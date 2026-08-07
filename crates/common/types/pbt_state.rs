@@ -16,57 +16,56 @@
 //! every state leaf, so a state written through this module can never
 //! commit to a zero-valued leaf.
 //!
-//! # Removal is only partly supported
+//! # Removal is by prefix, and what that does and does not take
 //!
 //! Flat state made removal trivial — an account was one map entry. A
-//! trie is not so kind, and the three parts of an account's state
-//! behave differently:
+//! trie is not so kind, and an account's state is spread over three
+//! regions that a removal has to treat differently. Each is a subtree of
+//! the one unified tree, and the embedding puts it there on purpose, so
+//! each is one [`BinaryTrie::remove_prefix`] call:
 //!
-//! - **Header leaves are enumerable.** An account's header stem is a
-//!   known 33 bytes and its leaves are sub-indices `0..=255`, so
-//!   clearing them is a bounded loop of at most 256 removals. That
-//!   covers basic data, the code hash or the delegation indicator, and
-//!   storage slots `0..=63`.
-//! - **Code must not be removed.** Every chunk is content-addressed by
-//!   the code hash and lives in the code zone, so two accounts with
-//!   identical bytecode share the very same leaves; deleting one
-//!   account's chunks would take the other's code with it. They are
-//!   therefore left in place — the same reason ethrex never prunes its
-//!   `ACCOUNT_CODES` table. A delegation indicator is the exception
-//!   that proves the rule: it is not chunkified, it sits in the
-//!   account's own header, and it goes when the account does.
-//! - **Overflow storage is unbounded and cannot be enumerated.** Slots
-//!   at `64` and above live under `0xff ‖ blake3(address) ‖ …`. The
-//!   embedding deliberately makes them contiguous, but [`BinaryTrie`]
-//!   offers no iteration and no prefix removal, so their extent is
-//!   unknowable from the trie alone.
+//! - **The header stem goes.** [`get_tree_prefix_for_header`] covers the
+//!   account's basic data, its code hash or its delegation indicator,
+//!   and storage slots `0..=63` — and nothing of any other account.
+//! - **Overflow storage goes.** Slots at `64` and above live under
+//!   `0xff ‖ blake3(address)` ([`get_tree_prefix_for_overflow_storage`]),
+//!   which the embedding makes contiguous for exactly this reason. It is
+//!   unbounded and cannot be enumerated from outside the trie — a slot's
+//!   key is not recoverable from the leaf — so a prefix removal is the
+//!   only way to clear it, and it is why this module once had to refuse
+//!   such an account instead.
+//! - **Code stays, all of it.** Every chunk is content-addressed by the
+//!   code hash and lives in the code zone, so two accounts running the
+//!   same bytecode share the very same leaves and deleting one account's
+//!   chunks would take the other's code with it. They are left in place —
+//!   the same reason ethrex never prunes its `ACCOUNT_CODES` table.
+//!   Neither prefix above reaches them, so this needs no special care;
+//!   under the older address-keyed layout, where chunks `0..=127` sat in
+//!   the account's own header, it would have.
 //!
-//! Rather than silently leave orphaned storage behind, a removal this
-//! module can see would strand overflow storage is refused with
-//! [`PbtStateError::OverflowStorageNotRemovable`]. What it can see is
-//! the batch it is given: any overflow-zone slot written for an account
-//! anywhere in the same `updates` slice. That is exactly the modern
-//! case — post-EIP-6780 `SELFDESTRUCT` only takes effect in the
-//! transaction that created the account, so a removable account's
-//! storage was necessarily written in the same block. Overflow storage
-//! written by an *earlier* block is invisible here and would be
-//! stranded silently: a correctness gap for old-chain replay, not for
-//! live operation on a modern chain.
+//!   A delegation indicator is the exception that proves the rule: it is
+//!   not chunkified, it sits in the account's own header, and it goes
+//!   when the account does.
 //!
-//! TODO: fix this properly by giving [`BinaryTrie`] a prefix-removal
-//! (or prefix-iteration) operation and calling it on
-//! `0xff ‖ blake3(address32)`, the prefix under which the embedding
-//! already gathers an account's entire overflow storage as one
-//! contiguous subtree. Until then the gap above stands.
-
-use std::collections::HashSet;
+//! A storage wipe ([`AccountUpdate::removed_storage`]) takes the second
+//! region and the storage part of the first
+//! ([`get_tree_prefix_for_header_storage`]), leaving the account itself.
+//!
+//! # Reads that need more than a key
+//!
+//! [`has_storage`] is the read that could not be served before the trie
+//! had prefixes. It answers "does this account hold any storage at all",
+//! which EIP-7610 needs to refuse a `CREATE` over an account that does,
+//! and it is two existence checks — one per storage region — rather than
+//! the 64-lookup half-answer a header-only scan would give.
 
 use ethrex_binary_trie::BinaryTrieError;
 use ethrex_binary_trie::embedding::{
-    DELEGATION_CODE_LENGTH, HEADER_STORAGE_OFFSET, HEADER_STORAGE_SLOTS, address20_to_address32,
-    chunkify_code, encode_basic_data, encode_delegation, get_tree_key_for_basic_data,
-    get_tree_key_for_code_chunk, get_tree_key_for_code_hash, get_tree_key_for_delegation,
-    get_tree_key_for_header, get_tree_key_for_storage_slot, is_delegation,
+    DELEGATION_CODE_LENGTH, address20_to_address32, chunkify_code, encode_basic_data,
+    encode_delegation, get_tree_key_for_basic_data, get_tree_key_for_code_chunk,
+    get_tree_key_for_code_hash, get_tree_key_for_delegation, get_tree_key_for_storage_slot,
+    get_tree_prefix_for_header, get_tree_prefix_for_header_storage,
+    get_tree_prefix_for_overflow_storage, is_delegation,
 };
 use ethrex_binary_trie::trie::BinaryTrie;
 use ethrex_crypto::keccak::keccak_hash;
@@ -89,14 +88,6 @@ const BASIC_DATA_BALANCE_RANGE: std::ops::Range<usize> = 16..32;
 pub enum PbtStateError {
     #[error(transparent)]
     Trie(#[from] BinaryTrieError),
-    /// The account's storage cannot be cleared because part of it lives
-    /// in the overflow storage zone, which the trie cannot enumerate.
-    /// See the module docs.
-    #[error(
-        "account {0:?}: cannot clear storage, it reaches past slot 63 into the overflow storage \
-         zone, which the binary trie can neither enumerate nor remove by prefix"
-    )]
-    OverflowStorageNotRemovable(Address),
     /// The update changed an account's basic data without carrying its
     /// bytecode, and the trie holds no previous basic-data leaf to take
     /// the code size from.
@@ -110,17 +101,15 @@ pub enum PbtStateError {
 /// Apply `updates` to `trie`.
 ///
 /// Order within the slice does not affect the resulting trie: every
-/// update writes and removes keys derived from its own account, and the
-/// overflow-storage check is computed over the whole batch up front.
+/// update writes and removes keys derived from its own account.
 ///
 /// See the module docs for what removal does and does not cover.
 pub fn apply_account_updates(
     trie: &mut BinaryTrie,
     updates: &[AccountUpdate],
 ) -> Result<(), PbtStateError> {
-    let overflow_storage = accounts_with_overflow_storage(updates);
     for update in updates {
-        apply_account_update(trie, update, &overflow_storage)?;
+        apply_account_update(trie, update)?;
     }
     Ok(())
 }
@@ -165,10 +154,12 @@ pub fn apply_account_updates(
 ///
 /// [`AccountInfo`] has no `storage_root`, and that is why it is what this
 /// returns. The binary trie has no such value to report: storage is not a
-/// per-account subtrie there, it is leaves of the one unified tree. Callers
-/// that need an `AccountState` have to decide what to put in that field, and
-/// the decision belongs to them rather than here — see `StoreVmDatabase` in
-/// `crates/blockchain/vm.rs`, which makes it and documents what it costs.
+/// per-account subtrie there, it is leaves of the one unified tree. What it
+/// *can* report is whether the account holds any storage at all, which is what
+/// every consumer of that field actually reads out of it — see [`has_storage`]
+/// and [`get_account`], and `StoreVmDatabase` in `crates/blockchain/vm.rs` for
+/// what it puts in the field on the strength of them. Kept separate because
+/// the account RPCs want none of it.
 pub fn get_account_info(
     trie: &mut BinaryTrie,
     address: Address,
@@ -195,6 +186,67 @@ pub fn get_account_info(
         balance,
         nonce,
     }))
+}
+
+/// An account as the binary trie is able to describe it.
+///
+/// [`AccountInfo`] plus the one thing an MPT-shaped `AccountState` needs
+/// that `AccountInfo` has no field for. The two travel together because
+/// [`get_account`] answers both out of one open trie, and the storage
+/// question reuses the header-stem nodes the account read already
+/// loaded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BinaryAccount {
+    pub info: AccountInfo,
+    /// Whether the account holds any storage at all — see
+    /// [`has_storage`].
+    pub has_storage: bool,
+}
+
+/// [`get_account_info`] together with [`has_storage`], for the caller
+/// that has to fill an `AccountState`.
+///
+/// One open trie serves both, which is not merely tidy: the storage
+/// question's first half walks to the very header stem the account read
+/// just loaded, so it costs almost nothing on top. Split across two
+/// opens it would be a second walk from the root.
+pub fn get_account(
+    trie: &mut BinaryTrie,
+    address: Address,
+) -> Result<Option<BinaryAccount>, PbtStateError> {
+    let Some(info) = get_account_info(trie, address)? else {
+        return Ok(None);
+    };
+    Ok(Some(BinaryAccount {
+        info,
+        has_storage: has_storage(trie, address)?,
+    }))
+}
+
+/// Whether `trie` holds any storage for `address`.
+///
+/// The answer `storage_root != EMPTY_TRIE_HASH` stands for on the MPT
+/// side, and the binary trie can give it directly rather than through a
+/// summary hash it does not have. EIP-7610 is what makes it
+/// consensus-relevant: a `CREATE` at an address that holds storage must
+/// fail even when that address has no code and a zero nonce.
+///
+/// Two existence checks, because an account's storage lives in two
+/// places — slots `0..=63` in the header stem, the rest in the storage
+/// zone — and no prefix shorter than the empty one covers both. The
+/// header is asked first: it is the cheaper of the two for a caller that
+/// has just read the account, since the walk to the stem is already
+/// loaded, and finding storage there skips the second check entirely.
+///
+/// Neither check scans. [`BinaryTrie::contains_prefix`] stops at the
+/// first node whose subtree lies wholly under the prefix, so this is two
+/// root-to-node walks whatever the account's storage looks like.
+pub fn has_storage(trie: &mut BinaryTrie, address: Address) -> Result<bool, PbtStateError> {
+    let address32 = address20_to_address32(address);
+    Ok(
+        trie.contains_prefix(&get_tree_prefix_for_header_storage(&address32))?
+            || trie.contains_prefix(&get_tree_prefix_for_overflow_storage(&address32))?,
+    )
 }
 
 /// The value `trie` holds for `address`'s storage `slot`, or `None` if it
@@ -228,58 +280,30 @@ fn decode_basic_data(basic_data: &[u8; 32]) -> (u64, U256) {
     )
 }
 
-/// Addresses this batch writes an overflow-zone storage slot for.
-///
-/// The whole batch is scanned before anything is applied, so the answer
-/// — and therefore which removals are refused — does not depend on the
-/// order of `updates`.
-fn accounts_with_overflow_storage(updates: &[AccountUpdate]) -> HashSet<Address> {
-    updates
-        .iter()
-        .filter(|update| {
-            update
-                .added_storage
-                .keys()
-                .any(|slot| !slot_lives_in_header(slot_index(slot)))
-        })
-        .map(|update| update.address)
-        .collect()
-}
-
 fn slot_index(slot: &H256) -> U256 {
     U256::from_big_endian(slot.as_bytes())
-}
-
-/// Whether a storage slot lives in the account header stem, which holds
-/// slots `0` through `63`.
-fn slot_lives_in_header(slot: U256) -> bool {
-    slot < U256::from(HEADER_STORAGE_SLOTS)
 }
 
 fn apply_account_update(
     trie: &mut BinaryTrie,
     update: &AccountUpdate,
-    overflow_storage: &HashSet<Address>,
 ) -> Result<(), PbtStateError> {
     let address32 = address20_to_address32(update.address);
 
     if update.removed {
-        refuse_if_overflow_storage(update.address, overflow_storage)?;
         // The whole header stem goes: basic data, the code hash or the
         // delegation indicator, and storage slots 0..=63. Code chunks
         // are content-addressed and shared, so they stay.
-        remove_header_leaves(trie, &address32, 0..=u8::MAX)?;
+        trie.remove_prefix(&get_tree_prefix_for_header(&address32))?;
+        trie.remove_prefix(&get_tree_prefix_for_overflow_storage(&address32))?;
         return Ok(());
     }
 
     if update.removed_storage {
-        refuse_if_overflow_storage(update.address, overflow_storage)?;
-        // Only the storage region of the header: the account survives.
-        remove_header_leaves(
-            trie,
-            &address32,
-            header_storage_sub_index(0)..=header_storage_sub_index(63),
-        )?;
+        // Both storage regions, and neither of the two that are not
+        // storage: the account itself survives, and so does its code.
+        trie.remove_prefix(&get_tree_prefix_for_header_storage(&address32))?;
+        trie.remove_prefix(&get_tree_prefix_for_overflow_storage(&address32))?;
     }
 
     // EIP-7702: an account's code is either an ordinary program or a
@@ -388,38 +412,6 @@ fn state_write(
     trie.insert(key, value)
 }
 
-fn refuse_if_overflow_storage(
-    address: Address,
-    overflow_storage: &HashSet<Address>,
-) -> Result<(), PbtStateError> {
-    if overflow_storage.contains(&address) {
-        return Err(PbtStateError::OverflowStorageNotRemovable(address));
-    }
-    Ok(())
-}
-
-/// Header sub-index of storage slot `slot`, for `slot` below 64.
-fn header_storage_sub_index(slot: u8) -> u8 {
-    debug_assert!(u64::from(slot) < HEADER_STORAGE_SLOTS);
-    HEADER_STORAGE_OFFSET as u8 + slot
-}
-
-/// Remove the account header leaves at `sub_indices`.
-///
-/// Most are absent, which [`BinaryTrie::remove`] reports as `None`
-/// without erroring, so the loop is bounded and cheap in the common
-/// case of an account with few leaves.
-fn remove_header_leaves(
-    trie: &mut BinaryTrie,
-    address32: &[u8; 32],
-    sub_indices: std::ops::RangeInclusive<u8>,
-) -> Result<(), BinaryTrieError> {
-    for sub_index in sub_indices {
-        trie.remove(&get_tree_key_for_header(address32, sub_index))?;
-    }
-    Ok(())
-}
-
 /// The code size that goes into the basic-data leaf, which must be the
 /// account's actual bytecode length.
 ///
@@ -474,7 +466,7 @@ mod tests {
     use crate::types::Code;
     use ethrex_binary_trie::embedding::{
         ACCOUNT_ZONE, BASIC_DATA_LEAF_KEY, CODE_HASH_LEAF_KEY, CODE_ZONE, DELEGATION_LEAF_KEY,
-        DELEGATION_MARKER, STORAGE_ZONE,
+        DELEGATION_MARKER, STORAGE_ZONE, get_tree_key_for_header,
     };
     use ethrex_binary_trie::trie::{BinaryTrie, InMemoryBinaryTrieDB};
     use ethrex_crypto::NativeCrypto;
@@ -1050,47 +1042,119 @@ mod tests {
         );
     }
 
-    #[test]
-    fn removing_an_account_with_overflow_storage_errors() {
-        let updates = vec![
+    /// Storage slots on both sides of the header/overflow boundary, and
+    /// several of the overflow ones so they land in more than one group
+    /// — one leaf would not need a subtree removal to clear.
+    fn slots_across_the_boundary() -> Vec<(U256, U256)> {
+        [0u64, 5, 63, 64, 255, 256, 1_000, 100_000]
+            .into_iter()
+            .map(|slot| (U256::from(slot), U256::from(slot + 1)))
+            .collect()
+    }
+
+    /// The storage-only counterpart of `applied`: an account carrying
+    /// [`slots_across_the_boundary`], plus a second account to check the
+    /// removal does not reach past its own.
+    fn trie_with_storage_on_both_sides() -> BinaryTrie {
+        applied(&[
             AccountUpdate {
-                added_storage: storage(&[(U256::from(1_000), U256::from(7u64))]),
+                added_storage: storage(&slots_across_the_boundary()),
                 ..eoa_update(ADDR_A, 1, 1)
             },
-            AccountUpdate::removed(ADDR_A),
-        ];
-        let mut trie = BinaryTrie::new_temp();
-        let error = apply_account_updates(&mut trie, &updates).expect_err("must refuse");
-        assert!(matches!(
-            error,
-            PbtStateError::OverflowStorageNotRemovable(address) if address == ADDR_A
-        ));
-        assert!(
-            format!("{error}").contains(&format!("{ADDR_A:?}")),
-            "error names the account: {error}"
-        );
+            AccountUpdate {
+                added_storage: storage(&slots_across_the_boundary()),
+                ..eoa_update(ADDR_B, 2, 2)
+            },
+        ])
+    }
 
-        // `removed_storage` alone is refused for the same reason.
-        let wipe = vec![AccountUpdate {
-            added_storage: storage(&[(U256::from(1_000), U256::from(7u64))]),
-            removed_storage: true,
-            ..eoa_update(ADDR_A, 1, 1)
-        }];
-        assert!(matches!(
-            apply_account_updates(&mut BinaryTrie::new_temp(), &wipe),
-            Err(PbtStateError::OverflowStorageNotRemovable(_))
-        ));
+    /// Every slot of `slots_across_the_boundary` reads back as absent
+    /// for `address`, and still reads back for the other account.
+    fn assert_storage_cleared_for_only(trie: &mut BinaryTrie, address: Address) {
+        let other = if address == ADDR_A { ADDR_B } else { ADDR_A };
+        for (slot, value) in slots_across_the_boundary() {
+            let key = H256(slot.to_big_endian());
+            assert_eq!(
+                get_storage_slot(trie, address, &key).unwrap(),
+                None,
+                "slot {slot} survived the wipe"
+            );
+            assert_eq!(
+                get_storage_slot(trie, other, &key).unwrap(),
+                Some(value),
+                "slot {slot} of another account must be untouched"
+            );
+        }
     }
 
     #[test]
-    fn removed_storage_clears_header_slots_and_keeps_the_account() {
+    fn removing_an_account_clears_its_overflow_storage() {
+        let mut trie = trie_with_storage_on_both_sides();
+        // The premise: this account's storage reaches into the overflow
+        // zone, which is what used to make it unremovable.
+        assert!(has_storage(&mut trie, ADDR_A).unwrap());
+        assert!(
+            get_storage_slot(
+                &mut trie,
+                ADDR_A,
+                &H256(U256::from(100_000u64).to_big_endian())
+            )
+            .unwrap()
+            .is_some()
+        );
+
+        apply_account_updates(&mut trie, &[AccountUpdate::removed(ADDR_A)]).unwrap();
+
+        assert_eq!(get_account_info(&mut trie, ADDR_A).unwrap(), None);
+        assert!(
+            !has_storage(&mut trie, ADDR_A).unwrap(),
+            "no orphaned storage may be left behind"
+        );
+        assert_storage_cleared_for_only(&mut trie, ADDR_A);
+
+        // And the result is the state that never held the account, not
+        // merely one that answers the same to these questions.
+        let without = applied(&[AccountUpdate {
+            added_storage: storage(&slots_across_the_boundary()),
+            ..eoa_update(ADDR_B, 2, 2)
+        }]);
+        assert_eq!(trie.root(), without.root());
+    }
+
+    #[test]
+    fn removed_storage_clears_both_zones_and_keeps_the_account() {
+        let a32 = address20_to_address32(ADDR_A);
+        let mut trie = trie_with_storage_on_both_sides();
+
+        apply_account_updates(
+            &mut trie,
+            &[AccountUpdate {
+                removed_storage: true,
+                ..AccountUpdate::new(ADDR_A)
+            }],
+        )
+        .unwrap();
+
+        assert_storage_cleared_for_only(&mut trie, ADDR_A);
+        assert!(!has_storage(&mut trie, ADDR_A).unwrap());
+        assert_eq!(
+            trie.get(&get_tree_key_for_basic_data(&a32)).unwrap(),
+            Some(encode_basic_data(0, 1, U256::one()).unwrap()),
+            "the account itself survives a storage wipe"
+        );
+    }
+
+    /// A storage wipe must not take the account's code with it: header
+    /// code chunks share the stem with header storage, and only the two
+    /// sub-index bits tell them apart.
+    #[test]
+    fn removed_storage_keeps_the_code() {
+        let code = plain_code(31 * 130);
+        let code_hash = code.hash;
         let a32 = address20_to_address32(ADDR_A);
         let mut trie = applied(&[AccountUpdate {
-            added_storage: storage(&[
-                (U256::from(0), U256::from(1u64)),
-                (U256::from(63), U256::from(2u64)),
-            ]),
-            ..eoa_update(ADDR_A, 2, 200)
+            added_storage: storage(&slots_across_the_boundary()),
+            ..contract_update(ADDR_A, code.clone())
         }]);
 
         apply_account_updates(
@@ -1102,18 +1166,137 @@ mod tests {
         )
         .unwrap();
 
-        for slot in [0u64, 63] {
+        let chunks = chunkify_code(code.code());
+        for (chunk_id, chunk) in chunks.iter().enumerate() {
             assert_eq!(
-                trie.get(&get_tree_key_for_storage_slot(&a32, U256::from(slot)))
+                trie.get(&get_tree_key_for_code_chunk(&code_hash.0, chunk_id as u64))
                     .unwrap(),
-                None
+                Some(*chunk),
+                "chunk {chunk_id} must survive a storage wipe"
             );
         }
         assert_eq!(
-            trie.get(&get_tree_key_for_basic_data(&a32)).unwrap(),
-            Some(encode_basic_data(0, 2, U256::from(200u64)).unwrap()),
-            "the account itself survives a storage wipe"
+            trie.get(&get_tree_key_for_code_hash(&a32)).unwrap(),
+            Some(code_hash.0)
         );
+    }
+
+    /// Code is content-addressed and shared between accounts running the
+    /// same bytecode, so an account removal must leave *all* of it alone —
+    /// the one region where "the account is gone" does not mean "its
+    /// leaves are gone".
+    ///
+    /// This was once true only of chunks `128` and above, while chunks
+    /// `0..=127` sat in the account's own header and went with it. The
+    /// spec since moved every chunk into the code zone, so the account's
+    /// header prefix no longer reaches any of them and the sharing is
+    /// total. An earlier version of this test asserted the opposite of
+    /// its last line — that A's chunk 0 was "its alone" and had gone.
+    #[test]
+    fn removing_an_account_leaves_shared_code_alone() {
+        let code = plain_code(31 * 130);
+        let code_hash = code.hash;
+        let a32 = address20_to_address32(ADDR_A);
+        let mut trie = applied(&[
+            contract_update(ADDR_A, code.clone()),
+            contract_update(ADDR_B, code.clone()),
+        ]);
+
+        apply_account_updates(&mut trie, &[AccountUpdate::removed(ADDR_A)]).unwrap();
+
+        let chunks = chunkify_code(code.code());
+        for (chunk_id, chunk) in chunks.iter().enumerate() {
+            assert_eq!(
+                trie.get(&get_tree_key_for_code_chunk(&code_hash.0, chunk_id as u64))
+                    .unwrap(),
+                Some(*chunk),
+                "chunk {chunk_id} is B's too and must survive A's removal"
+            );
+        }
+
+        // What was A's alone did go: its header leaves name its address,
+        // and nothing in the code zone does.
+        assert_eq!(trie.get(&get_tree_key_for_code_hash(&a32)).unwrap(), None);
+        assert_eq!(trie.get(&get_tree_key_for_basic_data(&a32)).unwrap(), None);
+    }
+
+    #[test]
+    fn has_storage_sees_each_zone_on_its_own() {
+        // Nothing at all.
+        let mut none = applied(&[eoa_update(ADDR_A, 1, 1)]);
+        assert!(!has_storage(&mut none, ADDR_A).unwrap());
+        assert!(
+            !has_storage(&mut none, Address::repeat_byte(0xcc)).unwrap(),
+            "an absent account holds no storage"
+        );
+
+        // Header storage only, at each end of its range.
+        for slot in [0u64, 63] {
+            let mut trie = applied(&[AccountUpdate {
+                added_storage: storage(&[(U256::from(slot), U256::from(9u64))]),
+                ..eoa_update(ADDR_A, 1, 1)
+            }]);
+            assert!(has_storage(&mut trie, ADDR_A).unwrap(), "slot {slot}");
+            assert!(
+                !has_storage(&mut trie, ADDR_B).unwrap(),
+                "one account's storage is not another's"
+            );
+        }
+
+        // Overflow storage only, so the header check must not be the
+        // one answering.
+        for slot in [64u64, 100_000] {
+            let mut trie = applied(&[AccountUpdate {
+                added_storage: storage(&[(U256::from(slot), U256::from(9u64))]),
+                ..eoa_update(ADDR_A, 1, 1)
+            }]);
+            assert!(has_storage(&mut trie, ADDR_A).unwrap(), "slot {slot}");
+            assert!(!has_storage(&mut trie, ADDR_B).unwrap());
+        }
+    }
+
+    /// Code is not storage, in either zone: a contract with no storage
+    /// must not be reported as having some because its chunks share the
+    /// header stem or sit in the code zone.
+    #[test]
+    fn has_storage_is_not_confused_by_code() {
+        let mut trie = applied(&[contract_update(ADDR_A, plain_code(31 * 130))]);
+        assert!(!has_storage(&mut trie, ADDR_A).unwrap());
+    }
+
+    /// Zero means absent, and absent means no storage: a slot written
+    /// and then cleared leaves the account with none, exactly as if it
+    /// had never been written.
+    #[test]
+    fn has_storage_follows_zero_writes_back_to_false() {
+        for slot in [7u64, 100_000] {
+            let mut trie = applied(&[
+                AccountUpdate {
+                    added_storage: storage(&[(U256::from(slot), U256::from(9u64))]),
+                    ..eoa_update(ADDR_A, 1, 1)
+                },
+                AccountUpdate {
+                    added_storage: storage(&[(U256::from(slot), U256::zero())]),
+                    ..AccountUpdate::new(ADDR_A)
+                },
+            ]);
+            assert!(!has_storage(&mut trie, ADDR_A).unwrap(), "slot {slot}");
+        }
+    }
+
+    #[test]
+    fn get_account_reports_the_info_and_the_storage_together() {
+        let mut trie = trie_with_storage_on_both_sides();
+        let account = get_account(&mut trie, ADDR_A).unwrap().expect("present");
+        assert_eq!(
+            account.info,
+            get_account_info(&mut trie, ADDR_A).unwrap().unwrap()
+        );
+        assert!(account.has_storage);
+
+        let mut bare = applied(&[eoa_update(ADDR_A, 1, 1)]);
+        assert!(!get_account(&mut bare, ADDR_A).unwrap().unwrap().has_storage);
+        assert_eq!(get_account(&mut bare, ADDR_B).unwrap(), None);
     }
 
     #[test]

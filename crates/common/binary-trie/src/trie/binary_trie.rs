@@ -52,13 +52,14 @@ use ethereum_types::H256;
 use crate::error::BinaryTrieError;
 
 use super::MAX_KEY_LENGTH;
-use super::bits::bytes_to_bits;
+use super::bits::{bits_start_with, bytes_to_bits};
 use super::db::{BinaryTrieDB, InMemoryBinaryTrieDB};
 use super::node::{
     EMPTY_TRIE_ROOT, StoredNode, blake3_hash, branch_hash, decode, encode_branch, encode_leaf,
     leaf_hash,
 };
 use super::path::BitPath;
+use super::prefix::KeyPrefix;
 
 enum Node {
     Leaf {
@@ -141,6 +142,38 @@ enum Removal {
     /// it must go. Only the parent can act on that: it alone knows the
     /// sibling that takes its place.
     Vanished([u8; 32]),
+}
+
+/// Where a node's subtree sits relative to a [`KeyPrefix`] the descent
+/// is following.
+///
+/// Computed by [`BinaryTrie::locate`] and shared by the two prefix
+/// operations, which differ only in what they do with the answer.
+enum Span {
+    /// No key below this node is under the prefix.
+    Outside,
+    /// *Every* key below this node is under the prefix, because the
+    /// prefix ran out at or inside this node. A branch always has two
+    /// children and a leaf always has a value, so the subtree is never
+    /// empty — which is what makes an existence check stop here.
+    Covered,
+    /// The prefix reaches past this branch, so only part of its subtree
+    /// can be under it: continue into the `bit` child, whose own path
+    /// consumes bits up to and including `split`.
+    Below { split: usize, bit: u8 },
+}
+
+/// What a prefix removal did to the subtree it was applied to, the
+/// [`Removal`] of [`BinaryTrie::remove_prefix`]. It counts leaves rather
+/// than carrying a value, there being no single value to return.
+enum PrefixRemoval {
+    /// Nothing under this subtree was under the prefix.
+    Absent,
+    /// Leaves went and this subtree still has a node at its path.
+    Removed(usize),
+    /// Leaves went and this subtree is *entirely* gone, so the reference
+    /// to it must go. Only the parent can act on that.
+    Vanished(usize),
 }
 
 /// Compressed binary radix trie over prefix-free byte keys and
@@ -784,6 +817,255 @@ impl BinaryTrie {
                 Self::get_at(db, child, bits, split + 1, key)
             }
         }
+    }
+
+    /// Whether any key in the trie begins with `prefix`.
+    ///
+    /// One descent, and it stops at the first node whose whole subtree
+    /// lies under `prefix` rather than walking that subtree: a branch
+    /// always has two children and a leaf always has a value, so
+    /// reaching such a node *is* the answer. So this costs a root-to-node
+    /// walk, not a scan — which is the point, since the caller that
+    /// needs it asks "does this account hold any storage" for every
+    /// account an execution touches.
+    ///
+    /// # Errors
+    ///
+    /// - [`BinaryTrieError::EmptyKey`] if `prefix` is empty. The empty
+    ///   prefix names the whole trie, so the question it asks is "is
+    ///   this trie non-empty" — which [`BinaryTrie::root`] answers
+    ///   without reading anything. A caller that reaches here with one
+    ///   built an empty prefix by accident, and answering it would hide
+    ///   that.
+    /// - [`BinaryTrieError::Backend`] or
+    ///   [`BinaryTrieError::MalformedNode`] if a node on the path could
+    ///   not be loaded.
+    pub fn contains_prefix(&mut self, prefix: &KeyPrefix) -> Result<bool, BinaryTrieError> {
+        if prefix.is_empty() {
+            return Err(BinaryTrieError::EmptyKey);
+        }
+        let bits = prefix.as_bits();
+        let Self { db, root, .. } = self;
+        match root {
+            None => Ok(false),
+            Some(node_ref) => Self::contains_prefix_at(db.as_ref(), node_ref, bits, 0),
+        }
+    }
+
+    fn contains_prefix_at(
+        db: &dyn BinaryTrieDB,
+        node_ref: &mut NodeRef,
+        bits: &[u8],
+        depth: usize,
+    ) -> Result<bool, BinaryTrieError> {
+        let path = BitPath::from_bits(&bits[..depth]);
+        match Self::locate(Self::resolve(db, node_ref, &path)?, bits, depth) {
+            Span::Outside => Ok(false),
+            Span::Covered => Ok(true),
+            Span::Below { split, bit } => {
+                let Node::Branch { left, right, .. } = Self::resolve(db, node_ref, &path)? else {
+                    unreachable!("only a branch reaches past itself")
+                };
+                let child = if bit == 0 { left } else { right };
+                Self::contains_prefix_at(db, child, bits, split + 1)
+            }
+        }
+    }
+
+    /// Where `node`'s subtree sits relative to `bits`, the prefix a
+    /// descent that has already consumed `depth` of those bits is
+    /// following.
+    ///
+    /// The one place the prefix arithmetic lives, so the existence check
+    /// and the removal cannot disagree about what a prefix covers.
+    fn locate(node: &Node, bits: &[u8], depth: usize) -> Span {
+        match node {
+            // A leaf carries its whole key, so its own bits settle it
+            // outright — no path reasoning needed, and a key shorter
+            // than the prefix is simply not under it.
+            Node::Leaf { key, .. } => {
+                if bits_start_with(key, bits) {
+                    Span::Covered
+                } else {
+                    Span::Outside
+                }
+            }
+            Node::Branch { prefix, .. } => {
+                let split = depth + prefix.len();
+                if bits.len() <= split {
+                    // The prefix runs out at or inside this branch's own
+                    // prefix. Every key below shares those bits, so if
+                    // what is left of the prefix agrees with them, the
+                    // whole subtree is under it.
+                    if bits[depth..] == prefix[..bits.len() - depth] {
+                        Span::Covered
+                    } else {
+                        Span::Outside
+                    }
+                } else if bits[depth..split] != prefix[..] {
+                    Span::Outside
+                } else {
+                    Span::Below {
+                        split,
+                        bit: bits[split],
+                    }
+                }
+            }
+        }
+    }
+
+    /// Remove every key beginning with `prefix`, returning how many
+    /// leaves went.
+    ///
+    /// The embedding gathers the state that belongs together under a
+    /// common prefix — an account's header stem, or the whole of its
+    /// overflow storage — precisely so that clearing it is one
+    /// operation. Doing it key by key is not an option for either: the
+    /// header stem would be 256 descents, and overflow storage is
+    /// unbounded and cannot be enumerated from outside the trie at all.
+    ///
+    /// Absence is not an error, as it is not for [`BinaryTrie::remove`]:
+    /// a prefix nothing lives under removes nothing and returns `0`.
+    ///
+    /// # Cost
+    ///
+    /// One descent to the covered node, then a walk of everything below
+    /// it — because every node that leaves the tree leaves a path behind
+    /// for the next [`BinaryTrie::commit`] to tombstone, and those paths
+    /// are only knowable by reading the subtree. That walk is
+    /// proportional to what is being deleted, which is the price of
+    /// deleting it without leaving the database full of unreachable
+    /// nodes.
+    ///
+    /// # Errors
+    ///
+    /// The trie is left unchanged on every error, and no path is
+    /// tombstoned unless the whole subtree was read successfully:
+    /// - [`BinaryTrieError::EmptyKey`] if `prefix` is empty — see
+    ///   [`BinaryTrie::contains_prefix`], with the extra force that
+    ///   emptying the whole trie by accident is worse than misreading it.
+    /// - [`BinaryTrieError::Backend`] or
+    ///   [`BinaryTrieError::MalformedNode`] if a node could not be
+    ///   loaded.
+    pub fn remove_prefix(&mut self, prefix: &KeyPrefix) -> Result<usize, BinaryTrieError> {
+        if prefix.is_empty() {
+            return Err(BinaryTrieError::EmptyKey);
+        }
+        let bits = prefix.as_bits();
+        let Self {
+            db,
+            root,
+            pending_removal,
+        } = self;
+        let Some(node_ref) = root else {
+            return Ok(0);
+        };
+        match Self::remove_prefix_at(db.as_ref(), node_ref, bits, 0, pending_removal)? {
+            PrefixRemoval::Absent => Ok(0),
+            PrefixRemoval::Removed(count) => Ok(count),
+            PrefixRemoval::Vanished(count) => {
+                // Every key in the trie was under the prefix, and the
+                // subtree walk already tombstoned the root's own path
+                // along with the rest.
+                *root = None;
+                Ok(count)
+            }
+        }
+    }
+
+    /// Remove under `bits` from the subtree at `node_ref`, invalidating
+    /// it on the way back out if anything below it changed — the same
+    /// discipline [`BinaryTrie::remove_at`] follows, and for the same
+    /// reason.
+    fn remove_prefix_at(
+        db: &dyn BinaryTrieDB,
+        node_ref: &mut NodeRef,
+        bits: &[u8],
+        depth: usize,
+        pending_removal: &mut BTreeSet<BitPath>,
+    ) -> Result<PrefixRemoval, BinaryTrieError> {
+        let result = Self::remove_prefix_below(db, node_ref, bits, depth, pending_removal);
+        if !matches!(result, Ok(PrefixRemoval::Absent) | Err(_)) {
+            node_ref.invalidate();
+        }
+        result
+    }
+
+    /// The prefix removal itself; see [`BinaryTrie::remove_prefix_at`],
+    /// which wraps it to invalidate the node on the way back out.
+    fn remove_prefix_below(
+        db: &dyn BinaryTrieDB,
+        node_ref: &mut NodeRef,
+        bits: &[u8],
+        depth: usize,
+        pending_removal: &mut BTreeSet<BitPath>,
+    ) -> Result<PrefixRemoval, BinaryTrieError> {
+        // The descent got here by matching `bits[..depth]`, so those
+        // bits are this node's path — the key it is stored under.
+        let path = BitPath::from_bits(&bits[..depth]);
+        match Self::locate(Self::resolve(db, node_ref, &path)?, bits, depth) {
+            Span::Outside => Ok(PrefixRemoval::Absent),
+            Span::Covered => {
+                // Read the whole subtree before touching anything: a
+                // failure part-way through must not leave the tombstones
+                // of nodes that are still in the tree.
+                let mut retired = Vec::new();
+                let count = Self::collect_subtree(db, node_ref, &path, &mut retired)?;
+                pending_removal.extend(retired);
+                // The caller unlinks this subtree: only it knows whether
+                // there is a sibling to put in its place.
+                Ok(PrefixRemoval::Vanished(count))
+            }
+            Span::Below { split, bit } => {
+                let Node::Branch { left, right, .. } = Self::resolve(db, node_ref, &path)? else {
+                    unreachable!("only a branch reaches past itself")
+                };
+                let child = if bit == 0 { left } else { right };
+                match Self::remove_prefix_at(db, child, bits, split + 1, pending_removal)? {
+                    // Nothing below vanished, so this branch still has
+                    // both its children and keeps its shape.
+                    other @ (PrefixRemoval::Absent | PrefixRemoval::Removed(_)) => Ok(other),
+                    PrefixRemoval::Vanished(count) => {
+                        Self::collapse(db, node_ref, &path, bit, pending_removal)?;
+                        Ok(PrefixRemoval::Removed(count))
+                    }
+                }
+            }
+        }
+    }
+
+    /// Push the path of every node in the subtree at `path` onto
+    /// `retired`, its own included, and return how many of them are
+    /// leaves.
+    ///
+    /// Loads the subtree to do it, stored references and all: a path is
+    /// only knowable from the branch above it, so there is no way to
+    /// name the nodes about to be orphaned without reading them.
+    ///
+    /// Collects into the caller's vector rather than straight into the
+    /// pending set so that a failure half-way down leaves nothing
+    /// behind — a tombstone for a node still in the tree would delete
+    /// live state at the next commit.
+    fn collect_subtree(
+        db: &dyn BinaryTrieDB,
+        node_ref: &mut NodeRef,
+        path: &BitPath,
+        retired: &mut Vec<BitPath>,
+    ) -> Result<usize, BinaryTrieError> {
+        let leaves = match Self::resolve(db, node_ref, path)? {
+            Node::Leaf { .. } => 1,
+            Node::Branch {
+                prefix,
+                left,
+                right,
+            } => {
+                let (left_path, right_path) = (path.child(prefix, 0), path.child(prefix, 1));
+                Self::collect_subtree(db, left, &left_path, retired)?
+                    + Self::collect_subtree(db, right, &right_path, retired)?
+            }
+        };
+        retired.push(path.clone());
+        Ok(leaves)
     }
 
     /// Root hash: [`EMPTY_TRIE_ROOT`] for the empty trie, otherwise
@@ -1881,6 +2163,301 @@ mod tests {
             assert_eq!(reopened.get(key).unwrap(), Some(*value));
         }
         assert_eq!(reopened.get(&[0x7f; 34]).unwrap(), None);
+    }
+
+    // -----------------------------------------------------------------
+    // Prefix operations.
+    // -----------------------------------------------------------------
+
+    /// Prefix of the `wide_entries` keys whose first byte is below 8:
+    /// the four zero bits of the high nibble, then the `8`s bit.
+    ///
+    /// Deliberately not byte-aligned. This is the shape the embedding
+    /// actually asks for — an account's header storage is the sub-index
+    /// bytes beginning `01` — and a byte-only prefix could not express
+    /// it.
+    fn low_half_prefix() -> KeyPrefix {
+        KeyPrefix::from_bytes(&[]).and_bits(&[0, 0, 0, 0, 0])
+    }
+
+    #[test]
+    fn contains_prefix_answers_both_ways() {
+        let entries = wide_entries();
+        let mut trie = BinaryTrie::new_temp();
+        for (key, value) in &entries {
+            trie.insert(key.clone(), *value).unwrap();
+        }
+
+        // A whole key is a prefix of itself.
+        for (key, _) in &entries {
+            assert!(trie.contains_prefix(&KeyPrefix::from_bytes(key)).unwrap());
+        }
+        // One byte of it, which only key 0 begins with.
+        assert!(
+            trie.contains_prefix(&KeyPrefix::from_bytes(&[0x00]))
+                .unwrap()
+        );
+        // A sub-byte prefix covering a whole subtree, and its complement.
+        assert!(trie.contains_prefix(&low_half_prefix()).unwrap());
+        assert!(
+            trie.contains_prefix(&KeyPrefix::from_bytes(&[]).and_bits(&[0, 0, 0, 0, 1]))
+                .unwrap()
+        );
+        // Nothing lives up here.
+        assert!(
+            !trie
+                .contains_prefix(&KeyPrefix::from_bytes(&[0x80]))
+                .unwrap()
+        );
+        assert!(
+            !trie
+                .contains_prefix(&KeyPrefix::from_bytes(&[]).and_bits(&[1]))
+                .unwrap()
+        );
+        // Longer than any key: a leaf's key must *begin* with the
+        // prefix, so a prefix reaching past it matches nothing.
+        assert!(
+            !trie
+                .contains_prefix(&KeyPrefix::from_bytes(&[0x00; 35]))
+                .unwrap()
+        );
+        // The empty trie has nothing under any prefix.
+        assert!(
+            !BinaryTrie::new_temp()
+                .contains_prefix(&KeyPrefix::from_bytes(&[0x00]))
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn contains_prefix_stops_at_the_covered_node() {
+        let entries = wide_entries();
+        let (map, root) = commit_entries(&entries);
+        let (db, counts) = CountingDB::over(map);
+
+        let mut trie = BinaryTrie::open(Box::new(db), root);
+        assert!(trie.contains_prefix(&low_half_prefix()).unwrap());
+
+        // The prefix runs out one bit into the tree: the root branch,
+        // then the child whose whole subtree is covered. Answering
+        // without walking that subtree is the whole point — a full scan
+        // would read all 15 of its nodes.
+        let read = counts.reads();
+        assert!(
+            read <= 2,
+            "an existence check should stop at the covered node, read {read}"
+        );
+    }
+
+    #[test]
+    fn prefix_operations_refuse_the_empty_prefix() {
+        let mut trie = BinaryTrie::new_temp();
+        trie.insert(wide_key(0), [0; 32]).unwrap();
+        let empty = KeyPrefix::from_bytes(&[]);
+        assert_eq!(trie.contains_prefix(&empty), Err(BinaryTrieError::EmptyKey));
+        assert_eq!(trie.remove_prefix(&empty), Err(BinaryTrieError::EmptyKey));
+        assert_eq!(
+            trie.get(&wide_key(0)).unwrap(),
+            Some([0; 32]),
+            "the refusal must not have emptied the trie"
+        );
+    }
+
+    #[test]
+    fn remove_prefix_removes_exactly_the_covered_keys() {
+        let entries = wide_entries();
+        let mut trie = BinaryTrie::new_temp();
+        for (key, value) in &entries {
+            trie.insert(key.clone(), *value).unwrap();
+        }
+
+        assert_eq!(trie.remove_prefix(&low_half_prefix()).unwrap(), 8);
+
+        let kept = &entries[8..];
+        for (key, _) in &entries[..8] {
+            assert_eq!(trie.get(key).unwrap(), None, "key {key:02x?} survived");
+        }
+        for (key, value) in kept {
+            assert_eq!(trie.get(key).unwrap(), Some(*value));
+        }
+        assert!(!trie.contains_prefix(&low_half_prefix()).unwrap());
+        assert_eq!(
+            trie.root(),
+            root_from_scratch(kept),
+            "what is left must be the canonical tree for it, not merely a \
+             self-consistent one"
+        );
+        // Removing it again finds nothing, and changes nothing.
+        assert_eq!(trie.remove_prefix(&low_half_prefix()).unwrap(), 0);
+        assert_eq!(trie.root(), root_from_scratch(kept));
+    }
+
+    #[test]
+    fn remove_prefix_of_a_single_key_matches_remove() {
+        let entries = wide_entries();
+        let by_prefix = {
+            let mut trie = BinaryTrie::new_temp();
+            for (key, value) in &entries {
+                trie.insert(key.clone(), *value).unwrap();
+            }
+            assert_eq!(
+                trie.remove_prefix(&KeyPrefix::from_bytes(&wide_key(3)))
+                    .unwrap(),
+                1
+            );
+            trie.root()
+        };
+        assert_eq!(
+            by_prefix,
+            root_after(&[
+                ins(0),
+                ins(1),
+                ins(2),
+                ins(3),
+                ins(4),
+                ins(5),
+                ins(6),
+                ins(7),
+                ins(8),
+                ins(9),
+                ins(10),
+                ins(11),
+                ins(12),
+                ins(13),
+                ins(14),
+                ins(15),
+                del(3),
+            ])
+        );
+    }
+
+    #[test]
+    fn remove_prefix_can_empty_the_trie() {
+        let entries = wide_entries();
+        let mut trie = BinaryTrie::new_temp();
+        for (key, value) in &entries {
+            trie.insert(key.clone(), *value).unwrap();
+        }
+        // Every key begins with a zero high nibble.
+        assert_eq!(
+            trie.remove_prefix(&KeyPrefix::from_bytes(&[]).and_bits(&[0, 0, 0, 0]))
+                .unwrap(),
+            entries.len()
+        );
+        assert_eq!(trie.root(), EMPTY_TRIE_ROOT);
+        assert_eq!(trie.commit().unwrap(), EMPTY_TRIE_ROOT);
+
+        // And on a single-leaf trie, where the root is the covered node
+        // and has no sibling to take its place.
+        let mut trie = BinaryTrie::new_temp();
+        trie.insert(vec![0x42; 34], [1; 32]).unwrap();
+        assert_eq!(
+            trie.remove_prefix(&KeyPrefix::from_bytes(&[0x42])).unwrap(),
+            1
+        );
+        assert_eq!(trie.root(), EMPTY_TRIE_ROOT);
+    }
+
+    #[test]
+    fn remove_prefix_of_an_absent_prefix_changes_nothing() {
+        let entries = wide_entries();
+        let mut trie = BinaryTrie::new_temp();
+        for (key, value) in &entries {
+            trie.insert(key.clone(), *value).unwrap();
+        }
+        let before = trie.root();
+        // Diverges above the tree, inside a branch prefix, and below a
+        // leaf respectively.
+        for prefix in [
+            KeyPrefix::from_bytes(&[0x80]),
+            KeyPrefix::from_bytes(&[0x10]),
+            KeyPrefix::from_bytes(&[0x00; 35]),
+        ] {
+            assert_eq!(trie.remove_prefix(&prefix).unwrap(), 0);
+            assert_eq!(trie.root(), before);
+        }
+        assert_eq!(
+            BinaryTrie::new_temp()
+                .remove_prefix(&KeyPrefix::from_bytes(&[0x00]))
+                .unwrap(),
+            0,
+            "an empty trie has nothing under any prefix"
+        );
+    }
+
+    /// The bits selecting `two_byte_entries` keys whose second byte is
+    /// in `32..64`: a zero first byte, then `001`.
+    fn second_byte_upper_prefix() -> KeyPrefix {
+        KeyPrefix::from_bytes(&[0x00]).and_bits(&[0, 0, 1])
+    }
+
+    #[test]
+    fn remove_prefix_survives_a_reopen_with_no_stale_nodes_behind_it() {
+        let entries = two_byte_entries(64);
+        let (map, root) = commit_entries(&entries);
+
+        let mut trie = BinaryTrie::open(Box::new(InMemoryBinaryTrieDB::new(map.clone())), root);
+        assert_eq!(trie.remove_prefix(&second_byte_upper_prefix()).unwrap(), 32);
+        let new_root = trie.commit().unwrap();
+
+        let kept = &entries[..32];
+        assert_eq!(new_root, root_from_scratch(kept));
+
+        // A fresh handle over the same nodes: every answer below comes
+        // from what the commit wrote and deleted.
+        let mut reopened =
+            BinaryTrie::open(Box::new(InMemoryBinaryTrieDB::new(map.clone())), new_root);
+        for (key, value) in kept {
+            assert_eq!(reopened.get(key).unwrap(), Some(*value), "key {key:02x?}");
+        }
+        for (key, _) in &entries[32..] {
+            assert_eq!(reopened.get(key).unwrap(), None, "key {key:02x?}");
+        }
+        assert_eq!(reopened.root(), new_root);
+
+        // The removed subtree's nodes are gone from the database, not
+        // merely unreachable: a canonical trie over `kept` has
+        // `2 * 32 - 1` nodes and the store must hold exactly those.
+        assert_eq!(
+            map.lock().unwrap().len(),
+            2 * kept.len() - 1,
+            "the orphaned subtree must not still be on disk"
+        );
+    }
+
+    #[test]
+    fn a_failed_prefix_removal_leaves_the_trie_and_the_tombstones_alone() {
+        let entries = wide_entries();
+        let (map, root) = commit_entries(&entries);
+
+        // `low_half_prefix` covers the node at `[0; 5]`, whose subtree
+        // holds keys 0 through 7: keys 0-3 under `[0; 6]` and keys 4-7
+        // under `[0, 0, 0, 0, 0, 1]`. The walk is post-order and goes
+        // left first, so taking away the leaf for key 4 — the leftmost
+        // of the *right* half — fails it only after it has collected the
+        // seven paths of the left half, every one of them a node still
+        // very much in the tree. That is the case the two-phase
+        // collection exists for; a walk that failed on its first node
+        // would not test it at all.
+        let victim = BitPath::from_bits(&[0, 0, 0, 0, 0, 1, 0, 0]).to_db_key();
+        assert!(map.lock().unwrap().remove(&victim).is_some());
+        let before = map.lock().unwrap().len();
+
+        let mut trie = BinaryTrie::open(Box::new(InMemoryBinaryTrieDB::new(map.clone())), root);
+        assert!(matches!(
+            trie.remove_prefix(&low_half_prefix()),
+            Err(BinaryTrieError::Backend(_))
+        ));
+        assert_eq!(trie.root(), root, "a failed removal must not move the root");
+
+        // And the commit that follows must not tombstone anything: the
+        // paths the failed walk collected belong to live nodes.
+        trie.commit().unwrap();
+        assert_eq!(
+            map.lock().unwrap().len(),
+            before,
+            "a failed removal must leave no tombstones behind"
+        );
     }
 
     #[test]

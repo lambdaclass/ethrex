@@ -26,6 +26,7 @@
 use ethereum_types::{H160, H256, U256};
 
 use crate::error::BinaryTrieError;
+use crate::trie::KeyPrefix;
 use crate::trie::node::blake3_hash;
 
 /// Sub-index of the account header leaf packing version, code size,
@@ -202,6 +203,57 @@ pub fn encode_delegation(code: &[u8]) -> [u8; 32] {
     let len = code.len().min(32);
     out[..len].copy_from_slice(&code[..len]);
     out
+}
+
+/// Prefix covering an account's entire header stem: its basic data,
+/// code hash, delegation indicator and storage slots `0`-`63`.
+///
+/// The stem is every byte of a header key but the sub-index, so this is
+/// exactly the group [`get_tree_key_for_header`] indexes into — all of
+/// it, and nothing belonging to any other account. It is the unit an
+/// account removal clears.
+///
+/// Note it holds no code: every code chunk is content-addressed in
+/// [`CODE_ZONE`] and shared between accounts running the same bytecode,
+/// so removing this prefix cannot strand or corrupt another account's
+/// code. That was not true of the older address-keyed chunk layout.
+pub fn get_tree_prefix_for_header(address: &Address32) -> KeyPrefix {
+    let key = get_tree_key_for_header(address, 0);
+    KeyPrefix::from_bytes(&key[..key.len() - 1])
+}
+
+/// Prefix covering an account's header storage: slots `0` through `63`,
+/// and nothing else in the header.
+///
+/// Those slots are sub-indices [`HEADER_STORAGE_OFFSET`] through
+/// [`HEADER_STORAGE_OFFSET`]` + `[`HEADER_STORAGE_SLOTS`]` - 1`, which is
+/// `64..=127` — a range that begins on a power of two and is one long, so
+/// every sub-index byte in it and no other begins with the bits `01`. The
+/// stem plus those two bits is therefore a single prefix over exactly the
+/// account's header storage, which is what lets "does this account have
+/// storage" be one traversal rather than 64 lookups.
+pub fn get_tree_prefix_for_header_storage(address: &Address32) -> KeyPrefix {
+    // The two bits below are `HEADER_STORAGE_OFFSET`'s top two, and the
+    // range they select is `[64, 128)`: assert the constants still say
+    // so rather than leaving the literals to drift away from them.
+    debug_assert_eq!(HEADER_STORAGE_OFFSET, 0b0100_0000);
+    debug_assert_eq!(HEADER_STORAGE_OFFSET + HEADER_STORAGE_SLOTS, 0b1000_0000);
+    get_tree_prefix_for_header(address).and_bits(&[0, 1])
+}
+
+/// Prefix covering an account's overflow storage: every slot from `64`
+/// up, and nothing else.
+///
+/// This is the contiguity [`storage_tree_position`] is built for. Every
+/// one of the account's storage-zone keys opens with the zone byte and
+/// `key_hash(address)`, and no other account's does, so the account's
+/// whole overflow storage — unbounded, and unenumerable from outside the
+/// trie — is one subtree that can be asked about or removed in one go.
+pub fn get_tree_prefix_for_overflow_storage(address: &Address32) -> KeyPrefix {
+    let mut prefix = Vec::with_capacity(33);
+    prefix.push(STORAGE_ZONE);
+    prefix.extend_from_slice(key_hash(address).as_bytes());
+    KeyPrefix::from_bytes(&prefix)
 }
 
 /// Build the hash-derived position of an account's overflow storage
@@ -550,6 +602,123 @@ mod tests {
             Err(BinaryTrieError::BalanceTooLarge)
         );
         assert!(encode_basic_data(0, 0, (U256::from(1) << 128) - 1).is_ok());
+    }
+
+    /// Whether `key`'s bits begin with `prefix`'s.
+    fn covers(prefix: &KeyPrefix, key: &[u8]) -> bool {
+        let key_bits: Vec<u8> = key
+            .iter()
+            .flat_map(|byte| (0..8).map(move |i| (byte >> (7 - i)) & 1))
+            .collect();
+        key_bits.starts_with(prefix.as_bits())
+    }
+
+    #[test]
+    fn the_header_prefix_covers_every_header_leaf_and_nothing_else() {
+        let a32 = address20_to_address32(ADDR20);
+        let other = address20_to_address32(H160([0x99; 20]));
+        let prefix = get_tree_prefix_for_header(&a32);
+        assert_eq!(prefix.len(), (ACCOUNT_KEY_LENGTH - 1) * 8);
+
+        for sub_index in 0..=u8::MAX {
+            assert!(
+                covers(&prefix, &get_tree_key_for_header(&a32, sub_index)),
+                "sub-index {sub_index}"
+            );
+            assert!(
+                !covers(&prefix, &get_tree_key_for_header(&other, sub_index)),
+                "another account's sub-index {sub_index}"
+            );
+        }
+        // No code belongs to it at all: every chunk is content-addressed
+        // in the code zone and shared between accounts running the same
+        // bytecode. Chunk 0 is checked as well as a high one, because
+        // chunks 0..=127 used to live in this very stem.
+        assert!(!covers(
+            &prefix,
+            &get_tree_key_for_code_chunk(&[0x11; 32], 0)
+        ));
+        assert!(!covers(
+            &prefix,
+            &get_tree_key_for_code_chunk(&[0x11; 32], 128)
+        ));
+        assert!(!covers(
+            &prefix,
+            &get_tree_key_for_storage_slot(&a32, U256::from(64))
+        ));
+    }
+
+    #[test]
+    fn the_header_storage_prefix_covers_slots_0_to_63_and_no_other_leaf() {
+        let a32 = address20_to_address32(ADDR20);
+        let prefix = get_tree_prefix_for_header_storage(&a32);
+        // The stem, then the two bits that select sub-indices 64..=127.
+        assert_eq!(prefix.len(), (ACCOUNT_KEY_LENGTH - 1) * 8 + 2);
+
+        for slot in 0..64u64 {
+            assert!(
+                covers(
+                    &prefix,
+                    &get_tree_key_for_storage_slot(&a32, U256::from(slot))
+                ),
+                "slot {slot}"
+            );
+        }
+        // Every other header leaf falls outside: basic data, the code
+        // hash, the delegation indicator, and the whole upper half the
+        // header no longer uses for code.
+        for sub_index in 0..=u8::MAX {
+            let in_storage = (HEADER_STORAGE_OFFSET..HEADER_STORAGE_OFFSET + HEADER_STORAGE_SLOTS)
+                .contains(&u64::from(sub_index));
+            assert_eq!(
+                covers(&prefix, &get_tree_key_for_header(&a32, sub_index)),
+                in_storage,
+                "sub-index {sub_index}"
+            );
+        }
+        // Slot 64 is the first that is not header storage.
+        assert!(!covers(
+            &prefix,
+            &get_tree_key_for_storage_slot(&a32, U256::from(64))
+        ));
+    }
+
+    #[test]
+    fn the_overflow_storage_prefix_covers_the_account_and_only_it() {
+        let a32 = address20_to_address32(ADDR20);
+        let other = address20_to_address32(H160([0x99; 20]));
+        let prefix = get_tree_prefix_for_overflow_storage(&a32);
+        assert_eq!(prefix.len(), 33 * 8, "the zone byte and one full digest");
+
+        // Slots either side of the first group boundary, one far out,
+        // and one at the top of the slot space: all one subtree.
+        for slot in [
+            U256::from(64),
+            U256::from(255),
+            U256::from(256),
+            U256::from(1_000_000),
+            U256::MAX,
+        ] {
+            assert!(
+                covers(&prefix, &get_tree_key_for_storage_slot(&a32, slot)),
+                "slot {slot}"
+            );
+            assert!(
+                !covers(&prefix, &get_tree_key_for_storage_slot(&other, slot)),
+                "another account's slot {slot} must lie outside"
+            );
+        }
+        // Header leaves are in another zone entirely, so removing this
+        // prefix cannot take the account with it.
+        assert!(!covers(&prefix, &get_tree_key_for_basic_data(&a32)));
+        assert!(!covers(
+            &prefix,
+            &get_tree_key_for_storage_slot(&a32, U256::from(63))
+        ));
+        assert!(!covers(
+            &prefix,
+            &get_tree_key_for_code_chunk(&[0x11; 32], 128)
+        ));
     }
 
     #[test]

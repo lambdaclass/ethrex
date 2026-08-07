@@ -7,11 +7,13 @@ mod bits;
 pub mod db;
 pub(crate) mod node;
 pub mod path;
+pub mod prefix;
 
 pub use binary_trie::BinaryTrie;
 pub use db::{BinaryTrieDB, InMemoryBinaryTrieDB};
 pub use node::EMPTY_TRIE_ROOT;
 pub use path::BitPath;
+pub use prefix::KeyPrefix;
 
 /// The hash a stored node commits to.
 ///

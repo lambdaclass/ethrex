@@ -35,7 +35,7 @@ use ethrex_common::{
         Receipt, Transaction,
         block_access_list::BlockAccessList,
         block_execution_witness::{ExecutionWitness, RpcExecutionWitness},
-        pbt_state::{self, apply_account_updates},
+        pbt_state::{self, BinaryAccount, apply_account_updates},
     },
     utils::keccak,
 };
@@ -2247,9 +2247,10 @@ impl Store {
     ///
     /// [`AccountInfo`] rather than an `AccountState` is what makes one shared
     /// path possible across the two tries: it has no `storage_root`, which the
-    /// binary trie has no way to report (see `pbt_state::get_account_info` and
-    /// `StoreVmDatabase::account_state_from_binary_trie`). All three account
-    /// RPCs only ever wanted the balance, the nonce and the code hash.
+    /// binary trie has no value for (see `pbt_state::get_account_info`). All
+    /// three account RPCs only ever wanted the balance, the nonce and the code
+    /// hash, so none of them pays for the storage question
+    /// [`Self::get_binary_account`] asks on execution's behalf.
     pub fn get_account_info_by_hash(
         &self,
         block_hash: BlockHash,
@@ -2682,10 +2683,10 @@ impl Store {
     ///
     /// # Errors
     ///
-    /// [`StoreError::PbtState`] if the updates cannot be applied —
-    /// notably removing an account whose storage reaches the overflow
-    /// zone, which the trie cannot enumerate. Nothing is committed in
-    /// that case, so `parent_root` remains the state on disk.
+    /// [`StoreError::PbtState`] if the updates cannot be embedded — see
+    /// [`Store::apply_account_updates_to_binary_trie_blocking`]. Nothing
+    /// is committed in that case, so `parent_root` remains the state on
+    /// disk.
     pub async fn apply_account_updates_to_binary_trie(
         &self,
         parent_root: H256,
@@ -2836,9 +2837,10 @@ impl Store {
     ///
     /// Returns an [`AccountInfo`] rather than an `AccountState` because the
     /// binary trie has no storage root to put in one — storage is not a
-    /// per-account subtrie there. The caller that needs an `AccountState`
-    /// decides what to do about that; see `StoreVmDatabase` in
-    /// `crates/blockchain/vm.rs`.
+    /// per-account subtrie there. The caller that needs an `AccountState` wants
+    /// [`Self::get_binary_account`], which also asks whether the account holds
+    /// any storage, and decides what to put in the field; see `StoreVmDatabase`
+    /// in `crates/blockchain/vm.rs`.
     ///
     /// Deliberately unchecked, exactly as [`Self::get_account_state_by_root`]
     /// is: `StoreVmDatabase::new` gates on [`Self::has_binary_trie_state`] once
@@ -2850,6 +2852,28 @@ impl Store {
     ) -> Result<Option<AccountInfo>, StoreError> {
         let mut trie = self.open_binary_trie(state_root)?;
         Ok(pbt_state::get_account_info(&mut trie, address)?)
+    }
+
+    /// [`Self::get_binary_account_info`] plus the "does this account hold any
+    /// storage" answer, for the caller that has to fill an MPT-shaped
+    /// `AccountState`.
+    ///
+    /// A separate method rather than more work inside
+    /// [`Self::get_binary_account_info`] because the two callers want different
+    /// things. The account RPCs want the balance, the nonce and the code hash
+    /// and nothing else, and would pay two extra trie walks per call for a
+    /// field they never read; execution needs the storage answer for EIP-7610.
+    ///
+    /// Both come out of one open trie, so the header-storage half of the
+    /// storage question re-walks nodes the account read has already loaded —
+    /// see `pbt_state::get_account`.
+    pub fn get_binary_account(
+        &self,
+        state_root: H256,
+        address: Address,
+    ) -> Result<Option<BinaryAccount>, StoreError> {
+        let mut trie = self.open_binary_trie(state_root)?;
+        Ok(pbt_state::get_account(&mut trie, address)?)
     }
 
     /// Root-addressed storage read against the binary trie, the counterpart of
@@ -7814,7 +7838,6 @@ mod binary_trie_block_tests {
     };
     use ethrex_binary_trie::trie::EMPTY_TRIE_ROOT;
     use ethrex_common::constants::EMPTY_KECCAK_HASH;
-    use ethrex_common::types::pbt_state::PbtStateError;
 
     const ADDR_C: Address = Address::repeat_byte(0xcc);
 
@@ -8147,9 +8170,8 @@ mod binary_trie_block_tests {
     #[tokio::test]
     async fn removing_an_account_reaches_the_trie_of_the_survivors() {
         let (store, backend, _dir) = test_store();
-        // Slot 5 lives in the header stem, which `apply_account_updates`
-        // can enumerate and therefore remove; the overflow zone is the
-        // case below.
+        // Slot 5 lives in the header stem, one prefix removal; the
+        // overflow zone, which takes a second one, is the case below.
         let genesis_root = store
             .setup_genesis_binary_trie(alloc(vec![
                 (ADDR_A, genesis_account(1, 100, vec![], &[])),
@@ -8181,46 +8203,70 @@ mod binary_trie_block_tests {
     }
 
     #[tokio::test]
-    async fn removing_an_account_with_overflow_storage_is_refused() {
+    async fn removing_an_account_clears_its_overflow_storage_on_disk() {
         let (store, backend, _dir) = test_store();
+        // ADDR_A's storage reaches past slot 63 into the overflow zone,
+        // which no bounded loop over the header stem can clear: the
+        // slots there are unenumerable from outside the trie, and this
+        // removal was once refused outright for that reason.
+        let overflow_slots: Vec<(u64, u64)> = [64u64, 255, 256, 5_000, 1_000_000]
+            .iter()
+            .map(|s| (*s, s + 1))
+            .collect();
+        let mut slots = vec![(5u64, 7u64)];
+        slots.extend(overflow_slots.iter().copied());
         let genesis_root = store
             .setup_genesis_binary_trie(alloc(vec![
-                (ADDR_A, genesis_account(1, 100, vec![], &[(100, 7)])),
-                (ADDR_B, genesis_account(2, 200, vec![], &[])),
+                (ADDR_A, genesis_account(1, 100, vec![], &slots)),
+                (ADDR_B, genesis_account(2, 200, vec![], &slots)),
             ]))
             .await
             .unwrap();
 
-        // A self-destruct in the same block that wrote overflow storage:
-        // the trie cannot enumerate that storage, so the removal must
-        // surface as an error rather than strand it.
-        let err = store
-            .apply_account_updates_to_binary_trie(
-                genesis_root,
-                &[AccountUpdate {
-                    added_storage: storage_map(&[(100, 9)]),
-                    ..AccountUpdate::removed(ADDR_A)
-                }],
-            )
+        let block_root = store
+            .apply_account_updates_to_binary_trie(genesis_root, &[AccountUpdate::removed(ADDR_A)])
             .await
-            .unwrap_err();
-        assert!(
-            matches!(
-                &err,
-                StoreError::PbtState(PbtStateError::OverflowStorageNotRemovable(address))
-                    if *address == ADDR_A
-            ),
-            "unexpected error: {err:?}"
-        );
+            .unwrap();
 
-        // The refusal left the parent state alone: nothing was committed.
+        // The removed account leaves nothing behind, and the root is the
+        // one a trie that never held it would have — the strong form,
+        // which a stranded leaf anywhere would break.
+        let survivor = store
+            .setup_genesis_binary_trie(alloc(vec![(
+                ADDR_B,
+                genesis_account(2, 200, vec![], &slots),
+            )]))
+            .await
+            .unwrap();
+        assert_eq!(block_root, survivor);
+
         let a32 = address20_to_address32(ADDR_A);
-        let mut trie = reopen(&backend, genesis_root);
-        assert_eq!(trie.root(), genesis_root);
-        assert_eq!(
-            trie.get(&get_tree_key_for_storage_slot(&a32, U256::from(100)))
-                .unwrap(),
-            Some(U256::from(7u64).to_big_endian())
+        let b32 = address20_to_address32(ADDR_B);
+        let mut trie = reopen(&backend, block_root);
+        assert_eq!(trie.get(&get_tree_key_for_basic_data(&a32)).unwrap(), None);
+        for (slot, value) in &slots {
+            assert_eq!(
+                trie.get(&get_tree_key_for_storage_slot(&a32, U256::from(*slot)))
+                    .unwrap(),
+                None,
+                "slot {slot} was stranded"
+            );
+            assert_eq!(
+                trie.get(&get_tree_key_for_storage_slot(&b32, U256::from(*slot)))
+                    .unwrap(),
+                Some(U256::from(*value).to_big_endian()),
+                "slot {slot} of the other account must be untouched"
+            );
+        }
+        // And the read path agrees: no orphaned storage under that
+        // address for a later `CREATE` to collide with.
+        assert_eq!(store.get_binary_account(block_root, ADDR_A).unwrap(), None);
+        assert!(
+            store
+                .get_binary_account(block_root, ADDR_B)
+                .unwrap()
+                .expect("the survivor is still there")
+                .has_storage
         );
     }
 
