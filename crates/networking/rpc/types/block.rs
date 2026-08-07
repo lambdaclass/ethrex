@@ -61,6 +61,7 @@ impl TryInto<Block> for RpcBlock {
                 transactions,
                 ommers: Vec::new(),
                 withdrawals: Some(block_body.withdrawals),
+                ..Default::default()
             },
         })
     }
@@ -214,6 +215,7 @@ mod test {
             transactions: vec![Transaction::EIP1559Transaction(tx)],
             ommers: vec![],
             withdrawals: Some(vec![]),
+            ..Default::default()
         };
         let hash = block_header.hash();
 
