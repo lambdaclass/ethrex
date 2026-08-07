@@ -127,6 +127,7 @@ fn block_decode_still_accepts_a_body_with_a_legacy_transaction() {
             transactions: vec![sample_legacy()],
             ommers: Vec::new(),
             withdrawals: None,
+            ..Default::default()
         },
     );
     let encoded = block.encode_to_vec();

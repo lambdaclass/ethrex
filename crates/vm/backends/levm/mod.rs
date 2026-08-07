@@ -4612,6 +4612,7 @@ mod burned_fees_tests {
             transactions: vec![tx],
             ommers: vec![],
             withdrawals: Some(vec![]),
+            ..Default::default()
         };
         Block::new(header, body)
     }

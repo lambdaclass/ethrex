@@ -281,6 +281,7 @@ fn eip8025_new_payload_request_to_block(
         transactions,
         ommers: vec![],
         withdrawals: Some(withdrawals),
+        ..Default::default()
     };
 
     let header = BlockHeader {
@@ -353,6 +354,7 @@ fn new_payload_request_amsterdam_to_block(
         transactions,
         ommers: vec![],
         withdrawals: Some(withdrawals),
+        ..Default::default()
     };
 
     let header = BlockHeader {
@@ -477,6 +479,7 @@ pub fn new_payload_request_to_block(
         transactions: transactions.clone(),
         ommers: vec![],
         withdrawals: Some(withdrawals.clone()),
+        ..Default::default()
     };
 
     let mut header = BlockHeader {

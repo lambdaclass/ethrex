@@ -602,6 +602,7 @@ mod tests {
             transactions: vec![],
             ommers: vec![],
             withdrawals: Some(vec![]),
+            ..Default::default()
         };
         let block = Block::new(header.clone(), body.clone());
         let original_hash = block.hash();
@@ -786,6 +787,7 @@ mod tests {
             transactions: vec![],
             ommers: vec![],
             withdrawals: Some(vec![]),
+            ..Default::default()
         };
         let block = Block::new(header.clone(), body.clone());
         let original_hash = block.hash();
