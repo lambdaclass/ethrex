@@ -20,7 +20,7 @@ use ethrex_p2p::{
     network::P2PContext,
     peer_handler::PeerHandler,
     peer_table::{PeerTable, PeerTableServer},
-    sync::SyncMode,
+    sync::{BackfillConfig, HistoryChain, SyncMode},
     sync_manager::SyncManager,
     types::{NetworkConfig, Node, NodeRecord},
     utils::public_key_from_signing_key,
@@ -144,6 +144,75 @@ pub fn init_metrics(opts: &Options, network: &Network, tracker: TaskTracker) {
 
     // Metrics is a non-fatal sidecar: its failure is logged loudly but must not down the node.
     spawn_logged(&tracker, "metrics server", metrics_api);
+}
+
+/// Interval between RocksDB observability samples. Property reads are cheap
+/// metadata lookups, so a tight-ish cadence gives responsive Grafana panels
+/// without measurable overhead.
+const DB_METRICS_SAMPLE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// Periodically exports RocksDB observability metrics: per-column-family sizes,
+/// key/file counts and compaction debt, plus DB-wide block-cache usage and the
+/// history-backfill frontier. Populates the gauges surfaced by the metrics API.
+///
+/// A no-op for non-RocksDB backends (`rocksdb_stats()` returns `None`). Spawned
+/// only when metrics are enabled.
+pub(crate) fn spawn_rocksdb_metrics_collector(
+    store: Store,
+    tracker: &TaskTracker,
+    cancel_token: CancellationToken,
+) {
+    use ethrex_metrics::db::METRICS_DB;
+
+    tracker.spawn(async move {
+        loop {
+            // Each sample reads several RocksDB properties per column family;
+            // keep that off the async runtime like the rest of the storage layer.
+            let stats = {
+                let store = store.clone();
+                match tokio::task::spawn_blocking(move || store.rocksdb_stats()).await {
+                    Ok(stats) => stats,
+                    Err(e) => {
+                        warn!("RocksDB metrics sample panicked: {e}");
+                        None
+                    }
+                }
+            };
+            if let Some(stats) = stats {
+                let mut total_live_sst = 0u64;
+                for cf in &stats.cfs {
+                    METRICS_DB.set_cf(
+                        &cf.name,
+                        cf.live_sst_bytes,
+                        cf.total_sst_bytes,
+                        cf.live_data_bytes,
+                        cf.num_keys,
+                        cf.num_files,
+                        cf.blob_bytes,
+                        cf.pending_compaction_bytes,
+                        cf.memtable_bytes,
+                    );
+                    total_live_sst += cf.live_sst_bytes;
+                }
+                METRICS_DB.set_global(
+                    total_live_sst,
+                    stats.block_cache_usage_bytes,
+                    stats.block_cache_capacity_bytes,
+                    stats.block_cache_pinned_bytes,
+                    stats.running_compactions,
+                    stats.block_cache_hits,
+                    stats.block_cache_misses,
+                );
+            }
+            if let Ok(frontier) = store.get_earliest_block_number().await {
+                METRICS_DB.set_backfill_frontier(frontier);
+            }
+            tokio::select! {
+                _ = tokio::time::sleep(DB_METRICS_SAMPLE_INTERVAL) => {}
+                _ = cancel_token.cancelled() => return,
+            }
+        }
+    });
 }
 
 /// Opens a new or pre-existing Store with default tunables and loads the initial
@@ -300,6 +369,23 @@ pub async fn init_rpc_api(
         &opts.syncmode
     };
 
+    // Historical-chain backfill is opt-in via `--history.chain`; it is
+    // meaningless in dev mode (single-node chain, full state from genesis), so
+    // force it off there like syncmode.
+    if !opts.dev && opts.history_chain == HistoryChain::Off && opts.history_transactions != 0 {
+        warn!(
+            "--history.transactions has no effect with --history.chain off: no backfill runs, so there is nothing to bound"
+        );
+    }
+    let backfill_config = BackfillConfig {
+        mode: if opts.dev {
+            HistoryChain::Off
+        } else {
+            opts.history_chain.clone()
+        },
+        tx_index_horizon: opts.history_transactions,
+    };
+
     // Create SyncManager
     let syncer = SyncManager::new(
         peer_handler.clone(),
@@ -308,6 +394,7 @@ pub async fn init_rpc_api(
         blockchain.clone(),
         store.clone(),
         datadir.to_path_buf(),
+        backfill_config,
     )
     .await;
 
@@ -855,6 +942,7 @@ pub async fn init_l1(
 
     if opts.metrics_enabled {
         init_metrics(&opts, &network, tracker.clone());
+        spawn_rocksdb_metrics_collector(store.clone(), &tracker, cancel_token.clone());
     }
 
     if opts.dev {

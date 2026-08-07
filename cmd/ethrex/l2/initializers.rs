@@ -20,6 +20,7 @@ use ethrex_p2p::{
     peer_handler::PeerHandler,
     peer_table::PeerTableServer,
     rlpx::{initiator::RLPxInitiator, l2::l2_connection::P2PBasedContext},
+    sync::{BackfillConfig, HistoryChain},
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
 };
@@ -329,6 +330,11 @@ pub async fn init_l2(
             blockchain.clone(),
             store.clone(),
             opts.node_opts.datadir.clone(),
+            // L2 nodes do not backfill L1 historical chain data.
+            BackfillConfig {
+                mode: HistoryChain::Off,
+                tx_index_horizon: 0,
+            },
         )
         .await;
 
@@ -394,7 +400,12 @@ pub async fn init_l2(
 
     // Initialize metrics if enabled
     if opts.node_opts.metrics_enabled {
-        init_metrics(&opts.node_opts, &network.to_string(), tracker);
+        init_metrics(&opts.node_opts, &network.to_string(), tracker.clone());
+        initializers::spawn_rocksdb_metrics_collector(
+            store.clone(),
+            &tracker,
+            sequencer_cancellation_token.clone(),
+        );
     }
 
     let l2_url = Url::parse(&format!(

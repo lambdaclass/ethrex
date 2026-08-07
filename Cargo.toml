@@ -24,6 +24,7 @@ members = [
   "crates/vm/levm",
   "crates/vm/levm/runner",
   "crates/common/config",
+  "tooling/history_validator",
   "tooling/repl",
   "test",
 ]

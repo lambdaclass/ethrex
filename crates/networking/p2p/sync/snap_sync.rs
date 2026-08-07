@@ -36,6 +36,7 @@ use crate::snap::{
     },
     request_account_range, request_bytecodes, request_storage_ranges,
 };
+use crate::sync::backfill::reconcile_frontier;
 use crate::sync::code_collector::CodeHashCollector;
 use crate::sync::healing::{heal_state_trie_wrap, heal_storage_trie};
 use crate::utils::{
@@ -654,6 +655,19 @@ pub async fn snap_sync(
             None,
             None,
         )
+        .await?;
+
+    // Snap sync stores bodies only from the pivot onward; every block below the
+    // pivot is headers-only. Record the true frontier — the lowest block with a
+    // stored body — so RPC (`earliest` tag, feeHistory) reflects what is
+    // actually available instead of genesis. Historical backfill, when enabled,
+    // lowers this frontier further as it fills bodies/receipts downward.
+    // Recomputing rather than writing the pivot keeps the value a lower bound:
+    // a later snap cycle must not push the frontier above blocks that already
+    // have bodies (e.g. backfilled ones), and a fresh node must not keep the
+    // genesis-init placeholder (0) that `min` with the pivot would preserve.
+    store
+        .update_earliest_block_number(reconcile_frontier(store).await?)
         .await?;
     Ok(())
 }

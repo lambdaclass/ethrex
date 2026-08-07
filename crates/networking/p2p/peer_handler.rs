@@ -3,6 +3,7 @@ use crate::{
     metrics::{CurrentStepValue, METRICS},
     peer_table::{
         PeerData, PeerDiagnostics, PeerTable, PeerTableServerProtocol as _, RequestPermit,
+        SelectedPeer,
     },
     rlpx::{
         connection::server::PeerConnection,
@@ -13,6 +14,7 @@ use crate::{
                 BLOCK_HEADER_LIMIT, BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders,
                 HashOrNumber,
             },
+            receipts::{GetReceipts, GetReceipts70},
         },
         message::Message as RLPxMessage,
         p2p::{Capability, SUPPORTED_ETH_CAPABILITIES},
@@ -20,7 +22,10 @@ use crate::{
 };
 use ethrex_common::{
     H256,
-    types::{BlockBody, BlockHeader, block_access_list::BlockAccessList, validate_block_body},
+    types::{
+        BlockBody, BlockHeader, Receipt, block_access_list::BlockAccessList, compute_receipts_root,
+        validate_block_body,
+    },
 };
 use ethrex_crypto::NativeCrypto;
 use spawned_concurrency::{error::ActorError, tasks::ActorRef};
@@ -77,6 +82,20 @@ impl HeaderFetchOutcome {
             HeaderFetchOutcome::PeerFailed => "peer(s) queried but did not serve headers",
         }
     }
+}
+
+/// Highest eth version we would negotiate with a peer advertising `capabilities`.
+///
+/// Mirrors the handshake rule in `rlpx::connection::server` (the highest version
+/// supported by both sides wins), so callers can pick the wire format the
+/// connection actually uses. Returns `None` if we share no eth version with the
+/// peer.
+fn negotiated_eth_version(capabilities: &[Capability]) -> Option<u8> {
+    capabilities
+        .iter()
+        .filter(|cap| SUPPORTED_ETH_CAPABILITIES.contains(cap))
+        .map(|cap| cap.version)
+        .max()
 }
 
 /// Asks a single already-selected peer for the block number at `sync_head`.
@@ -143,7 +162,7 @@ impl PeerHandler {
     async fn get_random_peer(
         &mut self,
         capabilities: &[Capability],
-    ) -> Result<Option<(H256, PeerConnection, RequestPermit)>, PeerHandlerError> {
+    ) -> Result<Option<SelectedPeer>, PeerHandlerError> {
         Ok(self
             .peer_table
             .get_random_peer(capabilities.to_vec())
@@ -453,7 +472,7 @@ impl PeerHandler {
         });
         match self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await? {
             None => Ok(HeaderFetchOutcome::NoPeerAvailable),
-            Some((peer_id, mut connection, permit)) => {
+            Some((peer_id, mut connection, permit, _caps)) => {
                 let response = connection
                     .outgoing_request(request, PEER_REPLY_TIMEOUT)
                     .await;
@@ -567,7 +586,7 @@ impl PeerHandler {
         });
         match self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await? {
             None => Ok(None),
-            Some((peer_id, mut connection, permit)) => {
+            Some((peer_id, mut connection, permit, _caps)) => {
                 let response = connection
                     .outgoing_request(request, PEER_REPLY_TIMEOUT)
                     .await;
@@ -577,15 +596,31 @@ impl PeerHandler {
                     block_bodies,
                 })) = response
                 {
-                    // Check that the response is not empty and does not contain more bodies than the ones requested
-                    if !block_bodies.is_empty() && block_bodies.len() <= block_hashes_len {
-                        self.peer_table.record_success(peer_id)?;
+                    if block_bodies.len() > block_hashes_len {
+                        // More bodies than hashes requested: a protocol violation, so
+                        // drop the peer rather than just scoring it down.
+                        debug!(
+                            %peer_id,
+                            got = block_bodies.len(),
+                            requested = block_hashes_len,
+                            "Peer returned more block bodies than requested, disposing"
+                        );
+                        self.peer_table.record_failure(peer_id)?;
+                        let _ = self.peer_table.set_disposable(peer_id);
+                        return Ok(None);
+                    }
+                    if !block_bodies.is_empty() {
+                        // Success is recorded by the caller, once the bodies have
+                        // actually been validated against their headers.
                         return Ok(Some((block_bodies, peer_id)));
                     }
                 }
-                debug!("Didn't receive block bodies from peer, penalizing peer {peer_id}");
+                // An empty response is spec-conformant for a peer that holds none of
+                // the requested range (geth's `ServiceGetBlockBodiesQuery` appends only
+                // what it finds), which post-history-expiry is the common case rather
+                // than the adversarial one. Score it down, but keep it in the table.
+                debug!(%peer_id, "No block bodies received, applying a soft penalty");
                 self.peer_table.record_failure(peer_id)?;
-                let _ = self.peer_table.set_disposable(peer_id);
                 Ok(None)
             }
         }
@@ -608,21 +643,198 @@ impl PeerHandler {
             else {
                 continue; // Retry on empty response
             };
-            let mut res = Vec::new();
-            let mut validation_success = true;
-            for (header, body) in block_headers[..block_bodies.len()].iter().zip(block_bodies) {
-                if let Err(e) = validate_block_body(header, &body, &NativeCrypto) {
-                    debug!("Invalid block body error {e}, discarding peer {peer_id} and retrying");
-                    validation_success = false;
-                    self.peer_table.record_critical_failure(peer_id)?;
+            // Keep the longest leading run of bodies that validates against its
+            // header, and stop at the first that doesn't.
+            //
+            // A response is not necessarily aligned with the request: a peer holding
+            // only part of the range omits the hashes it lacks rather than truncating
+            // (geth's `ServiceGetBlockBodiesQuery` appends only what it finds), so the
+            // list can be compacted rather than a prefix. That is expected from peers
+            // with partially expired history and must not be punished. A body that
+            // matches *no* requested header is a different thing entirely: the peer
+            // made it up, and that still earns a critical failure.
+            let mut valid_upto = 0usize;
+            let mut mismatch = None;
+            for (idx, body) in block_bodies.iter().enumerate() {
+                if let Err(err) = validate_block_body(&block_headers[idx], body, &NativeCrypto) {
+                    mismatch = Some((idx, err));
                     break;
                 }
-                res.push(body);
+                valid_upto = idx + 1;
             }
-            // Retry on validation failure
-            if validation_success {
+
+            if let Some((idx, err)) = &mismatch {
+                // Does this body belong to some later header we asked for? If so the
+                // response is compacted, not fabricated.
+                let compacted = block_headers[idx + 1..].iter().any(|header| {
+                    validate_block_body(header, &block_bodies[*idx], &NativeCrypto).is_ok()
+                });
+                if compacted {
+                    debug!(
+                        %peer_id,
+                        block_number = block_headers[*idx].number,
+                        bodies_kept = valid_upto,
+                        "Peer skipped requested blocks it does not have; keeping the bodies verified so far"
+                    );
+                } else {
+                    debug!(
+                        %peer_id,
+                        err = %err,
+                        block_number = block_headers[*idx].number,
+                        bodies_kept = valid_upto,
+                        "Block body matches no requested header, discarding peer"
+                    );
+                    self.peer_table.record_critical_failure(peer_id)?;
+                }
+            }
+
+            if valid_upto > 0 {
+                let mut res = block_bodies;
+                res.truncate(valid_upto);
+                self.peer_table.record_success(peer_id)?;
                 return Ok(Some(res));
             }
+            // Nothing usable. A fabricated body was already charged above; anything
+            // else (e.g. a peer whose whole response was for other blocks) gets a
+            // soft penalty before re-rolling onto another peer.
+            if mismatch.is_none() {
+                self.peer_table.record_failure(peer_id)?;
+            }
+        }
+        Ok(None)
+    }
+
+    /// Internal method to request receipts for the given block hashes from a
+    /// random eth peer (any supported version; the wire form follows the
+    /// version the connection negotiated).
+    ///
+    /// Returns the per-block receipt lists (aligned with the leading
+    /// `block_hashes`) and the responding peer id, or `None` if there is no
+    /// suitable peer or the response is missing/empty/oversized.
+    ///
+    /// The request form depends on the version the connection negotiated, because
+    /// eth/70 (EIP-7975) changed the `GetReceipts` wire format to a paginated one
+    /// carrying `firstBlockReceiptIndex`, and eth/71 (EIP-8159, `requires: [7928,
+    /// 7975]`) builds on eth/70 rather than skipping it. Sending the eth/68 form to
+    /// an eth/70+ peer would fail to decode on their side, so the version is
+    /// derived from the peer's advertised capabilities.
+    async fn request_receipts_inner(
+        &mut self,
+        block_hashes: &[H256],
+    ) -> Result<Option<(Vec<Vec<Receipt>>, H256)>, PeerHandlerError> {
+        let block_hashes_len = block_hashes.len();
+        let request_id = rand::random();
+        match self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await? {
+            None => Ok(None),
+            Some((peer_id, mut connection, permit, capabilities)) => {
+                // eth/70+ uses the paginated form; always start at receipt 0 of the
+                // first block, since backfill wants whole blocks.
+                let paginated = negotiated_eth_version(&capabilities).is_some_and(|v| v >= 70);
+                let request = if paginated {
+                    RLPxMessage::GetReceipts70(GetReceipts70::new(
+                        request_id,
+                        0,
+                        block_hashes.to_vec(),
+                    ))
+                } else {
+                    RLPxMessage::GetReceipts68(GetReceipts::new(request_id, block_hashes.to_vec()))
+                };
+                let response = connection
+                    .outgoing_request(request, PEER_REPLY_TIMEOUT)
+                    .await;
+                drop(permit);
+                // The peer replies with the `Receipts` variant matching its own
+                // negotiated eth version; all of them decode to `Vec<Vec<Receipt>>`.
+                let receipts = match response {
+                    Ok(RLPxMessage::Receipts68(msg)) if msg.get_id() == request_id => msg.receipts,
+                    Ok(RLPxMessage::Receipts69(msg)) if msg.get_id() == request_id => msg.receipts,
+                    Ok(RLPxMessage::Receipts70(msg)) if msg.id == request_id => {
+                        let mut receipts = msg.receipts;
+                        // A truncated trailing list holds only part of that block's
+                        // receipts, so its root can't be checked. Drop it and treat
+                        // the response as a shorter prefix — the caller already
+                        // handles short prefixes, so every stored block stays
+                        // root-verified without a separate validation path.
+                        if msg.last_block_incomplete {
+                            receipts.pop();
+                        }
+                        receipts
+                    }
+                    _ => {
+                        debug!("Didn't receive receipts from peer, penalizing peer {peer_id}");
+                        self.peer_table.record_failure(peer_id)?;
+                        let _ = self.peer_table.set_disposable(peer_id);
+                        return Ok(None);
+                    }
+                };
+                // An empty response is spec-conformant for a peer that holds
+                // none of the requested range — the norm for old history after
+                // the history-expiry rollout — so it earns only a soft penalty:
+                // the peer may still be valuable for head-following. An
+                // oversized response is a protocol violation and makes the peer
+                // disposable.
+                if receipts.is_empty() {
+                    debug!("Received empty receipts from peer {peer_id}, penalizing softly");
+                    self.peer_table.record_failure(peer_id)?;
+                    return Ok(None);
+                }
+                if receipts.len() > block_hashes_len {
+                    debug!("Received oversized receipts from peer {peer_id}, penalizing");
+                    self.peer_table.record_failure(peer_id)?;
+                    let _ = self.peer_table.set_disposable(peer_id);
+                    return Ok(None);
+                }
+                self.peer_table.record_success(peer_id)?;
+                Ok(Some((receipts, peer_id)))
+            }
+        }
+    }
+
+    /// Requests receipts for the given block headers from any eth peer and
+    /// validates them against each header's `receipts_root`.
+    ///
+    /// Returns the per-block receipts (aligned with the leading `block_headers`,
+    /// possibly a shorter prefix if the peer truncated the response) or `None` if
+    /// no peer returned a valid, root-matching response within the retry limit.
+    ///
+    /// The root is recomputed from the receipts' logs, so the per-receipt bloom
+    /// omitted from eth/69 onward is reconstructed as part of validation. The
+    /// request form follows the peer's negotiated version (see
+    /// `request_receipts_inner`).
+    pub async fn request_receipts(
+        &mut self,
+        block_headers: &[BlockHeader],
+    ) -> Result<Option<Vec<Vec<Receipt>>>, PeerHandlerError> {
+        let block_hashes: Vec<H256> = block_headers.iter().map(|h| h.hash()).collect();
+
+        for _ in 0..REQUEST_RETRY_ATTEMPTS {
+            let Some((receipts, peer_id)) = self.request_receipts_inner(&block_hashes).await?
+            else {
+                continue; // retry on no-peer / empty response
+            };
+            // As with bodies, keep the longest leading run whose receipts root
+            // matches its header and stop at the first that doesn't, since a peer
+            // holding only part of the range answers with a compacted list rather
+            // than a prefix.
+            let mut verified = 0usize;
+            for (header, block_receipts) in block_headers[..receipts.len()].iter().zip(&receipts) {
+                let computed = compute_receipts_root(block_receipts, &NativeCrypto);
+                if computed != header.receipts_root {
+                    debug!(
+                        "Receipts root mismatch for block {} (computed {computed:?}, expected {:?}); keeping the {verified} verified before it",
+                        header.number, header.receipts_root
+                    );
+                    break;
+                }
+                verified += 1;
+            }
+            let mut receipts = receipts;
+            receipts.truncate(verified);
+            if verified > 0 {
+                return Ok(Some(receipts));
+            }
+            // Nothing usable: penalize and re-roll onto another peer.
+            self.peer_table.record_failure(peer_id)?;
         }
         Ok(None)
     }
@@ -642,7 +854,7 @@ impl PeerHandler {
         });
         match self.get_random_peer(&[Capability::eth(71)]).await? {
             None => Ok(None),
-            Some((peer_id, mut connection, permit)) => {
+            Some((peer_id, mut connection, permit, _caps)) => {
                 let response = connection
                     .outgoing_request(request, PEER_REPLY_TIMEOUT)
                     .await;
