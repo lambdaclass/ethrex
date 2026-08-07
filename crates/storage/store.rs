@@ -4417,10 +4417,13 @@ impl Store {
             if header.number == 0 {
                 return Ok(None);
             }
-            let Some(parent) = self.get_block_header(header.number - 1)? else {
+            let parent_number = header.number - 1;
+            // One line per step, so a walk that descends further than expected
+            // is diagnosable from a log rather than only from its aftermath.
+            debug!("State for block {} not held; walking back", header.number);
+            let Some(parent) = self.get_block_header(parent_number)? else {
                 return Err(StoreError::Custom(format!(
-                    "parent header for block {} not found",
-                    header.number - 1
+                    "parent header for block {parent_number} not found"
                 )));
             };
             header = parent;
