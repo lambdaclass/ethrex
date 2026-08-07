@@ -606,24 +606,43 @@ impl RpcHandler for SendRawTransactionRequest {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        // RPC submissions go through the *local* entry points so the
-        // BlockchainOptions::private_mempool flag controls whether the tx is
-        // propagated to peers. P2P-received txs continue to use the
-        // non-local methods elsewhere.
-        let hash = if let SendRawTransactionRequest::EIP4844(wrapped_blob_tx) = self {
-            context
-                .blockchain
-                .add_local_blob_transaction_to_pool(
-                    wrapped_blob_tx.tx.clone(),
-                    wrapped_blob_tx.blobs_bundle.clone(),
-                )
-                .await
-        } else {
-            context
-                .blockchain
-                .add_local_transaction_to_pool(self.to_transaction())
-                .await
-        }?;
+        // RPC submissions go through the *local* entry points, which does two
+        // things: tags them `TxOrigin::Local` so they may bypass admission gates
+        // aimed at P2P spam (e.g. the min-tip floor), and lets
+        // `BlockchainOptions::private_mempool` decide whether they are gossiped.
+        // P2P-received txs use the non-local methods elsewhere.
+        let hash = match self {
+            #[cfg(feature = "c-kzg")]
+            SendRawTransactionRequest::EIP4844(wrapped_blob_tx) => {
+                context
+                    .blockchain
+                    .add_local_blob_transaction_to_pool(
+                        wrapped_blob_tx.tx.clone(),
+                        wrapped_blob_tx.blobs_bundle.clone(),
+                    )
+                    .await?
+            }
+            #[cfg(not(feature = "c-kzg"))]
+            SendRawTransactionRequest::EIP4844(_) => {
+                // The build flag is an operator concern, not something the RPC
+                // caller can act on, so it goes to the log while the wire
+                // response only states the capability that is missing.
+                tracing::error!(
+                    "rejected an eth_sendRawTransaction EIP-4844 request: this binary was built \
+                     without the `c-kzg` feature, so blob transactions cannot be verified. \
+                     Rebuild with `--features c-kzg` to enable them."
+                );
+                return Err(RpcErr::BadParams(
+                    "blob transactions (EIP-4844) are not supported by this node".to_string(),
+                ));
+            }
+            _ => {
+                context
+                    .blockchain
+                    .add_local_transaction_to_pool(self.to_transaction())
+                    .await?
+            }
+        };
         serde_json::to_value(format!("{hash:#x}"))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }

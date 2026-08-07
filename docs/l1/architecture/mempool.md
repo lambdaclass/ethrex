@@ -81,7 +81,13 @@ Defined in `crates/common/types/transaction.rs` (in its `mempool` module), this 
 
 ## Admission Validation
 
-Every transaction entering the pool — through RPC or P2P — passes through `Blockchain::validate_transaction` (`crates/blockchain/blockchain.rs`). It returns `Ok((tx_to_replace, frame_reservation, sender_account_nonce))` — `tx_to_replace` is `Some(hash)` when the transaction replaces an existing one at the same `(sender, nonce)` — or `Err(MempoolError::*)` on rejection. Checks run in this order:
+Every transaction entering the pool — through RPC or P2P — passes through `Blockchain::validate_transaction(tx, sender, origin)` (`crates/blockchain/blockchain.rs`). It returns `Ok((frame_reservation, sender_admission))` or `Err(MempoolError::*)` on rejection:
+
+- `frame_reservation` — the paymaster reservation to apply on insert for EIP-8141 frame transactions. Computed here but applied inside `add_transaction`'s locked section, so a frame tx that fails a later check never leaks a reservation.
+- `sender_admission` — the per-sender gate inputs (queued cap, cumulative balance), re-checked *atomically* under the insertion write lock rather than here. Replacement detection and removal of any same-nonce tx also happen under that lock, which is why no `tx_to_replace` hash is returned.
+- `origin` — whether the transaction arrived via this node's RPC (`TxOrigin::Local`) or from a peer (`TxOrigin::External`); see [Transaction origin](#transaction-origin).
+
+Checks run in this order:
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
@@ -136,6 +142,27 @@ Notes on individual checks:
 **Gapped-nonce rejection under pressure.** When the pool is heavily occupied, a new *non-replacement* transaction whose nonce is not the sender's on-chain nonce is rejected with `GapAdmissionDeniedUnderPressure { occupancy_pct, nonce_gap }`. The gate fires only when `occupancy_pct ≥ gap_admit_occupancy_threshold` (default 90; a threshold of 100 disables it), so nonce-gap parking spam is bounded without affecting normal load.
 
 **Per-sender queued cap.** Enforced inside `add_transaction` (see [Insertion path](#insertion-path)), not here, so it re-checks the live pool atomically with the insert.
+
+## Transaction Origin
+
+`TxOrigin` (`crates/blockchain/mempool.rs`) records where a transaction entered from:
+
+| Variant | Source |
+|---|---|
+| `TxOrigin::Local` | This node's own RPC — `eth_sendRawTransaction`. |
+| `TxOrigin::External` | Gossip from a peer (`Transactions` / `PooledTransactions`). |
+
+It is threaded through `validate_transaction` so admission policy can treat operator-submitted
+transactions differently from peer-gossiped ones, the way geth's `local` flag does.
+
+**No admission rule is origin-gated yet.** The parameter is currently unused (`_origin`); the
+intended first consumer is the min-tip floor, which should exempt `Local` transactions by default,
+together with an opt-out flag (geth's `--txpool.nolocals` equivalent). That flag deliberately does
+not ship here — adding it before a rule consumes it would expose an operator knob that does
+nothing.
+
+Origin is orthogonal to propagation: a `Local` transaction is still gossiped unless a separate
+non-propagation setting says otherwise.
 
 ## Replacement by Fee (RBF)
 
@@ -296,7 +323,7 @@ The mempool today is a single combined pool with FIFO regular eviction and the a
 
 - **Tip-aware regular eviction.** Regular eviction is arrival-order FIFO; a high-tip transaction can be evicted for a low-tip one. Heap/tip-aware eviction is in flight (#6607).
 - **Minimum priority-fee floor at admission** (#6604).
-- **Local-vs-P2P origin threading** through admission (#6608).
+- **Origin-gated admission rules.** `TxOrigin` is threaded through admission, but no rule consumes it yet; the min-tip local exemption and its `nolocals` opt-out are still to come.
 - **Periodic re-validation / sweep** of stale or dormant pending transactions (#6610).
 - **Single combined pool.** Blob and non-blob transactions share `transaction_pool` with separate caps and eviction, but there is no full pending/queued sub-pool separation.
 
