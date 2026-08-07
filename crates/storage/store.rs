@@ -668,7 +668,13 @@ impl Store {
     /// could land in the range between gather and commit and survive the
     /// pass — readers tolerate the stray (they gate on
     /// `EarliestBlockNumber`) but disk usage leaks.
-    pub async fn prune_block_heights(
+    ///
+    /// Deliberately not part of the crate's public API: the invariant above is
+    /// enforced by [`crate::pruner::HistoryPruner`], not by this method, and an
+    /// external caller naming an arbitrary range would delete data the node needs
+    /// to restart. Tests outside this crate reach it via
+    /// [`Self::prune_block_heights_for_test`] under the `testing` feature.
+    pub(crate) async fn prune_block_heights(
         &self,
         start: BlockNumber,
         count: usize,
@@ -683,7 +689,22 @@ impl Store {
             struct HeightDeletions {
                 hashes: Vec<BlockHash>,
                 canonical_hash: Option<BlockHash>,
-                bodies_to_purge: Vec<(BlockHash, BlockBody)>,
+                bodies_to_purge: Vec<BodyDeletions>,
+            }
+
+            /// Per-body deletion work, fully precomputed in the parallel gather
+            /// phase. The RLP body is decoded there, its per-transaction receipt
+            /// keys and transaction hashes derived, and the decoded body dropped.
+            ///
+            /// Deriving these here rather than in the write phase keeps the
+            /// per-transaction keccak (one hash per tx, cold on a freshly decoded
+            /// body) on the rayon workers instead of the single write thread, and
+            /// means the chunk's decoded bodies aren't held in memory until commit.
+            struct BodyDeletions {
+                hash: BlockHash,
+                hash_key: Vec<u8>,
+                /// `(receipt_key, tx_hash)` per transaction, in index order.
+                txs: Vec<(Vec<u8>, H256)>,
             }
 
             let end = start + count as u64;
@@ -718,11 +739,22 @@ impl Store {
 
                     let mut bodies = Vec::with_capacity(hashes.len());
                     for h in &hashes {
-                        if let Some(body_bytes) = rtxn.get(BODIES, h.encode_to_vec().as_slice())? {
-                            let body = BlockBodyRLP::from_bytes(body_bytes)
+                        let hash_key = h.encode_to_vec();
+                        if let Some(body_bytes) = rtxn.get(BODIES, hash_key.as_slice())? {
+                            let body: BlockBody = BlockBodyRLP::from_bytes(body_bytes)
                                 .to()
                                 .map_err(StoreError::from)?;
-                            bodies.push((*h, body));
+                            let txs = body
+                                .transactions
+                                .iter()
+                                .enumerate()
+                                .map(|(i, tx)| (receipt_key(h, i as u64), tx.hash(&NativeCrypto)))
+                                .collect();
+                            bodies.push(BodyDeletions {
+                                hash: *h,
+                                hash_key,
+                                txs,
+                            });
                         }
                     }
 
@@ -761,21 +793,20 @@ impl Store {
 
                 // Body-derived deletes — only for hashes whose body was on
                 // disk. Hashes without a body contribute nothing, and emitting
-                // a BODIES tombstone for them would be pure write amp.
-                for (h, body) in &hd.bodies_to_purge {
-                    let hash_key = h.encode_to_vec();
-                    wtxn.delete(BODIES, &hash_key)?;
+                // a BODIES tombstone for them would be pure write amp. Keys and
+                // tx hashes were derived in the gather phase.
+                for body in &hd.bodies_to_purge {
+                    wtxn.delete(BODIES, &body.hash_key)?;
                     counts.bodies += 1;
 
-                    for (i, tx) in body.transactions.iter().enumerate() {
-                        let key = receipt_key(h, i as u64);
-                        wtxn.delete(RECEIPTS_V2, &key)?;
+                    for (receipt_key, tx_hash) in &body.txs {
+                        wtxn.delete(RECEIPTS_V2, receipt_key)?;
                         counts.receipts += 1;
 
                         tx_location_removals
-                            .entry(tx.hash(&NativeCrypto))
+                            .entry(*tx_hash)
                             .or_default()
-                            .push(*h);
+                            .push(body.hash);
                         counts.tx_locations += 1;
                     }
                 }
@@ -794,8 +825,19 @@ impl Store {
             // orphans old enough to be pruned getting re-included mid-pass.
             if !tx_location_removals.is_empty() {
                 let rtxn = backend.begin_read()?;
-                for (tx_hash, removed_block_hashes) in &tx_location_removals {
-                    let Some(bytes) = rtxn.get(TRANSACTION_LOCATIONS, tx_hash.as_bytes())? else {
+                // One batched read instead of a point get per transaction. A chunk
+                // at mainnet tx density is ~18K distinct hashes, and the keys are
+                // tx hashes so the access pattern is uniformly random — worth
+                // handing to the backend in one call.
+                let removals: Vec<(H256, Vec<BlockHash>)> =
+                    tx_location_removals.into_iter().collect();
+                let keys: Vec<&[u8]> = removals.iter().map(|(h, _)| h.as_bytes()).collect();
+                let stored = rtxn.multi_get(TRANSACTION_LOCATIONS, &keys);
+
+                for ((tx_hash, removed_block_hashes), result) in
+                    removals.iter().zip(stored.into_iter())
+                {
+                    let Some(bytes) = result? else {
                         continue;
                     };
                     let locations = <Vec<(BlockNumber, BlockHash, Index)>>::decode(&bytes)?;
@@ -849,6 +891,18 @@ impl Store {
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+    }
+
+    /// Test-only escape hatch for [`Self::prune_block_heights`], so tests in other
+    /// crates can simulate a pruned datadir without the destructive primitive
+    /// being callable by ordinary consumers.
+    #[cfg(any(test, feature = "testing"))]
+    pub async fn prune_block_heights_for_test(
+        &self,
+        start: BlockNumber,
+        count: usize,
+    ) -> Result<PruneHeightCounts, StoreError> {
+        self.prune_block_heights(start, count).await
     }
 
     /// Obtain canonical block bodies in from..=to
@@ -1515,7 +1569,7 @@ impl Store {
     /// `prune_block_heights` enforces the same invariant inside its atomic
     /// write batch; this guards the other writers (snap-sync completion and
     /// genesis init).
-    pub async fn update_earliest_block_number(
+    pub async fn advance_earliest_block_number(
         &self,
         block_number: BlockNumber,
     ) -> Result<(), StoreError> {
@@ -1636,12 +1690,18 @@ impl Store {
     /// body at or above it — doing so bricks the node on the next boot with
     /// "Block N not found".
     ///
-    /// Found by walking back from the head via [`Self::has_state_root`], the
-    /// same way `regenerate_head_state` locates the on-disk state. The walk
-    /// length equals the unpersisted window: ~`DB_COMMIT_THRESHOLD` blocks
-    /// when live-following, but up to `BATCH_COMMIT_THRESHOLD × EXECUTE_BATCH_SIZE`
-    /// during bulk/batch sync — which is exactly why a fixed head-distance
-    /// floor is unsafe and this is queried instead.
+    /// Found by walking back from the head via [`Self::has_state_root_on_disk`],
+    /// the same boundary `regenerate_head_state` lands on at boot. It must be the
+    /// on-disk variant: plain `has_state_root` cascades through the in-memory
+    /// layer cache and would report the head itself as persisted on a live node,
+    /// silently turning this floor into a no-op.
+    ///
+    /// The walk length is the unpersisted window, ~`DB_COMMIT_THRESHOLD` blocks.
+    /// Both commit gates bound it to that: the depth gate is passed
+    /// `DB_COMMIT_THRESHOLD` by every `add_block_pipeline_bounded` caller
+    /// (including the bulk-sync path), and the canonical safe-commit gate tracks
+    /// `head - DB_COMMIT_THRESHOLD`. This is queried rather than assumed so the
+    /// floor stays correct if that window ever widens.
     pub async fn get_latest_persisted_state_block(&self) -> Result<BlockNumber, StoreError> {
         let head = self.get_latest_block_number().await?;
         let store = self.clone();
@@ -1649,7 +1709,7 @@ impl Store {
             let Some(mut header) = store.get_block_header(head)? else {
                 return Ok(0);
             };
-            while !store.has_state_root(header.state_root)? {
+            while !store.has_state_root_on_disk(header.state_root)? {
                 if header.number == 0 {
                     return Ok(0);
                 }
@@ -3203,7 +3263,7 @@ impl Store {
         info!(hash = %genesis_hash, "Storing genesis block");
 
         self.add_block(genesis_block).await?;
-        self.update_earliest_block_number(genesis_block_number)
+        self.advance_earliest_block_number(genesis_block_number)
             .await?;
         self.forkchoice_update(vec![], genesis_block_number, genesis_hash, None, None)
             .await?;
@@ -4324,6 +4384,34 @@ impl Store {
             return Ok(true);
         }
         let trie = self.open_state_trie(state_root)?;
+        // NOTE: here we hash the root because the trie doesn't check the state root is correct
+        let Some(root) = trie.db().get(Nibbles::default())? else {
+            return Ok(false);
+        };
+        let root_hash = ethrex_trie::Node::decode(&root)?
+            .compute_hash(&NativeCrypto)
+            .finalize(&NativeCrypto);
+        Ok(state_root == root_hash)
+    }
+
+    /// Like [`Self::has_state_root`], but answers strictly about *disk*.
+    ///
+    /// [`Self::has_state_root`] opens the trie via [`Self::open_state_trie`], whose
+    /// read cascade consults the in-memory [`TrieLayerCache`] before falling through
+    /// to the backend (see `TrieWrapper::get`). Because every state change rewrites
+    /// the root node, the head's own layer always satisfies a root lookup, so
+    /// `has_state_root(head.state_root)` returns `true` on a live node even when
+    /// nothing has been committed. Callers that need the durable boundary — what
+    /// survives a restart — must not use it.
+    ///
+    /// This variant uses [`Self::open_direct_state_trie`], which is backed only by
+    /// `BackendTrieDB` and never sees the layer cache.
+    pub fn has_state_root_on_disk(&self, state_root: H256) -> Result<bool, StoreError> {
+        // Empty state trie is always available
+        if state_root == EMPTY_TRIE_HASH {
+            return Ok(true);
+        }
+        let trie = self.open_direct_state_trie(state_root)?;
         // NOTE: here we hash the root because the trie doesn't check the state root is correct
         let Some(root) = trie.db().get(Nibbles::default())? else {
             return Ok(false);
@@ -6040,7 +6128,7 @@ mod pruning_index_tests {
                 .unwrap();
             parent = hash;
         }
-        store.update_earliest_block_number(0).await.unwrap();
+        store.advance_earliest_block_number(0).await.unwrap();
 
         // Exact match (ts=1500 -> block 5 with ts=1500)
         let r = store
@@ -6077,7 +6165,7 @@ mod pruning_index_tests {
         let block = dummy_block(3, ethrex_common::H256::zero());
         let hash = block.hash();
         store.add_block(block).await.unwrap();
-        // Set canonical mapping via write_async (matches T6 test pattern).
+        // Set canonical mapping via write_async (no public setter outside forkchoice).
         store
             .write_async(
                 CANONICAL_BLOCK_HASHES,
@@ -6086,7 +6174,7 @@ mod pruning_index_tests {
             )
             .await
             .unwrap();
-        store.update_earliest_block_number(0).await.unwrap();
+        store.advance_earliest_block_number(0).await.unwrap();
 
         store.prune_block_heights(3, 1).await.unwrap();
 
@@ -6147,7 +6235,7 @@ mod pruning_index_tests {
             )
             .await
             .unwrap();
-        store.update_earliest_block_number(0).await.unwrap();
+        store.advance_earliest_block_number(0).await.unwrap();
 
         store.prune_block_heights(7, 1).await.unwrap();
 
@@ -6238,7 +6326,7 @@ mod pruning_index_tests {
             )
             .await
             .unwrap();
-        store.update_earliest_block_number(0).await.unwrap();
+        store.advance_earliest_block_number(0).await.unwrap();
 
         // Pre-condition: receipts and tx_locations exist.
         let receipt_key_0 = receipt_key(&hash, 0);

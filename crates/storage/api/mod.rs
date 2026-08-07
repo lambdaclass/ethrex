@@ -95,6 +95,11 @@ pub trait StorageReadView: Send + Sync {
     /// to traverse the entire CF regardless of any prefix-extractor / bloom
     /// configuration on the backend. May be slow on large tables — intended
     /// for migrations and similar maintenance tasks rather than hot paths.
+    ///
+    /// Laziness is backend-dependent and is *not* part of this contract: the
+    /// RocksDB backend streams, but the in-memory backend materializes and sorts
+    /// the whole table before yielding its first item. Callers that need bounded
+    /// heap on an arbitrary backend must bound the table, not rely on the iterator.
     fn full_scan(
         &self,
         table: &'static str,

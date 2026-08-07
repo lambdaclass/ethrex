@@ -2,8 +2,11 @@
 //! locations, and non-canonical block data for heights older than the
 //! configured retention window.
 
+use crate::error::StoreError;
 use crate::store::Store;
+use ethrex_common::types::BlockNumber;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tokio_util::sync::CancellationToken;
 
 #[cfg(feature = "metrics")]
 use ethrex_metrics::pruning::METRICS_PRUNING;
@@ -34,12 +37,22 @@ const SAFETY_DISTANCE: u64 = 256;
 //
 // This is NOT what protects the state-regeneration window. On restart the node
 // re-executes every block from the last *persisted* state root up to the head
-// (`regenerate_head_state`), and that window can be far larger than 256 during
-// bulk/batch sync — up to `BATCH_COMMIT_THRESHOLD × EXECUTE_BATCH_SIZE` blocks,
-// where `EXECUTE_BATCH_SIZE` is operator-configurable. `tick` caps the prune
-// target at the actual persisted height (`Store::get_latest_persisted_state_block`)
-// for that; `KEEP_RECENT` is only the additional near-head margin layered on top.
+// (`regenerate_head_state`). Today both commit gates bound that window to
+// ~`DB_COMMIT_THRESHOLD` (128) — the depth gate is passed `DB_COMMIT_THRESHOLD`
+// by every `add_block_pipeline_bounded` caller including the bulk-sync path
+// (`Blockchain::add_blocks_in_batch`), and the canonical safe-commit gate tracks
+// `head - DB_COMMIT_THRESHOLD` — so `KEEP_RECENT` happens to cover it with a 2x
+// margin. That is a coincidence of the current constants, not a guarantee:
+// `tick` caps the prune target at the actual persisted height
+// (`Store::get_latest_persisted_state_block`) so the invariant holds even if the
+// window widens.
 const KEEP_RECENT: u64 = 256;
+
+// The pruner never prunes below this height. Block 0's body is cheap to keep and
+// `eth_getBlockByNumber(0)` is a common way to identify a chain; geth and reth
+// both retain it. Without this floor the first pass deletes it and genesis
+// lookups start returning null.
+const LOWEST_PRUNABLE_BLOCK: u64 = 1;
 
 pub struct HistoryPruner {
     store: Store,
@@ -66,29 +79,61 @@ impl HistoryPruner {
         }
     }
 
-    /// Run forever. Every PRUNE_INTERVAL_SECS, run one pass. Errors are
-    /// logged at ERROR level and don't stop the loop.
-    pub async fn run(self) {
+    /// Run until `cancel` fires. Every PRUNE_INTERVAL_SECS, run one pass.
+    /// Errors are logged at ERROR level and don't stop the loop.
+    ///
+    /// Cancellation matters for more than tidiness: shutdown drains the persist
+    /// worker and fsyncs the DB (`Store::shutdown`), but the pruner commits
+    /// through its own write transactions and so bypasses that drain. Without
+    /// this the pruner can land a batch after the final fsync, leaving the DB
+    /// needing WAL recovery on the next start.
+    pub async fn run(self, cancel: CancellationToken) {
         let mut interval = tokio::time::interval(Duration::from_secs(PRUNE_INTERVAL_SECS));
         loop {
-            interval.tick().await;
-            if let Err(e) = self.tick(now_seconds()).await {
-                tracing::error!(error = ?e, "history pruner pass failed");
+            tokio::select! {
+                _ = cancel.cancelled() => {
+                    tracing::debug!("history pruner shutting down");
+                    return;
+                }
+                _ = interval.tick() => {
+                    if let Err(e) = self.tick(now_seconds()).await {
+                        tracing::error!(error = ?e, "history pruner pass failed");
+                    }
+                }
             }
         }
     }
 
     /// Run one pass. Returns the number of heights processed.
     /// Public for testability (lets tests inject `now`).
-    pub async fn tick(&self, now_secs: u64) -> Result<usize, crate::error::StoreError> {
+    pub async fn tick(&self, now_secs: u64) -> Result<usize, StoreError> {
+        self.tick_with_floor(now_secs, None).await
+    }
+
+    /// Run one pass, with an optional caller-supplied cap: `max_prunable` is the
+    /// highest height that may be deleted. Heights above it are left alone.
+    ///
+    /// Used by the L2 node to withhold blocks not yet committed to L1 — their
+    /// bodies are still needed to build and prove the batch. There, `max_prunable`
+    /// is the last block of the newest batch that has a commit transaction.
+    pub async fn tick_with_floor(
+        &self,
+        now_secs: u64,
+        max_prunable: Option<BlockNumber>,
+    ) -> Result<usize, StoreError> {
         // Empty / pre-init store: nothing to prune. Bail before touching any
         // downstream reads so we don't surface MissingEarliestBlockNumber from
         // `find_canonical_block_by_timestamp`.
-        let mut earliest = match self.store.get_earliest_block_number().await {
+        let stored_earliest = match self.store.get_earliest_block_number().await {
             Ok(n) => n,
-            Err(crate::error::StoreError::MissingEarliestBlockNumber) => return Ok(0),
+            Err(StoreError::MissingEarliestBlockNumber) => return Ok(0),
             Err(e) => return Err(e),
         };
+        // Keep the genesis body. `EarliestBlockNumber` still advances past it, so
+        // block 0 becomes a hole below the reported range — harmless, because the
+        // block-by-number RPC path reads header+body directly rather than gating
+        // on the pointer, and genesis carries no logs or transactions to find.
+        let mut earliest = stored_earliest.max(LOWEST_PRUNABLE_BLOCK);
 
         // Never prune within `keep_recent` of the head: the state DB persists
         // ~128 blocks behind the head and re-executes the rest from their
@@ -97,7 +142,7 @@ impl HistoryPruner {
         // shorter than `keep_recent`, there is nothing safe to prune yet.
         let head = match self.store.get_latest_block_number().await {
             Ok(n) => n,
-            Err(crate::error::StoreError::MissingLatestBlockNumber) => return Ok(0),
+            Err(StoreError::MissingLatestBlockNumber) => return Ok(0),
             Err(e) => return Err(e),
         };
         let Some(prune_ceiling) = head.checked_sub(self.keep_recent) else {
@@ -124,22 +169,24 @@ impl HistoryPruner {
 
         // Never prune at or above the last block whose state trie is persisted
         // to disk: on restart `regenerate_head_state` re-executes every block
-        // above that point from its body. The unpersisted window is
-        // ~DB_COMMIT_THRESHOLD blocks when live-following, but up to
-        // BATCH_COMMIT_THRESHOLD × EXECUTE_BATCH_SIZE (thousands) during bulk
-        // sync — so the fixed `KEEP_RECENT` margin is not sufficient on its own
-        // and we cap at the actual persisted height.
+        // above that point from its body. `KEEP_RECENT` covers the current
+        // ~DB_COMMIT_THRESHOLD window, but we cap at the measured persisted
+        // height so the invariant survives any future widening of it.
         let persisted = match self.persisted_floor_override {
             Some(p) => p,
             None => self.store.get_latest_persisted_state_block().await?,
         };
 
         // Cap by every floor: finality, the retention window, the near-head
-        // margin, and the persisted-state boundary.
-        let target = finalized
+        // margin, the persisted-state boundary, and any caller-supplied cap
+        // (L2: last block committed to L1).
+        let mut target = finalized
             .min(retention_block)
             .min(prune_ceiling)
             .min(persisted);
+        if let Some(max_prunable) = max_prunable {
+            target = target.min(max_prunable);
+        }
         if earliest > target {
             return Ok(0);
         }
@@ -244,6 +291,165 @@ mod tests {
         }
     }
 
+    /// Regression for the floor being silently inert: the *production* query must
+    /// report the on-disk boundary, not the head.
+    ///
+    /// `Store::has_state_root` reads through the in-memory `TrieLayerCache` before
+    /// disk, and every block rewrites the trie root node, so asking it about the
+    /// head's state root answers "yes" from RAM on any live node. A floor built on
+    /// it collapses to `head` and constrains nothing. This exercises
+    /// `get_latest_persisted_state_block` directly, with no override, on a chain
+    /// whose state was never committed: the honest answer is 0.
+    #[tokio::test]
+    async fn persisted_state_block_reports_disk_not_layer_cache() {
+        let store = Store::new("", EngineType::InMemory).unwrap();
+
+        let mut parent = ethrex_common::H256::zero();
+        for n in 0..=5u64 {
+            let h = header_with_ts(n, n * 100, parent);
+            let hash = h.hash();
+            store
+                .add_block(Block {
+                    header: h,
+                    body: BlockBody::default(),
+                })
+                .await
+                .unwrap();
+            store.set_canonical_block_for_test(n, hash).await.unwrap();
+            parent = hash;
+        }
+        store.set_latest_block_number_for_test(5).await.unwrap();
+
+        // These synthetic headers carry the default (empty) state root and no trie
+        // was ever written, so nothing above genesis is persisted. Returning 5 here
+        // would mean the query is answering from the layer cache / treating the head
+        // as durable.
+        let persisted = store.get_latest_persisted_state_block().await.unwrap();
+        assert_eq!(
+            persisted, 0,
+            "persisted floor must reflect on-disk state, not the head"
+        );
+    }
+
+    /// With no override, a chain that has never committed state must not be pruned
+    /// at all — the persisted floor pins the target at 0.
+    #[tokio::test]
+    async fn tick_without_override_is_blocked_by_persisted_floor() {
+        let store = Store::new("", EngineType::InMemory).unwrap();
+        store.advance_earliest_block_number(0).await.unwrap();
+
+        let mut parent = ethrex_common::H256::zero();
+        for n in 0..=20u64 {
+            let h = header_with_ts(n, n * 100, parent);
+            let hash = h.hash();
+            store
+                .add_block(Block {
+                    header: h,
+                    body: BlockBody::default(),
+                })
+                .await
+                .unwrap();
+            store.set_canonical_block_for_test(n, hash).await.unwrap();
+            parent = hash;
+        }
+        store.set_finalized_block_number_for_test(20).await.unwrap();
+        store.set_latest_block_number_for_test(20).await.unwrap();
+
+        // Retention and finality both reach the head; only the persisted floor
+        // stands in the way. `HistoryPruner::new` leaves it enabled.
+        let pruner = HistoryPruner {
+            store: store.clone(),
+            retention: Duration::from_secs(1),
+            keep_recent: 0,
+            persisted_floor_override: None,
+        };
+        assert_eq!(pruner.tick(10_000).await.unwrap(), 0);
+        for n in 0..=20 {
+            assert!(
+                store.get_block_body(n).await.unwrap().is_some(),
+                "body {n} must survive: no state is persisted"
+            );
+        }
+    }
+
+    /// `max_prunable` (used by the L2 node to withhold uncommitted blocks) caps the
+    /// target independently of the other floors.
+    #[tokio::test]
+    async fn tick_respects_max_prunable_cap() {
+        let store = Store::new("", EngineType::InMemory).unwrap();
+        store.advance_earliest_block_number(0).await.unwrap();
+
+        let mut parent = ethrex_common::H256::zero();
+        for n in 0..=20u64 {
+            let h = header_with_ts(n, n * 100, parent);
+            let hash = h.hash();
+            store
+                .add_block(Block {
+                    header: h,
+                    body: BlockBody::default(),
+                })
+                .await
+                .unwrap();
+            store.set_canonical_block_for_test(n, hash).await.unwrap();
+            parent = hash;
+        }
+        store.set_finalized_block_number_for_test(20).await.unwrap();
+        store.set_latest_block_number_for_test(20).await.unwrap();
+
+        // Everything is old enough and the other floors are disabled, but only
+        // blocks up to 6 are "committed".
+        let pruner = pruner_with_keep_recent(store.clone(), 1, 0);
+        let pruned = pruner.tick_with_floor(10_000, Some(6)).await.unwrap();
+
+        assert_eq!(pruned, 6, "heights 1..=6 (genesis is never pruned)");
+        for n in 1..=6 {
+            assert!(store.get_block_body(n).await.unwrap().is_none(), "body {n}");
+        }
+        for n in 7..=20 {
+            assert!(
+                store.get_block_body(n).await.unwrap().is_some(),
+                "body {n} is not committed yet"
+            );
+        }
+    }
+
+    /// The genesis body is never pruned: `eth_getBlockByNumber(0)` is a common
+    /// chain-identity probe and geth/reth both keep it.
+    #[tokio::test]
+    async fn tick_never_prunes_genesis_body() {
+        let store = Store::new("", EngineType::InMemory).unwrap();
+        store.advance_earliest_block_number(0).await.unwrap();
+
+        let mut parent = ethrex_common::H256::zero();
+        for n in 0..=10u64 {
+            let h = header_with_ts(n, n * 100, parent);
+            let hash = h.hash();
+            store
+                .add_block(Block {
+                    header: h,
+                    body: BlockBody::default(),
+                })
+                .await
+                .unwrap();
+            store.set_canonical_block_for_test(n, hash).await.unwrap();
+            parent = hash;
+        }
+        store.set_finalized_block_number_for_test(10).await.unwrap();
+        store.set_latest_block_number_for_test(10).await.unwrap();
+
+        let pruner = pruner_with_keep_recent(store.clone(), 1, 0);
+        pruner.tick(10_000).await.unwrap();
+
+        assert!(
+            store.get_block_body(0).await.unwrap().is_some(),
+            "genesis body must survive pruning"
+        );
+        assert!(
+            store.get_block_body(1).await.unwrap().is_none(),
+            "block 1 should still be pruned"
+        );
+    }
+
     #[tokio::test]
     async fn tick_no_finalized_no_work() {
         let store = Store::new("", EngineType::InMemory).unwrap();
@@ -255,7 +461,7 @@ mod tests {
     #[tokio::test]
     async fn tick_prunes_old_blocks() {
         let store = Store::new("", EngineType::InMemory).unwrap();
-        store.update_earliest_block_number(0).await.unwrap();
+        store.advance_earliest_block_number(0).await.unwrap();
 
         // ts 0..900 step 100; now=950, retention=200s -> cutoff ts<=750 -> block 7.
         let mut parent = ethrex_common::H256::zero();
@@ -278,13 +484,19 @@ mod tests {
         let pruner = pruner_with_keep_recent(store.clone(), 200, 0);
         let pruned = pruner.tick(950).await.unwrap();
 
-        assert_eq!(pruned, 8);
+        // Heights 1..=7: genesis is never pruned, so 7 rather than 8. The pointer
+        // still lands on 8 — `prune_block_heights` advances past the range it wrote.
+        assert_eq!(pruned, 7);
         assert_eq!(store.get_earliest_block_number().await.unwrap(), 8);
 
         for n in 0..10 {
             assert!(store.get_block_header(n).unwrap().is_some(), "header {n}");
         }
-        for n in 0..=7 {
+        assert!(
+            store.get_block_body(0).await.unwrap().is_some(),
+            "genesis body is retained"
+        );
+        for n in 1..=7 {
             assert!(store.get_block_body(n).await.unwrap().is_none(), "body {n}");
         }
         for n in 8..=9 {
@@ -297,7 +509,7 @@ mod tests {
     #[tokio::test]
     async fn full_pruning_cycle_with_orphan_and_restart() {
         let store = Store::new("", EngineType::InMemory).unwrap();
-        store.update_earliest_block_number(0).await.unwrap();
+        store.advance_earliest_block_number(0).await.unwrap();
 
         // Canonical chain 0..=20, timestamps 0..2000 step 100.
         let mut parent = ethrex_common::H256::zero();
@@ -325,16 +537,20 @@ mod tests {
         store.set_finalized_block_number_for_test(20).await.unwrap();
         store.set_latest_block_number_for_test(20).await.unwrap();
 
-        // Pass 1: now=1500, retention=500s → prune 0..=10.
+        // Pass 1: now=1500, retention=500s → prune 1..=10 (genesis retained).
         // keep_recent = 0 isolates retention logic from the head floor.
         let pruner = pruner_with_keep_recent(store.clone(), 500, 0);
         let pruned = pruner.tick(1500).await.unwrap();
-        assert_eq!(pruned, 11);
+        assert_eq!(pruned, 10);
 
         for n in 0..=20 {
             assert!(store.get_block_header(n).unwrap().is_some(), "header {n}");
         }
-        for n in 0..=10 {
+        assert!(
+            store.get_block_body(0).await.unwrap().is_some(),
+            "genesis body is retained"
+        );
+        for n in 1..=10 {
             assert!(store.get_block_body(n).await.unwrap().is_none(), "body {n}");
         }
         for n in 11..=20 {
@@ -370,7 +586,7 @@ mod tests {
     #[tokio::test]
     async fn tick_keeps_recent_head_window() {
         let store = Store::new("", EngineType::InMemory).unwrap();
-        store.update_earliest_block_number(0).await.unwrap();
+        store.advance_earliest_block_number(0).await.unwrap();
 
         // Chain 0..=20, all timestamps well below the cutoff so retention
         // alone would prune the whole chain.
@@ -396,10 +612,10 @@ mod tests {
         let pruner = pruner_with_keep_recent(store.clone(), 1, 5);
         let pruned = pruner.tick(10_000).await.unwrap();
 
-        assert_eq!(pruned, 16, "should prune heights 0..=15");
+        assert_eq!(pruned, 15, "should prune heights 1..=15 (genesis retained)");
         assert_eq!(store.get_earliest_block_number().await.unwrap(), 16);
 
-        for n in 0..=15 {
+        for n in 1..=15 {
             assert!(store.get_block_body(n).await.unwrap().is_none(), "body {n}");
         }
         // The head window (16..=20, incl. the head) keeps its bodies.
@@ -417,7 +633,7 @@ mod tests {
     #[tokio::test]
     async fn tick_keeps_unpersisted_state_window() {
         let store = Store::new("", EngineType::InMemory).unwrap();
-        store.update_earliest_block_number(0).await.unwrap();
+        store.advance_earliest_block_number(0).await.unwrap();
 
         // Chain 0..=20, all timestamps well below the cutoff so retention,
         // finality, and the head margin would all otherwise reach the head.
@@ -450,10 +666,10 @@ mod tests {
         };
         let pruned = pruner.tick(10_000).await.unwrap();
 
-        assert_eq!(pruned, 9, "should prune heights 0..=8 only");
+        assert_eq!(pruned, 8, "should prune heights 1..=8 only");
         assert_eq!(store.get_earliest_block_number().await.unwrap(), 9);
 
-        for n in 0..=8 {
+        for n in 1..=8 {
             assert!(store.get_block_body(n).await.unwrap().is_none(), "body {n}");
         }
         // The unpersisted window (9..=20) keeps its bodies — regeneration needs
@@ -470,7 +686,7 @@ mod tests {
     #[tokio::test]
     async fn tick_does_not_prune_head_when_chain_shorter_than_keep_recent() {
         let store = Store::new("", EngineType::InMemory).unwrap();
-        store.update_earliest_block_number(0).await.unwrap();
+        store.advance_earliest_block_number(0).await.unwrap();
 
         let mut parent = ethrex_common::H256::zero();
         for n in 0..=10u64 {

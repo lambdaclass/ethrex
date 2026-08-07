@@ -1,3 +1,7 @@
+//! Metrics defined in this module register into the Prometheus default registry.
+//! The metrics API exposes them via `gather_default_metrics()`, so they do not
+//! appear in `api.rs`'s explicit gather list.
+
 use prometheus::{
     Histogram, IntCounter, IntGauge, register_histogram, register_int_counter, register_int_gauge,
 };
@@ -71,7 +75,10 @@ impl MetricsPruning {
             .expect("Failed to create ethrex_pruning_orphan_headers_deleted_total"),
             index_entries_deleted: register_int_counter!(
                 "ethrex_pruning_index_entries_deleted_total",
-                "Total BLOCK_HASHES_BY_NUMBER entries deleted"
+                "BLOCK_HASHES_BY_NUMBER entries observed by the prune scan. The removal \
+                 itself is a single range tombstone per chunk, so this counts what was \
+                 seen rather than rows the backend reports deleted; entries written \
+                 between the scan and the commit are dropped but not counted"
             )
             .expect("Failed to create ethrex_pruning_index_entries_deleted_total"),
         }

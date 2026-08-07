@@ -818,13 +818,16 @@ pub async fn init_l1(
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
 
-    // History pruner — only when --history.retention is set.
+    let cancel_token = tokio_util::sync::CancellationToken::new();
+
+    // History pruner — only when --history.retention is set. Spawned with the
+    // cancel token so shutdown stops it before `Store::shutdown` fsyncs; the
+    // pruner writes outside the persist worker, so a late batch would leave the
+    // DB needing WAL recovery.
     if let Some(retention) = opts.history_retention {
         let pruner = HistoryPruner::new(store.clone(), retention);
-        tracker.spawn(pruner.run());
+        tracker.spawn(pruner.run(cancel_token.clone()));
     }
-
-    let cancel_token = tokio_util::sync::CancellationToken::new();
 
     let p2p_context = P2PContext::new(
         local_p2p_node.clone(),

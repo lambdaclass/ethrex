@@ -45,6 +45,12 @@ fn migrate_3_to_4_with_batch_size(
 
     let mut bw = backend.begin_write()?;
     let mut written: usize = 0;
+    // Progress reporting, matching migrate_1_to_2 / migrate_2_to_3. This scans
+    // every header on the node (~23.5M on mainnet), so without periodic output the
+    // step looks indistinguishable from a hang.
+    let start = Instant::now();
+    let mut last_progress_log = Instant::now();
+    let mut total: u64 = 0;
 
     for item in iter {
         let (hash_key, header_bytes) = item?;
@@ -64,11 +70,19 @@ fn migrate_3_to_4_with_batch_size(
         let index_key = block_hashes_by_number_key(header.number, hash);
         bw.put(BLOCK_HASHES_BY_NUMBER, &index_key, &[])?;
         written += 1;
+        total += 1;
 
         if written >= batch_size {
             bw.commit()?;
             bw = backend.begin_write()?;
             written = 0;
+            if last_progress_log.elapsed() >= PROGRESS_LOG_INTERVAL {
+                let rate = entries_per_second(total, start.elapsed());
+                tracing::info!(
+                    "Schema migration v3 → v4: {total} block-hash index entries written so far ({rate:.0} entries/s)"
+                );
+                last_progress_log = Instant::now();
+            }
         }
     }
 
@@ -488,7 +502,7 @@ mod tests {
 
         let backend = crate::backend::in_memory::InMemoryBackend::open().unwrap();
 
-        // Populate HEADERS with several entries representing a "v2 state".
+        // Populate HEADERS with several entries representing a pre-migration (v3) state.
         // Each header has a distinct `number` so their hashes differ.
         let headers: Vec<BlockHeader> = (10u64..14)
             .map(|n| BlockHeader {

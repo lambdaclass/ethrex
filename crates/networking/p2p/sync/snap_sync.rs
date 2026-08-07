@@ -289,7 +289,7 @@ pub async fn sync_cycle_snap(
     // header fetch loop returned a single-header batch and never invoked
     // `process_incoming_headers`.
     let pivot_number = store.get_latest_block_number().await?;
-    store.update_earliest_block_number(pivot_number).await?;
+    store.advance_earliest_block_number(pivot_number).await?;
 
     store.clear_snap_state().await?;
 

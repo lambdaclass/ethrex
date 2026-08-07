@@ -275,6 +275,13 @@ impl RpcHandler for GetRawReceipts {
             Some(header) => header,
             None => return Ok(Value::Null),
         };
+        // Receipts are deleted alongside the body when a height is pruned, and
+        // `get_all_block_receipts` reports that as an empty list — which would be
+        // indistinguishable from a block that genuinely has no transactions. Gate on
+        // the body so an unavailable block reports null, as the other block RPCs do.
+        if storage.get_block_body(block_number).await?.is_none() {
+            return Ok(Value::Null);
+        }
         let receipts: Vec<String> = get_all_block_receipts(header, storage)
             .await?
             .iter()
@@ -451,7 +458,10 @@ mod pruning_rpc_tests {
             .forkchoice_update(vec![], block_number, hash, None, None)
             .await
             .unwrap();
-        storage.prune_block_heights(block_number, 1).await.unwrap();
+        storage
+            .prune_block_heights_for_test(block_number, 1)
+            .await
+            .unwrap();
         hash
     }
 
@@ -495,7 +505,7 @@ mod pruning_rpc_tests {
         let storage = setup_store().await;
 
         // earliest = 6; block 10 has no header or body at all.
-        storage.update_earliest_block_number(6).await.unwrap();
+        storage.advance_earliest_block_number(6).await.unwrap();
 
         let context = default_context_with_storage(storage).await;
         let req = GetBlockByNumberRequest {
@@ -540,8 +550,12 @@ mod pruning_rpc_tests {
         let hash = add_pruned_block(&storage, 9).await;
         let _ = hash; // body is pruned; canonical header still exists
 
-        // earliest = 9, so block 9 is at the pruning horizon (body missing).
-        storage.update_earliest_block_number(9).await.unwrap();
+        // `add_pruned_block` already advanced the horizon past block 9 (pruning
+        // [9, 10) sets EarliestBlockNumber to 10), so block 9 sits below it with no
+        // body. Don't write the pointer again here: `advance_earliest_block_number`
+        // is advance-only and would silently drop a lower value, which previously
+        // made this setup read as if it set earliest = 9.
+        assert_eq!(storage.get_earliest_block_number().await.unwrap(), 10);
 
         let req = GetBlockReceiptsRequest {
             block: BlockIdentifierOrHash::Identifier(BlockIdentifier::Number(9)),
