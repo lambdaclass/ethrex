@@ -1,6 +1,6 @@
 //! `InclusionListSatisfactionValidator::check_with_profile_2`: EIP-8369
-//! Profile 2 (FOCIL AA-VOPS) omissions are observed but never converted into
-//! `IlUnsatisfied`.
+//! Profile 2 (FOCIL AA-VOPS) omissions. Only `Eligible` makes a list
+//! unsatisfied; `Ineligible` and `Undecided` leave the payload verdict alone.
 //!
 //! Two layers:
 //! - Unit-level (`FakeEvaluator`): pins the wiring contract — which fill
@@ -9,7 +9,12 @@
 //! - End-to-end (real `Store`/`Blockchain`): drives
 //!   [`BlockchainProfile2Evaluator`] against real block state to prove the
 //!   three verdicts are actually reachable through validation-prefix replay,
-//!   and that the payload verdict never moves because of them.
+//!   and that only `Eligible` moves the payload verdict.
+//!
+//! The end-to-end layer also pins the pre-execution gates that
+//! `run_frame_validation_prefix` runs ahead of the replay — the EIP-8250 keyed
+//! nonce and the EIP-8141 outer signatures — because a transaction that was
+//! never includable must be excused, not reported unjustified.
 
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -531,6 +536,8 @@ async fn self_verify_frame_tx_reading_outside_the_surface_is_ineligible() {
         }
         other => panic!("expected Ineligible, got {other:?}"),
     }
+
+    verdict.expect("an out-of-surface read must not fail the block");
 }
 
 /// A frame tx carrying an EIP-8312 UTXO frame is `Undecided`: EIP-8369 does
@@ -568,4 +575,82 @@ async fn frame_tx_with_a_utxo_frame_is_undecided() {
 
     // Undecided is excused, so the block stands.
     verdict.expect("an undecidable omission must not fail the block");
+}
+
+/// EIP-8250: a listed frame tx whose `nonce_seq` does not match the current
+/// sequence for a selected key could never have been included, so its omission
+/// is justified. The keyed-nonce gate runs inside `run_frame_validation_prefix`,
+/// ahead of the prefix replay, and a stale sequence must surface as `Ineligible`
+/// rather than `Eligible` — the latter would withhold an attestation from an
+/// honest block.
+#[tokio::test]
+async fn frame_tx_with_a_stale_keyed_nonce_is_ineligible() {
+    let sender = Address::from_low_u64_be(0xE44);
+    let (store, blockchain, genesis) =
+        setup_profile2_store(&[(sender, approve_code(APPROVE_EXECUTION_AND_PAYMENT))]).await;
+
+    let mut tx = self_verify_tx(sender, 50_000);
+    // Key 0 is the sender's linear account nonce, which genesis sets to 0.
+    tx.nonce_seq = 7;
+    let il = vec![frame_tx_transaction(tx.clone())];
+
+    let (header, verdict) =
+        import_block_omitting_il(&store, &blockchain, &genesis, il.clone()).await;
+
+    let gas_left = header.gas_limit.saturating_sub(header.gas_used);
+    let evaluator = BlockchainProfile2Evaluator::new(&blockchain, &header, gas_left);
+    match evaluator.evaluate(&tx) {
+        Profile2Eligibility::Ineligible(violation) => {
+            assert!(
+                violation.contains("Nonce") || violation.contains("nonce"),
+                "expected a nonce-mismatch violation, got: {violation}"
+            );
+        }
+        other => panic!("expected Ineligible, got {other:?}"),
+    }
+
+    verdict.expect("a stale keyed nonce must not fail the block");
+}
+
+/// EIP-8141: a listed frame tx carrying a signature that does not verify could
+/// never have been included. `validate_frame_signatures` runs inside
+/// `run_frame_validation_prefix`, so a bad signature must surface as
+/// `Ineligible`.
+///
+/// An empty signature list passes vacuously and is legitimate: a smart-account
+/// sender is authenticated by its own VERIFY frame calling `APPROVE`, not by an
+/// outer signature. This pins the case where a signature IS present and does
+/// not verify.
+#[tokio::test]
+async fn frame_tx_with_an_unverifiable_signature_is_ineligible() {
+    use ethrex_common::types::{FRAME_SIG_SCHEME_SECP256K1, FrameSignature};
+
+    let sender = Address::from_low_u64_be(0xE55);
+    let (store, blockchain, genesis) =
+        setup_profile2_store(&[(sender, approve_code(APPROVE_EXECUTION_AND_PAYMENT))]).await;
+
+    let mut tx = self_verify_tx(sender, 50_000);
+    // Well-formed length and a bare recovery id, so the entry is rejected for
+    // failing to recover `sender` rather than for being malformed.
+    let mut signature = vec![0x01u8; 65];
+    signature[0] = 0;
+    tx.signatures = vec![FrameSignature {
+        scheme: FRAME_SIG_SCHEME_SECP256K1,
+        msg: Default::default(),
+        signature: signature.into(),
+        ..Default::default()
+    }];
+    let il = vec![frame_tx_transaction(tx.clone())];
+
+    let (header, verdict) =
+        import_block_omitting_il(&store, &blockchain, &genesis, il.clone()).await;
+
+    let gas_left = header.gas_limit.saturating_sub(header.gas_used);
+    let evaluator = BlockchainProfile2Evaluator::new(&blockchain, &header, gas_left);
+    match evaluator.evaluate(&tx) {
+        Profile2Eligibility::Ineligible(_) => {}
+        other => panic!("expected Ineligible, got {other:?}"),
+    }
+
+    verdict.expect("an unverifiable signature must not fail the block");
 }
