@@ -6694,3 +6694,78 @@ mod flatkeyvalue_completeness_tests {
         ])));
     }
 }
+
+#[cfg(test)]
+mod durable_head_tests {
+    use super::*;
+    use crate::backend::in_memory::InMemoryBackend;
+    use ethrex_common::types::{BlockBody, BlockHeader};
+
+    fn block_at(number: BlockNumber, parent_hash: H256) -> Block {
+        Block::new(
+            BlockHeader {
+                number,
+                parent_hash,
+                state_root: H256::repeat_byte(number as u8),
+                ..Default::default()
+            },
+            BlockBody::default(),
+        )
+    }
+
+    /// The startup clamp SHALL NOT lower `flushed_upto`.
+    ///
+    /// During full sync the canonical head lags execution: blocks are executed and their
+    /// trie state committed long before a forkchoice update canonicalizes them, so the
+    /// durable frontier is legitimately *ahead* of `LatestBlockNumber`. Clamping the head
+    /// to the lower of the two is correct, but persisting that lower value over the marker
+    /// throws away the only record of how far the database is actually durable.
+    ///
+    /// The consequence is not cosmetic. `regenerate_head_state` resumes from the frontier;
+    /// with it destroyed it resumes from the canonical head, whose state the single-version
+    /// on-disk trie has already overwritten. The node then reports "Unknown state found in
+    /// DB. Please run `ethrex removedb`" on a database that was perfectly recoverable.
+    #[tokio::test]
+    async fn clamp_does_not_lower_the_durable_frontier() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(
+            backend.clone(),
+            dir.path().to_path_buf(),
+            1,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
+
+        // Two blocks on disk, only the first canonicalized — the shape full sync leaves
+        // behind when it is stopped mid-batch.
+        let block1 = block_at(1, H256::zero());
+        let block1_hash = block1.hash();
+        let block2 = block_at(2, block1_hash);
+        store.add_block(block1).await.unwrap();
+        store.add_block(block2).await.unwrap();
+        store
+            .forkchoice_update(vec![(1, block1_hash)], 1, block1_hash, None, None)
+            .await
+            .unwrap();
+
+        // Block data is durable through block 2, while the canonical head is still 1.
+        let mut tx = backend.begin_write().unwrap();
+        write_flushed_upto(tx.as_mut(), 2).unwrap();
+        tx.commit().unwrap();
+
+        store.anchor_to_durable_head(1).await.unwrap();
+
+        assert_eq!(
+            store.read_flushed_upto_opt().unwrap(),
+            Some(2),
+            "the clamp must leave the durable frontier intact; lowering it here is what \
+             makes a mid-sync restart unrecoverable"
+        );
+        assert_eq!(
+            store.get_latest_block_number().await.unwrap(),
+            1,
+            "the head itself is still clamped to the canonical head"
+        );
+    }
+}
