@@ -5,8 +5,8 @@
 use crate::rlpx::message::Message as RLPxMessage;
 use crate::{
     metrics::{CurrentStepValue, METRICS},
-    peer_handler::PeerHandler,
-    peer_table::{PeerTableServerProtocol as _, RequestPermit},
+    peer_handler::{PeerHandler, request_kind},
+    peer_table::{PeerTableServerProtocol as _, RequestOutcome, RequestPermit},
     rlpx::{
         connection::server::PeerConnection,
         error::PeerConnectionError,
@@ -260,10 +260,20 @@ pub async fn request_account_range(
                 completed_tasks += 1;
             }
             if accounts.is_empty() {
-                peers.peer_table.record_failure(peer_id)?;
+                peers.record_peer_request(
+                    peer_id,
+                    request_kind::ACCOUNT_RANGE,
+                    RequestOutcome::Empty,
+                    None,
+                )?;
                 continue;
             }
-            peers.peer_table.record_success(peer_id)?;
+            peers.record_peer_request(
+                peer_id,
+                request_kind::ACCOUNT_RANGE,
+                RequestOutcome::Served,
+                None,
+            )?;
 
             downloaded_count += accounts.len() as u64;
 
@@ -446,13 +456,23 @@ pub async fn request_bytecodes(
                 completed_tasks += 1;
             }
             if bytecodes.is_empty() {
-                peers.peer_table.record_failure(peer_id)?;
+                peers.record_peer_request(
+                    peer_id,
+                    request_kind::BYTECODES,
+                    RequestOutcome::Empty,
+                    None,
+                )?;
                 continue;
             }
 
             downloaded_count += bytecodes.len() as u64;
 
-            peers.peer_table.record_success(peer_id)?;
+            peers.record_peer_request(
+                peer_id,
+                request_kind::BYTECODES,
+                RequestOutcome::Served,
+                None,
+            )?;
             for (i, bytecode) in bytecodes.into_iter().enumerate() {
                 all_bytecodes[start_index + i] = bytecode;
             }
@@ -958,7 +978,12 @@ pub async fn request_storage_ranges(
             }
 
             if account_storages.is_empty() {
-                peers.peer_table.record_failure(peer_id)?;
+                peers.record_peer_request(
+                    peer_id,
+                    request_kind::STORAGE_RANGES,
+                    RequestOutcome::Empty,
+                    None,
+                )?;
                 continue;
             }
             if let Some(hash_end) = hash_end {
@@ -968,7 +993,12 @@ pub async fn request_storage_ranges(
                 }
             }
 
-            peers.peer_table.record_success(peer_id)?;
+            peers.record_peer_request(
+                peer_id,
+                request_kind::STORAGE_RANGES,
+                RequestOutcome::Served,
+                None,
+            )?;
 
             let n_storages = account_storages.len();
             let n_slots = account_storages

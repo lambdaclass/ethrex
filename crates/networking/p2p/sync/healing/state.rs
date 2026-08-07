@@ -24,8 +24,8 @@ use tracing::{debug, trace};
 
 use crate::{
     metrics::{CurrentStepValue, METRICS},
-    peer_handler::{PeerHandler, RequestMetadata},
-    peer_table::PeerTableServerProtocol as _,
+    peer_handler::{PeerHandler, RequestMetadata, request_kind},
+    peer_table::{PeerTableServerProtocol as _, RequestOutcome},
     rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES,
     snap::{
         SnapError,
@@ -235,13 +235,24 @@ async fn heal_state_trie(
                         .count() as u64;
                     nodes_to_heal.push((nodes, batch));
                     downloads_success += 1;
-                    peers.peer_table.record_success(peer_id)?;
+                    // Batched download: the round trip isn't measured at this boundary.
+                    peers.record_peer_request(
+                        peer_id,
+                        request_kind::TRIE_NODES,
+                        RequestOutcome::Served,
+                        None,
+                    )?;
                 }
                 // If the peers failed to respond, reschedule the task by adding the batch to the paths vector
                 Err(_) => {
                     paths.extend(batch.into_iter().map(DepthOrderedMetadata));
                     downloads_fail += 1;
-                    peers.peer_table.record_failure(peer_id)?;
+                    peers.record_peer_request(
+                        peer_id,
+                        request_kind::TRIE_NODES,
+                        RequestOutcome::Timeout,
+                        None,
+                    )?;
                 }
             }
         }
