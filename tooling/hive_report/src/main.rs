@@ -25,6 +25,94 @@ struct JsonFile {
     test_cases: std::collections::HashMap<String, TestCase>,
 }
 
+// --- Exclusion config ---
+
+#[derive(Debug, Deserialize, Default)]
+struct ExclusionConfig {
+    #[serde(default)]
+    known_issues: Vec<ExclusionRule>,
+    #[serde(default)]
+    wip: Vec<ExclusionRule>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ExclusionRule {
+    category: String,
+    subcategory: String,
+    reason: String,
+    tests: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum ExclusionKind {
+    KnownIssue,
+    Wip,
+}
+
+impl ExclusionConfig {
+    fn load() -> Self {
+        let config_path = concat!(env!("CARGO_MANIFEST_DIR"), "/exclusions.toml");
+        match fs::read_to_string(config_path) {
+            Ok(content) => match toml::from_str(&content) {
+                Ok(config) => config,
+                Err(e) => {
+                    eprintln!("Warn: Failed to parse {config_path}: {e}. Using empty config.");
+                    Self::default()
+                }
+            },
+            Err(_) => {
+                eprintln!("Info: No exclusions.toml found at {config_path}. No exclusions applied.");
+                Self::default()
+            }
+        }
+    }
+
+    /// Check if a test case matches any exclusion rule.
+    /// Returns the kind and index of the matching rule, if any.
+    fn classify(
+        &self,
+        category: &str,
+        subcategory: &str,
+        test_name: &str,
+        passes: bool,
+    ) -> Option<(ExclusionKind, usize)> {
+        for (i, rule) in self.known_issues.iter().enumerate() {
+            if rule.matches(category, subcategory, test_name, passes) {
+                return Some((ExclusionKind::KnownIssue, i));
+            }
+        }
+        for (i, rule) in self.wip.iter().enumerate() {
+            if rule.matches(category, subcategory, test_name, passes) {
+                return Some((ExclusionKind::Wip, i));
+            }
+        }
+        None
+    }
+
+    fn rule(&self, kind: ExclusionKind, index: usize) -> &ExclusionRule {
+        match kind {
+            ExclusionKind::KnownIssue => &self.known_issues[index],
+            ExclusionKind::Wip => &self.wip[index],
+        }
+    }
+}
+
+impl ExclusionRule {
+    fn matches(&self, category: &str, subcategory: &str, test_name: &str, passes: bool) -> bool {
+        if self.category != category || self.subcategory != subcategory {
+            return false;
+        }
+        match &self.tests {
+            // Specific test names listed: exclude those tests regardless of pass/fail
+            Some(patterns) => patterns.iter().any(|p| test_name.contains(p.as_str())),
+            // No specific tests: only exclude failing tests in this scope
+            None => !passes,
+        }
+    }
+}
+
+// --- Hive results ---
+
 const HIVE_SLACK_BLOCKS_FILE_PATH: &str = "./hive_slack_blocks.json";
 
 struct HiveResult {
@@ -54,44 +142,6 @@ impl CategoryResults {
     }
 }
 
-impl HiveResult {
-    fn new(suite: String, fork: String, passed_tests: usize, total_tests: usize) -> Self {
-        let (category, display_name) = match suite.as_str() {
-            "engine-api" => ("Engine", "Paris"),
-            "engine-auth" => ("Engine", "Auth"),
-            "engine-cancun" => ("Engine", "Cancun"),
-            "engine-exchange-capabilities" => ("Engine", "Exchange Capabilities"),
-            "engine-withdrawals" => ("Engine", "Shanghai"),
-            "discv4" => ("P2P", "Discovery V4"),
-            "eth" => ("P2P", "Eth capability"),
-            "snap" => ("P2P", "Snap capability"),
-            "rpc-compat" => ("RPC", "RPC API Compatibility"),
-            "sync" => ("Sync", "Node Syncing"),
-            "eels/consume-rlp" => ("EVM - Consume RLP", fork.as_str()),
-            "eels/consume-engine" => ("EVM - Consume Engine", fork.as_str()),
-            "eels/execute-blobs" => ("EVM - Execute Blobs", "Execute Blobs"),
-            other => {
-                eprintln!("Warn: Unknown suite: {other}. Skipping");
-                ("", "")
-            }
-        };
-
-        let success_percentage = calculate_success_percentage(passed_tests, total_tests);
-
-        HiveResult {
-            category: category.to_string(),
-            display_name: display_name.to_string(),
-            passed_tests,
-            total_tests,
-            success_percentage,
-        }
-    }
-
-    fn should_skip(&self) -> bool {
-        self.category.is_empty()
-    }
-}
-
 impl std::fmt::Display for HiveResult {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -102,25 +152,10 @@ impl std::fmt::Display for HiveResult {
     }
 }
 
-fn create_fork_result(json_data: &JsonFile, fork: &str, test_pattern: &str) -> HiveResult {
-    let total_tests = json_data
-        .test_cases
-        .iter()
-        .filter(|(_, test_case)| test_case.name.contains(test_pattern))
-        .count();
-    let passed_tests = json_data
-        .test_cases
-        .iter()
-        .filter(|(_, test_case)| {
-            test_case.name.contains(test_pattern) && test_case.summary_result.pass
-        })
-        .count();
-    HiveResult::new(
-        json_data.name.clone(),
-        fork.to_string(),
-        passed_tests,
-        total_tests,
-    )
+/// Tracks excluded test counts per exclusion rule.
+struct ExcludedCounts {
+    passed: usize,
+    total: usize,
 }
 
 fn calculate_success_percentage(passed_tests: usize, total_tests: usize) -> f64 {
@@ -131,10 +166,124 @@ fn calculate_success_percentage(passed_tests: usize, total_tests: usize) -> f64 
     }
 }
 
+/// Maps a hive suite name to (category, display_name).
+fn suite_to_category(suite: &str, fork: &str) -> (String, String) {
+    let (category, display_name) = match suite {
+        "engine-api" => ("Engine", "Paris"),
+        "engine-auth" => ("Engine", "Auth"),
+        "engine-cancun" => ("Engine", "Cancun"),
+        "engine-exchange-capabilities" => ("Engine", "Exchange Capabilities"),
+        "engine-withdrawals" => ("Engine", "Shanghai"),
+        "discv4" => ("P2P", "Discovery V4"),
+        "eth" => ("P2P", "Eth capability"),
+        "snap" => ("P2P", "Snap capability"),
+        "rpc-compat" => ("RPC", "RPC API Compatibility"),
+        "sync" => ("Sync", "Node Syncing"),
+        "eels/consume-rlp" => ("EVM - Consume RLP", fork),
+        "eels/consume-engine" => ("EVM - Consume Engine", fork),
+        "eels/execute-blobs" => ("EVM - Execute Blobs", "Execute Blobs"),
+        other => {
+            eprintln!("Warn: Unknown suite: {other}. Skipping");
+            ("", "")
+        }
+    };
+    (category.to_string(), display_name.to_string())
+}
+
+/// Process test cases, partitioning them into main results and excluded buckets.
+fn process_tests<'a>(
+    test_cases: impl Iterator<Item = &'a TestCase>,
+    category: &str,
+    display_name: &str,
+    config: &ExclusionConfig,
+    excluded: &mut HashMap<(ExclusionKind, usize), ExcludedCounts>,
+) -> (usize, usize) {
+    let mut main_passed = 0usize;
+    let mut main_total = 0usize;
+
+    for tc in test_cases {
+        let passes = tc.summary_result.pass;
+        if let Some((kind, idx)) = config.classify(category, display_name, &tc.name, passes) {
+            let entry = excluded
+                .entry((kind, idx))
+                .or_insert(ExcludedCounts { passed: 0, total: 0 });
+            entry.total += 1;
+            if passes {
+                entry.passed += 1;
+            }
+        } else {
+            main_total += 1;
+            if passes {
+                main_passed += 1;
+            }
+        }
+    }
+
+    (main_passed, main_total)
+}
+
+fn fork_order(display_name: &str) -> Option<u8> {
+    match display_name {
+        "Amsterdam" => Some(0),
+        "Osaka" => Some(1),
+        "Prague" => Some(2),
+        "Cancun" => Some(3),
+        "Shanghai" => Some(4),
+        "Paris" => Some(5),
+        _ => None,
+    }
+}
+
+fn sort_results(results: &mut [HiveResult]) {
+    results.sort_by(|a, b| {
+        let category_cmp = a.category.cmp(&b.category);
+        if category_cmp != Ordering::Equal {
+            return category_cmp;
+        }
+
+        if let (Some(rank_a), Some(rank_b)) =
+            (fork_order(&a.display_name), fork_order(&b.display_name))
+        {
+            let order_cmp = rank_a.cmp(&rank_b);
+            if order_cmp != Ordering::Equal {
+                return order_cmp;
+            }
+        }
+
+        b.passed_tests
+            .cmp(&a.passed_tests)
+            .then_with(|| {
+                b.success_percentage
+                    .partial_cmp(&a.success_percentage)
+                    .unwrap()
+            })
+    });
+}
+
+fn group_results(results: Vec<HiveResult>) -> Vec<CategoryResults> {
+    let mut grouped: Vec<CategoryResults> = Vec::new();
+    for result in results {
+        if let Some(last) = grouped
+            .last_mut()
+            .filter(|last| last.name == result.category)
+        {
+            last.tests.push(result);
+            continue;
+        }
+        let name = result.category.clone();
+        grouped.push(CategoryResults {
+            name,
+            tests: vec![result],
+        });
+    }
+    grouped
+}
+
 fn build_slack_blocks(
     categories: &[CategoryResults],
     total_passed: usize,
     total_tests: usize,
+    excluded_sections: &[(ExclusionKind, &ExclusionRule, &ExcludedCounts)],
 ) -> serde_json::Value {
     let total_percentage = calculate_success_percentage(total_passed, total_tests);
     let mut blocks = vec![json!({
@@ -142,7 +291,7 @@ fn build_slack_blocks(
         "text": {
             "type": "plain_text",
             "text": format!(
-                "Daily Hive Coverage report — {total_passed}/{total_tests} ({total_percentage:.02}%)"
+                "Daily Hive Coverage report \u{2014} {total_passed}/{total_tests} ({total_percentage:.02}%)"
             )
         }
     })];
@@ -152,9 +301,9 @@ fn build_slack_blocks(
         let category_total = category.total_tests();
         let category_percentage = category.success_percentage();
         let status = if category_passed == category_total {
-            "✅"
+            "\u{2705}"
         } else {
-            "⚠️"
+            "\u{26a0}\u{fe0f}"
         };
 
         let mut lines = vec![format!(
@@ -193,25 +342,80 @@ fn build_slack_blocks(
         }));
     }
 
+    // Add exclusion sections if there are any excluded tests
+    let known_issues: Vec<_> = excluded_sections
+        .iter()
+        .filter(|(kind, _, counts)| *kind == ExclusionKind::KnownIssue && counts.total > 0)
+        .collect();
+
+    let wip: Vec<_> = excluded_sections
+        .iter()
+        .filter(|(kind, _, counts)| *kind == ExclusionKind::Wip && counts.total > 0)
+        .collect();
+
+    if !known_issues.is_empty() || !wip.is_empty() {
+        blocks.push(json!({
+            "type": "divider",
+        }));
+    }
+
+    if !known_issues.is_empty() {
+        let total_excluded: usize = known_issues.iter().map(|(_, _, c)| c.total).sum();
+        let mut lines = vec![format!(
+            "\u{1f4cb} *Known Issues* ({total_excluded} tests excluded)"
+        )];
+        for (_, rule, counts) in &known_issues {
+            let failing = counts.total - counts.passed;
+            lines.push(format!(
+                "  {} > {}: {}/{} ({} failing)",
+                rule.category, rule.subcategory, counts.passed, counts.total, failing
+            ));
+            lines.push(format!("  _{}_", rule.reason));
+        }
+        blocks.push(json!({
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": lines.join("\n"),
+            },
+        }));
+    }
+
+    if !wip.is_empty() {
+        let total_excluded: usize = wip.iter().map(|(_, _, c)| c.total).sum();
+        let mut lines = vec![format!(
+            "\u{1f6a7} *Work in Progress* ({total_excluded} tests excluded)"
+        )];
+        for (_, rule, counts) in &wip {
+            let failing = counts.total - counts.passed;
+            lines.push(format!(
+                "  {} > {}: {}/{} ({} failing)",
+                rule.category, rule.subcategory, counts.passed, counts.total, failing
+            ));
+            lines.push(format!("  _{}_", rule.reason));
+        }
+        blocks.push(json!({
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": lines.join("\n"),
+            },
+        }));
+    }
+
     json!({ "blocks": blocks })
 }
 
 fn aggregate_result(
     aggregated_results: &mut HashMap<(String, String), (usize, usize)>,
-    result: HiveResult,
+    category: String,
+    display_name: String,
+    passed_tests: usize,
+    total_tests: usize,
 ) {
-    if result.should_skip() {
+    if category.is_empty() {
         return;
     }
-
-    let HiveResult {
-        category,
-        display_name,
-        passed_tests,
-        total_tests,
-        ..
-    } = result;
-
     let entry = aggregated_results
         .entry((category, display_name))
         .or_insert((0, 0));
@@ -219,8 +423,19 @@ fn aggregate_result(
     entry.1 += total_tests;
 }
 
+const FORK_PATTERNS: &[(&str, &str)] = &[
+    ("Paris", "fork_Paris"),
+    ("Shanghai", "fork_Shanghai"),
+    ("Cancun", "fork_Cancun"),
+    ("Prague", "fork_Prague"),
+    ("Osaka", "fork_Osaka"),
+    ("Amsterdam", "fork_Amsterdam"),
+];
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let config = ExclusionConfig::load();
     let mut aggregated_results: HashMap<(String, String), (usize, usize)> = HashMap::new();
+    let mut excluded_counts: HashMap<(ExclusionKind, usize), ExcludedCounts> = HashMap::new();
 
     for entry in fs::read_dir("hive/workspace/logs")? {
         let entry = entry?;
@@ -245,47 +460,66 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
 
-            // Both of these simulators have only 1 suite where we can find tests for 3 different forks.
-            // To get the total tests and the passed tests a filtes is done each time so we do not clone the test cases each time.
             if json_data.name.as_str() == "eels/consume-rlp"
                 || json_data.name.as_str() == "eels/consume-engine"
             {
-                let result_paris = create_fork_result(&json_data, "Paris", "fork_Paris");
-                // Shanghai
-                let result_shanghai = create_fork_result(&json_data, "Shanghai", "fork_Shanghai");
-                // Cancun
-                let result_cancun = create_fork_result(&json_data, "Cancun", "fork_Cancun");
-                // Prague
-                let result_prague = create_fork_result(&json_data, "Prague", "fork_Prague");
-                // Osaka
-                let result_osaka = create_fork_result(&json_data, "Osaka", "fork_Osaka");
+                for (fork, pattern) in FORK_PATTERNS {
+                    let (category, display_name) =
+                        suite_to_category(&json_data.name, fork);
+                    if category.is_empty() {
+                        continue;
+                    }
 
-                let result_amsterdam =
-                    create_fork_result(&json_data, "Amsterdam", "fork_Amsterdam");
+                    let fork_tests = json_data
+                        .test_cases
+                        .values()
+                        .filter(|tc| tc.name.contains(pattern));
 
-                aggregate_result(&mut aggregated_results, result_paris);
-                aggregate_result(&mut aggregated_results, result_shanghai);
-                aggregate_result(&mut aggregated_results, result_cancun);
-                aggregate_result(&mut aggregated_results, result_prague);
-                aggregate_result(&mut aggregated_results, result_osaka);
-                aggregate_result(&mut aggregated_results, result_amsterdam);
+                    let (passed, total) = process_tests(
+                        fork_tests,
+                        &category,
+                        &display_name,
+                        &config,
+                        &mut excluded_counts,
+                    );
+
+                    aggregate_result(
+                        &mut aggregated_results,
+                        category,
+                        display_name,
+                        passed,
+                        total,
+                    );
+                }
             } else {
-                let total_tests = json_data.test_cases.len();
-                let passed_tests = json_data
-                    .test_cases
-                    .values()
-                    .filter(|test_case| test_case.summary_result.pass)
-                    .count();
+                let (category, display_name) =
+                    suite_to_category(&json_data.name, "");
+                if category.is_empty() {
+                    continue;
+                }
 
-                let result =
-                    HiveResult::new(json_data.name, String::new(), passed_tests, total_tests);
-                aggregate_result(&mut aggregated_results, result);
+                let (passed, total) = process_tests(
+                    json_data.test_cases.values(),
+                    &category,
+                    &display_name,
+                    &config,
+                    &mut excluded_counts,
+                );
+
+                aggregate_result(
+                    &mut aggregated_results,
+                    category,
+                    display_name,
+                    passed,
+                    total,
+                );
             }
         }
     }
 
     let mut results: Vec<HiveResult> = aggregated_results
         .into_iter()
+        .filter(|(_, (_, total))| *total > 0)
         .map(
             |((category, display_name), (passed_tests, total_tests))| HiveResult {
                 category,
@@ -297,55 +531,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .collect();
 
-    // First by category ascending, use fork ordering newest → oldest when applicable, then by passed tests descending.
-    results.sort_by(|a, b| {
-        let category_cmp = a.category.cmp(&b.category);
-        if category_cmp != Ordering::Equal {
-            return category_cmp;
-        }
-
-        let fork_rank = |display_name: &str| match display_name {
-            "Amsterdam" => Some(0),
-            "Osaka" => Some(1),
-            "Prague" => Some(2),
-            "Cancun" => Some(3),
-            "Shanghai" => Some(4),
-            "Paris" => Some(5),
-            _ => None,
-        };
-
-        if let (Some(rank_a), Some(rank_b)) =
-            (fork_rank(&a.display_name), fork_rank(&b.display_name))
-        {
-            let order_cmp = rank_a.cmp(&rank_b);
-            if order_cmp != Ordering::Equal {
-                return order_cmp;
-            }
-        }
-
-        b.passed_tests.cmp(&a.passed_tests).then_with(|| {
-            b.success_percentage
-                .partial_cmp(&a.success_percentage)
-                .unwrap()
-        })
-    });
-
-    let mut grouped_results: Vec<CategoryResults> = Vec::new();
-    for result in results {
-        if let Some(last) = grouped_results
-            .last_mut()
-            .filter(|last| last.name == result.category)
-        {
-            last.tests.push(result);
-            continue;
-        }
-
-        let name = result.category.clone();
-        grouped_results.push(CategoryResults {
-            name,
-            tests: vec![result],
-        });
-    }
+    sort_results(&mut results);
+    let grouped_results = group_results(results);
 
     for category in &grouped_results {
         println!("*{}*", category.name);
@@ -356,18 +543,49 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!();
-    let total_passed = grouped_results
+    let total_passed: usize = grouped_results
         .iter()
         .flat_map(|group| group.tests.iter().map(|r| r.passed_tests))
-        .sum::<usize>();
-    let total_tests = grouped_results
+        .sum();
+    let total_tests: usize = grouped_results
         .iter()
         .flat_map(|group| group.tests.iter().map(|r| r.total_tests))
-        .sum::<usize>();
+        .sum();
     let total_percentage = calculate_success_percentage(total_passed, total_tests);
     println!("*Total: {total_passed}/{total_tests} ({total_percentage:.02}%)*");
 
-    let slack_blocks = build_slack_blocks(&grouped_results, total_passed, total_tests);
+    // Print exclusion summary to stdout
+    for ((kind, idx), counts) in &excluded_counts {
+        if counts.total == 0 {
+            continue;
+        }
+        let rule = config.rule(*kind, *idx);
+        let label = match kind {
+            ExclusionKind::KnownIssue => "Known Issue",
+            ExclusionKind::Wip => "WIP",
+        };
+        let failing = counts.total - counts.passed;
+        println!(
+            "\n[{label}] {} > {}: {}/{} ({failing} failing) — {}",
+            rule.category, rule.subcategory, counts.passed, counts.total, rule.reason
+        );
+    }
+
+    // Build excluded sections list for Slack, sorted for stable output
+    let mut excluded_sections: Vec<(ExclusionKind, &ExclusionRule, &ExcludedCounts)> =
+        excluded_counts
+            .iter()
+            .map(|((kind, idx), counts)| (*kind, config.rule(*kind, *idx), counts))
+            .filter(|(_, _, counts)| counts.total > 0)
+            .collect();
+    excluded_sections.sort_by(|a, b| {
+        a.1.category
+            .cmp(&b.1.category)
+            .then_with(|| a.1.subcategory.cmp(&b.1.subcategory))
+    });
+
+    let slack_blocks =
+        build_slack_blocks(&grouped_results, total_passed, total_tests, &excluded_sections);
     fs::write(
         HIVE_SLACK_BLOCKS_FILE_PATH,
         serde_json::to_string_pretty(&slack_blocks)?,
