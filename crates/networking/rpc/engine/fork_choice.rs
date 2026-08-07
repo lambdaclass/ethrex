@@ -207,7 +207,7 @@ fn parse(
     Ok((forkchoice_state, payload_attributes))
 }
 
-async fn handle_forkchoice(
+pub(crate) async fn handle_forkchoice(
     fork_choice_state: &ForkChoiceState,
     context: RpcApiContext,
     version: usize,
@@ -419,7 +419,7 @@ async fn handle_forkchoice(
     }
 }
 
-fn validate_attributes_v1(
+pub(crate) fn validate_attributes_v1(
     attributes: &PayloadAttributesV3,
     head_block: &BlockHeader,
 ) -> Result<(), RpcErr> {
@@ -429,7 +429,7 @@ fn validate_attributes_v1(
     validate_timestamp(attributes, head_block)
 }
 
-fn validate_attributes_v2(
+pub(crate) fn validate_attributes_v2(
     attributes: &PayloadAttributesV3,
     head_block: &BlockHeader,
 ) -> Result<(), RpcErr> {
@@ -439,7 +439,7 @@ fn validate_attributes_v2(
     validate_timestamp(attributes, head_block)
 }
 
-fn validate_attributes_v2_pre_shanghai(
+pub(crate) fn validate_attributes_v2_pre_shanghai(
     attributes: &PayloadAttributesV3,
     head_block: &BlockHeader,
 ) -> Result<(), RpcErr> {
@@ -449,7 +449,7 @@ fn validate_attributes_v2_pre_shanghai(
     validate_timestamp(attributes, head_block)
 }
 
-fn validate_attributes_v3(
+pub(crate) fn validate_attributes_v3(
     attributes: &PayloadAttributesV3,
     head_block: &BlockHeader,
     context: &RpcApiContext,
@@ -490,7 +490,13 @@ fn validate_timestamp(
     Ok(())
 }
 
-async fn build_payload(
+/// Build a payload from V1..V3-shaped attributes.
+///
+/// Shared with the engine REST/SSZ transport (`engine_rest::handlers::forkchoice`)
+/// so both transports build payloads through exactly one code path — a REST-local
+/// copy of this function silently diverged once already (it ignored the
+/// CL-supplied `target_gas_limit` on V4).
+pub(crate) async fn build_payload(
     attributes: &PayloadAttributesV3,
     context: RpcApiContext,
     fork_choice_state: &ForkChoiceState,
@@ -557,7 +563,7 @@ fn parse_v4(
     Ok((forkchoice_state, payload_attributes))
 }
 
-fn validate_attributes_v4(
+pub(crate) fn validate_attributes_v4(
     attributes: &PayloadAttributesV4,
     head_block: &BlockHeader,
     context: &RpcApiContext,
@@ -596,7 +602,11 @@ fn validate_timestamp_v4(
     Ok(())
 }
 
-async fn build_payload_v4(
+/// Build a payload from V4 (Amsterdam) attributes.
+///
+/// Shared with the engine REST/SSZ transport so the `target_gas_limit` handling
+/// below cannot drift per-transport (see `build_payload`).
+pub(crate) async fn build_payload_v4(
     attributes: &PayloadAttributesV4,
     context: RpcApiContext,
     fork_choice_state: &ForkChoiceState,

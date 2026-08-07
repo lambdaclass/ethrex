@@ -62,8 +62,17 @@ ethrex-l2.workspace = true
 ethrex-l2-rpc.workspace = true
 reqwest.workspace = true
 tokio-util.workspace = true
-ethrex-guest-program = { workspace = true, default-features = false }
+# engine REST/SSZ tests (tests/rpc/engine_rest_tests.rs)
+axum = { workspace = true, features = ["http2"] }
+tower = "0.5"
+http-body-util = "0.1"
+jsonwebtoken.workspace = true
+serde.workspace = true
+# Shared by the engine REST/SSZ tests and the EIP-8025 stateless tests from main.
 libssz.workspace = true
+libssz-types.workspace = true
+libssz-derive.workspace = true
+ethrex-guest-program = { workspace = true, default-features = false }
 ethrex-crypto.workspace = true
 ethrex-metrics = { workspace = true, features = ["metrics"] }
 serial_test = "3"
