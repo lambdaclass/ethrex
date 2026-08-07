@@ -61,3 +61,38 @@ a third against the same signals would fail the same way. Note also that
 recording the target from `engine_newPayload` is actively harmful and was
 reverted: during catch-up the payload's number *is* the local head, so it
 converts an honest `Unknown` into a misleading `Known`.
+
+### Deep reorgs into a full-synced range are refused
+
+**Where:** `crates/storage/journal.rs` (see its "Batch mode (full sync)" section),
+`Store::store_block_updates`, and `compute_reorg_ceiling` in
+`crates/blockchain/fork_choice.rs`.
+
+**Why:** Deep-reorg recovery replays reverse diffs from the `STATE_HISTORY`
+journal, which is written per block by the normal commit path. Full sync imports
+in batches — one trie layer per ~1024 blocks — and the commit path **skips
+journaling entirely** in that mode, because per-block reverse diffs are not
+produced there. So a range imported by full sync has no journal coverage, and a
+reorg whose pivot falls inside it cannot be reconstructed.
+
+This is a bounded limitation rather than a latent fault, and the guard is
+already correct: `compute_reorg_ceiling` derives its journal reach from
+`Store::lowest_state_history_block_number`, so an uncovered range simply does
+not extend the reach. The ceiling falls back to layer-cache retention and a
+deeper forkchoice update is refused with `-38006 TooDeepReorg`. The node
+declines the reorg; it does not attempt one it cannot complete, and it does not
+accept incorrect state. Pinned by `journal_skipped_in_batch_mode`.
+
+Reorg support becomes available for blocks imported after the node transitions
+to normal block-by-block execution, and the covered window is
+`[finalized + 1, cache_edge]` — journal entries at or below each new finalized
+block are pruned on every forkchoice update that advances finality.
+
+Not specific to any state commitment: this predates the EIP-8297 binary trie and
+applies identically to the Merkle-Patricia trie. The binary-trie journal (format
+v2) inherits the same boundary.
+
+**Removal:** Journal during batch import as well, which means producing
+per-block reverse diffs on a path deliberately built to avoid per-block work —
+a real cost trade, not an oversight. Worth revisiting only if operators hit
+refused reorgs shortly after a full sync in practice.
