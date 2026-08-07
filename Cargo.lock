@@ -4457,6 +4457,7 @@ dependencies = [
  "anyhow",
  "bytes",
  "cita_trie",
+ "clap",
  "ethereum-types 0.15.1",
  "ethrex",
  "ethrex-blockchain",
