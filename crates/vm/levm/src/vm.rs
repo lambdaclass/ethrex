@@ -1633,11 +1633,6 @@ impl<'a> VM<'a> {
         Ok(report)
     }
 
-    /// EIP-8272 native RECENT_ROOT_CODE write core (docs/eip-8272.md
-    /// divergence #4: the spec leaves the predeploy bytecode TBD, so ethrex
-    /// executes the 64-byte `salt ‖ root` write natively). The committed entry
-    /// is keyed by `source_id = keccak256(caller ‖ salt)` over the 20-byte
-    /// address and the 32-byte salt (EIP-8272 §Root sources, with the
     /// EIP-8312: allocate the next global UTXO index from the vault's counter.
     ///
     /// Settlement-created UTXOs draw from the SAME counter the deposit bytecode
@@ -1723,58 +1718,6 @@ impl<'a> VM<'a> {
     pub fn discard_durable_vault_writes(&mut self) {
         self.durable_vault_writes.clear();
         self.durable_state_gas = 0;
-    }
-
-    /// fixed-length encodings its Specification preamble sets out) — a
-    /// caller-authenticated namespace (nobody can write into another caller's
-    /// source_id), with the salt giving each caller as many namespaces as it
-    /// needs; a referencing transaction declares the same source_id in its
-    /// envelope. The entry commits to the CURRENT slot (EIP-7843
-    /// `env.slot_number`); last-write-wins within a block follows from plain
-    /// storage-write ordering. Callers enforce the static/value/calldata-shape
-    /// rules and gas; this core performs the storage write through the
-    /// standard backed-up path (journaled and BAL-recorded like any storage
-    /// write, and rolled back by an enclosing revert exactly as a real
-    /// bytecode SSTORE would be).
-    pub(crate) fn recent_root_native_write(
-        &mut self,
-        caller: Address,
-        salt: &[u8],
-        root: &[u8],
-    ) -> Result<(), VMError> {
-        let current_slot = self.env.slot_number;
-        // Beacon slots are u64; a larger env value can only come from a
-        // crafted header. Refuse to write rather than truncate.
-        if current_slot > U256::from(u64::MAX) {
-            return Err(ExceptionalHalt::InvalidOpcode.into());
-        }
-        let mut preimage = [0u8; 52];
-        preimage[..20].copy_from_slice(caller.as_bytes());
-        preimage[20..52].copy_from_slice(salt);
-        let source_id = H256(ethrex_crypto::keccak::keccak_hash(preimage));
-        let entry = ethrex_common::types::RecentRootReference {
-            source_id,
-            slot: current_slot.low_u64(),
-            root: H256::from_slice(root),
-        };
-        // entry_hash/storage_key come from the shared ethrex-common helpers —
-        // the same code the read-side validity check runs, so a root written
-        // here always validates its own reference.
-        let storage_key = entry.storage_key();
-        let entry_hash = entry.entry_hash();
-        let recent_root_addr = ethrex_common::types::frame_tx_recent_root();
-        // Ensure the predeploy account is cached before touching its storage.
-        let _ = self.db.get_account(recent_root_addr)?;
-        let current = self.get_storage_value(recent_root_addr, storage_key)?;
-        let key_u256 = U256::from_big_endian(&storage_key.0);
-        self.update_account_storage(
-            recent_root_addr,
-            storage_key,
-            key_u256,
-            U256::from_big_endian(entry_hash.as_bytes()),
-            current,
-        )?;
-        Ok(())
     }
 
     /// Execute a frame transaction (EIP-8141).
@@ -3575,57 +3518,6 @@ impl<'a> VM<'a> {
                 self.env.config.fork,
                 self.vm_type,
             )
-            // EIP-8272's predeploy is codeless too, but a call into it performs the native
-            // recent-root write, so it must reach `run_execution`.
-            && !(self.env.config.fork >= Fork::Hegota
-                && self.current_call_frame.to == ethrex_common::types::frame_tx_recent_root())
-    }
-
-    /// EIP-8272 native write for a transaction whose recipient is the predeploy itself.
-    fn run_top_level_recent_root_write(&mut self) -> Result<ContextResult, VMError> {
-        let recent_root_addr = ethrex_common::types::frame_tx_recent_root();
-        if let Some(recorder) = self.db.bal_recorder.as_mut() {
-            recorder.record_touched_address(recent_root_addr);
-        }
-
-        let gas_limit = self.current_call_frame.gas_limit;
-        let revert = |gas_used: u64| ContextResult {
-            result: TxResult::Revert(VMError::RevertOpcode),
-            gas_used,
-            gas_spent: gas_used,
-            output: Bytes::new(),
-        };
-
-        // `gas_remaining` enters this frame already net of intrinsic gas, so what the
-        // transaction owes is always measured against `gas_limit`, never the write cost alone.
-        #[expect(clippy::as_conversions, reason = "gas_remaining is non-negative here")]
-        let consumed = |frame: &crate::call_frame::CallFrame| {
-            frame.gas_limit.saturating_sub(frame.gas_remaining.max(0) as u64)
-        };
-
-        if self.current_call_frame.calldata.len() != 64 || !self.current_call_frame.msg_value.is_zero() {
-            return Ok(revert(consumed(&self.current_call_frame)));
-        }
-        if self.current_call_frame.gas_remaining < crate::gas_cost::RECENT_ROOT_WRITE_GAS as i64 {
-            self.current_call_frame.gas_remaining = 0;
-            return Ok(revert(gas_limit));
-        }
-
-        let caller = self.current_call_frame.msg_sender;
-        let calldata = self.current_call_frame.calldata.clone();
-        let (salt, root) = calldata.split_at(32);
-        self.recent_root_native_write(caller, salt, root)?;
-        self.current_call_frame.gas_remaining = self
-            .current_call_frame
-            .gas_remaining
-            .saturating_sub(crate::gas_cost::RECENT_ROOT_WRITE_GAS as i64);
-        let gas_used = consumed(&self.current_call_frame);
-        Ok(ContextResult {
-            result: TxResult::Success,
-            gas_used,
-            gas_spent: gas_used,
-            output: Bytes::new(),
-        })
     }
 
     /// Main execution loop.
@@ -3663,17 +3555,6 @@ impl<'a> VM<'a> {
         // charge is rolled back in the precompile branch below (mirrors EELS
         // `refill_frame_state_gas`). Set in-region by `prepare_execution`.
         let top_frame_new_account_charged = self.value_new_account_charged;
-
-        // EIP-8272: the predeploy is codeless, so a transaction sent straight to it would
-        // otherwise run as a transfer to an ordinary account and write nothing. Same native
-        // write the CALL-opcode and frame paths perform. Only the top-level entry reaches
-        // here: a frame targeting the predeploy is codeless, so it takes the default-code
-        // path, where `execute_default_code` performs the write and never calls back in.
-        if self.env.config.fork >= Fork::Hegota
-            && self.current_call_frame.to == ethrex_common::types::frame_tx_recent_root()
-        {
-            return self.run_top_level_recent_root_write();
-        }
 
         #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
         if precompiles::is_precompile(
