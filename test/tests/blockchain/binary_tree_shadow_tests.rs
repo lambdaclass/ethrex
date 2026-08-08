@@ -53,6 +53,7 @@ use ethrex_blockchain::{
 use ethrex_common::{
     Address, H160, H256, U256,
     constants::EMPTY_TRIE_HASH,
+    evm::calculate_create_address,
     types::{
         AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHeader,
         DEFAULT_BUILDER_GAS_CEIL, EIP1559Transaction, ELASTICITY_MULTIPLIER, Genesis,
@@ -64,7 +65,7 @@ use ethrex_crypto::NativeCrypto;
 use ethrex_l2_rpc::signer::{LocalSigner, Signable, Signer};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store, error::StoreError};
-use ethrex_vm::{DynVmDatabase, Evm, VmDatabase};
+use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, VmDatabase};
 use secp256k1::SecretKey;
 use tokio_util::sync::CancellationToken;
 
@@ -1742,34 +1743,52 @@ async fn a_storage_only_account_exists_and_collides_on_both_paths() {
 }
 
 // ---------------------------------------------------------------------------
-// D3.5 What became of the MPT, pinned so it is visible rather than assumed.
+// Phase D10 — what became of the MPT: it is **frozen** at the flip.
 //
-// Phase D2 decided to keep the MPT advancing after the flip. D3 does not change
-// that, and this records what "advancing" now means, because it is not obvious:
+// This replaces `the_mpt_keeps_advancing_after_the_flip_but_is_no_longer_addressable_by_header_root`,
+// which pinned Phase D2's decision to keep merkleizing past the activation. That
+// decision is reversed: `Blockchain::store_block_inner` now drops the MPT diff of
+// every block whose header commits a binary root, so the MPT stops at the last
+// MPT-committing header and stays there.
 //
-//   * the MPT is still correct — post-flip merkleization reads its parent state
-//     through the trie-layer chain, which is keyed by *header* state roots and
-//     therefore stays continuous across the boundary, so the MPT holds the same
-//     state an MPT-committing node's does;
-//   * but it is no longer *addressable*: `has_state_root(header.state_root)` is
-//     false for every active header, because that root belongs to the binary
-//     trie. Execution must therefore not resolve through it (it does not — see
-//     the tests above), and any root-guarded MPT reader still pointed at an
-//     active header's root fails loudly instead of answering from some other
-//     block's state.
+// What the old test pinned, and what became of each half:
 //
-// The state-reading RPCs no longer are pointed at it: Phase D4 below moves them
-// onto the same per-header rule execution uses. This test stays because the MPT
-// is still advancing underneath, and the day it is frozen the change should be
-// deliberate.
+//   * "the MPT is still correct at the head" — deliberately **no longer true**,
+//     and this test asserts the opposite: the MPT reads back the *last pre-flip*
+//     state at every post-flip block. Nothing lost, because the MPT is
+//     single-version and path-keyed — one state on disk plus a bounded chain of
+//     diff layers — so past the flip it could only ever answer for the last
+//     pre-flip block anyway. Merkleizing on was computing nodes no header names.
+//   * "it is no longer addressable by header root" — still true, still asserted
+//     below, and unchanged by the freeze: `has_state_root(header.state_root)` is
+//     false for every active header because that root belongs to the binary trie.
+//
+// The last assertion pins that the last pre-flip root stays addressable. Note
+// what it does and does not show: these tests run on the in-memory backend
+// (`IN_MEMORY_COMMIT_THRESHOLD == 10000`), so every block here is still inside
+// the layer window and the root would be addressable either way. The assertion
+// guards against the freeze accidentally *removing* that root; the stronger
+// production claim — that on RocksDB the commit gate flushes the pre-flip layers
+// and then has nothing more to write, so disk parks on the last pre-flip state
+// permanently instead of sliding past it at `head - 128` — follows from the same
+// mechanism but is not what this test measures.
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn the_mpt_keeps_advancing_after_the_flip_but_is_no_longer_addressable_by_header_root() {
+async fn the_mpt_freezes_at_the_flip_and_keeps_serving_the_last_pre_flip_state() {
     let chains = build_boundary_chains(FLIP_BLOCK + BLOCKS_PAST_THE_FLIP).await;
     let head = chains.scheduled_blocks.last().unwrap();
-    let twin_head = chains.twin_blocks.last().unwrap();
     let hashed_sender = keccak(sender_from_key(&test_secret_key()).as_bytes());
+
+    // The last block whose header commits an MPT root, and its twin.
+    let last_pre_flip = &chains.scheduled_blocks[(FLIP_BLOCK - 2) as usize];
+    let twin_last_pre_flip = &chains.twin_blocks[(FLIP_BLOCK - 2) as usize];
+    assert_eq!(
+        last_pre_flip.header.number,
+        FLIP_BLOCK - 1,
+        "the block before the flip"
+    );
+    assert!(last_pre_flip.header.timestamp < chains.activation);
 
     assert!(
         !chains
@@ -1779,8 +1798,8 @@ async fn the_mpt_keeps_advancing_after_the_flip_but_is_no_longer_addressable_by_
         "an active header's root is a binary root, so the MPT does not hold it"
     );
 
-    // Block-addressed, which skips the root guard: the MPT is still there and
-    // still right.
+    // Block-addressed, which skips the root guard, so it reports what the MPT
+    // actually holds rather than refusing to answer.
     let mpt_account = |store: &Store, block: &Block| {
         let trie = store
             .state_trie(block.hash())
@@ -1794,17 +1813,610 @@ async fn the_mpt_keeps_advancing_after_the_flip_but_is_no_longer_addressable_by_
         )
         .expect("decode account state")
     };
-    let scheduled = mpt_account(&chains.scheduled_store, head);
-    let twin = mpt_account(&chains.twin_store, twin_head);
+
+    // The heart of it: at a block twelve past the flip, the MPT still reads back
+    // the state as of the last *pre-flip* block. `build_chain` sends exactly one
+    // transfer per block, so the sender's nonce is the block number and the two
+    // answers are impossible to confuse.
+    let at_head = mpt_account(&chains.scheduled_store, head);
+    let frozen_at = mpt_account(&chains.scheduled_store, last_pre_flip);
     assert_eq!(
-        (scheduled.nonce, scheduled.balance),
-        (twin.nonce, twin.balance),
-        "the MPT must still hold the state an MPT-committing node holds at this height"
+        (at_head.nonce, at_head.balance, at_head.storage_root),
+        (frozen_at.nonce, frozen_at.balance, frozen_at.storage_root),
+        "the MPT must be frozen: reading it at the head must give the last pre-flip state"
     );
     assert_eq!(
-        scheduled.nonce,
+        at_head.nonce,
+        FLIP_BLOCK - 1,
+        "the frozen state is the last pre-flip block's, not the head's \
+         ({} blocks of merkleization must have been skipped)",
+        BLOCKS_PAST_THE_FLIP + 1
+    );
+
+    // ...and it is the *right* pre-flip state, not merely a stale one: an
+    // MPT-committing twin at the same height holds the same thing.
+    let twin = mpt_account(&chains.twin_store, twin_last_pre_flip);
+    assert_eq!(
+        (frozen_at.nonce, frozen_at.balance, frozen_at.storage_root),
+        (twin.nonce, twin.balance, twin.storage_root),
+        "the frozen MPT must equal what an MPT-committing node holds at the last pre-flip block"
+    );
+
+    // Guard against a vacuous pass in the other direction: the twin *did* keep
+    // going, so `FLIP_BLOCK - 1` is a real stopping point rather than the only
+    // state either chain ever had.
+    let twin_head = mpt_account(&chains.twin_store, chains.twin_blocks.last().unwrap());
+    assert_eq!(
+        twin_head.nonce,
         FLIP_BLOCK + BLOCKS_PAST_THE_FLIP,
-        "guard against a vacuous pass: this is the end state, not a stale one"
+        "the unscheduled twin keeps merkleizing to its own head"
+    );
+
+    // The read the freeze gains: the last pre-flip root stays addressable,
+    // because nothing overwrites the MPT out from under it any more.
+    assert!(
+        chains
+            .scheduled_store
+            .has_state_root(last_pre_flip.header.state_root)
+            .expect("root check"),
+        "the frozen MPT still holds the last root a header committed to it"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// D10.1 The freeze survives a reorg back into MPT territory.
+//
+// The freeze would be unsound if a chain could re-enter MPT territory without
+// the MPT being able to follow. It cannot, and the reason is a consensus rule
+// rather than anything about tries: timestamps strictly increase along every
+// chain (`TimestampNotGreaterThanParent`, `crates/common/types/block.rs`), so a
+// branch that contains any pre-flip header must diverge *below* the flip block.
+// A reorg into MPT territory therefore always pivots below the flip — a height
+// at which the MPT was live, its diff layers were staged and its `STATE_HISTORY`
+// reverse diffs were written. Unwinding through them lands the MPT at the pivot,
+// and the new branch's pre-flip blocks re-advance it through the same `else` arm
+// that served the original chain, because their headers commit MPT roots.
+//
+// This drives that end to end: fork below the flip, extend the fork with a
+// pre-flip block, then flip the fork too.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_reorg_to_a_pivot_below_the_flip_re_advances_the_frozen_mpt() {
+    let chains = build_boundary_chains(FLIP_BLOCK + BLOCKS_PAST_THE_FLIP).await;
+    let store = chains.scheduled_store.clone();
+    let blockchain = Blockchain::default_with_store(store.clone());
+    let sender = sender_from_key(&test_secret_key());
+    let hashed_sender = keccak(sender.as_bytes());
+    let chain_id = chains.scheduled_genesis.config.chain_id;
+
+    let mpt_nonce = |block: &Block| {
+        let trie = store
+            .state_trie(block.hash())
+            .expect("state trie read")
+            .expect("state trie present");
+        AccountState::decode(
+            &trie
+                .get(hashed_sender.as_bytes())
+                .expect("state trie lookup")
+                .expect("the funded sender must be present"),
+        )
+        .expect("decode account state")
+        .nonce
+    };
+
+    // The pivot: block 1, comfortably below the flip. `build_chain` puts one
+    // transfer in every block, so the sender's nonce here is 1.
+    let pivot = &chains.scheduled_blocks[0];
+    let abandoned = &chains.scheduled_blocks[1];
+    assert_eq!(pivot.header.number, 1);
+    assert!(
+        abandoned.header.timestamp < chains.activation,
+        "still pre-flip"
+    );
+    assert_eq!(mpt_nonce(abandoned), 2, "the chain being abandoned");
+
+    // Fork: a competing block 2 at a different (still pre-flip) timestamp,
+    // carrying no transaction, so its state is distinguishable from the block it
+    // replaces by the sender's nonce alone.
+    let forked_pre_flip = build_block_at(
+        &store,
+        &blockchain,
+        &pivot.header,
+        pivot.header.timestamp + BLOCK_TIME / 2,
+    )
+    .await;
+    assert!(
+        forked_pre_flip.header.timestamp < chains.activation,
+        "the fork's second block must still commit an MPT root"
+    );
+    assert_ne!(forked_pre_flip.hash(), abandoned.hash());
+    blockchain
+        .add_block(forked_pre_flip.clone())
+        .expect("the forked pre-flip block must import");
+
+    // The MPT re-advanced onto the fork. `has_state_root` is the strong form:
+    // the MPT's root node hashes to exactly what this header committed, so the
+    // trie holds this branch's state and not the abandoned one's.
+    assert!(
+        store
+            .has_state_root(forked_pre_flip.header.state_root)
+            .expect("root check"),
+        "a pre-flip header on the new branch must address a live MPT"
+    );
+    assert_eq!(
+        mpt_nonce(&forked_pre_flip),
+        1,
+        "the fork carries no transaction, so the MPT must follow the fork rather \
+         than stay on the abandoned block's state"
+    );
+
+    // Now flip the fork too, with a transaction so the post-flip state is
+    // unmistakably different from the pre-flip one it must freeze at.
+    blockchain
+        .add_transaction_to_pool(
+            transfer_tx(chain_id, 1, &LocalSigner::new(test_secret_key()).into()).await,
+        )
+        .await
+        .expect("tx should enter pool");
+    let forked_post_flip = build_block_at(
+        &store,
+        &blockchain,
+        &forked_pre_flip.header,
+        chains.activation,
+    )
+    .await;
+    assert!(
+        forked_post_flip.header.timestamp >= chains.activation,
+        "the fork's third block is past the activation"
+    );
+    blockchain
+        .add_block(forked_post_flip.clone())
+        .expect("the forked post-flip block must import");
+    assert_eq!(
+        forked_post_flip.header.state_root,
+        binary_root(&store, &forked_post_flip),
+        "so it commits a binary root, recorded on import"
+    );
+
+    assert!(
+        !store
+            .has_state_root(forked_post_flip.header.state_root)
+            .expect("root check"),
+        "an active header's root is a binary root"
+    );
+    assert_eq!(
+        mpt_nonce(&forked_post_flip),
+        1,
+        "the MPT freezes again on the new branch, at *its* last pre-flip block"
+    );
+
+    // The freeze is the MPT's alone: the binary trie kept advancing, and the
+    // reorged chain answers out of it. Read through the real RPC entry points,
+    // which pick a trie per header, so this covers both sides of the boundary at
+    // once: block 2 out of the re-advanced MPT, block 3 out of the binary trie.
+    make_canonical(
+        &store,
+        &[
+            pivot.clone(),
+            forked_pre_flip.clone(),
+            forked_post_flip.clone(),
+        ],
+    )
+    .await;
+    assert_eq!(
+        state_reads(&store, forked_pre_flip.header.number, sender, &[])
+            .await
+            .nonce,
+        1,
+        "the pre-flip block on the new branch reads out of the MPT"
+    );
+    assert_eq!(
+        state_reads(&store, forked_post_flip.header.number, sender, &[])
+            .await
+            .nonce,
+        2,
+        "the post-flip block reads out of the binary trie, which did advance"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// D10.2 The freeze reaches disk, and it reaches the journal — both without any
+//      special-casing, because both are driven by the same node set.
+//
+// The two tests above read the MPT through the layer cache, where "frozen" and
+// "advancing but unaddressable" could in principle look alike. These go to the
+// bottom of the stack: flush every layer, then throw the cache away, and ask
+// what is actually in the column families.
+//
+// The mechanism worth naming, since it is why neither of these needed code: a
+// post-flip block still stages a diff layer, because layers are keyed by
+// *header* state roots and a post-flip header's root moves every block. That
+// layer simply carries an empty MPT node set. `commit_to_disk` iterates
+// `layer.nodes` for both the table writes and the reverse-diff buckets it
+// journals, so an empty set writes nothing and journals nothing, in every one of
+// the four MPT sections at once.
+// ---------------------------------------------------------------------------
+
+/// A staged chain past the flip, flushed to disk with the layer cache dropped,
+/// so every question below is answered by the column families alone.
+async fn flushed_chain_past_the_flip() -> StagedChain {
+    let chain = build_staged_chain(FLIP_BLOCK + BLOCKS_PAST_THE_FLIP).await;
+    make_canonical(&chain.store, &chain.blocks).await;
+    flush_every_layer(&chain.store, chain.blocks.last().unwrap().header.state_root).await;
+    chain
+}
+
+#[tokio::test]
+async fn the_frozen_mpt_on_disk_is_exactly_the_last_pre_flip_state() {
+    let chain = flushed_chain_past_the_flip().await;
+    let head = chain.blocks.last().unwrap();
+    let last_pre_flip = &chain.blocks[(FLIP_BLOCK - 2) as usize];
+    assert!(last_pre_flip.header.timestamp < chain.activation);
+    assert!(head.header.timestamp >= chain.activation);
+
+    // No layers left: `has_state_root` now reads the root node out of
+    // `ACCOUNT_TRIE_NODES` and keccaks it, so it is a statement about disk.
+    chain.store.drop_trie_layers_for_test().unwrap();
+
+    assert!(
+        chain
+            .store
+            .has_state_root(last_pre_flip.header.state_root)
+            .expect("root check"),
+        "the on-disk MPT must hash to exactly the root the last MPT-committing header named"
+    );
+    assert!(
+        !chain
+            .store
+            .has_state_root(head.header.state_root)
+            .expect("root check"),
+        "and the head's root is a binary root, which the MPT never held"
+    );
+}
+
+#[tokio::test]
+async fn post_flip_journal_entries_carry_no_mpt_sections() {
+    let chain = flushed_chain_past_the_flip().await;
+
+    let (mut pre_flip_seen, mut post_flip_seen) = (0u64, 0u64);
+    for block in &chain.blocks {
+        let entry = chain
+            .store
+            .state_history_entry_for_test(block.header.number)
+            .expect("journal read")
+            .unwrap_or_else(|| {
+                panic!(
+                    "block {} must have been journaled by the flush",
+                    block.header.number
+                )
+            });
+
+        if block.header.timestamp < chain.activation {
+            pre_flip_seen += 1;
+            assert!(
+                !entry.account_trie_diff.is_empty(),
+                "block {}: a pre-flip commit overwrites account-trie nodes, so it journals them",
+                block.header.number
+            );
+        } else {
+            post_flip_seen += 1;
+            // The four MPT sections, all empty, none of them special-cased.
+            assert!(
+                entry.account_trie_diff.is_empty()
+                    && entry.storage_trie_diff.is_empty()
+                    && entry.account_flat_diff.is_empty()
+                    && entry.storage_flat_diff.is_empty(),
+                "block {}: a post-flip commit changes nothing in the MPT, so it has nothing to \
+                 reverse (account_trie={}, storage_trie={}, account_flat={}, storage_flat={})",
+                block.header.number,
+                entry.account_trie_diff.len(),
+                entry.storage_trie_diff.len(),
+                entry.account_flat_diff.len(),
+                entry.storage_flat_diff.len(),
+            );
+            // ...but the entry is not vacuously empty: the binary trie moved,
+            // and its reverse diff is what a deep reorg unwinds with.
+            assert!(
+                !entry.binary_trie_diff.is_empty(),
+                "block {}: the binary trie did advance, so its section must be populated",
+                block.header.number
+            );
+        }
+    }
+    assert_eq!(pre_flip_seen, FLIP_BLOCK - 1, "blocks below the flip");
+    assert_eq!(
+        post_flip_seen,
+        BLOCKS_PAST_THE_FLIP + 1,
+        "the flip block and everything above it"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// D10.3 An account created past the flip never enters the frozen MPT — and its
+//       code is still stored.
+//
+// Freezing the trie also let both importers stop *computing* the diff
+// (`Blockchain::frozen_mpt_updates_list` for `add_block`,
+// `drain_updates_without_merkleizing` for the pipelined path). A contract
+// deployment is the sharpest probe of that pair, because it is the one update
+// shape that touches three different stores at once: a brand-new account, its
+// storage root, and a bytecode blob.
+//
+// The freeze-owned assertion is the negative one: the created account must be
+// absent from the MPT. Every account `build_chain` touches otherwise already
+// exists in the genesis alloc, so "the MPT did not move" is only ever visible
+// as an unchanged value; a CREATE makes it visible as an *absence*, which no
+// stale read can imitate.
+//
+// The bytecode assertion is deliberately labelled as what it is: a real
+// end-to-end property, but **not** an isolation test of the skip. Both importers
+// keep `code_updates` out of the skip on purpose, yet dropping them would not be
+// observable here, because `Store::advance_binary_trie_for_block` calls
+// `write_account_codes` independently on every scheduled chain. The redundancy
+// is the reason the assertion cannot fail, not an oversight — and it is why the
+// skip keeps the codes anyway rather than relying on the binary path to carry
+// them.
+// ---------------------------------------------------------------------------
+
+/// Deploy 5 bytes of runtime with a 12-byte `CODECOPY`/`RETURN` prologue. The
+/// runtime itself is never executed; all that matters is that it is a
+/// distinctive blob whose hash the test can look up directly.
+fn deployed_runtime() -> Bytes {
+    Bytes::from_static(&[0x60, 0x01, 0x60, 0x01, 0x55])
+}
+
+async fn deploy_tx(chain_id: u64, nonce: u64, signer: &Signer) -> Transaction {
+    let runtime = deployed_runtime();
+    let mut init = vec![
+        0x60,
+        runtime.len() as u8, // PUSH1 len
+        0x60,
+        0x0c, // PUSH1 12 — offset of the runtime within this init code
+        0x60,
+        0x00, // PUSH1 0
+        0x39, // CODECOPY
+        0x60,
+        runtime.len() as u8, // PUSH1 len
+        0x60,
+        0x00, // PUSH1 0
+        0xf3, // RETURN
+    ];
+    init.extend_from_slice(&runtime);
+
+    let mut tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+        chain_id,
+        nonce,
+        max_priority_fee_per_gas: 1,
+        max_fee_per_gas: TEST_MAX_FEE_PER_GAS,
+        gas_limit: TEST_GAS_LIMIT,
+        to: TxKind::Create,
+        value: U256::zero(),
+        data: Bytes::from(init),
+        ..Default::default()
+    });
+    tx.sign_inplace(signer).await.unwrap();
+    tx
+}
+
+#[tokio::test]
+async fn an_account_created_past_the_flip_never_enters_the_frozen_mpt() {
+    // Both importers grew their own skip, with their own `removed` handling, so
+    // a regression in one is invisible in the other.
+    for pipelined in [false, true] {
+        let chains = build_boundary_chains(FLIP_BLOCK).await;
+        let store = chains.scheduled_store.clone();
+        let blockchain = Blockchain::default_with_store(store.clone());
+        let head = chains.scheduled_blocks.last().unwrap();
+        assert!(
+            head.header.timestamp >= chains.activation,
+            "the chain is already past the flip, so the next block is too"
+        );
+
+        // `build_chain` sent one transfer per block, so this is the sender's next
+        // nonce and therefore the address the CREATE will land on.
+        let sender = sender_from_key(&test_secret_key());
+        let deploy_nonce = FLIP_BLOCK;
+        let created = calculate_create_address(sender, deploy_nonce);
+        let runtime_hash = keccak(deployed_runtime().as_ref());
+
+        assert!(
+            mpt_account_at(&store, head, created).is_none(),
+            "guard against a vacuous pass: the CREATE address is absent before the deploy"
+        );
+
+        let signer: Signer = LocalSigner::new(test_secret_key()).into();
+        blockchain
+            .add_transaction_to_pool(
+                deploy_tx(
+                    chains.scheduled_genesis.config.chain_id,
+                    deploy_nonce,
+                    &signer,
+                )
+                .await,
+            )
+            .await
+            .expect("deploy tx should enter pool");
+        let block = build_block(&store, &blockchain, &head.header).await;
+        assert!(block.header.timestamp >= chains.activation);
+        assert_eq!(
+            block.body.transactions.len(),
+            1,
+            "the deploy must have made it into the payload, or nothing below is tested"
+        );
+
+        if pipelined {
+            blockchain
+                .add_block_pipeline(block.clone(), None)
+                .expect("pipelined import past the flip");
+        } else {
+            blockchain
+                .add_block(block.clone())
+                .expect("serial import past the flip");
+        }
+
+        // The deploy really happened: the binary trie — which is what this
+        // header's root names — has the account, with the deployed code hash.
+        let binary_db = StoreVmDatabase::new(store.clone(), block.header.clone())
+            .expect("a post-flip header must open a readable state");
+        let created_state = binary_db
+            .get_account_state(created)
+            .expect("binary account read")
+            .unwrap_or_else(|| panic!("pipelined={pipelined}: the CREATE must have landed"));
+        assert_eq!(
+            created_state.code_hash, runtime_hash,
+            "pipelined={pipelined}: the created account carries the deployed code hash"
+        );
+
+        // The freeze: that account never reached the MPT. Block-addressed, so
+        // this is what the trie holds rather than what it will admit to holding.
+        assert!(
+            mpt_account_at(&store, &block, created).is_none(),
+            "pipelined={pipelined}: an account created past the flip must not enter the \
+             frozen MPT"
+        );
+
+        // End-to-end, and redundantly guaranteed — see the section comment.
+        assert_eq!(
+            store
+                .get_account_code(runtime_hash)
+                .expect("code read")
+                .map(|code| Bytes::copy_from_slice(code.code())),
+            Some(deployed_runtime()),
+            "pipelined={pipelined}: the deployed bytecode is retrievable by hash"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// D10.4 The freeze lives at the choke point, not only at the two importers.
+//
+// D10.1-3 drive the two block importers, both of which now also skip *computing*
+// the MPT diff. That makes them redundant with the freeze in `store_block_inner`
+// — either alone would keep the MPT still — so neither of them can show that the
+// freeze at the choke point is load-bearing.
+//
+// It is, because `store_block_inner` builds the only non-test `UpdateBatch` in
+// the tree and other producers reach it with a *fully merkleized* list and no
+// skip of their own: the L2 sequencer's block producer and L1 committer
+// (`apply_account_updates_batch` then `store_block`), and witness regeneration
+// (`apply_account_updates_from_trie_with_witness` then `store_block`). This
+// drives that shape directly — merkleize a post-flip block against its parent,
+// hand the result to `store_block`, and require the MPT not to move.
+//
+// (Witness regeneration cannot actually be driven past the flip today: it opens
+// the first block's parent state at `parent_header.state_root`, which is a
+// binary root, and fails with `RootNotFound` before it reaches the store. That
+// is a pre-existing limitation of MPT-shaped witnesses at a binary-root header —
+// the same reason `eth_getProof` refuses post-flip — and not something the
+// freeze introduced or is required to fix. `store_block` is exercised here
+// directly rather than through it.)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn store_block_drops_a_post_flip_mpt_diff_even_when_its_caller_merkleized_one() {
+    let chains = build_boundary_chains(FLIP_BLOCK + BLOCKS_PAST_THE_FLIP).await;
+    let store = chains.scheduled_store.clone();
+    let blockchain = Blockchain::default_with_store(store.clone());
+    let head = chains.scheduled_blocks.last().unwrap();
+    let sender = sender_from_key(&test_secret_key());
+    assert!(head.header.timestamp >= chains.activation);
+
+    let frozen_at = mpt_account_at(&store, head, sender).expect("the sender is in the alloc");
+    assert_eq!(
+        frozen_at.nonce,
+        FLIP_BLOCK - 1,
+        "precondition: the MPT is frozen at the last pre-flip block"
+    );
+
+    // A block the store has never seen, so `store_block` really does install a
+    // fresh diff layer for it. (Re-storing an *imported* block proves nothing:
+    // `TrieLayerCache::put_batch_with_binary` refuses a state root it already
+    // holds, so the whole update is discarded before the freeze is consulted.)
+    //
+    // It must also carry a transfer. An empty block only touches the system
+    // contracts and the coinbase, which would leave the sender untouched in the
+    // merkleized diff and make this whole test pass whether or not the freeze
+    // fires — the fixture hiding the very thing it is meant to expose.
+    blockchain
+        .add_transaction_to_pool(
+            transfer_tx(
+                chains.scheduled_genesis.config.chain_id,
+                FLIP_BLOCK + BLOCKS_PAST_THE_FLIP,
+                &LocalSigner::new(test_secret_key()).into(),
+            )
+            .await,
+        )
+        .await
+        .expect("tx should enter pool");
+    let sibling = build_block_at(
+        &store,
+        &blockchain,
+        &head.header,
+        head.header.timestamp + BLOCK_TIME,
+    )
+    .await;
+    assert!(sibling.header.timestamp >= chains.activation);
+    assert_eq!(
+        sibling.body.transactions.len(),
+        1,
+        "the transfer must be in the block, or the sender is never touched"
+    );
+
+    // Record its binary root the way an importer would, so the header can be
+    // validated on the `account_updates: None` arm — the arm the L2 producer,
+    // the L1 committer and witness regeneration all take.
+    let updates = account_updates_for(&store, std::slice::from_ref(&sibling))
+        .pop()
+        .expect("one block, one update set");
+    let parent_binary = store
+        .get_binary_trie_root(head.hash())
+        .expect("parent binary root read")
+        .expect("the parent records one");
+    let binary_root = store
+        .compute_binary_trie_root(head.hash(), parent_binary, &updates)
+        .expect("binary root computation");
+    assert_eq!(
+        binary_root, sibling.header.state_root,
+        "the payload committed the binary root, so this is the one to record"
+    );
+    store
+        .set_binary_trie_root(sibling.hash(), binary_root)
+        .expect("record binary root");
+
+    // Merkleize it against its parent, exactly as those callers do. This
+    // succeeds despite the parent's root being a binary root, because MPT nodes
+    // are path-keyed: it resumes from the frozen trie and produces a real diff.
+    let merkleized = store
+        .apply_account_updates_batch(sibling.header.parent_hash, &updates)
+        .expect("merkleization against the frozen MPT")
+        .expect("the parent's state is reachable");
+    assert!(
+        !merkleized.state_updates.is_empty(),
+        "guard against a vacuous pass: the caller really did produce an MPT diff for \
+         `store_block` to drop"
+    );
+
+    blockchain
+        .store_block(
+            sibling.clone(),
+            merkleized,
+            BlockExecutionResult {
+                receipts: vec![],
+                requests: vec![],
+                block_gas_used: sibling.header.gas_used,
+                tx_gas_breakdowns: Vec::new(),
+            },
+        )
+        .expect("storing a post-flip block through the choke point must succeed");
+    store.wait_for_persistence_idle().await.expect("idle");
+
+    let after = mpt_account_at(&store, &sibling, sender).expect("the sender is in the alloc");
+    assert_eq!(
+        (after.nonce, after.balance, after.storage_root),
+        (frozen_at.nonce, frozen_at.balance, frozen_at.storage_root),
+        "the freeze must drop the diff its caller handed it (a thawed MPT would read {})",
+        FLIP_BLOCK + BLOCKS_PAST_THE_FLIP + 1
     );
 }
 
@@ -3980,32 +4592,44 @@ async fn a_node_at_a_known_target_is_reported_synced() {
 }
 
 // ===========================================================================
-// Phase D5 — the MPT on a node that never had one.
+// Phase D5 — the MPT on a node that never had one, and why it needs no
+// provenance marker.
 //
-// `store_block_inner` keeps merkleizing into the MPT after the flip; D3.5
-// above pins that on a node which executed every block the MPT stays
-// *correct*, just unaddressable by header root. A `pbtsnap/1` snap-sync
-// client lands somewhere no full-sync node is ever in: it holds binary-trie
-// state and `ACCOUNT_CODES` for a post-flip pivot and executed none of the
-// blocks beneath it, so its MPT never advanced past the genesis alloc that
-// `add_initial_state` writes at startup.
+// A `pbtsnap/1` snap-sync client lands somewhere no full-sync node is ever in:
+// it holds binary-trie state and `ACCOUNT_CODES` for a post-flip pivot and
+// executed none of the blocks beneath it, so its MPT never advanced past the
+// genesis alloc that `add_initial_state` writes at startup.
 //
-// The snap plan predicts that importing on such a pivot merely computes a
-// meaningless MPT root nobody reads. These tests establish that the outcome
-// is that, but not for the reason the prediction assumes, and the difference
-// is the part worth pinning: MPT nodes are keyed by **path**, not by hash
-// (`BackendTrieDB`, `TrieWrapper::get`), so opening the state trie at a root
-// the store does not hold neither fails nor yields an empty trie — it reads
-// whatever node sits at the root path, which on a snap-landed node is the
-// *genesis* root node. Merkleization therefore succeeds by silently
-// resuming from genesis state, and the root it commits is a hybrid of
-// genesis and the blocks imported since.
+// **What this phase originally established, and why it mattered.** When
+// `store_block_inner` still merkleized past the flip, importing on such a pivot
+// produced a *fabricated* MPT rather than an error. MPT nodes are keyed by
+// **path**, not by hash (`BackendTrieDB`, `TrieWrapper::get`), so opening the
+// state trie at a root the store does not hold neither fails nor yields an empty
+// trie — it reads whatever node sits at the root path, which on a snap-landed
+// node is the *genesis* root node. Merkleization therefore succeeded by silently
+// resuming from genesis state, and committed a hybrid of the genesis alloc and
+// the blocks imported since. (Had the read been hash-keyed it would have failed
+// with `TrieError::InconsistentTree`; `Trie::get` and `Trie::insert` do raise
+// `RootNotFound`, but only when the root path is *empty*, which ethrex's always-
+// written genesis alloc rules out.)
 //
-// Had the read been hash-keyed, the same import would have failed with
-// `TrieError::InconsistentTree` instead: `Trie::get` and `Trie::insert` do
-// raise `RootNotFound` when the root path is *empty*, which is the shape a
-// store with no genesis alloc would be in. Ethrex always writes a genesis
-// alloc, so the silent-resume branch is the one a real snap node takes.
+// That is what made a *conditional* skip need a provenance marker. "Skip
+// merkleization when the MPT is not meaningful" has to decide what "meaningful"
+// means, and a snap-landed node and a full-sync node are indistinguishable by
+// inspecting the trie: both hold a well-formed MPT rooted at a real node, and
+// nothing on disk records which blocks built it.
+//
+// **Phase D10's unconditional freeze removes the question rather than answering
+// it.** Past the flip nothing writes the MPT, on either kind of node. The
+// snap-landed node's MPT stays at the genesis alloc; the full-sync node's stays
+// at its last pre-flip block. The two still *contain* different things — they
+// always did, and no marker could have changed that — but their *behaviour* is
+// now identical, and behaviour is all a skip decision needed. There is nothing
+// left for a marker to select between, so none is introduced.
+//
+// The tests below are the ones that established the fabrication; they are kept,
+// inverted where the freeze reversed them, because the fabrication is precisely
+// what must not come back.
 // ===========================================================================
 
 /// Re-execute `blocks` against `donor` — which holds every trie — and return
@@ -4178,8 +4802,9 @@ async fn a_snap_landed_store_holds_the_pivots_binary_state_over_an_empty_mpt() {
     );
     assert_eq!(
         donor.nonce,
-        FLIP_BLOCK + BLOCKS_PAST_THE_FLIP,
-        "guard against a vacuous pass: the donor really did advance its MPT this far"
+        FLIP_BLOCK - 1,
+        "guard against a vacuous pass: the donor really did advance its MPT, up to the \
+         last pre-flip block, where Phase D10 freezes it"
     );
     assert_ne!(
         landed.balance, donor.balance,
@@ -4257,63 +4882,117 @@ async fn importing_on_a_snap_landed_pivot_succeeds_and_still_validates_the_binar
 }
 
 // ---------------------------------------------------------------------------
-// D5.3 What the MPT it maintains actually contains.
+// D5.3 What the MPT it maintains actually contains — nothing new.
 //
-// Not an empty trie and not the right one: a hybrid of the genesis alloc and
-// the blocks imported since the pivot. Touched accounts get correct absolute
-// values (the updates come from execution, which reads the binary trie), while
-// everything the pre-pivot history changed and this block did not stays at its
-// alloc value. This is the assertion that fails the moment post-flip MPT
-// maintenance is skipped, which is why it is the mutation target for the
-// design change D5 exists to inform.
+// **This test is the inverse of the one it replaces.** Before Phase D10 it
+// asserted that a snap-landed node's post-flip import *fabricated* MPT state: a
+// hybrid of the genesis alloc and the blocks imported since the pivot, with
+// touched accounts landing at their true absolute values (execution reads the
+// binary trie, so the updates are correct) over an untouched genesis background.
+// It was named `the_mpt_a_snap_landed_node_maintains_is_a_fabrication_over_genesis_state`
+// and its central assertion was documented as "the line that dies if
+// `store_block_inner` stops merkleizing past the flip".
+//
+// It stopped. The freeze is unconditional, so a post-flip import writes no MPT
+// at all and the fabrication cannot occur — which is exactly why the test is
+// inverted rather than deleted: the fabrication reappearing is the regression
+// this phase exists to catch.
+//
+// It is also the concrete form of the provenance-marker argument in the phase
+// header. Both nodes are checked here, and the *behaviour* is identical — no
+// MPT write on either — even though the *contents* differ by their whole
+// histories. A marker distinguishing them would have nothing to select.
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn the_mpt_a_snap_landed_node_maintains_is_a_fabrication_over_genesis_state() {
+async fn a_snap_landed_node_writes_no_mpt_past_the_flip_so_it_cannot_fabricate_one() {
     let SnapLanded {
         chains,
         store,
+        pivot,
         next,
-        ..
     } = snap_landed_at_post_flip_pivot().await;
     let sender = sender_from_key(&test_secret_key());
+    let beacon = beacon_roots_contract();
 
+    // Snapshot both MPTs at the pivot, before the shared block is imported —
+    // addressed at the pivot rather than at `next`, which no store holds yet.
+    let landed_before = mpt_account_at(&store, &pivot, sender).expect("the sender is in the alloc");
+    let landed_beacon_before =
+        mpt_account_at(&store, &pivot, beacon).expect("the beacon-roots contract is in the alloc");
+    let donor_before = mpt_account_at(&chains.scheduled_store, &pivot, sender)
+        .expect("the sender is in the alloc");
+
+    // The fixture must actually be the condition under investigation: the two
+    // MPTs hold different things, so "unchanged" below is a real claim about
+    // each rather than an accident of them being the same trie.
+    assert_eq!(
+        landed_before.nonce, 0,
+        "the snap-landed MPT is still the genesis alloc"
+    );
+    assert_eq!(
+        donor_before.nonce,
+        FLIP_BLOCK - 1,
+        "the donor's MPT is its last pre-flip block"
+    );
+
+    // Both nodes import the same post-flip block.
     Blockchain::default_with_store(store.clone())
         .add_block(next.clone())
         .expect("import");
-
-    // The donor imports the same block, so the two MPTs differ only in the
-    // history beneath them.
     Blockchain::default_with_store(chains.scheduled_store.clone())
         .add_block(next.clone())
         .expect("donor import");
 
-    // The MPT did advance — it is not frozen and not empty. This is the line
-    // that dies if `store_block_inner` stops merkleizing past the flip.
-    let landed =
-        mpt_account_at(&store, &next, sender).expect("the sender is in the fabricated MPT");
+    // Neither MPT moved. On the snap-landed node this is the fabrication not
+    // happening: the sender's absolute post-state nonce would have been written
+    // straight over the alloc value, and was not.
+    let landed_after = mpt_account_at(&store, &next, sender).expect("the sender is in the alloc");
     assert_eq!(
-        landed.nonce,
-        FLIP_BLOCK + BLOCKS_PAST_THE_FLIP + 1,
-        "the imported block's own updates carry absolute post-state values, so a \
-         touched account lands at its true nonce even on a fabricated MPT"
+        landed_after.nonce,
+        0,
+        "the freeze wrote nothing, so the snap-landed MPT is still the genesis alloc \
+         (a fabricated one would read {})",
+        FLIP_BLOCK + BLOCKS_PAST_THE_FLIP + 1
+    );
+    assert_eq!(
+        (landed_after.balance, landed_after.storage_root),
+        (landed_before.balance, landed_before.storage_root),
+        "and nothing else about the account moved either"
     );
 
-    // But it is a fabrication: the beacon-roots contract's storage ring has
-    // seen exactly one block here and the whole chain on the donor, so the two
-    // storage roots cannot agree.
-    let landed_beacon = mpt_account_at(&store, &next, beacon_roots_contract())
-        .expect("the beacon-roots contract is in the alloc");
-    let donor_beacon = mpt_account_at(&chains.scheduled_store, &next, beacon_roots_contract())
-        .expect("the beacon-roots contract is in the alloc");
-    assert_ne!(
-        landed_beacon.storage_root, donor_beacon.storage_root,
-        "a snap-landed node's MPT must not match the one a node with real ancestry holds — \
-         if these agree the fixture is not exercising a missing history"
+    // The beacon-roots contract is the sharpest probe available: its storage
+    // ring is written by the system call in *every* block, so a single
+    // fabricating import is guaranteed to disturb its storage root.
+    let landed_beacon_after =
+        mpt_account_at(&store, &next, beacon).expect("the beacon-roots contract is in the alloc");
+    assert_eq!(
+        landed_beacon_after.storage_root, landed_beacon_before.storage_root,
+        "the per-block beacon-roots write did not reach the MPT"
+    );
+
+    // The donor — real MPT ancestry, same block — behaves identically. That
+    // sameness is the whole provenance-marker conclusion.
+    let donor_after =
+        mpt_account_at(&chains.scheduled_store, &next, sender).expect("the sender is in the alloc");
+    assert_eq!(
+        (
+            donor_after.nonce,
+            donor_after.balance,
+            donor_after.storage_root
+        ),
+        (
+            donor_before.nonce,
+            donor_before.balance,
+            donor_before.storage_root
+        ),
+        "a node with full MPT ancestry freezes on exactly the same rule, so the two \
+         are indistinguishable in behaviour and no provenance marker is needed"
     );
     assert_ne!(
-        landed_beacon.storage_root, *EMPTY_TRIE_HASH,
-        "guard against a vacuous pass: the fabricated MPT really did write storage"
+        landed_after.nonce, donor_after.nonce,
+        "guard against a vacuous pass: the two MPTs really do hold different states, \
+         so 'both unchanged' is two claims and not one"
     );
 }
 // Phase E — the single-version trie parked *past* the root it is asked to

@@ -4938,6 +4938,29 @@ impl Store {
         Ok(())
     }
 
+    /// Test-only: the decoded `STATE_HISTORY` entry at `block_number`, or
+    /// `None` if that block was never journaled (batch-mode import, or a block
+    /// whose layer has not been committed yet).
+    ///
+    /// The counterpart of [`Self::put_state_history_entry_for_test`], for tests
+    /// that need to inspect *which sections* a real commit produced rather than
+    /// merely that an entry exists — the EIP-8297 freeze, for instance, is
+    /// visible here as post-flip entries whose four MPT sections are empty while
+    /// their binary sections are not.
+    #[doc(hidden)]
+    pub fn state_history_entry_for_test(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<JournalEntry>, StoreError> {
+        let read = self.backend.begin_read()?;
+        let Some(bytes) = read.get(STATE_HISTORY, &block_number.to_be_bytes())? else {
+            return Ok(None);
+        };
+        JournalEntry::decode(&bytes)
+            .map(Some)
+            .map_err(|err| StoreError::Custom(format!("journal decode at {block_number}: {err}")))
+    }
+
     /// Atomically prepares the store for a deep-reorg apply pass.
     ///
     /// Builds an [`Overlay`] from journal entries in `[to_block, from_block]`

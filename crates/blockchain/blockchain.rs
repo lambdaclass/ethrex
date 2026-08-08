@@ -679,6 +679,14 @@ impl Blockchain {
         // at activation.
         let collect_updates = collect_witness || chain_config.binary_tree_scheduled();
 
+        // The EIP-8297 freeze, asked of *this* header exactly as
+        // `store_block_inner` asks it: from the flip onward the block's MPT diff
+        // is dropped rather than staged, so computing it is pure waste. Note
+        // this is the per-header question, not `binary_tree_scheduled()` — a
+        // pre-flip block on a scheduled chain still merkleizes, because its own
+        // header commits the root that comes out.
+        let merkleize_mpt = !chain_config.is_binary_tree_active(block.header.timestamp);
+
         // Validate the block pre-execution
         validate_block_pre_execution(block, parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
         self.validate_l1_transaction_types(block)?;
@@ -1018,6 +1026,7 @@ impl Blockchain {
                                 queue_length_ref,
                                 max_queue_length_ref,
                                 collect_updates,
+                                merkleize_mpt,
                             )?,
                         };
                         let merkle_end_instant = Instant::now();
@@ -1095,6 +1104,12 @@ impl Blockchain {
     /// returned. Witness generation and EIP-8297 shadow tracking are the two
     /// consumers; neither can be served from the `AccountUpdatesList`, which is
     /// already MPT-shaped.
+    ///
+    /// `merkleize_mpt` is false from the EIP-8297 flip onward, where the MPT is
+    /// frozen (see [`Self::store_block_inner`]) and the sixteen shard workers
+    /// would be computing a root that is dropped on the floor. The stream is
+    /// still consumed to completion — see
+    /// [`Self::drain_updates_without_merkleizing`] for why that is not optional.
     fn handle_merkleization(
         &self,
         rx: Receiver<Vec<AccountUpdate>>,
@@ -1102,7 +1117,16 @@ impl Blockchain {
         queue_length: &AtomicUsize,
         max_queue_length: &mut usize,
         collect_updates: bool,
+        merkleize_mpt: bool,
     ) -> Result<(AccountUpdatesList, Option<Vec<AccountUpdate>>), StoreError> {
+        if !merkleize_mpt {
+            return Ok(Self::drain_updates_without_merkleizing(
+                rx,
+                queue_length,
+                max_queue_length,
+                collect_updates,
+            ));
+        }
         let parent_state_root = parent_header.state_root;
 
         // Create 16 worker channels (crossbeam for select! support)
@@ -1306,6 +1330,82 @@ impl Blockchain {
         }
 
         result
+    }
+
+    /// [`Self::handle_merkleization`] with the MPT half removed: from the
+    /// EIP-8297 flip onward the MPT is frozen, so the sixteen shard workers have
+    /// nothing to produce that anything will read.
+    ///
+    /// **The stream must still be drained, and that is not a detail.** The
+    /// executor streams per-transaction updates down `rx` throughout execution;
+    /// dropping the receiver early makes its next `send` fail with "sending on a
+    /// closed channel", which surfaces as a spurious error racing whatever the
+    /// block's real outcome was. The same hazard is documented on the BAL path,
+    /// which drains for the same reason. Consuming `rx` to completion also keeps
+    /// the queue-depth accounting honest.
+    ///
+    /// Two things are still harvested from the stream, because they outlive the
+    /// MPT:
+    ///
+    /// - the merged raw `AccountUpdate`s, which are how the *binary* trie
+    ///   advances (`collect_updates` is unconditionally true on a scheduled
+    ///   chain, so past the flip this branch always accumulates);
+    /// - `code_updates`, because bytecode lives in its own content-addressed
+    ///   table shared by both tries and is not frozen with the MPT.
+    ///
+    /// `state_trie_hash` is deliberately `H256::zero()` rather than the parent's
+    /// root or the frozen MPT's. Nothing reads it past the flip — header
+    /// validation and payload building both take their binary-root branches —
+    /// and a zero root makes any future caller that wrongly reaches for it fail
+    /// its `validate_state_root` loudly instead of accepting a plausible-looking
+    /// hash computed over a trie that stopped advancing.
+    fn drain_updates_without_merkleizing(
+        rx: Receiver<Vec<AccountUpdate>>,
+        queue_length: &AtomicUsize,
+        max_queue_length: &mut usize,
+        collect_updates: bool,
+    ) -> (AccountUpdatesList, Option<Vec<AccountUpdate>>) {
+        let mut code_updates: Vec<(H256, Code)> = vec![];
+        let mut accumulator: Option<FxHashMap<Address, AccountUpdate>> =
+            collect_updates.then(FxHashMap::default);
+
+        for updates in rx {
+            let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
+            *max_queue_length = current_length.max(*max_queue_length);
+            if let Some(acc) = &mut accumulator {
+                for update in updates.clone() {
+                    match acc.entry(update.address) {
+                        Entry::Vacant(e) => {
+                            e.insert(update);
+                        }
+                        Entry::Occupied(mut e) => {
+                            e.get_mut().merge(update);
+                        }
+                    }
+                }
+            }
+            // Harvested per streamed message, and gated on `removed` exactly as
+            // the merkleizing path gates it, so the two produce the same list
+            // for the same block.
+            for update in updates {
+                if update.removed {
+                    continue;
+                }
+                if let (Some(info), Some(code)) = (&update.info, update.code) {
+                    code_updates.push((info.code_hash, code));
+                }
+            }
+        }
+
+        (
+            AccountUpdatesList {
+                state_trie_hash: H256::zero(),
+                state_updates: Vec::new(),
+                storage_updates: Vec::new(),
+                code_updates,
+            },
+            accumulator.map(|acc| acc.into_values().collect()),
+        )
     }
 
     /// Validation path synthesizes `BalSynthesisItem`s from the input BAL pre-execution and
@@ -2368,45 +2468,65 @@ impl Blockchain {
             };
         }
 
-        // Task D2 — the MPT keeps advancing after activation. Decided, not
-        // overlooked.
+        // Task D5 — the MPT is **frozen** at the flip. This reverses D2, which
+        // kept it advancing; the reasoning D2 deferred is now settled.
         //
-        // Once the flip has happened, post-activation headers address the binary
-        // trie, so the MPT's only remaining consensus job is serving pre-flip
-        // blocks still inside the retention window (~128 blocks; see
-        // `docs/known-issue-stale-state-root-reads.md`). Past that window nothing
-        // reads it for consensus at all.
+        // From the first block whose header commits a binary root, this block's
+        // MPT diff is dropped and never reaches the store. The MPT stops where
+        // the last MPT-committing header left it and stays there.
         //
-        // The cost of keeping it: post-activation it is dead weight, and freezing
-        // it at the flip would roughly halve steady-state state-write work — every
-        // touched account and slot is currently written into two tries where one
-        // would do.
+        // **Freezing loses nothing, because the MPT is single-version.** Its
+        // node tables are keyed by *path*, not by node hash, so block N+1
+        // overwrites block N's node at the same path: disk holds exactly one
+        // state (the canonical safe-commit root, `head - DB_COMMIT_THRESHOLD`)
+        // plus the in-memory diff layers above it. It can therefore only ever
+        // answer for a bounded, sliding window. Continuing to merkleize past the
+        // flip does not preserve history — it advances a trie past the last root
+        // any header names, computing nodes nothing can address (`has_state_root`
+        // is false for every active header, which is why `StoreVmDatabase` and
+        // the state RPCs resolve through the binary trie instead). Freezing
+        // keeps precisely the state that is still meaningful.
         //
-        // Why it is kept anyway, for now: `eth_getBalance` and every other
-        // state-reading RPC still resolves through the MPT, so freezing it would
-        // have to land together with binary-trie-backed *RPC* reads (D3 moved
-        // execution's reads, not those), and the layer cache and safe-commit-root
-        // machinery would have to tolerate a trie that stops advancing —
-        // `store_block_updates` stages a layer keyed by the new MPT root each
-        // block and the commit gate walks those layers by depth, neither of which
-        // has a meaning for a trie whose root never moves again. That is a bigger
-        // change than the flip itself, and it is not required for the flip to be
-        // correct. Keeping both tries is the conservative choice and costs only
-        // throughput.
+        // It in fact *gains* a read. Today the last pre-flip root scrolls off
+        // the retention window ~128 blocks after the flip and becomes
+        // `MissingStateRoot` forever. Frozen, the commit gate flushes the
+        // pre-flip layers and then has nothing further to write, so disk parks
+        // on the last pre-flip state permanently and that root stays
+        // addressable. Pinned by
+        // `the_mpt_freezes_at_the_flip_and_keeps_serving_the_last_pre_flip_state`.
         //
-        // What "keeps advancing" means past the flip, since it is not obvious:
-        // merkleization opens the parent's state at `parent_header.state_root`,
-        // which is now a binary root, and the trie *layers* are keyed by header
-        // state roots — so the layer chain stays continuous across the boundary
-        // and the MPT goes on holding correct state. It just stops being
-        // addressable by root: `Store::has_state_root` is false for every active
-        // header, which is why execution resolves through the binary trie instead
-        // (`StoreVmDatabase`) and why root-guarded MPT readers fail loudly at a
-        // post-flip block rather than answering from the wrong state. Pinned by
-        // `the_mpt_keeps_advancing_after_the_flip_but_is_no_longer_addressable_by_header_root`.
+        // **The layer chain still spans the boundary**, which is what makes the
+        // freeze free rather than a special case: layers are keyed by *header*
+        // state roots (`Store::apply_updates` keys on `last_block.header.state_root`),
+        // not by MPT roots, so a post-flip block still stages a layer — one
+        // carrying its binary nodes and an empty MPT set. Nothing in the commit
+        // gate, the safe-commit walk or the journal needs to know the MPT stopped:
+        // an empty node set commits to zero writes and journals to empty
+        // account-trie/storage-trie/flat-KV sections, with no special-casing.
+        //
+        // **Reorgs into MPT territory keep working.** Timestamps strictly
+        // increase along every chain (`TimestampNotGreaterThanParent`), so a
+        // branch containing pre-flip headers must diverge *below* the flip
+        // block. Such a reorg pivots below the flip, where the MPT was live and
+        // both the layers and the `STATE_HISTORY` reverse diffs exist; unwinding
+        // lands the MPT at the pivot and the new branch's pre-flip blocks
+        // re-advance it through the `else` arm above. Pinned by
+        // `a_reorg_to_a_pivot_below_the_flip_re_advances_the_frozen_mpt`.
+        //
+        // `code_updates` is deliberately *not* frozen: bytecode is
+        // content-addressed in its own table, shared by both tries, and the
+        // binary trie's code chunks do not replace `ACCOUNT_CODES` reads.
+        let (account_updates, storage_updates) = if binary_tree_active {
+            (Vec::new(), Vec::new())
+        } else {
+            (
+                account_updates_list.state_updates,
+                account_updates_list.storage_updates,
+            )
+        };
         let update_batch = UpdateBatch {
-            account_updates: account_updates_list.state_updates,
-            storage_updates: account_updates_list.storage_updates,
+            account_updates,
+            storage_updates,
             receipts: vec![(block.hash(), execution_result.receipts)],
             blocks: vec![block],
             code_updates: account_updates_list.code_updates,
@@ -2478,16 +2598,55 @@ impl Blockchain {
         )?))
     }
 
+    /// The `AccountUpdatesList` a frozen MPT produces for a block: no state or
+    /// storage diff at all, and only the code deployments, which are *not*
+    /// frozen with it — bytecode lives in its own content-addressed table that
+    /// both tries read.
+    ///
+    /// The serial counterpart of [`Self::drain_updates_without_merkleizing`],
+    /// which see for why `state_trie_hash` is zero rather than any real root.
+    /// The `removed` skip mirrors `Store::apply_account_updates_from_trie_batch`,
+    /// which `continue`s past a removed account before it reaches code
+    /// collection, so the two paths emit the same list for the same block.
+    fn frozen_mpt_updates_list(account_updates: &[AccountUpdate]) -> AccountUpdatesList {
+        let mut code_updates: Vec<(H256, Code)> = vec![];
+        for update in account_updates {
+            if update.removed {
+                continue;
+            }
+            if let (Some(info), Some(code)) = (&update.info, &update.code) {
+                code_updates.push((info.code_hash, code.clone()));
+            }
+        }
+        AccountUpdatesList {
+            state_trie_hash: H256::zero(),
+            state_updates: Vec::new(),
+            storage_updates: Vec::new(),
+            code_updates,
+        }
+    }
+
     pub fn add_block(&self, block: Block) -> Result<(), ChainError> {
         let since = Instant::now();
         let (res, updates) = self.execute_block(&block)?;
         let executed = Instant::now();
 
-        // Apply the account updates over the last block's state and compute the new state root
-        let account_updates_list = self
+        // Apply the account updates over the last block's state and compute the
+        // new state root — unless the EIP-8297 freeze has taken the MPT out of
+        // service for this header, in which case there is no root to compute
+        // and no diff to stage. Same per-header question `store_block_inner`
+        // asks, and the pipelined importer's `merkleize_mpt`.
+        let account_updates_list = if self
             .storage
-            .apply_account_updates_batch(block.header.parent_hash, &updates)?
-            .ok_or(ChainError::ParentStateNotFound)?;
+            .get_chain_config()
+            .is_binary_tree_active(block.header.timestamp)
+        {
+            Self::frozen_mpt_updates_list(&updates)
+        } else {
+            self.storage
+                .apply_account_updates_batch(block.header.parent_hash, &updates)?
+                .ok_or(ChainError::ParentStateNotFound)?
+        };
 
         let (gas_used, gas_limit, block_number, transactions_count) = (
             block.header.gas_used,
