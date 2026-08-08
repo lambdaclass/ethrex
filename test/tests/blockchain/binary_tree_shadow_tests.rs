@@ -39,6 +39,7 @@
 //! No block-hash -> MPT-root registry is involved anywhere.
 
 use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 use std::{fs::File, io::BufReader, path::PathBuf};
 
 use bytes::Bytes;
@@ -53,15 +54,16 @@ use ethrex_common::{
     Address, H160, H256, U256,
     constants::EMPTY_TRIE_HASH,
     types::{
-        AccountState, Block, BlockBody, BlockHeader, DEFAULT_BUILDER_GAS_CEIL, EIP1559Transaction,
-        ELASTICITY_MULTIPLIER, Genesis, GenesisAccount, Transaction, TxKind,
+        AccountState, AccountUpdate, Block, BlockBody, BlockHeader, DEFAULT_BUILDER_GAS_CEIL,
+        EIP1559Transaction, ELASTICITY_MULTIPLIER, Genesis, GenesisAccount, Transaction, TxKind,
     },
     utils::keccak,
 };
+use ethrex_crypto::NativeCrypto;
 use ethrex_l2_rpc::signer::{LocalSigner, Signable, Signer};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::VmDatabase;
+use ethrex_vm::{DynVmDatabase, Evm, VmDatabase};
 use secp256k1::SecretKey;
 use tokio_util::sync::CancellationToken;
 
@@ -3973,5 +3975,343 @@ async fn a_node_at_a_known_target_is_reported_synced() {
     assert!(
         !ethrex_rpc::is_reported_synced(false, canonical_head, &target),
         "an unlatched node is not synced even at the target"
+    );
+}
+
+// ===========================================================================
+// Phase D5 — the MPT on a node that never had one.
+//
+// `store_block_inner` keeps merkleizing into the MPT after the flip; D3.5
+// above pins that on a node which executed every block the MPT stays
+// *correct*, just unaddressable by header root. A `pbtsnap/1` snap-sync
+// client lands somewhere no full-sync node is ever in: it holds binary-trie
+// state and `ACCOUNT_CODES` for a post-flip pivot and executed none of the
+// blocks beneath it, so its MPT never advanced past the genesis alloc that
+// `add_initial_state` writes at startup.
+//
+// The snap plan predicts that importing on such a pivot merely computes a
+// meaningless MPT root nobody reads. These tests establish that the outcome
+// is that, but not for the reason the prediction assumes, and the difference
+// is the part worth pinning: MPT nodes are keyed by **path**, not by hash
+// (`BackendTrieDB`, `TrieWrapper::get`), so opening the state trie at a root
+// the store does not hold neither fails nor yields an empty trie — it reads
+// whatever node sits at the root path, which on a snap-landed node is the
+// *genesis* root node. Merkleization therefore succeeds by silently
+// resuming from genesis state, and the root it commits is a hybrid of
+// genesis and the blocks imported since.
+//
+// Had the read been hash-keyed, the same import would have failed with
+// `TrieError::InconsistentTree` instead: `Trie::get` and `Trie::insert` do
+// raise `RootNotFound` when the root path is *empty*, which is the shape a
+// store with no genesis alloc would be in. Ethrex always writes a genesis
+// alloc, so the silent-resume branch is the one a real snap node takes.
+// ===========================================================================
+
+/// Re-execute `blocks` against `donor` — which holds every trie — and return
+/// the account updates each produced.
+///
+/// This is the whole of what a second store needs to reach the same *binary*
+/// state, and it is deliberately all it gets: nothing here writes an MPT.
+fn account_updates_for(donor: &Store, blocks: &[Block]) -> Vec<Vec<AccountUpdate>> {
+    blocks
+        .iter()
+        .map(|block| {
+            let parent = donor
+                .get_block_header_by_hash(block.header.parent_hash)
+                .expect("parent header read")
+                .expect("parent header present");
+            let vm_db: DynVmDatabase =
+                Box::new(StoreVmDatabase::new(donor.clone(), parent).expect("vm db"));
+            let mut vm = Evm::new_from_db_for_l1(Arc::new(vm_db), Arc::new(NativeCrypto));
+            vm.execute_block(block).expect("re-execution must succeed");
+            vm.get_state_transitions().expect("state transitions")
+        })
+        .collect()
+}
+
+/// A store in the shape `pbtsnap/1`'s landing leaves behind (plan Decision 8):
+/// binary-trie state for the pivot written straight to the backend, bytecode in
+/// `ACCOUNT_CODES`, the ancestry's headers and bodies, canonical pointers — and
+/// an MPT holding nothing but the genesis alloc, because the node executed no
+/// pre-pivot block.
+///
+/// The binary half is reached by replaying account updates rather than by a real
+/// range download, and the writes go through
+/// `apply_account_updates_to_binary_trie_blocking`, which commits nodes to the
+/// backend with no diff layer — the state a landed snapshot is in. That the
+/// result really is the pivot's state is checked against the donor's recorded
+/// root by `a_snap_landed_store_holds_the_pivots_binary_state_over_an_empty_mpt`,
+/// which is the same equality the plan's landing performs against
+/// `pivot_header.state_root`.
+async fn snap_landed_store(chains: &BoundaryChains, pivot: usize) -> Store {
+    let blocks = &chains.scheduled_blocks[..=pivot];
+    let updates = account_updates_for(&chains.scheduled_store, blocks);
+
+    let store = store_from_genesis(chains.scheduled_genesis.clone()).await;
+    let genesis_hash = store
+        .get_block_header(0)
+        .expect("genesis header read")
+        .expect("genesis header present")
+        .hash();
+    let mut root = store
+        .get_binary_trie_root(genesis_hash)
+        .expect("genesis binary root read")
+        .expect("genesis seeds a binary root");
+
+    for (block, block_updates) in blocks.iter().zip(updates.iter()) {
+        root = store
+            .apply_account_updates_to_binary_trie_blocking(root, block_updates)
+            .expect("binary-trie advance");
+        store
+            .set_binary_trie_root(block.hash(), root)
+            .expect("record binary root");
+    }
+
+    store
+        .add_blocks(blocks.to_vec())
+        .await
+        .expect("write the ancestry's headers and bodies");
+    make_canonical(&store, blocks).await;
+    store
+}
+
+/// The account the MPT answers with at `block`, through the same `state_trie`
+/// entry point `apply_account_updates_batch` uses.
+fn mpt_account_at(store: &Store, block: &Block, address: Address) -> Option<AccountState> {
+    let trie = store
+        .state_trie(block.hash())
+        .expect("state trie open")
+        .expect("state trie present");
+    trie.get(keccak(address.as_bytes()).as_bytes())
+        .expect("state trie lookup")
+        .map(|encoded| AccountState::decode(&encoded).expect("decode account state"))
+}
+
+/// The EIP-4788 beacon-roots contract. It is in the fixture's alloc and its
+/// storage is written by the system call in *every* block, so its storage root
+/// is a fingerprint of how much history a trie has actually seen — which is
+/// what separates a fabricated MPT from a real one.
+fn beacon_roots_contract() -> Address {
+    Address::from_slice(&hex::decode("000f3df6d732807ef1319fb7b8bb8522d0beac02").unwrap())
+}
+
+/// A post-flip pivot, a snap-landed store sitting at it, and the next block a
+/// node holding the whole chain would import on top.
+struct SnapLanded {
+    chains: BoundaryChains,
+    store: Store,
+    pivot: Block,
+    next: Block,
+}
+
+async fn snap_landed_at_post_flip_pivot() -> SnapLanded {
+    let chains = build_boundary_chains(FLIP_BLOCK + BLOCKS_PAST_THE_FLIP).await;
+    let pivot_index = chains.scheduled_blocks.len() - 1;
+    let pivot = chains.scheduled_blocks[pivot_index].clone();
+
+    // Built by the donor, which holds every trie, so `next` is a block a real
+    // network would gossip rather than one the node under test produced.
+    let donor_chain = Blockchain::default_with_store(chains.scheduled_store.clone());
+    let signer: Signer = LocalSigner::new(test_secret_key()).into();
+    let tx = transfer_tx(
+        chains.scheduled_genesis.config.chain_id,
+        chains.scheduled_blocks.len() as u64,
+        &signer,
+    )
+    .await;
+    donor_chain
+        .add_transaction_to_pool(tx)
+        .await
+        .expect("tx should enter pool");
+    let next = build_block(&chains.scheduled_store, &donor_chain, &pivot.header).await;
+
+    let store = snap_landed_store(&chains, pivot_index).await;
+    SnapLanded {
+        chains,
+        store,
+        pivot,
+        next,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// D5.1 The fixture really is the condition under investigation.
+//
+// Everything below is worthless if the simulated node either lacks the pivot's
+// binary state or secretly has MPT ancestry, so both halves are asserted
+// before any conclusion is drawn from them.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_snap_landed_store_holds_the_pivots_binary_state_over_an_empty_mpt() {
+    let SnapLanded {
+        chains,
+        store,
+        pivot,
+        ..
+    } = snap_landed_at_post_flip_pivot().await;
+    let sender = sender_from_key(&test_secret_key());
+
+    assert!(
+        pivot.header.timestamp >= chains.activation,
+        "the pivot must be post-flip, which is what Decision 12 requires of one"
+    );
+    assert!(
+        store
+            .has_binary_trie_state(pivot.hash(), pivot.header.state_root)
+            .expect("binary state check"),
+        "the landed store must hold the pivot's binary state by the predicate the \
+         whole plan gates on"
+    );
+
+    // The MPT half: block-addressed reads skip the root guard, so this is the
+    // state merkleization will actually resume from. The donor is at the end
+    // state; the snap-landed node is still at the genesis alloc.
+    let landed = mpt_account_at(&store, &pivot, sender).expect("the funded sender is in the alloc");
+    let donor = mpt_account_at(&chains.scheduled_store, &pivot, sender)
+        .expect("the funded sender is in the alloc");
+
+    assert_eq!(
+        landed.nonce, 0,
+        "a snap-landed node's MPT has seen no block, so the sender is still at its alloc nonce"
+    );
+    assert_eq!(
+        donor.nonce,
+        FLIP_BLOCK + BLOCKS_PAST_THE_FLIP,
+        "guard against a vacuous pass: the donor really did advance its MPT this far"
+    );
+    assert_ne!(
+        landed.balance, donor.balance,
+        "the two MPTs must not coincidentally agree, or nothing below distinguishes them"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// D5.2 Import succeeds, and consensus is unaffected either way.
+//
+// The answer to the plan's open question: post-flip MPT maintenance on a node
+// with no MPT ancestry neither errors nor panics. It cannot, because the MPT
+// read is path-keyed and finds the genesis root node.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn importing_on_a_snap_landed_pivot_succeeds_and_still_validates_the_binary_root() {
+    let SnapLanded {
+        store, next, pivot, ..
+    } = snap_landed_at_post_flip_pivot().await;
+
+    Blockchain::default_with_store(store.clone())
+        .add_block(next.clone())
+        .expect("importing on a snap-landed pivot must succeed, MPT ancestry or not");
+
+    assert_eq!(
+        store
+            .get_binary_trie_root(next.hash())
+            .expect("binary root read"),
+        Some(next.header.state_root),
+        "the header's root is the binary root, and the node reproduced it"
+    );
+    assert!(
+        store
+            .has_state_for_header(next.hash(), &next.header)
+            .expect("state reachability"),
+        "the imported block's state must be reachable, which is what forkchoice asks"
+    );
+
+    // The other half of "consensus is unaffected": a wrong root is still
+    // refused. Without this the test above would also pass on a node that had
+    // stopped checking anything.
+    let mut tampered = next.clone();
+    tampered.header.state_root = H256::repeat_byte(0x99);
+    let err = Blockchain::default_with_store(store.clone())
+        .add_block(tampered.clone())
+        .expect_err("a block whose header commits the wrong binary root must be rejected");
+    assert!(
+        matches!(
+            err,
+            ChainError::InvalidBlock(InvalidBlockError::StateRootMismatch)
+        ),
+        "expected a state-root mismatch, got: {err:?}"
+    );
+    assert_eq!(
+        store
+            .get_binary_trie_root(tampered.hash())
+            .expect("binary root read"),
+        None,
+        "a rejected block must leave no recorded binary root behind"
+    );
+
+    // And the MPT root the import computed addresses nothing: the header names
+    // the binary root, and the MPT does not hold it.
+    assert!(
+        !store
+            .has_state_root(next.header.state_root)
+            .expect("root check"),
+        "an active header's root is a binary root, so no MPT reader can resolve through it"
+    );
+    assert!(
+        pivot.header.number > 0,
+        "sanity: the pivot is a real block, not the genesis the MPT is stuck at"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// D5.3 What the MPT it maintains actually contains.
+//
+// Not an empty trie and not the right one: a hybrid of the genesis alloc and
+// the blocks imported since the pivot. Touched accounts get correct absolute
+// values (the updates come from execution, which reads the binary trie), while
+// everything the pre-pivot history changed and this block did not stays at its
+// alloc value. This is the assertion that fails the moment post-flip MPT
+// maintenance is skipped, which is why it is the mutation target for the
+// design change D5 exists to inform.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn the_mpt_a_snap_landed_node_maintains_is_a_fabrication_over_genesis_state() {
+    let SnapLanded {
+        chains,
+        store,
+        next,
+        ..
+    } = snap_landed_at_post_flip_pivot().await;
+    let sender = sender_from_key(&test_secret_key());
+
+    Blockchain::default_with_store(store.clone())
+        .add_block(next.clone())
+        .expect("import");
+
+    // The donor imports the same block, so the two MPTs differ only in the
+    // history beneath them.
+    Blockchain::default_with_store(chains.scheduled_store.clone())
+        .add_block(next.clone())
+        .expect("donor import");
+
+    // The MPT did advance — it is not frozen and not empty. This is the line
+    // that dies if `store_block_inner` stops merkleizing past the flip.
+    let landed =
+        mpt_account_at(&store, &next, sender).expect("the sender is in the fabricated MPT");
+    assert_eq!(
+        landed.nonce,
+        FLIP_BLOCK + BLOCKS_PAST_THE_FLIP + 1,
+        "the imported block's own updates carry absolute post-state values, so a \
+         touched account lands at its true nonce even on a fabricated MPT"
+    );
+
+    // But it is a fabrication: the beacon-roots contract's storage ring has
+    // seen exactly one block here and the whole chain on the donor, so the two
+    // storage roots cannot agree.
+    let landed_beacon = mpt_account_at(&store, &next, beacon_roots_contract())
+        .expect("the beacon-roots contract is in the alloc");
+    let donor_beacon = mpt_account_at(&chains.scheduled_store, &next, beacon_roots_contract())
+        .expect("the beacon-roots contract is in the alloc");
+    assert_ne!(
+        landed_beacon.storage_root, donor_beacon.storage_root,
+        "a snap-landed node's MPT must not match the one a node with real ancestry holds — \
+         if these agree the fixture is not exercising a missing history"
+    );
+    assert_ne!(
+        landed_beacon.storage_root, *EMPTY_TRIE_HASH,
+        "guard against a vacuous pass: the fabricated MPT really did write storage"
     );
 }
