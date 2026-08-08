@@ -1862,6 +1862,163 @@ async fn the_mpt_freezes_at_the_flip_and_keeps_serving_the_last_pre_flip_state()
     );
 }
 
+// ---------------------------------------------------------------------------
+// D5.1 The freeze survives a reorg back into MPT territory.
+//
+// The freeze would be unsound if a chain could re-enter MPT territory without
+// the MPT being able to follow. It cannot, and the reason is a consensus rule
+// rather than anything about tries: timestamps strictly increase along every
+// chain (`TimestampNotGreaterThanParent`, `crates/common/types/block.rs`), so a
+// branch that contains any pre-flip header must diverge *below* the flip block.
+// A reorg into MPT territory therefore always pivots below the flip — a height
+// at which the MPT was live, its diff layers were staged and its `STATE_HISTORY`
+// reverse diffs were written. Unwinding through them lands the MPT at the pivot,
+// and the new branch's pre-flip blocks re-advance it through the same `else` arm
+// that served the original chain, because their headers commit MPT roots.
+//
+// This drives that end to end: fork below the flip, extend the fork with a
+// pre-flip block, then flip the fork too.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_reorg_to_a_pivot_below_the_flip_re_advances_the_frozen_mpt() {
+    let chains = build_boundary_chains(FLIP_BLOCK + BLOCKS_PAST_THE_FLIP).await;
+    let store = chains.scheduled_store.clone();
+    let blockchain = Blockchain::default_with_store(store.clone());
+    let sender = sender_from_key(&test_secret_key());
+    let hashed_sender = keccak(sender.as_bytes());
+    let chain_id = chains.scheduled_genesis.config.chain_id;
+
+    let mpt_nonce = |block: &Block| {
+        let trie = store
+            .state_trie(block.hash())
+            .expect("state trie read")
+            .expect("state trie present");
+        AccountState::decode(
+            &trie
+                .get(hashed_sender.as_bytes())
+                .expect("state trie lookup")
+                .expect("the funded sender must be present"),
+        )
+        .expect("decode account state")
+        .nonce
+    };
+
+    // The pivot: block 1, comfortably below the flip. `build_chain` puts one
+    // transfer in every block, so the sender's nonce here is 1.
+    let pivot = &chains.scheduled_blocks[0];
+    let abandoned = &chains.scheduled_blocks[1];
+    assert_eq!(pivot.header.number, 1);
+    assert!(
+        abandoned.header.timestamp < chains.activation,
+        "still pre-flip"
+    );
+    assert_eq!(mpt_nonce(abandoned), 2, "the chain being abandoned");
+
+    // Fork: a competing block 2 at a different (still pre-flip) timestamp,
+    // carrying no transaction, so its state is distinguishable from the block it
+    // replaces by the sender's nonce alone.
+    let forked_pre_flip = build_block_at(
+        &store,
+        &blockchain,
+        &pivot.header,
+        pivot.header.timestamp + BLOCK_TIME / 2,
+    )
+    .await;
+    assert!(
+        forked_pre_flip.header.timestamp < chains.activation,
+        "the fork's second block must still commit an MPT root"
+    );
+    assert_ne!(forked_pre_flip.hash(), abandoned.hash());
+    blockchain
+        .add_block(forked_pre_flip.clone())
+        .expect("the forked pre-flip block must import");
+
+    // The MPT re-advanced onto the fork. `has_state_root` is the strong form:
+    // the MPT's root node hashes to exactly what this header committed, so the
+    // trie holds this branch's state and not the abandoned one's.
+    assert!(
+        store
+            .has_state_root(forked_pre_flip.header.state_root)
+            .expect("root check"),
+        "a pre-flip header on the new branch must address a live MPT"
+    );
+    assert_eq!(
+        mpt_nonce(&forked_pre_flip),
+        1,
+        "the fork carries no transaction, so the MPT must follow the fork rather \
+         than stay on the abandoned block's state"
+    );
+
+    // Now flip the fork too, with a transaction so the post-flip state is
+    // unmistakably different from the pre-flip one it must freeze at.
+    blockchain
+        .add_transaction_to_pool(
+            transfer_tx(chain_id, 1, &LocalSigner::new(test_secret_key()).into()).await,
+        )
+        .await
+        .expect("tx should enter pool");
+    let forked_post_flip = build_block_at(
+        &store,
+        &blockchain,
+        &forked_pre_flip.header,
+        chains.activation,
+    )
+    .await;
+    assert!(
+        forked_post_flip.header.timestamp >= chains.activation,
+        "the fork's third block is past the activation"
+    );
+    blockchain
+        .add_block(forked_post_flip.clone())
+        .expect("the forked post-flip block must import");
+    assert_eq!(
+        forked_post_flip.header.state_root,
+        binary_root(&store, &forked_post_flip),
+        "so it commits a binary root, recorded on import"
+    );
+
+    assert!(
+        !store
+            .has_state_root(forked_post_flip.header.state_root)
+            .expect("root check"),
+        "an active header's root is a binary root"
+    );
+    assert_eq!(
+        mpt_nonce(&forked_post_flip),
+        1,
+        "the MPT freezes again on the new branch, at *its* last pre-flip block"
+    );
+
+    // The freeze is the MPT's alone: the binary trie kept advancing, and the
+    // reorged chain answers out of it. Read through the real RPC entry points,
+    // which pick a trie per header, so this covers both sides of the boundary at
+    // once: block 2 out of the re-advanced MPT, block 3 out of the binary trie.
+    make_canonical(
+        &store,
+        &[
+            pivot.clone(),
+            forked_pre_flip.clone(),
+            forked_post_flip.clone(),
+        ],
+    )
+    .await;
+    assert_eq!(
+        state_reads(&store, forked_pre_flip.header.number, sender, &[])
+            .await
+            .nonce,
+        1,
+        "the pre-flip block on the new branch reads out of the MPT"
+    );
+    assert_eq!(
+        state_reads(&store, forked_post_flip.header.number, sender, &[])
+            .await
+            .nonce,
+        2,
+        "the post-flip block reads out of the binary trie, which did advance"
+    );
+}
+
 // ===========================================================================
 // Phase D4 — the state-reading RPCs follow the header past the flip.
 //
