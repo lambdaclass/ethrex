@@ -10346,6 +10346,695 @@ mod binary_trie_block_tests {
     }
 }
 
+/// The binary flat mirror and the binary trie hold exactly the same leaves.
+///
+/// Nine tasks of derived state stand between a leaf and its mirror row — a
+/// changelog emitted at commit, a diff layer, a journal section, a write batch,
+/// a coverage gate, a genesis seed and a backfill sweep — and until this module
+/// nothing asserted that the two representations agree. Every other test in
+/// this file pins one of those hops; this one pins the property they exist to
+/// deliver.
+///
+/// **The check is bidirectional and the counts are asserted equal.** A mirror
+/// that is a *superset* of the trie is exactly as wrong as one that is a
+/// subset, and much harder to notice: a stray row never surfaces as a failed
+/// read — reads are point lookups that would simply never ask for it — it
+/// surfaces as a range scan serving a key the state does not contain, which a
+/// range proof against the trie's root then rejects. Without the count
+/// assertion either direction passes vacuously.
+///
+/// **The trie side reads nodes only.** `Store::open_binary_trie` consults the
+/// mirror behind the coverage gate, so comparing that handle against the mirror
+/// would be the mirror agreeing with itself. Every trie read here goes through
+/// a bare `BackendBinaryTrieDB`, whose `binary_flat_computed` takes the trait
+/// default of `false`.
+#[cfg(test)]
+mod binary_flat_agreement_tests {
+    use super::genesis_binary_trie_tests::{
+        alloc, code_of, genesis_account, storage_map, test_store,
+    };
+    use super::*;
+    use ethrex_binary_trie::embedding::{
+        ACCOUNT_KEY_LENGTH, DELEGATION_MARKER, STORAGE_KEY_LENGTH, address20_to_address32,
+        get_tree_key_for_basic_data, get_tree_key_for_code_chunk, get_tree_key_for_code_hash,
+        get_tree_key_for_delegation, get_tree_key_for_storage_slot,
+    };
+    use ethrex_common::constants::EMPTY_KECCAK_HASH;
+
+    /// The account whose code is delegated, re-delegated and undelegated.
+    const EOA: Address = Address::repeat_byte(0x11);
+    /// Runs `shared` bytecode; survives everything.
+    const SHARED_ONE: Address = Address::repeat_byte(0x22);
+    /// Runs the same bytecode; removed in step 3, so the chunks must stay.
+    const SHARED_TWO: Address = Address::repeat_byte(0x33);
+    /// Holds more than 256 slots across both storage regions; self-destructs.
+    const FAT: Address = Address::repeat_byte(0x44);
+    /// Present from genesis and barely touched: the state the reorgs must not
+    /// disturb.
+    const BYSTANDER: Address = Address::repeat_byte(0x55);
+    const DELEGATE_ONE: Address = Address::repeat_byte(0x66);
+    const DELEGATE_TWO: Address = Address::repeat_byte(0x77);
+
+    /// How many leaves one [`BinaryTrie::leaves_from`] call asks for.
+    ///
+    /// Deliberately far smaller than the state these tests build, so the walk
+    /// is resumed some fifty times over and its inclusive-`origin` handling is
+    /// genuinely exercised rather than merely present. Must be at least two, or
+    /// a resumed batch consisting solely of the repeated leaf could never make
+    /// progress.
+    const WALK_BATCH: usize = 8;
+
+    fn block_hash(tag: u64) -> BlockHash {
+        H256::from_low_u64_be(0xb10c_0000 + tag)
+    }
+
+    fn eoa_update(address: Address, nonce: u64, balance: u64) -> AccountUpdate {
+        AccountUpdate {
+            info: Some(AccountInfo {
+                code_hash: *EMPTY_KECCAK_HASH,
+                balance: U256::from(balance),
+                nonce,
+            }),
+            ..AccountUpdate::new(address)
+        }
+    }
+
+    fn storage_update(address: Address, slots: &[(u64, u64)]) -> AccountUpdate {
+        AccountUpdate {
+            added_storage: storage_map(slots),
+            ..AccountUpdate::new(address)
+        }
+    }
+
+    fn contract_update(
+        address: Address,
+        nonce: u64,
+        balance: u64,
+        code: &Code,
+        slots: &[(u64, u64)],
+    ) -> AccountUpdate {
+        AccountUpdate {
+            info: Some(AccountInfo {
+                code_hash: code.hash,
+                balance: U256::from(balance),
+                nonce,
+            }),
+            code: Some(code.clone()),
+            added_storage: storage_map(slots),
+            ..AccountUpdate::new(address)
+        }
+    }
+
+    /// EIP-7702: the account's code becomes a delegation indicator, which the
+    /// embedding stores whole at `DELEGATION_LEAF_KEY` instead of as chunks —
+    /// and which displaces the code-hash leaf entirely.
+    fn delegation_update(
+        address: Address,
+        target: Address,
+        nonce: u64,
+        balance: u64,
+    ) -> AccountUpdate {
+        let indicator = [&DELEGATION_MARKER[..], target.as_bytes()].concat();
+        let code = code_of(indicator);
+        AccountUpdate {
+            info: Some(AccountInfo {
+                code_hash: code.hash,
+                balance: U256::from(balance),
+                nonce,
+            }),
+            code: Some(code),
+            ..AccountUpdate::new(address)
+        }
+    }
+
+    /// The other direction: empty code is not a delegation, so the indicator
+    /// leaf goes and the code-hash leaf comes back.
+    fn undelegation_update(address: Address, nonce: u64, balance: u64) -> AccountUpdate {
+        AccountUpdate {
+            info: Some(AccountInfo {
+                code_hash: *EMPTY_KECCAK_HASH,
+                balance: U256::from(balance),
+                nonce,
+            }),
+            code: Some(code_of(vec![])),
+            ..AccountUpdate::new(address)
+        }
+    }
+
+    fn mirror_row(store: &Store, key: &[u8]) -> Option<Vec<u8>> {
+        store
+            .backend
+            .begin_read()
+            .expect("read view")
+            .get(BINARY_FLATKEYVALUE, key)
+            .expect("mirror read")
+    }
+
+    /// Every leaf the trie at `binary_root` holds, taken from the **node table
+    /// alone** through [`BinaryTrie::leaves_from`], resumed a batch at a time.
+    ///
+    /// The walk was built in Task 9 for the backfill sweep and is an ordered,
+    /// resumable enumeration of the tree's leaves — exactly what this needs. It
+    /// also lets the assertion state the ordering claim on the way past: the
+    /// batch must come back sorted, and must not reach behind `origin`.
+    fn trie_leaves(store: &Store, binary_root: H256) -> BTreeMap<Vec<u8>, [u8; 32]> {
+        let mut leaves: BTreeMap<Vec<u8>, [u8; 32]> = BTreeMap::new();
+        let mut origin: Vec<u8> = Vec::new();
+        loop {
+            // Reopened per batch, as `leaves_from`'s own docs require: one
+            // handle held across the whole walk accumulates the entire tree in
+            // memory, which is the cost the resumability exists to avoid.
+            let db = BackendBinaryTrieDB::new(store.backend.clone()).expect("read view opens");
+            let mut trie = BinaryTrie::open(Box::new(db), binary_root);
+            let batch = trie.leaves_from(&origin, WALK_BATCH).expect("leaf walk");
+
+            let keys: Vec<Vec<u8>> = batch.iter().map(|(key, _)| key.clone()).collect();
+            let mut sorted = keys.clone();
+            sorted.sort();
+            assert_eq!(keys, sorted, "the walk must hand back leaves in key order");
+            if let Some(first) = keys.first() {
+                assert!(
+                    first.as_slice() >= origin.as_slice(),
+                    "the walk reached behind its origin"
+                );
+            }
+
+            let before = leaves.len();
+            for (key, value) in &batch {
+                leaves.insert(key.clone(), *value);
+            }
+            // `origin` is inclusive, so every resumed batch repeats the leaf it
+            // was resumed from; a batch that adds nothing new is the end.
+            if batch.len() < WALK_BATCH || leaves.len() == before {
+                return leaves;
+            }
+            origin = keys.last().expect("a full batch is non-empty").clone();
+        }
+    }
+
+    /// The invariant the whole feature rests on: `BINARY_FLATKEYVALUE` and the
+    /// binary trie at `binary_root` hold **exactly** the same leaves.
+    ///
+    /// Three statements, none of which is redundant:
+    ///
+    /// - every mirror row is a leaf of the trie with the same value, asked of
+    ///   the trie by *descent* rather than of the walk, so a walk that lost a
+    ///   subtree cannot make this direction pass by losing it twice;
+    /// - every trie leaf is a mirror row with the same value;
+    /// - the two counts are equal, without which either direction above is
+    ///   satisfied by the empty set.
+    ///
+    /// Plus the two encoding invariants that belong at the same place: a mirror
+    /// key is 34 or 66 bytes, and no row holds 32 zero bytes — "zero means
+    /// absent", so such a row would be a mirror entry for a key the trie's root
+    /// does not commit to.
+    fn assert_mirror_matches_trie(store: &Store, binary_root: H256, context: &str) {
+        // The mirror side: a full column-family scan. It is also where the
+        // ordering claim is cheapest to state, since the sorted CF *is* the
+        // ordered leaf index this feature exists to provide.
+        let rows = store.binary_flat_rows_for_test().expect("mirror scan");
+        let scanned: Vec<Vec<u8>> = rows.iter().map(|(key, _)| key.clone()).collect();
+        let mut sorted = scanned.clone();
+        sorted.sort();
+        assert_eq!(
+            scanned, sorted,
+            "[{context}] the mirror must scan in tree-key order"
+        );
+
+        let mut mirror: BTreeMap<Vec<u8>, [u8; 32]> = BTreeMap::new();
+        for (key, value) in rows {
+            assert!(
+                key.len() == ACCOUNT_KEY_LENGTH || key.len() == STORAGE_KEY_LENGTH,
+                "[{context}] {key:?} is {} bytes: a tree key is 34 or 66",
+                key.len()
+            );
+            let value: [u8; 32] = value.as_slice().try_into().unwrap_or_else(|_| {
+                panic!(
+                    "[{context}] the row at {key:?} is {} bytes, not a 32-byte leaf value",
+                    value.len()
+                )
+            });
+            assert_ne!(
+                value, [0u8; 32],
+                "[{context}] zero means absent, so no row may hold 32 zero bytes: {key:?}"
+            );
+            assert!(
+                mirror.insert(key.clone(), value).is_none(),
+                "[{context}] the scan returned {key:?} twice"
+            );
+        }
+
+        let leaves = trie_leaves(store, binary_root);
+
+        // Mirror -> trie, by descent.
+        let db = BackendBinaryTrieDB::new(store.backend.clone()).expect("read view opens");
+        let mut trie = BinaryTrie::open(Box::new(db), binary_root);
+        for (key, value) in &mirror {
+            assert_eq!(
+                trie.get(key).expect("descent"),
+                Some(*value),
+                "[{context}] the mirror holds {key:?} and the trie does not agree; a stray row \
+                 never surfaces as a failed read, it surfaces as a range serving a key the \
+                 state does not contain"
+            );
+        }
+
+        // Trie -> mirror.
+        for (key, value) in &leaves {
+            assert_eq!(
+                mirror.get(key),
+                Some(value),
+                "[{context}] the trie holds leaf {key:?} and the mirror does not"
+            );
+        }
+
+        assert_eq!(
+            mirror.len(),
+            leaves.len(),
+            "[{context}] the mirror holds {} leaves and the trie {}: a superset is exactly as \
+             wrong as a subset",
+            mirror.len(),
+            leaves.len()
+        );
+        assert!(
+            !leaves.is_empty(),
+            "[{context}] the state is empty, so agreement between the two says nothing"
+        );
+    }
+
+    /// A chain driven the way block import drives one: each block's binary
+    /// advance is **staged** into a diff layer by
+    /// [`Store::advance_binary_trie_for_block`] and then flushed through
+    /// `commit_to_disk`, so the mirror reaches disk on the production write
+    /// path and the journal's sixth section is written on the way past.
+    ///
+    /// The layer's state root is the binary root, which is the shape a chain
+    /// has past binary-tree activation: the header commits to the binary trie
+    /// and there is no second root to key the layer by.
+    struct Chain {
+        store: Store,
+        _dir: tempfile::TempDir,
+        number: BlockNumber,
+        hash: BlockHash,
+        root: H256,
+        /// `(number, hash, root)` per committed block, so a reorg can name a
+        /// pivot without recomputing it.
+        history: Vec<(BlockNumber, BlockHash, H256)>,
+    }
+
+    impl Chain {
+        async fn start(accounts: Vec<(Address, GenesisAccount)>) -> Chain {
+            let (store, _backend, dir) = test_store();
+            let root = store
+                .setup_genesis_binary_trie(alloc(accounts))
+                .await
+                .expect("genesis");
+            let hash = block_hash(0);
+            // Genesis writes the trie and seeds the mirror directly; it does
+            // not record a block-hash mapping, and block 1's advance needs one.
+            store.set_binary_trie_root(hash, root).expect("record");
+            Chain {
+                store,
+                _dir: dir,
+                number: 0,
+                hash,
+                root,
+                history: vec![(0, hash, root)],
+            }
+        }
+
+        /// Stage one block on top of `(parent_hash, parent_root)` **without**
+        /// flushing it, returning its binary root. Two calls on the same parent
+        /// stage two competing branches.
+        fn stage(
+            &self,
+            number: BlockNumber,
+            hash: BlockHash,
+            parent_hash: BlockHash,
+            parent_root: H256,
+            updates: &[AccountUpdate],
+        ) -> H256 {
+            let advance = self
+                .store
+                .advance_binary_trie_for_block(hash, parent_hash, updates)
+                .expect("advance");
+            assert_eq!(advance.parent_root, parent_root);
+            let root = advance.root;
+            let mut guard = self.store.trie_cache.write().expect("cache");
+            let mut updated = (**guard).clone();
+            updated.put_batch_with_binary(
+                parent_root,
+                root,
+                number,
+                hash,
+                // One MPT node per block, so the layer is not degenerate and
+                // the journal entry carries all six sections.
+                vec![(Nibbles::from_raw(&[0x01, number as u8], false), vec![1])],
+                BinaryLayerUpdate::from(advance),
+            );
+            *guard = Arc::new(updated);
+            root
+        }
+
+        fn flush(&self, root: H256) {
+            let trie = self.store.trie_cache.read().expect("cache").clone();
+            commit_to_disk(
+                self.store.backend.as_ref(),
+                &self.store.flatkeyvalue_control_tx,
+                &self.store.trie_cache,
+                &trie,
+                root,
+                false,
+            )
+            .expect("commit");
+        }
+
+        /// Extend the tip by one block, flush it, and assert agreement.
+        fn block(&mut self, updates: &[AccountUpdate], context: &str) -> H256 {
+            let number = self.number + 1;
+            let hash = block_hash(number);
+            let root = self.stage(number, hash, self.hash, self.root, updates);
+            self.flush(root);
+            self.adopt(number, hash, root);
+            assert_mirror_matches_trie(&self.store, root, context);
+            root
+        }
+
+        fn adopt(&mut self, number: BlockNumber, hash: BlockHash, root: H256) {
+            self.number = number;
+            self.hash = hash;
+            self.root = root;
+            self.history.push((number, hash, root));
+        }
+    }
+
+    /// The scripted sequence: every way a leaf can leave the trie, with the
+    /// agreement assertion after each step.
+    #[tokio::test]
+    async fn the_mirror_agrees_with_the_trie_through_every_way_a_leaf_can_leave() {
+        // Five chunks, so the code zone holds several leaves and a removal has
+        // something to leave behind.
+        let shared = code_of(vec![0x60u8; 31 * 5]);
+        let chunk_keys: Vec<Vec<u8>> = (0..5)
+            .map(|i| get_tree_key_for_code_chunk(&shared.hash.0, i))
+            .collect();
+
+        let mut chain = Chain::start(vec![
+            (
+                BYSTANDER,
+                genesis_account(1, 1_000, vec![], &[(1, 2), (70, 3)]),
+            ),
+            (EOA, genesis_account(1, 500, vec![], &[])),
+        ])
+        .await;
+        assert_mirror_matches_trie(&chain.store, chain.root, "genesis");
+
+        // --- Step 1: accounts, contracts, storage in both regions -----------
+        chain.block(
+            &[
+                contract_update(
+                    SHARED_ONE,
+                    1,
+                    10,
+                    &shared,
+                    &[(5, 0xaa), (63, 0xbb), (64, 0xcc), (900, 0xdd)],
+                ),
+                contract_update(SHARED_TWO, 1, 20, &shared, &[(7, 0xee), (5_000, 0xff)]),
+                eoa_update(EOA, 2, 400),
+            ],
+            "step 1: accounts, contracts and storage on both sides of the header boundary",
+        );
+        let one32 = address20_to_address32(SHARED_ONE);
+        let header_slot = get_tree_key_for_storage_slot(&one32, U256::from(5));
+        let overflow_slot = get_tree_key_for_storage_slot(&one32, U256::from(900));
+        assert_eq!(header_slot.len(), ACCOUNT_KEY_LENGTH);
+        assert_eq!(overflow_slot.len(), STORAGE_KEY_LENGTH);
+        assert!(mirror_row(&chain.store, &header_slot).is_some());
+        assert!(mirror_row(&chain.store, &overflow_slot).is_some());
+
+        // --- Step 2: a storage slot written to zero -------------------------
+        // `state_write`'s zero-collapse removes the leaf rather than storing
+        // zeros, in both regions.
+        chain.block(
+            &[storage_update(SHARED_ONE, &[(5, 0), (900, 0)])],
+            "step 2: a slot written to zero in each storage region",
+        );
+        assert!(
+            mirror_row(&chain.store, &header_slot).is_none(),
+            "a zeroed header-range slot must leave the mirror, not sit in it as zeros"
+        );
+        assert!(
+            mirror_row(&chain.store, &overflow_slot).is_none(),
+            "and the same in the overflow zone"
+        );
+
+        // --- Step 3: shared bytecode, one holder removed --------------------
+        for key in &chunk_keys {
+            assert!(mirror_row(&chain.store, key).is_some(), "chunk {key:?}");
+        }
+        let two32 = address20_to_address32(SHARED_TWO);
+        chain.block(
+            &[AccountUpdate::removed(SHARED_TWO)],
+            "step 3: one of two accounts running the same bytecode is removed",
+        );
+        for key in &chunk_keys {
+            assert!(
+                mirror_row(&chain.store, key).is_some(),
+                "code chunks are content-addressed and shared, so they must stay: {key:?}"
+            );
+        }
+        for key in [
+            get_tree_key_for_basic_data(&two32),
+            get_tree_key_for_code_hash(&two32),
+            get_tree_key_for_storage_slot(&two32, U256::from(7)),
+            get_tree_key_for_storage_slot(&two32, U256::from(5_000)),
+        ] {
+            assert!(
+                mirror_row(&chain.store, &key).is_none(),
+                "the removed account's header stem must go: {key:?}"
+            );
+        }
+
+        // --- Step 4: delegate, re-delegate, undelegate (EIP-7702) -----------
+        let eoa32 = address20_to_address32(EOA);
+        let delegation_key = get_tree_key_for_delegation(&eoa32);
+        let code_hash_key = get_tree_key_for_code_hash(&eoa32);
+        assert!(mirror_row(&chain.store, &code_hash_key).is_some());
+
+        chain.block(
+            &[delegation_update(EOA, DELEGATE_ONE, 3, 400)],
+            "step 4a: delegate",
+        );
+        let first = mirror_row(&chain.store, &delegation_key)
+            .expect("the delegation indicator leaf appears");
+        assert!(
+            mirror_row(&chain.store, &code_hash_key).is_none(),
+            "an account holds the code-hash leaf or the delegation leaf, never both"
+        );
+
+        chain.block(
+            &[delegation_update(EOA, DELEGATE_TWO, 4, 400)],
+            "step 4b: re-delegate",
+        );
+        let second = mirror_row(&chain.store, &delegation_key).expect("still delegated");
+        assert_ne!(first, second, "re-delegation must rewrite the indicator");
+
+        chain.block(&[undelegation_update(EOA, 5, 400)], "step 4c: undelegate");
+        assert!(
+            mirror_row(&chain.store, &delegation_key).is_none(),
+            "the indicator leaf must go"
+        );
+        assert!(
+            mirror_row(&chain.store, &code_hash_key).is_some(),
+            "and the code-hash leaf must come back"
+        );
+
+        // --- Step 5: a self-destruct across both storage regions ------------
+        // 320 slots: 64 in the header stem (0..=63) and 256 in the overflow
+        // zone (64..=319), which itself spans two 256-slot groups. Removing the
+        // account is two `remove_prefix` calls, and every retired leaf has to
+        // reach the changelog for the mirror to keep up.
+        let fat_slots: Vec<(u64, u64)> = (0..320u64).map(|slot| (slot, slot + 1)).collect();
+        chain.block(
+            &[contract_update(FAT, 1, 30, &shared, &fat_slots)],
+            "step 5a: an account with more than 256 slots across both regions",
+        );
+        let fat32 = address20_to_address32(FAT);
+        assert_eq!(
+            get_tree_key_for_storage_slot(&fat32, U256::from(63)).len(),
+            ACCOUNT_KEY_LENGTH,
+            "slot 63 is header storage"
+        );
+        assert_eq!(
+            get_tree_key_for_storage_slot(&fat32, U256::from(64)).len(),
+            STORAGE_KEY_LENGTH,
+            "slot 64 is the overflow zone"
+        );
+        for slot in [0u64, 63, 64, 255, 256, 319] {
+            assert!(
+                mirror_row(
+                    &chain.store,
+                    &get_tree_key_for_storage_slot(&fat32, U256::from(slot))
+                )
+                .is_some(),
+                "slot {slot} should be in the mirror"
+            );
+        }
+
+        chain.block(
+            &[AccountUpdate::removed(FAT)],
+            "step 5b: self-destruct, exercising remove_prefix over both regions",
+        );
+        for (slot, _) in &fat_slots {
+            assert!(
+                mirror_row(
+                    &chain.store,
+                    &get_tree_key_for_storage_slot(&fat32, U256::from(*slot))
+                )
+                .is_none(),
+                "slot {slot} was stranded in the mirror by remove_prefix"
+            );
+        }
+        assert!(mirror_row(&chain.store, &get_tree_key_for_basic_data(&fat32)).is_none());
+        for key in &chunk_keys {
+            assert!(
+                mirror_row(&chain.store, key).is_some(),
+                "the surviving holder still runs this bytecode: {key:?}"
+            );
+        }
+
+        // --- Step 6: a shallow reorg ----------------------------------------
+        // Two blocks staged on the same parent; committing one must discard the
+        // other's mirror writes along with its layer, never write them.
+        let parent_hash = chain.hash;
+        let parent_root = chain.root;
+        let number = chain.number + 1;
+        let abandoned = chain.stage(
+            number,
+            block_hash(900),
+            parent_hash,
+            parent_root,
+            &[
+                eoa_update(BYSTANDER, 9, 999),
+                storage_update(SHARED_ONE, &[(11, 0xa1)]),
+            ],
+        );
+        let kept_hash = block_hash(901);
+        let kept = chain.stage(
+            number,
+            kept_hash,
+            parent_hash,
+            parent_root,
+            &[
+                eoa_update(BYSTANDER, 9, 111),
+                storage_update(SHARED_ONE, &[(12, 0xb2)]),
+            ],
+        );
+        assert_ne!(abandoned, kept, "the two branches must differ");
+        chain.flush(kept);
+        chain.adopt(number, kept_hash, kept);
+        assert_mirror_matches_trie(&chain.store, kept, "step 6: shallow reorg");
+        assert!(
+            mirror_row(
+                &chain.store,
+                &get_tree_key_for_storage_slot(&one32, U256::from(11))
+            )
+            .is_none(),
+            "the abandoned branch's leaf must never reach the mirror"
+        );
+        assert!(
+            mirror_row(
+                &chain.store,
+                &get_tree_key_for_storage_slot(&one32, U256::from(12))
+            )
+            .is_some(),
+            "the committed branch's leaf must"
+        );
+
+        // --- Step 7: a reorg deeper than the layer cache --------------------
+        // Every block above was flushed, so the layer cache is empty and *any*
+        // reorg is deeper than it: the unwind can only come from the journal's
+        // sixth section, through an `Overlay`, and the new chain's first commit
+        // has to bridge every mirror key the overlay holds and the new block
+        // does not rewrite.
+        //
+        // The pivot is chosen so the unwind spans the self-destruct: block 5b
+        // removed 320 leaves, so undoing it is the largest possible bridge, and
+        // the new block below touches none of them.
+        let head = chain.number;
+        let (pivot_number, pivot_hash, pivot_root) = chain
+            .history
+            .iter()
+            .copied()
+            .find(|(number, _, _)| *number == head - 2)
+            .expect("a pivot two blocks back");
+        let staged_layers = chain.store.trie_cache.read().unwrap().layer_count();
+        assert!(
+            staged_layers < 2,
+            "the reorg must be deeper than what the layer cache can serve, but it holds \
+             {staged_layers} layers"
+        );
+        chain
+            .store
+            .install_overlay_for_reorg(head, pivot_number + 1, |_| None)
+            .expect("overlay");
+
+        let replacement_hash = block_hash(902);
+        let replacement = chain.stage(
+            pivot_number + 1,
+            replacement_hash,
+            pivot_hash,
+            pivot_root,
+            &[eoa_update(BYSTANDER, 30, 2_000)],
+        );
+        chain.flush(replacement);
+        chain.adopt(pivot_number + 1, replacement_hash, replacement);
+        assert_mirror_matches_trie(
+            &chain.store,
+            replacement,
+            "step 7: reorg deeper than the layer cache, through the journal",
+        );
+
+        // The unwound blocks' effects are gone and the pivot's are back — both
+        // directions of the sixth section, on disk.
+        assert!(
+            mirror_row(
+                &chain.store,
+                &get_tree_key_for_storage_slot(&one32, U256::from(12))
+            )
+            .is_none(),
+            "the abandoned block's leaf must be deleted, not left with a stale value"
+        );
+        for slot in [0u64, 63, 64, 255, 256, 319] {
+            assert!(
+                mirror_row(
+                    &chain.store,
+                    &get_tree_key_for_storage_slot(&fat32, U256::from(slot))
+                )
+                .is_some(),
+                "unwinding the self-destruct must restore slot {slot} to the mirror"
+            );
+        }
+        // And the reconciliation really did journal its sixth section.
+        let entry = {
+            let bytes = chain
+                .store
+                .backend
+                .begin_read()
+                .unwrap()
+                .get(STATE_HISTORY, &(pivot_number + 1).to_be_bytes())
+                .unwrap()
+                .expect("the reconciliation block's journal entry");
+            JournalEntry::decode(&bytes).unwrap()
+        };
+        assert!(
+            entry.binary_flat_diff.len() > 300,
+            "the bridge must journal the mirror keys the new block did not rewrite, got {}",
+            entry.binary_flat_diff.len()
+        );
+    }
+}
+
 /// Regression tests for stale state-root reads.
 ///
 /// ethrex keeps exactly one version of the state trie on disk — trie nodes are
