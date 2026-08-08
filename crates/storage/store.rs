@@ -6,15 +6,19 @@ use crate::{
         StorageBackend, StorageReadView, StorageWriteBatch,
         tables::{
             ACCOUNT_CODE_METADATA, ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES,
-            BAD_BLOCKS, BINARY_TRIE_NODES, BINARY_TRIE_ROOTS, BLOCK_ACCESS_LISTS, BLOCK_NUMBERS,
-            BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA, EXECUTION_WITNESSES, FULLSYNC_HEADERS,
-            HEADERS, INVALID_CHAINS, MISC_VALUES, PENDING_BLOCKS, RECEIPTS_V2, SNAP_STATE,
-            STATE_HISTORY, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
+            BAD_BLOCKS, BINARY_FLATKEYVALUE, BINARY_TRIE_NODES, BINARY_TRIE_ROOTS,
+            BLOCK_ACCESS_LISTS, BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA,
+            EXECUTION_WITNESSES, FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS, MISC_VALUES,
+            PENDING_BLOCKS, RECEIPTS_V2, SNAP_STATE, STATE_HISTORY, STORAGE_FLATKEYVALUE,
+            STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
         },
     },
     apply_prefix,
     backend::in_memory::InMemoryBackend,
-    binary_trie::{BackendBinaryTrieDB, BinaryTrieNodes, LayeredBinaryTrieDB, StagedBinaryNodes},
+    binary_trie::{
+        BackendBinaryTrieDB, BinaryFlatWrites, BinaryTrieNodes, LayeredBinaryTrieDB,
+        StagedBinaryNodes,
+    },
     block_data_buffer::BlockDataBuffer,
     error::StoreError,
     journal::{FlatDiff, JournalEntry},
@@ -25,7 +29,8 @@ use crate::{
 };
 
 use ethrex_binary_trie::trie::{
-    BinaryTrie, BinaryTrieDB, BitPath, EMPTY_TRIE_ROOT as BINARY_EMPTY_TRIE_ROOT, hash_stored_node,
+    BinaryTrie, BinaryTrieDB, BitPath, EMPTY_TRIE_ROOT as BINARY_EMPTY_TRIE_ROOT, LeafChangelog,
+    hash_stored_node,
 };
 use ethrex_common::{
     Address, H256, U256,
@@ -133,6 +138,62 @@ const FLUSHED_UPTO_KEY: &[u8] = b"bodies_flushed_upto";
 
 /// Single key under which the bounded list of bad blocks is stored in `BAD_BLOCKS`.
 const BAD_BLOCKS_KEY: &[u8] = b"bad_blocks";
+
+/// `MISC_VALUES` key holding the binary flat mirror's durable backfill frontier.
+///
+/// A named constant rather than a repeated literal, which is where the MPT's
+/// equivalent went wrong: it spells `"last_written"` inline at eight sites and
+/// has no constant, unlike [`FLUSHED_UPTO_KEY`].
+///
+/// Three durable states, per the plan's Decision 2:
+/// - **absent** — no backfill generator has ever run;
+/// - **a real tree key** — the generator has swept up to and including it;
+/// - **the 1-byte sentinel `[0xff]`** — complete. Unambiguous because no tree
+///   key is one byte long; they are 34 or 66.
+pub(crate) const BINARY_LAST_WRITTEN_KEY: &[u8] = b"binary_last_written";
+
+/// The `[0xff]` completion sentinel stored under [`BINARY_LAST_WRITTEN_KEY`].
+pub(crate) const BINARY_FLAT_FRONTIER_COMPLETE: &[u8] = &[0xff];
+
+/// Whether `commit_to_disk` is the writer responsible for `key` — i.e. whether
+/// it should both write the mirror row and journal its pre-image.
+///
+/// This is the binary counterpart of the MPT's frontier skip
+/// (`key > last_written` -> skip both the write and the journal push, because
+/// "keys past the frontier aren't written to disk yet, so they must not be
+/// journaled either": a `Some(None)` pre-image recorded for a key that was
+/// never put would make a rollback delete a row that never existed).
+///
+/// **This is a *write-ownership* question, not a coverage claim, and the
+/// distinction is deliberate.** Task 9 of the plan builds the backfill
+/// generator that makes this marker non-absent; until then the marker is always
+/// absent, and the three cases resolve as:
+///
+/// - **absent** — no generator exists, so no generator owns any part of the
+///   keyspace, so this write path owns all of it. Skip nothing. That is the
+///   honest answer to "who writes this row", and it is *not* the answer to "may
+///   a reader trust the mirror here", which is `false`: nothing has seeded the
+///   genesis alloc leaves (that is Task 8), so the mirror is a strict subset of
+///   the trie until a generator or a genesis seed says otherwise. Task 7's
+///   `binary_flat_computed` must answer that second question separately and must
+///   **not** reuse this function — Decision 1 is explicit that a coverage
+///   predicate must never return `true` for a key whose row might be missing.
+/// - **a real tree key** — the live case once Task 9 lands. Keys at or below the
+///   frontier are ours; keys above it belong to the generator, which has not
+///   written them yet. This arm needs no further change when Task 9 lands.
+/// - **`[0xff]`** — complete; the generator owns nothing, we own everything.
+///
+/// The `[0xff]` case cannot be folded into the ordinary comparison, and the
+/// explicit arm is load-bearing rather than tidy: a storage-zone tree key begins
+/// with the zone byte `0xff` and continues, so `[0xff, ..] > [0xff]`
+/// lexicographically and every overflow-storage leaf would be skipped on a
+/// *complete* mirror.
+fn binary_flat_frontier_covers(frontier: &[u8], key: &[u8]) -> bool {
+    if frontier.is_empty() || frontier == BINARY_FLAT_FRONTIER_COMPLETE {
+        return true;
+    }
+    key <= frontier
+}
 
 /// Maximum number of bad blocks retained for `debug_getBadBlocks`.
 const MAX_BAD_BLOCKS: usize = 16;
@@ -366,6 +427,20 @@ pub struct BinaryTrieAdvance {
     /// `(BINARY_TRIE_NODES key, encoded node)` pairs; an empty value is a
     /// tombstone, per `BinaryTrieDB`'s convention.
     pub nodes: BinaryTrieNodes,
+    /// The same block's writes to the flat leaf mirror, derived from the
+    /// [`LeafChangelog`] the trie's own commit emitted: one
+    /// `BINARY_FLATKEYVALUE` row per leaf the block created, changed or removed.
+    ///
+    /// A removal (`None` in the changelog) becomes an **empty value**, which is
+    /// the tombstone convention every layer downstream already speaks. It must
+    /// not become 32 zero bytes: "zero means absent" is what put the removal in
+    /// the changelog in the first place, and a zero row would be a mirror entry
+    /// for a key the trie's root does not commit to.
+    ///
+    /// Taken from `commit` rather than reconstructed at the call sites, so
+    /// `remove_prefix` — whose retired leaves only the trie knows — is covered
+    /// by construction.
+    pub flat: BinaryFlatWrites,
 }
 
 impl From<BinaryTrieAdvance> for BinaryLayerUpdate {
@@ -374,8 +449,24 @@ impl From<BinaryTrieAdvance> for BinaryLayerUpdate {
             root: advance.root,
             parent_root: advance.parent_root,
             nodes: advance.nodes,
+            flat: advance.flat,
         }
     }
+}
+
+/// Turn the trie's [`LeafChangelog`] into `BINARY_FLATKEYVALUE` writes.
+///
+/// `Some(value)` is the 32 raw bytes, no tag and no length prefix. `None` is a
+/// removal and becomes an empty value — the tombstone every consumer of these
+/// pairs already understands, and deliberately *not* 32 zero bytes.
+fn flat_writes_from_changelog(leaves: LeafChangelog) -> BinaryFlatWrites {
+    leaves
+        .into_iter()
+        .map(|(key, value)| match value {
+            Some(value) => (key, value.to_vec()),
+            None => (key, Vec::new()),
+        })
+        .collect()
 }
 
 /// Storage trie updates grouped by account address hash.
@@ -3171,7 +3262,12 @@ impl Store {
 
         let mut trie = BinaryTrie::open(Box::new(db), parent_root);
         apply_account_updates(&mut trie, account_updates)?;
-        let root = trie.commit()?.root;
+        let committed = trie.commit()?;
+        let root = committed.root;
+        // The leaf changelog is the mirror's only input: every path that can
+        // retire a leaf (`remove_prefix` above all) reports through it, so a
+        // future caller cannot add a mutation path that bypasses the mirror.
+        let flat = flat_writes_from_changelog(committed.leaves);
         drop(trie);
 
         let nodes = std::mem::take(&mut *staged.lock().map_err(|_| StoreError::LockError)?);
@@ -3180,6 +3276,7 @@ impl Store {
             root,
             parent_root,
             nodes,
+            flat,
         })
     }
 
@@ -5540,6 +5637,14 @@ fn commit_to_disk(
     let last_written = read_view
         .get(MISC_VALUES, "last_written".as_bytes())?
         .unwrap_or_default();
+    // The binary mirror's frontier, read from the same pre-write view for the
+    // same reason. Absent until Task 9's generator exists, which
+    // [`binary_flat_frontier_covers`] reads as "this write path owns the whole
+    // keyspace" — a write-ownership answer, not a coverage claim. See that
+    // function's docs.
+    let binary_last_written = read_view
+        .get(MISC_VALUES, BINARY_LAST_WRITTEN_KEY)?
+        .unwrap_or_default();
 
     let mut write_tx = backend.begin_write()?;
 
@@ -5638,6 +5743,28 @@ fn commit_to_disk(
         }
         None => Vec::new(),
     };
+    // And the same bridge again for `BINARY_FLATKEYVALUE`. A third list, not a
+    // share of `binary_extra_writes`: the two binary key spaces have identical
+    // length ranges, so a merged list would write mirror rows into
+    // `BINARY_TRIE_NODES` and node encodings into the mirror, with nothing in
+    // the bytes to tell them apart. An overlay `None` becomes an empty value,
+    // which the write loop below turns into a delete — the "absent at the pivot"
+    // semantics, and the reason a reorg cannot leave a stale row behind for a
+    // leaf the new chain does not have.
+    let binary_flat_extra_writes: Vec<(Vec<u8>, Vec<u8>)> = match &overlay_for_reconciliation {
+        Some(overlay) => {
+            let layer_keys: rustc_hash::FxHashSet<&Vec<u8>> = committed_layers
+                .iter()
+                .flat_map(|l| l.binary_flat.iter().map(|(k, _)| k))
+                .collect();
+            overlay
+                .iter_binary_flat_entries()
+                .filter(|(key, _)| !layer_keys.contains(key))
+                .map(|(key, value)| (key.clone(), value.clone().unwrap_or_default()))
+                .collect()
+        }
+        None => Vec::new(),
+    };
     // Pivot heights (T, D) for the reconciliation commit; `None` in steady state.
     let reorg_heights = overlay_for_reconciliation
         .as_ref()
@@ -5666,6 +5793,14 @@ fn commit_to_disk(
     // reorg recoverable past activation. Untouched on unscheduled chains, where
     // `layer.binary_nodes` is empty and this map stays so.
     let mut binary_overlay: HashMap<Vec<u8>, Option<Vec<u8>>> = HashMap::new();
+    // A third intra-batch pre-image map, for `BINARY_FLATKEYVALUE`, separate
+    // from `binary_overlay` for the sharper form of the same reason that one is
+    // separate from `overlay`: a `BitPath` DB key at bit-depth 240 is 34 bytes
+    // and an account-zone tree key is 34 bytes, so the two spaces are not
+    // distinguishable at all. One shared map would let a node write supply a
+    // leaf's pre-image, and a multi-layer commit would then journal a reverse
+    // diff that restores a node encoding into the mirror.
+    let mut binary_flat_overlay: HashMap<Vec<u8>, Option<Vec<u8>>> = HashMap::new();
 
     let mut result = Ok(());
     'layers: for layer in &committed_layers {
@@ -5679,6 +5814,7 @@ fn commit_to_disk(
         let mut journal_account_flat: FlatDiff = Vec::new();
         let mut journal_storage_flat: FlatDiff = Vec::new();
         let mut journal_binary_trie: FlatDiff = Vec::new();
+        let mut journal_binary_flat: FlatDiff = Vec::new();
 
         // The reconciliation commit is single-layer at `T`; fold the overlay bridge entries
         // into that layer's writes so they land in T's journal entry. `extra` is empty in
@@ -5824,6 +5960,94 @@ fn commit_to_disk(
             }
         }
 
+        // The same block's writes to the flat leaf mirror, into the SAME write
+        // batch again. The mirror is *derived* from the binary trie, so this is
+        // stronger than the flush parity above: a mirror persisted at a
+        // different block than the trie does not merely lag, it disagrees with
+        // the root it is a view of, and a range served from it would carry
+        // leaves the root does not commit to.
+        //
+        // Empty on unscheduled chains.
+        //
+        // `binary_flat_extra` folds the overlay's mirror bridge into the single
+        // reconciliation layer, mirroring `extra` and `binary_extra` above.
+        let binary_flat_extra: &[(Vec<u8>, Vec<u8>)] = if is_reconciliation_layer {
+            &binary_flat_extra_writes
+        } else {
+            &[]
+        };
+        for (key, value) in layer.binary_flat.iter().chain(binary_flat_extra.iter()) {
+            // The frontier skip, the binary counterpart of the MPT one above:
+            // a key this write path does not own is neither written nor
+            // journaled, because a `Some(None)` pre-image for a row that was
+            // never put would make a rollback delete something that never
+            // existed. The frontier is absent until Task 9 builds the generator,
+            // which reads as "we own everything"; see
+            // `binary_flat_frontier_covers` for why that is a write-ownership
+            // answer and not a coverage claim.
+            if !binary_flat_frontier_covers(&binary_last_written, key) {
+                continue;
+            }
+
+            // "Zero means absent", enforced at the writer because that is where
+            // the invariant is. A leaf whose encoding is 32 zero bytes was
+            // *removed* from the trie, so the mirror must delete the row, not
+            // store zeros. Storing them would put a row in the mirror for a key
+            // the trie's root does not commit to; a range served from the mirror
+            // and proved against that root fails on it. The empty value is the
+            // tombstone; 32 zero bytes is a corruption signal, and refusing the
+            // whole commit is the right response to one.
+            //
+            // The same check `BackendBinaryFlatDB::put_batch` makes, repeated
+            // here because this path writes through `write_tx` directly — it has
+            // to, to stay in one transaction with the nodes — and so does not go
+            // through that writer.
+            if !value.is_empty() && value.iter().all(|byte| *byte == 0) {
+                result = Err(StoreError::Custom(format!(
+                    "refusing to commit a 32-zero-byte binary flat value for key {key:?} at \
+                     block {}: zero means absent, so the trie removed this leaf and the row \
+                     must be deleted with an empty value, not written as zeros",
+                    layer.block_number
+                )));
+                break 'layers;
+            }
+
+            // Pre-image first, from the intra-batch map or disk, exactly as the
+            // two loops above do.
+            let prev_value = if !is_batch {
+                match binary_flat_overlay.get(key) {
+                    Some(v) => Some(v.clone()),
+                    None => match read_view.get(BINARY_FLATKEYVALUE, key) {
+                        Ok(v) => Some(v),
+                        Err(e) => {
+                            result = Err(e);
+                            break 'layers;
+                        }
+                    },
+                }
+            } else {
+                None
+            };
+
+            let new_value = if value.is_empty() {
+                // Tombstone: the leaf left the tree. The row must go, not become
+                // zeros — see above.
+                result = write_tx.delete(BINARY_FLATKEYVALUE, key);
+                None
+            } else {
+                result = write_tx.put(BINARY_FLATKEYVALUE, key, value);
+                Some(value.clone())
+            };
+            if result.is_err() {
+                break 'layers;
+            }
+
+            if let Some(prev) = prev_value {
+                journal_binary_flat.push((key.clone(), prev));
+                binary_flat_overlay.insert(key.clone(), new_value);
+            }
+        }
+
         // Reconciliation: BEFORE writing this block's journal entry, wipe the
         // obsolete OLD-chain entries in `[T, D]` so the new T entry (below) isn't clobbered
         // by the range delete. Fires only for the single reconciliation layer at height T.
@@ -5871,6 +6095,7 @@ fn commit_to_disk(
                 account_flat_diff: journal_account_flat,
                 storage_flat_diff: journal_storage_flat,
                 binary_trie_diff: journal_binary_trie,
+                binary_flat_diff: journal_binary_flat,
             };
             result = write_tx.put(
                 STATE_HISTORY,
@@ -6690,6 +6915,7 @@ mod state_history_tests {
                 account_flat_diff: vec![],
                 storage_flat_diff: vec![],
                 binary_trie_diff: vec![],
+                binary_flat_diff: vec![],
             };
             tx.put(STATE_HISTORY, &n.to_be_bytes(), &entry.encode())
                 .unwrap();
@@ -7281,6 +7507,7 @@ mod state_history_tests {
                     account_flat_diff: vec![],
                     storage_flat_diff: vec![],
                     binary_trie_diff: vec![],
+                    binary_flat_diff: vec![],
                 };
                 tx.put(STATE_HISTORY, &n.to_be_bytes(), &entry.encode())
                     .unwrap();
@@ -7373,6 +7600,7 @@ mod state_history_tests {
                     account_flat_diff: vec![],
                     storage_flat_diff: vec![],
                     binary_trie_diff: vec![],
+                    binary_flat_diff: vec![],
                 };
                 tx.put(STATE_HISTORY, &n.to_be_bytes(), &entry.encode())
                     .unwrap();
@@ -7469,6 +7697,614 @@ mod state_history_tests {
         assert!(!store.is_state_in_layer_cache(roots[2]).unwrap());
         assert!(journal_entry_exists(&backend, 11));
         assert!(journal_entry_exists(&backend, 12));
+    }
+
+    // -----------------------------------------------------------------------
+    // The flat leaf mirror in `commit_to_disk`.
+    // -----------------------------------------------------------------------
+
+    /// A 34-byte account-zone tree key: zone byte `0x00`, digest, sub-index.
+    /// The same length a `BitPath` DB key has at bit-depth 240, which is the
+    /// collision these tests keep honest.
+    fn tree_key(b: u8) -> Vec<u8> {
+        let mut key = vec![0u8; 34];
+        key[1] = b;
+        key
+    }
+
+    /// A 66-byte overflow-storage tree key, beginning with the `0xff` zone byte.
+    /// It is `> [0xff]` lexicographically, which is why the frontier's `[0xff]`
+    /// completion sentinel needs an explicit arm rather than a comparison.
+    fn storage_tree_key(b: u8) -> Vec<u8> {
+        let mut key = vec![0u8; 66];
+        key[0] = 0xff;
+        key[1] = b;
+        key
+    }
+
+    /// A 32-byte leaf value.
+    fn leaf_value(b: u8) -> Vec<u8> {
+        vec![b; 32]
+    }
+
+    fn flat_row(backend: &Arc<dyn StorageBackend>, key: &[u8]) -> Option<Vec<u8>> {
+        backend
+            .begin_read()
+            .unwrap()
+            .get(BINARY_FLATKEYVALUE, key)
+            .unwrap()
+    }
+
+    fn decode_entry(backend: &Arc<dyn StorageBackend>, block: BlockNumber) -> JournalEntry {
+        let bytes = backend
+            .begin_read()
+            .unwrap()
+            .get(STATE_HISTORY, &block.to_be_bytes())
+            .unwrap()
+            .unwrap_or_else(|| panic!("journal entry for block {block}"));
+        JournalEntry::decode(&bytes).unwrap()
+    }
+
+    /// Stages one block's layer carrying MPT nodes, binary nodes and mirror
+    /// writes, then flushes it through `commit_to_disk`.
+    fn stage_and_commit(
+        store: &Store,
+        parent: H256,
+        root: H256,
+        block: BlockNumber,
+        binary_root: H256,
+        parent_binary_root: H256,
+        binary_nodes: Vec<(Vec<u8>, Vec<u8>)>,
+        binary_flat: Vec<(Vec<u8>, Vec<u8>)>,
+    ) {
+        {
+            let mut guard = store.trie_cache.write().unwrap();
+            let mut updated = (**guard).clone();
+            updated.put_batch_with_binary(
+                parent,
+                root,
+                block,
+                H256::repeat_byte(block as u8),
+                vec![(Nibbles::from_raw(&[0x01, block as u8], false), vec![1])],
+                BinaryLayerUpdate {
+                    root: binary_root,
+                    parent_root: parent_binary_root,
+                    nodes: binary_nodes,
+                    flat: binary_flat,
+                },
+            );
+            *guard = Arc::new(updated);
+        }
+        let trie = store.trie_cache.read().unwrap().clone();
+        commit_to_disk(
+            store.backend.as_ref(),
+            &store.flatkeyvalue_control_tx,
+            &store.trie_cache,
+            &trie,
+            root,
+            false,
+        )
+        .expect("commit");
+    }
+
+    fn test_store(backend: &Arc<dyn StorageBackend>) -> (Store, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(
+            backend.clone(),
+            dir.path().to_path_buf(),
+            1,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
+        (store, dir)
+    }
+
+    /// The mirror lands on disk in the same batch as the nodes, and its
+    /// pre-images land in the journal's sixth section — `None` for a row the
+    /// block created, the old value for one it overwrote.
+    #[tokio::test]
+    async fn a_blocks_mirror_writes_reach_disk_and_the_sixth_journal_section() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let (store, _dir) = test_store(&backend);
+
+        stage_and_commit(
+            &store,
+            H256::zero(),
+            H256::repeat_byte(1),
+            1,
+            H256::repeat_byte(0x81),
+            H256::zero(),
+            vec![(tree_key(0xa), vec![0xaa])],
+            vec![
+                (tree_key(0x01), leaf_value(0x11)),
+                (storage_tree_key(0x02), leaf_value(0x22)),
+            ],
+        );
+
+        assert_eq!(flat_row(&backend, &tree_key(0x01)), Some(leaf_value(0x11)));
+        assert_eq!(
+            flat_row(&backend, &storage_tree_key(0x02)),
+            Some(leaf_value(0x22)),
+            "an overflow-storage key must be written; it is the one the `[0xff]` \
+             frontier sentinel would wrongly exclude under a naive comparison"
+        );
+
+        let entry = decode_entry(&backend, 1);
+        let mut diff = entry.binary_flat_diff.clone();
+        diff.sort();
+        assert_eq!(
+            diff,
+            vec![(tree_key(0x01), None), (storage_tree_key(0x02), None),],
+            "both rows were created by this block, so both pre-images are absences"
+        );
+        assert!(
+            entry
+                .binary_trie_diff
+                .iter()
+                .any(|(k, _)| *k == tree_key(0xa)),
+            "the node section must still carry the node write"
+        );
+
+        // Second block overwrites one row and removes the other.
+        stage_and_commit(
+            &store,
+            H256::repeat_byte(1),
+            H256::repeat_byte(2),
+            2,
+            H256::repeat_byte(0x82),
+            H256::repeat_byte(0x81),
+            vec![],
+            vec![
+                (tree_key(0x01), leaf_value(0x99)),
+                (storage_tree_key(0x02), vec![]),
+            ],
+        );
+
+        assert_eq!(flat_row(&backend, &tree_key(0x01)), Some(leaf_value(0x99)));
+        assert_eq!(
+            flat_row(&backend, &storage_tree_key(0x02)),
+            None,
+            "an empty value is a tombstone: the row must be deleted, not zeroed"
+        );
+
+        let entry = decode_entry(&backend, 2);
+        let mut diff = entry.binary_flat_diff.clone();
+        diff.sort();
+        assert_eq!(
+            diff,
+            vec![
+                (tree_key(0x01), Some(leaf_value(0x11))),
+                (storage_tree_key(0x02), Some(leaf_value(0x22))),
+            ],
+            "pre-images must be the values block 1 left on disk"
+        );
+    }
+
+    /// The rollback direction, which is what the sixth section exists for:
+    /// applying the reverse diff must restore the parent's mirror exactly,
+    /// **including deletions** — a row the block created is removed, not left
+    /// behind with a stale value.
+    #[tokio::test]
+    async fn applying_the_sixth_section_restores_the_parents_mirror_including_deletions() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let (store, _dir) = test_store(&backend);
+
+        // Block 1 establishes two rows.
+        stage_and_commit(
+            &store,
+            H256::zero(),
+            H256::repeat_byte(1),
+            1,
+            H256::repeat_byte(0x81),
+            H256::zero(),
+            vec![],
+            vec![
+                (tree_key(0x01), leaf_value(0x11)),
+                (tree_key(0x02), leaf_value(0x22)),
+            ],
+        );
+        // Block 2 overwrites one, removes one, and creates a third.
+        stage_and_commit(
+            &store,
+            H256::repeat_byte(1),
+            H256::repeat_byte(2),
+            2,
+            H256::repeat_byte(0x82),
+            H256::repeat_byte(0x81),
+            vec![],
+            vec![
+                (tree_key(0x01), leaf_value(0x99)),
+                (tree_key(0x02), vec![]),
+                (tree_key(0x03), leaf_value(0x33)),
+            ],
+        );
+
+        // Apply block 2's reverse diff by hand, the way a rollback would:
+        // `Some(prev)` is a put, `None` is a delete.
+        let entry = decode_entry(&backend, 2);
+        {
+            let mut tx = backend.begin_write().unwrap();
+            for (key, prev) in &entry.binary_flat_diff {
+                match prev {
+                    Some(v) => tx.put(BINARY_FLATKEYVALUE, key, v).unwrap(),
+                    None => tx.delete(BINARY_FLATKEYVALUE, key).unwrap(),
+                }
+            }
+            tx.commit().unwrap();
+        }
+
+        assert_eq!(
+            flat_row(&backend, &tree_key(0x01)),
+            Some(leaf_value(0x11)),
+            "the overwritten row must be restored to block 1's value"
+        );
+        assert_eq!(
+            flat_row(&backend, &tree_key(0x02)),
+            Some(leaf_value(0x22)),
+            "the row block 2 removed must come back"
+        );
+        assert_eq!(
+            flat_row(&backend, &tree_key(0x03)),
+            None,
+            "the row block 2 created must be DELETED, not left with a stale value; \
+             this is the direction a missing `None` pre-image would silently break"
+        );
+    }
+
+    /// A deep-reorg reconciliation must bridge the overlay's mirror entries the
+    /// new chain did not rewrite, into the same batch and the same journal
+    /// entry, with an overlay `None` becoming a delete.
+    #[tokio::test]
+    async fn deep_reorg_reconciliation_bridges_untouched_mirror_keys() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let (store, _dir) = test_store(&backend);
+
+        // Old-chain disk state: three mirror rows.
+        {
+            let mut tx = backend.begin_write().unwrap();
+            for (k, v) in [
+                (tree_key(0xb1), leaf_value(0xb1)),
+                (tree_key(0xb2), leaf_value(0xb2)),
+                (tree_key(0xb3), leaf_value(0xb3)),
+            ] {
+                tx.put(BINARY_FLATKEYVALUE, &k, &v).unwrap();
+            }
+            tx.commit().unwrap();
+        }
+
+        // Journal entries for the old chain above the pivot, carrying mirror
+        // pre-images: `b1` had a different value at the pivot, `b2` did not
+        // exist at all, `b3` is not mentioned (so disk already holds the pivot
+        // value and no bridge entry is needed).
+        let pivot_root = H256::repeat_byte(0x09);
+        {
+            let mut tx = backend.begin_write().unwrap();
+            let entry = JournalEntry {
+                block_hash: H256::repeat_byte(10),
+                parent_state_root: pivot_root,
+                parent_binary_root: H256::repeat_byte(0x99),
+                account_trie_diff: vec![],
+                storage_trie_diff: vec![],
+                account_flat_diff: vec![],
+                storage_flat_diff: vec![],
+                binary_trie_diff: vec![],
+                binary_flat_diff: vec![
+                    (tree_key(0xb1), Some(leaf_value(0xa1))),
+                    (tree_key(0xb2), None),
+                ],
+            };
+            tx.put(STATE_HISTORY, &10u64.to_be_bytes(), &entry.encode())
+                .unwrap();
+            tx.commit().unwrap();
+        }
+        store.install_overlay_for_reorg(10, 10, |_| None).unwrap();
+
+        // The new chain's block at T rewrites only `b1`.
+        stage_and_commit(
+            &store,
+            pivot_root,
+            H256::repeat_byte(10),
+            10,
+            H256::repeat_byte(0x8a),
+            H256::repeat_byte(0x99),
+            vec![],
+            vec![(tree_key(0xb1), leaf_value(0xc1))],
+        );
+
+        assert_eq!(
+            flat_row(&backend, &tree_key(0xb1)),
+            Some(leaf_value(0xc1)),
+            "the layer wins over the bridge for a key it rewrote"
+        );
+        assert_eq!(
+            flat_row(&backend, &tree_key(0xb2)),
+            None,
+            "an overlay `None` must become a DELETE: the leaf did not exist at \
+             the pivot, and leaving the old chain's row would make the mirror a \
+             superset of the trie"
+        );
+        assert_eq!(
+            flat_row(&backend, &tree_key(0xb3)),
+            Some(leaf_value(0xb3)),
+            "a key no entry mentions is already at its pivot value"
+        );
+
+        let entry = decode_entry(&backend, 10);
+        let keys: Vec<&Vec<u8>> = entry.binary_flat_diff.iter().map(|(k, _)| k).collect();
+        assert!(
+            keys.contains(&&tree_key(0xb1)) && keys.contains(&&tree_key(0xb2)),
+            "both the layer's key and the bridged key must be journaled in T's \
+             entry, got {keys:?}"
+        );
+    }
+
+    /// Batch mode (full sync) writes the mirror and journals nothing, matching
+    /// the rule the other five sections already follow.
+    #[tokio::test]
+    async fn a_batch_commit_writes_the_mirror_and_journals_nothing() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let (store, _dir) = test_store(&backend);
+
+        {
+            let mut guard = store.trie_cache.write().unwrap();
+            let mut updated = (**guard).clone();
+            updated.put_batch_with_binary(
+                H256::zero(),
+                H256::repeat_byte(1),
+                1,
+                H256::repeat_byte(1),
+                vec![(Nibbles::from_raw(&[0x01], false), vec![1])],
+                BinaryLayerUpdate {
+                    root: H256::repeat_byte(0x81),
+                    parent_root: H256::zero(),
+                    nodes: vec![],
+                    flat: vec![(tree_key(0x01), leaf_value(0x11))],
+                },
+            );
+            *guard = Arc::new(updated);
+        }
+        let trie = store.trie_cache.read().unwrap().clone();
+        commit_to_disk(
+            store.backend.as_ref(),
+            &store.flatkeyvalue_control_tx,
+            &store.trie_cache,
+            &trie,
+            H256::repeat_byte(1),
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(
+            flat_row(&backend, &tree_key(0x01)),
+            Some(leaf_value(0x11)),
+            "batch mode still writes the mirror; only journaling is skipped"
+        );
+        assert!(
+            !journal_entry_exists(&backend, 1),
+            "batch mode must journal nothing"
+        );
+    }
+
+    /// The frontier skip. Task 9 builds the generator that makes this marker
+    /// non-absent; the skip is wired now so it fires the moment it does, and
+    /// this pins the behaviour of all three durable states.
+    #[tokio::test]
+    async fn the_frontier_skips_both_the_write_and_the_journal_push() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let (store, _dir) = test_store(&backend);
+
+        // A partial frontier: the generator has swept up to `tree_key(0x05)`.
+        {
+            let mut tx = backend.begin_write().unwrap();
+            tx.put(MISC_VALUES, BINARY_LAST_WRITTEN_KEY, &tree_key(0x05))
+                .unwrap();
+            tx.commit().unwrap();
+        }
+
+        stage_and_commit(
+            &store,
+            H256::zero(),
+            H256::repeat_byte(1),
+            1,
+            H256::repeat_byte(0x81),
+            H256::zero(),
+            vec![],
+            vec![
+                (tree_key(0x01), leaf_value(0x11)), // below the frontier: ours
+                (tree_key(0x05), leaf_value(0x55)), // at it: ours
+                (tree_key(0x09), leaf_value(0x99)), // past it: the generator's
+                (storage_tree_key(0x01), leaf_value(0xaa)), // far past it
+            ],
+        );
+
+        assert_eq!(flat_row(&backend, &tree_key(0x01)), Some(leaf_value(0x11)));
+        assert_eq!(
+            flat_row(&backend, &tree_key(0x05)),
+            Some(leaf_value(0x55)),
+            "the frontier is inclusive, matching the MPT's `key > last_written` skip"
+        );
+        assert_eq!(
+            flat_row(&backend, &tree_key(0x09)),
+            None,
+            "a key past the frontier is the generator's to write, not ours"
+        );
+        assert_eq!(flat_row(&backend, &storage_tree_key(0x01)), None);
+
+        let entry = decode_entry(&backend, 1);
+        let mut journaled: Vec<Vec<u8>> = entry
+            .binary_flat_diff
+            .iter()
+            .map(|(k, _)| k.clone())
+            .collect();
+        journaled.sort();
+        let mut expected = vec![tree_key(0x01), tree_key(0x05)];
+        expected.sort();
+        assert_eq!(
+            journaled, expected,
+            "the skip must jump over the journal push as well as the write: a \
+             `Some(None)` pre-image for an unwritten row would make a rollback \
+             delete a key that was never put"
+        );
+    }
+
+    /// The completion sentinel is one byte and an overflow-storage tree key
+    /// begins with `0xff`, so `[0xff, ..] > [0xff]` lexicographically. A naive
+    /// `key <= frontier` would silently drop every storage-zone leaf on a
+    /// *complete* mirror — the exact opposite of what "complete" means.
+    #[tokio::test]
+    async fn the_complete_sentinel_covers_the_storage_zone_it_sorts_below() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let (store, _dir) = test_store(&backend);
+        {
+            let mut tx = backend.begin_write().unwrap();
+            tx.put(
+                MISC_VALUES,
+                BINARY_LAST_WRITTEN_KEY,
+                BINARY_FLAT_FRONTIER_COMPLETE,
+            )
+            .unwrap();
+            tx.commit().unwrap();
+        }
+
+        stage_and_commit(
+            &store,
+            H256::zero(),
+            H256::repeat_byte(1),
+            1,
+            H256::repeat_byte(0x81),
+            H256::zero(),
+            vec![],
+            vec![
+                (tree_key(0x01), leaf_value(0x11)),
+                (storage_tree_key(0x01), leaf_value(0xaa)),
+            ],
+        );
+
+        assert_eq!(flat_row(&backend, &tree_key(0x01)), Some(leaf_value(0x11)));
+        assert_eq!(
+            flat_row(&backend, &storage_tree_key(0x01)),
+            Some(leaf_value(0xaa)),
+            "a complete frontier must cover the storage zone, which sorts ABOVE \
+             the one-byte `[0xff]` sentinel"
+        );
+        assert_eq!(decode_entry(&backend, 1).binary_flat_diff.len(), 2);
+    }
+
+    /// "Zero means absent" at the production writer. A 32-zero-byte value is not
+    /// a leaf the trie holds — the embedding resolved it to a removal — so a row
+    /// carrying one would put the mirror ahead of the trie's root, and a range
+    /// proved against that root would fail on it. Refuse the commit.
+    #[tokio::test]
+    async fn a_32_zero_byte_mirror_value_is_refused_rather_than_written() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let (store, _dir) = test_store(&backend);
+
+        {
+            let mut guard = store.trie_cache.write().unwrap();
+            let mut updated = (**guard).clone();
+            updated.put_batch_with_binary(
+                H256::zero(),
+                H256::repeat_byte(1),
+                1,
+                H256::repeat_byte(1),
+                vec![],
+                BinaryLayerUpdate {
+                    root: H256::repeat_byte(0x81),
+                    parent_root: H256::zero(),
+                    nodes: vec![],
+                    flat: vec![
+                        (tree_key(0x01), leaf_value(0x11)),
+                        (tree_key(0x02), vec![0u8; 32]),
+                    ],
+                },
+            );
+            *guard = Arc::new(updated);
+        }
+        let trie = store.trie_cache.read().unwrap().clone();
+        let err = commit_to_disk(
+            store.backend.as_ref(),
+            &store.flatkeyvalue_control_tx,
+            &store.trie_cache,
+            &trie,
+            H256::repeat_byte(1),
+            false,
+        )
+        .expect_err("a zero-valued leaf must not be committed");
+        let message = err.to_string();
+        assert!(
+            message.contains("zero means absent"),
+            "the error must name the invariant, got: {message}"
+        );
+
+        // Nothing was written: the whole `write_tx` is abandoned, so even the
+        // valid row beside it does not land.
+        assert_eq!(flat_row(&backend, &tree_key(0x01)), None);
+        assert_eq!(flat_row(&backend, &tree_key(0x02)), None);
+        assert!(!journal_entry_exists(&backend, 1));
+    }
+
+    /// The Decision 6 collision at the journal level, end to end through
+    /// `commit_to_disk`: one 34-byte key written as a node and as a mirror row,
+    /// with different values, in one block. Each must reach its own section with
+    /// its own pre-image and land in its own column family.
+    #[tokio::test]
+    async fn a_shared_34_byte_key_is_committed_to_both_tables_independently() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let (store, _dir) = test_store(&backend);
+        let shared = tree_key(0x07);
+
+        stage_and_commit(
+            &store,
+            H256::zero(),
+            H256::repeat_byte(1),
+            1,
+            H256::repeat_byte(0x81),
+            H256::zero(),
+            vec![(shared.clone(), vec![0xa7])],
+            vec![(shared.clone(), leaf_value(0xf7))],
+        );
+
+        let read = backend.begin_read().unwrap();
+        assert_eq!(
+            read.get(BINARY_TRIE_NODES, &shared).unwrap(),
+            Some(vec![0xa7]),
+            "the node encoding must be in the node table"
+        );
+        assert_eq!(
+            read.get(BINARY_FLATKEYVALUE, &shared).unwrap(),
+            Some(leaf_value(0xf7)),
+            "the leaf value must be in the mirror, not the node's bytes"
+        );
+
+        let entry = decode_entry(&backend, 1);
+        assert_eq!(entry.binary_trie_diff, vec![(shared.clone(), None)]);
+        assert_eq!(entry.binary_flat_diff, vec![(shared.clone(), None)]);
+
+        // Now the direction that separates the pre-image maps: a second block
+        // rewrites both, and each reverse diff must record its OWN previous
+        // value. A shared intra-batch map would cross them.
+        stage_and_commit(
+            &store,
+            H256::repeat_byte(1),
+            H256::repeat_byte(2),
+            2,
+            H256::repeat_byte(0x82),
+            H256::repeat_byte(0x81),
+            vec![(shared.clone(), vec![0xb8])],
+            vec![(shared.clone(), leaf_value(0xf8))],
+        );
+
+        let entry = decode_entry(&backend, 2);
+        assert_eq!(
+            entry.binary_trie_diff,
+            vec![(shared.clone(), Some(vec![0xa7]))],
+            "the node's pre-image is the node's previous encoding"
+        );
+        assert_eq!(
+            entry.binary_flat_diff,
+            vec![(shared, Some(leaf_value(0xf7)))],
+            "the leaf's pre-image is the leaf's previous value, not the node's"
+        );
     }
 
     /// Adversarial regression for the journal-pruning race: while a deep-reorg

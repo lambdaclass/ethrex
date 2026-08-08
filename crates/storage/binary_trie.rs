@@ -92,6 +92,17 @@ impl BinaryTrieDB for BackendBinaryTrieDB {
 /// [`BinaryTrieDB::put_batch`]'s tombstone convention.
 pub type BinaryTrieNodes = Vec<(Vec<u8>, Vec<u8>)>;
 
+/// Flat-mirror writes as they are staged and flushed: [`BINARY_FLATKEYVALUE`]
+/// key/value pairs, with an **empty value meaning "delete this row"** per
+/// [`BackendBinaryFlatDB::put_batch`]'s tombstone convention.
+///
+/// Byte-identical in shape to [`BinaryTrieNodes`] and deliberately a distinct
+/// alias: the two key spaces overlap exactly (a 34-byte `BitPath` DB key and a
+/// 34-byte account-zone tree key are indistinguishable), so the type name is the
+/// only place a reader is told which table a `Vec<(Vec<u8>, Vec<u8>)>` is bound
+/// for.
+pub type BinaryFlatWrites = Vec<(Vec<u8>, Vec<u8>)>;
+
 /// One row of [`BINARY_FLATKEYVALUE`] as a scan yields it: the tree key and its
 /// 32-byte leaf value, or the read failure that stopped the scan.
 pub type BinaryFlatEntry = Result<(Vec<u8>, [u8; 32]), StoreError>;

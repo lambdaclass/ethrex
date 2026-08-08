@@ -126,7 +126,7 @@ use ethrex_trie::{Nibbles, TrieDB, TrieError};
 
 use crate::{
     api::{StorageBackend, tables::STATE_HISTORY},
-    binary_trie::BinaryTrieNodes,
+    binary_trie::{BinaryFlatWrites, BinaryTrieNodes},
     error::StoreError,
     journal::{JournalDecodeError, JournalEntry},
     trie::classify_trie_key,
@@ -154,6 +154,33 @@ struct TrieLayer {
     /// the node left the tree, so a reader must answer "absent" and must not
     /// fall through to the stale node still on disk at that path.
     binary_nodes: FxHashMap<Vec<u8>, Vec<u8>>,
+    /// The same block's writes to the flat mirror of the binary trie's leaves,
+    /// keyed by the embedding's own tree key — the exact `BINARY_FLATKEYVALUE`
+    /// key, 34 or 66 bytes.
+    ///
+    /// A third map in the same layer for the same reason there is a second: the
+    /// mirror is derived from the trie and must advance on disk in the same
+    /// atomic step, so it is staged, flushed and discarded as one unit with the
+    /// nodes it mirrors. A mirror persisted at a different block than the trie
+    /// is the recovery problem this module's header refuses.
+    ///
+    /// It cannot share `binary_nodes`: a `BitPath` DB key is
+    /// `4 + ceil(bits/8)` bytes, so a node at bit-depth 240 has a 34-byte key
+    /// and a node at bit-depth 496 a 66-byte one — byte-for-byte the lengths of
+    /// account-zone and storage-zone tree keys. The two key spaces are not
+    /// distinguishable from each other at all, and only the map they live in
+    /// says which is which.
+    ///
+    /// An empty *value* is a tombstone, matching `binary_nodes`: the leaf left
+    /// the tree, so a reader must answer "absent" and must not fall through to
+    /// the row a previous block left on the single-version disk table. Note the
+    /// second kind of zero this is one typo from: a *32-zero-byte* value is an
+    /// invariant violation, never a tombstone, because "zero means absent"
+    /// already resolved that leaf to a removal (see
+    /// [`BackendBinaryFlatDB::put_batch`](crate::binary_trie::BackendBinaryFlatDB::put_batch)).
+    ///
+    /// Empty on every chain that does not schedule `binaryTreeTime`.
+    binary_flat: FxHashMap<Vec<u8>, Vec<u8>>,
     /// Binary-trie root this layer's `binary_nodes` produce, i.e. the root the
     /// block's binary post-state is addressed by. `H256::zero()` when the chain
     /// is not binary-tree-scheduled and this layer holds no binary nodes.
@@ -203,6 +230,13 @@ pub struct BinaryLayerUpdate {
     pub parent_root: H256,
     /// `(BINARY_TRIE_NODES key, encoded node)` pairs; empty value = tombstone.
     pub nodes: BinaryTrieNodes,
+    /// `(BINARY_FLATKEYVALUE key, 32-byte leaf value)` pairs for the flat mirror
+    /// of the same block's leaf changes; empty value = the leaf was removed.
+    ///
+    /// Derived from the leaf changelog `BinaryTrie::commit` emits, one entry per
+    /// leaf the block created, changed or removed — one row against the
+    /// `1 + branch_depth` node rows beside it.
+    pub flat: BinaryFlatWrites,
 }
 
 impl BinaryLayerUpdate {
@@ -257,6 +291,27 @@ pub struct TrieLayerCache {
     /// keep exactly the false-positive rate they had: binary keys are 34 bytes
     /// and would otherwise crowd the same filter.
     binary_bloom: AtomicBloomFilter<FxBuildHasher>,
+    /// Bloom filter over every binary *flat-mirror* key in every layer — a third
+    /// filter, not a share of `binary_bloom`.
+    ///
+    /// Sharing would cost only false positives, never correctness: both lookups
+    /// resolve in their own map, so a filter hit at most buys a wasted walk. It
+    /// is separate anyway, for two reasons.
+    ///
+    /// The two key spaces provably collide (see the `binary_flat` field docs),
+    /// and a shared filter turns that collision from a probabilistic false
+    /// positive into a *deterministic* one: every key staged in exactly one of
+    /// the two maps would pass the filter for the other's lookup and force the
+    /// full bounded parent walk, at that specific key, every time. Separate
+    /// filters keep each negative answer exact.
+    ///
+    /// And Decision 6 spends its length forbidding these two key spaces from
+    /// sharing a container anywhere else — the journal section, the overlay map,
+    /// the intra-batch pre-image map. One place where they are deliberately
+    /// mixed, even harmlessly, is an invitation to mix them somewhere it is not
+    /// harmless. The cost is one more filter and one more loop in
+    /// [`Self::rebuild_bloom`].
+    binary_flat_bloom: AtomicBloomFilter<FxBuildHasher>,
     /// Optional in-memory overlay bridging on-disk state at the cache edge `D` to the
     /// virtual state at a deep-reorg pivot. When installed, reads that miss the layer
     /// chain consult the overlay before falling through to disk. `None` in steady state.
@@ -292,6 +347,7 @@ impl Default for TrieLayerCache {
             bloom: Self::create_filter(BLOOM_SIZE),
             binary_index: Default::default(),
             binary_bloom: Self::create_filter(BLOOM_SIZE),
+            binary_flat_bloom: Self::create_filter(BLOOM_SIZE),
             last_id: 0,
             layers: Default::default(),
             // TODO (issue #6345): this is coupled with DB_COMMIT_THRESHOLD in store.rs — unify them.
@@ -316,6 +372,7 @@ impl TrieLayerCache {
             bloom: Self::create_filter(BLOOM_SIZE),
             binary_index: Default::default(),
             binary_bloom: Self::create_filter(BLOOM_SIZE),
+            binary_flat_bloom: Self::create_filter(BLOOM_SIZE),
             last_id: 0,
             layers: Default::default(),
             commit_threshold,
@@ -499,6 +556,44 @@ impl TrieLayerCache {
         None
     }
 
+    /// Looks up a `BINARY_FLATKEYVALUE` key (a tree key, 34 or 66 bytes) as of
+    /// `binary_root`, walking the same layer chain [`Self::binary_get`] walks.
+    ///
+    /// Same three-state return, and `Some(None)` carries the same weight: the
+    /// mirror is single-version on disk, so "this leaf is not in the trie at
+    /// this root" cannot be answered by falling through to the row a previous
+    /// block wrote there.
+    ///
+    /// Resolution goes through the same [`binary_index`](Self) and the same
+    /// bounded parent walk as `binary_get` — one chain of blocks carries all
+    /// three sets, and the index is a second entry point into it, so like
+    /// `binary_get` this walk has no "state cycle" invariant to lean on and
+    /// caps itself instead.
+    ///
+    /// The only thing that distinguishes a flat key from a node key is which of
+    /// the two maps is consulted; see the `binary_flat` field docs.
+    pub fn binary_flat_get(&self, binary_root: H256, key: &[u8]) -> Option<Option<Vec<u8>>> {
+        // A bloom miss is proof no layer has the key. Its own filter, not
+        // `binary_bloom`: see the `binary_flat_bloom` field docs.
+        if !self.binary_flat_bloom.contains(key) {
+            return None;
+        }
+        let mut current = *self.binary_index.get(&binary_root)?;
+        let mut steps = 0usize;
+        let max_steps = self.layers.len();
+        while let Some(layer) = self.layers.get(&current) {
+            if let Some(value) = layer.binary_flat.get(key) {
+                return Some((!value.is_empty()).then(|| value.clone()));
+            }
+            current = layer.parent;
+            steps += 1;
+            if steps > max_steps {
+                return None;
+            }
+        }
+        None
+    }
+
     /// Whether `binary_root` has a diff layer holding its binary state. The
     /// binary counterpart of [`Self::has_layer`].
     pub fn has_binary_layer(&self, binary_root: H256) -> bool {
@@ -626,7 +721,11 @@ impl TrieLayerCache {
         key_values: Vec<(Nibbles, Vec<u8>)>,
         binary: BinaryLayerUpdate,
     ) {
-        if parent == state_root && key_values.is_empty() && binary.nodes.is_empty() {
+        if parent == state_root
+            && key_values.is_empty()
+            && binary.nodes.is_empty()
+            && binary.flat.is_empty()
+        {
             return;
         } else if parent == state_root {
             // L1 always changes the state root (system contracts run even on empty blocks), so
@@ -647,6 +746,9 @@ impl TrieLayerCache {
         for (p, _) in &binary.nodes {
             self.binary_bloom.insert(p);
         }
+        for (p, _) in &binary.flat {
+            self.binary_flat_bloom.insert(p);
+        }
 
         let nodes: FxHashMap<Vec<u8>, Vec<u8>> = key_values
             .into_iter()
@@ -656,11 +758,13 @@ impl TrieLayerCache {
         let binary_root = binary.root;
         let parent_binary_root = binary.parent_root;
         let binary_nodes: FxHashMap<Vec<u8>, Vec<u8>> = binary.nodes.into_iter().collect();
+        let binary_flat: FxHashMap<Vec<u8>, Vec<u8>> = binary.flat.into_iter().collect();
 
         self.last_id += 1;
         let entry = TrieLayer {
             nodes,
             binary_nodes,
+            binary_flat,
             binary_root,
             parent_binary_root,
             parent,
@@ -692,9 +796,15 @@ impl TrieLayerCache {
             .values()
             .map(|layer| layer.binary_nodes.len())
             .sum();
+        let total_binary_flat_keys: usize = self
+            .layers
+            .values()
+            .map(|layer| layer.binary_flat.len())
+            .sum();
 
         let filter = Self::create_filter(total_keys.max(BLOOM_SIZE));
         let binary_filter = Self::create_filter(total_binary_keys.max(BLOOM_SIZE));
+        let binary_flat_filter = Self::create_filter(total_binary_flat_keys.max(BLOOM_SIZE));
 
         // Parallel insertion - AtomicBloomFilter allows concurrent insert via &self
         self.layers.par_iter().for_each(|(_, layer)| {
@@ -704,10 +814,14 @@ impl TrieLayerCache {
             for path in layer.binary_nodes.keys() {
                 binary_filter.insert(path);
             }
+            for path in layer.binary_flat.keys() {
+                binary_flat_filter.insert(path);
+            }
         });
 
         self.bloom = filter;
         self.binary_bloom = binary_filter;
+        self.binary_flat_bloom = binary_flat_filter;
         self.binary_index = self
             .layers
             .iter()
@@ -791,6 +905,7 @@ impl TrieLayerCache {
                 parent_binary_root: layer.parent_binary_root,
                 nodes: layer.nodes.into_iter().collect(),
                 binary_nodes: layer.binary_nodes.into_iter().collect(),
+                binary_flat: layer.binary_flat.into_iter().collect(),
             })
             .collect();
         Some(committed)
@@ -824,6 +939,16 @@ pub struct CommittedLayer {
     /// Written into the same `write_tx` as `nodes`, which is the point: the two
     /// tries advance on disk in one atomic step, never independently.
     pub binary_nodes: BinaryTrieNodes,
+    /// The same block's writes to the binary trie's flat leaf mirror, as
+    /// `BINARY_FLATKEYVALUE` key/value pairs with an empty value meaning
+    /// "delete this row". Empty on unscheduled chains.
+    ///
+    /// Written into the same `write_tx` as `nodes` and `binary_nodes`, for the
+    /// stronger version of the same reason: the mirror is *derived* from the
+    /// binary trie, so a mirror persisted at a different block than the trie it
+    /// mirrors is not merely inconsistent, it is a mirror that disagrees with
+    /// the root it is supposed to be a view of.
+    pub binary_flat: BinaryFlatWrites,
 }
 
 /// [`TrieDB`] adapter that checks in-memory diff-layers ([`TrieLayerCache`]) first,
@@ -1011,6 +1136,14 @@ pub struct Overlay {
     /// binary key would be served as (and, on reconciliation, written as) an
     /// account-trie node.
     binary_trie: FxHashMap<Vec<u8>, Option<Vec<u8>>>,
+    /// Reverse diff for `BINARY_FLATKEYVALUE`, in a sixth map of its own.
+    ///
+    /// It cannot share the four MPT maps for the reason `binary_trie` gives, and
+    /// it cannot share `binary_trie` either: the two binary key spaces have
+    /// identical length ranges (34 and 66 bytes both ways), so a shared map
+    /// would serve a node pre-image for a leaf read and write a leaf into
+    /// `BINARY_TRIE_NODES` on reconciliation.
+    binary_flat: FxHashMap<Vec<u8>, Option<Vec<u8>>>,
     /// Bloom filter shared across all four MPT/flat-KV CFs. A miss here lets
     /// readers skip the overlay lookup and fall through to disk without touching
     /// any map.
@@ -1019,6 +1152,12 @@ pub struct Overlay {
     /// reason [`TrieLayerCache`]'s is: an unscheduled chain's MPT lookups keep
     /// exactly the false-positive rate they had.
     binary_bloom: AtomicBloomFilter<FxBuildHasher>,
+    /// Bloom filter over `binary_flat`, kept separate from `binary_bloom` for
+    /// the reason [`TrieLayerCache`]'s `binary_flat_bloom` gives: the two key
+    /// spaces collide exactly, so a shared filter would make every key present
+    /// in only one of the maps a deterministic false positive for the other's
+    /// lookup.
+    binary_flat_bloom: AtomicBloomFilter<FxBuildHasher>,
     /// Highest block number covered by the overlay (= cache edge `D` at install time).
     from_block: BlockNumber,
     /// Lowest block number covered by the overlay (= `pivot + 1`).
@@ -1052,6 +1191,7 @@ impl fmt::Debug for Overlay {
             .field("account_flat_len", &self.account_flat.len())
             .field("storage_flat_len", &self.storage_flat.len())
             .field("binary_trie_len", &self.binary_trie.len())
+            .field("binary_flat_len", &self.binary_flat.len())
             .field("from_block", &self.from_block)
             .field("to_block", &self.to_block)
             .finish()
@@ -1066,10 +1206,14 @@ impl Default for Overlay {
             account_flat: FxHashMap::default(),
             storage_flat: FxHashMap::default(),
             binary_trie: FxHashMap::default(),
+            binary_flat: FxHashMap::default(),
             bloom: AtomicBloomFilter::with_false_pos(FALSE_POSITIVE_RATE)
                 .hasher(FxBuildHasher)
                 .expected_items(Self::BLOOM_INITIAL_CAPACITY),
             binary_bloom: AtomicBloomFilter::with_false_pos(FALSE_POSITIVE_RATE)
+                .hasher(FxBuildHasher)
+                .expected_items(Self::BLOOM_INITIAL_CAPACITY),
+            binary_flat_bloom: AtomicBloomFilter::with_false_pos(FALSE_POSITIVE_RATE)
                 .hasher(FxBuildHasher)
                 .expected_items(Self::BLOOM_INITIAL_CAPACITY),
             from_block: 0,
@@ -1185,6 +1329,13 @@ impl Overlay {
             self.binary_bloom.insert(&k);
             self.binary_trie.insert(k, v);
         }
+        // A sixth loop, its own map and its own filter. The two binary key
+        // spaces are the same lengths, so nothing but the section it arrived in
+        // says which of the two tables this key belongs to.
+        for (k, v) in entry.binary_flat_diff {
+            self.binary_flat_bloom.insert(&k);
+            self.binary_flat.insert(k, v);
+        }
     }
 
     /// Looks up a `BINARY_TRIE_NODES` key in the overlay, with the same
@@ -1199,6 +1350,24 @@ impl Overlay {
             return None;
         }
         self.binary_trie.get(key).cloned()
+    }
+
+    /// Looks up a `BINARY_FLATKEYVALUE` key in the overlay, with the same
+    /// three-state contract as [`Self::binary_lookup`].
+    ///
+    /// `Some(None)` is load-bearing here for the same reason it is for nodes:
+    /// the mirror is single-version, so "this leaf was not in the trie at the
+    /// pivot" cannot be answered by falling through to disk, which still holds
+    /// the abandoned chain's row at that exact tree key.
+    ///
+    /// Deliberately a separate method rather than a `cf` variant: routing by key
+    /// length is what this whole split exists to avoid, and a 34-byte key is a
+    /// legal input to *four* of these lookups.
+    pub fn binary_flat_lookup(&self, key: &[u8]) -> Option<Option<Vec<u8>>> {
+        if !self.binary_flat_bloom.contains(key) {
+            return None;
+        }
+        self.binary_flat.get(key).cloned()
     }
 
     /// Looks up `key` in the overlay's `cf` slot. Three-state return:
@@ -1220,13 +1389,14 @@ impl Overlay {
         map.get(key).cloned()
     }
 
-    /// Total number of overlay entries across all five CFs.
+    /// Total number of overlay entries across all six CFs.
     pub fn len(&self) -> usize {
         self.account_trie.len()
             + self.storage_trie.len()
             + self.account_flat.len()
             + self.storage_flat.len()
             + self.binary_trie.len()
+            + self.binary_flat.len()
     }
 
     /// Whether the overlay holds any entries.
@@ -1244,6 +1414,7 @@ impl Overlay {
             &self.account_flat,
             &self.storage_flat,
             &self.binary_trie,
+            &self.binary_flat,
         ]
         .iter()
         .flat_map(|map| map.iter())
@@ -1317,6 +1488,17 @@ impl Overlay {
     pub fn iter_binary_entries(&self) -> impl Iterator<Item = (&Vec<u8>, &Option<Vec<u8>>)> {
         self.binary_trie.iter()
     }
+
+    /// Iterates the binary flat-mirror reverse diff as `(key, value)`, for the
+    /// reconciliation bridge in `commit_to_disk`.
+    ///
+    /// Separate from [`Self::iter_binary_entries`] because the two streams feed
+    /// writers targeting *different* column families and nothing in the key
+    /// bytes distinguishes them — merging the two would silently write leaves
+    /// into `BINARY_TRIE_NODES` and nodes into `BINARY_FLATKEYVALUE`.
+    pub fn iter_binary_flat_entries(&self) -> impl Iterator<Item = (&Vec<u8>, &Option<Vec<u8>>)> {
+        self.binary_flat.iter()
+    }
 }
 
 #[cfg(test)]
@@ -1343,6 +1525,7 @@ mod overlay_tests {
                 account_flat_diff: vec![],
                 storage_flat_diff: vec![],
                 binary_trie_diff: vec![],
+                binary_flat_diff: vec![],
             };
             tx.put(STATE_HISTORY, &n.to_be_bytes(), &entry.encode())
                 .unwrap();
@@ -1499,6 +1682,7 @@ mod overlay_tests {
                 account_flat_diff: vec![],
                 storage_flat_diff: vec![],
                 binary_trie_diff: vec![],
+                binary_flat_diff: vec![],
             };
             tx.put(STATE_HISTORY, &n.to_be_bytes(), &entry.encode())
                 .unwrap();
@@ -1644,6 +1828,7 @@ mod overlay_tests {
             account_flat_diff: vec![(vec![0x30; 65], Some(b"acct-flat".to_vec()))],
             storage_flat_diff: vec![(vec![0x40; 131], None)],
             binary_trie_diff: vec![],
+            binary_flat_diff: vec![],
         };
         let mut tx = backend.begin_write().unwrap();
         tx.put(STATE_HISTORY, &1u64.to_be_bytes(), &entry.encode())
@@ -1762,6 +1947,7 @@ mod overlay_tests {
             account_flat_diff: vec![(vec![0x30; 65], None)],
             storage_flat_diff: vec![(vec![0x40; 131], Some(b"sf".to_vec()))],
             binary_trie_diff: vec![],
+            binary_flat_diff: vec![],
         };
         let mut tx = backend.begin_write().unwrap();
         tx.put(STATE_HISTORY, &1u64.to_be_bytes(), &entry.encode())
@@ -1816,6 +2002,7 @@ mod overlay_tests {
             account_flat_diff: vec![],
             storage_flat_diff: vec![],
             binary_trie_diff,
+            binary_flat_diff: vec![],
         };
         let mut tx = backend.begin_write().unwrap();
         tx.put(STATE_HISTORY, &block.to_be_bytes(), &entry.encode())
@@ -1908,6 +2095,136 @@ mod overlay_tests {
         assert_eq!(overlay.binary_lookup(&[0x0c; 34]), None);
     }
 
+    /// Seeds one entry carrying *all three* colliding sections at the same key
+    /// bytes: an account-trie pre-image, a binary-node one and a binary-flat
+    /// one, each with a different value.
+    fn seed_all_three(
+        backend: &Arc<dyn StorageBackend>,
+        block: BlockNumber,
+        account_trie_diff: FlatDiff,
+        binary_trie_diff: FlatDiff,
+        binary_flat_diff: FlatDiff,
+    ) {
+        let entry = JournalEntry {
+            block_hash: h(block as u8),
+            parent_state_root: h(0xf0),
+            parent_binary_root: h(0xb0),
+            account_trie_diff,
+            storage_trie_diff: vec![],
+            account_flat_diff: vec![],
+            storage_flat_diff: vec![],
+            binary_trie_diff,
+            binary_flat_diff,
+        };
+        let mut tx = backend.begin_write().unwrap();
+        tx.put(STATE_HISTORY, &block.to_be_bytes(), &entry.encode())
+            .unwrap();
+        tx.commit().unwrap();
+    }
+
+    /// The Decision 6 collision at the overlay level, all three ways at once.
+    ///
+    /// A 34-byte key is a legal `ACCOUNT_TRIE_NODES` path, a legal
+    /// `BINARY_TRIE_NODES` path (bit-depth 240) and a legal
+    /// `BINARY_FLATKEYVALUE` tree key (account zone). `absorb` puts each in its
+    /// own map behind its own filter, and each lookup must answer with its own
+    /// pre-image — because on reconciliation each stream is written to a
+    /// different column family with no further interpretation.
+    #[test]
+    fn all_three_colliding_sections_resolve_independently_in_the_overlay() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let shared = vec![0x07; 34];
+        seed_all_three(
+            &backend,
+            1,
+            vec![(shared.clone(), Some(b"mpt".to_vec()))],
+            vec![(shared.clone(), Some(b"binary-node".to_vec()))],
+            vec![(shared.clone(), Some(vec![0xf5; 32]))],
+        );
+        let overlay = Overlay::from_journal(backend.as_ref(), 1, 1, |_| None).unwrap();
+
+        assert_eq!(
+            overlay.lookup(OverlayCf::AccountTrie, &shared),
+            Some(Some(b"mpt".to_vec()))
+        );
+        assert_eq!(
+            overlay.binary_lookup(&shared),
+            Some(Some(b"binary-node".to_vec()))
+        );
+        assert_eq!(
+            overlay.binary_flat_lookup(&shared),
+            Some(Some(vec![0xf5; 32])),
+            "the mirror pre-image must not be either of the other two"
+        );
+
+        // Three streams, three destinations. The flat entries must not appear in
+        // the length-classified stream (which would write them into an MPT CF)
+        // nor in the node stream (which would write them into BINARY_TRIE_NODES).
+        assert_eq!(overlay.iter_all_entries().count(), 1);
+        assert_eq!(overlay.iter_binary_entries().count(), 1);
+        assert_eq!(overlay.iter_binary_flat_entries().count(), 1);
+        assert_eq!(overlay.len(), 3);
+        assert!(overlay.byte_size() >= 34 * 3);
+    }
+
+    /// The tombstone direction across the two binary sections: a node created by
+    /// the commit and a leaf that already existed, at one key. A conflated map
+    /// answers the wrong kind of absence, and on rollback that is a delete
+    /// against the wrong table.
+    #[test]
+    fn binary_flat_absence_does_not_leak_into_the_node_map_or_back() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let shared = vec![0x09; 34];
+        seed_all_three(
+            &backend,
+            1,
+            vec![],
+            vec![(shared.clone(), None)],
+            vec![(shared.clone(), Some(vec![0xf6; 32]))],
+        );
+        let overlay = Overlay::from_journal(backend.as_ref(), 1, 1, |_| None).unwrap();
+
+        assert_eq!(
+            overlay.binary_lookup(&shared),
+            Some(None),
+            "the node did not exist at the pivot"
+        );
+        assert_eq!(
+            overlay.binary_flat_lookup(&shared),
+            Some(Some(vec![0xf6; 32])),
+            "the leaf did, with a value; a shared map would report it absent"
+        );
+    }
+
+    /// The oldest in-range pre-image wins for the mirror too, on the same
+    /// descending walk: an unwind must land on the pivot's leaf value, not on
+    /// the value one block above it.
+    #[test]
+    fn the_oldest_binary_flat_pre_image_in_range_wins() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let key = vec![0x0a; 66];
+        for (block, byte) in [(3u64, 0x33u8), (4, 0x44), (5, 0x55)] {
+            seed_all_three(
+                &backend,
+                block,
+                vec![],
+                vec![],
+                vec![(key.clone(), Some(vec![byte; 32]))],
+            );
+        }
+        let overlay = Overlay::from_journal(backend.as_ref(), 5, 3, |_| None).unwrap();
+        assert_eq!(
+            overlay.binary_flat_lookup(&key),
+            Some(Some(vec![0x33; 32])),
+            "the oldest reverse-diff value is the one at the pivot"
+        );
+        assert_eq!(
+            overlay.binary_flat_lookup(&[0x0b; 66]),
+            None,
+            "a key no entry mentions must miss, so the caller reads disk"
+        );
+    }
+
     /// The read gate: only the pivot's binary root and the new-chain layers
     /// built on top of it may see overlay values. Everything else — a historical
     /// binary root an RPC is reading at, say — must fall through to disk, which
@@ -1939,6 +2256,7 @@ mod overlay_tests {
                 root: h(0xb2),
                 parent_root: h(0xb1),
                 nodes: vec![(vec![0x0e; 34], vec![9])],
+                flat: vec![],
             },
         );
         assert!(cache.overlay_serves_binary(h(0xb2)));
@@ -2231,6 +2549,7 @@ mod tests {
                 // the same `0x80 + n` convention.
                 parent_root: h256(0x80 + n - 1),
                 nodes: binary,
+                flat: vec![],
             },
         );
     }
@@ -2401,6 +2720,310 @@ mod tests {
         assert!(
             committed.iter().all(|layer| layer.binary_nodes.is_empty()),
             "an unscheduled chain must flush no binary nodes"
+        );
+        assert!(
+            committed.iter().all(|layer| layer.binary_flat.is_empty()),
+            "an unscheduled chain must flush no binary flat entries either"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Binary flat mirror entries in the same layers.
+    // -----------------------------------------------------------------------
+
+    /// A `BINARY_FLATKEYVALUE` tree key: the account zone byte, a digest, a
+    /// sub-index. 34 bytes — deliberately the *same length* a `BitPath` DB key
+    /// has at bit-depth 240, which is the collision the sections exist to keep
+    /// apart.
+    fn fkey(b: u8) -> Vec<u8> {
+        let mut key = vec![0u8; 34];
+        key[1] = b;
+        key
+    }
+
+    /// A 32-byte leaf value.
+    fn fval(b: u8) -> Vec<u8> {
+        vec![b; 32]
+    }
+
+    /// One block's layer carrying all three sets, by the same `0x80 + n` binary
+    /// root convention as [`put_dual`].
+    fn put_triple(
+        cache: &mut TrieLayerCache,
+        parent: H256,
+        n: u8,
+        nodes: Vec<(Vec<u8>, Vec<u8>)>,
+        flat: Vec<(Vec<u8>, Vec<u8>)>,
+    ) {
+        cache.put_batch_with_binary(
+            parent,
+            h256(n),
+            n as u64,
+            h256(n),
+            vec![(key(n), vec![n])],
+            BinaryLayerUpdate {
+                root: h256(0x80 + n),
+                parent_root: h256(0x80 + n - 1),
+                nodes,
+                flat,
+            },
+        );
+    }
+
+    /// The flat mirror resolves through the *same* secondary index the nodes do:
+    /// one chain of blocks, one binary root, two staged sets.
+    #[test]
+    fn a_binary_flat_entry_resolves_through_the_secondary_index() {
+        let (mut cache, _cell) = cache_with_cell(4, H256::zero());
+        put_triple(
+            &mut cache,
+            H256::zero(),
+            1,
+            vec![(bkey(0xa), vec![0x11])],
+            vec![(fkey(0xa), fval(0x11))],
+        );
+
+        assert_eq!(
+            cache.binary_flat_get(h256(0x81), &fkey(0xa)),
+            Some(Some(fval(0x11)))
+        );
+        // The MPT root is not a binary root; asking with the layer's own key
+        // must find nothing, or the two indexes have been conflated.
+        assert_eq!(cache.binary_flat_get(h256(1), &fkey(0xa)), None);
+        // An unknown binary root falls through to disk.
+        assert_eq!(cache.binary_flat_get(h256(0xff), &fkey(0xa)), None);
+    }
+
+    /// The flat walk follows the same parent links, newest writer winning.
+    #[test]
+    fn the_binary_flat_walk_follows_the_layer_parent_chain() {
+        let (mut cache, _cell) = cache_with_cell(4, H256::zero());
+        put_triple(
+            &mut cache,
+            H256::zero(),
+            1,
+            vec![(bkey(0xa), vec![0x11])],
+            vec![(fkey(0xa), fval(0x11)), (fkey(0xb), fval(0xbb))],
+        );
+        put_triple(
+            &mut cache,
+            h256(1),
+            2,
+            vec![(bkey(0xa), vec![0x22])],
+            vec![(fkey(0xa), fval(0x22))],
+        );
+        put_triple(
+            &mut cache,
+            h256(2),
+            3,
+            vec![(bkey(0xc), vec![0xcc])],
+            vec![(fkey(0xc), fval(0xcc))],
+        );
+
+        let tip = h256(0x83);
+        assert_eq!(
+            cache.binary_flat_get(tip, &fkey(0xa)),
+            Some(Some(fval(0x22))),
+            "the newest layer that wrote the key must win"
+        );
+        assert_eq!(
+            cache.binary_flat_get(tip, &fkey(0xb)),
+            Some(Some(fval(0xbb))),
+            "a key only the oldest layer wrote must still be found"
+        );
+        // Reading at an older root must not see a newer layer's write.
+        assert_eq!(
+            cache.binary_flat_get(h256(0x81), &fkey(0xa)),
+            Some(Some(fval(0x11)))
+        );
+        assert_eq!(cache.binary_flat_get(h256(0x81), &fkey(0xc)), None);
+    }
+
+    /// The tombstone rule again, and it is load-bearing in the same way: the
+    /// mirror is single-version on disk, so "the leaf left the tree" cannot be
+    /// answered by falling through to the row the previous block wrote.
+    #[test]
+    fn an_empty_binary_flat_value_reads_as_absent_and_does_not_fall_through() {
+        let (mut cache, _cell) = cache_with_cell(4, H256::zero());
+        put_triple(
+            &mut cache,
+            H256::zero(),
+            1,
+            vec![(bkey(0xa), vec![0x11])],
+            vec![(fkey(0xa), fval(0x11))],
+        );
+        put_triple(
+            &mut cache,
+            h256(1),
+            2,
+            vec![(bkey(0xa), vec![])],
+            vec![(fkey(0xa), vec![])],
+        );
+
+        assert_eq!(
+            cache.binary_flat_get(h256(0x82), &fkey(0xa)),
+            Some(None),
+            "Some(None) is 'removed here'; a bare None would send the caller to disk"
+        );
+        assert_eq!(
+            cache.binary_flat_get(h256(0x81), &fkey(0xa)),
+            Some(Some(fval(0x11)))
+        );
+    }
+
+    /// One flush, three sets: the mirror cannot persist at a different block
+    /// than the trie it mirrors.
+    #[test]
+    fn commit_hands_back_all_three_sets_together() {
+        let safe = h256(1);
+        let (mut cache, _cell) = cache_with_cell(4, safe);
+        put_triple(
+            &mut cache,
+            H256::zero(),
+            1,
+            vec![(bkey(0xa), vec![0x11])],
+            vec![(fkey(0xa), fval(0x11))],
+        );
+        put_triple(
+            &mut cache,
+            h256(1),
+            2,
+            vec![(bkey(0xb), vec![0x22])],
+            vec![(fkey(0xb), fval(0x22))],
+        );
+
+        let committed = cache.commit(safe).expect("layer 1 is committable");
+        assert_eq!(committed.len(), 1);
+        assert_eq!(committed[0].binary_nodes, vec![(bkey(0xa), vec![0x11])]);
+        assert_eq!(committed[0].binary_flat, vec![(fkey(0xa), fval(0x11))]);
+        assert!(
+            !committed[0].nodes.is_empty(),
+            "the same CommittedLayer must carry the MPT nodes: one flush, not three"
+        );
+
+        assert_eq!(cache.binary_flat_get(h256(0x81), &fkey(0xa)), None);
+        assert_eq!(
+            cache.binary_flat_get(h256(0x82), &fkey(0xb)),
+            Some(Some(fval(0x22)))
+        );
+    }
+
+    /// The abandoned branch's mirror entries are dropped with its nodes, never
+    /// handed to the disk writer. Both branches write the same tree key with
+    /// different values — the collision a single-version mirror cannot hold.
+    #[test]
+    fn committing_one_branch_discards_the_abandoned_branchs_binary_flat_entries() {
+        let base = h256(1);
+        let (mut cache, _cell) = cache_with_cell(4, H256::zero());
+        put_triple(
+            &mut cache,
+            H256::zero(),
+            1,
+            vec![(bkey(0x01), vec![0x01])],
+            vec![(fkey(0x01), fval(0x01))],
+        );
+        // The branch that loses, imported first.
+        put_triple(
+            &mut cache,
+            base,
+            9,
+            vec![(bkey(0xff), vec![0x99])],
+            vec![(fkey(0xff), fval(0x99))],
+        );
+        // The branch that wins, imported after it and then extended.
+        put_triple(
+            &mut cache,
+            base,
+            2,
+            vec![(bkey(0xff), vec![0x22])],
+            vec![(fkey(0xff), fval(0x22))],
+        );
+        put_triple(
+            &mut cache,
+            h256(2),
+            3,
+            vec![(bkey(0x03), vec![0x33])],
+            vec![(fkey(0x03), fval(0x33))],
+        );
+
+        assert_eq!(
+            cache.binary_flat_get(h256(0x89), &fkey(0xff)),
+            Some(Some(fval(0x99))),
+            "the losing branch is resident before the commit"
+        );
+
+        let committed = cache.commit(h256(2)).expect("the winner's first block");
+        let flushed: Vec<(&Vec<u8>, &Vec<u8>)> = committed
+            .iter()
+            .flat_map(|layer| layer.binary_flat.iter().map(|(k, v)| (k, v)))
+            .collect();
+        assert_eq!(
+            flushed,
+            vec![(&fkey(0x01), &fval(0x01)), (&fkey(0xff), &fval(0x22))],
+            "only the fork point and the winning branch may be flushed, and the shared \
+             tree key must carry the winner's value"
+        );
+        assert_eq!(
+            cache.binary_flat_get(h256(0x89), &fkey(0xff)),
+            None,
+            "the abandoned branch's mirror entries must stop resolving"
+        );
+        assert_eq!(
+            cache.binary_flat_get(h256(0x83), &fkey(0x03)),
+            Some(Some(fval(0x33))),
+            "the surviving branch's still-resident layer is untouched"
+        );
+    }
+
+    /// The Decision 6 collision, at the layer level. A `BitPath` DB key at
+    /// bit-depth 240 is 34 bytes and an account-zone tree key is 34 bytes, so
+    /// the two key spaces genuinely overlap. Nothing distinguishes them but the
+    /// map they are stored in, and this pins that the maps stay apart —
+    /// including the tombstone direction, where a conflated lookup would report
+    /// the wrong kind of absence.
+    #[test]
+    fn a_shared_34_byte_key_resolves_independently_in_nodes_and_flat() {
+        let (mut cache, _cell) = cache_with_cell(4, H256::zero());
+        // One key, byte-for-byte, staged in both sets with different values.
+        let shared = bkey(0x00);
+        assert_eq!(shared.len(), 34);
+        put_triple(
+            &mut cache,
+            H256::zero(),
+            1,
+            vec![(shared.clone(), vec![0xa7])],
+            vec![(shared.clone(), fval(0xf1))],
+        );
+
+        assert_eq!(
+            cache.binary_get(h256(0x81), &shared),
+            Some(Some(vec![0xa7])),
+            "the node lookup must read the node map"
+        );
+        assert_eq!(
+            cache.binary_flat_get(h256(0x81), &shared),
+            Some(Some(fval(0xf1))),
+            "the flat lookup must read the flat map"
+        );
+
+        // And the tombstone direction: removing the node must not report the
+        // leaf as removed, nor the reverse.
+        put_triple(
+            &mut cache,
+            h256(1),
+            2,
+            vec![(shared.clone(), vec![])],
+            vec![],
+        );
+        assert_eq!(
+            cache.binary_get(h256(0x82), &shared),
+            Some(None),
+            "the node is tombstoned at this root"
+        );
+        assert_eq!(
+            cache.binary_flat_get(h256(0x82), &shared),
+            Some(Some(fval(0xf1))),
+            "the leaf is untouched: a conflated map would answer Some(None) here"
         );
     }
 }
