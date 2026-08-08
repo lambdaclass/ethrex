@@ -14,7 +14,10 @@ use crate::{
     },
     apply_prefix,
     backend::in_memory::InMemoryBackend,
-    binary_trie::{BackendBinaryTrieDB, BinaryTrieNodes, LayeredBinaryTrieDB, StagedBinaryNodes},
+    binary_trie::{
+        BackendBinaryTrieDB, BinaryFlatWrites, BinaryTrieNodes, LayeredBinaryTrieDB,
+        StagedBinaryNodes,
+    },
     block_data_buffer::BlockDataBuffer,
     error::StoreError,
     journal::{FlatDiff, JournalEntry},
@@ -25,7 +28,8 @@ use crate::{
 };
 
 use ethrex_binary_trie::trie::{
-    BinaryTrie, BinaryTrieDB, BitPath, EMPTY_TRIE_ROOT as BINARY_EMPTY_TRIE_ROOT, hash_stored_node,
+    BinaryTrie, BinaryTrieDB, BitPath, EMPTY_TRIE_ROOT as BINARY_EMPTY_TRIE_ROOT, LeafChangelog,
+    hash_stored_node,
 };
 use ethrex_common::{
     Address, H256, U256,
@@ -366,6 +370,20 @@ pub struct BinaryTrieAdvance {
     /// `(BINARY_TRIE_NODES key, encoded node)` pairs; an empty value is a
     /// tombstone, per `BinaryTrieDB`'s convention.
     pub nodes: BinaryTrieNodes,
+    /// The same block's writes to the flat leaf mirror, derived from the
+    /// [`LeafChangelog`] the trie's own commit emitted: one
+    /// `BINARY_FLATKEYVALUE` row per leaf the block created, changed or removed.
+    ///
+    /// A removal (`None` in the changelog) becomes an **empty value**, which is
+    /// the tombstone convention every layer downstream already speaks. It must
+    /// not become 32 zero bytes: "zero means absent" is what put the removal in
+    /// the changelog in the first place, and a zero row would be a mirror entry
+    /// for a key the trie's root does not commit to.
+    ///
+    /// Taken from `commit` rather than reconstructed at the call sites, so
+    /// `remove_prefix` — whose retired leaves only the trie knows — is covered
+    /// by construction.
+    pub flat: BinaryFlatWrites,
 }
 
 impl From<BinaryTrieAdvance> for BinaryLayerUpdate {
@@ -374,8 +392,24 @@ impl From<BinaryTrieAdvance> for BinaryLayerUpdate {
             root: advance.root,
             parent_root: advance.parent_root,
             nodes: advance.nodes,
+            flat: advance.flat,
         }
     }
+}
+
+/// Turn the trie's [`LeafChangelog`] into `BINARY_FLATKEYVALUE` writes.
+///
+/// `Some(value)` is the 32 raw bytes, no tag and no length prefix. `None` is a
+/// removal and becomes an empty value — the tombstone every consumer of these
+/// pairs already understands, and deliberately *not* 32 zero bytes.
+fn flat_writes_from_changelog(leaves: LeafChangelog) -> BinaryFlatWrites {
+    leaves
+        .into_iter()
+        .map(|(key, value)| match value {
+            Some(value) => (key, value.to_vec()),
+            None => (key, Vec::new()),
+        })
+        .collect()
 }
 
 /// Storage trie updates grouped by account address hash.
@@ -3171,7 +3205,12 @@ impl Store {
 
         let mut trie = BinaryTrie::open(Box::new(db), parent_root);
         apply_account_updates(&mut trie, account_updates)?;
-        let root = trie.commit()?.root;
+        let committed = trie.commit()?;
+        let root = committed.root;
+        // The leaf changelog is the mirror's only input: every path that can
+        // retire a leaf (`remove_prefix` above all) reports through it, so a
+        // future caller cannot add a mutation path that bypasses the mirror.
+        let flat = flat_writes_from_changelog(committed.leaves);
         drop(trie);
 
         let nodes = std::mem::take(&mut *staged.lock().map_err(|_| StoreError::LockError)?);
@@ -3180,6 +3219,7 @@ impl Store {
             root,
             parent_root,
             nodes,
+            flat,
         })
     }
 
