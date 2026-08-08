@@ -2019,6 +2019,118 @@ async fn a_reorg_to_a_pivot_below_the_flip_re_advances_the_frozen_mpt() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// D5.2 The freeze reaches disk, and it reaches the journal — both without any
+//      special-casing, because both are driven by the same node set.
+//
+// The two tests above read the MPT through the layer cache, where "frozen" and
+// "advancing but unaddressable" could in principle look alike. These go to the
+// bottom of the stack: flush every layer, then throw the cache away, and ask
+// what is actually in the column families.
+//
+// The mechanism worth naming, since it is why neither of these needed code: a
+// post-flip block still stages a diff layer, because layers are keyed by
+// *header* state roots and a post-flip header's root moves every block. That
+// layer simply carries an empty MPT node set. `commit_to_disk` iterates
+// `layer.nodes` for both the table writes and the reverse-diff buckets it
+// journals, so an empty set writes nothing and journals nothing, in every one of
+// the four MPT sections at once.
+// ---------------------------------------------------------------------------
+
+/// A staged chain past the flip, flushed to disk with the layer cache dropped,
+/// so every question below is answered by the column families alone.
+async fn flushed_chain_past_the_flip() -> StagedChain {
+    let chain = build_staged_chain(FLIP_BLOCK + BLOCKS_PAST_THE_FLIP).await;
+    make_canonical(&chain.store, &chain.blocks).await;
+    flush_every_layer(&chain.store, chain.blocks.last().unwrap().header.state_root).await;
+    chain
+}
+
+#[tokio::test]
+async fn the_frozen_mpt_on_disk_is_exactly_the_last_pre_flip_state() {
+    let chain = flushed_chain_past_the_flip().await;
+    let head = chain.blocks.last().unwrap();
+    let last_pre_flip = &chain.blocks[(FLIP_BLOCK - 2) as usize];
+    assert!(last_pre_flip.header.timestamp < chain.activation);
+    assert!(head.header.timestamp >= chain.activation);
+
+    // No layers left: `has_state_root` now reads the root node out of
+    // `ACCOUNT_TRIE_NODES` and keccaks it, so it is a statement about disk.
+    chain.store.drop_trie_layers_for_test().unwrap();
+
+    assert!(
+        chain
+            .store
+            .has_state_root(last_pre_flip.header.state_root)
+            .expect("root check"),
+        "the on-disk MPT must hash to exactly the root the last MPT-committing header named"
+    );
+    assert!(
+        !chain
+            .store
+            .has_state_root(head.header.state_root)
+            .expect("root check"),
+        "and the head's root is a binary root, which the MPT never held"
+    );
+}
+
+#[tokio::test]
+async fn post_flip_journal_entries_carry_no_mpt_sections() {
+    let chain = flushed_chain_past_the_flip().await;
+
+    let (mut pre_flip_seen, mut post_flip_seen) = (0u64, 0u64);
+    for block in &chain.blocks {
+        let entry = chain
+            .store
+            .state_history_entry_for_test(block.header.number)
+            .expect("journal read")
+            .unwrap_or_else(|| {
+                panic!(
+                    "block {} must have been journaled by the flush",
+                    block.header.number
+                )
+            });
+
+        if block.header.timestamp < chain.activation {
+            pre_flip_seen += 1;
+            assert!(
+                !entry.account_trie_diff.is_empty(),
+                "block {}: a pre-flip commit overwrites account-trie nodes, so it journals them",
+                block.header.number
+            );
+        } else {
+            post_flip_seen += 1;
+            // The four MPT sections, all empty, none of them special-cased.
+            assert!(
+                entry.account_trie_diff.is_empty()
+                    && entry.storage_trie_diff.is_empty()
+                    && entry.account_flat_diff.is_empty()
+                    && entry.storage_flat_diff.is_empty(),
+                "block {}: a post-flip commit changes nothing in the MPT, so it has nothing to \
+                 reverse (account_trie={}, storage_trie={}, account_flat={}, storage_flat={})",
+                block.header.number,
+                entry.account_trie_diff.len(),
+                entry.storage_trie_diff.len(),
+                entry.account_flat_diff.len(),
+                entry.storage_flat_diff.len(),
+            );
+            // ...but the entry is not vacuously empty: the binary trie moved,
+            // and its reverse diff is what a deep reorg unwinds with.
+            assert!(
+                !entry.binary_trie_diff.is_empty(),
+                "block {}: the binary trie did advance, so its section must be populated",
+                block.header.number
+            );
+        }
+    }
+    assert_eq!(pre_flip_seen, FLIP_BLOCK - 1, "blocks below the flip");
+    assert_eq!(
+        post_flip_seen,
+        BLOCKS_PAST_THE_FLIP + 1,
+        "the flip block and everything above it"
+    );
+}
+
 // ===========================================================================
 // Phase D4 — the state-reading RPCs follow the header past the flip.
 //
