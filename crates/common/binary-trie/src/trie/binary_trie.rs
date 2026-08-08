@@ -201,6 +201,15 @@ enum PrefixRemoval {
 /// sort it again. See [`BinaryTrie::commit`].
 pub type LeafChangelog = Vec<(Vec<u8>, Option<[u8; 32]>)>;
 
+/// A run of live leaves in ascending key order: what
+/// [`BinaryTrie::leaves_from`] hands back.
+///
+/// Deliberately not a [`LeafChangelog`]: every entry here is a leaf the tree
+/// *holds*, so there is no `None` to mean "removed" and nothing to fold — it
+/// is a window onto the tree's contents rather than a diff against a previous
+/// state.
+pub type LeafBatch = Vec<(Vec<u8>, [u8; 32])>;
+
 /// What a [`BinaryTrie::commit`] produced.
 ///
 /// Two outputs rather than one because the leaf changes are not
@@ -1212,6 +1221,158 @@ impl BinaryTrie {
         };
         retired.push(path.clone());
         Ok(leaves)
+    }
+
+    /// Up to `limit` leaves whose key is at or after `origin`, **in ascending
+    /// key order** — which, because this trie's keys are prefix-free and
+    /// expanded MSB-first, is also left-then-right leaf order.
+    ///
+    /// The primitive a backfill sweep needs and the one the tree could not
+    /// offer: `BINARY_TRIE_NODES` sorts by bit *count* first (`to_db_key`
+    /// prepends one), so a range scan of the node table returns nodes grouped
+    /// by depth and there is no way to recover leaf order from it without a
+    /// full traversal. This walks the structure instead, where the order is
+    /// free.
+    ///
+    /// **Resumable, and that is what `origin` is for.** A sweep that stops
+    /// after a batch restarts here with its frontier and pays one root-to-leaf
+    /// descent to get back to it, not a re-walk of everything below it:
+    /// subtrees that lie entirely before `origin` are pruned by comparing the
+    /// node's own bit path against the origin's bits, without being loaded.
+    ///
+    /// `origin` is **inclusive**, so a caller resuming from an
+    /// already-processed key sees it again and is expected to skip it. That is
+    /// one redundant leaf per batch, and it avoids inventing a successor key —
+    /// bytewise `+1` is only the true successor of a *prefix-free* key set, so
+    /// a helper for it belongs with the range API that needs it rather than
+    /// buried in a resume path.
+    ///
+    /// An empty `origin` starts at the first leaf. A `limit` of zero returns
+    /// nothing.
+    ///
+    /// Takes `&mut self` for the same reason [`BinaryTrie::get`] does: the walk
+    /// loads nodes and keeps them. A long sweep should therefore reopen the
+    /// trie between batches rather than hold one instance across all of them,
+    /// or it accumulates the whole tree in memory.
+    ///
+    /// # Errors
+    ///
+    /// [`BinaryTrieError::Backend`] or [`BinaryTrieError::MalformedNode`] if a
+    /// node the walk reaches could not be loaded.
+    pub fn leaves_from(
+        &mut self,
+        origin: &[u8],
+        limit: usize,
+    ) -> Result<LeafBatch, BinaryTrieError> {
+        let mut out = Vec::new();
+        if limit == 0 {
+            return Ok(out);
+        }
+        let origin_bits = bytes_to_bits(origin);
+        let Self { db, root, .. } = self;
+        if let Some(node_ref) = root {
+            Self::leaves_from_at(
+                db.as_ref(),
+                node_ref,
+                &BitPath::new(),
+                origin,
+                &origin_bits,
+                true,
+                limit,
+                &mut out,
+            )?;
+        }
+        Ok(out)
+    }
+
+    /// Collect from the subtree at `node_ref`, left child first.
+    ///
+    /// `bounded` means "this subtree's path is still a prefix of the origin's
+    /// bits", so leaves under it may fall on either side of `origin` and have
+    /// to be compared. Once a child's path is *strictly greater* than the
+    /// origin's bits at its first differing bit, everything below it is at or
+    /// after `origin` and the comparison can be dropped for the whole subtree —
+    /// which is also what lets the sibling subtree before it be skipped without
+    /// a load.
+    #[allow(clippy::too_many_arguments)]
+    fn leaves_from_at(
+        db: &dyn BinaryTrieDB,
+        node_ref: &mut NodeRef,
+        path: &BitPath,
+        origin: &[u8],
+        origin_bits: &[u8],
+        bounded: bool,
+        limit: usize,
+        out: &mut LeafBatch,
+    ) -> Result<(), BinaryTrieError> {
+        if out.len() >= limit {
+            return Ok(());
+        }
+        match Self::resolve(db, node_ref, path)? {
+            Node::Leaf { key, value } => {
+                // Under a bounded path the leaf may still precede the origin;
+                // under an unbounded one it cannot, and the compare is skipped
+                // rather than merely redundant. Compared as bytes, which for
+                // this trie's prefix-free keys is the same order as the bits.
+                if !bounded || key.as_slice() >= origin {
+                    out.push((key.clone(), *value));
+                }
+                Ok(())
+            }
+            Node::Branch {
+                prefix,
+                left,
+                right,
+            } => {
+                let children = [
+                    (path.child(prefix, 0), left),
+                    (path.child(prefix, 1), right),
+                ];
+                for (child_path, child) in children {
+                    if out.len() >= limit {
+                        return Ok(());
+                    }
+                    match Self::compare_path_to_origin(&child_path, origin_bits, bounded) {
+                        Some(child_bounded) => Self::leaves_from_at(
+                            db,
+                            child,
+                            &child_path,
+                            origin,
+                            origin_bits,
+                            child_bounded,
+                            limit,
+                            out,
+                        )?,
+                        // Entirely before the origin: not loaded, not walked.
+                        None => continue,
+                    }
+                }
+                Ok(())
+            }
+        }
+    }
+
+    /// Where the subtree at `path` sits relative to `origin_bits`, given that
+    /// its parent was `bounded`.
+    ///
+    /// `None` means the whole subtree precedes the origin and can be skipped.
+    /// `Some(bounded)` means walk it, with `bounded` saying whether its leaves
+    /// still need comparing.
+    fn compare_path_to_origin(path: &BitPath, origin_bits: &[u8], bounded: bool) -> Option<bool> {
+        if !bounded {
+            return Some(false);
+        }
+        let bits = path.as_bits();
+        let shared = bits.len().min(origin_bits.len());
+        match bits[..shared].cmp(&origin_bits[..shared]) {
+            std::cmp::Ordering::Less => None,
+            std::cmp::Ordering::Greater => Some(false),
+            // Still on the origin's path. If the subtree's path already runs
+            // past the origin's bits it can only hold keys the origin is a bit
+            // prefix of — which the prefix-free rule makes the origin itself —
+            // but the leaf compare is what settles that, not this.
+            std::cmp::Ordering::Equal => Some(true),
+        }
     }
 
     /// Root hash: [`EMPTY_TRIE_ROOT`] for the empty trie, otherwise
@@ -3158,6 +3319,162 @@ mod tests {
             trie.pending_leaves.len(),
             1,
             "a failed commit must not consume the changelog"
+        );
+    }
+
+    // ---- Ordered, resumable leaf enumeration ---------------------------
+
+    /// Keys spanning all three zones and both key lengths, sorted — which by
+    /// the ordering property is also the order a walk must produce them in.
+    fn ordered_entries() -> Vec<(Vec<u8>, [u8; 32])> {
+        let mut entries: Vec<(Vec<u8>, [u8; 32])> = Vec::new();
+        for i in 0..12u8 {
+            for zone in [0x00u8, 0x01, 0xff] {
+                let mut key = vec![0x00; if zone == 0xff { 66 } else { 34 }];
+                key[0] = zone;
+                key[1] = i;
+                key[2] = i.wrapping_mul(37);
+                let value = [i.wrapping_add(zone).max(1); 32];
+                entries.push((key, value));
+            }
+        }
+        entries.sort();
+        entries
+    }
+
+    fn walked(trie: &mut BinaryTrie, origin: &[u8], limit: usize) -> Vec<(Vec<u8>, [u8; 32])> {
+        trie.leaves_from(origin, limit).unwrap()
+    }
+
+    #[test]
+    fn a_walk_from_the_start_is_the_sorted_key_order() {
+        let entries = ordered_entries();
+        let mut trie = BinaryTrie::new_temp();
+        // Inserted in an order that is not key order, so the sequence read
+        // back is the tree's, not the input's.
+        for (key, value) in entries.iter().rev() {
+            trie.insert(key.clone(), *value).unwrap();
+        }
+        trie.commit().unwrap();
+        assert_eq!(walked(&mut trie, &[], usize::MAX), entries);
+    }
+
+    #[test]
+    fn a_walk_resumes_from_an_inclusive_origin() {
+        let entries = ordered_entries();
+        let mut trie = BinaryTrie::new_temp();
+        for (key, value) in &entries {
+            trie.insert(key.clone(), *value).unwrap();
+        }
+        trie.commit().unwrap();
+
+        for i in 0..entries.len() {
+            assert_eq!(
+                walked(&mut trie, &entries[i].0, usize::MAX),
+                entries[i..].to_vec(),
+                "an origin equal to a key returns that key first ({i})"
+            );
+        }
+
+        // An origin strictly between two keys returns the successor.
+        let mut between = entries[5].0.clone();
+        let last = between.len() - 1;
+        between[last] = between[last].wrapping_add(1);
+        assert_eq!(
+            walked(&mut trie, &between, usize::MAX),
+            entries[6..].to_vec()
+        );
+
+        // An origin past every key returns nothing.
+        assert!(walked(&mut trie, &[0xff; 66], usize::MAX).is_empty());
+    }
+
+    #[test]
+    fn a_walk_stops_at_the_limit_and_the_batches_reassemble() {
+        // How the backfill sweep actually drives this: batches of `limit`,
+        // resuming from the last key seen, which comes back once and is
+        // dropped. The concatenation must be the whole trie exactly once.
+        let entries = ordered_entries();
+        let mut trie = BinaryTrie::new_temp();
+        for (key, value) in &entries {
+            trie.insert(key.clone(), *value).unwrap();
+        }
+        trie.commit().unwrap();
+
+        for batch in [1usize, 2, 7, 1_000] {
+            let mut collected: Vec<(Vec<u8>, [u8; 32])> = Vec::new();
+            let mut origin: Vec<u8> = Vec::new();
+            loop {
+                // `batch + 1` on resume, because the inclusive origin spends
+                // one slot re-reporting the previous frontier. This is exactly
+                // what the backfill sweep has to do.
+                let resuming = !collected.is_empty();
+                let mut leaves = walked(&mut trie, &origin, batch + usize::from(resuming));
+                if resuming {
+                    // The resume key is inclusive, so the first entry of every
+                    // batch after the first repeats the previous frontier.
+                    assert_eq!(leaves.first().map(|(key, _)| key), Some(&origin));
+                    leaves.remove(0);
+                }
+                if leaves.is_empty() {
+                    break;
+                }
+                origin = leaves.last().unwrap().0.clone();
+                collected.extend(leaves);
+            }
+            assert_eq!(collected, entries, "batch size {batch}");
+        }
+    }
+
+    #[test]
+    fn a_walk_over_an_empty_trie_is_empty() {
+        let mut trie = BinaryTrie::new_temp();
+        assert!(walked(&mut trie, &[], usize::MAX).is_empty());
+        assert!(walked(&mut trie, &[0x00; 34], usize::MAX).is_empty());
+    }
+
+    #[test]
+    fn a_zero_limit_walks_nothing() {
+        let entries = ordered_entries();
+        let mut trie = BinaryTrie::new_temp();
+        for (key, value) in &entries {
+            trie.insert(key.clone(), *value).unwrap();
+        }
+        trie.commit().unwrap();
+        assert!(walked(&mut trie, &[], 0).is_empty());
+    }
+
+    #[test]
+    fn a_resumed_walk_does_not_load_the_subtree_it_skipped() {
+        // What makes a resume cheap rather than a re-walk: subtrees entirely
+        // before the origin are pruned by their bit path and never read. With
+        // 36 leaves a full walk loads every node; a walk resumed near the end
+        // must load a small fraction of that.
+        let entries = ordered_entries();
+        let map: NodeMap = Default::default();
+        let mut trie = BinaryTrie::new(Box::new(InMemoryBinaryTrieDB::new(map.clone())));
+        for (key, value) in &entries {
+            trie.insert(key.clone(), *value).unwrap();
+        }
+        let root = trie.commit().unwrap().root;
+        drop(trie);
+
+        let full = {
+            let (db, counts) = CountingDB::over(map.clone());
+            let mut trie = BinaryTrie::open(Box::new(db), root);
+            assert_eq!(walked(&mut trie, &[], usize::MAX).len(), entries.len());
+            counts.reads()
+        };
+        let resumed = {
+            let (db, counts) = CountingDB::over(map);
+            let mut trie = BinaryTrie::open(Box::new(db), root);
+            let last = &entries[entries.len() - 1].0;
+            assert_eq!(walked(&mut trie, last, usize::MAX).len(), 1);
+            counts.reads()
+        };
+        assert!(
+            resumed * 3 < full,
+            "a resume near the end read {resumed} nodes against {full} for the full walk"
         );
     }
 
