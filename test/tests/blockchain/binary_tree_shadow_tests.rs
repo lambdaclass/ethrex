@@ -1742,34 +1742,52 @@ async fn a_storage_only_account_exists_and_collides_on_both_paths() {
 }
 
 // ---------------------------------------------------------------------------
-// D3.5 What became of the MPT, pinned so it is visible rather than assumed.
+// D5 What became of the MPT: it is **frozen** at the flip.
 //
-// Phase D2 decided to keep the MPT advancing after the flip. D3 does not change
-// that, and this records what "advancing" now means, because it is not obvious:
+// This replaces `the_mpt_keeps_advancing_after_the_flip_but_is_no_longer_addressable_by_header_root`,
+// which pinned Phase D2's decision to keep merkleizing past the activation. That
+// decision is reversed: `Blockchain::store_block_inner` now drops the MPT diff of
+// every block whose header commits a binary root, so the MPT stops at the last
+// MPT-committing header and stays there.
 //
-//   * the MPT is still correct — post-flip merkleization reads its parent state
-//     through the trie-layer chain, which is keyed by *header* state roots and
-//     therefore stays continuous across the boundary, so the MPT holds the same
-//     state an MPT-committing node's does;
-//   * but it is no longer *addressable*: `has_state_root(header.state_root)` is
-//     false for every active header, because that root belongs to the binary
-//     trie. Execution must therefore not resolve through it (it does not — see
-//     the tests above), and any root-guarded MPT reader still pointed at an
-//     active header's root fails loudly instead of answering from some other
-//     block's state.
+// What the old test pinned, and what became of each half:
 //
-// The state-reading RPCs no longer are pointed at it: Phase D4 below moves them
-// onto the same per-header rule execution uses. This test stays because the MPT
-// is still advancing underneath, and the day it is frozen the change should be
-// deliberate.
+//   * "the MPT is still correct at the head" — deliberately **no longer true**,
+//     and this test asserts the opposite: the MPT reads back the *last pre-flip*
+//     state at every post-flip block. Nothing lost, because the MPT is
+//     single-version and path-keyed — one state on disk plus a bounded chain of
+//     diff layers — so past the flip it could only ever answer for the last
+//     pre-flip block anyway. Merkleizing on was computing nodes no header names.
+//   * "it is no longer addressable by header root" — still true, still asserted
+//     below, and unchanged by the freeze: `has_state_root(header.state_root)` is
+//     false for every active header because that root belongs to the binary trie.
+//
+// The last assertion pins that the last pre-flip root stays addressable. Note
+// what it does and does not show: these tests run on the in-memory backend
+// (`IN_MEMORY_COMMIT_THRESHOLD == 10000`), so every block here is still inside
+// the layer window and the root would be addressable either way. The assertion
+// guards against the freeze accidentally *removing* that root; the stronger
+// production claim — that on RocksDB the commit gate flushes the pre-flip layers
+// and then has nothing more to write, so disk parks on the last pre-flip state
+// permanently instead of sliding past it at `head - 128` — follows from the same
+// mechanism but is not what this test measures.
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn the_mpt_keeps_advancing_after_the_flip_but_is_no_longer_addressable_by_header_root() {
+async fn the_mpt_freezes_at_the_flip_and_keeps_serving_the_last_pre_flip_state() {
     let chains = build_boundary_chains(FLIP_BLOCK + BLOCKS_PAST_THE_FLIP).await;
     let head = chains.scheduled_blocks.last().unwrap();
-    let twin_head = chains.twin_blocks.last().unwrap();
     let hashed_sender = keccak(sender_from_key(&test_secret_key()).as_bytes());
+
+    // The last block whose header commits an MPT root, and its twin.
+    let last_pre_flip = &chains.scheduled_blocks[(FLIP_BLOCK - 2) as usize];
+    let twin_last_pre_flip = &chains.twin_blocks[(FLIP_BLOCK - 2) as usize];
+    assert_eq!(
+        last_pre_flip.header.number,
+        FLIP_BLOCK - 1,
+        "the block before the flip"
+    );
+    assert!(last_pre_flip.header.timestamp < chains.activation);
 
     assert!(
         !chains
@@ -1779,8 +1797,8 @@ async fn the_mpt_keeps_advancing_after_the_flip_but_is_no_longer_addressable_by_
         "an active header's root is a binary root, so the MPT does not hold it"
     );
 
-    // Block-addressed, which skips the root guard: the MPT is still there and
-    // still right.
+    // Block-addressed, which skips the root guard, so it reports what the MPT
+    // actually holds rather than refusing to answer.
     let mpt_account = |store: &Store, block: &Block| {
         let trie = store
             .state_trie(block.hash())
@@ -1794,17 +1812,53 @@ async fn the_mpt_keeps_advancing_after_the_flip_but_is_no_longer_addressable_by_
         )
         .expect("decode account state")
     };
-    let scheduled = mpt_account(&chains.scheduled_store, head);
-    let twin = mpt_account(&chains.twin_store, twin_head);
+
+    // The heart of it: at a block twelve past the flip, the MPT still reads back
+    // the state as of the last *pre-flip* block. `build_chain` sends exactly one
+    // transfer per block, so the sender's nonce is the block number and the two
+    // answers are impossible to confuse.
+    let at_head = mpt_account(&chains.scheduled_store, head);
+    let frozen_at = mpt_account(&chains.scheduled_store, last_pre_flip);
     assert_eq!(
-        (scheduled.nonce, scheduled.balance),
-        (twin.nonce, twin.balance),
-        "the MPT must still hold the state an MPT-committing node holds at this height"
+        (at_head.nonce, at_head.balance, at_head.storage_root),
+        (frozen_at.nonce, frozen_at.balance, frozen_at.storage_root),
+        "the MPT must be frozen: reading it at the head must give the last pre-flip state"
     );
     assert_eq!(
-        scheduled.nonce,
+        at_head.nonce,
+        FLIP_BLOCK - 1,
+        "the frozen state is the last pre-flip block's, not the head's \
+         ({} blocks of merkleization must have been skipped)",
+        BLOCKS_PAST_THE_FLIP + 1
+    );
+
+    // ...and it is the *right* pre-flip state, not merely a stale one: an
+    // MPT-committing twin at the same height holds the same thing.
+    let twin = mpt_account(&chains.twin_store, twin_last_pre_flip);
+    assert_eq!(
+        (frozen_at.nonce, frozen_at.balance, frozen_at.storage_root),
+        (twin.nonce, twin.balance, twin.storage_root),
+        "the frozen MPT must equal what an MPT-committing node holds at the last pre-flip block"
+    );
+
+    // Guard against a vacuous pass in the other direction: the twin *did* keep
+    // going, so `FLIP_BLOCK - 1` is a real stopping point rather than the only
+    // state either chain ever had.
+    let twin_head = mpt_account(&chains.twin_store, chains.twin_blocks.last().unwrap());
+    assert_eq!(
+        twin_head.nonce,
         FLIP_BLOCK + BLOCKS_PAST_THE_FLIP,
-        "guard against a vacuous pass: this is the end state, not a stale one"
+        "the unscheduled twin keeps merkleizing to its own head"
+    );
+
+    // The read the freeze gains: the last pre-flip root stays addressable,
+    // because nothing overwrites the MPT out from under it any more.
+    assert!(
+        chains
+            .scheduled_store
+            .has_state_root(last_pre_flip.header.state_root)
+            .expect("root check"),
+        "the frozen MPT still holds the last root a header committed to it"
     );
 }
 
