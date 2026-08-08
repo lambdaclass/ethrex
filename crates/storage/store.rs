@@ -7747,6 +7747,12 @@ mod state_history_tests {
 
     /// Stages one block's layer carrying MPT nodes, binary nodes and mirror
     /// writes, then flushes it through `commit_to_disk`.
+    ///
+    /// Eight parameters because a layer genuinely has that many independent
+    /// dimensions here: two roots and a parent root, the block number, and the
+    /// two staged key sets. Grouping them into a struct would only move the
+    /// same list one level down for a fixture builder used in one module.
+    #[allow(clippy::too_many_arguments)]
     fn stage_and_commit(
         store: &Store,
         parent: H256,
@@ -7868,7 +7874,7 @@ mod state_history_tests {
         );
 
         let entry = decode_entry(&backend, 2);
-        let mut diff = entry.binary_flat_diff.clone();
+        let mut diff = entry.binary_flat_diff;
         diff.sort();
         assert_eq!(
             diff,
