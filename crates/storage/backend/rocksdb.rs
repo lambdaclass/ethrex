@@ -1,7 +1,7 @@
 use crate::api::tables::{
-    ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES, BLOCK_NUMBERS, BODIES,
-    CANONICAL_BLOCK_HASHES, FULLSYNC_HEADERS, HEADERS, RECEIPTS_V2, STORAGE_FLATKEYVALUE,
-    STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
+    ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES, BINARY_FLATKEYVALUE,
+    BINARY_TRIE_NODES, BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, FULLSYNC_HEADERS, HEADERS,
+    RECEIPTS_V2, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
 };
 use crate::api::{
     PrefixResult, StorageBackend, StorageLockedView, StorageReadView, StorageWriteBatch,
@@ -182,7 +182,21 @@ impl RocksDBBackend {
                     configure_block_cache(&mut block_opts);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
-                ACCOUNT_TRIE_NODES | STORAGE_TRIE_NODES => {
+                // The EIP-8297 tables get the MPT's trie tuning, not the
+                // catch-all default. They had been falling into the `_` arm
+                // below -- 64MB buffers, three of them, and **no bloom filter**
+                // -- while their MPT counterparts get 512MB x 6 and 10 bits per
+                // key. That is the worst possible pairing for this trie: a
+                // binary radix descent is ~33 node reads deep against the MPT's
+                // ~7, so it issues far more point lookups and, without a bloom,
+                // each miss pays a full block read.
+                //
+                // Grouped with the MPT arms rather than given their own because
+                // the access shape is identical -- point reads of path-keyed
+                // nodes during a descent, and point reads of leaf rows for the
+                // flat mirror. Any future divergence should be driven by
+                // measurement, not by the tables being new.
+                ACCOUNT_TRIE_NODES | STORAGE_TRIE_NODES | BINARY_TRIE_NODES => {
                     cf_opts.set_write_buffer_size(512 * 1024 * 1024); // 512MB
                     cf_opts.set_max_write_buffer_number(6);
                     cf_opts.set_min_write_buffer_number_to_merge(2);
@@ -195,7 +209,7 @@ impl RocksDBBackend {
                     configure_block_cache(&mut block_opts);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
-                ACCOUNT_FLATKEYVALUE | STORAGE_FLATKEYVALUE => {
+                ACCOUNT_FLATKEYVALUE | STORAGE_FLATKEYVALUE | BINARY_FLATKEYVALUE => {
                     cf_opts.set_write_buffer_size(512 * 1024 * 1024); // 512MB
                     cf_opts.set_max_write_buffer_number(6);
                     cf_opts.set_min_write_buffer_number_to_merge(2);
@@ -669,5 +683,47 @@ mod tests {
             vec![(200, bh, 7)],
             "later write for same block_hash wins"
         );
+    }
+
+    /// Every state table must be explicitly tuned, not left to the catch-all.
+    ///
+    /// `BINARY_TRIE_NODES` and `BINARY_FLATKEYVALUE` were added without an arm
+    /// and silently took the `_` default: 64MB buffers and **no bloom filter**,
+    /// while their MPT counterparts get 512MB and 10 bits per key. Nothing
+    /// failed — the tables worked, they were just slow in a way no test could
+    /// see, and a binary descent is ~33 reads deep, so it is the workload that
+    /// suffers most from a missing bloom.
+    ///
+    /// This scans the source because RocksDB's applied options are not
+    /// introspectable from the handle. Crude, but it fails loudly the next time
+    /// a state table is added without a home, which is the failure it exists to
+    /// catch.
+    #[test]
+    fn every_state_table_is_explicitly_tuned() {
+        let source = include_str!("rocksdb.rs");
+        // The arm bodies are what differ; presence of the constant anywhere in
+        // a `=> {` arm head is enough to show it was placed deliberately.
+        let arm_heads: String = source
+            .lines()
+            .filter(|line| line.trim_end().ends_with("=> {"))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        for table in [
+            "ACCOUNT_TRIE_NODES",
+            "STORAGE_TRIE_NODES",
+            "ACCOUNT_FLATKEYVALUE",
+            "STORAGE_FLATKEYVALUE",
+            "BINARY_TRIE_NODES",
+            "BINARY_FLATKEYVALUE",
+        ] {
+            assert!(
+                arm_heads.contains(table),
+                "{table} is not named in any column-family tuning arm, so it \
+                 falls into the `_` default: no bloom filter and a 64MB write \
+                 buffer. State tables are read on the hot path and must be \
+                 placed deliberately."
+            );
+        }
     }
 }
