@@ -1344,6 +1344,160 @@ mod tests {
         BitPath::from_bits(&[0, 0, 0, 0, 0])
     }
 
+    /// Every leaf key in the trie, in depth-first left-then-right order:
+    /// the order a range scan of the tree itself would produce, read off
+    /// the *structure* rather than derived from the keys.
+    ///
+    /// Test-only, and deliberately so — nothing in production walks the
+    /// tree in order today, which is exactly why the ordering property
+    /// this pins is invisible to every other test.
+    fn leaf_keys_in_order(trie: &mut BinaryTrie) -> Vec<Vec<u8>> {
+        fn walk(
+            db: &dyn BinaryTrieDB,
+            node_ref: &mut NodeRef,
+            path: &BitPath,
+            out: &mut Vec<Vec<u8>>,
+        ) {
+            match BinaryTrie::resolve(db, node_ref, path).expect("node loads") {
+                Node::Leaf { key, .. } => out.push(key.clone()),
+                Node::Branch {
+                    prefix,
+                    left,
+                    right,
+                } => {
+                    let (left_path, right_path) = (path.child(prefix, 0), path.child(prefix, 1));
+                    walk(db, left, &left_path, out);
+                    walk(db, right, &right_path, out);
+                }
+            }
+        }
+
+        let mut out = Vec::new();
+        let BinaryTrie { db, root, .. } = trie;
+        if let Some(node_ref) = root {
+            walk(db.as_ref(), node_ref, &BitPath::new(), &mut out);
+        }
+        out
+    }
+
+    /// Keys the real embedding produces, drawn from all three zones:
+    /// account headers at several sub-indices, code chunks (shared
+    /// between two of the accounts, as identical bytecode is), storage
+    /// slots inside the header range, and storage slots past it in the
+    /// overflow zone.
+    ///
+    /// Derived from the embedding rather than hand-written so that the
+    /// key *shapes* under test are the ones the tree actually holds —
+    /// two lengths, three zone bytes, and hash-derived middles with no
+    /// exploitable structure.
+    fn embedding_keys(accounts: u64) -> Vec<Vec<u8>> {
+        use crate::embedding::{
+            get_tree_key_for_basic_data, get_tree_key_for_code_chunk, get_tree_key_for_code_hash,
+            get_tree_key_for_delegation, get_tree_key_for_storage_slot,
+        };
+        use ethereum_types::{H160, U256};
+
+        let mut keys = Vec::new();
+        for i in 0..accounts {
+            let address = crate::embedding::address20_to_address32(H160::from_low_u64_be(i + 1));
+            keys.push(get_tree_key_for_basic_data(&address));
+            // An account holds one of these two, never both; the key set
+            // under test wants both shapes, and the trie does not care
+            // which account each came from.
+            if i.is_multiple_of(2) {
+                keys.push(get_tree_key_for_code_hash(&address));
+            } else {
+                keys.push(get_tree_key_for_delegation(&address));
+            }
+            // Header-range storage (sub-index 64..128) and overflow
+            // storage (a 66-byte key in zone 0xff).
+            for slot in [0u64, 5, 63] {
+                keys.push(get_tree_key_for_storage_slot(&address, U256::from(slot)));
+            }
+            for slot in [64u64, 255, 256, 1_000_000] {
+                keys.push(get_tree_key_for_storage_slot(&address, U256::from(slot)));
+            }
+            // Two distinct bytecodes across the whole set, so code-zone
+            // leaves are shared the way identical deployments share them.
+            let mut code_hash = [0u8; 32];
+            code_hash[0] = (i % 2) as u8;
+            for chunk in [0u64, 1, 255, 256] {
+                keys.push(get_tree_key_for_code_chunk(&code_hash, chunk));
+            }
+        }
+        keys.sort();
+        keys.dedup();
+        keys
+    }
+
+    /// Whether no key in `keys` is a byte-prefix of another. `keys` must
+    /// be sorted: a proper prefix sorts immediately before the keys that
+    /// extend it, so checking neighbours catches every pair — the same
+    /// argument [`BinaryTrie::check_ascending`] documents.
+    fn is_prefix_free(keys: &[Vec<u8>]) -> bool {
+        keys.windows(2)
+            .all(|pair| !pair[1].starts_with(&pair[0]) && !pair[0].starts_with(&pair[1]))
+    }
+
+    #[test]
+    fn bytewise_key_order_is_leaf_order() {
+        // The property the whole flat-mirror design rests on: sorting
+        // tree keys as bytes produces the same sequence as walking the
+        // tree left-then-right. It holds because `bytes_to_bits` expands
+        // MSB-first and the key set is prefix-free, and it would break
+        // silently — visible in nothing else — if either changed.
+        let keys = embedding_keys(40);
+        assert!(
+            keys.len() > 300,
+            "want a few hundred keys, got {}",
+            keys.len()
+        );
+
+        let mut trie = BinaryTrie::new_temp();
+        for (i, key) in keys.iter().enumerate() {
+            trie.insert(key.clone(), [i as u8; 32]).unwrap();
+        }
+
+        // `keys` is already sorted by `Vec::sort` in the helper.
+        assert_eq!(leaf_keys_in_order(&mut trie), keys);
+    }
+
+    #[test]
+    fn bytewise_key_order_is_leaf_order_across_a_commit() {
+        // The same claim against a tree read back from the database,
+        // where the walk resolves stored references rather than reading
+        // nodes the inserts left in memory. Paths, not just in-memory
+        // structure, have to agree with the ordering.
+        let keys = embedding_keys(20);
+        let entries: Vec<(Vec<u8>, [u8; 32])> = keys
+            .iter()
+            .enumerate()
+            .map(|(i, key)| (key.clone(), [i as u8; 32]))
+            .collect();
+        let (map, root) = commit_entries(&entries);
+
+        let mut reopened = BinaryTrie::open(Box::new(InMemoryBinaryTrieDB::new(map)), root);
+        assert_eq!(leaf_keys_in_order(&mut reopened), keys);
+    }
+
+    #[test]
+    fn the_embedding_produces_a_prefix_free_key_set() {
+        // What makes the ordering claim above true, asserted of the
+        // *embedding* rather than of the trie: `PrefixViolation` already
+        // enforces it per insert, but only for the keys a test happens
+        // to insert. Zones are separated by their first byte, and every
+        // key within a zone is the same length, so no key can extend
+        // another.
+        let keys = embedding_keys(40);
+        assert!(is_prefix_free(&keys), "embedding keys must be prefix-free");
+
+        // And the guard is not vacuous: a key set that is *not*
+        // prefix-free is recognised as such.
+        let mut violating = vec![vec![0x00u8; 34], vec![0x00u8; 34]];
+        violating[1].push(0x01);
+        assert!(!is_prefix_free(&violating));
+    }
+
     /// Fill a fresh in-memory backend, commit, and hand back the node
     /// map plus the committed root.
     fn commit_entries(entries: &[(Vec<u8>, [u8; 32])]) -> (NodeMap, H256) {
