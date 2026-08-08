@@ -91,6 +91,40 @@ pub const STORAGE_TRIE_NODES: &str = "storage_trie_nodes";
 /// use: a node that changes overwrites itself in place.
 pub const BINARY_TRIE_NODES: &str = "binary_trie_nodes";
 
+/// EIP-8297 binary trie flat key-value mirror: [`Vec<u8>`] => [`Vec<u8>`]
+/// - [`Vec<u8>`] = the leaf's **tree key**, exactly as the embedding derives it:
+///   34 bytes in the account and code zones, 66 in the storage zone. Not a bit
+///   path and not a hash — the raw key, so that the column family's bytewise
+///   order *is* the tree's leaf order. That holds because keys expand to bits
+///   MSB-first and the key set is prefix-free; see the binary-trie crate's
+///   `key_ordering` tests, which exist to keep it true.
+/// - [`Vec<u8>`] = the leaf's 32-byte value, raw. No tag and no length prefix:
+///   every leaf value in this tree is exactly 32 bytes, so there is nothing to
+///   delimit.
+///
+/// An **empty value is a tombstone**, not a stored leaf: it means the key left
+/// the tree and the row must be deleted, so a later read answers `None`. That
+/// is the same convention [`BINARY_TRIE_NODES`] uses, and it is *not* the same
+/// as a value of 32 zero bytes — which must never be written at all. The state
+/// embedding resolves a zero-valued leaf to a removal ("zero means absent"), so
+/// a 32-zero-byte row would claim a key the trie's root does not commit to, and
+/// a range served from this table and proved against that root would fail on
+/// it. `value.is_empty()` is the tombstone test; `value == [0u8; 32]` is an
+/// invariant violation. See `BackendBinaryFlatDB` in
+/// `crates/storage/binary_trie.rs`.
+///
+/// **Derived, not authoritative.** The trie is the state; this table is a
+/// mirror of its leaves that exists so a leaf can be read in one lookup instead
+/// of a ~256-bit descent, and so leaves can be enumerated in key order, which
+/// the node table cannot do at any price — [`BINARY_TRIE_NODES`] is keyed by
+/// bit path behind a bit *count*, so it sorts breadth-first. Every row here is
+/// produced by a change the trie was already told about, and the whole table
+/// can be dropped and rebuilt from the trie.
+///
+/// Single-version, like the trie it mirrors: one row per key, overwritten in
+/// place, no history.
+pub const BINARY_FLATKEYVALUE: &str = "binary_flatkeyvalue";
+
 /// EIP-8297 binary-trie root by block hash: [`Vec<u8>`] => [`Vec<u8>`]
 /// - [`Vec<u8>`] = `block_hash.as_bytes()`
 /// - [`Vec<u8>`] = the block's binary-trie root, 32 raw bytes.
@@ -129,14 +163,27 @@ pub const INVALID_CHAINS: &str = "invalid_ancestors";
 /// - [`Vec<u8>`] = `BlockHeaderRLP::from(block.header.clone()).bytes().clone()`
 pub const FULLSYNC_HEADERS: &str = "fullsync_headers";
 
-/// Account sate flat key-value store: [`Nibbles`] => [`Vec<u8>`]
-/// - [`Nibbles`] = `node_hash.as_ref()`
-/// - [`Vec<u8>`] = `node_data`
+/// Account state flat key-value mirror of the MPT: [`Vec<u8>`] => [`Vec<u8>`]
+/// - [`Vec<u8>`] = the account's **leaf path** in the state trie, one byte per
+///   nibble, 65 bytes long. Not a node hash: this table is keyed by where the
+///   leaf sits, so a lookup answers without descending. `classify_trie_key`
+///   (`crates/storage/trie.rs`) dispatches on exactly that length.
+/// - [`Vec<u8>`] = the leaf's own value, the RLP-encoded `AccountState`.
+///
+/// An empty value is a tombstone: the row is deleted and a read answers `None`
+/// (`Trie::get`, `crates/common/trie/trie.rs`). Coverage is progressive — see
+/// `TrieDB::flatkeyvalue_computed` and the `last_written` frontier in
+/// [`MISC_VALUES`] — so a miss is authoritative absence only for keys the
+/// frontier already covers.
 pub const ACCOUNT_FLATKEYVALUE: &str = "account_flatkeyvalue";
 
-/// Storage slots key-value store: [`Nibbles`] => [`Vec<u8>`]
-/// - [`Nibbles`] = `node_hash.as_ref()`
-/// - [`Vec<u8>`] = `node_data`
+/// Storage slot flat key-value mirror of the MPT: [`Vec<u8>`] => [`Vec<u8>`]
+/// - [`Vec<u8>`] = the account's address prefix followed by the slot's leaf
+///   path in that account's storage trie, 131 bytes long. The length is what
+///   tells this table's keys apart from [`ACCOUNT_FLATKEYVALUE`]'s.
+/// - [`Vec<u8>`] = the leaf's own value, the RLP-encoded slot value.
+///
+/// Same tombstone and progressive-coverage rules as [`ACCOUNT_FLATKEYVALUE`].
 pub const STORAGE_FLATKEYVALUE: &str = "storage_flatkeyvalue";
 
 pub const MISC_VALUES: &str = "misc_values";
@@ -170,7 +217,7 @@ pub const BLOCK_ACCESS_LISTS: &str = "block_access_lists";
 /// - [`Vec<u8>`] = RLP-encoded `Vec<Block>` (sorted by descending block number)
 pub const BAD_BLOCKS: &str = "bad_blocks";
 
-pub const TABLES: [&str; 24] = [
+pub const TABLES: [&str; 25] = [
     CHAIN_DATA,
     ACCOUNT_CODES,
     ACCOUNT_CODE_METADATA,
@@ -186,6 +233,7 @@ pub const TABLES: [&str; 24] = [
     ACCOUNT_TRIE_NODES,
     STORAGE_TRIE_NODES,
     BINARY_TRIE_NODES,
+    BINARY_FLATKEYVALUE,
     BINARY_TRIE_ROOTS,
     FULLSYNC_HEADERS,
     ACCOUNT_FLATKEYVALUE,

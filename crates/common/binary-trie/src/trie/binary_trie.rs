@@ -39,12 +39,22 @@
 //! sends those to the database as empty-valued entries — tombstones
 //! the backend deletes — in the same batch as the writes.
 //!
+//! Alongside the node writes, a commit reports a [`LeafChangelog`]:
+//! every *leaf* the mutations since the last commit created, changed or
+//! removed, keyed by tree key rather than by bit path. A storage layer
+//! mirrors those into a flat key-value table; nothing in this crate
+//! consumes them. They are accumulated as the mutations happen rather
+//! than reconstructed at commit time, because a leaf's key is only in
+//! hand at the moment it is touched — a dirty *branch* says nothing
+//! about which keys are below it, and `remove_prefix` retires leaves
+//! whose membership only the tree knows.
+//!
 //! Recursion depth is bounded by the key length in bits, so max-length
 //! keys could theoretically overflow the stack; embedding keys are at
 //! most 66 bytes, and going iterative is the fallback if that ever
 //! matters.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::sync::OnceLock;
 
 use ethereum_types::H256;
@@ -176,6 +186,35 @@ enum PrefixRemoval {
     Vanished(usize),
 }
 
+/// Leaves a commit created, changed or removed, in ascending key
+/// order: the tree key, and its new value or `None` if the key is no
+/// longer in the tree.
+///
+/// A *value* of `None` means the key was removed. It is not the same as
+/// a value of `Some([0u8; 32])`, which this trie never holds — the
+/// state embedding removes a leaf rather than storing zero, so a
+/// consumer that writes 32 zero bytes where it should have deleted ends
+/// up claiming a key the tree does not commit to.
+///
+/// Sorted because the natural accumulator is keyed by tree key, and
+/// because a consumer writing a sorted table would otherwise have to
+/// sort it again. See [`BinaryTrie::commit`].
+pub type LeafChangelog = Vec<(Vec<u8>, Option<[u8; 32]>)>;
+
+/// What a [`BinaryTrie::commit`] produced.
+///
+/// Two outputs rather than one because the leaf changes are not
+/// recoverable from the root: a root names a whole tree, and the
+/// difference between two of them is exactly what a caller mirroring
+/// leaves into a flat table needs and cannot compute.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Committed {
+    /// Root hash of the committed tree.
+    pub root: H256,
+    /// Every leaf that changed since the previous commit.
+    pub leaves: LeafChangelog,
+}
+
 /// Compressed binary radix trie over prefix-free byte keys and
 /// 32-byte values, committing to its contents with a BLAKE3 root.
 pub struct BinaryTrie {
@@ -188,6 +227,20 @@ pub struct BinaryTrie {
     /// the set is at most two paths per removal, so the ordering costs
     /// nothing worth counting.
     pending_removal: BTreeSet<BitPath>,
+    /// Leaves touched since the last commit, drained by the next one
+    /// into a [`LeafChangelog`].
+    ///
+    /// A map rather than a list, and that is what implements the
+    /// delete-then-reinsert rule: a key removed and put back before the
+    /// commit must report the reinsertion, not the removal, and a map
+    /// keyed by tree key gets that from the later write overwriting the
+    /// earlier one. The same rule `commit` applies to `pending_removal`
+    /// when it filters out paths it is about to write, arrived at one
+    /// level up rather than at commit time.
+    ///
+    /// Ordered for the reason [`LeafChangelog`] gives, and for the same
+    /// determinism `pending_removal` wants.
+    pending_leaves: BTreeMap<Vec<u8>, Option<[u8; 32]>>,
 }
 
 impl BinaryTrie {
@@ -197,6 +250,7 @@ impl BinaryTrie {
             db,
             root: None,
             pending_removal: BTreeSet::new(),
+            pending_leaves: BTreeMap::new(),
         }
     }
 
@@ -209,6 +263,7 @@ impl BinaryTrie {
             db,
             root: (root != EMPTY_TRIE_ROOT).then_some(NodeRef::Stored(root)),
             pending_removal: BTreeSet::new(),
+            pending_leaves: BTreeMap::new(),
         }
     }
 
@@ -286,10 +341,20 @@ impl BinaryTrie {
                 value,
             });
         }
+        // Every leaf is new, so the first commit's changelog is the whole
+        // input. Recorded before the fold, which consumes each key on its
+        // way past — and cloned rather than borrowed for the same reason.
+        // Genesis is the caller that wants this: seeding a flat mirror
+        // from the alloc falls out of building the tree from it.
+        let pending_leaves = run
+            .iter()
+            .map(|leaf| (leaf.key.clone(), Some(leaf.value)))
+            .collect();
         Ok(Self {
             db,
             root: (!run.is_empty()).then(|| NodeRef::loaded(Self::fold(&mut run, 0))),
             pending_removal: BTreeSet::new(),
+            pending_leaves,
         })
     }
 
@@ -378,14 +443,31 @@ impl BinaryTrie {
             return Err(BinaryTrieError::KeyTooLong);
         }
         let bits = bytes_to_bits(&key);
-        let Self { db, root, .. } = self;
-        match root {
+        // The key is consumed by the leaf it becomes, so the changelog's
+        // copy is taken now. One 34- or 66-byte allocation per insert,
+        // and there is no way around it short of the leaf borrowing its
+        // own key.
+        let recorded = key.clone();
+        let Self {
+            db,
+            root,
+            pending_leaves,
+            ..
+        } = self;
+        let result = match root {
             None => {
                 *root = Some(NodeRef::loaded(Node::Leaf { key, value }));
                 Ok(())
             }
             Some(node_ref) => Self::insert_at(db.as_ref(), node_ref, &bits, 0, key, value),
+        };
+        // Only a successful insert changed a leaf. A failed one leaves
+        // the trie untouched, so a changelog entry for it would tell a
+        // mirror to write a key the tree does not hold.
+        if result.is_ok() {
+            pending_leaves.insert(recorded, Some(value));
         }
+        result
     }
 
     /// Load the node `node_ref` points at, caching it in place so the
@@ -595,21 +677,32 @@ impl BinaryTrie {
             db,
             root,
             pending_removal,
+            pending_leaves,
         } = self;
         let Some(node_ref) = root else {
             return Ok(None);
         };
-        match Self::remove_at(db.as_ref(), node_ref, &bits, 0, key, pending_removal)? {
-            Removal::Absent => Ok(None),
-            Removal::Removed(value) => Ok(Some(value)),
+        let removed = match Self::remove_at(db.as_ref(), node_ref, &bits, 0, key, pending_removal)?
+        {
+            Removal::Absent => None,
+            Removal::Removed(value) => Some(value),
             Removal::Vanished(value) => {
                 // The root was the matching leaf and nothing is left to
                 // take its place.
                 pending_removal.insert(BitPath::new());
                 *root = None;
-                Ok(Some(value))
+                Some(value)
             }
+        };
+        // Only a removal that found the key changed a leaf. Absence is
+        // not an error here — a slot already at zero is written to zero
+        // as readily as one that was not — but it is also not a change,
+        // and reporting one would make an unchanged block's changelog
+        // non-empty.
+        if removed.is_some() {
+            pending_leaves.insert(key.to_vec(), None);
         }
+        Ok(removed)
     }
 
     /// Remove from the subtree at `node_ref`, invalidating it on the
@@ -956,11 +1049,19 @@ impl BinaryTrie {
             db,
             root,
             pending_removal,
+            pending_leaves,
         } = self;
         let Some(node_ref) = root else {
             return Ok(0);
         };
-        match Self::remove_prefix_at(db.as_ref(), node_ref, bits, 0, pending_removal)? {
+        match Self::remove_prefix_at(
+            db.as_ref(),
+            node_ref,
+            bits,
+            0,
+            pending_removal,
+            pending_leaves,
+        )? {
             PrefixRemoval::Absent => Ok(0),
             PrefixRemoval::Removed(count) => Ok(count),
             PrefixRemoval::Vanished(count) => {
@@ -983,8 +1084,10 @@ impl BinaryTrie {
         bits: &[u8],
         depth: usize,
         pending_removal: &mut BTreeSet<BitPath>,
+        pending_leaves: &mut BTreeMap<Vec<u8>, Option<[u8; 32]>>,
     ) -> Result<PrefixRemoval, BinaryTrieError> {
-        let result = Self::remove_prefix_below(db, node_ref, bits, depth, pending_removal);
+        let result =
+            Self::remove_prefix_below(db, node_ref, bits, depth, pending_removal, pending_leaves);
         if !matches!(result, Ok(PrefixRemoval::Absent) | Err(_)) {
             node_ref.invalidate();
         }
@@ -999,6 +1102,7 @@ impl BinaryTrie {
         bits: &[u8],
         depth: usize,
         pending_removal: &mut BTreeSet<BitPath>,
+        pending_leaves: &mut BTreeMap<Vec<u8>, Option<[u8; 32]>>,
     ) -> Result<PrefixRemoval, BinaryTrieError> {
         // The descent got here by matching `bits[..depth]`, so those
         // bits are this node's path — the key it is stored under.
@@ -1010,8 +1114,16 @@ impl BinaryTrie {
                 // failure part-way through must not leave the tombstones
                 // of nodes that are still in the tree.
                 let mut retired = Vec::new();
-                let count = Self::collect_subtree(db, node_ref, &path, &mut retired)?;
+                let mut retired_keys = Vec::new();
+                let count =
+                    Self::collect_subtree(db, node_ref, &path, &mut retired, &mut retired_keys)?;
                 pending_removal.extend(retired);
+                // The keys are free: the walk above had to load every
+                // leaf it is retiring in order to name its path, and a
+                // leaf's encoding carries its whole key. Deriving them
+                // outside the trie instead would mean a second descent
+                // that can disagree with this one.
+                pending_leaves.extend(retired_keys.into_iter().map(|key| (key, None)));
                 // The caller unlinks this subtree: only it knows whether
                 // there is a sibling to put in its place.
                 Ok(PrefixRemoval::Vanished(count))
@@ -1021,7 +1133,14 @@ impl BinaryTrie {
                     unreachable!("only a branch reaches past itself")
                 };
                 let child = if bit == 0 { left } else { right };
-                match Self::remove_prefix_at(db, child, bits, split + 1, pending_removal)? {
+                match Self::remove_prefix_at(
+                    db,
+                    child,
+                    bits,
+                    split + 1,
+                    pending_removal,
+                    pending_leaves,
+                )? {
                     // Nothing below vanished, so this branch still has
                     // both its children and keeps its shape.
                     other @ (PrefixRemoval::Absent | PrefixRemoval::Removed(_)) => Ok(other),
@@ -1035,33 +1154,42 @@ impl BinaryTrie {
     }
 
     /// Push the path of every node in the subtree at `path` onto
-    /// `retired`, its own included, and return how many of them are
-    /// leaves.
+    /// `retired`, its own included, and the tree key of every leaf in it
+    /// onto `retired_keys`. Returns how many of the nodes are leaves,
+    /// which is `retired_keys`'s own growth.
     ///
     /// Loads the subtree to do it, stored references and all: a path is
     /// only knowable from the branch above it, so there is no way to
-    /// name the nodes about to be orphaned without reading them.
+    /// name the nodes about to be orphaned without reading them. The
+    /// keys ride along for nothing — a leaf commits to its whole key in
+    /// its own encoding, so every one of them is already in hand by the
+    /// time its path is.
     ///
-    /// Collects into the caller's vector rather than straight into the
-    /// pending set so that a failure half-way down leaves nothing
-    /// behind — a tombstone for a node still in the tree would delete
-    /// live state at the next commit.
+    /// Collects into the caller's vectors rather than straight into the
+    /// pending set and the changelog so that a failure half-way down
+    /// leaves nothing behind — a tombstone for a node still in the tree
+    /// would delete live state at the next commit, and a changelog entry
+    /// for a leaf still in the tree would delete it from the mirror.
     fn collect_subtree(
         db: &dyn BinaryTrieDB,
         node_ref: &mut NodeRef,
         path: &BitPath,
         retired: &mut Vec<BitPath>,
+        retired_keys: &mut Vec<Vec<u8>>,
     ) -> Result<usize, BinaryTrieError> {
         let leaves = match Self::resolve(db, node_ref, path)? {
-            Node::Leaf { .. } => 1,
+            Node::Leaf { key, .. } => {
+                retired_keys.push(key.clone());
+                1
+            }
             Node::Branch {
                 prefix,
                 left,
                 right,
             } => {
                 let (left_path, right_path) = (path.child(prefix, 0), path.child(prefix, 1));
-                Self::collect_subtree(db, left, &left_path, retired)?
-                    + Self::collect_subtree(db, right, &right_path, retired)?
+                Self::collect_subtree(db, left, &left_path, retired, retired_keys)?
+                    + Self::collect_subtree(db, right, &right_path, retired, retired_keys)?
             }
         };
         retired.push(path.clone());
@@ -1106,7 +1234,7 @@ impl BinaryTrie {
     }
 
     /// Write the changed nodes to the database under their bit paths
-    /// and return the root hash.
+    /// and return the root hash and the leaf changelog.
     ///
     /// Only the changed ones: a node whose stored copy is still current
     /// is skipped, along with everything below it. That is safe because
@@ -1134,12 +1262,21 @@ impl BinaryTrie {
     /// the reinsertion fills — a tombstone for them would erase a live
     /// node.
     ///
+    /// **The leaf changelog obeys the same rule**, one level up: it is
+    /// accumulated in a map keyed by tree key, so a key removed and
+    /// reinserted before this commit reports the reinsertion and not the
+    /// removal. Committing an unchanged trie hands back an empty
+    /// changelog, and committing twice in a row empties it — the log
+    /// describes the step from the previous commit to this one, not the
+    /// tree's contents.
+    ///
     /// # Errors
     ///
-    /// [`BinaryTrieError::Backend`] if the write fails. The dirty flags
-    /// and the pending removals survive a failed write, so the nodes are
-    /// offered again next time.
-    pub fn commit(&mut self) -> Result<H256, BinaryTrieError> {
+    /// [`BinaryTrieError::Backend`] if the write fails. The dirty flags,
+    /// the pending removals and the changelog all survive a failed
+    /// write, so the nodes *and* the leaf changes are offered again next
+    /// time.
+    pub fn commit(&mut self) -> Result<Committed, BinaryTrieError> {
         let mut entries = Vec::new();
         let root = match &self.root {
             None => EMPTY_TRIE_ROOT,
@@ -1157,15 +1294,35 @@ impl BinaryTrie {
         if entries.is_empty() {
             // Nothing was written, so nothing was filtered: every
             // pending removal would have made it into `entries`, and
-            // there were none.
-            return Ok(root);
+            // there were none. The changelog is drained all the same
+            // rather than asserted empty — every leaf change dirties a
+            // node, so there is nothing in it, and taking it is cheaper
+            // than relying on that being true after a future edit.
+            return Ok(Committed {
+                root,
+                leaves: self.take_leaf_changelog(),
+            });
         }
         self.db.put_batch(entries)?;
         self.pending_removal.clear();
         if let Some(node_ref) = &mut self.root {
             Self::mark_clean(node_ref);
         }
-        Ok(root)
+        Ok(Committed {
+            root,
+            leaves: self.take_leaf_changelog(),
+        })
+    }
+
+    /// Drain the accumulated leaf changes into a [`LeafChangelog`].
+    ///
+    /// Draining, not copying: a commit reports the step it just made
+    /// durable, so leaving the entries behind would make the next commit
+    /// re-report them and a mirror rewrite rows nothing touched.
+    fn take_leaf_changelog(&mut self) -> LeafChangelog {
+        std::mem::take(&mut self.pending_leaves)
+            .into_iter()
+            .collect()
     }
 
     /// Hash of the subtree at `path`, pushing every dirty node in it
@@ -1344,6 +1501,160 @@ mod tests {
         BitPath::from_bits(&[0, 0, 0, 0, 0])
     }
 
+    /// Every leaf key in the trie, in depth-first left-then-right order:
+    /// the order a range scan of the tree itself would produce, read off
+    /// the *structure* rather than derived from the keys.
+    ///
+    /// Test-only, and deliberately so — nothing in production walks the
+    /// tree in order today, which is exactly why the ordering property
+    /// this pins is invisible to every other test.
+    fn leaf_keys_in_order(trie: &mut BinaryTrie) -> Vec<Vec<u8>> {
+        fn walk(
+            db: &dyn BinaryTrieDB,
+            node_ref: &mut NodeRef,
+            path: &BitPath,
+            out: &mut Vec<Vec<u8>>,
+        ) {
+            match BinaryTrie::resolve(db, node_ref, path).expect("node loads") {
+                Node::Leaf { key, .. } => out.push(key.clone()),
+                Node::Branch {
+                    prefix,
+                    left,
+                    right,
+                } => {
+                    let (left_path, right_path) = (path.child(prefix, 0), path.child(prefix, 1));
+                    walk(db, left, &left_path, out);
+                    walk(db, right, &right_path, out);
+                }
+            }
+        }
+
+        let mut out = Vec::new();
+        let BinaryTrie { db, root, .. } = trie;
+        if let Some(node_ref) = root {
+            walk(db.as_ref(), node_ref, &BitPath::new(), &mut out);
+        }
+        out
+    }
+
+    /// Keys the real embedding produces, drawn from all three zones:
+    /// account headers at several sub-indices, code chunks (shared
+    /// between two of the accounts, as identical bytecode is), storage
+    /// slots inside the header range, and storage slots past it in the
+    /// overflow zone.
+    ///
+    /// Derived from the embedding rather than hand-written so that the
+    /// key *shapes* under test are the ones the tree actually holds —
+    /// two lengths, three zone bytes, and hash-derived middles with no
+    /// exploitable structure.
+    fn embedding_keys(accounts: u64) -> Vec<Vec<u8>> {
+        use crate::embedding::{
+            get_tree_key_for_basic_data, get_tree_key_for_code_chunk, get_tree_key_for_code_hash,
+            get_tree_key_for_delegation, get_tree_key_for_storage_slot,
+        };
+        use ethereum_types::{H160, U256};
+
+        let mut keys = Vec::new();
+        for i in 0..accounts {
+            let address = crate::embedding::address20_to_address32(H160::from_low_u64_be(i + 1));
+            keys.push(get_tree_key_for_basic_data(&address));
+            // An account holds one of these two, never both; the key set
+            // under test wants both shapes, and the trie does not care
+            // which account each came from.
+            if i.is_multiple_of(2) {
+                keys.push(get_tree_key_for_code_hash(&address));
+            } else {
+                keys.push(get_tree_key_for_delegation(&address));
+            }
+            // Header-range storage (sub-index 64..128) and overflow
+            // storage (a 66-byte key in zone 0xff).
+            for slot in [0u64, 5, 63] {
+                keys.push(get_tree_key_for_storage_slot(&address, U256::from(slot)));
+            }
+            for slot in [64u64, 255, 256, 1_000_000] {
+                keys.push(get_tree_key_for_storage_slot(&address, U256::from(slot)));
+            }
+            // Two distinct bytecodes across the whole set, so code-zone
+            // leaves are shared the way identical deployments share them.
+            let mut code_hash = [0u8; 32];
+            code_hash[0] = (i % 2) as u8;
+            for chunk in [0u64, 1, 255, 256] {
+                keys.push(get_tree_key_for_code_chunk(&code_hash, chunk));
+            }
+        }
+        keys.sort();
+        keys.dedup();
+        keys
+    }
+
+    /// Whether no key in `keys` is a byte-prefix of another. `keys` must
+    /// be sorted: a proper prefix sorts immediately before the keys that
+    /// extend it, so checking neighbours catches every pair — the same
+    /// argument [`BinaryTrie::check_ascending`] documents.
+    fn is_prefix_free(keys: &[Vec<u8>]) -> bool {
+        keys.windows(2)
+            .all(|pair| !pair[1].starts_with(&pair[0]) && !pair[0].starts_with(&pair[1]))
+    }
+
+    #[test]
+    fn bytewise_key_order_is_leaf_order() {
+        // The property the whole flat-mirror design rests on: sorting
+        // tree keys as bytes produces the same sequence as walking the
+        // tree left-then-right. It holds because `bytes_to_bits` expands
+        // MSB-first and the key set is prefix-free, and it would break
+        // silently — visible in nothing else — if either changed.
+        let keys = embedding_keys(40);
+        assert!(
+            keys.len() > 300,
+            "want a few hundred keys, got {}",
+            keys.len()
+        );
+
+        let mut trie = BinaryTrie::new_temp();
+        for (i, key) in keys.iter().enumerate() {
+            trie.insert(key.clone(), [i as u8; 32]).unwrap();
+        }
+
+        // `keys` is already sorted by `Vec::sort` in the helper.
+        assert_eq!(leaf_keys_in_order(&mut trie), keys);
+    }
+
+    #[test]
+    fn bytewise_key_order_is_leaf_order_across_a_commit() {
+        // The same claim against a tree read back from the database,
+        // where the walk resolves stored references rather than reading
+        // nodes the inserts left in memory. Paths, not just in-memory
+        // structure, have to agree with the ordering.
+        let keys = embedding_keys(20);
+        let entries: Vec<(Vec<u8>, [u8; 32])> = keys
+            .iter()
+            .enumerate()
+            .map(|(i, key)| (key.clone(), [i as u8; 32]))
+            .collect();
+        let (map, root) = commit_entries(&entries);
+
+        let mut reopened = BinaryTrie::open(Box::new(InMemoryBinaryTrieDB::new(map)), root);
+        assert_eq!(leaf_keys_in_order(&mut reopened), keys);
+    }
+
+    #[test]
+    fn the_embedding_produces_a_prefix_free_key_set() {
+        // What makes the ordering claim above true, asserted of the
+        // *embedding* rather than of the trie: `PrefixViolation` already
+        // enforces it per insert, but only for the keys a test happens
+        // to insert. Zones are separated by their first byte, and every
+        // key within a zone is the same length, so no key can extend
+        // another.
+        let keys = embedding_keys(40);
+        assert!(is_prefix_free(&keys), "embedding keys must be prefix-free");
+
+        // And the guard is not vacuous: a key set that is *not*
+        // prefix-free is recognised as such.
+        let mut violating = vec![vec![0x00u8; 34], vec![0x00u8; 34]];
+        violating[1].push(0x01);
+        assert!(!is_prefix_free(&violating));
+    }
+
     /// Fill a fresh in-memory backend, commit, and hand back the node
     /// map plus the committed root.
     fn commit_entries(entries: &[(Vec<u8>, [u8; 32])]) -> (NodeMap, H256) {
@@ -1353,7 +1664,7 @@ mod tests {
         for (key, value) in entries {
             trie.insert(key.clone(), *value).unwrap();
         }
-        let root = trie.commit().unwrap();
+        let root = trie.commit().unwrap().root;
         assert_eq!(root, trie.root(), "commit and root must agree");
         (map, root)
     }
@@ -1413,7 +1724,7 @@ mod tests {
 
         let mut trie = BinaryTrie::open(Box::new(InMemoryBinaryTrieDB::new(map.clone())), root);
         trie.insert(vec![0x7f; 34], [0xee; 32]).unwrap();
-        let new_root = trie.commit().unwrap();
+        let new_root = trie.commit().unwrap().root;
         assert_ne!(new_root, root, "a new key must move the root");
 
         let mut reopened = BinaryTrie::open(Box::new(InMemoryBinaryTrieDB::new(map)), new_root);
@@ -1437,7 +1748,7 @@ mod tests {
         let mut newcomer = vec![0x00; 34];
         newcomer[0] = 0x80;
         trie.insert(newcomer.clone(), [0xcd; 32]).unwrap();
-        let new_root = trie.commit().unwrap();
+        let new_root = trie.commit().unwrap().root;
 
         let mut reopened = BinaryTrie::open(Box::new(InMemoryBinaryTrieDB::new(map)), new_root);
         for (key, value) in &entries {
@@ -1521,7 +1832,7 @@ mod tests {
         }
         assert!(counts.reads() > 0, "the reads should have loaded nodes");
 
-        assert_eq!(trie.commit().unwrap(), root);
+        assert_eq!(trie.commit().unwrap().root, root);
         assert_eq!(
             counts.writes(),
             0,
@@ -1541,7 +1852,7 @@ mod tests {
         assert_eq!(trie.get(key).unwrap(), Some(*value));
 
         assert_eq!(
-            trie.commit().unwrap(),
+            trie.commit().unwrap().root,
             root,
             "reading must not move the root"
         );
@@ -1561,7 +1872,7 @@ mod tests {
         let newcomer = deep_split_key();
         let mut trie = BinaryTrie::open(Box::new(db), root);
         trie.insert(newcomer.clone(), [0xcd; 32]).unwrap();
-        let new_root = trie.commit().unwrap();
+        let new_root = trie.commit().unwrap().root;
 
         let mut expected = entries;
         expected.push((newcomer, [0xcd; 32]));
@@ -1656,7 +1967,7 @@ mod tests {
             BinaryTrie::open(Box::new(InMemoryBinaryTrieDB::new_empty()), EMPTY_TRIE_ROOT);
         assert_eq!(trie.root(), EMPTY_TRIE_ROOT);
         assert_eq!(trie.get(&[0xab; 34]).unwrap(), None);
-        assert_eq!(trie.commit().unwrap(), EMPTY_TRIE_ROOT);
+        assert_eq!(trie.commit().unwrap().root, EMPTY_TRIE_ROOT);
     }
 
     #[test]
@@ -1780,7 +2091,7 @@ mod tests {
         assert_eq!(trie.remove(&[0x42; 34]).unwrap(), Some([1; 32]));
         assert_eq!(trie.root(), EMPTY_TRIE_ROOT);
         assert_eq!(trie.get(&[0x42; 34]).unwrap(), None);
-        assert_eq!(trie.commit().unwrap(), EMPTY_TRIE_ROOT);
+        assert_eq!(trie.commit().unwrap().root, EMPTY_TRIE_ROOT);
     }
 
     #[test]
@@ -1872,7 +2183,7 @@ mod tests {
         // exactly where the database put it.
         let removed = wide_key(LOPSIDED_ODD_ONE);
         assert_eq!(trie.remove(&removed).unwrap(), Some([LOPSIDED_ODD_ONE; 32]));
-        let new_root = trie.commit().unwrap();
+        let new_root = trie.commit().unwrap().root;
 
         let kept = &entries[..entries.len() - 1];
         let mut reopened = BinaryTrie::open(Box::new(InMemoryBinaryTrieDB::new(map)), new_root);
@@ -1933,7 +2244,7 @@ mod tests {
         // because the root is computed from memory.
         trie.remove(&key).unwrap();
         trie.insert(key.clone(), [0xee; 32]).unwrap();
-        let new_root = trie.commit().unwrap();
+        let new_root = trie.commit().unwrap().root;
 
         let mut reopened = BinaryTrie::open(Box::new(InMemoryBinaryTrieDB::new(map)), new_root);
         for (key, value) in &entries[..entries.len() - 1] {
@@ -2053,7 +2364,7 @@ mod tests {
         let mut trie = BinaryTrie::from_sorted_leaves(empty_db(), vec![]).unwrap();
         assert_eq!(trie.root(), EMPTY_TRIE_ROOT);
         assert_eq!(trie.get(&[0xab; 34]).unwrap(), None);
-        assert_eq!(trie.commit().unwrap(), EMPTY_TRIE_ROOT);
+        assert_eq!(trie.commit().unwrap().root, EMPTY_TRIE_ROOT);
     }
 
     #[test]
@@ -2147,7 +2458,7 @@ mod tests {
         let map = db.inner();
 
         let mut trie = BinaryTrie::from_sorted_leaves(Box::new(db), entries.clone()).unwrap();
-        let root = trie.commit().unwrap();
+        let root = trie.commit().unwrap().root;
         assert_eq!(root, trie.root(), "commit and root must agree");
         assert_eq!(
             root,
@@ -2345,7 +2656,7 @@ mod tests {
             entries.len()
         );
         assert_eq!(trie.root(), EMPTY_TRIE_ROOT);
-        assert_eq!(trie.commit().unwrap(), EMPTY_TRIE_ROOT);
+        assert_eq!(trie.commit().unwrap().root, EMPTY_TRIE_ROOT);
 
         // And on a single-leaf trie, where the root is the covered node
         // and has no sibling to take its place.
@@ -2398,7 +2709,7 @@ mod tests {
 
         let mut trie = BinaryTrie::open(Box::new(InMemoryBinaryTrieDB::new(map.clone())), root);
         assert_eq!(trie.remove_prefix(&second_byte_upper_prefix()).unwrap(), 32);
-        let new_root = trie.commit().unwrap();
+        let new_root = trie.commit().unwrap().root;
 
         let kept = &entries[..32];
         assert_eq!(new_root, root_from_scratch(kept));
@@ -2471,7 +2782,7 @@ mod tests {
         let (db, counts) = CountingDB::over(InMemoryBinaryTrieDB::new_empty().inner());
 
         let mut trie = BinaryTrie::from_sorted_leaves(Box::new(db), sorted(&entries)).unwrap();
-        let root = trie.commit().unwrap();
+        let root = trie.commit().unwrap().root;
 
         assert_eq!(root, root_from_scratch(&entries));
         assert_eq!(
@@ -2485,6 +2796,262 @@ mod tests {
             counts.reads(),
             0,
             "bulk construction builds from its input alone"
+        );
+    }
+
+    // ---- The leaf changelog -------------------------------------------
+    //
+    // A commit's second output: which *leaves* changed, keyed by tree key.
+    // Nothing in this crate consumes it, so these tests are the whole of
+    // its specification.
+
+    /// The single account whose storage the prefix tests remove.
+    fn changelog_address() -> crate::embedding::Address32 {
+        crate::embedding::address20_to_address32(ethereum_types::H160::from_low_u64_be(7))
+    }
+
+    #[test]
+    fn a_commit_reports_every_leaf_it_wrote() {
+        let mut trie = BinaryTrie::new_temp();
+        let entries = &sample_entries()[..3];
+        for (key, value) in entries {
+            trie.insert(key.clone(), *value).unwrap();
+        }
+
+        let mut expected: Vec<(Vec<u8>, Option<[u8; 32]>)> = entries
+            .iter()
+            .map(|(key, value)| (key.clone(), Some(*value)))
+            .collect();
+        expected.sort();
+        assert_eq!(trie.commit().unwrap().leaves, expected);
+    }
+
+    #[test]
+    fn the_changelog_is_in_key_order() {
+        // Sorted, so a consumer writing a sorted table does not have to
+        // sort it again — and because the order the mutations arrived in
+        // says nothing about the tree.
+        let mut trie = BinaryTrie::new_temp();
+        for (key, value) in sample_entries().iter().rev() {
+            trie.insert(key.clone(), *value).unwrap();
+        }
+
+        let keys: Vec<Vec<u8>> = trie
+            .commit()
+            .unwrap()
+            .leaves
+            .into_iter()
+            .map(|(key, _)| key)
+            .collect();
+        let mut sorted = keys.clone();
+        sorted.sort();
+        assert_eq!(keys, sorted);
+    }
+
+    #[test]
+    fn a_removal_reports_the_key_as_absent() {
+        let entries = sample_entries();
+        let (map, root) = commit_entries(&entries);
+
+        let mut trie = BinaryTrie::open(Box::new(InMemoryBinaryTrieDB::new(map)), root);
+        assert!(trie.remove(&entries[1].0).unwrap().is_some());
+
+        // `None`, not `Some([0u8; 32])`. The two are one typo apart and
+        // mean opposite things: absence versus a stored zero the tree
+        // never holds.
+        assert_eq!(
+            trie.commit().unwrap().leaves,
+            vec![(entries[1].0.clone(), None)]
+        );
+    }
+
+    #[test]
+    fn a_removal_of_an_absent_key_reports_nothing() {
+        // Removing a key that is not there is not an error — the state
+        // model writes an already-zero slot to zero as readily as any
+        // other — but it is not a change either, and a changelog entry
+        // for it would make an idle block rewrite mirror rows.
+        let entries = sample_entries();
+        let (map, root) = commit_entries(&entries);
+
+        let mut trie = BinaryTrie::open(Box::new(InMemoryBinaryTrieDB::new(map)), root);
+        assert_eq!(trie.remove(&[0x7f; 34]).unwrap(), None);
+        assert!(trie.commit().unwrap().leaves.is_empty());
+    }
+
+    #[test]
+    fn a_failed_insert_reports_nothing() {
+        // A rejected insert leaves the trie untouched, so reporting the
+        // key would tell a mirror to store a leaf the tree does not hold.
+        let mut trie = BinaryTrie::new_temp();
+        trie.insert(vec![0x00; 34], [1u8; 32]).unwrap();
+        assert_eq!(
+            trie.insert(vec![0x00; 33], [2u8; 32]),
+            Err(BinaryTrieError::PrefixViolation)
+        );
+
+        assert_eq!(
+            trie.commit().unwrap().leaves,
+            vec![(vec![0x00; 34], Some([1u8; 32]))]
+        );
+    }
+
+    #[test]
+    fn remove_prefix_reports_every_leaf_it_retired() {
+        use crate::embedding::{
+            get_tree_key_for_storage_slot, get_tree_prefix_for_overflow_storage,
+        };
+        use ethereum_types::U256;
+
+        // 200 overflow-storage leaves under one account, plus a header
+        // leaf outside the prefix that must survive untouched.
+        let address = changelog_address();
+        let slots: Vec<u64> = (64..264).collect();
+        let mut trie = BinaryTrie::new_temp();
+        for (i, slot) in slots.iter().enumerate() {
+            let key = get_tree_key_for_storage_slot(&address, U256::from(*slot));
+            trie.insert(key, [(i % 251) as u8 + 1; 32]).unwrap();
+        }
+        let survivor = crate::embedding::get_tree_key_for_basic_data(&address);
+        trie.insert(survivor.clone(), [0xaa; 32]).unwrap();
+        trie.commit().unwrap();
+
+        let count = trie
+            .remove_prefix(&get_tree_prefix_for_overflow_storage(&address))
+            .unwrap();
+        let leaves = trie.commit().unwrap().leaves;
+
+        // The count `remove_prefix` returns and the changelog it emitted
+        // are two answers to the same question, computed on the same
+        // walk. They must agree, or one of them is counting nodes the
+        // other is not naming.
+        assert_eq!(count, 200);
+        assert_eq!(leaves.len(), count);
+        assert!(
+            leaves.iter().all(|(_, value)| value.is_none()),
+            "a retired leaf is reported as absent"
+        );
+
+        let mut expected: Vec<Vec<u8>> = slots
+            .iter()
+            .map(|slot| get_tree_key_for_storage_slot(&address, U256::from(*slot)))
+            .collect();
+        expected.sort();
+        let reported: Vec<Vec<u8>> = leaves.into_iter().map(|(key, _)| key).collect();
+        assert_eq!(reported, expected);
+
+        // The header leaf is outside the prefix, so it is neither
+        // removed nor reported.
+        assert_eq!(trie.get(&survivor).unwrap(), Some([0xaa; 32]));
+    }
+
+    #[test]
+    fn delete_then_reinsert_in_one_commit_reports_the_reinsertion() {
+        // The rule `commit` already applies to `pending_removal`, one
+        // level up: the tree ends the commit holding the key, so a
+        // mirror told to delete it would drop a live leaf.
+        let entries = sample_entries();
+        let (map, root) = commit_entries(&entries);
+        let (key, _) = entries[1].clone();
+
+        let mut trie = BinaryTrie::open(Box::new(InMemoryBinaryTrieDB::new(map)), root);
+        trie.remove(&key).unwrap();
+        trie.insert(key.clone(), [0x99; 32]).unwrap();
+
+        assert_eq!(
+            trie.commit().unwrap().leaves,
+            vec![(key, Some([0x99; 32]))],
+            "the reinsertion, not a removal followed by one"
+        );
+    }
+
+    #[test]
+    fn reinsert_then_delete_in_one_commit_reports_the_removal() {
+        // The other direction, which the same map gets right for the
+        // same reason: the last write to a key wins, and here it is the
+        // removal.
+        let mut trie = BinaryTrie::new_temp();
+        let entries = sample_entries();
+        for (key, value) in &entries {
+            trie.insert(key.clone(), *value).unwrap();
+        }
+        trie.commit().unwrap();
+
+        let (key, value) = entries[1].clone();
+        trie.insert(key.clone(), value).unwrap();
+        trie.remove(&key).unwrap();
+
+        assert_eq!(trie.commit().unwrap().leaves, vec![(key, None)]);
+    }
+
+    #[test]
+    fn a_second_commit_of_the_same_state_reports_nothing() {
+        // The changelog is the step from the previous commit to this
+        // one, not an inventory of the tree.
+        let mut trie = BinaryTrie::new_temp();
+        for (key, value) in sample_entries() {
+            trie.insert(key, value).unwrap();
+        }
+        let first = trie.commit().unwrap();
+        assert_eq!(first.leaves.len(), sample_entries().len());
+
+        let second = trie.commit().unwrap();
+        assert_eq!(second.root, first.root);
+        assert!(second.leaves.is_empty());
+    }
+
+    #[test]
+    fn a_bulk_build_reports_every_leaf() {
+        // Genesis: the mirror falls out of building the tree from the
+        // alloc, with no second pass over the state.
+        let entries = two_byte_entries(64);
+        let mut trie = BinaryTrie::from_sorted_leaves(
+            Box::new(InMemoryBinaryTrieDB::new_empty()),
+            sorted(&entries),
+        )
+        .unwrap();
+
+        let mut expected: Vec<(Vec<u8>, Option<[u8; 32]>)> = entries
+            .iter()
+            .map(|(key, value)| (key.clone(), Some(*value)))
+            .collect();
+        expected.sort();
+        assert_eq!(trie.commit().unwrap().leaves, expected);
+    }
+
+    #[test]
+    fn an_empty_bulk_build_reports_nothing() {
+        let mut trie =
+            BinaryTrie::from_sorted_leaves(Box::new(InMemoryBinaryTrieDB::new_empty()), Vec::new())
+                .unwrap();
+        let committed = trie.commit().unwrap();
+        assert_eq!(committed.root, EMPTY_TRIE_ROOT);
+        assert!(committed.leaves.is_empty());
+    }
+
+    #[test]
+    fn a_failed_write_offers_the_changelog_again() {
+        // The dirty flags and the pending removals survive a failed
+        // write so the nodes are offered again; the changelog has to
+        // survive with them, or the retry writes nodes to disk and
+        // leaves the mirror one block behind for ever.
+        struct FailingDB;
+        impl BinaryTrieDB for FailingDB {
+            fn get(&self, _path: &BitPath) -> Result<Option<Vec<u8>>, BinaryTrieError> {
+                Ok(None)
+            }
+            fn put_batch(&self, _entries: Vec<(BitPath, Vec<u8>)>) -> Result<(), BinaryTrieError> {
+                Err(BinaryTrieError::Backend("write refused".to_string()))
+            }
+        }
+
+        let mut trie = BinaryTrie::new(Box::new(FailingDB));
+        trie.insert(vec![0x00; 34], [1u8; 32]).unwrap();
+        assert!(matches!(trie.commit(), Err(BinaryTrieError::Backend(_))));
+        assert_eq!(
+            trie.pending_leaves.len(),
+            1,
+            "a failed commit must not consume the changelog"
         );
     }
 }

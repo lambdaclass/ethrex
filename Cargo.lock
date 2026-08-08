@@ -3866,6 +3866,7 @@ dependencies = [
  "ethereum-types 0.15.1",
  "hex",
  "hex-literal 0.4.1",
+ "proptest",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
