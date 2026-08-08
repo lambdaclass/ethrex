@@ -3139,10 +3139,37 @@ impl Store {
 
         let staged = LayeredBinaryTrieDB::staging_buffer();
         let gate_root = self.binary_layer_gate(parent_hash, parent_root)?;
-        let mut trie = BinaryTrie::open(
-            Box::new(self.layered_binary_trie_db(parent_root, gate_root, staged.clone())?),
-            parent_root,
-        );
+        let db = self.layered_binary_trie_db(parent_root, gate_root, staged.clone())?;
+
+        // The mapping row says which root this block must extend. It does not
+        // say the trie still *holds* it — the row is durable and the nodes are
+        // not, so a trie advanced past that root (or parked elsewhere by a
+        // snapshot install) still answers the lookup above. `BinaryTrie::open`
+        // records a root without validating it, and a path-keyed walk then
+        // resolves whatever is on disk, so without this the commit would be a
+        // root computed over the wrong base with nothing downstream able to
+        // tell.
+        //
+        // Checked through `db` rather than via `binary_trie_holds_root`: that
+        // helper gates its layer read on the root itself, but for a
+        // pre-activation block the layer is keyed by the parent's *header*
+        // root, which is an MPT root. `binary_layer_gate` above is what
+        // resolves that, so the check has to run against this db to avoid
+        // spuriously refusing a live import.
+        if parent_root != BINARY_EMPTY_TRIE_ROOT {
+            let holds = db
+                .get(&BitPath::new())
+                .map_err(|e| StoreError::Custom(format!("binary root node read failed: {e}")))?
+                .is_some_and(|encoded| hash_stored_node(&encoded) == parent_root);
+            if !holds {
+                return Err(StoreError::BinaryTrieRootNotHeld {
+                    parent_hash,
+                    parent_root,
+                });
+            }
+        }
+
+        let mut trie = BinaryTrie::open(Box::new(db), parent_root);
         apply_account_updates(&mut trie, account_updates)?;
         let root = trie.commit()?;
         drop(trie);

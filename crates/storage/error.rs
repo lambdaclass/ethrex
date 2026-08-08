@@ -40,6 +40,22 @@ pub enum StoreError {
         "no binary-trie root recorded for parent block {parent_hash:#x}: the binary trie is incomplete and cannot be extended (a chain with binaryTreeTime scheduled must have processed every block from genesis)"
     )]
     MissingBinaryTrieRoot { parent_hash: H256 },
+    /// The recorded root for a parent exists, but the trie no longer holds it.
+    ///
+    /// The `BINARY_TRIE_ROOTS` row is written durably at import and outlives
+    /// the nodes it names: the binary trie is path-keyed and single-version, so
+    /// once it has been advanced past (or parked at some other block, as a
+    /// snapshot install would leave it) the nodes for an older root are simply
+    /// gone. Opening at that root would record it without validating and then
+    /// resolve whatever nodes are actually on disk, silently committing a root
+    /// computed over the wrong base. This refuses instead.
+    #[error(
+        "the binary trie no longer holds root {parent_root:#x} recorded for parent block {parent_hash:#x}: it has been advanced past or parked elsewhere, and extending it would build on the wrong state"
+    )]
+    BinaryTrieRootNotHeld {
+        parent_hash: H256,
+        parent_root: H256,
+    },
     #[error("missing store: is an execution DB being used instead?")]
     MissingStore,
     /// A read was requested against a state root this node does not hold.

@@ -63,7 +63,7 @@ use ethrex_common::{
 use ethrex_crypto::NativeCrypto;
 use ethrex_l2_rpc::signer::{LocalSigner, Signable, Signer};
 use ethrex_rlp::decode::RLPDecode;
-use ethrex_storage::{EngineType, Store};
+use ethrex_storage::{EngineType, Store, error::StoreError};
 use ethrex_vm::{DynVmDatabase, Evm, VmDatabase};
 use secp256k1::SecretKey;
 use tokio_util::sync::CancellationToken;
@@ -4370,7 +4370,7 @@ fn wrong_base_probe_updates() -> Vec<AccountUpdate> {
 /// so gating on the binary root waits for nothing and can miss a parent layer
 /// that has not been installed yet.
 #[tokio::test]
-async fn extending_a_root_the_parked_binary_trie_no_longer_holds_builds_on_the_wrong_base() {
+async fn extending_a_root_the_parked_binary_trie_no_longer_holds_is_refused() {
     let sender = sender_from_key(&test_secret_key());
     let genesis = load_funded_genesis(sender, Some(FAR_FUTURE_BINARY_TREE_TIME));
     let chain_id = genesis.config.chain_id;
@@ -4411,65 +4411,46 @@ async fn extending_a_root_the_parked_binary_trie_no_longer_holds_builds_on_the_w
          is not what the single-version trie holds any more"
     );
 
-    // What extending genesis *should* produce, from a store whose trie really
-    // is at genesis.
+    // A store whose trie really is at genesis extends it without complaint —
+    // so the refusal below is about the trie's contents, not about the call.
     let clean = store_from_genesis(genesis.clone()).await;
     let clean_genesis_hash = clean.get_block_header(0).unwrap().unwrap().hash();
-    let expected = clean
+    clean
         .advance_binary_trie_for_block(
             H256::repeat_byte(0x11),
             clean_genesis_hash,
             &wrong_base_probe_updates(),
         )
-        .expect("a trie that holds genesis extends it")
-        .root;
+        .expect("a trie that holds genesis extends it");
 
-    // The parked node, asked the same question.
-    let advance = store
+    // The parked node, asked the same question, must refuse. Before the guard
+    // it answered — silently, with a root computed over block 3's state while
+    // still reporting genesis as its parent, so nothing downstream could tell.
+    let err = store
         .advance_binary_trie_for_block(
             H256::repeat_byte(0x11),
             genesis_hash,
             &wrong_base_probe_updates(),
         )
-        .expect(
-            "extending from a root the trie no longer holds does not error: \
-             `advance_binary_trie_for_block` gates on the recorded parent root \
-             alone, and that row is still there",
+        .expect_err(
+            "extending a root the trie no longer holds must refuse: the \
+             recorded-root row outlives the nodes it names, and a path-keyed \
+             open would resolve whatever is on disk instead",
         );
 
-    assert_ne!(
-        advance.root, expected,
-        "and it does not produce genesis's successor either — it builds on \
-         whatever the path-keyed trie resolves to now"
-    );
-    assert_eq!(
-        advance.parent_root, genesis_binary_root,
-        "the advance still reports genesis as its parent, so nothing \
-         downstream can tell the base was wrong"
+    assert!(
+        matches!(
+            err,
+            StoreError::BinaryTrieRootNotHeld { parent_root, .. }
+                if parent_root == genesis_binary_root
+        ),
+        "the refusal must name the root that is missing, not a generic error: {err:?}"
     );
 
-    // Name the base it actually used: block 3's state, reproduced on a twin
-    // whose trie genuinely is at block 3.
-    let twin = store_from_genesis(genesis.clone()).await;
-    let twin_chain = Blockchain::default_with_store(twin.clone());
-    let twin_blocks = build_chain(&twin, &twin_chain, chain_id, 3).await;
-    let twin_head = twin_blocks.last().expect("a non-empty chain");
-    let from_block_three = twin
-        .advance_binary_trie_for_block(
-            H256::repeat_byte(0x22),
-            twin_head.hash(),
-            &wrong_base_probe_updates(),
-        )
-        .expect("the twin extends its own head")
-        .root;
-
-    assert_eq!(
-        advance.root, from_block_three,
-        "the wrong base is not arbitrary: extending genesis on the parked node \
-         produces exactly block 3's successor. A full-sync fallback after a \
-         snap install would record this root for block 1 and keep going, with \
-         nothing detecting it until the flip block."
-    );
+    // Before the guard this call succeeded, and the base it silently used was
+    // not arbitrary: it produced exactly block 3's successor, which a full-sync
+    // fallback after a snapshot install would have recorded as block 1's root
+    // and carried forward, with nothing detecting it until the flip block.
 }
 
 /// The same parked node at startup: the resume walk is *not* where this bites.
