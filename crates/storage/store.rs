@@ -2669,7 +2669,7 @@ impl Store {
 
         let mut trie = BinaryTrie::new(Box::new(BackendBinaryTrieDB::new(self.backend.clone())?));
         apply_account_updates(&mut trie, &updates)?;
-        Ok(trie.commit()?)
+        Ok(trie.commit()?.root)
     }
 
     /// Advances the EIP-8297 binary trie by one block: opens it at
@@ -2749,7 +2749,7 @@ impl Store {
             parent_root,
         );
         apply_account_updates(&mut trie, account_updates)?;
-        Ok(trie.commit()?)
+        Ok(trie.commit()?.root)
     }
 
     /// The binary-trie root `account_updates` produce on top of
@@ -3171,7 +3171,7 @@ impl Store {
 
         let mut trie = BinaryTrie::open(Box::new(db), parent_root);
         apply_account_updates(&mut trie, account_updates)?;
-        let root = trie.commit()?;
+        let root = trie.commit()?.root;
         drop(trie);
 
         let nodes = std::mem::take(&mut *staged.lock().map_err(|_| StoreError::LockError)?);

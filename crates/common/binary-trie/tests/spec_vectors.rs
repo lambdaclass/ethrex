@@ -242,7 +242,7 @@ fn spec_roots_survive_a_storage_round_trip() {
             trie.insert(unhex(&e.key), unhex(&e.value).try_into().unwrap())
                 .unwrap();
         }
-        let committed = trie.commit().unwrap();
+        let committed = trie.commit().unwrap().root;
         assert_eq!(
             committed.as_bytes(),
             expected.as_slice(),

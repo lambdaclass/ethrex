@@ -976,6 +976,56 @@ mod tests {
     }
 
     #[test]
+    fn a_zero_storage_write_reports_the_leaf_as_removed() {
+        // The point where "zero means absent" enters the leaf changelog,
+        // and therefore any flat mirror fed from it. `state_write`
+        // collapses a zero value onto a removal, so the changelog must
+        // carry `None` — a `Some([0u8; 32])` would put a row in the
+        // mirror for a key the trie's root does not commit to, and a
+        // range proved against that root would fail on it.
+        let a32 = address20_to_address32(ADDR_A);
+        let written = get_tree_key_for_storage_slot(&a32, U256::from(9));
+
+        let db = InMemoryBinaryTrieDB::new_empty();
+        let mut trie = BinaryTrie::new(Box::new(db));
+        apply_account_updates(
+            &mut trie,
+            &[AccountUpdate {
+                added_storage: storage(&[(U256::from(9), U256::from(42u64))]),
+                ..eoa_update(ADDR_A, 1, 1)
+            }],
+        )
+        .unwrap();
+        let created = trie.commit().unwrap().leaves;
+        assert_eq!(
+            created
+                .iter()
+                .find(|(key, _)| key == &written)
+                .map(|(_, value)| *value),
+            Some(Some(U256::from(42u64).to_big_endian())),
+        );
+
+        apply_account_updates(
+            &mut trie,
+            &[AccountUpdate {
+                added_storage: storage(&[(U256::from(9), U256::zero())]),
+                ..AccountUpdate::new(ADDR_A)
+            }],
+        )
+        .unwrap();
+        let cleared = trie.commit().unwrap().leaves;
+
+        assert!(
+            cleared.contains(&(written, None)),
+            "a slot written to zero is reported removed, not zero-valued"
+        );
+        assert!(
+            !cleared.iter().any(|(_, value)| value == &Some([0u8; 32])),
+            "no leaf is ever reported with a 32-zero-byte value"
+        );
+    }
+
+    #[test]
     fn applying_updates_is_order_independent() {
         let updates = vec![
             contract_update(ADDR_A, plain_code(31 * 130)),
@@ -1478,7 +1528,7 @@ mod tests {
             ],
         )
         .unwrap();
-        let root = trie.commit().unwrap();
+        let root = trie.commit().unwrap().root;
         assert_eq!(root, trie.root());
 
         let mut reopened = BinaryTrie::open(Box::new(InMemoryBinaryTrieDB::new(db.inner())), root);

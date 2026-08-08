@@ -9,7 +9,7 @@ pub(crate) mod node;
 pub mod path;
 pub mod prefix;
 
-pub use binary_trie::BinaryTrie;
+pub use binary_trie::{BinaryTrie, Committed, LeafChangelog};
 pub use db::{BinaryTrieDB, InMemoryBinaryTrieDB};
 pub use node::EMPTY_TRIE_ROOT;
 pub use path::BitPath;
