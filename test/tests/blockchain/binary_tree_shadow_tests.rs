@@ -1742,7 +1742,7 @@ async fn a_storage_only_account_exists_and_collides_on_both_paths() {
 }
 
 // ---------------------------------------------------------------------------
-// D5 What became of the MPT: it is **frozen** at the flip.
+// Phase D10 — what became of the MPT: it is **frozen** at the flip.
 //
 // This replaces `the_mpt_keeps_advancing_after_the_flip_but_is_no_longer_addressable_by_header_root`,
 // which pinned Phase D2's decision to keep merkleizing past the activation. That
@@ -1863,7 +1863,7 @@ async fn the_mpt_freezes_at_the_flip_and_keeps_serving_the_last_pre_flip_state()
 }
 
 // ---------------------------------------------------------------------------
-// D5.1 The freeze survives a reorg back into MPT territory.
+// D10.1 The freeze survives a reorg back into MPT territory.
 //
 // The freeze would be unsound if a chain could re-enter MPT territory without
 // the MPT being able to follow. It cannot, and the reason is a consensus rule
@@ -2020,7 +2020,7 @@ async fn a_reorg_to_a_pivot_below_the_flip_re_advances_the_frozen_mpt() {
 }
 
 // ---------------------------------------------------------------------------
-// D5.2 The freeze reaches disk, and it reaches the journal — both without any
+// D10.2 The freeze reaches disk, and it reaches the journal — both without any
 //      special-casing, because both are driven by the same node set.
 //
 // The two tests above read the MPT through the layer cache, where "frozen" and
@@ -4303,32 +4303,44 @@ async fn a_node_at_a_known_target_is_reported_synced() {
 }
 
 // ===========================================================================
-// Phase D5 — the MPT on a node that never had one.
+// Phase D5 — the MPT on a node that never had one, and why it needs no
+// provenance marker.
 //
-// `store_block_inner` keeps merkleizing into the MPT after the flip; D3.5
-// above pins that on a node which executed every block the MPT stays
-// *correct*, just unaddressable by header root. A `pbtsnap/1` snap-sync
-// client lands somewhere no full-sync node is ever in: it holds binary-trie
-// state and `ACCOUNT_CODES` for a post-flip pivot and executed none of the
-// blocks beneath it, so its MPT never advanced past the genesis alloc that
-// `add_initial_state` writes at startup.
+// A `pbtsnap/1` snap-sync client lands somewhere no full-sync node is ever in:
+// it holds binary-trie state and `ACCOUNT_CODES` for a post-flip pivot and
+// executed none of the blocks beneath it, so its MPT never advanced past the
+// genesis alloc that `add_initial_state` writes at startup.
 //
-// The snap plan predicts that importing on such a pivot merely computes a
-// meaningless MPT root nobody reads. These tests establish that the outcome
-// is that, but not for the reason the prediction assumes, and the difference
-// is the part worth pinning: MPT nodes are keyed by **path**, not by hash
-// (`BackendTrieDB`, `TrieWrapper::get`), so opening the state trie at a root
-// the store does not hold neither fails nor yields an empty trie — it reads
-// whatever node sits at the root path, which on a snap-landed node is the
-// *genesis* root node. Merkleization therefore succeeds by silently
-// resuming from genesis state, and the root it commits is a hybrid of
-// genesis and the blocks imported since.
+// **What this phase originally established, and why it mattered.** When
+// `store_block_inner` still merkleized past the flip, importing on such a pivot
+// produced a *fabricated* MPT rather than an error. MPT nodes are keyed by
+// **path**, not by hash (`BackendTrieDB`, `TrieWrapper::get`), so opening the
+// state trie at a root the store does not hold neither fails nor yields an empty
+// trie — it reads whatever node sits at the root path, which on a snap-landed
+// node is the *genesis* root node. Merkleization therefore succeeded by silently
+// resuming from genesis state, and committed a hybrid of the genesis alloc and
+// the blocks imported since. (Had the read been hash-keyed it would have failed
+// with `TrieError::InconsistentTree`; `Trie::get` and `Trie::insert` do raise
+// `RootNotFound`, but only when the root path is *empty*, which ethrex's always-
+// written genesis alloc rules out.)
 //
-// Had the read been hash-keyed, the same import would have failed with
-// `TrieError::InconsistentTree` instead: `Trie::get` and `Trie::insert` do
-// raise `RootNotFound` when the root path is *empty*, which is the shape a
-// store with no genesis alloc would be in. Ethrex always writes a genesis
-// alloc, so the silent-resume branch is the one a real snap node takes.
+// That is what made a *conditional* skip need a provenance marker. "Skip
+// merkleization when the MPT is not meaningful" has to decide what "meaningful"
+// means, and a snap-landed node and a full-sync node are indistinguishable by
+// inspecting the trie: both hold a well-formed MPT rooted at a real node, and
+// nothing on disk records which blocks built it.
+//
+// **Phase D10's unconditional freeze removes the question rather than answering
+// it.** Past the flip nothing writes the MPT, on either kind of node. The
+// snap-landed node's MPT stays at the genesis alloc; the full-sync node's stays
+// at its last pre-flip block. The two still *contain* different things — they
+// always did, and no marker could have changed that — but their *behaviour* is
+// now identical, and behaviour is all a skip decision needed. There is nothing
+// left for a marker to select between, so none is introduced.
+//
+// The tests below are the ones that established the fabrication; they are kept,
+// inverted where the freeze reversed them, because the fabrication is precisely
+// what must not come back.
 // ===========================================================================
 
 /// Re-execute `blocks` against `donor` — which holds every trie — and return
@@ -4501,8 +4513,9 @@ async fn a_snap_landed_store_holds_the_pivots_binary_state_over_an_empty_mpt() {
     );
     assert_eq!(
         donor.nonce,
-        FLIP_BLOCK + BLOCKS_PAST_THE_FLIP,
-        "guard against a vacuous pass: the donor really did advance its MPT this far"
+        FLIP_BLOCK - 1,
+        "guard against a vacuous pass: the donor really did advance its MPT, up to the \
+         last pre-flip block, where Phase D10 freezes it"
     );
     assert_ne!(
         landed.balance, donor.balance,
@@ -4580,63 +4593,117 @@ async fn importing_on_a_snap_landed_pivot_succeeds_and_still_validates_the_binar
 }
 
 // ---------------------------------------------------------------------------
-// D5.3 What the MPT it maintains actually contains.
+// D5.3 What the MPT it maintains actually contains — nothing new.
 //
-// Not an empty trie and not the right one: a hybrid of the genesis alloc and
-// the blocks imported since the pivot. Touched accounts get correct absolute
-// values (the updates come from execution, which reads the binary trie), while
-// everything the pre-pivot history changed and this block did not stays at its
-// alloc value. This is the assertion that fails the moment post-flip MPT
-// maintenance is skipped, which is why it is the mutation target for the
-// design change D5 exists to inform.
+// **This test is the inverse of the one it replaces.** Before Phase D10 it
+// asserted that a snap-landed node's post-flip import *fabricated* MPT state: a
+// hybrid of the genesis alloc and the blocks imported since the pivot, with
+// touched accounts landing at their true absolute values (execution reads the
+// binary trie, so the updates are correct) over an untouched genesis background.
+// It was named `the_mpt_a_snap_landed_node_maintains_is_a_fabrication_over_genesis_state`
+// and its central assertion was documented as "the line that dies if
+// `store_block_inner` stops merkleizing past the flip".
+//
+// It stopped. The freeze is unconditional, so a post-flip import writes no MPT
+// at all and the fabrication cannot occur — which is exactly why the test is
+// inverted rather than deleted: the fabrication reappearing is the regression
+// this phase exists to catch.
+//
+// It is also the concrete form of the provenance-marker argument in the phase
+// header. Both nodes are checked here, and the *behaviour* is identical — no
+// MPT write on either — even though the *contents* differ by their whole
+// histories. A marker distinguishing them would have nothing to select.
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn the_mpt_a_snap_landed_node_maintains_is_a_fabrication_over_genesis_state() {
+async fn a_snap_landed_node_writes_no_mpt_past_the_flip_so_it_cannot_fabricate_one() {
     let SnapLanded {
         chains,
         store,
+        pivot,
         next,
-        ..
     } = snap_landed_at_post_flip_pivot().await;
     let sender = sender_from_key(&test_secret_key());
+    let beacon = beacon_roots_contract();
 
+    // Snapshot both MPTs at the pivot, before the shared block is imported —
+    // addressed at the pivot rather than at `next`, which no store holds yet.
+    let landed_before = mpt_account_at(&store, &pivot, sender).expect("the sender is in the alloc");
+    let landed_beacon_before =
+        mpt_account_at(&store, &pivot, beacon).expect("the beacon-roots contract is in the alloc");
+    let donor_before = mpt_account_at(&chains.scheduled_store, &pivot, sender)
+        .expect("the sender is in the alloc");
+
+    // The fixture must actually be the condition under investigation: the two
+    // MPTs hold different things, so "unchanged" below is a real claim about
+    // each rather than an accident of them being the same trie.
+    assert_eq!(
+        landed_before.nonce, 0,
+        "the snap-landed MPT is still the genesis alloc"
+    );
+    assert_eq!(
+        donor_before.nonce,
+        FLIP_BLOCK - 1,
+        "the donor's MPT is its last pre-flip block"
+    );
+
+    // Both nodes import the same post-flip block.
     Blockchain::default_with_store(store.clone())
         .add_block(next.clone())
         .expect("import");
-
-    // The donor imports the same block, so the two MPTs differ only in the
-    // history beneath them.
     Blockchain::default_with_store(chains.scheduled_store.clone())
         .add_block(next.clone())
         .expect("donor import");
 
-    // The MPT did advance — it is not frozen and not empty. This is the line
-    // that dies if `store_block_inner` stops merkleizing past the flip.
-    let landed =
-        mpt_account_at(&store, &next, sender).expect("the sender is in the fabricated MPT");
+    // Neither MPT moved. On the snap-landed node this is the fabrication not
+    // happening: the sender's absolute post-state nonce would have been written
+    // straight over the alloc value, and was not.
+    let landed_after = mpt_account_at(&store, &next, sender).expect("the sender is in the alloc");
     assert_eq!(
-        landed.nonce,
-        FLIP_BLOCK + BLOCKS_PAST_THE_FLIP + 1,
-        "the imported block's own updates carry absolute post-state values, so a \
-         touched account lands at its true nonce even on a fabricated MPT"
+        landed_after.nonce,
+        0,
+        "the freeze wrote nothing, so the snap-landed MPT is still the genesis alloc \
+         (a fabricated one would read {})",
+        FLIP_BLOCK + BLOCKS_PAST_THE_FLIP + 1
+    );
+    assert_eq!(
+        (landed_after.balance, landed_after.storage_root),
+        (landed_before.balance, landed_before.storage_root),
+        "and nothing else about the account moved either"
     );
 
-    // But it is a fabrication: the beacon-roots contract's storage ring has
-    // seen exactly one block here and the whole chain on the donor, so the two
-    // storage roots cannot agree.
-    let landed_beacon = mpt_account_at(&store, &next, beacon_roots_contract())
-        .expect("the beacon-roots contract is in the alloc");
-    let donor_beacon = mpt_account_at(&chains.scheduled_store, &next, beacon_roots_contract())
-        .expect("the beacon-roots contract is in the alloc");
-    assert_ne!(
-        landed_beacon.storage_root, donor_beacon.storage_root,
-        "a snap-landed node's MPT must not match the one a node with real ancestry holds — \
-         if these agree the fixture is not exercising a missing history"
+    // The beacon-roots contract is the sharpest probe available: its storage
+    // ring is written by the system call in *every* block, so a single
+    // fabricating import is guaranteed to disturb its storage root.
+    let landed_beacon_after =
+        mpt_account_at(&store, &next, beacon).expect("the beacon-roots contract is in the alloc");
+    assert_eq!(
+        landed_beacon_after.storage_root, landed_beacon_before.storage_root,
+        "the per-block beacon-roots write did not reach the MPT"
+    );
+
+    // The donor — real MPT ancestry, same block — behaves identically. That
+    // sameness is the whole provenance-marker conclusion.
+    let donor_after =
+        mpt_account_at(&chains.scheduled_store, &next, sender).expect("the sender is in the alloc");
+    assert_eq!(
+        (
+            donor_after.nonce,
+            donor_after.balance,
+            donor_after.storage_root
+        ),
+        (
+            donor_before.nonce,
+            donor_before.balance,
+            donor_before.storage_root
+        ),
+        "a node with full MPT ancestry freezes on exactly the same rule, so the two \
+         are indistinguishable in behaviour and no provenance marker is needed"
     );
     assert_ne!(
-        landed_beacon.storage_root, *EMPTY_TRIE_HASH,
-        "guard against a vacuous pass: the fabricated MPT really did write storage"
+        landed_after.nonce, donor_after.nonce,
+        "guard against a vacuous pass: the two MPTs really do hold different states, \
+         so 'both unchanged' is two claims and not one"
     );
 }
 // Phase E — the single-version trie parked *past* the root it is asked to
