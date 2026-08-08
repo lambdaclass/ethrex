@@ -95,12 +95,6 @@ const _: () = assert!(
 );
 const _: () =
     assert!(RECENT_ROOT_REFERENCE_GAS == ethrex_common::types::FRAME_TX_RECENT_ROOT_REFERENCE_GAS);
-/// EIP-8272: flat cost of a successful native RECENT_ROOT_ADDRESS write. The
-/// spec leaves RECENT_ROOT_CODE (and its gas schedule) TBD, so ethrex prices
-/// the write as a cold created-slot SSTORE (20000 creation + 2100 cold
-/// surcharge) — the dominant real cost of committing the entry. Flat pricing
-/// slightly over-charges ring-entry overwrites, which is the safe direction.
-pub const RECENT_ROOT_WRITE_GAS: u64 = 22100;
 
 // EIP-8312 UTXO frames. Every constant is a sum of EIP-8038 / EIP-2780 / EIP-8037
 // primitives rather than a bespoke number, so a future repricing flows through.
