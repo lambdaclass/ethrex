@@ -9417,6 +9417,91 @@ mod genesis_binary_trie_tests {
     }
 
     #[tokio::test]
+    async fn the_embedding_reads_the_same_answers_with_the_mirror_on_and_off() {
+        // The composition that matters: not raw key reads, but the real
+        // `pbt_state` accessors, over a state shaped to hit every leaf kind the
+        // embedding produces. If the mirror and the descent ever disagreed
+        // here, the disagreement would reach consensus.
+        use crate::binary_trie::{BackendBinaryFlatDB, BinaryFlatCoverage};
+        use crate::layering::TrieLayerCache;
+        use ethrex_common::types::pbt_state::{get_account_info, get_storage_slot};
+
+        let (store, backend, _dir) = test_store();
+        // Identical bytecode from two senders, so their code-zone chunks are
+        // the same shared leaves; storage on both sides of the header/overflow
+        // boundary; and an account with zero balance and zero nonce, which
+        // exists but whose basic-data leaf is at its emptiest.
+        let shared_code = vec![0x60u8; 31 * 130];
+        let root = store
+            .setup_genesis_binary_trie(alloc(vec![
+                (
+                    ADDR_A,
+                    genesis_account(1, 7, shared_code.clone(), &[(63, 0xaaaa), (64, 0xbbbb)]),
+                ),
+                (ADDR_B, genesis_account(0, 0, shared_code.clone(), &[])),
+            ]))
+            .await
+            .unwrap();
+
+        // A delegation, applied on top so `CODE_HASH_LEAF_KEY` gives way to
+        // `DELEGATION_LEAF_KEY` for that account.
+        let delegated = Address::repeat_byte(0xcc);
+        let root = store
+            .apply_account_updates_to_binary_trie(
+                root,
+                &[AccountUpdate {
+                    address: delegated,
+                    info: Some(AccountInfo {
+                        code_hash: *EMPTY_KECCAK_HASH,
+                        balance: U256::from(5u64),
+                        nonce: 1,
+                    }),
+                    code: Some(code_of(
+                        [&[0xef, 0x01, 0x00][..], ADDR_A.as_bytes()].concat(),
+                    )),
+                    ..AccountUpdate::new(delegated)
+                }],
+            )
+            .await
+            .unwrap();
+
+        let read_at = |coverage: BinaryFlatCoverage| {
+            let mut trie = BinaryTrie::open(
+                Box::new(LayeredBinaryTrieDB::new(
+                    root,
+                    Arc::new(TrieLayerCache::default()),
+                    BackendBinaryTrieDB::new(Arc::clone(&backend)).unwrap(),
+                    BackendBinaryFlatDB::new(Arc::clone(&backend)).unwrap(),
+                    coverage,
+                    LayeredBinaryTrieDB::staging_buffer(),
+                )),
+                root,
+            );
+            let accounts: Vec<_> = [ADDR_A, ADDR_B, delegated, Address::repeat_byte(0xde)]
+                .into_iter()
+                .map(|address| get_account_info(&mut trie, address).unwrap())
+                .collect();
+            let slots: Vec<_> = [63u64, 64, 65]
+                .into_iter()
+                .map(|slot| {
+                    get_storage_slot(&mut trie, ADDR_A, &H256::from_low_u64_be(slot)).unwrap()
+                })
+                .collect();
+            (accounts, slots)
+        };
+
+        let covered = read_at(BinaryFlatCoverage::Everything);
+        assert_eq!(covered, read_at(BinaryFlatCoverage::Nothing));
+        // And the answers are not vacuously equal: the accounts are really
+        // there, the absent one is really absent, and the storage is real.
+        assert!(covered.0[0].is_some() && covered.0[1].is_some() && covered.0[2].is_some());
+        assert_eq!(covered.0[3], None);
+        assert_eq!(covered.1[0], Some(U256::from(0xaaaau64)));
+        assert_eq!(covered.1[1], Some(U256::from(0xbbbbu64)));
+        assert_eq!(covered.1[2], None);
+    }
+
+    #[tokio::test]
     async fn an_empty_alloc_still_marks_the_mirror_complete() {
         // An empty state is a *covered* state, not an uncovered one: every key
         // is legitimately absent, so a reader may trust a miss. Leaving the
