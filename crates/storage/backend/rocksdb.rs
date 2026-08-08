@@ -685,30 +685,112 @@ mod tests {
         );
     }
 
-    /// Every state table must be explicitly tuned, not left to the catch-all.
+    /// Every table must have a *deliberate* column-family home — either a
+    /// tuning arm, or this list saying the catch-all default is intended.
     ///
-    /// `BINARY_TRIE_NODES` and `BINARY_FLATKEYVALUE` were added without an arm
-    /// and silently took the `_` default: 64MB buffers and **no bloom filter**,
-    /// while their MPT counterparts get 512MB and 10 bits per key. Nothing
-    /// failed — the tables worked, they were just slow in a way no test could
-    /// see, and a binary descent is ~33 reads deep, so it is the workload that
-    /// suffers most from a missing bloom.
+    /// Silence is the failure mode. `BINARY_TRIE_NODES` and
+    /// `BINARY_FLATKEYVALUE` were added with no arm and silently took the
+    /// default: 64MB buffers and **no bloom filter**, while their MPT
+    /// counterparts get 512MB and 10 bits per key. Nothing failed — the tables
+    /// worked, they were just slow in a way no test could see.
     ///
-    /// This scans the source because RocksDB's applied options are not
-    /// introspectable from the handle. Crude, but it fails loudly the next time
-    /// a state table is added without a home, which is the failure it exists to
-    /// catch.
+    /// These are recorded as intended, not measured. A devnet run on 2026-08-08
+    /// could not measure column-family behaviour at all: the datadir was ~5MB
+    /// against a 12GiB shared cache with zero flushes, so no SST existed and no
+    /// bloom ever bound. Any of these may deserve tuning once there is a state
+    /// large enough to show it.
+    const DELIBERATELY_DEFAULT: &[(&str, &str)] = &[
+        (
+            "ACCOUNT_CODE_METADATA",
+            "small, paired with the tuned ACCOUNT_CODES",
+        ),
+        ("BAD_BLOCKS", "diagnostic, rarely written and rarely read"),
+        (
+            "BINARY_TRIE_ROOTS",
+            "one small row per block, read once at import",
+        ),
+        (
+            "BLOCK_ACCESS_LISTS",
+            "per block, but read only during validation",
+        ),
+        (
+            "CHAIN_DATA",
+            "a handful of rows for the lifetime of the datadir",
+        ),
+        (
+            "EXECUTION_WITNESSES",
+            "large values, written and read whole",
+        ),
+        (
+            "FULLSYNC_HEADERS",
+            "transient, cleared when full sync completes",
+        ),
+        ("INVALID_CHAINS", "diagnostic"),
+        (
+            "MISC_VALUES",
+            "a handful of rows; holds the generator frontiers",
+        ),
+        (
+            "PENDING_BLOCKS",
+            "transient, small, drained as blocks are canonicalised",
+        ),
+        ("SNAP_STATE", "transient, cleared when snap sync completes"),
+        (
+            "STATE_HISTORY",
+            "write-per-block and range-deleted at finality; a bloom does not \
+             help a range scan, and the reorg read is rare",
+        ),
+    ];
+
+    /// Fails when a table is added to `TABLES` without a column-family
+    /// decision, which is how the binary tables ended up unblooomed.
+    ///
+    /// Scans the source because RocksDB's applied options are not
+    /// introspectable from the handle, and counts rather than name-matches
+    /// because `TABLES` holds string values while the arms name constants.
     #[test]
-    fn every_state_table_is_explicitly_tuned() {
+    fn every_table_has_a_deliberate_column_family_home() {
+        use crate::api::tables::TABLES;
+
         let source = include_str!("rocksdb.rs");
-        // The arm bodies are what differ; presence of the constant anywhere in
-        // a `=> {` arm head is enough to show it was placed deliberately.
-        let arm_heads: String = source
+        let tuned: std::collections::BTreeSet<String> = source
             .lines()
             .filter(|line| line.trim_end().ends_with("=> {"))
-            .collect::<Vec<_>>()
-            .join("\n");
+            .flat_map(|line| {
+                line.split(|c: char| !(c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit()))
+                    .filter(|t| t.len() > 3)
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>()
+            })
+            .collect();
 
+        let defaulted: std::collections::BTreeSet<String> = DELIBERATELY_DEFAULT
+            .iter()
+            .map(|(name, _)| (*name).to_owned())
+            .collect();
+
+        let overlap: Vec<_> = tuned.intersection(&defaulted).collect();
+        assert!(
+            overlap.is_empty(),
+            "these tables are both tuned and listed as deliberately default, so \
+             one of the two is stale: {overlap:?}"
+        );
+
+        assert_eq!(
+            tuned.len() + defaulted.len(),
+            TABLES.len(),
+            "every table needs a home: {} tuned + {} deliberately default != {} \
+             in TABLES. A table added without an arm silently takes the \
+             catch-all -- no bloom filter, a 64MB write buffer -- which is what \
+             happened to the binary-trie tables. Add an arm, or add it to \
+             DELIBERATELY_DEFAULT with the reason.",
+            tuned.len(),
+            defaulted.len(),
+            TABLES.len()
+        );
+
+        // The hot state tables are not a judgement call: they are read on the
+        // descent and must carry the MPT's tuning.
         for table in [
             "ACCOUNT_TRIE_NODES",
             "STORAGE_TRIE_NODES",
@@ -717,13 +799,7 @@ mod tests {
             "BINARY_TRIE_NODES",
             "BINARY_FLATKEYVALUE",
         ] {
-            assert!(
-                arm_heads.contains(table),
-                "{table} is not named in any column-family tuning arm, so it \
-                 falls into the `_` default: no bloom filter and a 64MB write \
-                 buffer. State tables are read on the hot path and must be \
-                 placed deliberately."
-            );
+            assert!(tuned.contains(table), "{table} must be explicitly tuned");
         }
     }
 }
