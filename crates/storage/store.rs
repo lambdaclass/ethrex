@@ -16,7 +16,8 @@ use crate::{
     apply_prefix,
     backend::in_memory::InMemoryBackend,
     binary_trie::{
-        BackendBinaryTrieDB, BinaryFlatWrites, BinaryTrieNodes, LayeredBinaryTrieDB,
+        BINARY_FLAT_FRONTIER_COMPLETE, BackendBinaryFlatDB, BackendBinaryTrieDB,
+        BinaryFlatCoverage, BinaryFlatWrites, BinaryTrieNodes, LayeredBinaryTrieDB,
         StagedBinaryNodes,
     },
     block_data_buffer::BlockDataBuffer,
@@ -152,9 +153,6 @@ const BAD_BLOCKS_KEY: &[u8] = b"bad_blocks";
 ///   key is one byte long; they are 34 or 66.
 pub(crate) const BINARY_LAST_WRITTEN_KEY: &[u8] = b"binary_last_written";
 
-/// The `[0xff]` completion sentinel stored under [`BINARY_LAST_WRITTEN_KEY`].
-pub(crate) const BINARY_FLAT_FRONTIER_COMPLETE: &[u8] = &[0xff];
-
 /// Whether `commit_to_disk` is the writer responsible for `key` — i.e. whether
 /// it should both write the mirror row and journal its pre-image.
 ///
@@ -188,6 +186,41 @@ pub(crate) const BINARY_FLAT_FRONTIER_COMPLETE: &[u8] = &[0xff];
 /// with the zone byte `0xff` and continues, so `[0xff, ..] > [0xff]`
 /// lexicographically and every overflow-storage leaf would be skipped on a
 /// *complete* mirror.
+/// Fold a [`BinaryTrie::commit`] changelog into [`BINARY_FLATKEYVALUE`] inside
+/// an existing write batch: `Some` writes the 32-byte value, `None` deletes
+/// the row.
+///
+/// Takes the batch rather than opening one so a caller can land the rows in the
+/// same transaction as whatever else the commit implies — for genesis, the
+/// completion marker.
+///
+/// # Errors
+///
+/// [`StoreError::Custom`] on a 32-zero-byte value, the same refusal
+/// [`BackendBinaryFlatDB::put_batch`] and `commit_to_disk` make and for the same
+/// reason: "zero means absent", so the trie removed that leaf, and a row
+/// written for it would put a key in the mirror the trie's root does not commit
+/// to. Nothing is written for that entry, and the caller's batch is expected to
+/// be dropped rather than committed.
+fn stage_binary_flat_leaves(
+    tx: &mut Box<dyn crate::api::StorageWriteBatch>,
+    leaves: &LeafChangelog,
+) -> Result<(), StoreError> {
+    for (key, value) in leaves {
+        match value {
+            Some(value) if value.iter().all(|byte| *byte == 0) => {
+                return Err(StoreError::Custom(format!(
+                    "refusing to seed a 32-zero-byte binary flat value for key {key:?}: zero \
+                     means absent, so the trie holds no such leaf"
+                )));
+            }
+            Some(value) => tx.put(BINARY_FLATKEYVALUE, key, value)?,
+            None => tx.delete(BINARY_FLATKEYVALUE, key)?,
+        }
+    }
+    Ok(())
+}
+
 fn binary_flat_frontier_covers(frontier: &[u8], key: &[u8]) -> bool {
     if frontier.is_empty() || frontier == BINARY_FLAT_FRONTIER_COMPLETE {
         return true;
@@ -272,6 +305,18 @@ pub struct Store {
     latest_block_header: LatestBlockHeaderCache,
     /// Last computed FlatKeyValue for incremental updates.
     last_computed_flatkeyvalue: Arc<RwLock<Vec<u8>>>,
+
+    /// In-memory copy of the binary flat mirror's backfill frontier, in the
+    /// **durable** three-state shape (absent / a tree key / `[0xff]`) rather
+    /// than the MPT's padded in-memory form — the marker's states are already
+    /// distinguishable here, and padding a 34- or 66-byte keyspace to one
+    /// length would make an all-zero pad compare as *covering* every account
+    /// key, which is the wrong direction to be wrong in.
+    ///
+    /// Kept beside `last_computed_flatkeyvalue` and read the same way: the
+    /// generator advances it at batch commit, so it lags the durable marker
+    /// and readers under-claim coverage.
+    binary_last_computed: Arc<RwLock<Vec<u8>>>,
 
     /// Cache for account bytecodes, keyed by the bytecode hash.
     /// Note that we don't remove entries on account code changes, since
@@ -2108,7 +2153,7 @@ impl Store {
         let persist_cap = persist_channel_capacity.max(1); // clamp: 0 would be a rendezvous channel
         let (persist_tx, persist_rx) = std::sync::mpsc::sync_channel(persist_cap);
 
-        let (last_written, initial_flushed_upto) = {
+        let (last_written, binary_last_written, initial_flushed_upto) = {
             let tx = backend.begin_read()?;
             let last_written = tx
                 .get(MISC_VALUES, "last_written".as_bytes())?
@@ -2118,12 +2163,39 @@ impl Store {
             } else {
                 last_written
             };
+            // Kept verbatim, unlike the MPT frontier above: the binary marker's
+            // three states are already unambiguous, so there is nothing to
+            // expand and no length to guess. See the `binary_last_computed`
+            // field docs.
+            let binary_last_written = tx
+                .get(MISC_VALUES, BINARY_LAST_WRITTEN_KEY)?
+                .unwrap_or_default();
             let initial_flushed_upto = match tx.get(MISC_VALUES, FLUSHED_UPTO_KEY)? {
                 Some(bytes) => decode_flushed_upto(&bytes)?,
                 None => 0,
             };
-            (last_written, initial_flushed_upto)
+            (last_written, binary_last_written, initial_flushed_upto)
         };
+
+        // The binary mirror's cold-start wipe, taken here rather than inside
+        // the backfill generator where the MPT takes it.
+        //
+        // An absent marker means no sweep and no genesis seed has ever claimed
+        // this table, so whatever is in it is of unknown provenance — rows an
+        // abandoned sweep left behind for leaves the trie has since dropped
+        // would make the mirror a *superset*, and a range served from it would
+        // carry leaves the root does not commit to.
+        //
+        // It happens at open because Task 6's write-ownership rule reads an
+        // absent marker as "the commit path owns the whole keyspace": blocks
+        // imported before the generator's first `Continue` write mirror rows,
+        // and a lazy wipe would truncate the table underneath them. Doing it
+        // before the store exists makes that rule true instead of merely
+        // usually-true. A partial frontier is left alone — that is a resume,
+        // and its rows are exactly what the frontier claims.
+        if binary_last_written.is_empty() {
+            backend.clear_table(BINARY_FLATKEYVALUE)?;
+        }
         let mut initial_buffer = BlockDataBuffer::new();
         initial_buffer.set_flushed_upto(initial_flushed_upto);
 
@@ -2143,6 +2215,7 @@ impl Store {
             persist_tx,
             pending_trie_roots: Arc::new(PendingTrieRoots::default()),
             last_computed_flatkeyvalue: Arc::new(RwLock::new(last_written)),
+            binary_last_computed: Arc::new(RwLock::new(binary_last_written)),
             account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
             code_metadata_cache: Arc::new(Mutex::new(rustc_hash::FxHashMap::default())),
             fcu_lock: Arc::new(tokio::sync::Mutex::new(())),
@@ -2152,6 +2225,7 @@ impl Store {
         };
         let backend_clone = store.backend.clone();
         let last_computed_fkv = store.last_computed_flatkeyvalue.clone();
+        let binary_last_computed = store.binary_last_computed.clone();
         background_threads.push(std::thread::spawn(move || {
             let rx = fkv_rx;
             // Wait for the first Continue to start generation
@@ -2168,6 +2242,19 @@ impl Store {
 
             let _ = flatkeyvalue_generator(&backend_clone, &last_computed_fkv, &rx)
                 .inspect_err(|err| error!("Error while generating FlatKeyValue: {err}"));
+            // The binary mirror's sweep runs here, on this thread and over this
+            // same channel, rather than on a second one. `commit_to_disk`'s
+            // `Stop` is a rendezvous send that blocks the persist worker until
+            // a generator receives it; a second independent rendezvous channel
+            // would make the worker wait on two generators in series. Sharing
+            // means one `Stop` pauses whichever sweep is running, and adds no
+            // message to that critical path.
+            //
+            // Sequenced rather than chained on the MPT sweep's result: the two
+            // are independent backfills, and an MPT failure is no reason to
+            // leave the binary mirror unbuilt.
+            let _ = binary_flat_generator(&backend_clone, &binary_last_computed, &rx)
+                .inspect_err(|err| error!("Error while generating the binary flat mirror: {err}"));
         }));
         // The single persist worker: sole swapper of `block_data_buffer`, sole
         // builder of trie diff-layers. One DB transaction per `Block` message.
@@ -2760,7 +2847,50 @@ impl Store {
 
         let mut trie = BinaryTrie::new(Box::new(BackendBinaryTrieDB::new(self.backend.clone())?));
         apply_account_updates(&mut trie, &updates)?;
-        Ok(trie.commit()?.root)
+        let committed = trie.commit()?;
+
+        // Seed the flat mirror from the same changelog the commit reported,
+        // and declare it complete. A chain that starts from genesis therefore
+        // never runs the backfill generator: the mirror has covered the whole
+        // keyspace since block 0, and every later block maintains it through
+        // `commit_to_disk`.
+        //
+        // **Rows and marker in one batch, and after the nodes.** The nodes went
+        // to disk in `commit`'s own transaction, so a crash can land between
+        // the two — which is why the marker rides with the rows rather than
+        // ahead of them, and why it is written last in program order. Nodes
+        // without a marker is the recoverable state: coverage reads as
+        // `Nothing`, no reader trusts the mirror, and Task 9's generator
+        // rebuilds it. A marker without rows would be the unrecoverable one.
+        let mut tx = self.backend.begin_write()?;
+        stage_binary_flat_leaves(&mut tx, &committed.leaves)?;
+        tx.put(
+            MISC_VALUES,
+            BINARY_LAST_WRITTEN_KEY,
+            BINARY_FLAT_FRONTIER_COMPLETE,
+        )?;
+        tx.commit()?;
+        // Only now: the in-memory frontier is what readers gate on, so
+        // publishing it before the batch landed would open the gate on a
+        // mirror a failed commit left empty.
+        self.publish_binary_flat_frontier(BINARY_FLAT_FRONTIER_COMPLETE)?;
+
+        Ok(committed.root)
+    }
+
+    /// Replace the in-memory copy of the mirror's backfill frontier.
+    ///
+    /// Separate from the durable write on purpose: the durable marker is what
+    /// survives a restart and the in-memory one is what readers gate on, so
+    /// the in-memory copy must be published *after* the batch carrying the
+    /// rows has committed. Publishing first would claim coverage a failed
+    /// write never delivered.
+    fn publish_binary_flat_frontier(&self, frontier: &[u8]) -> Result<(), StoreError> {
+        *self
+            .binary_last_computed
+            .write()
+            .map_err(|_| StoreError::LockError)? = frontier.to_vec();
+        Ok(())
     }
 
     /// Advances the EIP-8297 binary trie by one block: opens it at
@@ -2840,7 +2970,20 @@ impl Store {
             parent_root,
         );
         apply_account_updates(&mut trie, account_updates)?;
-        Ok(trie.commit()?.root)
+        let committed = trie.commit()?;
+
+        // The mirror follows the nodes here too. This path bypasses the diff
+        // layers, so nothing downstream would ever fold its leaf changes into
+        // `BINARY_FLATKEYVALUE` — and after genesis marks the frontier
+        // complete, a mirror that skipped a commit is not merely stale but
+        // *authoritative and wrong*, since a read below the frontier does not
+        // fall back to a descent. Cheap insurance: one row per changed leaf,
+        // which the changelog already has in hand.
+        let mut tx = self.backend.begin_write()?;
+        stage_binary_flat_leaves(&mut tx, &committed.leaves)?;
+        tx.commit()?;
+
+        Ok(committed.root)
     }
 
     /// The binary-trie root `account_updates` produce on top of
@@ -2894,12 +3037,62 @@ impl Store {
         gate_root: H256,
         staged: StagedBinaryNodes,
     ) -> Result<LayeredBinaryTrieDB, StoreError> {
+        // One read view for both handles, so a node read and a mirror read
+        // taken in one traversal see one consistent snapshot: the mirror is
+        // written in the nodes' own `write_tx`, and reading the two through
+        // different views could land either side of that batch.
+        let read_view = self.backend.begin_read()?;
         Ok(LayeredBinaryTrieDB::new(
             binary_root,
             self.gated_snapshot(gate_root)?,
-            BackendBinaryTrieDB::new(self.backend.clone())?,
+            BackendBinaryTrieDB::with_view(self.backend.clone(), read_view.clone()),
+            BackendBinaryFlatDB::with_view(self.backend.clone(), read_view),
+            self.binary_flat_coverage()?,
             staged,
         ))
+    }
+
+    /// How much of the keyspace a read may trust the binary flat mirror for,
+    /// from the in-memory frontier.
+    ///
+    /// The **read** gate. Its write-side sibling `binary_flat_frontier_covers`
+    /// answers the opposite question for an absent marker; see
+    /// [`BinaryFlatCoverage`] for why the two must not be unified.
+    fn binary_flat_coverage(&self) -> Result<BinaryFlatCoverage, StoreError> {
+        let frontier = self
+            .binary_last_computed
+            .read()
+            .map_err(|_| StoreError::LockError)?;
+        Ok(BinaryFlatCoverage::from_marker(Some(frontier.as_slice())))
+    }
+
+    /// Whether the binary flat mirror's backfill has finished, read from the
+    /// **durable** marker rather than the in-memory frontier — the same choice
+    /// [`Self::flatkeyvalue_fully_generated`] makes, and for the same reason:
+    /// the in-memory copy lags by design.
+    ///
+    /// Gates journal-backed deep reorgs, which the mirror cannot survive
+    /// mid-sweep: entries journaled while the generator runs omit pre-images
+    /// for keys past the frontier.
+    pub fn binary_flat_fully_generated(&self) -> Result<bool, StoreError> {
+        let tx = self.backend.begin_read()?;
+        let marker = tx.get(MISC_VALUES, BINARY_LAST_WRITTEN_KEY)?;
+        Ok(BinaryFlatCoverage::from_marker(marker.as_deref()).is_complete())
+    }
+
+    /// Whether the binary mirror's backfill is still outstanding on a chain
+    /// that has one — the gate a deep reorg must not cross.
+    ///
+    /// **Conditional on the schedule, and that is load-bearing.** An
+    /// unscheduled chain has no binary trie and never writes the frontier
+    /// marker, so an unconditional completeness check would read as "still
+    /// generating" for ever and defer every deep reorg on every existing MPT
+    /// chain. The binary hazard only exists where the binary mirror does.
+    pub fn binary_flat_generation_pending(&self) -> Result<bool, StoreError> {
+        if !self.get_chain_config().binary_tree_scheduled() {
+            return Ok(false);
+        }
+        Ok(!self.binary_flat_fully_generated()?)
     }
 
     /// The root to gate a binary read at `parent_hash` on: the parent's
@@ -5099,6 +5292,29 @@ impl Store {
         Ok(count)
     }
 
+    /// Every `(tree key, leaf value)` row in the binary flat mirror. For
+    /// testing only — the mirror side of the agreement invariant, which needs
+    /// *which* rows exist and not just how many, because a mirror that is a
+    /// superset of the trie is exactly as wrong as one that is a subset.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn binary_flat_rows_for_test(&self) -> Result<BinaryFlatWrites, StoreError> {
+        use crate::api::tables::BINARY_FLATKEYVALUE;
+        let read = self.backend.begin_read()?;
+        read.prefix_iterator(BINARY_FLATKEYVALUE, &[])?
+            .map(|entry| entry.map(|(k, v)| (k.into_vec(), v.into_vec())))
+            .collect()
+    }
+
+    /// The mirror's durable backfill frontier marker, verbatim. For testing
+    /// only: `None` is absent, `Some([0xff])` is complete, anything else is a
+    /// tree key the sweep has reached.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn binary_flat_frontier_for_test(&self) -> Result<Option<Vec<u8>>, StoreError> {
+        self.backend
+            .begin_read()?
+            .get(MISC_VALUES, BINARY_LAST_WRITTEN_KEY)
+    }
+
     /// Number of recorded block-hash -> binary-root entries. For testing only;
     /// companion to [`Store::binary_trie_node_count_for_test`].
     #[cfg(any(test, feature = "testing"))]
@@ -6270,6 +6486,182 @@ fn flatkeyvalue_generator(
                 return Ok(());
             }
         };
+    }
+}
+
+/// Leaves per write batch in the binary mirror's backfill sweep. The MPT
+/// generator's figure, unchanged: large enough that the per-batch overhead
+/// disappears, small enough that a stop is honoured promptly and a dropped
+/// batch is cheap to redo.
+const BINARY_FLAT_BATCH: usize = 10_000;
+
+/// Backfill [`BINARY_FLATKEYVALUE`] from the on-disk binary trie, advancing the
+/// durable frontier as it goes.
+///
+/// The MPT's `flatkeyvalue_generator`, transposed, with one structural
+/// simplification: that sweep is *nested* — accounts outer, each account's
+/// storage trie inner — which is the only reason the MPT needs a second,
+/// stricter coverage predicate that slices `[0..64]` off its frontier. This
+/// trie is one tree over one keyspace, so a single linear pass and a single
+/// `key <= frontier` compare are sufficient (plan Decision 2).
+///
+/// **It runs on the MPT generator's thread and shares its control channel**,
+/// which is the one thing the plan says not to copy about the MPT. That
+/// channel is `sync_channel(0)` — a rendezvous — so `commit_to_disk`'s `Stop`
+/// *blocks the persist worker* until the generator reaches its next
+/// `try_recv`. A second independent rendezvous channel on that path would make
+/// the worker wait on two generators in series, each between checks that can
+/// sit behind a trie open. Sharing means one `Stop` pauses whichever sweep is
+/// running and one `Continue` resumes it, with no new message on the critical
+/// path at all.
+///
+/// Four behaviours are copied deliberately:
+///
+/// - **`clear_table` on a cold start.** An absent marker means no sweep has
+///   ever run, so whatever is in the table is of unknown provenance and is
+///   wiped rather than trusted.
+/// - **The cursor rides in the same batch as the data.** One extra small write
+///   per leaf buys crash safety by construction: the durable marker can never
+///   run ahead of the durable rows it claims.
+/// - **The in-memory frontier advances only at batch commit**, so it lags the
+///   durable one and readers under-claim coverage — the conservative direction.
+/// - **Start-once.** A `Continue` arriving mid-sweep is an error, exactly as it
+///   is for the MPT: it would mean two drivers think they own this sweep.
+fn binary_flat_generator(
+    backend: &Arc<dyn StorageBackend>,
+    binary_last_computed: &RwLock<Vec<u8>>,
+    control_rx: &std::sync::mpsc::Receiver<FKVGeneratorControlMessage>,
+) -> Result<(), StoreError> {
+    binary_flat_generator_with_batch(backend, binary_last_computed, control_rx, BINARY_FLAT_BATCH)
+}
+
+/// [`binary_flat_generator`] with the batch size exposed, so a test can drive
+/// several batches over a handful of leaves rather than needing ten thousand.
+fn binary_flat_generator_with_batch(
+    backend: &Arc<dyn StorageBackend>,
+    binary_last_computed: &RwLock<Vec<u8>>,
+    control_rx: &std::sync::mpsc::Receiver<FKVGeneratorControlMessage>,
+    batch: usize,
+) -> Result<(), StoreError> {
+    let initial = backend
+        .begin_read()?
+        .get(MISC_VALUES, BINARY_LAST_WRITTEN_KEY)?
+        .unwrap_or_default();
+    if initial == BINARY_FLAT_FRONTIER_COMPLETE {
+        info!("Binary flat mirror already generated. Skipping.");
+        return Ok(());
+    }
+    // The cold-start wipe is *not* here, unlike the MPT's, and the difference
+    // is forced by Task 6's write-ownership rule. The MPT reads an absent
+    // marker as an all-zero frontier, so its commit path writes almost nothing
+    // and a lazy `clear_table` discards almost nothing. The binary rule is the
+    // opposite — absent means "the commit path owns the whole keyspace" — so a
+    // wipe here would delete rows blocks imported since startup had already
+    // written. Those rows are uncovered and re-derived by this sweep, so it is
+    // not a correctness bug, but it is a race, and a background thread
+    // truncating a table under the write path is not a thing to leave in.
+    // `Store::from_backend` does the wipe once, before any block can commit.
+    info!("Generation of the binary flat mirror started.");
+
+    loop {
+        // A fresh read view per pass, so state written while the sweep was
+        // paused is visible after the Continue.
+        let read_tx = backend.begin_read()?;
+        let Some(encoded_root) = read_tx.get(BINARY_TRIE_NODES, &BitPath::new().to_db_key())?
+        else {
+            // No binary trie on disk: an unscheduled chain, or a scheduled one
+            // whose genesis has not landed yet. Nothing to mirror, and marking
+            // an empty keyspace complete here would be a claim about a trie
+            // that does not exist.
+            info!("No binary trie on disk; binary flat generation has nothing to do.");
+            return Ok(());
+        };
+        let root = hash_stored_node(&encoded_root);
+
+        let mut frontier = read_tx
+            .get(MISC_VALUES, BINARY_LAST_WRITTEN_KEY)?
+            .unwrap_or_default();
+        debug!("Starting binary flat loop pivot={frontier:?} root={root:x}");
+
+        let outcome = (|| -> Result<(), StoreError> {
+            loop {
+                // Reopened per batch, on purpose: the walk caches every node it
+                // resolves, so one instance held across a whole sweep would
+                // accumulate the entire trie in memory. A batch costs one
+                // root-to-leaf descent to get back to the frontier.
+                let mut trie = BinaryTrie::open(
+                    Box::new(BackendBinaryTrieDB::with_view(
+                        backend.clone(),
+                        read_tx.clone(),
+                    )),
+                    root,
+                );
+                // `+ 1` when resuming: `leaves_from`'s origin is inclusive, so
+                // the frontier leaf comes back and is dropped below.
+                let resuming = !frontier.is_empty();
+                let mut leaves = trie
+                    .leaves_from(&frontier, batch + usize::from(resuming))
+                    .map_err(|e| StoreError::Custom(format!("binary flat sweep failed: {e}")))?;
+                if resuming && leaves.first().is_some_and(|(key, _)| key == &frontier) {
+                    leaves.remove(0);
+                }
+                if leaves.is_empty() {
+                    return Ok(());
+                }
+
+                let mut write_txn = backend.begin_write()?;
+                for (key, value) in &leaves {
+                    if value.iter().all(|byte| *byte == 0) {
+                        return Err(StoreError::Custom(format!(
+                            "binary trie holds a 32-zero-byte leaf at {key:?}: zero means absent, \
+                             so this leaf should not exist"
+                        )));
+                    }
+                    // Cursor first and in the same batch, so a crash between
+                    // batches leaves the marker naming a row that is on disk.
+                    write_txn.put(MISC_VALUES, BINARY_LAST_WRITTEN_KEY, key)?;
+                    write_txn.put(BINARY_FLATKEYVALUE, key, value)?;
+                    fkv_check_for_stop_msg(control_rx)?;
+                }
+                write_txn.commit()?;
+
+                frontier = leaves.last().expect("the batch is non-empty").0.clone();
+                // Only after the batch is durable: an in-memory frontier ahead
+                // of disk would have readers trusting rows a crash would take
+                // back.
+                *binary_last_computed
+                    .write()
+                    .map_err(|_| StoreError::LockError)? = frontier.clone();
+            }
+        })();
+
+        match outcome {
+            Err(StoreError::PivotChanged) => match control_rx.recv() {
+                Ok(FKVGeneratorControlMessage::Continue) => {}
+                Ok(FKVGeneratorControlMessage::Stop) => {
+                    return Err(StoreError::Custom("Unexpected Stop message".to_string()));
+                }
+                Err(std::sync::mpsc::RecvError) => {
+                    info!("Store closed, stopping binary flat generation.");
+                    return Ok(());
+                }
+            },
+            Err(err) => return Err(err),
+            Ok(()) => {
+                let mut write_txn = backend.begin_write()?;
+                write_txn.put(
+                    MISC_VALUES,
+                    BINARY_LAST_WRITTEN_KEY,
+                    BINARY_FLAT_FRONTIER_COMPLETE,
+                )?;
+                write_txn.commit()?;
+                *binary_last_computed
+                    .write()
+                    .map_err(|_| StoreError::LockError)? = BINARY_FLAT_FRONTIER_COMPLETE.to_vec();
+                info!("Binary flat mirror generation finished.");
+                return Ok(());
+            }
+        }
     }
 }
 
@@ -8525,6 +8917,295 @@ mod datadir_tests {
     }
 }
 
+/// The binary mirror's backfill sweep: the path an *existing* datadir takes,
+/// where the trie is on disk and the mirror is not. A chain that started from
+/// genesis never reaches any of this — genesis marks the frontier complete —
+/// so these drive the generator directly rather than through a store.
+#[cfg(test)]
+mod binary_flat_backfill_tests {
+    use super::*;
+    use crate::backend::in_memory::InMemoryBackend;
+    use ethrex_binary_trie::trie::BinaryTrie;
+
+    /// `n` leaves spanning both key lengths and all three zones, sorted — the
+    /// order the sweep must produce them in.
+    fn leaves(n: u8) -> Vec<(Vec<u8>, [u8; 32])> {
+        let mut out = Vec::new();
+        for i in 0..n {
+            for zone in [0x00u8, 0x01, 0xff] {
+                let mut key = vec![0x00; if zone == 0xff { 66 } else { 34 }];
+                key[0] = zone;
+                key[1] = i;
+                key[2] = i.wrapping_mul(31).wrapping_add(1);
+                out.push((key, [i.wrapping_add(zone) | 1; 32]));
+            }
+        }
+        out.sort();
+        out
+    }
+
+    /// A backend holding `leaves` as a committed binary trie and nothing in the
+    /// mirror.
+    fn backend_with_trie(leaves: &[(Vec<u8>, [u8; 32])]) -> Arc<dyn StorageBackend> {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let mut trie = BinaryTrie::new(Box::new(
+            BackendBinaryTrieDB::new(Arc::clone(&backend)).unwrap(),
+        ));
+        for (key, value) in leaves {
+            trie.insert(key.clone(), *value).unwrap();
+        }
+        trie.commit().unwrap();
+        backend
+    }
+
+    fn marker(backend: &Arc<dyn StorageBackend>) -> Option<Vec<u8>> {
+        backend
+            .begin_read()
+            .unwrap()
+            .get(MISC_VALUES, BINARY_LAST_WRITTEN_KEY)
+            .unwrap()
+    }
+
+    fn rows(backend: &Arc<dyn StorageBackend>) -> Vec<(Vec<u8>, Vec<u8>)> {
+        backend
+            .begin_read()
+            .unwrap()
+            .prefix_iterator(BINARY_FLATKEYVALUE, &[])
+            .unwrap()
+            .map(|entry| {
+                let (k, v) = entry.unwrap();
+                (k.into_vec(), v.into_vec())
+            })
+            .collect()
+    }
+
+    /// Run the sweep to completion with no control traffic. The sender is held
+    /// for the call so a `try_recv` sees `Empty`, not `Disconnected` — a
+    /// disconnected channel is a stop signal.
+    fn sweep(backend: &Arc<dyn StorageBackend>, batch: usize) -> (Vec<u8>, Result<(), StoreError>) {
+        let (tx, rx) = std::sync::mpsc::sync_channel(0);
+        let frontier = RwLock::new(
+            backend
+                .begin_read()
+                .unwrap()
+                .get(MISC_VALUES, BINARY_LAST_WRITTEN_KEY)
+                .unwrap()
+                .unwrap_or_default(),
+        );
+        let result = binary_flat_generator_with_batch(backend, &frontier, &rx, batch);
+        drop(tx);
+        (frontier.into_inner().unwrap(), result)
+    }
+
+    #[test]
+    fn a_sweep_mirrors_every_leaf_and_marks_the_frontier_complete() {
+        let expected = leaves(9);
+        let backend = backend_with_trie(&expected);
+        assert!(rows(&backend).is_empty(), "the mirror starts empty");
+
+        let (in_memory, result) = sweep(&backend, 4);
+        result.unwrap();
+
+        assert_eq!(marker(&backend).as_deref(), Some([0xff].as_slice()));
+        assert_eq!(in_memory, vec![0xff]);
+        // Both directions with a count check, so neither can pass vacuously.
+        let rows = rows(&backend);
+        assert_eq!(rows.len(), expected.len());
+        for ((key, value), (expected_key, expected_value)) in rows.iter().zip(&expected) {
+            assert_eq!(key, expected_key, "and in key order");
+            assert_eq!(value.as_slice(), expected_value.as_slice());
+        }
+    }
+
+    #[test]
+    fn a_sweep_resumes_from_a_durable_frontier_rather_than_restarting() {
+        let expected = leaves(9);
+        let backend = backend_with_trie(&expected);
+        let split = expected.len() / 2;
+
+        // What a crash mid-sweep leaves behind: rows up to the frontier and a
+        // marker naming the last of them.
+        let mut tx = backend.begin_write().unwrap();
+        for (key, value) in &expected[..split] {
+            tx.put(BINARY_FLATKEYVALUE, key, value).unwrap();
+        }
+        // A deliberately wrong value *below* the frontier. A sweep that
+        // restarted would correct it; a sweep that resumed will not. That is
+        // what makes this a resume test rather than a completeness test.
+        tx.put(BINARY_FLATKEYVALUE, &expected[0].0, &[0xcd; 32])
+            .unwrap();
+        tx.put(MISC_VALUES, BINARY_LAST_WRITTEN_KEY, &expected[split - 1].0)
+            .unwrap();
+        tx.commit().unwrap();
+
+        sweep(&backend, 3).1.unwrap();
+
+        assert_eq!(marker(&backend).as_deref(), Some([0xff].as_slice()));
+        let rows = rows(&backend);
+        assert_eq!(rows.len(), expected.len(), "the sweep filled in the rest");
+        assert_eq!(
+            rows[0].1,
+            vec![0xcd; 32],
+            "a row below the frontier was not revisited"
+        );
+        for ((key, value), (expected_key, expected_value)) in rows.iter().zip(&expected).skip(1) {
+            assert_eq!(key, expected_key);
+            assert_eq!(value.as_slice(), expected_value.as_slice());
+        }
+    }
+
+    #[test]
+    fn a_completed_sweep_is_not_run_again() {
+        let expected = leaves(4);
+        let backend = backend_with_trie(&expected);
+        let mut tx = backend.begin_write().unwrap();
+        tx.put(MISC_VALUES, BINARY_LAST_WRITTEN_KEY, &[0xff])
+            .unwrap();
+        tx.commit().unwrap();
+
+        sweep(&backend, 4).1.unwrap();
+        assert!(
+            rows(&backend).is_empty(),
+            "a complete marker means the mirror is someone else's business"
+        );
+    }
+
+    #[test]
+    fn no_binary_trie_means_no_claim_of_completeness() {
+        // An unscheduled chain, or a scheduled one before genesis lands. There
+        // is nothing to mirror — and marking an empty keyspace complete would
+        // be a coverage claim about a trie that does not exist, which is
+        // exactly the "mirror is a subset" failure the read gate exists to
+        // prevent.
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        sweep(&backend, 4).1.unwrap();
+        assert_eq!(marker(&backend), None);
+        assert!(rows(&backend).is_empty());
+    }
+
+    #[test]
+    fn a_stop_pauses_the_sweep_and_a_continue_finishes_it() {
+        // The shared control channel, end to end. `Stop` is a rendezvous send,
+        // so it does not return until the sweep receives it — which makes this
+        // deterministic rather than timing-dependent.
+        let expected = leaves(30);
+        let backend = backend_with_trie(&expected);
+        let (tx, rx) = std::sync::mpsc::sync_channel(0);
+        let frontier = Arc::new(RwLock::new(Vec::new()));
+
+        let sweeping = {
+            let backend = Arc::clone(&backend);
+            let frontier = Arc::clone(&frontier);
+            std::thread::spawn(move || {
+                binary_flat_generator_with_batch(&backend, &frontier, &rx, 2)
+            })
+        };
+
+        // `Stop` fails only if the sweep already finished and dropped the
+        // receiver, which is a legal interleaving on a trie this small and not
+        // something to make the assertion depend on.
+        if tx.send(FKVGeneratorControlMessage::Stop).is_ok() {
+            // The send returned, so the sweep took the message and is now
+            // blocked in `recv`. Whatever it had committed is durable and the
+            // marker is not the completion sentinel: work stopped where it was
+            // told to, mid-sweep.
+            match marker(&backend) {
+                Some(paused) => {
+                    assert_ne!(paused, vec![0xff], "a stopped sweep has not completed");
+                    assert!(
+                        expected.iter().any(|(key, _)| key == &paused),
+                        "the durable frontier names a real leaf, never a partial batch"
+                    );
+                }
+                // Stopped inside the first batch, before anything committed.
+                None => assert!(rows(&backend).is_empty()),
+            }
+            tx.send(FKVGeneratorControlMessage::Continue).unwrap();
+        }
+        sweeping.join().unwrap().unwrap();
+
+        assert_eq!(marker(&backend).as_deref(), Some([0xff].as_slice()));
+        assert_eq!(rows(&backend).len(), expected.len());
+        assert_eq!(*frontier.read().unwrap(), vec![0xff]);
+    }
+
+    #[tokio::test]
+    async fn opening_a_store_with_an_absent_marker_wipes_a_stale_mirror() {
+        // Rows of unknown provenance are a *superset* hazard: a leaf the trie
+        // has since dropped would still be served by a range scan, and proved
+        // against the root it would fail. The wipe happens at open rather than
+        // in the generator because the commit path owns the whole keyspace
+        // while the marker is absent, so a lazy wipe would truncate the table
+        // under blocks already importing.
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let mut tx = backend.begin_write().unwrap();
+        tx.put(BINARY_FLATKEYVALUE, &[0x00; 34], &[0x77; 32])
+            .unwrap();
+        tx.commit().unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(
+            Arc::clone(&backend),
+            dir.path().to_path_buf(),
+            1,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
+        assert!(store.binary_flat_rows_for_test().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn opening_a_store_mid_backfill_keeps_the_rows_the_frontier_claims() {
+        // The other half: a partial frontier is a *resume*, and its rows are
+        // exactly what it claims. Wiping them would restart the sweep on every
+        // restart and never finish on a large trie.
+        let expected = leaves(4);
+        let backend = backend_with_trie(&expected);
+        let mut tx = backend.begin_write().unwrap();
+        tx.put(BINARY_FLATKEYVALUE, &expected[0].0, &expected[0].1)
+            .unwrap();
+        tx.put(MISC_VALUES, BINARY_LAST_WRITTEN_KEY, &expected[0].0)
+            .unwrap();
+        tx.commit().unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(
+            Arc::clone(&backend),
+            dir.path().to_path_buf(),
+            1,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
+        assert_eq!(store.binary_flat_rows_for_test().unwrap().len(), 1);
+        // And the in-memory frontier came back in its durable shape, so the
+        // read gate covers exactly that one key.
+        assert!(store.binary_flat_coverage().unwrap().covers(&expected[0].0));
+        assert!(!store.binary_flat_coverage().unwrap().covers(&expected[1].0));
+    }
+
+    #[tokio::test]
+    async fn a_deep_reorg_is_deferred_only_on_a_chain_that_has_a_mirror() {
+        // An unscheduled chain never writes the marker. An unconditional
+        // completeness check would therefore read as "still generating" for
+        // ever and defer every deep reorg on every existing MPT chain.
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(
+            Arc::clone(&backend),
+            dir.path().to_path_buf(),
+            1,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
+        assert!(!store.get_chain_config().binary_tree_scheduled());
+        assert!(!store.binary_flat_fully_generated().unwrap());
+        assert!(
+            !store.binary_flat_generation_pending().unwrap(),
+            "no binary tree, no binary hazard"
+        );
+    }
+}
+
 #[cfg(test)]
 mod flatkeyvalue_completeness_tests {
     use super::*;
@@ -8634,6 +9315,226 @@ mod genesis_binary_trie_tests {
     pub(super) fn reopen(backend: &Arc<dyn StorageBackend>, root: H256) -> BinaryTrie {
         let db = BackendBinaryTrieDB::new(Arc::clone(backend)).expect("read view opens");
         BinaryTrie::open(Box::new(db), root)
+    }
+
+    /// Every leaf the same updates produce on a store-less trie, as a
+    /// key -> value map: the mirror's expected contents computed independently
+    /// of the store, so an agreement assertion is two statements meeting
+    /// rather than one restated.
+    pub(super) fn plain_leaves(updates: &[AccountUpdate]) -> BTreeMap<Vec<u8>, [u8; 32]> {
+        let mut trie = BinaryTrie::new_temp();
+        apply_account_updates(&mut trie, updates).expect("updates apply");
+        trie.commit()
+            .expect("commit")
+            .leaves
+            .into_iter()
+            .filter_map(|(key, value)| value.map(|value| (key, value)))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn genesis_seeds_the_mirror_and_marks_it_complete() {
+        // A chain that starts from genesis never runs the backfill generator:
+        // the alloc *is* the whole state, so the changelog `commit` hands back
+        // is the whole mirror, and the frontier can be declared complete on the
+        // spot.
+        let (store, backend, _dir) = test_store();
+        // Both key lengths, all three zones, and a storage slot on each side of
+        // the header/overflow boundary.
+        let bytecode = vec![0x01u8; 31 * 130];
+        let storage = [(63u64, 0xaaaa), (64, 0xbbbb)];
+        let root = store
+            .setup_genesis_binary_trie(alloc(vec![
+                (ADDR_A, genesis_account(1, 7, bytecode.clone(), &storage)),
+                (ADDR_B, genesis_account(2, 9, vec![], &[])),
+            ]))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            store.binary_flat_frontier_for_test().unwrap().as_deref(),
+            Some([0xff].as_slice()),
+            "the mirror covers the whole keyspace from block 0"
+        );
+        assert!(store.binary_flat_fully_generated().unwrap());
+
+        let rows = store.binary_flat_rows_for_test().unwrap();
+        let expected = plain_leaves(&[
+            AccountUpdate {
+                address: ADDR_A,
+                info: Some(AccountInfo {
+                    code_hash: code_of(bytecode.clone()).hash,
+                    balance: U256::from(7u64),
+                    nonce: 1,
+                }),
+                code: Some(code_of(bytecode)),
+                added_storage: storage_map(&storage),
+                ..AccountUpdate::new(ADDR_A)
+            },
+            AccountUpdate {
+                address: ADDR_B,
+                info: Some(AccountInfo {
+                    code_hash: *EMPTY_KECCAK_HASH,
+                    balance: U256::from(9u64),
+                    nonce: 2,
+                }),
+                code: Some(code_of(vec![])),
+                ..AccountUpdate::new(ADDR_B)
+            },
+        ]);
+
+        // Both directions, so neither can pass vacuously: the mirror holds
+        // every leaf the trie does, and no leaf the trie does not.
+        assert_eq!(
+            rows.len(),
+            expected.len(),
+            "a superset is as wrong as a subset"
+        );
+        let mut trie = reopen(&backend, root);
+        for (key, value) in &rows {
+            assert_ne!(
+                value.as_slice(),
+                [0u8; 32].as_slice(),
+                "zero means absent, so no row may hold 32 zero bytes: {key:?}"
+            );
+            let value: [u8; 32] = value.as_slice().try_into().expect("32-byte leaf value");
+            assert_eq!(expected.get(key), Some(&value), "key {key:?}");
+            assert_eq!(
+                trie.get(key).unwrap(),
+                Some(value),
+                "the trie disagrees at {key:?}"
+            );
+        }
+
+        // And the rows came out of the table in tree-key order, which is what
+        // makes the mirror an ordered leaf index rather than just a cache.
+        let mut sorted = rows.iter().map(|(key, _)| key.clone()).collect::<Vec<_>>();
+        sorted.sort();
+        assert_eq!(
+            rows.into_iter().map(|(key, _)| key).collect::<Vec<_>>(),
+            sorted
+        );
+    }
+
+    #[tokio::test]
+    async fn the_embedding_reads_the_same_answers_with_the_mirror_on_and_off() {
+        // The composition that matters: not raw key reads, but the real
+        // `pbt_state` accessors, over a state shaped to hit every leaf kind the
+        // embedding produces. If the mirror and the descent ever disagreed
+        // here, the disagreement would reach consensus.
+        use crate::binary_trie::{BackendBinaryFlatDB, BinaryFlatCoverage};
+        use crate::layering::TrieLayerCache;
+        use ethrex_common::types::pbt_state::{get_account_info, get_storage_slot};
+
+        let (store, backend, _dir) = test_store();
+        // Identical bytecode from two senders, so their code-zone chunks are
+        // the same shared leaves; storage on both sides of the header/overflow
+        // boundary; and an account with zero balance and zero nonce, which
+        // exists but whose basic-data leaf is at its emptiest.
+        let shared_code = vec![0x60u8; 31 * 130];
+        let root = store
+            .setup_genesis_binary_trie(alloc(vec![
+                (
+                    ADDR_A,
+                    genesis_account(1, 7, shared_code.clone(), &[(63, 0xaaaa), (64, 0xbbbb)]),
+                ),
+                (ADDR_B, genesis_account(0, 0, shared_code.clone(), &[])),
+            ]))
+            .await
+            .unwrap();
+
+        // A delegation, applied on top so `CODE_HASH_LEAF_KEY` gives way to
+        // `DELEGATION_LEAF_KEY` for that account.
+        let delegated = Address::repeat_byte(0xcc);
+        let root = store
+            .apply_account_updates_to_binary_trie(
+                root,
+                &[AccountUpdate {
+                    address: delegated,
+                    info: Some(AccountInfo {
+                        code_hash: *EMPTY_KECCAK_HASH,
+                        balance: U256::from(5u64),
+                        nonce: 1,
+                    }),
+                    code: Some(code_of(
+                        [&[0xef, 0x01, 0x00][..], ADDR_A.as_bytes()].concat(),
+                    )),
+                    ..AccountUpdate::new(delegated)
+                }],
+            )
+            .await
+            .unwrap();
+
+        let read_at = |coverage: BinaryFlatCoverage| {
+            let mut trie = BinaryTrie::open(
+                Box::new(LayeredBinaryTrieDB::new(
+                    root,
+                    Arc::new(TrieLayerCache::default()),
+                    BackendBinaryTrieDB::new(Arc::clone(&backend)).unwrap(),
+                    BackendBinaryFlatDB::new(Arc::clone(&backend)).unwrap(),
+                    coverage,
+                    LayeredBinaryTrieDB::staging_buffer(),
+                )),
+                root,
+            );
+            let accounts: Vec<_> = [ADDR_A, ADDR_B, delegated, Address::repeat_byte(0xde)]
+                .into_iter()
+                .map(|address| get_account_info(&mut trie, address).unwrap())
+                .collect();
+            let slots: Vec<_> = [63u64, 64, 65]
+                .into_iter()
+                .map(|slot| {
+                    get_storage_slot(&mut trie, ADDR_A, &H256::from_low_u64_be(slot)).unwrap()
+                })
+                .collect();
+            (accounts, slots)
+        };
+
+        let covered = read_at(BinaryFlatCoverage::Everything);
+        assert_eq!(covered, read_at(BinaryFlatCoverage::Nothing));
+        // And the answers are not vacuously equal: the accounts are really
+        // there, the absent one is really absent, and the storage is real.
+        assert!(covered.0[0].is_some() && covered.0[1].is_some() && covered.0[2].is_some());
+        assert_eq!(covered.0[3], None);
+        assert_eq!(covered.1[0], Some(U256::from(0xaaaau64)));
+        assert_eq!(covered.1[1], Some(U256::from(0xbbbbu64)));
+        assert_eq!(covered.1[2], None);
+    }
+
+    #[tokio::test]
+    async fn an_empty_alloc_still_marks_the_mirror_complete() {
+        // An empty state is a *covered* state, not an uncovered one: every key
+        // is legitimately absent, so a reader may trust a miss. Leaving the
+        // marker off here would make a fresh chain run a backfill over nothing.
+        let (store, _backend, _dir) = test_store();
+        store
+            .setup_genesis_binary_trie(BTreeMap::new())
+            .await
+            .unwrap();
+        assert!(store.binary_flat_fully_generated().unwrap());
+        assert!(store.binary_flat_rows_for_test().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_unscheduled_chain_writes_no_mirror_rows() {
+        // The shadow-tracking property, extended to the mirror: a chain with no
+        // binary tree scheduled does literally no binary work, so the column
+        // family is untouched and the frontier marker is absent — which the
+        // read gate reads as "trust nothing", the only safe answer for a table
+        // nothing has populated.
+        let mut genesis = Genesis::default();
+        assert!(!genesis.config.binary_tree_scheduled());
+        genesis.alloc.insert(
+            ADDR_A,
+            genesis_account(1, 1_000, vec![0x60, 0x00], &[(1, 2)]),
+        );
+        let mut store = Store::new("", EngineType::InMemory).unwrap();
+        store.add_initial_state(genesis).await.unwrap();
+
+        assert_eq!(store.binary_trie_node_count_for_test().unwrap(), 0);
+        assert!(store.binary_flat_rows_for_test().unwrap().is_empty());
+        assert_eq!(store.binary_flat_frontier_for_test().unwrap(), None);
+        assert!(!store.binary_flat_fully_generated().unwrap());
     }
 
     #[tokio::test]

@@ -277,6 +277,72 @@ impl BackendBinaryFlatDB {
     }
 }
 
+/// How much of the keyspace a **reader** may trust [`BINARY_FLATKEYVALUE`]
+/// for, parsed from the durable backfill frontier marker.
+///
+/// **The read-side counterpart of `store::binary_flat_frontier_covers`, and
+/// deliberately not the same predicate.** That one asks *who writes this row*
+/// and answers "this commit path" when the marker is absent, because a
+/// generator that has never run owns nothing. This one asks *may a read trust
+/// the mirror here* and answers `false` for the same absent marker, because
+/// nothing has populated the mirror yet and Decision 1 forbids a coverage
+/// predicate returning `true` for a key whose row might legitimately be
+/// missing. Two questions, opposite answers to the same input; folding them
+/// into one function would have to pick one and be wrong about the other.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BinaryFlatCoverage {
+    /// Marker absent (or empty): no genesis seed and no generator sweep, so
+    /// the mirror is a strict subset of the trie and covers nothing.
+    Nothing,
+    /// The sweep has reached this tree key inclusively; keys at or below it
+    /// are covered, keys above it are not.
+    UpTo(Vec<u8>),
+    /// The `[0xff]` sentinel: the whole keyspace.
+    Everything,
+}
+
+impl BinaryFlatCoverage {
+    /// Read the three-state durable marker.
+    ///
+    /// The `[0xff]` sentinel is unambiguous because no tree key is one byte
+    /// long — they are 34 or 66 — so it can never collide with a real
+    /// frontier.
+    pub fn from_marker(marker: Option<&[u8]>) -> Self {
+        match marker {
+            None | Some([]) => Self::Nothing,
+            Some(marker) if marker == BINARY_FLAT_FRONTIER_COMPLETE => Self::Everything,
+            Some(marker) => Self::UpTo(marker.to_vec()),
+        }
+    }
+
+    /// Whether a read of `key` may be answered from the mirror.
+    ///
+    /// The comparison is inclusive and over whole tree keys: this trie has one
+    /// keyspace and one linear sweep, so a single `key <= frontier` suffices.
+    /// The MPT's second, stricter predicate exists only because its generator
+    /// is a nested account/storage sweep, and there is nothing here for it to
+    /// mean (plan Decision 2).
+    pub fn covers(&self, key: &[u8]) -> bool {
+        match self {
+            Self::Nothing => false,
+            Self::UpTo(frontier) => key <= frontier.as_slice(),
+            Self::Everything => true,
+        }
+    }
+
+    /// Whether the sweep is finished — the gate range serving and deep-reorg
+    /// deferral consult, and the analogue of `Store::flatkeyvalue_fully_generated`.
+    pub fn is_complete(&self) -> bool {
+        matches!(self, Self::Everything)
+    }
+}
+
+/// The `[0xff]` completion sentinel stored under the mirror's frontier key.
+///
+/// Defined here, next to the coverage predicate that reads it, and re-exported
+/// by `store` alongside the `MISC_VALUES` key it is stored under.
+pub const BINARY_FLAT_FRONTIER_COMPLETE: &[u8] = &[0xff];
+
 /// Shared buffer a [`LayeredBinaryTrieDB`] writes into. The trie owns its
 /// `Box<dyn BinaryTrieDB>`, so the caller keeps a handle on the buffer to
 /// collect the staged writes after committing.
@@ -308,23 +374,38 @@ pub struct LayeredBinaryTrieDB {
     cache: Arc<TrieLayerCache>,
     /// The on-disk trie, consulted only when the layer chain misses.
     db: BackendBinaryTrieDB,
+    /// The on-disk leaf mirror, read only for keys [`Self::coverage`] covers.
+    flat_db: BackendBinaryFlatDB,
+    /// How much of the keyspace this handle's reads may trust the mirror for.
+    ///
+    /// A snapshot taken when the handle was built, like the layer cache
+    /// snapshot beside it. A frontier that advanced since then makes this
+    /// handle under-claim coverage and descend where it could have looked up,
+    /// which is the harmless direction; the other direction would read a row
+    /// the generator has not written.
+    coverage: BinaryFlatCoverage,
     /// Where [`BinaryTrieDB::put_batch`] deposits this block's node writes.
     staged: StagedBinaryNodes,
 }
 
 impl LayeredBinaryTrieDB {
-    /// A handle reading at `binary_root` through `cache`, falling back to `db`,
-    /// and staging writes into `staged`.
+    /// A handle reading at `binary_root` through `cache`, falling back to `db`
+    /// for nodes and `flat_db` for mirrored leaves within `coverage`, and
+    /// staging writes into `staged`.
     pub fn new(
         binary_root: H256,
         cache: Arc<TrieLayerCache>,
         db: BackendBinaryTrieDB,
+        flat_db: BackendBinaryFlatDB,
+        coverage: BinaryFlatCoverage,
         staged: StagedBinaryNodes,
     ) -> Self {
         Self {
             binary_root,
             cache,
             db,
+            flat_db,
+            coverage,
             staged,
         }
     }
@@ -379,6 +460,60 @@ impl BinaryTrieDB for LayeredBinaryTrieDB {
             staged.push((path.to_db_key(), encoded));
         }
         Ok(())
+    }
+
+    /// Whether a read at this handle's root may be answered from the mirror.
+    ///
+    /// Two gates, and the second is the one that is easy to forget.
+    ///
+    /// **The frontier** is the coverage snapshot taken when this handle was
+    /// built: the mirror covers a key only once a genesis seed or a backfill
+    /// sweep has written its row.
+    ///
+    /// **A deep-reorg overlay turns the mirror off entirely**, for the reason
+    /// spelled out on the MPT's `TrieWrapper::flatkeyvalue_computed`: journal
+    /// entries written while a generator was running are permanently missing
+    /// pre-images past the frontier, so an unwind cannot restore those rows,
+    /// and disk may still hold the abandoned chain's value for them. Nodes are
+    /// always journaled and always unwind, so the descent stays correct where
+    /// the mirror does not — which is exactly what returning `false` here buys.
+    fn binary_flat_computed(&self, key: &[u8]) -> bool {
+        if self.cache.overlay_serves_binary(self.binary_root) {
+            return false;
+        }
+        self.coverage.covers(key)
+    }
+
+    /// Read cascade for a mirrored leaf: layer chain, then disk.
+    ///
+    /// **No overlay step, and that is not an omission.** This method is
+    /// reached only when [`binary_flat_computed`] said `true`, and that gate
+    /// answers `false` whenever an overlay serves this root — so an overlay
+    /// branch here would be code that cannot run, standing in for a safety
+    /// property enforced one level up.
+    ///
+    /// A layer hit is authoritative in both directions, exactly as it is for
+    /// nodes: `Some(None)` is a tombstone — the leaf left the tree in one of
+    /// these blocks — and must answer `None` without falling through, because
+    /// the single-version mirror on disk still holds the row this block
+    /// deleted.
+    ///
+    /// [`binary_flat_computed`]: BinaryTrieDB::binary_flat_computed
+    fn binary_flat_get(&self, key: &[u8]) -> Result<Option<[u8; 32]>, BinaryTrieError> {
+        if let Some(value) = self.cache.binary_flat_get(self.binary_root, key) {
+            return value
+                .map(|value| {
+                    <[u8; 32]>::try_from(value.as_slice()).map_err(|_| {
+                        BinaryTrieError::Backend(format!(
+                            "staged binary flat value for key {key:?} is {} bytes, not \
+                             {BINARY_FLAT_VALUE_LENGTH}",
+                            value.len()
+                        ))
+                    })
+                })
+                .transpose();
+        }
+        self.flat_db.get(key).map_err(backend_error)
     }
 }
 
@@ -856,6 +991,335 @@ mod tests {
             let reader = flat_handle(&db);
             assert_eq!(reader.range_from(&[]).unwrap().count(), 0);
             assert_eq!(reader.range_from(&[0x00u8; 34]).unwrap().count(), 0);
+        }
+    }
+
+    // ---- Reading through the mirror ------------------------------------
+
+    mod coverage {
+        use super::*;
+        use crate::api::tables::{BINARY_FLATKEYVALUE, STATE_HISTORY};
+        use crate::journal::JournalEntry;
+        use crate::layering::{BinaryLayerUpdate, Overlay, TrieLayerCache};
+        use ethrex_binary_trie::embedding::{
+            address20_to_address32, get_tree_key_for_basic_data, get_tree_key_for_storage_slot,
+        };
+        use ethrex_common::{H160, U256};
+
+        fn account_key(i: u64) -> Vec<u8> {
+            get_tree_key_for_basic_data(&address20_to_address32(H160::from_low_u64_be(i)))
+        }
+
+        fn storage_key(i: u64) -> Vec<u8> {
+            get_tree_key_for_storage_slot(
+                &address20_to_address32(H160::from_low_u64_be(i)),
+                U256::from(4_096u64),
+            )
+        }
+
+        #[test]
+        fn an_absent_marker_covers_nothing() {
+            // **The seam.** The write-side `binary_flat_frontier_covers` reads
+            // an absent marker as `true` — no generator exists, so the commit
+            // path owns the whole keyspace. That is a write-ownership answer.
+            // The read gate asks a different question and must answer `false`:
+            // an absent marker means nothing has seeded the mirror, so it is a
+            // strict subset of the trie and a miss would be read as an absence
+            // the trie does not agree with.
+            for marker in [None, Some([].as_slice())] {
+                let coverage = BinaryFlatCoverage::from_marker(marker);
+                assert_eq!(coverage, BinaryFlatCoverage::Nothing);
+                assert!(!coverage.covers(&account_key(1)));
+                assert!(!coverage.covers(&storage_key(1)));
+                assert!(!coverage.covers(&[]));
+                assert!(!coverage.is_complete());
+            }
+        }
+
+        #[test]
+        fn the_completion_sentinel_covers_every_zone() {
+            // Including the overflow-storage zone, whose keys *begin* with
+            // `0xff` and are therefore lexicographically greater than the
+            // 1-byte `[0xff]` sentinel. Comparing the sentinel as an ordinary
+            // frontier would exclude every storage leaf from a mirror that is
+            // complete — the same trap the write-side predicate documents.
+            let coverage = BinaryFlatCoverage::from_marker(Some(&[0xff]));
+            assert_eq!(coverage, BinaryFlatCoverage::Everything);
+            assert!(coverage.is_complete());
+            assert!(coverage.covers(&account_key(1)));
+            assert!(coverage.covers(&storage_key(1)));
+            assert!(coverage.covers(&[0xff; 66]));
+        }
+
+        #[test]
+        fn a_partial_frontier_is_inclusive_and_stops_above_itself() {
+            let mut keys = [account_key(1), account_key(2), storage_key(3)];
+            keys.sort();
+            let coverage = BinaryFlatCoverage::from_marker(Some(&keys[1]));
+            assert!(coverage.covers(&keys[0]));
+            assert!(coverage.covers(&keys[1]), "the frontier key itself");
+            assert!(!coverage.covers(&keys[2]));
+            assert!(!coverage.is_complete());
+        }
+
+        /// A layered handle over `backend` at `binary_root`, with `cache` and
+        /// `coverage`.
+        fn layered(
+            db: &Arc<dyn StorageBackend>,
+            cache: Arc<TrieLayerCache>,
+            binary_root: H256,
+            coverage: BinaryFlatCoverage,
+        ) -> LayeredBinaryTrieDB {
+            LayeredBinaryTrieDB::new(
+                binary_root,
+                cache,
+                BackendBinaryTrieDB::new(Arc::clone(db)).unwrap(),
+                BackendBinaryFlatDB::new(Arc::clone(db)).unwrap(),
+                coverage,
+                LayeredBinaryTrieDB::staging_buffer(),
+            )
+        }
+
+        #[test]
+        fn a_mirrored_read_cascades_layers_then_disk() {
+            let db = backend();
+            let on_disk = account_key(1);
+            let staged = account_key(2);
+            let overwritten = account_key(3);
+            let deleted = account_key(4);
+            BackendBinaryFlatDB::new(Arc::clone(&db))
+                .unwrap()
+                .put_batch(vec![
+                    (on_disk.clone(), vec![0x11; 32]),
+                    (overwritten.clone(), vec![0x22; 32]),
+                    (deleted.clone(), vec![0x33; 32]),
+                ])
+                .unwrap();
+
+            let root = H256::repeat_byte(0xb1);
+            let mut cache = TrieLayerCache::default();
+            cache.put_batch_with_binary(
+                H256::zero(),
+                H256::repeat_byte(0x01),
+                1,
+                H256::repeat_byte(0x01),
+                vec![],
+                BinaryLayerUpdate {
+                    root,
+                    parent_root: H256::zero(),
+                    nodes: vec![],
+                    flat: vec![
+                        (staged.clone(), vec![0x44; 32]),
+                        (overwritten.clone(), vec![0x55; 32]),
+                        // Empty value: the leaf left the tree in this block.
+                        (deleted.clone(), vec![]),
+                    ],
+                },
+            );
+            let handle = layered(
+                &db,
+                Arc::new(cache),
+                root,
+                BinaryFlatCoverage::from_marker(Some(&[0xff])),
+            );
+
+            assert_eq!(handle.binary_flat_get(&on_disk).unwrap(), Some([0x11; 32]));
+            assert_eq!(handle.binary_flat_get(&staged).unwrap(), Some([0x44; 32]));
+            assert_eq!(
+                handle.binary_flat_get(&overwritten).unwrap(),
+                Some([0x55; 32]),
+                "the layer's value supersedes the row on disk"
+            );
+            assert_eq!(
+                handle.binary_flat_get(&deleted).unwrap(),
+                None,
+                "a layer tombstone must not fall through to the surviving disk row"
+            );
+            assert_eq!(handle.binary_flat_get(&account_key(9)).unwrap(), None);
+        }
+
+        #[test]
+        fn an_overlay_turns_the_mirror_off_even_with_a_complete_frontier() {
+            // The MPT's `TrieWrapper::flatkeyvalue_computed` does exactly this
+            // and says why: journal entries written while a generator was
+            // running are permanently missing pre-images past the frontier, so
+            // an unwind cannot restore those rows and disk may still hold the
+            // abandoned chain's value. Nodes are always journaled, so the
+            // descent stays correct where the mirror does not.
+            let db = backend();
+            let key = account_key(1);
+            let pivot = H256::repeat_byte(0xb1);
+
+            let entry = JournalEntry {
+                block_hash: H256::repeat_byte(1),
+                parent_state_root: H256::repeat_byte(0xf0),
+                parent_binary_root: pivot,
+                account_trie_diff: vec![],
+                storage_trie_diff: vec![],
+                account_flat_diff: vec![],
+                storage_flat_diff: vec![],
+                binary_trie_diff: vec![],
+                binary_flat_diff: vec![(key.clone(), Some(vec![0x99; 32]))],
+            };
+            let mut tx = db.begin_write().unwrap();
+            tx.put(STATE_HISTORY, &1u64.to_be_bytes(), &entry.encode())
+                .unwrap();
+            tx.commit().unwrap();
+            let overlay = Overlay::from_journal(db.as_ref(), 1, 1, |_| None).unwrap();
+
+            let mut cache = TrieLayerCache::default();
+            cache.set_overlay(Arc::new(overlay));
+            let cache = Arc::new(cache);
+            let complete = BinaryFlatCoverage::from_marker(Some(&[0xff]));
+
+            assert!(
+                !layered(&db, cache.clone(), pivot, complete.clone()).binary_flat_computed(&key),
+                "the mirror is off at a root the overlay serves"
+            );
+            // A root the overlay does *not* serve is unaffected: it reads
+            // disk, which still holds that root's state.
+            assert!(
+                layered(&db, cache, H256::repeat_byte(0xee), complete).binary_flat_computed(&key),
+            );
+        }
+
+        #[test]
+        fn the_frontier_gates_the_read_key_by_key() {
+            let db = backend();
+            let mut keys = [account_key(1), account_key(2), storage_key(3)];
+            keys.sort();
+            let cache = Arc::new(TrieLayerCache::default());
+            let handle = layered(
+                &db,
+                cache,
+                H256::repeat_byte(0xb1),
+                BinaryFlatCoverage::from_marker(Some(&keys[1])),
+            );
+            assert!(handle.binary_flat_computed(&keys[0]));
+            assert!(handle.binary_flat_computed(&keys[1]));
+            assert!(!handle.binary_flat_computed(&keys[2]));
+        }
+
+        #[test]
+        fn a_trie_over_the_layered_handle_agrees_with_the_mirror_on_and_off() {
+            // The composition that matters: the same state read twice, once
+            // through the descent and once through the mirror, must give the
+            // same answers — for present keys, absent keys, and both key
+            // lengths.
+            let db = backend();
+            let entries: Vec<(Vec<u8>, [u8; 32])> = (1..=6u64)
+                .flat_map(|i| {
+                    [
+                        (account_key(i), [i as u8; 32]),
+                        (storage_key(i), [i as u8 + 100; 32]),
+                    ]
+                })
+                .collect();
+
+            let mut trie =
+                BinaryTrie::new(Box::new(BackendBinaryTrieDB::new(Arc::clone(&db)).unwrap()));
+            for (key, value) in &entries {
+                trie.insert(key.clone(), *value).unwrap();
+            }
+            let committed = trie.commit().unwrap();
+            drop(trie);
+
+            // The mirror, written from the changelog exactly as the commit
+            // path writes it.
+            BackendBinaryFlatDB::new(Arc::clone(&db))
+                .unwrap()
+                .put_batch(
+                    committed
+                        .leaves
+                        .iter()
+                        .map(|(key, value)| {
+                            (key.clone(), value.map(|v| v.to_vec()).unwrap_or_default())
+                        })
+                        .collect(),
+                )
+                .unwrap();
+
+            let absent = vec![account_key(99), storage_key(99)];
+            for coverage in [
+                BinaryFlatCoverage::Nothing,
+                BinaryFlatCoverage::from_marker(Some(&[0xff])),
+            ] {
+                let mut trie = BinaryTrie::open(
+                    Box::new(layered(
+                        &db,
+                        Arc::new(TrieLayerCache::default()),
+                        committed.root,
+                        coverage.clone(),
+                    )),
+                    committed.root,
+                );
+                for (key, value) in &entries {
+                    assert_eq!(
+                        trie.get(key).unwrap(),
+                        Some(*value),
+                        "key {key:?} under {coverage:?}"
+                    );
+                }
+                for key in &absent {
+                    assert_eq!(trie.get(key).unwrap(), None, "{key:?} under {coverage:?}");
+                }
+            }
+        }
+
+        #[test]
+        fn the_mirror_is_actually_on_the_layered_read_path() {
+            // The storage-side counterpart of the crate's node-read counter:
+            // wipe the *node* table, leave the mirror, and a covered read
+            // still answers. Nothing but the mirror can be serving it.
+            let db = backend();
+            let key = account_key(1);
+            let mut trie =
+                BinaryTrie::new(Box::new(BackendBinaryTrieDB::new(Arc::clone(&db)).unwrap()));
+            trie.insert(key.clone(), [0x77; 32]).unwrap();
+            let committed = trie.commit().unwrap();
+            drop(trie);
+            BackendBinaryFlatDB::new(Arc::clone(&db))
+                .unwrap()
+                .put_batch(vec![(key.clone(), vec![0x77; 32])])
+                .unwrap();
+            db.clear_table(BINARY_TRIE_NODES).unwrap();
+
+            let mut covered = BinaryTrie::open(
+                Box::new(layered(
+                    &db,
+                    Arc::new(TrieLayerCache::default()),
+                    committed.root,
+                    BinaryFlatCoverage::from_marker(Some(&[0xff])),
+                )),
+                committed.root,
+            );
+            assert_eq!(covered.get(&key).unwrap(), Some([0x77; 32]));
+
+            // Without coverage the same read has to descend, and there is
+            // nothing left to descend into.
+            let mut uncovered = BinaryTrie::open(
+                Box::new(layered(
+                    &db,
+                    Arc::new(TrieLayerCache::default()),
+                    committed.root,
+                    BinaryFlatCoverage::Nothing,
+                )),
+                committed.root,
+            );
+            assert!(
+                uncovered.get(&key).is_err(),
+                "the node table is gone, so an uncovered read cannot succeed"
+            );
+            // And the table really is empty, so the assertion above is not
+            // passing on a stale read view.
+            assert_eq!(
+                db.begin_read()
+                    .unwrap()
+                    .prefix_iterator(BINARY_FLATKEYVALUE, &[])
+                    .unwrap()
+                    .count(),
+                1
+            );
         }
     }
 }

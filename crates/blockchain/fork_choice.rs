@@ -462,6 +462,22 @@ async fn reorg_apply_deep(
         return Err(InvalidForkChoice::Syncing);
     }
 
+    // The same deferral for the binary trie's flat mirror, which inherits the
+    // same hole: `commit_to_disk` skips journaling mirror rows past the binary
+    // frontier, so entries written during a sweep are permanently missing
+    // those pre-images and an overlay would serve stale values. The binary read
+    // gate already switches the mirror off while an overlay is installed, so an
+    // unwind that lands there still reads correct state from the trie nodes —
+    // this closes the common case of a reorg arriving *during* generation.
+    //
+    // Gated on the schedule, not just on completeness: a chain with no binary
+    // tree never writes the marker, and an unconditional check would defer
+    // every deep reorg on every MPT chain for ever.
+    if store.binary_flat_generation_pending()? {
+        info!(%head_hash, "deferring deep-reorg apply: binary flat mirror generation still in progress");
+        return Err(InvalidForkChoice::Syncing);
+    }
+
     let head = store
         .get_block_header_by_hash(head_hash)?
         .ok_or(InvalidForkChoice::Syncing)?;
