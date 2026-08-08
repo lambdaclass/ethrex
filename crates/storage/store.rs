@@ -5911,6 +5911,7 @@ fn commit_to_disk(
                 account_flat_diff: journal_account_flat,
                 storage_flat_diff: journal_storage_flat,
                 binary_trie_diff: journal_binary_trie,
+                binary_flat_diff: vec![],
             };
             result = write_tx.put(
                 STATE_HISTORY,
@@ -6730,6 +6731,7 @@ mod state_history_tests {
                 account_flat_diff: vec![],
                 storage_flat_diff: vec![],
                 binary_trie_diff: vec![],
+                binary_flat_diff: vec![],
             };
             tx.put(STATE_HISTORY, &n.to_be_bytes(), &entry.encode())
                 .unwrap();
@@ -7321,6 +7323,7 @@ mod state_history_tests {
                     account_flat_diff: vec![],
                     storage_flat_diff: vec![],
                     binary_trie_diff: vec![],
+                    binary_flat_diff: vec![],
                 };
                 tx.put(STATE_HISTORY, &n.to_be_bytes(), &entry.encode())
                     .unwrap();
@@ -7413,6 +7416,7 @@ mod state_history_tests {
                     account_flat_diff: vec![],
                     storage_flat_diff: vec![],
                     binary_trie_diff: vec![],
+                    binary_flat_diff: vec![],
                 };
                 tx.put(STATE_HISTORY, &n.to_be_bytes(), &entry.encode())
                     .unwrap();

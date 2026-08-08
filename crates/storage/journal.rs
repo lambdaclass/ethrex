@@ -44,16 +44,79 @@
 //!
 //! Entries use a hand-rolled compact format: a version byte at offset 0, then
 //! `block_hash` (32 bytes), `parent_state_root` (32 bytes),
-//! `parent_binary_root` (32 bytes), then five varint-prefixed reverse-diff
+//! `parent_binary_root` (32 bytes), then six varint-prefixed reverse-diff
 //! sections in order: account-trie, storage-trie, account flat-KV, storage
-//! flat-KV, binary-trie. RLP/bincode/postcard are skipped — the access pattern
-//! (write-once, read-on-reorg, large volume) makes encode/decode cost matter.
+//! flat-KV, binary-trie, binary flat-KV. RLP/bincode/postcard are skipped — the
+//! access pattern (write-once, read-on-reorg, large volume) makes encode/decode
+//! cost matter.
 //!
-//! The binary section is a fifth flat list rather than something folded into the
-//! existing four, because the reader cannot tell the column families apart by
-//! key length: a `BitPath` key is `4 + ceil(bits/8)` bytes, which overlaps the
-//! whole MPT range that `classify_trie_key` dispatches on. The section boundary
-//! is the only thing that says which table a key belongs to.
+//! The binary sections are flat lists of their own rather than something folded
+//! into the MPT four, because the reader cannot tell the column families apart
+//! by key length: a `BitPath` key is `4 + ceil(bits/8)` bytes, which overlaps
+//! the whole MPT range that `classify_trie_key` dispatches on. The section
+//! boundary is the only thing that says which table a key belongs to.
+//!
+//! The two binary sections must stay apart from *each other* for a sharper
+//! version of that reason. A `BitPath` DB key at bit-depth 240 is 34 bytes and
+//! at bit-depth 496 is 66 bytes — byte-for-byte the lengths of account-zone and
+//! storage-zone tree keys. Binary nodes and binary flat entries are not
+//! distinguishable by length from each other either, so the only thing that
+//! routes a key to `BINARY_TRIE_NODES` rather than `BINARY_FLATKEYVALUE` is
+//! which section it arrived in.
+//!
+//! ## v2 was redefined in place; a datadir predating that must be wiped
+//!
+//! The sixth section (binary flat-KV) was added to v2 rather than by bumping to
+//! v3. The format is unreleased and has no external consumers, so a bump would
+//! buy a compatibility guarantee nobody needs and add a migration path with no
+//! users. `STATE_HISTORY` is a rebuildable cache of recent history, not durable
+//! state: losing it costs reorg *reach* until finality advances and the layer
+//! cache refills, the same bounded consequence [`drain_stale_journal_entries`]
+//! already has.
+//!
+//! Three things follow, and each is load-bearing:
+//!
+//! - **[`drain_stale_journal_entries`] will not fire.** It compares the version
+//!   *byte*, and the byte is unchanged, so its fast path returns `Ok(None)` and
+//!   old five-section entries survive to reach [`JournalEntry::decode`].
+//! - **What happens then is a loud, deterministic
+//!   [`JournalDecodeError::Truncated`].** [`JournalEntry::encode`] is
+//!   exact-length, so a five-section record leaves the cursor at
+//!   `offset == bytes.len()` after the fifth section; the sixth
+//!   `decode_flat_diff` then reads its count varint at `offset >= len` and
+//!   errors. Never a silent misread. The downgrade direction is equally loud:
+//!   an old binary reading a new entry decodes five sections and fails the
+//!   trailing-bytes check with [`JournalDecodeError::TrailingBytes`].
+//! - **The section is appended *last*, and what that buys is narrower than it
+//!   looks — checked against the codec rather than assumed.** The tempting claim
+//!   is that the loud failure *depends* on the position: insert the section in
+//!   the middle and an old entry's next section's count varint would be read as
+//!   the new section's count, and the record could parse into garbage. **That is
+//!   not true of this codec**, and it was tested rather than argued
+//!   (`a_five_section_v2_record_fails_loudly_as_truncated` was mutation-checked
+//!   by relocating the section to position two, in both `encode` and `decode`,
+//!   with a fixture carrying content in every section; the outcome was the same
+//!   `Truncated`, at the same offset). Sections here are *self-delimiting* — a
+//!   count varint, then that many self-delimiting entries — so reading six
+//!   sections from a stream that is exactly five consumes the same five
+//!   partitions in the same order and runs off the end on the sixth, whatever
+//!   the new section is labelled. The failure is position-independent.
+//!
+//!   What appending last genuinely buys is that **the five existing sections
+//!   keep their byte offsets**: a current record with an empty sixth section is
+//!   the old five-section encoding plus one `0` byte, which
+//!   `appending_last_leaves_the_five_existing_sections_byte_identical` pins.
+//!   That is the property a future lenient decode would need — "a missing
+//!   trailing section defaults to empty" is sound only for a trailing section;
+//!   the same leniency around a middle section would silently re-route every
+//!   key after it. It is also what keeps hand-rolled fixtures and any
+//!   offset-aware tooling valid. Put any future section on the end for those
+//!   reasons, not for the failure mode.
+//!
+//! Redefining a version byte in place is acceptable only while the format is
+//! unreleased. Once it has consumers, [`JOURNAL_VERSION`]'s own doc comment
+//! states the rule that applies instead: per-version `decode_vN` arms, not
+//! re-encoding.
 //!
 //! ## Version strategy
 //!
@@ -91,6 +154,12 @@ use crate::{
 /// rejected outright rather than read with an empty binary section: on a
 /// scheduled chain that would silently claim the binary trie needs no unwinding,
 /// which is precisely the bug the version exists to prevent.
+///
+/// v2 was later **redefined in place** to add a sixth section, the binary
+/// flat-KV reverse diff, rather than bumped to v3. See the "v2 was redefined in
+/// place" section of this module's docs for why, and for the consequence: a
+/// datadir predating that change must be wiped, because the drain will not fire
+/// and its entries fail to decode.
 pub const JOURNAL_VERSION: u8 = 2;
 
 /// A single reverse-diff entry: `(on_disk_key, previous_value_or_none)`.
@@ -107,7 +176,7 @@ pub type FlatDiff = Vec<ReverseDiffEntry>;
 
 /// A single reverse-diff entry covering one block's commit.
 ///
-/// All five diff sections are flat lists of `(on_disk_key, prev_value)` tuples.
+/// All six diff sections are flat lists of `(on_disk_key, prev_value)` tuples.
 /// On rollback, each entry can be applied directly to its column family
 /// without further interpretation: `Some(prev)` becomes a `put`, `None`
 /// becomes a `delete`.
@@ -153,6 +222,30 @@ pub struct JournalEntry {
     /// the whole cost an unscheduled chain pays: one extra `0` count byte per
     /// entry.
     pub binary_trie_diff: FlatDiff,
+    /// Reverse diff for `BINARY_FLATKEYVALUE`, keyed by the embedding's own tree
+    /// key (34 or 66 bytes).
+    ///
+    /// **Appended last, and that is a format guarantee rather than an
+    /// accident** — see the "v2 was redefined in place" section of this module's
+    /// docs. A section inserted mid-record would let a five-section entry parse
+    /// into garbage instead of failing; appended last it fails as
+    /// [`JournalDecodeError::Truncated`].
+    ///
+    /// Its own section rather than a share of `binary_trie_diff`: the two key
+    /// spaces have identical length ranges and only the section boundary says
+    /// which of the two column families a key belongs to.
+    ///
+    /// A `None` pre-image means the commit created the row, so a rollback
+    /// deletes it — which is also how the mirror spells a removed leaf, so the
+    /// rollback and the mirror's own convention agree by construction. The
+    /// mirror is derived state, but it is journaled all the same, including
+    /// content-addressed code-zone leaves: a leftover chunk is inert to a point
+    /// read and *visible to an ordered iterator*, which is the whole reason the
+    /// table exists.
+    ///
+    /// Empty on every chain that does not schedule `binaryTreeTime`: one extra
+    /// `0` count byte per entry.
+    pub binary_flat_diff: FlatDiff,
 }
 
 /// Errors that can occur when decoding a journal entry from disk.
@@ -191,7 +284,8 @@ impl JournalEntry {
             + diff_byte_estimate(&self.storage_trie_diff)
             + diff_byte_estimate(&self.account_flat_diff)
             + diff_byte_estimate(&self.storage_flat_diff)
-            + diff_byte_estimate(&self.binary_trie_diff);
+            + diff_byte_estimate(&self.binary_trie_diff)
+            + diff_byte_estimate(&self.binary_flat_diff);
         let mut out = Vec::with_capacity(approx);
 
         out.push(JOURNAL_VERSION);
@@ -204,6 +298,10 @@ impl JournalEntry {
         encode_flat_diff(&mut out, &self.account_flat_diff);
         encode_flat_diff(&mut out, &self.storage_flat_diff);
         encode_flat_diff(&mut out, &self.binary_trie_diff);
+        // Last, always. The module docs explain why the position is a format
+        // guarantee: it is what makes a stale five-section record fail as
+        // `Truncated` instead of parsing into garbage.
+        encode_flat_diff(&mut out, &self.binary_flat_diff);
 
         out
     }
@@ -234,6 +332,11 @@ impl JournalEntry {
         let account_flat_diff = decode_flat_diff(&mut cur)?;
         let storage_flat_diff = decode_flat_diff(&mut cur)?;
         let binary_trie_diff = decode_flat_diff(&mut cur)?;
+        // The sixth and last section. On a five-section record written before
+        // v2 was redefined in place, the cursor is already at `bytes.len()`
+        // here (`encode` is exact-length), so this read fails as `Truncated` —
+        // loud, deterministic, and only because the section is last.
+        let binary_flat_diff = decode_flat_diff(&mut cur)?;
 
         // Reject trailing bytes: a corrupt or mixed-version record that happens to
         // have a valid prefix must not be silently treated as valid.
@@ -253,6 +356,7 @@ impl JournalEntry {
             account_flat_diff,
             storage_flat_diff,
             binary_trie_diff,
+            binary_flat_diff,
         })
     }
 }
@@ -645,10 +749,13 @@ mod tests {
             account_flat_diff: vec![],
             storage_flat_diff: vec![],
             binary_trie_diff: vec![],
+            binary_flat_diff: vec![],
         };
         round_trip(&entry);
-        // 1 (version) + 32 + 32 + 32 + 1 (count=0) * 5 = 102 bytes.
-        assert_eq!(entry.encode().len(), 102);
+        // 1 (version) + 32 + 32 + 32 + 1 (count=0) * 6 = 103 bytes. It was 102
+        // with five sections; the sixth costs one `0` count byte per entry,
+        // which is the whole price an unscheduled chain pays for the mirror.
+        assert_eq!(entry.encode().len(), 103);
     }
 
     #[test]
@@ -670,6 +777,13 @@ mod tests {
                 (vec![0x0c; 34], Some(vec![0xcc, 0xdd])),
                 (vec![0x0d; 5], None),
             ],
+            // A 34-byte account-zone tree key and a 66-byte storage-zone one:
+            // the same lengths the binary *node* section above uses, which is
+            // the point.
+            binary_flat_diff: vec![
+                (vec![0x1c; 34], Some(vec![0xee; 32])),
+                (vec![0x1d; 66], None),
+            ],
         };
         round_trip(&entry);
     }
@@ -685,6 +799,7 @@ mod tests {
             account_flat_diff: vec![(vec![0xaa; 32], None)],
             storage_flat_diff: vec![],
             binary_trie_diff: vec![(vec![0x0c; 34], None)],
+            binary_flat_diff: vec![],
         };
         round_trip(&entry);
     }
@@ -710,6 +825,7 @@ mod tests {
             account_flat_diff: vec![],
             storage_flat_diff: vec![],
             binary_trie_diff: vec![],
+            binary_flat_diff: vec![],
         };
         round_trip(&entry);
     }
@@ -742,6 +858,7 @@ mod tests {
             account_flat_diff: vec![],
             storage_flat_diff: vec![],
             binary_trie_diff: vec![],
+            binary_flat_diff: vec![],
         };
         let bytes = entry.encode();
         let err = JournalEntry::decode(&bytes[..bytes.len() - 1]).unwrap_err();
@@ -890,6 +1007,7 @@ mod tests {
             account_flat_diff: vec![],
             storage_flat_diff: vec![],
             binary_trie_diff: vec![],
+            binary_flat_diff: vec![],
         };
         let mut bytes = entry.encode();
         bytes.push(0xff); // unexpected trailing byte
@@ -918,8 +1036,9 @@ mod tests {
             vec(flat_diff_entry(), 0..16),
             vec(flat_diff_entry(), 0..16),
             vec(flat_diff_entry(), 0..16),
+            vec(flat_diff_entry(), 0..16),
         )
-            .prop_map(|(bh, psr, pbr, a, b, c, d, e)| JournalEntry {
+            .prop_map(|(bh, psr, pbr, a, b, c, d, e, f)| JournalEntry {
                 block_hash: H256::from(bh),
                 parent_state_root: H256::from(psr),
                 parent_binary_root: H256::from(pbr),
@@ -928,6 +1047,7 @@ mod tests {
                 account_flat_diff: c,
                 storage_flat_diff: d,
                 binary_trie_diff: e,
+                binary_flat_diff: f,
             });
         proptest!(|(entry in entry_strategy)| {
             let bytes = entry.encode();
@@ -965,6 +1085,7 @@ mod tests {
             account_flat_diff: vec![(vec![0xcc; 65], Some(vec![0xdd]))],
             storage_flat_diff: vec![],
             binary_trie_diff: vec![(vec![0x0e; 34], Some(vec![0xef]))],
+            binary_flat_diff: vec![],
         };
         let baseline = entry.encode();
         proptest!(|(idx in 0..baseline.len(), bit in 0u8..8)| {
@@ -998,6 +1119,7 @@ mod tests {
             account_flat_diff: vec![],
             storage_flat_diff: vec![],
             binary_trie_diff: vec![(shared_key.clone(), Some(vec![0xb2]))],
+            binary_flat_diff: vec![],
         };
         let decoded = JournalEntry::decode(&entry.encode()).unwrap();
         assert_eq!(
@@ -1009,6 +1131,205 @@ mod tests {
             decoded.binary_trie_diff,
             vec![(shared_key, Some(vec![0xb2]))],
             "the binary pre-image must survive it too, with its own value"
+        );
+    }
+
+    /// The Decision 6 collision at its sharpest: the two *binary* sections.
+    ///
+    /// A `BitPath` DB key at bit-depth 240 is 34 bytes and an account-zone tree
+    /// key is 34 bytes. Nothing in the bytes distinguishes them, and there are
+    /// no section tags — sections are positional — so the section boundary is
+    /// the only thing that routes a key to `BINARY_TRIE_NODES` rather than
+    /// `BINARY_FLATKEYVALUE`. Folding the two together would, on rollback,
+    /// restore a leaf value into the node table and a node encoding into the
+    /// mirror, at the same key, in the same commit.
+    ///
+    /// The direct analogue of
+    /// [`binary_and_account_sections_do_not_bleed_at_a_shared_key`], and the one
+    /// existing tests cannot cover because the collision is new.
+    #[test]
+    fn binary_flat_and_binary_node_sections_do_not_bleed_at_a_shared_key() {
+        let shared_key = vec![0x07; 34];
+        let entry = JournalEntry {
+            block_hash: h(0x01),
+            parent_state_root: h(0x02),
+            parent_binary_root: h(0x03),
+            account_trie_diff: vec![],
+            storage_trie_diff: vec![],
+            account_flat_diff: vec![],
+            storage_flat_diff: vec![],
+            binary_trie_diff: vec![(shared_key.clone(), Some(vec![0xb2]))],
+            binary_flat_diff: vec![(shared_key.clone(), Some(vec![0xf3; 32]))],
+        };
+        let decoded = JournalEntry::decode(&entry.encode()).unwrap();
+        assert_eq!(
+            decoded.binary_trie_diff,
+            vec![(shared_key.clone(), Some(vec![0xb2]))],
+            "the node pre-image must survive the shared key with its own value"
+        );
+        assert_eq!(
+            decoded.binary_flat_diff,
+            vec![(shared_key.clone(), Some(vec![0xf3; 32]))],
+            "the mirror pre-image must survive it too, and must not be the node's"
+        );
+
+        // The absence direction as well: a `None` in one section must not be
+        // read as a `None` in the other, because a rollback turns it into a
+        // delete against a different column family.
+        let asymmetric = JournalEntry {
+            binary_trie_diff: vec![(shared_key.clone(), None)],
+            binary_flat_diff: vec![(shared_key.clone(), Some(vec![0xf3; 32]))],
+            ..entry
+        };
+        let decoded = JournalEntry::decode(&asymmetric.encode()).unwrap();
+        assert_eq!(decoded.binary_trie_diff, vec![(shared_key.clone(), None)]);
+        assert_eq!(
+            decoded.binary_flat_diff,
+            vec![(shared_key, Some(vec![0xf3; 32]))]
+        );
+    }
+
+    /// v2 was redefined in place, so a datadir written before the sixth section
+    /// existed still carries the version byte `2` and survives
+    /// `drain_stale_journal_entries` untouched. This pins what happens when such
+    /// a record reaches the decoder: a loud, deterministic `Truncated`, never a
+    /// silent misread.
+    ///
+    /// **What this does not pin, and why the module docs say so.** It does *not*
+    /// prove the failure depends on the section being last. Mutation-checked by
+    /// relocating the section to position two in both `encode` and `decode`,
+    /// with a fixture carrying content in every section: same `Truncated`, same
+    /// offset. Sections are self-delimiting, so reading six of them from a
+    /// five-section stream always consumes the same five partitions and runs off
+    /// the end, wherever the sixth is declared. The positional guarantee is
+    /// pinned separately, by
+    /// [`appending_last_leaves_the_five_existing_sections_byte_identical`].
+    ///
+    /// Hand-rolled the way [`encode_v1_entry`] is: the five-section encoder no
+    /// longer exists, and pinning this against a real predecessor shape rather
+    /// than a truncated current record is the whole point.
+    #[test]
+    fn a_five_section_v2_record_fails_loudly_as_truncated() {
+        let mut bytes = vec![JOURNAL_VERSION];
+        bytes.extend_from_slice(h(0xaa).as_bytes());
+        bytes.extend_from_slice(h(0xbb).as_bytes());
+        bytes.extend_from_slice(h(0xcc).as_bytes());
+        // account_trie_diff: one (path, None) pair, so the record is not
+        // trivially empty and the failure cannot come from an empty buffer.
+        encode_varint(&mut bytes, 1);
+        encode_varint(&mut bytes, 1);
+        bytes.push(0x42);
+        bytes.push(0);
+        // The other four v2 sections, all empty. Five in total — no sixth.
+        for _ in 0..4 {
+            encode_varint(&mut bytes, 0);
+        }
+        let len_before_sixth = bytes.len();
+
+        assert_eq!(
+            JournalEntry::decode(&bytes),
+            Err(JournalDecodeError::Truncated {
+                offset: len_before_sixth,
+                expected: 1,
+            }),
+            "a five-section v2 record must fail at the start of the missing \
+             sixth section, not decode into garbage"
+        );
+
+        // The claim that the failure is *positional* rather than incidental:
+        // append the missing section and the very same bytes decode cleanly.
+        encode_varint(&mut bytes, 0);
+        let decoded = JournalEntry::decode(&bytes).expect("six sections decode");
+        assert_eq!(decoded.account_trie_diff, vec![(vec![0x42], None)]);
+        assert!(decoded.binary_flat_diff.is_empty());
+    }
+
+    /// The positional guarantee, stated as the thing that is actually true: the
+    /// sixth section is *appended*, so the five that predate it keep their byte
+    /// offsets and a current record with an empty sixth section is exactly the
+    /// old five-section encoding plus one `0` count byte.
+    ///
+    /// This is what "appended last" buys, and it is not the loud failure — that
+    /// happens wherever the section sits (see
+    /// [`a_five_section_v2_record_fails_loudly_as_truncated`]). It is what makes
+    /// a future lenient decode possible and sound: "a missing *trailing* section
+    /// defaults to empty" can only be said of a trailing section, whereas the
+    /// same leniency around a middle section would silently re-route every key
+    /// after it into the wrong column family. Moving the section — even
+    /// consistently across `encode` and `decode`, which nothing else in this
+    /// file would notice — fails here.
+    #[test]
+    fn appending_last_leaves_the_five_existing_sections_byte_identical() {
+        // A record with content in all five original sections and nothing in the
+        // sixth, so the only difference from the pre-change encoding is the byte
+        // the sixth section contributes.
+        let entry = JournalEntry {
+            block_hash: h(0xaa),
+            parent_state_root: h(0xbb),
+            parent_binary_root: h(0xcc),
+            account_trie_diff: vec![(vec![0x01, 0x02], Some(vec![0xa1, 0xa2]))],
+            storage_trie_diff: vec![(vec![0x03; 67], None)],
+            account_flat_diff: vec![(vec![0x04; 65], Some(vec![0xa4; 3]))],
+            storage_flat_diff: vec![(vec![0x05; 131], None)],
+            binary_trie_diff: vec![(vec![0x06; 34], Some(vec![0xa6; 2]))],
+            binary_flat_diff: vec![],
+        };
+        let encoded = entry.encode();
+
+        // The five-section encoding, hand-rolled the way `encode_v1_entry` is:
+        // the previous encoder is gone, and comparing against a truncated
+        // current record would make the assertion vacuous.
+        let mut five = vec![JOURNAL_VERSION];
+        five.extend_from_slice(h(0xaa).as_bytes());
+        five.extend_from_slice(h(0xbb).as_bytes());
+        five.extend_from_slice(h(0xcc).as_bytes());
+        encode_flat_diff(&mut five, &entry.account_trie_diff);
+        encode_flat_diff(&mut five, &entry.storage_trie_diff);
+        encode_flat_diff(&mut five, &entry.account_flat_diff);
+        encode_flat_diff(&mut five, &entry.storage_flat_diff);
+        encode_flat_diff(&mut five, &entry.binary_trie_diff);
+
+        assert_eq!(
+            &encoded[..five.len()],
+            five.as_slice(),
+            "the five pre-existing sections must sit at unchanged byte offsets"
+        );
+        assert_eq!(
+            &encoded[five.len()..],
+            &[0u8],
+            "the only addition is the sixth section's empty count byte, on the end"
+        );
+    }
+
+    /// The downgrade direction, and the other half of "loud in both directions":
+    /// a binary that knows only five sections reads a six-section record,
+    /// consumes five, and is left holding the sixth section's bytes. Simulated
+    /// by decoding a six-section record truncated to nothing — the observable
+    /// form is `TrailingBytes`, which the existing decoder already produces for
+    /// any suffix it does not understand.
+    #[test]
+    fn a_five_section_reader_would_see_trailing_bytes_on_a_six_section_record() {
+        let entry = JournalEntry {
+            block_hash: h(0xaa),
+            parent_state_root: h(0xbb),
+            parent_binary_root: h(0xcc),
+            account_trie_diff: vec![],
+            storage_trie_diff: vec![],
+            account_flat_diff: vec![],
+            storage_flat_diff: vec![],
+            binary_trie_diff: vec![],
+            binary_flat_diff: vec![],
+        };
+        let mut bytes = entry.encode();
+        // One trailing byte is what a six-section record looks like to a
+        // five-section decoder: everything parsed, one section's worth left.
+        bytes.push(0x00);
+        assert!(
+            matches!(
+                JournalEntry::decode(&bytes),
+                Err(JournalDecodeError::TrailingBytes { trailing: 1, .. })
+            ),
+            "an unrecognised trailing section must be rejected, not ignored"
         );
     }
 
@@ -1056,6 +1377,7 @@ mod tests {
             account_flat_diff: vec![],
             storage_flat_diff: vec![],
             binary_trie_diff: vec![],
+            binary_flat_diff: vec![],
         }
         .encode()
     }
@@ -1242,6 +1564,40 @@ mod tests {
             diff_byte_estimate(&diff),
             buf.len(),
             "estimate must equal actual encoded length so encode() avoids realloc"
+        );
+    }
+
+    /// The same invariant one level up: `encode`'s `Vec::with_capacity(approx)`
+    /// must be exact for the *whole entry*, not just one section.
+    ///
+    /// The section-level test above cannot see a missing term in `approx` —
+    /// dropping one section's `diff_byte_estimate` leaves every section's own
+    /// estimate correct and only makes the entry realloc on the hot path, which
+    /// nothing observes. `with_capacity` allocates exactly, and the encoder only
+    /// ever appends, so `capacity() == len()` holds if and only if every section
+    /// is accounted for. Adding a seventh section without its term fails here.
+    #[test]
+    fn encode_capacity_is_exact_for_every_section() {
+        let entry = JournalEntry {
+            block_hash: h(0x11),
+            parent_state_root: h(0x22),
+            parent_binary_root: h(0x33),
+            account_trie_diff: vec![(vec![0x01; 3], Some(vec![0xa1; 4]))],
+            storage_trie_diff: vec![(vec![0x02; 67], None)],
+            account_flat_diff: vec![(vec![0x03; 65], Some(vec![0xa3; 200]))],
+            storage_flat_diff: vec![(vec![0x04; 131], Some(vec![0xa4; 5]))],
+            binary_trie_diff: vec![(vec![0x05; 34], Some(vec![0xa5; 9]))],
+            binary_flat_diff: vec![
+                (vec![0x06; 34], Some(vec![0xa6; 32])),
+                (vec![0x07; 66], None),
+            ],
+        };
+        let encoded = entry.encode();
+        assert_eq!(
+            encoded.capacity(),
+            encoded.len(),
+            "encode()'s capacity hint must cover every section exactly; a \
+             mismatch means a section's diff_byte_estimate term is missing"
         );
     }
 }
