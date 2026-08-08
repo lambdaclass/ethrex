@@ -53,6 +53,7 @@ use ethrex_blockchain::{
 use ethrex_common::{
     Address, H160, H256, U256,
     constants::EMPTY_TRIE_HASH,
+    evm::calculate_create_address,
     types::{
         AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHeader,
         DEFAULT_BUILDER_GAS_CEIL, EIP1559Transaction, ELASTICITY_MULTIPLIER, Genesis,
@@ -64,7 +65,7 @@ use ethrex_crypto::NativeCrypto;
 use ethrex_l2_rpc::signer::{LocalSigner, Signable, Signer};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store, error::StoreError};
-use ethrex_vm::{DynVmDatabase, Evm, VmDatabase};
+use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, VmDatabase};
 use secp256k1::SecretKey;
 use tokio_util::sync::CancellationToken;
 
@@ -2128,6 +2129,294 @@ async fn post_flip_journal_entries_carry_no_mpt_sections() {
         post_flip_seen,
         BLOCKS_PAST_THE_FLIP + 1,
         "the flip block and everything above it"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// D10.3 An account created past the flip never enters the frozen MPT — and its
+//       code is still stored.
+//
+// Freezing the trie also let both importers stop *computing* the diff
+// (`Blockchain::frozen_mpt_updates_list` for `add_block`,
+// `drain_updates_without_merkleizing` for the pipelined path). A contract
+// deployment is the sharpest probe of that pair, because it is the one update
+// shape that touches three different stores at once: a brand-new account, its
+// storage root, and a bytecode blob.
+//
+// The freeze-owned assertion is the negative one: the created account must be
+// absent from the MPT. Every account `build_chain` touches otherwise already
+// exists in the genesis alloc, so "the MPT did not move" is only ever visible
+// as an unchanged value; a CREATE makes it visible as an *absence*, which no
+// stale read can imitate.
+//
+// The bytecode assertion is deliberately labelled as what it is: a real
+// end-to-end property, but **not** an isolation test of the skip. Both importers
+// keep `code_updates` out of the skip on purpose, yet dropping them would not be
+// observable here, because `Store::advance_binary_trie_for_block` calls
+// `write_account_codes` independently on every scheduled chain. The redundancy
+// is the reason the assertion cannot fail, not an oversight — and it is why the
+// skip keeps the codes anyway rather than relying on the binary path to carry
+// them.
+// ---------------------------------------------------------------------------
+
+/// Deploy 5 bytes of runtime with a 12-byte `CODECOPY`/`RETURN` prologue. The
+/// runtime itself is never executed; all that matters is that it is a
+/// distinctive blob whose hash the test can look up directly.
+fn deployed_runtime() -> Bytes {
+    Bytes::from_static(&[0x60, 0x01, 0x60, 0x01, 0x55])
+}
+
+async fn deploy_tx(chain_id: u64, nonce: u64, signer: &Signer) -> Transaction {
+    let runtime = deployed_runtime();
+    let mut init = vec![
+        0x60,
+        runtime.len() as u8, // PUSH1 len
+        0x60,
+        0x0c, // PUSH1 12 — offset of the runtime within this init code
+        0x60,
+        0x00, // PUSH1 0
+        0x39, // CODECOPY
+        0x60,
+        runtime.len() as u8, // PUSH1 len
+        0x60,
+        0x00, // PUSH1 0
+        0xf3, // RETURN
+    ];
+    init.extend_from_slice(&runtime);
+
+    let mut tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+        chain_id,
+        nonce,
+        max_priority_fee_per_gas: 1,
+        max_fee_per_gas: TEST_MAX_FEE_PER_GAS,
+        gas_limit: TEST_GAS_LIMIT,
+        to: TxKind::Create,
+        value: U256::zero(),
+        data: Bytes::from(init),
+        ..Default::default()
+    });
+    tx.sign_inplace(signer).await.unwrap();
+    tx
+}
+
+#[tokio::test]
+async fn an_account_created_past_the_flip_never_enters_the_frozen_mpt() {
+    // Both importers grew their own skip, with their own `removed` handling, so
+    // a regression in one is invisible in the other.
+    for pipelined in [false, true] {
+        let chains = build_boundary_chains(FLIP_BLOCK).await;
+        let store = chains.scheduled_store.clone();
+        let blockchain = Blockchain::default_with_store(store.clone());
+        let head = chains.scheduled_blocks.last().unwrap();
+        assert!(
+            head.header.timestamp >= chains.activation,
+            "the chain is already past the flip, so the next block is too"
+        );
+
+        // `build_chain` sent one transfer per block, so this is the sender's next
+        // nonce and therefore the address the CREATE will land on.
+        let sender = sender_from_key(&test_secret_key());
+        let deploy_nonce = FLIP_BLOCK;
+        let created = calculate_create_address(sender, deploy_nonce);
+        let runtime_hash = keccak(deployed_runtime().as_ref());
+
+        assert!(
+            mpt_account_at(&store, head, created).is_none(),
+            "guard against a vacuous pass: the CREATE address is absent before the deploy"
+        );
+
+        let signer: Signer = LocalSigner::new(test_secret_key()).into();
+        blockchain
+            .add_transaction_to_pool(
+                deploy_tx(
+                    chains.scheduled_genesis.config.chain_id,
+                    deploy_nonce,
+                    &signer,
+                )
+                .await,
+            )
+            .await
+            .expect("deploy tx should enter pool");
+        let block = build_block(&store, &blockchain, &head.header).await;
+        assert!(block.header.timestamp >= chains.activation);
+        assert_eq!(
+            block.body.transactions.len(),
+            1,
+            "the deploy must have made it into the payload, or nothing below is tested"
+        );
+
+        if pipelined {
+            blockchain
+                .add_block_pipeline(block.clone(), None)
+                .expect("pipelined import past the flip");
+        } else {
+            blockchain
+                .add_block(block.clone())
+                .expect("serial import past the flip");
+        }
+
+        // The deploy really happened: the binary trie — which is what this
+        // header's root names — has the account, with the deployed code hash.
+        let binary_db = StoreVmDatabase::new(store.clone(), block.header.clone())
+            .expect("a post-flip header must open a readable state");
+        let created_state = binary_db
+            .get_account_state(created)
+            .expect("binary account read")
+            .unwrap_or_else(|| panic!("pipelined={pipelined}: the CREATE must have landed"));
+        assert_eq!(
+            created_state.code_hash, runtime_hash,
+            "pipelined={pipelined}: the created account carries the deployed code hash"
+        );
+
+        // The freeze: that account never reached the MPT. Block-addressed, so
+        // this is what the trie holds rather than what it will admit to holding.
+        assert!(
+            mpt_account_at(&store, &block, created).is_none(),
+            "pipelined={pipelined}: an account created past the flip must not enter the \
+             frozen MPT"
+        );
+
+        // End-to-end, and redundantly guaranteed — see the section comment.
+        assert_eq!(
+            store
+                .get_account_code(runtime_hash)
+                .expect("code read")
+                .map(|code| Bytes::copy_from_slice(code.code())),
+            Some(deployed_runtime()),
+            "pipelined={pipelined}: the deployed bytecode is retrievable by hash"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// D10.4 The freeze lives at the choke point, not only at the two importers.
+//
+// D10.1-3 drive the two block importers, both of which now also skip *computing*
+// the MPT diff. That makes them redundant with the freeze in `store_block_inner`
+// — either alone would keep the MPT still — so neither of them can show that the
+// freeze at the choke point is load-bearing.
+//
+// It is, because `store_block_inner` builds the only non-test `UpdateBatch` in
+// the tree and other producers reach it with a *fully merkleized* list and no
+// skip of their own: the L2 sequencer's block producer and L1 committer
+// (`apply_account_updates_batch` then `store_block`), and witness regeneration
+// (`apply_account_updates_from_trie_with_witness` then `store_block`). This
+// drives that shape directly — merkleize a post-flip block against its parent,
+// hand the result to `store_block`, and require the MPT not to move.
+//
+// (Witness regeneration cannot actually be driven past the flip today: it opens
+// the first block's parent state at `parent_header.state_root`, which is a
+// binary root, and fails with `RootNotFound` before it reaches the store. That
+// is a pre-existing limitation of MPT-shaped witnesses at a binary-root header —
+// the same reason `eth_getProof` refuses post-flip — and not something the
+// freeze introduced or is required to fix. `store_block` is exercised here
+// directly rather than through it.)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn store_block_drops_a_post_flip_mpt_diff_even_when_its_caller_merkleized_one() {
+    let chains = build_boundary_chains(FLIP_BLOCK + BLOCKS_PAST_THE_FLIP).await;
+    let store = chains.scheduled_store.clone();
+    let blockchain = Blockchain::default_with_store(store.clone());
+    let head = chains.scheduled_blocks.last().unwrap();
+    let sender = sender_from_key(&test_secret_key());
+    assert!(head.header.timestamp >= chains.activation);
+
+    let frozen_at = mpt_account_at(&store, head, sender).expect("the sender is in the alloc");
+    assert_eq!(
+        frozen_at.nonce,
+        FLIP_BLOCK - 1,
+        "precondition: the MPT is frozen at the last pre-flip block"
+    );
+
+    // A block the store has never seen, so `store_block` really does install a
+    // fresh diff layer for it. (Re-storing an *imported* block proves nothing:
+    // `TrieLayerCache::put_batch_with_binary` refuses a state root it already
+    // holds, so the whole update is discarded before the freeze is consulted.)
+    //
+    // It must also carry a transfer. An empty block only touches the system
+    // contracts and the coinbase, which would leave the sender untouched in the
+    // merkleized diff and make this whole test pass whether or not the freeze
+    // fires — the fixture hiding the very thing it is meant to expose.
+    blockchain
+        .add_transaction_to_pool(
+            transfer_tx(
+                chains.scheduled_genesis.config.chain_id,
+                FLIP_BLOCK + BLOCKS_PAST_THE_FLIP,
+                &LocalSigner::new(test_secret_key()).into(),
+            )
+            .await,
+        )
+        .await
+        .expect("tx should enter pool");
+    let sibling = build_block_at(
+        &store,
+        &blockchain,
+        &head.header,
+        head.header.timestamp + BLOCK_TIME,
+    )
+    .await;
+    assert!(sibling.header.timestamp >= chains.activation);
+    assert_eq!(
+        sibling.body.transactions.len(),
+        1,
+        "the transfer must be in the block, or the sender is never touched"
+    );
+
+    // Record its binary root the way an importer would, so the header can be
+    // validated on the `account_updates: None` arm — the arm the L2 producer,
+    // the L1 committer and witness regeneration all take.
+    let updates = account_updates_for(&store, std::slice::from_ref(&sibling))
+        .pop()
+        .expect("one block, one update set");
+    let parent_binary = store
+        .get_binary_trie_root(head.hash())
+        .expect("parent binary root read")
+        .expect("the parent records one");
+    let binary_root = store
+        .compute_binary_trie_root(head.hash(), parent_binary, &updates)
+        .expect("binary root computation");
+    assert_eq!(
+        binary_root, sibling.header.state_root,
+        "the payload committed the binary root, so this is the one to record"
+    );
+    store
+        .set_binary_trie_root(sibling.hash(), binary_root)
+        .expect("record binary root");
+
+    // Merkleize it against its parent, exactly as those callers do. This
+    // succeeds despite the parent's root being a binary root, because MPT nodes
+    // are path-keyed: it resumes from the frozen trie and produces a real diff.
+    let merkleized = store
+        .apply_account_updates_batch(sibling.header.parent_hash, &updates)
+        .expect("merkleization against the frozen MPT")
+        .expect("the parent's state is reachable");
+    assert!(
+        !merkleized.state_updates.is_empty(),
+        "guard against a vacuous pass: the caller really did produce an MPT diff for \
+         `store_block` to drop"
+    );
+
+    blockchain
+        .store_block(
+            sibling.clone(),
+            merkleized,
+            BlockExecutionResult {
+                receipts: vec![],
+                requests: vec![],
+                block_gas_used: sibling.header.gas_used,
+                tx_gas_breakdowns: Vec::new(),
+            },
+        )
+        .expect("storing a post-flip block through the choke point must succeed");
+    store.wait_for_persistence_idle().await.expect("idle");
+
+    let after = mpt_account_at(&store, &sibling, sender).expect("the sender is in the alloc");
+    assert_eq!(
+        (after.nonce, after.balance, after.storage_root),
+        (frozen_at.nonce, frozen_at.balance, frozen_at.storage_root),
+        "the freeze must drop the diff its caller handed it (a thawed MPT would read {})",
+        FLIP_BLOCK + BLOCKS_PAST_THE_FLIP + 1
     );
 }
 
