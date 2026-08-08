@@ -872,11 +872,29 @@ impl BinaryTrie {
     /// Takes `&mut self` because a read loads the nodes on its path and
     /// keeps them: the next read down the same path costs nothing.
     ///
+    /// **The flat mirror short-circuits the descent.** When the backend
+    /// says it holds a trustworthy mirror row for `key`
+    /// ([`BinaryTrieDB::binary_flat_computed`]), the answer is one lookup
+    /// instead of a walk ~272 or ~528 bits deep, and a mirror miss is a
+    /// definitive absence rather than a reason to descend — that is what
+    /// the coverage predicate promises, and falling back on a miss would
+    /// make the promise unnecessary and the miss unobservable.
+    ///
+    /// **Uncommitted writes win over the mirror**, which is the guard the
+    /// MPT spells `!self.dirty.contains(&path)` and this trie gets from
+    /// `pending_leaves`: a key this instance has inserted or removed since
+    /// its last commit lives in the in-memory nodes, while the mirror is
+    /// still a commit behind. Without the guard, a read-after-write inside
+    /// one block would return the pre-state.
+    ///
     /// # Errors
     ///
     /// [`BinaryTrieError::Backend`] or [`BinaryTrieError::MalformedNode`]
     /// if a node on the path could not be loaded.
     pub fn get(&mut self, key: &[u8]) -> Result<Option<[u8; 32]>, BinaryTrieError> {
+        if !self.pending_leaves.contains_key(key) && self.db.binary_flat_computed(key) {
+            return self.db.binary_flat_get(key);
+        }
         let bits = bytes_to_bits(key);
         let Self { db, root, .. } = self;
         match root {
@@ -1390,7 +1408,7 @@ mod tests {
     use crate::trie::path::BitPath;
     use hex_literal::hex;
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     /// Nodes read and nodes written, counted per node rather than per
     /// call: what matters is how much of the tree was touched, not how
@@ -1444,6 +1462,94 @@ mod tests {
                 .fetch_add(entries.len(), Ordering::Relaxed);
             self.inner.put_batch(entries)
         }
+    }
+
+    /// A [`CountingDB`] that also answers flat-mirror reads, so a test can
+    /// assert how many *nodes* a `get` loaded while the mirror is on.
+    ///
+    /// The mirror's contents and its coverage are set independently, because
+    /// the two are independent in production and the interesting failures live
+    /// in their disagreement: a covered key whose row is missing must read as
+    /// absent, not fall back to a descent.
+    struct MirroredDB {
+        inner: CountingDB,
+        mirror: BTreeMap<Vec<u8>, [u8; 32]>,
+        /// Whether the mirror is trusted. `false` is the trait default and
+        /// means every read descends.
+        covered: Arc<AtomicBool>,
+    }
+
+    impl MirroredDB {
+        fn over(map: NodeMap) -> (Self, Counts, Arc<AtomicBool>) {
+            let (inner, counts) = CountingDB::over(map);
+            let covered = Arc::new(AtomicBool::new(false));
+            (
+                Self {
+                    inner,
+                    mirror: BTreeMap::new(),
+                    covered: covered.clone(),
+                },
+                counts,
+                covered,
+            )
+        }
+
+        /// Fold a commit's changelog into the mirror the way the storage
+        /// layer's writer does: `Some` writes the row, `None` deletes it.
+        fn absorb(&mut self, leaves: &LeafChangelog) {
+            for (key, value) in leaves {
+                match value {
+                    Some(value) => {
+                        self.mirror.insert(key.clone(), *value);
+                    }
+                    None => {
+                        self.mirror.remove(key);
+                    }
+                }
+            }
+        }
+    }
+
+    impl BinaryTrieDB for MirroredDB {
+        fn get(&self, path: &BitPath) -> Result<Option<Vec<u8>>, BinaryTrieError> {
+            self.inner.get(path)
+        }
+
+        fn put_batch(&self, entries: Vec<(BitPath, Vec<u8>)>) -> Result<(), BinaryTrieError> {
+            self.inner.put_batch(entries)
+        }
+
+        fn binary_flat_computed(&self, _key: &[u8]) -> bool {
+            self.covered.load(Ordering::Relaxed)
+        }
+
+        fn binary_flat_get(&self, key: &[u8]) -> Result<Option<[u8; 32]>, BinaryTrieError> {
+            Ok(self.mirror.get(key).copied())
+        }
+    }
+
+    /// A trie over `entries` committed to a fresh node map, then **reopened**
+    /// at the committed root over a [`MirroredDB`] whose mirror holds exactly
+    /// what the commit's changelog reported.
+    ///
+    /// Reopened rather than reused so nothing is resolved in memory and every
+    /// node a read touches is a counted load — which is the whole point of the
+    /// counter.
+    fn mirrored_trie(entries: &[(Vec<u8>, [u8; 32])]) -> (BinaryTrie, Counts, Arc<AtomicBool>) {
+        let map: NodeMap = Default::default();
+        let mut trie = BinaryTrie::new(Box::new(InMemoryBinaryTrieDB::new(map.clone())));
+        for (key, value) in entries {
+            trie.insert(key.clone(), *value).unwrap();
+        }
+        let committed = trie.commit().unwrap();
+
+        let (mut db, counts, covered) = MirroredDB::over(map);
+        db.absorb(&committed.leaves);
+        (
+            BinaryTrie::open(Box::new(db), committed.root),
+            counts,
+            covered,
+        )
     }
 
     /// Five keys in the 34- and 66-byte shapes the embedding produces,
@@ -3052,6 +3158,120 @@ mod tests {
             trie.pending_leaves.len(),
             1,
             "a failed commit must not consume the changelog"
+        );
+    }
+
+    // ---- Reading through the flat mirror -------------------------------
+
+    #[test]
+    fn a_covered_read_loads_no_nodes() {
+        // The test that proves the mirror is on the read path at all. A
+        // `get` answered from the mirror must load *zero* nodes — not fewer,
+        // zero — because the descent it replaces is the entire cost the
+        // mirror exists to avoid. Asserting only on the returned value would
+        // pass just as happily with the gate deleted.
+        let entries = sample_entries();
+        let (mut trie, counts, covered) = mirrored_trie(&entries);
+        covered.store(true, Ordering::Relaxed);
+
+        for (key, value) in &entries {
+            assert_eq!(trie.get(key).unwrap(), Some(*value), "key {key:?}");
+        }
+        assert_eq!(
+            counts.reads(),
+            0,
+            "a covered read must not touch the node table"
+        );
+    }
+
+    #[test]
+    fn an_uncovered_read_descends_to_the_same_answer() {
+        // The other half of the pair: with coverage off the same trie over
+        // the same mirror answers identically, by walking. If this ever
+        // disagreed with the test above, the mirror and the tree would be
+        // saying different things about the same state.
+        let entries = sample_entries();
+        let (mut trie, counts, _covered) = mirrored_trie(&entries);
+
+        for (key, value) in &entries {
+            assert_eq!(trie.get(key).unwrap(), Some(*value), "key {key:?}");
+        }
+        assert!(
+            counts.reads() > 0,
+            "an uncovered read has nowhere to go but the node table"
+        );
+    }
+
+    #[test]
+    fn a_key_in_neither_reads_as_absent_either_way() {
+        let entries = sample_entries();
+        let absent = vec![0x7f; 34];
+        assert!(entries.iter().all(|(key, _)| key != &absent));
+
+        let (mut trie, _, covered) = mirrored_trie(&entries);
+        assert_eq!(trie.get(&absent).unwrap(), None);
+        covered.store(true, Ordering::Relaxed);
+        assert_eq!(trie.get(&absent).unwrap(), None);
+    }
+
+    #[test]
+    fn an_uncommitted_write_wins_over_the_mirror() {
+        // The MPT's `!self.dirty.contains(&path)` guard, which this trie
+        // gets from `pending_leaves`. The mirror is a commit behind by
+        // construction, so a read-after-write inside one block must come
+        // from the in-memory nodes.
+        let entries = sample_entries();
+        let (key, old) = entries[0].clone();
+        let (mut trie, _, covered) = mirrored_trie(&entries);
+        covered.store(true, Ordering::Relaxed);
+        assert_eq!(trie.get(&key).unwrap(), Some(old));
+
+        trie.insert(key.clone(), [0xee; 32]).unwrap();
+        assert_eq!(
+            trie.get(&key).unwrap(),
+            Some([0xee; 32]),
+            "the mirror still holds the pre-state; the trie must not"
+        );
+
+        // And a removal in the same instance reads as absent, not as the
+        // mirror's surviving row.
+        trie.remove(&key).unwrap();
+        assert_eq!(trie.get(&key).unwrap(), None);
+
+        // A key this instance has *not* touched still takes the fast path.
+        let (untouched, value) = entries[1].clone();
+        assert_eq!(trie.get(&untouched).unwrap(), Some(value));
+    }
+
+    #[test]
+    fn a_covered_miss_is_a_definitive_absence() {
+        // The sharpest consequence of the coverage promise, and the reason
+        // an implementation that is merely usually right must answer
+        // `false`: under coverage there is no fallback, so a mirror that is
+        // a *subset* of the tree loses live state silently. Pinned here so
+        // that a future "just descend on a miss" softening has to delete a
+        // test that says why it is wrong.
+        let entries = sample_entries();
+        let (missing, _) = entries[2].clone();
+
+        let map: NodeMap = Default::default();
+        let mut trie = BinaryTrie::new(Box::new(InMemoryBinaryTrieDB::new(map.clone())));
+        for (key, value) in &entries {
+            trie.insert(key.clone(), *value).unwrap();
+        }
+        let committed = trie.commit().unwrap();
+
+        let (mut db, counts, covered) = MirroredDB::over(map);
+        db.absorb(&committed.leaves);
+        db.mirror.remove(&missing);
+        covered.store(true, Ordering::Relaxed);
+        let mut trie = BinaryTrie::open(Box::new(db), committed.root);
+
+        assert_eq!(trie.get(&missing).unwrap(), None);
+        assert_eq!(
+            counts.reads(),
+            0,
+            "no fallback descent: the miss is the answer"
         );
     }
 }

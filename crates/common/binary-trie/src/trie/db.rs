@@ -38,6 +38,50 @@ pub trait BinaryTrieDB: Send + Sync {
     ///
     /// [`get`]: BinaryTrieDB::get
     fn put_batch(&self, entries: Vec<(BitPath, Vec<u8>)>) -> Result<(), BinaryTrieError>;
+
+    /// Whether a read of `key` may be answered from the flat leaf mirror
+    /// instead of by descending the tree.
+    ///
+    /// **A coverage question, and only that.** `true` promises that
+    /// [`binary_flat_get`] is *authoritative for this key in both
+    /// directions*: it returns the leaf's value if the tree holds it, and
+    /// `None` if the tree does not. A `None` under a `true` answer is
+    /// therefore a definitive absence and [`BinaryTrie::get`] does **not**
+    /// fall back to a descent — which is why an implementation that is
+    /// merely *usually* right must answer `false`. A mirror that is a subset
+    /// of the tree makes reads lose live state; a mirror that is a superset
+    /// makes them invent it.
+    ///
+    /// Defaults to `false`, so an implementation that keeps no mirror — the
+    /// in-memory one, every test that does not care — is unaffected and
+    /// every read descends. The MPT's `TrieDB::flatkeyvalue_computed` has
+    /// exactly this default for exactly this reason.
+    ///
+    /// Note this is *not* the same question as "who is responsible for
+    /// writing this key's mirror row". A backfill generator that has not
+    /// started owns nothing, so the commit path owns the whole keyspace —
+    /// and yet no reader may trust the mirror, because nothing has populated
+    /// it. The two predicates are separate on purpose and answer an absent
+    /// frontier oppositely.
+    ///
+    /// [`binary_flat_get`]: BinaryTrieDB::binary_flat_get
+    /// [`BinaryTrie::get`]: super::BinaryTrie::get
+    fn binary_flat_computed(&self, _key: &[u8]) -> bool {
+        false
+    }
+
+    /// The flat mirror's value for `key`, consulted only when
+    /// [`binary_flat_computed`] answered `true` for it.
+    ///
+    /// Defaults to `Ok(None)`, which is unreachable behind the `false`
+    /// default above and would be read as a definitive absence if it ever
+    /// were reached — so an implementation overriding one of the two must
+    /// override both.
+    ///
+    /// [`binary_flat_computed`]: BinaryTrieDB::binary_flat_computed
+    fn binary_flat_get(&self, _key: &[u8]) -> Result<Option<[u8; 32]>, BinaryTrieError> {
+        Ok(None)
+    }
 }
 
 /// In-memory [`BinaryTrieDB`], backed by a map that clones and
