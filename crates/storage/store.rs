@@ -16,7 +16,8 @@ use crate::{
     apply_prefix,
     backend::in_memory::InMemoryBackend,
     binary_trie::{
-        BackendBinaryTrieDB, BinaryFlatWrites, BinaryTrieNodes, LayeredBinaryTrieDB,
+        BINARY_FLAT_FRONTIER_COMPLETE, BackendBinaryFlatDB, BackendBinaryTrieDB,
+        BinaryFlatCoverage, BinaryFlatWrites, BinaryTrieNodes, LayeredBinaryTrieDB,
         StagedBinaryNodes,
     },
     block_data_buffer::BlockDataBuffer,
@@ -152,9 +153,6 @@ const BAD_BLOCKS_KEY: &[u8] = b"bad_blocks";
 ///   key is one byte long; they are 34 or 66.
 pub(crate) const BINARY_LAST_WRITTEN_KEY: &[u8] = b"binary_last_written";
 
-/// The `[0xff]` completion sentinel stored under [`BINARY_LAST_WRITTEN_KEY`].
-pub(crate) const BINARY_FLAT_FRONTIER_COMPLETE: &[u8] = &[0xff];
-
 /// Whether `commit_to_disk` is the writer responsible for `key` — i.e. whether
 /// it should both write the mirror row and journal its pre-image.
 ///
@@ -272,6 +270,18 @@ pub struct Store {
     latest_block_header: LatestBlockHeaderCache,
     /// Last computed FlatKeyValue for incremental updates.
     last_computed_flatkeyvalue: Arc<RwLock<Vec<u8>>>,
+
+    /// In-memory copy of the binary flat mirror's backfill frontier, in the
+    /// **durable** three-state shape (absent / a tree key / `[0xff]`) rather
+    /// than the MPT's padded in-memory form — the marker's states are already
+    /// distinguishable here, and padding a 34- or 66-byte keyspace to one
+    /// length would make an all-zero pad compare as *covering* every account
+    /// key, which is the wrong direction to be wrong in.
+    ///
+    /// Kept beside `last_computed_flatkeyvalue` and read the same way: the
+    /// generator advances it at batch commit, so it lags the durable marker
+    /// and readers under-claim coverage.
+    binary_last_computed: Arc<RwLock<Vec<u8>>>,
 
     /// Cache for account bytecodes, keyed by the bytecode hash.
     /// Note that we don't remove entries on account code changes, since
@@ -2108,7 +2118,7 @@ impl Store {
         let persist_cap = persist_channel_capacity.max(1); // clamp: 0 would be a rendezvous channel
         let (persist_tx, persist_rx) = std::sync::mpsc::sync_channel(persist_cap);
 
-        let (last_written, initial_flushed_upto) = {
+        let (last_written, binary_last_written, initial_flushed_upto) = {
             let tx = backend.begin_read()?;
             let last_written = tx
                 .get(MISC_VALUES, "last_written".as_bytes())?
@@ -2118,11 +2128,18 @@ impl Store {
             } else {
                 last_written
             };
+            // Kept verbatim, unlike the MPT frontier above: the binary marker's
+            // three states are already unambiguous, so there is nothing to
+            // expand and no length to guess. See the `binary_last_computed`
+            // field docs.
+            let binary_last_written = tx
+                .get(MISC_VALUES, BINARY_LAST_WRITTEN_KEY)?
+                .unwrap_or_default();
             let initial_flushed_upto = match tx.get(MISC_VALUES, FLUSHED_UPTO_KEY)? {
                 Some(bytes) => decode_flushed_upto(&bytes)?,
                 None => 0,
             };
-            (last_written, initial_flushed_upto)
+            (last_written, binary_last_written, initial_flushed_upto)
         };
         let mut initial_buffer = BlockDataBuffer::new();
         initial_buffer.set_flushed_upto(initial_flushed_upto);
@@ -2143,6 +2160,7 @@ impl Store {
             persist_tx,
             pending_trie_roots: Arc::new(PendingTrieRoots::default()),
             last_computed_flatkeyvalue: Arc::new(RwLock::new(last_written)),
+            binary_last_computed: Arc::new(RwLock::new(binary_last_written)),
             account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
             code_metadata_cache: Arc::new(Mutex::new(rustc_hash::FxHashMap::default())),
             fcu_lock: Arc::new(tokio::sync::Mutex::new(())),
@@ -2894,12 +2912,47 @@ impl Store {
         gate_root: H256,
         staged: StagedBinaryNodes,
     ) -> Result<LayeredBinaryTrieDB, StoreError> {
+        // One read view for both handles, so a node read and a mirror read
+        // taken in one traversal see one consistent snapshot: the mirror is
+        // written in the nodes' own `write_tx`, and reading the two through
+        // different views could land either side of that batch.
+        let read_view = self.backend.begin_read()?;
         Ok(LayeredBinaryTrieDB::new(
             binary_root,
             self.gated_snapshot(gate_root)?,
-            BackendBinaryTrieDB::new(self.backend.clone())?,
+            BackendBinaryTrieDB::with_view(self.backend.clone(), read_view.clone()),
+            BackendBinaryFlatDB::with_view(self.backend.clone(), read_view),
+            self.binary_flat_coverage()?,
             staged,
         ))
+    }
+
+    /// How much of the keyspace a read may trust the binary flat mirror for,
+    /// from the in-memory frontier.
+    ///
+    /// The **read** gate. Its write-side sibling `binary_flat_frontier_covers`
+    /// answers the opposite question for an absent marker; see
+    /// [`BinaryFlatCoverage`] for why the two must not be unified.
+    fn binary_flat_coverage(&self) -> Result<BinaryFlatCoverage, StoreError> {
+        let frontier = self
+            .binary_last_computed
+            .read()
+            .map_err(|_| StoreError::LockError)?;
+        Ok(BinaryFlatCoverage::from_marker(Some(frontier.as_slice())))
+    }
+
+    /// Whether the binary flat mirror's backfill has finished, read from the
+    /// **durable** marker rather than the in-memory frontier — the same choice
+    /// [`Self::flatkeyvalue_fully_generated`] makes, and for the same reason:
+    /// the in-memory copy lags by design.
+    ///
+    /// Gates journal-backed deep reorgs, which the mirror cannot survive
+    /// mid-sweep: entries journaled while the generator runs omit pre-images
+    /// for keys past the frontier.
+    pub fn binary_flat_fully_generated(&self) -> Result<bool, StoreError> {
+        let tx = self.backend.begin_read()?;
+        let marker = tx.get(MISC_VALUES, BINARY_LAST_WRITTEN_KEY)?;
+        Ok(BinaryFlatCoverage::from_marker(marker.as_deref()).is_complete())
     }
 
     /// The root to gate a binary read at `parent_hash` on: the parent's
