@@ -2363,6 +2363,22 @@ impl<'a> VM<'a> {
             // every slot, a single such frame halts block production.
             let mut frame_bal_checkpoint = self.db.bal_recorder.as_ref().map(|r| r.checkpoint());
 
+            // Frames run through `run_execution`, which neither opens nor closes a tracer context,
+            // and the shortcut branches below never reach it at all. Opening here covers all three
+            // paths; the matching close follows the branch.
+            self.tracer.enter(
+                if is_static {
+                    CallType::STATICCALL
+                } else {
+                    CallType::CALL
+                },
+                caller,
+                target,
+                frame.value,
+                frame.gas_limit,
+                &frame.data,
+            );
+
             let (frame_success, frame_gas_used, frame_logs) = if value_transfer_reverted {
                 self.substate.revert_backup();
                 self.restore_cache_state()?;
@@ -2509,6 +2525,11 @@ impl<'a> VM<'a> {
 
                 result
             };
+
+            self.tracer.exit_early(
+                frame_gas_used,
+                (!frame_success).then(|| "frame reverted".to_string()),
+            )?;
 
             // EIP-8037: a failed frame's state changes were reverted above, so it
             // creates no state and must contribute zero state gas. Roll the shared
@@ -3052,6 +3073,16 @@ impl<'a> VM<'a> {
         // refund above (which also returns the max-vs-effective fee delta).
         let frame_gas_used = total_gas_used.saturating_sub(intrinsic_gas);
         let gas_refund = sum_frame_gas_limits.saturating_sub(frame_gas_used);
+
+        // The frame loop bypasses `finalize_execution`, so close the transaction's tracer
+        // context here; without it the top call reports no gas and no result.
+        let tx_ctx_result = ContextResult {
+            result: result.clone(),
+            gas_used: total_gas_used,
+            gas_spent: total_gas_used,
+            output: Bytes::new(),
+        };
+        self.tracer.exit_context(&tx_ctx_result, true)?;
 
         let report = ExecutionReport {
             result,
