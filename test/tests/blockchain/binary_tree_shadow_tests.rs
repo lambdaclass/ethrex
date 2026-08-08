@@ -53,8 +53,9 @@ use ethrex_common::{
     Address, H160, H256, U256,
     constants::EMPTY_TRIE_HASH,
     types::{
-        AccountState, Block, BlockBody, BlockHeader, DEFAULT_BUILDER_GAS_CEIL, EIP1559Transaction,
-        ELASTICITY_MULTIPLIER, Genesis, GenesisAccount, Transaction, TxKind,
+        AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHeader,
+        DEFAULT_BUILDER_GAS_CEIL, EIP1559Transaction, ELASTICITY_MULTIPLIER, Genesis,
+        GenesisAccount, Transaction, TxKind,
     },
     utils::keccak,
 };
@@ -3974,4 +3975,217 @@ async fn a_node_at_a_known_target_is_reported_synced() {
         !ethrex_rpc::is_reported_synced(false, canonical_head, &target),
         "an unlatched node is not synced even at the target"
     );
+}
+
+// ===========================================================================
+// Phase E — the single-version trie parked *past* the root it is asked to
+// extend.
+//
+// Phase D9 covered one way a `BINARY_TRIE_ROOTS` row outlives the nodes it
+// names: the nodes never reached disk. This is the other way round — the nodes
+// reached disk and were then overwritten, because the binary trie is path-keyed
+// and holds exactly one version of state.
+//
+// Why it matters beyond a curiosity: a `pbtsnap/1` install would land the
+// pivot's state into that single slot, while genesis keeps the row
+// `add_initial_state` wrote for it. A node that then falls back to full sync
+// walks forward from genesis, and every pre-activation block shadow-tracks
+// through `advance_binary_trie_for_block`, which gates on the recorded parent
+// root and on nothing else.
+//
+// The tests below need no snap-sync seam: flushing a short chain's layers and
+// dropping them parks the trie at block 3 with today's machinery, which is the
+// same shape the seam would produce.
+// ===========================================================================
+
+/// A single fresh account, so the root that comes out depends entirely on the
+/// base it was applied to.
+fn wrong_base_probe_updates() -> Vec<AccountUpdate> {
+    vec![AccountUpdate {
+        address: Address::from_low_u64_be(0xD00D),
+        info: Some(AccountInfo {
+            balance: U256::from(7u64),
+            nonce: 1,
+            ..Default::default()
+        }),
+        ..Default::default()
+    }]
+}
+
+/// Park the binary trie at block 3, then ask it to extend genesis.
+///
+/// Establishes the answer to "clean error, panic, or silent wrong base": it is
+/// the third. `has_binary_trie_state` sees the problem perfectly well — the
+/// precondition below asserts that — but `advance_binary_trie_for_block` never
+/// asks it.
+///
+/// **This is a characterization test of a gap, not a specification.** It pins
+/// down what the code does today so the gap cannot close or widen unnoticed;
+/// the behaviour it records is the behaviour we want to remove. When
+/// `advance_binary_trie_for_block` grows the missing presence check, this test
+/// must be *inverted* — the `advance` below becomes an `expect_err` — not
+/// deleted. Failing here after such a change is the guard working.
+///
+/// The check has to read through the gated DB `advance` already builds, not
+/// through `binary_trie_holds_root`, whose gate is the root itself: for a
+/// pre-activation block the layer is keyed by the parent's *header* (MPT) root,
+/// so gating on the binary root waits for nothing and can miss a parent layer
+/// that has not been installed yet.
+#[tokio::test]
+async fn extending_a_root_the_parked_binary_trie_no_longer_holds_builds_on_the_wrong_base() {
+    let sender = sender_from_key(&test_secret_key());
+    let genesis = load_funded_genesis(sender, Some(FAR_FUTURE_BINARY_TREE_TIME));
+    let chain_id = genesis.config.chain_id;
+
+    // The node under test: trie driven to block 3, flushed, layers dropped, so
+    // the one on-disk version is block 3's.
+    let store = store_from_genesis(genesis.clone()).await;
+    let blockchain = Blockchain::default_with_store(store.clone());
+    let blocks = build_chain(&store, &blockchain, chain_id, 3).await;
+    let head = blocks.last().expect("a non-empty chain");
+
+    let genesis_hash = store.get_block_header(0).unwrap().unwrap().hash();
+    let genesis_binary_root = store
+        .get_binary_trie_root(genesis_hash)
+        .unwrap()
+        .expect("genesis seeding records a binary root");
+
+    store
+        .commit_trie_layers_for_test(head.header.state_root)
+        .await
+        .unwrap();
+    store.drop_trie_layers_for_test().unwrap();
+
+    // Genesis's bookkeeping row is durable and still there ...
+    assert_eq!(
+        store.get_binary_trie_root(genesis_hash).unwrap(),
+        Some(genesis_binary_root),
+        "genesis keeps the binary root `add_initial_state` recorded for it"
+    );
+    // ... while the nodes behind it were overwritten in place by block 3.
+    // This is the presence check doing its job, and it is the whole reason the
+    // failure below is a gap in one caller rather than a gap in the predicate.
+    assert!(
+        !store
+            .has_binary_trie_state(genesis_hash, genesis_binary_root)
+            .unwrap(),
+        "precondition: the presence check must see that genesis's binary state \
+         is not what the single-version trie holds any more"
+    );
+
+    // What extending genesis *should* produce, from a store whose trie really
+    // is at genesis.
+    let clean = store_from_genesis(genesis.clone()).await;
+    let clean_genesis_hash = clean.get_block_header(0).unwrap().unwrap().hash();
+    let expected = clean
+        .advance_binary_trie_for_block(
+            H256::repeat_byte(0x11),
+            clean_genesis_hash,
+            &wrong_base_probe_updates(),
+        )
+        .expect("a trie that holds genesis extends it")
+        .root;
+
+    // The parked node, asked the same question.
+    let advance = store
+        .advance_binary_trie_for_block(
+            H256::repeat_byte(0x11),
+            genesis_hash,
+            &wrong_base_probe_updates(),
+        )
+        .expect(
+            "extending from a root the trie no longer holds does not error: \
+             `advance_binary_trie_for_block` gates on the recorded parent root \
+             alone, and that row is still there",
+        );
+
+    assert_ne!(
+        advance.root, expected,
+        "and it does not produce genesis's successor either — it builds on \
+         whatever the path-keyed trie resolves to now"
+    );
+    assert_eq!(
+        advance.parent_root, genesis_binary_root,
+        "the advance still reports genesis as its parent, so nothing \
+         downstream can tell the base was wrong"
+    );
+
+    // Name the base it actually used: block 3's state, reproduced on a twin
+    // whose trie genuinely is at block 3.
+    let twin = store_from_genesis(genesis.clone()).await;
+    let twin_chain = Blockchain::default_with_store(twin.clone());
+    let twin_blocks = build_chain(&twin, &twin_chain, chain_id, 3).await;
+    let twin_head = twin_blocks.last().expect("a non-empty chain");
+    let from_block_three = twin
+        .advance_binary_trie_for_block(
+            H256::repeat_byte(0x22),
+            twin_head.hash(),
+            &wrong_base_probe_updates(),
+        )
+        .expect("the twin extends its own head")
+        .root;
+
+    assert_eq!(
+        advance.root, from_block_three,
+        "the wrong base is not arbitrary: extending genesis on the parked node \
+         produces exactly block 3's successor. A full-sync fallback after a \
+         snap install would record this root for block 1 and keep going, with \
+         nothing detecting it until the flip block."
+    );
+}
+
+/// The same parked node at startup: the resume walk is *not* where this bites.
+///
+/// `last_block_with_state` asks `has_state_for_header`, which is the real
+/// presence check on both tries, so it lands on a block whose state is genuinely
+/// held. The hole is forward-only — in the shadow-track path, not the walk.
+#[tokio::test]
+async fn the_resume_walk_on_a_parked_binary_trie_lands_on_state_it_really_holds() {
+    let chains = build_boundary_chains(FLIP_BLOCK + 2).await;
+    let store = &chains.scheduled_store;
+    let head = chains.scheduled_blocks.last().expect("a non-empty chain");
+    assert!(
+        head.header.number > FLIP_BLOCK,
+        "the head must be past the flip, or the binary trie is never consulted"
+    );
+
+    // The commit gate only flushes a *canonical* root, exactly as the real one
+    // driven by `forkchoice_update` does.
+    make_canonical(store, &chains.scheduled_blocks).await;
+    store
+        .commit_trie_layers_for_test(head.header.state_root)
+        .await
+        .unwrap();
+    store.drop_trie_layers_for_test().unwrap();
+
+    // The trie is parked at the head, so the head is where the walk stops.
+    assert_eq!(
+        store.last_block_with_state(head.header.number).unwrap(),
+        Some(head.header.number),
+        "the resume walk stops at the head whose state the parked trie holds"
+    );
+
+    // Every *earlier* post-flip block still has its durable root row, and the
+    // presence check refuses all of them, because the single-version trie moved
+    // on. This is the behaviour that makes the resume walk safe, and it is
+    // exactly the check `advance_binary_trie_for_block` skips.
+    for block in &chains.scheduled_blocks {
+        if block.header.number >= head.header.number || block.header.number < FLIP_BLOCK {
+            continue;
+        }
+        assert_eq!(
+            store.get_binary_trie_root(block.hash()).unwrap(),
+            Some(block.header.state_root),
+            "block {} keeps its durable root row",
+            block.header.number
+        );
+        assert!(
+            !store
+                .has_binary_trie_state(block.hash(), block.header.state_root)
+                .unwrap(),
+            "block {}'s binary state was overwritten by the head's, and the \
+             presence check must say so",
+            block.header.number
+        );
+    }
 }
