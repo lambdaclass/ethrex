@@ -140,13 +140,20 @@ spec:   12000 + 3000 + 3 + 2100 + 3 + 2100 = 19206
 ethrex: 12000 + 3000 + 3 + 3000 + 3 + 3000 = 21006
 ```
 
-**Why nobody noticed: Amsterdam has no live fixture coverage.** The pinned bundle
-`tests-glamsterdam-devnet@v7.2.0` contains no `eip8037`/`eip8038` directories at
-all, and ethrex fails **560/560** of `vectors/eest/for_amsterdam` on the
-genesis-hash assertion — the bundle predates the current Amsterdam header shape.
-(`vectors/eest/amsterdam`, from `tests@v20.0.0`, fails 190/201, almost all
-`SystemContractCallFailed`.) So a `make test-levm` run cannot be catching
-Amsterdam regressions, which is exactly how the gas schedule drifted unobserved.
+**Coverage is suspect, but not established.** Running the on-disk vectors
+directly (`cargo test --manifest-path tooling/ef_tests/blockchain/Cargo.toml`)
+gives 0/1120 on `for_amsterdam`, failing on the genesis-hash assertion. That
+looked like "Amsterdam is untested", but the same run gives 196/392 on `cancun`
+and 145/469 on `prague` — forks that do not use the EIP-8038 constants at all.
+So the local vector tree is stale or partially downloaded, and these numbers
+measure that, not CI. `make test-levm` has download/refresh prerequisites that
+were not run.
+
+What remains solid is the constant divergence itself, which is a direct
+code-vs-spec comparison verified arithmetically and independent of any test
+infrastructure. Whether CI currently exercises Amsterdam is **open** and worth
+checking with a proper `make test-levm` run before drawing conclusions about how
+this went unnoticed.
 
 Found while running the EIP-8297 `BinaryTree` fixtures: 22 of 24 failed on
 `GasUsedMismatch`/`ReceiptsRootMismatch`. Filling the *same* tests at `Amsterdam`
@@ -156,6 +163,7 @@ numbers, and the two forks' fills are byte-identical in `gasUsed` and
 the spec exactly.
 
 **Removal:** Resync the seven constants above against
-`src/ethereum/forks/amsterdam/vm/gas.py`, and re-pin
-`.fixtures_url_amsterdam` to a bundle that actually exercises Amsterdam, so the
-next drift is caught by CI rather than by accident.
+`src/ethereum/forks/amsterdam/vm/gas.py`. Separately, confirm whether CI
+exercises Amsterdam at all — if `.fixtures_url_amsterdam` points at a bundle
+with no `eip8037`/`eip8038` coverage, re-pin it so the next drift is caught by
+CI rather than by accident.
