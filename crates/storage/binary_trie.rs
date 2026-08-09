@@ -103,9 +103,13 @@ pub type BinaryTrieNodes = Vec<(Vec<u8>, Vec<u8>)>;
 /// for.
 pub type BinaryFlatWrites = Vec<(Vec<u8>, Vec<u8>)>;
 
-/// One row of [`BINARY_FLATKEYVALUE`] as a scan yields it: the tree key and its
-/// 32-byte leaf value, or the read failure that stopped the scan.
-pub type BinaryFlatEntry = Result<(Vec<u8>, [u8; 32]), StoreError>;
+/// One leaf as an ordered range hands it back: the tree key, 34 or 66 bytes,
+/// and its 32-byte value.
+pub type BinaryFlatLeaf = (Vec<u8>, [u8; 32]);
+
+/// One row of [`BINARY_FLATKEYVALUE`] as a scan yields it: a leaf, or the read
+/// failure that stopped the scan.
+pub type BinaryFlatEntry = Result<BinaryFlatLeaf, StoreError>;
 
 /// Length of every leaf value in the binary trie, and therefore of every value
 /// in [`BINARY_FLATKEYVALUE`]. Fixed, which is why the flat encoding needs no
