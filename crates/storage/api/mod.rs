@@ -58,6 +58,55 @@ pub trait StorageBackend: Debug + Send + Sync {
     fn flush(&self) -> Result<(), StoreError> {
         Ok(())
     }
+
+    /// Engine-internal counters, for diagnosing storage behaviour on a devnet.
+    ///
+    /// `None` for backends with no such notion. See [`StorageStats`] for what
+    /// is and is not gated.
+    fn stats(&self) -> Option<StorageStats> {
+        None
+    }
+}
+
+/// Per-table storage-engine counters.
+///
+/// A devnet run on 2026-08-08 had to shut the node down, then count SST files
+/// and parse the RocksDB `LOG` by hand to get exactly these four numbers. They
+/// are cheap RocksDB properties and need no statistics object.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableStats {
+    /// Table (column-family) name.
+    pub table: &'static str,
+    /// `rocksdb.estimate-num-keys` — live keys, memtables plus SSTs.
+    pub estimated_keys: u64,
+    /// `rocksdb.total-sst-files-size` — bytes across *all* SST files, including
+    /// versions superseded by a newer write but not yet compacted away.
+    pub sst_bytes: u64,
+    /// `rocksdb.estimate-live-data-size` — bytes after deduplication, i.e. the
+    /// on-disk footprint of the live set. This is the figure to compare between
+    /// tables; `sst_bytes` inflates with write amplification.
+    pub live_data_bytes: u64,
+    /// `rocksdb.size-all-mem-tables` — bytes not yet flushed. On a small devnet
+    /// this is where *everything* is: the 2026-08-08 run saw zero flushes, so
+    /// no SST existed and neither SST figure above meant anything.
+    pub memtable_bytes: u64,
+}
+
+/// A snapshot of storage-engine diagnostics.
+#[derive(Debug, Clone, Default)]
+pub struct StorageStats {
+    /// The engine's own counter dump (RocksDB tickers and histograms: bloom
+    /// hit/miss, block-cache hit/miss, read and write latency).
+    ///
+    /// `None` unless statistics were switched on when the store was opened —
+    /// collecting them costs roughly 5-10% throughput, so they are off by
+    /// default. `--rocksdb.statistics` turns them on.
+    ///
+    /// Note that RocksDB's block-cache tickers are **DB-global**, not per
+    /// column family, so these attribute to the database as a whole.
+    pub engine_statistics: Option<String>,
+    /// Per-table properties. Always populated — these are free.
+    pub tables: Vec<TableStats>,
 }
 
 /// Read-only transaction interface.

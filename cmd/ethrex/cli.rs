@@ -120,6 +120,29 @@ pub struct Options {
         env = "ETHREX_ROCKSDB_BLOCK_CACHE_SIZE",
     )]
     pub rocksdb_block_cache_size: usize,
+    #[arg(
+        long = "rocksdb.statistics",
+        default_value = "false",
+        help = "Collect RocksDB statistics (bloom hit/miss, cache hit/miss, read \
+                latency). Costs throughput; for diagnostic runs only.",
+        long_help = "Installs a RocksDB Statistics object, making bloom-filter and \
+                     block-cache hit/miss tickers and read/write latency histograms \
+                     readable, and dumps them (with per-table key counts and sizes) \
+                     to the log on graceful shutdown.\n\
+                     \n\
+                     Off by default because RocksDB documents statistics collection \
+                     as costing roughly 5-10% throughput. Turn it on for a devnet or \
+                     a performance investigation, not for a production node.\n\
+                     \n\
+                     Independent of --metrics.enabled: that starts the Prometheus \
+                     endpoint and is cheap enough to leave on, whereas this is a \
+                     measurable tax on every read and write.\n\
+                     \n\
+                     ETHREX_ROCKSDB_STATISTICS sets the same value.",
+        help_heading = "Storage options",
+        env = "ETHREX_ROCKSDB_STATISTICS"
+    )]
+    pub rocksdb_enable_statistics: bool,
     #[arg(long = "syncmode", default_value = "snap", value_name = "SYNC_MODE", value_parser = utils::parse_sync_mode, help = "The way in which the node will sync its state.", long_help = "Can be either \"full\" or \"snap\" with \"snap\" as default value.", help_heading = "P2P options", env = "ETHREX_SYNCMODE")]
     pub syncmode: SyncMode,
     #[arg(
@@ -553,6 +576,7 @@ impl Default for Options {
             bootnodes: Default::default(),
             datadir: Default::default(),
             rocksdb_block_cache_size: ethrex_storage::DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
+            rocksdb_enable_statistics: false,
             syncmode: Default::default(),
             metrics_addr: "0.0.0.0".to_owned(),
             metrics_port: Default::default(),

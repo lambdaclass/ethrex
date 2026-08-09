@@ -867,6 +867,7 @@ pub async fn init_l1(
 
     let store_config = StoreConfig {
         rocksdb_block_cache_size: opts.rocksdb_block_cache_size,
+        rocksdb_enable_statistics: opts.rocksdb_enable_statistics,
         ..StoreConfig::default()
     };
     let store_result = if opts.skip_genesis_validation {
