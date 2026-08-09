@@ -13,7 +13,7 @@
 //! [`BackendTrieDB`]: crate::trie::BackendTrieDB
 
 use crate::api::tables::{BINARY_FLATKEYVALUE, BINARY_TRIE_NODES};
-use crate::api::{StorageBackend, StorageReadView};
+use crate::api::{StorageBackend, StorageLockedView, StorageReadView};
 use crate::error::StoreError;
 use crate::layering::TrieLayerCache;
 use ethrex_binary_trie::BinaryTrieError;
@@ -234,46 +234,81 @@ impl BackendBinaryFlatDB {
         tx.commit()
     }
 
+    /// Pin [`BINARY_FLATKEYVALUE`] for an ordered scan.
+    ///
+    /// The returned view is a snapshot taken now and held until it is dropped.
+    /// Reads go through it, not through this handle's `read_view`, so the whole
+    /// scan sees one point in time even though the persist worker is flushing
+    /// committed layers into the table concurrently.
+    ///
+    /// Deliberately a separate object the caller must keep alive rather than a
+    /// `range_from` method here. An iterator that opened its own view and
+    /// dropped it per call would be pinned only within one `next`, which is
+    /// exactly the hazard; making the view a value the caller holds turns
+    /// "keep it open for the whole merge" into something the borrow checker
+    /// enforces.
+    pub fn begin_locked(&self) -> Result<BinaryFlatLockedView, StoreError> {
+        Ok(BinaryFlatLockedView {
+            view: self.db.begin_locked(BINARY_FLATKEYVALUE)?,
+        })
+    }
+}
+
+/// A pinned read view of [`BINARY_FLATKEYVALUE`], the disk half of an ordered
+/// range scan.
+///
+/// Held open for the length of a scan. See
+/// [`BackendBinaryFlatDB::begin_locked`] for why it is a value rather than a
+/// method.
+pub struct BinaryFlatLockedView {
+    view: Box<dyn StorageLockedView>,
+}
+
+impl BinaryFlatLockedView {
     /// Every row with a key at or after `origin`, in ascending key order —
     /// which, by the ordering property this table exists for, is leaf order.
     ///
-    /// **This is a full ordered scan filtered from the front, not a seek**, and
-    /// that is a limitation of the backend API rather than a choice. The only
-    /// ordered primitive [`StorageReadView`] offers is `prefix_iterator`, whose
-    /// two implementations disagree about what a non-empty prefix means: the
-    /// RocksDB one seeks to it and iterates to the end of the column family
-    /// (there is no prefix extractor configured, so `prefix_same_as_start` has
-    /// nothing to act on), while the in-memory one filters to keys that
-    /// literally start with it. Passing `origin` as a prefix would therefore
-    /// return different rows on different backends. Passing the empty prefix is
-    /// the one form both agree on, and every existing full-table scan in this
-    /// crate uses it.
+    /// A real seek, off [`StorageLockedView::range_from`]: no `O(n)` walk to
+    /// reach the origin, and no `prefix_iterator`, whose two backend
+    /// implementations disagree about what a non-empty prefix means and so
+    /// cannot be used as a seek at all.
     ///
-    /// A real seek — and the pinned read view an ordered scan wants, so a
-    /// concurrent flush cannot shift rows across the cursor — needs the storage
-    /// API to grow a range primitive. [`StorageLockedView`] cannot supply it
-    /// either: it has `get` and nothing else.
+    /// # Errors
     ///
-    /// [`StorageLockedView`]: crate::api::StorageLockedView
+    /// [`StoreError::Custom`] if a row is not exactly
+    /// [`BINARY_FLAT_VALUE_LENGTH`] bytes, reported at the row rather than up
+    /// front — the scan is lazy, so a malformed row stops it where it is found.
     pub fn range_from<'a>(
         &'a self,
-        origin: &'a [u8],
+        origin: &[u8],
     ) -> Result<impl Iterator<Item = BinaryFlatEntry> + 'a, StoreError> {
-        Ok(self
-            .read_view
-            .prefix_iterator(BINARY_FLATKEYVALUE, &[])?
-            .skip_while(move |entry| entry.as_ref().is_ok_and(|(key, _)| key.as_ref() < origin))
-            .map(|entry| {
-                let (key, value) = entry?;
-                let value: [u8; 32] = value.as_ref().try_into().map_err(|_| {
-                    StoreError::Custom(format!(
-                        "binary flat value for key {key:?} is {} bytes, not \
-                         {BINARY_FLAT_VALUE_LENGTH}",
-                        value.len()
-                    ))
-                })?;
-                Ok((key.into_vec(), value))
-            }))
+        Ok(self.view.range_from(origin)?.map(|entry| {
+            let (key, value) = entry?;
+            let value: [u8; 32] = value.as_ref().try_into().map_err(|_| {
+                StoreError::Custom(format!(
+                    "binary flat value for key {key:?} is {} bytes, not \
+                     {BINARY_FLAT_VALUE_LENGTH}",
+                    value.len()
+                ))
+            })?;
+            Ok((key.into_vec(), value))
+        }))
+    }
+
+    /// The leaf value stored under `key` as of the pinned snapshot.
+    ///
+    /// Same contract as [`BackendBinaryFlatDB::get`], read through this view so
+    /// a point read taken during a scan agrees with the scan.
+    pub fn get(&self, key: &[u8]) -> Result<Option<[u8; 32]>, StoreError> {
+        let Some(value) = self.view.get(key)? else {
+            return Ok(None);
+        };
+        value.as_slice().try_into().map(Some).map_err(|_| {
+            StoreError::Custom(format!(
+                "binary flat value for key {key:?} is {} bytes, not {BINARY_FLAT_VALUE_LENGTH}",
+                value.len()
+            ))
+        })
     }
 }
 
@@ -925,7 +960,7 @@ mod tests {
             shuffled.reverse();
             flat_handle(&db).put_batch(shuffled).unwrap();
 
-            let reader = flat_handle(&db);
+            let reader = flat_handle(&db).begin_locked().unwrap();
             let scanned: Vec<Vec<u8>> = reader
                 .range_from(&[])
                 .unwrap()
@@ -961,7 +996,7 @@ mod tests {
                 )
                 .unwrap();
 
-            let reader = flat_handle(&db);
+            let reader = flat_handle(&db).begin_locked().unwrap();
             let from = |origin: &[u8]| -> Vec<Vec<u8>> {
                 reader
                     .range_from(origin)
@@ -988,7 +1023,7 @@ mod tests {
         #[test]
         fn a_range_over_an_empty_table_is_empty() {
             let db = backend();
-            let reader = flat_handle(&db);
+            let reader = flat_handle(&db).begin_locked().unwrap();
             assert_eq!(reader.range_from(&[]).unwrap().count(), 0);
             assert_eq!(reader.range_from(&[0x00u8; 34]).unwrap().count(), 0);
         }
