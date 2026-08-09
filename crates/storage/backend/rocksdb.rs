@@ -116,6 +116,35 @@ impl RocksDBBackend {
             block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
         };
 
+        // Gives a CF a *working* memtable bloom filter.
+        //
+        // `memtable_prefix_bloom_size_ratio` only sizes the filter; it does not
+        // ask for one. RocksDB allocates the memtable bloom only when a prefix
+        // extractor is configured **or** `memtable_whole_key_filtering` is on,
+        // and this backend has never set either — so the 0.2 ratio that has sat
+        // on the MPT trie/flat CFs since they were tuned (and was inherited by
+        // the binary tables) built nothing at all. Confirmed from the applied
+        // `OPTIONS` file of a devnet on 2026-08-08: `prefix_extractor=nullptr`
+        // and `memtable_whole_key_filtering=false` on every one of them.
+        //
+        // Whole-key filtering rather than a prefix extractor because these are
+        // whole-key point-lookup tables: trie nodes are keyed by a complete
+        // path/hash and the flat mirror by a complete account/slot key, and
+        // every read is an exact `get`. There is no meaningful key prefix to
+        // extract, and inventing one would also silently change iterator
+        // semantics (`prefix_iterator_cf` is used on these CFs).
+        //
+        // This matters most for the binary trie, whose ~33-node descent issues
+        // ~5x the point lookups of the MPT's ~7; each miss that the bloom
+        // rejects is a skiplist walk avoided. It only binds while data is still
+        // in the memtable — the SST-level bloom above covers it after a flush.
+        let configure_memtable_bloom = |cf_opts: &mut Options| {
+            cf_opts.set_memtable_whole_key_filtering(true);
+            // Sizes the filter as a fraction of the write buffer. Keeping 0.2
+            // preserves the (previously inert) intent: 512MB * 0.2 of bloom bits.
+            cf_opts.set_memtable_prefix_bloom_ratio(0.2);
+        };
+
         let mut cf_descriptors = Vec::new();
         for cf_name in &all_cfs_to_open {
             let mut cf_opts = Options::default();
@@ -201,7 +230,7 @@ impl RocksDBBackend {
                     cf_opts.set_max_write_buffer_number(6);
                     cf_opts.set_min_write_buffer_number_to_merge(2);
                     cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
-                    cf_opts.set_memtable_prefix_bloom_ratio(0.2); // Bloom filter
+                    configure_memtable_bloom(&mut cf_opts);
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
@@ -214,7 +243,7 @@ impl RocksDBBackend {
                     cf_opts.set_max_write_buffer_number(6);
                     cf_opts.set_min_write_buffer_number_to_merge(2);
                     cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
-                    cf_opts.set_memtable_prefix_bloom_ratio(0.2); // Bloom filter
+                    configure_memtable_bloom(&mut cf_opts);
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
@@ -683,6 +712,141 @@ mod tests {
             vec![(200, bh, 7)],
             "later write for same block_hash wins"
         );
+    }
+
+    /// The state tables carry `memtable_prefix_bloom_ratio(0.2)`, but a ratio
+    /// on its own builds **nothing**: RocksDB only allocates a memtable bloom
+    /// when a prefix extractor is set *or* whole-key filtering is on, and
+    /// neither was. A devnet capture on 2026-08-08 confirmed it from the
+    /// applied `OPTIONS` file — `prefix_extractor=nullptr`,
+    /// `memtable_whole_key_filtering=false` on every trie and flat CF, MPT and
+    /// binary alike. The ratio was dead configuration.
+    ///
+    /// This asserts the filter is *used*, not that a setter was called.
+    /// `bloom_memtable_miss_count` is only incremented from inside
+    /// `MemTable::Get`, and only when the memtable actually holds a bloom — so
+    /// a non-zero count is RocksDB reporting it consulted a filter it built.
+    /// Removing `set_memtable_whole_key_filtering(true)` drops it to 0.
+    ///
+    /// Deliberately never flushes: this must exercise the memtable path, not
+    /// the SST bloom (which is a separate, already-working setting).
+    #[test]
+    fn the_memtable_bloom_is_real_on_the_state_tables() {
+        use rocksdb::perf::{PerfContext, PerfMetric, PerfStatsLevel, set_perf_stats};
+
+        for table in [
+            ACCOUNT_TRIE_NODES,
+            STORAGE_TRIE_NODES,
+            BINARY_TRIE_NODES,
+            ACCOUNT_FLATKEYVALUE,
+            STORAGE_FLATKEYVALUE,
+            BINARY_FLATKEYVALUE,
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let backend = RocksDBBackend::open(
+                dir.path(),
+                crate::store::DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
+            )
+            .unwrap();
+
+            // Populate the memtable only — no flush, so every read below is
+            // served (or rejected) by the memtable.
+            let mut tx = backend.begin_write().unwrap();
+            for i in 0..4096u64 {
+                tx.put(table, H256::from_low_u64_be(i).as_bytes(), b"node")
+                    .unwrap();
+            }
+            tx.commit().unwrap();
+
+            let read = backend.begin_read().unwrap();
+
+            set_perf_stats(PerfStatsLevel::EnableCount);
+            let mut ctx = PerfContext::default();
+            ctx.reset();
+            // Keys that were never written: the bloom should reject them
+            // without walking the skiplist.
+            for i in 0..1024u64 {
+                let absent = H256::from_low_u64_be(u64::MAX - i);
+                assert!(read.get(table, absent.as_bytes()).unwrap().is_none());
+            }
+            let misses = ctx.metric(PerfMetric::BloomMemtableMissCount);
+            ctx.reset();
+            // Keys that were written: the bloom should pass them through.
+            for i in 0..1024u64 {
+                let present = H256::from_low_u64_be(i);
+                assert!(read.get(table, present.as_bytes()).unwrap().is_some());
+            }
+            let hits = ctx.metric(PerfMetric::BloomMemtableHitCount);
+            set_perf_stats(PerfStatsLevel::Disable);
+
+            assert!(
+                misses > 0,
+                "{table}: 1024 absent point lookups produced no memtable-bloom \
+                 rejections, so no memtable bloom was built. \
+                 memtable_prefix_bloom_ratio alone does not create one — it \
+                 needs memtable_whole_key_filtering or a prefix extractor."
+            );
+            assert!(
+                hits > 0,
+                "{table}: present keys did not register memtable-bloom hits"
+            );
+        }
+    }
+
+    /// The applied `OPTIONS` file is RocksDB's own record of what it actually
+    /// runs with, and is what the devnet had to read by hand. Asserting on it
+    /// catches the case where a setter exists, compiles, and is silently
+    /// ignored or overridden by a later call.
+    #[test]
+    fn the_applied_options_file_records_whole_key_filtering() {
+        let dir = tempfile::tempdir().unwrap();
+        let _backend = RocksDBBackend::open(
+            dir.path(),
+            crate::store::DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
+        )
+        .unwrap();
+
+        // RocksDB writes OPTIONS-<n> on open; take the highest-numbered one.
+        let options_file = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with("OPTIONS-"))
+            .max()
+            .expect("RocksDB must write an OPTIONS file on open");
+        let text = std::fs::read_to_string(dir.path().join(options_file)).unwrap();
+
+        // Split into `[CFOptions "name"]` sections.
+        let section_of = |cf: &str| -> String {
+            let header = format!("[CFOptions \"{cf}\"]");
+            let start = text
+                .find(&header)
+                .unwrap_or_else(|| panic!("no {header} section in OPTIONS"))
+                + header.len();
+            let rest = &text[start..];
+            let end = rest.find("\n[").unwrap_or(rest.len());
+            rest[..end].to_owned()
+        };
+
+        for table in [
+            ACCOUNT_TRIE_NODES,
+            STORAGE_TRIE_NODES,
+            BINARY_TRIE_NODES,
+            ACCOUNT_FLATKEYVALUE,
+            STORAGE_FLATKEYVALUE,
+            BINARY_FLATKEYVALUE,
+        ] {
+            let section = section_of(table);
+            assert!(
+                section.contains("memtable_whole_key_filtering=true"),
+                "{table}: OPTIONS does not enable whole-key memtable filtering, \
+                 so memtable_prefix_bloom_size_ratio is a no-op:\n{section}"
+            );
+            assert!(
+                section.contains("memtable_prefix_bloom_size_ratio=0.200000"),
+                "{table}: OPTIONS does not size the memtable bloom:\n{section}"
+            );
+        }
     }
 
     /// Every table must have a *deliberate* column-family home — either a
