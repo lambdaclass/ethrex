@@ -17,7 +17,7 @@ use crate::{
     backend::in_memory::InMemoryBackend,
     binary_trie::{
         BINARY_FLAT_FRONTIER_COMPLETE, BackendBinaryFlatDB, BackendBinaryTrieDB,
-        BinaryFlatCoverage, BinaryFlatWrites, BinaryTrieNodes, LayeredBinaryTrieDB,
+        BinaryFlatCoverage, BinaryFlatLeaf, BinaryFlatWrites, BinaryTrieNodes, LayeredBinaryTrieDB,
         StagedBinaryNodes,
     },
     block_data_buffer::BlockDataBuffer,
@@ -3352,6 +3352,148 @@ impl Store {
             return Ok(false);
         };
         Ok(hash_stored_node(&encoded) == root)
+    }
+
+    /// Up to `max_leaves` of the binary trie's leaves at `binary_root`, in
+    /// ascending key order, from the first key at or after `origin` and
+    /// stopping at `limit` **inclusive**.
+    ///
+    /// The ordered range primitive. Leaves come from the flat mirror, not from
+    /// the trie: the disk half is a seek into [`BINARY_FLATKEYVALUE`] on a
+    /// pinned view, the layer half is the layer stack's `binary_flat` entries
+    /// materialized into a `BTreeMap`, and the two are merged with layer
+    /// entries winning and a tombstone suppressing the disk row.
+    ///
+    /// **Boundaries.** `origin` is inclusive and an empty `origin` starts at
+    /// the first leaf. `limit` is inclusive; an empty `limit` means no upper
+    /// bound, which is the only reading that makes an empty `limit` usable at
+    /// all, since as a key it would sort below everything. A `limit` below
+    /// `origin` yields nothing. `max_leaves` of zero yields nothing.
+    ///
+    /// **Not the snap serving rules, deliberately.** A range server has a
+    /// progress rule (the first leaf at or after `origin` must be returned even
+    /// if it is past `limit`) and a terminator rule (stop *after* the first
+    /// leaf past `limit`), and neither is applied here: both exist to make a
+    /// response provably complete over an interval, which is a property of the
+    /// response, not of the store. A caller wanting the terminator asks for one
+    /// more leaf from
+    /// [`increment_key(limit)`](ethrex_binary_trie::trie::increment_key) — which
+    /// is what that function is for on this side, the resume successor being the
+    /// other.
+    ///
+    /// **Two gates, and both refuse rather than truncate.** A short range is
+    /// indistinguishable from a complete one at the call site and produces a
+    /// response that fails its own proof, so neither failure may be silent:
+    ///
+    /// - The mirror must be fully backfilled. Mid-sweep it is a strict subset
+    ///   of the trie, and rows past the frontier are simply missing.
+    /// - `binary_root` must be a root this node's binary trie really resolves
+    ///   to, by the same re-hash [`Self::binary_trie_holds_root`] does for point
+    ///   reads. The trie is single-version, so a root the disk has advanced past
+    ///   is not servable even though its rows partly remain.
+    ///
+    /// **The layer map is built before the disk view is pinned, and the order is
+    /// load-bearing.** Pinning first would leave a window in which a flush moves
+    /// a layer's entries onto disk: the layer is then gone from the cache the
+    /// materialization reads, and the pinned view predates the write, so those
+    /// leaves appear in neither half and the range has a hole. Built first, a
+    /// flush in the same window is harmless — the map still holds the entries by
+    /// value and the pinned view now holds them too, so the merge sees a
+    /// duplicate key and the layer wins with the identical value.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Custom`] if either gate refuses, or if a mirror row or
+    /// layer entry is not exactly 32 bytes.
+    pub fn binary_flat_range(
+        &self,
+        binary_root: H256,
+        origin: &[u8],
+        limit: &[u8],
+        max_leaves: usize,
+    ) -> Result<Vec<BinaryFlatLeaf>, StoreError> {
+        if max_leaves == 0 {
+            return Ok(Vec::new());
+        }
+        if !self.binary_flat_coverage()?.is_complete() {
+            return Err(StoreError::Custom(
+                "cannot serve a binary flat range while the mirror's backfill is incomplete: \
+                 rows past the frontier are missing, so the range would have holes"
+                    .to_string(),
+            ));
+        }
+        if !self.binary_trie_holds_root(binary_root)? {
+            return Err(StoreError::Custom(format!(
+                "cannot serve a binary flat range at {binary_root:#x}: the binary trie does not \
+                 resolve to that root"
+            )));
+        }
+
+        // Layers first, disk second. See the note above — the reverse order has
+        // a window in which a flush drops leaves out of both halves.
+        let layer_entries = self
+            .gated_snapshot(binary_root)?
+            .binary_flat_entries_from(binary_root, origin)
+            .unwrap_or_default();
+
+        let flat = BackendBinaryFlatDB::new(self.backend.clone())?;
+        let view = flat.begin_locked()?;
+        let mut disk = view.range_from(origin)?;
+
+        // Both halves are already ordered and already start at `origin`, so
+        // this is a two-cursor merge with no sort and no buffering of the disk
+        // side.
+        let mut layers = layer_entries.into_iter().peekable();
+        let mut disk_next = disk.next().transpose()?;
+        let mut out = Vec::new();
+
+        while out.len() < max_leaves {
+            let disk_key = disk_next.as_ref().map(|(key, _)| key.as_slice());
+            let layer_key = layers.peek().map(|(key, _)| key.as_slice());
+            let next_key = match (disk_key, layer_key) {
+                (None, None) => break,
+                (Some(key), None) | (None, Some(key)) => key,
+                (Some(from_disk), Some(from_layer)) => from_disk.min(from_layer),
+            };
+            // An empty `limit` is "no upper bound"; any other is inclusive.
+            if !limit.is_empty() && next_key > limit {
+                break;
+            }
+
+            let take_disk = disk_key == Some(next_key);
+            let take_layer = layer_key == Some(next_key);
+            // Both sides advance on an equal key, so the layer's answer —
+            // value or tombstone — replaces the disk row rather than shadowing
+            // it into the next round.
+            let from_disk = if take_disk {
+                let entry = disk_next.take();
+                disk_next = disk.next().transpose()?;
+                entry
+            } else {
+                None
+            };
+
+            if take_layer {
+                let (key, value) = layers.next().ok_or_else(|| {
+                    StoreError::Custom("binary flat range: peeked layer entry vanished".to_string())
+                })?;
+                // A tombstone means the leaf left the tree, so it suppresses
+                // the disk row instead of falling through to it.
+                if let Some(value) = value {
+                    let value: [u8; 32] = value.as_slice().try_into().map_err(|_| {
+                        StoreError::Custom(format!(
+                            "binary flat layer entry for key {key:?} is {} bytes, not 32",
+                            value.len()
+                        ))
+                    })?;
+                    out.push((key, value));
+                }
+            } else if let Some(entry) = from_disk {
+                out.push(entry);
+            }
+        }
+
+        Ok(out)
     }
 
     /// The binary-trie root recorded for `block_hash`, if any.
@@ -10464,6 +10606,7 @@ mod binary_flat_agreement_tests {
         get_tree_key_for_basic_data, get_tree_key_for_code_chunk, get_tree_key_for_code_hash,
         get_tree_key_for_delegation, get_tree_key_for_storage_slot,
     };
+    use ethrex_binary_trie::trie::increment_key;
     use ethrex_common::constants::EMPTY_KECCAK_HASH;
 
     /// The account whose code is delegated, re-delegated and undelegated.
@@ -11117,6 +11260,337 @@ mod binary_flat_agreement_tests {
             "the bridge must journal the mirror keys the new block did not rewrite, got {}",
             entry.binary_flat_diff.len()
         );
+    }
+
+    // ---- Task 10: the ordered range primitive ---------------------------
+
+    /// No upper bound, spelled as the empty key.
+    const UNBOUNDED: &[u8] = &[];
+    /// Larger than any state these tests build, so a range is bounded by
+    /// `origin`/`limit` and never silently truncated by the count.
+    const PLENTY: usize = 10_000;
+
+    fn range(store: &Store, root: H256, origin: &[u8], limit: &[u8]) -> Vec<(Vec<u8>, [u8; 32])> {
+        store
+            .binary_flat_range(root, origin, limit, PLENTY)
+            .expect("range")
+    }
+
+    fn range_keys(store: &Store, root: H256, origin: &[u8], limit: &[u8]) -> Vec<Vec<u8>> {
+        range(store, root, origin, limit)
+            .into_iter()
+            .map(|(key, _)| key)
+            .collect()
+    }
+
+    /// A chain with enough state to have leaves in all three zones, flushed, so
+    /// the mirror is entirely on disk and no layer is involved.
+    async fn flushed_chain() -> Chain {
+        let code = code_of(vec![0x60u8; 31 * 3]);
+        let mut chain = Chain::start(vec![
+            (BYSTANDER, genesis_account(1, 1_000, vec![], &[(1, 2)])),
+            (EOA, genesis_account(1, 500, vec![], &[])),
+        ])
+        .await;
+        chain.block(
+            &[
+                contract_update(SHARED_ONE, 1, 10, &code, &[(5, 0xaa), (900, 0xdd)]),
+                eoa_update(EOA, 2, 400),
+            ],
+            "range fixture",
+        );
+        chain
+    }
+
+    /// The range is exactly the trie's leaves, in key order, and the four
+    /// cursor boundary cases hold on it.
+    ///
+    /// Tied to [`trie_leaves`] rather than to a hand-written list: the primitive
+    /// reads the mirror, the expectation comes from the node table, and the
+    /// point of the feature is that those two agree.
+    #[tokio::test]
+    async fn a_range_is_the_tries_leaves_in_order() {
+        let chain = flushed_chain().await;
+        let expected: Vec<Vec<u8>> = trie_leaves(&chain.store, chain.root)
+            .into_keys()
+            .collect::<Vec<_>>();
+        assert!(expected.len() > 8, "the fixture must be worth scanning");
+
+        let all = range_keys(&chain.store, chain.root, UNBOUNDED, UNBOUNDED);
+        assert_eq!(all, expected);
+
+        // Boundary 1: an origin equal to a key returns that key.
+        let pivot = &expected[3];
+        assert_eq!(
+            range_keys(&chain.store, chain.root, pivot, UNBOUNDED),
+            expected[3..].to_vec()
+        );
+
+        // Boundary 2: an origin between keys returns the successor.
+        //
+        // The gap has to be found rather than assumed: consecutive leaves in
+        // one stem differ only in their sub-index byte, so `increment_key`
+        // lands exactly *on* the next key there and would test boundary 1
+        // again. Pick the first pair with room between them.
+        let (index, between) = expected
+            .windows(2)
+            .enumerate()
+            .find_map(|(index, pair)| {
+                let next = increment_key(&pair[0])?;
+                (next < pair[1]).then_some((index, next))
+            })
+            .expect("two leaves with a gap between them");
+        assert!(between > expected[index] && between < expected[index + 1]);
+        assert_eq!(
+            range_keys(&chain.store, chain.root, &between, UNBOUNDED),
+            expected[index + 1..].to_vec()
+        );
+
+        // Boundary 3: an origin above every key returns empty.
+        assert!(range_keys(&chain.store, chain.root, &[0xff; 66], UNBOUNDED).is_empty());
+
+        // `limit` is inclusive, and `max_leaves` bounds the count.
+        assert_eq!(
+            range_keys(&chain.store, chain.root, UNBOUNDED, &expected[2]),
+            expected[..3].to_vec()
+        );
+        assert_eq!(
+            chain
+                .store
+                .binary_flat_range(chain.root, UNBOUNDED, UNBOUNDED, 3)
+                .expect("range")
+                .len(),
+            3
+        );
+        assert!(
+            chain
+                .store
+                .binary_flat_range(chain.root, UNBOUNDED, UNBOUNDED, 0)
+                .expect("range")
+                .is_empty()
+        );
+        // A limit below the origin yields nothing.
+        assert!(range_keys(&chain.store, chain.root, &expected[4], &expected[2]).is_empty());
+    }
+
+    /// Boundary 4: an empty trie returns empty rather than failing.
+    ///
+    /// The empty root is a real root the gate must accept — a chain can be
+    /// asked for a range before it holds any state — so this pins the gate as
+    /// much as the cursor.
+    #[tokio::test]
+    async fn a_range_over_an_empty_trie_is_empty() {
+        let (store, _backend, _dir) = test_store();
+        let root = store
+            .setup_genesis_binary_trie(alloc(vec![]))
+            .await
+            .expect("genesis");
+        assert_eq!(root, BINARY_EMPTY_TRIE_ROOT);
+        assert!(range(&store, root, UNBOUNDED, UNBOUNDED).is_empty());
+        assert!(range(&store, root, &[0x00; 34], UNBOUNDED).is_empty());
+    }
+
+    /// A range spanning the zone boundaries is contiguous and correctly
+    /// ordered.
+    ///
+    /// The three zones are the first key byte — `0x00` header, `0x01` code
+    /// chunks, `0xff` overflow storage — so this is the assertion that a scan
+    /// crossing `0x00 -> 0x01` and `0x01 -> 0xff` has no seam. It would catch a
+    /// merge that restarted its cursor per zone, or a table that sorted by
+    /// anything but the raw key.
+    #[tokio::test]
+    async fn a_range_crosses_the_zone_boundaries_without_a_seam() {
+        let chain = flushed_chain().await;
+        let keys = range_keys(&chain.store, chain.root, UNBOUNDED, UNBOUNDED);
+
+        let zones: Vec<u8> = keys.iter().map(|key| key[0]).collect();
+        assert!(
+            zones.contains(&0x00) && zones.contains(&0x01) && zones.contains(&0xff),
+            "the fixture must span all three zones, got {zones:?}"
+        );
+        let mut sorted = zones.clone();
+        sorted.sort_unstable();
+        assert_eq!(
+            zones, sorted,
+            "the zones must come out in order and grouped"
+        );
+
+        // Contiguity: a range starting inside the code zone is the tail of the
+        // full range from the same point, with nothing dropped at either seam.
+        let first_code = keys
+            .iter()
+            .position(|key| key[0] == 0x01)
+            .expect("a code-zone leaf");
+        assert_eq!(
+            range_keys(&chain.store, chain.root, &keys[first_code], UNBOUNDED),
+            keys[first_code..].to_vec()
+        );
+        let first_overflow = keys
+            .iter()
+            .position(|key| key[0] == 0xff)
+            .expect("an overflow-zone leaf");
+        assert_eq!(
+            range_keys(
+                &chain.store,
+                chain.root,
+                &keys[first_code],
+                &keys[first_overflow]
+            ),
+            keys[first_code..=first_overflow].to_vec()
+        );
+    }
+
+    /// The three layer interactions, on one staged-but-unflushed block so the
+    /// disk half is stale in every way at once: a leaf that exists only in the
+    /// layer, one the layer deleted, and one the layer overwrote.
+    ///
+    /// Staged, not flushed — `Chain::stage` puts the block in a diff layer and
+    /// leaves the mirror on disk at the parent. That is the state a range
+    /// server is in for the whole layer window, and the merge is the only thing
+    /// that makes it servable.
+    #[tokio::test]
+    async fn the_layer_stack_wins_over_the_disk_mirror() {
+        let chain = flushed_chain().await;
+        let parent_root = chain.root;
+        let one32 = address20_to_address32(SHARED_ONE);
+        let eoa32 = address20_to_address32(EOA);
+
+        let overwritten = get_tree_key_for_basic_data(&eoa32);
+        let deleted = get_tree_key_for_storage_slot(&one32, U256::from(900));
+        let added = get_tree_key_for_storage_slot(&one32, U256::from(901));
+
+        let on_disk = range(&chain.store, parent_root, UNBOUNDED, UNBOUNDED);
+        let disk_keys: Vec<Vec<u8>> = on_disk.iter().map(|(key, _)| key.clone()).collect();
+        assert!(
+            disk_keys.contains(&deleted),
+            "the fixture must hold slot 900"
+        );
+        assert!(!disk_keys.contains(&added), "and must not hold slot 901");
+        let disk_value = on_disk
+            .iter()
+            .find(|(key, _)| key == &overwritten)
+            .map(|(_, value)| *value)
+            .expect("the EOA's basic data is on disk");
+
+        // Stage a block that adds, deletes and overwrites, without flushing.
+        let number = chain.number + 1;
+        let hash = block_hash(number);
+        let staged = chain.stage(
+            number,
+            hash,
+            chain.hash,
+            parent_root,
+            &[
+                storage_update(SHARED_ONE, &[(900, 0), (901, 0x77)]),
+                eoa_update(EOA, 9, 999),
+            ],
+        );
+        assert_ne!(staged, parent_root);
+        // Nothing reached the mirror on disk, so every difference below comes
+        // from the merge and not from a flush that happened anyway.
+        assert_eq!(
+            range(&chain.store, parent_root, UNBOUNDED, UNBOUNDED),
+            on_disk,
+            "staging must not have moved the disk mirror"
+        );
+
+        let merged = range(&chain.store, staged, UNBOUNDED, UNBOUNDED);
+        let merged_keys: Vec<Vec<u8>> = merged.iter().map(|(key, _)| key.clone()).collect();
+
+        // (a) A leaf written only in the layer appears at its sorted position.
+        assert!(merged_keys.contains(&added));
+        let mut sorted = merged_keys.clone();
+        sorted.sort();
+        assert_eq!(merged_keys, sorted, "the merge must stay in key order");
+
+        // (b) A leaf deleted in a layer is absent, even though the disk row is
+        // still there. This is the tombstone doing its job.
+        assert!(
+            !merged_keys.contains(&deleted),
+            "a tombstoned leaf must not be served from the single-version disk row"
+        );
+        assert!(
+            mirror_row(&chain.store, &deleted).is_some(),
+            "the disk row must still exist, or (b) proved nothing"
+        );
+
+        // (c) A leaf overwritten in a layer returns the layer's value.
+        let merged_value = merged
+            .iter()
+            .find(|(key, _)| key == &overwritten)
+            .map(|(_, value)| *value)
+            .expect("the EOA is still in the range");
+        assert_ne!(
+            merged_value, disk_value,
+            "the layer's value must win over the disk row"
+        );
+
+        // The whole merged range is exactly the staged trie's leaves — the same
+        // tie to the node table the flushed case has, now across the layer.
+        let expected = trie_leaves_layered(&chain.store, staged);
+        assert_eq!(merged, expected.into_iter().collect::<Vec<_>>());
+
+        // And flushing changes nothing, which is what "the layer window is
+        // servable" has to mean.
+        chain.flush(staged);
+        assert_eq!(range(&chain.store, staged, UNBOUNDED, UNBOUNDED), merged);
+    }
+
+    /// [`trie_leaves`] against the **layered** node reader, so a staged block's
+    /// trie is walkable. The disk-only reader cannot see it.
+    fn trie_leaves_layered(store: &Store, binary_root: H256) -> BTreeMap<Vec<u8>, [u8; 32]> {
+        let mut leaves: BTreeMap<Vec<u8>, [u8; 32]> = BTreeMap::new();
+        let mut origin: Vec<u8> = Vec::new();
+        loop {
+            let mut trie = store.open_binary_trie(binary_root).expect("open");
+            let batch = trie.leaves_from(&origin, WALK_BATCH).expect("leaf walk");
+            let before = leaves.len();
+            for (key, value) in &batch {
+                leaves.insert(key.clone(), *value);
+            }
+            if batch.len() < WALK_BATCH || leaves.len() == before {
+                return leaves;
+            }
+            origin = batch.last().expect("non-empty").0.clone();
+        }
+    }
+
+    /// Both gates refuse rather than truncate.
+    ///
+    /// A short range is indistinguishable from a complete one at the call site
+    /// and produces a response that fails its own proof, so "return what we
+    /// have" is the wrong answer to either question.
+    #[tokio::test]
+    async fn a_range_refuses_an_unservable_root_and_an_incomplete_mirror() {
+        let chain = flushed_chain().await;
+
+        // A root the trie does not resolve to.
+        let bogus = H256::repeat_byte(0x5a);
+        assert!(
+            chain
+                .store
+                .binary_flat_range(bogus, UNBOUNDED, UNBOUNDED, PLENTY)
+                .is_err(),
+            "an unservable root must be refused, not answered from whatever is on disk"
+        );
+
+        // A mirror mid-backfill. Rewinding the frontier is exactly the state a
+        // node is in while the generator sweeps.
+        chain.store.publish_binary_flat_frontier(&[]).expect("mark");
+        assert!(
+            chain
+                .store
+                .binary_flat_range(chain.root, UNBOUNDED, UNBOUNDED, PLENTY)
+                .is_err(),
+            "an incomplete mirror must be refused: its rows past the frontier are missing"
+        );
+        // Restoring it makes the same call succeed, so the refusal was the
+        // gate and not the fixture.
+        chain
+            .store
+            .publish_binary_flat_frontier(BINARY_FLAT_FRONTIER_COMPLETE)
+            .expect("mark");
+        assert!(!range(&chain.store, chain.root, UNBOUNDED, UNBOUNDED).is_empty());
     }
 }
 

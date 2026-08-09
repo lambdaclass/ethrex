@@ -724,6 +724,33 @@ impl StorageLockedView for RocksDBLocked {
             .get_cf(&self.cf, key)
             .map_err(|e| StoreError::Custom(format!("Failed to get:{e:?}")))
     }
+
+    /// A native seek on the snapshot taken by `begin_locked`.
+    ///
+    /// `IteratorMode::From(start, Forward)` positions on the first key at or
+    /// after `start` and iterates to the end of the column family. No
+    /// `prefix_same_as_start`, so nothing truncates the scan where the keys
+    /// stop sharing a prefix with `start` — which is the whole difference from
+    /// `prefix_iterator_cf` and the reason this method exists.
+    ///
+    /// Iterating `self.lock` rather than `self.db` is the pinning: the rows are
+    /// read at the snapshot's sequence number, so a flush or compaction running
+    /// under a long scan cannot move one across the cursor.
+    fn range_from<'a>(
+        &'a self,
+        start: &[u8],
+    ) -> Result<Box<dyn Iterator<Item = PrefixResult> + 'a>, StoreError> {
+        let iter = self
+            .lock
+            .iterator_cf(
+                &self.cf,
+                rocksdb::IteratorMode::From(start, rocksdb::Direction::Forward),
+            )
+            .map(|result| {
+                result.map_err(|e| StoreError::Custom(format!("Failed to iterate: {e}")))
+            });
+        Ok(Box::new(iter))
+    }
 }
 
 impl Drop for RocksDBLocked {

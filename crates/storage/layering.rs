@@ -118,6 +118,7 @@ use fastbloom::AtomicBloomFilter;
 use rayon::prelude::*;
 use rustc_hash::{FxBuildHasher, FxHashMap};
 use std::{
+    collections::BTreeMap,
     fmt,
     sync::{Arc, RwLock},
 };
@@ -598,6 +599,71 @@ impl TrieLayerCache {
     /// binary counterpart of [`Self::has_layer`].
     pub fn has_binary_layer(&self, binary_root: H256) -> bool {
         self.binary_index.contains_key(&binary_root)
+    }
+
+    /// Every `BINARY_FLATKEYVALUE` entry at or after `origin` that the layer
+    /// chain from `binary_root` holds, flattened into one ordered map — the
+    /// layer half of an ordered range scan.
+    ///
+    /// `None` under a value is a tombstone with exactly the weight
+    /// [`Self::binary_flat_get`] gives it: the leaf left the tree, so a merge
+    /// must **suppress** the disk row rather than fall through to it. Dropping
+    /// tombstones here instead of carrying them would make a deleted leaf
+    /// reappear from the single-version table, which is the one failure a range
+    /// proof is guaranteed to catch and the one this shape exists to prevent.
+    ///
+    /// **Why materialize at all.** A point read cascades layer chain → disk one
+    /// key at a time, each step a hash lookup. An ordered scan cannot: the
+    /// layers are [`FxHashMap`]s with no ordered access, so there is no cursor
+    /// to merge with the disk iterator. Collecting the chain into a
+    /// [`BTreeMap`] once per scan buys that cursor. The stack is bounded by
+    /// `commit_threshold` layers of one block's writes each — thousands of
+    /// entries, not millions — and the cost is paid once per range request
+    /// rather than once per leaf. Keeping the layers ordered instead would tax
+    /// every block's write path to serve a request type that only arrives
+    /// during someone else's sync.
+    ///
+    /// **No pinning needed on this half**, unlike the disk half. The map is
+    /// built here, by value, from the layers as they are at this instant, so it
+    /// is already a snapshot; nothing a later flush does can shift it.
+    ///
+    /// Nearest layer wins, which is why the walk inserts with
+    /// [`BTreeMap::entry`] and never overwrites: it runs from `binary_root`
+    /// *upwards*, so the first writer of a key it meets is the newest. Same
+    /// [`binary_index`](Self) resolution and same bounded parent walk as
+    /// `binary_flat_get`, for the same reason — the index is a second entry
+    /// point into the parent links and has no state-cycle invariant to lean on.
+    ///
+    /// Returns `None` when `binary_root` names no layer, which is the same
+    /// signal `binary_flat_get` gives and means "ask disk alone". A caller must
+    /// not read that as "the layers are empty here": an unknown root is
+    /// unservable, whereas a root whose layer holds no flat entries returns an
+    /// empty map.
+    pub fn binary_flat_entries_from(
+        &self,
+        binary_root: H256,
+        origin: &[u8],
+    ) -> Option<BTreeMap<Vec<u8>, Option<Vec<u8>>>> {
+        let mut entries: BTreeMap<Vec<u8>, Option<Vec<u8>>> = BTreeMap::new();
+        let mut current = *self.binary_index.get(&binary_root)?;
+        let mut steps = 0usize;
+        let max_steps = self.layers.len();
+        while let Some(layer) = self.layers.get(&current) {
+            for (key, value) in &layer.binary_flat {
+                if key.as_slice() < origin {
+                    continue;
+                }
+                entries
+                    .entry(key.clone())
+                    .or_insert_with(|| (!value.is_empty()).then(|| value.clone()));
+            }
+            current = layer.parent;
+            steps += 1;
+            if steps > max_steps {
+                break;
+            }
+        }
+        Some(entries)
     }
 
     /// Determines whether a disk commit should happen by checking whether the safe-commit root
@@ -3024,6 +3090,143 @@ mod tests {
             cache.binary_flat_get(h256(0x82), &shared),
             Some(Some(fval(0xf1))),
             "the leaf is untouched: a conflated map would answer Some(None) here"
+        );
+    }
+
+    // ---- The layer half of an ordered range scan ------------------------
+
+    /// The materialized map is sorted, spans the whole chain, and lets the
+    /// newest layer win — the same three properties `binary_flat_get` has, now
+    /// asserted over the whole set at once instead of one key at a time.
+    #[test]
+    fn the_flat_entries_of_a_chain_materialize_in_key_order() {
+        let (mut cache, _cell) = cache_with_cell(4, H256::zero());
+        put_triple(
+            &mut cache,
+            H256::zero(),
+            1,
+            vec![],
+            vec![
+                (fkey(0xc0), fval(0x11)),
+                (fkey(0x10), fval(0x11)),
+                (fkey(0x40), fval(0x11)),
+            ],
+        );
+        put_triple(
+            &mut cache,
+            h256(1),
+            2,
+            vec![],
+            // Overwrites the oldest layer's `0x40` and adds one that sorts
+            // between two of its keys, so neither "sorted" nor "newest wins"
+            // can pass by accident of insertion order.
+            vec![(fkey(0x40), fval(0x22)), (fkey(0x80), fval(0x22))],
+        );
+
+        let entries = cache
+            .binary_flat_entries_from(h256(0x82), &[])
+            .expect("the tip resolves through the secondary index");
+        let seen: Vec<(Vec<u8>, Option<Vec<u8>>)> = entries.into_iter().collect();
+        assert_eq!(
+            seen,
+            vec![
+                (fkey(0x10), Some(fval(0x11))),
+                (fkey(0x40), Some(fval(0x22))),
+                (fkey(0x80), Some(fval(0x22))),
+                (fkey(0xc0), Some(fval(0x11))),
+            ]
+        );
+    }
+
+    /// A tombstone survives materialization as `None`.
+    ///
+    /// The one entry that must *not* be dropped: the disk table is
+    /// single-version, so a deleted leaf still has its row there, and a merge
+    /// that saw no tombstone would serve it. Dropping tombstones is the
+    /// plausible-looking simplification this test exists to refuse.
+    #[test]
+    fn a_tombstone_survives_materialization_as_a_none() {
+        let (mut cache, _cell) = cache_with_cell(4, H256::zero());
+        put_triple(
+            &mut cache,
+            H256::zero(),
+            1,
+            vec![],
+            vec![(fkey(0x10), fval(0x11)), (fkey(0x20), fval(0x11))],
+        );
+        put_triple(&mut cache, h256(1), 2, vec![], vec![(fkey(0x10), vec![])]);
+
+        let entries = cache
+            .binary_flat_entries_from(h256(0x82), &[])
+            .expect("the tip resolves");
+        assert_eq!(
+            entries.get(&fkey(0x10)),
+            Some(&None),
+            "a deleted leaf must be present as a tombstone, not absent"
+        );
+        assert_eq!(entries.get(&fkey(0x20)), Some(&Some(fval(0x11))));
+
+        // And the tombstone must win over the older layer's value, not the
+        // other way round.
+        assert_eq!(
+            cache.binary_flat_get(h256(0x82), &fkey(0x10)),
+            Some(None),
+            "the point read agrees with the materialized map"
+        );
+    }
+
+    /// `origin` bounds the map below, and inclusively.
+    #[test]
+    fn materialization_drops_entries_below_the_origin() {
+        let (mut cache, _cell) = cache_with_cell(4, H256::zero());
+        put_triple(
+            &mut cache,
+            H256::zero(),
+            1,
+            vec![],
+            vec![
+                (fkey(0x10), fval(0x11)),
+                (fkey(0x40), fval(0x11)),
+                (fkey(0x80), fval(0x11)),
+            ],
+        );
+        // A tombstone below the origin is dropped too: it can only suppress a
+        // disk row the scan will never reach.
+        put_triple(&mut cache, h256(1), 2, vec![], vec![(fkey(0x10), vec![])]);
+
+        let keys = |origin: &[u8]| -> Vec<Vec<u8>> {
+            cache
+                .binary_flat_entries_from(h256(0x82), origin)
+                .expect("the tip resolves")
+                .into_keys()
+                .collect()
+        };
+        assert_eq!(keys(&[]), vec![fkey(0x10), fkey(0x40), fkey(0x80)]);
+        // Inclusive: an origin equal to a key keeps that key.
+        assert_eq!(keys(&fkey(0x40)), vec![fkey(0x40), fkey(0x80)]);
+        // Between keys: the successor onwards.
+        let mut between = fkey(0x40);
+        between[33] = 1;
+        assert_eq!(keys(&between), vec![fkey(0x80)]);
+        // Above every key: empty, and still `Some` — the root is known.
+        assert!(keys(&[0xff; 34]).is_empty());
+    }
+
+    /// An unknown binary root is `None`, not an empty map. The two mean
+    /// different things: "ask disk alone" versus "this root's layer holds no
+    /// leaves", and a range server must not serve a root it cannot resolve.
+    #[test]
+    fn an_unknown_root_materializes_to_none_not_an_empty_map() {
+        let (mut cache, _cell) = cache_with_cell(4, H256::zero());
+        put_triple(&mut cache, H256::zero(), 1, vec![], vec![]);
+
+        assert_eq!(cache.binary_flat_entries_from(h256(0xff), &[]), None);
+        // The MPT root is not a binary root either.
+        assert_eq!(cache.binary_flat_entries_from(h256(1), &[]), None);
+        // A known root whose layer carries no flat entries is an empty map.
+        assert_eq!(
+            cache.binary_flat_entries_from(h256(0x81), &[]),
+            Some(std::collections::BTreeMap::new())
         );
     }
 }
