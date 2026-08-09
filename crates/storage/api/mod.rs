@@ -208,4 +208,206 @@ pub trait StorageWriteBatch: Send {
 pub trait StorageLockedView: Send + Sync {
     /// Retrieves a value by key from the locked table.
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError>;
+
+    /// Every key-value pair in the locked table whose key is **at or after**
+    /// `start`, in ascending lexicographic key order, running to the end of the
+    /// table.
+    ///
+    /// A **seek**, and deliberately not
+    /// [`prefix_iterator`](StorageReadView::prefix_iterator). Those two are the
+    /// same call shape and mean different things, so read this before reaching
+    /// for either:
+    ///
+    /// - `start` bounds the iteration *below* and not at all above. A `start`
+    ///   that happens to be a prefix of some longer key does not stop the scan
+    ///   when the keys stop sharing it — `range_from(b"\x01")` over
+    ///   `[b"\x01", b"\x01\x01", b"\x02"]` yields all three.
+    /// - An empty `start` is the whole table, which is the one input on which
+    ///   this and `prefix_iterator` agree.
+    /// - A table the backend has never seen is empty, not an error.
+    ///
+    /// `prefix_iterator` cannot be used as a seek on the strength of its name:
+    /// its two implementations disagree. RocksDB's `prefix_iterator_cf` sets
+    /// `prefix_same_as_start(true)`, but no prefix extractor is configured on
+    /// any column family, so the option has nothing to act on and the iterator
+    /// runs to the end of the CF; the in-memory one filters to
+    /// `key.starts_with(prefix)`. That divergence is pre-existing — `store.rs`
+    /// already depends on the RocksDB behaviour when seeking `RECEIPTS_V2` — and
+    /// is left in place. This method is the portable primitive to use instead,
+    /// and `api::tests::range_from_conformance` runs the same scenario against
+    /// both backends so the two cannot drift again.
+    ///
+    /// **On a locked view rather than a read view, and that is the point.** An
+    /// ordered scan is a long-running read; a concurrent flush or compaction
+    /// under an unpinned iterator can move a row across the cursor, so the scan
+    /// misses it or returns it twice. A range served to a peer is supposed to be
+    /// exactly the tree's content over an interval and is proved against a root
+    /// that fails on the smallest gap. The view is pinned when
+    /// [`begin_locked`](StorageBackend::begin_locked) is called and stays pinned
+    /// until it is dropped, so a caller must hold the view for the whole scan —
+    /// the iterator borrows it, which makes that a compile-time obligation
+    /// rather than a convention.
+    fn range_from<'a>(
+        &'a self,
+        start: &[u8],
+    ) -> Result<Box<dyn Iterator<Item = PrefixResult> + 'a>, StoreError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::tables::MISC_VALUES;
+    use crate::backend::in_memory::InMemoryBackend;
+
+    /// Rows chosen so that a prefix filter and a seek give different answers:
+    /// `[0x01]` is a prefix of `[0x01, 0x01]`, and `[0x02]` shares no prefix
+    /// with either.
+    fn seed(backend: &dyn StorageBackend) {
+        let mut tx = backend.begin_write().expect("write batch");
+        tx.put_batch(
+            MISC_VALUES,
+            vec![
+                (vec![0x01], b"a".to_vec()),
+                (vec![0x01, 0x01], b"b".to_vec()),
+                (vec![0x02], b"c".to_vec()),
+                (vec![0x02, 0xff], b"d".to_vec()),
+                (vec![0xff], b"e".to_vec()),
+            ],
+        )
+        .expect("put");
+        tx.commit().expect("commit");
+    }
+
+    fn collect(view: &dyn StorageLockedView, start: &[u8]) -> Vec<(Vec<u8>, Vec<u8>)> {
+        view.range_from(start)
+            .expect("range_from")
+            .map(|entry| {
+                let (key, value) = entry.expect("row");
+                (key.into_vec(), value.into_vec())
+            })
+            .collect()
+    }
+
+    /// The agreement the two backends must hold to, asserted identically
+    /// against each. Every case here is one `prefix_iterator` gets wrong on at
+    /// least one backend.
+    fn assert_range_from_semantics(backend: &dyn StorageBackend) {
+        // Nothing written yet: an untouched table scans empty rather than
+        // failing. RocksDB has the CF, the in-memory map has no entry for it,
+        // and both must answer the same way.
+        let empty_view = backend.begin_locked(MISC_VALUES).expect("locked view");
+        assert_eq!(collect(&*empty_view, &[]), Vec::new());
+        assert_eq!(collect(&*empty_view, &[0x01]), Vec::new());
+        drop(empty_view);
+
+        seed(backend);
+        let view = backend.begin_locked(MISC_VALUES).expect("locked view");
+
+        let all = vec![
+            (vec![0x01], b"a".to_vec()),
+            (vec![0x01, 0x01], b"b".to_vec()),
+            (vec![0x02], b"c".to_vec()),
+            (vec![0x02, 0xff], b"d".to_vec()),
+            (vec![0xff], b"e".to_vec()),
+        ];
+
+        // An empty start is the whole table, in ascending key order.
+        assert_eq!(collect(&*view, &[]), all);
+
+        // A start equal to a present key includes that key, and does **not**
+        // stop at the end of the keys sharing it as a prefix. This is the case
+        // `prefix_iterator` gets wrong on the in-memory backend, which would
+        // return only the first two rows.
+        assert_eq!(collect(&*view, &[0x01]), all);
+
+        // A start between keys lands on the successor.
+        assert_eq!(collect(&*view, &[0x01, 0x00]), all[1..].to_vec());
+        assert_eq!(collect(&*view, &[0x01, 0x02]), all[2..].to_vec());
+
+        // A start above every key is empty. This is the case `prefix_iterator`
+        // gets wrong on RocksDB, which ignores the prefix and returns
+        // everything from the seek point — here, nothing — but would return the
+        // whole table for a start that sorts before the first key.
+        assert_eq!(collect(&*view, &[0xff, 0x00]), Vec::new());
+
+        // A start below every key is the whole table.
+        assert_eq!(collect(&*view, &[0x00]), all);
+
+        // A start on the last key is that key alone.
+        assert_eq!(collect(&*view, &[0xff]), all[4..].to_vec());
+    }
+
+    /// The other half of the agreement, and the half a row-for-row comparison
+    /// cannot see: the scan reads the view's own pinned snapshot, not the live
+    /// table.
+    ///
+    /// This is what makes `range_from` a *locked* primitive rather than a
+    /// renamed `prefix_iterator`. On RocksDB the two return identical rows —
+    /// `prefix_iterator_cf` sets `prefix_same_as_start` on a CF with no prefix
+    /// extractor, so it degenerates to exactly this seek — and swapping one for
+    /// the other passes every assertion above. What it does not pass is this:
+    /// `prefix_iterator_cf` runs on the database handle, so it observes writes
+    /// the snapshot predates.
+    fn assert_range_from_is_pinned(backend: &dyn StorageBackend) {
+        seed(backend);
+        let view = backend.begin_locked(MISC_VALUES).expect("locked view");
+        let before = collect(&*view, &[]);
+
+        // Insert a row that sorts in the middle of the range, and delete one
+        // that is already in it. Both directions matter: an unpinned scan
+        // gains the first and loses the second, and a range proof fails on
+        // either.
+        let mut tx = backend.begin_write().expect("write batch");
+        tx.put_batch(MISC_VALUES, vec![(vec![0x01, 0x80], b"late".to_vec())])
+            .expect("put");
+        tx.delete(MISC_VALUES, &[0x02]).expect("delete");
+        tx.commit().expect("commit");
+
+        assert_eq!(
+            collect(&*view, &[]),
+            before,
+            "the locked view must not observe writes made after begin_locked"
+        );
+        // The rows really did land, so the assertion above is not vacuous.
+        let after = backend.begin_locked(MISC_VALUES).expect("locked view");
+        let fresh = collect(&*after, &[]);
+        assert!(fresh.iter().any(|(key, _)| key.as_slice() == [0x01, 0x80]));
+        assert!(!fresh.iter().any(|(key, _)| key.as_slice() == [0x02]));
+    }
+
+    #[test]
+    fn range_from_conformance_in_memory() {
+        let backend = InMemoryBackend::open().expect("in-memory backend");
+        assert_range_from_semantics(&backend);
+    }
+
+    #[test]
+    fn range_from_is_pinned_in_memory() {
+        let backend = InMemoryBackend::open().expect("in-memory backend");
+        assert_range_from_is_pinned(&backend);
+    }
+
+    /// The same assertions against RocksDB. Decision 13 of the binary-flat
+    /// plan records that the two backends had already drifted on
+    /// `prefix_iterator` precisely because no test ran the same scenario
+    /// against both; this is that test for the primitive that replaces it.
+    #[cfg(feature = "rocksdb")]
+    #[test]
+    fn range_from_conformance_rocksdb() {
+        use crate::backend::rocksdb::{RocksDBBackend, RocksDBConfig};
+        let dir = tempfile::tempdir().expect("tempdir");
+        let backend =
+            RocksDBBackend::open(dir.path(), RocksDBConfig::default()).expect("rocksdb backend");
+        assert_range_from_semantics(&backend);
+    }
+
+    #[cfg(feature = "rocksdb")]
+    #[test]
+    fn range_from_is_pinned_rocksdb() {
+        use crate::backend::rocksdb::{RocksDBBackend, RocksDBConfig};
+        let dir = tempfile::tempdir().expect("tempdir");
+        let backend =
+            RocksDBBackend::open(dir.path(), RocksDBConfig::default()).expect("rocksdb backend");
+        assert_range_from_is_pinned(&backend);
+    }
 }

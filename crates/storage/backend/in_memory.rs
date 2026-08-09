@@ -101,6 +101,38 @@ impl StorageLockedView for InMemoryLocked {
             .and_then(|table_ref| table_ref.get(key))
             .cloned())
     }
+
+    /// Sorted eagerly, because the table is an unordered [`FxHashMap`] and
+    /// there is no cursor to seek. That makes this `O(n log n)` in the whole
+    /// table where RocksDB's is a seek plus `O(k)` in the rows returned — a
+    /// difference in cost, not in answers, and the answers are what
+    /// `api::tests::range_from_conformance_*` pins. This backend is dev/test
+    /// only.
+    ///
+    /// Filtering before the sort rather than after keeps the sort to the rows
+    /// that can be yielded.
+    fn range_from<'a>(
+        &'a self,
+        start: &[u8],
+    ) -> Result<Box<dyn Iterator<Item = PrefixResult> + 'a>, StoreError> {
+        let mut entries: Vec<(Vec<u8>, Vec<u8>)> = self
+            .snapshot
+            .get(&self.table_name)
+            .into_iter()
+            .flatten()
+            .filter(|(key, _)| key.as_slice() >= start)
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
+        entries.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
+
+        let results: Vec<PrefixResult> = entries
+            .into_iter()
+            .map(|(k, v)| Ok((k.into_boxed_slice(), v.into_boxed_slice())))
+            .collect();
+        Ok(Box::new(InMemoryPrefixIter {
+            results: results.into_iter(),
+        }))
+    }
 }
 
 pub struct InMemoryReadTx {
