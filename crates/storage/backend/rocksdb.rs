@@ -156,6 +156,24 @@ impl RocksDBBackend {
         // the size (see the `--rocksdb.block-cache-size` CLI flag); a value that is too
         // small relative to the filter + working-set size will degrade block-import
         // throughput (filter blocks displace data blocks, EVM reads spill to disk).
+        //
+        // Stays shared, deliberately. Giving the trie-node CFs their own cache
+        // was considered as a way to make cache behaviour attributable after
+        // the 2026-08-08 devnet could not attribute any of it, and rejected:
+        //
+        //  - It would not actually attribute anything. RocksDB's block-cache
+        //    tickers (`rocksdb.block.cache.hit`/`.miss`, and the index/filter/
+        //    data variants) are recorded on the *DB's* `Statistics` object, not
+        //    per `Cache`. A second cache yields per-cache *occupancy*
+        //    (`Cache::get_usage`), never a per-CF hit rate — which is the
+        //    number that was wanted.
+        //  - It would break the memory ceiling. The single cache is what makes
+        //    `--rocksdb.block-cache-size` a bound rather than a suggestion;
+        //    two caches means the operator's one number bounds neither, and
+        //    the split ratio is a policy choice no measurement supports. The
+        //    mainnet sweep behind the 12 GiB default found ~8 GiB is already
+        //    the floor where the filter set thrashes, so mis-splitting it
+        //    regresses a measured workload to instrument an unmeasured one.
         let block_cache = Cache::new_lru_cache(block_cache_size);
 
         // Configures a CF's block-based table to keep its index and bloom-filter blocks
