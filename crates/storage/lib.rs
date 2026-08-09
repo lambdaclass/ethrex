@@ -77,6 +77,7 @@ pub mod store;
 pub mod trie;
 pub mod utils;
 
+pub use api::{StorageStats, TableStats};
 pub use layering::apply_prefix;
 pub use store::{
     AccountUpdatesList, BATCH_COMMIT_THRESHOLD, BinaryTrieAdvance, DB_COMMIT_THRESHOLD,

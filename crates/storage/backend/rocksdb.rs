@@ -4,15 +4,16 @@ use crate::api::tables::{
     RECEIPTS_V2, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
 };
 use crate::api::{
-    PrefixResult, StorageBackend, StorageLockedView, StorageReadView, StorageWriteBatch,
-    tables::TABLES,
+    PrefixResult, StorageBackend, StorageLockedView, StorageReadView, StorageStats,
+    StorageWriteBatch, TableStats, tables::TABLES,
 };
 use crate::error::StoreError;
 use rocksdb::DBWithThreadMode;
 use rocksdb::checkpoint::Checkpoint;
+use rocksdb::statistics::StatsLevel;
 use rocksdb::{
     BlockBasedOptions, Cache, ColumnFamilyDescriptor, MergeOperands, MultiThreaded, Options,
-    SnapshotWithThreadMode, WriteBatch,
+    SnapshotWithThreadMode, WriteBatch, properties,
 };
 use std::collections::HashSet;
 use std::path::Path;
@@ -30,15 +31,61 @@ fn tx_locations_merge_op(
     tx_locations_merge(existing, operands)
 }
 
+/// The subset of [`crate::store::StoreConfig`] the RocksDB backend consumes.
+///
+/// A struct rather than positional arguments so that `open(path, 12 << 30, false)`
+/// can't happen at the five call sites.
+#[derive(Debug, Clone, Copy)]
+pub struct RocksDBConfig {
+    /// Size in bytes of the LRU block cache shared by every column family.
+    pub block_cache_size: usize,
+    /// Install a RocksDB `Statistics` object, making tickers and histograms
+    /// readable through [`RocksDBBackend::stats`].
+    ///
+    /// Off by default: RocksDB documents statistics collection as costing
+    /// roughly 5-10% throughput, which is not a price to pay on every node for
+    /// numbers only a diagnostic run reads.
+    pub enable_statistics: bool,
+}
+
+impl Default for RocksDBConfig {
+    fn default() -> Self {
+        Self {
+            block_cache_size: crate::store::DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
+            enable_statistics: false,
+        }
+    }
+}
+
 /// RocksDB backend
-#[derive(Debug)]
 pub struct RocksDBBackend {
     /// Optimistric transaction database
     db: Arc<DBWithThreadMode<MultiThreaded>>,
+    /// The `Options` the DB was opened with, retained **only** when statistics
+    /// are enabled.
+    ///
+    /// `enable_statistics()` installs a `shared_ptr<Statistics>` on the options,
+    /// and the open DB holds that same pointer — so reading counters means
+    /// reading them back off this object. Dropping it here would leave no handle
+    /// to the live statistics. `None` when statistics are off, which is what
+    /// makes [`RocksDBBackend::stats`] report them absent rather than empty.
+    stats_opts: Option<Options>,
+}
+
+// `rocksdb::Options` has no `Debug`, so the derive can't be used. The db handle
+// is the only field worth printing anyway.
+impl std::fmt::Debug for RocksDBBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RocksDBBackend")
+            .field("db", &self.db)
+            .field("statistics_enabled", &self.stats_opts.is_some())
+            .finish()
+    }
 }
 
 impl RocksDBBackend {
-    pub fn open(path: impl AsRef<Path>, block_cache_size: usize) -> Result<Self, StoreError> {
+    pub fn open(path: impl AsRef<Path>, config: RocksDBConfig) -> Result<Self, StoreError> {
+        let block_cache_size = config.block_cache_size;
         // Rocksdb optimizations options
         let mut opts = Options::default();
         opts.create_if_missing(true);
@@ -74,6 +121,16 @@ impl RocksDBBackend {
         opts.set_compaction_readahead_size(4 * 1024 * 1024); // 4MB
         opts.set_advise_random_on_open(false);
         opts.set_compression_type(rocksdb::DBCompressionType::None);
+
+        if config.enable_statistics {
+            opts.enable_statistics();
+            // `ExceptDetailedTimers` keeps every ticker (bloom hit/miss,
+            // block-cache hit/miss, bytes read/written) and the read/write
+            // latency histograms, while skipping the counters that must take a
+            // clock reading inside a mutex — those are the ones that hurt
+            // scalability under concurrent writes.
+            opts.set_statistics_level(StatsLevel::ExceptDetailedTimers);
+        }
 
         let compressible_tables = [
             BLOCK_NUMBERS,
@@ -299,7 +356,49 @@ impl RocksDBBackend {
         )
         .map_err(|e| StoreError::Custom(format!("Failed to open RocksDB with all CFs: {}", e)))?;
 
-        Ok(Self { db: Arc::new(db) })
+        Ok(Self {
+            db: Arc::new(db),
+            stats_opts: config.enable_statistics.then_some(opts),
+        })
+    }
+
+    /// RocksDB's own counter dump: tickers and histograms.
+    ///
+    /// `None` unless the store was opened with `enable_statistics`. The string
+    /// is RocksDB's `Statistics::ToString()`, the same text that
+    /// `rocksdb.stats`-style tooling consumes; it is read live off the
+    /// `Statistics` object the open DB is still writing to.
+    pub fn statistics(&self) -> Option<String> {
+        self.stats_opts.as_ref()?.get_statistics()
+    }
+
+    /// Per-table size and key-count properties.
+    ///
+    /// Free — these are computed from metadata RocksDB already maintains, and
+    /// need no `Statistics` object, so they are readable on any node.
+    /// Tables whose column family is missing are skipped rather than reported
+    /// as zero, so a zero here means "empty", not "absent".
+    pub fn table_stats(&self) -> Vec<TableStats> {
+        TABLES
+            .iter()
+            .filter_map(|table| {
+                let cf = self.db.cf_handle(table)?;
+                let property = |name: &properties::PropName| {
+                    self.db
+                        .property_int_value_cf(&cf, name)
+                        .ok()
+                        .flatten()
+                        .unwrap_or(0)
+                };
+                Some(TableStats {
+                    table,
+                    estimated_keys: property(properties::ESTIMATE_NUM_KEYS),
+                    sst_bytes: property(properties::TOTAL_SST_FILES_SIZE),
+                    live_data_bytes: property(properties::ESTIMATE_LIVE_DATA_SIZE),
+                    memtable_bytes: property(properties::SIZE_ALL_MEM_TABLES),
+                })
+            })
+            .collect()
     }
 
     /// Drops column families that exist on disk but are no longer listed in
@@ -410,6 +509,13 @@ impl StorageBackend for RocksDBBackend {
         self.db
             .flush_wal(true)
             .map_err(|e| StoreError::Custom(format!("RocksDB flush_wal failed: {e}")))
+    }
+
+    fn stats(&self) -> Option<StorageStats> {
+        Some(StorageStats {
+            engine_statistics: self.statistics(),
+            tables: self.table_stats(),
+        })
     }
 }
 
@@ -629,11 +735,7 @@ mod tests {
     #[test]
     fn merge_operator_survives_flush_and_compaction() {
         let dir = tempfile::tempdir().unwrap();
-        let backend = RocksDBBackend::open(
-            dir.path(),
-            crate::store::DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
-        )
-        .unwrap();
+        let backend = RocksDBBackend::open(dir.path(), RocksDBConfig::default()).unwrap();
         let cf = backend.db.cf_handle(TRANSACTION_LOCATIONS).unwrap();
 
         let tx_hash = H256::from_low_u64_be(0xabcd);
@@ -676,11 +778,7 @@ mod tests {
     #[test]
     fn merge_operator_dedupes_across_compaction() {
         let dir = tempfile::tempdir().unwrap();
-        let backend = RocksDBBackend::open(
-            dir.path(),
-            crate::store::DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
-        )
-        .unwrap();
+        let backend = RocksDBBackend::open(dir.path(), RocksDBConfig::default()).unwrap();
         let cf = backend.db.cf_handle(TRANSACTION_LOCATIONS).unwrap();
 
         let tx_hash = H256::from_low_u64_be(0x1234);
@@ -743,11 +841,7 @@ mod tests {
             BINARY_FLATKEYVALUE,
         ] {
             let dir = tempfile::tempdir().unwrap();
-            let backend = RocksDBBackend::open(
-                dir.path(),
-                crate::store::DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
-            )
-            .unwrap();
+            let backend = RocksDBBackend::open(dir.path(), RocksDBConfig::default()).unwrap();
 
             // Populate the memtable only — no flush, so every read below is
             // served (or rejected) by the memtable.
@@ -800,11 +894,7 @@ mod tests {
     #[test]
     fn the_applied_options_file_records_whole_key_filtering() {
         let dir = tempfile::tempdir().unwrap();
-        let _backend = RocksDBBackend::open(
-            dir.path(),
-            crate::store::DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
-        )
-        .unwrap();
+        let _backend = RocksDBBackend::open(dir.path(), RocksDBConfig::default()).unwrap();
 
         // RocksDB writes OPTIONS-<n> on open; take the highest-numbered one.
         let options_file = std::fs::read_dir(dir.path())
@@ -847,6 +937,149 @@ mod tests {
                 "{table}: OPTIONS does not size the memtable bloom:\n{section}"
             );
         }
+    }
+
+    /// Pulls a ticker's count out of RocksDB's statistics dump. Lines look
+    /// like `rocksdb.bloom.filter.useful COUNT : 1234`.
+    fn ticker(dump: &str, name: &str) -> u64 {
+        dump.lines()
+            .find(|line| line.starts_with(name))
+            .and_then(|line| line.rsplit(':').next())
+            .and_then(|value| value.trim().parse().ok())
+            .unwrap_or_else(|| panic!("ticker {name} missing from dump:\n{dump}"))
+    }
+
+    /// Statistics cost throughput (RocksDB documents ~5-10%), so the default
+    /// must not pay for them. Asserts absence of the *object*, not of a config
+    /// bit: with no `Statistics` installed RocksDB has nothing to dump.
+    #[test]
+    fn statistics_are_absent_unless_asked_for() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = RocksDBBackend::open(dir.path(), RocksDBConfig::default()).unwrap();
+        assert!(!RocksDBConfig::default().enable_statistics);
+
+        let stats = backend.stats().expect("rocksdb always reports table stats");
+        assert!(
+            stats.engine_statistics.is_none(),
+            "a default node must not be collecting RocksDB statistics"
+        );
+        assert!(
+            !stats.tables.is_empty(),
+            "per-table properties are free and must be readable regardless"
+        );
+    }
+
+    /// The finding this closes: with no `Statistics` object anywhere in the
+    /// tree, the bloom tickers were not recorded, so a devnet could not tell
+    /// whether the SST bloom was doing anything.
+    ///
+    /// Asserts the *count*, not the presence of the ticker name — the name
+    /// appears in every dump, including one where every counter is zero.
+    #[test]
+    fn enabling_statistics_records_the_bloom_tickers() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = RocksDBBackend::open(
+            dir.path(),
+            RocksDBConfig {
+                enable_statistics: true,
+                ..RocksDBConfig::default()
+            },
+        )
+        .unwrap();
+
+        let mut tx = backend.begin_write().unwrap();
+        for i in 0..4096u64 {
+            tx.put(BINARY_TRIE_NODES, H256::from_low_u64_be(i).as_bytes(), b"n")
+                .unwrap();
+        }
+        tx.commit().unwrap();
+        // Flush so the reads below hit an SST and consult its bloom filter;
+        // an unflushed memtable would exercise the memtable bloom instead.
+        let cf = backend.db.cf_handle(BINARY_TRIE_NODES).unwrap();
+        backend.db.flush_cf(&cf).unwrap();
+
+        let read = backend.begin_read().unwrap();
+        for i in 0..1024u64 {
+            let absent = H256::from_low_u64_be(u64::MAX - i);
+            assert!(
+                read.get(BINARY_TRIE_NODES, absent.as_bytes())
+                    .unwrap()
+                    .is_none()
+            );
+        }
+
+        let dump = backend
+            .stats()
+            .unwrap()
+            .engine_statistics
+            .expect("statistics were enabled at open");
+        assert!(
+            ticker(&dump, "rocksdb.bloom.filter.useful") > 0,
+            "absent-key reads against an SST must show the bloom avoiding file \
+             reads; this is the number the 2026-08-08 devnet could not obtain"
+        );
+        assert!(
+            ticker(&dump, "rocksdb.number.keys.written") >= 4096,
+            "write tickers must be recorded too"
+        );
+    }
+
+    /// Per-table sizes and key counts must be readable without the statistics
+    /// object, and must actually describe the table asked about — the devnet
+    /// had to stop the node and count SST files by hand for these.
+    #[test]
+    fn table_stats_describe_each_table_separately() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = RocksDBBackend::open(dir.path(), RocksDBConfig::default()).unwrap();
+
+        const KEYS: u64 = 2048;
+        let mut tx = backend.begin_write().unwrap();
+        for i in 0..KEYS {
+            tx.put(BINARY_TRIE_NODES, H256::from_low_u64_be(i).as_bytes(), b"n")
+                .unwrap();
+        }
+        tx.commit().unwrap();
+
+        let of = |stats: &StorageStats, table: &str| -> TableStats {
+            stats
+                .tables
+                .iter()
+                .find(|t| t.table == table)
+                .expect("every table is reported")
+                .clone()
+        };
+
+        // Before any flush everything lives in the memtable. This is exactly
+        // the state the 2026-08-08 devnet was in (zero flushes), where the SST
+        // figures describe nothing.
+        let before = backend.stats().unwrap();
+        let unflushed = of(&before, BINARY_TRIE_NODES);
+        assert!(
+            unflushed.memtable_bytes > 0,
+            "unflushed writes must show up as memtable bytes"
+        );
+        assert_eq!(
+            unflushed.sst_bytes, 0,
+            "nothing has been flushed, so there is no SST"
+        );
+
+        let cf = backend.db.cf_handle(BINARY_TRIE_NODES).unwrap();
+        backend.db.flush_cf(&cf).unwrap();
+
+        let after = backend.stats().unwrap();
+        let flushed = of(&after, BINARY_TRIE_NODES);
+        assert_eq!(
+            flushed.estimated_keys, KEYS,
+            "key count must be per-table and exact for a freshly flushed table"
+        );
+        assert!(flushed.sst_bytes > 0, "the flush must have produced an SST");
+        assert!(flushed.live_data_bytes > 0, "live data must be non-zero");
+
+        // A table nobody wrote to must not inherit the numbers above.
+        let untouched = of(&after, ACCOUNT_TRIE_NODES);
+        assert_eq!(untouched.estimated_keys, 0);
+        assert_eq!(untouched.sst_bytes, 0);
+        assert_eq!(untouched.live_data_bytes, 0);
     }
 
     /// Every table must have a *deliberate* column-family home — either a

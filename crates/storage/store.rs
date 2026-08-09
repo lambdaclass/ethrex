@@ -1,9 +1,9 @@
 #[cfg(feature = "rocksdb")]
-use crate::backend::rocksdb::RocksDBBackend;
+use crate::backend::rocksdb::{RocksDBBackend, RocksDBConfig};
 use crate::{
     STORE_METADATA_FILENAME, STORE_SCHEMA_VERSION,
     api::{
-        StorageBackend, StorageReadView, StorageWriteBatch,
+        StorageBackend, StorageReadView, StorageStats, StorageWriteBatch,
         tables::{
             ACCOUNT_CODE_METADATA, ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES,
             BAD_BLOCKS, BINARY_FLATKEYVALUE, BINARY_TRIE_NODES, BINARY_TRIE_ROOTS,
@@ -108,6 +108,14 @@ pub struct StoreConfig {
     /// the effective ceiling on RocksDB's resident memory. Ignored for
     /// in-memory backends.
     pub rocksdb_block_cache_size: usize,
+    /// Install a RocksDB `Statistics` object so bloom hit/miss, block-cache
+    /// hit/miss and read/write latency histograms become readable via
+    /// [`Store::storage_stats`], and get dumped once on shutdown.
+    ///
+    /// **Off by default.** RocksDB documents statistics collection as costing
+    /// roughly 5-10% throughput. This is a diagnostic switch for devnet runs,
+    /// not something to leave on. Ignored for in-memory backends.
+    pub rocksdb_enable_statistics: bool,
     /// Bound on the persist worker's channel: number of staged (acked) live
     /// messages whose flush may still be in flight. Once full, the next send
     /// blocks — that is the backpressure that throttles `newPayload`.
@@ -119,9 +127,52 @@ impl Default for StoreConfig {
     fn default() -> Self {
         Self {
             rocksdb_block_cache_size: DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
+            rocksdb_enable_statistics: false,
             persist_channel_capacity: DEFAULT_PERSIST_CHANNEL_CAPACITY,
         }
     }
+}
+
+/// Projects the store-wide config onto the subset the RocksDB backend takes,
+/// so the backend never sees knobs it has no say over (e.g. the persist
+/// channel) and new backend tunables have exactly one place to be threaded.
+#[cfg(feature = "rocksdb")]
+impl From<StoreConfig> for RocksDBConfig {
+    fn from(config: StoreConfig) -> Self {
+        Self {
+            block_cache_size: config.rocksdb_block_cache_size,
+            enable_statistics: config.rocksdb_enable_statistics,
+        }
+    }
+}
+
+/// Emits the storage-engine diagnostics to the log, once, on graceful shutdown.
+///
+/// Deliberately silent unless statistics were explicitly enabled, so a default
+/// node's shutdown output is unchanged. The per-table figures are free to read,
+/// but the flag is what says "this run is a diagnostic run".
+///
+/// This exists because the 2026-08-08 devnet had to stop the node, count SST
+/// files on disk and parse RocksDB's `LOG` by hand to obtain exactly these
+/// numbers.
+fn log_storage_stats(backend: &dyn StorageBackend) {
+    let Some(stats) = backend.stats() else {
+        return;
+    };
+    let Some(engine_statistics) = stats.engine_statistics else {
+        return;
+    };
+    for table in &stats.tables {
+        info!(
+            table = table.table,
+            estimated_keys = table.estimated_keys,
+            sst_bytes = table.sst_bytes,
+            live_data_bytes = table.live_data_bytes,
+            memtable_bytes = table.memtable_bytes,
+            "storage table stats"
+        );
+    }
+    info!("storage engine statistics:\n{engine_statistics}");
 }
 
 /// Control messages for the FlatKeyValue generator
@@ -669,10 +720,24 @@ impl Store {
                 .map_err(|e| StoreError::Custom(format!("shutdown ack: {e}")))??;
             // Worker has flushed block data to the WAL/memtables; make it durable
             // and recovery-free.
-            backend.flush()
+            backend.flush()?;
+            // After the flush, so the per-table SST figures describe the whole
+            // dataset rather than whatever happened to have been flushed. This
+            // is the moment the 2026-08-08 devnet took its measurements by hand.
+            log_storage_stats(backend.as_ref());
+            Ok(())
         })
         .await
         .map_err(|e| StoreError::Custom(format!("shutdown join: {e}")))?
+    }
+
+    /// Storage-engine diagnostics, or `None` for a backend with no such notion.
+    ///
+    /// Per-table sizes and key counts are always populated;
+    /// [`StorageStats::engine_statistics`] needs
+    /// [`StoreConfig::rocksdb_enable_statistics`].
+    pub fn storage_stats(&self) -> Option<StorageStats> {
+        self.backend.stats()
     }
 
     /// Add a block in a single transaction.
@@ -2078,10 +2143,7 @@ impl Store {
                     // Open backend, run migrations, then drop obsolete CFs.
                     // Cleanup must happen AFTER migrations so legacy CFs (e.g.
                     // `receipts`) are still readable during the migration.
-                    let rocksdb = Arc::new(RocksDBBackend::open(
-                        &path,
-                        config.rocksdb_block_cache_size,
-                    )?);
+                    let rocksdb = Arc::new(RocksDBBackend::open(&path, config.into())?);
                     crate::migrations::run_pending_migrations(rocksdb.as_ref(), &db_path, v)?;
                     rocksdb.drop_obsolete_cfs(&path);
                     let backend: Arc<dyn crate::api::StorageBackend> = rocksdb;
@@ -2104,7 +2166,7 @@ impl Store {
         match engine_type {
             #[cfg(feature = "rocksdb")]
             EngineType::RocksDB => {
-                let rocksdb = RocksDBBackend::open(&path, config.rocksdb_block_cache_size)?;
+                let rocksdb = RocksDBBackend::open(&path, config.into())?;
                 rocksdb.drop_obsolete_cfs(&path);
                 let backend: Arc<dyn StorageBackend> = Arc::new(rocksdb);
                 Self::from_backend(
@@ -6917,7 +6979,7 @@ pub fn read_chain_id_from_db(path: &Path) -> Option<u64> {
     {
         // The cache size is irrelevant for this one-shot chain-id read (the LRU
         // is sized as a ceiling, not pre-allocated), so we use the default.
-        let backend = match RocksDBBackend::open(path, DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES) {
+        let backend = match RocksDBBackend::open(path, RocksDBConfig::default()) {
             Ok(backend) => backend,
             Err(e) => {
                 warn!("Failed to open RocksDB at {path:?} to read chain ID: {e}");
