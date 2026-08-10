@@ -4451,3 +4451,315 @@ mod intrinsic_gas_accounting_tests {
         );
     }
 }
+
+// ==================== EIP-8141 initial access sets (EIPs#12113) ====================
+//
+// "When frame-transaction processing begins, `accessed_addresses` is initialized
+// as in EIP-2929 and EIP-3651 (`tx.sender`, the coinbase, and precompiles warm),
+// and `accessed_storage_keys` empty (there is no access list). Being a frame
+// target does not warm an address: a `resolved_target`'s warm/cold access is
+// charged within the frame's own `gas_limit`. The payer is added to
+// `accessed_addresses` when an `APPROVE` with payment scope sets it and collects
+// `max_cost`, as for any protocol-touched account. `ENTRY_POINT` is not
+// pre-warmed."
+//
+// Each clause is asserted as a gas differential between two runs that differ
+// only in the probed address or slot, so the assertions survive a repricing of
+// the warm/cold spread itself.
+
+/// Address of the account the access probes are deployed at.
+const PROBE: Address = Address::repeat_byte(0xB1);
+/// An address that is never a frame target, never the payer, and never the
+/// sender: the cold control for every probe below.
+const COLD_CONTROL: Address = Address::repeat_byte(0xC0);
+
+/// `PUSH20 addr; BALANCE; POP; STOP` — one account access, nothing else.
+fn balance_probe_code(addr: Address) -> Bytes {
+    let mut code = vec![0x73];
+    code.extend_from_slice(addr.as_bytes());
+    code.extend_from_slice(&[0x31, 0x50, 0x00]);
+    Bytes::from(code)
+}
+
+/// Run a frame tx whose prefix approves via the sender and whose final DEFAULT
+/// frame executes `probe_code` at [`PROBE`], and return total `gas_used`.
+///
+/// `extra_frames` are appended before the probe frame, so a caller can make an
+/// address a frame target (or the payer) and then probe how it was warmed.
+fn probe_gas_used(
+    probe_code: Bytes,
+    extra_accounts: &[SeededAccount],
+    extra_frames: Vec<Frame>,
+) -> u64 {
+    probe_gas_used_with_sender_code(probe_code, extra_accounts, extra_frames, APPROVE_BOTH_CODE)
+}
+
+/// [`probe_gas_used`], with the sender's approval code chosen by the caller. A
+/// prefix that hands payment to a third-party payer must approve execution only
+/// here, since a second payment-scope `APPROVE` halts once `payer` is set.
+fn probe_gas_used_with_sender_code(
+    probe_code: Bytes,
+    extra_accounts: &[SeededAccount],
+    extra_frames: Vec<Frame>,
+    sender_code: &'static [u8],
+) -> u64 {
+    let mut accounts: Vec<SeededAccount> = vec![
+        (PROBE, U256::zero(), 0, probe_code),
+        (COLD_CONTROL, U256::from(1u64), 0, Bytes::new()),
+    ];
+    accounts.extend_from_slice(extra_accounts);
+
+    let mut frames = vec![Frame {
+        mode: u8::from(FrameMode::Verify),
+        flags: 0x03,
+        target: Some(FUNDED_SENDER),
+        gas_limit: 100_000,
+        value: U256::zero(),
+        data: Bytes::new(),
+    }];
+    frames.extend(extra_frames);
+    frames.push(Frame {
+        mode: u8::from(FrameMode::Default),
+        flags: 0,
+        target: Some(PROBE),
+        gas_limit: 100_000,
+        value: U256::zero(),
+        data: Bytes::new(),
+    });
+
+    // The sender's code approves execution and payment for itself.
+    accounts.push((
+        FUNDED_SENDER,
+        AUTO_SEED_SENDER_BALANCE,
+        0,
+        Bytes::from(sender_code),
+    ));
+
+    let tx = frame_tx_with_frames(frames);
+    let (result, _db) = run_frame_tx(&accounts, tx);
+    let report = result.expect("probe frame tx must execute");
+    assert_eq!(
+        report.result,
+        TxResult::Success,
+        "probe frame tx must succeed"
+    );
+    report.gas_used
+}
+
+#[test]
+fn entry_point_is_not_pre_warmed_but_the_sender_is() {
+    // ENTRY_POINT is `ORIGIN` inside DEFAULT and VERIFY frames, so if it were
+    // pre-warmed an account access to it would be charged warm. The spec says it
+    // is not; `tx.sender` is (EIP-2929).
+    let entry_point = ethrex_common::types::frame_tx_entry_point();
+    let entry_point_gas = probe_gas_used(balance_probe_code(entry_point), &[], vec![]);
+    let sender_gas = probe_gas_used(balance_probe_code(FUNDED_SENDER), &[], vec![]);
+    let control_gas = probe_gas_used(balance_probe_code(COLD_CONTROL), &[], vec![]);
+
+    assert!(
+        entry_point_gas > sender_gas,
+        "ENTRY_POINT must be cold and tx.sender warm, but accessing ENTRY_POINT \
+         ({entry_point_gas}) did not cost more than accessing the sender ({sender_gas})"
+    );
+    assert_eq!(
+        entry_point_gas, control_gas,
+        "ENTRY_POINT must cost exactly what any other cold account costs"
+    );
+}
+
+#[test]
+fn frame_transaction_starts_with_no_warm_storage_keys() {
+    // A frame transaction carries no access list, so every storage slot starts
+    // cold. Probing two distinct slots costs one cold access more than probing
+    // the same slot twice.
+    // `PUSH1 s; SLOAD; POP` per slot, then STOP.
+    let sload = |slot: u8| vec![0x60, slot, 0x54, 0x50];
+    let mut same = sload(0);
+    same.extend(sload(0));
+    same.push(0x00);
+    let mut distinct = sload(0);
+    distinct.extend(sload(1));
+    distinct.push(0x00);
+
+    let same_gas = probe_gas_used(Bytes::from(same), &[], vec![]);
+    let distinct_gas = probe_gas_used(Bytes::from(distinct), &[], vec![]);
+
+    assert!(
+        distinct_gas > same_gas,
+        "the second slot must be charged cold (no pre-warmed keys), but two \
+         distinct slots ({distinct_gas}) cost no more than the same slot twice ({same_gas})"
+    );
+}
+
+#[test]
+fn being_a_frame_target_does_not_warm_an_address() {
+    // A later frame's target must not be warm before that frame runs: its
+    // warm/cold access is charged within its own frame's gas limit.
+    let later_target = Address::repeat_byte(0xD1);
+    let later_frame = Frame {
+        mode: u8::from(FrameMode::Default),
+        flags: 0,
+        target: Some(later_target),
+        gas_limit: 50_000,
+        value: U256::zero(),
+        data: Bytes::new(),
+    };
+    let accounts = [(later_target, U256::from(1u64), 0, Bytes::new())];
+
+    // The probe frame runs BEFORE the frame that targets `later_target`, so the
+    // probe sees whatever the protocol warmed up front.
+    let target_gas = probe_gas_used(
+        balance_probe_code(later_target),
+        &accounts,
+        vec![later_frame.clone()],
+    );
+    let control_gas = probe_gas_used(
+        balance_probe_code(COLD_CONTROL),
+        &accounts,
+        vec![later_frame],
+    );
+
+    assert_eq!(
+        target_gas, control_gas,
+        "an address must not be warmed merely by being a frame target: probing \
+         it cost {target_gas} against {control_gas} for a never-targeted address"
+    );
+}
+
+#[test]
+fn the_payer_is_warm_after_a_payment_scope_approve() {
+    // "The payer is added to `accessed_addresses` when an `APPROVE` with payment
+    // scope sets it and collects `max_cost`, as for any protocol-touched
+    // account."
+    let payer = Address::repeat_byte(0xE1);
+    let accounts = [(payer, U256::MAX, 0, Bytes::from(APPROVE_PAYMENT_CODE))];
+    let pay = pay_frame(payer);
+
+    let payer_gas = probe_gas_used_with_sender_code(
+        balance_probe_code(payer),
+        &accounts,
+        vec![pay.clone()],
+        APPROVE_EXECUTION_CODE,
+    );
+    let control_gas = probe_gas_used_with_sender_code(
+        balance_probe_code(COLD_CONTROL),
+        &accounts,
+        vec![pay],
+        APPROVE_EXECUTION_CODE,
+    );
+
+    assert!(
+        payer_gas < control_gas,
+        "the payer must be warm once a payment-scope APPROVE collected max_cost, \
+         but probing it cost {payer_gas} against {control_gas} for a cold account"
+    );
+}
+
+/// EIP-8141 signature validation is protocol-level cryptography, not EVM
+/// execution (EIPs#12026): `ecrecover` and `P256VERIFY` denote the verification
+/// functions, not calls to the precompile accounts exposing them. Validating the
+/// `signatures` list therefore accesses no precompile address, and in particular
+/// records no EIP-7951 entry in an EIP-7928 block access list.
+mod signature_validation_touches_no_precompile {
+    use super::*;
+    use ethrex_common::types::{FRAME_SIG_SCHEME_SECP256K1, FrameSignature};
+    use k256::ecdsa::SigningKey;
+    use k256::elliptic_curve::sec1::ToEncodedPoint;
+
+    fn key_and_address(seed: u8) -> (SigningKey, Address) {
+        let signing_key = SigningKey::from_bytes(&[seed; 32].into()).unwrap();
+        let uncompressed = signing_key.verifying_key().to_encoded_point(false);
+        let pub_hash = ethrex_crypto::keccak::keccak_hash(&uncompressed.as_bytes()[1..]);
+        (signing_key, Address::from_slice(&pub_hash[12..]))
+    }
+
+    fn sign(key: &SigningKey, sig_hash: H256, signer: Address) -> FrameSignature {
+        let (raw_sig, recovery_id) = key.sign_prehash_recoverable(sig_hash.as_bytes()).unwrap();
+        let mut bytes = vec![0u8; 65];
+        bytes[0] = recovery_id.to_byte();
+        bytes[1..].copy_from_slice(&raw_sig.to_bytes());
+        FrameSignature {
+            scheme: FRAME_SIG_SCHEME_SECP256K1,
+            signer: Some(signer),
+            msg: Bytes::new(),
+            signature: Bytes::from(bytes),
+        }
+    }
+
+    #[test]
+    fn a_validated_signature_records_no_precompile_in_the_block_access_list() {
+        let (key, signer) = key_and_address(0x77);
+
+        let mut tx = frame_tx_with_frames(vec![Frame {
+            mode: u8::from(FrameMode::Verify),
+            flags: 0x03,
+            target: Some(FUNDED_SENDER),
+            gas_limit: 100_000,
+            value: U256::zero(),
+            data: Bytes::new(),
+        }]);
+        tx.signatures = vec![FrameSignature {
+            scheme: FRAME_SIG_SCHEME_SECP256K1,
+            signer: Some(signer),
+            msg: Bytes::new(),
+            signature: Bytes::from(vec![0u8; 65]),
+        }];
+        let sig_hash = tx.compute_sig_hash();
+        tx.signatures[0] = sign(&key, sig_hash, signer);
+        tx.inner_hash = Default::default();
+        tx.cached_canonical = Default::default();
+
+        let accounts = [(
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0,
+            Bytes::from(APPROVE_BOTH_CODE),
+        )];
+        let mut seeded: Vec<SeededAccount> = accounts.to_vec();
+        seeded.push((signer, U256::from(1u64), 0, Bytes::new()));
+
+        let mut db = seeded_db(&seeded);
+        db.enable_bal_recording();
+        let env = frame_tx_env(&tx);
+        let transaction = Transaction::FrameTransaction(tx);
+
+        let report = {
+            let mut vm = VM::new(
+                env,
+                &mut db,
+                &transaction,
+                LevmCallTracer::disabled(),
+                VMType::L1,
+                &NativeCrypto,
+                None,
+            )
+            .expect("VM::new should succeed for a signed frame tx");
+            vm.execute().expect("the signed frame tx must execute")
+        };
+        assert_eq!(
+            report.result,
+            TxResult::Success,
+            "the signature must validate, otherwise this asserts nothing"
+        );
+
+        let bal = db
+            .bal_recorder
+            .as_ref()
+            .expect("BAL recording was enabled")
+            .clone()
+            .build();
+
+        // The precompile range is 0x01..=0xff plus the EIP-7951 P256VERIFY
+        // address at 0x100. None may appear: signature validation calls the
+        // verification functions, not the accounts.
+        for account in bal.accounts() {
+            let raw = U256::from_big_endian(account.address.as_bytes());
+            assert!(
+                raw > U256::from(0x100u64) || raw.is_zero(),
+                "a precompile address ({:?}) was recorded in the block access \
+                 list by signature validation",
+                account.address
+            );
+        }
+    }
+}

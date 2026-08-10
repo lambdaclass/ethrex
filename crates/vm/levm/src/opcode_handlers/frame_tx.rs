@@ -127,6 +127,11 @@ pub fn apply_approve(
                 Err(e) => return Err(VMError::Internal(e)),
             }
 
+            // The payer is a protocol-touched account: collecting `max_cost`
+            // adds it to `accessed_addresses` without charging a cold access,
+            // as for `tx.sender` and the coinbase.
+            vm.substate.add_accessed_address(frame_target);
+
             let ctx = vm
                 .frame_tx_context
                 .as_mut()
@@ -179,6 +184,9 @@ pub fn apply_approve(
                 Err(InternalError::Underflow) => return Err(VMError::RevertOpcode),
                 Err(e) => return Err(VMError::Internal(e)),
             }
+
+            // See scope 0x1: collecting `max_cost` warms the payer.
+            vm.substate.add_accessed_address(frame_target);
 
             let ctx = vm
                 .frame_tx_context
