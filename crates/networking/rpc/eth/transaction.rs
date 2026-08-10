@@ -608,6 +608,11 @@ impl RpcHandler for SendRawTransactionRequest {
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         // Blob-carrying transactions take the blob admission path so their sidecar
         // is stored with them: EIP-4844 and EIP-8141 frame transactions alike.
+        //
+        // RPC submissions go through the *local* entry points so the
+        // BlockchainOptions::private_mempool flag controls whether the tx is
+        // propagated to peers. P2P-received txs continue to use the
+        // non-local methods elsewhere.
         let blobs_bundle = match self {
             SendRawTransactionRequest::EIP4844(wrapped) => Some(&wrapped.blobs_bundle),
             SendRawTransactionRequest::FrameWithBlobs(wrapped) => Some(&wrapped.blobs_bundle),
@@ -617,13 +622,13 @@ impl RpcHandler for SendRawTransactionRequest {
             Some(blobs_bundle) => {
                 context
                     .blockchain
-                    .add_blob_transaction_to_pool(self.to_transaction(), blobs_bundle.clone())
+                    .add_local_blob_transaction_to_pool(self.to_transaction(), blobs_bundle.clone())
                     .await
             }
             None => {
                 context
                     .blockchain
-                    .add_transaction_to_pool(self.to_transaction())
+                    .add_local_transaction_to_pool(self.to_transaction())
                     .await
             }
         }?;
