@@ -237,13 +237,13 @@ Not in the plan's list, found this pass:
 | Task | Status |
 | --- | --- |
 | 6.1 record drift since pins | **done** — §1, and no core EIP moved normatively |
-| 6.2 reclassify adopted items, bump pins | **partly** — §4 confirms all five, plus three more; `docs/eip-8272.md`/`docs/hegota-devnet.md` already carry them as annotated "no longer a divergence" entries rather than deletions, which reads better and is left as is. Pin bumps outstanding. |
+| 6.2 reclassify adopted items, bump pins | **done** — §4 confirms all five, plus three more; pins bumped. `docs/eip-8272.md`/`docs/hegota-devnet.md` carry them as annotated "no longer a divergence" entries rather than deletions, which reads better and is left as is. |
 | 6.3 open-PR rows | **done** — §6 |
 | 6.4 resolve EIPs#12041 paymaster hash | **done** — §8 |
-| 6.5 EIPs#12026 BAL clause + EIPs#12113 warm-set clause | **open** |
-| 6.6 EIP-8272 BAL read record + EIP-8250 bookkeeping exclusion | **open** |
-| 6.7 every `yes` row closed or moved to Open Questions with a fallback | **open** — every `yes` row has an action and §3.1 is closed conformant. Remaining blockers are 6.4-6.6. |
-| 6.8 checkpoint | **open** |
+| 6.5 EIPs#12026 BAL clause + EIPs#12113 warm-set clause | **done** — §9.1, §9.2 |
+| 6.6 EIP-8272 BAL read record + EIP-8250 bookkeeping exclusion | **done** — §9.3, §9.4 |
+| 6.7 every `yes` row closed or moved to Open Questions with a fallback | **done** — §10.1 |
+| 6.8 checkpoint | **done** — §10.2 |
 
 ## 8. Canonical paymaster (EIPs#12041) — resolved
 
@@ -277,3 +277,142 @@ constraint there.
 | Item | Consensus-visible | Action | Owner |
 | --- | --- | --- | --- |
 | The hash is per-fork and #12041 is unmerged | **yes** — a byte change moves the hash, and an instance canonical today demotes if the pin moves | track #12041 to merge | Edgar |
+
+## 9. Initial access sets and protocol bookkeeping (Tasks 6.5, 6.6)
+
+### 9.1 EIPs#12113 — frame-transaction initial access sets
+
+Five clauses, one test each in `test/tests/levm/eip8141_tests.rs`. Each is a gas
+differential between two runs differing only in the probed address or slot, so it
+survives a repricing of the warm/cold spread itself.
+
+| Clause | Verdict |
+| --- | --- |
+| `accessed_addresses` starts as EIP-2929/EIP-3651 (`tx.sender`, coinbase, precompiles) | conformant — `env.origin` is `tx.sender` for a frame tx |
+| `accessed_storage_keys` starts empty | conformant — `FrameTransaction` returns `EMPTY_ACCESS_LIST` |
+| being a frame target does not warm an address | conformant |
+| `ENTRY_POINT` is not pre-warmed | conformant — it is only ever the frame *caller*, never inserted |
+| the payer is added when a payment-scope `APPROVE` collects `max_cost` | **was divergent, now fixed** |
+
+The payer clause was a real gap: `APPROVE` scopes `0x1` and `0x3` debited the payer's
+balance via `decrease_account_balance` without adding it to `accessed_addresses`, so a
+later access to the payer was charged cold where a conforming client charges warm. That
+is a per-transaction `gas_used` difference, hence a receipts and state-root difference.
+Fixed by warming the payer at both scopes, which is free, as for `tx.sender` and the
+coinbase.
+
+### 9.2 EIPs#12026 — signature validation records no precompile
+
+**Conformant.** ethrex's `validate_signatures` calls `precompiles::ecrecover` and the
+P256 verifier as ordinary Rust functions; it never routes through the EVM call path, so
+no precompile account is loaded, warmed, or recorded. Pinned by
+`a_validated_signature_records_no_precompile_in_the_block_access_list`, which runs a
+frame transaction carrying a real secp256k1 signature under a live BAL recorder and
+asserts no address at or below `0x100` appears.
+
+#12026 carries two further clauses this ledger should track:
+
+| Clause | Bearing |
+| --- | --- |
+| `floor_cost` is the calldata floor function *of the fork in force* — EIP-7623's 10/40 per token, or EIP-7976's flat 64 gas per byte where scheduled | consensus-visible through the frame-tx calldata floor; re-check when EIP-7976 lands on this chain's fork schedule |
+| `frame.value` follows ordinary `CALL` value-transfer semantics, charged inside the frame's `gas_limit` including the fork's account-creation cost; a frame that cannot cover it reverts without transferring, so no EIP-7708 log | not yet asserted by a test |
+
+### 9.3 EIP-8272 reference reads in the BAL — keep the record
+
+EIP-8272 says a valid reference "MUST add `RECENT_ROOT_ADDRESS` and its `storage_key` to
+the transaction's accessed address and storage-key sets. This affects warm/cold gas
+accounting only." ethrex additionally records each key as an EIP-7928 `storage_reads`
+entry, which raised the question of whether that sentence forbids the record.
+
+**Decision: keep it.** The sentence scopes what *adding to the accessed sets* does; it
+does not speak to EIP-7928 at all. Three reasons the record is required rather than
+merely permitted:
+
+1. The read genuinely happens. Validating a reference compares
+   `RECENT_ROOT_ADDRESS[storage_key]` against `entry_hash`, so a real storage slot is
+   read from state.
+2. EIP-7928's own precedents record protocol-performed reads, not just EVM `SLOAD`s: the
+   EIP-7002 and EIP-7251 dequeues read queue slots "which appear as storage_reads".
+   The reference check is the same shape — a protocol-level read outside any EVM frame.
+3. A BAL reconstructor that omitted it would not reproduce the access list execution
+   produces, which is what `the_access_list_commitment_survives_a_rebuild` requires.
+
+Recorded as a **read**, never a change, under the transaction's own
+`block_access_index`, and only after the whole validity pass succeeds. **Action:**
+closed, with this justification. **Owner:** —
+
+### 9.4 EIP-8250 keyed nonces are protocol bookkeeping
+
+EIP-8250: keyed-nonce reads and writes "do NOT add `NONCE_MANAGER` or its slots to
+EIP-2929 `accessed_addresses` or `accessed_storage_keys`, are NOT charged under EIP-2200
+`SSTORE` pricing, and do NOT warm the address or slot for later user-level access."
+
+**Conformant on all three.** `consume_keyed_nonces` never calls `add_accessed_address`
+or its storage equivalent, and charges only `KEYED_NONCE_FIRST_USE_GAS` on a key's first
+use. Two tests in `test/tests/levm/eip8250_tests.rs`:
+`consuming_a_keyed_nonce_does_not_warm_the_nonce_manager` (probing `NONCE_MANAGER` after
+a keyed consumption costs exactly what probing a never-touched account costs) and
+`a_keyed_nonce_is_not_priced_as_an_sstore` (a second first-use key costs one surcharge
+plus envelope data, with no storage charge layered on).
+
+The third clause — the *slot* not entering `accessed_storage_keys` — is not separately
+observable from the EVM, since `SLOAD` only ever reads the executing account's own
+storage and `NONCE_MANAGER` has no code path that would expose it. It follows from the
+same absence of warming calls that the address clause is asserted on.
+
+## 10. Sweep and checkpoint (Tasks 6.7, 6.8)
+
+### 10.1 Every consensus-visible row (Task 6.7)
+
+Task 6.7's bar: zero rows may end the phase as "yes / unresolved / no fallback".
+
+| Row | Consensus-visible | Disposition |
+| --- | --- | --- |
+| §2 fork rule set is broader than EIP-8081 | yes | **carried** — publication must name the five-EIP set and the pins, never the fork name. Feeds Phase 8's artifact set. |
+| §2 Amsterdam prerequisite | yes | **closed** — enforced at genesis load |
+| §3.1 VERIFY budgets | yes | **closed** — conformant, `2**20` |
+| §3.2 two fixed endpoints, no claimed index | yes | **carried** — one-way (ethrex stricter); fallback is the EIP-7805 extension draft, which EIP-8369 explicitly asks for |
+| §3.3 attester state reconstruction | no | closed |
+| §3.4 per-IL code-byte budget | yes | **carried** — published in the artifact set and the extension draft |
+| §3.5 `AA_VOPS_SLOT_COUNT = 4`, absent means 4 not off | yes | **carried** — published; a joining client MUST NOT read the missing key as "off" |
+| §3.6 `SLOTNUM` banned in the validation prefix | yes | **carried** — one-way (ethrex stricter); track EIPs#12066 |
+| §5 `RECENT_ROOT_CODE` bytes | yes | **carried** — byte-identical to EIPs#12131; unmerged, so track it |
+| §5 static-context gas not pinned by a test | yes | **open test gap**, behaviour is spec-conformant; see §10.2 |
+| §8 canonical paymaster hash | yes | **carried** — matches EIPs#12041; unmerged, so track it |
+| §9.1 payer warming | yes | **closed** — fixed and tested |
+| §9.2 signature validation records no precompile | yes | **closed** — conformant and tested |
+| §9.2 `floor_cost` follows the fork's calldata floor | yes | **carried** — re-check if EIP-7976 joins this chain's fork schedule |
+| §9.3 EIP-8272 reference reads in the BAL | yes | **closed** — kept, with justification |
+| §9.4 keyed nonces are protocol bookkeeping | yes | **closed** — conformant and tested |
+
+No row is unresolved without a stated fallback, so Task 6.7's bar is met.
+
+Four rows are carried by deliberate choice rather than closed, and they share one root
+cause: **EIP-8369 defers the whole consensus integration to an extension EIP that does
+not exist**. §3.2, §3.4 and §3.5 are all consequences of having to pick an enforcement
+point anyway. Publishing that extension draft is what converts them from divergences
+into a specification a second client can implement, and it is the single highest-value
+piece of upstream work this branch has outstanding.
+
+### 10.2 Checkpoint (Task 6.8)
+
+Verified on 2026-08-10:
+
+| Check | Result |
+| --- | --- |
+| every row has a non-empty action | yes |
+| no consensus-visible row unresolved without a fallback | yes — §10.1 |
+| pins match head for 8141 / 8250 / 8272 / 7805 | yes — bumped to `4093c21847` |
+| pin matches head for 8369 | yes — `6f818e27dd`, PR #12110 head |
+| `cargo clippy --workspace` (l2/prover/guest excluded) | clean |
+| `cargo test -p ethrex-test --test ethrex_tests` | 1229 passed / 0 failed |
+| `cargo test -p ethrex-rpc --lib` | 122 passed / 0 failed |
+| `make -C tooling/ef_tests/blockchain test` | 14 744 + 3 138 passed / 0 failed |
+
+`make -C tooling/ef_tests/engine test` is **not** clean and is not gated on this phase:
+24 FOCIL fixtures fail, verified identical at the commit this work started from. They
+are recorded under "Not complete" in `docs/hegota-testnet.md`. That crate is its own
+cargo workspace, so it must be run through its Makefile.
+
+**Phase 6 is complete.** Bring-up is unblocked as far as the ledger is concerned; the
+FOCIL fixture failures are the remaining item that predates it.

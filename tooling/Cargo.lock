@@ -3293,6 +3293,7 @@ dependencies = [
  "ethrex-storage 23.0.0",
  "ethrex-trie 23.0.0",
  "ethrex-vm",
+ "hex-literal",
  "libssz",
  "libssz-merkle",
  "rayon",

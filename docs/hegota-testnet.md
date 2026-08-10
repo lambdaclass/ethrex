@@ -66,7 +66,9 @@ passed / 0 failed**, `cargo test -p ethrex-rpc --lib` is 122 passed, and
 | Phase 5 docs + V5 guard (Tasks 5.5/5.6) | `0234ae116` | frame txs recorded as IL-eligible; `newPayloadV5`'s Hegotá rejection tested |
 | Divergence ledger (Tasks 6.1-6.3) | `9c818c484` | `docs/hegota-testnet-divergences.md`; pins bumped; `RECENT_ROOT_CODE` verified byte-identical to `#12131` |
 | EIP-8369 VERIFY budgets | `b2090f668` | `2**20`, not derived; this chain runs at 200M, where the derivation was ~3x |
-| Canonical paymaster (Task 6.4) | | `#12041`'s 355-byte runtime hash pinned; the trace exemption and the pending-cap exemption both fire now |
+| Canonical paymaster (Task 6.4) | `5d26cd5de` | `#12041`'s 355-byte runtime hash pinned; the trace exemption and the pending-cap exemption both fire now |
+| Access sets + bookkeeping (Tasks 6.5/6.6) | `d290f6547` | payer warmed on a payment-scope APPROVE; EIP-8272 BAL reads kept with justification |
+| Phase 6 closed (Tasks 6.7/6.8) | | divergence ledger swept; no consensus-visible row unresolved without a fallback |
 
 ### Not complete
 
@@ -97,7 +99,9 @@ passed / 0 failed**, `cargo test -p ethrex-rpc --lib` is 122 passed, and
   `Transaction::FrameTransaction`, while these fixtures carry ordinary typed
   transactions). Diagnosing these is real work and probably belongs ahead of Phase 6 —
   they are the upstream conformance suite for the exact feature this branch enforces.
-- **Phase 6** — the divergence ledger lives at `docs/hegota-testnet-divergences.md`.
+- **Phase 6 is complete.** The divergence ledger lives at
+  `docs/hegota-testnet-divergences.md`; its §10 carries the sweep and the checkpoint.
+  Historical note on what it found:
   Tasks 6.1-6.3 are closed: no core EIP has moved normatively since the pins (EIP-8141
   and EIP-7805 are byte-identical, EIP-8250 and EIP-8272 gained one Abstract sentence
   each), all ten upstream PRs are still open, and the pins are bumped. Tasks 6.4-6.8 are
@@ -189,13 +193,14 @@ passed / 0 failed**, `cargo test -p ethrex-rpc --lib` is 122 passed, and
    this branch enforces, so they matter more than their age suggests. Start by running
    one file with `cargo test -p ef_tests-engine --release focil` and reading what the
    fixture expects against what ethrex returns.
-3. Then **Phase 6 Tasks 6.4-6.8**, reading `docs/hegota-testnet-divergences.md` first.
-   6.1-6.4 are done and every consensus-visible row has an action. 6.5 and 6.6 (the
-   EIPs#12026 / EIPs#12113 BAL and warm-set clauses, and the EIP-8272 BAL read record)
-   are what remain before the 6.7 sweep.
-4. Do **not** start Phases 7-9 (genesis, publication, install) before Phase 6. Bringing
-   up a testnet whose ledger is open just means finding the split with a second client
-   attached.
+3. **Phase 6 is closed**, so Phases 7-9 are unblocked. Read
+   `docs/hegota-testnet-divergences.md` §10.1 first: four rows are carried by choice
+   rather than closed, and Phase 8's artifact set is where three of them have to be
+   published (the five-EIP set and pins, `AA_VOPS_SLOT_COUNT = 4`, and the per-IL
+   code-byte budget). A joining client cannot derive any of them from the genesis file.
+4. The single highest-value upstream item is the **EIP-7805 extension draft** EIP-8369
+   asks for. Publishing it converts the two-endpoint rule, the code-byte budget and the
+   slot count from divergences into a specification a second client can implement.
 
 The engine fixtures live in their own cargo workspace, so `cargo test -p
 ef_tests-engine` fails from the repo root with "did not match any packages". Run them
@@ -987,7 +992,7 @@ churns and training data is stale.
       document. Independently verified while planning: the PR's 355-byte runtime hashes
       to `0xda42f0d11838c4c0c3129b8b8e93e9718127ad6b315e517e1088125707c4d45c`, which is
       the value the PR states — use that as a cross-check, not as the source.
-- [ ] Task 6.5: Resolve EIPs#12026's BAL clause and EIPs#12113's warm-set clause, both
+- [x] Task 6.5: Resolve EIPs#12026's BAL clause and EIPs#12113's warm-set clause, both
       of which are consensus-visible through `blockAccessListHash`. Confirm that
       validating a frame transaction's `signatures` records no EIP-7951 precompile
       access in the block access list, and that frame-transaction processing starts
@@ -996,7 +1001,7 @@ churns and training data is stale.
       frame target, that the payer is added when a payment-scope `APPROVE` collects
       `max_cost`, and that `ENTRY_POINT` is not pre-warmed. One test per clause in
       `test/tests/levm/eip8141_tests.rs`.
-- [ ] Task 6.6: Resolve the two EIP-8272 items the merged text now pins that ethrex may
+- [x] Task 6.6: Resolve the two EIP-8272 items the merged text now pins that ethrex may
       implement differently. First: the merged Reference-validity section says a valid
       reference adds the address and storage key to the accessed sets and "affects
       warm/cold gas accounting only", while ethrex performs real storage reads and
@@ -1007,12 +1012,12 @@ churns and training data is stale.
       reads and writes are protocol bookkeeping which must **not** enter
       `accessed_addresses` / `accessed_storage_keys`, must not be priced as `SSTORE`,
       and must not warm anything, and add a test asserting each of the three.
-- [ ] Task 6.7: For every row in `docs/hegota-testnet-divergences.md` whose
+- [x] Task 6.7: For every row in `docs/hegota-testnet-divergences.md` whose
       consensus-visible column reads "yes" and whose action is not "closed", either
       close it or move it verbatim into the Open Questions section of this document
       with the fallback we ship. Zero rows may end the phase as "yes / unresolved /
       no fallback".
-- [ ] Task 6.8: **Checkpoint: Verify Phase 6 complete.** Confirm every row of
+- [x] Task 6.8: **Checkpoint: Verify Phase 6 complete.** Confirm every row of
       `docs/hegota-testnet-divergences.md` has a non-empty action, that no
       consensus-visible row is unresolved without a stated fallback, that the ```pins```
       block in `docs/hegota-devnet.md` matches what `diff_eip` reports as head for

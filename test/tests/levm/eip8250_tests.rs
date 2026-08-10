@@ -305,3 +305,109 @@ fn keyed_nonce_consumption_survives_a_later_batch_revert() {
         "a non-zero key must not touch the sender's linear account nonce",
     );
 }
+
+// ==================== Keyed nonces are protocol bookkeeping ====================
+//
+// EIP-8250: "Keyed-nonce reads and writes performed by stateful validity and
+// `consume_nonce_set` are protocol bookkeeping: they do NOT add `NONCE_MANAGER`
+// or its slots to EIP-2929 `accessed_addresses` or `accessed_storage_keys`, are
+// NOT charged under EIP-2200 `SSTORE` pricing, and do NOT warm the address or
+// slot for later user-level access."
+
+/// A probe account whose code does `PUSH20 addr; BALANCE; POP; STOP`.
+const PROBE: Address = Address::repeat_byte(0xB2);
+/// Never touched by the protocol: the cold control.
+const COLD_CONTROL: Address = Address::repeat_byte(0xC2);
+
+fn balance_probe_code(addr: Address) -> Bytes {
+    let mut code = vec![0x73];
+    code.extend_from_slice(addr.as_bytes());
+    code.extend_from_slice(&[0x31, 0x50, 0x00]);
+    Bytes::from(code)
+}
+
+/// Run a frame tx that consumes `nonce_keys` and then probes `probed`'s
+/// warm/cold status from a DEFAULT frame, returning total `gas_used`.
+fn keyed_nonce_probe_gas(probed: Address, nonce_keys: Vec<U256>) -> u64 {
+    let tx = frame_tx_with_keys(
+        vec![
+            frame(FrameMode::Verify, 0x03, FUNDED_SENDER, 100_000, &[]),
+            frame(FrameMode::Default, 0, PROBE, 100_000, &[]),
+        ],
+        nonce_keys,
+    );
+    let (result, _db) = run_frame_tx(
+        &[
+            (
+                FUNDED_SENDER,
+                sender_balance(),
+                0,
+                Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+            ),
+            (PROBE, U256::zero(), 0, balance_probe_code(probed)),
+            (COLD_CONTROL, U256::from(1u64), 0, Bytes::new()),
+            (
+                ethrex_common::types::frame_tx_nonce_manager(),
+                U256::zero(),
+                1,
+                Bytes::from(NONCE_MANAGER_STUB_CODE.to_vec()),
+            ),
+        ],
+        tx,
+    );
+    result
+        .expect("the keyed-nonce probe tx must execute")
+        .gas_used
+}
+
+#[test]
+fn consuming_a_keyed_nonce_does_not_warm_the_nonce_manager() {
+    let nonce_manager = ethrex_common::types::frame_tx_nonce_manager();
+    let keys = vec![U256::one()];
+
+    let manager_gas = keyed_nonce_probe_gas(nonce_manager, keys.clone());
+    let control_gas = keyed_nonce_probe_gas(COLD_CONTROL, keys);
+
+    assert_eq!(
+        manager_gas, control_gas,
+        "consuming a keyed nonce must not warm NONCE_MANAGER for later \
+         user-level access: probing it cost {manager_gas} against {control_gas} \
+         for a never-touched account"
+    );
+}
+
+#[test]
+fn a_keyed_nonce_is_not_priced_as_an_sstore() {
+    // The only keyed-nonce charge is the first-use state-growth surcharge, and
+    // it applies per newly-occupied key. A second key costs exactly one more
+    // surcharge — not an additional EIP-2200 SSTORE charge, and not a cold-slot
+    // access on top.
+    let one_key = keyed_nonce_probe_gas(COLD_CONTROL, vec![U256::one()]);
+    let two_keys = keyed_nonce_probe_gas(COLD_CONTROL, vec![U256::one(), U256::from(2u64)]);
+
+    // An extra key also lengthens the signed envelope, so the delta carries a
+    // few gas of ordinary transaction data cost. What it must NOT carry is any
+    // storage pricing: a cold slot access or an EIP-2200 charge would add
+    // thousands, so bounding the excess below `ENVELOPE_SLACK` is what makes
+    // this an assertion about pricing rather than about an exact total.
+    const ENVELOPE_SLACK: u64 = 100;
+    let surcharge = ethrex_levm::gas_cost::KEYED_NONCE_FIRST_USE_GAS;
+
+    let second_key_delta = two_keys - one_key;
+    assert!(
+        (surcharge..surcharge + ENVELOPE_SLACK).contains(&second_key_delta),
+        "a second first-use keyed nonce must cost one KEYED_NONCE_FIRST_USE_GAS \
+         ({surcharge}) plus envelope data only, but cost {second_key_delta} more \
+         -- a storage charge is layered on top"
+    );
+
+    // Key 0 is the legacy account nonce and occupies no NONCE_MANAGER slot, so
+    // it carries no surcharge at all.
+    let legacy_only = keyed_nonce_probe_gas(COLD_CONTROL, vec![U256::zero()]);
+    let keyed_delta = one_key - legacy_only;
+    assert!(
+        (surcharge..surcharge + ENVELOPE_SLACK).contains(&keyed_delta),
+        "the legacy nonce key must carry no keyed-nonce surcharge, so one keyed \
+         key should cost one surcharge ({surcharge}) more, not {keyed_delta}"
+    );
+}
