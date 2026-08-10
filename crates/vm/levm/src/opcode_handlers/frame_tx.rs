@@ -657,37 +657,6 @@ impl OpcodeHandler for OpRecentRootRefLoadHandler {
     }
 }
 
-/// NONCEKEYLOAD (0xB9) -- read `nonce_keys[index]` from the signed envelope.
-/// Stack: `[index]`. Gas: 3. Reads only the envelope, never contract storage;
-/// allowed in any frame mode (incl. VERIFY). Exceptional-halt if
-/// `index >= len(nonce_keys)`.
-///
-/// SPEC DIVERGENCE (EIP-8250): the spec deliberately exposes only `len`
-/// (TXPARAM 0x0D), the whole-set keccak digest (0x0E) and `nonce_keys[0]`
-/// (0x10) — there is no per-index accessor; the digest is its substitute. This
-/// opcode is an ethrex-only extension for the Hegotá devnet (see
-/// docs/eip-8250.md). Consensus-visible: its byte, gas, and out-of-range
-/// (all-gas exceptional halt) semantics must match across clients.
-pub struct OpNonceKeyLoadHandler;
-impl OpcodeHandler for OpNonceKeyLoadHandler {
-    #[inline(always)]
-    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
-        let [index] = *vm.current_call_frame.stack.pop()?;
-
-        vm.current_call_frame
-            .increase_consumed_gas(gas_cost::NONCEKEYLOAD)?;
-
-        let ctx = vm
-            .frame_tx_context
-            .as_ref()
-            .ok_or(ExceptionalHalt::InvalidOpcode)?;
-
-        let key = load_nonce_key(ctx, index)?;
-        vm.current_call_frame.stack.push(key)?;
-        Ok(OpcodeResult::Continue)
-    }
-}
-
 // -- Helper functions --
 
 pub fn load_tx_param(
@@ -742,23 +711,6 @@ pub fn load_tx_param(
             .unwrap_or_else(U256::zero)),
         _ => Err(ExceptionalHalt::InvalidOpcode.into()),
     }
-}
-
-/// Read `nonce_keys[index]` from the signed envelope, or exceptional-halt
-/// (`InvalidOpcode`, consuming all gas) if `index` is out of range or does not
-/// fit in a usize. Backs the NONCEKEYLOAD opcode; kept as a pure helper so the
-/// bounds behavior is unit-testable without a full VM.
-pub(crate) fn load_nonce_key(
-    ctx: &crate::vm::FrameTxContext,
-    index: U256,
-) -> Result<U256, VMError> {
-    let index = u64::try_from(index).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
-    let idx = index_to_usize(index)?;
-    ctx.tx
-        .nonce_keys
-        .get(idx)
-        .copied()
-        .ok_or(ExceptionalHalt::InvalidOpcode.into())
 }
 
 pub fn address_to_u256(addr: ethrex_common::Address) -> U256 {
@@ -851,7 +803,7 @@ fn execute_default_verify(
 
 #[cfg(test)]
 mod max_cost_tests {
-    use super::{address_to_u256, compute_tx_max_cost, load_nonce_key, load_tx_param};
+    use super::{address_to_u256, compute_tx_max_cost, load_tx_param};
     use crate::errors::{ExceptionalHalt, VMError};
     use crate::vm::FrameTxContext;
     use ethrex_common::{Address, H256, U256, types::FrameTransaction};
@@ -942,29 +894,6 @@ mod max_cost_tests {
         let c = ctx(10, 0, 0, 21_000);
         assert!(matches!(
             load_tx_param(&c, 0x12, true),
-            Err(VMError::ExceptionalHalt(ExceptionalHalt::InvalidOpcode))
-        ));
-    }
-
-    #[test]
-    fn nonce_key_load_reads_by_index_and_halts_out_of_range() {
-        let mut c = ctx(10, 0, 0, 21_000);
-        c.tx.nonce_keys = vec![U256::from(0u64), U256::from(5u64), U256::from(9u64)];
-        // In-range indices return the element.
-        assert_eq!(load_nonce_key(&c, U256::zero()).unwrap(), U256::from(0u64));
-        assert_eq!(load_nonce_key(&c, U256::one()).unwrap(), U256::from(5u64));
-        assert_eq!(
-            load_nonce_key(&c, U256::from(2u64)).unwrap(),
-            U256::from(9u64)
-        );
-        // Out-of-range and oversized indices exceptional-halt (never a silent
-        // zero-fill — a differing value would fork consensus).
-        assert!(matches!(
-            load_nonce_key(&c, U256::from(3u64)),
-            Err(VMError::ExceptionalHalt(ExceptionalHalt::InvalidOpcode))
-        ));
-        assert!(matches!(
-            load_nonce_key(&c, U256::MAX),
             Err(VMError::ExceptionalHalt(ExceptionalHalt::InvalidOpcode))
         ));
     }

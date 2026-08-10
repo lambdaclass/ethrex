@@ -35,7 +35,6 @@ EIP-8312 carries its own timestamp and is inert until a chain opts in.
 | `0xB6` | `TXTRACE` | 7906 | ethrex allocation; EIP-7906 assigns no opcode bytes |
 | `0xB7` | `EVENTDATACOPY` | 7906 | as above |
 | `0xB8` | `TXDIFF` | 7906 | as above |
-| `0xB9` | `NONCEKEYLOAD` | 8250 | **ethrex-only extension** — indexed `nonce_keys[i]`; spec defines no per-index accessor (see `docs/eip-8250.md`) |
 
 EIP-7906's Constants table carries only `TXTRACE_GAS_COST`, `EVENTDATACOPY_GAS_COST` and `POST_TX`, so `0xB6`/`0xB7`/`0xB8` are ethrex's allocation, chosen to leave `0xB5` to EIP-8272. The standalone `eip-7906` branch uses the same three bytes, so the two agree; `test/tests/levm/eip7906_tests.rs` and `crates/vm/levm/src/opcode_handlers/tx_trace.rs` carry them. Flag upstream so the 8141-family drafts settle non-overlapping bytes.
 
@@ -47,7 +46,7 @@ EIP-7906's Constants table carries only `TXTRACE_GAS_COST`, `EVENTDATACOPY_GAS_C
 - ⚠️ **Strict atomic-batch consumption durability not yet implemented** — flagged for devnet/interop validation.
 
 ### EIP-8272 (Recent Roots) — see `docs/eip-8272.md`
-- `RECENT_ROOT_CODE` handled **natively** (spec `TBD`). No longer divergences: `RECENTROOTREFLOAD` at `0xB5`, TXPARAM `0x0F`, and `RECENT_ROOT_ADDRESS` at `0x…8272` all match the current spec.
+- No divergences remain. `RECENTROOTREFLOAD` at `0xB5`, TXPARAM `0x0F` and `RECENT_ROOT_ADDRESS` at `0x…8272` all match the current spec, and `RECENT_ROOT_CODE` is the specified 144-byte predeploy rather than a native VM write. The predeploy replaced a flat `RECENT_ROOT_WRITE_GAS` that skipped the EIP-8037 state-gas charge on the created slot, so the same write cost 38 064 gas here against 127 196 on a client executing the code — a consensus split that is now closed. Its two `PUSH32` immediates are `keccak256("RECENT_ROOT_ENTRY")` and `keccak256("RECENT_ROOT_STORAGE")`, the same domains ethrex already derived, so the hash layout is unchanged and only gas and call semantics moved.
 
 ### EIP-7906 (Tx Assertions)
 - Opcodes renumbered as above. Behaviour otherwise unchanged.
