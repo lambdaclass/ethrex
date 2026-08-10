@@ -404,6 +404,8 @@ pub async fn init_dev_network(
 ) {
     info!("Running in DEV_MODE");
 
+    let chain_config = store.get_chain_config();
+
     let head_block_hash = {
         let current_block_number = store.get_latest_block_number().await.unwrap();
         store
@@ -415,14 +417,14 @@ pub async fn init_dev_network(
 
     // The producer stands in for the CL, so it supplies what a CL would: the
     // EIP-7843 slot to continue from and the execution-apis#796 target gas limit,
-    // which it holds at the head's gas limit.
+    // which it holds at the head's gas limit so the dev chain keeps its
+    // configured limit.
     let head_header = store
         .get_block_header_by_hash(head_block_hash)
         .unwrap()
         .unwrap();
     let head_slot_number = head_header.slot_number.unwrap_or(0);
     let target_gas_limit = head_header.gas_limit;
-    let chain_config = store.get_chain_config();
 
     let max_tries = 3;
 
@@ -795,7 +797,10 @@ pub async fn init_l1(
             r#type: BlockchainType::L1,
             max_blobs_per_block: opts.max_blobs_per_block,
             precompute_witnesses: opts.precompute_witnesses,
+            private_mempool: opts.mempool_private,
             precompile_cache_enabled: !opts.no_precompile_cache,
+            price_bump_percent: opts.mempool_price_bump,
+            blob_price_bump_percent: opts.mempool_blob_price_bump,
             max_queued_txs_per_account: opts.mempool_max_queued_txs_per_account,
             bal_parallel_exec_enabled: !opts.no_bal_parallel_exec,
             bal_prefetch_enabled: !opts.no_bal_prefetch,

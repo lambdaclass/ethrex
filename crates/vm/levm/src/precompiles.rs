@@ -227,6 +227,24 @@ pub const P256VERIFY: Precompile = Precompile {
     active_since_fork: Osaka,
 };
 
+/// EXECUTE precompile address (0x0101) for Native Rollups (EIP-8079).
+/// Active only on L1 at or above `Fork::LStar`. The L1-only + LStar gate is
+/// enforced in `is_precompile` (the `matches!(vm_type, VMType::L1)` check);
+/// `execute_precompile`'s dispatch only re-checks `fork >= LStar` and relies on
+/// `is_precompile` having already rejected the L2 case at the call site.
+/// NOTE: `EXECUTE` is intentionally NOT in the `PRECOMPILES` array, so its
+/// `active_since_fork` below is never consulted by `precompiles_for_fork` — the
+/// gating is entirely the hand-written checks above. The field is set for
+/// documentation only.
+pub const EXECUTE: Precompile = Precompile {
+    address: H160([
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x01, 0x01,
+    ]),
+    name: "EXECUTE",
+    active_since_fork: LStar,
+};
+
 pub const PRECOMPILES: [Precompile; 18] = [
     ECRECOVER,
     SHA2_256,
@@ -255,6 +273,9 @@ pub fn precompiles_for_fork(fork: Fork) -> impl Iterator<Item = Precompile> {
 }
 
 pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
+    if fork >= Fork::LStar && matches!(vm_type, VMType::L1) && *address == EXECUTE.address {
+        return true;
+    }
     (matches!(vm_type, VMType::L2(_)) && *address == P256VERIFY.address)
         || precompiles_for_fork(fork).any(|precompile| precompile.address == *address)
 }
@@ -304,6 +325,7 @@ pub fn execute_precompile(
     fork: Fork,
     cache: Option<&PrecompileCache>,
     crypto: &dyn Crypto,
+    _stateless_validator: Option<&dyn crate::StatelessValidator>,
 ) -> Result<Bytes, VMError> {
     type PrecompileFn = fn(&Bytes, &mut u64, Fork, &dyn Crypto) -> Result<Bytes, VMError>;
 
@@ -335,6 +357,18 @@ pub fn execute_precompile(
             Some(p_256_verify as PrecompileFn);
         precompiles
     };
+
+    // EXECUTE precompile is dispatched before the const table (LStar runtime gate;
+    // L1-only enforcement is at the is_precompile call site).
+    if fork >= Fork::LStar && address == EXECUTE.address {
+        return crate::execute_precompile::execute_precompile(
+            calldata,
+            gas_remaining,
+            fork,
+            crypto,
+            _stateless_validator,
+        );
+    }
 
     if address[0..18] != [0u8; 18] {
         return Err(VMError::Internal(InternalError::InvalidPrecompileAddress));
@@ -1480,4 +1514,26 @@ pub fn bls12_map_fp2_to_g2(
     output[144..192].copy_from_slice(&result[96..144]);
     output[208..256].copy_from_slice(&result[144..192]);
     Ok(Bytes::copy_from_slice(&output))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethrex_common::types::Fork;
+
+    /// I3 gate test: EXECUTE precompile is L1-only and only active since LStar.
+    #[test]
+    fn execute_precompile_gated_by_lstar_and_l1() {
+        let execute_addr = EXECUTE.address;
+        // Pre-LStar L1: not a precompile.
+        assert!(!is_precompile(&execute_addr, Fork::Amsterdam, VMType::L1));
+        // LStar on L2: not a precompile (L1-only, I3).
+        assert!(!is_precompile(
+            &execute_addr,
+            Fork::LStar,
+            VMType::L2(Default::default())
+        ));
+        // LStar on L1: is a precompile.
+        assert!(is_precompile(&execute_addr, Fork::LStar, VMType::L1));
+    }
 }
