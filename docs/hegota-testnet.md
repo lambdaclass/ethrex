@@ -990,11 +990,89 @@ party can join, and the seven-point verification pass in
       node joins from a different host using only the published bundle, and that Task
       8.8's two deposit outcomes are both recorded. List each task and its status.
 
+### Phase 9: Install the testnet on its own server
+
+Why this phase: the testnet lands on a different host from the running Hegotá devnet,
+with its own keys and its own faucet. The devnet host is the reference implementation of
+the surrounding infrastructure, so this phase is mostly transcription plus the deliberate
+departures below. Access to the reference host is documented outside this repository; it
+is reached over the tailnet in two hops.
+
+**Verified on the running devnet host** (read-only inspection), and reusable:
+
+- `~/hegota-prod.yaml` is the config actually in service, and it is *simpler* than
+  `fixtures/networks/hegota-devnet.yaml`: `sigp/lighthouse:v8.0.0-rc.1`,
+  `fulu_fork_epoch: 0`, `heze_fork_epoch: 1`, **no `gloas_fork_epoch`** and **no
+  `additional_preloaded_contracts`**. It works: the live head carries both `slotNumber`
+  and `blockAccessListHash`, and `requestsHash` is the empty-input hash, so the genesis
+  generator derives the Amsterdam times from `heze` and installs the EIP-8282 predeploys
+  itself. Scheduling Gloas explicitly is one valid arrangement, not a requirement.
+- `~/hegota-Caddyfile` fronts every service as a host-based vhost with automatic
+  Let's Encrypt certificates: three RPC subdomains, the explorer, the faucet. Two
+  hard-won details to carry over. **Never** add `header Access-Control-*` directives:
+  ethrex's RPC server already emits a complete permissive CORS set, Caddy's `header`
+  appends rather than replaces, and a duplicated `Access-Control-Allow-Origin` is
+  hard-rejected by browsers and by MetaMask's request layer. And the explorer is proxied
+  through a **stable** local port maintained by a small socat unit, because kurtosis
+  reassigns the explorer's real port on every re-genesis; only that unit changes, never
+  the Caddy config.
+- The no-regenesis binary-swap runbook: `/usr/local/bin/ethrex` is a small wrapper that
+  execs `ethrex-real "$@" --http.api=ethrex`, and upgrades replace only `ethrex-real`
+  inside the running container. Consequence worth carrying: **the image tag does not
+  identify the running binary**, so always read `--version` from the binary. The upgrade
+  scripts record `eth_blockNumber` and the block-1000 hash before and after the restart,
+  so an accidental regenesis or DB rewrite is caught immediately. Reuse that check for
+  every manual intervention.
+
+- [ ] Task 9.1: Replace the validator keys. `preregistered_validator_keys_mnemonic`
+      defaults to the ethereum-package mnemonic beginning "giant issue aisle success",
+      which is public and identical on every kurtosis devnet. Generate our own and set it
+      explicitly. This is not cosmetic on a permissioned chain: the accounts derived from
+      the default mnemonic are prefunded and spendable by anyone who has ever run the
+      package.
+- [ ] Task 9.2: Set `prefunded_accounts` explicitly for the accounts we control — the
+      faucet, the deposit-gater admin, and a deployer — rather than relying on whatever
+      the mnemonic funds. **The gater admin MUST NOT be a default-mnemonic account**: it
+      can mint deposit tokens, so a public key there makes the permissioning worthless
+      while appearing to work. Cross-check against `DEPOSIT_CONTRACT_ADMINS` from Phase 7,
+      which is what grants that address its gater role in genesis.
+- [ ] Task 9.3: Set `network_id` to the chain ID fixed in Phase 7 (`8141`), replacing the
+      package default `3151908`.
+- [ ] Task 9.4: Change the consensus client. `sigp/lighthouse:v8.0.0-rc.1` is what the
+      devnet runs and it has no FOCIL support, so it cannot drive this chain: EIP-7805
+      needs `engine_getInclusionListV1`, `engine_forkchoiceUpdatedV5` and
+      `engine_newPayloadV6`. Move to a FOCIL-capable build and verify the three methods
+      are advertised through `engine_exchangeCapabilities` before the fork boundary, not
+      after.
+- [ ] Task 9.5: Move `port_publisher.cl` below the host's ephemeral floor. The devnet
+      publishes it at `33000`, inside the default `32768`-and-up range, where a fixed
+      publish can lose the race against a dynamically assigned port. It has not bitten
+      there; do not carry the risk to a host that must also stay externally reachable.
+- [ ] Task 9.6: Stand up our own faucet. The devnet's is a container on a local port
+      behind the Caddy vhost, configured by an env file holding an RPC URL, a funding
+      private key, a per-request amount, and the public RPC and explorer URLs. Build the
+      testnet's own with its own key, funded from a Task 9.2 account. The key is a
+      secret: it belongs in the host's env file, never in this repository or in a
+      kurtosis config.
+- [ ] Task 9.7: Write `scripts/hegota-testnet/INSTALL.md` covering, in order: host
+      prerequisites, the docker image build and tag, `make checkout-ethereum-package`,
+      the kurtosis launch with our config, extracting the artifact set from
+      `/network-configs`, the Caddy vhosts and the explorer port-forward unit, the faucet
+      deploy, the firewall rules from Phase 8, and the deposit-token minting runbook.
+      Include the verification pass and the no-regenesis upgrade path. Written so someone
+      who has never seen the devnet host can follow it.
+- [ ] Task 9.8: **Checkpoint: Verify Phase 9 complete.** On the target host: the three
+      ELs agree on head number and hash; every published artifact is fetchable over
+      HTTPS; the faucet funds a fresh address; a deposit from a token-holding address
+      succeeds and one from a token-less address reverts; no account derived from the
+      default mnemonic holds a balance or the gater admin role. List each task and its
+      status.
+
 - [ ] **Final Audit**. Re-read the entire plan. For each task, verify the
       implementation exists in the codebase: the deletions of Phase 2 by grep, the
-      tests of Phases 3-6 by name, the config of Phase 7 by file, and the artifacts and
-      recorded observations of Phase 8 by file. List any gaps. All gaps must be resolved
-      before reporting completion.
+      tests of Phases 3-6 by name, the config of Phase 7 by file, the artifacts and
+      recorded observations of Phase 8 by file, and the install runbook and host state of
+      Phase 9. List any gaps. All gaps must be resolved before reporting completion.
 
 ## PR reconciliation snapshot
 
