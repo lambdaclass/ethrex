@@ -110,6 +110,34 @@ impl BinaryTrieDB for SinkDB {
     }
 }
 
+/// What production actually does with a commit's entries: push them
+/// into an in-memory staging vector under their database keys.
+///
+/// Mirrors `LayeredBinaryTrieDB::put_batch` in `crates/storage`, which
+/// writes nothing to disk — the staged nodes reach RocksDB later, at the
+/// layer flush. The in-memory backend's `put_batch` is a `BTreeMap`
+/// insert instead, which is *not* the production shape and costs far
+/// more, so timing a commit against it overstates the write.
+struct StagingDB {
+    inner: InMemoryBinaryTrieDB,
+    staged: Arc<Mutex<Vec<(Vec<u8>, Vec<u8>)>>>,
+}
+
+impl BinaryTrieDB for StagingDB {
+    fn get(&self, path: &BitPath) -> Result<Option<Vec<u8>>, BinaryTrieError> {
+        self.inner.get(path)
+    }
+
+    fn put_batch(&self, entries: Vec<(BitPath, Vec<u8>)>) -> Result<(), BinaryTrieError> {
+        let mut staged = self.staged.lock().expect("staging buffer");
+        staged.reserve(entries.len());
+        for (path, encoded) in entries {
+            staged.push((path.to_db_key(), encoded));
+        }
+        Ok(())
+    }
+}
+
 /// Build a trie of `leaf_count` random leaves and return its backing
 /// map, its root, and the keys, so a later round can update a subset.
 fn build(leaf_count: usize, seed: u64) -> (NodeMap, ethereum_types::H256, Vec<Vec<u8>>) {
@@ -135,49 +163,78 @@ struct Round {
     apply: Duration,
     read_time: Duration,
     reads: usize,
-    commit: Duration,
     commit_no_write: Duration,
+    commit_staging: Duration,
     written: Vec<(BitPath, Vec<u8>)>,
 }
 
-fn round(map: &NodeMap, root: ethereum_types::H256, keys: &[Vec<u8>], changed: usize, seed: u64) -> Round {
+fn round(
+    map: &NodeMap,
+    root: ethereum_types::H256,
+    keys: &[Vec<u8>],
+    changed: usize,
+    seed: u64,
+) -> Round {
     let mut rng = Rng(seed);
     let picks: Vec<Vec<u8>> = (0..changed)
         .map(|_| keys[(rng.next_u64() as usize) % keys.len()].clone())
         .collect();
     let values: Vec<[u8; 32]> = (0..changed).map(|_| rng.value()).collect();
 
-    // Timed arm: real backend, so the write is included.
+    let apply_all = |trie: &mut BinaryTrie| {
+        for (key, value) in picks.iter().zip(&values) {
+            trie.insert(key.clone(), *value).expect("insert");
+        }
+    };
+
+    // Capture arm, untimed for commit: the recorder clones every entry,
+    // so its commit time is not reportable. It exists only to hand back
+    // the exact node multiset and the read count.
     let (db, log) = RecordingDB::over(Arc::clone(map));
     let mut trie = BinaryTrie::open(Box::new(db), root);
-    let apply_start = Instant::now();
-    for (key, value) in picks.iter().zip(&values) {
-        trie.insert(key.clone(), *value).expect("insert");
-    }
-    let apply = apply_start.elapsed();
-    let commit_start = Instant::now();
+    apply_all(&mut trie);
     trie.commit().expect("commit");
-    let commit = commit_start.elapsed();
     drop(trie);
     let recorded = std::mem::take(&mut *log.lock().expect("log"));
 
-    // Ablation arm: identical work against a backend whose put_batch
-    // does nothing, so the difference is the backend's share of commit.
+    // Apply arm: reads timed inside the backend, so the read share of
+    // apply is separated from the tree-walking around it.
+    let (db, log) = RecordingDB::over(Arc::clone(map));
+    let mut trie = BinaryTrie::open(Box::new(db), root);
+    let start = Instant::now();
+    apply_all(&mut trie);
+    let apply = start.elapsed();
+    let read_time = log.lock().expect("log").read_time;
+    drop(trie);
+
+    // Commit arm with no backend at all: the trie's own commit cost —
+    // recursion, encoding, hashing, path building, mark_clean.
     let scratch = InMemoryBinaryTrieDB::new(Arc::clone(map));
     let mut trie = BinaryTrie::open(Box::new(SinkDB(scratch)), root);
-    for (key, value) in picks.iter().zip(&values) {
-        trie.insert(key.clone(), *value).expect("insert");
-    }
+    apply_all(&mut trie);
     let start = Instant::now();
     trie.commit().expect("commit");
     let commit_no_write = start.elapsed();
+    drop(trie);
+
+    // Commit arm shaped like production: entries pushed into a staging
+    // vector under their database keys, nothing touching disk.
+    let staging = StagingDB {
+        inner: InMemoryBinaryTrieDB::new(Arc::clone(map)),
+        staged: Arc::new(Mutex::new(Vec::new())),
+    };
+    let mut trie = BinaryTrie::open(Box::new(staging), root);
+    apply_all(&mut trie);
+    let start = Instant::now();
+    trie.commit().expect("commit");
+    let commit_staging = start.elapsed();
 
     Round {
         apply,
-        read_time: recorded.read_time,
+        read_time,
         reads: recorded.reads,
-        commit,
         commit_no_write,
+        commit_staging,
         written: recorded.written,
     }
 }
@@ -268,22 +325,31 @@ fn commit_cost_breakdown() {
             let reps = if r.written.len() > 20_000 { 20 } else { 200 };
             let (hash, encode, db_key, path_build) = replay(&r.written, reps);
             let dirty = r.written.len();
+            let core = micros(r.commit_no_write);
+            let residual = core - micros(hash) - micros(encode) - micros(path_build);
             println!(
-                "changed={changed:<5} dirty_nodes={dirty:<6} ({:.1}/leaf)  reads={:<6}\n  \
-                 apply    {:>9.1} us  (backend reads {:>8.1} us)\n  \
-                 commit   {:>9.1} us  (no-write arm {:>8.1} us -> write share {:>7.1} us)\n  \
-                 replayed: hash {:>8.1} us | encode {:>8.1} us | db_key {:>8.1} us | path {:>8.1} us",
+                "changed={changed:<5} dirty={dirty:<6} ({:.1}/leaf)  node_reads={:<6}\n  \
+                 apply           {:>9.1} us  (of which backend reads {:>8.1} us)\n  \
+                 commit  core    {:>9.1} us   +staging {:>8.1} us (staging share {:>7.1} us)\n  \
+                 core split: hash {:>8.1} us ({:>4.1}%) | encode {:>7.1} us ({:>4.1}%) \
+                 | path {:>7.1} us ({:>4.1}%) | residual {:>7.1} us ({:>4.1}%)\n  \
+                 staging replay: db_key {:>7.1} us",
                 dirty as f64 / changed as f64,
                 r.reads,
                 micros(r.apply),
                 micros(r.read_time),
-                micros(r.commit),
-                micros(r.commit_no_write),
-                micros(r.commit).max(micros(r.commit_no_write)) - micros(r.commit_no_write),
+                core,
+                micros(r.commit_staging),
+                micros(r.commit_staging) - core,
                 micros(hash),
+                100.0 * micros(hash) / core,
                 micros(encode),
-                micros(db_key),
+                100.0 * micros(encode) / core,
                 micros(path_build),
+                100.0 * micros(path_build) / core,
+                residual,
+                100.0 * residual / core,
+                micros(db_key),
             );
         }
         drop(keys);
