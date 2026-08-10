@@ -164,6 +164,12 @@ passed / 0 failed**, `cargo test -p ethrex-rpc --lib` is 122 passed, and
 
 ### Start here next session
 
+0. **`/read-handoffs` returns nothing for this branch.** `handoff_resume` with no
+   arguments resolves to branch `main` in whatever project the engram MCP server was
+   launched from, and answers empty — verified twice, at both ends of the 2026-08-10
+   session. Pass both arguments explicitly:
+   `handoff_resume(branch="hegota-testnet", project="/home/edgar/dev/ethrex_2")`.
+   Nothing below depends on that working: this file is the artifact and it is in git.
 1. Read this Progress block and the traps above.
 2. **Diagnose the 24 pre-existing FOCIL engine-fixture failures** described under "Not
    complete". They are upstream's conformance suite for EIP-7805, which is the feature
