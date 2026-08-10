@@ -210,7 +210,12 @@ impl RLPxMessage for NewPooledTransactionHashes {
         let (transaction_types, decoder): (Bytes, _) = decoder.decode_field("transactionTypes")?;
         let (transaction_sizes, decoder): (Vec<usize>, _) =
             decoder.decode_field("transactionSizes")?;
-        let (transaction_hashes, _): (Vec<H256>, _) = decoder.decode_field("transactionHashes")?;
+        let (transaction_hashes, decoder): (Vec<H256>, _) =
+            decoder.decode_field("transactionHashes")?;
+        // The announcement is exactly three fields until eth/72 adds `cell_mask`
+        // (EIP-8070). Reject a longer list instead of ignoring the extra fields,
+        // so a peer encoding a newer shape on this session is caught here.
+        decoder.finish()?;
 
         if transaction_hashes.len() == transaction_sizes.len()
             && transaction_sizes.len() == transaction_types.len()
