@@ -2553,6 +2553,16 @@ impl Blockchain {
             return Ok(());
         };
 
+        // EIP-8369 budgets derive from the PARENT's gas limit: that is the head
+        // inclusion lists for this slot were built against, so every evaluator
+        // computes the same budget without needing this block.
+        let parent_gas_limit = self
+            .storage
+            .get_block_header_by_hash(header.parent_hash)
+            .ok()
+            .flatten()
+            .map_or(header.gas_limit, |parent| parent.gas_limit);
+
         let pre_state = inclusion_list_validator::StoreIlStateProvider {
             store: &self.storage,
             state_root: pre_state_root,
@@ -2575,7 +2585,12 @@ impl Blockchain {
             .refresh_all_from(&post_state, &crypto)
             .map_err(|e| ChainError::Custom(format!("IL validator refresh failed: {e}")))?;
 
-        let profile_2 = focil_profile2::BlockchainProfile2Evaluator::new(self, &header, gas_left);
+        let profile_2 = focil_profile2::BlockchainProfile2Evaluator::new(
+            self,
+            &header,
+            pre_state_root,
+            gas_left,
+        );
         let report = validator.check_with_profile_2(
             il,
             &block_tx_hashes,
@@ -2584,6 +2599,7 @@ impl Blockchain {
             &chain_config,
             &crypto,
             Some(&profile_2),
+            parent_gas_limit,
         );
 
         // Log every Profile 2 outcome, including the ones that reached no

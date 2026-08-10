@@ -136,7 +136,12 @@ pub async fn block_satisfies_inclusion_list(
     let gas_left = header.gas_limit.saturating_sub(header.gas_used);
     let chain_config = context.storage.get_chain_config();
 
-    let profile_2 = BlockchainProfile2Evaluator::new(&context.blockchain, &header, gas_left);
+    let profile_2 = BlockchainProfile2Evaluator::new(
+        &context.blockchain,
+        &header,
+        parent_header.state_root,
+        gas_left,
+    );
     let report = validator.check_with_profile_2(
         inclusion_list,
         &block_tx_hashes,
@@ -145,6 +150,7 @@ pub async fn block_satisfies_inclusion_list(
         &chain_config,
         &crypto,
         Some(&profile_2),
+        parent_header.gas_limit,
     );
 
     // Log every Profile 2 outcome, including the ones that reached no

@@ -22,7 +22,7 @@ use std::collections::HashSet;
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::error::ChainError;
-use ethrex_blockchain::focil_eligibility::MAX_VERIFY_GAS_PER_TX;
+use ethrex_blockchain::focil_eligibility::max_verify_gas_per_tx;
 use ethrex_blockchain::focil_profile2::BlockchainProfile2Evaluator;
 use ethrex_blockchain::inclusion_list_builder::{
     AccountStateView, IlStateProvider, IlStateProviderError,
@@ -177,6 +177,7 @@ fn eligible_profile2_omission_lands_in_unjustified_bucket() {
         &config(),
         &crypto,
         Some(&evaluator),
+        60000000,
     );
 
     assert_eq!(
@@ -232,6 +233,7 @@ fn ineligible_and_undecided_omissions_are_excluded_from_unjustified() {
         &config(),
         &crypto,
         Some(&evaluator),
+        60000000,
     );
 
     assert!(report.unsatisfied.is_none());
@@ -259,9 +261,9 @@ fn ignored_and_charged_not_admitted_never_reach_the_evaluator() {
     let ignored_sender = Address::repeat_byte(0x44);
     let charged_not_admitted_sender = Address::repeat_byte(0x55);
 
-    // Over MAX_VERIFY_GAS_PER_TX: priced, then rejected by the per-tx cap →
+    // Over max_verify_gas_per_tx(60000000): priced, then rejected by the per-tx cap →
     // `FillOutcome::Ignored`.
-    let ignored_tx = self_verify_tx(ignored_sender, MAX_VERIFY_GAS_PER_TX + 1);
+    let ignored_tx = self_verify_tx(ignored_sender, max_verify_gas_per_tx(60000000) + 1);
 
     // Priceable (a valid prefix shape) but statically invalid (empty
     // `nonce_keys`, which EIP-8250 forbids for a non-vault sender) →
@@ -290,6 +292,7 @@ fn ignored_and_charged_not_admitted_never_reach_the_evaluator() {
         &config(),
         &crypto,
         Some(&evaluator),
+        60000000,
     );
 
     assert!(report.unsatisfied.is_none());
@@ -468,7 +471,8 @@ async fn self_verify_frame_tx_that_would_pass_replay_is_eligible() {
         .refresh_all_from(&post_state, &crypto)
         .expect("refresh");
 
-    let evaluator = BlockchainProfile2Evaluator::new(&blockchain, &header, gas_left);
+    let evaluator =
+        BlockchainProfile2Evaluator::new(&blockchain, &header, header.state_root, gas_left);
     let report = validator.check_with_profile_2(
         &il,
         &HashSet::new(),
@@ -477,6 +481,7 @@ async fn self_verify_frame_tx_that_would_pass_replay_is_eligible() {
         &store.get_chain_config(),
         &crypto,
         Some(&evaluator),
+        60000000,
     );
 
     assert_eq!(
@@ -533,7 +538,8 @@ async fn self_verify_frame_tx_reading_outside_the_surface_is_ineligible() {
         .refresh_all_from(&post_state, &crypto)
         .expect("refresh");
 
-    let evaluator = BlockchainProfile2Evaluator::new(&blockchain, &header, gas_left);
+    let evaluator =
+        BlockchainProfile2Evaluator::new(&blockchain, &header, header.state_root, gas_left);
     let report = validator.check_with_profile_2(
         &il,
         &HashSet::new(),
@@ -542,6 +548,7 @@ async fn self_verify_frame_tx_reading_outside_the_surface_is_ineligible() {
         &store.get_chain_config(),
         &crypto,
         Some(&evaluator),
+        60000000,
     );
 
     assert!(
@@ -595,7 +602,8 @@ async fn frame_tx_with_a_utxo_frame_is_undecided() {
         import_block_omitting_il(&store, &blockchain, &genesis, il.clone()).await;
 
     let gas_left = header.gas_limit.saturating_sub(header.gas_used);
-    let evaluator = BlockchainProfile2Evaluator::new(&blockchain, &header, gas_left);
+    let evaluator =
+        BlockchainProfile2Evaluator::new(&blockchain, &header, header.state_root, gas_left);
     match evaluator.evaluate(&tx) {
         Profile2Eligibility::Undecided(_) => {}
         other => panic!("expected Undecided, got {other:?}"),
@@ -633,14 +641,24 @@ async fn queued_frame_tx_eligibility_flips_across_the_payload() {
     let (_s0, chain_before, header_before) =
         setup_profile2_store_at_nonce(&[(sender, code.clone())], 0, "focil-queued-before.db").await;
     let gas_left = header_before.gas_limit;
-    let before =
-        BlockchainProfile2Evaluator::new(&chain_before, &header_before, gas_left).evaluate(&tx);
+    let before = BlockchainProfile2Evaluator::new(
+        &chain_before,
+        &header_before,
+        header_before.state_root,
+        gas_left,
+    )
+    .evaluate(&tx);
 
     // End of payload: the predecessor has consumed sequence 0.
     let (_s1, chain_after, header_after) =
         setup_profile2_store_at_nonce(&[(sender, code)], 1, "focil-queued-after.db").await;
-    let after =
-        BlockchainProfile2Evaluator::new(&chain_after, &header_after, gas_left).evaluate(&tx);
+    let after = BlockchainProfile2Evaluator::new(
+        &chain_after,
+        &header_after,
+        header_after.state_root,
+        gas_left,
+    )
+    .evaluate(&tx);
 
     match (&before, &after) {
         (Profile2Eligibility::Ineligible(violation), Profile2Eligibility::Eligible) => {
@@ -696,7 +714,7 @@ async fn frame_tx_eligible_at_both_endpoints_can_be_ineligible_between_them() {
         let (_store, chain, header) =
             setup_profile2_store_funded(&[(sender, code)], 0, balance, db).await;
         let gas_left = header.gas_limit;
-        BlockchainProfile2Evaluator::new(&chain, &header, gas_left).evaluate(tx)
+        BlockchainProfile2Evaluator::new(&chain, &header, header.state_root, gas_left).evaluate(tx)
     }
 
     let start = verdict_at(sender, code.clone(), &tx, funded, "focil-sandwich-start.db").await;
@@ -746,7 +764,8 @@ async fn frame_tx_with_a_stale_keyed_nonce_is_ineligible() {
         import_block_omitting_il(&store, &blockchain, &genesis, il.clone()).await;
 
     let gas_left = header.gas_limit.saturating_sub(header.gas_used);
-    let evaluator = BlockchainProfile2Evaluator::new(&blockchain, &header, gas_left);
+    let evaluator =
+        BlockchainProfile2Evaluator::new(&blockchain, &header, header.state_root, gas_left);
     match evaluator.evaluate(&tx) {
         Profile2Eligibility::Ineligible(violation) => {
             assert!(
@@ -794,7 +813,8 @@ async fn frame_tx_with_an_unverifiable_signature_is_ineligible() {
         import_block_omitting_il(&store, &blockchain, &genesis, il.clone()).await;
 
     let gas_left = header.gas_limit.saturating_sub(header.gas_used);
-    let evaluator = BlockchainProfile2Evaluator::new(&blockchain, &header, gas_left);
+    let evaluator =
+        BlockchainProfile2Evaluator::new(&blockchain, &header, header.state_root, gas_left);
     match evaluator.evaluate(&tx) {
         Profile2Eligibility::Ineligible(_) => {}
         other => panic!("expected Ineligible, got {other:?}"),

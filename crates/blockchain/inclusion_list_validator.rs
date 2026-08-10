@@ -340,10 +340,20 @@ impl InclusionListSatisfactionValidator {
         header: &BlockHeader,
         config: &ChainConfig,
         crypto: &dyn Crypto,
+        parent_gas_limit: u64,
     ) -> Result<(), IlUnsatisfied> {
-        self.check_with_profile_2(il, block_txs, gas_left, header, config, crypto, None)
-            .unsatisfied
-            .map_or(Ok(()), Err)
+        self.check_with_profile_2(
+            il,
+            block_txs,
+            gas_left,
+            header,
+            config,
+            crypto,
+            None,
+            parent_gas_limit,
+        )
+        .unsatisfied
+        .map_or(Ok(()), Err)
     }
 
     /// The Profile 1 satisfaction pass, extended with an observational EIP-8369
@@ -385,10 +395,11 @@ impl InclusionListSatisfactionValidator {
         config: &ChainConfig,
         crypto: &dyn Crypto,
         profile_2: Option<&dyn IlProfile2Evaluator>,
+        parent_gas_limit: u64,
     ) -> IlCheckReport {
         let utxo_frames_active = config.is_utxo_frames_activated(header.timestamp);
         let base_fee = header.base_fee_per_gas.unwrap_or_default();
-        let fill_outcomes = fill_il_budget(il, utxo_frames_active);
+        let fill_outcomes = fill_il_budget(il, utxo_frames_active, parent_gas_limit);
 
         let mut report = IlCheckReport::default();
 
@@ -398,7 +409,7 @@ impl InclusionListSatisfactionValidator {
                 continue;
             }
 
-            let profile = classify(tx_il, utxo_frames_active);
+            let profile = classify(tx_il, utxo_frames_active, parent_gas_limit);
 
             // EIP-8369 Profile 2. A transaction that passes stateful eligibility
             // replay at the evaluation index could have been included, so its

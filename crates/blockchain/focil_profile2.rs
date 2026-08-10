@@ -7,12 +7,13 @@
 //! module supplies the one implementation that actually replays a
 //! transaction's validation prefix.
 
+use ethrex_common::H256;
 use ethrex_common::types::{BlockHeader, FrameMode, FrameTransaction, Transaction};
 use ethrex_vm::FocilVopsSurface;
 
 use crate::{
     Blockchain,
-    focil_eligibility::{MAX_VERIFY_GAS_PER_TX, profile_2_payer},
+    focil_eligibility::{max_verify_gas_per_tx, profile_2_payer},
     inclusion_list_validator::{IlProfile2Evaluator, Profile2Eligibility},
     vm::StoreVmDatabase,
 };
@@ -29,21 +30,96 @@ use crate::{
 pub struct BlockchainProfile2Evaluator<'a> {
     blockchain: &'a Blockchain,
     header: &'a BlockHeader,
+    pre_state_root: H256,
     gas_left: u64,
 }
 
 impl<'a> BlockchainProfile2Evaluator<'a> {
-    pub fn new(blockchain: &'a Blockchain, header: &'a BlockHeader, gas_left: u64) -> Self {
+    /// `header` is the block being judged, `pre_state_root` the state root the
+    /// block executes from, and `gas_left` its `gas_limit - gas_used`.
+    pub fn new(
+        blockchain: &'a Blockchain,
+        header: &'a BlockHeader,
+        pre_state_root: H256,
+        gas_left: u64,
+    ) -> Self {
         Self {
             blockchain,
             header,
+            pre_state_root,
             gas_left,
         }
     }
 }
 
+/// Union of the verdicts at the two evaluation states: an omission is
+/// unjustified when the transaction was includable at *either* endpoint.
+///
+/// `Eligible` at either state wins outright. Otherwise an `Undecided` dominates,
+/// because a state that could not be evaluated is not evidence that the
+/// transaction was uneligible there — treating it as such would excuse an
+/// omission on the strength of a local failure.
+fn union(a: Profile2Eligibility, b: Profile2Eligibility) -> Profile2Eligibility {
+    use Profile2Eligibility::{Eligible, Ineligible, Undecided};
+    match (a, b) {
+        (Eligible, _) | (_, Eligible) => Eligible,
+        (Undecided(why), _) | (_, Undecided(why)) => Undecided(why),
+        (Ineligible(at_end), Ineligible(at_start)) => Ineligible(format!(
+            "ineligible at both endpoints: end-of-payload: {at_end}; start-of-payload: {at_start}"
+        )),
+    }
+}
+
 impl<'a> IlProfile2Evaluator for BlockchainProfile2Evaluator<'a> {
+    /// An omission is unjustified when the candidate was includable at the state
+    /// the payload started from OR the state it ended at.
+    ///
+    /// Judging at a single point admits a payload in which the transaction fails
+    /// at that point. The complete rule is the union over every index, which is
+    /// unaffordable; these two are the endpoints the evaluator already holds, so
+    /// the extra cost is one replay and no state reconstruction. The union closes
+    /// two holes an end-of-payload-only rule leaves open: a payer solvent early
+    /// and drained by a later transaction of the same block, and a queued keyed
+    /// nonce that only becomes valid late in the payload.
+    ///
+    /// `gas_fits` is deliberately NOT part of this union and is evaluated once,
+    /// against the end of the payload. Gas remaining decreases monotonically
+    /// within a block, so evaluating it at the start would mark every full block
+    /// unsatisfied and turn the inclusion list into a hard claim on block space.
     fn evaluate(&self, tx: &FrameTransaction) -> Profile2Eligibility {
+        if tx.total_gas_limit() > self.gas_left {
+            return Profile2Eligibility::Ineligible(format!(
+                "total gas limit {} exceeds the block's remaining gas {}",
+                tx.total_gas_limit(),
+                self.gas_left
+            ));
+        }
+
+        let at_end = self.evaluate_at(tx, self.header.state_root);
+        if matches!(at_end, Profile2Eligibility::Eligible) {
+            return at_end;
+        }
+        union(at_end, self.evaluate_at(tx, self.pre_state_root))
+    }
+}
+
+impl<'a> BlockchainProfile2Evaluator<'a> {
+    /// Replay the validation prefix against one evaluation state.
+    ///
+    /// `state_root` selects which state to read: the judged block's own root for
+    /// the end of the payload, the root it executed from for the start.
+    ///
+    /// The block *context* is the judged block's in both cases — base fee,
+    /// timestamp, gas limit, chain id and the EIP-7843 slot all come from
+    /// `self.header`, because each endpoint asks whether the transaction could
+    /// have been included in *this* block, not in its parent. Only the state
+    /// differs, which is why this takes a root rather than a header.
+    fn evaluate_at(&self, tx: &FrameTransaction, state_root: H256) -> Profile2Eligibility {
+        let state_header = BlockHeader {
+            state_root,
+            ..self.header.clone()
+        };
+        let state_header = &state_header;
         // EIP-8369 does not model EIP-8312 at all, and a UTXO frame executes
         // AFTER the validation prefix and can invalidate it (a spent input, an
         // unproven opening), which the prefix-only replay below never
@@ -60,14 +136,6 @@ impl<'a> IlProfile2Evaluator for BlockchainProfile2Evaluator<'a> {
             );
         }
 
-        if tx.total_gas_limit() > self.gas_left {
-            return Profile2Eligibility::Ineligible(format!(
-                "total gas limit {} exceeds the block's remaining gas {}",
-                tx.total_gas_limit(),
-                self.gas_left
-            ));
-        }
-
         let config = self.blockchain.storage.get_chain_config();
         let current_slot =
             config.effective_slot_number(self.header.slot_number, self.header.timestamp);
@@ -78,7 +146,7 @@ impl<'a> IlProfile2Evaluator for BlockchainProfile2Evaluator<'a> {
         if let Err(err) = self.blockchain.check_recent_root_references_at_root(
             tx,
             current_slot,
-            self.header.state_root,
+            state_header.state_root,
         ) {
             return Profile2Eligibility::Ineligible(format!(
                 "recent-root reference invalid: {err}"
@@ -100,16 +168,16 @@ impl<'a> IlProfile2Evaluator for BlockchainProfile2Evaluator<'a> {
             }
         };
 
-        let vm_db = match StoreVmDatabase::new(self.blockchain.storage.clone(), self.header.clone())
-        {
-            Ok(vm_db) => vm_db,
-            Err(err) => {
-                return Profile2Eligibility::Undecided(format!(
-                    "failed to open state at header {}: {err}",
-                    self.header.number
-                ));
-            }
-        };
+        let vm_db =
+            match StoreVmDatabase::new(self.blockchain.storage.clone(), state_header.clone()) {
+                Ok(vm_db) => vm_db,
+                Err(err) => {
+                    return Profile2Eligibility::Undecided(format!(
+                        "failed to open state at header {}: {err}",
+                        state_header.number
+                    ));
+                }
+            };
         let mut vm = match self.blockchain.new_evm(vm_db) {
             Ok(vm) => vm,
             Err(err) => {
@@ -127,7 +195,7 @@ impl<'a> IlProfile2Evaluator for BlockchainProfile2Evaluator<'a> {
             self.header,
             &prefix,
             None,
-            MAX_VERIFY_GAS_PER_TX,
+            max_verify_gas_per_tx(self.header.gas_limit),
             Some(surface),
         ) {
             Err(err) => Profile2Eligibility::Undecided(format!("simulation error: {err}")),
