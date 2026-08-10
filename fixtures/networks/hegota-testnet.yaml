@@ -1,0 +1,183 @@
+# Hegotá testnet — permissioned, externally joinable, four transaction-layer EIPs
+# plus EIP-8369 as FOCIL's eligibility layer.
+#
+# Active rule set: EIP-8141 (frame transactions), EIP-8250 (keyed nonces),
+# EIP-8272 (recent roots), EIP-7805 (FOCIL), EIP-8369 (FOCIL eligibility, no
+# activation switch of its own). All activate together at the single Hegotá fork,
+# which the consensus layer calls `heze`. EIP-7906 is not on this chain.
+# EIP-8312 is present in the binary but inert: `utxoFramesTime` is unset.
+#
+# Launch:
+#   make localnet ENCLAVE=hegota-testnet \
+#     KURTOSIS_CONFIG_FILE=fixtures/networks/hegota-testnet.yaml
+#
+# Three values MUST be replaced before a real deployment, and are marked
+# REPLACE below: the validator mnemonic, the prefunded/admin addresses, and the
+# advertised public IP. They are per-deployment and two of them are secrets, so
+# they are not committed here.
+
+participants:
+  # `--nat.extip` is required, not optional. The ethrex kurtosis launcher is the
+  # only EL launcher that never emits an external-IP flag, so `port_publisher`'s
+  # `nat_exit_ip` below does not reach the EL: without this flag ethrex
+  # advertises a container-internal address in discovery and its ENR, and no
+  # external peer can dial in. `--p2p.addr` is the *bind* address and is not a
+  # substitute.
+  - el_type: ethrex
+    el_image: ethrex:hegota-testnet
+    el_extra_params:
+      - "--syncmode"
+      - "full"
+      - "--nat.extip"
+      - "REPLACE_WITH_HOST_PUBLIC_IP"
+    cl_type: lighthouse
+    cl_image: sigp/lighthouse:focil
+    validator_count: 32
+    supernode: true
+  - el_type: ethrex
+    el_image: ethrex:hegota-testnet
+    el_extra_params:
+      - "--syncmode"
+      - "full"
+      - "--nat.extip"
+      - "REPLACE_WITH_HOST_PUBLIC_IP"
+    cl_type: lighthouse
+    cl_image: sigp/lighthouse:focil
+    validator_count: 32
+  - el_type: ethrex
+    el_image: ethrex:hegota-testnet
+    el_extra_params:
+      - "--syncmode"
+      - "full"
+      - "--nat.extip"
+      - "REPLACE_WITH_HOST_PUBLIC_IP"
+    cl_type: lighthouse
+    cl_image: sigp/lighthouse:focil
+    validator_count: 32
+
+# The consensus client must speak the FOCIL engine surface from the fork
+# boundary on, because ethrex rejects `newPayloadV5` and `forkchoiceUpdatedV4`
+# once Hegotá is active — only the V6/V5 pair carries `inclusionListTransactions`.
+# Required: `engine_getInclusionListV1`, `engine_newPayloadV6`,
+# `engine_forkchoiceUpdatedV5`, and EIP-7843 `slotNumber` on the payload
+# attributes. Verify all four through `engine_exchangeCapabilities` before the
+# boundary, not after: there is no inert intermediate state, so a client that
+# speaks only V5/V4 halts the node at the fork.
+#
+# The client is Lighthouse. `docs/hegota-devnet.md` records the analysis: the
+# `focil` branch is a strict superset of the `unstable` base the devnet images
+# build from, carrying the same ForkName list through Gloas and Heze, both
+# `JsonPayloadAttributesV4` and `V5` with `slot_number` and `target_gas_limit`,
+# plus the three engine methods above. A newer stock build is not a substitute —
+# `unstable` rejects a Heze payload outright with `UnsupportedForkVariant`.
+#
+# There is no published tag for it, so the image is built from the branch. What
+# remains unproven is the rest of the network config against that build, so
+# measure it on a scratch enclave rather than inferring from branch dates.
+
+network_params:
+  # Chain ID 8141, unclaimed in the chainid.network registry (8272 is taken).
+  # Replaces the kurtosis default 3151908.
+  network_id: "8141"
+  seconds_per_slot: 6
+
+  # Osaka/Fulu from genesis, Hegotá (heze) at epoch 1. Amsterdam is NOT scheduled
+  # explicitly and does not need to be: the genesis generator derives the
+  # Amsterdam-era fork times from `heze` and installs the EIP-8282 builder
+  # deposit/exit predeploys itself. This is the arrangement the running Hegotá
+  # devnet uses, and its blocks carry both EIP-7843 `slotNumber` and the EIP-7928
+  # `blockAccessListHash`, with `requestsHash` at the empty-input value — proof the
+  # Amsterdam schema and the request predeploys are both live.
+  fulu_fork_epoch: 0
+  heze_fork_epoch: 1
+
+  # Validator keys. The package default mnemonic is public and identical on every
+  # kurtosis deployment, so its derived accounts are prefunded and spendable by
+  # anyone who has ever run the package. On a permissioned chain that is not
+  # cosmetic: an attacker holding a default-mnemonic key could pay for and submit
+  # transactions, and if such an address held the deposit-gater admin role it
+  # could mint deposit tokens and defeat the permissioning entirely.
+  # Generate a fresh mnemonic per deployment and keep it on the host.
+  preregistered_validator_keys_mnemonic: "REPLACE_WITH_A_FRESHLY_GENERATED_MNEMONIC"
+
+  # Accounts we control, funded at genesis. Each address is REPLACE:
+  #   - the faucet's funding account
+  #   - the deposit-gater admin, which mints access tokens; it must also appear in
+  #     DEPOSIT_CONTRACT_ADMINS below, and it must NOT be derived from any public
+  #     mnemonic
+  #   - a deployer for contract deployment
+  prefunded_accounts: '{
+    "REPLACE_WITH_FAUCET_ADDRESS": {"balance": "1000000ETH"},
+    "REPLACE_WITH_GATER_ADMIN_ADDRESS": {"balance": "1000ETH"},
+    "REPLACE_WITH_DEPLOYER_ADDRESS": {"balance": "1000ETH"}
+  }'
+
+  # `deposit_contract_address` is deliberately NOT set, and MUST stay at the
+  # package default 0x00000000219ab540356cBB839Cbe05303d7705Fa.
+  #
+  # The gated deposit contract's gater template hard-codes the
+  # DEPOSIT_CONTRACT_ROLE grant for exactly that address, as gater storage
+  # 0xc0de0000000000000000000000000000219ab540356cbb839cbe05303d7705fa = 1, and
+  # `TokenDepositGater.check_deposit` opens with
+  # `require(hasRole(DEPOSIT_CONTRACT_ROLE, _msgSender()))`. The genesis generator
+  # patches the admin and per-prefix settings keys but never that role key, so any
+  # other deposit address makes EVERY deposit revert with "Only deposit contract
+  # can call this function" — while the chain otherwise looks healthy.
+
+# Permissioned validator entry, Sepolia-style: anyone may sync and peer, but
+# depositing requires an access token. Installs pk910/gated-deposit-contract —
+# `GatedDepositContract`, which is the mainnet deposit contract plus a single
+# gater check and emits the same `DepositEvent` with no extra events, and
+# `TokenDepositGater`, an ERC20 with 0 decimals that burns one token per deposit.
+# Nothing is required of the execution layer: ethrex matches deposit logs by
+# address and topic, so a gated contract is transparent to it.
+#
+# Every value here MUST be a string. The package JSON-encodes each entry and
+# templates it as `export KEY=VALUE`, so a Starlark list renders as
+# `export X=["0x…"]`, bash strips the inner quotes, and the generator's
+# `jq -r '.[]'` then fails on invalid JSON.
+#
+# Settings values are a bitfield: 0x01 = blocked, 0x02 = no token required.
+# Keys 0x00-0xff select a withdrawal-credential prefix; 0xffff selects top-ups.
+#   0x00 -> 0x01  BLS withdrawal credentials blocked, forcing execution-layer
+#                 credentials so validators are withdrawable and consolidatable
+#   0x01 -> 0x00  execution-address credentials: allowed, one token per deposit
+#   0x02 -> 0x00  compounding credentials (EIP-7251): allowed, one token
+#   0xffff -> 0x02  top-ups need no token, so raising an existing validator's
+#                 balance is not gated; only creating a new one is
+ethereum_genesis_generator_params:
+  extra_env:
+    DEPOSIT_CONTRACT_GATED: "true"
+    DEPOSIT_CONTRACT_ADMINS: '["REPLACE_WITH_GATER_ADMIN_ADDRESS"]'
+    DEPOSIT_CONTRACT_SETTINGS: '{"0x00":"0x01","0x01":"0x00","0x02":"0x00","0xffff":"0x02"}'
+
+additional_services:
+  - dora
+
+# Frame-transaction-aware explorer: it decodes the type-0x06 envelope and shows
+# per-frame receipts, where stock Dora renders frame transactions as opaque blobs.
+dora_params:
+  image: ghcr.io/lambdaclass/dora:heze-decode
+
+# Every published port must sit below the host's ephemeral floor
+# (`/proc/sys/net/ipv4/ip_local_port_range`, 32768 by default). Kurtosis hands
+# dynamic host ports to unpublished services out of that range, so a fixed
+# publish inside it races them and can lose:
+#   failed to bind host port 0.0.0.0:33008/tcp: address already in use
+# The running devnet publishes its CL block at 33000, inside that range; this
+# chain must also stay reachable from outside, so it does not carry that risk.
+#
+# `nat_exit_ip: auto` makes the package resolve the host's public address and
+# hand it to the launchers that accept one. The ethrex EL is not among them —
+# see `--nat.extip` above.
+port_publisher:
+  nat_exit_ip: auto
+  el:
+    enabled: true
+    public_port_start: 32000
+  cl:
+    enabled: true
+    public_port_start: 31000
+  additional_services:
+    enabled: true
+    public_port_start: 31500
