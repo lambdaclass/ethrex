@@ -665,6 +665,10 @@ def post_slack(lines, all_ok=True):
                              headers={"Content-Type": "application/json"}, timeout=15)
         if resp.status_code != 200:
             log(f"Slack returned {resp.status_code}")
+        else:
+            # Log the success too: a reporter that is silent when it works and silent when
+            # it is misconfigured cannot be told apart from one that never ran.
+            log(f"posted {len(lines)} line(s) to Slack via {key}")
     except Exception as exc:
         log(f"Slack post failed: {exc}")
 
