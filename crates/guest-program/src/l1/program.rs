@@ -16,6 +16,7 @@ use crate::l1::input::{
 use crate::l1::output::ProgramOutput;
 
 use ethrex_common::types::ELASTICITY_MULTIPLIER;
+use ethrex_common::validate_block_access_list_hash;
 use ethrex_vm::Evm;
 
 #[cfg(feature = "eip-8025")]
@@ -45,6 +46,8 @@ pub fn execution_program(
         last_block_hash,
         non_privileged_count,
         chain_id,
+        burned_fees: _,
+        bals: _,
     } = execute_blocks(
         &blocks,
         execution_witness,
@@ -207,8 +210,19 @@ fn decode_payload_withdrawals<const MAX_WITHDRAWALS: usize>(
         .collect()
 }
 
-#[cfg(feature = "eip-8025")]
+/// Convert a 32-byte little-endian SSZ `uint256` base-fee field to `u64`.
+///
+/// The upper 24 bytes (`[8..32]`) MUST be zero. They don't affect block validation
+/// (base fee fits in `u64` for any real chain), but they ARE covered by
+/// `NewPayloadRequest::hash_tree_root()`. Silently truncating to the low 8 bytes
+/// would let ~2^192 distinct SSZ inputs reconstruct the *same* block while producing
+/// *different* roots, breaking the "one block ⇒ one root" commitment invariant for
+/// any root-keyed consumer (e.g. a ZK variant or a root-anchored settlement path).
+/// Rejecting non-zero upper bytes closes that malleability.
 fn base_fee_per_gas_from_le_bytes(bytes: &[u8; 32]) -> Result<u64, String> {
+    if bytes[8..].iter().any(|&b| b != 0) {
+        return Err("base_fee_per_gas exceeds u64 (non-zero upper bytes)".to_string());
+    }
     Ok(u64::from_le_bytes(
         bytes[..8]
             .try_into()
@@ -235,7 +249,7 @@ fn validate_reconstructed_block_hash(
 
 /// Transform an SSZ `NewPayloadRequest` into a `Block`.
 #[cfg(feature = "eip-8025")]
-fn new_payload_request_to_block(
+fn eip8025_new_payload_request_to_block(
     req: &ethrex_common::types::eip8025_ssz::NewPayloadRequest,
     crypto: &dyn Crypto,
 ) -> Result<ethrex_common::types::Block, String> {
@@ -375,7 +389,6 @@ fn new_payload_request_amsterdam_to_block(
 
 /// Validate that the blob versioned hashes in the `NewPayloadRequest` match
 /// the blob commitments in the block's transactions.
-#[cfg(feature = "eip-8025")]
 fn validate_versioned_hashes<'a>(
     block: &ethrex_common::types::Block,
     versioned_hashes: impl IntoIterator<Item = &'a [u8; 32]>,
@@ -399,6 +412,203 @@ fn validate_versioned_hashes<'a>(
         return Err(ExecutionError::Internal(
             "versioned hashes mismatch between NewPayloadRequest and transactions".to_string(),
         ));
+    }
+
+    Ok(())
+}
+
+/// Transform a native-rollup SSZ `NewPayloadRequest` (`stateless_ssz`) into a `Block`.
+///
+/// Always compiled — used by the EXECUTE precompile path (`ethrex-blockchain`),
+/// the L2 advancer, and [`verify_stateless_block`]. Distinct from
+/// [`eip8025_new_payload_request_to_block`], which reconstructs from the
+/// EIP-8025 guest's `eip8025_ssz` payload (no in-SSZ block access list).
+pub fn new_payload_request_to_block(
+    req: &ethrex_common::types::stateless_ssz::NewPayloadRequest,
+    crypto: &dyn Crypto,
+) -> Result<ethrex_common::types::Block, String> {
+    use bytes::Bytes;
+    use ethrex_common::constants::DEFAULT_OMMERS_HASH;
+    use ethrex_common::types::requests::compute_requests_hash;
+    use ethrex_common::types::{
+        Block, BlockBody, BlockHeader, Transaction, Withdrawal, compute_transactions_root,
+        compute_withdrawals_root,
+    };
+    use ethrex_common::{Address, Bloom, H256};
+
+    let payload = &req.execution_payload;
+
+    // Decode transactions from raw bytes
+    let transactions: Vec<Transaction> = payload
+        .transactions
+        .iter()
+        .map(|tx_bytes| {
+            let raw: Vec<u8> = tx_bytes.iter().copied().collect();
+            Transaction::decode_canonical(&raw).map_err(|e| format!("tx decode: {e}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    // Convert SSZ withdrawals to ethrex Withdrawals
+    let withdrawals: Vec<Withdrawal> = payload
+        .withdrawals
+        .iter()
+        .map(|w| Withdrawal {
+            index: w.index,
+            validator_index: w.validator_index,
+            address: Address::from_slice(&w.address.0),
+            amount: w.amount,
+        })
+        .collect();
+
+    // Build execution_requests from the SSZ typed ExecutionRequests field
+    let execution_requests = req.execution_requests.to_encoded_requests();
+    let requests_hash = compute_requests_hash(&execution_requests);
+
+    // Convert base_fee_per_gas from [u8; 32] LE uint256 to u64. The helper rejects
+    // non-zero upper bytes so a single block maps to a single hash_tree_root (see
+    // `base_fee_per_gas_from_le_bytes`).
+    let base_fee_per_gas = base_fee_per_gas_from_le_bytes(&payload.base_fee_per_gas)?;
+
+    // Build logs_bloom from SszVector<u8, 256>
+    let bloom_bytes: Vec<u8> = payload.logs_bloom.iter().copied().collect();
+    let logs_bloom = Bloom::from_slice(&bloom_bytes);
+
+    let body = BlockBody {
+        transactions: transactions.clone(),
+        ommers: vec![],
+        withdrawals: Some(withdrawals.clone()),
+    };
+
+    let mut header = BlockHeader {
+        parent_hash: H256::from_slice(&payload.parent_hash),
+        ommers_hash: *DEFAULT_OMMERS_HASH,
+        coinbase: Address::from_slice(&payload.fee_recipient.0),
+        state_root: H256::from_slice(&payload.state_root),
+        transactions_root: compute_transactions_root(&body.transactions, crypto),
+        receipts_root: H256::from_slice(&payload.receipts_root),
+        logs_bloom,
+        difficulty: 0.into(),
+        number: payload.block_number,
+        gas_limit: payload.gas_limit,
+        gas_used: payload.gas_used,
+        timestamp: payload.timestamp,
+        extra_data: Bytes::from(payload.extra_data.iter().copied().collect::<Vec<u8>>()),
+        prev_randao: H256::from_slice(&payload.prev_randao),
+        nonce: 0,
+        base_fee_per_gas: Some(base_fee_per_gas),
+        withdrawals_root: Some(compute_withdrawals_root(&withdrawals, crypto)),
+        blob_gas_used: Some(payload.blob_gas_used),
+        excess_blob_gas: Some(payload.excess_blob_gas),
+        parent_beacon_block_root: Some(H256::from_slice(&req.parent_beacon_block_root)),
+        requests_hash: Some(requests_hash),
+        // EIP-7843: reconstruct the slot number carried in the SSZ payload so the
+        // computed block hash matches the producer's. Native-rollup blocks are
+        // Amsterdam+, where slot_number is always present.
+        slot_number: Some(payload.slot_number),
+        ..Default::default()
+    };
+
+    // EIP-7928: when the payload carries a Block Access List, derive the header
+    // commitment from it. ethrex encodes the BAL as RLP (the preimage of
+    // block_access_list_hash), so decode-then-compute_hash reproduces the exact
+    // hash the producer set — honoring the empty-BAL special case. An empty
+    // field means pre-Amsterdam: leave block_access_list_hash as None.
+    if !payload.block_access_list.is_empty() {
+        use ethrex_rlp::decode::RLPDecode;
+        let bal_bytes: Vec<u8> = payload.block_access_list.iter().copied().collect();
+        let bal = ethrex_common::types::block_access_list::BlockAccessList::decode(&bal_bytes)
+            .map_err(|e| format!("block_access_list decode: {e}"))?;
+        header.block_access_list_hash = Some(bal.compute_hash(crypto));
+    }
+
+    Ok(Block::new(header, body))
+}
+
+/// Core stateless block validation for the native-rollup EXECUTE path.
+///
+/// Sole caller: `ethrex-blockchain`'s `verify_stateless_new_payload`
+/// (`StatelessExecutor`, the `StatelessValidator` trait impl invoked by the
+/// EXECUTE precompile). NOTE: the zkVM guest binaries do **not** call this —
+/// they validate via the separate `validate_eip8025_*` path
+/// (`eip8025_new_payload_request_to_block`), so changes here do not affect
+/// zk-proof output.
+///
+/// Implements the `verify_stateless_new_payload` logic from execution-specs:
+/// reconstruct block → validate versioned hashes → execute statelessly →
+/// inject recomputed `burned_fees` → validate the recomputed block access list
+/// hash (Amsterdam+) → verify `block_hash`.
+///
+/// **Always compiled** — no `#[cfg(feature = "eip-8025")]` gate, so the
+/// always-compiled `verify_inner` in `ethrex-blockchain` can call it without
+/// pulling in the SSZ feature.
+pub fn verify_stateless_block(
+    new_payload_request: &ethrex_common::types::stateless_ssz::NewPayloadRequest,
+    execution_witness: ethrex_common::types::block_execution_witness::ExecutionWitness,
+    crypto: Arc<dyn Crypto>,
+) -> Result<(), ExecutionError> {
+    // ChainConfig is Copy — capture it before execute_blocks consumes execution_witness.
+    let chain_config = execution_witness.chain_config;
+
+    // Transform SSZ NewPayloadRequest → Block.
+    // Do NOT call block.hash() here — burned_fees is not yet known so any
+    // cached value would be stale.
+    let block = new_payload_request_to_block(new_payload_request, crypto.as_ref())
+        .map_err(|e| ExecutionError::Internal(format!("payload conversion: {e}")))?;
+
+    // Keep block in a fixed-size array so we can reclaim it after execute_blocks
+    // (which borrows it as &[Block] without consuming it).
+    let blocks = [block];
+
+    // Validate blob versioned hashes (does not touch block.hash())
+    validate_versioned_hashes(&blocks[0], new_payload_request.versioned_hashes.iter())?;
+
+    // Execute statelessly — burned_fees and BAL are recomputed from actual execution.
+    let result = execute_blocks(
+        &blocks,
+        execution_witness,
+        ELASTICITY_MULTIPLIER,
+        |db, _| Ok(Evm::new_for_l1(db.clone(), crypto.clone())),
+        crypto.clone(),
+    )?;
+
+    // Inject recomputed burned_fees into the header, then check block_hash.
+    //
+    // Safety: execute_blocks calls initialize_block_header_hashes which
+    // populates block.header.hash via OnceCell — but with burned_fees=None
+    // (pre-execution value).  into_with_burned_fees() takes ownership, sets
+    // burned_fees, and calls OnceCell::take() to clear the stale cache, so
+    // the next hash() call reflects the injected value.
+    //
+    // At Amsterdam (pre-LStar), burned_fees is None both here and in the
+    // original header, so the hash is unchanged — no regression on the
+    // current path.
+    let recomputed_burned_fees = result.burned_fees.first().copied().flatten();
+    let recomputed_bal = result.bals.into_iter().next().flatten();
+    let [block] = blocks;
+    let tx_count = block.body.transactions.len();
+    let verified_header = block.header.into_with_burned_fees(recomputed_burned_fees);
+
+    // EIP-7928 (Amsterdam+): validate the recomputed BAL — structural checks
+    // (index bounds, size cap) and hash match against header.block_access_list_hash.
+    // Pre-Amsterdam blocks produce recomputed_bal = None, so this is a no-op there.
+    if let Some(ref bal) = recomputed_bal {
+        validate_block_access_list_hash(
+            &verified_header,
+            &chain_config,
+            bal,
+            tx_count,
+            crypto.as_ref(),
+        )
+        .map_err(ExecutionError::BlockValidation)?;
+    }
+
+    let computed_hash = verified_header.hash();
+    let expected_hash =
+        ethrex_common::H256::from_slice(&new_payload_request.execution_payload.block_hash);
+    if computed_hash != expected_hash {
+        return Err(ExecutionError::Internal(format!(
+            "block_hash mismatch: expected {expected_hash:?}, got {computed_hash:?}"
+        )));
     }
 
     Ok(())
@@ -543,7 +753,7 @@ pub fn validate_eip8025_execution(
     crypto: Arc<dyn Crypto>,
 ) -> Result<(), ExecutionError> {
     // Transform SSZ NewPayloadRequest → Block
-    let block = new_payload_request_to_block(new_payload_request, crypto.as_ref())
+    let block = eip8025_new_payload_request_to_block(new_payload_request, crypto.as_ref())
         .map_err(|e| ExecutionError::Internal(format!("payload conversion: {e}")))?;
 
     validate_reconstructed_block_hash(

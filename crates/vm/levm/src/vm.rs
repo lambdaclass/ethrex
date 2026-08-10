@@ -704,6 +704,11 @@ pub struct VM<'a> {
     pub(crate) opcode_table: &'static [OpCodeFn; 256],
     /// Crypto provider for cryptographic operations.
     pub crypto: &'a dyn Crypto,
+    /// Optional stateless validator for the EXECUTE precompile.
+    /// `None` on VMs that never dispatch EXECUTE (guest program, witness
+    /// generation, the stateless validator itself) — those paths can't supply
+    /// one without a dependency cycle or recursion.
+    pub stateless_validator: Option<&'a dyn crate::StatelessValidator>,
 }
 
 /// secp256k1 group order `n`.
@@ -897,6 +902,7 @@ impl<'a> VM<'a> {
         tracer: LevmCallTracer,
         vm_type: VMType,
         crypto: &'a dyn Crypto,
+        stateless_validator: Option<&'a dyn crate::StatelessValidator>,
     ) -> Result<Self, VMError> {
         Self::new_with_root_stack(
             env,
@@ -905,6 +911,7 @@ impl<'a> VM<'a> {
             tracer,
             vm_type,
             crypto,
+            stateless_validator,
             Stack::default(),
             Memory::default(),
         )
@@ -925,6 +932,7 @@ impl<'a> VM<'a> {
         tracer: LevmCallTracer,
         vm_type: VMType,
         crypto: &'a dyn Crypto,
+        stateless_validator: Option<&'a dyn crate::StatelessValidator>,
         stack_pool: &mut Vec<Stack>,
         memory_pool: &mut Vec<Memory>,
     ) -> Result<Self, VMError> {
@@ -945,6 +953,7 @@ impl<'a> VM<'a> {
             tracer,
             vm_type,
             crypto,
+            stateless_validator,
             root_stack,
             root_memory,
         )?;
@@ -996,6 +1005,7 @@ impl<'a> VM<'a> {
         tracer: LevmCallTracer,
         vm_type: VMType,
         crypto: &'a dyn Crypto,
+        stateless_validator: Option<&'a dyn crate::StatelessValidator>,
         root_stack: Stack,
         root_memory: Memory,
     ) -> Result<Self, VMError> {
@@ -1086,6 +1096,7 @@ impl<'a> VM<'a> {
             frame_tx_context: None,
             opcode_table: VM::build_opcode_table(fork),
             crypto,
+            stateless_validator,
         };
 
         let call_type = if is_create {
@@ -2723,6 +2734,7 @@ impl<'a> VM<'a> {
                 self.env.config.fork,
                 self.db.store.precompile_cache(),
                 self.crypto,
+                self.stateless_validator,
             );
 
             debug_assert_eq!(
@@ -2757,10 +2769,11 @@ impl<'a> VM<'a> {
         // Specialize the dispatch loop on whether a struct-log tracer is active.
         // The `!TRACED` variant compiles out every tracer branch and capture call,
         // leaving a minimal hot loop (the common, non-traced case).
-        if self.opcode_tracer.active {
-            self.run_dispatch::<true>()
-        } else {
-            self.run_dispatch::<false>()
+        match (self.opcode_tracer.active, self.validation_observer.active) {
+            (false, false) => self.run_dispatch::<false, false>(),
+            (false, true) => self.run_dispatch::<false, true>(),
+            (true, false) => self.run_dispatch::<true, false>(),
+            (true, true) => self.run_dispatch::<true, true>(),
         }
     }
 
@@ -2768,7 +2781,9 @@ impl<'a> VM<'a> {
     /// active. With `TRACED = false` the compiler eliminates the tracer branches
     /// and the cold `trace_*_step` calls entirely, so the hot loop body stays
     /// minimal; the traced variant keeps the cold helpers out of line.
-    fn run_dispatch<const TRACED: bool>(&mut self) -> Result<ContextResult, VMError> {
+    fn run_dispatch<const TRACED: bool, const VALIDATING: bool>(
+        &mut self,
+    ) -> Result<ContextResult, VMError> {
         let mut error = OnceCell::<VMError>::new();
 
         #[cfg(feature = "perf_opcode_timings")]
@@ -2787,7 +2802,7 @@ impl<'a> VM<'a> {
             // EIP-8141 mempool validation-trace observer (single branch on the
             // fast path when inactive). Enforces the banned-opcode set and the
             // sequential `GAS`-before-`*CALL` rule before the handler runs.
-            if self.validation_observer.active {
+            if VALIDATING {
                 self.check_validation_banned_opcode(opcode);
             }
 
@@ -3114,6 +3129,7 @@ impl<'a> VM<'a> {
     }
 
     /// Executes precompile and handles the output that it returns, generating a report.
+    #[allow(clippy::too_many_arguments)]
     pub fn execute_precompile(
         code_address: H160,
         calldata: &Bytes,
@@ -3122,6 +3138,7 @@ impl<'a> VM<'a> {
         fork: Fork,
         cache: Option<&precompiles::PrecompileCache>,
         crypto: &dyn Crypto,
+        stateless_validator: Option<&dyn crate::StatelessValidator>,
     ) -> Result<ContextResult, VMError> {
         Self::handle_precompile_result(
             precompiles::execute_precompile(
@@ -3131,6 +3148,7 @@ impl<'a> VM<'a> {
                 fork,
                 cache,
                 crypto,
+                stateless_validator,
             ),
             gas_limit,
             *gas_remaining,
@@ -3455,6 +3473,7 @@ impl<'a> VM<'a> {
             pending_prep_oog: false,
             opcode_table: VM::build_opcode_table(fork),
             crypto,
+            stateless_validator: None,
             validation_observer: ValidationObserver::disabled(),
             frame_tx_context: None,
         }
