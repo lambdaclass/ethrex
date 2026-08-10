@@ -1030,21 +1030,30 @@ party can join, and the seven-point verification pass in
 
 ### Phase 9: Install the testnet on its own server
 
-Why this phase: the testnet lands on a different host from the running Hegotá devnet,
-with its own keys and its own faucet. The devnet host is the reference implementation of
-the surrounding infrastructure, so this phase is mostly transcription plus the deliberate
-departures below. Access to the reference host is documented outside this repository; it
-is reached over the tailnet in two hops.
+Why this phase: the testnet lands on its own host, with its own keys and its own faucet.
+The target server is not yet chosen, so nothing here may depend on a particular machine.
+The existing Hegotá devnet is the reference implementation of the surrounding
+infrastructure, and the reusable patterns below were read off it; the runbook is written
+against a fresh host.
 
-**Verified on the running devnet host** (read-only inspection), and reusable:
+The config is validated locally under kurtosis before it reaches any server. That is the
+gate for this phase: a launch that works on a laptop proves the genesis, the gated deposit
+contract and the fork schedule, and leaves only reachability and DNS to prove on the host.
 
-- `~/hegota-prod.yaml` is the config actually in service, and it is *simpler* than
-  `fixtures/networks/hegota-devnet.yaml`: `sigp/lighthouse:v8.0.0-rc.1`,
-  `fulu_fork_epoch: 0`, `heze_fork_epoch: 1`, **no `gloas_fork_epoch`** and **no
-  `additional_preloaded_contracts`**. It works: the live head carries both `slotNumber`
-  and `blockAccessListHash`, and `requestsHash` is the empty-input hash, so the genesis
-  generator derives the Amsterdam times from `heze` and installs the EIP-8282 predeploys
-  itself. Scheduling Gloas explicitly is one valid arrangement, not a requirement.
+**Observed on a running Hegotá deployment** (read-only), and reusable:
+
+- **The fork schedule that works is `fulu 0 / gloas 1 / heze 2`**, confirmed from the
+  consensus client's own `/eth/v1/config/spec`. Gloas must be scheduled and must not be
+  at genesis. An earlier reading of a stale config file suggested the generator derives
+  the Amsterdam-era times from `heze` alone, making an explicit Gloas unnecessary; that
+  was wrong, and the file it came from was six weeks older than the running enclave.
+  Treat any on-host config file as evidence only after checking it against the live
+  chain.
+- **`ethpandaops/lighthouse:focil` is a published, FOCIL-capable image**, reporting
+  `Lighthouse/v8.1.3-52e5197`, with the FOCIL preset in its spec endpoint
+  (`INCLUSION_LIST_COMMITTEE_SIZE`, `MAX_BYTES_PER_INCLUSION_LIST`,
+  `DOMAIN_INCLUSION_LIST_COMMITTEE`, `INCLUSION_LIST_DUE_BPS`,
+  `MAX_REQUEST_INCLUSION_LIST`) alongside `HEZE_FORK_EPOCH`. No branch build is needed.
 - `~/hegota-Caddyfile` fronts every service as a host-based vhost with automatic
   Let's Encrypt certificates: three RPC subdomains, the explorer, the faucet. Two
   hard-won details to carry over. **Never** add `header Access-Control-*` directives:
@@ -1076,12 +1085,19 @@ is reached over the tailnet in two hops.
       which is what grants that address its gater role in genesis.
 - [ ] Task 9.3: Set `network_id` to the chain ID fixed in Phase 7 (`8141`), replacing the
       package default `3151908`.
-- [ ] Task 9.4: Change the consensus client. `sigp/lighthouse:v8.0.0-rc.1` is what the
-      devnet runs and it has no FOCIL support, so it cannot drive this chain: EIP-7805
-      needs `engine_getInclusionListV1`, `engine_forkchoiceUpdatedV5` and
-      `engine_newPayloadV6`. Move to a FOCIL-capable build and verify the three methods
-      are advertised through `engine_exchangeCapabilities` before the fork boundary, not
-      after.
+- [x] Task 9.4: Pin the consensus client to `ethpandaops/lighthouse:focil`, verified
+      FOCIL-capable from its own spec endpoint rather than from its tag name. A client
+      without FOCIL cannot drive this chain at all: ethrex rejects `newPayloadV5` and
+      `forkchoiceUpdatedV4` once Hegotá is active, so only the V6/V5 pair works, and
+      there is no inert intermediate state in which a non-FOCIL client merely degrades.
+- [ ] Task 9.9: Validate the config locally under kurtosis before touching a server:
+      `make localnet ENCLAVE=hegota-testnet
+      KURTOSIS_CONFIG_FILE=fixtures/networks/hegota-testnet.yaml`, with the REPLACE
+      placeholders filled by throwaway local values. Confirm the enclave reaches the
+      Hegotá boundary and keeps producing, that the gated deposit contract and its gater
+      are both present with the expected storage, and that a token-holding address can
+      deposit while a token-less one cannot. `--nat.extip` and DNS are the only items
+      this cannot prove.
 - [ ] Task 9.5: Move `port_publisher.cl` below the host's ephemeral floor. The devnet
       publishes it at `33000`, inside the default `32768`-and-up range, where a fixed
       publish can lose the race against a dynamically assigned port. It has not bitten
