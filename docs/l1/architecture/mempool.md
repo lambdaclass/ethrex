@@ -247,6 +247,52 @@ Three P2P paths interact with the mempool:
 
 Incoming gossip flows the other way: `Mempool::reserve_unknown_hashes` filters incoming `NewPooledTransactionHashes` against `transaction_pool` and `in_flight_txs` in one locked pass, marking unknown hashes in-flight so concurrent peer handlers don't issue duplicate `GetPooledTransactions` requests. `clear_in_flight_txs` clears the marker when the response arrives or the connection drops; `alternates` records fallback announcers to retry against.
 
+## Reorg Re-injection
+
+When fork-choice orphans blocks, the transactions they contained are no longer
+in any canonical block *or* in the pool — they were removed on inclusion. Without
+intervention they are simply lost until someone resubmits them. This path puts
+them back.
+
+**Detection.** The engine FCU handler snapshots the previous head before applying
+the new fork choice, then compares. Three cases skip the work entirely: a zero
+previous head (first FCU), an unchanged head (repeated FCU), and the normal
+slot-advance case where the new head's parent *is* the previous head. Only a
+genuine reorg falls through, so typical FCUs pay nothing.
+
+**Collection.** `find_common_ancestor` walks both branches back to their shared
+block; `collect_orphaned_transactions` then gathers transactions from the orphaned
+side, subtracting any that also appear in the new canonical branch (a transaction
+included on both sides was never orphaned).
+
+**Re-admission.** Each transaction goes back through the *same* admission path as
+a fresh submission, so every stateful check — nonce and balance against the new
+canonical head, the fee floors, the per-sender gates — is re-applied. A
+transaction that is no longer valid after the reorg is simply dropped. Depth is
+bounded by `--mempool.reorg-depth` (default 64); beyond that the whole
+re-injection is skipped and logged, since a reorg that deep is a bigger problem
+than mempool contents.
+
+Re-injection is **best-effort**: failures are logged and skipped rather than
+aborting the batch, and it never evicts to make room — if the pool is at capacity
+the remaining orphans are skipped so freshly-arrived transactions aren't displaced
+by older ones.
+
+### Blob sidecar limbo
+
+Blob transactions need their sidecar to be re-admitted, but sidecars are dropped
+when a blob tx is included. So on inclusion the sidecar is **moved** (not copied —
+they are large) from `blobs_bundle_pool` into `blobs_bundle_limbo`, where it waits
+in case the block is orphaned. On re-injection the sidecar is pulled back out, and
+restored to limbo if admission fails so a later attempt can still succeed.
+
+Limbo is drained when blocks finalize, since a finalized block can no longer be
+reorged. If the finalization delta can't be determined — no previous finalized
+block, or one unknown to this store after a sync gap — limbo is cleared wholesale
+rather than reconstructed by walking the chain: it is in-memory and best-effort,
+so discarding costs at most a few un-re-injectable orphans, whereas a walk from
+genesis would mean tens of millions of DB reads inside the fork-choice handler.
+
 ## Operator-Facing CLI
 
 Mempool-related flags in `cmd/ethrex/cli.rs`:
@@ -259,6 +305,7 @@ Mempool-related flags in `cmd/ethrex/cli.rs`:
 | `--mempool.max-queued-txs-per-account` | `ETHREX_MEMPOOL_MAX_QUEUED_TXS_PER_ACCOUNT` | `64` (`DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT`) | Per-sender cap on queued (future-nonce) transactions; executable txs are never capped. |
 | `--mempool.private` | `ETHREX_MEMPOOL_PRIVATE` | `false` | Keep RPC-submitted txs out of P2P propagation; they still enter the pool and can be included in locally-built blocks. |
 | `--mempool.gap-admit-occupancy-threshold` | `ETHREX_MEMPOOL_GAP_ADMIT_OCCUPANCY_THRESHOLD` | `90` (`DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD`) | Occupancy percentage (`0..=100`) at/above which gapped-nonce txs are rejected; `100` disables the gate. |
+| `--mempool.reorg-depth` | `ETHREX_MEMPOOL_REORG_DEPTH` | `64` (`DEFAULT_MEMPOOL_REORG_DEPTH`) | Max reorg depth for which orphaned txs are re-injected; deeper reorgs skip re-injection entirely. |
 | `--p2p.tx-broadcasting-interval` | `ETHREX_P2P_TX_BROADCASTING_INTERVAL` | `1000` ms (`BROADCAST_INTERVAL_MS`) | Period of the `TxBroadcaster` actor tick. |
 
 ## Error Taxonomy

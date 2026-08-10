@@ -111,6 +111,12 @@ Node options:
           [env: ETHREX_MEMPOOL_MAX_SIZE=]
           [default: 10000]
 
+      --mempool.reorg-depth <MEMPOOL_REORG_DEPTH>
+          Maximum reorg depth (in blocks) for which transactions in orphaned blocks are re-injected into the mempool. Deeper reorgs skip re-injection.
+
+          [env: ETHREX_MEMPOOL_REORG_DEPTH=]
+          [default: 64]
+
       --mempool.private
           Node-level config (not a protocol/EIP behavior): keep RPC-submitted transactions private. They enter the mempool and may be included in blocks built locally, but are not propagated to peers. P2P-received transactions are unaffected.
 
@@ -385,6 +391,11 @@ Node options:
           [env: ETHREX_MEMPOOL_MAX_SIZE=]
           [default: 10000]
 
+      --mempool.reorg-depth <MEMPOOL_REORG_DEPTH>
+          Maximum reorg depth (in blocks) for which transactions in orphaned blocks are re-injected into the mempool. Deeper reorgs skip re-injection.
+
+          [env: ETHREX_MEMPOOL_REORG_DEPTH=]
+          [default: 64]
       --mempool.gap-admit-occupancy-threshold <PERCENTAGE>
           Mempool occupancy percentage (0-100) at or above which incoming transactions with a nonce gap relative to the sender's on-chain nonce are rejected. Setting to 100 disables the check.
 

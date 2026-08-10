@@ -12,7 +12,7 @@ use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_blockchain::{
     BlockchainOptions, BlockchainType, DEFAULT_BLOB_PRICE_BUMP_PERCENT,
     DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD, DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT,
-    DEFAULT_PRICE_BUMP_PERCENT, L2Config,
+    DEFAULT_MEMPOOL_REORG_DEPTH, DEFAULT_PRICE_BUMP_PERCENT, L2Config,
     error::{ChainError, InvalidBlockError},
 };
 use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis, validate_block_body};
@@ -239,6 +239,15 @@ pub struct Options {
         env = "ETHREX_MEMPOOL_MAX_SIZE"
     )]
     pub mempool_max_size: usize,
+    #[arg(
+        help = "Maximum reorg depth (in blocks) for which transactions in orphaned blocks are re-injected into the mempool. Deeper reorgs skip re-injection.",
+        long = "mempool.reorg-depth",
+        default_value_t = DEFAULT_MEMPOOL_REORG_DEPTH,
+        value_name = "MEMPOOL_REORG_DEPTH",
+        help_heading = "Node options",
+        env = "ETHREX_MEMPOOL_REORG_DEPTH"
+    )]
+    pub mempool_reorg_depth: u64,
     #[arg(
         long = "mempool.private",
         default_value_t = false,
@@ -515,6 +524,7 @@ impl Options {
             discv4_enabled: true,
             discv5_enabled: true,
             mempool_max_size: 10_000,
+            mempool_reorg_depth: DEFAULT_MEMPOOL_REORG_DEPTH,
             ..Default::default()
         }
     }
@@ -537,6 +547,7 @@ impl Options {
             discv4_enabled: true,
             discv5_enabled: true,
             mempool_max_size: 10_000,
+            mempool_reorg_depth: DEFAULT_MEMPOOL_REORG_DEPTH,
             ..Default::default()
         }
     }
@@ -575,6 +586,7 @@ impl Default for Options {
             dev: Default::default(),
             force: false,
             mempool_max_size: Default::default(),
+            mempool_reorg_depth: DEFAULT_MEMPOOL_REORG_DEPTH,
             mempool_private: false,
             mempool_price_bump: DEFAULT_PRICE_BUMP_PERCENT,
             mempool_blob_price_bump: DEFAULT_BLOB_PRICE_BUMP_PERCENT,

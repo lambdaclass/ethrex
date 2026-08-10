@@ -52,11 +52,7 @@ pub mod stateless;
 pub mod tracing;
 pub mod vm;
 
-use ::tracing::{error, info, instrument, warn};
-// Every `debug!` call site lives in the rayon warmer path, so the import is
-// unused in any configuration that compiles that path out.
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
-use ::tracing::debug;
+use ::tracing::{debug, error, info, instrument, warn};
 use constants::{AMSTERDAM_MAX_INITCODE_SIZE, MAX_INITCODE_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
@@ -142,6 +138,12 @@ pub const DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD: u8 = 90;
 /// Merkle write set for the trie-node prefetch: written storage slots and changed accounts.
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 type TriePrefetchInput = (Vec<(Address, H256)>, Vec<Address>);
+
+/// Maximum reorg depth (in blocks) for which orphaned-block transactions are
+/// re-injected into the mempool. Reorgs deeper than this are treated as
+/// catastrophic — re-injection is skipped to bound the amount of work done
+/// during fork-choice processing.
+pub const DEFAULT_MEMPOOL_REORG_DEPTH: u64 = 64;
 
 /// Background thread for dropping large tree structures off the critical path.
 /// Accepts any `Send` value and drops it on a dedicated thread, avoiding
@@ -327,6 +329,10 @@ pub struct BlockchainOptions {
     /// warmer thread and the executor. Set to false (via `--no-precompile-cache`) to
     /// disable the cache for benchmarking purposes.
     pub precompile_cache_enabled: bool,
+    /// Maximum reorg depth (in blocks) for which transactions in orphaned
+    /// blocks are re-injected into the mempool. Reorgs deeper than this skip
+    /// re-injection and log a warning.
+    pub reorg_depth: u64,
     /// Minimum fee-field bump (in percent) required to replace a non-blob
     /// transaction at the same `(sender, nonce)`. Matches the 10%
     /// default of every peer EL client.
@@ -379,6 +385,7 @@ impl Default for BlockchainOptions {
             precompute_witnesses: false,
             private_mempool: false,
             precompile_cache_enabled: true,
+            reorg_depth: DEFAULT_MEMPOOL_REORG_DEPTH,
             price_bump_percent: DEFAULT_PRICE_BUMP_PERCENT,
             blob_price_bump_percent: DEFAULT_BLOB_PRICE_BUMP_PERCENT,
             max_queued_txs_per_account: DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT,
@@ -3187,10 +3194,223 @@ impl Blockchain {
         self.mempool.remove_transaction(hash)
     }
 
-    /// Remove all transactions in the executed block from the pool (if we have them)
+    /// Remove all transactions in the executed block from the pool (if we have them).
+    ///
+    /// For blob (EIP-4844) transactions, the sidecars are moved into the mempool
+    /// limbo rather than discarded, so they remain available for re-injection if
+    /// the block gets orphaned by a reorg. Limbo entries are purged once the
+    /// block is finalized.
     pub fn remove_block_transactions_from_pool(&self, block: &Block) -> Result<(), StoreError> {
         for tx in &block.body.transactions {
-            self.mempool.remove_transaction(&tx.hash(&NativeCrypto))?;
+            self.mempool
+                .remove_included_transaction(&tx.hash(&NativeCrypto))?;
+        }
+        Ok(())
+    }
+
+    /// Re-inject transactions that were in orphaned blocks back into the mempool
+    /// after a reorg, with full admission re-validation.
+    ///
+    /// Behaviour:
+    /// - If the reorg depth exceeds `options.reorg_depth`, the entire re-injection
+    ///   is skipped and a warning is logged.
+    /// - Each transaction is admitted via the same path as a freshly-submitted tx
+    ///   (`add_transaction_to_pool` / `add_blob_transaction_to_pool`), so all
+    ///   stateful checks (nonce/balance under the new canonical head) are applied.
+    /// - For blob transactions, the sidecar is pulled from the mempool limbo. If
+    ///   the sidecar is missing (e.g. the node was restarted between block
+    ///   inclusion and the reorg), the blob tx is dropped silently — there is no
+    ///   way to reconstruct sidecars.
+    /// - Failures are logged at debug level and the loop continues; re-injection
+    ///   is strictly best-effort.
+    ///
+    /// Returns the number of transactions actually re-injected.
+    pub async fn reinject_orphaned_transactions(
+        &self,
+        previous_head_hash: H256,
+        new_head_hash: H256,
+    ) -> Result<usize, StoreError> {
+        let Some(branches) =
+            fork_choice::find_common_ancestor(&self.storage, previous_head_hash, new_head_hash)
+                .await?
+        else {
+            debug!(
+                previous_head = %previous_head_hash,
+                new_head = %new_head_hash,
+                "Could not compute common ancestor for reorg re-injection; skipping",
+            );
+            return Ok(0);
+        };
+
+        let depth = branches.depth();
+        if depth == 0 {
+            // Not a reorg (e.g. the new head was a descendant of the previous head).
+            return Ok(0);
+        }
+
+        if depth > self.options.reorg_depth {
+            warn!(
+                depth,
+                cap = self.options.reorg_depth,
+                previous_head = %previous_head_hash,
+                new_head = %new_head_hash,
+                "Reorg deeper than configured cap; skipping mempool re-injection",
+            );
+            return Ok(0);
+        }
+
+        let txs = fork_choice::collect_orphaned_transactions(&self.storage, &branches).await?;
+        info!(
+            depth,
+            orphaned_tx_count = txs.len(),
+            previous_head = %previous_head_hash,
+            new_head = %new_head_hash,
+            "Reorg detected; re-injecting orphaned transactions into mempool",
+        );
+
+        let mut reinjected = 0usize;
+        let mut skipped_full = 0usize;
+        for tx in txs {
+            // Don't evict freshly-arrived (post-reorg) txs to make room for
+            // orphaned ones. If the pool is already at capacity, stop
+            // re-injecting and log how many were skipped.
+            if self.mempool.is_full()? {
+                skipped_full += 1;
+                continue;
+            }
+            let tx_hash = tx.hash(&NativeCrypto);
+            match tx {
+                #[cfg(feature = "c-kzg")]
+                Transaction::EIP4844Transaction(inner) => {
+                    let Some(blobs_bundle) = self.mempool.take_blob_limbo_entry(&tx_hash)? else {
+                        debug!(
+                            tx_hash = %tx_hash,
+                            "Blob sidecar missing from limbo; cannot re-inject orphaned EIP-4844 tx",
+                        );
+                        continue;
+                    };
+                    // Clone the bundle so we can re-insert it into limbo if
+                    // admission fails for a transient reason (pool full,
+                    // replacement rules, etc.). Otherwise the sidecar would
+                    // be lost permanently and the blob tx could never be
+                    // re-injected on a later attempt.
+                    let bundle_backup = blobs_bundle.clone();
+                    match self.add_blob_transaction_to_pool(inner, blobs_bundle).await {
+                        Ok(_) => reinjected += 1,
+                        Err(error) => {
+                            debug!(
+                                tx_hash = %tx_hash,
+                                %error,
+                                "Failed to re-inject orphaned EIP-4844 transaction; restoring sidecar to limbo",
+                            );
+                            self.mempool
+                                .insert_blob_limbo_entry(tx_hash, bundle_backup)?;
+                        }
+                    }
+                }
+                #[cfg(not(feature = "c-kzg"))]
+                Transaction::EIP4844Transaction(_) => {
+                    debug!(
+                        tx_hash = %tx_hash,
+                        "Skipping orphaned EIP-4844 transaction (c-kzg feature disabled)",
+                    );
+                }
+                other => match self.add_transaction_to_pool(other).await {
+                    Ok(_) => reinjected += 1,
+                    Err(error) => {
+                        debug!(
+                            tx_hash = %tx_hash,
+                            %error,
+                            "Failed to re-inject orphaned transaction",
+                        );
+                    }
+                },
+            }
+        }
+        if skipped_full > 0 {
+            warn!(
+                skipped = skipped_full,
+                reinjected,
+                "Mempool reached capacity during reorg re-injection; remaining orphaned txs dropped to preserve freshly-arrived ones",
+            );
+        }
+        Ok(reinjected)
+    }
+
+    /// Purge blob sidecars from the mempool limbo for all transactions in
+    /// blocks between (exclusive) the previously-finalized block and (inclusive)
+    /// the newly-finalized block.
+    ///
+    /// Once a block is finalized it cannot be reorged, so we no longer need to
+    /// hold on to its blob sidecars. `previous_finalized_hash` may be zero on
+    /// the very first finalization advance, in which case purging walks every
+    /// canonical block from genesis up to the new finalized height.
+    ///
+    /// The walk is by canonical block number, not by parent_hash chasing,
+    /// because the input is a CL-supplied finalized hash (already part of the
+    /// canonical chain). This removes the previous `reorg_depth` cap, which
+    /// would leak sidecars whenever a finalization gap exceeded the cap
+    /// (fresh-node first finalization, CL downtime catch-up, etc.).
+    pub async fn purge_finalized_blob_limbo(
+        &self,
+        previous_finalized_hash: H256,
+        new_finalized_hash: H256,
+    ) -> Result<(), StoreError> {
+        if new_finalized_hash.is_zero() || previous_finalized_hash == new_finalized_hash {
+            return Ok(());
+        }
+
+        let Some(new_header) = self.storage.get_block_header_by_hash(new_finalized_hash)? else {
+            return Ok(());
+        };
+        // Determine where to start walking. When the previous finalized block
+        // can't be located we deliberately do NOT fall back to walking from
+        // genesis: on a synced node that is tens of millions of DB reads inside
+        // the fork-choice handler. Limbo is in-memory, bounded, and best-effort,
+        // so we clear it wholesale instead — which also avoids the opposite
+        // failure of leaking entries older than any bounded walk.
+        //
+        // On a genuine cold start limbo is empty, so this is a no-op; the case
+        // that actually matters is a sync gap, where clearing costs at most a
+        // few un-re-injectable orphaned blob txs.
+        let start_number = if previous_finalized_hash.is_zero() {
+            let cleared = self.mempool.clear_blob_limbo()?;
+            if cleared > 0 {
+                debug!(cleared, "Cleared blob limbo: no previous finalized block");
+            }
+            return Ok(());
+        } else {
+            match self
+                .storage
+                .get_block_header_by_hash(previous_finalized_hash)?
+            {
+                Some(header) => header.number.saturating_add(1),
+                None => {
+                    let cleared = self.mempool.clear_blob_limbo()?;
+                    if cleared > 0 {
+                        debug!(
+                            cleared,
+                            "Cleared blob limbo: previous finalized block unknown to this store"
+                        );
+                    }
+                    return Ok(());
+                }
+            }
+        };
+
+        let mut hashes_to_purge: Vec<H256> = Vec::new();
+        for number in start_number..=new_header.number {
+            let Some(block_hash) = self.storage.get_canonical_block_hash(number).await? else {
+                continue;
+            };
+            if let Some(body) = self.storage.get_block_body_by_hash(block_hash).await? {
+                for tx in body.transactions {
+                    hashes_to_purge.push(tx.hash(&NativeCrypto));
+                }
+            }
+        }
+        if !hashes_to_purge.is_empty() {
+            self.mempool.purge_blob_limbo_entries(&hashes_to_purge)?;
         }
         Ok(())
     }
