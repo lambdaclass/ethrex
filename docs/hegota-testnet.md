@@ -211,9 +211,27 @@ Independently verified against ethereum/EIPs#12131's 144-byte runtime:
 So the swap changes gas and call semantics, **not** the hash layout: a root written
 through the predeploy still validates its own reference with no change to the read side.
 
-### Frame transactions are excused from the FOCIL IL satisfaction check
+### Frame transactions are enforced through EIP-8369 Profile 2, not excused
 
-Already the behaviour on `origin/hegota-devnet` and the right one. The satisfaction
+**Corrected against the branch.** The blanket `TxType::Frame` skip is gone from
+`crates/blockchain/inclusion_list_validator.rs`, and both callers wire a live Profile 2
+evaluator: `crates/networking/rpc/engine/inclusion_list.rs:139` and
+`crates/blockchain/blockchain.rs:2558` construct `BlockchainProfile2Evaluator` and call
+`check_with_profile_2`. Frame-transaction omissions are therefore enforced on this
+branch today, by replaying each candidate's validation prefix
+(`crates/blockchain/focil_profile2.rs:125`).
+
+This makes **EIP-8369 a fifth active EIP, not an inert one.** It has no activation
+timestamp: `ChainConfig::aa_vops_slot_count()` falls back to
+`DEFAULT_AA_VOPS_SLOT_COUNT = 4` (`crates/common/types/genesis.rs:35`), so leaving the
+field unset selects the constant rather than disabling the profile. Nothing in the
+chain config can turn it off. Either it is published to Nethermind as part of this
+chain's rule set, or the enforcement path is gated behind a timestamp of its own, or the
+blanket skip is restored for the testnet. Phase 3 decides which; the plan below no
+longer assumes inertness.
+
+The original reasoning for skipping frame transactions, retained because it is why the
+generic path must never be reached for type `0x06`: the satisfaction
 check is a pure state comparison that must not call the EVM
 (`crates/blockchain/inclusion_list_validator.rs`), but a frame transaction's
 includability depends on executing its validation prefix to discover `payer`, on the
@@ -230,10 +248,29 @@ budget, and the builder's per-sender linear-nonce walk is actively wrong for the
 
 ### Adopt the `SLOTNUM` validation-prefix ban (`#7108` / EIPs#12066)
 
-EIP-8141's banned-opcode list is a **public-mempool validation-trace rule**, not a
-consensus rule ("A public mempool node must simulate the validation prefix and reject
-the transaction if … execution uses a banned opcode"). So banning `SLOTNUM` can only
-over-reject at admission; it cannot split. EIP-8272 makes the beacon slot load-bearing,
+EIP-8141's banned-opcode list is written as a **public-mempool validation-trace rule**
+("A public mempool node must simulate the validation prefix and reject the transaction
+if … execution uses a banned opcode"), and it is enforced that way: the check runs only
+behind `validation_observer.active` (`crates/vm/levm/src/vm.rs:3647`), the sole site
+setting `active: true` is `ValidationObserver::new` at `vm.rs:3176`, and its sole caller
+is `LEVM::simulate_frame_validation_prefix`. Block execution never reaches it, so the
+ban cannot change a state root.
+
+**It is nonetheless fork-choice visible on this branch, through FOCIL.** One of
+`simulate_frame_validation_prefix`'s callers is `crates/blockchain/focil_profile2.rs:125`,
+where `!outcome.passed` becomes `Profile2Eligibility::Ineligible`. A banned opcode in
+the prefix therefore makes the transaction ineligible, which makes its omission
+justified, which decides whether the payload satisfies its inclusion lists and whether
+an attester votes for it. Banning `SLOTNUM` while another client does not means ethrex
+excuses an omission that client enforces: ethrex attests to a block it withholds from.
+The divergence is in attestation rather than in execution, so it splits the fork choice
+without ever producing a state-root mismatch — which makes it harder to notice, not
+more benign. Adopting `#7108` is still correct, because Nethermind is implementing the
+ban; the point is that it MUST land on both clients before the chain carries a frame
+transaction whose prefix reads `SLOTNUM`, and it belongs in the published rule set
+rather than being treated as node-local policy.
+
+EIP-8272 makes the beacon slot load-bearing,
 which gives `SLOTNUM` exactly the property the list exists to exclude, and Nethermind
 is implementing the ban. The interaction with `RECENT_ROOT_CODE` is benign: a VERIFY
 frame is already forbidden to `SSTORE` under the STATICCALL restrictions, so calling
@@ -364,11 +401,34 @@ proof that only four EIPs are active must land first.
       test` green (this pulls the FOCIL fixtures via `focil-vectors` from
       `.fixtures_url_focil`, `tests-focil@v0.1.0`). List each task and its status.
 
-### Phase 3: Prove EIP-8312 and EIP-8369 are inert, and enumerate the active surface
+### Phase 3: Settle EIP-8369, prove EIP-8312 inert, and enumerate the active surface
 
-Why this phase: "exactly four EIPs" is now an activation-gating claim, not a
-code-absence claim. It has to be tested, not asserted, because these two are the only
-things standing between the published chain and a fifth or sixth EIP.
+Why this phase: "exactly four EIPs" is an activation-gating claim, not a code-absence
+claim, and it has to be tested rather than asserted. Verification found the two cases
+are not alike:
+
+- **EIP-8312 is properly inert.** `utxo_frames_time` is a distinct chain-config field
+  (`crates/common/types/genesis.rs:346`) and `validate_static_constraints` rejects
+  `FrameMode::Utxo` when it is unset (`crates/common/types/transaction.rs:2738`). Mode
+  `5` also does not collide with any EIP-7906 mode, so removing EIP-7906 frees nothing
+  it uses. This needs a pinning test, nothing more.
+- **EIP-8369 is active and cannot be switched off** — see the decision above. Task 3.0
+  resolves it before any of the pinning tests are written, because the answer changes
+  what they assert.
+
+- [ ] Task 3.0: Decide EIP-8369's status on this chain and record it in the decision
+      section above. Options, in the order I would take them: (a) publish it as part of
+      the chain's rule set, which requires `AA_VOPS_SLOT_COUNT = 4`,
+      `MAX_VERIFY_GAS_PER_TX`/`MAX_VERIFY_GAS_PER_IL = 1 << 20`
+      (`crates/blockchain/focil_eligibility.rs`) and the `SLOTNUM` ban to be in the
+      artifact set Phase 8 hands Nethermind, and confirmation that they implement
+      Profile 2; (b) restore the blanket `TxType::Frame` skip for the testnet, the
+      conservative interim both EIP-8369 and the frame-tx FOCIL draft mandate
+      pre-activation, and re-enable enforcement once a second client ships it; (c) add
+      a `focilProfile2Time` gate. Option (b) is the only one that is safe without a
+      commitment from Nethermind, and it is a strict subset of any future eligible set,
+      so it can only over-accept. Whichever is chosen, the two `check_with_profile_2`
+      call sites and `aa_vops_slot_count()`'s silent default are the surfaces to change.
 
 - [ ] Task 3.1: Add `test/tests/levm/hegota_active_surface_tests.rs` with a test that
       builds a `ChainConfig` with `hegota_time` set and `utxo_frames_time`,
@@ -377,11 +437,17 @@ things standing between the published chain and a fifth or sixth EIP.
       `FrameTransaction::validate_static_constraints`; `TXPARAM(0x11)` halts with
       `InvalidOpcode`; `SLOTNUM` still resolves from `env.slot_number` supplied by the
       header rather than derived. Register the module in `test/tests/levm/mod.rs`.
-- [ ] Task 3.2: Add to `test/tests/blockchain/focil_tests.rs` a test that, with
-      `aa_vops_slot_count == None`, `InclusionListSatisfactionValidator::check` returns
-      `Ok(())` for an omitted frame transaction whose sender nonce and balance would
-      otherwise satisfy every gate, and that the validation observer applies the
-      EIP-8141 sender-storage rule rather than the EIP-8369 Profile 2 rule.
+- [ ] Task 3.2: Add to `test/tests/blockchain/focil_tests.rs` a test over the entry
+      point the consensus path actually uses. `InclusionListSatisfactionValidator::check`
+      is the Profile-1-only wrapper and proves nothing about the live behaviour, because
+      both real callers use `check_with_profile_2` with a `BlockchainProfile2Evaluator`.
+      Assert against `check_with_profile_2`, and assert the outcome Task 3.0 chose: under
+      (b), that an omitted frame transaction whose sender nonce and balance would
+      otherwise satisfy every gate yields no `IlUnsatisfied`; under (a), that a Profile 2
+      candidate eligible at the judged state does yield one, and that a prefix reading
+      storage slot `aa_vops_slot_count()` of `sender` does not. Also assert that
+      `aa_vops_slot_count()` returns `4` when the field is `None`, so the silent default
+      is pinned rather than mistaken for a disabled feature.
 - [ ] Task 3.3: Add `test/tests/levm/hegota_opcode_surface_tests.rs` asserting the
       exact set of opcodes registered at `Fork::Hegota` and absent before it:
       `APPROVE 0xAA`, `TXPARAM 0xB0`, `FRAMEDATALOAD 0xB1`, `FRAMEDATACOPY 0xB2`,
