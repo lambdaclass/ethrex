@@ -200,8 +200,8 @@ pub const UTXO_VAULT_RUNTIME_BYTECODE: [u8; 76] = [
 /// the `SSTORE` itself, and under `DELEGATECALL`/`CALLCODE` the write lands in
 /// the calling account's storage, leaving recent-root storage untouched.
 ///
-/// Provisional: `RECENT_ROOT_CODE` is TBD in the spec's constants table, so
-/// this is the candidate proposed in ethereum/EIPs#12131.
+/// Provisional: `RECENT_ROOT_CODE` is specified by ethereum/EIPs#12131, which
+/// is not yet merged, so upstream's constants table still reads `TBD`.
 ///
 /// The code derives the ring index as `SLOTNUM AND 0x1fff` (`push2 0x1fff`),
 /// which equals `S mod RECENT_ROOT_LENGTH` only while `RECENT_ROOT_LENGTH` is

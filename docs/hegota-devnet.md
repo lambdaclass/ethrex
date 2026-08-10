@@ -41,7 +41,7 @@ EIP-8312 carries its own timestamp and is inert until a chain opts in.
 
 ### EIP-8272 (Recent Roots) — see `docs/eip-8272.md`
 - No divergences remain. `RECENTROOTREFLOAD` at `0xB5`, TXPARAM `0x0F` and `RECENT_ROOT_ADDRESS` at `0x…8272` all match the current spec, and `RECENT_ROOT_CODE` is the 144-byte predeploy from ethereum/EIPs#12131 (`keccak256` = `0x432c8b183d17d5e9939623833203b9a5b62325246cfcd9307982bfde8f18c6fb`) rather than a native VM write. The predeploy replaced a flat `RECENT_ROOT_WRITE_GAS` that skipped the EIP-8037 state-gas charge on the created slot, so the same write cost 38 064 gas here against 127 196 on a client executing the code — a consensus split that is now closed. Its two `PUSH32` immediates are `keccak256("RECENT_ROOT_ENTRY")` and `keccak256("RECENT_ROOT_STORAGE")`, the same domains ethrex already derived, so the hash layout is unchanged and only gas and call semantics moved.
-- ⚠️ **`RECENT_ROOT_CODE` is provisional**: ethereum/EIPs#12131 is open, not merged. Its bytes could still move (the `0x1fff` mask is the live question), and a change to them changes the code hash and the write's gas on a chain already running.
+- ⚠️ **`RECENT_ROOT_CODE` is provisional**: ethereum/EIPs#12131 specifies the bytecode ethrex installs, byte for byte, but is open rather than merged. Its bytes could still move, and a change to them changes the code hash and the write's gas on a chain already running.
 
 ### EIP-8312 (UTXO Frames) — see `docs/eip-8312.md`
 - Frame mode **5** (spec `3`; ethrex leaves 3 unassigned and reserves 4 for EIP-8288's deferred DEP_VERIFY).
@@ -100,12 +100,12 @@ point of the pin is to make "what changed since we aligned" an exact question.
 `/hegota-eips` diffs these against the head of each pinned source.
 
 ```pins
-eip-8141  4a9ad32cf2  core      2026-07-30
-eip-8250  81b976ac01  core      2026-08-03
-eip-8272  d8636a330d  core      2026-08-03
+eip-8141  4093c21847  core      2026-08-10
+eip-8250  4093c21847  core      2026-08-10
+eip-8272  4093c21847  core      2026-08-10
 eip-8312  a5da3f608c  core      2026-08-05  nerolation/EIPs@nerolation/utxo-frame
-eip-7805  9a345f96c2  focil     2026-02-20
-eip-8369  ad8571028a  focil     2026-08-07  soispoke/EIPs@codex/vops-profiles-focil
+eip-7805  4093c21847  focil     2026-08-10
+eip-8369  6f818e27dd  focil     2026-08-10  soispoke/EIPs@codex/vops-profiles-focil
 eip-7928  6c666b8d64  adjacent  2026-07-09
 eip-8037  5a8c80897a  adjacent  2026-07-31
 ```

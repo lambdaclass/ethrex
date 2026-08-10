@@ -56,7 +56,7 @@ passed / 0 failed**, `cargo test -p ethrex-rpc --lib` is 122 passed, and
 | Generator pin + 8282 inhibitor | (in `70c8ebc4a` range) | generator `v6.1.6`; package default 6.0.7 would freeze at Amsterdam |
 | EIP-7906 removed (Task 2.2) | `e862b2fa1` | −3054/+118; mode 3 unassigned, `Utxo` still 5 |
 | `origin/main` merged (Task 2.6) | `b1c21e7b0` | 15 conflicts plus six silent auto-merge duplicates |
-| Two-endpoint Profile 2 (Tasks 3.0/3.1/3.3) | `07092961c` | union of both endpoints; budgets derived from parent gas limit |
+| Two-endpoint Profile 2 (Tasks 3.0/3.1/3.3) | `07092961c` | union of both endpoints |
 | Phase 4 closed (Tasks 4.2-4.8) | `a485332a6` | code hash + mask pinned, the three activation cases enforced, predeploy behaviour and the BAL write/read split tested |
 | Per-IL code-byte budget (Task 3.2) | `138f75ce0` | charged inside the replay, not after it; 16 bodies / 16 x 64 KiB per list, shared across candidates and both endpoints |
 | Phase 3 closed (Tasks 3.1/3.3-3.6) | `545712d88` | inert-surface and exact-set opcode tests, chain-config doc comments, absent-field table |
@@ -64,6 +64,7 @@ passed / 0 failed**, `cargo test -p ethrex-rpc --lib` is 122 passed, and
 | IL BAL indexing (Task 5.4) | `ccd359718` | IL entry takes index 1; build and re-import agree on the commitment |
 | Hegotá requires Amsterdam | `0a1ccaed8`, `2a2aab360` | `validate_fork_schedule` at genesis load; 40 tests had been running Hegotá with Amsterdam off |
 | Phase 5 docs + V5 guard (Tasks 5.5/5.6) | `0234ae116` | frame txs recorded as IL-eligible; `newPayloadV5`'s Hegotá rejection tested |
+| Divergence ledger (Tasks 6.1-6.3) | | `docs/hegota-testnet-divergences.md`; pins bumped; `RECENT_ROOT_CODE` verified byte-identical to `#12131` |
 
 ### Not complete
 
@@ -94,10 +95,14 @@ passed / 0 failed**, `cargo test -p ethrex-rpc --lib` is 122 passed, and
   `Transaction::FrameTransaction`, while these fixtures carry ordinary typed
   transactions). Diagnosing these is real work and probably belongs ahead of Phase 6 —
   they are the upstream conformance suite for the exact feature this branch enforces.
-- **Phase 6** — the divergence ledger against upstream: not started. This is the gate
-  on bring-up, and it is the recommended next phase. `eipmcp` now shows EIP-8081
-  (*Hardfork Meta - Hegotá*) is a real upstream meta EIP with a declared EIP set, which
-  the ledger predates, so expect the audit to find more than is currently recorded.
+- **Phase 6** — the divergence ledger lives at `docs/hegota-testnet-divergences.md`.
+  Tasks 6.1-6.3 are closed: no core EIP has moved normatively since the pins (EIP-8141
+  and EIP-7805 are byte-identical, EIP-8250 and EIP-8272 gained one Abstract sentence
+  each), all ten upstream PRs are still open, and the pins are bumped. Tasks 6.4-6.8 are
+  open. The VERIFY budgets now take EIP-8369's `2**20` rather than deriving from the gas
+  limit: the derivation's "within 11%" justification assumed a 60M block, and this
+  testnet runs at 200M, where it was ~3× the constant and put committee replay at a
+  quarter of the block. See the divergence ledger §3.1.
 - **Phase 7 Task 7.3** (generator revision) is satisfied by pinning the generator image
   in the config instead of bumping `ETHEREUM_PACKAGE_REVISION`; **Task 7.8** needs a
   live enclave.
@@ -156,6 +161,12 @@ passed / 0 failed**, `cargo test -p ethrex-rpc --lib` is 122 passed, and
   Profile 2 enforcement had already invalidated, and the builder had already moved past
   it via `is_linear_nonce_domain`. Check the code before implementing a task written
   before a decision that changed the branch.
+- **This chain's gas limit is 200,000,000, not 60,000,000.** The pinned
+  `ethereum-package` (`b5b3af65`) defaults both `genesis_gaslimit` and `gas_limit` to
+  200M whenever `gloas_fork_epoch` is scheduled, and `hegota-testnet.yaml` sets Gloas at
+  epoch 1 without overriding either. Any constant justified by arithmetic at a 60M block
+  is wrong here by more than 3×; Task 3.1's derived VERIFY budget was exactly that and
+  has been replaced. Check the effective limit before reasoning from one.
 - **The three EIP-8272 write-gas figures on record are one curve, not a disagreement.**
   127 256 (ours, 64 non-zero calldata bytes), 127 244 (ethereum/EIPs#12131) and 127 196
   (ethrex `#7120`) differ only by how many zero bytes the `salt ‖ root` payload carries:
@@ -176,20 +187,17 @@ passed / 0 failed**, `cargo test -p ethrex-rpc --lib` is 122 passed, and
    this branch enforces, so they matter more than their age suggests. Start by running
    one file with `cargo test -p ef_tests-engine --release focil` and reading what the
    fixture expects against what ethrex returns.
-3. Then **Phase 6**, the divergence ledger. It is the gate on bring-up: a surviving
-   consensus-visible divergence is a chain split the first time a second client follows
-   a block that uses it. Do the audit through `eipmcp` (`get_eip`, `diff_eip`,
-   `pending_prs_for_eip`), starting from EIP-8081's declared set. Known open items to
-   fold in: `RECENT_ROOT_CODE` is still an unmerged PR (ethereum/EIPs#12131, whose two
-   authorial questions are recorded in `docs/eip-8272.md`), and the `SLOTNUM`
-   validation-prefix ban is proposed but unmerged (ethereum/EIPs#12066).
+3. Then **Phase 6 Tasks 6.4-6.8**, reading `docs/hegota-testnet-divergences.md` first.
+   6.1-6.3 are done and every consensus-visible row has an action. 6.4 (the EIPs#12041
+   paymaster code hash, which still ships as an `H256::zero()` sentinel) is the largest
+   remaining piece.
 4. Do **not** start Phases 7-9 (genesis, publication, install) before Phase 6. Bringing
    up a testnet whose ledger is open just means finding the split with a second client
    attached.
 
-Loose ends that are nobody's task yet: `COLD_READ_AMPLIFICATION.md` and `FINDINGS.md`
-sit untracked at the repo root and have not been read in several sessions — fold them
-into the docs or delete them.
+The engine fixtures live in their own cargo workspace, so `cargo test -p
+ef_tests-engine` fails from the repo root with "did not match any packages". Run them
+through `make -C tooling/ef_tests/engine test`, or pass `--manifest-path`.
 
 The two things that decide whether this succeeds:
 
@@ -721,18 +729,19 @@ the two EIPs the tree carries beyond the intended set are not alike:
       rather than by block number, so it is safe to run against a non-canonical
       header; `S_start` must be derived the same way and MUST NOT be the parent
       post-state alone.
-- [x] Task 3.1: Derive the VERIFY budgets instead of hard-coding them. Replace
-      `MAX_VERIFY_GAS_PER_TX` and `MAX_VERIFY_GAS_PER_IL`
-      (`crates/blockchain/focil_eligibility.rs`, both `1 << 20`) with
-      `P.gas_limit / COMMITTEE_VERIFY_GAS_FRACTION / IL_COMMITTEE_SIZE` at
-      `COMMITTEE_VERIFY_GAS_FRACTION = 4`. Derive from the **parent** gas limit, never
-      `B`'s: the parent is the head inclusion lists for `B`'s slot are built against,
-      so includers, builders and attesters compute the same budget before `B` exists.
-      At a 60,000,000 gas limit this yields 937,500 per list, within 11% of the current
-      constant, so the operating point does not move but stops drifting with the gas
-      limit. Keep both values equal, so one transaction may consume a list's budget.
-      These are consensus inputs: they MUST NOT be read from node configuration, and
-      MUST NOT reuse EIP-8141's operator-tunable `MAX_VERIFY_GAS` mempool cap.
+- [x] Task 3.1: ~~Derive the VERIFY budgets instead of hard-coding them.~~
+      **Superseded — the budgets are EIP-8369's `2**20`.** The derivation
+      `P.gas_limit / COMMITTEE_VERIFY_GAS_FRACTION / IL_COMMITTEE_SIZE` was justified by
+      landing within 11% of `2**20` at a 60,000,000 gas limit, but this testnet runs at
+      200,000,000 (the pinned `ethereum-package` defaults the limit to 200M whenever
+      Gloas is scheduled, and the config does not override it), where the derivation
+      gives 3,125,000 per list — ~3× the constant, and 50M gas of committee-wide replay
+      against an unmeasured attestation deadline. `docs/hegota-testnet-divergences.md`
+      §3.1 carries the numbers. The derivation belongs in the EIP-7805 extension draft
+      as a proposal, with benchmarks. Still true and still enforced: both values are
+      equal, so one transaction may consume a list's budget, and they are consensus
+      inputs that MUST NOT be read from node configuration or reuse EIP-8141's
+      operator-tunable `MAX_VERIFY_GAS` mempool cap.
 - [x] Task 3.2: Add the per-inclusion-list code-byte budget, which does not exist yet.
       Count each distinct `codeHash` once and each distinct code body's byte length
       once, charged on first load by any replay of that list and shared across both
@@ -938,13 +947,13 @@ All spec lookups in this phase go through the `eipmcp` MCP server — `get_eip`,
 fetch EIP text from the web and do not write it from memory; library and spec text
 churns and training data is stale.
 
-- [ ] Task 6.1: `sync_repo("eips")`, then for each of `eip-8141`, `eip-8250`,
+- [x] Task 6.1: `sync_repo("eips")`, then for each of `eip-8141`, `eip-8250`,
       `eip-8272`, `eip-7805` run `diff_eip(n)` against the pin recorded in
       `docs/hegota-devnet.md`'s ```pins``` block (`4a9ad32cf2`, `81b976ac01`,
       `d8636a330d`, `9a345f96c2`). Record every changed line in a new
       `docs/hegota-testnet-divergences.md` with columns: item, ethrex behaviour, spec
       behaviour, consensus-visible (yes/no), action, owner.
-- [ ] Task 6.2: In `docs/hegota-testnet-divergences.md`, reclassify as **conformant**
+- [x] Task 6.2: In `docs/hegota-testnet-divergences.md`, reclassify as **conformant**
       and delete from the divergence lists in `docs/eip-8250.md` and
       `docs/eip-8272.md` the five items upstream has adopted: EIP-8250 `TXPARAM
       nonce_keys[0] = 0x10`, EIP-8250 `NONCE_MANAGER = 0x…8250`, EIP-8272
@@ -952,7 +961,7 @@ churns and training data is stale.
       0x0F`, EIP-8272 `RECENT_ROOT_ADDRESS = 0x…8272`. Confirm each against `get_eip`
       before deleting the entry, and bump the ```pins``` block to the SHAs `diff_eip`
       reports as head.
-- [ ] Task 6.3: For each of the nine open upstream PRs, use `pending_prs_for_eip` to
+- [x] Task 6.3: For each of the nine open upstream PRs, use `pending_prs_for_eip` to
       confirm it is still open, then add one row to
       `docs/hegota-testnet-divergences.md` giving the upstream PR, the ethrex PR that
       implements it (or "none"), merged/unmerged, and what we ship in the meantime:
