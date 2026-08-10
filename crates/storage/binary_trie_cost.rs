@@ -204,6 +204,8 @@ fn run_at(leaf_count: usize, block_cache_size: usize, label: &str) {
         start.elapsed().as_secs_f64()
     );
 
+    control_read_cost(backend.clone(), &keys);
+
     for &changed in &[1usize, 100, 1_000] {
         round(
             backend.clone(),
@@ -211,6 +213,48 @@ fn run_at(leaf_count: usize, block_cache_size: usize, label: &str) {
             &keys,
             changed,
             0xDEADBEEF ^ changed as u64,
+        );
+    }
+}
+
+/// Untimed-per-call control: one `Instant` around a whole batch of raw
+/// `BINARY_TRIE_NODES` lookups, so the per-read figure the round reports
+/// can be checked against one that carries no timer overhead at all.
+///
+/// Reads leaf paths, whose depth is the deepest the trie has, so this is
+/// the same kind of lookup a descent's last step makes.
+fn control_read_cost(backend: Arc<dyn StorageBackend>, keys: &[Vec<u8>]) {
+    use ethrex_binary_trie::trie::BitPath;
+
+    let db = BackendBinaryTrieDB::new(backend).expect("read view");
+    // Paths that certainly exist are unknown without a descent, so probe
+    // a fixed shallow depth where every path is populated, plus a set of
+    // deep paths derived from real keys.
+    let probes: Vec<BitPath> = keys
+        .iter()
+        .take(20_000)
+        .map(|key| {
+            let bits: Vec<u8> = (0..20).map(|i| (key[i / 8] >> (7 - i % 8)) & 1).collect();
+            BitPath::from_bits(&bits)
+        })
+        .collect();
+
+    // Warm nothing deliberately: measure the first pass and a second one.
+    for pass in 0..2 {
+        let start = Instant::now();
+        let mut hits = 0usize;
+        for path in &probes {
+            if db.get(path).expect("get").is_some() {
+                hits += 1;
+            }
+        }
+        let elapsed = start.elapsed();
+        println!(
+            "  control: {} raw BINARY_TRIE_NODES lookups (pass {pass}, {hits} hits) \
+             in {:.1} us = {:.2} us/read, no per-call timer",
+            probes.len(),
+            micros(elapsed),
+            micros(elapsed) / probes.len() as f64,
         );
     }
 }
