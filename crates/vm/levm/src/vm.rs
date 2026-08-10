@@ -3586,12 +3586,18 @@ impl<'a> VM<'a> {
     ///
     /// Static bans: `ORIGIN`, `GASPRICE`, `BLOCKHASH`, `COINBASE`, `TIMESTAMP`
     /// (except when the current frame's target is EXPIRY_VERIFIER), `NUMBER`,
-    /// `PREVRANDAO`, `GASLIMIT`, `BASEFEE`, `BLOBHASH`, `BLOBBASEFEE`, `INVALID`,
-    /// `SELFDESTRUCT`, `BALANCE`, `SELFBALANCE`, `TLOAD`, `TSTORE`, and `CALLCODE`
-    /// in non-deploy prefix frames (ERC-7562 bans CALLCODE in validation;
+    /// `PREVRANDAO`, `GASLIMIT`, `BASEFEE`, `BLOBHASH`, `BLOBBASEFEE`, `SLOTNUM`,
+    /// `INVALID`, `SELFDESTRUCT`, `BALANCE`, `SELFBALANCE`, `TLOAD`, `TSTORE`, and
+    /// `CALLCODE` in non-deploy prefix frames (ERC-7562 bans CALLCODE in validation;
     /// DELEGATECALL is allowed subject to the CALL-family trace rules in the
     /// handlers). `SSTORE`/`CREATE`/`CREATE2` are allowed only inside the deploy
     /// frame and are enforced in their handlers (state-write rules), not here.
+    ///
+    /// `SLOTNUM` (EIP-7843) joins the block-dependent set for the same reason as
+    /// `NUMBER` and `TIMESTAMP`: its value changes between admission and inclusion,
+    /// so a prefix branching on it can pass simulation and revert in the block. It
+    /// is not covered transitively, since the handler reads the header's slot
+    /// number rather than deriving it from `TIMESTAMP`.
     ///
     /// Sequential `GAS` rule: `GAS` is allowed only immediately before a
     /// `*CALL` (`CALL`/`CALLCODE`/`DELEGATECALL`/`STATICCALL`). We detect this by
@@ -3615,6 +3621,7 @@ impl<'a> VM<'a> {
         const BASEFEE: u8 = 0x48;
         const BLOBHASH: u8 = 0x49;
         const BLOBBASEFEE: u8 = 0x4A;
+        const SLOTNUM: u8 = 0x4B;
         const INVALID: u8 = 0xFE;
         const SELFDESTRUCT: u8 = 0xFF;
         const BALANCE: u8 = 0x31;
@@ -3641,8 +3648,8 @@ impl<'a> VM<'a> {
 
         let banned = match opcode {
             ORIGIN | GASPRICE | BLOCKHASH | COINBASE | NUMBER | PREVRANDAO | GASLIMIT | BASEFEE
-            | BLOBHASH | BLOBBASEFEE | INVALID | SELFDESTRUCT | BALANCE | SELFBALANCE | TLOAD
-            | TSTORE => true,
+            | BLOBHASH | BLOBBASEFEE | SLOTNUM | INVALID | SELFDESTRUCT | BALANCE | SELFBALANCE
+            | TLOAD | TSTORE => true,
             // TIMESTAMP is permitted only when the currently executing contract
             // IS the EXPIRY_VERIFIER predeploy (checked by code_address so the
             // rule tracks the executing contract at every call depth, not just the
