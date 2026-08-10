@@ -125,10 +125,10 @@ fn progressive_list_roots_match_remerkleable() {
 /// `mix_in_active_fields(merkleize_progressive(field_roots), &[true; N])` by hand
 /// — and so does this test, which is why it is the one that matters most.
 ///
-/// Ignored for the same reason as above: `merkleize_progressive` is wrong. The
-/// surrounding primitives are not — `mix_in_active_fields`, `merkleize`, `pack`
-/// and `mix_in_length` were all verified against remerkleable independently, so
-/// swapping the two children in `libssz` makes every case here pass.
+/// This is the case that pins the composition: `mix_in_active_fields`,
+/// `merkleize`, `pack` and `mix_in_length` were each verified against
+/// remerkleable independently, so a failure here isolates to the progressive
+/// child order that `libssz-merkle 0.2.2` had reversed.
 ///
 /// Reference roots from remerkleable at the pin:
 ///

@@ -3,18 +3,15 @@
 # Prints the zkVM SDK version the stateless-validator guest is built against, for
 # use in release asset names.
 #
-# The `v` prefix is part of the name, not decoration: eth-act/ere-guests
-# publishes `stateless-validator-<guest>-<zkvm>-v<version>.{elf,vk}` (see its
-# v0.15.0 assets, and the example commands in ere's docs/vk-generation.md), and
-# it republishes guest ELFs verbatim. Dropping the `v` makes our assets not
-# drop-in for that pipeline.
+# The `v` prefix is part of the name: eth-act/ere-guests publishes
+# `stateless-validator-<guest>-<zkvm>-v<version>.{elf,vk}` and republishes guest
+# ELFs verbatim, so dropping it makes our assets not drop-in for that pipeline.
 #
-# The guests reach their SDK through `ere-platform-{zisk,sp1,openvm}`, so there is
-# no direct `tag = "vX.Y.Z"` in their manifests to read. The versions are instead
-# fixed by the pinned `ere` revision below, mirroring what `ere-catalog` resolves
-# at that rev. Bumping the rev therefore REQUIRES updating this table, and the
-# consistency check enforces that: it fails if the manifests disagree with
-# ERE_REV, so a silent rev bump cannot mislabel an artifact.
+# The guests reach their SDK through `ere-platform-{zisk,sp1,openvm}`, so their
+# manifests carry no `tag = "vX.Y.Z"` to read. The table below instead mirrors
+# what `ere-catalog` resolves at the pinned ere rev, and the check further down
+# fails if the manifests have moved off that rev — a silent bump cannot mislabel
+# an artifact.
 #
 # Usage: zkvm-version.sh <zisk|sp1|openvm>
 

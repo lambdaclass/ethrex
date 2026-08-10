@@ -196,14 +196,13 @@ pub struct ExecutionPayload {
 /// `ProgressiveContainer` merkleization, per EIP-7495/EIP-7916:
 /// `mix_in_active_fields(merkleize_progressive(field_roots), active_fields)`.
 ///
-/// Hand-written because `libssz-derive 0.2.2` has no progressive support.
+/// Hand-written because `libssz-derive` has no progressive support.
 ///
-/// NOTE: `libssz-merkle 0.2.2`'s `merkleize_progressive` has its subtree children
-/// reversed relative to the reference implementation, so the roots produced here
-/// are wrong until that is fixed upstream. The composition below is correct — see
-/// `test/tests/common/progressive_ssz_tests.rs`, whose two `#[ignore]`d cases
-/// pass the moment `libssz` swaps that argument pair. Every other primitive used
-/// here was verified against remerkleable.
+/// The roots are verified against remerkleable by
+/// `test/tests/common/progressive_ssz_tests.rs`. `libssz-merkle 0.2.2` had its
+/// progressive subtree children reversed relative to the reference, which made
+/// every root here wrong; the workspace pins 0.3.0, which fixes it, and those
+/// tests are what hold that pin in place.
 fn progressive_container_root<const N: usize>(
     hasher: &impl Sha256Hasher,
     field_roots: [Node; N],

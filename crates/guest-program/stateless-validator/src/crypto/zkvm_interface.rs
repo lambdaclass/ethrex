@@ -1,6 +1,6 @@
 //! [`ethrex_crypto::Crypto`] implementation using [`zkvm_interface`].
 
-use alloc::{string::ToString, sync::Arc, vec, vec::Vec};
+use alloc::{format, sync::Arc, vec, vec::Vec};
 use core::mem::transmute;
 
 use ethrex_crypto::{Crypto, CryptoError};
@@ -79,9 +79,7 @@ impl Crypto for ZkVMInterfaceCrypto {
         let p2 = zkvm_bn254_g1_point { data: *p2 };
         let mut result = zkvm_bn254_g1_point { data: [0; 64] };
         let ret = unsafe { zkvm_bn254_g1_add(&p1, &p2, &mut result) };
-        (ret == 0)
-            .then_some(result.data)
-            .ok_or_else(|| CryptoError::Other("bn254_g1_add failed".to_string()))
+        checked(ret == 0, result.data, "bn254_g1_add")
     }
 
     #[inline]
@@ -96,9 +94,7 @@ impl Crypto for ZkVMInterfaceCrypto {
         let scalar = zkvm_bn254_scalar { data: *scalar };
         let mut result = zkvm_bn254_g1_point { data: [0; 64] };
         let ret = unsafe { zkvm_bn254_g1_mul(&point, &scalar, &mut result) };
-        (ret == 0)
-            .then_some(result.data)
-            .ok_or_else(|| CryptoError::Other("bn254_g1_mul failed".to_string()))
+        checked(ret == 0, result.data, "bn254_g1_mul")
     }
 
     #[inline]
@@ -120,9 +116,7 @@ impl Crypto for ZkVMInterfaceCrypto {
             .collect::<Result<_, CryptoError>>()?;
         let mut verified = false;
         let ret = unsafe { zkvm_bn254_pairing(pairs.as_ptr(), pairs.len(), &mut verified) };
-        (ret == 0)
-            .then_some(verified)
-            .ok_or_else(|| CryptoError::Other("bn254_pairing failed".to_string()))
+        checked(ret == 0, verified, "bn254_pairing")
     }
 
     #[inline]
@@ -139,9 +133,7 @@ impl Crypto for ZkVMInterfaceCrypto {
                 output.as_mut_ptr(),
             )
         };
-        (ret == 0)
-            .then_some(output)
-            .ok_or_else(|| CryptoError::Other("modexp failed".to_string()))
+        checked(ret == 0, output, "modexp")
     }
 
     #[cfg(feature = "zisk")]
@@ -223,9 +215,7 @@ impl Crypto for ZkVMInterfaceCrypto {
         let b = pack_bls12_381_g1(b);
         let mut result = zkvm_bls12_381_g1_point { data: [0; 96] };
         let ret = unsafe { zkvm_bls12_g1_add(&a, &b, &mut result) };
-        (ret == 0)
-            .then_some(result.data)
-            .ok_or_else(|| CryptoError::Other("bls12_g1_add failed".to_string()))
+        checked(ret == 0, result.data, "bls12_g1_add")
     }
 
     #[inline]
@@ -242,9 +232,7 @@ impl Crypto for ZkVMInterfaceCrypto {
             .collect();
         let mut result = zkvm_bls12_381_g1_point { data: [0; 96] };
         let ret = unsafe { zkvm_bls12_g1_msm(pairs.as_ptr(), pairs.len(), &mut result) };
-        (ret == 0)
-            .then_some(result.data)
-            .ok_or_else(|| CryptoError::Other("bls12_g1_msm failed".to_string()))
+        checked(ret == 0, result.data, "bls12_g1_msm")
     }
 
     #[inline]
@@ -257,9 +245,7 @@ impl Crypto for ZkVMInterfaceCrypto {
         let b = pack_bls12_381_g2(b);
         let mut result = zkvm_bls12_381_g2_point { data: [0; 192] };
         let ret = unsafe { zkvm_bls12_g2_add(&a, &b, &mut result) };
-        (ret == 0)
-            .then_some(result.data)
-            .ok_or_else(|| CryptoError::Other("bls12_g2_add failed".to_string()))
+        checked(ret == 0, result.data, "bls12_g2_add")
     }
 
     #[inline]
@@ -276,9 +262,7 @@ impl Crypto for ZkVMInterfaceCrypto {
             .collect();
         let mut result = zkvm_bls12_381_g2_point { data: [0; 192] };
         let ret = unsafe { zkvm_bls12_g2_msm(pairs.as_ptr(), pairs.len(), &mut result) };
-        (ret == 0)
-            .then_some(result.data)
-            .ok_or_else(|| CryptoError::Other("bls12_g2_msm failed".to_string()))
+        checked(ret == 0, result.data, "bls12_g2_msm")
     }
 
     #[inline]
@@ -298,9 +282,7 @@ impl Crypto for ZkVMInterfaceCrypto {
             .collect();
         let mut verified = false;
         let ret = unsafe { zkvm_bls12_pairing(pairs.as_ptr(), pairs.len(), &mut verified) };
-        (ret == 0)
-            .then_some(verified)
-            .ok_or_else(|| CryptoError::Other("bls12_pairing failed".to_string()))
+        checked(ret == 0, verified, "bls12_pairing")
     }
 
     #[inline]
@@ -308,9 +290,7 @@ impl Crypto for ZkVMInterfaceCrypto {
         let fp = zkvm_bls12_381_fp { data: *fp };
         let mut result = zkvm_bls12_381_g1_point { data: [0; 96] };
         let ret = unsafe { zkvm_bls12_map_fp_to_g1(&fp, &mut result) };
-        (ret == 0)
-            .then_some(result.data)
-            .ok_or_else(|| CryptoError::Other("bls12_map_fp_to_g1 failed".to_string()))
+        checked(ret == 0, result.data, "bls12_map_fp_to_g1")
     }
 
     #[inline]
@@ -323,10 +303,16 @@ impl Crypto for ZkVMInterfaceCrypto {
         };
         let mut result = zkvm_bls12_381_g2_point { data: [0; 192] };
         let ret = unsafe { zkvm_bls12_map_fp2_to_g2(&fp2, &mut result) };
-        (ret == 0)
-            .then_some(result.data)
-            .ok_or_else(|| CryptoError::Other("bls12_map_fp2_to_g2 failed".to_string()))
+        checked(ret == 0, result.data, "bls12_map_fp2_to_g2")
     }
+}
+
+/// Maps a syscall's success flag onto its result. Non-zero is the only failure
+/// signal these syscalls give, so the message is just the operation name.
+#[inline]
+fn checked<T>(ok: bool, value: T, what: &str) -> Result<T, CryptoError> {
+    ok.then_some(value)
+        .ok_or_else(|| CryptoError::Other(format!("{what} failed")))
 }
 
 #[inline]

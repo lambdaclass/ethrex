@@ -80,38 +80,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y minisign
 
-      - name: Assert the signing script signs and refuses to no-op
+      # Only the guards `dry-run-release-assets` in tag_release.yaml cannot
+      # reach: it runs the happy path with the real secrets and the committed
+      # key, so what is left to check here is every way the script must REFUSE.
+      # An unsigned release that still looks green is the failure it exists to
+      # prevent, so each guard is asserted to fail with its OWN diagnostic — a
+      # guard whose removal is masked by a later failure has stopped being tested.
+      - name: Assert the signing script refuses to no-op
         env:
           SCRIPT: .github/scripts/sign-stateless-artifacts.sh
         run: |
           set -euo pipefail
-          # Exercises the REAL script finalize-release runs, with a throwaway
-          # keypair. Its value is entirely in its guards — an unsigned release
-          # that still looks green is the failure it exists to prevent — so each
-          # guard is asserted to fail with its OWN diagnostic, not merely to
-          # exit non-zero: a guard whose removal is masked by some later failure
-          # has silently stopped being tested.
-          # The committed public key is the trust anchor consumers verify
-          # against, and the release now hard-fails if it does not match the
-          # signing key. A corrupted or truncated commit of it must therefore
-          # surface here, not at release time.
-          python3 - <<'EOF'
-          import base64, pathlib, sys
-          path = pathlib.Path(".github/minisign.pub")
-          if not path.is_file():
-              sys.exit("::error::.github/minisign.pub is missing")
-          lines = [l for l in path.read_text().splitlines() if l.strip()]
-          if len(lines) != 2 or not lines[0].startswith("untrusted comment:"):
-              sys.exit("::error::.github/minisign.pub is not a minisign public key file")
-          raw = base64.b64decode(lines[1], validate=True)
-          if len(raw) != 42 or raw[:2] != b"Ed":
-              sys.exit(f"::error::.github/minisign.pub is not a 42-byte Ed25519 minisign key (got {len(raw)} bytes, algo {raw[:2]!r})")
-          key_id = format(int.from_bytes(raw[2:10], "little"), "016X")
-          if key_id not in lines[0]:
-              sys.exit(f"::error::.github/minisign.pub comment does not name its key id {key_id}")
-          print(f"ok  committed public key is well-formed (key id {key_id})")
-          EOF
-
           work="$(mktemp -d)"
           minisign -G -W -p "$work/pub" -s "$work/key" > /dev/null
           minisign -G -W -p "$work/other.pub" -s "$work/other.key" > /dev/null
@@ -119,8 +98,8 @@ jobs:
           export MINISIGN_SECRET_KEY
           MINISIGN_SECRET_KEY="$(cat "$work/key")"
 
-          # Rebuild the layout download-artifact produces: one directory per
-          # artifact, including a non-stateless one that must be left alone.
+          # The layout download-artifact produces: one directory per artifact,
+          # including a non-stateless one that must be left alone.
           make_tree() {
             local root="$1"
             rm -rf "$root"
@@ -131,18 +110,6 @@ jobs:
             done
             mkdir -p "$root/ethrex-linux-x86_64"
             head -c 64 /dev/urandom > "$root/ethrex-linux-x86_64/ethrex"
-          }
-
-          verify_all() { # verify_all <dir> <pubkey>
-            local n=0 f
-            for f in "$1"/stateless-validator-*/*.elf "$1"/stateless-validator-*/*.vk; do
-              minisign -V -m "$f" -p "$2" -x "$f.minisig" > /dev/null
-              n=$((n + 1))
-            done
-            if [ "$n" -ne 4 ]; then
-              echo "::error::expected 4 signed artifacts, verified $n"
-              exit 1
-            fi
           }
 
           expect_fail() { # expect_fail <desc> <committed-pub> <dir> <expected-msg>
@@ -160,76 +127,30 @@ jobs:
             echo "ok  rejects: $1"
           }
 
-          # ── No committed public key ────────────────────────────────────────
-          # The state the repository is in right now: the signing secrets exist
-          # but .github/minisign.pub has not been committed yet. This MUST still
-          # produce a signed release, or adding the secret would have broken the
-          # next tag.
+          # Without a committed key the script must still sign, and must say so
+          # loudly enough that a maintainer can commit the derived key. Adding
+          # the signing secret before the public key must not break a release.
           make_tree "$work/bin"
           out="$(mktemp)"
-          COMMITTED_PUBLIC_KEY="$work/absent.pub" TRUSTED_COMMENT_SUFFIX="ethrex v0.0.0-test deadbeef" \
-            bash "$SCRIPT" "$work/bin" > "$out" 2>&1
-          verify_all "$work/bin" "$work/pub"
+          COMMITTED_PUBLIC_KEY="$work/absent.pub" bash "$SCRIPT" "$work/bin" > "$out" 2>&1
+          for f in "$work"/bin/stateless-validator-*/*.elf "$work"/bin/stateless-validator-*/*.vk; do
+            minisign -V -m "$f" -p "$work/pub" -x "$f.minisig" > /dev/null
+          done
           grep -qF "::warning::No committed public key" "$out" || {
             echo "::error::expected a warning about the missing committed key"; cat "$out"; exit 1; }
-          # The derived key must be printed, so a maintainer can commit it.
           grep -qF "$(grep -v '^untrusted' "$work/pub")" "$out" || {
             echo "::error::the derived public key was not printed"; cat "$out"; exit 1; }
-          diff <(grep -v '^untrusted' "$work/bin/minisign/minisign.pub") \
-               <(grep -v '^untrusted' "$work/pub") > /dev/null
-          echo "ok  signs with a derived key when none is committed, and says so"
-
-          # ── Committed public key present ───────────────────────────────────
-          make_tree "$work/bin2"
-          COMMITTED_PUBLIC_KEY="$work/pub" bash "$SCRIPT" "$work/bin2" > /dev/null
-          verify_all "$work/bin2" "$work/pub"
-          test -f "$work/bin2/minisign/minisign.pub"
-          echo "ok  signs and verifies against a committed key"
-
           # Scoped to the stateless artifacts: the node binary is not signed.
-          if [ -e "$work/bin2/ethrex-linux-x86_64/ethrex.minisig" ]; then
+          if [ -e "$work/bin/ethrex-linux-x86_64/ethrex.minisig" ]; then
             echo "::error::signed a non-stateless artifact"
             exit 1
           fi
-          echo "ok  leaves non-stateless artifacts unsigned"
+          echo "ok  signs with a derived key when none is committed, and says so"
 
-          # A tampered artifact must stop verifying, proving the signature binds
-          # the bytes rather than just existing.
-          elf="$work/bin2/stateless-validator-ethrex-sp1-v6.3.1/stateless-validator-ethrex-sp1-v6.3.1.elf"
-          printf 'x' >> "$elf"
-          if minisign -V -m "$elf" -p "$work/pub" > /dev/null 2>&1; then
-            echo "::error::a tampered artifact still verified"
-            exit 1
-          fi
-          echo "ok  tampered artifact fails verification"
-
-          # ── MINISIGN_PUBLIC_KEY cross-check ────────────────────────────────
-          # The secret is a recorded copy, not a substitute for the derived key:
-          # a matching one is confirmed, a stale one fails rather than being
-          # published in place of the real key.
-          make_tree "$work/bin-sec"
-          out="$(mktemp)"
-          MINISIGN_PUBLIC_KEY="$(cat "$work/pub")" COMMITTED_PUBLIC_KEY="$work/absent.pub" \
-            bash "$SCRIPT" "$work/bin-sec" > "$out" 2>&1
-          verify_all "$work/bin-sec" "$work/pub"
-          grep -qF "matches the MINISIGN_PUBLIC_KEY secret" "$out" || {
-            echo "::error::a matching MINISIGN_PUBLIC_KEY was not confirmed"; cat "$out"; exit 1; }
-          echo "ok  confirms a matching MINISIGN_PUBLIC_KEY secret"
-
-          make_tree "$work/bin-stale"
-          out="$(mktemp)"
-          if MINISIGN_PUBLIC_KEY="$(cat "$work/other.pub")" COMMITTED_PUBLIC_KEY="$work/absent.pub" \
-               bash "$SCRIPT" "$work/bin-stale" > "$out" 2>&1; then
-            echo "::error::a stale MINISIGN_PUBLIC_KEY was accepted"
-            exit 1
-          fi
-          grep -qF "the MINISIGN_PUBLIC_KEY secret" "$out" || {
-            echo "::error::stale secret failed for the wrong reason:"; cat "$out"; exit 1; }
-          echo "ok  rejects: a stale MINISIGN_PUBLIC_KEY secret"
-
-          # ── Guards ─────────────────────────────────────────────────────────
-          make_tree "$work/bin3"
-          expect_fail "a committed key from a different keypair" "$work/other.pub" "$work/bin3" \
+          # Every refusal. A stale recorded key must fail rather than be
+          # published in place of the key that actually signed.
+          make_tree "$work/bin2"
+          expect_fail "a committed key from a different keypair" "$work/other.pub" "$work/bin2" \
             "does not match"
           expect_fail "an artifact set with nothing to sign" "$work/pub" "$work/empty-dir" \
             "does not exist"
@@ -238,8 +159,18 @@ jobs:
           expect_fail "an artifact directory with no stateless assets" "$work/pub" "$work/empty" \
             "no stateless-validator .elf/.vk artifacts found"
 
+          out="$(mktemp)"
+          if MINISIGN_PUBLIC_KEY="$(cat "$work/other.pub")" COMMITTED_PUBLIC_KEY="$work/absent.pub" \
+               bash "$SCRIPT" "$work/bin2" > "$out" 2>&1; then
+            echo "::error::a stale MINISIGN_PUBLIC_KEY was accepted"
+            exit 1
+          fi
+          grep -qF "the MINISIGN_PUBLIC_KEY secret" "$out" || {
+            echo "::error::stale secret failed for the wrong reason:"; cat "$out"; exit 1; }
+          echo "ok  rejects: a stale MINISIGN_PUBLIC_KEY secret"
+
           # A wrong password must fail loudly rather than produce a key that
           # silently disagrees with the one used to sign.
           MINISIGN_SECRET_KEY="$(cat "$work/pw.key")"
-          MINISIGN_PASSWORD="wrong" expect_fail "a wrong key password" "$work/pw.pub" "$work/bin3" \
+          MINISIGN_PASSWORD="wrong" expect_fail "a wrong key password" "$work/pw.pub" "$work/bin2" \
             "could not derive the public key"

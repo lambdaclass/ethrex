@@ -1,45 +1,19 @@
 //! Host-side fixture tests for the stateless-validator guest logic.
 //!
 //! Runs `run_stateless_validation` over EEST `blockchain_test` fixtures that
-//! embed `statelessInputBytes`/`statelessOutputBytes` (the `tests-zkevm`
-//! releases of `ethereum/execution-specs`) and asserts the produced output is
-//! byte-identical to the expected output. This is both the PR gate for guest
-//! breakage and the equivalence harness for comparing guest integrations.
+//! embed `statelessInputBytes`/`statelessOutputBytes` and asserts the produced
+//! output is byte-identical. This is both the PR gate for guest breakage and the
+//! equivalence harness for comparing guest integrations.
 //!
-//! See `tests/common/mod.rs` for the fixture source and the
-//! `ETHREX_STATELESS_FIXTURES` contract; when the variable is unset the test
-//! is skipped so plain `cargo test` runs stay green without a download. Point it
-//! at the `blockchain_tests/` subtree of a `make -C tooling/ef_tests/blockchain
-//! stateless-vector` run — not its parent, which also holds a `.meta/index.json`
-//! that is not a fixture.
+//! Fixtures come from `ETHREX_STATELESS_FIXTURES` (see `tests/common/mod.rs`);
+//! when it is unset the test skips, so plain `cargo test` stays green without a
+//! download. Point it at the `blockchain_tests/` subtree of a `make -C
+//! tooling/ef_tests/blockchain stateless-vector` run — not its parent, which also
+//! holds a `.meta/index.json` that is not a fixture.
 //!
-//! MEASURED BASELINE, 2026-08-06, against the 768-block generated vector set,
-//! with libssz 0.3.0 (the EIP-7916 progressive child-order fix): **762 exact
-//! matches, 6 differing — all of them in `successful_validation` only**.
-//!
-//! Every root now matches, so decode, witness rebuild, public-key validation,
-//! block reconstruction, merkleization and encoding all agree with
-//! execution-specs. What is left is six genuine disagreements about whether a
-//! block is valid. Under libssz 0.2.2 this was 8 exact / 755 root-only / 6, and
-//! the 755 were entirely the reversed progressive subtree children; see
-//! `test/tests/common/progressive_ssz_tests.rs`.
-//!
-//! Five are ethrex being too strict — the spec accepts, we reject:
-//!   - `test_witness_7702::test_witness_codes_auth_nonce_mismatch`
-//!   - `test_witness_7702::test_witness_codes_redelegation_old_marker_included_new_marker_excluded`
-//!   - `test_witness_7702::test_witness_codes_reset_delegation`
-//!   - `test_witness_bytecodes_contract_creation::test_witness_codes_failed_create_after_initcode_read`
-//!   - `test_witness_validation_state::test_validation_state_extra_unused_trie_node`
-//!
-//! One is ethrex being too lax, which is the one that matters — the spec
-//! rejects, we accept:
-//!   - `test_witness_validation_headers::test_validation_headers_non_contiguous_chain` (block5)
-//!
-//! A guest that accepts a payload the spec rejects can prove an invalid state
-//! transition, so the non-contiguous-chain case is a correctness bug rather than
-//! a conformance gap. Tracked separately; this test stays red until all six are
-//! resolved rather than being pinned to the current count, so no regression can
-//! hide behind an expected-failure list.
+//! The current baseline is recorded in `docs/eip-8025.md`. Divergences are left
+//! failing rather than pinned to an expected-failure count, so no regression can
+//! hide behind a list.
 #![cfg(feature = "host")]
 
 mod common;

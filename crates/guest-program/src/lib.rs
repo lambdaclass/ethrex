@@ -4,15 +4,10 @@ pub mod l1;
 pub mod l2;
 pub mod methods;
 
-// Input/output aliases, selected by the `l2` feature.
-//
-// The L2 batch prover keeps its own rkyv-serialized `ProgramInput` and its own
-// commitment shape — the on-chain verifier needs state roots and blob/message
-// commitments that `statelessOutputBytes` does not carry.
-//
-// The L1 guest's input is the spec's `statelessInputBytes`: an opaque blob the
-// host passes straight through, aliased here so `ProverBackend` stays
-// generic-free. Its output is the spec's `SszStatelessValidationResult`.
+// Input/output aliases, selected by the `l2` feature, so `ProverBackend` stays
+// generic-free. L1 uses the spec's `statelessInputBytes`/`SszStatelessValidationResult`;
+// L2 keeps its own rkyv `ProgramInput` and commitment shape, because its on-chain
+// verifier needs state roots and blob/message commitments the spec output lacks.
 
 #[cfg(feature = "l2")]
 pub mod input {

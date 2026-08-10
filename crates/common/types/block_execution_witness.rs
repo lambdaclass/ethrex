@@ -292,24 +292,18 @@ impl ExecutionWitness {
     /// wire, so the fork comes from the schema-id prefix instead.
     pub fn from_ssz(
         input: &crate::types::stateless_ssz::SszStatelessInput,
+        crypto: &dyn Crypto,
     ) -> Result<Self, GuestProgramStateError> {
         let first_block_number = input.new_payload_request.execution_payload.block_number;
 
-        let mut initial_state_root = None;
-        for h in input.witness.headers.iter() {
-            let header_bytes: Vec<u8> = h.iter().copied().collect();
-            let header = BlockHeader::decode(&header_bytes)?;
-            if header.number == first_block_number.saturating_sub(1) {
-                initial_state_root = Some(header.state_root);
-                break;
-            }
-        }
-        let initial_state_root = initial_state_root.ok_or_else(|| {
-            GuestProgramStateError::Custom(format!(
-                "header for block {} not found",
-                first_block_number.saturating_sub(1)
-            ))
-        })?;
+        // In wire order, before any sort or dedup: reordering hides violations.
+        // Without this a witness whose headers do not form a chain is accepted,
+        // and a guest that accepts a payload the spec rejects can prove an
+        // invalid state transition (`test_validation_headers_non_contiguous_chain`).
+        let headers = decode_witness_headers(&input.witness.headers_as_vecs())?;
+        validate_witness_headers_chain(&headers, crypto)?;
+
+        let initial_state_root = find_parent_state_root(&headers, first_block_number)?;
 
         let (state_trie_root, storage_trie_roots) =
             rebuild_state_and_storage_tries(input.witness.state_as_vecs(), initial_state_root)?;
@@ -340,15 +334,20 @@ where
         .into_iter()
         .filter_map(|b| {
             let bytes = b.as_ref();
-            // Some implementations of debug_executionWitness emit a `Null`
-            // node (single byte 0x80) which would fail RLP decode here.
-            if bytes == [0x80] {
-                return None;
-            }
-            let hash = keccak(bytes);
-            Some(Node::decode(bytes).map(|node| (hash, node)))
+            // An entry that does not decode as a trie node is skipped rather
+            // than rejected. Witnesses legitimately carry such entries: the
+            // `Null` node (single byte 0x80) some `debug_executionWitness`
+            // implementations emit, and unused nodes the spec explicitly
+            // tolerates (`test_validation_state_extra_unused_trie_node`).
+            //
+            // Skipping is safe because it only makes a node unavailable. If the
+            // trie walk actually needs it, `get_embedded_root` fails there — the
+            // correct place to reject — and the post-execution state-root check
+            // still binds the result either way. Hard-failing here rejected
+            // witnesses the spec accepts.
+            Some((keccak(bytes), Node::decode(bytes).ok()?))
         })
-        .collect::<Result<_, RLPDecodeError>>()?;
+        .collect();
 
     // Get state trie root with the rest of the trie embedded into it.
     let state_trie_root = if let NodeRef::Node(state_trie_root, _) =
@@ -1056,6 +1055,18 @@ pub fn amsterdam_chain_config(chain_id: u64) -> ChainConfig {
         prague_time: Some(0),
         osaka_time: Some(0),
         amsterdam_time: Some(0),
+        // NOT `Default` (which is `Address::zero()`). `Requests::from_deposit_receipts`
+        // selects deposit logs by `log.address == deposit_contract_address`, so a zero
+        // address matches nothing: every deposit in the block is dropped, the recomputed
+        // `requests_hash` disagrees with the header's, and a valid block is committed as
+        // `successful_validation = false`. The conformance set is
+        // `eip8025_optional_proofs`, which carries no deposit case, so no fixture covers
+        // this — see `amsterdam_chain_config_sets_deposit_contract` below.
+        //
+        // #3278 leaves only `chain_id` on the wire, so this cannot be chain-specific.
+        // Mainnet's address is used, which is also what EEST fills against
+        // (`tooling/ef_tests/blockchain/fork.rs`).
+        deposit_contract_address: crate::constants::MAINNET_DEPOSIT_CONTRACT_ADDRESS,
         ..Default::default()
     }
 }
@@ -1092,5 +1103,25 @@ mod amsterdam_chain_config_tests {
     #[test]
     fn carries_the_chain_id_through() {
         assert_eq!(amsterdam_chain_config(u64::MAX).chain_id, u64::MAX);
+    }
+
+    /// A zero `deposit_contract_address` silently drops every deposit in a block:
+    /// `Requests::from_deposit_receipts` filters logs by that address, so the
+    /// recomputed `requests_hash` disagrees with the header's and the guest commits
+    /// `successful_validation = false` for a valid block. The
+    /// `eip8025_optional_proofs` conformance set has no deposit case, so this test
+    /// is the only thing standing between that and a silent regression.
+    #[test]
+    fn amsterdam_chain_config_sets_deposit_contract() {
+        let config = amsterdam_chain_config(1);
+        assert_ne!(
+            config.deposit_contract_address,
+            crate::Address::zero(),
+            "a zero deposit contract address makes every deposit-bearing block invalid"
+        );
+        assert_eq!(
+            config.deposit_contract_address,
+            crate::constants::MAINNET_DEPOSIT_CONTRACT_ADDRESS
+        );
     }
 }

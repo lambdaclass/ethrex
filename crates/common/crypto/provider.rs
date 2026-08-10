@@ -160,8 +160,6 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
         Ok(hash)
     }
 
-    /// Recover the signer address from a 65-byte signature (r||s||v) + 32-byte message hash.
-    /// Used by transaction validation (tx.sender()) and EIP-7702 authority recovery.
     /// Recover the signer's **uncompressed** secp256k1 public key (`0x04 || X || Y`).
     ///
     /// [`Self::recover_signer`] hashes this and keeps the last 20 bytes; the
@@ -198,6 +196,8 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
         Ok(public_key.serialize_uncompressed())
     }
 
+    /// Recover the signer address from a 65-byte signature (r||s||v) + 32-byte message hash.
+    /// Used by transaction validation (tx.sender()) and EIP-7702 authority recovery.
     fn recover_signer(&self, sig: &[u8; 65], msg: &[u8; 32]) -> Result<Address, CryptoError> {
         // EIP-2: reject high-s signatures (s > secp256k1n/2)
         const SECP256K1_N_HALF: [u8; 32] =

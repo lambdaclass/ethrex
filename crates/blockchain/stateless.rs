@@ -94,7 +94,7 @@ impl ethrex_vm::StatelessValidator for StatelessExecutor {
         // exceptionally: tx included, gas charged — the DoS bound holds) rather
         // than `VMError::Internal`, which would abort the whole tx and let the
         // attacker walk away uncharged after we already did the trie rebuild.
-        let execution_witness = ExecutionWitness::from_ssz(input)
+        let execution_witness = ExecutionWitness::from_ssz(input, self.crypto.as_ref())
             .map_err(|_| VMError::from(PrecompileError::ExecuteInvalidInput))?;
 
         let result = verify_stateless_new_payload(input, execution_witness, self.crypto.clone());

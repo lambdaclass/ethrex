@@ -251,10 +251,9 @@ impl NativeL1Advancer {
 /// preimage of `block_access_list_hash` (see `BlockAccessList::compute_hash`),
 /// so the guest-program reconstruction can decode it and recompute the same
 /// hash. `None` (pre-Amsterdam) → empty list.
-/// Build the SSZ `block_access_list` field.
 ///
-/// Since execution-specs #3248 this is a `ProgressiveList<u8>`, which carries no
-/// length bound, so the conversion is infallible — the `Result` is gone.
+/// Infallible since execution-specs #3248 made the field a `ProgressiveList<u8>`,
+/// which carries no length bound.
 pub fn bal_to_ssz_block_access_list(
     bal: Option<&ethrex_common::types::block_access_list::BlockAccessList>,
 ) -> libssz_types::ProgressiveList<u8> {
@@ -290,17 +289,10 @@ pub fn build_ssz_stateless_input(
     let ssz_transactions: ProgressiveList<ProgressiveList<u8>> = transactions.into();
 
     // One uncompressed secp256k1 key per transaction, in transaction order, so the
-    // consumer can check senders without running `ecrecover` (#6716). Derived from
-    // the same `body.transactions` above, so the length and ordering the consumer
-    // requires hold by construction.
-    //
-    // Every transaction in a native-rollup block is signature-bearing: L1→L2
-    // messages are relayed as signed EIP-1559 transactions, and the EXECUTE
-    // precompile rejects the signature-less variants (privileged and frame)
-    // outright. `public_key` therefore returns `Some` for all of them, and a `None`
-    // is a real inconsistency rather than a case to skip — skipping would shorten
-    // the list and be rejected as a length mismatch anyway, with a far less
-    // informative message.
+    // consumer can check senders without running `ecrecover` (#6716). Every
+    // transaction here is signature-bearing — the EXECUTE precompile rejects the
+    // signature-less variants — so a `None` is a real inconsistency, not a case to
+    // skip; skipping would shorten the list and fail the length check anyway.
     let public_keys = body
         .transactions
         .iter()
@@ -399,11 +391,9 @@ pub fn build_ssz_stateless_input(
         public_keys: ssz_public_keys,
     };
 
-    // 5. Serialize to schema-prefixed SSZ bytes.
-    //
-    // The 2-byte big-endian schema id goes first, making this byte-identical to
-    // the spec's `statelessInputBytes`. Since #3278 it is the only carrier of the
-    // fork, so it is not optional framing.
+    // 5. Serialize to schema-prefixed SSZ bytes. The 2-byte big-endian schema id
+    // goes first, making this byte-identical to the spec's `statelessInputBytes`;
+    // since #3278 it is the only carrier of the fork, not optional framing.
     let mut buf = ethrex_common::types::stateless_ssz::STATELESS_INPUT_SCHEMA_ID
         .to_be_bytes()
         .to_vec();

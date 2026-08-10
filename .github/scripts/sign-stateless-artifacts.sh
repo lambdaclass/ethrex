@@ -18,15 +18,12 @@
 #
 # The public key is always *derived* from the secret key with `minisign -R`, so
 # the key published with a release can never disagree with the key that signed
-# it. Any other copy is treated as a claim to be checked against that, never as
-# a substitute for it.
+# it. Any other copy is a claim to be checked against it, never a substitute.
 #
 # Optional environment:
 #   TRUSTED_COMMENT_SUFFIX  appended to each signed trusted comment, e.g. the tag
 #                           and commit. Signed, so it is a provenance claim.
-#   MINISIGN_PUBLIC_KEY     the public key as recorded in the repo secret. Not
-#                           required — it is cross-checked against the derived
-#                           key so a stale or mistyped secret is caught.
+#   MINISIGN_PUBLIC_KEY     the public key as recorded in the repo secret.
 #   COMMITTED_PUBLIC_KEY    path to the in-repo public key (default
 #                           .github/minisign.pub). The out-of-band trust anchor;
 #                           when present it must match the derived key.
@@ -68,10 +65,8 @@ key_line() {
 }
 DERIVED_KEY="$(key_line "$WORK_DIR/minisign.pub")"
 
-# Cross-check any other recorded copy of the public key against the derived one.
-# Neither is used *instead of* the derived key — the point is to catch a copy
-# that has gone stale, which is a sign the key was rotated somewhere and not
-# everywhere.
+# Catches a recorded copy that has gone stale — a sign the key was rotated
+# somewhere and not everywhere.
 check_matches_derived() { # check_matches_derived <file> <what>
   local recorded
   recorded="$(key_line "$1")"
@@ -98,14 +93,10 @@ if [ -n "${MINISIGN_PUBLIC_KEY:-}" ]; then
   echo "Signing key matches the MINISIGN_PUBLIC_KEY secret"
 fi
 
-# A public key shipped inside the same release it authenticates proves nothing:
-# anyone able to replace the artifacts can replace the key beside them, and a
-# repo secret is no better — it is not something a downloader can consult. The
-# signature is only meaningful against a key published out-of-band, which is why
-# the in-repo copy is the trust anchor and everything else is a convenience.
-#
-# It is not required, because requiring it would fail the first release made
-# after the signing secrets were configured. Once committed it is enforced.
+# A key shipped inside the release it authenticates proves nothing — anyone who
+# can replace the artifacts can replace the key beside them. The in-repo copy is
+# the trust anchor because it is published out-of-band. Not required, or the
+# first release after configuring the secrets would fail; enforced once present.
 PUBLIC_KEY_SOURCE="$WORK_DIR/minisign.pub"
 if [ -f "$COMMITTED_PUBLIC_KEY" ]; then
   check_matches_derived "$COMMITTED_PUBLIC_KEY" "'$COMMITTED_PUBLIC_KEY'"
@@ -137,11 +128,10 @@ done < <(
     \( -name '*.elf' -o -name '*.vk' \) -print0 | sort -z
 )
 
-# A hard failure, not a warning. The artifact names are built from
-# zkvm-version.sh, so a version bump or a rename can move them out from under
-# this glob — and an unsigned release that still looks green is exactly the
-# failure this script exists to prevent. The same trap already caught the
-# release download pattern once (`ethrex*` vs `*ethrex*`).
+# A hard failure, not a warning: the artifact names come from zkvm-version.sh, so
+# a version bump or rename can move them out from under this glob, and an
+# unsigned release that still looks green is what this script exists to prevent.
+# The same trap already caught the download pattern once (`ethrex*` vs `*ethrex*`).
 if [ "${#artifacts[@]}" -eq 0 ]; then
   echo "error: no stateless-validator .elf/.vk artifacts found under '$ARTIFACT_DIR'" >&2
   echo "       expected files named stateless-validator-ethrex-<zkvm>-<version>.{elf,vk}" >&2
@@ -168,24 +158,18 @@ for file in "${artifacts[@]}"; do
     -t "$trusted_comment" \
     > /dev/null
 
-  # Verify what was just produced, against the committed key when there is one — this is the check a consumer will run, so running it here
-  # means a broken keypair fails the release instead of shipping.
-  #
-  # Overlaps with the key-match check above by design: that one fails fast with a
-  # precise diagnostic, this one is the last line of defence on the real release
-  # path, where nothing else verifies the output.
+  # The check a consumer will run, against the committed key when there is one, so
+  # a broken keypair fails the release instead of shipping. Overlaps the key-match
+  # check above by design: that one fails fast with a precise diagnostic, this one
+  # is the last line of defence on the real release path.
   minisign -V -m "$file" -p "$PUBLIC_KEY_SOURCE" -x "$file.minisig" > /dev/null
 
   echo "  signed + verified: $filename"
 done
 
-# Publish the committed key alongside the artifacts. It carries no authority by
-# itself (see above) — it is there so a consumer who already trusts this
-# repository does not have to fetch it separately.
-#
-# One directory deep, matching every other downloaded artifact, so the release
-# job's `./bin/**/*` glob covers it without depending on whether `**` matches
-# zero path segments in the uploader's glob implementation.
+# Published alongside the artifacts purely as a convenience — it carries no
+# authority by itself (see above). One directory deep, matching every other
+# downloaded artifact, so the release job's `./bin/**/*` glob covers it.
 mkdir -p "$ARTIFACT_DIR/minisign"
 cp "$PUBLIC_KEY_SOURCE" "$ARTIFACT_DIR/minisign/minisign.pub"
 

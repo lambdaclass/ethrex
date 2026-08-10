@@ -66,11 +66,8 @@ fn validate_versioned_hashes<'a>(
     Ok(())
 }
 
-/// Transform a native-rollup SSZ `NewPayloadRequest` (`stateless_ssz`) into a `Block`.
-///
-/// Always compiled — used by the EXECUTE precompile path (`ethrex-blockchain`),
-/// the L2 advancer, and [`verify_stateless_block`]. Distinct from
-/// the pre-#3278 duplicate converter, which has been deleted.
+/// Transform an SSZ `NewPayloadRequest` into a `Block`. Shared by the EXECUTE
+/// precompile path, the L2 advancer, and [`verify_stateless_block`].
 pub fn new_payload_request_to_block(
     req: &ethrex_common::types::stateless_ssz::NewPayloadRequest,
     crypto: &dyn Crypto,
@@ -175,21 +172,15 @@ pub fn new_payload_request_to_block(
 /// Validate the per-transaction public keys carried by a stateless input.
 ///
 /// The spec's `StatelessInput` supplies one uncompressed secp256k1 key per
-/// transaction so a guest can skip `ecrecover`; a key that does not derive to
-/// the recovered sender must reject the payload (issue #6716).
+/// transaction so a guest can skip `ecrecover`; a key that does not derive to the
+/// recovered sender must reject the payload (#6716). Called from
+/// [`verify_stateless_block`] — the single point both the zkVM guest and the
+/// EXECUTE precompile pass through — so neither path can drop it.
 ///
-/// Hoisted out of the now-deleted duplicate validation family, which was the
-/// only place this check existed. It is called from [`verify_stateless_block`],
-/// which is the single point both the zkVM guest and the EXECUTE precompile pass
-/// through, so neither path can drop it (#6716). That placement is deliberate:
-/// while the check lived in a caller, one of the two callers did not have it.
-///
-/// Upstream `build_stateless_input` *skips* keys for undecodable or
-/// bad-signature transactions, so `public_keys.len()` can legitimately be
-/// shorter than the transaction count. Such payloads are invalid on both sides
-/// and both emit `successful_validation = false`, so the strict length check
-/// stays output-compatible with the reference — but it is compared before any
-/// zip so a short list fails cleanly rather than panicking.
+/// Upstream `build_stateless_input` skips keys for undecodable or bad-signature
+/// transactions, so a short `public_keys` is possible; such payloads are invalid
+/// on both sides, and the length is checked before any zip so a short list fails
+/// cleanly rather than panicking.
 pub fn validate_public_keys(
     public_keys: &SszPublicKeys,
     block: &ethrex_common::types::Block,
@@ -231,17 +222,16 @@ pub fn validate_public_keys(
     Ok(())
 }
 
-/// Stateless validation of a single payload, shared by every entrypoint.
+/// Stateless validation of a single payload, shared by every entrypoint: the
+/// zkVM guests via [`run_stateless_guest`], and the EXECUTE precompile via
+/// `verify_inner` in `ethrex-blockchain`. Everything a payload must satisfy
+/// belongs here rather than in a caller — see [`validate_public_keys`] for what
+/// splitting it cost.
 ///
-/// Implements the `verify_stateless_new_payload` logic from execution-specs:
-/// reconstruct block → check the supplied public keys → validate versioned
-/// hashes → execute statelessly → inject recomputed `burned_fees` → validate the
-/// recomputed block access list hash (Amsterdam+) → verify `block_hash`.
-///
-/// Always compiled, and reached by both entrypoints: the zkVM guests via
-/// [`run_stateless_guest`], and the EXECUTE precompile via `verify_inner` in
-/// `ethrex-blockchain`. Everything a payload must satisfy belongs here rather
-/// than in a caller — see [`validate_public_keys`] for what splitting it cost.
+/// Implements `verify_stateless_new_payload` from execution-specs: reconstruct
+/// block → check the supplied public keys → validate versioned hashes → execute
+/// statelessly → inject recomputed `burned_fees` → validate the recomputed block
+/// access list hash (Amsterdam+) → verify `block_hash`.
 pub fn verify_stateless_block(
     new_payload_request: &ethrex_common::types::stateless_ssz::NewPayloadRequest,
     public_keys: &SszPublicKeys,
@@ -320,6 +310,23 @@ pub fn verify_stateless_block(
     Ok(())
 }
 
+/// Per-stage instrumentation for [`run_stateless_guest_traced`].
+///
+/// Every method defaults to a no-op, so [`run_stateless_guest`] pays nothing for
+/// it — `print` takes `fmt::Arguments` so its message is never formatted unless a
+/// trace consumes it. The zkVM guests supply their platform's cycle scopes; the
+/// scope names appear in ZisK profiling output, so keep them stable.
+pub trait GuestTrace {
+    fn scope<T>(_name: &str, f: impl FnOnce() -> T) -> T {
+        f()
+    }
+    fn print(_message: core::fmt::Arguments<'_>) {}
+}
+
+/// The [`GuestTrace`] used by the uninstrumented entrypoint.
+pub struct NoTrace;
+impl GuestTrace for NoTrace {}
+
 /// Run the stateless validation guest: `statelessInputBytes` in,
 /// `statelessOutputBytes` out.
 ///
@@ -329,30 +336,50 @@ pub fn verify_stateless_block(
 /// `schema_id` **even when validation fails** — zero sentinels are the
 /// decode-failure signal only, and the root is computed before validation runs.
 pub fn run_stateless_guest(input_bytes: &[u8], crypto: Arc<dyn Crypto>) -> Vec<u8> {
+    run_stateless_guest_traced::<NoTrace>(input_bytes, crypto)
+}
+
+/// [`run_stateless_guest`] with per-stage instrumentation. One implementation
+/// serves both, so an instrumented guest cannot drift from the plain one.
+pub fn run_stateless_guest_traced<T: GuestTrace>(
+    input_bytes: &[u8],
+    crypto: Arc<dyn Crypto>,
+) -> Vec<u8> {
     use libssz::SszEncode;
 
-    let Ok(input) = decode_stateless_input(input_bytes) else {
+    let Ok(input) = T::scope("deserialize_input", || decode_stateless_input(input_bytes)) else {
         let mut out = Vec::new();
         SszStatelessValidationResult::default().ssz_append(&mut out);
         return out;
     };
 
-    let new_payload_request_root = input
-        .new_payload_request
-        .hash_tree_root(&CryptoWrapper(crypto.clone()));
+    let new_payload_request_root = T::scope("new_payload_request_root", || {
+        input
+            .new_payload_request
+            .hash_tree_root(&CryptoWrapper(crypto.clone()))
+    });
     let chain_id = input.chain_id;
 
-    let successful_validation = validate_stateless_execution(&input, crypto).is_ok();
+    // No `validate_chain_config` scope: #3278 removed all chain configuration
+    // from the wire, so the fork comes from the schema id and the config is
+    // derived inside the validation.
+    let successful_validation = T::scope("run_validation", || {
+        validate_stateless_execution(&input, crypto)
+            .inspect_err(|err| T::print(format_args!("Validation failed: {err}\n")))
+    })
+    .is_ok();
 
-    let mut out = Vec::new();
-    SszStatelessValidationResult {
-        new_payload_request_root,
-        successful_validation,
-        chain_id,
-        schema_id: STATELESS_INPUT_SCHEMA_ID,
-    }
-    .ssz_append(&mut out);
-    out
+    T::scope("serialize_output", || {
+        let mut out = Vec::new();
+        SszStatelessValidationResult {
+            new_payload_request_root,
+            successful_validation,
+            chain_id,
+            schema_id: STATELESS_INPUT_SCHEMA_ID,
+        }
+        .ssz_append(&mut out);
+        out
+    })
 }
 
 /// Validate a decoded stateless input: rebuild the `ExecutionWitness`, derive the
@@ -363,8 +390,11 @@ pub fn validate_stateless_execution(
     crypto: Arc<dyn Crypto>,
 ) -> Result<(), ExecutionError> {
     let execution_witness =
-        ethrex_common::types::block_execution_witness::ExecutionWitness::from_ssz(input)
-            .map_err(|e| ExecutionError::Internal(format!("witness rebuild: {e}")))?;
+        ethrex_common::types::block_execution_witness::ExecutionWitness::from_ssz(
+            input,
+            crypto.as_ref(),
+        )
+        .map_err(|e| ExecutionError::Internal(format!("witness rebuild: {e}")))?;
 
     verify_stateless_block(
         &input.new_payload_request,

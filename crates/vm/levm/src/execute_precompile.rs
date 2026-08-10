@@ -64,16 +64,10 @@ fn run_execute(
     };
     use libssz::SszDecode;
 
-    // The input is schema-prefixed `statelessInputBytes`: a 2-byte big-endian
-    // schema id, then the SSZ body. Since execution-specs #3278 the prefix is the
-    // only thing that identifies the fork — no chain configuration crosses the
-    // wire — so rejecting an unexpected id is a correctness requirement, not a
-    // sanity check. Upstream `deserialize_stateless_input` rejects it the same way.
-    //
-    // All of this is attacker-controlled, so every failure here is a CALL-level
-    // failure rather than an invariant violation.
-    // `split_first_chunk` yields a fixed-size array, so no indexing is needed —
-    // this crate denies `clippy::indexing_slicing`.
+    // Schema-prefixed `statelessInputBytes`: a 2-byte big-endian schema id, then
+    // the SSZ body. Since execution-specs #3278 the prefix is the only thing
+    // identifying the fork, so an unexpected id must be rejected. All of it is
+    // attacker-controlled, hence CALL-level failures rather than invariants.
     let (schema_bytes, body) = calldata
         .split_first_chunk::<STATELESS_INPUT_SCHEMA_ID_SIZE>()
         .ok_or(VMError::from(PrecompileError::ExecuteInvalidInput))?;
@@ -149,18 +143,12 @@ fn validate_l2_constraints(
         return Err(PrecompileError::ExecuteInvalidInput.into());
     }
     for tx_bytes in payload.transactions.iter() {
-        // Rejected transaction types, by leading EIP-2718 envelope byte:
-        //
-        // - `0x03` (EIP-4844): L2 blocks carry no blobs, and `blob_gas_used` /
-        //   `excess_blob_gas` are already pinned to zero above.
-        // - `0x06` (frame) and `0x7e` (privileged): these carry an explicit sender
-        //   and no signature, so no public key can be recovered for them. The
-        //   stateless input commits one key per transaction, so admitting them
-        //   would make a well-formed block unrepresentable. Native rollups do not
-        //   need them: L1→L2 messages are relayed as signed EIP-1559 transactions
-        //   (see `block_producer.rs`), so rejecting them here costs no
-        //   functionality and turns "every transaction is signature-bearing" from
-        //   an incidental property of the current producer into an enforced one.
+        // Rejected by leading EIP-2718 envelope byte: `0x03` (EIP-4844) because
+        // L2 blocks carry no blobs, and `0x06` (frame) / `0x7e` (privileged)
+        // because they carry an explicit sender and no signature — the stateless
+        // input commits one public key per transaction, so admitting them would
+        // make a well-formed block unrepresentable. Native rollups relay L1→L2
+        // messages as signed EIP-1559 transactions, so this costs no function.
         if let Some(&(0x03 | 0x06 | 0x7e)) = tx_bytes.iter().next() {
             return Err(PrecompileError::ExecuteInvalidInput.into());
         }
@@ -208,12 +196,9 @@ mod tests {
     }
 
     /// Encode an input as `statelessInputBytes`: the 2-byte big-endian schema id
-    /// followed by the SSZ body.
-    ///
-    /// Every test must go through this. Building the body alone makes `run_execute`
-    /// reject at the prefix check, which silently turns each constraint test below
-    /// into a test of the prefix check — they pass without ever evaluating the
-    /// constraint they name.
+    /// followed by the SSZ body. Every test must go through this — a bare body is
+    /// rejected at the prefix check, which would silently turn each constraint
+    /// test below into a test of the prefix check.
     fn calldata_for(input: &SszStatelessInput) -> Bytes {
         let mut buf = ethrex_common::types::stateless_ssz::STATELESS_INPUT_SCHEMA_ID
             .to_be_bytes()

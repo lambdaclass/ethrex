@@ -9,11 +9,10 @@ See `crates/server/api/proto/api.proto` in eth-act/ere:
     message ExecuteResponse { oneof result { ExecuteOk ok = 1; string err = 2; } }
     message ExecuteOk       { bytes public_values = 1; bytes report = 2; }
 
-Speaks protobuf rather than Twirp's JSON on purpose. The generated types carry a
-bare `#[derive(serde::Serialize)]` with no `rename_all` and no base64 helper, so
-JSON would encode `bytes` as an array of integers — for a multi-megabyte witness
-that is both enormous and needless. The two messages here are small enough to
-encode and decode by hand, which also removes any guesswork about field naming.
+Speaks protobuf rather than Twirp's JSON because the generated types carry a bare
+`#[derive(serde::Serialize)]`, so JSON would encode `bytes` as an array of
+integers — enormous for a multi-megabyte witness. Every field either side uses is
+length-delimited, which is the only wire type handled below.
 
 Usage: ere-execute.py <url> <input-file> <output-file>
 """
@@ -49,38 +48,27 @@ def decode_varint(buf: bytes, pos: int) -> tuple[int, int]:
 
 
 def fields(buf: bytes):
-    """Yield (field_number, wire_type, payload) for a protobuf message."""
+    """Yield (field_number, payload) for each length-delimited field, skipping
+    varint fields so an added scalar does not break parsing."""
     pos = 0
     while pos < len(buf):
         key, pos = decode_varint(buf, pos)
-        field, wire = key >> 3, key & 0x07
-        if wire == 2:  # length-delimited
+        wire = key & 0x07
+        if wire == 2:
             length, pos = decode_varint(buf, pos)
-            yield field, wire, buf[pos : pos + length]
+            yield key >> 3, buf[pos : pos + length]
             pos += length
-        elif wire == 0:  # varint
-            value, pos = decode_varint(buf, pos)
-            yield field, wire, value
-        elif wire == 5:
-            yield field, wire, buf[pos : pos + 4]
-            pos += 4
-        elif wire == 1:
-            yield field, wire, buf[pos : pos + 8]
-            pos += 8
+        elif wire == 0:
+            _, pos = decode_varint(buf, pos)
         else:
-            raise ValueError(f"unsupported wire type {wire} for field {field}")
-
-
-def encode_execute_request(stdin: bytes) -> bytes:
-    """ExecuteRequest with only `input_stdin` (field 1, length-delimited)."""
-    return b"\x0a" + encode_varint(len(stdin)) + stdin
+            raise ValueError(f"unsupported wire type {wire} for field {key >> 3}")
 
 
 def decode_execute_response(body: bytes) -> bytes:
     """Return `ok.public_values`, or raise with the server's `err` string."""
-    for field, _wire, payload in fields(body):
+    for field, payload in fields(body):
         if field == 1:  # ExecuteOk
-            for inner_field, _w, inner in fields(payload):
+            for inner_field, inner in fields(payload):
                 if inner_field == 1:  # public_values
                     return inner
             raise ValueError("ExecuteOk carried no public_values")
@@ -99,9 +87,10 @@ def main() -> int:
         stdin = handle.read()
     print(f"executing with {len(stdin)} bytes of statelessInputBytes")
 
+    # ExecuteRequest with only `input_stdin` (field 1, length-delimited).
     request = urllib.request.Request(
         url,
-        data=encode_execute_request(stdin),
+        data=b"\x0a" + encode_varint(len(stdin)) + stdin,
         headers={"Content-Type": "application/protobuf"},
         method="POST",
     )

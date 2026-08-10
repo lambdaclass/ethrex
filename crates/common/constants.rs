@@ -10,6 +10,18 @@ pub const SYSTEM_ADDRESS: H160 = H160([
     0xFF, 0xFF, 0xFF, 0xFE,
 ]);
 
+/// EIP-6110 beacon deposit contract on Ethereum mainnet.
+/// 0x00000000219ab540356cbb839cbe05303d7705fa
+///
+/// Lives here rather than only in `ethrex_vm::system_contracts` so that
+/// `ethrex-common` can reach it: `amsterdam_chain_config` needs it to derive a
+/// `ChainConfig` for the stateless guest, and `ethrex-common` cannot depend on
+/// `ethrex-vm`. `system_contracts` re-uses this value so there is one copy.
+pub const MAINNET_DEPOSIT_CONTRACT_ADDRESS: H160 = H160([
+    0x00, 0x00, 0x00, 0x00, 0x21, 0x9A, 0xB5, 0x40, 0x35, 0x6C, 0xBB, 0x83, 0x9C, 0xBE, 0x05, 0x30,
+    0x3D, 0x77, 0x05, 0xFA,
+]);
+
 // = Keccak256(RLP([])) as of EIP-3675
 pub static DEFAULT_OMMERS_HASH: LazyLock<H256> = LazyLock::new(|| {
     H256::from_slice(
