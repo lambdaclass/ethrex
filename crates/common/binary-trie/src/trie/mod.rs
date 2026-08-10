@@ -3,9 +3,9 @@
 //! to its contents with BLAKE3 hashes up to a single root.
 
 mod binary_trie;
+mod bits;
 #[cfg(test)]
 mod commit_cost;
-mod bits;
 pub mod db;
 pub(crate) mod node;
 pub mod path;

@@ -120,8 +120,11 @@ impl BinaryTrieDB for SinkDB {
 /// more, so timing a commit against it overstates the write.
 struct StagingDB {
     inner: InMemoryBinaryTrieDB,
-    staged: Arc<Mutex<Vec<(Vec<u8>, Vec<u8>)>>>,
+    staged: StagedNodes,
 }
+
+/// The staging buffer's type, matching `StagedBinaryNodes` in `crates/storage`.
+type StagedNodes = Arc<Mutex<Vec<(Vec<u8>, Vec<u8>)>>>;
 
 impl BinaryTrieDB for StagingDB {
     fn get(&self, path: &BitPath) -> Result<Option<Vec<u8>>, BinaryTrieError> {

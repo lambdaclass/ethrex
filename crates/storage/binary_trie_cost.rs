@@ -14,8 +14,8 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use ethrex_binary_trie::trie::{BinaryTrie, BinaryTrieDB, BitPath};
 use ethrex_binary_trie::BinaryTrieError;
+use ethrex_binary_trie::trie::{BinaryTrie, BinaryTrieDB, BitPath};
 
 use crate::api::StorageBackend;
 use crate::backend::rocksdb::{RocksDBBackend, RocksDBConfig};
