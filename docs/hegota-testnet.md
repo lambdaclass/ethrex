@@ -1,9 +1,15 @@
 # Hegotá testnet — implementation plan
 
 Working document. Plan for `hegota-testnet`: a permissioned, externally reachable
-kurtosis devnet carrying **exactly four active EIPs** on one ethrex binary, with a
-fixed chain ID and a reproducible genesis, so Nethermind can join it later without a
-re-genesis.
+kurtosis devnet carrying **four transaction-layer EIPs plus EIP-8369 as FOCIL's
+eligibility layer** on one ethrex binary, with a fixed chain ID and a reproducible
+genesis, so another client can join it later without a re-genesis.
+
+EIP-8369 is in the rule set rather than alongside it. EIP-7805 enforcement needs an
+eligibility rule for frame transactions, EIP-8369 is that rule, and it has no activation
+switch to turn off — so enforcing rather than excusing frame-transaction omissions means
+publishing it. Its constants are consensus inputs and appear in the artifact set for that
+reason.
 
 The two things that decide whether this succeeds:
 
@@ -34,10 +40,18 @@ ethrex+CL pairs under kurtosis on a public host behind a gated deposit contract.
 Explicit:
 
 - Branch named `hegota-testnet`.
-- Exactly four EIPs **active**: EIP-8141 (frame transactions), EIP-8250 (keyed
-  nonces), EIP-8272 (recent roots), EIP-7805 (FOCIL). All four under the single
+- Four transaction-layer EIPs **active**: EIP-8141 (frame transactions), EIP-8250
+  (keyed nonces), EIP-8272 (recent roots), EIP-7805 (FOCIL). All under the single
   existing `Fork::Hegota`, genesis aliases `hegotaTime` / `hezeTime` / `bogotaTime`.
+- EIP-8369 (VOPS profiles for FOCIL eligibility) is **also active and published**: it
+  has no activation switch, and EIP-7805 enforcement over frame transactions is
+  undefined without it. Its consensus inputs are `AA_VOPS_SLOT_COUNT = 4`, the derived
+  VERIFY budgets, the per-list code-byte bound, and the two-endpoint enforcement rule.
 - EIP-7906 (transaction assertions) is out. `NONCEKEYLOAD` (`0xB9`) is out.
+- EIP-8312 (UTXO frames) stays in the tree but inert behind an unset `utxoFramesTime`,
+  including the defensive `Undecided` guard in the Profile 2 evaluator, which is
+  unreachable while it is inert and is what keeps a prefix-only replay honest if it is
+  ever switched on.
 - Fixed chain ID and reproducible genesis, publishable without a re-genesis.
 - Gated deposit contract wired into genesis; validator entry requires a token.
 - 3 nodes under kurtosis on a production server, reachable from the public internet.
@@ -415,7 +429,7 @@ superseded. Cutting first and reconciling later means re-resolving the same conf
 ### Phase 2: Cut `hegota-testnet`
 
 Why this phase: every later phase edits this branch, so its exact construction and the
-proof that only four EIPs are active must land first.
+proof that the active EIP set is the intended one must land first.
 
 - [ ] Task 2.1: `git switch -c hegota-testnet origin/hegota-devnet`. Do not merge
       anything yet.
@@ -470,11 +484,12 @@ proof that only four EIPs are active must land first.
       test` green (this pulls the FOCIL fixtures via `focil-vectors` from
       `.fixtures_url_focil`, `tests-focil@v0.1.0`). List each task and its status.
 
-### Phase 3: Settle EIP-8369, prove EIP-8312 inert, and enumerate the active surface
+### Phase 3: Complete EIP-8369 enforcement, prove EIP-8312 inert, enumerate the surface
 
-Why this phase: "exactly four EIPs" is an activation-gating claim, not a code-absence
-claim, and it has to be tested rather than asserted. Verification found the two cases
-are not alike:
+Why this phase: the active EIP set is an activation-gating claim, not a code-absence
+claim, so it has to be tested rather than asserted. Deleting EIP-7906 is independent of
+this work — the FOCIL eligibility path contains no reference to `PostTx` or EIP-7906 — but
+the two EIPs the tree carries beyond the intended set are not alike:
 
 - **EIP-8312 is properly inert.** `utxo_frames_time` is a distinct chain-config field
   (`crates/common/types/genesis.rs:346`) and `validate_static_constraints` rejects
@@ -755,8 +770,9 @@ churns and training data is stale.
 - [ ] Task 6.8: **Checkpoint: Verify Phase 6 complete.** Confirm every row of
       `docs/hegota-testnet-divergences.md` has a non-empty action, that no
       consensus-visible row is unresolved without a stated fallback, that the ```pins```
-      block in `docs/hegota-devnet.md` matches what `diff_eip` reports as head for all
-      four EIPs, and that `cargo test --workspace --exclude 'ethrex-l2*' --exclude
+      block in `docs/hegota-devnet.md` matches what `diff_eip` reports as head for
+      EIP-8141, EIP-8250, EIP-8272, EIP-7805 and EIP-8369, and that `cargo test
+      --workspace --exclude 'ethrex-l2*' --exclude
       ethrex-prover --exclude ethrex-guest-program` is green. List each task and its
       status.
 
