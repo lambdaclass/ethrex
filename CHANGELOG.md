@@ -12,6 +12,10 @@
 
 ## Perf
 
+### 2026-08-07
+
+- Access the EVM memory buffer without `RefCell`'s borrow-flag bookkeeping and round the `MLOAD`/`MSTORE` memory size once instead of twice [#7119](https://github.com/lambdaclass/ethrex/pull/7119)
+
 ### 2026-07-22
 
 - Unify full-sync batch import onto the per-block execution pipeline, validating every block's state root and reusing the pipeline's BAL-driven parallel execution instead of the bespoke "execute all, apply once" batch path [#7008](https://github.com/lambdaclass/ethrex/pull/7008)
