@@ -360,9 +360,19 @@ impl InclusionListSatisfactionValidator {
     /// Profile 2 pass over the same inclusion list.
     ///
     /// `unsatisfied` is `Ok(())`/`Err` iff every inclusion-list transaction is
-    /// classified as non-appendable (`present | blob | frame |
+    /// classified as non-appendable (`present | blob |
     /// unrecoverable | intrinsic_gas_too_low | insufficient_gas |
     /// below_base_fee | invalid_sender | invalid_nonce | invalid_balance`),
+    ///
+    /// Frame transactions are NOT on that list. They used to be excused
+    /// wholesale, on the grounds that the generic pass compares the declared
+    /// sender's nonce and balance and so cannot judge a keyed, payer-funded
+    /// transaction. That reasoning still holds for the generic pass — which is
+    /// why type `0x06` must never reach it — but it is no longer a reason to
+    /// excuse the omission: an EIP-8369 Profile 2 candidate is judged by
+    /// replaying its validation prefix through an [`IlProfile2Evaluator`], and
+    /// only an `Eligible` verdict makes the list unsatisfied.
+    ///
     /// for the first IL transaction that is missing AND could still have been
     /// validly appended to the end of the block. This mirrors EELS
     /// `check_inclusion_list_transactions` + `check_transaction`

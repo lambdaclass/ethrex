@@ -1875,6 +1875,57 @@ mod tests {
         assert_eq!(encoded.as_ref(), expected.as_slice());
     }
 
+    /// A context whose chain schedules Hegotá (and, as EIP-8081 requires,
+    /// Amsterdam) from genesis.
+    async fn hegota_context() -> RpcApiContext {
+        let mut storage = Store::new("test-newpayload-v5-hegota", EngineType::InMemory)
+            .expect("Failed to create test store");
+        let genesis = ethrex_common::types::Genesis {
+            config: ChainConfig {
+                shanghai_time: Some(0),
+                cancun_time: Some(0),
+                prague_time: Some(0),
+                osaka_time: Some(0),
+                amsterdam_time: Some(0),
+                hegota_time: Some(0),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        storage
+            .add_initial_state(genesis)
+            .await
+            .expect("genesis with a coherent fork schedule must load");
+        default_context_with_storage(storage).await
+    }
+
+    /// From Hegotá on, only `engine_newPayloadV6` carries
+    /// `inclusionListTransactions`, so V5 must refuse a Hegotá-timestamp payload
+    /// rather than accept one and silently drop the inclusion list.
+    ///
+    /// A consensus client picks the method from its own fork with no fallback,
+    /// so a V5 that accepted these would only be reachable from a client that
+    /// disagrees with us about the fork — exactly the case the guard exists for.
+    #[tokio::test]
+    async fn new_payload_v5_rejects_a_hegota_payload() {
+        let request = NewPayloadV5Request {
+            payload: v5_payload(),
+            expected_blob_versioned_hashes: vec![],
+            parent_beacon_block_root: H256::zero(),
+            execution_requests: vec![],
+            raw_bal_hash: Some(H256::zero()),
+        };
+
+        let err = request
+            .handle(hegota_context().await)
+            .await
+            .expect_err("V5 must refuse a Hegotá payload");
+        assert!(
+            matches!(err, RpcErr::UnsupportedFork(ref m) if m.contains("newPayloadV5")),
+            "expected an UnsupportedFork naming V5, got {err:?}"
+        );
+    }
+
     async fn test_context() -> RpcApiContext {
         let storage = Store::new("test-payload-bodies", EngineType::InMemory)
             .expect("Failed to create test store");

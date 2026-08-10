@@ -832,7 +832,7 @@ the frame-tx gates the mempool applies produces blocks its own peers reject.
       the async `handle` rather than a pure validator, so it needs a
       `default_context_with_storage` fixture with `hegota_time` set, unlike the
       pure-function tests around it.
-- [ ] Task 5.6: **Rewritten against Tasks 5.1/5.2.** Record the opposite of what this
+- [x] Task 5.6: **Rewritten against Tasks 5.1/5.2.** Record the opposite of what this
       task originally said: frame transactions ARE eligible for locally built inclusion
       lists, and the builder handles them by nonce domain rather than by exclusion.
       Add to `docs/hegota-devnet.md`'s EIP-7805 section the builder-side treatment
