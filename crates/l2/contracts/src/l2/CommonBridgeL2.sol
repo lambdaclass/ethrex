@@ -15,6 +15,9 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
     /// @notice Token address used to represent ETH
     address public constant ETH_TOKEN =
         0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
+    /// @notice Domain separator for messages sent through sendIntentToL1
+    bytes32 public constant INTENT_DOMAIN =
+        keccak256("ethrex.L2ToL1Intent.v1");
 
     mapping(uint256 chainId => uint256 txId) public transactionIds;
 
@@ -108,6 +111,18 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
         IMessenger(L1_MESSENGER).sendMessageToL1(
             keccak256(abi.encodePacked(tokenL1, tokenL2, destination, amount))
         );
+    }
+
+    /// @inheritdoc ICommonBridgeL2
+    function sendIntentToL1(
+        bytes32 payloadHash
+    ) external override returns (bytes32) {
+        bytes32 intentHash = keccak256(
+            abi.encode(INTENT_DOMAIN, block.chainid, msg.sender, payloadHash)
+        );
+        IMessenger(L1_MESSENGER).sendMessageToL1(intentHash);
+        emit IntentInitiated(msg.sender, payloadHash, intentHash);
+        return intentHash;
     }
 
     /// @inheritdoc ICommonBridgeL2

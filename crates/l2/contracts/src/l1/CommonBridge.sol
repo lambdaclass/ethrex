@@ -127,6 +127,13 @@ contract CommonBridge is
     /// must have a gasLimit at or below this value.
     uint256 public l2GasLimit;
 
+    /// @notice Mapping of consumed messages. Kept separate from
+    /// claimedWithdrawalIDs so that data-only messages and withdrawals cannot
+    /// mark each other as spent.
+    /// @dev The key is the message leaf, not the message id, so that message
+    /// @dev types with their own id counters cannot collide.
+    mapping(bytes32 => bool) public consumedMessages;
+
     /// @notice Minimum allowed value for l2GasLimit. Must be at least as large as the
     /// highest hardcoded gas limit used by internal bridge functions.
     uint256 public constant DEPOSIT_GAS_LIMIT = 21000 * 5;
@@ -635,6 +642,43 @@ contract CommonBridge is
             ),
             "CommonBridge: Invalid proof"
         );
+    }
+
+    /// @inheritdoc ICommonBridge
+    function verifyAndConsume(
+        bytes32 messageHash,
+        uint256 batchNumber,
+        uint256 messageId,
+        bytes32[] calldata proof
+    ) external override whenNotPaused returns (bool) {
+        require(
+            batchWithdrawalLogsMerkleRoots[batchNumber] != bytes32(0),
+            "CommonBridge: the batch that emitted the message was not committed"
+        );
+        require(
+            batchNumber <=
+                IOnChainProposer(ON_CHAIN_PROPOSER).lastVerifiedBatch(),
+            "CommonBridge: the batch that emitted the message was not verified"
+        );
+
+        bytes32 leaf = keccak256(
+            abi.encodePacked(L2_BRIDGE_ADDRESS, messageHash, messageId)
+        );
+        require(
+            consumedMessages[leaf] == false,
+            "CommonBridge: the message was already consumed"
+        );
+        consumedMessages[leaf] = true;
+        emit MessageConsumed(batchNumber, messageId, messageHash);
+        require(
+            MerkleProof.verify(
+                proof,
+                batchWithdrawalLogsMerkleRoots[batchNumber],
+                leaf
+            ),
+            "CommonBridge: Invalid proof"
+        );
+        return true;
     }
 
     function _verifyMessageProof(
