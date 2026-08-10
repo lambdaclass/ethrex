@@ -33,7 +33,7 @@ impl RpcHandler for GasPrice {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let latest_block_number = context.storage.get_latest_block_number().await?;
+        let latest_block_number = context.storage.get_latest_block_number()?;
         let latest_header = context
             .storage
             .get_block_header(latest_block_number)?

@@ -407,7 +407,7 @@ pub async fn init_dev_network(
     let chain_config = store.get_chain_config();
 
     let (head_block_hash, target_gas_limit) = {
-        let current_block_number = store.get_latest_block_number().await.unwrap();
+        let current_block_number = store.get_latest_block_number().unwrap();
         let head_block_hash = store
             .get_canonical_block_hash(current_block_number)
             .await
@@ -1023,7 +1023,7 @@ pub async fn regenerate_head_state(
     // which clamp `LatestBlockNumber` to `flushed_upto`. All blocks up to
     // `head_block_number` are therefore on disk; callers that skip that clamp
     // would break this assumption.
-    let head_block_number = store.get_latest_block_number().await?;
+    let head_block_number = store.get_latest_block_number()?;
     debug!("regenerate_head_state head clamped to durable block {head_block_number}");
 
     let Some(last_header) = store.get_block_header(head_block_number)? else {

@@ -499,13 +499,12 @@ impl DiscoveryServer {
             node_id,
             sender_public_key,
             enr_response_message.node_record,
-        )
-        .await?;
+        )?;
 
         Ok(())
     }
 
-    async fn discv4_validate_enr_fork_id(
+    fn discv4_validate_enr_fork_id(
         &mut self,
         node_id: H256,
         sender_public_key: H512,
@@ -524,7 +523,7 @@ impl DiscoveryServer {
             .store
             .get_block_header(0)?
             .ok_or(DiscoveryServerError::InvalidContact)?;
-        let latest_block_number = self.store.get_latest_block_number().await?;
+        let latest_block_number = self.store.get_latest_block_number()?;
         let latest_block_header = self
             .store
             .get_block_header(latest_block_number)?
@@ -537,7 +536,7 @@ impl DiscoveryServer {
             latest_block_number,
         );
 
-        if !backend::is_fork_id_valid(&self.store, &remote_fork_id).await? {
+        if !backend::is_fork_id_valid(&self.store, &remote_fork_id)? {
             self.peer_table.set_is_fork_id_valid(node_id, false)?;
             debug!(protocol = "discv4", received = "ENRResponse", from = %format!("{sender_public_key:#x}"), local_fork_id=%local_fork_id, remote_fork_id=%remote_fork_id, "fork id mismatch in ENR response, skipping");
             return Ok(());

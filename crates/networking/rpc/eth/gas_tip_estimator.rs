@@ -47,7 +47,7 @@ impl GasTipEstimator {
     /// Estimate Gas Price based on already accepted transactions,
     /// as per the spec, this will be returned in wei.
     pub async fn estimate_gas_tip(&mut self, storage: &Store) -> Result<u64, RpcErr> {
-        let latest_block_number = storage.get_latest_block_number().await?;
+        let latest_block_number = storage.get_latest_block_number()?;
         let latest_block_hash = storage
             .get_canonical_block_hash(latest_block_number)
             .await?
