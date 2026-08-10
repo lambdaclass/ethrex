@@ -942,6 +942,7 @@ where
         state.node.clone(),
         connection.clone(),
         state.capabilities.clone(),
+        state.negotiated_eth_capability.clone(),
         state.is_inbound,
     )?;
 
@@ -1045,7 +1046,7 @@ async fn send_all_pooled_tx_hashes(
             .map_err(|e| PeerConnectionError::BroadcastError(e.to_string()))?;
         send_tx_hashes(
             txs,
-            state.capabilities.clone(),
+            state.negotiated_eth_capability.clone(),
             connection,
             state.node.node_id(),
             &state.blockchain,
