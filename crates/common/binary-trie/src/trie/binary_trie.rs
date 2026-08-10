@@ -939,6 +939,84 @@ impl BinaryTrie {
         }
     }
 
+    /// Boundary walk of `key`: the stored encodings of every node on the
+    /// path from the root to where a lookup of `key` would stop, root first.
+    ///
+    /// The proof half of this crate's range machinery, and the exact same
+    /// descent [`BinaryTrie::get`] makes — deliberately, since a walk that
+    /// stopped anywhere else would attest to a tree shape the lookup does not
+    /// see. It lives here rather than in [`proof`] because it needs the
+    /// private node machinery; everything a *verifier* runs is over there,
+    /// standalone. The format itself, and why a verifier needs nothing but
+    /// these bytes, is documented in [`proof`].
+    ///
+    /// The walk does **not** short-circuit through the flat mirror the way
+    /// [`BinaryTrie::get`] does: a mirror holds values, and a proof is made of
+    /// nodes.
+    ///
+    /// An empty trie yields an empty proof, which is what
+    /// [`verify_walk`](proof::verify_walk) requires of the empty root.
+    ///
+    /// Loaded nodes are re-encoded rather than re-read: the encoding is
+    /// canonical, so a re-encoded node is byte-identical to the stored one and
+    /// a proof cannot depend on whether the server happened to have the node
+    /// in memory. `a_walk_over_a_reopened_trie_matches_the_in_memory_one`
+    /// pins that.
+    ///
+    /// At most one node per key bit, so `MAX_KEY_LENGTH * 8` nodes bounds a
+    /// proof.
+    ///
+    /// # Errors
+    ///
+    /// [`BinaryTrieError::Backend`] or [`BinaryTrieError::MalformedNode`] if a
+    /// node on the path could not be loaded.
+    ///
+    /// [`proof`]: super::proof
+    pub fn prove_walk(&mut self, key: &[u8]) -> Result<Vec<Vec<u8>>, BinaryTrieError> {
+        let bits = bytes_to_bits(key);
+        let mut proof = Vec::new();
+        let Self { db, root, .. } = self;
+        if let Some(node_ref) = root {
+            Self::prove_walk_at(db.as_ref(), node_ref, &bits, 0, &mut proof)?;
+        }
+        Ok(proof)
+    }
+
+    fn prove_walk_at(
+        db: &dyn BinaryTrieDB,
+        node_ref: &mut NodeRef,
+        bits: &[u8],
+        depth: usize,
+        proof: &mut Vec<Vec<u8>>,
+    ) -> Result<(), BinaryTrieError> {
+        match Self::resolve(db, node_ref, &BitPath::from_bits(&bits[..depth]))? {
+            Node::Leaf { key, value } => {
+                proof.push(encode_leaf(key, value));
+                Ok(())
+            }
+            Node::Branch {
+                prefix,
+                left,
+                right,
+            } => {
+                proof.push(encode_branch(
+                    prefix,
+                    Self::merkleize(left),
+                    Self::merkleize(right),
+                ));
+                let split = depth + prefix.len();
+                // The divergence rule of `get_at`, and it must stay the same
+                // one: the node is already in the proof either way, and this
+                // decides only whether the walk continues past it.
+                if split >= bits.len() || bits[depth..split] != prefix[..] {
+                    return Ok(());
+                }
+                let child = if bits[split] == 0 { left } else { right };
+                Self::prove_walk_at(db, child, bits, split + 1, proof)
+            }
+        }
+    }
+
     /// Whether any key in the trie begins with `prefix`.
     ///
     /// One descent, and it stops at the first node whose whole subtree
