@@ -39,7 +39,7 @@ Resolved at the time the branch was cut. `left-right` counts read as
 
 Branch `hegota-testnet`, pushed to `origin`. Baseline for anything below: the whole
 workspace compiles (`--exclude 'ethrex-l2*' --exclude ethrex-prover --exclude
-ethrex-guest-program`) and `cargo test -p ethrex-test --test ethrex_tests` is **1217
+ethrex-guest-program`) and `cargo test -p ethrex-test --test ethrex_tests` is **1221
 passed / 0 failed**.
 
 | Landed | Commit | Notes |
@@ -60,7 +60,7 @@ passed / 0 failed**.
 | Per-IL code-byte budget (Task 3.2) | `138f75ce0` | charged inside the replay, not after it; 16 bodies / 16 x 64 KiB per list, shared across candidates and both endpoints |
 | Phase 3 closed (Tasks 3.1/3.3-3.6) | `545712d88` | inert-surface and exact-set opcode tests, chain-config doc comments, absent-field table |
 | IL fork/expiry gates (Task 5.3) | `f4ecf768d` | defence in depth; execution already skipped these entries |
-| IL BAL indexing (Task 5.4) | | IL entry takes index 1; build and re-import agree on the commitment |
+| IL BAL indexing (Task 5.4) | `ccd359718` | IL entry takes index 1; build and re-import agree on the commitment |
 
 ### Not complete
 
