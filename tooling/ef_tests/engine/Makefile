@@ -28,22 +28,29 @@ $(SPECTEST_VECTORS_DIR): $(SPECTEST_ARTIFACT)
 	mkdir -p $(SPECTEST_VECTORS_DIR)
 	tar -xzf $(SPECTEST_ARTIFACT) --strip-components=2 -C $(SPECTEST_VECTORS_DIR) fixtures/blockchain_tests_engine
 
-# Order-only on $(SPECTEST_VECTORS_DIR): building it runs clean-vectors, which deletes
-# $(AMSTERDAM_ARTIFACT). Downloading afterwards keeps the bundle from being wiped
-# between the curl and the extract.
-$(AMSTERDAM_ARTIFACT): $(AMSTERDAM_FIXTURES_FILE) | $(SPECTEST_VECTORS_DIR)
-	curl -L -o $(AMSTERDAM_ARTIFACT) $(AMSTERDAM_URL)
-
-# Clear the subtrees first: the bundle is overlaid onto an existing `vectors/eest`, so
-# fixtures renamed or dropped between devnet releases would otherwise survive as stale
-# leftovers and run against the current client.
-$(AMSTERDAM_STAMP): $(AMSTERDAM_ARTIFACT) $(SPECTEST_VECTORS_DIR)
-	rm -rf $(addprefix $(SPECTEST_VECTORS_DIR)/,$(AMSTERDAM_SUBTREES))
-	tar -xzf $(AMSTERDAM_ARTIFACT) --strip-components=2 -C $(SPECTEST_VECTORS_DIR) \
-		$(addprefix fixtures/blockchain_tests_engine/,$(AMSTERDAM_SUBTREES))
-	touch $@
-
-amsterdam-vectors: $(AMSTERDAM_STAMP) ## 📥 Overlay Amsterdam engine fixtures onto vectors/eest
+# The overlay is keyed on the release URL it was built from, recorded in
+# $(AMSTERDAM_STAMP). Timestamps cannot express this: a bundle left on disk by
+# another branch says nothing in its mtime about which release it came from, so one
+# that merely looks newer than the URL file would be re-extracted as if it were the
+# requested release. Clearing the subtrees before extracting also drops fixtures that
+# upstream renamed or removed, which would otherwise survive and run against the
+# current client. The fetch lands in a temporary file so a failed download leaves
+# the previous bundle and stamp untouched instead of truncating them.
+amsterdam-vectors: | $(SPECTEST_VECTORS_DIR) ## 📥 Overlay Amsterdam fixtures, re-fetching when the pinned release changed
+	@have=$$(cat $(AMSTERDAM_STAMP) 2>/dev/null); \
+	for subtree in $(AMSTERDAM_SUBTREES); do \
+		[ -d $(SPECTEST_VECTORS_DIR)/$$subtree ] || have=; \
+	done; \
+	if [ "$$have" = "$(AMSTERDAM_URL)" ]; then \
+		echo "Amsterdam fixtures already overlaid from $(AMSTERDAM_URL)"; \
+	else \
+		curl -fL -o $(AMSTERDAM_ARTIFACT).part $(AMSTERDAM_URL) && \
+		mv $(AMSTERDAM_ARTIFACT).part $(AMSTERDAM_ARTIFACT) && \
+		rm -rf $(addprefix $(SPECTEST_VECTORS_DIR)/,$(AMSTERDAM_SUBTREES)) && \
+		tar -xzf $(AMSTERDAM_ARTIFACT) --strip-components=2 -C $(SPECTEST_VECTORS_DIR) \
+			$(addprefix fixtures/blockchain_tests_engine/,$(AMSTERDAM_SUBTREES)) && \
+		echo "$(AMSTERDAM_URL)" > $(AMSTERDAM_STAMP); \
+	fi
 
 help: ## 📚 Show help for each Makefile target
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
@@ -52,7 +59,7 @@ download-test-vectors: $(VECTORS_TARGETS) amsterdam-vectors ## 📥 Download eng
 
 clean-vectors: ## 🗑️  Clean test vectors
 	rm -rf $(VECTORS_ROOT)
-	rm -f $(SPECTEST_ARTIFACT) $(AMSTERDAM_ARTIFACT)
+	rm -f $(SPECTEST_ARTIFACT) $(AMSTERDAM_ARTIFACT) $(AMSTERDAM_ARTIFACT).part
 
 test: $(VECTORS_TARGETS) amsterdam-vectors ## 🧪 Run engine-format fixture suite (InMemory, release)
 	cargo test -p ef_tests-engine --release
