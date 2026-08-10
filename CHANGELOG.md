@@ -12,6 +12,10 @@
 
 ## Perf
 
+### 2026-08-10
+
+- Move, instead of clone, a finished call frame's account snapshots when merging its backup into the parent or the tx-level accumulator [#7125](https://github.com/lambdaclass/ethrex/pull/7125)
+
 ### 2026-07-22
 
 - Unify full-sync batch import onto the per-block execution pipeline, validating every block's state root and reusing the pipeline's BAL-driven parallel execution instead of the bespoke "execute all, apply once" batch path [#7008](https://github.com/lambdaclass/ethrex/pull/7008)
