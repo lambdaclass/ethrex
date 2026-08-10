@@ -2859,7 +2859,7 @@ impl<'a> VM<'a> {
         frame_indices: &[usize],
         deploy_index: Option<usize>,
         canonical_paymaster_pay_frame: Option<usize>,
-        focil_surface: Option<crate::validation_observer::FocilVopsSurface>,
+        profile_2: Option<crate::validation_observer::Profile2Replay>,
     ) -> Result<PrefixSimResult, VMError> {
         use crate::validation_observer::ValidationObserver;
 
@@ -2949,7 +2949,10 @@ impl<'a> VM<'a> {
         let expiry_verifier = ethrex_common::types::frame_tx_expiry_verifier();
         let mut observer = ValidationObserver::new(sender, deploy_index, expiry_verifier);
         observer.canonical_paymaster_pay_frame = canonical_paymaster_pay_frame;
-        observer.focil_surface = focil_surface;
+        if let Some(profile_2) = profile_2 {
+            observer.focil_surface = Some(profile_2.surface);
+            observer.code_budget = Some(profile_2.code_budget);
+        }
         self.validation_observer = observer;
 
         self.simulate_validation_prefix(frame_indices)
@@ -3064,6 +3067,12 @@ impl<'a> VM<'a> {
                     target,
                     self.env.config.fork,
                 )?;
+
+            // The frame's own code counts against the list's allowance too: a
+            // prefix that never calls out still makes every attester read the
+            // body it runs. Charged by resolved code address, so an EIP-7702
+            // delegation is charged as the delegate's body.
+            self.validation_charge_code(code_address)?;
 
             self.substate.push_backup();
 
@@ -3598,7 +3607,24 @@ impl<'a> VM<'a> {
         if self.db.get_account(target)?.is_empty() {
             self.validation_observer
                 .record_violation(FrameSimViolation::CallToNonexistentOrDelegated(target));
+            return Ok(());
         }
+        self.validation_charge_code(target)
+    }
+
+    /// Charge `target`'s code body against the inclusion list's
+    /// [`CodeBodyBudget`](crate::validation_observer::CodeBodyBudget).
+    ///
+    /// A no-op unless a budget is configured, which happens only for EIP-8369
+    /// Profile 2 replays. Reads the length through the code metadata rather than
+    /// the body, so the budget is decided before the bytes are materialized.
+    fn validation_charge_code(&mut self, target: Address) -> Result<(), VMError> {
+        if self.validation_observer.code_budget.is_none() {
+            return Ok(());
+        }
+        let code_hash = self.db.get_account(target)?.info.code_hash;
+        let len = self.db.get_code_metadata(code_hash)?.length;
+        self.validation_observer.charge_code_body(code_hash, len);
         Ok(())
     }
 

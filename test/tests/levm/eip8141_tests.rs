@@ -1938,7 +1938,9 @@ mod validation_observer_tests {
     use ethrex_levm::environment::{EVMConfig, Environment};
     use ethrex_levm::errors::DatabaseError;
     use ethrex_levm::tracing::LevmCallTracer;
-    use ethrex_levm::validation_observer::{FocilVopsSurface, FrameSimViolation};
+    use ethrex_levm::validation_observer::{
+        CodeBodyBudget, FocilVopsSurface, FrameSimViolation, Profile2Replay,
+    };
     use ethrex_levm::vm::{PrefixSimResult, VM, VMType};
     use rustc_hash::FxHashMap;
     use std::sync::Arc;
@@ -2123,8 +2125,12 @@ mod validation_observer_tests {
             None,
         )
         .unwrap();
+        let profile_2 = focil_surface.map(|surface| Profile2Replay {
+            surface,
+            code_budget: CodeBodyBudget::unbounded(),
+        });
         let result = vm
-            .run_frame_validation_prefix(frame_indices, deploy_index, None, focil_surface)
+            .run_frame_validation_prefix(frame_indices, deploy_index, None, profile_2)
             .unwrap();
         (result, vm.validation_observer.violation.clone())
     }
@@ -2452,7 +2458,7 @@ mod frame_validation_prefix_tests {
     use ethrex_crypto::NativeCrypto;
     use ethrex_levm::db::{Database, gen_db::GeneralizedDatabase};
     use ethrex_levm::errors::DatabaseError;
-    use ethrex_levm::validation_observer::FocilVopsSurface;
+    use ethrex_levm::validation_observer::{CodeBodyBudget, FocilVopsSurface, Profile2Replay};
     use ethrex_levm::vm::VMType;
     use ethrex_vm::backends::levm::LEVM;
     use rustc_hash::FxHashMap;
@@ -2767,7 +2773,10 @@ mod frame_validation_prefix_tests {
             &prefix,
             None,
             FRAME_TX_MAX_VERIFY_GAS,
-            Some(surface),
+            Some(Profile2Replay {
+                surface,
+                code_budget: CodeBodyBudget::unbounded(),
+            }),
         )
         .expect("simulation runs");
         assert!(
@@ -2850,7 +2859,10 @@ mod frame_validation_prefix_tests {
             &prefix,
             None,
             FRAME_TX_MAX_VERIFY_GAS,
-            Some(surface),
+            Some(Profile2Replay {
+                surface,
+                code_budget: CodeBodyBudget::unbounded(),
+            }),
         )
         .expect("simulation runs");
         assert!(

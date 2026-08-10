@@ -57,18 +57,10 @@ passed / 0 failed**.
 | `origin/main` merged (Task 2.6) | `b1c21e7b0` | 15 conflicts plus six silent auto-merge duplicates |
 | Two-endpoint Profile 2 (Tasks 3.0/3.1/3.3) | `07092961c` | union of both endpoints; budgets derived from parent gas limit |
 | Phase 4 closed (Tasks 4.2-4.8) | `a485332a6` | code hash + mask pinned, the three activation cases enforced, predeploy behaviour and the BAL write/read split tested |
+| Per-IL code-byte budget (Task 3.2) | | charged inside the replay, not after it; 16 bodies / 16 x 64 KiB per list, shared across candidates and both endpoints |
 
 ### Not complete
 
-- **Phase 3 Task 3.2** — the per-inclusion-list code-byte budget (distinct `codeHash`
-  counted once per list, bounded at `MAX_VALIDATION_CODE_BODIES = 16` and
-  `16 * MAX_CODE_SIZE`, shared across both endpoints). Blocked on a real dependency:
-  the replay does not report which code bodies it loaded, so this needs
-  `FrameValidationOutcome` (`crates/vm/backends/mod.rs:410`) extended to return the
-  distinct code hashes and sizes the prefix touched, then a `RefCell` budget on the
-  evaluator charged once per list. Without it, EVM gas alone does not bound bytes
-  loaded: at a few thousand gas per cold account a list's gas budget admits hundreds of
-  cold accesses, each able to pull a maximum-size code body.
 - **Phase 5** and **Phase 6** — not started.
 - **Phase 7 Task 7.3** (generator revision) is satisfied by pinning the generator image
   in the config instead of bumping `ETHEREUM_PACKAGE_REVISION`; **Task 7.8** needs a
@@ -396,6 +388,34 @@ because gas remaining is monotone within a payload; evaluating it at `S_start` w
 every full block unsatisfied and convert the inclusion list into a hard priority claim on
 block space.
 
+### The code-byte budget is charged inside the replay, not after it
+
+The per-inclusion-list code bound exists because VERIFY gas does not bound how much code
+a Profile 2 replay makes an attester read: at a few thousand gas per cold account, a
+single candidate's budget admits hundreds of cold accesses, each able to pull a
+maximum-size body. A ledger that only *reports* what a replay loaded, and charges once it
+returns, therefore bounds a list but not a transaction — one candidate can exceed the
+whole allowance by an order of magnitude before anything notices.
+
+So the allowance travels *into* the replay (`Profile2Replay`, alongside the AA-VOPS
+surface) and the observer charges each body as it is loaded, ending the replay on the
+first one that does not fit. The evaluator holds the ledger in a `RefCell` and folds each
+replay's result back in, so the charge is per list: shared across every candidate and
+across both evaluation endpoints, with an already-charged `codeHash` free to load again.
+Charges survive a failed verdict, because a replay that loaded bodies and then failed
+still made every attester read them.
+
+Bounds are 16 bodies and 16 × 64 KiB. Both bind: a count alone would admit sixteen
+maximum-size bodies, and a byte total alone would let a list spend its allowance on many
+tiny ones. The byte figure tracks EIP-7954's Amsterdam `MAX_CODE_SIZE` rather than the
+pre-Amsterdam 24 KiB, since frame transactions exist only from Hegotá.
+
+The charge order is list order, over the omitted candidates only: a listed transaction the
+block included never replays and never charges, so the allowance is spent exactly on the
+work omissions force. Both inputs — the list and the block's transaction set — are fixed
+before judging, so every attester spends the allowance on the same candidates in the same
+order and reaches the same verdicts.
+
 The rule is written up as a Standards Track extension to EIP-7805 — the enforcing
 extension EIP-8369 asks for — and that draft, not this document, is the normative
 reference once it is published. Two commits already on this branch demonstrate the
@@ -629,7 +649,7 @@ the two EIPs the tree carries beyond the intended set are not alike:
       limit. Keep both values equal, so one transaction may consume a list's budget.
       These are consensus inputs: they MUST NOT be read from node configuration, and
       MUST NOT reuse EIP-8141's operator-tunable `MAX_VERIFY_GAS` mempool cap.
-- [ ] Task 3.2: Add the per-inclusion-list code-byte budget, which does not exist yet.
+- [x] Task 3.2: Add the per-inclusion-list code-byte budget, which does not exist yet.
       Count each distinct `codeHash` once and each distinct code body's byte length
       once, charged on first load by any replay of that list and shared across both
       evaluation states. Bound at `MAX_VALIDATION_CODE_BODIES = 16` bodies and

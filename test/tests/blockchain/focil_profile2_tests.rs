@@ -822,3 +822,194 @@ async fn frame_tx_with_an_unverifiable_signature_is_ineligible() {
 
     verdict.expect("an unverifiable signature must not fail the block");
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Per-inclusion-list code-body budget.
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// EVM gas does not bound how much code a Profile 2 replay makes an attester
+// read: at a few thousand gas per cold account, one candidate's VERIFY budget
+// admits hundreds of cold accesses, each able to pull a maximum-size body. The
+// budget is per inclusion **list** rather than per transaction, because the
+// motivating shape is many transactions validating against one shared verifier
+// contract whose bytes an attester loads once.
+
+/// `EXTCODESIZE` each of `targets` (result discarded), then APPROVE both
+/// scopes. Each cold `EXTCODESIZE` charges the target's code body against the
+/// list's allowance.
+fn extcodesize_then_approve_code(targets: &[Address], scope: u8) -> Bytes {
+    let mut code = Vec::new();
+    for target in targets {
+        code.push(0x73); // PUSH20
+        code.extend_from_slice(target.as_bytes());
+        code.push(0x3B); // EXTCODESIZE
+        code.push(0x50); // POP
+    }
+    code.extend_from_slice(&[0x60, scope, 0x60, 0x00, 0x60, 0x00, 0xAA, 0x00]);
+    Bytes::from(code)
+}
+
+/// `count` filler contracts, each with a distinct one-off body so each has its
+/// own code hash. Identical bodies would share a hash and be charged once,
+/// which is the opposite of what these tests need.
+fn filler_contracts(count: u8) -> Vec<(Address, Bytes)> {
+    (0..count)
+        .map(|i| {
+            (
+                Address::from_low_u64_be(0xF000 + u64::from(i)),
+                Bytes::from(vec![0x60, i, 0x00]),
+            )
+        })
+        .collect()
+}
+
+/// A candidate reading `n` filler bodies on top of its own.
+fn reader_tx(sender: Address) -> FrameTransaction {
+    self_verify_tx(sender, 400_000)
+}
+
+#[tokio::test]
+async fn a_prefix_over_the_code_body_bound_is_ineligible() {
+    // MAX_VALIDATION_CODE_BODIES is 16 and the prefix's own code counts, so 16
+    // fillers put the candidate one body over.
+    let sender = Address::from_low_u64_be(0xC0DE);
+    let fillers = filler_contracts(16);
+    let targets: Vec<Address> = fillers.iter().map(|(a, _)| *a).collect();
+
+    let mut accounts = vec![(
+        sender,
+        extcodesize_then_approve_code(&targets, APPROVE_EXECUTION_AND_PAYMENT),
+    )];
+    accounts.extend(fillers);
+
+    let (_store, chain, header) = setup_profile2_store_funded(
+        &accounts,
+        0,
+        U256::from(10u64).pow(U256::from(18u64)),
+        "focil-code-budget-over.db",
+    )
+    .await;
+    let evaluator =
+        BlockchainProfile2Evaluator::new(&chain, &header, header.state_root, header.gas_limit);
+
+    // Both endpoints replay and both run out, so the verdict is the union's
+    // combined message rather than the bare violation.
+    match evaluator.evaluate(&reader_tx(sender)) {
+        Profile2Eligibility::Ineligible(why) => {
+            assert!(
+                why.contains("ValidationCodeBudgetExceeded"),
+                "expected the budget violation, got {why}"
+            );
+        }
+        other => panic!("expected the budget to reject the replay, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn a_prefix_within_the_code_body_bound_is_eligible() {
+    // The negative control for the test above: 15 fillers plus the prefix's own
+    // code is exactly MAX_VALIDATION_CODE_BODIES, so nothing is rejected and the
+    // bound above is a bound rather than a blanket refusal.
+    let sender = Address::from_low_u64_be(0xC0DF);
+    let fillers = filler_contracts(15);
+    let targets: Vec<Address> = fillers.iter().map(|(a, _)| *a).collect();
+
+    let mut accounts = vec![(
+        sender,
+        extcodesize_then_approve_code(&targets, APPROVE_EXECUTION_AND_PAYMENT),
+    )];
+    accounts.extend(fillers);
+
+    let (_store, chain, header) = setup_profile2_store_funded(
+        &accounts,
+        0,
+        U256::from(10u64).pow(U256::from(18u64)),
+        "focil-code-budget-under.db",
+    )
+    .await;
+    let evaluator =
+        BlockchainProfile2Evaluator::new(&chain, &header, header.state_root, header.gas_limit);
+
+    assert_eq!(
+        evaluator.evaluate(&reader_tx(sender)),
+        Profile2Eligibility::Eligible
+    );
+}
+
+#[tokio::test]
+async fn the_code_budget_is_shared_across_the_list() {
+    // One evaluator judges one inclusion list. The first candidate fills the
+    // allowance to the brim; the second asks for one body more and is refused,
+    // even though it would pass on its own. Without a shared ledger a list could
+    // multiply an attester's read work by its own length.
+    let first = Address::from_low_u64_be(0xA001);
+    let second = Address::from_low_u64_be(0xA002);
+    let fillers = filler_contracts(14);
+    let targets: Vec<Address> = fillers.iter().map(|(a, _)| *a).collect();
+
+    // first: own code + 14 fillers = 15 bodies. second: own code + the same 14
+    // = one body more, the 16th, which fits. A third distinct body would not.
+    let mut accounts = vec![
+        (
+            first,
+            extcodesize_then_approve_code(&targets, APPROVE_EXECUTION_AND_PAYMENT),
+        ),
+        (
+            second,
+            extcodesize_then_approve_code(&targets, APPROVE_EXECUTION_AND_PAYMENT),
+        ),
+    ];
+    accounts.extend(fillers.clone());
+    // A 17th body only the third candidate reads.
+    let extra = Address::from_low_u64_be(0xBEEF);
+    accounts.push((extra, Bytes::from(vec![0x60, 0xEE, 0x00])));
+    let third = Address::from_low_u64_be(0xA003);
+    let mut third_targets = targets.clone();
+    third_targets.push(extra);
+    accounts.push((
+        third,
+        extcodesize_then_approve_code(&third_targets, APPROVE_EXECUTION_AND_PAYMENT),
+    ));
+
+    let (_store, chain, header) = setup_profile2_store_funded(
+        &accounts,
+        0,
+        U256::from(10u64).pow(U256::from(18u64)),
+        "focil-code-budget-shared.db",
+    )
+    .await;
+    let evaluator =
+        BlockchainProfile2Evaluator::new(&chain, &header, header.state_root, header.gas_limit);
+
+    // 15 bodies charged.
+    assert_eq!(
+        evaluator.evaluate(&reader_tx(first)),
+        Profile2Eligibility::Eligible,
+        "the first candidate must fit"
+    );
+    // Its own code is the 16th; the 14 fillers are already charged and free.
+    assert_eq!(
+        evaluator.evaluate(&reader_tx(second)),
+        Profile2Eligibility::Eligible,
+        "a candidate reusing charged bodies must still fit"
+    );
+    // Own code (17th) is one too many.
+    match evaluator.evaluate(&reader_tx(third)) {
+        Profile2Eligibility::Ineligible(why) => {
+            assert!(
+                why.contains("ValidationCodeBudgetExceeded"),
+                "expected the budget violation, got {why}"
+            );
+        }
+        other => panic!("expected the list's allowance to be spent, got {other:?}"),
+    }
+
+    // The same candidate against a fresh list passes, so the refusal above is
+    // the shared ledger and not something about the transaction itself.
+    let fresh =
+        BlockchainProfile2Evaluator::new(&chain, &header, header.state_root, header.gas_limit);
+    assert_eq!(
+        fresh.evaluate(&reader_tx(third)),
+        Profile2Eligibility::Eligible
+    );
+}

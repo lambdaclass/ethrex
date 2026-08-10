@@ -7,13 +7,18 @@
 //! module supplies the one implementation that actually replays a
 //! transaction's validation prefix.
 
+use std::cell::RefCell;
+
 use ethrex_common::H256;
 use ethrex_common::types::{BlockHeader, FrameMode, FrameTransaction, Transaction};
-use ethrex_vm::FocilVopsSurface;
+use ethrex_vm::{CodeBodyBudget, FocilVopsSurface, Profile2Replay};
 
 use crate::{
     Blockchain,
-    focil_eligibility::{max_verify_gas_per_tx, profile_2_payer},
+    focil_eligibility::{
+        MAX_VALIDATION_CODE_BODIES, max_validation_code_bytes, max_verify_gas_per_tx,
+        profile_2_payer,
+    },
     inclusion_list_validator::{IlProfile2Evaluator, Profile2Eligibility},
     vm::StoreVmDatabase,
 };
@@ -32,6 +37,12 @@ pub struct BlockchainProfile2Evaluator<'a> {
     header: &'a BlockHeader,
     pre_state_root: H256,
     gas_left: u64,
+    /// Code bodies this inclusion list's replays may still load. One evaluator
+    /// judges one list, so the ledger lives here and is carried across every
+    /// candidate and both evaluation states; `evaluate` takes `&self`, hence the
+    /// cell. A body already charged is free to load again, which is what makes
+    /// the shared-verifier shape affordable.
+    code_budget: RefCell<CodeBodyBudget>,
 }
 
 impl<'a> BlockchainProfile2Evaluator<'a> {
@@ -48,6 +59,10 @@ impl<'a> BlockchainProfile2Evaluator<'a> {
             header,
             pre_state_root,
             gas_left,
+            code_budget: RefCell::new(CodeBodyBudget::new(
+                MAX_VALIDATION_CODE_BODIES,
+                max_validation_code_bytes(),
+            )),
         }
     }
 }
@@ -190,21 +205,37 @@ impl<'a> BlockchainProfile2Evaluator<'a> {
             slot_count: config.aa_vops_slot_count(),
         };
         let transaction = Transaction::FrameTransaction(tx.clone());
-        match vm.simulate_frame_validation_prefix(
+        let outcome = vm.simulate_frame_validation_prefix(
             &transaction,
             self.header,
             &prefix,
             None,
             max_verify_gas_per_tx(self.header.gas_limit),
-            Some(surface),
-        ) {
+            Some(Profile2Replay {
+                surface,
+                code_budget: self.code_budget.borrow().clone(),
+            }),
+        );
+
+        match outcome {
             Err(err) => Profile2Eligibility::Undecided(format!("simulation error: {err}")),
-            Ok(outcome) if !outcome.passed => Profile2Eligibility::Ineligible(
-                outcome
-                    .violation
-                    .unwrap_or_else(|| "validation prefix did not pass".to_string()),
-            ),
-            Ok(_) => Profile2Eligibility::Eligible,
+            Ok(outcome) => {
+                // Charges survive the verdict. A replay that loaded bodies and
+                // then failed still made every attester read them, and refunding
+                // it would let a list retry the same reads for free.
+                if let Some(spent) = outcome.code_budget {
+                    *self.code_budget.borrow_mut() = spent;
+                }
+                if outcome.passed {
+                    Profile2Eligibility::Eligible
+                } else {
+                    Profile2Eligibility::Ineligible(
+                        outcome
+                            .violation
+                            .unwrap_or_else(|| "validation prefix did not pass".to_string()),
+                    )
+                }
+            }
         }
     }
 }

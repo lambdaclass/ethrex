@@ -61,6 +61,73 @@ pub enum FrameSimViolation {
     /// above `AA_VOPS_SLOT_COUNT`. Such a read makes the transaction ineligible
     /// for inclusion-list enforcement rather than merely expensive.
     StorageOutsideVopsSurface,
+    /// EIP-8369 Profile 2 only: the replay tried to load a code body the
+    /// inclusion list's [`CodeBodyBudget`] no longer covers, in bodies or in
+    /// bytes. Ends the replay rather than letting one list dictate how much
+    /// code every attester must read.
+    ValidationCodeBudgetExceeded,
+}
+
+/// What one inclusion list's Profile 2 replays may still load, in distinct code
+/// bodies and in bytes.
+///
+/// The budget is per inclusion **list**, not per transaction: the motivating
+/// shape is many transactions validating against one shared verifier contract,
+/// whose bytes an attester loads once. `charged` is therefore carried across
+/// every candidate in the list and across both evaluation states, and a body
+/// already on it costs nothing to load again.
+///
+/// EVM gas does not bound this on its own. At a few thousand gas per cold
+/// account, one candidate's VERIFY budget admits hundreds of cold accesses,
+/// each able to pull a maximum-size code body.
+///
+/// Deliberately not `Default`: a zero allowance rejects every replay, so the
+/// bound is always chosen explicitly.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodeBodyBudget {
+    /// Code hashes already charged, by this replay or by an earlier one for the
+    /// same inclusion list.
+    pub charged: Vec<H256>,
+    /// Distinct bodies still chargeable.
+    pub bodies_remaining: u32,
+    /// Total code bytes still chargeable.
+    pub bytes_remaining: u64,
+}
+
+impl CodeBodyBudget {
+    pub fn new(bodies: u32, bytes: u64) -> Self {
+        Self {
+            charged: Vec::new(),
+            bodies_remaining: bodies,
+            bytes_remaining: bytes,
+        }
+    }
+
+    /// An allowance nothing can exhaust, for callers that want the Profile 2
+    /// storage surface without the code bound (tests, and any future caller
+    /// that bounds its own work another way).
+    pub fn unbounded() -> Self {
+        Self::new(u32::MAX, u64::MAX)
+    }
+
+    /// Charge one code body. Returns `false` when it does not fit, which is
+    /// what ends the replay.
+    ///
+    /// Empty code is free: an account with no code is not a body to load, and
+    /// charging it would let the number of *accounts* a prefix touches consume
+    /// a budget meant for bytes.
+    fn charge(&mut self, code_hash: H256, len: u64) -> bool {
+        if len == 0 || self.charged.contains(&code_hash) {
+            return true;
+        }
+        if self.bodies_remaining == 0 || self.bytes_remaining < len {
+            return false;
+        }
+        self.bodies_remaining = self.bodies_remaining.saturating_sub(1);
+        self.bytes_remaining = self.bytes_remaining.saturating_sub(len);
+        self.charged.push(code_hash);
+        true
+    }
 }
 
 /// EIP-8369 Profile 2 (FOCIL AA-VOPS) storage surface.
@@ -77,6 +144,19 @@ pub struct FocilVopsSurface {
     pub payer: Address,
     /// `AA_VOPS_SLOT_COUNT` for the chain being judged.
     pub slot_count: u64,
+}
+
+/// Everything an EIP-8369 Profile 2 replay adds to ordinary prefix simulation.
+///
+/// The surface and the budget always travel together: a replay judging
+/// inclusion-list eligibility has both, and ordinary mempool simulation has
+/// neither. Passing them as one value is what keeps that invariant visible.
+#[derive(Debug, Clone)]
+pub struct Profile2Replay {
+    /// The AA-VOPS storage surface reads must stay inside.
+    pub surface: FocilVopsSurface,
+    /// The inclusion list's remaining code-body allowance.
+    pub code_budget: CodeBodyBudget,
 }
 
 /// EIP-8141 validation-trace observer. Inert (`active == false`) in every VM
@@ -130,6 +210,10 @@ pub struct ValidationObserver {
     /// EIP-8369 Profile 2 storage surface. `None` during ordinary mempool
     /// simulation, where EIP-8141's sender-only rule applies instead.
     pub focil_surface: Option<FocilVopsSurface>,
+    /// EIP-8369 Profile 2 per-inclusion-list code-body allowance. `None` during
+    /// ordinary mempool simulation, which is a local policy and bounds its own
+    /// work by the operator's `MAX_VERIFY_GAS` instead.
+    pub code_budget: Option<CodeBodyBudget>,
 }
 
 impl ValidationObserver {
@@ -149,6 +233,7 @@ impl ValidationObserver {
             read_legacy_nonce: false,
             violation: None,
             focil_surface: None,
+            code_budget: None,
         }
     }
 
@@ -173,6 +258,7 @@ impl ValidationObserver {
             read_legacy_nonce: false,
             violation: None,
             focil_surface: None,
+            code_budget: None,
         }
     }
 
@@ -192,6 +278,20 @@ impl ValidationObserver {
         }
         ethrex_common::U256::from_big_endian(slot.as_bytes())
             < ethrex_common::U256::from(surface.slot_count)
+    }
+
+    /// Charge one code body against the inclusion list's allowance, recording
+    /// [`FrameSimViolation::ValidationCodeBudgetExceeded`] when it does not fit.
+    ///
+    /// A no-op when no budget is configured, so ordinary mempool simulation is
+    /// unaffected.
+    pub fn charge_code_body(&mut self, code_hash: H256, len: u64) {
+        let Some(budget) = self.code_budget.as_mut() else {
+            return;
+        };
+        if !budget.charge(code_hash, len) {
+            self.record_violation(FrameSimViolation::ValidationCodeBudgetExceeded);
+        }
     }
 
     /// Records the first violation observed; later violations are ignored (the

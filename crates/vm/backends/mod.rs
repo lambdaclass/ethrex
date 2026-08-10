@@ -323,7 +323,7 @@ impl Evm {
         prefix: &ethrex_common::types::ValidationPrefix,
         canonical_paymaster_code_hash: Option<ethrex_common::H256>,
         max_verify_gas: u64,
-        focil_surface: Option<ethrex_levm::validation_observer::FocilVopsSurface>,
+        profile_2: Option<ethrex_levm::validation_observer::Profile2Replay>,
     ) -> Result<FrameValidationOutcome, EvmError> {
         LEVM::simulate_frame_validation_prefix(
             tx,
@@ -334,7 +334,7 @@ impl Evm {
             prefix,
             canonical_paymaster_code_hash,
             max_verify_gas,
-            focil_surface,
+            profile_2,
         )
     }
 
@@ -427,6 +427,10 @@ pub struct FrameValidationOutcome {
     /// Whether the prefix read `TXPARAM(0x0C)`, the sender's legacy account nonce
     /// (EIP-8250 §Mempool).
     pub read_legacy_nonce: bool,
+    /// EIP-8369 Profile 2: the per-inclusion-list code-body allowance as this
+    /// replay left it, for the caller to carry to the next replay of the same
+    /// list. `None` for ordinary mempool simulation, which configures no budget.
+    pub code_budget: Option<ethrex_levm::validation_observer::CodeBodyBudget>,
 }
 
 #[derive(Clone, Debug)]

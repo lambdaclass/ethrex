@@ -64,6 +64,32 @@ pub fn max_verify_gas_per_tx(parent_gas_limit: u64) -> u64 {
     max_verify_gas_per_il(parent_gas_limit)
 }
 
+/// Distinct code bodies one inclusion list's Profile 2 replays may load, across
+/// every candidate and both evaluation states.
+///
+/// The VERIFY gas budget does not bound this. At a few thousand gas per cold
+/// account, one candidate's budget alone admits hundreds of cold accesses, each
+/// able to pull a maximum-size code body — so an attester's read work would be
+/// set by the list's author rather than by the protocol.
+///
+/// Counted per list rather than per transaction because the motivating shape is
+/// many transactions validating against one shared verifier contract, whose
+/// bytes an attester loads once.
+pub const MAX_VALIDATION_CODE_BODIES: u32 = 16;
+
+/// EIP-7954 (Amsterdam) `MAX_CODE_SIZE`. Frame transactions exist only from
+/// Hegota, which is after Amsterdam, so this is the largest body a replay can
+/// ever be asked to load.
+const MAX_CODE_SIZE: u64 = 0x10000;
+
+/// Total code bytes one inclusion list's Profile 2 replays may load:
+/// [`MAX_VALIDATION_CODE_BODIES`] bodies at the largest legal size. Bounding the
+/// count alone would let sixteen maximum-size bodies through; bounding the bytes
+/// alone would let a list spend its allowance on many tiny ones. Both bind.
+pub const fn max_validation_code_bytes() -> u64 {
+    MAX_VALIDATION_CODE_BODIES as u64 * MAX_CODE_SIZE
+}
+
 /// Coarse classification of a sender account's code, per EIP-8369 Profile 1
 /// sender validity: "Sender validity requires the sender to satisfy
 /// [EIP-3607](https://eips.ethereum.org/EIPS/eip-3607), with

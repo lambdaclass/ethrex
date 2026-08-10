@@ -23,7 +23,7 @@ pub use ethrex_levm::utils::intrinsic_gas_dimensions;
 /// EIP-7623/7976/7981 floor gas for a transaction. Re-exported so the mempool
 /// can match the VM's `validate_min_gas_limit` check at admission time.
 pub use ethrex_levm::utils::intrinsic_gas_floor;
-pub use ethrex_levm::validation_observer::FocilVopsSurface;
+pub use ethrex_levm::validation_observer::{CodeBodyBudget, FocilVopsSurface, Profile2Replay};
 pub use ethrex_levm::vm::validate_frame_signatures;
 pub use execution_result::ExecutionResult;
 pub use witness_db::GuestProgramStateWrapper;

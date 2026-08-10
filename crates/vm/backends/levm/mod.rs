@@ -3164,7 +3164,7 @@ impl LEVM {
         prefix: &ethrex_common::types::ValidationPrefix,
         _canonical_paymaster_code_hash: Option<H256>,
         max_verify_gas: u64,
-        focil_surface: Option<ethrex_levm::validation_observer::FocilVopsSurface>,
+        profile_2: Option<ethrex_levm::validation_observer::Profile2Replay>,
     ) -> Result<FrameValidationOutcome, EvmError> {
         let frame_tx = match tx {
             Transaction::FrameTransaction(ft) => ft,
@@ -3196,13 +3196,14 @@ impl LEVM {
             &prefix.frame_indices,
             prefix.deploy_index,
             canonical_pay_frame,
-            focil_surface,
+            profile_2.clone(),
         ) {
             Ok(sim) => sim,
             Err(err) => {
                 // A preamble / VM error means the prefix cannot be validated;
                 // treat it as a (conservative) rejection rather than failing the
-                // whole admission pipeline.
+                // whole admission pipeline. The budget comes back untouched: the
+                // prefix never ran, so it loaded nothing.
                 return Ok(FrameValidationOutcome {
                     passed: false,
                     violation: Some(EvmError::from(err).to_string()),
@@ -3210,6 +3211,7 @@ impl LEVM {
                     accessed_paymaster: None,
                     touched_sender_slots: Vec::new(),
                     read_legacy_nonce: false,
+                    code_budget: profile_2.map(|p| p.code_budget),
                 });
             }
         };
@@ -3225,80 +3227,64 @@ impl LEVM {
         // distinct paymaster, so derive it from the established payer.
         let accessed_paymaster = sim.payer_address.map(|payer| (payer, false));
 
+        // Every outcome below reports the same observations and differs only in
+        // whether it passed and why not. The budget is the state the observer
+        // reached, which the caller carries to the next replay of the same
+        // inclusion list.
+        let observed = FrameValidationOutcome {
+            passed: false,
+            violation: None,
+            max_cost,
+            accessed_paymaster,
+            touched_sender_slots,
+            read_legacy_nonce,
+            code_budget: vm.validation_observer.code_budget.clone(),
+        };
+        let rejected = |reason: String| FrameValidationOutcome {
+            violation: Some(reason),
+            ..observed.clone()
+        };
+
         // Assertion: a recorded trace violation fails validation.
         if let Some(violation) = &vm.validation_observer.violation {
-            return Ok(FrameValidationOutcome {
-                passed: false,
-                violation: Some(format!("{violation:?}")),
-                max_cost,
-                accessed_paymaster,
-                touched_sender_slots,
-                read_legacy_nonce,
-            });
+            return Ok(rejected(format!("{violation:?}")));
         }
 
         // Assertion: no prefix frame reverted.
         if sim.any_revert {
-            return Ok(FrameValidationOutcome {
-                passed: false,
-                violation: Some("validation prefix frame reverted".to_string()),
-                max_cost,
-                accessed_paymaster,
-                touched_sender_slots,
-                read_legacy_nonce,
-            });
+            return Ok(rejected("validation prefix frame reverted".to_string()));
         }
 
         // Assertion: the prefix established a payer (verify/pay frames must
         // APPROVE-payment; otherwise the transaction has no payer).
         if sim.payer_address.is_none() {
-            return Ok(FrameValidationOutcome {
-                passed: false,
-                violation: Some("validation prefix did not establish a payer".to_string()),
-                max_cost,
-                accessed_paymaster,
-                touched_sender_slots,
-                read_legacy_nonce,
-            });
+            return Ok(rejected(
+                "validation prefix did not establish a payer".to_string(),
+            ));
         }
 
         // Assertion: a deploy frame must leave non-empty code at the sender.
         if prefix.deploy_index.is_some() {
             let code = vm.db.get_account_code(sender).map_err(VMError::from)?;
             if code.is_empty() {
-                return Ok(FrameValidationOutcome {
-                    passed: false,
-                    violation: Some(format!("{:?}", FrameSimViolation::DeployInstalledNoCode)),
-                    max_cost,
-                    accessed_paymaster,
-                    touched_sender_slots,
-                    read_legacy_nonce,
-                });
+                return Ok(rejected(format!(
+                    "{:?}",
+                    FrameSimViolation::DeployInstalledNoCode
+                )));
             }
         }
 
         // Assertion: total simulated prefix gas within the verify-gas budget.
         if sim.total_gas_used > max_verify_gas {
-            return Ok(FrameValidationOutcome {
-                passed: false,
-                violation: Some(format!(
-                    "validation prefix gas {} exceeds MAX_VERIFY_GAS {}",
-                    sim.total_gas_used, max_verify_gas
-                )),
-                max_cost,
-                accessed_paymaster,
-                touched_sender_slots,
-                read_legacy_nonce,
-            });
+            return Ok(rejected(format!(
+                "validation prefix gas {} exceeds MAX_VERIFY_GAS {}",
+                sim.total_gas_used, max_verify_gas
+            )));
         }
 
         Ok(FrameValidationOutcome {
             passed: true,
-            violation: None,
-            max_cost,
-            accessed_paymaster,
-            touched_sender_slots,
-            read_legacy_nonce,
+            ..observed
         })
     }
 
