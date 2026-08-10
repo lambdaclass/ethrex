@@ -78,6 +78,11 @@ NETWORKS = {
 KEEP_GENERATIONS = 5
 
 STOP_TIMEOUT_SECONDS = 300  # graceful; SIGKILL corrupts the resume state (see #7111)
+
+# One round per day. The base advances at chain rate, so measuring more often just resamples
+# a window that has barely moved: the extra points are not independent and would make the
+# trailing median look far more stable than the series really is.
+CYCLE_INTERVAL_SECONDS = 24 * 3600
 POLL_SECONDS = 20
 
 
@@ -377,9 +382,14 @@ def run_leg(net, target_block, log_path, timeout_seconds):
 
     drop_page_cache()
     started = time.time()
+    # `docker logs -f` replays the container's whole history before following, and the
+    # container is reused across legs — so without `--since` every run re-parses every
+    # earlier run's batches and the reported throughput becomes a cumulative average.
+    # Captured before the node starts so no output can slip in ahead of the cutoff.
+    since = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
     start_node(net)
 
-    logger = subprocess.Popen(["docker", "logs", "-f", f"ethrex-{net}"],
+    logger = subprocess.Popen(["docker", "logs", "-f", "--since", since, f"ethrex-{net}"],
                               stdout=open(log_path, "w"), stderr=subprocess.STDOUT)
     status, head = "ok", None
     try:
@@ -745,6 +755,7 @@ def main():
             return 0
 
         while True:
+            round_started = time.time()
             lines, all_ok = [], True
             for net in nets:  # serial on purpose: concurrent legs contend and both are junk
                 try:
@@ -762,7 +773,9 @@ def main():
                 post_slack(lines, all_ok=all_ok)
             if args.once:
                 return 0
-            time.sleep(3600)
+            # Pace on round start, not round end: a long round should not push the next
+            # day's measurement later and later.
+            time.sleep(max(0.0, CYCLE_INTERVAL_SECONDS - (time.time() - round_started)))
     finally:
         release_lock()
 
