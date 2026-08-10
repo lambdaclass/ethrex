@@ -225,10 +225,11 @@ This makes **EIP-8369 a fifth active EIP, not an inert one.** It has no activati
 timestamp: `ChainConfig::aa_vops_slot_count()` falls back to
 `DEFAULT_AA_VOPS_SLOT_COUNT = 4` (`crates/common/types/genesis.rs:35`), so leaving the
 field unset selects the constant rather than disabling the profile. Nothing in the
-chain config can turn it off. Either it is published to Nethermind as part of this
-chain's rule set, or the enforcement path is gated behind a timestamp of its own, or the
-blanket skip is restored for the testnet. Phase 3 decides which; the plan below no
-longer assumes inertness.
+chain config can turn it off.
+
+Resolved: it stays on and is completed, not gated off or skipped. EIP-8369 is part of
+this chain's published rule set, with `AA_VOPS_SLOT_COUNT = 4`, derived VERIFY budgets,
+and the two-endpoint enforcement rule below. The plan no longer assumes inertness.
 
 The original reasoning for skipping frame transactions, retained because it is why the
 generic path must never be reached for type `0x06`: the satisfaction
@@ -245,6 +246,67 @@ ever over-accept, never split. Symmetric decision for the **builder** side: excl
 frame transactions from the locally built inclusion list too, because an entry every
 client is required to excuse buys no censorship resistance while consuming the 8 KiB
 budget, and the builder's per-sender linear-nonce walk is actively wrong for them.
+
+### Profile 2 enforcement judges two fixed endpoints
+
+EIP-8369 specifies the eligibility *profiles* and explicitly not the consensus
+integration: Profile 2 enforcement "can activate only after EIP-8141, EIP-8250, and
+EIP-8272 are live and the enforcing extension defines how claimed indices are encoded,
+carried, and committed". What it defers is substantial — bounded claim encoding, a
+transaction identifier, lookup and deduplication, a block commitment, transport to the
+execution layer, retention and pruning across branches, and a consensus-validated
+canonical diff for every Profile 2 state update, with an equivalent diff an activation
+prerequisite wherever the EIP-7928 BAL lacks one. So EIP-8369 alone is not implementable
+as a chain rule, and the enforcement point has to come from somewhere.
+
+We take the two-endpoint rule: an omission is unjustified when the candidate is eligible
+at `S_start` **or** at `S_end`, where `S_start` is the parent post-state with `B`'s
+pre-execution system operations applied and `S_end` is the state after `B`'s last
+transaction. Both are states the evaluator already holds, so reconstruction costs
+nothing, and the count is two however many committee members listed the transaction.
+There is no claimed index, so no encoding, no block commitment, no engine-API change and
+no BAL reconstruction dependency. It is strictly stronger than `S_end` alone: it closes
+the case of a payer solvent early and drained by a later transaction of the same block,
+and it stops excusing a queued keyed-nonce transaction that is invalid early in the
+payload and valid late.
+
+This is a deliberate departure from EIP-8369's builder-claimed index, which is the worst
+affordable subset: end of payload is always claimable, so the omissions a claim excuses
+are a superset of those the end-of-payload rule excuses, and the claim carries no cost,
+proof or verification to offset that. `gas_fits` stays a single end-of-payload check
+because gas remaining is monotone within a payload; evaluating it at `S_start` would mark
+every full block unsatisfied and convert the inclusion list into a hard priority claim on
+block space.
+
+The rule is written up as a Standards Track extension to EIP-7805 — the enforcing
+extension EIP-8369 asks for — and that draft, not this document, is the normative
+reference once it is published. Two commits already on this branch demonstrate the
+motivating behaviour: `467450733` ("show Profile 2 eligibility flipping across a
+payload") and `dbcaeae78` ("show eligibility non-monotonic across a payload").
+
+### Activation is one fork timestamp; per-EIP chainspec keys are not our problem
+
+All four EIPs activate together on `Fork::Hegota`, keyed off a single genesis field
+(`hegotaTime`, with `hezeTime` and `bogotaTime` accepted as aliases). This matches how
+each EIP defines its own activation — EIP-8250 and EIP-8272 are deltas that "MUST
+activate at or after EIP-8141" — and it is what `ethereum-genesis-generator` writes into
+the geth-style `genesis.json` and `besu.json`: one `bogotaTime` key.
+
+The generator additionally writes a Nethermind-format `chainspec.json` whose activation
+is per-EIP (`params.eipNNNNTransitionTimestamp`), and for this fork it emits only
+`eip7805TransitionTimestamp` and `eip8141TransitionTimestamp` — nothing for EIP-8250 or
+EIP-8272. That is a property of that file format and of what Nethermind currently reads,
+not a gap in our activation. We do not add per-EIP transition timestamps to ethrex, and
+we do not hand-patch `chainspec.json` to paper over it: doing either would encode another
+client's configuration shape into our chain definition and give us two sources of truth
+for one fork boundary.
+
+What we publish is the fork timestamp and the EIP set. A client that needs additional
+chainspec keys to configure those EIPs needs them added to its own configuration parser
+and to the generator; that is upstream work for whoever owns that client, and it does not
+block our genesis. Phase 8 states the EIP set, the single activation timestamp and the
+constants explicitly, so nothing about the rule set has to be inferred from a
+client-specific file.
 
 ### Adopt the `SLOTNUM` validation-prefix ban (`#7108` / EIPs#12066)
 
@@ -265,10 +327,17 @@ an attester votes for it. Banning `SLOTNUM` while another client does not means 
 excuses an omission that client enforces: ethrex attests to a block it withholds from.
 The divergence is in attestation rather than in execution, so it splits the fork choice
 without ever producing a state-root mismatch — which makes it harder to notice, not
-more benign. Adopting `#7108` is still correct, because Nethermind is implementing the
-ban; the point is that it MUST land on both clients before the chain carries a frame
-transaction whose prefix reads `SLOTNUM`, and it belongs in the published rule set
-rather than being treated as node-local policy.
+more benign.
+
+Adopting `#7108` is correct on the spec's own terms: EIP-8272 makes the beacon slot
+load-bearing for transaction validity, which gives `SLOTNUM` exactly the property the
+banned-opcode list exists to exclude — a prefix that passes at admission and fails at
+inclusion — and EIPs#12066 is the upstream change that says so. That another client is
+also implementing it is corroboration, not the reason. The operational consequence is
+that the ban belongs in the **published rule set** rather than being treated as
+node-local policy, because through Profile 2 it decides an omission verdict; a client
+that follows the EIPs will agree, and a client that does not is the one that needs to
+change.
 
 EIP-8272 makes the beacon slot load-bearing,
 which gives `SLOTNUM` exactly the property the list exists to exclude, and Nethermind
@@ -412,23 +481,52 @@ are not alike:
   `FrameMode::Utxo` when it is unset (`crates/common/types/transaction.rs:2738`). Mode
   `5` also does not collide with any EIP-7906 mode, so removing EIP-7906 frees nothing
   it uses. This needs a pinning test, nothing more.
-- **EIP-8369 is active and cannot be switched off** — see the decision above. Task 3.0
-  resolves it before any of the pinning tests are written, because the answer changes
-  what they assert.
+- **EIP-8369 is active, cannot be switched off, and specifies no enforcement point** —
+  see [the enforcement decision](#profile-2-enforcement-judges-two-fixed-endpoints).
+  Profile 2 enforcement is kept and completed rather than skipped.
 
-- [ ] Task 3.0: Decide EIP-8369's status on this chain and record it in the decision
-      section above. Options, in the order I would take them: (a) publish it as part of
-      the chain's rule set, which requires `AA_VOPS_SLOT_COUNT = 4`,
-      `MAX_VERIFY_GAS_PER_TX`/`MAX_VERIFY_GAS_PER_IL = 1 << 20`
-      (`crates/blockchain/focil_eligibility.rs`) and the `SLOTNUM` ban to be in the
-      artifact set Phase 8 hands Nethermind, and confirmation that they implement
-      Profile 2; (b) restore the blanket `TxType::Frame` skip for the testnet, the
-      conservative interim both EIP-8369 and the frame-tx FOCIL draft mandate
-      pre-activation, and re-enable enforcement once a second client ships it; (c) add
-      a `focilProfile2Time` gate. Option (b) is the only one that is safe without a
-      commitment from Nethermind, and it is a strict subset of any future eligible set,
-      so it can only over-accept. Whichever is chosen, the two `check_with_profile_2`
-      call sites and `aa_vops_slot_count()`'s silent default are the surfaces to change.
+- [ ] Task 3.0: Implement the second evaluation state. Today
+      `BlockchainProfile2Evaluator` replays against one state, the judged header's
+      post-execution state (`crates/blockchain/focil_profile2.rs`), which is `S_end`.
+      Add `S_start` — the parent post-state with `B`'s pre-execution system operations
+      applied — and make an omission unjustified when the candidate is eligible at
+      *either*. Both states use `B`'s `base_fee_per_gas`, `timestamp`, `gas_limit`,
+      chain id and EIP-7843 `slotNumber`. `gas_fits` stays a single end-of-payload
+      check: gas remaining decreases monotonically, so evaluating it at `S_start`
+      would mark every full block unsatisfied and destroy EIP-7805's conditional
+      inclusion. The evaluator already reads through `header.state_root` explicitly
+      rather than by block number, so it is safe to run against a non-canonical
+      header; `S_start` must be derived the same way and MUST NOT be the parent
+      post-state alone.
+- [ ] Task 3.1: Derive the VERIFY budgets instead of hard-coding them. Replace
+      `MAX_VERIFY_GAS_PER_TX` and `MAX_VERIFY_GAS_PER_IL`
+      (`crates/blockchain/focil_eligibility.rs`, both `1 << 20`) with
+      `P.gas_limit / COMMITTEE_VERIFY_GAS_FRACTION / IL_COMMITTEE_SIZE` at
+      `COMMITTEE_VERIFY_GAS_FRACTION = 4`. Derive from the **parent** gas limit, never
+      `B`'s: the parent is the head inclusion lists for `B`'s slot are built against,
+      so includers, builders and attesters compute the same budget before `B` exists.
+      At a 60,000,000 gas limit this yields 937,500 per list, within 11% of the current
+      constant, so the operating point does not move but stops drifting with the gas
+      limit. Keep both values equal, so one transaction may consume a list's budget.
+      These are consensus inputs: they MUST NOT be read from node configuration, and
+      MUST NOT reuse EIP-8141's operator-tunable `MAX_VERIFY_GAS` mempool cap.
+- [ ] Task 3.2: Add the per-inclusion-list code-byte budget, which does not exist yet.
+      Count each distinct `codeHash` once and each distinct code body's byte length
+      once, charged on first load by any replay of that list and shared across both
+      evaluation states. Bound at `MAX_VALIDATION_CODE_BODIES = 16` bodies and
+      `16 * MAX_CODE_SIZE` bytes. Per-list rather than per-transaction accounting is
+      what makes the bound usable: the motivating shape is many transactions validating
+      against one shared verifier contract, whose bytes an attester loads once. EVM gas
+      alone does not bound bytes loaded — at a few thousand gas per cold account, a
+      list's gas budget admits hundreds of cold accesses each able to pull a
+      maximum-size code body.
+- [ ] Task 3.3: Keep `AA_VOPS_SLOT_COUNT` at 4 and pin it. It is the top of EIP-8369's
+      candidate range and the worst case for replay, so a benchmark that fits the
+      attestation deadline at 4 fits at 2 and 3, and no transaction eligible at a lower
+      value becomes unreachable. `aa_vops_slot_count()` already defaults to 4
+      (`crates/common/types/genesis.rs:35`); make the default explicit in the published
+      genesis rather than implicit, so a joining client cannot infer a different value
+      from an absent field.
 
 - [ ] Task 3.1: Add `test/tests/levm/hegota_active_surface_tests.rs` with a test that
       builds a `ChainConfig` with `hegota_time` set and `utxo_frames_time`,
