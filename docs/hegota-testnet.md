@@ -57,7 +57,7 @@ passed / 0 failed**.
 | `origin/main` merged (Task 2.6) | `b1c21e7b0` | 15 conflicts plus six silent auto-merge duplicates |
 | Two-endpoint Profile 2 (Tasks 3.0/3.1/3.3) | `07092961c` | union of both endpoints; budgets derived from parent gas limit |
 | Phase 4 closed (Tasks 4.2-4.8) | `a485332a6` | code hash + mask pinned, the three activation cases enforced, predeploy behaviour and the BAL write/read split tested |
-| Per-IL code-byte budget (Task 3.2) | | charged inside the replay, not after it; 16 bodies / 16 x 64 KiB per list, shared across candidates and both endpoints |
+| Per-IL code-byte budget (Task 3.2) | `138f75ce0` | charged inside the replay, not after it; 16 bodies / 16 x 64 KiB per list, shared across candidates and both endpoints |
 
 ### Not complete
 
