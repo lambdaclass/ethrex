@@ -403,28 +403,37 @@ mod tests {
         // computed independently — `4 + ceil(bits / 8)` written out
         // here — rather than against another call to the same geometry,
         // which would agree with itself under any mutation.
-        let g = depth(5);
         let ungrouped: std::collections::BTreeSet<usize> =
             (0..600usize).map(|bits| 4 + bits.div_ceil(8)).collect();
-        for bits in 0..600usize {
-            let grouped = group_db_key(&BitPath::from_bits(&vec![1u8; bits]), g).len();
-            let group_bits = bits - bits % 5;
-            assert_eq!(grouped, 4 + group_bits.div_ceil(8), "{bits} bits");
-            assert!(ungrouped.contains(&grouped), "{bits} bits");
+        for levels in 1..=MAX_GROUP_DEPTH {
+            let g = depth(levels);
+            for bits in 0..600usize {
+                let grouped = group_db_key(&BitPath::from_bits(&vec![1u8; bits]), g).len();
+                let group_bits = bits - bits % levels;
+                assert_eq!(
+                    grouped,
+                    4 + group_bits.div_ceil(8),
+                    "g={levels}, {bits} bits"
+                );
+                assert!(ungrouped.contains(&grouped), "g={levels}, {bits} bits");
+            }
+            // The two lengths the collision analysis names, at *every*
+            // group depth: 34 bytes at bit-depth 240 and 66 at 496 are
+            // byte-for-byte the account-zone and storage-zone tree-key
+            // lengths. Grouping removes neither collision at any depth,
+            // so no positional-routing argument in `crates/storage` may
+            // be relaxed on the strength of it.
+            assert!(
+                (0..=600)
+                    .any(|bits| group_db_key(&BitPath::from_bits(&vec![1u8; bits]), g).len() == 34),
+                "g={levels} still produces a 34-byte key"
+            );
+            assert!(
+                (0..=600)
+                    .any(|bits| group_db_key(&BitPath::from_bits(&vec![1u8; bits]), g).len() == 66),
+                "g={levels} still produces a 66-byte key"
+            );
         }
-        // The two lengths the collision analysis names, worked through:
-        // 34 bytes is still reachable (bit 240 is a multiple of 5), and
-        // 66 bytes still is too (bit 495 is), so grouping removes
-        // neither collision and the analysis must be re-run, not
-        // assumed away.
-        assert_eq!(
-            group_db_key(&BitPath::from_bits(&vec![1u8; 240]), g).len(),
-            34
-        );
-        assert_eq!(
-            group_db_key(&BitPath::from_bits(&vec![1u8; 496]), g).len(),
-            66
-        );
     }
 
     #[test]
