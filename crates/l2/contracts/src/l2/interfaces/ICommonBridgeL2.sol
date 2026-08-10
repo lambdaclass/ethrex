@@ -47,6 +47,17 @@ interface ICommonBridgeL2 {
         uint256 amount
     );
 
+    /// @notice An intent has been sent to L1.
+    /// @dev Event emitted when a data-only message is sent to L1.
+    /// @param senderOnL2 the caller on L2.
+    /// @param payloadHash the payload the caller committed to.
+    /// @param intentHash the hash that was sent to L1.
+    event IntentInitiated(
+        address indexed senderOnL2,
+        bytes32 indexed payloadHash,
+        bytes32 indexed intentHash
+    );
+
     /// @notice Initiates the withdrawal of funds to the L1.
     /// @dev This is the first step in the two step process of a user withdrawal.
     /// @dev It burns funds on L2 and sends a message to the L1 so users
@@ -103,6 +114,14 @@ interface ICommonBridgeL2 {
         address destination,
         uint256 amount
     ) external;
+
+    /// @notice Sends a data-only message to L1.
+    /// @dev The bridge hashes the payload together with a domain separator, the
+    /// @dev chain id and the caller, so that an intent can never be read as a
+    /// @dev withdrawal and the caller cannot claim to be someone else.
+    /// @param payloadHash Hash of the payload the caller commits to
+    /// @return The hash sent to L1
+    function sendIntentToL1(bytes32 payloadHash) external returns (bytes32);
 
     /// @notice Transfer ERC20 tokens to the desired L2 chain.
     /// @dev This burns tokens on this L2 and sends a message to the destination L2

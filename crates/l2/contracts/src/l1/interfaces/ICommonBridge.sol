@@ -43,6 +43,17 @@ interface ICommonBridge {
     /// @param newL2GasLimit The new L2 gas limit.
     event L2GasLimitUpdated(uint256 newL2GasLimit);
 
+    /// @notice A message from L2 has been consumed.
+    /// @dev Event emitted when a message is verified and marked as consumed.
+    /// @param batchNumber the batch number where the message was emitted.
+    /// @param messageId the message Id of the consumed message.
+    /// @param messageHash the hash that was sent from L2.
+    event MessageConsumed(
+        uint256 indexed batchNumber,
+        uint256 indexed messageId,
+        bytes32 indexed messageHash
+    );
+
     struct SendValues {
         address to;
         uint256 gasLimit;
@@ -218,6 +229,22 @@ interface ICommonBridge {
         uint256 withdrawalLogIndex,
         bytes32[] calldata withdrawalProof
     ) external;
+
+    /// @notice Verifies a data-only message from L2 and marks it as consumed.
+    /// @dev The message must belong to a batch that was committed and verified.
+    /// @dev Consumption is keyed by the message leaf, so a message can only be
+    /// @dev consumed once.
+    /// @param messageHash the hash that was sent from L2.
+    /// @param batchNumber the batch number where the message was emitted.
+    /// @param messageId the message Id of the message.
+    /// @param proof the merkle path to the message log.
+    /// @return True if the message was verified and consumed.
+    function verifyAndConsume(
+        bytes32 messageHash,
+        uint256 batchNumber,
+        uint256 messageId,
+        bytes32[] calldata proof
+    ) external returns (bool);
 
     /// @notice Checks if the sequencer has exceeded it's processing deadlines
     function hasExpiredPrivilegedTransactions() external view returns (bool);
