@@ -4,6 +4,8 @@
 
 mod binary_trie;
 mod bits;
+#[cfg(test)]
+mod commit_cost;
 pub mod db;
 pub(crate) mod node;
 pub mod path;

@@ -67,6 +67,8 @@
 pub mod api;
 pub mod backend;
 pub mod binary_trie;
+#[cfg(all(test, feature = "rocksdb"))]
+mod binary_trie_cost;
 pub mod block_data_buffer;
 pub mod error;
 pub mod journal;
