@@ -67,9 +67,33 @@ passed / 0 failed**, `cargo test -p ethrex-rpc --lib` is 122 passed, and
 
 ### Not complete
 
-- **Phase 5 Task 5.7** — the checkpoint. Everything else in Phase 5 is done or
-  superseded. `make -C tooling/ef_tests/engine test` had not been run when this was
-  written; it downloads a 646 MB fixture bundle on first use, so budget for that.
+- **Phase 5 Task 5.7** — the checkpoint ran, and it is NOT clean. Everything else in
+  Phase 5 is done or superseded. `make -C tooling/ef_tests/engine test` gives
+  **74 458 passed / 24 failed**, and every failure is a FOCIL fixture:
+  `for_bogota/bogota/eip7805_focil/focil/` — 10 files, listed below. **Pre-existing, not
+  introduced by this session's work**: the identical 10 files / 24 fixtures fail at
+  `15c911c06`, the commit this session started from (verified by checking it out and
+  re-running the `focil` subset). Everything else in that suite passes, and
+  `make -C tooling/ef_tests/blockchain test` is fully clean at 14 744 + 3 138.
+  First use downloads a 646 MB bundle, so budget for that.
+
+  Failing files: `block_status_depends_on_pending_inclusion_list`,
+  `block_with_intrinsic_gas_too_low_pending_il_tx_is_valid`,
+  `block_with_invalid_signature_pending_il_tx_is_valid`,
+  `block_with_pending_blob_il_tx_is_valid`, `block_with_reverting_included_il_tx_is_valid`,
+  `block_with_same_sender_included_il_txs_is_valid`,
+  `pending_il_depends_on_7702_authorization_nonce_effect`,
+  `unsatisfied_when_block_tx_funds_pending_il_sender`,
+  `unsatisfied_with_contract_creating_pending_il_tx`,
+  `unsatisfied_with_typed_pending_il_tx`.
+
+  Two candidates ruled out by reading, not by running: `validate_fork_schedule` cannot
+  be it (the harness's FOCIL bridge at `tooling/ef_tests/engine/src/fixture.rs:208` sets
+  `hegotaTime = amsterdamTime`, and equal timestamps are legal), and Task 5.3's gates
+  cannot be it (the fork gate is a no-op with Hegotá active; the expiry gate only matches
+  `Transaction::FrameTransaction`, while these fixtures carry ordinary typed
+  transactions). Diagnosing these is real work and probably belongs ahead of Phase 6 —
+  they are the upstream conformance suite for the exact feature this branch enforces.
 - **Phase 6** — the divergence ledger against upstream: not started. This is the gate
   on bring-up, and it is the recommended next phase. `eipmcp` now shows EIP-8081
   (*Hardfork Meta - Hegotá*) is a real upstream meta EIP with a declared EIP set, which
@@ -141,8 +165,11 @@ passed / 0 failed**, `cargo test -p ethrex-rpc --lib` is 122 passed, and
 ### Start here next session
 
 1. Read this Progress block and the traps above.
-2. Close **Phase 5 Task 5.7**: run `make -C tooling/ef_tests/engine test` (646 MB
-   fixture download on first use) and confirm nothing is `#[ignore]`d.
+2. **Diagnose the 24 pre-existing FOCIL engine-fixture failures** described under "Not
+   complete". They are upstream's conformance suite for EIP-7805, which is the feature
+   this branch enforces, so they matter more than their age suggests. Start by running
+   one file with `cargo test -p ef_tests-engine --release focil` and reading what the
+   fixture expects against what ethrex returns.
 3. Then **Phase 6**, the divergence ledger. It is the gate on bring-up: a surviving
    consensus-visible divergence is a chain split the first time a second client follows
    a block that uses it. Do the audit through `eipmcp` (`get_eip`, `diff_eip`,
