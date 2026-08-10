@@ -12,6 +12,7 @@ use ethrex_p2p::rlpx::{
         eth72::transactions::{
             NewPooledTransactionHashes72, PooledTransactions72, b16_to_u128, u128_to_b16,
         },
+        transactions::NewPooledTransactionHashes,
     },
     message::RLPxMessage,
 };
@@ -54,6 +55,17 @@ fn cell_mask_some_round_trips_little_endian() {
     let decoded = NewPooledTransactionHashes72::decode(&encode(&msg)).expect("decode");
     assert_eq!(decoded.cell_mask, Some(mask));
     assert_eq!(decoded, msg);
+}
+
+#[test]
+fn eth71_decoder_rejects_the_eth72_announcement() {
+    // The cell_mask field only exists from eth/72 (EIP-8070). An eth/71 peer
+    // sees a four-element list and must reject it rather than ignore the extra
+    // field, the way geth does ("input list has too many elements").
+    for mask in [None, Some(u128::MAX)] {
+        let encoded = encode(&npth(mask));
+        assert!(NewPooledTransactionHashes::decode(&encoded).is_err());
+    }
 }
 
 #[test]
