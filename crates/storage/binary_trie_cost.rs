@@ -239,23 +239,35 @@ fn control_read_cost(backend: Arc<dyn StorageBackend>, keys: &[Vec<u8>]) {
         })
         .collect();
 
-    // Warm nothing deliberately: measure the first pass and a second one.
-    for pass in 0..2 {
-        let start = Instant::now();
-        let mut hits = 0usize;
-        for path in &probes {
-            if db.get(path).expect("get").is_some() {
-                hits += 1;
+    // `keys` is sorted, so probing it in order is a *sequential* scan and
+    // reuses SST blocks. A descent is random access. Measuring both, with
+    // one timer around the whole batch rather than one per call, separates
+    // three things that could each explain the per-read cost a round
+    // reports: instrumentation overhead, access pattern, and cache size.
+    let mut shuffled = probes.clone();
+    let mut rng = Rng(0xA5A5_A5A5_DEAD_BEEF);
+    for i in (1..shuffled.len()).rev() {
+        shuffled.swap(i, (rng.next_u64() % (i as u64 + 1)) as usize);
+    }
+
+    for (label, set) in [("sequential", &probes), ("random", &shuffled)] {
+        for pass in 0..2 {
+            let start = Instant::now();
+            let mut hits = 0usize;
+            for path in set {
+                if db.get(path).expect("get").is_some() {
+                    hits += 1;
+                }
             }
+            let elapsed = start.elapsed();
+            println!(
+                "  control {label:<10} pass {pass}: {} raw lookups ({hits} hits) \
+                 in {:>9.1} us = {:.2} us/read, no per-call timer",
+                set.len(),
+                micros(elapsed),
+                micros(elapsed) / set.len() as f64,
+            );
         }
-        let elapsed = start.elapsed();
-        println!(
-            "  control: {} raw BINARY_TRIE_NODES lookups (pass {pass}, {hits} hits) \
-             in {:.1} us = {:.2} us/read, no per-call timer",
-            probes.len(),
-            micros(elapsed),
-            micros(elapsed) / probes.len() as f64,
-        );
     }
 }
 
