@@ -7,6 +7,7 @@ mod bits;
 #[cfg(test)]
 mod commit_cost;
 pub mod db;
+pub mod group;
 pub(crate) mod node;
 pub mod path;
 pub mod prefix;
@@ -15,6 +16,7 @@ pub mod range;
 
 pub use binary_trie::{BinaryTrie, Committed, LeafBatch, LeafChangelog};
 pub use db::{BinaryTrieDB, InMemoryBinaryTrieDB};
+pub use group::{GroupDepth, GroupRow, MAX_GROUP_DEPTH};
 pub use node::EMPTY_TRIE_ROOT;
 pub use path::BitPath;
 pub use prefix::KeyPrefix;
