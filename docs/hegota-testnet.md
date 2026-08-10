@@ -56,7 +56,7 @@ passed / 0 failed**.
 | EIP-7906 removed (Task 2.2) | `e862b2fa1` | −3054/+118; mode 3 unassigned, `Utxo` still 5 |
 | `origin/main` merged (Task 2.6) | `b1c21e7b0` | 15 conflicts plus six silent auto-merge duplicates |
 | Two-endpoint Profile 2 (Tasks 3.0/3.1/3.3) | `07092961c` | union of both endpoints; budgets derived from parent gas limit |
-| Phase 4 closed (Tasks 4.2-4.8) | `7ace5d901` | code hash + mask pinned, the three activation cases enforced, predeploy behaviour and the BAL write/read split tested |
+| Phase 4 closed (Tasks 4.2-4.8) | `a485332a6` | code hash + mask pinned, the three activation cases enforced, predeploy behaviour and the BAL write/read split tested |
 
 ### Not complete
 
