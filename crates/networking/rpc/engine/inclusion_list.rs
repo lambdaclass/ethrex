@@ -150,7 +150,6 @@ pub async fn block_satisfies_inclusion_list(
         &chain_config,
         &crypto,
         Some(&profile_2),
-        parent_header.gas_limit,
     );
 
     // Log every Profile 2 outcome, including the ones that reached no

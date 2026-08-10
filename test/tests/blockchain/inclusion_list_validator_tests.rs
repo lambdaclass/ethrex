@@ -196,15 +196,7 @@ fn all_il_present_returns_ok() {
         InclusionListSatisfactionValidator::new(&il, &state, &crypto).expect("construct");
 
     let block_txs: HashSet<H256> = il.iter().map(|t| t.hash(&NativeCrypto)).collect();
-    let result = validator.check(
-        &il,
-        &block_txs,
-        30_000_000,
-        &header(),
-        &config(),
-        &crypto,
-        60_000_000,
-    );
+    let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
     assert!(matches!(result, Ok(())));
 }
 
@@ -224,15 +216,7 @@ fn il_omitted_with_insufficient_gas_returns_ok() {
 
     let block_txs: HashSet<H256> = HashSet::new();
     // gas_left smaller than tx.gas_limit() → insufficient_gas
-    let result = validator.check(
-        &il,
-        &block_txs,
-        500_000,
-        &header(),
-        &config(),
-        &crypto,
-        60_000_000,
-    );
+    let result = validator.check(&il, &block_txs, 500_000, &header(), &config(), &crypto);
     assert!(matches!(result, Ok(())));
 }
 
@@ -261,15 +245,7 @@ fn il_omitted_with_advanced_nonce_returns_ok() {
         .expect("observe");
 
     let block_txs: HashSet<H256> = std::iter::once(bump_tx.hash(&NativeCrypto)).collect();
-    let result = validator.check(
-        &il,
-        &block_txs,
-        30_000_000,
-        &header(),
-        &config(),
-        &crypto,
-        60_000_000,
-    );
+    let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
     assert!(matches!(result, Ok(())));
 }
 
@@ -300,15 +276,7 @@ fn il_omitted_with_drained_balance_returns_ok() {
     // IL tx is omitted; tracker says alice has nonce 5 (matches IL) but
     // balance 0 (< cost). Should classify as invalid_balance → Ok.
     let block_txs: HashSet<H256> = HashSet::new();
-    let result = validator.check(
-        &il,
-        &block_txs,
-        30_000_000,
-        &header(),
-        &config(),
-        &crypto,
-        60_000_000,
-    );
+    let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
     assert!(matches!(result, Ok(())));
 }
 
@@ -328,15 +296,7 @@ fn il_omitted_with_sufficient_state_returns_unsatisfied() {
 
     // Empty block; alice retains nonce 5 and rich balance; gas plenty.
     let block_txs: HashSet<H256> = HashSet::new();
-    let result = validator.check(
-        &il,
-        &block_txs,
-        30_000_000,
-        &header(),
-        &config(),
-        &crypto,
-        60_000_000,
-    );
+    let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
     match result {
         Err(IlUnsatisfied { tx_hash }) => {
             assert_eq!(tx_hash, il[0].hash(&NativeCrypto));
@@ -435,15 +395,7 @@ fn il_position_in_block_does_not_matter() {
     .into_iter()
     .collect();
 
-    let result = validator.check(
-        &il,
-        &block_txs,
-        30_000_000,
-        &header(),
-        &config(),
-        &crypto,
-        60_000_000,
-    );
+    let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
     assert!(matches!(result, Ok(())));
 }
 
@@ -463,24 +415,8 @@ fn algorithm_is_idempotent_over_il() {
 
     let block_txs: HashSet<H256> = HashSet::new();
 
-    let r1 = validator.check(
-        &il,
-        &block_txs,
-        30_000_000,
-        &header(),
-        &config(),
-        &crypto,
-        60_000_000,
-    );
-    let r2 = validator.check(
-        &il,
-        &block_txs,
-        30_000_000,
-        &header(),
-        &config(),
-        &crypto,
-        60_000_000,
-    );
+    let r1 = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
+    let r2 = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
 
     // Both runs must return the same Unsatisfied verdict for the same hash.
     match (r1, r2) {
@@ -530,15 +466,7 @@ fn algorithm_does_not_invoke_evm() {
     // Empty block → IL tx omitted → returns Unsatisfied without ever
     // touching `_panic_state` or any execution surface.
     let block_txs: HashSet<H256> = HashSet::new();
-    let result = validator.check(
-        &il,
-        &block_txs,
-        30_000_000,
-        &header(),
-        &config(),
-        &crypto,
-        60_000_000,
-    );
+    let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
     match result {
         Err(_) => {}
         other => panic!("expected Unsatisfied, got {other:?}"),
@@ -567,15 +495,7 @@ fn check_does_not_call_state_provider() {
     // This test documents the design: `check`'s signature contains no
     // provider, so it cannot call out to one.
     let block_txs: HashSet<H256> = std::iter::once(il[0].hash(&NativeCrypto)).collect();
-    let _ = validator.check(
-        &il,
-        &block_txs,
-        30_000_000,
-        &header(),
-        &config(),
-        &crypto,
-        60_000_000,
-    );
+    let _ = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
     // Reach the end without panicking.
 }
 
@@ -632,15 +552,7 @@ fn omitted_frame_il_tx_is_satisfied() {
         InclusionListSatisfactionValidator::new(&il, &state, &crypto).expect("construct");
 
     let block_txs: HashSet<H256> = HashSet::new();
-    let result = validator.check(
-        &il,
-        &block_txs,
-        30_000_000,
-        &header(),
-        &config(),
-        &crypto,
-        60_000_000,
-    );
+    let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
     assert!(matches!(result, Ok(())), "frame IL tx must be skipped");
 }
 
@@ -660,15 +572,7 @@ fn frame_il_tx_present_in_block_is_satisfied() {
         InclusionListSatisfactionValidator::new(&il, &state, &crypto).expect("construct");
 
     let block_txs: HashSet<H256> = il.iter().map(|t| t.hash(&NativeCrypto)).collect();
-    let result = validator.check(
-        &il,
-        &block_txs,
-        30_000_000,
-        &header(),
-        &config(),
-        &crypto,
-        60_000_000,
-    );
+    let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
     assert!(
         matches!(result, Ok(())),
         "present frame IL tx must be satisfied"
@@ -740,15 +644,7 @@ fn omitted_blob_il_tx_is_satisfied() {
     // Empty block, ample gas, funded sender — only the blob-skip rule keeps
     // this satisfied.
     let block_txs: HashSet<H256> = HashSet::new();
-    let result = validator.check(
-        &il,
-        &block_txs,
-        30_000_000,
-        &header(),
-        &config(),
-        &crypto,
-        60_000_000,
-    );
+    let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
     assert!(matches!(result, Ok(())), "blob IL tx must be skipped");
 }
 
@@ -769,15 +665,7 @@ fn omitted_intrinsic_gas_too_low_il_tx_is_satisfied() {
         InclusionListSatisfactionValidator::new(&il, &state, &crypto).expect("construct");
 
     let block_txs: HashSet<H256> = HashSet::new();
-    let result = validator.check(
-        &il,
-        &block_txs,
-        30_000_000,
-        &header(),
-        &config(),
-        &crypto,
-        60_000_000,
-    );
+    let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
     assert!(
         matches!(result, Ok(())),
         "intrinsic-gas-too-low IL tx must be satisfied"
@@ -802,15 +690,7 @@ fn omitted_invalid_signature_il_tx_is_satisfied() {
     );
 
     let block_txs: HashSet<H256> = HashSet::new();
-    let result = validator.check(
-        &il,
-        &block_txs,
-        30_000_000,
-        &header(),
-        &config(),
-        &crypto,
-        60_000_000,
-    );
+    let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
     assert!(
         matches!(result, Ok(())),
         "invalid-signature IL tx must be satisfied"
@@ -837,15 +717,7 @@ fn omitted_below_base_fee_il_tx_is_satisfied() {
     hdr.base_fee_per_gas = Some(100);
 
     let block_txs: HashSet<H256> = HashSet::new();
-    let result = validator.check(
-        &il,
-        &block_txs,
-        30_000_000,
-        &hdr,
-        &config(),
-        &crypto,
-        60_000_000,
-    );
+    let result = validator.check(&il, &block_txs, 30_000_000, &hdr, &config(), &crypto);
     assert!(
         matches!(result, Ok(())),
         "below-base-fee IL tx must be satisfied"
@@ -855,15 +727,7 @@ fn omitted_below_base_fee_il_tx_is_satisfied() {
     // tx flips to Unsatisfied — proving the base-fee gate is what mattered.
     let mut hdr_ok = header();
     hdr_ok.base_fee_per_gas = Some(1);
-    let control = validator.check(
-        &il,
-        &block_txs,
-        30_000_000,
-        &hdr_ok,
-        &config(),
-        &crypto,
-        60_000_000,
-    );
+    let control = validator.check(&il, &block_txs, 30_000_000, &hdr_ok, &config(), &crypto);
     assert!(matches!(control, Err(IlUnsatisfied { .. })));
 }
 
@@ -888,15 +752,7 @@ fn an_omitted_tx_from_a_contract_sender_is_excused() {
     // Empty block, matching nonce, ample balance, plenty of gas, fee above
     // base — every gate except sender validity would pass.
     let block_txs: HashSet<H256> = HashSet::new();
-    let result = validator.check(
-        &il,
-        &block_txs,
-        30_000_000,
-        &header(),
-        &config(),
-        &crypto,
-        60_000_000,
-    );
+    let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
     assert!(
         matches!(result, Ok(())),
         "an otherwise-appendable tx from a contract sender must be excused"
@@ -923,15 +779,7 @@ fn an_omitted_tx_from_a_7702_delegated_sender_is_unsatisfied() {
         InclusionListSatisfactionValidator::new(&il, &state, &crypto).expect("construct");
 
     let block_txs: HashSet<H256> = HashSet::new();
-    let result = validator.check(
-        &il,
-        &block_txs,
-        30_000_000,
-        &header(),
-        &config(),
-        &crypto,
-        60_000_000,
-    );
+    let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
     match result {
         Err(IlUnsatisfied { tx_hash }) => assert_eq!(tx_hash, il[0].hash(&NativeCrypto)),
         other => panic!("expected Unsatisfied for a delegated EOA sender, got {other:?}"),
@@ -957,15 +805,7 @@ fn an_omitted_tx_from_an_eoa_sender_is_still_unsatisfied() {
         InclusionListSatisfactionValidator::new(&il, &state, &crypto).expect("construct");
 
     let block_txs: HashSet<H256> = HashSet::new();
-    let result = validator.check(
-        &il,
-        &block_txs,
-        30_000_000,
-        &header(),
-        &config(),
-        &crypto,
-        60_000_000,
-    );
+    let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
     match result {
         Err(IlUnsatisfied { tx_hash }) => assert_eq!(tx_hash, il[0].hash(&NativeCrypto)),
         other => panic!("expected Unsatisfied for a plain EOA sender, got {other:?}"),
@@ -1006,15 +846,7 @@ fn an_unclassifiable_sender_is_excused() {
     );
 
     let block_txs: HashSet<H256> = HashSet::new();
-    let result = validator.check(
-        &il,
-        &block_txs,
-        30_000_000,
-        &header(),
-        &config(),
-        &crypto,
-        60_000_000,
-    );
+    let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
     assert!(
         matches!(result, Ok(())),
         "an unclassifiable sender's omission must be excused"
@@ -1039,15 +871,7 @@ fn check_reads_no_state_after_the_code_classification_landed() {
 
     let _panic_state = PanicState;
     let block_txs: HashSet<H256> = HashSet::new();
-    let result = validator.check(
-        &il,
-        &block_txs,
-        30_000_000,
-        &header(),
-        &config(),
-        &crypto,
-        60_000_000,
-    );
+    let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
     assert!(
         matches!(result, Ok(())),
         "a contract-sender omission must be excused with no state read"

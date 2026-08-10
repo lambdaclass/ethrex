@@ -27,42 +27,21 @@
 use ethrex_common::Address;
 use ethrex_common::types::{FrameTransaction, Transaction, TxType, is_eip7702_delegation};
 
-/// Divisor setting the inclusion-list committee's aggregate metered replay
-/// budget as a fraction of the block gas limit.
-pub const COMMITTEE_VERIFY_GAS_FRACTION: u64 = 4;
-
-/// EIP-7805 `IL_COMMITTEE_SIZE`.
-pub const IL_COMMITTEE_SIZE: u64 = 16;
-
-/// The VERIFY budget one inclusion list may consume across all of its Profile 2
-/// occurrences, and equally the largest budget a single candidate may declare.
+/// EIP-8369 `MAX_VERIFY_GAS_PER_IL`: the VERIFY budget one inclusion list may
+/// consume across all of its Profile 2 occurrences.
 ///
-/// Derived from the gas limit rather than fixed: a constant changes meaning
-/// whenever the gas limit moves. `COMMITTEE_VERIFY_GAS_FRACTION` puts the whole
-/// committee's replay budget at a quarter of the limit, and dividing by
-/// `IL_COMMITTEE_SIZE` gives each list its share. At a 60,000,000 limit that is
-/// 937,500 per list.
-///
-/// It MUST be derived from the **parent's** gas limit. The parent is the head
-/// inclusion lists for this slot are built against, so includers, builders and
-/// attesters all compute the same number before the block being judged exists.
-///
-/// Per-transaction and per-list budgets are equal on purpose, so one expensive
+/// Per-list and per-transaction budgets are equal on purpose, so one expensive
 /// but legitimate validation shape can consume a list's whole budget rather than
 /// being unenforceable.
 ///
 /// This is a consensus-relevant input and MUST NOT be read from node
 /// configuration, nor share EIP-8141's operator-tunable `MAX_VERIFY_GAS`
 /// mempool cap: eligibility and public-mempool admission are separate policies.
-pub fn max_verify_gas_per_il(parent_gas_limit: u64) -> u64 {
-    parent_gas_limit / COMMITTEE_VERIFY_GAS_FRACTION / IL_COMMITTEE_SIZE
-}
+pub const MAX_VERIFY_GAS_PER_IL: u64 = 1 << 20;
 
-/// Largest VERIFY budget a single Profile 2 candidate may declare. Equal to
-/// [`max_verify_gas_per_il`] by construction.
-pub fn max_verify_gas_per_tx(parent_gas_limit: u64) -> u64 {
-    max_verify_gas_per_il(parent_gas_limit)
-}
+/// EIP-8369 `MAX_VERIFY_GAS_PER_TX`: the largest VERIFY budget a single Profile 2
+/// candidate may declare. Equal to [`MAX_VERIFY_GAS_PER_IL`].
+pub const MAX_VERIFY_GAS_PER_TX: u64 = MAX_VERIFY_GAS_PER_IL;
 
 /// Distinct code bodies one inclusion list's Profile 2 replays may load, across
 /// every candidate and both evaluation states.
@@ -216,14 +195,14 @@ pub fn verify_budget_cost(tx: &FrameTransaction) -> Option<u64> {
 /// are Profile 2 candidates. Anything carrying blobs is outside both, because
 /// blob gas has its own target and maximum and EIP-8369 defines no omission
 /// check over that second budget.
-pub fn classify(tx: &Transaction, utxo_frames_active: bool, parent_gas_limit: u64) -> VopsProfile {
+pub fn classify(tx: &Transaction, utxo_frames_active: bool) -> VopsProfile {
     if tx.tx_type() == TxType::EIP4844 || !tx.blob_versioned_hashes().is_empty() {
         return VopsProfile::Ineligible;
     }
 
     match tx {
         Transaction::FrameTransaction(frame_tx) => {
-            if is_profile_2_candidate(frame_tx, utxo_frames_active, parent_gas_limit) {
+            if is_profile_2_candidate(frame_tx, utxo_frames_active) {
                 VopsProfile::TwoCandidate
             } else {
                 VopsProfile::Ineligible
@@ -246,18 +225,14 @@ pub fn classify(tx: &Transaction, utxo_frames_active: bool, parent_gas_limit: u6
 ///    verifier frame unique and first;
 /// 3. no prefix frame sets `ATOMIC_BATCH_FLAG`, and no frame after the prefix
 ///    has mode `VERIFY`;
-/// 4. its VERIFY budget cost is at most [`max_verify_gas_per_tx`].
+/// 4. its VERIFY budget cost is at most [`MAX_VERIFY_GAS_PER_TX`].
 ///
 /// Condition 3 is enforced by [`FrameTransaction::validate_prefix_structure`],
 /// which rejects both as EIP-8141 structural violations.
 ///
 /// A self-funded EIP-8312 UTXO spend matches no recognized prefix and so is not
 /// a candidate, which is the intended outcome.
-pub fn is_profile_2_candidate(
-    tx: &FrameTransaction,
-    utxo_frames_active: bool,
-    parent_gas_limit: u64,
-) -> bool {
+pub fn is_profile_2_candidate(tx: &FrameTransaction, utxo_frames_active: bool) -> bool {
     if tx.validate_static_constraints(utxo_frames_active).is_err() {
         return false;
     }
@@ -273,7 +248,7 @@ pub fn is_profile_2_candidate(
         return false;
     }
 
-    verify_budget_cost(tx).is_some_and(|cost| cost <= max_verify_gas_per_tx(parent_gas_limit))
+    verify_budget_cost(tx).is_some_and(|cost| cost <= MAX_VERIFY_GAS_PER_TX)
 }
 
 /// The `payer` a Profile 2 candidate will establish, resolved from the prefix
@@ -365,12 +340,8 @@ impl FillOutcome {
 /// instead of forcing free verification work.
 ///
 /// Returns one outcome per input transaction, positionally.
-pub fn fill_il_budget(
-    il: &[Transaction],
-    utxo_frames_active: bool,
-    parent_gas_limit: u64,
-) -> Vec<FillOutcome> {
-    let mut remaining = max_verify_gas_per_il(parent_gas_limit);
+pub fn fill_il_budget(il: &[Transaction], utxo_frames_active: bool) -> Vec<FillOutcome> {
+    let mut remaining = MAX_VERIFY_GAS_PER_IL;
     let mut outcomes = Vec::with_capacity(il.len());
 
     for tx in il {
@@ -389,14 +360,14 @@ pub fn fill_il_budget(
             outcomes.push(FillOutcome::Ignored);
             continue;
         };
-        if cost > max_verify_gas_per_tx(parent_gas_limit) || cost > remaining {
+        if cost > MAX_VERIFY_GAS_PER_TX || cost > remaining {
             outcomes.push(FillOutcome::Ignored);
             continue;
         }
 
         remaining -= cost;
 
-        if is_profile_2_candidate(frame_tx, utxo_frames_active, parent_gas_limit) {
+        if is_profile_2_candidate(frame_tx, utxo_frames_active) {
             outcomes.push(FillOutcome::Admitted { cost });
         } else {
             outcomes.push(FillOutcome::ChargedNotAdmitted { cost });

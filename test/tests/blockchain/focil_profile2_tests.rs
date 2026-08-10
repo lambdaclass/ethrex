@@ -22,7 +22,7 @@ use std::collections::HashSet;
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::error::ChainError;
-use ethrex_blockchain::focil_eligibility::max_verify_gas_per_tx;
+use ethrex_blockchain::focil_eligibility::MAX_VERIFY_GAS_PER_TX;
 use ethrex_blockchain::focil_profile2::BlockchainProfile2Evaluator;
 use ethrex_blockchain::inclusion_list_builder::{
     AccountStateView, IlStateProvider, IlStateProviderError,
@@ -177,7 +177,6 @@ fn eligible_profile2_omission_lands_in_unjustified_bucket() {
         &config(),
         &crypto,
         Some(&evaluator),
-        60000000,
     );
 
     assert_eq!(
@@ -233,7 +232,6 @@ fn ineligible_and_undecided_omissions_are_excluded_from_unjustified() {
         &config(),
         &crypto,
         Some(&evaluator),
-        60000000,
     );
 
     assert!(report.unsatisfied.is_none());
@@ -261,9 +259,9 @@ fn ignored_and_charged_not_admitted_never_reach_the_evaluator() {
     let ignored_sender = Address::repeat_byte(0x44);
     let charged_not_admitted_sender = Address::repeat_byte(0x55);
 
-    // Over max_verify_gas_per_tx(60000000): priced, then rejected by the per-tx cap →
+    // Over MAX_VERIFY_GAS_PER_TX: priced, then rejected by the per-tx cap →
     // `FillOutcome::Ignored`.
-    let ignored_tx = self_verify_tx(ignored_sender, max_verify_gas_per_tx(60000000) + 1);
+    let ignored_tx = self_verify_tx(ignored_sender, MAX_VERIFY_GAS_PER_TX + 1);
 
     // Priceable (a valid prefix shape) but statically invalid (empty
     // `nonce_keys`, which EIP-8250 forbids for a non-vault sender) →
@@ -292,7 +290,6 @@ fn ignored_and_charged_not_admitted_never_reach_the_evaluator() {
         &config(),
         &crypto,
         Some(&evaluator),
-        60000000,
     );
 
     assert!(report.unsatisfied.is_none());
@@ -482,7 +479,6 @@ async fn self_verify_frame_tx_that_would_pass_replay_is_eligible() {
         &store.get_chain_config(),
         &crypto,
         Some(&evaluator),
-        60000000,
     );
 
     assert_eq!(
@@ -549,7 +545,6 @@ async fn self_verify_frame_tx_reading_outside_the_surface_is_ineligible() {
         &store.get_chain_config(),
         &crypto,
         Some(&evaluator),
-        60000000,
     );
 
     assert!(

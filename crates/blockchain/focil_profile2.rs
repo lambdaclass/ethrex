@@ -16,7 +16,7 @@ use ethrex_vm::{CodeBodyBudget, FocilVopsSurface, Profile2Replay};
 use crate::{
     Blockchain,
     focil_eligibility::{
-        MAX_VALIDATION_CODE_BODIES, max_validation_code_bytes, max_verify_gas_per_tx,
+        MAX_VALIDATION_CODE_BODIES, MAX_VERIFY_GAS_PER_TX, max_validation_code_bytes,
         profile_2_payer,
     },
     inclusion_list_validator::{IlProfile2Evaluator, Profile2Eligibility},
@@ -210,7 +210,7 @@ impl<'a> BlockchainProfile2Evaluator<'a> {
             self.header,
             &prefix,
             None,
-            max_verify_gas_per_tx(self.header.gas_limit),
+            MAX_VERIFY_GAS_PER_TX,
             Some(Profile2Replay {
                 surface,
                 code_budget: self.code_budget.borrow().clone(),

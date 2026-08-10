@@ -1,8 +1,8 @@
 //! EIP-8369 VOPS profile classification and the per-inclusion-list budget fill.
 
 use ethrex_blockchain::focil_eligibility::{
-    FillOutcome, SenderCode, VopsProfile, classify, classify_sender_code, default_evaluation_index,
-    evaluation_index, fee_valid, fill_il_budget, max_verify_gas_per_il, max_verify_gas_per_tx,
+    FillOutcome, MAX_VERIFY_GAS_PER_IL, MAX_VERIFY_GAS_PER_TX, SenderCode, VopsProfile, classify,
+    classify_sender_code, default_evaluation_index, evaluation_index, fee_valid, fill_il_budget,
     profile_2_payer, verify_budget_cost,
 };
 use ethrex_common::types::{
@@ -87,17 +87,14 @@ fn eip1559_tx(max_fee: u64, priority: u64) -> Transaction {
 
 #[test]
 fn regular_transactions_are_profile_1() {
-    assert_eq!(classify(&legacy_tx(), false, 60000000), VopsProfile::One);
-    assert_eq!(
-        classify(&eip1559_tx(1_000, 1), false, 60000000),
-        VopsProfile::One
-    );
+    assert_eq!(classify(&legacy_tx(), false), VopsProfile::One);
+    assert_eq!(classify(&eip1559_tx(1_000, 1), false), VopsProfile::One);
 }
 
 #[test]
 fn a_recognized_prefix_within_budget_is_a_profile_2_candidate() {
     let tx = Transaction::FrameTransaction(self_verify_tx(50_000));
-    assert_eq!(classify(&tx, false, 60000000), VopsProfile::TwoCandidate);
+    assert_eq!(classify(&tx, false), VopsProfile::TwoCandidate);
 }
 
 /// EIP-8369 puts every blob-carrying transaction outside both profiles: "blob gas
@@ -109,7 +106,7 @@ fn blob_carrying_transactions_are_outside_both_profiles() {
     let mut tx = self_verify_tx(50_000);
     tx.blob_versioned_hashes = vec![Default::default()];
     assert_eq!(
-        classify(&Transaction::FrameTransaction(tx), false, 60000000),
+        classify(&Transaction::FrameTransaction(tx), false),
         VopsProfile::Ineligible
     );
 }
@@ -118,10 +115,10 @@ fn blob_carrying_transactions_are_outside_both_profiles() {
 /// cap makes the transaction ineligible outright, not merely expensive.
 #[test]
 fn a_prefix_over_the_per_tx_cap_is_not_a_candidate() {
-    let tx = self_verify_tx(max_verify_gas_per_tx(60000000) + 1);
-    assert!(verify_budget_cost(&tx).is_some_and(|c| c > max_verify_gas_per_tx(60000000)));
+    let tx = self_verify_tx(MAX_VERIFY_GAS_PER_TX + 1);
+    assert!(verify_budget_cost(&tx).is_some_and(|c| c > MAX_VERIFY_GAS_PER_TX));
     assert_eq!(
-        classify(&Transaction::FrameTransaction(tx), false, 60000000),
+        classify(&Transaction::FrameTransaction(tx), false),
         VopsProfile::Ineligible
     );
 }
@@ -139,7 +136,7 @@ fn an_unrecognized_prefix_is_not_a_candidate() {
         data: Default::default(),
     }]);
     assert_eq!(
-        classify(&Transaction::FrameTransaction(tx), false, 60000000),
+        classify(&Transaction::FrameTransaction(tx), false),
         VopsProfile::Ineligible
     );
 }
@@ -213,7 +210,7 @@ fn fee_valid_rejects_below_base_fee_and_inverted_priority() {
 #[test]
 fn profile_1_transactions_are_not_metered() {
     let il = vec![legacy_tx(), eip1559_tx(1_000, 1)];
-    let outcomes = fill_il_budget(&il, false, 60000000);
+    let outcomes = fill_il_budget(&il, false);
     assert!(outcomes.iter().all(|o| *o == FillOutcome::NotMetered));
 }
 
@@ -221,13 +218,13 @@ fn profile_1_transactions_are_not_metered() {
 /// does not fit the remainder is ignored while earlier ones are already charged.
 #[test]
 fn the_fill_is_ordered_and_stops_at_the_list_budget() {
-    let big = max_verify_gas_per_il(60000000) / 2;
+    let big = MAX_VERIFY_GAS_PER_IL / 2;
     let il = vec![
         Transaction::FrameTransaction(self_verify_tx(big)),
         Transaction::FrameTransaction(self_verify_tx(big)),
         Transaction::FrameTransaction(self_verify_tx(big)),
     ];
-    let outcomes = fill_il_budget(&il, false, 60000000);
+    let outcomes = fill_il_budget(&il, false);
 
     assert!(outcomes[0].is_admitted());
     assert_eq!(
@@ -244,14 +241,14 @@ fn the_fill_is_ordered_and_stops_at_the_list_budget() {
 fn a_failed_candidate_keeps_its_budget_debit() {
     // Priceable from its shape, but static validation fails: nonce_keys is empty,
     // which EIP-8250 forbids for a non-vault sender.
-    let mut invalid = self_verify_tx(max_verify_gas_per_il(60000000) / 2);
+    let mut invalid = self_verify_tx(MAX_VERIFY_GAS_PER_IL / 2);
     invalid.nonce_keys = vec![];
 
     let il = vec![
         Transaction::FrameTransaction(invalid),
-        Transaction::FrameTransaction(self_verify_tx(max_verify_gas_per_il(60000000) / 2 + 1)),
+        Transaction::FrameTransaction(self_verify_tx(MAX_VERIFY_GAS_PER_IL / 2 + 1)),
     ];
-    let outcomes = fill_il_budget(&il, false, 60000000);
+    let outcomes = fill_il_budget(&il, false);
 
     assert!(
         matches!(outcomes[0], FillOutcome::ChargedNotAdmitted { .. }),
@@ -270,10 +267,10 @@ fn a_failed_candidate_keeps_its_budget_debit() {
 #[test]
 fn an_over_cap_occurrence_consumes_nothing() {
     let il = vec![
-        Transaction::FrameTransaction(self_verify_tx(max_verify_gas_per_tx(60000000) + 1)),
+        Transaction::FrameTransaction(self_verify_tx(MAX_VERIFY_GAS_PER_TX + 1)),
         Transaction::FrameTransaction(self_verify_tx(1_000)),
     ];
-    let outcomes = fill_il_budget(&il, false, 60000000);
+    let outcomes = fill_il_budget(&il, false);
 
     assert_eq!(outcomes[0], FillOutcome::Ignored);
     assert!(
@@ -291,7 +288,7 @@ fn the_only_verify_pay_shape_is_a_candidate() {
         verify_frame(Some(Address::repeat_byte(0x22)), APPROVE_PAYMENT, 30_000),
     ]);
     assert_eq!(
-        classify(&Transaction::FrameTransaction(tx.clone()), false, 60000000),
+        classify(&Transaction::FrameTransaction(tx.clone()), false),
         VopsProfile::TwoCandidate
     );
     // Both prefix frames are priced, plus the one signature.
