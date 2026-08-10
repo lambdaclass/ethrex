@@ -2213,7 +2213,7 @@ mod validation_observer_tests {
             vec![verify_frame_obs(sender, 50_000, 0x03, Bytes::new())],
         );
         let mut db = build_db(vec![(sender, account_with_code(0, code))]);
-        let (_result, violation) = run(&tx, &mut db, sender, &[0], None);
+        let (_result, violation) = run(&tx, &mut db, sender, &[0], None, None);
         assert_eq!(
             violation,
             Some(FrameSimViolation::BannedOpcode(0x4B)),
