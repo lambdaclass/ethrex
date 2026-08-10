@@ -37,17 +37,76 @@ Resolved at the time the branch was cut. `left-right` counts read as
 
 ## Progress
 
+Branch `hegota-testnet`, pushed to `origin`. Baseline for anything below: the whole
+workspace compiles (`--exclude 'ethrex-l2*' --exclude ethrex-prover --exclude
+ethrex-guest-program`) and `cargo test -p ethrex-test --test ethrex_tests` is **1198
+passed / 0 failed**.
+
 | Landed | Commit | Notes |
 | --- | --- | --- |
-| Branch cut (Task 2.1) | `87fb3f700` | from `origin/hegota-devnet` |
+| Branch cut (Task 2.1) | `87fb3f700` | from `origin/hegota-devnet`, not `main` |
 | PR ledger (Phase 1) | `4b6563197` | `docs/hegota-testnet-prs.md` |
-| EIP-8272 predeploy (Task 4.1) | `b964b318a` | `#7120` merged; native write and its flat gas removed |
-| `SLOTNUM` ban | `d43ebdda2` | `#7108` transplanted; needed a test fixup, `fc018b526` |
+| EIP-8272 predeploy (Task 4.1) | `b964b318a` | `#7120` merged; native write and its flat 22100 gas gone |
+| `SLOTNUM` ban | `d43ebdda2`, `fc018b526` | `#7108` transplanted; its test needed the FOCIL-surface argument |
 | `NONCEKEYLOAD` removed (Task 2.3) | `f598130c0` | `0xB9` free again |
+| Install phase written (Phase 9) | `a3f1b77be`, `a6b6c1033` | from a read-only survey of a running deployment |
+| Kurtosis config (Tasks 7.1/7.2/7.4/7.5) | `40e8f11a4`, `70c8ebc4a` | `fixtures/networks/hegota-testnet.yaml` |
+| Permissioning + runbook (Tasks 7.6/7.7) | `b27a9b999` | `docs/hegota-testnet-permissioning.md` |
+| Generator pin + 8282 inhibitor | (in `70c8ebc4a` range) | generator `v6.1.6`; package default 6.0.7 would freeze at Amsterdam |
+| EIP-7906 removed (Task 2.2) | `e862b2fa1` | −3054/+118; mode 3 unassigned, `Utxo` still 5 |
+| `origin/main` merged (Task 2.6) | `b1c21e7b0` | 15 conflicts plus six silent auto-merge duplicates |
+| Two-endpoint Profile 2 (Tasks 3.0/3.1/3.3) | `07092961c` | union of both endpoints; budgets derived from parent gas limit |
 
-Phase 4 is **not** complete — only Task 4.1. Tasks 4.2 through 4.8 (the byte-for-byte
-assertion, the mask pin, the install check, the four predeploy cases and the
-block-access-list test) still stand.
+### Not complete
+
+- **Phase 3 Task 3.2** — the per-inclusion-list code-byte budget (distinct `codeHash`
+  counted once per list, bounded at `MAX_VALIDATION_CODE_BODIES = 16` and
+  `16 * MAX_CODE_SIZE`, shared across both endpoints). Blocked on a real dependency:
+  the replay does not report which code bodies it loaded, so this needs
+  `FrameValidationOutcome` (`crates/vm/backends/mod.rs:410`) extended to return the
+  distinct code hashes and sizes the prefix touched, then a `RefCell` budget on the
+  evaluator charged once per list. Without it, EVM gas alone does not bound bytes
+  loaded: at a few thousand gas per cold account a list's gas budget admits hundreds of
+  cold accesses, each able to pull a maximum-size code body.
+- **Phase 4 Tasks 4.2–4.8** — the byte-for-byte bytecode assertion, the `push2 0x1fff`
+  mask pin, the `install_recent_root_code` check, the four predeploy behaviour cases
+  (calldata too short, too long, non-zero value, static context) and the
+  block-access-list interaction test. Only the merge (4.1) is done.
+- **Phase 5** and **Phase 6** — not started.
+- **Phase 7 Task 7.3** (generator revision) is satisfied by pinning the generator image
+  in the config instead of bumping `ETHEREUM_PACKAGE_REVISION`; **Task 7.8** needs a
+  live enclave.
+- **Phase 8** — the artifact set and firewall surface: not started.
+- **Phase 9 Task 9.9** — local kurtosis validation. Prerequisite is an `ethrex` image
+  build, and the three `REPLACE` placeholders in the config filled with throwaway local
+  values.
+
+### Traps found the hard way — do not rediscover these
+
+- **Resolve `origin/hegota-devnet`, never a local `hegota-devnet` ref.** A stale local
+  ref was 132 commits behind and produced a wrong picture of the entire branch: it
+  predated the FOCIL merge, EIP-8312, EIP-8369 and the divergence reclassification.
+- **`origin/main` is not an ancestor of this branch.** A `main`-based PR cannot be
+  merged as a branch; transplant its commits. Expect type-level breakage even when the
+  text applies cleanly, because helper signatures differ between the two bases.
+- **The `main` merge's real hazard was silent auto-merge duplication, not conflicts.**
+  `--mempool.private` had already been cherry-picked here, so main's copy arrived as an
+  independent addition and git kept both, producing six duplicate definitions with no
+  conflict marker: `is_blob_carrying`, `private_mempool` (field and Default init),
+  `add_transaction_no_broadcast`, `add_transaction_inner`, the `mempool.private` CLI
+  flag and its Default init. Only the compiler finds these. And the cherry-pick was
+  **not** a superset — it had no `private_pool` at all, so "take ours" would have
+  shipped a private mempool that still leaks over P2P.
+- **Two replacement policies now coexist by design.** `check_replacement_bid` applies
+  the blob↔non-blob category gate to everything, routes frame transactions to
+  EIP-8141's stricter rule (both dimensions ≥ `FRAME_TX_MIN_FEE_BUMP_PERCENT`, not
+  operator-tunable), and applies main's configurable percentage bump to everything else.
+- **Do not use index or brace arithmetic to delete Rust spans.** Two separate attempts
+  broke the tree; use exact-match edits or `ast-grep --rewrite`.
+- **Do not edit the working tree while a subagent is running in this repo.** One ran
+  `git stash` for a test baseline, swallowed unrelated uncommitted work, never popped
+  it, and reported "all changes fully restored". The reflog and `git stash list` are the
+  record, not the agent's report.
 
 The two things that decide whether this succeeds:
 
@@ -471,7 +530,7 @@ proof that the active EIP set is the intended one must land first.
 
 - [x] Task 2.1: `git switch -c hegota-testnet origin/hegota-devnet`. Do not merge
       anything yet.
-- [ ] Task 2.2: Delete EIP-7906. Remove `crates/vm/levm/src/opcode_handlers/tx_trace.rs`,
+- [x] Task 2.2: Delete EIP-7906. Remove `crates/vm/levm/src/opcode_handlers/tx_trace.rs`,
       `test/tests/levm/eip7906_tests.rs`, `docs/eip-7906.md` and
       `scripts/hegota-devnet/NOTES-FOR-7906-AUTHOR.md`; drop `TXTRACE` (`0xB6`),
       `EVENTDATACOPY` (`0xB7`) and `TXDIFF` (`0xB8`) from the enum, the dispatch table
@@ -506,7 +565,7 @@ proof that the active EIP set is the intended one must land first.
       line from the ```pins``` block, and remove the EIP-7906 paragraphs from
       `scripts/hegota-devnet/UPGRADE-GUIDE.md` and `scripts/hegota-devnet/USER-GUIDE.md`.
       Rename the branch references from `hegota-devnet` to `hegota-testnet`.
-- [ ] Task 2.6: `git merge origin/main`. Expect conflicts in
+- [x] Task 2.6: `git merge origin/main`. Expect conflicts in
       `crates/vm/levm/src/vm.rs`, `crates/vm/levm/src/gas_cost.rs`,
       `crates/blockchain/blockchain.rs`, `crates/blockchain/mempool.rs`,
       `crates/blockchain/payload.rs` and `crates/common/types/transaction.rs`. Resolve
@@ -538,7 +597,7 @@ the two EIPs the tree carries beyond the intended set are not alike:
   see [the enforcement decision](#profile-2-enforcement-judges-two-fixed-endpoints).
   Profile 2 enforcement is kept and completed rather than skipped.
 
-- [ ] Task 3.0: Implement the second evaluation state. Today
+- [x] Task 3.0: Implement the second evaluation state. Today
       `BlockchainProfile2Evaluator` replays against one state, the judged header's
       post-execution state (`crates/blockchain/focil_profile2.rs`), which is `S_end`.
       Add `S_start` — the parent post-state with `B`'s pre-execution system operations
@@ -551,7 +610,7 @@ the two EIPs the tree carries beyond the intended set are not alike:
       rather than by block number, so it is safe to run against a non-canonical
       header; `S_start` must be derived the same way and MUST NOT be the parent
       post-state alone.
-- [ ] Task 3.1: Derive the VERIFY budgets instead of hard-coding them. Replace
+- [x] Task 3.1: Derive the VERIFY budgets instead of hard-coding them. Replace
       `MAX_VERIFY_GAS_PER_TX` and `MAX_VERIFY_GAS_PER_IL`
       (`crates/blockchain/focil_eligibility.rs`, both `1 << 20`) with
       `P.gas_limit / COMMITTEE_VERIFY_GAS_FRACTION / IL_COMMITTEE_SIZE` at
@@ -573,7 +632,7 @@ the two EIPs the tree carries beyond the intended set are not alike:
       alone does not bound bytes loaded — at a few thousand gas per cold account, a
       list's gas budget admits hundreds of cold accesses each able to pull a
       maximum-size code body.
-- [ ] Task 3.3: Keep `AA_VOPS_SLOT_COUNT` at 4 and pin it. It is the top of EIP-8369's
+- [x] Task 3.3: Keep `AA_VOPS_SLOT_COUNT` at 4 and pin it. It is the top of EIP-8369's
       candidate range and the worst case for replay, so a benchmark that fits the
       attestation deadline at 4 fits at 2 and 3, and no transaction eligible at a lower
       value becomes unreachable. `aa_vops_slot_count()` already defaults to 4
@@ -846,7 +905,7 @@ re-genesis, which is exactly what we promised a third party we would not do.
       `ethpandaops/lighthouse:glamsterdam-devnet-7` (no `Heze` ForkName, so it cannot
       drive FOCIL) and do not use a stock Lighthouse release (`unstable` rejects a Heze
       payload with `UnsupportedForkVariant`).
-- [ ] Task 7.3: Bump `Makefile:73`'s `ETHEREUM_PACKAGE_REVISION` to a revision whose
+- [x] Task 7.3: Bump `Makefile:73`'s `ETHEREUM_PACKAGE_REVISION` to a revision whose
       `DEFAULT_ETHEREUM_GENESIS_GENERATOR_IMAGE` is `>= 6.1.4`, or override it in
       `fixtures/networks/hegota-testnet.yaml` with
       `ethereum_genesis_generator_params.image:
