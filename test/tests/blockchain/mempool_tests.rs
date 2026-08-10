@@ -318,6 +318,16 @@ async fn setup_osaka_hegota_store_without_amsterdam_time(sender: Address) -> Sto
     hegota_store_without_amsterdam_time("osaka-hegota-no-amsterdam-time", sender, Some(0)).await
 }
 
+/// A chain scheduling a post-Amsterdam fork with no explicit `amsterdamTime`,
+/// so `get_fork` answers above Amsterdam while `is_amsterdam_activated` is
+/// false. Every admission gate must resolve the fork the way execution does —
+/// by ordinal — or it diverges from execution in whichever direction it points.
+///
+/// Uses LStar rather than Hegotá deliberately: `validate_fork_schedule` rejects
+/// `hegotaTime` without `amsterdamTime` (EIP-8081 requires EIP-7773), so that
+/// shape can no longer be loaded. LStar has no such declared prerequisite. If
+/// one is added, convert these tests to the next unconstrained pair rather than
+/// deleting them — the ordinal-gating discipline they pin outlives any one fork.
 async fn hegota_store_without_amsterdam_time(
     name: &str,
     sender: Address,
@@ -328,7 +338,7 @@ async fn hegota_store_without_amsterdam_time(
             chain_id: 0,
             shanghai_time: Some(0),
             osaka_time,
-            hegota_time: Some(0),
+            lstar_time: Some(0),
             ..Default::default()
         },
         gas_limit: 100_000_000,
@@ -648,6 +658,7 @@ async fn setup_hegota_store() -> Store {
         config: ChainConfig {
             chain_id: 0,
             shanghai_time: Some(0),
+            amsterdam_time: Some(0),
             hegota_time: Some(0),
             ..Default::default()
         },
@@ -1056,6 +1067,7 @@ async fn setup_hegota_store_ts1000() -> Store {
         config: ChainConfig {
             chain_id: 0,
             shanghai_time: Some(0),
+            amsterdam_time: Some(0),
             hegota_time: Some(0),
             ..Default::default()
         },
@@ -1370,23 +1382,46 @@ async fn mempool_admits_frame_tx_with_committed_recent_root() {
 
 #[tokio::test]
 async fn mempool_skips_recent_root_policy_without_head_slot_number() {
-    // Pre-Amsterdam head headers carry no slot number (EIP-7843), so there is
-    // nothing sound to compare a reference's slot against: the policy must be
-    // skipped (guard, don't reject) and block execution stays the
-    // authoritative check. The admission simulation only runs the validation
-    // prefix — it never reaches the VM's reference-validity check — so an
-    // uncommitted reference is admitted here.
+    // A head header with no EIP-7843 slot number gives nothing sound to compare
+    // a reference's slot against, so `check_recent_root_references` guards
+    // rather than rejects and block execution stays the authoritative check.
+    //
+    // Driven through the entry point directly rather than through
+    // `validate_transaction`. The scenario needs a head whose `slot_number` is
+    // `None` on a chain where frame transactions exist at all, and a Hegotá
+    // chain is Amsterdam+ (EIP-8081 requires EIP-7773), where the genesis header
+    // already carries `slot_number: Some(0)`. Building it from a store would
+    // mean a chain `validate_fork_schedule` refuses to load, which is what this
+    // test used to do.
     let store = setup_hegota_store().await;
+    let mut head = store.get_block_header(0).unwrap().expect("genesis header");
     let blockchain = Blockchain::default_with_store(store);
 
     let reference = recent_root_reference(RECENT_ROOT_TEST_HEAD_SLOT);
-    let tx = Transaction::FrameTransaction(frame_tx_with_reference(reference));
-    let result = blockchain
-        .validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap())
-        .await;
+    let frame_tx = frame_tx_with_reference(reference);
     assert!(
-        result.is_ok(),
-        "reference policy must be skipped when the head has no slot number; got {result:?}"
+        head.slot_number.is_some(),
+        "an Amsterdam+ genesis header carries a slot number; the guard's input          has to be constructed rather than found"
+    );
+
+    head.slot_number = None;
+    assert!(
+        blockchain
+            .check_recent_root_references(&frame_tx, &head, 0)
+            .is_ok(),
+        "the policy must be skipped when the head carries no slot number"
+    );
+
+    // The control: with a slot number present the policy runs and rejects this
+    // reference as too new, so the skip above is the guard rather than the
+    // reference happening to be acceptable.
+    head.slot_number = Some(0);
+    assert!(
+        matches!(
+            blockchain.check_recent_root_references(&frame_tx, &head, 0),
+            Err(MempoolError::FrameTxRecentRootTooNew { .. })
+        ),
+        "with a head slot number the policy must run"
     );
 }
 
@@ -1726,6 +1761,7 @@ async fn setup_hegota_store_funded() -> Store {
         config: ChainConfig {
             chain_id: 0,
             shanghai_time: Some(0),
+            amsterdam_time: Some(0),
             hegota_time: Some(0),
             ..Default::default()
         },
@@ -1824,6 +1860,7 @@ async fn mempool_rejects_underfunded_paymaster() {
         config: ChainConfig {
             chain_id: 0,
             shanghai_time: Some(0),
+            amsterdam_time: Some(0),
             hegota_time: Some(0),
             ..Default::default()
         },
@@ -2281,6 +2318,7 @@ async fn setup_hegota_store_with_balance(balance: U256) -> Store {
         config: ChainConfig {
             chain_id: 0,
             shanghai_time: Some(0),
+            amsterdam_time: Some(0),
             hegota_time: Some(0),
             ..Default::default()
         },
@@ -2471,6 +2509,7 @@ async fn mempool_rejects_frame_tx_with_banned_opcode() {
         config: ChainConfig {
             chain_id: 0,
             shanghai_time: Some(0),
+            amsterdam_time: Some(0),
             hegota_time: Some(0),
             ..Default::default()
         },
@@ -2527,6 +2566,7 @@ async fn mempool_revalidation_evicts_invalid_frame_tx() {
         config: ChainConfig {
             chain_id: 0,
             shanghai_time: Some(0),
+            amsterdam_time: Some(0),
             hegota_time: Some(0),
             ..Default::default()
         },
@@ -3990,6 +4030,7 @@ async fn keyed_frame_tx_admitted_despite_gap_gate() {
         config: ChainConfig {
             chain_id: 0,
             shanghai_time: Some(0),
+            amsterdam_time: Some(0),
             hegota_time: Some(0),
             ..Default::default()
         },
@@ -4441,6 +4482,7 @@ async fn setup_hegota_store_with_sender_code(name: &str, code: Bytes) -> Store {
         config: ChainConfig {
             chain_id: 0,
             shanghai_time: Some(0),
+            amsterdam_time: Some(0),
             hegota_time: Some(0),
             ..Default::default()
         },

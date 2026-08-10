@@ -2690,6 +2690,15 @@ impl Store {
     ) -> Result<(), StoreError> {
         debug!("Storing initial state from genesis");
 
+        // A fork scheduled without its prerequisite resolves to that fork's
+        // ordinal while the prerequisite's own timestamp gates stay closed, so
+        // the chain runs a combination no other client can agree on. Fail here
+        // rather than at the first block that depends on the difference.
+        genesis
+            .config
+            .validate_fork_schedule()
+            .map_err(StoreError::Custom)?;
+
         // Obtain genesis block
         let genesis_block = genesis.get_block();
         let genesis_block_number = genesis_block.header.number;
