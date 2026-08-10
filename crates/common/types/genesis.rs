@@ -570,6 +570,42 @@ impl ChainConfig {
         self.lstar_time.is_some_and(|time| time <= block_timestamp)
     }
 
+    /// Reject a fork schedule whose later forks are scheduled without their
+    /// prerequisites.
+    ///
+    /// [`ChainConfig::get_fork`] is a first-match cascade, so `hegotaTime` alone
+    /// resolves to [`Fork::Hegota`] even with `amsterdamTime` absent — and then
+    /// the two gating styles in this codebase disagree: `fork >= Fork::Amsterdam`
+    /// is true while `is_amsterdam_activated` is false. Every Amsterdam-gated
+    /// rule (EIP-7928 block access lists, EIP-8037 two-dimensional gas, EIP-7778
+    /// accounting) silently switches off under a fork that is specified on top
+    /// of them.
+    ///
+    /// EIP-8081 (*Hardfork Meta - Hegotá*) `requires` EIP-7773 (*Hardfork Meta -
+    /// Glamsterdam*), so this is the spec's own dependency rather than a local
+    /// convention. A chain that violates it could never produce a block another
+    /// client would accept, so failing at load beats degrading at runtime.
+    pub fn validate_fork_schedule(&self) -> Result<(), String> {
+        if let Some(hegota) = self.hegota_time {
+            match self.amsterdam_time {
+                None => {
+                    return Err(
+                        "hegotaTime is set but amsterdamTime is not; EIP-8081 requires EIP-7773"
+                            .to_string(),
+                    );
+                }
+                Some(amsterdam) if amsterdam > hegota => {
+                    return Err(format!(
+                        "amsterdamTime ({amsterdam}) is after hegotaTime ({hegota}); \
+                         Hegotá cannot activate before Amsterdam"
+                    ));
+                }
+                Some(_) => {}
+            }
+        }
+        Ok(())
+    }
+
     pub fn is_amsterdam_activated(&self, block_timestamp: u64) -> bool {
         self.amsterdam_time
             .is_some_and(|time| time <= block_timestamp)
@@ -1512,6 +1548,61 @@ mod tests {
 
         let error_message = result.unwrap_err().to_string();
         assert!(error_message.contains("missing field `depositContractAddress`"),);
+    }
+
+    #[test]
+    fn hegota_without_amsterdam_is_rejected() {
+        // The shape that motivates the check: `get_fork` already answers
+        // `Hegota`, so `fork >= Fork::Amsterdam` holds while
+        // `is_amsterdam_activated` does not, and every Amsterdam-gated rule
+        // silently switches off under a fork specified on top of them.
+        let config = ChainConfig {
+            hegota_time: Some(0),
+            amsterdam_time: None,
+            ..Default::default()
+        };
+        assert_eq!(config.get_fork(0), Fork::Hegota);
+        assert!(!config.is_amsterdam_activated(0));
+        let err = config
+            .validate_fork_schedule()
+            .expect_err("hegotaTime without amsterdamTime must be rejected");
+        assert!(err.contains("amsterdamTime"), "got: {err}");
+    }
+
+    #[test]
+    fn amsterdam_after_hegota_is_rejected() {
+        let config = ChainConfig {
+            hegota_time: Some(100),
+            amsterdam_time: Some(200),
+            ..Default::default()
+        };
+        assert!(config.validate_fork_schedule().is_err());
+    }
+
+    #[test]
+    fn a_complete_schedule_validates() {
+        // Same activation timestamp is legal: a devnet may start at Hegotá.
+        let together = ChainConfig {
+            hegota_time: Some(0),
+            amsterdam_time: Some(0),
+            ..Default::default()
+        };
+        assert!(together.validate_fork_schedule().is_ok());
+
+        let staged = ChainConfig {
+            hegota_time: Some(200),
+            amsterdam_time: Some(100),
+            ..Default::default()
+        };
+        assert!(staged.validate_fork_schedule().is_ok());
+
+        // A chain that never schedules Hegotá is unconstrained.
+        let no_hegota = ChainConfig {
+            hegota_time: None,
+            amsterdam_time: None,
+            ..Default::default()
+        };
+        assert!(no_hegota.validate_fork_schedule().is_ok());
     }
 
     #[test]

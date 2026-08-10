@@ -49,6 +49,7 @@ async fn hegota_store(store_name: &str) -> Store {
             chain_id: 0,
             shanghai_time: Some(0),
             cancun_time: Some(0),
+            amsterdam_time: Some(0),
             hegota_time: Some(0),
             ..Default::default()
         },

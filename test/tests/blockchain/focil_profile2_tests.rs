@@ -372,6 +372,7 @@ async fn setup_profile2_store_funded(
     let mut genesis: Genesis =
         serde_json::from_reader(std::io::BufReader::new(file)).expect("parse genesis fixture");
     genesis.config.hegota_time = Some(0);
+    genesis.config.amsterdam_time = Some(0);
     for (address, code) in accounts {
         genesis.alloc.insert(
             *address,
@@ -420,7 +421,7 @@ async fn import_block_omitting_il(
         random: H256::zero(),
         withdrawals: Some(Vec::new()),
         beacon_root: Some(H256::zero()),
-        slot_number: None,
+        slot_number: Some(1),
         version: 5,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
