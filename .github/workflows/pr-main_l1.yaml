@@ -72,6 +72,7 @@ jobs:
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
         with:
+          cache-pool: l1
           components: rustfmt, clippy
 
       # We don't run with workspace, as members of the workspace require l2. We run it with workspace
@@ -116,6 +117,9 @@ jobs:
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+        with:
+          cache-pool: l1
+          save-cache: 'true'
 
       - name: Run unit tests
         run: |
@@ -152,6 +156,8 @@ jobs:
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+        with:
+          cache-pool: l1
 
       - name: Run Engine EF tests
         run: make -C tooling/ef_tests/engine test
@@ -498,8 +504,14 @@ jobs:
       - name: Free Disk Space
         uses: ./.github/actions/free-disk
 
+      # Its own pool: this is the only job on main that builds the root
+      # workspace at `release-fast`, so the `l1` entry (dev profile) carries
+      # nothing it can link against.
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+        with:
+          cache-pool: l1-reorg
+          save-cache: 'true'
 
       # Built with release-grade optimization: an unoptimized ethrex overflows
       # the 2 MiB tokio worker stack while building a payload, since every

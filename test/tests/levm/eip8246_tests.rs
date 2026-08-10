@@ -245,6 +245,7 @@ fn execute_call(
         LevmCallTracer::disabled(),
         VMType::L1,
         &NativeCrypto,
+        None,
     )
     .unwrap();
 
