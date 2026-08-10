@@ -309,6 +309,11 @@ Networks run **serially** on purpose: two legs at once contend for CPU and disk 
 results are junk. An flock enforces this; bootstraps share it, cycles take it exclusively,
 and the manual A/B tool (#7112) takes it exclusively too.
 
+Slack messages follow multisync's shape: a status header, a summary block (host, the ethrex
+build measured — linked to its commit — window, elapsed, mode), then one line per network
+with throughput, its delta against the trailing median, block range and timings, followed by
+a per-network phase breakdown in ms per Mgas.
+
 Reporting goes to `SLACK_WEBHOOK_URL_SUCCESS`, or `SLACK_WEBHOOK_URL_FAILED` for a round
 where a cycle could not produce a valid measurement — a crashed node, an unclean exit, a
 leg that never reached its target. A merely *low* number is not a failure while the watch

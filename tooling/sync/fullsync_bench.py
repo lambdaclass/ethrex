@@ -648,7 +648,9 @@ def load_history(results_dir, net, limit=30):
 
 
 def summarise(result, history):
-    """Human-readable line plus the trailing-median delta, when there is enough history.
+    """Plain-text one-liner for logs and ad-hoc reporting.
+
+    Slack uses `_network_line` instead, which carries the same numbers with formatting.
 
     Deliberately reports against the trailing median rather than the previous run: a
     regression is a step, and a pairwise day-to-day difference carries far more noise.
@@ -670,14 +672,58 @@ def summarise(result, history):
     return line
 
 
-def post_slack(lines, all_ok=True):
-    """Report a round of cycles.
+def fmt_duration(seconds):
+    seconds = int(seconds)
+    h, rem = divmod(seconds, 3600)
+    m, sec = divmod(rem, 60)
+    return f"{h}h {m}m" if h else (f"{m}m {sec}s" if m else f"{sec}s")
 
-    A round where something broke goes to the failure webhook. Note what this does *not*
-    mean while the watch is observe-only: a throughput number being low is not a failure,
-    because there is no baseline to judge it against yet. Only a cycle that could not
-    produce a valid measurement at all counts — a crashed or OOM-killed node, an unclean
-    exit, a leg that never reached its target.
+
+def _network_line(result, history):
+    """One line per network, in multisync's `icon *name*: value` idiom."""
+    net = result["network"]
+    if result["throughput_ggas_s"]["mean"] is None:
+        return f"❌ *{net}*: `{result['status']}` — no valid measurement"
+
+    mean = result["throughput_ggas_s"]["mean"]
+    line = f"✅ *{net}*: `{mean:.4f} Ggas/s` over {result['batches']} batches"
+
+    # Against the trailing median, not the previous run: a regression is a step, and a
+    # pairwise day-to-day difference carries far more noise.
+    previous = [h["throughput_ggas_s"]["mean"] for h in history
+                if h.get("timestamp") != result.get("timestamp")
+                and h["throughput_ggas_s"]["mean"]]
+    if len(previous) >= 3:
+        ordered = sorted(previous)
+        median = ordered[len(ordered) // 2]
+        line += f" — `{100 * (mean - median) / median:+.1f}%` vs {len(previous)}-run median"
+    else:
+        line += f" — baseline building ({len(previous) + 1}/4)"
+
+    detail = [f"blocks {result.get('base_block')} → {result.get('reached_block')}"]
+    if result.get("blocks_per_s_mean"):
+        detail.append(f"{result['blocks_per_s_mean']:.1f} blocks/s")
+    if result.get("state_regen_seconds") is not None:
+        detail.append(f"regen {result['state_regen_seconds']:.0f}s")
+    detail.append(fmt_duration(result.get("wall_seconds", 0)))
+    return line + "\n        " + " · ".join(detail)
+
+
+def _phase_block(result):
+    """Per-phase cost, gas-normalised — where a regression actually lives."""
+    phases = result.get("phase_ms_per_mgas")
+    if not phases:
+        return None
+    width = max(len(name) for name in phases)
+    rows = "\n".join(f"{name:<{width}}  {value:>8.4f}" for name, value in phases.items())
+    return f"📊 *Phases — {result['network']}* (ms per Mgas)\n```\n{rows}\n```"
+
+
+def post_slack(entries, all_ok, round_started, results_dir):
+    """Report a round, in the same shape multisync uses.
+
+    `entries` is a list of `(result, history)` so each line can be scored against its own
+    network's trailing median.
     """
     key = "SLACK_WEBHOOK_URL_FAILED" if not all_ok else "SLACK_WEBHOOK_URL_SUCCESS"
     url = os.environ.get(key)
@@ -689,23 +735,48 @@ def post_slack(lines, all_ok=True):
     if not url:
         log(f"{key} unset; skipping Slack")
         return
-    # Observe-only by design for now: thresholds and step detection land once the
-    # bootstrap period has produced enough data to derive them (see #7111).
-    header = ("Full-sync throughput (observe-only)" if all_ok
-              else "Full-sync watch: cycle problem")
-    message = {"blocks": [
-        {"type": "header", "text": {"type": "plain_text", "text": header}},
-        {"type": "section", "text": {"type": "mrkdwn", "text": "\n".join(lines)}},
-    ]}
+
+    icon = "✅" if all_ok else "❌"
+    # Every leg in a round pulls the same `:main` image, so one build identifies the round.
+    measured = next((r.get("measured") or {} for r, _ in entries), {})
+    revision = measured.get("revision")
+    build = (f"<https://github.com/lambdaclass/ethrex/commit/{revision}|{revision[:8]}>"
+             if revision else "`unknown`")
+    windows = {r["network"]: NETWORKS[r["network"]]["measure_blocks"] for r, _ in entries}
+    window = (f"{next(iter(windows.values())):,} blocks"
+              if len(set(windows.values())) == 1
+              else ", ".join(f"{n} {v:,}" for n, v in windows.items()))
+
+    summary = (
+        f"*Host:* `{socket.gethostname()}`\n"
+        f"*Measured build:* {build}\n"
+        f"*Window:* `{window}`\n"
+        f"*Elapsed:* `{fmt_duration(time.time() - round_started)}`\n"
+        f"*Mode:* `observe-only` (no thresholds yet — see #7111)\n"
+        f"*Results:* `{results_dir}`"
+    )
+
+    blocks = [
+        {"type": "header",
+         "text": {"type": "plain_text", "text": f"{icon} Full-sync throughput"}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": summary}},
+        {"type": "divider"},
+    ]
+    for result, history in entries:
+        blocks.append({"type": "section",
+                       "text": {"type": "mrkdwn", "text": _network_line(result, history)}})
+    for result, _ in entries:
+        phase = _phase_block(result)
+        if phase:
+            blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": phase}})
+
     try:
-        resp = requests.post(url, data=json.dumps(message),
+        resp = requests.post(url, data=json.dumps({"blocks": blocks}),
                              headers={"Content-Type": "application/json"}, timeout=15)
         if resp.status_code != 200:
             log(f"Slack returned {resp.status_code}")
         else:
-            # Log the success too: a reporter that is silent when it works and silent when
-            # it is misconfigured cannot be told apart from one that never ran.
-            log(f"posted {len(lines)} line(s) to Slack via {key}")
+            log(f"posted {len(entries)} network(s) to Slack via {key}")
     except Exception as exc:
         log(f"Slack post failed: {exc}")
 
@@ -797,7 +868,7 @@ def main():
 
         while True:
             round_started = time.time()
-            lines, all_ok = [], True
+            entries, all_ok = [], True
             for net in nets:  # serial on purpose: concurrent legs contend and both are junk
                 try:
                     result = cycle(net, args.state_root, args.results_dir)
@@ -805,13 +876,15 @@ def main():
                         continue
                     if result.get("status") != "ok":
                         all_ok = False
-                    lines.append(summarise(result, load_history(args.results_dir, net)))
+                    entries.append((result, load_history(args.results_dir, net)))
                 except Exception as exc:  # isolate: one network must not stop the others
                     log(f"{net}: cycle failed: {exc}")
-                    lines.append(f"*{net}*: cycle failed — `{exc}`")
+                    entries.append(({"network": net, "status": f"cycle failed: {exc}",
+                                     "throughput_ggas_s": {"mean": None}}, []))
                     all_ok = False
-            if lines:
-                post_slack(lines, all_ok=all_ok)
+            if entries:
+                post_slack(entries, all_ok=all_ok, round_started=round_started,
+                           results_dir=args.results_dir)
             if args.once:
                 return 0
             # Pace on round start, not round end: a long round should not push the next
