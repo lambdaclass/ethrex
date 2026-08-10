@@ -46,6 +46,7 @@ EIP-8312 carries its own timestamp and is inert until a chain opts in.
 ### EIP-8312 (UTXO Frames) — see `docs/eip-8312.md`
 - Frame mode **5** (spec `3`; ethrex leaves 3 unassigned and reserves 4 for EIP-8288's deferred DEP_VERIFY).
 - **Does not activate at `Fork::Hegota`**: its fork assignment is undecided upstream, so it gets its own `utxoFramesTime` chain-config timestamp. Absent by default, so the whole surface is inert until a chain opts in — and a future timestamp keeps the upgrade state-preserving (no new genesis).
+- **Present but inert on `hegota-testnet`: `utxoFramesTime` unset.** Frame mode 5 is rejected by static validation, no vault account is installed and no block-end openings root is written, so the code in the tree is unreachable from the published genesis. Pinned by `a_utxo_frame_is_rejected_while_utxo_frames_time_is_unset`.
 - `payer` is length-tested, never compared to numeric zero — closes a consensus-split ambiguity in the spec's pseudocode.
 
 ### EIP-7805 (FOCIL) — see `crates/blockchain/inclusion_list_{builder,validator}.rs`
@@ -64,6 +65,26 @@ EIP-8312 carries its own timestamp and is inert until a chain opts in.
 - Not a divergence, but easy to mistake for one: **the VERIFY budget is computed twice, differently.** EIP-8369 says an expiry verifier frame "is ignored only when matching the four allowed prefix shapes; its gas limit still counts", so `verify_budget_cost` adds expiry frames back to the prefix sum, which `ValidationPrefix::frame_indices` omits for shape matching. The EIP-8141 mempool budget in `validate_prefix_structure` keeps summing the prefix alone. Both match their own spec; EIP-8141 rule 6 is silent on whether the expiry frame counts, and settling that is an upstream question rather than a reason to change admission unilaterally.
 - Also conformance rather than divergence: **eligibility ignores the operator-tunable VERIFY budget.** `validate_prefix_structure` takes a `max_verify_gas` argument that `--mempool.max-verify-gas` controls; the eligibility path passes `u64::MAX` and checks `MAX_VERIFY_GAS_PER_TX` itself, so a node-local flag can never decide an attested verdict. That follows from eligibility and mempool admission being separate policies, a consequence the EIP states but does not draw out for clients sharing the code path.
 - `AA_VOPS_SLOT_COUNT` = **4**, as a chain-config parameter rather than a constant. EIP-8369 leaves the value unset with a candidate range of 2 to 4 "pending benchmarks", so this fills a blank the spec left open rather than diverging from it.
+- **Live on `hegota-testnet` with `aaVopsSlotCount` unset**, which is not the same kind of absence as EIP-8312's. The profile has no off switch: an absent field selects the default 4 rather than disabling enforcement, so a joining client MUST NOT read the missing key as "Profile 2 off". Pinned by `aa_vops_slot_count_defaults_to_four`.
+- **A per-inclusion-list code-body budget bounds replay reads**: 16 distinct bodies and 16 x 64 KiB per list, charged inside the replay and shared across every candidate and both evaluation endpoints. EIP-8369 does not specify one; VERIFY gas alone leaves an attester's read work to the list's author. See `docs/hegota-testnet.md` for the derivation.
+
+### Chain-config fields that must stay absent from the published genesis
+
+Each is a surface the tree carries and the testnet does not run. A field that
+appears by accident is consensus-visible divergence from a client reading the
+same genesis, so each has a test that fails if the default moves.
+
+| Field | Effect if set | Pinned by |
+| --- | --- | --- |
+| `utxoFramesTime` | Activates EIP-8312: frame mode 5, the vault predeploy, block-end openings roots | `a_utxo_frame_is_rejected_while_utxo_frames_time_is_unset` |
+| `payerTxparamTime` | `TXPARAM(0x11)` returns the resolved payer instead of halting; an ethrex extension with no EIP behind it | `txparam_0x11_is_inactive_while_payer_txparam_time_is_unset` |
+| `derivedSlotTime` | The EL derives the EIP-7843 slot from the block timestamp instead of taking the CL's, re-keying every recent-root entry | `slotnum_comes_from_the_header_and_is_never_derived` |
+| `genesisTimestamp`, `secondsPerSlot` | Inert alone; only feed the `derivedSlotTime` derivation | (as above) |
+
+`aaVopsSlotCount` is deliberately NOT on this list: absent means 4, not off.
+
+All four live in `test/tests/levm/hegota_active_surface_tests.rs`, against a
+`ChainConfig` shaped like the published genesis.
 - Chosen at the top of the range for two reasons. It is the worst case for attester replay, so a result that fits the attestation deadline at 4 also fits at 2 and 3; and it is a superset, so no transaction eligible at a lower value becomes unreachable. A low value would make wallets ineligible, which presents as fewer enforcement obligations and reads as success.
 - The range covers the realistic validation surface: 1 slot for an address owner, 2 for a P256 pubkey, a third for a threshold or module word, with the fourth as headroom. Keyed nonces and recent roots already live in protocol state, so they cost no slots.
 - **This measures replay cost only.** EIP-8369 names two costs, replay time and the growth of the globally held surface. A devnet has too few accounts for the "first `AA_VOPS_SLOT_COUNT` slots of every account" storage cost to register, so no number produced here is evidence about that side.

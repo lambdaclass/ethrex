@@ -39,7 +39,7 @@ Resolved at the time the branch was cut. `left-right` counts read as
 
 Branch `hegota-testnet`, pushed to `origin`. Baseline for anything below: the whole
 workspace compiles (`--exclude 'ethrex-l2*' --exclude ethrex-prover --exclude
-ethrex-guest-program`) and `cargo test -p ethrex-test --test ethrex_tests` is **1209
+ethrex-guest-program`) and `cargo test -p ethrex-test --test ethrex_tests` is **1217
 passed / 0 failed**.
 
 | Landed | Commit | Notes |
@@ -58,6 +58,7 @@ passed / 0 failed**.
 | Two-endpoint Profile 2 (Tasks 3.0/3.1/3.3) | `07092961c` | union of both endpoints; budgets derived from parent gas limit |
 | Phase 4 closed (Tasks 4.2-4.8) | `a485332a6` | code hash + mask pinned, the three activation cases enforced, predeploy behaviour and the BAL write/read split tested |
 | Per-IL code-byte budget (Task 3.2) | `138f75ce0` | charged inside the replay, not after it; 16 bodies / 16 x 64 KiB per list, shared across candidates and both endpoints |
+| Phase 3 closed (Tasks 3.1/3.3-3.6) | | inert-surface and exact-set opcode tests, chain-config doc comments, absent-field table |
 
 ### Not complete
 
@@ -667,14 +668,14 @@ the two EIPs the tree carries beyond the intended set are not alike:
       genesis rather than implicit, so a joining client cannot infer a different value
       from an absent field.
 
-- [ ] Task 3.1: Add `test/tests/levm/hegota_active_surface_tests.rs` with a test that
+- [x] Task 3.1: Add `test/tests/levm/hegota_active_surface_tests.rs` with a test that
       builds a `ChainConfig` with `hegota_time` set and `utxo_frames_time`,
       `payer_txparam_time`, `derived_slot_time` and `aa_vops_slot_count` all `None`,
       and asserts: a frame with `mode == 5` is rejected by
       `FrameTransaction::validate_static_constraints`; `TXPARAM(0x11)` halts with
       `InvalidOpcode`; `SLOTNUM` still resolves from `env.slot_number` supplied by the
       header rather than derived. Register the module in `test/tests/levm/mod.rs`.
-- [ ] Task 3.2: Add to `test/tests/blockchain/focil_tests.rs` a test over the entry
+- [x] Task 3.2: Add to `test/tests/blockchain/focil_tests.rs` a test over the entry
       point the consensus path actually uses. `InclusionListSatisfactionValidator::check`
       is the Profile-1-only wrapper and proves nothing about the live behaviour, because
       both real callers use `check_with_profile_2` with a `BlockchainProfile2Evaluator`.
@@ -685,20 +686,29 @@ the two EIPs the tree carries beyond the intended set are not alike:
       storage slot `aa_vops_slot_count()` of `sender` does not. Also assert that
       `aa_vops_slot_count()` returns `4` when the field is `None`, so the silent default
       is pinned rather than mistaken for a disabled feature.
-- [ ] Task 3.3: Add `test/tests/levm/hegota_opcode_surface_tests.rs` asserting the
+      **Landed in `test/tests/blockchain/focil_profile2_tests.rs`, not `focil_tests.rs`.**
+      The premise no longer holds: `focil_tests.rs` never calls the Profile-1-only
+      `check` wrapper — every case there drives `add_block_pipeline_with_il`, which
+      uses `check_with_profile_2` internally. Each named assertion is made against
+      `check_with_profile_2` with a real `BlockchainProfile2Evaluator`:
+      `self_verify_frame_tx_that_would_pass_replay_is_eligible` (an eligible candidate
+      yields `IlUnsatisfied`), `self_verify_frame_tx_reading_outside_the_surface_is_ineligible`
+      (a read at exactly `aa_vops_slot_count()` does not), and
+      `aa_vops_slot_count_defaults_to_four` in the Task 3.1 module.
+- [x] Task 3.3: Add `test/tests/levm/hegota_opcode_surface_tests.rs` asserting the
       exact set of opcodes registered at `Fork::Hegota` and absent before it:
       `APPROVE 0xAA`, `TXPARAM 0xB0`, `FRAMEDATALOAD 0xB1`, `FRAMEDATACOPY 0xB2`,
       `FRAMEPARAM 0xB3`, `SIGPARAM 0xB4`, `RECENTROOTREFLOAD 0xB5`, and that
       `0xB6`-`0xB9` decode as invalid at every fork.
-- [ ] Task 3.4: Modify `crates/common/types/genesis.rs:ChainConfig` doc comments on
+- [x] Task 3.4: Modify `crates/common/types/genesis.rs:ChainConfig` doc comments on
       `utxo_frames_time`, `payer_txparam_time`, `derived_slot_time` and
       `aa_vops_slot_count` to state that the Hegotá testnet leaves each unset and what
       the surface does when set. No process or plan references in the comments.
-- [ ] Task 3.5: Update `docs/hegota-devnet.md` on this branch so the EIP-8312 and
+- [x] Task 3.5: Update `docs/hegota-devnet.md` on this branch so the EIP-8312 and
       EIP-8369 sections say "present but inert on `hegota-testnet`: `utxoFramesTime` /
       `AA_VOPS_SLOT_COUNT` unset", and add a table listing every chain-config field
       that must remain absent from the published genesis, with the test that pins it.
-- [ ] Task 3.6: **Checkpoint: Verify Phase 3 complete.** Run `cargo test -p ethrex-vm
+- [x] Task 3.6: **Checkpoint: Verify Phase 3 complete.** Run `cargo test -p ethrex-vm
       --lib`, `cargo test --test levm`, `cargo test --test blockchain` and confirm the
       three new test modules run and pass. List each task and its status.
 

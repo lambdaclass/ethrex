@@ -307,6 +307,11 @@ pub struct ChainConfig {
     /// state is slot-keyed). `None` on chains without this knob → behaviour is
     /// unchanged (CL-supplied slot, else 0). Requires `genesis_timestamp` +
     /// `seconds_per_slot` to be set; otherwise the derivation is skipped.
+    ///
+    /// The Hegotá testnet leaves this UNSET. Its CL is FOCIL-capable Lighthouse
+    /// over engine V4, which forwards the slot, and a derived slot that
+    /// disagreed with a CL-aware client's would key every recent-root entry
+    /// differently — a chain split with no state-root mismatch upstream of it.
     #[serde(default)]
     pub derived_slot_time: Option<u64>,
     /// Genesis block timestamp, used only by the `derived_slot_time` derivation.
@@ -325,6 +330,10 @@ pub struct ChainConfig {
     /// keeps its historical exceptional-halt (`InvalidOpcode`), so already-
     /// produced blocks re-execute identically. Gated on a FUTURE timestamp for a
     /// state-preserving rollout. `None` = unchanged behaviour.
+    ///
+    /// The Hegotá testnet leaves this UNSET: `TXPARAM(0x11)` is an ethrex
+    /// extension with no EIP behind it, so a second client would halt where
+    /// ethrex returns a payer.
     #[serde(default)]
     pub payer_txparam_time: Option<u64>,
 
@@ -342,6 +351,11 @@ pub struct ChainConfig {
     /// existing network and fixture). Setting it also requires Hegota to be
     /// scheduled, because UTXO frames are EIP-8141 frame transactions; see
     /// [`ChainConfig::is_utxo_frames_activated`].
+    ///
+    /// The Hegotá testnet leaves this UNSET, which is what keeps EIP-8312 out of
+    /// its rule set while the code stays in the tree: frame mode 5 is rejected
+    /// by static validation, no vault account is installed, and no block-end
+    /// openings root is written.
     #[serde(default)]
     pub utxo_frames_time: Option<u64>,
 
@@ -358,6 +372,14 @@ pub struct ChainConfig {
     /// genesis change rather than a code change.
     ///
     /// `None` selects [`DEFAULT_AA_VOPS_SLOT_COUNT`].
+    ///
+    /// The Hegotá testnet leaves this UNSET and therefore runs at the default 4,
+    /// the top of the candidate range and the worst case for replay: a benchmark
+    /// that fits the attestation deadline at 4 fits at 2 and 3, and no
+    /// transaction eligible at a lower value becomes unreachable. Unlike the
+    /// other three fields, absence here is not inertness — the surface is live
+    /// at its default — so a joining client MUST NOT infer a different value
+    /// from the missing field.
     #[serde(default)]
     pub aa_vops_slot_count: Option<u64>,
 

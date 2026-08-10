@@ -680,43 +680,83 @@ impl<'a> VM<'a> {
 mod tests {
     use super::*;
 
+    /// Compare handler identity by fn-pointer address without an `as` cast
+    /// (the workspace denies `clippy::as_conversions`).
+    fn same_handler(a: OpCodeFn, b: OpCodeFn) -> bool {
+        std::ptr::fn_addr_eq(a.0, b.0)
+    }
+
+    /// The frame-transaction opcode surface, as installed at Hegotá.
+    const FRAME_OPCODES: [(usize, &str); 7] = [
+        (0xAA, "APPROVE"),
+        (0xB0, "TXPARAM"),
+        (0xB1, "FRAMEDATALOAD"),
+        (0xB2, "FRAMEDATACOPY"),
+        (0xB3, "FRAMEPARAM"),
+        (0xB4, "SIGPARAM"),
+        (0xB5, "RECENTROOTREFLOAD"),
+    ];
+
+    /// Bytes adjacent to the surface that no EIP in the Hegotá set assigns.
+    /// `0xB9` was EIP-7906's `NONCEKEYLOAD` and is free again; leaving it
+    /// unpinned is how a re-added opcode would reach a chain unnoticed.
+    const UNASSIGNED: [usize; 4] = [0xB6, 0xB7, 0xB8, 0xB9];
+
     #[test]
     #[allow(
         clippy::indexing_slicing,
         reason = "fixed 256-entry table indexed by u8"
     )]
     fn frame_opcodes_not_installed_before_hegota() {
-        fn same_handler(a: OpCodeFn, b: OpCodeFn) -> bool {
-            // Compare handler identity by fn-pointer address without an `as`
-            // cast (the workspace denies clippy::as_conversions).
-            std::ptr::fn_addr_eq(a.0, b.0)
-        }
         // 0xEF is never assigned in any table -> it holds the invalid handler.
         for fork in [Fork::Osaka, Fork::Amsterdam] {
             let table = VM::build_opcode_table(fork);
-            for byte in [
-                0xAAusize, 0xB0, 0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xB8, 0xB9,
-            ] {
+            for (byte, name) in FRAME_OPCODES
+                .into_iter()
+                .chain(UNASSIGNED.into_iter().map(|byte| (byte, "unassigned")))
+            {
                 assert!(
                     same_handler(table[byte], table[0xEF]),
-                    "frame opcode {byte:#x} must be invalid at {fork:?}"
+                    "{name} ({byte:#x}) must be invalid at {fork:?}"
                 );
             }
         }
+    }
+
+    /// Hegotá installs exactly the frame-transaction surface and nothing else.
+    ///
+    /// Diffing the whole table against Amsterdam's is what makes this an *exact*
+    /// set: asserting each expected byte is present would pass just as happily
+    /// with an eighth opcode registered by accident, and an opcode a second
+    /// client does not have is a chain split on the first block that runs it.
+    #[test]
+    #[allow(
+        clippy::indexing_slicing,
+        reason = "fixed 256-entry table indexed by u8"
+    )]
+    fn hegota_installs_exactly_the_frame_opcode_surface() {
+        let amsterdam = VM::build_opcode_table(Fork::Amsterdam);
         let hegota = VM::build_opcode_table(Fork::Hegota);
-        assert!(!same_handler(hegota[0xAA], hegota[0xEF]));
-        // 0xB5 RECENTROOTREFLOAD.
-        for byte in [0xB5usize] {
+
+        let changed: Vec<usize> = (0..256)
+            .filter(|&byte| !same_handler(amsterdam[byte], hegota[byte]))
+            .collect();
+        let expected: Vec<usize> = FRAME_OPCODES.iter().map(|(byte, _)| *byte).collect();
+        assert_eq!(
+            changed, expected,
+            "Hegotá must change exactly the frame-transaction opcodes"
+        );
+
+        for (byte, name) in FRAME_OPCODES {
             assert!(
                 !same_handler(hegota[byte], hegota[0xEF]),
-                "frame opcode {byte:#x} must be installed at Hegota"
+                "{name} ({byte:#x}) must be installed at Hegotá"
             );
         }
-        // 0xB6-0xB8 are unassigned; they must stay invalid at every fork, including Hegota.
-        for byte in [0xB6usize, 0xB7, 0xB8] {
+        for byte in UNASSIGNED {
             assert!(
                 same_handler(hegota[byte], hegota[0xEF]),
-                "unassigned opcode {byte:#x} must be invalid at Hegota"
+                "unassigned opcode {byte:#x} must stay invalid at Hegotá"
             );
         }
     }
