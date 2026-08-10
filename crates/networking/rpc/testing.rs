@@ -26,8 +26,8 @@ pub struct BuildBlockV1Request {
     /// `slotNumber` from the payload attributes (EIP-7843). `None` when omitted;
     /// only applied to the built header when Amsterdam is active.
     pub slot_number: Option<u64>,
-    /// `targetGasLimit` from the payload attributes (present from Amsterdam
-    /// onwards). Overrides the node's static gas ceiling when provided.
+    /// `targetGasLimit` from the payload attributes. `None` when omitted;
+    /// overrides the node's static gas ceiling only when Amsterdam is active.
     pub target_gas_limit: Option<u64>,
 }
 
@@ -144,12 +144,15 @@ impl RpcHandler for BuildBlockV1Request {
         }
 
         let chain_config = context.storage.get_chain_config();
+        let is_amsterdam = chain_config.is_amsterdam_activated(self.attributes.timestamp);
         // EIP-7843 requires the block header to carry a `slot_number` from
         // Amsterdam onwards; mirror genesis behaviour by defaulting to 0 when
         // the attribute is absent. Pre-Amsterdam blocks leave it unset.
-        let slot_number = chain_config
-            .is_amsterdam_activated(self.attributes.timestamp)
-            .then(|| self.slot_number.unwrap_or(0));
+        let slot_number = is_amsterdam.then(|| self.slot_number.unwrap_or(0));
+        let gas_ceil = is_amsterdam
+            .then_some(self.target_gas_limit)
+            .flatten()
+            .unwrap_or(context.gas_ceil);
 
         let args = BuildPayloadArgs {
             parent: self.parent_block_hash,
@@ -161,7 +164,7 @@ impl RpcHandler for BuildBlockV1Request {
             slot_number,
             version: 3,
             elasticity_multiplier: ELASTICITY_MULTIPLIER,
-            gas_ceil: self.target_gas_limit.unwrap_or(context.gas_ceil),
+            gas_ceil,
         };
 
         let payload = match create_payload(&args, &context.storage, self.extra_data.clone()) {
@@ -219,7 +222,18 @@ impl RpcHandler for BuildBlockV1Request {
 mod tests {
     use super::*;
     use crate::test_utils::{default_context_with_storage, setup_store};
+    use ethrex_blockchain::payload::calc_gas_limit;
+    use ethrex_common::types::Genesis;
+    use ethrex_storage::{EngineType, Store};
     use serde_json::json;
+
+    async fn setup_amsterdam_store() -> Store {
+        let genesis: Genesis =
+            serde_json::from_str(include_str!("../../../fixtures/genesis/l1-bal.json")).unwrap();
+        let mut store = Store::new("test-store", EngineType::InMemory).unwrap();
+        store.add_initial_state(genesis).await.unwrap();
+        store
+    }
 
     async fn head_hash_and_timestamp(context: &RpcApiContext) -> (H256, u64) {
         let hash = context
@@ -317,7 +331,7 @@ mod tests {
 
     #[tokio::test]
     async fn built_block_honors_target_gas_limit() {
-        let store = setup_store().await;
+        let store = setup_amsterdam_store().await;
         let context = default_context_with_storage(store).await;
         let (head, timestamp) = head_hash_and_timestamp(&context).await;
         let parent_gas_limit = context
@@ -338,6 +352,34 @@ mod tests {
         assert_eq!(
             response["executionPayload"]["gasLimit"],
             json!(format!("{parent_gas_limit:#x}"))
+        );
+    }
+
+    #[tokio::test]
+    async fn pre_amsterdam_ignores_target_gas_limit() {
+        let store = setup_store().await;
+        let context = default_context_with_storage(store).await;
+        let (head, timestamp) = head_hash_and_timestamp(&context).await;
+        let parent_gas_limit = context
+            .storage
+            .get_block_header_by_hash(head)
+            .unwrap()
+            .unwrap()
+            .gas_limit;
+        let expected = calc_gas_limit(parent_gas_limit, context.gas_ceil);
+        assert_ne!(expected, parent_gas_limit);
+
+        let mut params = build_params(head, timestamp + 12, json!([])).unwrap();
+        params[1]["targetGasLimit"] = json!(format!("{parent_gas_limit:#x}"));
+        let response = BuildBlockV1Request::parse(&Some(params))
+            .unwrap()
+            .handle(context)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response["executionPayload"]["gasLimit"],
+            json!(format!("{expected:#x}"))
         );
     }
 }
