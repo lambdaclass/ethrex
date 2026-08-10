@@ -99,7 +99,7 @@ use tokio::sync::{
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 use tower_http::cors::CorsLayer;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 use tracing_subscriber::{EnvFilter, Registry, reload};
 
 #[cfg(all(feature = "jemalloc_profiling", target_os = "linux"))]

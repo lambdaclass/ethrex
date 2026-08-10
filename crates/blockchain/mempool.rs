@@ -64,6 +64,21 @@ fn fee_is_bumped(old_fee: u64, new_fee: u64) -> bool {
     new_fee > old_fee && u128::from(new_fee).saturating_mul(100) >= required
 }
 
+/// Whether `new` clears `existing` raised by `bump_percent`, in U256.
+///
+/// An overflowing threshold is treated as unmet rather than wrapping, so a
+/// pooled fee near `U256::MAX` cannot be replaced by a smaller one.
+fn is_bumped_u256(existing: U256, new: U256, bump_percent: u64) -> bool {
+    let multiplier = U256::from(100u64) + U256::from(bump_percent);
+    let Some(threshold) = existing
+        .checked_mul(multiplier)
+        .map(|v| v / U256::from(100u64))
+    else {
+        return false;
+    };
+    new >= threshold
+}
+
 /// Whether a keyed (EIP-8250) frame transaction may sit in the pool alongside
 /// the sender's other keyed frame transactions.
 ///
@@ -230,6 +245,11 @@ struct MempoolInner {
     /// but whose responses haven't arrived yet. Used to avoid sending duplicate
     /// requests when multiple peers announce the same transaction.
     in_flight_txs: FxHashSet<H256>,
+    /// Hashes of transactions admitted with `--mempool.private` set: they
+    /// MUST NOT be propagated to peers via any P2P path (broadcast,
+    /// new-peer pooled-hash dump, or `GetPooledTransactions` responses).
+    /// Cleared on transaction removal alongside `broadcast_pool`.
+    private_pool: FxHashSet<H256>,
     /// For each announced hash, the queue of *alternate* announcers that also
     /// advertised it while the hash was already in-flight from someone else.
     /// Each entry carries the announcer's own announced type and size so the
@@ -369,6 +389,7 @@ impl MempoolInner {
             self.txs_by_sender_nonce.remove(&(tx.sender(), tx.nonce()));
         }
         self.broadcast_pool.remove(hash);
+        self.private_pool.remove(hash);
 
         // Clear ALL frame-tx reservation state in this single removal path
         // (eviction / inclusion / reorg all funnel through here), so no outer
@@ -1349,8 +1370,12 @@ impl Mempool {
             inner.txs_by_sender_nonce.insert((sender, tx_nonce), hash);
         }
         inner.transaction_pool.insert(hash, transaction);
+        // Private txs are held for local block building only: they never enter
+        // the broadcast pool, so no P2P path can pick them up.
         if broadcast {
             inner.broadcast_pool.insert(hash);
+        } else {
+            inner.private_pool.insert(hash);
         }
         inner.alternates.remove(&hash);
 
@@ -1421,6 +1446,35 @@ impl Mempool {
         self.tx_added.notify_waiters();
 
         Ok(())
+    }
+
+    /// Transactions to announce to a newly connected peer, excluding
+    /// private-mempool and privileged transactions.
+    ///
+    /// Announced grouped by sender and ascending by nonce. This is NOT
+    /// cosmetic: `transaction_pool` is a hash map, so an unsorted dump
+    /// announces a sender's transactions in arbitrary order, and a peer that
+    /// fetches them in that order sees nonce gaps. Gapped transactions are
+    /// future/queued on the receiving side, so they can be turned away by the
+    /// gap-admission gate or counted against the per-sender queued cap and
+    /// never enter the peer's pool at all.
+    pub fn get_txs_for_new_peer_dump(&self) -> Result<Vec<MempoolTransaction>, StoreError> {
+        let inner = self.read()?;
+        let mut txs: Vec<MempoolTransaction> = inner
+            .transaction_pool
+            .iter()
+            .filter(|(hash, tx)| !inner.private_pool.contains(hash) && !tx.is_privileged())
+            .map(|(_, tx)| tx.clone())
+            .collect();
+        txs.sort_by(|a, b| a.sender().cmp(&b.sender()).then_with(|| a.cmp(b)));
+        Ok(txs)
+    }
+
+    /// Whether `hash` was admitted through the private-mempool path and must
+    /// therefore never be propagated to peers. False for hashes that were never
+    /// pooled, and for any hash after removal.
+    pub fn is_private(&self, hash: H256) -> Result<bool, StoreError> {
+        Ok(self.read()?.private_pool.contains(&hash))
     }
 
     pub fn get_txs_for_broadcast(&self) -> Result<Vec<MempoolTransaction>, StoreError> {
@@ -1879,6 +1933,8 @@ impl Mempool {
         sender: Address,
         nonce: u64,
         tx: &Transaction,
+        price_bump_percent: u64,
+        blob_price_bump_percent: u64,
     ) -> Result<Option<H256>, MempoolError> {
         // Keyed frame txs (EIP-8250) are indexed per `(sender, nonce_key)`, not
         // by the linear `(sender, nonce)` slot; find their fee-bump predecessor
@@ -1887,17 +1943,106 @@ impl Mempool {
         if let Transaction::FrameTransaction(frame_tx) = tx
             && frame_tx.is_keyed()
         {
-            return self.find_keyed_frame_tx_to_replace(sender, &frame_tx.nonce_keys, tx);
+            return self.find_keyed_frame_tx_to_replace(
+                sender,
+                &frame_tx.nonce_keys,
+                tx,
+                price_bump_percent,
+                blob_price_bump_percent,
+            );
         }
 
         let Some(tx_in_pool) = self.contains_sender_nonce(sender, nonce, tx.hash(&NativeCrypto))?
         else {
             return Ok(None);
         };
-        if !Self::is_fee_bump(&tx_in_pool, tx) {
+        Self::check_replacement_bid(
+            tx_in_pool.transaction(),
+            tx,
+            price_bump_percent,
+            blob_price_bump_percent,
+        )?;
+        Ok(Some(tx_in_pool.hash(&NativeCrypto)))
+    }
+
+    /// Whether `new` may replace `pooled` at the same nonce slot.
+    ///
+    /// Rejects blob ↔ non-blob category changes. Peer clients keep blob and
+    /// non-blob transactions in separate sub-pools precisely so a
+    /// cheap-to-replicate non-blob tx cannot displace a blob tx with its
+    /// expensive sidecar, or vice versa. ethrex has a single pool, so the same
+    /// guarantee is enforced here. Changes *within* the regular pool
+    /// (legacy ↔ 2930 ↔ 1559 ↔ 7702) are allowed, matching other clients.
+    ///
+    /// "Blob" means *carries a sidecar*, not "is type 0x03": an EIP-8141 frame
+    /// transaction with a non-empty `blob_versioned_hashes` carries one too, so
+    /// matching on `EIP4844Transaction` alone would let a frame ↔ frame
+    /// replacement take the base bump and skip the blob-fee comparison
+    /// entirely — the cheap sidecar re-propagation the stricter blob bump
+    /// exists to prevent.
+    ///
+    /// A replacement must STRICTLY out-bid the pooled transaction on both fee
+    /// dimensions before the percentage threshold applies. That guard is
+    /// load-bearing rather than redundant: the threshold uses integer division,
+    /// so it collapses onto the existing value whenever
+    /// `existing * bump / 100 < 1`. At a 1 wei tip with a 10% bump,
+    /// `floor(1 * 110 / 100) == 1`, so an identical-fee transaction would
+    /// satisfy `new >= threshold` and evict the pooled transaction while
+    /// re-gossiping itself.
+    fn check_replacement_bid(
+        pooled: &Transaction,
+        new: &Transaction,
+        price_bump_percent: u64,
+        blob_price_bump_percent: u64,
+    ) -> Result<(), MempoolError> {
+        let new_is_blob = new.is_blob_carrying();
+        let old_is_blob = pooled.is_blob_carrying();
+        if new_is_blob != old_is_blob {
+            return Err(MempoolError::ReplacementTypeMismatch);
+        }
+
+        // EIP-8141 §Replacement and Eviction sets its own, stricter rule for
+        // frame transactions: both fee dimensions must rise by at least
+        // `FRAME_TX_MIN_FEE_BUMP_PERCENT`, with no "either dimension rises"
+        // escape, because a frame-tx replacement re-runs the validation-prefix
+        // simulation and one-wei bumps would buy unbounded EVM work for free.
+        // That rule is not operator-tunable, so it does not read the
+        // configured percentages.
+        if matches!(new, Transaction::FrameTransaction(_)) {
+            return if Self::is_fee_bump(pooled, new) {
+                Ok(())
+            } else {
+                Err(MempoolError::UnderpricedReplacement)
+            };
+        }
+
+        let bump = if new_is_blob {
+            blob_price_bump_percent
+        } else {
+            price_bump_percent
+        };
+
+        if new.gas_fee_cap() <= pooled.gas_fee_cap() || new.gas_tip_cap() <= pooled.gas_tip_cap() {
             return Err(MempoolError::UnderpricedReplacement);
         }
-        Ok(Some(tx_in_pool.hash(&NativeCrypto)))
+
+        // Fee cap and tip are compared uniformly across types: a legacy tx's
+        // gas price acts as both its fee cap and its tip, so a legacy ↔ typed
+        // replacement is compared on the same two dimensions.
+        let bumped_fee_cap = is_bumped_u256(pooled.gas_fee_cap(), new.gas_fee_cap(), bump);
+        let bumped_tip = is_bumped_u256(pooled.gas_tip_cap(), new.gas_tip_cap(), bump);
+        let bumped_blob = !new_is_blob
+            || is_bumped_u256(
+                pooled.max_fee_per_blob_gas().unwrap_or_default(),
+                new.max_fee_per_blob_gas().unwrap_or_default(),
+                bump,
+            );
+
+        if bumped_fee_cap && bumped_tip && bumped_blob {
+            Ok(())
+        } else {
+            Err(MempoolError::UnderpricedReplacement)
+        }
     }
 
     /// Fee-bump predecessor for a NON-ZERO-keyed frame tx (EIP-8250): the
@@ -1915,6 +2060,8 @@ impl Mempool {
         sender: Address,
         keys: &[U256],
         tx: &Transaction,
+        price_bump_percent: u64,
+        blob_price_bump_percent: u64,
     ) -> Result<Option<H256>, MempoolError> {
         let (existing_hash, old_tx) = {
             let inner = self.read()?;
@@ -1932,9 +2079,7 @@ impl Mempool {
         if !keyed_key_sets_match(&old_tx, keys) {
             return Ok(None);
         }
-        if !Self::is_fee_bump(&old_tx, tx) {
-            return Err(MempoolError::UnderpricedReplacement);
-        }
+        Self::check_replacement_bid(&old_tx, tx, price_bump_percent, blob_price_bump_percent)?;
         Ok(Some(existing_hash))
     }
 

@@ -12,6 +12,7 @@ use ethrex_blockchain::mempool::{
     keyed_concurrency_verdict, transaction_intrinsic_gas,
 };
 use ethrex_blockchain::{Blockchain, BlockchainOptions};
+use ethrex_blockchain::{DEFAULT_BLOB_PRICE_BUMP_PERCENT, DEFAULT_PRICE_BUMP_PERCENT};
 use ethrex_common::constants::POST_OSAKA_GAS_LIMIT_CAP;
 use ethrex_crypto::NativeCrypto;
 use rustc_hash::FxHashMap;
@@ -3622,9 +3623,13 @@ fn keyed_replacement_enforces_fee_bump() {
 
     let underpriced = keyed_frame_tx(vec![U256::one()], 0, 20_000_000_000);
     assert!(matches!(
-        blockchain
-            .mempool
-            .find_tx_to_replace(frame_self_sender(), 0, &underpriced),
+        blockchain.mempool.find_tx_to_replace(
+            frame_self_sender(),
+            0,
+            &underpriced,
+            DEFAULT_PRICE_BUMP_PERCENT,
+            DEFAULT_BLOB_PRICE_BUMP_PERCENT,
+        ),
         Err(MempoolError::UnderpricedReplacement)
     ));
 
@@ -3632,7 +3637,13 @@ fn keyed_replacement_enforces_fee_bump() {
     assert_eq!(
         blockchain
             .mempool
-            .find_tx_to_replace(frame_self_sender(), 0, &bumped)
+            .find_tx_to_replace(
+                frame_self_sender(),
+                0,
+                &bumped,
+                DEFAULT_PRICE_BUMP_PERCENT,
+                DEFAULT_BLOB_PRICE_BUMP_PERCENT,
+            )
             .unwrap(),
         Some(a.hash(&NativeCrypto))
     );
@@ -4098,7 +4109,13 @@ fn frame_tx_replacement_requires_a_minimum_bump_on_both_fees() {
     ];
     for (max_fee, priority_fee, accepted, note) in cases {
         let replacement = priced_frame_tx(sender, 0, max_fee, priority_fee, None);
-        let result = mempool.find_tx_to_replace(sender, 0, &replacement);
+        let result = mempool.find_tx_to_replace(
+            sender,
+            0,
+            &replacement,
+            DEFAULT_PRICE_BUMP_PERCENT,
+            DEFAULT_BLOB_PRICE_BUMP_PERCENT,
+        );
         if accepted {
             assert!(
                 matches!(result, Ok(Some(_))),
@@ -4763,4 +4780,61 @@ fn add_transaction_no_broadcast_keeps_tx_out_of_broadcast_pool() {
         .map(|tx| tx.hash(&NativeCrypto))
         .collect();
     assert!(broadcast_after.is_empty());
+}
+
+#[test]
+fn add_transaction_no_broadcast_marks_tx_as_private_for_p2p_filters() {
+    let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
+    let public_decoded = Transaction::decode_canonical(&hex::decode(
+        "f86d80843baa0c4082f618946177843db3138ae69679a54b95cf345ed759450d870aa87bee538000808360306ba0151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65da064c5dd5aae2fbb535830ebbdad0234975cd7ece3562013b63ea18cc0df6c97d4",
+    ).unwrap()).unwrap();
+    let public_sender = public_decoded.sender(&NativeCrypto).unwrap();
+    let public_tx = MempoolTransaction::new(public_decoded, public_sender);
+    let public_hash = public_tx.hash(&NativeCrypto);
+
+    let private_decoded = Transaction::EIP1559Transaction(EIP1559Transaction {
+        chain_id: 1,
+        nonce: 0,
+        max_priority_fee_per_gas: 1,
+        max_fee_per_gas: 1_000_000_000,
+        gas_limit: 21_000,
+        to: TxKind::Call(H160::from_low_u64_be(0xBEEF)),
+        value: U256::zero(),
+        ..Default::default()
+    });
+    let private_sender = Address::from_low_u64_be(0xCAFE);
+    let private_hash = private_decoded.hash(&NativeCrypto);
+    let private_tx = MempoolTransaction::new(private_decoded, private_sender);
+
+    mempool
+        .add_transaction(
+            public_hash,
+            public_sender,
+            public_tx,
+            None,
+            None,
+            KeyedConcurrency::Denied,
+        )
+        .unwrap();
+    mempool
+        .add_transaction_no_broadcast(
+            private_hash,
+            private_sender,
+            private_tx,
+            None,
+            None,
+            KeyedConcurrency::Denied,
+        )
+        .unwrap();
+
+    // Public tx is not private; private tx is.
+    assert!(!mempool.is_private(public_hash).unwrap());
+    assert!(mempool.is_private(private_hash).unwrap());
+
+    // Removal clears the private flag (so a re-added hash isn't misclassified).
+    mempool.remove_transaction(&private_hash).unwrap();
+    assert!(!mempool.is_private(private_hash).unwrap());
+
+    // Hashes that were never in the pool are also not private.
+    assert!(!mempool.is_private(H256::random()).unwrap());
 }

@@ -319,10 +319,26 @@ pub struct BlockchainOptions {
     pub max_blobs_per_block: Option<u32>,
     /// If true, computes execution witnesses upon receiving newPayload messages and stores them in local storage
     pub precompute_witnesses: bool,
+    /// If true, transactions submitted via this node's RPC (e.g.
+    /// `eth_sendRawTransaction`) are kept private: they enter the mempool and
+    /// can be included in blocks built locally, but are not propagated to
+    /// peers via `Transactions` / `NewPooledTransactionHashes`. Equivalent to
+    /// reth's `--txpool.no-local-transactions-propagation`.
+    /// P2P-received transactions are unaffected.
+    pub private_mempool: bool,
     /// If true (default), per-block execution caches precompile results between the
     /// warmer thread and the executor. Set to false (via `--no-precompile-cache`) to
     /// disable the cache for benchmarking purposes.
     pub precompile_cache_enabled: bool,
+    /// Minimum fee-field bump (in percent) required to replace a non-blob
+    /// transaction at the same `(sender, nonce)`. Matches the 10%
+    /// default of every peer EL client.
+    pub price_bump_percent: u64,
+    /// Minimum fee-field bump (in percent) required to replace an EIP-4844
+    /// blob transaction at the same `(sender, nonce)`. Matches the 100%
+    /// default of every peer EL client. Blob replacements are deliberately
+    /// expensive because blob sidecars are large to re-propagate.
+    pub blob_price_bump_percent: u64,
     /// Maximum number of *queued* (future/nonce-gapped) transactions a single
     /// sender may hold in the mempool. Executable (contiguous-nonce) txs are NOT
     /// capped — mirroring geth's `AccountQueue` (a hard cap on the future/queued
@@ -362,13 +378,6 @@ pub struct BlockchainOptions {
     /// knob from `max_verify_gas`: the two lanes are disjoint, and this devnet
     /// already runs a raised `max_verify_gas` for EIP-8272 proof benchmarking.
     pub max_utxo_verify_gas: u64,
-    /// If true, transactions submitted via this node's RPC (e.g.
-    /// `eth_sendRawTransaction`) are kept private: they enter the mempool and
-    /// can be included in blocks built locally, but are not propagated to
-    /// peers via `Transactions` / `NewPooledTransactionHashes`. Equivalent to
-    /// reth's `--txpool.no-local-transactions-propagation`.
-    /// P2P-received transactions are unaffected.
-    pub private_mempool: bool,
 }
 
 impl Default for BlockchainOptions {
@@ -379,7 +388,10 @@ impl Default for BlockchainOptions {
             r#type: BlockchainType::default(),
             max_blobs_per_block: None,
             precompute_witnesses: false,
+            private_mempool: false,
             precompile_cache_enabled: true,
+            price_bump_percent: DEFAULT_PRICE_BUMP_PERCENT,
+            blob_price_bump_percent: DEFAULT_BLOB_PRICE_BUMP_PERCENT,
             max_queued_txs_per_account: DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT,
             bal_parallel_exec_enabled: true,
             bal_prefetch_enabled: true,
@@ -388,10 +400,18 @@ impl Default for BlockchainOptions {
             gap_admit_occupancy_threshold: DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD,
             max_verify_gas: DEFAULT_MAX_VERIFY_GAS,
             max_utxo_verify_gas: ethrex_common::types::MAX_UTXO_VERIFY_GAS,
-            private_mempool: false,
         }
     }
 }
+
+/// Default 10% bump required for non-blob RBF replacements (matches geth
+/// `PriceBump`, reth `default_price_bump`, nethermind `PriceBump`,
+/// erigon `PriceBump`, besu `DEFAULT_PRICE_BUMP`).
+pub const DEFAULT_PRICE_BUMP_PERCENT: u64 = 10;
+/// Default 100% bump required for blob RBF replacements (matches geth
+/// `blobpool.PriceBump`, reth `replace_blob_tx_price_bump`, nethermind
+/// blob comparison, erigon `BlobPriceBump`, besu `DEFAULT_BLOB_PRICE_BUMP`).
+pub const DEFAULT_BLOB_PRICE_BUMP_PERCENT: u64 = 100;
 
 /// Default per-account *queued* (future-nonce) tx cap. Matches geth's
 /// `AccountQueue` default (64) — a hard cap on the future/queued subpool only;
@@ -3155,6 +3175,9 @@ impl Blockchain {
 
         let hash = transaction.hash(&NativeCrypto);
         if self.mempool.contains_tx(hash)? {
+            if !broadcast {
+                warn!(%hash, "tx already public; --mempool.private cannot retroactively un-broadcast");
+            }
             return Ok(hash);
         }
 
@@ -3192,7 +3215,7 @@ impl Blockchain {
         // original error (a failing insert means the write lock is poisoned or
         // eviction failed, in which case the cleanup can't do better anyway).
         let mempool_tx = MempoolTransaction::new(transaction, sender);
-        let insert = if broadcast {
+        let inserted = if broadcast {
             self.mempool.add_transaction(
                 hash,
                 sender,
@@ -3211,7 +3234,7 @@ impl Blockchain {
                 keyed_concurrency,
             )
         };
-        if let Err(e) = insert {
+        if let Err(e) = inserted {
             let _ = self.mempool.remove_blobs_bundle(&hash);
             return Err(e);
         }
@@ -3270,6 +3293,9 @@ impl Blockchain {
         }
         let hash = transaction.hash(&NativeCrypto);
         if self.mempool.contains_tx(hash)? {
+            if !broadcast {
+                warn!(%hash, "tx already public; --mempool.private cannot retroactively un-broadcast");
+            }
             return Ok(hash);
         }
         let sender = transaction.sender(&NativeCrypto)?;
@@ -4139,7 +4165,13 @@ impl Blockchain {
 
         // Check the nonce of pendings TXs in the mempool from the same sender
         // If it exists check if the new tx has higher fees
-        let tx_to_replace_hash = self.mempool.find_tx_to_replace(sender, nonce, tx)?;
+        let tx_to_replace_hash = self.mempool.find_tx_to_replace(
+            sender,
+            nonce,
+            tx,
+            self.options.price_bump_percent,
+            self.options.blob_price_bump_percent,
+        )?;
 
         // Cumulative balance check across this sender's pending transactions.
         // Without this, a sender at the per-sender slot cap can have only one
@@ -4432,6 +4464,15 @@ impl Blockchain {
     }
 
     pub fn get_p2p_transaction_by_hash(&self, hash: &H256) -> Result<P2PTransaction, StoreError> {
+        // --mempool.private: never serve private txs over P2P, even if a peer
+        // somehow learned the hash. The spec for `GetPooledTransactions`
+        // explicitly allows skipping unavailable transactions, so we mirror
+        // the "not found" path the caller already handles.
+        if self.mempool.is_private(*hash)? {
+            return Err(StoreError::Custom(format!(
+                "Hash {hash} is private and must not propagate",
+            )));
+        }
         let Some(tx) = self.mempool.get_transaction_by_hash(*hash)? else {
             return Err(StoreError::Custom(format!(
                 "Hash {hash} not found in the mempool",

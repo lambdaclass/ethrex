@@ -251,7 +251,10 @@ pub async fn init_l2(
         perf_logs_enabled: true,
         max_blobs_per_block: None, // L2 doesn't support blob transactions
         precompute_witnesses: opts.node_opts.precompute_witnesses,
+        private_mempool: opts.node_opts.mempool_private,
         precompile_cache_enabled: true,
+        price_bump_percent: opts.node_opts.mempool_price_bump,
+        blob_price_bump_percent: opts.node_opts.mempool_blob_price_bump,
         max_queued_txs_per_account: opts.node_opts.mempool_max_queued_txs_per_account,
         bal_parallel_exec_enabled: true,
         bal_prefetch_enabled: true,
@@ -482,6 +485,9 @@ pub async fn init_native_rollup_l2(
         bal_parallel_trie_enabled: true,
         max_reorg_depth: opts.node_opts.max_reorg_depth,
         gap_admit_occupancy_threshold: opts.node_opts.mempool_gap_admit_occupancy_threshold,
+        private_mempool: opts.node_opts.mempool_private,
+        price_bump_percent: opts.node_opts.mempool_price_bump,
+        blob_price_bump_percent: opts.node_opts.mempool_blob_price_bump,
     };
 
     let blockchain = init_blockchain(store.clone(), blockchain_opts);

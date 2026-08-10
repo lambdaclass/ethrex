@@ -4433,9 +4433,15 @@ struct BlockPersist {
     wait_for_flush: bool,
     /// Number of the block whose layer this update represents (the last block in
     /// the batch, matching `child_state_root`). Threaded into the trie layer so
-    /// the committed-layer identity is available for the journal write path;
-    /// harmless for batch updates, since journal writes are skipped when
-    /// `wait_for_flush` (batch mode) is set.
+    /// the committed-layer identity is available for the journal write path.
+    ///
+    /// On a multi-block batch this names only the LAST block, which is NOT a usable
+    /// journal identity for the batch's layer. `wait_for_flush` does not make that
+    /// safe: it decides when THIS message acks, whereas the layer it creates is
+    /// journaled or not by whichever LATER commit sweeps it — `TrieLayerCache::commit`
+    /// takes the target layer and every ancestor, so a per-block commit can reach a
+    /// batch layer. Any journal entry must therefore be gated on the committed
+    /// layer covering exactly one block, not on this message's ack mode.
     block_number: BlockNumber,
     /// Hash of the block whose layer this update represents (see `block_number`).
     block_hash: H256,
