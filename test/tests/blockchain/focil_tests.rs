@@ -22,8 +22,8 @@ use ethrex_common::{
     Address, H160, H256, U256,
     types::{
         Block, BlockHeader, DEFAULT_BUILDER_GAS_CEIL, EIP1559Transaction, EIP4844Transaction,
-        ELASTICITY_MULTIPLIER, FrameTransaction, Genesis, GenesisAccount, RecentRootReference,
-        Transaction, TxKind, frame_tx_recent_root,
+        ELASTICITY_MULTIPLIER, Frame, FrameMode, FrameTransaction, Genesis, GenesisAccount,
+        RecentRootReference, Transaction, TxKind, frame_tx_expiry_verifier, frame_tx_recent_root,
     },
     validation::BlockValidationContext,
 };
@@ -550,5 +550,88 @@ async fn recent_root_reference_off_by_one_between_judgment_and_admission() {
     assert!(
         admitted_against_next_slot.is_ok(),
         "reference to slot S must be accepted when current_slot == S + 1; got {admitted_against_next_slot:?}"
+    );
+}
+
+/// The EIP-8141 expiry-verifier frame: a VERIFY frame targeting `0x…8141`
+/// whose data is the deadline as eight big-endian bytes.
+fn expiry_frame(deadline: u64) -> Frame {
+    Frame {
+        mode: FrameMode::Verify as u8,
+        flags: 0x00,
+        target: Some(frame_tx_expiry_verifier()),
+        gas_limit: 30_000,
+        value: U256::zero(),
+        data: Bytes::copy_from_slice(&deadline.to_be_bytes()),
+    }
+}
+
+/// An inclusion list is assembled against the parent and applied to a block
+/// that may sit on the far side of a fork boundary, so it can carry a frame
+/// transaction into a payload whose timestamp is still pre-Hegotá. It must not
+/// land there.
+///
+/// This pins the invariant, not the mechanism: two layers enforce it — the
+/// envelope-level gate in `apply_inclusion_list_transactions` and, under it,
+/// the `FrameTxPreFork` halt that makes the entry fail and be skipped. The test
+/// passes with either one alone, which is the point: whichever layer a future
+/// change removes, the other must still hold the line.
+#[tokio::test]
+async fn pre_hegota_payload_drops_a_listed_frame_transaction() {
+    let sk1 = key(TEST_PRIVATE_KEY);
+    let s1 = sender_from_key(&sk1);
+
+    // A chain WITHOUT `hegota_time`: `setup_store` alone, not `hegota_chain`.
+    let (store, _chain_id) = setup_store(&[s1]).await;
+    assert!(
+        store.get_chain_config().hegota_time.is_none(),
+        "this test needs a chain where Hegotá has not activated"
+    );
+    let blockchain = Blockchain::default_with_store(store.clone());
+    let genesis = store.get_block_header(0).unwrap().unwrap();
+
+    let il = vec![Transaction::FrameTransaction(FrameTransaction {
+        sender: s1,
+        ..Default::default()
+    })];
+
+    let block = build_block_with_il(&store, &blockchain, &genesis, &il).await;
+    assert!(
+        block.body.transactions.is_empty(),
+        "a frame transaction must not enter a pre-Hegotá payload through an inclusion list"
+    );
+}
+
+/// The same invariant for expiry: a frame transaction whose EIP-8141 deadline is
+/// behind the payload's timestamp is invalid in this block whoever listed it, so
+/// it must not be applied. Enforced at both layers as above — the envelope gate,
+/// and the expiry-verifier frame reverting during execution.
+#[tokio::test]
+async fn expired_listed_frame_transaction_is_dropped() {
+    let sk1 = key(TEST_PRIVATE_KEY);
+    let s1 = sender_from_key(&sk1);
+
+    let (store, _blockchain, genesis, _chain_id) = hegota_chain(&[s1]).await;
+    let blockchain = Blockchain::default_with_store(store.clone());
+
+    // `build_block_with_il` builds at `parent.timestamp + 12`, so a deadline at
+    // the parent's timestamp is already behind the block being built.
+    let deadline = genesis.timestamp;
+    let mut frame_tx = FrameTransaction {
+        sender: s1,
+        ..Default::default()
+    };
+    frame_tx.frames = vec![expiry_frame(deadline)];
+    assert_eq!(
+        frame_tx.expiry_deadline(),
+        Some(deadline),
+        "the fixture must actually carry an expiry deadline"
+    );
+
+    let il = vec![Transaction::FrameTransaction(frame_tx)];
+    let block = build_block_with_il(&store, &blockchain, &genesis, &il).await;
+    assert!(
+        block.body.transactions.is_empty(),
+        "an expired frame transaction must not be applied from an inclusion list"
     );
 }

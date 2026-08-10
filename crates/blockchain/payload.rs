@@ -834,6 +834,28 @@ impl Blockchain {
                 continue;
             }
 
+            // EIP-8141 fork and expiry gates, mirroring `fill_transactions`.
+            // Both are defence in depth rather than the thing that makes these
+            // transactions unincludable: a pre-fork frame transaction halts with
+            // `FrameTxPreFork` and an expired one reverts in its expiry-verifier
+            // frame, and the `apply_transaction` arm below already skips a
+            // failed entry and restores the BAL checkpoint. What the gates buy
+            // is deciding it from the envelope and the payload timestamp alone,
+            // so a list cannot spend an execution attempt and a checkpoint
+            // round-trip per entry on transactions that cannot be included.
+            if tx.tx_type() == TxType::Frame
+                && !chain_config.is_hegota_activated(context.payload.header.timestamp)
+            {
+                continue;
+            }
+            if let Transaction::FrameTransaction(frame_tx) = tx
+                && frame_tx
+                    .expiry_deadline()
+                    .is_some_and(|deadline| deadline < context.payload.header.timestamp)
+            {
+                continue;
+            }
+
             // BAL index + per-tx checkpoint, then record touched addresses.
             #[allow(clippy::cast_possible_truncation)]
             let tx_index = (context.payload.body.transactions.len() + 1) as u32;
