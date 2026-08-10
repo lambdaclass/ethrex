@@ -10,9 +10,11 @@ use std::time::{Duration, Instant};
 
 use super::binary_trie::BinaryTrie;
 use super::db::{BinaryTrieDB, InMemoryBinaryTrieDB, NodeMap};
+use super::group::{GroupDepth, GroupRow, MAX_GROUP_DEPTH, group_root, relative_bits};
 use super::node::{StoredNode, blake3_hash, decode, encode_branch, encode_leaf};
 use super::path::BitPath;
 use crate::error::BinaryTrieError;
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 /// Deterministic xorshift, so runs are comparable.
@@ -384,5 +386,153 @@ fn dirty_nodes_per_changed_leaf() {
             r.written.len() - leaves,
             r.reads,
         );
+    }
+}
+
+/// Recover the [`BitPath`] a database key was built from.
+///
+/// The inverse of [`BitPath::to_db_key`]: a four-byte big-endian bit
+/// count, then that many bits packed MSB-first. Only the harness needs
+/// it — production never goes backwards from a key — so it lives here
+/// rather than on `BitPath`, and it panics on a malformed key because
+/// the only keys it ever sees are ones this file just wrote.
+fn path_from_db_key(key: &[u8]) -> BitPath {
+    let count = u32::from_be_bytes(key[..4].try_into().expect("four-byte count")) as usize;
+    let packed = &key[4..];
+    BitPath::from_bits(
+        &(0..count)
+            .map(|i| (packed[i / 8] >> (7 - i % 8)) & 1)
+            .collect::<Vec<u8>>(),
+    )
+}
+
+/// Every stored node bucketed into the row it would occupy at
+/// `group_depth`, keyed by the row's database key.
+///
+/// Built over the *whole* database, not over the dirty set, because a
+/// row that a commit rewrites has to carry its untouched members too:
+/// that is exactly what makes grouped writes bigger than ungrouped
+/// ones, and it cannot be measured from the dirty set alone.
+fn rows_at(map: &NodeMap, group_depth: GroupDepth) -> BTreeMap<Vec<u8>, GroupRow> {
+    let nodes = map.lock().expect("map");
+    let mut by_path: Vec<(BitPath, &Vec<u8>)> = nodes
+        .iter()
+        .map(|(key, encoded)| (path_from_db_key(key), encoded))
+        .collect();
+    // Sorted by (depth, bits) so members go into each row in the order
+    // `GroupRow::push` demands.
+    by_path.sort_by(|a, b| (a.0.len(), a.0.as_bits()).cmp(&(b.0.len(), b.0.as_bits())));
+
+    let mut rows: BTreeMap<Vec<u8>, GroupRow> = BTreeMap::new();
+    for (path, encoded) in by_path {
+        let row_key = group_root(&path, group_depth).to_db_key();
+        rows.entry(row_key)
+            .or_default()
+            .push(
+                relative_bits(&path, group_depth),
+                encoded.clone(),
+                group_depth,
+            )
+            .expect("a node belongs in the row its own path selects");
+    }
+    rows
+}
+
+/// How grouping trades row count against row size, at every group depth
+/// this crate can store, over our own key distribution.
+///
+/// The two numbers that matter are on the same line: **rows touched**
+/// per block, which is what the 82.4%-of-block-time node lookups pay,
+/// and **bytes written**, which is what grouping costs to get it.
+/// go-ethereum ships `groupDepth = 5` and says openly it does not know
+/// the optimum; this answers it for our workload rather than inheriting
+/// the number.
+#[test]
+#[ignore = "measurement harness, not a correctness test"]
+fn group_depth_sweep() {
+    // Two state sizes, because the row count is *not* monotonic in the
+    // group depth: a band boundary that lands just above the depth the
+    // tree fans out at splits far more rows than one that lands just
+    // below. The depth distribution moves with the leaf count, so a
+    // ranking taken at one size is not evidence about another, and the
+    // second size is what says whether the winner is a real optimum or
+    // an artefact of where the bands happened to fall.
+    for leaf_count in [100_000usize, 1_000_000] {
+        sweep_at(leaf_count);
+    }
+}
+
+fn sweep_at(leaf_count: usize) {
+    {
+        let (map, root, keys) = build(leaf_count, 0x2545F4914F6CDD1D);
+        let node_count = map.lock().expect("map").len();
+        println!("\n=== group depth sweep: {leaf_count} leaves -> {node_count} nodes ===");
+
+        // Dirty sets first, so every group depth is scored on the same
+        // blocks rather than on fresh random ones.
+        let rounds: Vec<(usize, Vec<BitPath>, usize)> = [1usize, 100, 1_000, 5_000]
+            .iter()
+            .map(|&changed| {
+                let r = round(&map, root, &keys, changed, 0xDEADBEEF ^ changed as u64);
+                let bytes = r.written.iter().map(|(_, e)| e.len()).sum();
+                (
+                    changed,
+                    r.written.into_iter().map(|(p, _)| p).collect(),
+                    bytes,
+                )
+            })
+            .collect();
+
+        for levels in 1..=MAX_GROUP_DEPTH {
+            let group_depth = GroupDepth::new(levels).expect("in range");
+            let rows = rows_at(&map, group_depth);
+            let row_bytes: Vec<usize> = rows.values().map(|row| row.encode().len()).collect();
+            let total_bytes: usize = row_bytes.iter().sum();
+            let max_row = row_bytes.iter().copied().max().unwrap_or(0);
+            let mean_members =
+                rows.values().map(|r| r.members().len()).sum::<usize>() as f64 / rows.len() as f64;
+            // Rows with no member at the empty relative path. A branch
+            // whose prefix jumps a band boundary puts *both* its children
+            // in the next group and neither at that group's root, so a
+            // group can be entered at two nodes and have no root member
+            // at all. Counted rather than argued: a `resolve` that
+            // assumes a root member passes every hand-written test and
+            // fails on real state.
+            let rootless = rows.values().filter(|row| row.get(&[]).is_none()).count();
+            println!(
+                "\ng={levels}  rows={:<9} ({:>5.2}x fewer)  mean members {mean_members:>5.2}  \
+             mean row {:>6.0} B  max row {max_row} B  table {:>6.1} MiB  \
+             rootless rows {rootless} ({:>5.2}%)",
+                rows.len(),
+                node_count as f64 / rows.len() as f64,
+                total_bytes as f64 / rows.len() as f64,
+                total_bytes as f64 / (1024.0 * 1024.0),
+                100.0 * rootless as f64 / rows.len() as f64,
+            );
+            for (changed, dirty, flat_bytes) in &rounds {
+                // Reads equal the dirty set exactly (see
+                // `dirty_nodes_per_changed_leaf`), and a read of any member
+                // fetches its whole row, so rows read and rows written are
+                // the same set — one number, not two.
+                let touched: std::collections::BTreeSet<Vec<u8>> = dirty
+                    .iter()
+                    .map(|path| group_root(path, group_depth).to_db_key())
+                    .collect();
+                let written_bytes: usize = touched
+                    .iter()
+                    .map(|key| rows.get(key).map_or(0, |row| row.encode().len()))
+                    .sum();
+                println!(
+                    "  changed={changed:<5} rows touched={:<6} ({:>6.2}/leaf, {:>5.2}x fewer than \
+                 {} nodes)  bytes written {:>8} ({:>5.2}x of {flat_bytes})",
+                    touched.len(),
+                    touched.len() as f64 / *changed as f64,
+                    dirty.len() as f64 / touched.len() as f64,
+                    dirty.len(),
+                    written_bytes,
+                    written_bytes as f64 / *flat_bytes as f64,
+                );
+            }
+        }
     }
 }
