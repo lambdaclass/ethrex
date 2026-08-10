@@ -125,6 +125,13 @@ jobs:
         run: |
           cargo test --workspace --exclude 'ethrex-l2*' --exclude ethrex-prover --exclude ethrex-guest-program
 
+      # `make test` includes `test-stateless`, which generates its conformance
+      # vectors from a pinned execution-specs commit rather than downloading them
+      # (no tests-zkevm release carries the #3278 schema). That fill needs `uv`.
+      - name: Install uv
+        if: ${{ github.event_name != 'merge_group' }}
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+
       - name: Run Blockchain EF tests
         if: ${{ github.event_name != 'merge_group' }}
         run: |

@@ -50,28 +50,22 @@ pub fn parse_and_execute(
     let tests = parse_tests(path);
 
     let mut failures = Vec::new();
+    let mut executed = 0usize;
+    let mut skipped_by_name = 0usize;
+    let parsed = tests.len();
 
     for (test_key, test) in tests {
-        // TEMPORARY: the stateless run uses the tests-zkevm@v0.5.0 bundle (filled
-        // against glamsterdam-devnet v6.1.0), which predeploys the EIP-8282 builder
-        // deposit/exit contracts at the OLD addresses. This client uses the devnet-7
-        // addresses, so every Amsterdam+ block's end-of-block builder system call
-        // finds no code at the new addresses and fails. Skip Amsterdam+ fixtures in
-        // the stateless run — by fork, not by name, since cross-fork dirs like
-        // `for_amsterdam/prague/...` still run at the Amsterdam fork — until a zkevm
-        // bundle filled with the new predeploy addresses is released and
-        // `.fixtures_url_zkevm` is bumped. See docs/known_issues.md.
-        let skip_stateless_amsterdam =
-            run_stateless && test.network >= Fork::Amsterdam;
-        let should_skip_test = test.network < Fork::Merge
-            || skip_stateless_amsterdam
-            || skipped_tests
-                .map(|skipped| skipped.iter().any(|s| test_key.contains(s)))
-                .unwrap_or(false);
-
-        if should_skip_test {
+        let named = skipped_tests
+            .map(|skipped| skipped.iter().any(|s| test_key.contains(s)))
+            .unwrap_or(false);
+        if named {
+            skipped_by_name += 1;
             continue;
         }
+        if test.network < Fork::Merge {
+            continue;
+        }
+        executed += 1;
 
         let result = rt.block_on(run_ef_test(&test_key, &test, run_stateless));
 
@@ -79,6 +73,21 @@ pub fn parse_and_execute(
             eprintln!("Test {test_key} failed: {e:?}");
             failures.push(format!("{test_key}: {e:?}"));
         }
+    }
+
+    // A stateless fixture file that runs nothing, and was not deliberately named
+    // in the skip list, is a failure rather than a pass. A blanket fork-based skip
+    // once silenced the entire stateless run — 23,946 fixtures, all of them
+    // `network: Amsterdam` — and it stayed green the whole time. Named skips are
+    // exempt because they are a recorded decision; a structural skip is not. Not
+    // applied to the levm run, where `vectors/legacy/` is legitimately pre-Merge.
+    if run_stateless && parsed > 0 && executed == 0 && skipped_by_name == 0 {
+        return Err(format!(
+            "{}: all {parsed} stateless fixture(s) were skipped structurally, so this file \
+             tested nothing",
+            path.display()
+        )
+        .into());
     }
 
     if failures.is_empty() {
@@ -602,10 +611,7 @@ async fn re_run_stateless(
 /// Following the spec, we execute each block
 /// independently with its own witness.
 #[cfg(feature = "stateless")]
-async fn run_stateless_from_fixture(
-    test: &TestUnit,
-    test_key: &str,
-) -> Result<(), String> {
+async fn run_stateless_from_fixture(test: &TestUnit, test_key: &str) -> Result<(), String> {
     let chain_config = test.network.chain_config();
 
     for block_fixture in test.blocks.iter() {
