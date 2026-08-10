@@ -16,24 +16,21 @@ ethrex-common = { path = "../../common/", default-features = false }
 ethrex-crypto = { path = "../../common/crypto", default-features = false }
 ethrex-guest-program = { path = "../", default-features = false }
 
-# SSZ encode/decode and merkleization. The mirror spike reached these through
-# eth-act's `stateless-validator-common`; ethrex owns the wire types natively, so
-# they are declared here directly. Versions match the root workspace.
 # Must track the root workspace exactly: these are the same containers the host
 # encodes, and two libssz versions in one binary would have the guest merkleize
 # with a different progressive child order than ethrex-common does.
-libssz = { git = "https://github.com/lambdaclass/libssz", branch = "update-consensus-specs-v1.7.0-alpha.13" }
-libssz-merkle = { git = "https://github.com/lambdaclass/libssz", branch = "update-consensus-specs-v1.7.0-alpha.13" }
-libssz-types = { git = "https://github.com/lambdaclass/libssz", branch = "update-consensus-specs-v1.7.0-alpha.13" }
+libssz = "0.3.0"
+libssz-merkle = "0.3.0"
+libssz-types = "0.3.0"
 
 # ere platform abstraction (entrypoint / IO / cycle scopes) used by the per-zkVM
 # bins. Pinned to one ere rev; the ere-compiler and ere-server image tags in
 # tag_release.yaml are derived from the same rev.
 ere-platform-core = { git = "https://github.com/eth-act/ere", rev = "a25f1aed9664c3b63e73ef05360090a4c41da31b", optional = true }
 
-# zkvm-standards syscall bindings backing the ZisK and SP1 crypto provider. This
-# is what keeps guest crypto independent of per-SDK patched-crate stacks, so no
-# sp1-patches tags are needed for the SP1 guest at all.
+# zkvm-standards syscall bindings backing the ZisK and SP1 crypto providers. Keeps
+# guest crypto independent of per-SDK patched-crate stacks, so the SP1 guest needs
+# no sp1-patches tags at all.
 zkvm-interface = { git = "https://github.com/eth-act/zkvm-standards", rev = "282cd356c3a0498416bb0619f9c8a347ce9933fb", optional = true }
 
 # OpenVM crypto provider (OpenVM 2.0.0 line). Note openvm-kzg and

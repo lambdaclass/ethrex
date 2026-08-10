@@ -1633,7 +1633,8 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 [[package]]
 name = "libssz"
 version = "0.3.0"
-source = "git+https://github.com/lambdaclass/libssz?branch=update-consensus-specs-v1.7.0-alpha.13#de932604d53b088a0e9990077d808942fa29ca29"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b4bdd6d63ed811ae164966de20810be780e07de784a4834ccfe6be90480c369e"
 dependencies = [
  "smallvec",
 ]
@@ -1641,7 +1642,8 @@ dependencies = [
 [[package]]
 name = "libssz-derive"
 version = "0.3.0"
-source = "git+https://github.com/lambdaclass/libssz?branch=update-consensus-specs-v1.7.0-alpha.13#de932604d53b088a0e9990077d808942fa29ca29"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aeee1b9ac9200429f7e9830492765445989ea61c3fb9028ad5a96e1dd5f5e913"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1651,7 +1653,8 @@ dependencies = [
 [[package]]
 name = "libssz-merkle"
 version = "0.3.0"
-source = "git+https://github.com/lambdaclass/libssz?branch=update-consensus-specs-v1.7.0-alpha.13#de932604d53b088a0e9990077d808942fa29ca29"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "863eca32d1a43e5ec41106a515552efa8307768d37c68d26b7f21ff13cfee1a7"
 dependencies = [
  "libssz",
  "sha2",
@@ -1660,7 +1663,8 @@ dependencies = [
 [[package]]
 name = "libssz-types"
 version = "0.3.0"
-source = "git+https://github.com/lambdaclass/libssz?branch=update-consensus-specs-v1.7.0-alpha.13#de932604d53b088a0e9990077d808942fa29ca29"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d4231ac301726840a3fe111f11bd4619d3c97ed155cb94c88dbf92b70e04e017"
 dependencies = [
  "libssz",
  "libssz-merkle",
