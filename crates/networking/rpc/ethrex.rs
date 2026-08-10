@@ -5,6 +5,7 @@
 //! so operators can enable them on a public endpoint (`--http.api ethrex`)
 //! without also exposing the whole `debug_` surface.
 
+use ethrex_blockchain::mempool::FRAME_CANONICAL_PAYMASTER_CODE_HASH;
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::{
     Address, U256,
@@ -332,7 +333,7 @@ impl SimulateFrameTransactionRequest {
             &self.transaction,
             header,
             prefix,
-            None,
+            Some(FRAME_CANONICAL_PAYMASTER_CODE_HASH),
             context.blockchain.options.max_verify_gas,
             None,
         )

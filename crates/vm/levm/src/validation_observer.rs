@@ -23,12 +23,12 @@
 //! ## Canonical-pay-frame exemption
 //! ERC-7562 exempts the canonical paymaster's pay frame from the storage/call
 //! access restrictions (a canonical paymaster is trusted to touch shared
-//! reservation state). ethrex cannot resolve the canonical paymaster bytecode
-//! (OQ1: not pinned in the draft EIP or any reference implementation), so
+//! reservation state).
 //! [`canonical_paymaster_pay_frame`](ValidationObserver::canonical_paymaster_pay_frame)
-//! is always `None` here and the exemption never fires. The field and the
-//! `current_frame_index == canonical_paymaster_pay_frame` skip are wired up so
-//! the exemption flips on for free once the canonical code hash is pinned.
+//! carries that frame's index when the pay frame's resolved target has the
+//! canonical runtime code hash, and the
+//! `current_frame_index == canonical_paymaster_pay_frame` skip applies the
+//! exemption to it.
 
 use ethrex_common::{Address, H256};
 
@@ -190,9 +190,9 @@ pub struct ValidationObserver {
     /// correctly banning it in any callee of an expiry frame that routes execution
     /// elsewhere (an under-reject the per-top-frame boolean could not prevent).
     pub expiry_verifier: Address,
-    /// Index of the canonical paymaster's pay frame, if any. Always `None`
-    /// (OQ1, see module docs); the access-restriction skip is wired for the
-    /// future canonical-paymaster case.
+    /// Index of the canonical paymaster's pay frame, if any: set when the pay
+    /// frame's resolved target carries the canonical runtime code hash, which is
+    /// what admits the access-restriction skip (see module docs).
     pub canonical_paymaster_pay_frame: Option<usize>,
     /// The opcode byte executed on the previous dispatch-loop iteration. Used to
     /// enforce the `GAS` sequential rule (`GAS` is allowed only immediately

@@ -3874,6 +3874,7 @@ dependencies = [
  "ethrex-storage",
  "ethrex-trie",
  "ethrex-vm",
+ "hex-literal 0.4.1",
  "libssz",
  "libssz-merkle",
  "rayon",

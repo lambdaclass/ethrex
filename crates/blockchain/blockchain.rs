@@ -3719,7 +3719,7 @@ impl Blockchain {
                         &tx,
                         &block.header,
                         &prefix,
-                        None,
+                        Some(FRAME_CANONICAL_PAYMASTER_CODE_HASH),
                         self.options.max_verify_gas,
                         None,
                     ) {
@@ -3735,8 +3735,7 @@ impl Blockchain {
                         // Because evicting a tx decrements
                         // `reserved_pending_cost` (single removal path), the
                         // pass converges to `reserved <= balance` per paymaster
-                        // and never under-evicts. (All paymasters are
-                        // non-canonical today (OQ1); the per-paymaster pending
+                        // and never under-evicts. (The per-paymaster pending
                         // COUNT limit cannot be exceeded by a block, so only
                         // the balance/reserved aggregate needs re-checking.)
                         Ok(outcome) if outcome.passed => {
@@ -4277,14 +4276,12 @@ impl Blockchain {
             let mut vm = self
                 .new_evm(vm_db)
                 .map_err(|err| MempoolError::FrameTxValidationFailed(err.to_string()))?;
-            // OQ1: no canonical paymaster bytecode is resolvable, so no canonical
-            // code hash is passed (the canonical-pay-frame exemption never fires).
             let outcome = vm
                 .simulate_frame_validation_prefix(
                     tx,
                     &header,
                     &prefix,
-                    None,
+                    Some(FRAME_CANONICAL_PAYMASTER_CODE_HASH),
                     self.options.max_verify_gas,
                     None,
                 )
@@ -4329,28 +4326,22 @@ impl Blockchain {
 
             // Paymaster availability accounting (EIP-8141). The simulation
             // identified the payer (paymaster) and whether its code matched the
-            // canonical paymaster hash (always false today, OQ1). Reserve the
-            // tx's max cost against the paymaster's head balance, summed with all
-            // other pending reservations for that paymaster so concurrently
-            // pending sponsored txs cannot collectively overdraw it.
+            // canonical paymaster hash. Reserve the tx's max cost against the
+            // paymaster's head balance, summed with all other pending
+            // reservations for that paymaster so concurrently pending sponsored
+            // txs cannot collectively overdraw it.
             let max_cost = outcome.max_cost;
             if let Some((paymaster, code_is_canonical)) = outcome.accessed_paymaster {
-                // OQ1: re-derive the canonical flag from the paymaster's head
-                // code so the (currently always-false) determination lives in
-                // one place. The storage read is skipped entirely until the
-                // canonical bytecode hash is pinned upstream (the sentinel),
-                // since `is_canonical_paymaster` can only return false until then.
-                let is_canonical = if FRAME_CANONICAL_PAYMASTER_CODE_HASH == H256::zero() {
-                    code_is_canonical
-                } else {
-                    let paymaster_code = self
-                        .storage
-                        .get_code_by_account_address(header_no, paymaster)
-                        .await?
-                        .map(|code| code.code_bytes())
-                        .unwrap_or_default();
-                    code_is_canonical || is_canonical_paymaster(&paymaster_code)
-                };
+                // Re-derive the canonical flag from the paymaster's head code, so
+                // a target that acquired canonical code after the simulation
+                // observed it is still recognized.
+                let paymaster_code = self
+                    .storage
+                    .get_code_by_account_address(header_no, paymaster)
+                    .await?
+                    .map(|code| code.code_bytes())
+                    .unwrap_or_default();
+                let is_canonical = code_is_canonical || is_canonical_paymaster(&paymaster_code);
 
                 // Self-pay (payer == sender): exempt from the non-canonical COUNT
                 // limit (see FramePaymasterReservation::is_self_pay). The balance

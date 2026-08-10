@@ -3148,8 +3148,12 @@ impl LEVM {
     ///   - total simulated prefix gas <= `max_verify_gas`;
     ///   - no validation-trace rule was violated.
     ///
-    /// `canonical_paymaster_code_hash` is the pinned canonical paymaster code
-    /// hash, when known (always `None` today, OQ1).
+    /// `canonical_paymaster_code_hash` is the pinned canonical paymaster runtime
+    /// code hash. A `pay` frame whose resolved target's code hash matches is
+    /// exempt from the generic validation-trace rules, per EIP-8141: the
+    /// canonical implementation is standardized to be safe for public mempool
+    /// use, so it is admitted by the code-hash match plus a successful
+    /// `APPROVE(APPROVE_PAYMENT)` and the paymaster accounting rules.
     ///
     /// `max_verify_gas` is the node's `MAX_VERIFY_GAS` budget; the EIP-8141 spec
     /// value is `FRAME_TX_MAX_VERIFY_GAS`, but it is mempool policy and therefore
@@ -3162,7 +3166,7 @@ impl LEVM {
         vm_type: VMType,
         crypto: &dyn Crypto,
         prefix: &ethrex_common::types::ValidationPrefix,
-        _canonical_paymaster_code_hash: Option<H256>,
+        canonical_paymaster_code_hash: Option<H256>,
         max_verify_gas: u64,
         profile_2: Option<ethrex_levm::validation_observer::Profile2Replay>,
     ) -> Result<FrameValidationOutcome, EvmError> {
@@ -3176,6 +3180,24 @@ impl LEVM {
         };
         let sender = frame_tx.sender;
 
+        // Resolve the canonical pay-frame exemption before the VM borrows `db`.
+        // A null `pay` target resolves to `sender`, per EIP-8141.
+        let canonical_pay_frame = match (canonical_paymaster_code_hash, prefix.pay_index) {
+            (Some(canonical), Some(pay_index)) => {
+                let target = frame_tx
+                    .frames
+                    .get(pay_index)
+                    .and_then(|frame| frame.target)
+                    .unwrap_or(sender);
+                let matches = db
+                    .get_account(target)
+                    .map(|account| account.info.code_hash == canonical)
+                    .unwrap_or(false);
+                matches.then_some(pay_index)
+            }
+            _ => None,
+        };
+
         let env = Self::setup_env(tx, sender, block_header, db, vm_type)?;
         let blob_base_fee = env.base_blob_fee_per_gas;
         let mut vm = VM::new(
@@ -3187,10 +3209,6 @@ impl LEVM {
             crypto,
             None,
         )?;
-
-        // OQ1: no canonical paymaster is resolvable, so the canonical pay-frame
-        // exemption never fires (always `None`).
-        let canonical_pay_frame: Option<usize> = None;
 
         let sim = match vm.run_frame_validation_prefix(
             &prefix.frame_indices,
@@ -3221,11 +3239,18 @@ impl LEVM {
         let read_legacy_nonce = vm.validation_observer.read_legacy_nonce;
         // The payer established by the prefix is the paymaster (OQ2: the
         // APPROVE-payment address is treated uniformly as "paymaster", including
-        // the self-funded sender). Its canonical flag is always false (OQ1: no
-        // canonical paymaster bytecode is resolvable), which is also why
-        // `_canonical_paymaster_code_hash` is unused. The observer carries no
-        // distinct paymaster, so derive it from the established payer.
-        let accessed_paymaster = sim.payer_address.map(|payer| (payer, false));
+        // the self-funded sender). The observer carries no distinct paymaster, so
+        // derive it from the established payer, and its canonical flag from that
+        // account's runtime code hash.
+        let accessed_paymaster = sim.payer_address.map(|payer| {
+            let is_canonical = canonical_paymaster_code_hash.is_some_and(|canonical| {
+                vm.db
+                    .get_account(payer)
+                    .map(|account| account.info.code_hash == canonical)
+                    .unwrap_or(false)
+            });
+            (payer, is_canonical)
+        });
 
         // Every outcome below reports the same observations and differs only in
         // whether it passed and why not. The budget is the state the observer

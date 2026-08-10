@@ -2218,9 +2218,10 @@ pub const APPROVE_PAYMENT: u8 = 0x1;
 pub const APPROVE_EXECUTION: u8 = 0x2;
 pub const APPROVE_EXECUTION_AND_PAYMENT: u8 = 0x3;
 /// Maximum number of pending frame txs using a non-canonical paymaster per
-/// paymaster address. Per OQ1, all paymasters are currently non-canonical
-/// (FRAME_CANONICAL_PAYMASTER_CODE_HASH is unresolved in the draft EIP), so
-/// this de-facto limits sponsored frame txs to 1 per paymaster in the pool.
+/// paymaster address. A `pay` frame whose target's runtime code hash equals
+/// `FRAME_CANONICAL_PAYMASTER_CODE_HASH` is exempt and bounded by the payer's
+/// reserved balance alone; every other sponsor is capped here, so a single
+/// balance change cannot invalidate an unbounded set of pending transactions.
 pub const FRAME_TX_MAX_PENDING_NONCANONICAL_PAYMASTER: u8 = 1;
 
 /// Returns the ENTRY_POINT `Address` (0x…00aa) used as caller for

@@ -21,6 +21,7 @@ use ethrex_common::{
 use ethrex_crypto::NativeCrypto;
 use ethrex_storage::error::StoreError;
 use ethrex_vm::{intrinsic_gas_dimensions, intrinsic_gas_floor};
+use hex_literal::hex;
 use tracing::warn;
 
 /// Maximum number of alternate announcers tracked per hash. Bounds the memory
@@ -129,26 +130,25 @@ pub fn keyed_concurrency_verdict(
     }
 }
 
-/// Keccak-256 hash of the canonical paymaster bytecode (EIP-8141).
+/// Keccak-256 hash of the canonical paymaster runtime bytecode (EIP-8141
+/// §"Canonical paymaster"), over the 355-byte runtime pinned in
+/// `assets/eip-8141/canonical-paymaster.md`.
 ///
-/// OQ1 (canonical paymaster bytecode): UNRESOLVED. The draft EIP does not pin
-/// the canonical paymaster's bytecode, and no reference implementation
-/// (execution-specs, execution-spec-tests, geth, goevmlab, hive) ships one.
-/// Until it is pinned, this is a sentinel (`H256::zero()`) that no real account
-/// code can hash to, so [`is_canonical_paymaster`] returns `false` for every
-/// paymaster. That is the conservative interim: ALL paymasters are treated as
-/// non-canonical, which only ever over-rejects (de-facto limit of one pending
-/// sponsored frame tx per paymaster), never under-rejects. When the canonical
-/// hash is pinned, replace this sentinel and the exact-match body below flips on
-/// with no other change.
-pub const FRAME_CANONICAL_PAYMASTER_CODE_HASH: H256 = H256::zero();
+/// The canonical paymaster is not a singleton: many instances may be deployed,
+/// one per sponsor. Recognition is on the **runtime** code hash, so every
+/// instance shares identical runtime bytes and differs only in the per-instance
+/// `signer` its constructor writes to slot 0, which is not part of recognition.
+/// A `pay` frame whose target matches is admitted by that match plus a
+/// successful `APPROVE(APPROVE_PAYMENT)` and the paymaster accounting rules,
+/// rather than by satisfying each generic validation-trace rule individually.
+///
+/// The hash is per-fork: a new version is introduced by pinning a new hash, and
+/// versions unpinned at a fork boundary demote to non-canonical.
+pub const FRAME_CANONICAL_PAYMASTER_CODE_HASH: H256 = H256(hex!(
+    "da42f0d11838c4c0c3129b8b8e93e9718127ad6b315e517e1088125707c4d45c"
+));
 
-/// Whether `code` is the canonical EIP-8141 paymaster bytecode.
-///
-/// OQ1 interim: returns `false` for all paymasters because
-/// [`FRAME_CANONICAL_PAYMASTER_CODE_HASH`] is an unresolved sentinel that no
-/// real bytecode hashes to. The exact-keccak-match body is kept so this flips on
-/// for free once the canonical hash is pinned upstream.
+/// Whether `code` is the canonical EIP-8141 paymaster runtime bytecode.
 pub fn is_canonical_paymaster(code: &[u8]) -> bool {
     keccak(code) == FRAME_CANONICAL_PAYMASTER_CODE_HASH
 }
@@ -167,9 +167,10 @@ pub struct FramePaymasterReservation {
     pub paymaster: Address,
     /// The max cost (TXPARAM 0x06) reserved against the paymaster's balance.
     pub reserved_cost: U256,
-    /// Whether the paymaster's code matched the canonical paymaster hash. Always
-    /// `false` today (OQ1); non-canonical paymasters are subject to the
-    /// one-pending-tx limit.
+    /// Whether the paymaster's runtime code hash matched
+    /// [`FRAME_CANONICAL_PAYMASTER_CODE_HASH`]. Non-canonical paymasters are
+    /// subject to the one-pending-tx limit; canonical ones are bounded by the
+    /// payer's reserved balance alone.
     pub is_canonical: bool,
     /// The paymaster's head balance captured at admission time, so the locked
     /// re-check in [`Mempool::add_transaction`] can re-validate availability

@@ -8,13 +8,15 @@ use ethrex_blockchain::constants::{
 };
 use ethrex_blockchain::error::MempoolError;
 use ethrex_blockchain::mempool::{
-    FramePaymasterReservation, KeyedConcurrency, Mempool, is_canonical_paymaster,
-    keyed_concurrency_verdict, transaction_intrinsic_gas,
+    FRAME_CANONICAL_PAYMASTER_CODE_HASH, FramePaymasterReservation, KeyedConcurrency, Mempool,
+    is_canonical_paymaster, keyed_concurrency_verdict, transaction_intrinsic_gas,
 };
 use ethrex_blockchain::{Blockchain, BlockchainOptions};
 use ethrex_blockchain::{DEFAULT_BLOB_PRICE_BUMP_PERCENT, DEFAULT_PRICE_BUMP_PERCENT};
 use ethrex_common::constants::POST_OSAKA_GAS_LIMIT_CAP;
+use ethrex_common::utils::keccak;
 use ethrex_crypto::NativeCrypto;
+use hex_literal::hex;
 use rustc_hash::FxHashMap;
 
 use ethrex_common::types::{
@@ -860,14 +862,140 @@ fn frame_tx_reservation_maps_clear_after_add_and_remove() {
     );
 }
 
+/// The canonical paymaster runtime pinned by EIP-8141 §"Canonical paymaster",
+/// 355 bytes. Recognition is on the runtime code hash, so the per-instance
+/// `signer` in slot 0 is not part of it.
+const CANONICAL_PAYMASTER_RUNTIME: &[u8] = &hex!(
+    "3461002e57366100355760016001b41561005a575f6001b45f54141561005a5760026001b461005a5760015f5faa5b3661005a57005b5f3560f81c8060011461005e57806002146100a557806003146100ec57600414610123575b5f5ffd5b50335f54146100875760016001b41561005a575f6001b45f54141561005a5760026001b461005a575b60025461005a57600135801561005a57600155426201518001600255005b50335f54146100ce5760016001b41561005a575f6001b45f54141561005a5760026001b461005a575b60025461005a57600135801561005a57600355426201518001600255005b50335f54146101155760016001b41561005a575f6001b45f54141561005a5760026001b461005a575b5f6001555f6002555f600355005b600254801561005a57421061005a576001548015610153575f6001555f6002555f5f5f5f845f545af11561005a57005b506003545f555f6003555f60025500"
+);
+
 #[test]
-fn is_canonical_paymaster_is_false_for_all_codes_oq1_interim() {
-    // OQ1 interim: no canonical paymaster bytecode is pinned, so every paymaster
-    // is treated as non-canonical. This guards the documented interim until the
-    // canonical code hash is resolved upstream.
+fn canonical_paymaster_is_recognized_by_its_runtime_code_hash() {
+    assert_eq!(
+        CANONICAL_PAYMASTER_RUNTIME.len(),
+        355,
+        "EIP-8141 pins a 355-byte canonical paymaster runtime"
+    );
+    assert_eq!(
+        keccak(CANONICAL_PAYMASTER_RUNTIME),
+        FRAME_CANONICAL_PAYMASTER_CODE_HASH
+    );
+    assert!(is_canonical_paymaster(CANONICAL_PAYMASTER_RUNTIME));
+
+    // Nothing else is canonical, including a near-miss that differs in one byte.
     assert!(!is_canonical_paymaster(&[]));
     assert!(!is_canonical_paymaster(&[0x60, 0x00]));
     assert!(!is_canonical_paymaster(&[0xAA; 64]));
+    let mut near_miss = CANONICAL_PAYMASTER_RUNTIME.to_vec();
+    near_miss[0] ^= 0x01;
+    assert!(!is_canonical_paymaster(&near_miss));
+}
+
+#[test]
+fn canonical_paymaster_is_exempt_from_the_noncanonical_pending_cap() {
+    // EIP-8141: the MAX_PENDING_TXS_USING_NON_CANONICAL_PAYMASTER cap applies to
+    // `pay` frames whose target's runtime code hash does not equal the canonical
+    // paymaster code hash. A canonical instance is bounded by the payer's
+    // reserved balance alone, so many sponsored txs may be pending against it.
+    let funded_balance = U256::from(10u64).pow(U256::from(18u64));
+    let paymaster = Address::from_low_u64_be(0x9A11_D001);
+    let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
+
+    let phantom = |sender: Address, nonce_seq: u64| {
+        let tx = Transaction::FrameTransaction(FrameTransaction {
+            chain_id: 0,
+            nonce_keys: vec![U256::zero()],
+            nonce_seq,
+            sender,
+            frames: vec![Frame {
+                mode: FrameMode::Verify as u8,
+                flags: APPROVE_EXECUTION_AND_PAYMENT,
+                target: Some(sender),
+                gas_limit: 200,
+                value: U256::zero(),
+                data: Bytes::new(),
+            }],
+            signatures: vec![],
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas: 0,
+            max_fee_per_blob_gas: U256::zero(),
+            blob_versioned_hashes: vec![],
+            ..Default::default()
+        });
+        (tx.hash(&NativeCrypto), tx)
+    };
+
+    // The canonical flag is DERIVED from the paymaster's runtime bytes, exactly
+    // as the reservation path derives it, so this test fails if the pinned hash
+    // is wrong rather than merely restating the mempool's own bookkeeping.
+    let reservation_for = |code: &[u8]| FramePaymasterReservation {
+        paymaster,
+        reserved_cost: U256::from(1u64),
+        is_canonical: is_canonical_paymaster(code),
+        is_self_pay: false,
+        paymaster_balance: funded_balance,
+    };
+
+    // Two senders, one shared canonical paymaster. Both must be admitted, where
+    // the non-canonical cap of 1 would have rejected the second.
+    for (i, sender) in [
+        Address::from_low_u64_be(0xCA11_0001),
+        Address::from_low_u64_be(0xCA11_0002),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let (hash, tx) = phantom(sender, i as u64);
+        mempool
+            .add_transaction(
+                hash,
+                sender,
+                MempoolTransaction::new(tx, sender),
+                Some(reservation_for(CANONICAL_PAYMASTER_RUNTIME)),
+                None,
+                KeyedConcurrency::Denied,
+            )
+            .expect("a canonical paymaster is not capped by the non-canonical pending limit");
+    }
+
+    // The canonical reservations never touch the non-canonical counter.
+    assert_eq!(
+        mempool
+            .noncanonical_paymaster_pending(paymaster)
+            .unwrap_or(0),
+        0,
+        "canonical paymaster reservations must not consume a non-canonical slot"
+    );
+
+    // A paymaster one byte off the canonical runtime is capped as usual: the
+    // first fills the single slot, the second is rejected.
+    let mut near_miss = CANONICAL_PAYMASTER_RUNTIME.to_vec();
+    near_miss[0] ^= 0x01;
+    let other = Address::from_low_u64_be(0x9A11_D002);
+    let mut submit = |sender: Address, seq: u64| {
+        let (hash, tx) = phantom(sender, seq);
+        mempool.add_transaction(
+            hash,
+            sender,
+            MempoolTransaction::new(tx, sender),
+            Some(FramePaymasterReservation {
+                paymaster: other,
+                reserved_cost: U256::from(1u64),
+                is_canonical: is_canonical_paymaster(&near_miss),
+                is_self_pay: false,
+                paymaster_balance: funded_balance,
+            }),
+            None,
+            KeyedConcurrency::Denied,
+        )
+    };
+    submit(Address::from_low_u64_be(0xCA11_0003), 0)
+        .expect("the first non-canonical sponsored tx fills the slot");
+    let capped = submit(Address::from_low_u64_be(0xCA11_0004), 0);
+    assert!(
+        matches!(capped, Err(MempoolError::FrameTxNonCanonicalPaymasterLimit)),
+        "a near-miss paymaster must stay capped; got {capped:?}"
+    );
 }
 
 #[tokio::test]
@@ -1945,7 +2073,7 @@ async fn mempool_rejects_underfunded_paymaster() {
 
 #[tokio::test]
 async fn mempool_enforces_noncanonical_paymaster_limit() {
-    // EIP-8141 OQ1: a THIRD-PARTY (non-self-pay) paymaster is non-canonical; the
+    // EIP-8141: a THIRD-PARTY (non-self-pay) non-canonical paymaster; the
     // per-paymaster pending limit is
     // MAX_PENDING_TXS_USING_NON_CANONICAL_PAYMASTER = 1. Self-paying txs
     // (payer == sender) are exempt from this limit and are covered separately by

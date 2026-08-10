@@ -214,7 +214,7 @@ All confirmed **open** on 2026-08-10 via `pending_prs_for_eip`.
 | Upstream PR | Subject | ethrex | Ships meanwhile |
 | --- | --- | --- | --- |
 | EIPs#12066 | ban `SLOTNUM` in validation prefix | `#7108`, transplanted | the ban (see §3.6) |
-| EIPs#12041 | canonical paymaster reference bytecode | none | `FRAME_CANONICAL_PAYMASTER_CODE_HASH = H256::zero()` sentinel (`mempool.rs:63`) + fallback branch (`blockchain.rs:3825`) — **Task 6.4, open** |
+| EIPs#12041 | canonical paymaster reference bytecode | implemented ahead of merge | the pinned 355-byte runtime's hash; see §8 — **Task 6.4 closed** |
 | EIPs#12039 | keyed mempool concurrency | none | `keyed_concurrency_verdict` |
 | EIPs#12109 | atomic-batch approval scope | none | `docs/eip-8250.md` divergence #4 |
 | EIPs#12091 | block inclusion gating and payer solvency | none | — |
@@ -239,8 +239,41 @@ Not in the plan's list, found this pass:
 | 6.1 record drift since pins | **done** — §1, and no core EIP moved normatively |
 | 6.2 reclassify adopted items, bump pins | **partly** — §4 confirms all five, plus three more; `docs/eip-8272.md`/`docs/hegota-devnet.md` already carry them as annotated "no longer a divergence" entries rather than deletions, which reads better and is left as is. Pin bumps outstanding. |
 | 6.3 open-PR rows | **done** — §6 |
-| 6.4 resolve EIPs#12041 paymaster hash | **open** |
+| 6.4 resolve EIPs#12041 paymaster hash | **done** — §8 |
 | 6.5 EIPs#12026 BAL clause + EIPs#12113 warm-set clause | **open** |
 | 6.6 EIP-8272 BAL read record + EIP-8250 bookkeeping exclusion | **open** |
 | 6.7 every `yes` row closed or moved to Open Questions with a fallback | **open** — every `yes` row has an action and §3.1 is closed conformant. Remaining blockers are 6.4-6.6. |
 | 6.8 checkpoint | **open** |
+
+## 8. Canonical paymaster (EIPs#12041) — resolved
+
+ethereum/EIPs#12041 pins a 355-byte canonical paymaster runtime and its per-fork
+`keccak256`. Verified independently this pass rather than taken from the PR text: the
+runtime is 355 bytes and hashes to
+`0xda42f0d11838c4c0c3129b8b8e93e9718127ad6b315e517e1088125707c4d45c`, which is the value
+the PR states.
+
+ethrex previously shipped `FRAME_CANONICAL_PAYMASTER_CODE_HASH = H256::zero()`, a
+sentinel no real code can hash to, so every paymaster was non-canonical and the whole
+canonical path was unreachable. That was the conservative interim (it only over-rejects)
+but it left two behaviours inert:
+
+| Behaviour | Before | Now |
+| --- | --- | --- |
+| Pending-tx cap | every sponsor capped at `MAX_PENDING_TXS_USING_NON_CANONICAL_PAYMASTER = 1` | a canonical instance is bounded by the payer's reserved balance alone; every other sponsor stays capped |
+| Validation-trace exemption | `canonical_pay_frame` hard-coded `None`, so the ERC-7562 access-restriction skip never fired | resolved from the `pay` frame's target code hash, at all four simulation call sites |
+
+Recognition is on the **runtime** code hash, so the canonical paymaster is not a
+singleton: many instances may be deployed, one per sponsor, differing only in the
+`signer` their constructor writes to slot 0. An instance whose slot 0 is zero authorizes
+nothing, so a mis-deployment is inert rather than open.
+
+The exemption is passed to the Profile 2 replay as well as to mempool admission,
+revalidation and the RPC simulation. EIP-8369's Profile 2 surface says "the canonical
+paymaster exception does not expand this range", which only has meaning if the exception
+is in force during eligibility replay; the storage surface remains the binding
+constraint there.
+
+| Item | Consensus-visible | Action | Owner |
+| --- | --- | --- | --- |
+| The hash is per-fork and #12041 is unmerged | **yes** — a byte change moves the hash, and an instance canonical today demotes if the pin moves | track #12041 to merge | Edgar |

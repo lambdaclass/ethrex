@@ -20,6 +20,7 @@ use crate::{
         profile_2_payer,
     },
     inclusion_list_validator::{IlProfile2Evaluator, Profile2Eligibility},
+    mempool::FRAME_CANONICAL_PAYMASTER_CODE_HASH,
     vm::StoreVmDatabase,
 };
 
@@ -209,7 +210,7 @@ impl<'a> BlockchainProfile2Evaluator<'a> {
             &transaction,
             self.header,
             &prefix,
-            None,
+            Some(FRAME_CANONICAL_PAYMASTER_CODE_HASH),
             MAX_VERIFY_GAS_PER_TX,
             Some(Profile2Replay {
                 surface,

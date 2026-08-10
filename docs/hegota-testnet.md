@@ -64,7 +64,9 @@ passed / 0 failed**, `cargo test -p ethrex-rpc --lib` is 122 passed, and
 | IL BAL indexing (Task 5.4) | `ccd359718` | IL entry takes index 1; build and re-import agree on the commitment |
 | Hegotá requires Amsterdam | `0a1ccaed8`, `2a2aab360` | `validate_fork_schedule` at genesis load; 40 tests had been running Hegotá with Amsterdam off |
 | Phase 5 docs + V5 guard (Tasks 5.5/5.6) | `0234ae116` | frame txs recorded as IL-eligible; `newPayloadV5`'s Hegotá rejection tested |
-| Divergence ledger (Tasks 6.1-6.3) | | `docs/hegota-testnet-divergences.md`; pins bumped; `RECENT_ROOT_CODE` verified byte-identical to `#12131` |
+| Divergence ledger (Tasks 6.1-6.3) | `9c818c484` | `docs/hegota-testnet-divergences.md`; pins bumped; `RECENT_ROOT_CODE` verified byte-identical to `#12131` |
+| EIP-8369 VERIFY budgets | `b2090f668` | `2**20`, not derived; this chain runs at 200M, where the derivation was ~3x |
+| Canonical paymaster (Task 6.4) | | `#12041`'s 355-byte runtime hash pinned; the trace exemption and the pending-cap exemption both fire now |
 
 ### Not complete
 
@@ -99,7 +101,7 @@ passed / 0 failed**, `cargo test -p ethrex-rpc --lib` is 122 passed, and
   Tasks 6.1-6.3 are closed: no core EIP has moved normatively since the pins (EIP-8141
   and EIP-7805 are byte-identical, EIP-8250 and EIP-8272 gained one Abstract sentence
   each), all ten upstream PRs are still open, and the pins are bumped. Tasks 6.4-6.8 are
-  open. The VERIFY budgets now take EIP-8369's `2**20` rather than deriving from the gas
+  open (6.4 is closed). The VERIFY budgets now take EIP-8369's `2**20` rather than deriving from the gas
   limit: the derivation's "within 11%" justification assumed a 60M block, and this
   testnet runs at 200M, where it was ~3× the constant and put committee replay at a
   quarter of the block. See the divergence ledger §3.1.
@@ -188,9 +190,9 @@ passed / 0 failed**, `cargo test -p ethrex-rpc --lib` is 122 passed, and
    one file with `cargo test -p ef_tests-engine --release focil` and reading what the
    fixture expects against what ethrex returns.
 3. Then **Phase 6 Tasks 6.4-6.8**, reading `docs/hegota-testnet-divergences.md` first.
-   6.1-6.3 are done and every consensus-visible row has an action. 6.4 (the EIPs#12041
-   paymaster code hash, which still ships as an `H256::zero()` sentinel) is the largest
-   remaining piece.
+   6.1-6.4 are done and every consensus-visible row has an action. 6.5 and 6.6 (the
+   EIPs#12026 / EIPs#12113 BAL and warm-set clauses, and the EIP-8272 BAL read record)
+   are what remain before the 6.7 sweep.
 4. Do **not** start Phases 7-9 (genesis, publication, install) before Phase 6. Bringing
    up a testnet whose ledger is open just means finding the split with a second client
    attached.
@@ -974,7 +976,7 @@ churns and training data is stale.
       solvency; EIPs#12113 initial `accessed_addresses` set; EIPs#12026 floor
       repricing, signature validation and `frame.value` gas; EIPs#12061 frame receipt
       has no transaction-level status; EIPs#12110 VOPS profiles for FOCIL eligibility.
-- [ ] Task 6.4: Resolve EIPs#12041 concretely. Replace
+- [x] Task 6.4: Resolve EIPs#12041 concretely. Replace
       `crates/blockchain/mempool.rs:63`'s `FRAME_CANONICAL_PAYMASTER_CODE_HASH =
       H256::zero()` sentinel with the code hash the PR pins, delete the
       `== H256::zero()` fallback branch at `crates/blockchain/blockchain.rs:3825`, and

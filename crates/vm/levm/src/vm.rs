@@ -2852,8 +2852,8 @@ impl<'a> VM<'a> {
     /// `sender` with the prefix's `deploy_index`, runs the prefix via
     /// [`VM::simulate_validation_prefix`], and returns the raw simulation
     /// result. Does NOT charge or refund gas. `canonical_paymaster_pay_frame`
-    /// is the index of a canonical paymaster's pay frame (always `None` today,
-    /// OQ1); when set, the access-restriction skip fires for that frame.
+    /// is the index of a canonical paymaster's pay frame; when set, the
+    /// access-restriction skip fires for that frame.
     pub fn run_frame_validation_prefix(
         &mut self,
         frame_indices: &[usize],
