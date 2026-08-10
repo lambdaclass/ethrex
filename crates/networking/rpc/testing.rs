@@ -26,6 +26,9 @@ pub struct BuildBlockV1Request {
     /// `slotNumber` from the payload attributes (EIP-7843). `None` when omitted;
     /// only applied to the built header when Amsterdam is active.
     pub slot_number: Option<u64>,
+    /// `targetGasLimit` from the payload attributes (present from Amsterdam
+    /// onwards). Overrides the node's static gas ceiling when provided.
+    pub target_gas_limit: Option<u64>,
 }
 
 /// Decodes a `0x`-prefixed hex string JSON value into raw bytes.
@@ -40,11 +43,11 @@ fn decode_hex_value(value: &Value) -> Result<Bytes, RpcErr> {
 }
 
 /// Decodes a `0x`-prefixed hex string JSON value into a `u64`.
-fn decode_hex_u64(value: &Value) -> Result<u64, RpcErr> {
+fn decode_hex_u64(value: &Value, field: &str) -> Result<u64, RpcErr> {
     let str_data = serde_json::from_value::<String>(value.clone())?;
     let str_data = str_data.strip_prefix("0x").unwrap_or(&str_data);
     u64::from_str_radix(str_data, 16)
-        .map_err(|err| RpcErr::BadParams(format!("invalid slotNumber: {err}")))
+        .map_err(|err| RpcErr::BadParams(format!("invalid {field}: {err}")))
 }
 
 fn decode_transactions(value: &Value) -> Result<Option<Vec<Transaction>>, RpcErr> {
@@ -94,10 +97,14 @@ impl RpcHandler for BuildBlockV1Request {
                 extra_data.len()
             )));
         }
-        // `PayloadAttributesV3` has no `slotNumber`, so read it from the raw
-        // attributes object (EIP-7843, present from Amsterdam onwards).
+        // `PayloadAttributesV3` has no `slotNumber` or `targetGasLimit`, so read
+        // them from the raw attributes object (present from Amsterdam onwards).
         let slot_number = match params[1].get("slotNumber") {
-            Some(value) if !value.is_null() => Some(decode_hex_u64(value)?),
+            Some(value) if !value.is_null() => Some(decode_hex_u64(value, "slotNumber")?),
+            _ => None,
+        };
+        let target_gas_limit = match params[1].get("targetGasLimit") {
+            Some(value) if !value.is_null() => Some(decode_hex_u64(value, "targetGasLimit")?),
             _ => None,
         };
 
@@ -107,6 +114,7 @@ impl RpcHandler for BuildBlockV1Request {
             transactions,
             extra_data,
             slot_number,
+            target_gas_limit,
         })
     }
 
@@ -153,7 +161,7 @@ impl RpcHandler for BuildBlockV1Request {
             slot_number,
             version: 3,
             elasticity_multiplier: ELASTICITY_MULTIPLIER,
-            gas_ceil: context.gas_ceil,
+            gas_ceil: self.target_gas_limit.unwrap_or(context.gas_ceil),
         };
 
         let payload = match create_payload(&args, &context.storage, self.extra_data.clone()) {
@@ -253,6 +261,7 @@ mod tests {
         assert_eq!(empty_req.transactions.as_ref().unwrap().len(), 0);
         assert!(empty_req.extra_data.is_empty());
         assert!(empty_req.slot_number.is_none());
+        assert!(empty_req.target_gas_limit.is_none());
     }
 
     #[test]
@@ -261,6 +270,14 @@ mod tests {
         params[1]["slotNumber"] = json!("0x2a");
         let req = BuildBlockV1Request::parse(&Some(params)).unwrap();
         assert_eq!(req.slot_number, Some(0x2a));
+    }
+
+    #[test]
+    fn parse_reads_target_gas_limit_from_attributes() {
+        let mut params = build_params(H256::zero(), 0x10, json!([])).unwrap();
+        params[1]["targetGasLimit"] = json!("0x1c9c380");
+        let req = BuildBlockV1Request::parse(&Some(params)).unwrap();
+        assert_eq!(req.target_gas_limit, Some(0x1c9c380));
     }
 
     #[tokio::test]
@@ -296,5 +313,31 @@ mod tests {
         assert_eq!(payload["blockNumber"], json!("0x1"));
         assert_eq!(payload["transactions"], json!([]));
         assert_eq!(response["shouldOverrideBuilder"], json!(false));
+    }
+
+    #[tokio::test]
+    async fn built_block_honors_target_gas_limit() {
+        let store = setup_store().await;
+        let context = default_context_with_storage(store).await;
+        let (head, timestamp) = head_hash_and_timestamp(&context).await;
+        let parent_gas_limit = context
+            .storage
+            .get_block_header_by_hash(head)
+            .unwrap()
+            .unwrap()
+            .gas_limit;
+
+        let mut params = build_params(head, timestamp + 12, json!([])).unwrap();
+        params[1]["targetGasLimit"] = json!(format!("{parent_gas_limit:#x}"));
+        let response = BuildBlockV1Request::parse(&Some(params))
+            .unwrap()
+            .handle(context)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response["executionPayload"]["gasLimit"],
+            json!(format!("{parent_gas_limit:#x}"))
+        );
     }
 }
