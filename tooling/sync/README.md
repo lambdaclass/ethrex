@@ -364,6 +364,18 @@ to accept them alongside the default results directory, because folding a 2k-blo
 into a series of 21.6k-block ones would drag the trailing median that the comparison rests
 on.
 
+### What is being measured
+
+The compose runs `ghcr.io/lambdaclass/ethrex:main` with `pull_policy: always`, so each node
+start re-pulls the latest published build: the series tracks `main` over time rather than a
+pinned binary. That is the intent, but it means a sample is only interpretable alongside the
+build that produced it, which is why every result records `measured.revision` (the ethrex
+commit from the image's `org.opencontainers.image.revision` label) separately from
+`tooling_commit`.
+
+Point `ETHREX_IMAGE` at a local tag with `ETHREX_PULL_POLICY=never` to measure something
+else — that is how the manual A/B tool (#7112) will pin its refs.
+
 ### Storage layout
 
 Everything lives under `BENCH_DATA_ROOT` (default `/mnt/raid10/fullsync-bench`):
@@ -394,7 +406,9 @@ Each cycle writes one JSON per leg under `<results-dir>/<network>/`:
 | `blocks_per_s_mean` | likely the better primary on light testnet blocks |
 | `phase_ms_per_mgas` (`validate`/`exec`/`merkle`/`store`) | catches phase-localised regressions invisible end-to-end |
 | `state_regen_seconds` | restart cost; sensitive to commit cadence |
-| `wall_seconds`, `status`, `reached_block`, `commit`, `host` | validity and attribution |
+| `wall_seconds`, `status`, `reached_block`, `host` | validity |
+| `measured` (image, image_id, revision) | **which ethrex build produced this sample** |
+| `tooling_commit` | commit of the benchmarking code itself |
 
 Wall clock is deliberately *not* the throughput metric: it includes startup state
 regeneration, which is a real signal but a separate one, so it is reported on its own.

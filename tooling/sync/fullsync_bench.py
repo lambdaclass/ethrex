@@ -465,7 +465,8 @@ def cycle(net, state_root, results_dir):
                      timeout_seconds=_leg_timeout(cfg["measure_blocks"]))
     result["kind"] = "measure"
     result["base_block"] = base_head
-    result["commit"] = git_commit()
+    result["measured"] = measured_binary()
+    result["tooling_commit"] = tooling_commit()
     result["host"] = socket.gethostname()
     result["timestamp"] = stamp
     _write_result(results_dir, net, stamp, result)
@@ -577,12 +578,34 @@ def _leg_timeout(blocks):
     return max(3600, int(blocks / 1.0))
 
 
-def git_commit():
+def tooling_commit():
+    """Commit of this benchmarking code — not the code being measured."""
     try:
         return subprocess.check_output(["git", "rev-parse", "--short", "HEAD"],
                                        text=True).strip()
     except subprocess.CalledProcessError:
         return None
+
+
+def measured_binary():
+    """Identify the ethrex build this leg actually ran.
+
+    The compose pulls `:main` on every node start, so the binary moves underneath the series
+    — which is the point, but it means a result is only useful if it says *which* build
+    produced it. Recording this repo's commit instead (as this once did) labels every sample
+    with a tooling revision that barely changes, so a step in the series could not be traced
+    to the change that caused it.
+    """
+    image = os.environ.get("ETHREX_IMAGE", "ghcr.io/lambdaclass/ethrex:main")
+    fmt = '{{.Id}} {{index .Config.Labels "org.opencontainers.image.revision"}}'
+    out = run(["docker", "image", "inspect", image, "--format", fmt],
+              check=False, capture=True)
+    parts = (out.stdout or "").strip().split()
+    return {
+        "image": image,
+        "image_id": parts[0] if parts else None,
+        "revision": parts[1] if len(parts) > 1 else None,
+    }
 
 
 def _write_result(results_dir, net, stamp, result):
