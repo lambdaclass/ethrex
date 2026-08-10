@@ -7,8 +7,8 @@
 //!
 //! Spec: `EIPS/eip-8312.md` (Draft) at commit
 //! `a5da3f608c6dfbf353bea264054d99fc164ab10c`. Divergences from that text are
-//! recorded in `docs/eip-8312.md`; the one visible here is the frame-mode number
-//! (the spec's `UTXO_MODE = 3` is EIP-7906's POST_TX in this client, so UTXO
+//! recorded in `docs/eip-8312.md`; the one visible here is the frame-mode
+//! number (the spec's `UTXO_MODE = 3` is unassigned in this client, so UTXO
 //! takes mode 5 — see [`crate::types::FrameMode`]).
 //!
 //! This module holds only what is decidable from transaction bytes: the wire

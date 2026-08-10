@@ -1,6 +1,6 @@
 # Hegotá devnet branch — caveats
 
-`hegota-devnet` is the integration branch that combines the EIP-8141 frame-transaction work with its extensions for multi-client interop testing. It is **not** an upstream-clean branch: it carries deliberate divergences from the (still-draft) EIPs, listed here. Each standalone EIP PR (`eip-8250`, `eip-8272`, `eip-7906`) targets `eip-8141-1` and is upstream-faithful; the divergences below exist only to make the combined devnet build and run.
+`hegota-devnet` is the integration branch that combines the EIP-8141 frame-transaction work with its extensions for multi-client interop testing. It is **not** an upstream-clean branch: it carries deliberate divergences from the (still-draft) EIPs, listed here. Each standalone EIP PR (`eip-8250`, `eip-8272`) targets `eip-8141-1` and is upstream-faithful; the divergences below exist only to make the combined devnet build and run.
 
 ## Composition
 
@@ -8,7 +8,6 @@
 hegota-devnet = main       (EIP-8141 frame transactions)
               + eip-8250   (Keyed Nonces)
               + eip-8272   (Recent Roots)
-              + eip-7906   (Tx Assertions, opcodes renumbered)
               + eip-8312   (UTXO Frames, own activation timestamp)
               + eip-7805   (FOCIL inclusion lists)
               + devnet-only config, docs, scripts and the
@@ -21,7 +20,7 @@ of it, plus the devnet infrastructure and the ethrex-only extensions.
 **Not yet included:**
 - **EIP-8288** (PQ sig + STARK aggregation) — deferred (upstream-blocked: no Lean leanSTARK/leanSPHINCS tooling; `AGGREGATED_VK`/hash TBD).
 
-EIP-8141/8250/8272/7906 and EIP-7805 all activate together under the single
+EIP-8141/8250/8272 and EIP-7805 all activate together under the single
 `Fork::Hegota` / `hegota_time`, which is what the consensus layer calls `heze`.
 EIP-8312 carries its own timestamp and is inert until a chain opts in.
 
@@ -32,11 +31,6 @@ EIP-8312 carries its own timestamp and is inert until a chain opts in.
 | `0xAA` | `APPROVE` | 8141 | |
 | `0xB0`–`0xB4` | `TXPARAM`/`FRAMEDATALOAD`/`FRAMEDATACOPY`/`FRAMEPARAM`/`SIGPARAM` | 8141 | |
 | `0xB5` | `RECENTROOTREFLOAD` | 8272 | spec-conformant; EIP-8272 assigns `0xB5` itself, to avoid the `SIGPARAM` collision |
-| `0xB6` | `TXTRACE` | 7906 | ethrex allocation; EIP-7906 assigns no opcode bytes |
-| `0xB7` | `EVENTDATACOPY` | 7906 | as above |
-| `0xB8` | `TXDIFF` | 7906 | as above |
-
-EIP-7906's Constants table carries only `TXTRACE_GAS_COST`, `EVENTDATACOPY_GAS_COST` and `POST_TX`, so `0xB6`/`0xB7`/`0xB8` are ethrex's allocation, chosen to leave `0xB5` to EIP-8272. The standalone `eip-7906` branch uses the same three bytes, so the two agree; `test/tests/levm/eip7906_tests.rs` and `crates/vm/levm/src/opcode_handlers/tx_trace.rs` carry them. Flag upstream so the 8141-family drafts settle non-overlapping bytes.
 
 ## Per-EIP divergences
 
@@ -48,14 +42,9 @@ EIP-7906's Constants table carries only `TXTRACE_GAS_COST`, `EVENTDATACOPY_GAS_C
 ### EIP-8272 (Recent Roots) — see `docs/eip-8272.md`
 - No divergences remain. `RECENTROOTREFLOAD` at `0xB5`, TXPARAM `0x0F` and `RECENT_ROOT_ADDRESS` at `0x…8272` all match the current spec, and `RECENT_ROOT_CODE` is the specified 144-byte predeploy rather than a native VM write. The predeploy replaced a flat `RECENT_ROOT_WRITE_GAS` that skipped the EIP-8037 state-gas charge on the created slot, so the same write cost 38 064 gas here against 127 196 on a client executing the code — a consensus split that is now closed. Its two `PUSH32` immediates are `keccak256("RECENT_ROOT_ENTRY")` and `keccak256("RECENT_ROOT_STORAGE")`, the same domains ethrex already derived, so the hash layout is unchanged and only gas and call semantics moved.
 
-### EIP-7906 (Tx Assertions)
-- Opcodes renumbered as above. Behaviour otherwise unchanged.
-- Frame mode stays at **3**; EIP-8312 takes 5 rather than renumbering it (see below).
-
 ### EIP-8312 (UTXO Frames) — see `docs/eip-8312.md`
-- Frame mode **5** (spec `3`, already taken by EIP-7906 upstream; mode 4 stays reserved for EIP-8288 DEP_VERIFY).
+- Frame mode **5** (spec `3`; ethrex leaves 3 unassigned and reserves 4 for EIP-8288's deferred DEP_VERIFY).
 - **Does not activate at `Fork::Hegota`**: its fork assignment is undecided upstream, so it gets its own `utxoFramesTime` chain-config timestamp. Absent by default, so the whole surface is inert until a chain opts in — and a future timestamp keeps the upgrade state-preserving (no new genesis).
-- A UTXO frame and a POST_TX frame may not share a transaction (v1 composition rule; neither upstream draft defines it).
 - `payer` is length-tested, never compared to numeric zero — closes a consensus-split ambiguity in the spec's pseudocode.
 
 ### EIP-7805 (FOCIL) — see `crates/blockchain/inclusion_list_{builder,validator}.rs`
@@ -90,7 +79,6 @@ point of the pin is to make "what changed since we aligned" an exact question.
 eip-8141  4a9ad32cf2  core      2026-07-30
 eip-8250  81b976ac01  core      2026-08-03
 eip-8272  d8636a330d  core      2026-08-03
-eip-7906  ab022ace2a  core      2026-07-29
 eip-8312  a5da3f608c  core      2026-08-05  nerolation/EIPs@nerolation/utxo-frame
 eip-7805  9a345f96c2  focil     2026-02-20
 eip-8369  ad8571028a  focil     2026-08-07  soispoke/EIPs@codex/vops-profiles-focil
@@ -118,7 +106,7 @@ FOCIL work on the `focil` branch must target.
 
 ## Upstream items
 
-- **EIP-8312 vs EIP-7906 frame-mode collision** (both drafts claim mode 3). Needs a shared frame-mode registry in EIP-8141; raised with the EIP-8312 authors along with a set of spec-text findings (see the change's planning notes).
+- EIP-8312 specifies `UTXO_MODE = 3`; ethrex places it at 5 and leaves 3 unassigned instead. Needs a shared frame-mode registry in EIP-8141; raised with the EIP-8312 authors along with a set of spec-text findings (see the change's planning notes).
 
 - EIP-8272 TXPARAM `0x0D → 0x0F` fix PR (drafted; from `lambdaclass/EIPs`).
 - EIP-8250/8141 TXPARAM `0x0B` conflict (raise for an authoritative registry).

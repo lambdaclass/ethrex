@@ -702,7 +702,7 @@ fn max_gas_takes_the_calldata_floor_when_it_exceeds_the_standard_limit() {
 // EIP-8312 frame-mode allocation and activation gate
 //
 // The frame-mode table is unconditional: {0 DEFAULT, 1 VERIFY, 2 SENDER,
-// 3 POST_TX (EIP-7906), 4 reserved (EIP-8288 DEP_VERIFY), 5 UTXO (EIP-8312)}.
+// 3 unassigned, 4 reserved (EIP-8288 DEP_VERIFY), 5 UTXO (EIP-8312)}.
 // Only mode 5's *admissibility* is gated, on the EIP-8312 activation predicate,
 // so that a chain adopting EIP-8312 at a future timestamp re-executes all of its
 // existing blocks identically.
@@ -721,34 +721,21 @@ fn utxo_frame() -> Frame {
     }
 }
 
-fn post_tx_frame() -> Frame {
-    Frame {
-        mode: FrameMode::PostTx as u8,
-        flags: 0x00,
-        target: None,
-        gas_limit: 10_000,
-        value: U256::zero(),
-        data: Bytes::new(),
-    }
-}
-
 #[test]
 fn frame_mode_wire_bytes_are_pinned() {
     // These byte values are consensus-visible and covered by the transaction's
-    // signature, so pin them: EIP-7906 POST_TX keeps 3 (it was allocated first
-    // upstream and is already in live use), mode 4 stays reserved for EIP-8288's
-    // deferred DEP_VERIFY, and EIP-8312 UTXO takes 5 — a documented deviation
-    // from EIP-8312's own `UTXO_MODE = 3`.
+    // signature, so pin them: mode 3 is unassigned, mode 4 stays reserved for
+    // EIP-8288's deferred DEP_VERIFY, and EIP-8312 UTXO takes 5 — a documented
+    // deviation from EIP-8312's own `UTXO_MODE = 3`.
     assert_eq!(FrameMode::Default as u8, 0);
     assert_eq!(FrameMode::Verify as u8, 1);
     assert_eq!(FrameMode::Sender as u8, 2);
-    assert_eq!(FrameMode::PostTx as u8, 3);
     assert_eq!(FrameMode::Utxo as u8, 5);
 
     assert_eq!(FrameMode::from_u8(0), Some(FrameMode::Default));
     assert_eq!(FrameMode::from_u8(1), Some(FrameMode::Verify));
     assert_eq!(FrameMode::from_u8(2), Some(FrameMode::Sender));
-    assert_eq!(FrameMode::from_u8(3), Some(FrameMode::PostTx));
+    assert_eq!(FrameMode::from_u8(3), None, "mode 3 is unassigned");
     assert_eq!(FrameMode::from_u8(4), None, "mode 4 reserved for EIP-8288");
     assert_eq!(FrameMode::from_u8(5), Some(FrameMode::Utxo));
     for reserved in 6u8..=255 {
@@ -800,58 +787,23 @@ fn utxo_frame_rejected_before_activation_and_accepted_after() {
 }
 
 #[test]
-fn mode_four_is_reserved_regardless_of_activation() {
-    // EIP-8288's DEP_VERIFY is deferred upstream, so mode 4 is invalid on both
-    // sides of the EIP-8312 boundary.
-    let frame = Frame {
-        mode: 4,
-        ..deploy_frame()
-    };
-    let tx = base_frame_tx_with_frames(vec![self_verify_frame(), frame]);
-    for active in [false, true] {
-        let err = tx.validate_static_constraints(active).unwrap_err();
-        assert!(
-            err.contains("reserved execution mode 4"),
-            "expected reserved-mode error (active={active}), got: {err}"
-        );
+fn modes_three_and_four_are_reserved_regardless_of_activation() {
+    // Mode 3 is unassigned and EIP-8288's DEP_VERIFY (mode 4) is deferred
+    // upstream, so both are invalid on both sides of the EIP-8312 boundary.
+    for mode in [3u8, 4] {
+        let frame = Frame {
+            mode,
+            ..deploy_frame()
+        };
+        let tx = base_frame_tx_with_frames(vec![self_verify_frame(), frame]);
+        for active in [false, true] {
+            let err = tx.validate_static_constraints(active).unwrap_err();
+            assert!(
+                err.contains(&format!("reserved execution mode {mode}")),
+                "expected reserved-mode error (mode={mode}, active={active}), got: {err}"
+            );
+        }
     }
-}
-
-#[test]
-fn post_tx_frames_are_unaffected_by_utxo_activation() {
-    // POST_TX keeps mode 3 on both sides of activation: the EIP-8312 rollout is
-    // additive, so no already-signed POST_TX transaction and no POST_TX-producing
-    // tool changes meaning at the boundary.
-    let tx = base_frame_tx_with_frames(vec![self_verify_frame(), post_tx_frame()]);
-    assert!(tx.validate_static_constraints(false).is_ok());
-    assert!(tx.validate_static_constraints(true).is_ok());
-}
-
-#[test]
-fn utxo_and_post_tx_must_not_share_a_transaction() {
-    // v1 composition rule: EIP-7906's whole-body revert cannot be reconciled
-    // with EIP-8312's journal-external spent bits. Rejected in both frame
-    // orders — the POST_TX trailing-suffix rule covers one direction and this
-    // ban covers the other.
-    let utxo_then_post_tx =
-        base_frame_tx_with_frames(vec![self_verify_frame(), utxo_frame(), post_tx_frame()]);
-    let err = utxo_then_post_tx
-        .validate_static_constraints(true)
-        .unwrap_err();
-    assert!(
-        err.contains("must not share a transaction") || err.contains("trailing suffix"),
-        "expected a co-residency rejection, got: {err}"
-    );
-
-    let post_tx_then_utxo =
-        base_frame_tx_with_frames(vec![self_verify_frame(), post_tx_frame(), utxo_frame()]);
-    let err = post_tx_then_utxo
-        .validate_static_constraints(true)
-        .unwrap_err();
-    assert!(
-        err.contains("must not share a transaction") || err.contains("trailing suffix"),
-        "expected a co-residency rejection, got: {err}"
-    );
 }
 
 // ---------------------------------------------------------------------------

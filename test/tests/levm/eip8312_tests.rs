@@ -525,14 +525,14 @@ fn install_records_code_and_nonce_in_the_block_access_list() {
 //
 // The mechanism is ordering, not a special write: a staged write is absent from
 // the cache while the frame loop runs, so every scope-revert (per-frame failure,
-// atomic-batch unroll, EIP-7906 body rewind) restores a cache that never
-// contained it. The flush then applies it through the ordinary journaled path,
-// which is what keeps it reversible by `undo_last_tx` and recorded in the BAL.
+// atomic-batch unroll) restores a cache that never contained it. The flush then
+// applies it through the ordinary journaled path, which is what keeps it
+// reversible by `undo_last_tx` and recorded in the BAL.
 //
 // These tests exercise that interaction against the real `restore_cache_state`
 // and the real BAL recorder rather than a paraphrase of them. The end-to-end
-// matrix (spent bits staged by actual UTXO frames inside a batch and a POST_TX
-// body) arrives with the frame handler.
+// matrix (spent bits staged by actual UTXO frames inside a batch) arrives with
+// the frame handler.
 
 use ethrex_common::types::{spent_bit_location, utxo_vault as vault_addr};
 use ethrex_levm::utils::restore_cache_state;
@@ -650,8 +650,8 @@ fn a_staged_write_is_invisible_to_the_cache_until_flushed() {
 
 #[test]
 fn a_cache_restore_cannot_undo_a_staged_write() {
-    // This is the durability property, tested against the real restore path that
-    // an atomic-batch unroll and a POST_TX body rewind both use.
+    // This is the durability property, tested against the real restore path
+    // that an atomic-batch unroll uses.
     let (slot, word) = spent_word_for(3);
     let mut db = with_vm(false, |vm| {
         // Capture a backup exactly as a frame/batch/body scope entry does, then

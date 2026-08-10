@@ -332,7 +332,7 @@ pub struct ChainConfig {
     ///
     /// EIP-8312 is a Draft whose fork assignment is undecided upstream, so it
     /// gets its own activation timestamp rather than riding `Fork::Hegota` like
-    /// the rest of the frame-transaction family (EIP-8141/8250/8272/7906). This
+    /// the rest of the frame-transaction family (EIP-8141/8250/8272). This
     /// also makes a state-preserving in-place upgrade possible: a FUTURE
     /// timestamp leaves every already-produced block re-executing identically
     /// (no vault account, no openings-root writes, no UTXO frame mode), which is

@@ -228,59 +228,6 @@ pub struct GeneralizedDatabase {
     /// Optional BAL cursor for lazy per-read prefix materialization.
     /// When set, account loads and storage reads consult the BAL before hitting the store.
     pub lazy_bal: Option<LazyBalCursor>,
-    /// EIP-7906 transaction prestate: the value each account/slot held when the
-    /// transaction began, captured on first touch. `None` when the transaction
-    /// cannot execute the EIP-7906 introspection opcodes.
-    ///
-    /// Distinct from `initial_accounts_state`, which is an `AccountUpdates`
-    /// baseline whose granularity is block- or flush-scoped depending on the
-    /// execution path. TXTRACE / TXDIFF need the *transaction* prestate, and it
-    /// must be identical in every path (sequential build, sequential import,
-    /// parallel BAL-validating import), so it is maintained independently of
-    /// `skip_initial_tracking`.
-    pub tx_prestate: Option<CacheDB>,
-}
-
-/// EIP-7906: record `account` as `address`'s transaction-prestate entry.
-///
-/// First touch wins: a later touch may observe a value this transaction itself
-/// wrote, so an existing entry is never overwritten. Storage is captured
-/// slot-by-slot by [`capture_prestate_slot`] instead of being cloned wholesale,
-/// since the live storage map can carry slots this transaction never touches.
-fn capture_prestate_account(
-    tx_prestate: &mut Option<CacheDB>,
-    address: Address,
-    account: &LevmAccount,
-) {
-    if let Some(prestate) = tx_prestate {
-        prestate
-            .entry(address)
-            .or_insert_with(|| account.clone_without_storage());
-    }
-}
-
-/// EIP-7906: record `value` as the transaction-prestate value of `address`'s
-/// `key` slot. First touch wins, as in [`capture_prestate_account`].
-///
-/// `live` seeds the account entry when a slot is the first thing this transaction
-/// resolves on that account. Any account this transaction has already mutated was
-/// resolved through `load_account` first, which captured it, so the seed can only
-/// ever run on an account whose live info still equals its prestate info.
-fn capture_prestate_slot(
-    tx_prestate: &mut Option<CacheDB>,
-    address: Address,
-    key: H256,
-    value: U256,
-    live: &LevmAccount,
-) {
-    if let Some(prestate) = tx_prestate {
-        prestate
-            .entry(address)
-            .or_insert_with(|| live.clone_without_storage())
-            .storage
-            .entry(key)
-            .or_insert(value);
-    }
 }
 
 impl GeneralizedDatabase {
@@ -297,7 +244,6 @@ impl GeneralizedDatabase {
             skip_initial_tracking: false,
             accessed_accounts: None,
             lazy_bal: None,
-            tx_prestate: None,
         }
     }
 
@@ -331,7 +277,6 @@ impl GeneralizedDatabase {
             skip_initial_tracking: true,
             accessed_accounts: None,
             lazy_bal: None,
-            tx_prestate: None,
         }
     }
 
@@ -391,7 +336,6 @@ impl GeneralizedDatabase {
             skip_initial_tracking: false,
             accessed_accounts: None,
             lazy_bal: None,
-            tx_prestate: None,
         }
     }
 
@@ -403,13 +347,7 @@ impl GeneralizedDatabase {
             tracker.insert(address);
         }
 
-        if let Some(account) = self.current_accounts_state.get(&address) {
-            // A cache hit is not necessarily a touch by THIS transaction:
-            // `current_accounts_state` spans the whole block while building and up
-            // to a flush boundary while importing sequentially, so an account a
-            // previous transaction left here is being resolved for the first time
-            // now, and its live value is this transaction's prestate.
-            capture_prestate_account(&mut self.tx_prestate, address, account);
+        if self.current_accounts_state.contains_key(&address) {
             return self
                 .current_accounts_state
                 .get_mut(&address)
@@ -437,7 +375,6 @@ impl GeneralizedDatabase {
                 AccountStatus::Destroyed | AccountStatus::DestroyedModified => account.clone(),
                 _ => account.clone_without_storage(),
             };
-            capture_prestate_account(&mut self.tx_prestate, address, &clone);
             return Ok(self.current_accounts_state.entry(address).or_insert(clone));
         }
 
@@ -483,10 +420,7 @@ impl GeneralizedDatabase {
             self.lazy_bal = cursor_opt;
             if let Some(result) = helper_result {
                 result.map_err(|e| InternalError::Custom(format!("lazy_bal seed: {e}")))?;
-                if let Some(account) = self.current_accounts_state.get(&address) {
-                    // The BAL prefix materialized here is the state as of this
-                    // transaction's `bal_index`, i.e. its prestate (EIP-7906).
-                    capture_prestate_account(&mut self.tx_prestate, address, account);
+                if self.current_accounts_state.contains_key(&address) {
                     return self
                         .current_accounts_state
                         .get_mut(&address)
@@ -503,7 +437,6 @@ impl GeneralizedDatabase {
             if !self.skip_initial_tracking {
                 self.initial_accounts_state.insert(address, account.clone());
             }
-            capture_prestate_account(&mut self.tx_prestate, address, &account);
             return Ok(self
                 .current_accounts_state
                 .entry(address)
@@ -516,7 +449,6 @@ impl GeneralizedDatabase {
         if !self.skip_initial_tracking {
             self.initial_accounts_state.insert(address, account.clone());
         }
-        capture_prestate_account(&mut self.tx_prestate, address, &account);
         Ok(self
             .current_accounts_state
             .entry(address)
@@ -636,13 +568,6 @@ impl GeneralizedDatabase {
         key: H256,
     ) -> Result<U256, InternalError> {
         let value = self.store.get_storage_value(address, key)?;
-        // EIP-7906: a slot resolved from the store was never written in this block,
-        // so its stored value is this transaction's prestate. Captured before the
-        // `skip_initial_tracking` early return: the prestate map is maintained in
-        // every execution path, including the parallel per-tx ones.
-        if let Some(live) = self.current_accounts_state.get(&address) {
-            capture_prestate_slot(&mut self.tx_prestate, address, key, value, live);
-        }
         if self.skip_initial_tracking {
             return Ok(value);
         }
@@ -1131,11 +1056,6 @@ impl<'a> VM<'a> {
     ) -> Result<U256, InternalError> {
         if let Some(account) = self.db.current_accounts_state.get(&address) {
             if let Some(value) = account.storage.get(&key) {
-                // As in `load_account`: a cached slot may have been left here by a
-                // previous transaction (the cache is block- or flush-scoped), in
-                // which case this is its first resolution in this transaction and
-                // the cached value is the EIP-7906 prestate.
-                capture_prestate_slot(&mut self.db.tx_prestate, address, key, *value, account);
                 return Ok(*value);
             }
             // If the account was destroyed and then created then we cannot rely on the DB to obtain storage values
@@ -1161,11 +1081,6 @@ impl<'a> VM<'a> {
         });
         #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
         if let Some(value) = bal_hit {
-            // The BAL prefix value at this transaction's `bal_index` is its
-            // EIP-7906 prestate for the slot.
-            if let Some(live) = self.db.current_accounts_state.get(&address) {
-                capture_prestate_slot(&mut self.db.tx_prestate, address, key, value, live);
-            }
             let account = self
                 .db
                 .current_accounts_state
@@ -1190,11 +1105,6 @@ impl<'a> VM<'a> {
             .and_then(|account| account.storage.get(&key))
             .copied()
         {
-            // `initial` holds the slot's committed in-block value, which precedes
-            // this transaction, so it is the EIP-7906 prestate.
-            if let Some(live) = self.db.current_accounts_state.get(&address) {
-                capture_prestate_slot(&mut self.db.tx_prestate, address, key, value, live);
-            }
             let account = self
                 .db
                 .current_accounts_state

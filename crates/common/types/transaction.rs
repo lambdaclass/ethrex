@@ -1899,16 +1899,12 @@ pub struct FeeTokenTransaction {
 
 /// EIP-8141 Frame Transaction mode.
 ///
-/// Mode-number note: upstream EIP-8312 specifies `UTXO_MODE = 3`, which upstream
-/// EIP-7906 had already taken for POST_TX. ethrex keeps POST_TX at 3 (upstream
-/// EIP-7906, already live) and places UTXO at 5, leaving 4 reserved for
-/// EIP-8288's deferred DEP_VERIFY. Rationale: EIP-8312 activates on its own
-/// timestamp, so a pre-activation window where mode 3 means POST_TX exists on
-/// every chain; renumbering POST_TX at activation would make mode resolution
-/// depend on the activation era at every consumer and would break already-signed
-/// POST_TX transactions and tooling. Recorded as a divergence in
-/// docs/eip-8312.md, and raised upstream as the frame-mode collision (the two
-/// drafts need a shared mode registry in EIP-8141).
+/// Mode 3 is unassigned and mode 4 is reserved for EIP-8288's deferred
+/// DEP_VERIFY. EIP-8312 places UTXO at 5 rather than at its own spec's
+/// `UTXO_MODE = 3`, since 3 has carried other meanings on this chain and
+/// leaving it retired avoids any future collision with a wire byte a client
+/// or tool may already treat specially. Recorded as a divergence in
+/// docs/eip-8312.md.
 ///
 /// Mode 5 is only *admissible* from the EIP-8312 activation timestamp; see
 /// `ChainConfig::is_utxo_frames_activated`. Before it, mode 5 is reserved and
@@ -1920,10 +1916,6 @@ pub enum FrameMode {
     Default = 0,
     Verify = 1,
     Sender = 2,
-    /// EIP-7906: `POST_TX` — a STATICCALL-executed trailing-suffix frame whose
-    /// revert reverts the whole tx body. Required context for TXTRACE /
-    /// EVENTDATACOPY / TXDIFF. (Mode 4 stays reserved for EIP-8288 DEP_VERIFY.)
-    PostTx = 3,
     /// EIP-8312: `UTXO` — declares a UTXO spend; executes no EVM code.
     /// Admissible only from the EIP-8312 activation timestamp.
     Utxo = 5,
@@ -1931,7 +1923,7 @@ pub enum FrameMode {
 
 impl FrameMode {
     /// Convert from the lower 8 bits of the mode field.
-    /// Returns `None` for reserved values (4, and 6-255).
+    /// Returns `None` for reserved values (3, 4, and 6-255).
     ///
     /// Note this is a pure wire-byte mapping: mode 5 resolving to
     /// [`FrameMode::Utxo`] does not mean EIP-8312 is active. Callers gate
@@ -1943,8 +1935,7 @@ impl FrameMode {
             0 => Some(FrameMode::Default),
             1 => Some(FrameMode::Verify),
             2 => Some(FrameMode::Sender),
-            3 => Some(FrameMode::PostTx),
-            // 4 reserved: EIP-8288 DEP_VERIFY (deferred).
+            // 3 unassigned, 4 reserved: EIP-8288 DEP_VERIFY (deferred).
             5 => Some(FrameMode::Utxo),
             _ => None,
         }
@@ -2704,30 +2695,9 @@ impl FrameTransaction {
         let mut total_frame_gas: u128 = 0;
         let mut expiry_frame_count: usize = 0;
         let mut utxo_frame_count: usize = 0;
-        // EIP-7906: POST_TX frames must form a contiguous trailing suffix —
-        // once any frame is POST_TX, every later frame must be POST_TX too.
-        let post_tx = FrameMode::PostTx as u8;
-        if let Some(first) = self.frames.iter().position(|f| f.mode == post_tx)
-            && self.frames[first..].iter().any(|f| f.mode != post_tx)
-        {
-            return Err("POST_TX frames must form a contiguous trailing suffix".to_string());
-        }
-        // EIP-8312: a UTXO frame and a POST_TX frame must not share a
-        // transaction (v1 composition rule). EIP-7906's whole-body revert cannot
-        // be reconciled with EIP-8312's journal-external spent bits: rolling the
-        // bits back would violate the EIP-8312 durability rule, while keeping
-        // them set and skipping settlement would strand user value in the vault.
-        // The suffix rule above already forbids a UTXO frame *after* a POST_TX
-        // frame; this covers the reverse order.
-        let utxo = FrameMode::Utxo as u8;
-        if self.frames.iter().any(|f| f.mode == utxo)
-            && self.frames.iter().any(|f| f.mode == post_tx)
-        {
-            return Err("UTXO frames and POST_TX frames must not share a transaction".to_string());
-        }
 
         for (i, frame) in self.frames.iter().enumerate() {
-            // `None` means the mode byte is reserved (4, and 6-255).
+            // `None` means the mode byte is reserved (3, 4, and 6-255).
             let Some(frame_mode) = frame.execution_mode() else {
                 return Err(format!("Frame {i}: reserved execution mode {}", frame.mode));
             };
@@ -2969,8 +2939,8 @@ impl FrameTransaction {
         let is_default = |pos: usize| -> bool {
             // DEFAULT/VERIFY wire bytes are era-independent, and the four
             // recognized prefix shapes are DEFAULT/VERIFY-only by definition —
-            // a UTXO or POST_TX frame in prefix position simply fails to match,
-            // which is the intended "unrecognized prefix" outcome.
+            // a UTXO frame in prefix position simply fails to match, which is
+            // the intended "unrecognized prefix" outcome.
             frame(pos).is_some_and(|f| f.mode == FrameMode::Default as u8)
         };
         let is_verify =

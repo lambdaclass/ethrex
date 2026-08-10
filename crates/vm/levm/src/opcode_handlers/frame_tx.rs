@@ -229,16 +229,6 @@ impl OpcodeHandler for OpApproveHandler {
             .get(ctx.current_frame_index)
             .ok_or(ExceptionalHalt::InvalidOpcode)?;
 
-        // EIP-7906: APPROVE is forbidden inside a POST_TX frame. A POST_TX frame
-        // runs as a read-only assertion (dispatched as a STATICCALL); the spec
-        // disallows all state manipulation there and explicitly forbids APPROVE.
-        // Gate on the POST_TX mode specifically rather than on `is_static`: VERIFY
-        // frames are also static, but APPROVE is precisely how they grant sender /
-        // payer approval, so they must keep working.
-        if current_frame.execution_mode() == Some(FrameMode::PostTx) {
-            return Err(ExceptionalHalt::InvalidOpcode.into());
-        }
-
         let frame_target = current_frame.target.unwrap_or(ctx.tx.sender);
         if vm.current_call_frame.to != frame_target {
             return Err(VMError::RevertOpcode);
@@ -703,8 +693,8 @@ pub fn load_tx_param(
         // sender. `None` (payer not yet resolved — e.g. a validation-prefix
         // VERIFY frame that runs before payment) reads as the zero address,
         // matching the receipt's payer encoding; a committed tx always has a
-        // resolved payer (post-execution invariant), so the SENDER/POST_TX
-        // frames that consume this always observe the real payer.
+        // resolved payer (post-execution invariant), so the frames that run
+        // after the validation prefix always observe the real payer.
         0x11 if payer_txparam_active => Ok(ctx
             .payer_address
             .map(address_to_u256)
@@ -741,10 +731,7 @@ pub fn execute_default_code(
         // ETH transfer to an EOA work (spec §EOA support / Example 1).
         // Consumes no execution gas (the frame's value transfer is handled by
         // the caller's deferred transfer).
-        // EIP-7906: POST_TX default-code is handled like SENDER/DEFAULT.
-        Some(FrameMode::Sender | FrameMode::Default | FrameMode::PostTx) => {
-            Ok((true, 0, Vec::new()))
-        }
+        Some(FrameMode::Sender | FrameMode::Default) => Ok((true, 0, Vec::new())),
         // A UTXO frame never reaches the default-code path: it executes no EVM
         // code and is dispatched natively by the frame loop before any target
         // code resolution. A reserved mode is rejected by static validation.

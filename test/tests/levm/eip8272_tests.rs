@@ -10,7 +10,6 @@ use ethrex_common::types::{
 };
 use ethrex_common::{Address, H256, U256, constants::EMPTY_TRIE_HASH};
 use ethrex_crypto::NativeCrypto;
-use ethrex_vm::system_contracts::RECENT_ROOT_RUNTIME_BYTECODE;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::environment::{EVMConfig, Environment};
 use ethrex_levm::errors::{ExecutionReport, VMError};
@@ -18,6 +17,7 @@ use ethrex_levm::tracing::LevmCallTracer;
 use ethrex_levm::vm::{VM, VMType};
 use ethrex_storage::Store;
 use ethrex_vm::DynVmDatabase;
+use ethrex_vm::system_contracts::RECENT_ROOT_RUNTIME_BYTECODE;
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 

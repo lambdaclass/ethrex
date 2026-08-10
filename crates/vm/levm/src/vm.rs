@@ -2,7 +2,7 @@ use crate::{
     TransientStorage,
     account::LevmAccount,
     call_frame::{CallFrame, Stack},
-    db::gen_db::{CacheDB, GeneralizedDatabase},
+    db::gen_db::GeneralizedDatabase,
     debug::DebugMode,
     environment::Environment,
     errors::{
@@ -141,21 +141,6 @@ impl Substate {
             _ => SIZE_PRECOMPILES_PRE_CANCUN,
         };
         (n >= 1 && u64::from(n) <= max_contiguous) || (n == 0x100 && self.fork >= Fork::Osaka)
-    }
-
-    /// Number of open checkpoints below this substate level.
-    ///
-    /// Callers that open a checkpoint spanning an unknown number of nested ones
-    /// (EIP-7906's body scope encloses per-frame and atomic-batch checkpoints)
-    /// use this to unwind back to their own level instead of assuming a depth.
-    pub fn backup_depth(&self) -> usize {
-        let mut depth: usize = 0;
-        let mut node = self.parent.as_deref();
-        while let Some(parent) = node {
-            depth = depth.saturating_add(1);
-            node = parent.parent.as_deref();
-        }
-        depth
     }
 
     /// Push a checkpoint that can be either reverted or committed. All data up to this point is
@@ -701,9 +686,9 @@ pub struct VM<'a> {
     /// (the same durability EIP-8250 mandates for consumed keyed nonces).
     ///
     /// Durability is achieved by NOT writing through the journal during the frame
-    /// loop: staged writes are invisible to `CallFrameBackup`, to the atomic-batch
-    /// unroll, and to the EIP-7906 body rewind, because at the time those restore
-    /// the cache nothing has been written to it. The flush happens once, after the
+    /// loop: staged writes are invisible to `CallFrameBackup` and to the
+    /// atomic-batch unroll, because at the time those restore the cache nothing
+    /// has been written to it. The flush happens once, after the
     /// loop and after the tx-validity decision, through the ordinary journaled
     /// path — so the writes DO land in `tx_level_backup` and therefore remain
     /// reversible by `undo_last_tx` when a builder drops the transaction, and the
@@ -715,8 +700,8 @@ pub struct VM<'a> {
     /// EIP-8312: state gas owed for durable writes, accumulated separately from
     /// `state_gas_used` and folded into it after the frame loop.
     ///
-    /// The frame loop resets `state_gas_used` to a frame's, batch's, or body's
-    /// entry value when that scope fails, on the premise "the state changes were
+    /// The frame loop resets `state_gas_used` to a frame's or batch's entry
+    /// value when that scope fails, on the premise "the state changes were
     /// reverted, so no state grew". Durable writes falsify that premise: the
     /// state grew and stays grown. Keeping their gas here exempts it from those
     /// resets, so the transaction — and through it the block's EIP-8037 state
@@ -940,26 +925,6 @@ pub fn find_batch_end(frames: &[Frame], failed_idx: usize) -> usize {
         .unwrap_or(failed_idx)
 }
 
-/// EIP-7906: install the transaction prestate map on `db` for `tx`, or clear it.
-///
-/// The map is needed only by transactions that can execute TXTRACE /
-/// EVENTDATACOPY / TXDIFF, i.e. frame transactions carrying a POST_TX frame on a
-/// fork where those opcodes exist; every other transaction leaves it `None` and
-/// pays nothing. Assigning on every VM construction is what scopes the map to a
-/// single transaction: the `None` branch drops the previous transaction's map,
-/// which matters because a `GeneralizedDatabase` outlives one transaction on the
-/// sequential paths.
-fn install_tx_prestate(db: &mut GeneralizedDatabase, tx: &Transaction, fork: Fork) {
-    let reaches_introspection_opcodes = fork >= Fork::Hegota
-        && matches!(tx, Transaction::FrameTransaction(frame_tx)
-            if frame_tx
-                .frames
-                .iter()
-                .any(|frame| frame.execution_mode()
-                    == Some(FrameMode::PostTx)));
-    db.tx_prestate = reaches_introspection_opcodes.then(CacheDB::default);
-}
-
 impl<'a> VM<'a> {
     /// Constructs a VM, allocating a fresh 32 KB root call-frame stack.
     ///
@@ -1080,11 +1045,6 @@ impl<'a> VM<'a> {
         root_memory: Memory,
     ) -> Result<Self, VMError> {
         db.tx_backup = None; // If BackupHook is enabled, it will contain backup at the end of tx execution.
-
-        // Must precede `get_tx_callee` and every other account resolution below, so
-        // that the transaction's first touch of an account or slot is the one the
-        // EIP-7906 prestate records.
-        install_tx_prestate(db, tx, env.config.fork);
 
         let mut substate = Substate::initialize(&env, tx)?;
 
@@ -1648,7 +1608,7 @@ impl<'a> VM<'a> {
 
     /// EIP-8312: stage a durable vault write. Not applied to the cache here —
     /// see [`VM::flush_durable_vault_writes`] for why that is the mechanism that
-    /// makes the write survive frame, batch, and body reverts.
+    /// makes the write survive frame and batch reverts.
     pub fn stage_durable_vault_write(&mut self, slot: H256, value: U256) {
         self.durable_vault_writes.insert(slot, value);
     }
@@ -1658,8 +1618,8 @@ impl<'a> VM<'a> {
     /// been found valid.
     ///
     /// Ordering is the whole design. Every scope-revert the frame loop performs
-    /// (per-frame failure, atomic-batch unroll, EIP-7906 body rewind) restores
-    /// the cache from a backup captured before this point, so it cannot undo a
+    /// (per-frame failure, atomic-batch unroll) restores the cache from a
+    /// backup captured before this point, so it cannot undo a
     /// write that has not been made yet. Conversely, going through
     /// `update_account_storage` here means the write is recorded in the live
     /// call-frame backup, which is absorbed into `tx_level_backup` — so a builder
@@ -1971,40 +1931,6 @@ impl<'a> VM<'a> {
             ..Default::default()
         };
 
-        // EIP-7906: a reverted POST_TX frame reverts the transaction's execution
-        // BODY, while the validation prefix stays committed — the APPROVE gas
-        // payment and a deploy frame's account creation are permanently applied and
-        // the payer is fully charged for the gas consumed. That needs a rollback
-        // accumulator scoped to the body alone, alongside the tx-level one above
-        // (which still covers the whole transaction for a reverted VERIFY frame and
-        // for the `undo_last_tx` path).
-        //
-        // The prefix REGION is frames `0..=max(frame_indices)`, matching the range
-        // `simulate_validation_prefix` runs: interleaved expiry-verifier frames are
-        // transparent to prefix shape matching and so absent from `frame_indices`,
-        // but they sit inside the region and belong to the prefix. A transaction
-        // whose prefix shape is unrecognized cannot be admitted to the mempool; if
-        // one reaches execution anyway it has no prefix worth protecting, so every
-        // frame counts as body and a POST_TX revert undoes all of it.
-        let prefix_end_idx: Option<usize> = frame_tx
-            .validation_prefix()
-            .ok()
-            .and_then(|prefix| prefix.frame_indices.iter().copied().max());
-        let mut body_backup = crate::call_frame::CallFrameBackup::default();
-        // True while the outer call-frame backup holds effects attributable to the
-        // body. Effects accumulate in the outer backup during a frame and are
-        // absorbed at the START of the next one, so this tracks the frame they came
-        // from, not the frame about to run.
-        let mut absorbing_body = false;
-        // Substate depth of the body scope, set when the body opens. The body scope
-        // encloses the per-frame and atomic-batch checkpoints, so unwinding it is
-        // depth-driven rather than a single revert/commit.
-        let mut body_substate_depth: Option<usize> = None;
-        let mut body_logs_start: usize = 0;
-        let mut body_frame_start: usize = 0;
-        let mut state_gas_used_at_body_entry: i64 = 0;
-        let mut post_tx_reverted = false;
-
         // ENTRY_POINT address used as caller for DEFAULT/VERIFY frames
         let entry_point = ethrex_common::types::frame_tx_entry_point();
 
@@ -2087,32 +2013,8 @@ impl<'a> VM<'a> {
                 // before clearing, so an invalid-tx exit can still roll back
                 // every committed frame's state (see `tx_level_backup`).
                 tx_level_backup.absorb(&self.current_call_frame.call_frame_backup);
-                // EIP-7906: mirror body-frame originals into the body accumulator so
-                // a POST_TX revert can undo the body without disturbing the prefix.
-                // `absorb` is first-seen-wins, so when both a prefix frame and a body
-                // frame wrote the same slot the body accumulator holds the
-                // post-prefix value — which is exactly what the body must rewind to.
-                if absorbing_body {
-                    body_backup.absorb(&self.current_call_frame.call_frame_backup);
-                }
                 self.current_call_frame.call_frame_backup.clear();
             }
-
-            // EIP-7906: open the body scope on the first frame past the validation
-            // prefix. The substate checkpoint makes the body's logs, self-destructs
-            // and EIP-3529 refunds revertable as a unit; the BAL checkpoint is taken
-            // here rather than at transaction start so a body revert rewinds the
-            // recorder to the post-prefix position.
-            let is_body_frame = prefix_end_idx.is_none_or(|end| frame_idx > end);
-            if is_body_frame && body_substate_depth.is_none() {
-                self.substate.push_backup();
-                body_substate_depth = Some(self.substate.backup_depth());
-                body_backup.bal_checkpoint = self.db.bal_recorder.as_ref().map(|r| r.checkpoint());
-                body_logs_start = all_logs.len();
-                body_frame_start = frame_idx;
-                state_gas_used_at_body_entry = self.state_gas_used;
-            }
-            absorbing_body = is_body_frame;
 
             // Start a new atomic batch if this frame has the batch flag
             // and we're not already in one.
@@ -2200,9 +2102,6 @@ impl<'a> VM<'a> {
                     }
                     (sender, false)
                 }
-                // EIP-7906: POST_TX runs as a STATICCALL with ENTRY_POINT as caller
-                // (like VERIFY, but it is a post-execution assertion, not auth).
-                Some(FrameMode::PostTx) => (entry_point, true),
                 // EIP-8312: a UTXO frame executes no EVM code; it is dispatched
                 // natively (no caller, no target, no call frame) — see the UTXO
                 // handler. Reserved modes were rejected by static validation, so
@@ -2441,12 +2340,6 @@ impl<'a> VM<'a> {
                         )?;
                     } else {
                         tx_level_backup.absorb(&finished_frame.call_frame_backup);
-                        // EIP-7906: see the body accumulator note at the
-                        // start-of-frame absorb; a committed body frame must stay
-                        // rewindable by a POST_TX revert on its own.
-                        if is_body_frame {
-                            body_backup.absorb(&finished_frame.call_frame_backup);
-                        }
                     }
                 }
 
@@ -2557,16 +2450,6 @@ impl<'a> VM<'a> {
                     break;
                 }
 
-                // EIP-7906: a reverted POST_TX frame overrides atomic-batch
-                // unrolling and reverts the whole execution body — a strict
-                // superset of the batch the unroll above already undid. The
-                // transaction itself stays VALID; the body rewind runs after the
-                // loop, once the last live frame backup has been absorbed.
-                if frame.execution_mode() == Some(FrameMode::PostTx) {
-                    post_tx_reverted = true;
-                    break;
-                }
-
                 // Find the end of this batch (the first frame at or after the
                 // failing one without the flag)
                 let batch_end = find_batch_end(&frame_tx.frames, frame_idx);
@@ -2597,70 +2480,8 @@ impl<'a> VM<'a> {
                 break;
             }
 
-            // EIP-7906: a reverted POST_TX assertion frame reverts the transaction's
-            // execution BODY and nothing more. The transaction "remains valid, is
-            // included in the block, and generates a receipt with a failed status
-            // (status = 0)", while every state change in the validation prefix — the
-            // APPROVE gas payment, a deploy frame's account creation — "are
-            // permanently committed to the state, and the payer is fully charged for
-            // the gas consumed up to the point of the revert". Excluding the
-            // transaction instead would let an attacker burn a block's worth of
-            // execution and revert for free (EIP-7906 §Receipt Representation and
-            // Anti-DoS). The rewind itself runs after the loop.
-            if frame.execution_mode() == Some(FrameMode::PostTx) && !frame_success {
-                post_tx_reverted = true;
-                break;
-            }
-
             // Clear transient storage between frames
             self.substate.clear_transient_storage();
-        }
-
-        // EIP-7906: close the body scope. On a POST_TX revert the body is rewound and
-        // the validation prefix is left untouched; otherwise the body's substate
-        // effects merge into the prefix's as usual. Both directions unwind by depth
-        // because the body scope encloses an unknown number of per-frame and
-        // atomic-batch checkpoints (a batch whose flag runs through the final frame
-        // is never closed by the loop).
-        if let Some(body_depth) = body_substate_depth {
-            if post_tx_reverted {
-                // The failing POST_TX frame is static, but the last body frame's
-                // effects may still be sitting in the outer call-frame backup
-                // unabsorbed, so fold them in before rewinding.
-                if absorbing_body {
-                    body_backup.absorb(&self.current_call_frame.call_frame_backup);
-                }
-                tx_level_backup.absorb(&self.current_call_frame.call_frame_backup);
-                self.current_call_frame.call_frame_backup.clear();
-
-                while self.substate.backup_depth() >= body_depth {
-                    self.substate.revert_backup();
-                }
-                crate::utils::restore_cache_state(self.db, mem::take(&mut body_backup))?;
-                // Logs the body emitted are gone with its state. The prefix's logs
-                // (an APPROVE-side EIP-7708 transfer log, say) survive. The per-frame
-                // receipts keep their status and gas but lose those logs too — the
-                // consensus receipt carries only them, so the header bloom is built from
-                // them and would otherwise commit to logs that no longer happened.
-                all_logs.truncate(body_logs_start);
-                if let Some(ctx) = self.frame_tx_context.as_mut() {
-                    for (_, _, logs) in ctx.frame_results.iter_mut().skip(body_frame_start) {
-                        logs.clear();
-                    }
-                }
-                // EIP-8037: the body was unrolled, so it created no state and owes no
-                // state gas. Mirrors the atomic-batch unroll, which drops the state
-                // gas accumulated since batch entry for the same reason. EIP-7906 does
-                // not address 2D gas on a reverted body; charging the execution gas
-                // while dropping the state-growth surcharge is the reading consistent
-                // with both (no state grew), but it is flagged for a spec ruling in
-                // docs/eip-7906.md.
-                self.state_gas_used = state_gas_used_at_body_entry;
-            } else {
-                while self.substate.backup_depth() >= body_depth {
-                    self.substate.commit_backup();
-                }
-            }
         }
 
         // Post-execution, per EIP-8141: "verify that `payer` has been set
@@ -3215,13 +3036,6 @@ impl<'a> VM<'a> {
                     // Structural rules exclude SENDER frames from the prefix.
                     return Err(VMError::Internal(InternalError::Custom(
                         "SENDER frame in validation prefix".to_string(),
-                    )));
-                }
-                Some(FrameMode::PostTx) => {
-                    // EIP-7906: POST_TX frames are a trailing execution-body suffix,
-                    // never part of the validation prefix.
-                    return Err(VMError::Internal(InternalError::Custom(
-                        "POST_TX frame in validation prefix".to_string(),
                     )));
                 }
                 Some(FrameMode::Utxo) => {

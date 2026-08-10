@@ -117,6 +117,27 @@ network_params:
     "REPLACE_WITH_DEPLOYER_ADDRESS": {"balance": "1000ETH"}
   }'
 
+  # EIP-8282 builder execution requests. Both builder predeploys are part of
+  # Glamsterdam and EIP-8282 makes every block invalid from activation if either
+  # address has no code, exactly as EIP-7002 and EIP-7251 specify for their own
+  # predeploys. The generator deploys both from v6.1.4 on, but it arms slot 0 with
+  # EXCESS_INHIBITOR (2**256-1) only on the *exit* predeploy. EIP-8282 arms both at
+  # deployment so no request can be enqueued before the first end-of-block system
+  # call, and a preloaded runtime image never runs the init code that would arm it.
+  # The generator applies its system contracts before these, so this entry wins and
+  # supplies the inhibitor it omits. Drop it once the generator arms both.
+  #
+  # Symptom if missing: getPayload fails on every slot from the Amsterdam boundary
+  # on, the consensus client reports Unknown payload, and the chain freezes on the
+  # last pre-Amsterdam block.
+  additional_preloaded_contracts:
+    "0x0000BFF46984E3725691FA540A8C7589300D8282":
+      balance: "0"
+      nonce: "1"
+      code: "0x3373fffffffffffffffffffffffffffffffffffffffe1461011c575f54807fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff146102705760015460088111605257506058565b60089003015b601190600182026001905f5b5f821115607f57810190830284830290049160010191906064565b90939004925050503660b814609f57366102705734610270575f5260205ff35b8034106102705760383567ffffffffffffffff1680633b9aca001161027057633b9aca00029034031061027057600154600101600155600354806006026004015f358155600101602035815560010160403581556001016060358155600101608035815560010160a035905560b85f5f3760b85fa0600101600355005b60035460025480820380604011610131575060405b5f5b8181146101d7578281016006026004018160b8028154815260200181600101548152602001816002015480825260401c67ffffffffffffffff16816010018160381c81600701538160301c81600601538160281c81600501538160201c81600401538160181c81600301538160101c81600201538160081c816001015353602001816003015481526020018160040154815260200190600501549052600101610133565b91018092146101e957906002556101f4565b90505f6002555f6003555b36610242575f54600154817fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1461023057600882820111610238575b50505f610264565b0160089003610264565b7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff5b5f555f60015560b8025ff35b5f5ffd"
+      storage:
+        "0x0000000000000000000000000000000000000000000000000000000000000000": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+
   # `deposit_contract_address` is deliberately NOT set, and MUST stay at the
   # package default 0x00000000219ab540356cBB839Cbe05303d7705Fa.
   #
@@ -164,6 +185,12 @@ network_params:
 # per-prefix kill switch or a re-genesis. Admins granted later at runtime are
 # written with value 1 and can be revoked normally.
 ethereum_genesis_generator_params:
+  # v6.0.7, the version the pinned ethereum-package defaults to, predates v6.1.4 and
+  # therefore does not deploy the EIP-8282 builder predeploys at all — the chain would
+  # freeze at the Amsterdam boundary. Gating itself is older than both and works on
+  # either. Pinned explicitly here rather than by bumping the whole package, so the
+  # generator version this chain depends on is visible in one place.
+  image: ethpandaops/ethereum-genesis-generator:v6.1.6
   extra_env:
     DEPOSIT_CONTRACT_GATED: "true"
     DEPOSIT_CONTRACT_ADMINS: '["REPLACE_WITH_GATER_ADMIN_ADDRESS"]'
