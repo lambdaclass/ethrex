@@ -52,7 +52,7 @@ use ethrex_blockchain::{
 use ethrex_common::H256;
 #[cfg(feature = "l2")]
 use ethrex_common::types::Transaction;
-use ethrex_common::types::{MempoolTransaction, P2PTransaction, Receipt};
+use ethrex_common::types::{P2PTransaction, Receipt};
 use ethrex_crypto::NativeCrypto;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{Store, error::StoreError};
@@ -1028,14 +1028,9 @@ async fn send_all_pooled_tx_hashes(
     state: &mut Established,
     connection: &mut PeerConnection,
 ) -> Result<(), PeerConnectionError> {
-    let txs: Vec<MempoolTransaction> = state
-        .blockchain
-        .mempool
-        .get_all_txs_by_sender()?
-        .into_values()
-        .flatten()
-        .filter(|tx| !tx.is_privileged())
-        .collect();
+    // --mempool.private: locally-submitted private txs MUST NOT be
+    // disclosed via the new-peer pooled-hashes dump.
+    let txs = state.blockchain.mempool.get_txs_for_new_peer_dump()?;
     if !txs.is_empty() {
         state
             .tx_broadcaster
@@ -1848,9 +1843,10 @@ async fn handle_incoming_message(
                                     {
                                         target |= 1u128 << extra_col;
                                     }
-                                    let fetch_mask = target & u128::MAX; // peer is full provider
-                                    if fetch_mask != 0 {
-                                        state.pending_cell_requests.push((vec![hash], fetch_mask));
+                                    // A provider holds every column, so the whole
+                                    // target can be requested from it.
+                                    if target != 0 {
+                                        state.pending_cell_requests.push((vec![hash], target));
                                     }
                                 }
                             }

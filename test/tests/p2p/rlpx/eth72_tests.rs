@@ -1,9 +1,10 @@
 use bytes::Bytes;
+use ethrex_blockchain::mempool::Mempool;
 use ethrex_common::{
-    H256,
+    Address, H256,
     types::{
         BYTES_PER_BLOB, BYTES_PER_CELL, BlobsBundle, CELLS_PER_EXT_BLOB, EIP4844Transaction,
-        P2PTransaction, WrappedEIP4844Transaction,
+        MempoolTransaction, P2PTransaction, Transaction, WrappedEIP4844Transaction,
     },
 };
 use ethrex_p2p::rlpx::{
@@ -255,4 +256,39 @@ fn bytes_to_cell_mask_rejects_wrong_length() {
     assert_eq!(bytes_to_cell_mask(&Bytes::new()).unwrap(), None);
     assert!(bytes_to_cell_mask(&Bytes::from(vec![0u8; 8])).is_err());
     assert!(bytes_to_cell_mask(&Bytes::from(vec![0u8; 16])).is_ok());
+}
+
+// ── GetCells serving ─────────────────────────────────────────────────────────
+
+#[test]
+fn get_cells_does_not_serve_a_private_transaction() {
+    // --mempool.private txs never propagate, so their blob data must not leak
+    // through the eth/72 cell path either.
+    let mempool = Mempool::new(64);
+    let tx_hash = H256::from_low_u64_be(7);
+    let sender = Address::from_low_u64_be(1);
+    let tx = Transaction::EIP4844Transaction(EIP4844Transaction {
+        gas: 21_000,
+        to: Address::from_low_u64_be(2),
+        ..Default::default()
+    });
+    mempool
+        .add_transaction_no_broadcast(
+            tx_hash,
+            sender,
+            MempoolTransaction::new(tx, sender),
+            None,
+            None,
+        )
+        .expect("add private tx");
+    mempool
+        .store_cells(tx_hash, 1, vec![(0, 0, Box::new([0xAAu8; BYTES_PER_CELL]))])
+        .expect("store cells");
+
+    let response = GetCells::new(1, vec![tx_hash], 0b1).handle(&mempool);
+    assert_eq!(response.cell_mask, 0, "no columns may be served");
+    assert!(
+        response.cells.iter().all(|c| c.is_empty()),
+        "no cells may be served for a private tx"
+    );
 }

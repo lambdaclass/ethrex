@@ -241,8 +241,8 @@ impl GetCells {
     /// and we compute cells on demand via `cells_for_columns`. When only sampled
     /// cells are held, the TxCells mask is used.
     ///
-    /// Consequence of the uniform mask: if ANY requested hash is unknown (or we
-    /// hold no cells for it), the intersection collapses and we serve zero cells
+    /// Consequence of the uniform mask: if ANY requested hash is unknown, private
+    /// or we hold no cells for it, the intersection collapses and we serve zero cells
     /// for the whole batch. This is a protocol-level limitation of the single
     /// per-message `cell_mask`, not a bug; callers should request hashes they
     /// expect us to hold together.
@@ -252,6 +252,12 @@ impl GetCells {
         // requested columns.
         let mut served = self.cell_mask;
         for &tx_hash in &self.transaction_hashes {
+            // A private tx never propagates, so its blob data is treated as
+            // unavailable here, exactly like an unknown hash.
+            if mempool.is_private(tx_hash).unwrap_or(true) {
+                served = 0;
+                break;
+            }
             served &= mempool.available_cell_mask(tx_hash);
         }
         let mut all_cells: Vec<Vec<Cell>> = Vec::with_capacity(self.transaction_hashes.len());
