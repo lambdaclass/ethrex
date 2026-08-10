@@ -13,8 +13,7 @@ use crate::system_contracts::{
 use crate::{EvmError, ExecutionResult};
 use bytes::Bytes;
 use ethrex_common::H256;
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
-use ethrex_common::constants::EMPTY_KECCAK_HASH;
+use ethrex_common::constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH};
 use ethrex_common::types::Code;
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_common::types::TxType;
@@ -3497,6 +3496,24 @@ impl LEVM {
         let current = db.get_account_code(RECENT_ROOT_ADDRESS.address)?;
         if current.code() == RECENT_ROOT_RUNTIME_BYTECODE.as_slice() {
             return Ok(());
+        }
+        // EIP-8272 Activation: the address must have empty code and empty storage
+        // in the parent state, and the payload is invalid when it does not. Read
+        // through `store` rather than the account cache, because the storage root
+        // is the only witness that the account holds no slots. Anything reaching
+        // here is either absent (create) or an account whose code is not the
+        // predeploy's, so this is the activation block for the predeploy.
+        let parent_state = db
+            .store
+            .get_account_state(RECENT_ROOT_ADDRESS.address)
+            .map_err(EvmError::from)?;
+        if parent_state.code_hash != *EMPTY_KECCAK_HASH
+            || parent_state.storage_root != *EMPTY_TRIE_HASH
+        {
+            return Err(EvmError::Custom(format!(
+                "EIP-8272: RECENT_ROOT_ADDRESS {:#x} has non-empty code or storage in the parent state",
+                RECENT_ROOT_ADDRESS.address
+            )));
         }
         // Balance is preserved because only code_hash and nonce are written: an EOA
         // may have sent value here before the fork.

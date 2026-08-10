@@ -2297,7 +2297,7 @@ impl RecentRootReference {
     /// satisfy a reference to the older slot.
     ///
     /// This is the single definition shared by the read-side validity check,
-    /// the native write handler, and the mempool policy — computing it in more
+    /// the predeploy's write, and the mempool policy — computing it in more
     /// than one place risks a natively written root that its own reference
     /// cannot validate.
     pub fn entry_hash(&self) -> H256 {

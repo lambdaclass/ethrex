@@ -1,4 +1,7 @@
-use ethrex_common::{H160, types::Fork, types::Fork::*};
+use ethrex_common::{
+    H160,
+    types::{FRAME_TX_RECENT_ROOT_LENGTH, Fork, Fork::*},
+};
 
 pub use ethrex_common::constants::SYSTEM_ADDRESS;
 
@@ -199,6 +202,10 @@ pub const UTXO_VAULT_RUNTIME_BYTECODE: [u8; 76] = [
 ///
 /// Provisional: `RECENT_ROOT_CODE` is TBD in the spec's constants table, so
 /// this is the candidate proposed in ethereum/EIPs#12131.
+///
+/// The code derives the ring index as `SLOTNUM AND 0x1fff` (`push2 0x1fff`),
+/// which equals `S mod RECENT_ROOT_LENGTH` only while `RECENT_ROOT_LENGTH` is
+/// that power of two. The assertion below pins the length the mask assumes.
 pub const RECENT_ROOT_RUNTIME_BYTECODE: [u8; 144] = [
     0x34, 0x15, 0x36, 0x60, 0x40, 0x14, 0x16, 0x61, 0x00, 0x10, 0x57, 0x60, 0x00, 0x60, 0x00, 0xfd,
     0x5b, 0x33, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0x60, 0x20, 0x37, 0x60, 0x34, 0x60, 0x0c,
@@ -211,9 +218,16 @@ pub const RECENT_ROOT_RUNTIME_BYTECODE: [u8; 144] = [
     0xff, 0x4b, 0x16, 0x60, 0xd0, 0x52, 0x60, 0xc8, 0x52, 0x60, 0x48, 0x60, 0xa8, 0x20, 0x55, 0x00,
 ];
 
+const _: () = assert!(
+    FRAME_TX_RECENT_ROOT_LENGTH == 8192,
+    "RECENT_ROOT_RUNTIME_BYTECODE masks the slot with 0x1fff, which is \
+     `S mod RECENT_ROOT_LENGTH` only at RECENT_ROOT_LENGTH == 8192"
+);
+
 #[cfg(test)]
 mod expiry_verifier_tests {
     use super::*;
+    use ethrex_common::{H256, utils::keccak};
 
     #[test]
     fn expiry_verifier_constants_match_spec() {
@@ -251,5 +265,36 @@ mod expiry_verifier_tests {
         assert_eq!(RECENT_ROOT_RUNTIME_BYTECODE.len(), 144);
         assert_eq!(RECENT_ROOT_ADDRESS.address, H160::from_low_u64_be(0x8272));
         assert_eq!(RECENT_ROOT_ADDRESS.active_since_fork, Hegota);
+    }
+
+    /// The write side is a byte string with no compiler behind it, so the whole
+    /// body is hashed and the two domain immediates are checked against the
+    /// preimages the read side derives in
+    /// `RecentRootReference::{entry_hash, storage_key}`. A transcription error
+    /// in either would otherwise surface only as a storage-key mismatch at
+    /// reference-validation time.
+    #[test]
+    fn recent_root_bytecode_matches_spec() {
+        assert_eq!(
+            keccak(RECENT_ROOT_RUNTIME_BYTECODE),
+            H256::from_slice(
+                &hex::decode("432c8b183d17d5e9939623833203b9a5b62325246cfcd9307982bfde8f18c6fb")
+                    .expect("code hash literal is valid hex")
+            )
+        );
+
+        // `push32 RECENT_ROOT_ENTRY_DOMAIN` at 0x22, immediate at 0x23..0x43.
+        assert_eq!(RECENT_ROOT_RUNTIME_BYTECODE[0x22], 0x7f);
+        assert_eq!(
+            &RECENT_ROOT_RUNTIME_BYTECODE[0x23..0x43],
+            keccak(b"RECENT_ROOT_ENTRY").as_bytes()
+        );
+
+        // `push32 RECENT_ROOT_STORAGE_DOMAIN` at 0x5a, immediate at 0x5b..0x7b.
+        assert_eq!(RECENT_ROOT_RUNTIME_BYTECODE[0x5a], 0x7f);
+        assert_eq!(
+            &RECENT_ROOT_RUNTIME_BYTECODE[0x5b..0x7b],
+            keccak(b"RECENT_ROOT_STORAGE").as_bytes()
+        );
     }
 }

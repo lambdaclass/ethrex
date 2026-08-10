@@ -1,22 +1,26 @@
-//! EIP-8272: recent-root native write + reference validity, exercised directly
-//! through `execute_frame_tx` (bypassing the mempool/builder) so a failure
-//! surfaces as the raw `VMError`.
+//! EIP-8272: the recent-root predeploy and reference validity, exercised
+//! directly through `execute_frame_tx` and plain calls (bypassing the
+//! mempool/builder) so a failure surfaces as the raw `VMError`.
 
 use bytes::Bytes;
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::types::{
-    Account, BlockHeader, ChainConfig, Code, FRAME_TX_RECENT_ROOT_USABLE_WINDOW, Fork, Frame,
-    FrameMode, FrameTransaction, RecentRootReference, Transaction, frame_tx_recent_root,
+    Account, AccountState, BlockHeader, ChainConfig, Code, CodeMetadata, EIP1559Transaction,
+    FRAME_TX_RECENT_ROOT_USABLE_WINDOW, Fork, Frame, FrameMode, FrameTransaction,
+    RecentRootReference, Transaction, TxKind, frame_tx_recent_root,
 };
 use ethrex_common::{Address, H256, U256, constants::EMPTY_TRIE_HASH};
 use ethrex_crypto::NativeCrypto;
+use ethrex_levm::db::Database as LevmDatabase;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::environment::{EVMConfig, Environment};
+use ethrex_levm::errors::DatabaseError;
 use ethrex_levm::errors::{ExecutionReport, VMError};
 use ethrex_levm::tracing::LevmCallTracer;
 use ethrex_levm::vm::{VM, VMType};
 use ethrex_storage::Store;
 use ethrex_vm::DynVmDatabase;
+use ethrex_vm::backends::levm::LEVM;
 use ethrex_vm::system_contracts::RECENT_ROOT_RUNTIME_BYTECODE;
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
@@ -222,7 +226,7 @@ fn storage_slot(db: &GeneralizedDatabase, addr: Address, key: H256) -> U256 {
 }
 
 #[test]
-fn recent_root_native_write_commits_the_entry() {
+fn a_frame_targeting_the_predeploy_commits_the_entry() {
     let salt = [0x11u8; 32];
     let root = H256::repeat_byte(0x22);
     let write_slot = 100u64;
@@ -266,9 +270,9 @@ fn recent_root_native_write_commits_the_entry() {
 }
 
 #[test]
-fn recent_root_native_write_with_bal_recording() {
+fn a_frame_write_is_recorded_in_the_block_access_list() {
     // The block builder / import path executes with the EIP-7928 BAL recorder
-    // active. Reproduce that here: the native write records a storage change on
+    // active. Reproduce that here: the write records a storage change on
     // 0x8272, so a bug in that recording (or a build() inconsistency) would make
     // the builder's execute_frame_tx fail and silently skip the tx.
     let salt = [0x55u8; 32];
@@ -647,4 +651,414 @@ fn source_id_preimage_is_the_unpadded_address_and_salt() {
     padded[12..32].copy_from_slice(SENDER.as_bytes());
     padded[32..64].copy_from_slice(&[0x11u8; 32]);
     assert_ne!(H256(ethrex_crypto::keccak::keccak_hash(padded)), golden);
+}
+
+// ==================== Predeploy call behaviour ====================
+//
+// EIP-8272 §"Recent root contract". The predeploy carries real runtime code, so
+// these are ordinary EVM calls rather than frame transactions: the write is
+// reachable from a plain EOA transaction, and the spec's two prohibitions
+// (static context, `DELEGATECALL`/`CALLCODE`) fall out of the EVM rather than
+// from an explicit check in the code.
+
+const CALLER: Address = Address::repeat_byte(0xC0);
+/// Slot the wrapper contracts below store the inner call's success flag in.
+/// A keccak-derived recent-root storage key cannot collide with it.
+fn success_slot() -> H256 {
+    let mut key = H256::zero();
+    key.0[30..].copy_from_slice(&0xFFFFu16.to_be_bytes());
+    key
+}
+
+/// `calldatacopy(0, 0, 64)` — stage the 64-byte `salt ‖ root` argument for the
+/// wrappers below.
+const STAGE_ARGS: &[u8] = &[0x60, 0x40, 0x60, 0x00, 0x60, 0x00, 0x37];
+
+/// `sstore(0xffff, success); stop`
+const RECORD_SUCCESS: &[u8] = &[0x61, 0xff, 0xff, 0x55, 0x00];
+
+/// Forward the call to the predeploy with `DELEGATECALL`, then record whether it
+/// succeeded.
+fn delegatecall_wrapper() -> Bytes {
+    let call = [
+        0x60, 0x00, // retSize
+        0x60, 0x00, // retOffset
+        0x60, 0x40, // argsSize
+        0x60, 0x00, // argsOffset
+        0x61, 0x82, 0x72, // address
+        0x5a, // gas
+        0xf4, // DELEGATECALL
+    ];
+    Bytes::from([STAGE_ARGS, &call, RECORD_SUCCESS].concat())
+}
+
+/// Forward the call to the predeploy with `STATICCALL`, then record whether it
+/// succeeded.
+fn staticcall_wrapper() -> Bytes {
+    let call = [
+        0x60, 0x00, // retSize
+        0x60, 0x00, // retOffset
+        0x60, 0x40, // argsSize
+        0x60, 0x00, // argsOffset
+        0x61, 0x82, 0x72, // address
+        0x5a, // gas
+        0xfa, // STATICCALL
+    ];
+    Bytes::from([STAGE_ARGS, &call, RECORD_SUCCESS].concat())
+}
+
+/// `CALL` the predeploy, then revert the whole frame.
+fn reverting_wrapper() -> Bytes {
+    let call = [
+        0x60, 0x00, // retSize
+        0x60, 0x00, // retOffset
+        0x60, 0x40, // argsSize
+        0x60, 0x00, // argsOffset
+        0x60, 0x00, // value
+        0x61, 0x82, 0x72, // address
+        0x5a, // gas
+        0xf1, // CALL
+        0x50, // POP success
+        0x60, 0x00, 0x60, 0x00, 0xfd, // revert(0, 0)
+    ];
+    Bytes::from([STAGE_ARGS, &call].concat())
+}
+
+/// Run a plain EIP-1559 transaction — no frame transaction, no EIP-8141 path.
+fn run_plain_call(
+    accounts: &[SeededAccount],
+    to: Address,
+    data: &[u8],
+    slot: u64,
+) -> (ExecutionReport, GeneralizedDatabase) {
+    let mut db = seeded_db(accounts);
+    let env = Environment {
+        origin: SENDER,
+        gas_limit: 1_000_000,
+        block_gas_limit: (i64::MAX - 1) as u64,
+        config: EVMConfig::new(Fork::Hegota, EVMConfig::canonical_values(Fork::Hegota)),
+        chain_id: U256::from(CHAIN_ID),
+        base_fee_per_gas: U256::from(1u64),
+        gas_price: U256::from(1_000u64),
+        tx_max_fee_per_gas: Some(U256::from(1_000u64)),
+        tx_max_priority_fee_per_gas: Some(U256::from(1u64)),
+        slot_number: U256::from(slot),
+        ..Default::default()
+    };
+    let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+        to: TxKind::Call(to),
+        value: U256::zero(),
+        data: Bytes::from(data.to_vec()),
+        gas_limit: 1_000_000,
+        max_fee_per_gas: 1_000,
+        max_priority_fee_per_gas: 1,
+        ..Default::default()
+    });
+    let report = {
+        let mut vm = VM::new(
+            env,
+            &mut db,
+            &tx,
+            LevmCallTracer::disabled(),
+            VMType::L1,
+            &NativeCrypto,
+            None,
+        )
+        .expect("VM::new");
+        vm.execute().expect("plain call must execute")
+    };
+    (report, db)
+}
+
+/// The entry a successful write by `caller` at `slot` commits.
+fn committed_entry(caller: Address, salt: &[u8; 32], root: H256, slot: u64) -> RecentRootReference {
+    RecentRootReference {
+        source_id: source_id(caller, salt),
+        slot,
+        root,
+    }
+}
+
+#[test]
+fn plain_eoa_call_writes_the_entry() {
+    // The predeploy is callable like any other contract: `to = 0x…8272` with
+    // `salt ‖ root` as calldata commits the entry. Before the predeploy carried
+    // real code this call was a silent no-op, which is the divergence the swap
+    // removes.
+    let salt = [0x11u8; 32];
+    let root = H256::repeat_byte(0x22);
+    let write_slot = 100u64;
+    let accounts = [(SENDER, big(), 0, Bytes::new()), recent_root_predeploy()];
+    let calldata = [salt.as_slice(), root.as_bytes()].concat();
+
+    let (report, db) = run_plain_call(&accounts, frame_tx_recent_root(), &calldata, write_slot);
+
+    assert!(report.is_success(), "the write call must succeed");
+    let entry = committed_entry(SENDER, &salt, root, write_slot);
+    assert_eq!(
+        storage_slot(&db, frame_tx_recent_root(), entry.storage_key()),
+        U256::from_big_endian(entry.entry_hash().as_bytes()),
+        "committed entry hash mismatch",
+    );
+    // All 64 calldata bytes are non-zero here, the most expensive shape. Each
+    // zero byte in `salt ‖ root` takes 12 gas off (EIP-7623 charges a zero byte
+    // one token against a non-zero byte's four), and execution is far above the
+    // calldata floor, so the floor never binds. Pinned so a repricing that moves
+    // the write shows up here rather than at bring-up.
+    assert_eq!(report.gas_used, 127_256, "measured write gas");
+}
+
+#[test]
+fn delegatecall_writes_the_callers_storage_and_leaves_the_predeploy_untouched() {
+    // "Only a direct call to RECENT_ROOT_ADDRESS can write recent-root storage.
+    // DELEGATECALL and CALLCODE MUST NOT write recent-root storage." No explicit
+    // guard is needed: the SSTORE runs, but in the delegating account's storage,
+    // so recent-root storage is unchanged and the entry it produces is not
+    // referenceable.
+    let salt = [0x33u8; 32];
+    let root = H256::repeat_byte(0x44);
+    let write_slot = 150u64;
+    let accounts = [
+        (SENDER, big(), 0, Bytes::new()),
+        (CALLER, U256::zero(), 1, delegatecall_wrapper()),
+        recent_root_predeploy(),
+    ];
+    let calldata = [salt.as_slice(), root.as_bytes()].concat();
+
+    let (report, db) = run_plain_call(&accounts, CALLER, &calldata, write_slot);
+    assert!(report.is_success(), "the wrapper must not revert");
+    assert_eq!(
+        storage_slot(&db, CALLER, success_slot()),
+        U256::one(),
+        "the delegated call itself succeeds"
+    );
+
+    // `CALLER` inside delegated code is the EOA, so the entry is the one a
+    // direct call would have committed — it just lands in the wrong account.
+    let entry = committed_entry(SENDER, &salt, root, write_slot);
+    assert_eq!(
+        storage_slot(&db, frame_tx_recent_root(), entry.storage_key()),
+        U256::zero(),
+        "recent-root storage must be untouched by a DELEGATECALL"
+    );
+    assert_eq!(
+        storage_slot(&db, CALLER, entry.storage_key()),
+        U256::from_big_endian(entry.entry_hash().as_bytes()),
+        "the write lands in the delegating account's storage"
+    );
+}
+
+#[test]
+fn staticcall_fails_and_writes_nothing() {
+    // "In static context, the write MUST fail and storage MUST remain
+    // unchanged." The SSTORE raises, so the STATICCALL returns 0.
+    let salt = [0x55u8; 32];
+    let root = H256::repeat_byte(0x66);
+    let write_slot = 175u64;
+    let accounts = [
+        (SENDER, big(), 0, Bytes::new()),
+        (CALLER, U256::zero(), 1, staticcall_wrapper()),
+        recent_root_predeploy(),
+    ];
+    let calldata = [salt.as_slice(), root.as_bytes()].concat();
+
+    let (report, db) = run_plain_call(&accounts, CALLER, &calldata, write_slot);
+    assert!(report.is_success(), "the wrapper itself must not revert");
+    assert_eq!(
+        storage_slot(&db, CALLER, success_slot()),
+        U256::zero(),
+        "the static call must fail"
+    );
+    let entry = committed_entry(SENDER, &salt, root, write_slot);
+    assert_eq!(
+        storage_slot(&db, frame_tx_recent_root(), entry.storage_key()),
+        U256::zero(),
+        "storage must remain unchanged"
+    );
+}
+
+#[test]
+fn a_write_inside_a_reverting_frame_rolls_back() {
+    // The write is ordinary EVM state, so it is subject to ordinary revert
+    // semantics. A reference to a rolled-back entry must not validate, or a
+    // reverted block would leave referenceable roots behind.
+    let salt = [0x77u8; 32];
+    let root = H256::repeat_byte(0x88);
+    let write_slot = 200u64;
+    let accounts = [
+        (SENDER, big(), 0, Bytes::new()),
+        (CALLER, U256::zero(), 1, reverting_wrapper()),
+        recent_root_predeploy(),
+    ];
+    let calldata = [salt.as_slice(), root.as_bytes()].concat();
+
+    let (report, db) = run_plain_call(&accounts, CALLER, &calldata, write_slot);
+    assert!(!report.is_success(), "the outer frame reverts");
+    let entry = committed_entry(SENDER, &salt, root, write_slot);
+    assert_eq!(
+        storage_slot(&db, frame_tx_recent_root(), entry.storage_key()),
+        U256::zero(),
+        "the write must roll back with the frame that made it"
+    );
+}
+
+// ==================== Predeploy activation ====================
+//
+// EIP-8272 §Activation. `install_recent_root_code` runs on both the
+// payload-build path (`Evm::apply_system_calls`) and the block-import path
+// (`LEVM::prepare_block`); the two must agree or builder and importer compute
+// different state roots. The three cases the spec distinguishes are pinned
+// here, along with idempotence and BAL recording.
+
+/// A store that answers every account except `RECENT_ROOT_ADDRESS` as absent,
+/// so the parent state of the predeploy can be set per test.
+struct ParentState(AccountState);
+
+impl LevmDatabase for ParentState {
+    fn get_account_state(&self, address: Address) -> Result<AccountState, DatabaseError> {
+        Ok(if address == frame_tx_recent_root() {
+            self.0
+        } else {
+            AccountState::default()
+        })
+    }
+    fn get_storage_value(&self, _address: Address, _key: H256) -> Result<U256, DatabaseError> {
+        Ok(U256::zero())
+    }
+    fn get_block_hash(&self, _block_number: u64) -> Result<H256, DatabaseError> {
+        Ok(H256::zero())
+    }
+    fn get_chain_config(&self) -> Result<ChainConfig, DatabaseError> {
+        Ok(ChainConfig::default())
+    }
+    fn get_account_code(&self, _code_hash: H256) -> Result<Code, DatabaseError> {
+        Ok(Code::default())
+    }
+    fn get_code_metadata(&self, _code_hash: H256) -> Result<CodeMetadata, DatabaseError> {
+        Ok(CodeMetadata { length: 0 })
+    }
+}
+
+fn db_with_parent_state(state: AccountState) -> GeneralizedDatabase {
+    GeneralizedDatabase::new(Arc::new(ParentState(state)))
+}
+
+fn installed_predeploy(db: &GeneralizedDatabase) -> ethrex_levm::account::LevmAccount {
+    db.current_accounts_state
+        .get(&frame_tx_recent_root())
+        .cloned()
+        .expect("the predeploy account must exist after install")
+}
+
+fn installed_code(db: &GeneralizedDatabase) -> Bytes {
+    let hash = installed_predeploy(db).info.code_hash;
+    db.codes
+        .get(&hash)
+        .expect("the installed code must be registered")
+        .code_bytes()
+}
+
+#[test]
+fn install_creates_an_absent_predeploy_with_nonce_one() {
+    let mut db = db_with_parent_state(AccountState::default());
+    LEVM::install_recent_root_code(&mut db, &NativeCrypto).expect("install");
+
+    let account = installed_predeploy(&db);
+    assert_eq!(account.info.nonce, 1);
+    assert_eq!(account.info.balance, U256::zero());
+    assert_eq!(installed_code(&db), RECENT_ROOT_RUNTIME_BYTECODE.as_slice());
+}
+
+#[test]
+fn install_adopts_an_empty_account_and_preserves_its_balance() {
+    // An EOA may have sent value to 0x8272 before the fork, and may have sent
+    // transactions from it. The spec adopts such an account rather than
+    // rejecting it: set the code, take nonce = max(existing, 1), preserve the
+    // balance. Destroying either would burn user funds or re-open already-used
+    // CREATE addresses.
+    let squatted = U256::from(12_345u64);
+    let mut db = db_with_parent_state(AccountState {
+        balance: squatted,
+        nonce: 9,
+        ..AccountState::default()
+    });
+    LEVM::install_recent_root_code(&mut db, &NativeCrypto).expect("install");
+
+    let account = installed_predeploy(&db);
+    assert_eq!(account.info.balance, squatted, "balance must be preserved");
+    assert_eq!(account.info.nonce, 9, "nonce must never be lowered");
+    assert_eq!(installed_code(&db), RECENT_ROOT_RUNTIME_BYTECODE.as_slice());
+}
+
+#[test]
+fn install_rejects_a_parent_state_with_code_or_storage() {
+    // "The fork configuration MUST choose a RECENT_ROOT_ADDRESS with empty code
+    // and empty storage in the parent state of the first post-fork payload. If
+    // this condition is false at activation, the payload is invalid." Silently
+    // overwriting would destroy the squatter's state and diverge from a client
+    // that rejects.
+    let foreign_code = Code::from_bytecode(Bytes::from_static(&[0x00]), &NativeCrypto);
+    let mut with_code = db_with_parent_state(AccountState {
+        code_hash: foreign_code.hash,
+        ..AccountState::default()
+    });
+    LEVM::install_recent_root_code(&mut with_code, &NativeCrypto)
+        .expect_err("non-empty code in the parent state must invalidate the payload");
+
+    let mut with_storage = db_with_parent_state(AccountState {
+        storage_root: H256::repeat_byte(0x77),
+        ..AccountState::default()
+    });
+    LEVM::install_recent_root_code(&mut with_storage, &NativeCrypto)
+        .expect_err("non-empty storage in the parent state must invalidate the payload");
+}
+
+#[test]
+fn install_is_idempotent() {
+    // Exactly one account update, at the first Hegota block and none afterwards.
+    // A second install that touched the account would put a spurious predeploy
+    // entry in every block's access list.
+    let mut db = db_with_parent_state(AccountState::default());
+    LEVM::install_recent_root_code(&mut db, &NativeCrypto).expect("first install");
+    let after_first = installed_predeploy(&db);
+
+    db.enable_bal_recording();
+    LEVM::install_recent_root_code(&mut db, &NativeCrypto).expect("second install");
+    let after_second = installed_predeploy(&db);
+
+    assert_eq!(after_first.info.code_hash, after_second.info.code_hash);
+    assert_eq!(after_first.info.nonce, after_second.info.nonce);
+    assert_eq!(after_first.info.balance, after_second.info.balance);
+    let bal = db.take_bal().expect("BAL recorder was active");
+    assert!(
+        !bal.accounts()
+            .iter()
+            .any(|a| a.address == frame_tx_recent_root()),
+        "a repeat install must not record a change"
+    );
+}
+
+#[test]
+fn install_records_the_code_and_nonce_in_the_block_access_list() {
+    // EIP-7928 parallel import rebuilds post-state from the BAL, so an install
+    // that skips recording produces a state root the parallel path cannot match.
+    let mut db = db_with_parent_state(AccountState::default());
+    db.enable_bal_recording();
+
+    LEVM::install_recent_root_code(&mut db, &NativeCrypto).expect("install");
+
+    let bal = db.take_bal().expect("BAL recorder was active");
+    let changes = bal
+        .accounts()
+        .iter()
+        .find(|a| a.address == frame_tx_recent_root())
+        .expect("the BAL must mention the predeploy");
+    assert!(
+        !changes.code_changes.is_empty(),
+        "the code change must be recorded"
+    );
+    assert!(
+        !changes.nonce_changes.is_empty(),
+        "the nonce change must be recorded"
+    );
 }

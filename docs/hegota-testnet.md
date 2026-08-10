@@ -39,7 +39,7 @@ Resolved at the time the branch was cut. `left-right` counts read as
 
 Branch `hegota-testnet`, pushed to `origin`. Baseline for anything below: the whole
 workspace compiles (`--exclude 'ethrex-l2*' --exclude ethrex-prover --exclude
-ethrex-guest-program`) and `cargo test -p ethrex-test --test ethrex_tests` is **1198
+ethrex-guest-program`) and `cargo test -p ethrex-test --test ethrex_tests` is **1209
 passed / 0 failed**.
 
 | Landed | Commit | Notes |
@@ -56,6 +56,7 @@ passed / 0 failed**.
 | EIP-7906 removed (Task 2.2) | `e862b2fa1` | −3054/+118; mode 3 unassigned, `Utxo` still 5 |
 | `origin/main` merged (Task 2.6) | `b1c21e7b0` | 15 conflicts plus six silent auto-merge duplicates |
 | Two-endpoint Profile 2 (Tasks 3.0/3.1/3.3) | `07092961c` | union of both endpoints; budgets derived from parent gas limit |
+| Phase 4 closed (Tasks 4.2-4.8) | `7ace5d901` | code hash + mask pinned, the three activation cases enforced, predeploy behaviour and the BAL write/read split tested |
 
 ### Not complete
 
@@ -68,10 +69,6 @@ passed / 0 failed**.
   evaluator charged once per list. Without it, EVM gas alone does not bound bytes
   loaded: at a few thousand gas per cold account a list's gas budget admits hundreds of
   cold accesses, each able to pull a maximum-size code body.
-- **Phase 4 Tasks 4.2–4.8** — the byte-for-byte bytecode assertion, the `push2 0x1fff`
-  mask pin, the `install_recent_root_code` check, the four predeploy behaviour cases
-  (calldata too short, too long, non-zero value, static context) and the
-  block-access-list interaction test. Only the merge (4.1) is done.
 - **Phase 5** and **Phase 6** — not started.
 - **Phase 7 Task 7.3** (generator revision) is satisfied by pinning the generator image
   in the config instead of bumping `ETHEREUM_PACKAGE_REVISION`; **Task 7.8** needs a
@@ -107,6 +104,16 @@ passed / 0 failed**.
   `git stash` for a test baseline, swallowed unrelated uncommitted work, never popped
   it, and reported "all changes fully restored". The reflog and `git stash list` are the
   record, not the agent's report.
+- **`TxValidationError::InvalidFrameTransaction` lies about which check failed.** Static
+  constraints and the VERIFY-approval check share the one variant, so a frame tx built
+  without `nonce_keys` (a non-vault sender must select 1..=16) reports "VERIFY frame did
+  not call APPROVE or payer not approved". Check the payload shape before the approval
+  code.
+- **The three EIP-8272 write-gas figures on record are one curve, not a disagreement.**
+  127 256 (ours, 64 non-zero calldata bytes), 127 244 (ethereum/EIPs#12131) and 127 196
+  (ethrex `#7120`) differ only by how many zero bytes the `salt ‖ root` payload carries:
+  execution sits far above the EIP-7623 floor, so each zero byte is 12 gas cheaper.
+  Reconcile a gas delta against calldata content before reading it as a pricing split.
 
 The two things that decide whether this succeeds:
 
@@ -687,7 +694,7 @@ state at all.
       only, not the branch). Confirm the resulting tree contains
       `RECENT_ROOT_RUNTIME_BYTECODE` in `crates/vm/system_contracts.rs` and no
       `RECENT_ROOT_WRITE_GAS` in `crates/vm/levm/src/gas_cost.rs`.
-- [ ] Task 4.2: Assert the bytecode byte-for-byte. In `crates/vm/system_contracts.rs`
+- [x] Task 4.2: Assert the bytecode byte-for-byte. In `crates/vm/system_contracts.rs`
       add a unit test that `RECENT_ROOT_RUNTIME_BYTECODE.len() == 144`, that
       `keccak256(RECENT_ROOT_RUNTIME_BYTECODE)` equals a hex literal recorded in the
       test, and that the two `PUSH32` immediates at byte offsets `0x23..0x43` and `0x5b..0x7b` equal
@@ -695,11 +702,11 @@ state at all.
       respectively. This is the check that catches a
       transcription error, and it is the same pair the read side already derives in
       `RecentRootReference::{entry_hash, storage_key}`.
-- [ ] Task 4.3: Pin the `push2 0x1fff` mask assumption. Add a compile-time assertion
+- [x] Task 4.3: Pin the `push2 0x1fff` mask assumption. Add a compile-time assertion
       next to `RECENT_ROOT_RUNTIME_BYTECODE` that `RECENT_ROOT_LENGTH == 8192`, with a
       comment stating that the bytecode computes `i` as `SLOTNUM AND 0x1fff`, which
       equals `S mod RECENT_ROOT_LENGTH` only while the length is that power of two.
-- [ ] Task 4.4: Verify `crates/vm/backends/levm/mod.rs:install_recent_root_code`
+- [x] Task 4.4: Verify `crates/vm/backends/levm/mod.rs:install_recent_root_code`
       implements the spec's three-case activation: create with balance 0, nonce 1, code
       `RECENT_ROOT_CODE`, empty storage; adopt an existing empty-code empty-storage
       account by setting code and `nonce = max(existing, 1)` while preserving balance;
@@ -707,7 +714,7 @@ state at all.
       the parent state. Confirm it is called from both `prepare_block` and
       `apply_system_calls` and that it records the nonce and code change through
       `bal_recorder` so a BAL reconstructor reproduces the post-state.
-- [ ] Task 4.5: Add to `test/tests/levm/eip8272_tests.rs` the four cases the predeploy
+- [x] Task 4.5: Add to `test/tests/levm/eip8272_tests.rs` the four cases the predeploy
       swap newly makes reachable, each asserting gas as well as effect: a plain EOA
       transaction with `to = 0x…8272` and 64 bytes of calldata writes the entry (the
       old divergence #9 was a silent no-op); a `DELEGATECALL` to the predeploy writes
@@ -715,14 +722,14 @@ state at all.
       context reverts; a write inside a reverting frame rolls back. Record the measured
       gas for the plain-EOA case in `docs/eip-8272.md` next to the figure
       ethereum/EIPs#12131 reports, and reconcile any difference before bring-up.
-- [ ] Task 4.6: Verify the block-access-list interaction. Add a test that a
+- [x] Task 4.6: Verify the block-access-list interaction. Add a test that a
       predeploy write records `RECENT_ROOT_ADDRESS` and the storage key as a **write**
       in the block access list under the writing transaction's `block_access_index`,
       and that a reference-carrying frame transaction still records its keys as
       **reads** (`storage_reads`, never a change) as `docs/eip-8272.md` specifies.
       Confirm `blockAccessListHash` is stable across build and re-import for a block
       containing both.
-- [ ] Task 4.7: Rewrite the EIP-8272 sections of `docs/hegota-devnet.md` and
+- [x] Task 4.7: Rewrite the EIP-8272 sections of `docs/hegota-devnet.md` and
       `docs/eip-8272.md`: delete divergences #4, #6, #7, #8 and #9; record
       `RECENT_ROOT_CODE` as implemented from ethereum/EIPs#12131 with the code hash
       from Task 4.2; record the two open upstream questions from that PR and the answer
@@ -730,7 +737,7 @@ state at all.
       assertion; install-at-activation with no deployment transaction, which is what
       the merged Activation section already mandates and what ethrex already does for
       `0x…8141` and `0x…8250`).
-- [ ] Task 4.8: **Checkpoint: Verify Phase 4 complete.** Run `cargo test -p ethrex-vm
+- [x] Task 4.8: **Checkpoint: Verify Phase 4 complete.** Run `cargo test -p ethrex-vm
       --lib`, `cargo test -p ethrex-common recent_root`, `cargo test --test levm
       eip8272`, `make -C tooling/ef_tests/blockchain test`. Confirm
       `RECENT_ROOT_WRITE_GAS`, `recent_root_native_write`,

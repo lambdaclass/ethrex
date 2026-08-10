@@ -1822,7 +1822,7 @@ impl<'a> VM<'a> {
         // a root becomes referenceable the slot AFTER it was written, and past
         // the window its ring-buffer entry may have been overwritten. The
         // storage assertion recomputes entry_hash/storage_key with the shared
-        // ethrex-common helpers (one definition with the native write handler —
+        // ethrex-common helpers (one definition with the predeploy's write —
         // a divergence would make natively written roots unreferenceable) and
         // requires RECENT_ROOT_ADDRESS[storage_key] == entry_hash. entry_hash
         // commits to the RAW slot, so an entry overwritten by an aliasing newer
