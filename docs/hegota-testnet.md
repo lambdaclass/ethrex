@@ -820,7 +820,7 @@ Why this phase: the genesis must be right the first time. Chain ID, deposit gati
 the fork schedule are all baked into the genesis hash, and getting one wrong means a
 re-genesis, which is exactly what we promised a third party we would not do.
 
-- [ ] Task 7.1: Create `fixtures/networks/hegota-testnet.yaml` from
+- [x] Task 7.1: Create `fixtures/networks/hegota-testnet.yaml` from
       `fixtures/networks/hegota-devnet.yaml` with: `network_params.network_id: "8141"`;
       `seconds_per_slot: 6`; `fulu_fork_epoch: 0`, `gloas_fork_epoch: 1`,
       `heze_fork_epoch: 2`; three ethrex participants at `el_image: ethrex:local` with
@@ -836,7 +836,7 @@ re-genesis, which is exactly what we promised a third party we would not do.
       external-IP flag (verified: `src/el/ethrex/ethrex_launcher.star` has no
       `el_nat_exit_ip` reference, unlike geth, reth, besu, nethermind, erigon,
       nimbus-eth1 and ethereumjs).
-- [ ] Task 7.2: Pin the consensus client. Per `docs/hegota-devnet.md`, the client to
+- [x] Task 7.2: Pin the consensus client. Per `docs/hegota-devnet.md`, the client to
       move to is `sigp/lighthouse@focil` — a strict superset of the `unstable` base
       `ethpandaops/lighthouse:glamsterdam-devnet-7` builds from, with `ForkName` through
       `Heze`, `slot_number` and `target_gas_limit` on `JsonPayloadAttributesV4`/`V5`,
@@ -858,7 +858,7 @@ re-genesis, which is exactly what we promised a third party we would not do.
       `eip8282_deposit` with the comment "No storage (no excess inhibitor)" while
       `eip8282_exit` has storage, so the `additional_preloaded_contracts` preload in
       Task 7.1 is still required and must not be dropped.
-- [ ] Task 7.4: Add the gated deposit contract to
+- [x] Task 7.4: Add the gated deposit contract to
       `fixtures/networks/hegota-testnet.yaml` via
       `ethereum_genesis_generator_params.extra_env`, with **every value a string**:
       `DEPOSIT_CONTRACT_GATED: "true"`, `DEPOSIT_CONTRACT_ADMINS: '["<ADMIN_ADDR>"]'`,
@@ -870,7 +870,7 @@ re-genesis, which is exactly what we promised a third party we would not do.
       `export X=["0x…"]` and bash strips the inner quotes, leaving invalid JSON for the
       generator's `jq -r '.[]'`. Also add `<ADMIN_ADDR>` to
       `network_params.prefunded_accounts` so it can pay for mint transactions.
-- [ ] Task 7.5: **Do not set `network_params.deposit_contract_address`.** Leave it at
+- [x] Task 7.5: **Do not set `network_params.deposit_contract_address`.** Leave it at
       the package default `0x00000000219ab540356cBB839Cbe05303d7705Fa`
       (`ethereum-package/network_params.yaml:81`). The gater template hard-codes the
       `DEPOSIT_CONTRACT_ROLE` grant for exactly that address — storage key
@@ -879,7 +879,7 @@ re-genesis, which is exactly what we promised a third party we would not do.
       opens with `require(hasRole(DEPOSIT_CONTRACT_ROLE, _msgSender()))`, so any other
       deposit address makes **every** deposit revert with "Only deposit contract can
       call this function". Add the address, and this reason, as a comment in the config.
-- [ ] Task 7.6: Document the deposit-gating policy in a new
+- [x] Task 7.6: Document the deposit-gating policy in a new
       `docs/hegota-testnet-permissioning.md`: the gater lives at
       `0x00000000a11acc355c0de0000a11acc355c0de00` (the template's
       `deposit_gater_address`, also written into the deposit contract's storage slot
@@ -897,7 +897,7 @@ re-genesis, which is exactly what we promised a third party we would not do.
       validator so gating it adds no permissioning value and would break EIP-7251
       consolidation. Record that the genesis-injected admin is granted with value `2`,
       which `SimpleAccessControl.isStickyRole` treats as non-revocable.
-- [ ] Task 7.7: Write the token-minting runbook into
+- [x] Task 7.7: Write the token-minting runbook into
       `docs/hegota-testnet-permissioning.md`, using `pk910/gated-deposit-contract-cli`:
       `docker run --rm -it pk910/gated-deposit-contract-cli -k $ADMIN_KEY -r $RPC
       status` to confirm the gater address, token supply, admin stickiness and the

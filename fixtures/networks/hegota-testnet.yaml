@@ -143,13 +143,26 @@ network_params:
 #                 credentials so validators are withdrawable and consolidatable
 #   0x01 -> 0x00  execution-address credentials: allowed, one token per deposit
 #   0x02 -> 0x00  compounding credentials (EIP-7251): allowed, one token
+#   0x03 -> 0x00  builder credentials: allowed, one token; the chain runs Gloas,
+#                 so this prefix is reachable
 #   0xffff -> 0x02  top-ups need no token, so raising an existing validator's
 #                 balance is not gated; only creating a new one is
+#
+# An absent key reads as storage zero, which is neither blocked nor token-free —
+# the same as an explicit "0x00". The allowed prefixes are therefore listed for
+# the record rather than out of necessity; only 0x00 and 0xffff change behaviour.
+#
+# The admin injected here is granted with storage value 2, which
+# `SimpleAccessControl.isStickyRole` defines as sticky, and `revokeRole` refuses to
+# revoke a sticky role. A genesis admin is therefore PERMANENT for the life of the
+# chain: if that key leaks it cannot be removed, and the only remedies are the
+# per-prefix kill switch or a re-genesis. Admins granted later at runtime are
+# written with value 1 and can be revoked normally.
 ethereum_genesis_generator_params:
   extra_env:
     DEPOSIT_CONTRACT_GATED: "true"
     DEPOSIT_CONTRACT_ADMINS: '["REPLACE_WITH_GATER_ADMIN_ADDRESS"]'
-    DEPOSIT_CONTRACT_SETTINGS: '{"0x00":"0x01","0x01":"0x00","0x02":"0x00","0xffff":"0x02"}'
+    DEPOSIT_CONTRACT_SETTINGS: '{"0x00":"0x01","0x01":"0x00","0x02":"0x00","0x03":"0x00","0xffff":"0x02"}'
 
 additional_services:
   - dora
