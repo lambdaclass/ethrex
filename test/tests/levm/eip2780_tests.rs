@@ -5,7 +5,7 @@
 //!   - sender base: TX_BASE_COST_AMSTERDAM = 12000
 //!   - recipient access:
 //!       * self-transfer (sender == to): 0
-//!       * contract-creation: CREATE_ACCESS_AMSTERDAM = 11000 regular + new-account state gas
+//!       * contract-creation: CREATE_ACCESS_AMSTERDAM = 12000 regular + new-account state gas
 //!       * else: cold_account_access_cost = 3000
 //!   - value transfer:
 //!       * zero value, self-transfer, or contract-creation: 0
@@ -44,7 +44,7 @@ use std::sync::Arc;
 
 // Resource-based constants under test.
 const TX_BASE_COST_AMSTERDAM: u64 = 12000;
-const CREATE_ACCESS_AMSTERDAM: u64 = 11000;
+const CREATE_ACCESS_AMSTERDAM: u64 = 12000;
 const COLD_ACCOUNT_ACCESS_AMSTERDAM: u64 = 3000;
 const TX_VALUE_COST_AMSTERDAM: u64 = 6000;
 // Pre-Amsterdam base for the Osaka control.
@@ -234,9 +234,9 @@ fn test_intrinsic_create_zero_value_amsterdam() {
     assert_eq!(
         regular,
         TX_BASE_COST_AMSTERDAM + CREATE_ACCESS_AMSTERDAM,
-        "create value=0 regular gas (12000 + 11000 = 23000)"
+        "create value=0 regular gas (12000 + 12000 = 24000)"
     );
-    assert_eq!(regular, 23000, "create value=0 regular gas must be 23000");
+    assert_eq!(regular, 24000, "create value=0 regular gas must be 24000");
     assert_eq!(
         state, 0,
         "create intrinsic state gas is 0 (NEW_ACCOUNT moved in-region)"
@@ -253,9 +253,9 @@ fn test_intrinsic_create_nonzero_value_amsterdam() {
     assert_eq!(
         regular,
         TX_BASE_COST_AMSTERDAM + CREATE_ACCESS_AMSTERDAM,
-        "create value>0 regular gas (12000 + 11000 = 23000)"
+        "create value>0 regular gas (12000 + 12000 = 24000)"
     );
-    assert_eq!(regular, 23000, "create value>0 regular gas must be 23000");
+    assert_eq!(regular, 24000, "create value>0 regular gas must be 24000");
     assert_eq!(
         state, 0,
         "create intrinsic state gas is 0 (NEW_ACCOUNT moved in-region)"
