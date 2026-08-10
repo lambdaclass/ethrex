@@ -59,6 +59,8 @@ passed / 0 failed**.
 | Phase 4 closed (Tasks 4.2-4.8) | `a485332a6` | code hash + mask pinned, the three activation cases enforced, predeploy behaviour and the BAL write/read split tested |
 | Per-IL code-byte budget (Task 3.2) | `138f75ce0` | charged inside the replay, not after it; 16 bodies / 16 x 64 KiB per list, shared across candidates and both endpoints |
 | Phase 3 closed (Tasks 3.1/3.3-3.6) | `545712d88` | inert-surface and exact-set opcode tests, chain-config doc comments, absent-field table |
+| IL fork/expiry gates (Task 5.3) | `f4ecf768d` | defence in depth; execution already skipped these entries |
+| IL BAL indexing (Task 5.4) | | IL entry takes index 1; build and re-import agree on the commitment |
 
 ### Not complete
 
@@ -780,17 +782,21 @@ Why this phase: the highest-risk phase. The validator side is already correct on
 base; the builder side is not, and a builder that applies an inclusion list without
 the frame-tx gates the mempool applies produces blocks its own peers reject.
 
-- [ ] Task 5.1: Modify `crates/blockchain/payload.rs:apply_inclusion_list_transactions`
-      to skip `TxType::Frame` entries, symmetric with the satisfaction check's
-      exclusion. Justify in the code comment that an entry every client must excuse
-      buys no censorship resistance, and that the per-sender nonce/balance walk the IL
-      path relies on is the wrong domain for a keyed, payer-funded transaction.
-- [ ] Task 5.2: Modify `crates/blockchain/inclusion_list_builder.rs:filter_and_cap` to
-      exclude `TxType::Frame` alongside `EIP4844Transaction` and
-      `PrivilegedL2Transaction`, before the `tx.nonce() != expected_nonce` walk. Add a
-      test in `test/tests/blockchain/il_builder_tests.rs` that a pending frame
-      transaction never appears in a built inclusion list and never displaces a
-      regular transaction from the 8 KiB budget.
+- [x] Task 5.1: **Superseded — do NOT implement.** This task and 5.2 excluded frame
+      transactions from the inclusion-list path on the grounds that "an entry every
+      client must excuse buys no censorship resistance". Profile 2 enforcement makes
+      that false: omissions are enforced, not excused (see
+      [the enforcement decision](#frame-transactions-are-enforced-through-eip-8369-profile-2-not-excused)),
+      so excluding them would drop censorship resistance for the one transaction type
+      this testnet exists to exercise while ethrex still enforces other clients' lists
+      that carry them. The mechanical half of the justification — that the per-sender
+      linear-nonce walk is the wrong domain for a keyed, payer-funded transaction — is
+      real and already handled: `is_linear_nonce_domain`
+      (`crates/blockchain/inclusion_list_builder.rs:123`) routes keyed frame
+      transactions to a `non_linear` bucket that never enters the walk, and frame
+      transactions are exempt from balance gating because the payer is a paymaster
+      resolved during the validation prefix.
+- [x] Task 5.2: **Superseded — see Task 5.1.**
 - [ ] Task 5.3: Modify `crates/blockchain/payload.rs:apply_inclusion_list_transactions`
       to apply the two gates `fill_transactions` applies at
       `crates/blockchain/payload.rs:753-777` and that the IL path currently omits: the
@@ -800,14 +806,14 @@ the frame-tx gates the mempool applies produces blocks its own peers reject.
       assertions plus the fork gate applied to every IL entry, and add a test that an
       IL delivered across the Hegotá boundary cannot introduce a pre-fork-invalid
       transaction.
-- [ ] Task 5.4: Verify BAL index consistency between IL-first sequencing and
+- [x] Task 5.4: Verify BAL index consistency between IL-first sequencing and
       `fill_transactions`. `apply_inclusion_list_transactions` sets
       `context.vm.set_bal_index((transactions.len() + 1) as u32)` per entry; add a test
       in `test/tests/blockchain/focil_tests.rs` that a block containing IL-sequenced
       transactions followed by a reference-carrying frame transaction produces the same
       `blockAccessListHash` on build and on re-import, and that the frame transaction's
       EIP-8272 reference reads land under its own index.
-- [ ] Task 5.5: Verify the engine-API surface a FOCIL consensus client actually sends,
+- [~] Task 5.5: Verify the engine-API surface a FOCIL consensus client actually sends,
       per the divergences already recorded in `docs/hegota-devnet.md`: that
       `engine_getInclusionListV1` tolerates the one ignored `parentHash` parameter every
       shipping FOCIL client sends, that `engine_forkchoiceUpdatedV5` accepts the
@@ -815,12 +821,25 @@ the frame-tx gates the mempool applies produces blocks its own peers reject.
       `forkchoiceUpdatedV4` are rejected from Hegotá on. Add or confirm one test per
       item in `test/tests/rpc/engine_fork_choice_tests.rs` and
       `test/tests/rpc/payload_attributes_tests.rs`.
-- [ ] Task 5.6: Modify `crates/blockchain/inclusion_list_validator.rs` module docs to
-      state the frame-tx exclusion as a standing rule with its reason, and add to
-      `docs/hegota-devnet.md`'s EIP-7805 section the builder-side symmetry from Tasks
-      5.1-5.2. Record that frame-tx IL eligibility is unspecified upstream, that
-      ethereum/EIPs#12110 (VOPS profiles) is the candidate mechanism, and that ethrex
-      ships full exclusion until it merges.
+      **Two of three done.** `engine_getInclusionListV1`'s ignored `parentHash` is
+      covered by `get_inclusion_list_tolerates_a_stale_clients_parent_hash`
+      (`test/tests/rpc/inclusion_list_engine_tests.rs`), and
+      `parse_v5_accepts_the_custody_columns_parameter` now covers `custodyColumns` as
+      `null` AND as a populated 16-byte bitarray. `forkchoiceUpdatedV4`'s Hegotá
+      rejection is covered by `forkchoice_updated_v4_rejects_hegota_timestamp_with_unsupported_fork`.
+      **Remaining:** `engine_newPayloadV5`'s Hegotá rejection
+      (`crates/networking/rpc/engine/payload.rs:382`) has NO test. The guard sits inside
+      the async `handle` rather than a pure validator, so it needs a
+      `default_context_with_storage` fixture with `hegota_time` set, unlike the
+      pure-function tests around it.
+- [ ] Task 5.6: **Rewritten against Tasks 5.1/5.2.** Record the opposite of what this
+      task originally said: frame transactions ARE eligible for locally built inclusion
+      lists, and the builder handles them by nonce domain rather than by exclusion.
+      Add to `docs/hegota-devnet.md`'s EIP-7805 section the builder-side treatment
+      (`is_linear_nonce_domain`, the `non_linear` bucket, the balance-gating exemption)
+      alongside the validator-side enforcement already recorded there. Record that
+      frame-tx IL eligibility is unspecified upstream and that ethereum/EIPs#12110
+      (VOPS profiles) is the candidate mechanism ethrex implements ahead of its merge.
 - [ ] Task 5.7: **Checkpoint: Verify Phase 5 complete.** Run `cargo test --test
       blockchain focil`, `cargo test --test blockchain il_builder`, `cargo test --test
       blockchain il_validator`, `cargo test --test rpc`, and `make -C

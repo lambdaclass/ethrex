@@ -1032,6 +1032,18 @@ mod tests {
         .expect("V5 must accept the specified three-parameter form");
         assert!(attrs.is_none());
 
+        // A real 16-byte custody bitarray, the shape the engine API specifies
+        // for a client that does advertise one. Accepted and ignored: ethrex
+        // has no custody-dependent behaviour, and rejecting the value would
+        // halt the chain under a client that sends it.
+        let (_, attrs) = super::parse_v5(&Some(vec![
+            state.clone(),
+            serde_json::Value::Null,
+            json!(format!("0x{}", "ff".repeat(16))),
+        ]))
+        .expect("V5 must accept a populated custody bitarray");
+        assert!(attrs.is_none());
+
         // The one- and two-parameter forms stay accepted.
         super::parse_v5(&Some(vec![state.clone()])).expect("one param");
         super::parse_v5(&Some(vec![state.clone(), serde_json::Value::Null])).expect("two params");

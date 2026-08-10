@@ -324,3 +324,133 @@ async fn the_access_list_commitment_survives_a_rebuild() {
         "the header must commit to the access list under test"
     );
 }
+
+// ==================== EIP-7805 IL-first sequencing ====================
+//
+// `apply_inclusion_list_transactions` sequences the inclusion list ahead of the
+// mempool and assigns each entry `context.payload.body.transactions.len() + 1`
+// as its EIP-7928 block access index, on a code path separate from
+// `fill_transactions`. If the two disagree about indices, the builder and the
+// importer commit different `blockAccessListHash` values for the same block —
+// a chain split with no state-root mismatch to point at it, which is the
+// failure mode FOCIL adds on top of everything else.
+
+/// Build a block whose inclusion list carries the predeploy write, leaving the
+/// reference-carrying frame transaction to arrive from the mempool behind it.
+async fn build_il_sequenced_block() -> (Block, BlockAccessList) {
+    let (store, chain_id) = setup_store("eip8272-bal-il").await;
+    let blockchain = blockchain_with(store.clone(), false);
+    let genesis_header = store.get_block_header(0).unwrap().unwrap();
+
+    let signer: Signer = LocalSigner::new(test_secret_key()).into();
+    let mut write = write_tx(chain_id);
+    write.sign_inplace(&signer).await.unwrap();
+    let il = vec![write.clone()];
+
+    // The frame transaction goes through the pool, so the builder picks it up
+    // in `fill_transactions` after the list has been sequenced.
+    blockchain
+        .add_transaction_to_pool(reference_tx(chain_id))
+        .await
+        .expect("the reference-carrying frame transaction must enter the pool");
+
+    let args = BuildPayloadArgs {
+        parent: genesis_header.hash(),
+        timestamp: genesis_header.timestamp + 12,
+        fee_recipient: H160::zero(),
+        random: H256::zero(),
+        withdrawals: Some(Vec::new()),
+        beacon_root: Some(H256::zero()),
+        slot_number: Some(BLOCK_SLOT),
+        version: 1,
+        elasticity_multiplier: ELASTICITY_MULTIPLIER,
+        gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+        inclusion_list_transactions: Some(il.clone()),
+    };
+    let payload = create_payload(&args, &store, Bytes::new()).unwrap();
+    let result = blockchain
+        .build_payload_with_il(payload, &il)
+        .expect("a block sequencing an inclusion list ahead of a frame tx must be buildable");
+    let bal = result
+        .block_access_list
+        .expect("an Amsterdam+ block must produce a BAL");
+
+    assert_eq!(
+        result.payload.body.transactions.len(),
+        2,
+        "the listed write and the pooled frame transaction must both be included; receipts={:?}",
+        result.receipts
+    );
+    assert_eq!(
+        result.payload.body.transactions[0].hash(&ethrex_crypto::NativeCrypto),
+        write.hash(&ethrex_crypto::NativeCrypto),
+        "the inclusion-list entry must be sequenced first"
+    );
+    assert!(
+        result.receipts.iter().all(|r| r.succeeded),
+        "both transactions must succeed; receipts={:?}",
+        result.receipts
+    );
+    (result.payload, bal)
+}
+
+#[tokio::test]
+async fn an_il_sequenced_write_is_indexed_ahead_of_the_pooled_frame_transaction() {
+    let (_, bal) = build_il_sequenced_block().await;
+    let changes = predeploy_changes(&bal);
+
+    let written = U256::from_big_endian(written_entry().storage_key().as_bytes());
+    let slot_change = changes
+        .storage_changes
+        .iter()
+        .find(|change| change.slot == written)
+        .expect("the listed write must be recorded as a storage change");
+    assert_eq!(
+        slot_change
+            .slot_changes
+            .iter()
+            .map(|c| c.block_access_index)
+            .collect::<Vec<_>>(),
+        vec![1],
+        "an inclusion-list entry takes index 1, the same index fill_transactions \
+         would have given the block's first transaction"
+    );
+
+    // The frame transaction still reads its reference, so the block genuinely
+    // exercises both paths rather than one of them silently dropping out.
+    assert!(
+        changes.storage_reads.contains(&U256::from_big_endian(
+            referenced_entry().storage_key().as_bytes()
+        )),
+        "the pooled frame transaction's reference must still be recorded as a read"
+    );
+}
+
+#[tokio::test]
+async fn il_sequencing_produces_the_same_commitment_on_re_import() {
+    // The importer knows nothing about inclusion lists: it walks the block's
+    // transactions in order and indexes them from 1. The builder reached the
+    // same block down two code paths, so the two must agree — otherwise every
+    // block carrying an inclusion list is rejected by its own network.
+    let (block, build_bal) = build_il_sequenced_block().await;
+
+    for parallel in [false, true] {
+        let (store, _) = setup_store(&format!("eip8272-bal-il-import-{parallel}")).await;
+        let blockchain = blockchain_with(store, parallel);
+        let rebuilt = blockchain
+            .add_block_pipeline_bal(block.clone(), None)
+            .expect("the block must import")
+            .expect("a rebuilding path must return an access list");
+
+        assert_eq!(
+            rebuilt, build_bal,
+            "the rebuilt access list differs from the IL-sequenced one (parallel={parallel})"
+        );
+    }
+
+    assert_eq!(
+        block.header.block_access_list_hash,
+        Some(build_bal.compute_hash(&ethrex_crypto::NativeCrypto)),
+        "the header must commit to the access list under test"
+    );
+}
