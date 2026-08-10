@@ -383,7 +383,7 @@ Everything lives under `BENCH_DATA_ROOT` (default `/mnt/raid10/fullsync-bench`):
 ```
 <root>/data/<net>/         bind-mounted into the container as /data
 <root>/consensus/<net>/    beacon node database
-<root>/state/<net>/base.N  retained base generations
+<root>/state/<net>/base.N  retained base generations (BENCH_KEEP_GENERATIONS, default 2)
 <root>/results/<net>/      one JSON + log per leg
 ```
 
@@ -395,6 +395,18 @@ database rather than a delta. The runner asserts this at startup rather than tru
 Bind mounts are used instead of named Docker volumes for the same reason: Docker's
 `data-root` is usually on the OS disk, which is both smaller and a different filesystem
 from the array holding the bases.
+
+**Sizing.** Measured on mainnet: a base is ~285 G and a full measurement leg grows the live
+data dir by a further ~84 G, so peak is ~370 G plus one base per retained generation, plus
+~4.5 G for the beacon node. Sepolia is ~217 G / +24 G, hoodi ~49 G / +4 G. All three
+networks at two generations land around 1.2 T; mainnet alone around 700 G. Bases also grow
+with chain state, so provision headroom rather than exactly.
+
+`BENCH_KEEP_GENERATIONS` (default 2) is the cheapest lever on a small disk — it is pure
+rollback insurance and does not affect measurements. Each generation costs its own delta
+*plus* the dead SST files its hardlinks keep alive against compaction. 2 is the minimum:
+rotation deletes the oldest generation before the replacement snapshot exists, so a single
+generation would leave nothing behind if that snapshot failed.
 
 ### Metrics
 

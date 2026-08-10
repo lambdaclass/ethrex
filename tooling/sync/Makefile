@@ -365,6 +365,11 @@ BENCH_DATA_ROOT ?= /mnt/raid10/fullsync-bench
 export BENCH_DATA_ROOT
 
 FULLSYNC_BENCH_NETWORKS ?= mainnet
+# Retained base generations per network (rollback depth). Lower on a small disk: each
+# generation costs its delta plus the dead SSTs its hardlinks keep alive.
+BENCH_KEEP_GENERATIONS ?= 2
+export BENCH_KEEP_GENERATIONS
+
 FULLSYNC_BENCH_STATE ?= $(BENCH_DATA_ROOT)/state
 FULLSYNC_BENCH_RESULTS ?= $(BENCH_DATA_ROOT)/results
 

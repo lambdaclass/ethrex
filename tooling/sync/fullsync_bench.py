@@ -73,9 +73,23 @@ NETWORKS = {
                 "measure_blocks": 3 * BLOCKS_PER_DAY, "gap_blocks": 6 * BLOCKS_PER_DAY},
 }
 
-# Retained hardlink generations of each base, for rollback when a cycle ends badly.
-# Hardlinks pin SST files that compaction would otherwise free, so this is capped.
-KEEP_GENERATIONS = 5
+# Retained hardlink generations of each base, for rollback when a cycle ends badly: the
+# health gate refuses to promote a base that will not reopen, but a base that is subtly
+# wrong would otherwise poison every later cycle with no way back short of re-bootstrapping.
+#
+# Capped, and worth keeping low on a small disk: hardlinks pin SST files that compaction
+# would otherwise free, so each retained generation costs its own delta *plus* whatever dead
+# data it keeps alive.
+#
+# 2 is the floor, not 1: `rotate_generations` deletes the oldest generation *before* the
+# replacement snapshot is written, so with a single generation a failed snapshot would leave
+# the network with no base at all. At 2 the previous base survives as `base.1` throughout.
+KEEP_GENERATIONS = int(os.environ.get("BENCH_KEEP_GENERATIONS", "2"))
+if KEEP_GENERATIONS < 2:
+    raise SystemExit(
+        "BENCH_KEEP_GENERATIONS must be at least 2: rotation deletes the oldest generation "
+        "before the replacement snapshot exists, so 1 would leave no base if it failed"
+    )
 
 STOP_TIMEOUT_SECONDS = 300  # graceful; SIGKILL corrupts the resume state (see #7111)
 
