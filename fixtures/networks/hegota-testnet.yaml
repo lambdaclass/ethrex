@@ -31,7 +31,7 @@ participants:
       - "--nat.extip"
       - "REPLACE_WITH_HOST_PUBLIC_IP"
     cl_type: lighthouse
-    cl_image: sigp/lighthouse:focil
+    cl_image: ethpandaops/lighthouse:focil
     validator_count: 32
     supernode: true
   - el_type: ethrex
@@ -42,7 +42,7 @@ participants:
       - "--nat.extip"
       - "REPLACE_WITH_HOST_PUBLIC_IP"
     cl_type: lighthouse
-    cl_image: sigp/lighthouse:focil
+    cl_image: ethpandaops/lighthouse:focil
     validator_count: 32
   - el_type: ethrex
     el_image: ethrex:hegota-testnet
@@ -52,7 +52,7 @@ participants:
       - "--nat.extip"
       - "REPLACE_WITH_HOST_PUBLIC_IP"
     cl_type: lighthouse
-    cl_image: sigp/lighthouse:focil
+    cl_image: ethpandaops/lighthouse:focil
     validator_count: 32
 
 # The consensus client must speak the FOCIL engine surface from the fork
@@ -64,16 +64,13 @@ participants:
 # boundary, not after: there is no inert intermediate state, so a client that
 # speaks only V5/V4 halts the node at the fork.
 #
-# The client is Lighthouse. `docs/hegota-devnet.md` records the analysis: the
-# `focil` branch is a strict superset of the `unstable` base the devnet images
-# build from, carrying the same ForkName list through Gloas and Heze, both
-# `JsonPayloadAttributesV4` and `V5` with `slot_number` and `target_gas_limit`,
-# plus the three engine methods above. A newer stock build is not a substitute —
-# `unstable` rejects a Heze payload outright with `UnsupportedForkVariant`.
-#
-# There is no published tag for it, so the image is built from the branch. What
-# remains unproven is the rest of the network config against that build, so
-# measure it on a scratch enclave rather than inferring from branch dates.
+# The client is Lighthouse, and `ethpandaops/lighthouse:focil` is the image. This
+# is not inferred from the tag name: the running Hegotá devnet uses it, reports
+# `Lighthouse/v8.1.3-52e5197`, and its `/eth/v1/config/spec` carries the FOCIL
+# preset — `INCLUSION_LIST_COMMITTEE_SIZE` 16, `MAX_BYTES_PER_INCLUSION_LIST` 8192,
+# `DOMAIN_INCLUSION_LIST_COMMITTEE`, `INCLUSION_LIST_DUE_BPS` and
+# `MAX_REQUEST_INCLUSION_LIST` — alongside `HEZE_FORK_EPOCH`. A stock build is not a
+# substitute: it rejects a Heze payload outright with `UnsupportedForkVariant`.
 
 network_params:
   # Chain ID 8141, unclaimed in the chainid.network registry (8272 is taken).
@@ -81,15 +78,23 @@ network_params:
   network_id: "8141"
   seconds_per_slot: 6
 
-  # Osaka/Fulu from genesis, Hegotá (heze) at epoch 1. Amsterdam is NOT scheduled
-  # explicitly and does not need to be: the genesis generator derives the
-  # Amsterdam-era fork times from `heze` and installs the EIP-8282 builder
-  # deposit/exit predeploys itself. This is the arrangement the running Hegotá
-  # devnet uses, and its blocks carry both EIP-7843 `slotNumber` and the EIP-7928
-  # `blockAccessListHash`, with `requestsHash` at the empty-input value — proof the
-  # Amsterdam schema and the request predeploys are both live.
+  # Fork schedule, matching what the running Hegotá devnet demonstrably works with:
+  # its consensus client reports FULU_FORK_EPOCH 0, GLOAS_FORK_EPOCH 1,
+  # HEZE_FORK_EPOCH 2.
+  #
+  # Gloas MUST be scheduled explicitly. Hegotá is defined on top of it, and while
+  # levm resolves the EVM rules from the fork ordinal, the header schema, the block
+  # access list and the engine API surface all key off the Amsterdam-era timestamp
+  # the generator derives from Gloas. Leaving it unset runs Amsterdam EVM rules
+  # under a pre-Amsterdam header schema.
+  #
+  # Gloas MUST NOT be at epoch 0. With Gloas from genesis the beacon genesis state
+  # is a Gloas state, and the client rejects the one the generator writes
+  # ("Built-in genesis state SSZ bytes are invalid"). Forking in after genesis keeps
+  # the genesis state Fulu.
   fulu_fork_epoch: 0
-  heze_fork_epoch: 1
+  gloas_fork_epoch: 1
+  heze_fork_epoch: 2
 
   # Validator keys. The package default mnemonic is public and identical on every
   # kurtosis deployment, so its derived accounts are prefunded and spendable by
