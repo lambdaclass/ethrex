@@ -11,6 +11,44 @@ switch to turn off — so enforcing rather than excusing frame-transaction omiss
 publishing it. Its constants are consensus inputs and appear in the artifact set for that
 reason.
 
+## Starting state
+
+Resolved at the time the branch was cut. `left-right` counts read as
+`main-only / branch-only` against `origin/main`.
+
+| Ref | SHA | vs `origin/main` |
+| --- | --- | --- |
+| `origin/main` | `797df5540` | — |
+| `origin/hegota-devnet` | `dbcaeae78` | 8 / 196 |
+| `origin/focil` | `667563366` | 9 / 37 |
+| `origin/eip-8250` | `a441f27eb` | 20 / 15 |
+| `origin/eip-8272` | `c1d57faa4` | 18 / 24 |
+| `origin/eip-7906` | `1b6c6f15a` | out of scope |
+
+`hegota-testnet` is cut from `origin/hegota-devnet`. Two traps:
+
+- **A stale local `hegota-devnet` ref is 132 commits behind its remote.** Reasoning from
+  it produces a wrong picture of the branch — it predates the FOCIL merge, EIP-8312,
+  EIP-8369 and the divergence reclassification. Always resolve `origin/hegota-devnet`.
+- **`origin/main` is not an ancestor of this branch**, and has 8 commits this branch
+  lacks. A PR based on `main` therefore cannot be merged as a branch without dragging
+  that divergence in; transplant its commits instead. Expect type-level breakage even
+  when the text applies cleanly, because helper signatures differ between the two bases.
+
+## Progress
+
+| Landed | Commit | Notes |
+| --- | --- | --- |
+| Branch cut (Task 2.1) | `87fb3f700` | from `origin/hegota-devnet` |
+| PR ledger (Phase 1) | `4b6563197` | `docs/hegota-testnet-prs.md` |
+| EIP-8272 predeploy (Task 4.1) | `b964b318a` | `#7120` merged; native write and its flat gas removed |
+| `SLOTNUM` ban | `d43ebdda2` | `#7108` transplanted; needed a test fixup, `fc018b526` |
+| `NONCEKEYLOAD` removed (Task 2.3) | `f598130c0` | `0xB9` free again |
+
+Phase 4 is **not** complete — only Task 4.1. Tasks 4.2 through 4.8 (the byte-for-byte
+assertion, the mask pin, the install check, the four predeploy cases and the
+block-access-list test) still stand.
+
 The two things that decide whether this succeeds:
 
 1. **Cross-client interop.** Every consensus-visible ethrex-only divergence must be
@@ -386,13 +424,13 @@ Why this phase: the branch cannot be cut until we know which of ~21 open frame-t
 are already in `origin/hegota-devnet`, which must be transplanted, and which are
 superseded. Cutting first and reconciling later means re-resolving the same conflicts.
 
-- [ ] Task 1.1: `git fetch origin` and record in `docs/hegota-testnet.md` a "Starting
+- [x] Task 1.1: `git fetch origin` and record in `docs/hegota-testnet.md` a "Starting
       state" section stating the resolved SHAs of `origin/main`, `origin/hegota-devnet`,
       `origin/focil`, `origin/eip-8250`, `origin/eip-8272`, `origin/eip-7906`, and the
       three `git rev-list --left-right --count` figures against `origin/main`. Note
       explicitly that the local `hegota-devnet` ref is 132 commits behind its remote
       and must not be used.
-- [ ] Task 1.2: Create `docs/hegota-testnet-prs.md` with a table of every open
+- [x] Task 1.2: Create `docs/hegota-testnet-prs.md` with a table of every open
       lambdaclass/ethrex PR whose title or head branch matches
       `8141|8250|8272|7906|7805|focil|frame|sigparam|slotnum|recent.root|paymaster|nonce`,
       with columns: PR, head, base, review state, mergeable state, in-scope (yes/no),
@@ -400,28 +438,28 @@ superseded. Cutting first and reconciling later means re-resolving the same conf
       `gh pr list --repo lambdaclass/ethrex --state open --limit 200 --json number,title,headRefName,baseRefName,reviewDecision,mergeable,additions,deletions,isDraft`.
       Seed it from the snapshot in the "PR reconciliation snapshot" section below and
       refresh every row against `gh` rather than trusting the snapshot.
-- [ ] Task 1.3: For each PR whose `base` is `hegota-devnet` (`#7120`, `#7086`, `#7084`,
+- [x] Task 1.3: For each PR whose `base` is `hegota-devnet` (`#7120`, `#7086`, `#7084`,
       `#7085`, `#7121`), run `git log origin/hegota-devnet --oneline --grep=<subject>`
       and `git branch -r --contains <head sha>` to determine whether it is already
       merged into `origin/hegota-devnet`. Record "already in base" versus "needs
       transplant" per PR in `docs/hegota-testnet-prs.md`.
-- [ ] Task 1.4: Record in `docs/hegota-testnet-prs.md` the decision that **`#7120` is
+- [x] Task 1.4: Record in `docs/hegota-testnet-prs.md` the decision that **`#7120` is
       taken and `#7086` is closed as superseded**, with the one-sentence reason:
       `#7120` is stacked on `#7086` and deletes the native write wholesale (−190
       lines), so `#7086`'s extra interception paths are dead on arrival and landing
       `#7086` alone leaves us on the divergent 38 064-gas pricing.
-- [ ] Task 1.5: Record in `docs/hegota-testnet-prs.md` the resolution of the
+- [x] Task 1.5: Record in `docs/hegota-testnet-prs.md` the resolution of the
       `#7082` / `#7058` overlap (both implement "frame receipts with the storage
       codec"; `#7058` additionally carries the Amsterdam-scheduling devnet-boot fix).
       Check `origin/hegota-devnet` for `f4f29c001`/`e02532512`-equivalents first; if
       both are already in the base, mark both PRs "already in base, close".
-- [ ] Task 1.6: Mark as out-of-scope-for-the-gate, with the reason, in
+- [x] Task 1.6: Mark as out-of-scope-for-the-gate, with the reason, in
       `docs/hegota-testnet-prs.md`: `#7047` (base `frames-devnet-0`, needs a full
       re-target), `#6974` (`ethrex_simulateFrameTransaction`, useful but not on the
       interop-critical path), `#7091` (RLPx inbound hardening, not interop-critical),
       `#6891` (EIP-7906, deleted from this branch), `#6730` (EIP-8025), `#6625`,
       `#6325`. Each of these must still appear in the table.
-- [ ] Task 1.7: **Checkpoint: Verify Phase 1 complete.** Review Tasks 1.1-1.6. Confirm
+- [x] Task 1.7: **Checkpoint: Verify Phase 1 complete.** Review Tasks 1.1-1.6. Confirm
       `docs/hegota-testnet-prs.md` has one row per open matching PR with a non-empty
       action column and no row reading "TBD". List each task and its status. Do not
       proceed until all are done.
@@ -431,7 +469,7 @@ superseded. Cutting first and reconciling later means re-resolving the same conf
 Why this phase: every later phase edits this branch, so its exact construction and the
 proof that the active EIP set is the intended one must land first.
 
-- [ ] Task 2.1: `git switch -c hegota-testnet origin/hegota-devnet`. Do not merge
+- [x] Task 2.1: `git switch -c hegota-testnet origin/hegota-devnet`. Do not merge
       anything yet.
 - [ ] Task 2.2: Delete EIP-7906. Remove `crates/vm/levm/src/opcode_handlers/tx_trace.rs`,
       `test/tests/levm/eip7906_tests.rs`, `docs/eip-7906.md` and
@@ -451,7 +489,7 @@ proof that the active EIP set is the intended one must land first.
       arms in `crates/vm/levm/src/vm.rs`, `crates/vm/levm/src/gas_cost.rs` and
       `crates/vm/levm/src/opcode_handlers/mod.rs`. Use `ast-grep --rewrite` for the
       block deletions and `difft` to confirm each span.
-- [ ] Task 2.3: Delete `NONCEKEYLOAD`. Remove `OpNonceKeyLoadHandler` and
+- [x] Task 2.3: Delete `NONCEKEYLOAD`. Remove `OpNonceKeyLoadHandler` and
       `load_nonce_key` from `crates/vm/levm/src/opcode_handlers/frame_tx.rs`, the
       `NONCEKEYLOAD = 0xB9` enum entry, table slot and Hegotá registration plus its
       not-before-Hegota test from `crates/vm/levm/src/opcodes.rs`, and its gas constant
@@ -585,7 +623,7 @@ Why this phase: it deletes the single largest quantified consensus divergence
 because it changes whether a frame transaction's includability depends on recent-root
 state at all.
 
-- [ ] Task 4.1: Transplant `#7120`'s final commit onto `hegota-testnet` (its base is
+- [x] Task 4.1: Transplant `#7120`'s final commit onto `hegota-testnet` (its base is
       `hegota-devnet` and it is stacked on `#7086`, so cherry-pick the last commit
       only, not the branch). Confirm the resulting tree contains
       `RECENT_ROOT_RUNTIME_BYTECODE` in `crates/vm/system_contracts.rs` and no
