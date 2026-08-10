@@ -239,6 +239,16 @@ fn control_read_cost(backend: Arc<dyn StorageBackend>, keys: &[Vec<u8>]) {
         })
         .collect();
 
+    // Keep only the paths that exist. A descent reads nothing but present
+    // nodes, whereas a mixed set is diluted by misses the bloom filter
+    // rejects for almost nothing — which would make the control look
+    // faster than the descent for a reason that has nothing to do with
+    // the descent.
+    let probes: Vec<BitPath> = probes
+        .into_iter()
+        .filter(|path| db.get(path).expect("get").is_some())
+        .collect();
+
     // `keys` is sorted, so probing it in order is a *sequential* scan and
     // reuses SST blocks. A descent is random access. Measuring both, with
     // one timer around the whole batch rather than one per call, separates
