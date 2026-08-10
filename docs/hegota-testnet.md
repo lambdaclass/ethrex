@@ -40,7 +40,8 @@ Resolved at the time the branch was cut. `left-right` counts read as
 Branch `hegota-testnet`, pushed to `origin`. Baseline for anything below: the whole
 workspace compiles (`--exclude 'ethrex-l2*' --exclude ethrex-prover --exclude
 ethrex-guest-program`) and `cargo test -p ethrex-test --test ethrex_tests` is **1221
-passed / 0 failed**.
+passed / 0 failed**, `cargo test -p ethrex-rpc --lib` is 122 passed, and
+`make -C tooling/ef_tests/blockchain test` is 14 744 + 3 138 passed / 0 failed.
 
 | Landed | Commit | Notes |
 | --- | --- | --- |
@@ -61,10 +62,18 @@ passed / 0 failed**.
 | Phase 3 closed (Tasks 3.1/3.3-3.6) | `545712d88` | inert-surface and exact-set opcode tests, chain-config doc comments, absent-field table |
 | IL fork/expiry gates (Task 5.3) | `f4ecf768d` | defence in depth; execution already skipped these entries |
 | IL BAL indexing (Task 5.4) | `ccd359718` | IL entry takes index 1; build and re-import agree on the commitment |
+| Hegotá requires Amsterdam | `0a1ccaed8`, `2a2aab360` | `validate_fork_schedule` at genesis load; 40 tests had been running Hegotá with Amsterdam off |
+| Phase 5 docs + V5 guard (Tasks 5.5/5.6) | `0234ae116` | frame txs recorded as IL-eligible; `newPayloadV5`'s Hegotá rejection tested |
 
 ### Not complete
 
-- **Phase 5** and **Phase 6** — not started.
+- **Phase 5 Task 5.7** — the checkpoint. Everything else in Phase 5 is done or
+  superseded. `make -C tooling/ef_tests/engine test` had not been run when this was
+  written; it downloads a 646 MB fixture bundle on first use, so budget for that.
+- **Phase 6** — the divergence ledger against upstream: not started. This is the gate
+  on bring-up, and it is the recommended next phase. `eipmcp` now shows EIP-8081
+  (*Hardfork Meta - Hegotá*) is a real upstream meta EIP with a declared EIP set, which
+  the ledger predates, so expect the audit to find more than is currently recorded.
 - **Phase 7 Task 7.3** (generator revision) is satisfied by pinning the generator image
   in the config instead of bumping `ETHEREUM_PACKAGE_REVISION`; **Task 7.8** needs a
   live enclave.
@@ -104,11 +113,50 @@ passed / 0 failed**.
   without `nonce_keys` (a non-vault sender must select 1..=16) reports "VERIFY frame did
   not call APPROVE or payer not approved". Check the payload shape before the approval
   code.
+- **A test that passes without the code it tests is the default outcome, not the rare
+  one.** Three tests written this session passed with the feature stashed: two IL-gate
+  tests (the entry was already skipped on execution failure) and, nearly, the
+  `newPayloadV5` guard test. Stash the change and re-run before believing a new test.
+- **`hegotaTime` without `amsterdamTime` was a live fixture shape, not a hypothetical.**
+  `get_fork` is a first-match cascade, so it answered `Hegota` while every
+  `is_amsterdam_activated` gate stayed shut — 75 ordinal-gated sites disagreeing with 32
+  field-gated ones. 40 tests ran that way. `validate_fork_schedule` now rejects it at
+  genesis load (EIP-8081 requires EIP-7773). Three mempool tests deliberately keep the
+  ordinal-vs-field divergence alive using `lstarTime`, the one post-Amsterdam fork with
+  no declared prerequisite; if LStar gains one, move them again rather than delete them.
+- **Amsterdam headers must carry an EIP-7843 slot number.** Fixtures that set
+  `amsterdam_time` but leave `slot_number: None` in `BuildPayloadArgs` fail with
+  `SlotNumberNotPresent`. Several FOCIL fixtures had both problems at once.
+- **The plan can be wrong about the branch.** Phase 5 Tasks 5.1/5.2/5.6 instructed
+  excluding frame transactions from inclusion lists, on a justification Phase 3's
+  Profile 2 enforcement had already invalidated, and the builder had already moved past
+  it via `is_linear_nonce_domain`. Check the code before implementing a task written
+  before a decision that changed the branch.
 - **The three EIP-8272 write-gas figures on record are one curve, not a disagreement.**
   127 256 (ours, 64 non-zero calldata bytes), 127 244 (ethereum/EIPs#12131) and 127 196
   (ethrex `#7120`) differ only by how many zero bytes the `salt ‖ root` payload carries:
   execution sits far above the EIP-7623 floor, so each zero byte is 12 gas cheaper.
   Reconcile a gas delta against calldata content before reading it as a pricing split.
+
+### Start here next session
+
+1. Read this Progress block and the traps above.
+2. Close **Phase 5 Task 5.7**: run `make -C tooling/ef_tests/engine test` (646 MB
+   fixture download on first use) and confirm nothing is `#[ignore]`d.
+3. Then **Phase 6**, the divergence ledger. It is the gate on bring-up: a surviving
+   consensus-visible divergence is a chain split the first time a second client follows
+   a block that uses it. Do the audit through `eipmcp` (`get_eip`, `diff_eip`,
+   `pending_prs_for_eip`), starting from EIP-8081's declared set. Known open items to
+   fold in: `RECENT_ROOT_CODE` is still an unmerged PR (ethereum/EIPs#12131, whose two
+   authorial questions are recorded in `docs/eip-8272.md`), and the `SLOTNUM`
+   validation-prefix ban is proposed but unmerged (ethereum/EIPs#12066).
+4. Do **not** start Phases 7-9 (genesis, publication, install) before Phase 6. Bringing
+   up a testnet whose ledger is open just means finding the split with a second client
+   attached.
+
+Loose ends that are nobody's task yet: `COLD_READ_AMPLIFICATION.md` and `FINDINGS.md`
+sit untracked at the repo root and have not been read in several sessions — fold them
+into the docs or delete them.
 
 The two things that decide whether this succeeds:
 
