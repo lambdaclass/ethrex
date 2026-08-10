@@ -57,7 +57,10 @@ use ::tracing::{error, info, instrument, warn};
 // unused in any configuration that compiles that path out.
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ::tracing::debug;
-use constants::{AMSTERDAM_MAX_INITCODE_SIZE, MAX_INITCODE_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
+use constants::{
+    AMSTERDAM_MAX_INITCODE_SIZE, DEFAULT_DORMANCY, DEFAULT_MAX_NONCE_GAP, DEFAULT_MEMPOOL_LIFETIME,
+    MAX_INITCODE_SIZE, MEMPOOL_SWEEP_INTERVAL, POST_OSAKA_GAS_LIMIT_CAP,
+};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH, MIN_BASE_FEE_PER_BLOB_GAS};
@@ -115,7 +118,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::LazyLock;
 use std::sync::mpsc::Sender;
 use std::sync::{
-    Arc, RwLock,
+    Arc, RwLock, Weak,
     atomic::{AtomicBool, AtomicUsize, Ordering},
     mpsc::{Receiver, channel},
 };
@@ -327,6 +330,17 @@ pub struct BlockchainOptions {
     /// warmer thread and the executor. Set to false (via `--no-precompile-cache`) to
     /// disable the cache for benchmarking purposes.
     pub precompile_cache_enabled: bool,
+    /// Maximum age of a mempool transaction before it is evicted by the
+    /// periodic TTL sweep.
+    pub mempool_lifetime: Duration,
+    /// Threshold for the dormancy sweep: senders whose top pending nonce
+    /// exceeds their on-chain nonce by more than this value are eligible
+    /// for eviction once they have been dormant for [`Self::dormancy`].
+    pub max_nonce_gap: u64,
+    /// Dormancy window used by the nonce-gap sweep. A sender is only evicted
+    /// when all their pool entries are older than this and the nonce gap is
+    /// above [`Self::max_nonce_gap`].
+    pub dormancy: Duration,
     /// Minimum fee-field bump (in percent) required to replace a non-blob
     /// transaction at the same `(sender, nonce)`. Matches the 10%
     /// default of every peer EL client.
@@ -379,6 +393,9 @@ impl Default for BlockchainOptions {
             precompute_witnesses: false,
             private_mempool: false,
             precompile_cache_enabled: true,
+            mempool_lifetime: DEFAULT_MEMPOOL_LIFETIME,
+            max_nonce_gap: DEFAULT_MAX_NONCE_GAP,
+            dormancy: DEFAULT_DORMANCY,
             price_bump_percent: DEFAULT_PRICE_BUMP_PERCENT,
             blob_price_bump_percent: DEFAULT_BLOB_PRICE_BUMP_PERCENT,
             max_queued_txs_per_account: DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT,
@@ -544,6 +561,23 @@ impl Blockchain {
             merkle_pool: Self::build_merkle_pool(),
             prewarmed: PrewarmedCache::default(),
         }
+    }
+
+    /// Spawn the periodic mempool sweep task.
+    ///
+    /// Every [`MEMPOOL_SWEEP_INTERVAL`] the task runs two evictions:
+    ///   1. TTL sweep: drops txs older than [`BlockchainOptions::mempool_lifetime`].
+    ///   2. Dormancy sweep: drops every entry belonging to senders whose top
+    ///      pending nonce exceeds the on-chain nonce by more than
+    ///      [`BlockchainOptions::max_nonce_gap`] and who have been dormant
+    ///      for at least [`BlockchainOptions::dormancy`].
+    ///
+    /// The task holds only a [`Weak`] to the `Blockchain`, so it exits as
+    /// soon as the last `Arc` is dropped — there is no need to thread a
+    /// cancellation token through the call sites.
+    pub fn spawn_mempool_sweep(self: &Arc<Self>) {
+        let weak = Arc::downgrade(self);
+        tokio::spawn(run_mempool_sweep(weak));
     }
 
     /// L1 blocks must not contain L2-only transaction types (`FeeToken` 0x7d,
@@ -4593,6 +4627,55 @@ fn collect_trie(index: u8, mut trie: Trie) -> Result<(Box<BranchNode>, Vec<TrieN
         return Err(TrieError::InvalidInput);
     };
     Ok((root, nodes))
+}
+
+/// Periodic mempool sweep loop: ticks every [`MEMPOOL_SWEEP_INTERVAL`] and
+/// runs the TTL + dormancy evictions on the live mempool.
+///
+/// Holds only a [`Weak`] to the [`Blockchain`] so the task tears itself down
+/// once the last strong reference is dropped (no explicit shutdown signal).
+async fn run_mempool_sweep(blockchain: Weak<Blockchain>) {
+    let mut interval = tokio::time::interval(MEMPOOL_SWEEP_INTERVAL);
+    // `Skip` so a sweep iteration that takes longer than the configured
+    // interval doesn't trigger a burst of back-to-back ticks afterward
+    // (default `Burst` behavior). Under load we'd rather skip a sweep cycle
+    // than queue them up.
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    // Drop the first immediate tick — let the node finish initialising before
+    // doing any work.
+    interval.tick().await;
+    loop {
+        interval.tick().await;
+        let Some(chain) = blockchain.upgrade() else {
+            // Blockchain dropped; tear down.
+            return;
+        };
+
+        let ttl = chain.options.mempool_lifetime;
+        let max_gap = chain.options.max_nonce_gap;
+        let dormancy = chain.options.dormancy;
+
+        match chain.mempool.evict_stale(ttl) {
+            Ok(0) => {}
+            Ok(n) => info!(evicted = n, ttl_secs = ttl.as_secs(), "mempool TTL sweep"),
+            Err(e) => warn!(error = %e, "mempool TTL sweep failed"),
+        }
+
+        match chain
+            .mempool
+            .evict_dormant(&chain.storage, max_gap, dormancy)
+            .await
+        {
+            Ok(0) => {}
+            Ok(n) => info!(
+                evicted = n,
+                max_nonce_gap = max_gap,
+                dormancy_secs = dormancy.as_secs(),
+                "mempool dormancy sweep"
+            ),
+            Err(e) => warn!(error = %e, "mempool dormancy sweep failed"),
+        }
+    }
 }
 
 /// Serial reference computation of an account's storage root + node diff,

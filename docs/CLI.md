@@ -111,6 +111,23 @@ Node options:
           [env: ETHREX_MEMPOOL_MAX_SIZE=]
           [default: 10000]
 
+      --mempool.lifetime <DURATION>
+          Maximum age of a mempool transaction before it is evicted by the periodic sweep. Accepts values like 3h, 30m, 45s.
+
+          [env: ETHREX_MEMPOOL_LIFETIME=]
+          [default: 3h]
+
+      --mempool.max-nonce-gap <GAP>
+          Maximum allowed gap between a sender's highest pending nonce and their on-chain nonce before the dormancy sweep is eligible to evict their pool entries.
+
+          [env: ETHREX_MEMPOOL_MAX_NONCE_GAP=]
+          [default: 64]
+
+      --mempool.dormancy <DURATION>
+          Dormancy window for the nonce-gap mempool sweep. A sender is only evicted when all their pool entries are older than this and the nonce gap exceeds --mempool.max-nonce-gap. Accepts values like 3h, 30m, 45s.
+
+          [env: ETHREX_MEMPOOL_DORMANCY=]
+          [default: 3h]
       --mempool.private
           Node-level config (not a protocol/EIP behavior): keep RPC-submitted transactions private. They enter the mempool and may be included in blocks built locally, but are not propagated to peers. P2P-received transactions are unaffected.
 
@@ -385,6 +402,23 @@ Node options:
           [env: ETHREX_MEMPOOL_MAX_SIZE=]
           [default: 10000]
 
+      --mempool.lifetime <DURATION>
+          Maximum age of a mempool transaction before it is evicted by the periodic sweep. Accepts values like 3h, 30m, 45s.
+
+          [env: ETHREX_MEMPOOL_LIFETIME=]
+          [default: 3h]
+
+      --mempool.max-nonce-gap <GAP>
+          Maximum allowed gap between a sender's highest pending nonce and their on-chain nonce before the dormancy sweep is eligible to evict their pool entries.
+
+          [env: ETHREX_MEMPOOL_MAX_NONCE_GAP=]
+          [default: 64]
+
+      --mempool.dormancy <DURATION>
+          Dormancy window for the nonce-gap mempool sweep. A sender is only evicted when all their pool entries are older than this and the nonce gap exceeds --mempool.max-nonce-gap. Accepts values like 3h, 30m, 45s.
+
+          [env: ETHREX_MEMPOOL_DORMANCY=]
+          [default: 3h]
       --mempool.gap-admit-occupancy-threshold <PERCENTAGE>
           Mempool occupancy percentage (0-100) at or above which incoming transactions with a nonce gap relative to the sender's on-chain nonce are rejected. Setting to 100 disables the check.
 

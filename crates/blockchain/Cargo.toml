@@ -39,6 +39,7 @@ tokio-util.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }
+serde_json.workspace = true
 ethrex-levm.workspace = true
 tempfile.workspace = true
 

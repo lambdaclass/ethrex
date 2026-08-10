@@ -247,6 +247,35 @@ Three P2P paths interact with the mempool:
 
 Incoming gossip flows the other way: `Mempool::reserve_unknown_hashes` filters incoming `NewPooledTransactionHashes` against `transaction_pool` and `in_flight_txs` in one locked pass, marking unknown hashes in-flight so concurrent peer handlers don't issue duplicate `GetPooledTransactions` requests. `clear_in_flight_txs` clears the marker when the response arrives or the connection drops; `alternates` records fallback announcers to retry against.
 
+## Periodic Sweep
+
+A background task (`run_mempool_sweep`, spawned by `Blockchain::spawn_mempool_sweep`) ticks every
+`MEMPOOL_SWEEP_INTERVAL` (60s) and runs two independent evictions. It holds only a `Weak<Blockchain>`,
+so it tears itself down when the last strong reference drops — no shutdown signal to thread through.
+The interval uses `MissedTickBehavior::Skip`, so a sweep that overruns its window skips a cycle
+rather than firing back-to-back catch-up ticks under load.
+
+**TTL sweep** (`Mempool::evict_stale`) drops any transaction older than `--mempool.lifetime`
+(default 3h), matching geth's `Lifetime`. It takes one write lock for the whole pass: the scan is a
+bounded in-memory walk of at most `max_mempool_size` entries and performs no I/O.
+
+**Dormancy sweep** (`Mempool::evict_dormant`) targets the "high-nonce wall" shape — a sender parking
+a queue the chain can never reach. It evicts *every* pool entry for a sender when both hold:
+
+- the sender's **lowest** pool nonce exceeds their on-chain nonce by more than `--mempool.max-nonce-gap`
+  (default 64), and
+- every one of their pool entries is older than `--mempool.dormancy` (default 3h).
+
+Measuring the gap at the **lowest** nonce rather than the highest is deliberate: a sender with a long
+but *contiguous* queue (on-chain 0, pool 1..=65) is executable end-to-end and must not be swept, even
+though its highest nonce is far from the chain.
+
+Unlike the TTL sweep, this one needs the sender's on-chain nonce, so it snapshots pool state under a
+read lock, does the storage lookups without holding it, then re-acquires the write lock to remove.
+The snapshot records exact `(hash, timestamp)` pairs and the removal phase re-checks the timestamp,
+so a transaction that arrived after the snapshot is never evicted on the strength of stale
+observations.
+
 ## Operator-Facing CLI
 
 Mempool-related flags in `cmd/ethrex/cli.rs`:
@@ -259,6 +288,9 @@ Mempool-related flags in `cmd/ethrex/cli.rs`:
 | `--mempool.max-queued-txs-per-account` | `ETHREX_MEMPOOL_MAX_QUEUED_TXS_PER_ACCOUNT` | `64` (`DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT`) | Per-sender cap on queued (future-nonce) transactions; executable txs are never capped. |
 | `--mempool.private` | `ETHREX_MEMPOOL_PRIVATE` | `false` | Keep RPC-submitted txs out of P2P propagation; they still enter the pool and can be included in locally-built blocks. |
 | `--mempool.gap-admit-occupancy-threshold` | `ETHREX_MEMPOOL_GAP_ADMIT_OCCUPANCY_THRESHOLD` | `90` (`DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD`) | Occupancy percentage (`0..=100`) at/above which gapped-nonce txs are rejected; `100` disables the gate. |
+| `--mempool.lifetime` | `ETHREX_MEMPOOL_LIFETIME` | `3h` (`DEFAULT_MEMPOOL_LIFETIME`) | Max age before the TTL sweep evicts a tx. Accepts `3h`, `30m`, `45s`. |
+| `--mempool.max-nonce-gap` | `ETHREX_MEMPOOL_MAX_NONCE_GAP` | `64` (`DEFAULT_MAX_NONCE_GAP`) | Gap at a sender's *lowest* pool nonce above which the dormancy sweep may evict them. |
+| `--mempool.dormancy` | `ETHREX_MEMPOOL_DORMANCY` | `3h` (`DEFAULT_DORMANCY`) | How old every entry of a gapped sender must be before the dormancy sweep evicts them. |
 | `--p2p.tx-broadcasting-interval` | `ETHREX_P2P_TX_BROADCASTING_INTERVAL` | `1000` ms (`BROADCAST_INTERVAL_MS`) | Period of the `TxBroadcaster` actor tick. |
 
 ## Error Taxonomy
@@ -297,7 +329,6 @@ The mempool today is a single combined pool with FIFO regular eviction and the a
 - **Tip-aware regular eviction.** Regular eviction is arrival-order FIFO; a high-tip transaction can be evicted for a low-tip one. Heap/tip-aware eviction is in flight (#6607).
 - **Minimum priority-fee floor at admission** (#6604).
 - **Local-vs-P2P origin threading** through admission (#6608).
-- **Periodic re-validation / sweep** of stale or dormant pending transactions (#6610).
 - **Single combined pool.** Blob and non-blob transactions share `transaction_pool` with separate caps and eviction, but there is no full pending/queued sub-pool separation.
 
 ## Related Documentation

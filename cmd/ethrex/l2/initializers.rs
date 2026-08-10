@@ -253,6 +253,9 @@ pub async fn init_l2(
         precompute_witnesses: opts.node_opts.precompute_witnesses,
         private_mempool: opts.node_opts.mempool_private,
         precompile_cache_enabled: true,
+        mempool_lifetime: opts.node_opts.mempool_lifetime,
+        max_nonce_gap: opts.node_opts.mempool_max_nonce_gap,
+        dormancy: opts.node_opts.mempool_dormancy,
         price_bump_percent: opts.node_opts.mempool_price_bump,
         blob_price_bump_percent: opts.node_opts.mempool_blob_price_bump,
         max_queued_txs_per_account: opts.node_opts.mempool_max_queued_txs_per_account,
@@ -264,6 +267,8 @@ pub async fn init_l2(
     };
 
     let blockchain = init_blockchain(store.clone(), blockchain_opts.clone());
+
+    blockchain.spawn_mempool_sweep();
 
     regenerate_state(&store, &rollup_store, &blockchain, None).await?;
 
@@ -483,6 +488,9 @@ pub async fn init_native_rollup_l2(
         bal_parallel_trie_enabled: true,
         max_reorg_depth: opts.node_opts.max_reorg_depth,
         gap_admit_occupancy_threshold: opts.node_opts.mempool_gap_admit_occupancy_threshold,
+        mempool_lifetime: opts.node_opts.mempool_lifetime,
+        max_nonce_gap: opts.node_opts.mempool_max_nonce_gap,
+        dormancy: opts.node_opts.mempool_dormancy,
         private_mempool: opts.node_opts.mempool_private,
         price_bump_percent: opts.node_opts.mempool_price_bump,
         blob_price_bump_percent: opts.node_opts.mempool_blob_price_bump,
@@ -490,6 +498,10 @@ pub async fn init_native_rollup_l2(
 
     let blockchain = init_blockchain(store.clone(), blockchain_opts);
     blockchain.set_synced();
+    // The native-rollup node runs a mempool like any other, so it needs the
+    // same stale/dormant sweep as the standard L1 and L2 paths — otherwise
+    // abandoned transactions accumulate here indefinitely.
+    blockchain.spawn_mempool_sweep();
 
     let signer = get_signer(&datadir);
     let (local_p2p_node, _network_config) = get_local_p2p_node(&opts.node_opts, &signer);
