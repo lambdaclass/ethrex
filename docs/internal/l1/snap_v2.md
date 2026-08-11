@@ -238,6 +238,19 @@ Each account is written with the root its storage trie actually hashes to, not
 the one served with it. Served roots come from whichever pivot answered that
 account's range and disagree with the slots on disk as soon as the pivot moves.
 
+Storage tries take one of two builders, chosen by slot count. At or above
+`BULK_STORAGE_TRIE_SLOTS` a contract goes through `trie_from_sorted_accounts`,
+the same bulk builder the account trie uses, which constructs bottom-up from
+sorted leaves and writes through the trie's own db. Below it the contract is
+built slot by slot and its node changes are buffered, because the bulk builder
+spawns a writer pool per call and most contracts hold a handful of slots. The
+buffered changes are flushed every `STORAGE_WRITE_BATCH_NODES` nodes; writing
+each contract as it is built would open one write transaction per contract.
+
+Both builders must agree on the root, since a real state exercises both and only
+the combined state root would show a disagreement, far from the contract that
+caused it. `a_bulk_built_storage_trie_matches_a_slot_by_slot_one` pins that.
+
 On success the sync latches `snap2_reconstructed_block` in the diagnostics.
 That is the terminal evidence the snap/2 path ran to completion, and it is what
 test harnesses should assert on.
@@ -429,8 +442,13 @@ Assert on the latched reconstruction.
 - **Reorg past the pivot is unimplemented.** The sync takes the
   discard-and-restart escape hatch `caps/snap.md` permits, rather than
   recovering.
-- **Reconstruction is single-threaded**, where snap/1's storage insert fans out.
-  Likely the largest gap at mainnet scale.
+- **Reconstruction does not fan out across accounts**, where snap/1's storage
+  insert runs them through rayon. The per-contract costs it used to pay (a write
+  transaction each, and a root-down descent per slot) are gone, but the account
+  loop itself is still serial. Sharding it needs a range-bounded account
+  iterator on `FlatState`; the underlying RocksDB handle is `Sync` and already
+  hands out independent iterators, so nothing structural blocks it. Unmeasured
+  at mainnet scale, which is the reason it has not been done.
 - **`STORAGE_BATCH_SIZE` is a fixed count of 300 accounts** against a 512 KB
   response cap, where geth sizes the batch by response budget
   (`storageSets := cap / 1024`). Not currently implicated in truncation, but
