@@ -52,10 +52,22 @@ async fn server_shutdown(
     peer_table: PeerTable,
     local_node_record: NodeRecord,
     store: &Store,
+    pruner_handle: Option<tokio::task::JoinHandle<()>>,
 ) {
     info!("Server shut down started...");
     // Stop feeding new blocks before draining, so the persist queue can't grow.
     cancel_token.cancel();
+    // Await the history pruner before flushing. Cancellation stops it from starting
+    // another pass but does not abort one in flight, and it writes through its own
+    // transactions rather than the persist worker, so a pass that outlived the flush
+    // below would land a batch after the final fsync and force WAL recovery. Bounded
+    // by the pruner's own pass deadline, so this cannot hang shutdown for long.
+    if let Some(handle) = pruner_handle {
+        info!("Waiting for the history pruner to finish its current pass...");
+        if let Err(err) = handle.await {
+            error!("History pruner task did not shut down cleanly: {err}");
+        }
+    }
     // Drain the persist worker, force-flush the block-data buffer, and fsync the
     // DB. Without this an abrupt exit (e.g. `docker restart -t 0`) loses the
     // buffered block-data tail and leaves the DB needing WAL recovery on next
@@ -191,23 +203,26 @@ async fn main() -> eyre::Result<()> {
     info!("ethrex version: {}", get_client_version());
     tokio::spawn(periodically_check_version_update());
 
-    let (datadir, cancel_token, peer_table, local_node_record, store) =
+    let (datadir, cancel_token, peer_table, local_node_record, store, pruner_handle) =
         init_l1(opts, Some(log_filter_handler)).await?;
 
     let mut signal_terminate = signal(SignalKind::terminate())?;
 
     log_global_allocator();
 
+    // `take()` because each `select!` arm would otherwise move the same handle.
+    let mut pruner_handle = pruner_handle;
+
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
-            server_shutdown(&datadir, &cancel_token, peer_table, local_node_record, &store).await;
+            server_shutdown(&datadir, &cancel_token, peer_table, local_node_record, &store, pruner_handle.take()).await;
         }
         _ = signal_terminate.recv() => {
-            server_shutdown(&datadir, &cancel_token, peer_table, local_node_record, &store).await;
+            server_shutdown(&datadir, &cancel_token, peer_table, local_node_record, &store, pruner_handle.take()).await;
         }
         // A fatal subsystem (e.g. the RPC server) cancels the token to abort the node.
         _ = cancel_token.cancelled() => {
-            server_shutdown(&datadir, &cancel_token, peer_table, local_node_record, &store).await;
+            server_shutdown(&datadir, &cancel_token, peer_table, local_node_record, &store, pruner_handle.take()).await;
         }
     }
 

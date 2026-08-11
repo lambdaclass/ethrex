@@ -30,12 +30,7 @@ use eyre::OptionExt;
 use secp256k1::SecretKey;
 
 use spawned_concurrency::tasks::ActorRef;
-use std::{
-    fs::read_to_string,
-    path::Path,
-    sync::Arc,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::{fs::read_to_string, path::Path, sync::Arc, time::Duration};
 use tokio::task::JoinSet;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{info, warn};
@@ -209,21 +204,59 @@ async fn shutdown_sequencer_handles(
     }
 }
 
-/// How often the L2 history pruner re-checks the retention window.
-const L2_PRUNE_INTERVAL_SECS: u64 = 12;
-/// Upper bound on the batch walk in [`last_committed_l2_block`]. Commit normally
-/// lags sealing by a handful of batches, so the walk is short; the bound keeps a
-/// long-stalled committer from turning every pass into a full scan of all batches.
+/// Upper bound on the batch walk in [`last_committed_l2_block_local`]. Commit
+/// normally lags sealing by a handful of batches, so the walk is short; the bound
+/// keeps a long-stalled committer from turning every pass into a full scan of all
+/// batches.
 const MAX_BATCHES_TO_SCAN_FOR_COMMIT: u64 = 1024;
 
-/// Highest L2 block belonging to a batch that has been committed to L1, or `None`
-/// if no batch within the scan window has a commit transaction yet.
+/// Highest L2 block that may be pruned: the last block of the newest batch known to
+/// be committed to L1. `None` means "cannot tell", which the pruner treats as
+/// withhold-everything.
 ///
-/// This is the pruning cap for an L2 node: a block whose batch has not been
-/// committed is still needed in full — the committer reads its body to build the
-/// batch and the prover to prove it — so its body must not be deleted no matter
-/// how old the block is in wall-clock terms.
-async fn last_committed_l2_block(rollup_store: &StoreRollup) -> eyre::Result<Option<u64>> {
+/// A block whose batch has not been committed is still needed in full — the
+/// committer reads its body to build the batch and the prover to prove it — so its
+/// body must not be deleted no matter how old the block is in wall-clock terms.
+///
+/// Two sources, in order of authority:
+///
+/// 1. `lastCommittedBatch()` on the L1 `OnChainProposer`. This is what the rest of
+///    the sequencer trusts (see `state_updater`), and it is the only source that is
+///    correct in both directions. It requires an L1 RPC endpoint and the proposer
+///    address, which a follower node is not obliged to configure.
+/// 2. Locally-recorded commit-tx hashes, as a fallback. These only ever *lag* L1
+///    truth for a successful commit, which is the safe direction, with one caveat:
+///    the committer records a commit tx once it has a receipt without checking that
+///    the receipt succeeded, so a reverted commit (or an L1 reorg after the receipt)
+///    can make this source claim a batch that L1 does not consider committed. That
+///    is the unsafe direction, which is why it is the fallback and not the primary.
+async fn last_committed_l2_block(
+    rollup_store: &StoreRollup,
+    l1_source: Option<&(EthClient, Address)>,
+) -> eyre::Result<Option<u64>> {
+    if let Some((eth_client, on_chain_proposer_address)) = l1_source {
+        let batch =
+            ethrex_l2_sdk::get_last_committed_batch(eth_client, *on_chain_proposer_address).await?;
+        // Batch 0 is the genesis sentinel: nothing has been committed yet.
+        if batch == 0 {
+            return Ok(None);
+        }
+        return Ok(rollup_store
+            .get_block_numbers_by_batch(batch)
+            .await?
+            .and_then(|blocks| blocks.into_iter().max()));
+    }
+    last_committed_l2_block_local(rollup_store).await
+}
+
+/// Fallback for [`last_committed_l2_block`] when no L1 endpoint is configured:
+/// walk back from the newest sealed batch looking for a recorded commit tx.
+///
+/// Note this returns `None` on any node that never writes commit-tx hashes, which
+/// is every non-sequencer node outside `based` mode. That is safe (nothing is
+/// pruned) but means retention silently does nothing, hence the warning at the call
+/// site.
+async fn last_committed_l2_block_local(rollup_store: &StoreRollup) -> eyre::Result<Option<u64>> {
     let Some(latest_batch) = rollup_store.get_batch_number().await? else {
         return Ok(None);
     };
@@ -320,44 +353,57 @@ pub async fn init_l2(
 
     let cancel_token = tokio_util::sync::CancellationToken::new();
 
-    // History pruner — only when --history.retention is set. Unlike L1 this runs
-    // its own loop so it can additionally cap pruning at the last L1-committed
-    // block; uncommitted blocks are still needed by the committer and prover.
+    // History pruner — only when --history.retention is set. Shares
+    // `HistoryPruner`'s loop with L1 via `run_with_floor`, supplying the L2-only cap
+    // (the last block committed to L1) on every pass; uncommitted blocks are still
+    // needed by the committer and prover.
     if let Some(retention) = opts.node_opts.history_retention {
+        // Prefer the authoritative L1 source when this node is configured to talk to
+        // L1. Both pieces are needed, so fall back if either is absent.
+        let l1_source = match (
+            EthClient::new_with_multiple_urls(opts.sequencer_opts.eth_opts.rpc_url.clone()),
+            opts.sequencer_opts.committer_opts.on_chain_proposer_address,
+        ) {
+            (Ok(client), Some(address)) => Some((client, address)),
+            _ => {
+                warn!(
+                    "--history.retention: no L1 RPC endpoint and/or on-chain-proposer address is \
+                     configured, so the prune cap falls back to locally-recorded commit \
+                     transactions. On a node that does not run the committer (any non-sequencer \
+                     outside based mode) nothing is ever recorded, and pruning will not run"
+                );
+                None
+            }
+        };
+
+        info!(
+            retention_secs = retention.as_secs(),
+            l1_authoritative_cap = l1_source.is_some(),
+            "History pruning enabled: block bodies, receipts and transaction locations older \
+             than the retention window will be deleted permanently (canonical headers are kept)"
+        );
+
         let pruner = HistoryPruner::new(store.clone(), retention);
         let pruner_rollup_store = rollup_store.clone();
         let pruner_cancel = cancel_token.clone();
         tracker.spawn(async move {
-            let mut interval =
-                tokio::time::interval(Duration::from_secs(L2_PRUNE_INTERVAL_SECS));
-            loop {
-                tokio::select! {
-                    _ = pruner_cancel.cancelled() => {
-                        tracing::debug!("L2 history pruner shutting down");
-                        return;
+            // Warn once, not every 12s, when no cap can be determined.
+            let warned = std::sync::atomic::AtomicBool::new(false);
+            pruner
+                .run_with_floor(pruner_cancel, || async {
+                    let cap = last_committed_l2_block(&pruner_rollup_store, l1_source.as_ref())
+                        .await
+                        .map_err(|err| StoreError::Custom(err.to_string()))?;
+                    if cap.is_none() && !warned.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                        warn!(
+                            "L2 history pruner: no batch is known to be committed to L1, so \
+                             nothing can be pruned yet. This is expected before the first \
+                             commit; if it persists, --history.retention is having no effect"
+                        );
                     }
-                    _ = interval.tick() => {
-                        let max_prunable = match last_committed_l2_block(&pruner_rollup_store).await {
-                            Ok(Some(block)) => block,
-                            // Nothing committed to L1 yet: everything is still needed.
-                            Ok(None) => continue,
-                            Err(err) => {
-                                tracing::error!(error = ?err, "L2 history pruner: could not determine last committed block");
-                                continue;
-                            }
-                        };
-                        let now_secs = SystemTime::now()
-                            .duration_since(UNIX_EPOCH)
-                            .map(|d| d.as_secs())
-                            .unwrap_or(0);
-                        if let Err(err) =
-                            pruner.tick_with_floor(now_secs, Some(max_prunable)).await
-                        {
-                            tracing::error!(error = ?err, "L2 history pruner pass failed");
-                        }
-                    }
-                }
-            }
+                    Ok(cap)
+                })
+                .await;
         });
     }
 

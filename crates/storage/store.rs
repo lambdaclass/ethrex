@@ -51,7 +51,7 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     sync::{
-        Arc, Condvar, Mutex, RwLock,
+        Arc, Condvar, Mutex, OnceLock, RwLock,
         atomic::{AtomicUsize, Ordering},
         mpsc::{SyncSender, TryRecvError, sync_channel},
     },
@@ -74,6 +74,13 @@ const IN_MEMORY_COMMIT_THRESHOLD: usize = 10000;
 /// layer boundary, so batch mode commits by depth instead; this is sound because full sync and
 /// import only ever extend a single canonical chain (no competing forks to mis-commit).
 pub const BATCH_COMMIT_THRESHOLD: usize = 4;
+
+/// Width of the history pruner's gather fan-out (see `prune_block_heights`).
+///
+/// Deliberately small and independent of core count: the work is blocking RocksDB
+/// reads, so a few threads already overlap the I/O, and the pruner is a background
+/// task that must not crowd out block import.
+const PRUNE_GATHER_THREADS: usize = 4;
 
 /// Sorted, sharded `multi_get` tuning, shared by the account, storage, and
 /// trie-node batch read paths. A single `multi_get` runs at queue depth 1
@@ -663,17 +670,21 @@ impl Store {
     /// height). All writes land in a single `WriteBatch`; the pass is
     /// all-or-nothing.
     ///
-    /// Caller invariant: `start + count - 1 <= finalized`, and forkchoice
-    /// must not write at heights `<= finalized`. Otherwise a new index entry
-    /// could land in the range between gather and commit and survive the
-    /// pass — readers tolerate the stray (they gate on
+    /// Caller invariant: `start + count - 1 <= finalized`. This is the caller's
+    /// obligation and [`crate::pruner::HistoryPruner`] discharges it, capping every
+    /// range it passes at the finalized height.
+    ///
+    /// Separate environmental precondition, which nothing here enforces: forkchoice
+    /// must not write at heights `<= finalized`. That holds because consensus does
+    /// not rewrite finalized history, not because of anything this crate does. If it
+    /// were violated, a new index entry could land in the range between gather and
+    /// commit and survive the pass — readers tolerate the stray (they gate on
     /// `EarliestBlockNumber`) but disk usage leaks.
     ///
-    /// Deliberately not part of the crate's public API: the invariant above is
-    /// enforced by [`crate::pruner::HistoryPruner`], not by this method, and an
-    /// external caller naming an arbitrary range would delete data the node needs
-    /// to restart. Tests outside this crate reach it via
-    /// [`Self::prune_block_heights_for_test`] under the `testing` feature.
+    /// Deliberately not part of the crate's public API: an external caller naming an
+    /// arbitrary range would delete data the node needs to restart. Tests outside
+    /// this crate reach it via [`Self::prune_block_heights_for_test`] under the
+    /// `testing` feature.
     pub(crate) async fn prune_block_heights(
         &self,
         start: BlockNumber,
@@ -685,6 +696,24 @@ impl Store {
         let backend = self.backend.clone();
         tokio::task::spawn_blocking(move || -> Result<PruneHeightCounts, StoreError> {
             use rayon::prelude::*;
+
+            // Gather on a small dedicated pool rather than the global one. The global
+            // pool also serves sender recovery, BAL-parallel transaction execution and
+            // the trie batch reads, all on the block-import critical path; a 256-item
+            // fan-out of blocking disk reads injected there delays those. The work is
+            // I/O-bound, so a handful of threads is enough to overlap the reads, and
+            // bounding the width is the point. Built lazily and shared: constructing a
+            // pool per call would cost more than the reads, and eagerly spawning
+            // threads for a feature that is off by default has bitten us before on
+            // macOS thread limits.
+            static PRUNE_POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
+            let pool = PRUNE_POOL.get_or_init(|| {
+                rayon::ThreadPoolBuilder::new()
+                    .num_threads(PRUNE_GATHER_THREADS)
+                    .thread_name(|i| format!("prune-gather-{i}"))
+                    .build()
+                    .expect("Failed to create prune gather thread pool")
+            });
 
             struct HeightDeletions {
                 hashes: Vec<BlockHash>,
@@ -711,60 +740,65 @@ impl Store {
             let heights: Vec<BlockNumber> = (start..end).collect();
 
             // --- Gather phase: one read txn per height, parallelised. ---
-            let gathered: Vec<HeightDeletions> = heights
-                .par_iter()
-                .map(|&n| -> Result<HeightDeletions, StoreError> {
-                    let prefix = n.to_be_bytes();
-                    let rtxn = backend.begin_read()?;
+            let gathered: Vec<HeightDeletions> = pool.install(|| {
+                heights
+                    .par_iter()
+                    .map(|&n| -> Result<HeightDeletions, StoreError> {
+                        let prefix = n.to_be_bytes();
+                        let rtxn = backend.begin_read()?;
 
-                    let iter = rtxn.prefix_iterator(BLOCK_HASHES_BY_NUMBER, &prefix)?;
-                    let mut hashes = Vec::new();
-                    for item in iter {
-                        let (key, _) = item?;
-                        if key.len() != 40 {
-                            continue;
+                        let iter = rtxn.prefix_iterator(BLOCK_HASHES_BY_NUMBER, &prefix)?;
+                        let mut hashes = Vec::new();
+                        for item in iter {
+                            let (key, _) = item?;
+                            if key.len() != 40 {
+                                continue;
+                            }
+                            if key[0..8] != prefix {
+                                break;
+                            }
+                            hashes.push(H256::from_slice(&key[8..40]));
                         }
-                        if key[0..8] != prefix {
-                            break;
-                        }
-                        hashes.push(H256::from_slice(&key[8..40]));
-                    }
 
-                    // CANONICAL_BLOCK_HASHES is keyed by LE, not BE.
-                    let canonical_hash =
-                        match rtxn.get(CANONICAL_BLOCK_HASHES, n.to_le_bytes().as_slice())? {
+                        // CANONICAL_BLOCK_HASHES is keyed by LE, not BE.
+                        let canonical_hash = match rtxn
+                            .get(CANONICAL_BLOCK_HASHES, n.to_le_bytes().as_slice())?
+                        {
                             Some(b) => Some(H256::decode(b.as_slice()).map_err(StoreError::from)?),
                             None => None,
                         };
 
-                    let mut bodies = Vec::with_capacity(hashes.len());
-                    for h in &hashes {
-                        let hash_key = h.encode_to_vec();
-                        if let Some(body_bytes) = rtxn.get(BODIES, hash_key.as_slice())? {
-                            let body: BlockBody = BlockBodyRLP::from_bytes(body_bytes)
-                                .to()
-                                .map_err(StoreError::from)?;
-                            let txs = body
-                                .transactions
-                                .iter()
-                                .enumerate()
-                                .map(|(i, tx)| (receipt_key(h, i as u64), tx.hash(&NativeCrypto)))
-                                .collect();
-                            bodies.push(BodyDeletions {
-                                hash: *h,
-                                hash_key,
-                                txs,
-                            });
+                        let mut bodies = Vec::with_capacity(hashes.len());
+                        for h in &hashes {
+                            let hash_key = h.encode_to_vec();
+                            if let Some(body_bytes) = rtxn.get(BODIES, hash_key.as_slice())? {
+                                let body: BlockBody = BlockBodyRLP::from_bytes(body_bytes)
+                                    .to()
+                                    .map_err(StoreError::from)?;
+                                let txs = body
+                                    .transactions
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(i, tx)| {
+                                        (receipt_key(h, i as u64), tx.hash(&NativeCrypto))
+                                    })
+                                    .collect();
+                                bodies.push(BodyDeletions {
+                                    hash: *h,
+                                    hash_key,
+                                    txs,
+                                });
+                            }
                         }
-                    }
 
-                    Ok(HeightDeletions {
-                        hashes,
-                        canonical_hash,
-                        bodies_to_purge: bodies,
+                        Ok(HeightDeletions {
+                            hashes,
+                            canonical_hash,
+                            bodies_to_purge: bodies,
+                        })
                     })
-                })
-                .collect::<Result<Vec<_>, _>>()?;
+                    .collect::<Result<Vec<_>, _>>()
+            })?;
 
             // --- Write phase: single batch, single commit. ---
             let mut wtxn = backend.begin_write()?;
@@ -832,7 +866,12 @@ impl Store {
                 let removals: Vec<(H256, Vec<BlockHash>)> =
                     tx_location_removals.into_iter().collect();
                 let keys: Vec<&[u8]> = removals.iter().map(|(h, _)| h.as_bytes()).collect();
-                let stored = rtxn.multi_get(TRANSACTION_LOCATIONS, &keys);
+                // Uncached: these are cold, effectively random tx hashes at the prune
+                // frontier that will never be read again, and the RocksDB block cache
+                // is shared with the state-trie and flat-key-value CFs. Admitting them
+                // would evict the working set block execution depends on for the whole
+                // duration of a backlog drain.
+                let stored = rtxn.multi_get_uncached(TRANSACTION_LOCATIONS, &keys);
 
                 for ((tx_hash, removed_block_hashes), result) in
                     removals.iter().zip(stored.into_iter())

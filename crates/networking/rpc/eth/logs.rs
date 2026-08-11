@@ -172,28 +172,31 @@ pub(crate) async fn fetch_logs_with_filter(
             let block_header = storage
                 .get_block_header_by_hash(block_hash)?
                 .ok_or_else(|| RpcErr::BadParams(format!("Unknown block hash {block_hash:#x}")))?;
+            // A known header with no body means the body was pruned (canonical
+            // headers survive pruning), so this node cannot answer for that block.
+            // Report it rather than returning an empty list: an empty list is
+            // indistinguishable from "this block logged nothing", which would let a
+            // caller record a false negative for a block that does have logs.
+            //
+            // Checked before the bloom test, as geth does, so the answer does not
+            // depend on whether the filter happens to bloom-match a pruned block.
+            let block_body = storage
+                .get_block_body_by_hash(block_hash)
+                .await?
+                .ok_or_else(|| {
+                    RpcErr::PrunedHistoryUnavailable(format!(
+                        "block {block_hash:#x} is known but its body is no longer stored"
+                    ))
+                })?;
             if bloom_matcher.matches(&block_header.logs_bloom) {
-                // A known header with no body means the body was pruned (canonical
-                // headers survive pruning). There are no logs to return, which is
-                // the same answer the numeric-range path gives for a pruned range —
-                // not an internal error, which would read as a node fault.
-                match storage.get_block_body_by_hash(block_hash).await? {
-                    Some(block_body) => {
-                        collect_block_logs(
-                            &storage,
-                            &block_header,
-                            &block_body,
-                            &address_filter,
-                            &mut logs,
-                        )
-                        .await?;
-                    }
-                    None => {
-                        tracing::debug!(
-                            "eth_getLogs: body for block {block_hash:#x} is unavailable (pruned); returning no logs"
-                        );
-                    }
-                }
+                collect_block_logs(
+                    &storage,
+                    &block_header,
+                    &block_body,
+                    &address_filter,
+                    &mut logs,
+                )
+                .await?;
             }
         }
         None => {
@@ -208,17 +211,25 @@ pub(crate) async fn fetch_logs_with_filter(
                 .await?
                 .ok_or(RpcErr::WrongParam("toBlock".to_string()))?;
             // Malformed user range (e.g. fromBlock=100, toBlock=50) — reject before
-            // clamping so we don't silently accept inverted ranges.
+            // anything else so we don't silently accept inverted ranges.
             if from > to {
                 return Err(RpcErr::BadParams("Empty range".to_string()));
             }
-            // Clamp `from` up to the earliest unpruned block so that we don't attempt
-            // to load block bodies / receipts that have already been pruned.
+            // Any part of the range below the prune cutoff makes the answer
+            // incomplete, and an incomplete log set is indistinguishable from a
+            // complete one to the caller. Reject instead of silently clamping, so a
+            // consumer backfilling history gets a signal to retry elsewhere rather
+            // than recording a gap as "no events". This matches geth and reth, which
+            // both raise a dedicated pruned-history error here.
+            //
+            // The `earliest` tag resolves to `EarliestBlockNumber` itself
+            // (`BlockIdentifier::resolve_block_number`), so `fromBlock: "earliest"`
+            // asks for exactly the available window and is never rejected.
             let earliest = storage.get_earliest_block_number().await?;
-            let from = from.max(earliest);
-            // Entire requested range is below the prune cutoff — no logs to return.
-            if from > to {
-                return Ok(vec![]);
+            if from < earliest {
+                return Err(RpcErr::PrunedHistoryUnavailable(format!(
+                    "fromBlock {from} precedes the earliest stored block {earliest}"
+                )));
             }
             // The idea here is to fetch every log and filter by address, if given.
             // For that, we'll need each block in range, and its transactions,
@@ -467,11 +478,11 @@ mod pruning_log_tests {
             .unwrap();
     }
 
-    /// When `fromBlock` is below `earliest_block_number`, the handler must clamp
-    /// `from` up to `earliest` and return logs from the unpruned range rather than
-    /// erroring on the missing pruned bodies.
+    /// A `fromBlock` below `earliest_block_number` must be rejected, not clamped.
+    /// Clamping would return the logs of the available sub-range in an ordinary
+    /// success response, which a caller cannot distinguish from a complete answer.
     #[tokio::test]
-    async fn get_logs_clamps_from_block_to_earliest() {
+    async fn get_logs_rejects_from_block_below_earliest() {
         // setup_store() initialises genesis (block 0) and sets earliest = 0.
         let storage = setup_store().await;
         add_empty_canonical_blocks(&storage, 5).await;
@@ -484,9 +495,6 @@ mod pruning_log_tests {
         }
         assert_eq!(storage.get_earliest_block_number().await.unwrap(), 3);
 
-        // Ask for logs from 0 to 5 — fromBlock is below earliest, so it must be
-        // clamped to 3.  Blocks 3–5 have no transactions, so the result is empty
-        // but the call must not error.
         let filter = LogsFilter {
             from_block: BlockIdentifier::Number(0),
             to_block: BlockIdentifier::Number(5),
@@ -494,20 +502,50 @@ mod pruning_log_tests {
             address_filters: None,
             topics: vec![],
         };
-        let result = fetch_logs_with_filter(&filter, storage).await;
+        let result = fetch_logs_with_filter(&filter, storage.clone()).await;
+        assert!(
+            matches!(result, Err(RpcErr::PrunedHistoryUnavailable(_))),
+            "expected PrunedHistoryUnavailable, got {result:?}"
+        );
+
+        // A range fully inside the available window still succeeds.
+        let filter = LogsFilter {
+            from_block: BlockIdentifier::Number(3),
+            to_block: BlockIdentifier::Number(5),
+            block_hash: None,
+            address_filters: None,
+            topics: vec![],
+        };
+        let result = fetch_logs_with_filter(&filter, storage.clone()).await;
         assert!(result.is_ok(), "expected Ok, got {:?}", result.unwrap_err());
         assert!(
             result.unwrap().is_empty(),
-            "expected no logs for empty blocks"
+            "blocks 3-5 have no transactions"
+        );
+
+        // So does the `earliest` tag, which resolves to the cutoff itself rather
+        // than to 0 — asking for "everything you have" must never be rejected.
+        let filter = LogsFilter {
+            from_block: BlockIdentifier::Tag(BlockTag::Earliest),
+            to_block: BlockIdentifier::Number(5),
+            block_hash: None,
+            address_filters: None,
+            topics: vec![],
+        };
+        let result = fetch_logs_with_filter(&filter, storage).await;
+        assert!(
+            result.is_ok(),
+            "fromBlock=earliest must be accepted on a pruned node, got {:?}",
+            result.unwrap_err()
         );
     }
 
-    /// The `blockHash` form must also tolerate a pruned block. The canonical header
-    /// survives pruning, so the handler gets past the unknown-hash check and then
-    /// finds no body; that used to surface as `RpcErr::Internal` (JSON-RPC -32603),
-    /// which reads to a caller as a node fault rather than "no logs here".
+    /// The `blockHash` form must report a pruned block rather than answering `[]`.
+    /// The canonical header survives pruning, so the handler gets past the
+    /// unknown-hash check and then finds no body; an empty list there is
+    /// indistinguishable from "this block logged nothing".
     #[tokio::test]
-    async fn get_logs_by_block_hash_of_pruned_block_returns_empty() {
+    async fn get_logs_by_block_hash_of_pruned_block_is_rejected() {
         let storage = setup_store().await;
         add_empty_canonical_blocks(&storage, 5).await;
 
@@ -528,17 +566,36 @@ mod pruning_log_tests {
         };
         let result = fetch_logs_with_filter(&filter, storage).await;
         assert!(
-            result.is_ok(),
-            "expected Ok for pruned block, got {:?}",
-            result.unwrap_err()
+            matches!(result, Err(RpcErr::PrunedHistoryUnavailable(_))),
+            "expected PrunedHistoryUnavailable, got {result:?}"
         );
-        assert!(result.unwrap().is_empty());
     }
 
-    /// When the entire requested range is below `earliest_block_number` (from > to
-    /// after clamping), the handler must return an empty list, not an error.
+    /// An unknown block hash stays `BadParams` — it is a caller mistake, not a
+    /// statement about what this node retains, so it must not be conflated with
+    /// the pruned-history error.
     #[tokio::test]
-    async fn get_logs_entire_range_below_earliest_returns_empty() {
+    async fn get_logs_unknown_block_hash_is_bad_params() {
+        let storage = setup_store().await;
+
+        let filter = LogsFilter {
+            from_block: BlockIdentifier::Number(0),
+            to_block: BlockIdentifier::Number(0),
+            block_hash: Some(ethrex_common::H256::from_low_u64_be(0xdead)),
+            address_filters: None,
+            topics: vec![],
+        };
+        let result = fetch_logs_with_filter(&filter, storage).await;
+        assert!(
+            matches!(result, Err(RpcErr::BadParams(_))),
+            "expected BadParams, got {result:?}"
+        );
+    }
+
+    /// A range entirely below `earliest_block_number` is rejected for the same
+    /// reason a partially-pruned one is.
+    #[tokio::test]
+    async fn get_logs_entire_range_below_earliest_is_rejected() {
         let storage = setup_store().await;
 
         // Set earliest to 10; ask for 0..=5 — entirely pruned.
@@ -552,14 +609,15 @@ mod pruning_log_tests {
             topics: vec![],
         };
         let result = fetch_logs_with_filter(&filter, storage).await;
-        assert!(result.is_ok(), "expected Ok, got {:?}", result.unwrap_err());
-        assert!(result.unwrap().is_empty());
+        assert!(
+            matches!(result, Err(RpcErr::PrunedHistoryUnavailable(_))),
+            "expected PrunedHistoryUnavailable, got {result:?}"
+        );
     }
 
-    /// A malformed inverted range (fromBlock > toBlock) must be rejected with
-    /// `BadParams` even after the clamp logic was introduced — the clamp only
-    /// suppresses errors for ranges that fall below the prune cutoff, not for
-    /// user-supplied nonsense.
+    /// A malformed inverted range (fromBlock > toBlock) must still be rejected with
+    /// `BadParams`, and must take precedence over the prune check — it is
+    /// user-supplied nonsense regardless of what the node retains.
     #[tokio::test]
     async fn get_logs_rejects_malformed_inverted_range() {
         let storage = setup_store().await;

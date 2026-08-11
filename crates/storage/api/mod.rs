@@ -81,6 +81,26 @@ pub trait StorageReadView: Send + Sync {
         keys.iter().map(|k| self.get(table, k)).collect()
     }
 
+    /// Like [`multi_get`](Self::multi_get), but asks the backend not to admit the
+    /// blocks it touches into the block cache.
+    ///
+    /// For one-shot scans over cold, effectively random keys — the history pruner
+    /// reading `TRANSACTION_LOCATIONS` for a batch of old transactions is the
+    /// motivating case — cache admission is pure harm: the blocks will not be read
+    /// again, and admitting them evicts the hot working set (on RocksDB the cache is
+    /// shared across every column family, so this displaces state-trie and
+    /// flat-key-value blocks that block execution depends on).
+    ///
+    /// Only a hint. Backends without a per-read cache policy fall back to
+    /// [`multi_get`](Self::multi_get), so results are always identical.
+    fn multi_get_uncached(
+        &self,
+        table: &'static str,
+        keys: &[&[u8]],
+    ) -> Vec<Result<Option<Vec<u8>>, StoreError>> {
+        self.multi_get(table, keys)
+    }
+
     /// Returns an iterator over all key-value pairs with the given prefix.
     fn prefix_iterator(
         &self,

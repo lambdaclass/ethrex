@@ -9,7 +9,7 @@ use ethrex_rlp::{
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},
 };
-use ethrex_storage::Store;
+use ethrex_storage::{Store, error::StoreError};
 
 #[derive(Debug, Clone)]
 pub struct BlockRangeUpdate {
@@ -34,7 +34,16 @@ impl BlockRangeUpdate {
         // makes peers request bodies we no longer hold, and `fetch_blocks` answers
         // those with a short response rather than an error, so they keep retrying
         // instead of asking a peer that has the data.
-        let earliest_block = storage.get_earliest_block_number().await.unwrap_or(0);
+        //
+        // Only the genuinely-unset case defaults to 0. Swallowing every error here
+        // would make a transient backend failure produce exactly the false "I have
+        // everything" announcement this exists to avoid, so anything else propagates,
+        // matching how the reads above are handled.
+        let earliest_block = match storage.get_earliest_block_number().await {
+            Ok(earliest) => earliest,
+            Err(StoreError::MissingEarliestBlockNumber) => 0,
+            Err(err) => return Err(err.into()),
+        };
 
         Ok(Self {
             earliest_block,

@@ -21,6 +21,7 @@ pub struct MetricsPruning {
     pub tx_locations_deleted: IntCounter,
     pub orphan_headers_deleted: IntCounter,
     pub index_entries_deleted: IntCounter,
+    pub heights_skipped: IntCounter,
 }
 
 impl MetricsPruning {
@@ -81,6 +82,13 @@ impl MetricsPruning {
                  between the scan and the commit are dropped but not counted"
             )
             .expect("Failed to create ethrex_pruning_index_entries_deleted_total"),
+            heights_skipped: register_int_counter!(
+                "ethrex_pruning_heights_skipped_total",
+                "Block heights the pruner could not prune and stepped over. Each one leaves \
+                 its bodies/receipts on disk permanently, so a non-zero value means disk is \
+                 not being fully reclaimed and the underlying read error needs investigating"
+            )
+            .expect("Failed to create ethrex_pruning_heights_skipped_total"),
         }
     }
 }

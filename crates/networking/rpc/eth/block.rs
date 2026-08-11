@@ -11,6 +11,7 @@ use crate::{
     },
     utils::RpcErr,
 };
+use ethrex_common::constants::EMPTY_TRIE_HASH;
 use ethrex_common::types::{
     Block, BlockBody, BlockHash, BlockHeader, Receipt, calculate_base_fee_per_blob_gas,
 };
@@ -279,7 +280,14 @@ impl RpcHandler for GetRawReceipts {
         // `get_all_block_receipts` reports that as an empty list — which would be
         // indistinguishable from a block that genuinely has no transactions. Gate on
         // the body so an unavailable block reports null, as the other block RPCs do.
-        if storage.get_block_body(block_number).await?.is_none() {
+        //
+        // The header already tells us whether the block had transactions, so only
+        // blocks that did need the (comparatively expensive) body existence check.
+        // An empty-transactions-root block has no receipts either way, so the empty
+        // list is the correct and unambiguous answer for it.
+        if header.transactions_root != *EMPTY_TRIE_HASH
+            && storage.get_block_body(block_number).await?.is_none()
+        {
             return Ok(Value::Null);
         }
         let receipts: Vec<String> = get_all_block_receipts(header, storage)

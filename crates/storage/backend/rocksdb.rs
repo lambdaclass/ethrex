@@ -409,6 +409,31 @@ impl StorageReadView for RocksDBReadTx {
             .collect()
     }
 
+    fn multi_get_uncached(
+        &self,
+        table: &'static str,
+        keys: &[&[u8]],
+    ) -> Vec<Result<Option<Vec<u8>>, StoreError>> {
+        let Some(cf) = self.db.cf_handle(table) else {
+            let err_msg = format!("Table {} not found", table);
+            return (0..keys.len())
+                .map(|_| Err(StoreError::Custom(err_msg.clone())))
+                .collect();
+        };
+        // `fill_cache(false)` keeps this scan's data blocks out of the shared block
+        // cache. Correctness is unaffected — it only suppresses cache admission.
+        let mut opts = rocksdb::ReadOptions::default();
+        opts.fill_cache(false);
+        self.db
+            .batched_multi_get_cf_opt(&cf, keys.iter().copied(), false, &opts)
+            .into_iter()
+            .map(|res| {
+                res.map(|opt| opt.map(|slice| slice.to_vec()))
+                    .map_err(|e| StoreError::Custom(format!("multi_get_uncached {}: {}", table, e)))
+            })
+            .collect()
+    }
+
     fn prefix_iterator(
         &self,
         table: &'static str,
