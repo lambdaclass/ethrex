@@ -10,5 +10,12 @@
 pub mod error;
 mod server;
 
+/// The protocol over a real connection between two in-process nodes. Separate
+/// from `server`'s unit tests because it tests the seams *between* the pieces
+/// those cover — negotiation, dispatch and response routing — which no
+/// function-level test reaches.
+#[cfg(test)]
+mod live_tests;
+
 pub use error::PbtSnapError;
 pub use server::process_pbt_leaf_range_request;
