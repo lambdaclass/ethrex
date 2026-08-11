@@ -1,0 +1,92 @@
+# EIP-8297 binary-tree devnet with the commitment active **at genesis**.
+#
+# The complement to `binary-tree-devnet.yaml`, not a replacement. That one
+# starts MPT-committed and flips a few slots in, which is the only shape that
+# exercises shadow tracking and the flip itself. This one has no MPT-committed
+# prefix at all, so it exercises the binary trie as the sole commitment from
+# block 0 — and nothing in the flip path runs. Run both.
+#
+# REQUIRES A PATCHED ethereum-package. Apply it first:
+#
+#   git -C ethereum-package apply ../fixtures/networks/pbt-genesis-ethereum-package.patch
+#
+# or `make pbt-genesis-devnet`, which applies it and runs with the right flags.
+#
+# Why a patch is needed: a stock generator computes the execution genesis block
+# with go-ethereum's `core.Genesis.ToBlock()`, which commits to an MPT state
+# root — the only alternative it knows is Verkle — and bakes that hash into the
+# beacon state's `latest_execution_payload_header.block_hash`. ethrex computes a
+# *binary* root for the same alloc, so the two layers disagree about genesis
+# before a single slot is produced. The generator can already express the right
+# answer via `--shadow-fork-block`; `ethereum-package` just has no way to reach
+# it on a `kurtosis` network. The patch adds one, and is the upstream ask.
+# See `docs/pbt-at-genesis-investigation.md`.
+#
+# The patch splits genesis generation into three steps inside one kurtosis run:
+# generate the EL genesis, start an EL on it and read block 0 back over RPC,
+# then build the CL genesis with `SHADOW_FORK_FILE` pointing at that block.
+# That is what dissolves the chicken-and-egg — no pre-seeded artefact, no second
+# pass, no pinned timestamp.
+#
+# Run: make pbt-genesis-devnet
+#   or kurtosis run --enclave pbt-genesis ./ethereum-package/kurtosis.yml \
+#        --args-file ./fixtures/networks/pbt-genesis-devnet.yaml
+#
+# Pass `kurtosis.yml`, not the directory: kurtosis 1.20.0 mangles local
+# *directory* packages (the tarball carries the directory name as a top-level
+# prefix, so `kurtosis.yml` is not at the root) and fails with "No 'kurtosis.yml'
+# file was found in the package root". It is cached, so it survives an engine
+# restart. `make localnet` passes the directory and will hit this.
+participants:
+  - el_type: ethrex
+    el_image: ethrex:local
+    cl_type: lighthouse
+    cl_image: sigp/lighthouse:v8.1.3
+    validator_count: 32
+    count: 2
+    # Fulu/PeerDAS wants at least one supernode; marking the participant
+    # makes all replicas supernodes.
+    supernode: true
+    el_extra_params:
+      # Zero delay: active from genesis. `binaryTreeTime` never enters
+      # genesis.json at all, so the generator's silent discard of unknown
+      # chain-config keys is not even on the path.
+      - "--experimental.binary-tree-delay=0"
+      # Required on any scheduled chain: ethrex defaults to snap sync, which
+      # is MPT-shaped and is refused at startup once the commitment is set.
+      - "--syncmode=full"
+      # Devnet-only: widen the RPC namespace allowlist for test tooling.
+      - "--http.api=eth,net,web3,debug,admin,txpool"
+
+ethereum_metrics_exporter_enabled: true
+
+# Pinned explicitly even though it matches the package default: this image
+# computes the EL genesis block hash and embeds it in the beacon genesis
+# state, so it is where the consensus layer's view of genesis comes from.
+ethereum_genesis_generator_params:
+  image: ethpandaops/ethereum-genesis-generator:6.0.7
+  # Added by the patch. The EL used to compute the genesis block, run as a
+  # throwaway service between the two halves of genesis generation.
+  precomputed_el_genesis_block_image: ethrex:local
+  precomputed_el_genesis_block_params:
+    # `--syncmode full` again, deliberately: `binary_tree_scheduled()` makes
+    # ethrex refuse snap sync on the throwaway precompute node too.
+    - "--syncmode"
+    - "full"
+    - "--experimental.binary-tree-delay=0"
+
+network_params:
+  seconds_per_slot: 3
+  # No fork_epoch overrides: the package defaults are all-at-genesis.
+
+additional_services:
+  - dora
+  - spamoor
+
+spamoor_params:
+  spammers:
+    # Gentle EOA-transfer load: enough to exercise per-block binary-trie
+    # commitment and account creation without ballooning the state.
+    - scenario: eoatx
+      config:
+        throughput: 20

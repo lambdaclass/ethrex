@@ -104,6 +104,43 @@ stop-localnet: ## 🛑 Stop local network
 	kurtosis enclave stop $(ENCLAVE)
 	kurtosis enclave rm $(ENCLAVE) --force
 
+PBT_GENESIS_ENCLAVE ?= pbt-genesis
+PBT_GENESIS_CONFIG ?= ./fixtures/networks/pbt-genesis-devnet.yaml
+PBT_GENESIS_PATCH := fixtures/networks/pbt-genesis-ethereum-package.patch
+
+# A devnet with the EIP-8297 binary tree active *at genesis*, rather than
+# scheduled a few slots in as `binary-tree-devnet.yaml` does. Needs a patched
+# ethereum-package; see the config file and docs/pbt-at-genesis-investigation.md
+# for why, and treat the patch as the upstream ask.
+#
+# Not reusing the `localnet` target: it passes the ethereum-package *directory*,
+# which kurtosis 1.20.0 mangles (the tarball carries the directory name as a
+# prefix, so kurtosis.yml is not at the package root), and it tails logs, which
+# is the wrong way to judge this chain -- a halt logs nothing above WARN.
+pbt-genesis-devnet: build-image checkout-ethereum-package ## 🌳 Start a devnet with EIP-8297 active at genesis
+	@set -e; \
+	cd ethereum-package; \
+	if git apply --reverse --check ../$(PBT_GENESIS_PATCH) >/dev/null 2>&1; then \
+		echo "ethereum-package already patched for pre-computed EL genesis."; \
+	else \
+		echo "Patching ethereum-package for pre-computed EL genesis..."; \
+		git apply ../$(PBT_GENESIS_PATCH); \
+	fi; \
+	cd ..; \
+	kurtosis run --enclave $(PBT_GENESIS_ENCLAVE) ./ethereum-package/kurtosis.yml \
+		--args-file $(PBT_GENESIS_CONFIG)
+	@echo
+	@echo "Verify by querying, not by reading logs -- a halt here logs nothing above WARN:"
+	@echo "  kurtosis enclave inspect $(PBT_GENESIS_ENCLAVE)   # find the mapped 8545 ports"
+	@echo "  curl -s -X POST -H 'Content-Type: application/json' \\"
+	@echo "    --data '{\"jsonrpc\":\"2.0\",\"method\":\"eth_blockNumber\",\"params\":[],\"id\":1}' \\"
+	@echo "    http://localhost:<port>"
+	@echo "Expect the head to advance and every node to agree on hash and stateRoot."
+
+stop-pbt-genesis-devnet: ## 🛑 Stop the at-genesis binary-tree devnet
+	kurtosis enclave stop $(PBT_GENESIS_ENCLAVE)
+	kurtosis enclave rm $(PBT_GENESIS_ENCLAVE) --force
+
 HIVE_BRANCH ?= master
 
 setup-hive: ## 🐝 Set up Hive testing framework
