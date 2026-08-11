@@ -5,13 +5,12 @@ use bytes::Bytes;
 use crate::rkyv_utils::H256Wrapper;
 use crate::serde_utils;
 use crate::types::{Block, Code, CodeMetadata};
-use crate::utils::keccak;
 use crate::{
     constants::EMPTY_KECCAK_HASH,
     types::{AccountState, AccountUpdate, BlockHeader, ChainConfig},
 };
 use ethereum_types::{Address, H256, U256};
-use ethrex_crypto::{Crypto, NativeCrypto};
+use ethrex_crypto::Crypto;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_rlp::structs::{Decoder, Encoder};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
@@ -305,8 +304,11 @@ impl ExecutionWitness {
 
         let initial_state_root = find_parent_state_root(&headers, first_block_number)?;
 
-        let (state_trie_root, storage_trie_roots) =
-            rebuild_state_and_storage_tries(input.witness.state_as_vecs(), initial_state_root)?;
+        let (state_trie_root, storage_trie_roots) = rebuild_state_and_storage_tries(
+            input.witness.state_as_vecs(),
+            initial_state_root,
+            crypto,
+        )?;
 
         Ok(Self {
             codes: input.witness.codes_as_vecs(),
@@ -325,12 +327,16 @@ impl ExecutionWitness {
 fn rebuild_state_and_storage_tries<I, B>(
     state_bytes: I,
     initial_state_root: H256,
+    crypto: &dyn Crypto,
 ) -> Result<(Option<Node>, BTreeMap<H256, Node>), GuestProgramStateError>
 where
     I: IntoIterator<Item = B>,
     B: AsRef<[u8]>,
 {
-    let nodes: BTreeMap<H256, Node> = state_bytes
+    // `crypto`, not the free `keccak`: on RISC-V the latter falls through to the
+    // software `tiny_keccak` (see `ethrex_crypto::keccak`), so hashing every witness
+    // node here would bypass the zkVM's accelerated keccak in the guest.
+    let nodes: FxHashMap<H256, Node> = state_bytes
         .into_iter()
         .filter_map(|b| {
             let bytes = b.as_ref();
@@ -345,13 +351,15 @@ where
             // correct place to reject — and the post-execution state-root check
             // still binds the result either way. Hard-failing here rejected
             // witnesses the spec accepts.
-            Some((keccak(bytes), Node::decode(bytes).ok()?))
+            Some((H256(crypto.keccak256(bytes)), Node::decode(bytes).ok()?))
         })
         .collect();
 
-    // Get state trie root with the rest of the trie embedded into it.
+    // `_committed` pre-seeds each node's hash slot, so later hashing of the subtree
+    // reuses the known value instead of re-encoding and re-hashing the whole trie.
+    // Sound here because `nodes` is keyed by the hash of the very bytes it decodes.
     let state_trie_root = if let NodeRef::Node(state_trie_root, _) =
-        Trie::get_embedded_root(&nodes, initial_state_root)?
+        Trie::get_embedded_root_committed(&nodes, initial_state_root, crypto)?
     {
         Some((*state_trie_root).clone())
     } else {
@@ -363,12 +371,12 @@ where
     // RPC spec.
     let mut storage_trie_roots = BTreeMap::new();
     if let Some(root) = &state_trie_root {
-        let accounts = collect_accounts_from_embedded_trie(root, &nodes, &NativeCrypto);
+        let accounts = collect_accounts_from_embedded_trie(root, &nodes, crypto);
         for (hashed_address, storage_root_hash) in accounts {
             if storage_root_hash == EMPTY_TRIE_HASH || !nodes.contains_key(&storage_root_hash) {
                 continue;
             }
-            let node = Trie::get_embedded_root(&nodes, storage_root_hash)?;
+            let node = Trie::get_embedded_root_committed(&nodes, storage_root_hash, crypto)?;
             let NodeRef::Node(node, _) = node else {
                 return Err(GuestProgramStateError::Custom(
                     "execution witness does not contain non-empty storage trie".to_string(),
@@ -915,7 +923,7 @@ impl GuestProgramState {
 /// used by `into_execution_witness`; this one backs the SSZ `from_ssz` path.
 pub fn collect_accounts_from_embedded_trie(
     root: &Node,
-    nodes: &BTreeMap<H256, Node>,
+    nodes: &FxHashMap<H256, Node>,
     crypto: &dyn Crypto,
 ) -> Vec<(H256, H256)> {
     let mut accounts = Vec::new();
@@ -927,7 +935,7 @@ fn collect_accounts_from_node(
     node: &Node,
     path: ethrex_trie::Nibbles,
     accounts: &mut Vec<(H256, H256)>,
-    nodes: &BTreeMap<H256, Node>,
+    nodes: &FxHashMap<H256, Node>,
     crypto: &dyn Crypto,
 ) {
     use ethrex_trie::NodeRef;
