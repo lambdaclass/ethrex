@@ -64,7 +64,7 @@ use crate::error::BinaryTrieError;
 use super::MAX_KEY_LENGTH;
 use super::bits::{bits_start_with, bytes_to_bits};
 use super::db::{BinaryTrieDB, InMemoryBinaryTrieDB};
-use super::group::{GroupDepth, GroupRow, group_root, group_start, relative_bits};
+use super::group::{GroupDepth, GroupRow, MAX_GROUP_DEPTH, group_root, group_start, relative_bits};
 use super::node::{
     EMPTY_TRIE_ROOT, StoredNode, blake3_hash, branch_hash, decode, encode_branch, encode_leaf,
     leaf_hash,
@@ -1857,23 +1857,23 @@ impl BinaryTrie {
         // ordered: a commit batch that varies in order between two runs
         // over the same tree is a difference nothing downstream can
         // explain.
-        type Members = BTreeMap<(usize, Vec<u8>), Option<Vec<u8>>>;
+        type Members = BTreeMap<RelativeKey, Option<Vec<u8>>>;
         let mut touched: BTreeMap<BitPath, Members> = BTreeMap::new();
         let changes = entries
             .into_iter()
             .map(|(path, encoded)| (path, Some(encoded)))
             .chain(tombstones.into_iter().map(|path| (path, None)));
         for (path, change) in changes {
-            let relative = relative_bits(&path, group_depth).to_vec();
+            let relative = RelativeKey::new(relative_bits(&path, group_depth));
             touched
                 .entry(group_root(&path, group_depth))
                 .or_default()
-                .insert((relative.len(), relative), change);
+                .insert(relative, change);
         }
 
         let mut rows = Vec::with_capacity(touched.len());
         for (row_root, changes) in touched {
-            let mut members: BTreeMap<(usize, Vec<u8>), Vec<u8>> = BTreeMap::new();
+            let mut members: BTreeMap<RelativeKey, Vec<u8>> = BTreeMap::new();
             // Nothing written into this row means nothing to rebuild it
             // from: every change is a removal, and the survivors — if
             // any — are only on disk.
@@ -1882,7 +1882,7 @@ impl BinaryTrie {
                 && let Some(stored) = db.get_group(&row_root)?
             {
                 for (relative, encoded) in GroupRow::decode(&stored)?.members() {
-                    members.insert((relative.len(), relative.clone()), encoded.clone());
+                    members.insert(RelativeKey::new(relative), encoded.clone());
                 }
             }
             for (member, change) in changes {
@@ -1896,8 +1896,8 @@ impl BinaryTrie {
                 continue;
             }
             let mut row = GroupRow::new();
-            for ((_, relative), encoded) in members {
-                row.push(&relative, encoded, group_depth)?;
+            for (relative, encoded) in members {
+                row.push(&relative.bits(), encoded, group_depth)?;
             }
             rows.push((row_root, row.encode()));
         }
@@ -1923,8 +1923,134 @@ impl BinaryTrie {
     }
 }
 
+/// Where a member sits inside its row: its relative bit path, packed.
+///
+/// A relative path is always shorter than the group depth, so at
+/// most `MAX_GROUP_DEPTH - 1` bits — small enough to be a `Copy`
+/// key rather than a heap allocation. `build_rows` keyed members by
+/// `(usize, Vec<u8>)`, which allocated once per member: measured at
+/// ~68,000 allocations per block at `g = 6`, for a change that
+/// dirtied ~11,000 nodes. Nothing about the ordering needed them.
+///
+/// Ordered by `(len, bits)` — the derive, field order being what
+/// states it — which is [`GroupRow`]'s own member order. Packing
+/// MSB-first is what makes that equivalent: comparing two equal-length
+/// packed values numerically agrees with comparing the bit slices they
+/// came from lexicographically, because both scan from bit 0 and the
+/// earlier bit carries the higher weight. So the rows this builds are
+/// byte-identical to the ones the `Vec` key built, which is the only
+/// property that matters — a row is a consensus-visible preimage.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct RelativeKey {
+    len: u8,
+    bits: u8,
+}
+
+impl RelativeKey {
+    fn new(relative: &[u8]) -> Self {
+        let mut bits = 0u8;
+        for (i, bit) in relative.iter().enumerate() {
+            bits |= bit << (7 - i);
+        }
+        Self {
+            len: relative.len() as u8,
+            bits,
+        }
+    }
+
+    /// The bits back out, for [`GroupRow::push`].
+    ///
+    /// Returns a guard holding a stack buffer rather than a slice,
+    /// because the buffer cannot outlive this call — which is the
+    /// whole point, since allocating it is what this type exists to
+    /// avoid.
+    fn bits(self) -> RelativeBits {
+        let mut out = [0u8; MAX_GROUP_DEPTH];
+        for (i, slot) in out.iter_mut().enumerate().take(self.len as usize) {
+            *slot = (self.bits >> (7 - i)) & 1;
+        }
+        RelativeBits {
+            bits: out,
+            len: self.len as usize,
+        }
+    }
+}
+
+/// A stack-allocated relative path, borrowed as a slice.
+struct RelativeBits {
+    bits: [u8; MAX_GROUP_DEPTH],
+    len: usize,
+}
+
+impl std::ops::Deref for RelativeBits {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        &self.bits[..self.len]
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    /// The packed member key must sort exactly as the `(len, Vec<u8>)`
+    /// key it replaced, for *every* relative path a group can hold.
+    ///
+    /// This is the whole correctness argument for the change, and it is
+    /// the kind of claim that reads as obviously true and is not: it
+    /// holds only because the bits are packed MSB-first, so that a
+    /// numeric comparison of two equal-length packed values agrees with
+    /// a lexicographic comparison of the slices they came from. Packed
+    /// the other way round it would silently reverse the order of every
+    /// row's members, changing bytes that are consensus preimages.
+    ///
+    /// Exhaustive rather than sampled: a relative path is shorter than
+    /// the group depth, so there are only 255 of them across all depths,
+    /// and every ordered pair is checked.
+    #[test]
+    fn the_packed_member_key_orders_exactly_as_the_slice_it_replaced() {
+        let mut paths: Vec<Vec<u8>> = Vec::new();
+        for len in 0..MAX_GROUP_DEPTH {
+            for value in 0u32..(1 << len) {
+                paths.push(
+                    (0..len)
+                        .map(|i| ((value >> (len - 1 - i)) & 1) as u8)
+                        .collect(),
+                );
+            }
+        }
+        assert_eq!(
+            paths.len(),
+            (1 << MAX_GROUP_DEPTH) - 1,
+            "every path below the max depth"
+        );
+
+        for left in &paths {
+            for right in &paths {
+                let old = (left.len(), left).cmp(&(right.len(), right));
+                let new = RelativeKey::new(left).cmp(&RelativeKey::new(right));
+                assert_eq!(
+                    old, new,
+                    "ordering disagrees for {left:?} vs {right:?}: was {old:?}, now {new:?}"
+                );
+            }
+        }
+    }
+
+    /// And the bits survive the round trip, since `GroupRow::push` is
+    /// handed them back out.
+    #[test]
+    fn a_packed_member_key_gives_back_the_path_it_was_built_from() {
+        for len in 0..MAX_GROUP_DEPTH {
+            for value in 0u32..(1 << len) {
+                let path: Vec<u8> = (0..len)
+                    .map(|i| ((value >> (len - 1 - i)) & 1) as u8)
+                    .collect();
+                let key = RelativeKey::new(&path);
+                assert_eq!(&*key.bits(), &path[..], "round trip for {path:?}");
+            }
+        }
+    }
+
     use super::*;
     use crate::error::BinaryTrieError;
     use crate::trie::db::{BinaryTrieDB, InMemoryBinaryTrieDB, NodeMap};
