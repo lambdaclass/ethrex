@@ -5371,16 +5371,13 @@ async fn an_installed_snapshot_is_indistinguishable_from_replay() {
         );
     }
 
-    // Bytecode: the trie commits to chunks, but only `ACCOUNT_CODES` answers
-    // the EVM, and it is a separate write.
-    for code in &codes {
-        assert_eq!(
-            target.get_account_code(code.hash).unwrap().as_ref(),
-            Some(code),
-            "code {:#x} did not land in the code table",
-            code.hash
-        );
-    }
+    // Bytecode is asserted in
+    // `a_leaf_the_snapshot_does_not_contain_does_not_survive_the_install`, on a
+    // target whose own genesis does not already hold it. Asserting it here
+    // proves nothing: this target was seeded from the same alloc, so
+    // `add_initial_state` wrote every one of these codes before the install
+    // ran, and dropping the seam's own code write leaves the assertion passing.
+    // A mutation check caught exactly that.
 }
 
 /// A leaf set that does not merkleize to the header's root is refused, and
@@ -5454,12 +5451,45 @@ async fn a_snapshot_that_does_not_hash_to_the_header_is_refused_before_writing()
         "the head's leaves must not install under an earlier block's hash",
     );
     // And a pre-activation block has no binary root to commit to at all.
+    //
+    // Stated against a header that carries the *right* root, which is the only
+    // way to reach the activation guard: any ordinary pre-flip header commits
+    // an MPT root, so it is refused by the root check whether the guard exists
+    // or not, and an assertion made against one passes with the guard deleted.
+    // A mutation check caught exactly that.
+    let impostor = BlockHeader {
+        number: 99,
+        timestamp: source.activation - 1,
+        state_root: root,
+        ..Default::default()
+    };
+    assert!(
+        !source
+            .genesis
+            .config
+            .is_binary_tree_active(impostor.timestamp),
+        "the impostor must sit before the flip"
+    );
+    target
+        .add_block_header(impostor.hash(), impostor.clone())
+        .await
+        .expect("header");
+    let error = target
+        .install_binary_snapshot(impostor.hash(), leaves.clone(), codes.clone())
+        .await
+        .expect_err("a pre-activation block must be refused");
+    assert!(
+        format!("{error}").contains("before the binary-tree activation"),
+        "the refusal must be the activation guard, not the root check: {error}",
+    );
+
+    // An unknown block is refused too, and for its own reason.
     assert!(
         target
-            .install_binary_snapshot(genesis_header.hash(), leaves, codes)
+            .install_binary_snapshot(H256::repeat_byte(0xab), leaves, codes)
             .await
             .is_err(),
-        "a pre-activation block must be refused",
+        "a snapshot must not install against a header this node does not have",
     );
 }
 
@@ -5506,5 +5536,113 @@ async fn a_block_imports_on_top_of_an_installed_snapshot() {
             .get_binary_account_info(next.header.state_root, sender)
             .unwrap(),
         "the snap-synced node and the replaying node must agree one block on",
+    );
+}
+
+/// A leaf the installing node held and the snapshot does not must disappear.
+///
+/// The falsification target for the flat mirror, and the reason the install
+/// clears `BINARY_FLATKEYVALUE` rather than only overwriting it. Every earlier
+/// test here installs over a *key-identical* prior state — transfers move
+/// values, never the key set — so every stale row happens to be overwritten
+/// and a mirror that was merely written over passes. Give the target an
+/// account the snapshot's chain never had, and the difference becomes the
+/// whole answer: the mirror is consulted before the tree for any key below its
+/// frontier and never falls back to a descent, so a surviving row is served as
+/// state the installed root does not commit to.
+#[tokio::test]
+async fn a_leaf_the_snapshot_does_not_contain_does_not_survive_the_install() {
+    let source = build_staged_chain(FLIP_BLOCK + 2).await;
+    let head = source.blocks.last().unwrap().clone();
+    let root = head.header.state_root;
+    let leaves = whole_leaf_set(&source.store, root);
+    let codes = codes_for_alloc(&source.store, root, &source.genesis.alloc);
+
+    // The target joined from a genesis that shares nothing with the source's:
+    // one account the source's chain has never heard of, and none of its
+    // contracts. Only the *pivot header* has to be shared for an install; the
+    // node's own history does not. The empty-of-contracts half is what makes
+    // the bytecode assertion below non-vacuous — a target seeded from the same
+    // alloc already holds every code the snapshot carries.
+    let stranger = Address::repeat_byte(0x5a);
+    let mut target_genesis = source.genesis.clone();
+    target_genesis.alloc.clear();
+    target_genesis.alloc.insert(
+        stranger,
+        GenesisAccount {
+            balance: U256::from(1234u64),
+            code: Bytes::new(),
+            storage: BTreeMap::from([(U256::from(7u64), U256::from(9u64))]),
+            nonce: 5,
+        },
+    );
+    let target = header_only_target(target_genesis.clone(), &source.blocks).await;
+
+    // Precondition: the stranger really is there before the install, and the
+    // source really has never had it.
+    let target_genesis_root = target
+        .get_binary_trie_root(target_genesis.get_block().hash())
+        .unwrap()
+        .expect("the target seeded its own genesis");
+    assert!(
+        target
+            .get_binary_account_info(target_genesis_root, stranger)
+            .unwrap()
+            .is_some(),
+        "the fixture must actually put the stranger in the target's state"
+    );
+    assert!(
+        source
+            .store
+            .get_binary_account_info(root, stranger)
+            .unwrap()
+            .is_none(),
+        "the snapshot must not contain the stranger"
+    );
+    assert!(!codes.is_empty(), "the snapshot carries bytecode");
+    for code in &codes {
+        assert!(
+            target.get_account_code(code.hash).unwrap().is_none(),
+            "the target must not already hold code {:#x}, or the assertion \
+             below is vacuous",
+            code.hash
+        );
+    }
+
+    target
+        .install_binary_snapshot(head.hash(), leaves, codes.clone())
+        .await
+        .expect("install");
+
+    // The trie commits to code as chunks; the EVM fetches whole bytecode by
+    // hash, and only `ACCOUNT_CODES` answers that. It is a separate write and
+    // nothing else on this path performs it.
+    for code in &codes {
+        assert_eq!(
+            target.get_account_code(code.hash).unwrap().as_ref(),
+            Some(code),
+            "code {:#x} did not land in the code table",
+            code.hash
+        );
+    }
+
+    assert_eq!(
+        target.get_binary_account_info(root, stranger).unwrap(),
+        None,
+        "the stranger's account leaf outlived the snapshot that replaced it",
+    );
+    assert_eq!(
+        target
+            .get_binary_storage_slot(root, stranger, H256(U256::from(7u64).to_big_endian()))
+            .unwrap(),
+        None,
+        "the stranger's storage leaf outlived the snapshot that replaced it",
+    );
+    // And the state that *is* in the snapshot still reads correctly, so the
+    // clearing did not simply empty the mirror.
+    let sender = sender_from_key(&test_secret_key());
+    assert_eq!(
+        target.get_binary_account_info(root, sender).unwrap(),
+        source.store.get_binary_account_info(root, sender).unwrap(),
     );
 }
