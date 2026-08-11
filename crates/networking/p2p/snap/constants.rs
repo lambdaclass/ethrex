@@ -173,13 +173,6 @@ const BAL_AVERAGE_SIZE_BYTES: u64 = 72 * 1024;
 pub const BAL_REQUEST_BATCH_SIZE: usize =
     (BAL_RESPONSE_SOFT_CAP_BYTES / BAL_AVERAGE_SIZE_BYTES) as usize;
 
-/// Maximum BAL catch-up passes before giving up on reconciling by replay.
-///
-/// Each pass replays up to the pivot that was current when it started; the pivot can
-/// advance again while it runs, so a pass may be needed per advancement. The loop
-/// normally ends when the pivot stops moving, and this only bounds pathological churn.
-pub const MAX_BAL_CATCHUP_PASSES: u32 = 10;
-
 /// Maximum retry attempts per block before falling back to snap/1 healing.
 pub const BAL_MAX_RETRIES_PER_BLOCK: u32 = 3;
 

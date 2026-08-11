@@ -30,9 +30,7 @@ use crate::{
             self, Capability, DisconnectMessage, DisconnectReason, PingMessage, PongMessage,
             SUPPORTED_ETH_CAPABILITIES, advertised_snap_capabilities,
         },
-        snap::{
-            Snap2BlockAccessLists, Snap2GetBlockAccessLists, TrieNodes, snap2_entry_encoded_len,
-        },
+        snap::{Snap2BlockAccessLists, Snap2GetBlockAccessLists, TrieNodes},
     },
     snap::constants::{BAL_MAX_REQUEST_HASHES, BAL_RESPONSE_SOFT_CAP_BYTES},
     snap::{
@@ -1117,7 +1115,7 @@ where
 {
     // This allow is because in l2 we mut the capabilities
     // to include the l2 cap
-    let snap_capabilities = advertised_snap_capabilities();
+    let snap_capabilities = advertised_snap_capabilities(state.blockchain.is_synced());
     #[allow(unused_mut)]
     let mut supported_capabilities: Vec<Capability> =
         [&SUPPORTED_ETH_CAPABILITIES[..], snap_capabilities].concat();
@@ -1796,17 +1794,12 @@ async fn handle_incoming_message(
 
 /// Build a `Snap2BlockAccessLists` response for a `Snap2GetBlockAccessLists` request.
 ///
-/// Per devp2p `caps/snap.md` ("GetBlockAccessLists"/"BlockAccessLists"):
-/// - always respond; the RLP empty string marks unknown/pruned/pre-Amsterdam blocks,
-///   and positional correspondence with the request is preserved;
-/// - truncate from the tail once the byte budget is exceeded, never collapse entries;
-/// - orphaned blocks are served the same way as canonical ones, since the key is the
-///   block hash.
-///
-/// `response_bytes` is the requester's soft limit; `0` means it named none, in which
-/// case the spec's recommended 2 MiB applies. The spec also lets a responder apply its
-/// own QoS limits, so the request can only ever lower the cap below
-/// [`BAL_RESPONSE_SOFT_CAP_BYTES`], never raise it.
+/// Per EIP-8189:
+/// - §50: always respond; push `None` for unknown/pruned/pre-Amsterdam blocks.
+/// - §51: truncate from tail (preserve order) once the byte budget is exceeded.
+/// - §52: orphaned blocks are served the same way as canonical blocks (keyed by hash).
+/// - §60: enforce `min(response_bytes, 2 MiB)`; `0` means 2 MiB.
+/// - §100: push `None` for blocks whose header has `block_access_list_hash == None`.
 pub fn build_snap2_bal_response(
     req: Snap2GetBlockAccessLists,
     storage: &ethrex_storage::Store,
@@ -1844,7 +1837,10 @@ pub fn build_snap2_bal_response(
             break;
         }
 
-        bytes_used += snap2_entry_encoded_len(raw_bal.as_ref()) as u64;
+        bytes_used += match &raw_bal {
+            Some(bal) => bal.length() as u64,
+            None => 1, // RLP empty string (0x80) = 1 byte
+        };
         bals.push(raw_bal);
     }
 

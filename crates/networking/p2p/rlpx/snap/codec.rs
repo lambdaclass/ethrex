@@ -347,73 +347,40 @@ impl RLPxMessage for Snap2GetBlockAccessLists {
     }
 }
 
-/// Byte length of the RLP string header that wraps `payload_len` content bytes.
-///
-/// A BAL always encodes as an RLP list (leading byte >= 0xc0) so the single-byte
-/// self-encoding case for values < 0x80 never applies here.
-const fn rlp_string_header_len(payload_len: usize) -> usize {
-    if payload_len < 56 {
-        1
-    } else {
-        // 0xb7 + length-of-length, then the big-endian length itself.
-        1 + (usize::BITS as usize - payload_len.leading_zeros() as usize).div_ceil(8)
-    }
-}
-
-/// Encoded size of one `bals` entry, used by the server to track its response budget
-/// without serializing the BAL first.
-pub fn snap2_entry_encoded_len(bal: Option<&BlockAccessList>) -> usize {
-    match bal {
-        None => 1,
-        Some(bal) => {
-            let payload = bal.length();
-            rlp_string_header_len(payload) + payload
-        }
-    }
-}
-
-fn encode_snap2_entry(bal: Option<&BlockAccessList>, buf: &mut dyn BufMut) {
-    match bal {
-        // RLP empty string: the "BAL unavailable" sentinel.
-        None => buf.put_u8(0x80),
-        Some(bal) => <[u8] as RLPEncode>::encode(&bal.encode_to_vec(), buf),
-    }
-}
-
 /// Per-slot wrapper for `Option<BlockAccessList>` in snap/2 responses.
 ///
-/// Wire format per devp2p `caps/snap.md` ("BlockAccessLists (0x09)"), which types the
-/// response as `[reqID: P, bals: [bal1: B, bal2: B, ...]]`: every entry is an RLP byte
-/// string, matching how snap carries all of its other payloads (`node1: B`, `code1: B`,
-/// `accBody: B`).
-///
-///   `None`      → RLP empty string (0x80), meaning the BAL is unavailable
-///   `Some(bal)` → RLP byte string whose content is the RLP-encoded `BlockAccessList`
-///
-/// This is deliberately *not* eth/71's `BlockAccessLists` (0x13) shape, which splices the
-/// BAL in as a bare list. Hashing is unaffected either way: `keccak256` covers the inner
-/// bytes, not the string header.
+/// Wire format per EIP-8189 §50, §58:
+///   `None` → RLP empty string (0x80)
+///   `Some(bal)` → RLP-encoded `BlockAccessList`
 #[derive(Debug, Clone)]
 struct Snap2OptionalBal(Option<BlockAccessList>);
 
 impl RLPEncode for Snap2OptionalBal {
     fn encode(&self, buf: &mut dyn BufMut) {
-        encode_snap2_entry(self.0.as_ref(), buf);
+        match &self.0 {
+            None => buf.put_u8(0x80), // RLP empty string per EIP-8189 §50,§58
+            Some(bal) => bal.encode(buf),
+        }
     }
 
     fn length(&self) -> usize {
-        snap2_entry_encoded_len(self.0.as_ref())
+        match &self.0 {
+            None => 1,
+            Some(bal) => bal.length(),
+        }
     }
 }
 
 impl RLPDecode for Snap2OptionalBal {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        // `Bytes` decodes an RLP byte string; `Vec<u8>` would decode a list of bytes.
-        let (payload, rest) = Bytes::decode_unfinished(rlp)?;
-        if payload.is_empty() {
-            return Ok((Snap2OptionalBal(None), rest));
+        // INVARIANT: a `BlockAccessList` always encodes as an RLP list (first byte >= 0xc0),
+        // so the short-string byte 0x80 is unambiguously the `None` sentinel (§50/§58). If
+        // `BlockAccessList` is ever refactored into a type whose RLP could collapse into a
+        // short string, this peek would mis-decode and must be revisited.
+        if rlp.first() == Some(&0x80) {
+            return Ok((Snap2OptionalBal(None), &rlp[1..]));
         }
-        let bal = BlockAccessList::decode(&payload)?;
+        let (bal, rest) = BlockAccessList::decode_unfinished(rlp)?;
         Ok((Snap2OptionalBal(Some(bal)), rest))
     }
 }
@@ -425,11 +392,17 @@ struct Snap2OptionalBalRef<'a>(Option<&'a BlockAccessList>);
 
 impl RLPEncode for Snap2OptionalBalRef<'_> {
     fn encode(&self, buf: &mut dyn BufMut) {
-        encode_snap2_entry(self.0, buf);
+        match self.0 {
+            None => buf.put_u8(0x80), // RLP empty string per EIP-8189 §50,§58
+            Some(bal) => bal.encode(buf),
+        }
     }
 
     fn length(&self) -> usize {
-        snap2_entry_encoded_len(self.0)
+        match self.0 {
+            None => 1,
+            Some(bal) => bal.length(),
+        }
     }
 }
 

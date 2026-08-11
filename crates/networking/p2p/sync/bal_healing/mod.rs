@@ -5,7 +5,7 @@
 
 mod apply;
 
-pub use apply::{BalApplyMode, apply_bal};
+pub use apply::apply_bal;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -28,20 +28,6 @@ use crate::{
 
 /// Reason a single-block BAL apply could not produce a valid post-state.
 ///
-/// How far one [`advance_state_via_bals`] pass got.
-///
-/// A pass can stop short of its target when peers stop serving, so the caller needs
-/// both the running root and the block it belongs to in order to resume rather than
-/// restart from the original base.
-#[derive(Debug, Clone)]
-pub struct BalReplayProgress {
-    /// State root after the last successfully applied block, or the start root when
-    /// the pass applied nothing.
-    pub state_root: H256,
-    /// Header of the last block whose BAL was applied, or `None` if none were.
-    pub last_applied: Option<BlockHeader>,
-}
-
 /// Pure-function output of [`try_apply_bal_block`]. The driver decides whether
 /// each variant is retryable (e.g. fetch from another peer) or fatal
 /// (e.g. chain reorg detected).
@@ -75,7 +61,6 @@ pub fn try_apply_bal_block(
     bal: &BlockAccessList,
     parent_state_root: H256,
     expected_parent_hash: H256,
-    mode: BalApplyMode,
 ) -> Result<H256, ApplyBalError> {
     bal.validate_ordering()
         .map_err(ApplyBalError::BadOrdering)?;
@@ -98,7 +83,7 @@ pub fn try_apply_bal_block(
         });
     }
 
-    match apply_bal(store, parent_state_root, bal, header, mode) {
+    match apply_bal(store, parent_state_root, bal, header) {
         Ok(new_root) => {
             if let Err(e) = store.store_block_access_list(header.hash(), bal) {
                 warn!(
@@ -136,24 +121,18 @@ pub async fn advance_state_via_bals(
     store: &Store,
     peers: &mut PeerHandler,
     start_block: BlockHeader,
-    start_state_root: H256,
     target_block_hash: H256,
-    mode: BalApplyMode,
     diagnostics: &Arc<tokio::sync::RwLock<SyncDiagnostics>>,
-) -> Result<BalReplayProgress, SyncError> {
+) -> Result<H256, SyncError> {
     // Step 1: load headers from start+1 to target.
     let headers = load_headers_range(store, start_block.number + 1, target_block_hash).await?;
     if headers.is_empty() {
         info!("advance_state_via_bals: no headers to replay, returning start root");
-        return Ok(BalReplayProgress {
-            state_root: start_state_root,
-            last_applied: None,
-        });
+        return Ok(start_block.state_root);
     }
 
-    let mut current_root = start_state_root;
+    let mut current_root = start_block.state_root;
     let mut parent_hash = start_block.hash();
-    let mut last_applied: Option<BlockHeader> = None;
 
     // Step 2: process in batches.
     let mut i = 0;
@@ -192,11 +171,8 @@ pub async fn advance_state_via_bals(
                         let mut diag = diagnostics.write().await;
                         diag.snap2_peer_failures += 1;
                     }
-                    // Return partial progress; the caller decides how to continue.
-                    return Ok(BalReplayProgress {
-                        state_root: current_root,
-                        last_applied,
-                    });
+                    // Return partial progress; caller falls back to snap/1 healing.
+                    return Ok(current_root);
                 }
                 Ok(None) => {
                     warn!(
@@ -206,10 +182,7 @@ pub async fn advance_state_via_bals(
                         let mut diag = diagnostics.write().await;
                         diag.snap2_peer_failures += 1;
                     }
-                    return Ok(BalReplayProgress {
-                        state_root: current_root,
-                        last_applied,
-                    });
+                    return Ok(current_root);
                 }
                 Ok(Some((response_bals, peer_id))) => {
                     // EIP-8189 permits truncating a response from the tail, but a
@@ -271,18 +244,10 @@ pub async fn advance_state_via_bals(
                         let header = &batch_headers[next];
                         let block_hash = batch_hashes[next];
 
-                        match try_apply_bal_block(
-                            store,
-                            header,
-                            &bal,
-                            current_root,
-                            parent_hash,
-                            mode,
-                        ) {
+                        match try_apply_bal_block(store, header, &bal, current_root, parent_hash) {
                             Ok(new_root) => {
                                 current_root = new_root;
                                 parent_hash = block_hash;
-                                last_applied = Some(header.clone());
                                 batch_filled[next] = true;
                                 {
                                     let mut diag = diagnostics.write().await;
@@ -344,13 +309,10 @@ pub async fn advance_state_via_bals(
                 .any(|(idx, &count)| !batch_filled[idx] && count >= BAL_MAX_RETRIES_PER_BLOCK);
             if any_exhausted {
                 warn!(
-                    "advance_state_via_bals: exhausted retries for batch at block index {}; returning partial progress",
+                    "advance_state_via_bals: exhausted retries for batch at block index {}; returning partial root for snap/1 fallback",
                     i
                 );
-                return Ok(BalReplayProgress {
-                    state_root: current_root,
-                    last_applied,
-                });
+                return Ok(current_root);
             }
         }
 
@@ -362,10 +324,7 @@ pub async fn advance_state_via_bals(
         headers.len(),
         current_root
     );
-    Ok(BalReplayProgress {
-        state_root: current_root,
-        last_applied,
-    })
+    Ok(current_root)
 }
 
 /// Load headers from `start_number` up to (and including) the block with hash `target_hash`.

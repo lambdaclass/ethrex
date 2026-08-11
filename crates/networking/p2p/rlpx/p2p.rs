@@ -29,13 +29,17 @@ pub const SNAP1_ONLY_CAPABILITIES: [Capability; 1] = [Capability::snap(1)];
 
 /// The snap versions to advertise on a new connection.
 ///
-/// Both, always. State sync picks one strategy for the whole run: with snap/2 peers it
-/// reconciles the range download by replaying block access lists and never asks for trie
-/// nodes, and without them it falls back to snap/1 `GetTrieNodes` healing. Advertising
-/// both is what leaves peers available for whichever it picks, and per-connection
-/// negotiation still settles on a single version with each peer.
-pub const fn advertised_snap_capabilities() -> &'static [Capability] {
-    &SUPPORTED_SNAP_CAPABILITIES
+/// EIP-8189 ("Backwards Compatibility") tells a node that is synchronizing data to use a
+/// single snap version for state sync, and to serve both only once synchronization is
+/// complete. ethrex's state sync reconciles the trie with `GetTrieNodes`, which snap/2
+/// removes, so offering snap/2 before the initial sync finishes would negotiate away the
+/// only healing mechanism it has and leave the sync with no peer able to serve it.
+pub const fn advertised_snap_capabilities(is_synced: bool) -> &'static [Capability] {
+    if is_synced {
+        &SUPPORTED_SNAP_CAPABILITIES
+    } else {
+        &SNAP1_ONLY_CAPABILITIES
+    }
 }
 
 #[cfg(test)]
@@ -43,8 +47,15 @@ mod capability_tests {
     use super::*;
 
     #[test]
-    fn both_snap_versions_are_offered() {
-        let advertised = advertised_snap_capabilities();
+    fn syncing_node_withholds_snap2() {
+        let advertised = advertised_snap_capabilities(false);
+        assert!(advertised.contains(&Capability::snap(1)));
+        assert!(!advertised.contains(&Capability::snap(2)));
+    }
+
+    #[test]
+    fn synced_node_offers_both_versions() {
+        let advertised = advertised_snap_capabilities(true);
         assert!(advertised.contains(&Capability::snap(1)));
         assert!(advertised.contains(&Capability::snap(2)));
     }

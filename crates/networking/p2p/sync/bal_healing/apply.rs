@@ -29,21 +29,6 @@ use ethrex_storage::{
     apply_prefix, encode_code, hash_address, hash_key,
 };
 
-/// How strictly a BAL application is tied to the header it came from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BalApplyMode {
-    /// The trie at `parent_state_root` is complete and its root is a real historical
-    /// root, so applying the block's diff must reproduce `block_header.state_root`
-    /// exactly. Used when catching a finished pivot up to a later one.
-    Verified,
-    /// The trie is the patchwork the range download produces: every key is present,
-    /// but values come from a mix of the roots that were current while each range was
-    /// served, so no intermediate root matches any header. Per devp2p `caps/snap.md`
-    /// ("Synchronization algorithm"), consistency is only asserted once, against the
-    /// final pivot, after the whole span has been applied.
-    CatchUp,
-}
-
 /// Apply a single `BlockAccessList` to the state trie rooted at `parent_state_root`.
 ///
 /// Returns the new state root after applying all account/storage changes from `bal`.
@@ -61,14 +46,13 @@ pub fn apply_bal(
     parent_state_root: H256,
     bal: &BlockAccessList,
     block_header: &BlockHeader,
-    mode: BalApplyMode,
 ) -> Result<H256, SyncError> {
     // Empty BAL: the block made no state changes, so its state root must equal the parent's.
     // The non-empty path enforces this via the per-block check below; do the same here so the
     // contract holds for any caller that bypasses `try_apply_bal_block`'s BAL-hash guard
     // (future direct callers, or tests passing a mismatched header).
     if bal.is_empty() {
-        if mode == BalApplyMode::Verified && parent_state_root != block_header.state_root {
+        if parent_state_root != block_header.state_root {
             return Err(SyncError::StateRootMismatch(
                 block_header.state_root,
                 parent_state_root,
@@ -170,9 +154,8 @@ pub fn apply_bal(
 
     let (new_state_root, state_nodes) = state_trie.collect_changes_since_last_hash(&NativeCrypto);
 
-    // Per-block state root check. Only meaningful in `Verified` mode; in `CatchUp` the
-    // running root is synthetic until the final pivot is reached.
-    if mode == BalApplyMode::Verified && new_state_root != block_header.state_root {
+    // Per-block state root check (§68 / EIP-8189).
+    if new_state_root != block_header.state_root {
         return Err(SyncError::StateRootMismatch(
             block_header.state_root,
             new_state_root,
