@@ -629,6 +629,49 @@ jobs:
           # tag and commit produced it.
           trusted-comment-suffix: "ethrex ${{ github.ref_name }} ${{ github.sha }}"
 
+      # Deliberately NOT gated on HAS_MINISIGN_SECRET_KEY: the failure this
+      # exists to catch is signing being skipped entirely, which would leave the
+      # step above green and publish an unsigned release. `dry-run-release-assets`
+      # has the same post-condition, but it is `workflow_dispatch`-only and so
+      # never runs on the tag path that actually publishes.
+      - name: Assert the release is fully signed before publishing
+        run: |
+          set -euo pipefail
+          elfs=$(find ./bin -type f -name 'stateless-validator-ethrex-*.elf' | wc -l | tr -d ' ')
+          vks=$(find ./bin -type f -name 'stateless-validator-ethrex-*.vk' | wc -l | tr -d ' ')
+
+          if [ "${HAS_MINISIGN_SECRET_KEY}" != "true" ]; then
+            # Forks without a keypair may publish unsigned. The canonical repo
+            # may not: a missing secret there means the key was removed or the
+            # environment gate failed, and shipping unsigned would be silent.
+            if [ "${{ github.repository }}" = "lambdaclass/ethrex" ]; then
+              echo "::error::MINISIGN_SECRET_KEY is absent; refusing to publish $elfs ELF(s) and $vks VK(s) unsigned"
+              exit 1
+            fi
+            echo "::warning::no signing key configured; publishing unsigned (fork)"
+            exit 0
+          fi
+
+          if [ "$elfs" -eq 0 ] || [ "$vks" -eq 0 ] || [ "$elfs" -ne "$vks" ]; then
+            echo "::error::expected matching ELFs and VKs; got $elfs ELF(s), $vks VK(s)"
+            find ./bin -type f | sort
+            exit 1
+          fi
+
+          # Every stateless artifact must carry a signature that verifies against
+          # the committed trust anchor, not merely exist alongside one.
+          count=0
+          while IFS= read -r -d '' file; do
+            if [ ! -f "$file.minisig" ]; then
+              echo "::error::unsigned artifact would be published: $file"
+              exit 1
+            fi
+            minisign -V -m "$file" -p .github/minisign.pub -x "$file.minisig" > /dev/null
+            count=$((count + 1))
+          done < <(find ./bin -type f -name 'stateless-validator-ethrex-*' \
+                     \( -name '*.elf' -o -name '*.vk' \) -print0)
+          echo "ok  $count signed artifact(s) verified against .github/minisign.pub"
+
       - name: Get previous tag
         run: |
           last_tag=$(git --no-pager tag --sort=creatordate | grep -v -E '^v[0-9]+\.[0-9]+\.[0-9]+-' | grep -v '${{ github.ref_name }}' | tail -1)

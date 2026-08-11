@@ -10,6 +10,9 @@ on:
       # Without this, editing a script under .github/scripts would not run the
       # jobs below that exercise those scripts.
       - ".github/scripts/**"
+      # The trust anchor: a PR that changes only the committed public key must
+      # still run the job that validates it.
+      - ".github/minisign.pub"
 
 permissions:
   contents: read
@@ -80,6 +83,29 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y minisign
 
+      # The committed public key is the trust anchor consumers verify against,
+      # and the release hard-fails if it does not match the signing key. A
+      # corrupted or truncated commit of it must surface here, on the PR that
+      # changes it, rather than at release time. Needs no secrets.
+      - name: Assert the committed public key is well-formed
+        run: |
+          python3 - <<'EOF'
+          import base64, pathlib, sys
+          path = pathlib.Path(".github/minisign.pub")
+          if not path.is_file():
+              sys.exit("::error::.github/minisign.pub is missing")
+          lines = [l for l in path.read_text().splitlines() if l.strip()]
+          if len(lines) != 2 or not lines[0].startswith("untrusted comment:"):
+              sys.exit("::error::.github/minisign.pub is not a minisign public key file")
+          raw = base64.b64decode(lines[1], validate=True)
+          if len(raw) != 42 or raw[:2] != b"Ed":
+              sys.exit(f"::error::.github/minisign.pub is not a 42-byte Ed25519 minisign key (got {len(raw)} bytes, algo {raw[:2]!r})")
+          key_id = format(int.from_bytes(raw[2:10], "little"), "016X")
+          if key_id not in lines[0]:
+              sys.exit(f"::error::.github/minisign.pub comment does not name its key id {key_id}")
+          print(f"ok  committed public key is well-formed (key id {key_id})")
+          EOF
+
       # Only the guards `dry-run-release-assets` in tag_release.yaml cannot
       # reach: it runs the happy path with the real secrets and the committed
       # key, so what is left to check here is every way the script must REFUSE.
@@ -146,6 +172,19 @@ jobs:
             exit 1
           fi
           echo "ok  signs with a derived key when none is committed, and says so"
+
+          # A tampered artifact must stop verifying, proving the signature binds
+          # the bytes rather than merely existing. Nothing else asserts this on a
+          # PR: `dry-run-release-assets` is `workflow_dispatch`-only, so on the
+          # pull_request path this is the only check that a .minisig is bound to
+          # its payload at all.
+          elf="$work/bin/stateless-validator-ethrex-sp1-v6.3.1/stateless-validator-ethrex-sp1-v6.3.1.elf"
+          printf 'x' >> "$elf"
+          if minisign -V -m "$elf" -p "$work/pub" -x "$elf.minisig" > /dev/null 2>&1; then
+            echo "::error::a tampered artifact still verified"
+            exit 1
+          fi
+          echo "ok  tampered artifact fails verification"
 
           # Every refusal. A stale recorded key must fail rather than be
           # published in place of the key that actually signed.
