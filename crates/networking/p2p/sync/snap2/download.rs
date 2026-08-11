@@ -266,6 +266,7 @@ pub async fn download_state(
                 &mut writer,
                 cursor,
                 code_hash_collector,
+                diagnostics,
             )
             .await?;
             publish(&mut writer, flat, &accounts_dir, &storages_dir).await?;
@@ -317,6 +318,7 @@ pub async fn download_state(
                 &mut writer,
                 cursor,
                 code_hash_collector,
+                diagnostics,
             )
             .await?;
             progressed = true;
@@ -540,6 +542,7 @@ fn next_storage_batch(task: &mut RangeTask) -> Option<Vec<(H256, StorageWork)>> 
 }
 
 /// Fold one worker's answer back into its range.
+#[allow(clippy::too_many_arguments)]
 async fn handle_response(
     response: Response,
     peers: &PeerHandler,
@@ -547,6 +550,7 @@ async fn handle_response(
     writer: &mut ChunkWriter,
     cursor: &mut DownloadCursor,
     code_hash_collector: &mut CodeHashCollector,
+    diagnostics: &Arc<tokio::sync::RwLock<SyncDiagnostics>>,
 ) -> Result<(), SyncError> {
     match response {
         Response::Accounts { range, outcome } => {
@@ -561,9 +565,11 @@ async fn handle_response(
                 // selection, so without this the download retries it forever at
                 // full score and never progresses.
                 let _ = peers.peer_table.record_failure(outcome.peer_id);
+                diagnostics.write().await.snap2_ranges_unverified += 1;
                 return Ok(());
             }
             let _ = peers.peer_table.record_success(outcome.peer_id);
+            diagnostics.write().await.snap2_ranges_served += 1;
             let Some(served_through) = outcome
                 .accounts
                 .last()
@@ -623,12 +629,26 @@ async fn handle_response(
                 // Nothing usable came back; every contract in the batch is
                 // still owed. Score the peer for the same reason as above.
                 let _ = peers.peer_table.record_failure(outcome.peer_id);
+                let requeued = requested.len() as u64;
                 for (account_hash, work) in requested {
                     task.awaiting_storage.insert(account_hash, work);
                 }
+                let mut diag = diagnostics.write().await;
+                diag.snap2_ranges_unverified += 1;
+                diag.snap2_storage_requeued += requeued;
                 return Ok(());
             }
             let _ = peers.peer_table.record_success(outcome.peer_id);
+            {
+                let mut diag = diagnostics.write().await;
+                diag.snap2_ranges_served += 1;
+                diag.snap2_storage_requeued += outcome.unserved.len() as u64;
+                diag.snap2_storage_partial += outcome
+                    .served
+                    .iter()
+                    .filter(|served| served.remaining.is_some())
+                    .count() as u64;
+            }
 
             let owed: BTreeMap<H256, StorageWork> = requested.into_iter().collect();
             for served in outcome.served {
@@ -667,6 +687,7 @@ async fn handle_response(
 }
 
 /// Collect every outstanding response before the pivot changes under them.
+#[allow(clippy::too_many_arguments)]
 async fn collect_inflight(
     tasks: &mut BTreeMap<RangeId, RangeTask>,
     peers: &PeerHandler,
@@ -674,13 +695,23 @@ async fn collect_inflight(
     writer: &mut ChunkWriter,
     cursor: &mut DownloadCursor,
     code_hash_collector: &mut CodeHashCollector,
+    diagnostics: &Arc<tokio::sync::RwLock<SyncDiagnostics>>,
 ) -> Result<(), SyncError> {
     while tasks.values().any(RangeTask::is_inflight) {
         let Some(response) = rx.recv().await else {
             debug!("snap/2 download: response channel closed with work in flight");
             break;
         };
-        handle_response(response, peers, tasks, writer, cursor, code_hash_collector).await?;
+        handle_response(
+            response,
+            peers,
+            tasks,
+            writer,
+            cursor,
+            code_hash_collector,
+            diagnostics,
+        )
+        .await?;
     }
     Ok(())
 }

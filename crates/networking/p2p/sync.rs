@@ -88,6 +88,16 @@ pub struct SyncDiagnostics {
     pub snap2_bals_unavailable: u64,
     /// Number of snap/2 peer-level failures.
     pub snap2_peer_failures: u64,
+    /// Range responses that verified and contributed leaves.
+    pub snap2_ranges_served: u64,
+    /// Range responses that could not be verified, so the range is re-requested.
+    pub snap2_ranges_unverified: u64,
+    /// Contracts a storage response did not reach, re-queued for another round.
+    /// A rate close to the request size means responses are being truncated and
+    /// the batch is mostly being re-requested rather than drained.
+    pub snap2_storage_requeued: u64,
+    /// Contracts served only in part, still owed slots from a later request.
+    pub snap2_storage_partial: u64,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
