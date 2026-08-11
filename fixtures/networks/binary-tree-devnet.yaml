@@ -11,6 +11,98 @@
 # block commits the full carried-over state.
 #
 # Run: make localnet KURTOSIS_CONFIG_FILE=./fixtures/networks/binary-tree-devnet.yaml
+#
+# `make localnet` passes the ethereum-package *directory*, which kurtosis
+# 1.20.0 mangles; if that fails, run the package file directly:
+#
+#   kurtosis run --enclave <name> ./ethereum-package/kurtosis.yml \
+#     --args-file ./fixtures/networks/binary-tree-devnet.yaml
+#
+# ---------------------------------------------------------------------------
+# The pbtsnap late-join scenario
+# ---------------------------------------------------------------------------
+#
+# This config is the one to use for it, over `pbt-genesis-devnet.yaml`: a late
+# joiner has to download headers *across* the flip and then pivot on a
+# binary-committed one, and only an MPT-committed genesis makes that the real
+# shape. It also needs no patched ethereum-package. What it does NOT exercise
+# is a chain with no MPT prefix at all — that is the other config's job.
+#
+# The participants above deliberately stay on `--syncmode=full`: they are the
+# chain the joiner syncs *from*, and they must have replayed every block.
+#
+# Two things make the joiner different from just adding a fourth participant:
+#
+#   1. It has to start LATE, after the flip plus enough blocks that a pivot
+#      lands post-flip. kurtosis brings every participant up at genesis, so the
+#      joiner is added by hand once the chain is running.
+#   2. `download_headers_to_sync_head` falls back to full sync whenever the
+#      chain is shorter than MIN_FULL_BLOCKS (10 000). No devnet reaches that,
+#      so at the default value the state-download path is unreachable and the
+#      joiner silently full-syncs instead — which looks like success. Build the
+#      joiner's image with the `sync-test` feature and override the constant.
+#
+# Recipe (host commands; substitute the enclave name and the mapped ports that
+# `kurtosis enclave inspect` prints):
+#
+#   docker build --build-arg BUILD_FLAGS="-p ethrex --features sync-test" \
+#     -t ethrex:synctest .
+#
+#   # genesis.json and the JWT come from the enclave's own file artifacts, so
+#   # the joiner is guaranteed to be on the same chain and fork id.
+#   CID=$(docker ps -q --filter name=el-1-ethrex)
+#   NETCFG=$(docker inspect $CID \
+#     --format '{{range .Mounts}}{{if eq .Destination "/network-configs"}}{{.Name}}{{end}}{{end}}')
+#   JWT=$(docker inspect $CID \
+#     --format '{{range .Mounts}}{{if eq .Destination "/jwt"}}{{.Name}}{{end}}{{end}}')
+#   ENODE=$(curl -s -X POST -H 'Content-Type: application/json' \
+#     --data '{"jsonrpc":"2.0","method":"admin_nodeInfo","params":[],"id":1}' \
+#     http://127.0.0.1:<el-1 rpc port> | python3 -c 'import json,sys;print(json.load(sys.stdin)["result"]["enode"])')
+#
+#   docker run -d --name pbt-joiner --network kt-<enclave> \
+#     -v $NETCFG:/network-configs -v $JWT:/jwt \
+#     -e MIN_FULL_BLOCKS=32 -p 18545:8545 -p 18551:8551 ethrex:synctest \
+#     --datadir=/data --network=/network-configs/genesis.json \
+#     --syncmode=snap --experimental.binary-tree-delay=30 \
+#     --http.addr=0.0.0.0 --http.port=8545 \
+#     --http.api=eth,net,web3,debug,admin,txpool \
+#     --authrpc.addr=0.0.0.0 --authrpc.port=8551 \
+#     --authrpc.jwtsecret=/jwt/jwtsecret \
+#     --p2p.port=30303 --discovery.port=30303 --bootnodes=$ENODE
+#
+# `--experimental.binary-tree-delay=30` must match the participants exactly:
+# binaryTreeTime joins the timestamp fork list, so a different value changes
+# the fork id and the joiner is rejected before it reaches Established.
+#
+# The joiner has no consensus client, and nothing starts a sync cycle except a
+# forkchoice update, so relay one: read `eth_getBlockByNumber("latest")` from a
+# participant and POST it as `engine_forkchoiceUpdatedV3` to the joiner's
+# authrpc (port 18551) with an HS256 JWT signed with /jwt/jwtsecret, every few
+# seconds. That is the whole consensus-layer role in this scenario.
+#
+# JUDGE IT BY QUERYING. A halt on this branch logs nothing above WARN, and a
+# joiner that quietly full-synced looks identical at the head. The checks that
+# actually distinguish the two, all over JSON-RPC:
+#
+#   - `admin_syncStatus` on the joiner reports `sync_mode: "pbtsnap"` and a
+#     `pivot_block_number`. This is the only positive statement that the
+#     pbtsnap path ran.
+#   - `eth_getBlockByNumber("latest")` agrees on `hash` AND `stateRoot` across
+#     the joiner and all participants, and keeps agreeing as the chain moves.
+#   - `eth_getBalance(addr, <pre-pivot height>)` FAILS on the joiner while the
+#     participants answer. If it succeeds, the joiner replayed the chain and
+#     the run proved nothing.
+#   - `eth_getBalance(addr, <pivot height and above>)` matches the participants
+#     exactly — the installed snapshot is right, and post-flip blocks import on
+#     a node with no MPT ancestry.
+#   - `eth_getProof` refuses any post-activation block, on the joiner and on a
+#     participant alike, with the EIP-8297 message. Expected, not a bug: a
+#     binary root has no MPT behind it and the response shape is the MPT's.
+#   - `debug_traceBlockByNumber` fails for pre-pivot blocks on the joiner and
+#     succeeds for post-pivot ones. Same contract as MPT snap sync.
+#
+# Recorded result of one such run, and what it left untested: the "Implemented
+# in ethrex" section of `docs/eip-draft-pbtsnap.md`.
 participants:
   - el_type: ethrex
     el_image: ethrex:local
@@ -23,8 +115,11 @@ participants:
     supernode: true
     el_extra_params:
       - "--experimental.binary-tree-delay=30"
-      # Required on any scheduled chain: ethrex defaults to snap sync, which
-      # is MPT-shaped and is refused at startup once binaryTreeTime is set.
+      # These nodes ARE the chain, so they must replay every block. Pinned
+      # rather than left to the default for a second reason: the default is
+      # snap, these start before the flip, and snap sync before the activation
+      # timestamp is refused at startup (there is no binary-committed pivot to
+      # download yet). The late joiner is the node that uses snap — see above.
       - "--syncmode=full"
       # Devnet-only: widen the RPC namespace allowlist for test tooling.
       - "--http.api=eth,net,web3,debug,admin,txpool"

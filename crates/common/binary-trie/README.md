@@ -92,10 +92,46 @@ documentation:
 
 **Vendored from:** `projects/binary-trie` @ `ad84d306`
 
+### Proofs and state sync
+
+Proofs are no longer a non-goal. `BinaryTrie::prove_walk` emits the
+root-to-terminal sequence of stored-node encodings for one key,
+`trie::proof::verify_walk` checks it against a root, and
+`trie::range::prove_range` / `verify_range` build a range proof out of two
+boundary walks — the left walk of the request origin and the right walk of
+the last returned leaf — by recomputing the root from the frontier those two
+walks pin.
+
+Those three are the primitives under `pbtsnap/1`, the experimental RLPx
+capability that lets a node join a binary-tree chain after the flip without
+replaying it: it range-downloads the pivot block's leaves, verifies every
+range against the pivot header's `state_root`, and lands them with
+`Store::install_binary_snapshot`, which re-merkleizes the whole leaf set
+before it writes a row. Bytecode rides `snap/1 GetByteCodes`; there is no
+reverse embedding, because the leaves on the wire are the trie's own keys and
+values.
+
+Two limits are worth stating here rather than leaving to the driver:
+
+- **A server can only serve a root it still holds.** The persistent trie is
+  single-version and sits near `head - DB_COMMIT_THRESHOLD`, with the roots
+  above it addressable only through the layer cache, so a pivot goes
+  unservable after roughly that many blocks. There is no healing protocol in
+  v1: a stale pivot restarts the download against a fresh one, bounded at
+  three attempts per cycle.
+- **A node that syncs this way has no pre-pivot state.** Balances, storage,
+  tracing and `debug_*` for blocks below the pivot fail explicitly — the same
+  contract MPT snap sync has always had. `eth_getProof` additionally refuses
+  every post-activation block on *any* node, snap-synced or not: the response
+  shape is the MPT's and a binary root has no MPT behind it.
+
+Spec: `docs/eip-draft-pbtsnap.md` (ethrex-experimental draft, no upstream
+standing). Plan and decision record: `docs/plans/2026-07-26-pbt-snap-sync.md`.
+
 ### Non-goals (today)
 
-No proofs, no fork wiring. These are deferred to the state-commitment
-integration work.
+No fork wiring in this crate — activation scheduling lives in the chain
+config and the blockchain crate, not here.
 
 ### Spec discrepancy
 

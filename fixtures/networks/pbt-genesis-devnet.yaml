@@ -52,8 +52,13 @@ participants:
       # genesis.json at all, so the generator's silent discard of unknown
       # chain-config keys is not even on the path.
       - "--experimental.binary-tree-delay=0"
-      # Required on any scheduled chain: ethrex defaults to snap sync, which
-      # is MPT-shaped and is refused at startup once the commitment is set.
+      # These nodes ARE the chain, so they must replay every block. Snap mode
+      # on a scheduled chain now means pbtsnap rather than being refused, and
+      # on this config it would even be accepted at startup (the commitment is
+      # active from genesis, so there is no pre-flip window) — which is exactly
+      # why it is pinned: a participant that state-downloads instead of
+      # replaying is not a witness to anything. For the late-join scenario,
+      # where a node SHOULD snap-sync, see binary-tree-devnet.yaml.
       - "--syncmode=full"
       # Devnet-only: widen the RPC namespace allowlist for test tooling.
       - "--http.api=eth,net,web3,debug,admin,txpool"
@@ -69,8 +74,8 @@ ethereum_genesis_generator_params:
   # throwaway service between the two halves of genesis generation.
   precomputed_el_genesis_block_image: ethrex:local
   precomputed_el_genesis_block_params:
-    # `--syncmode full` again, deliberately: `binary_tree_scheduled()` makes
-    # ethrex refuse snap sync on the throwaway precompute node too.
+    # `--syncmode full` again, deliberately: this node exists only to compute
+    # genesis and has no peers, so any state-download mode is meaningless here.
     - "--syncmode"
     - "full"
     - "--experimental.binary-tree-delay=0"
