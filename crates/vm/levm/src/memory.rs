@@ -156,11 +156,20 @@ impl Memory {
         Ok(())
     }
 
-    /// Load `size` bytes from the given offset. Returning a Bytes.
+    /// Borrows `size` bytes from the given offset, growing (and zero-filling) memory
+    /// first, exactly like [`load_range`](Self::load_range) — reads past the current
+    /// length see the zeros `resize` wrote. The slice is valid until the next
+    /// `&mut self` access, so callers must consume it (copy it out, hash it, hand it
+    /// to `Code`) before mutating memory again.
+    ///
+    /// This is the one range read: [`load_range`](Self::load_range) and
+    /// [`with_range`](Self::with_range) are thin wrappers. The CREATE init-code path
+    /// calls it directly to avoid a per-CREATE ~48 KiB owned copy that only ever gets
+    /// read once (see [`Code::from_slice_unchecked`]).
     #[inline]
-    pub fn load_range(&mut self, offset: usize, size: usize) -> Result<Bytes, VMError> {
+    pub fn load_range_ref(&mut self, offset: usize, size: usize) -> Result<&[u8], VMError> {
         if size == 0 {
-            return Ok(Bytes::new());
+            return Ok(&[]);
         }
 
         let new_size = offset.checked_add(size).ok_or(OutOfBounds)?;
@@ -173,20 +182,19 @@ impl Memory {
         // SAFETY: resize already makes sure bounds are correct.
         #[allow(unsafe_code)]
         unsafe {
-            Ok(Bytes::copy_from_slice(buf.get_unchecked(
-                true_offset..(true_offset.wrapping_add(size)),
-            )))
+            Ok(buf.get_unchecked(true_offset..(true_offset.wrapping_add(size))))
         }
     }
 
+    /// Load `size` bytes from the given offset. Returning a Bytes.
+    #[inline]
+    pub fn load_range(&mut self, offset: usize, size: usize) -> Result<Bytes, VMError> {
+        Ok(Bytes::copy_from_slice(self.load_range_ref(offset, size)?))
+    }
+
     /// Borrow `size` bytes from the given offset and pass them to `f`, without
-    /// allocating a `Bytes` copy of the range.
-    ///
-    /// `load_range` reads through `self.buf()`, whose `Ref` guard cannot
-    /// outlive this call — so a `-> &[u8]` accessor can't be written. Callers that
-    /// only need to read the range (e.g. hashing) take the borrow via this closure
-    /// instead. Semantics match `load_range` exactly, including zero-padding reads
-    /// past the current length (handled by `resize`).
+    /// allocating a `Bytes` copy of the range. For callers that only need to read
+    /// the range (e.g. hashing) and would rather not hold the borrow themselves.
     #[inline]
     pub fn with_range<R>(
         &mut self,
@@ -194,21 +202,7 @@ impl Memory {
         size: usize,
         f: impl FnOnce(&[u8]) -> R,
     ) -> Result<R, VMError> {
-        if size == 0 {
-            return Ok(f(&[]));
-        }
-
-        let new_size = offset.checked_add(size).ok_or(OutOfBounds)?;
-        self.resize(new_size)?;
-
-        let true_offset = offset.wrapping_add(self.current_base);
-
-        let buf = self.buf();
-
-        // SAFETY: resize already makes sure bounds are correct.
-        #[allow(unsafe_code)]
-        let range = unsafe { buf.get_unchecked(true_offset..(true_offset.wrapping_add(size))) };
-        Ok(f(range))
+        Ok(f(self.load_range_ref(offset, size)?))
     }
 
     /// Load N bytes from the given offset.

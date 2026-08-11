@@ -892,11 +892,19 @@ impl<'a> VM<'a> {
         // Clear callframe subreturn data
         current_call_frame.sub_return_data = Bytes::new();
 
-        // Load code from memory
-        let code = self
+        // Build the init `Code` directly from a borrowed memory slice, avoiding an
+        // owned `Bytes` copy of the init code. Under the guest's non-freeing bump
+        // allocator that per-CREATE ~48 KiB copy — read once, then immediately
+        // re-copied into `Code`'s padded executable buffer — was 91% of peak RAM on
+        // mass-CREATE workloads (`stress_mix_operations`). `code` below is a zero-copy
+        // view of the (unpadded) init code for the CREATE2 address hash and the tracer.
+        let init_slice = self
             .current_call_frame
             .memory
-            .load_range(code_offset_in_memory, code_size_in_memory)?;
+            .load_range_ref(code_offset_in_memory, code_size_in_memory)?;
+        // The bogus hash is fine here: an init code's hash is never read.
+        let code_obj = Code::from_slice_unchecked(init_slice, H256::zero());
+        let code = code_obj.code_bytes();
 
         // Get account info of deployer
         let deployer = self.current_call_frame.to;
@@ -1018,8 +1026,7 @@ impl<'a> VM<'a> {
             deployer,
             new_address,
             new_address,
-            // SAFETY: init code hash is never used
-            Code::from_bytecode_unchecked(code, H256::zero()),
+            code_obj,
             value,
             Bytes::new(),
             false,

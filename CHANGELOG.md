@@ -12,6 +12,10 @@
 
 ## Perf
 
+### 2026-08-10
+
+- Build `CREATE` init code from a borrowed memory slice instead of an owned copy [#7126](https://github.com/lambdaclass/ethrex/pull/7126)
+
 ### 2026-08-07
 
 - Access the EVM memory buffer without `RefCell`'s borrow-flag bookkeeping and round the `MLOAD`/`MSTORE` memory size once instead of twice [#7119](https://github.com/lambdaclass/ethrex/pull/7119)

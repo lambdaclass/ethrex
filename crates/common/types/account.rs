@@ -63,6 +63,19 @@ impl Code {
         Self::from_parts_unchecked(hash, &code, jump_targets)
     }
 
+    /// Like [`from_bytecode_unchecked`](Self::from_bytecode_unchecked) but takes a
+    /// borrowed slice, avoiding an owned `Bytes` copy of the logical bytecode. The
+    /// single necessary copy — into the internally padded executable buffer — happens
+    /// in [`from_parts_unchecked`](Self::from_parts_unchecked). Used on the CREATE
+    /// init-code path, where the init code is read straight out of guest memory: an
+    /// owned intermediate `Bytes` there is pure waste (it is only ever borrowed to
+    /// build this `Code`), and under the guest's non-freeing bump allocator that
+    /// per-CREATE ~48 KiB copy dominated peak RAM.
+    pub fn from_slice_unchecked(code: &[u8], hash: H256) -> Self {
+        let jump_targets = Self::compute_jump_targets(code);
+        Self::from_parts_unchecked(hash, code, jump_targets)
+    }
+
     /// `code` is the logical, unpadded bytecode; `BYTECODE_PADDING` STOP bytes are
     /// appended internally by `from_parts_unchecked`.
     pub fn from_bytecode(code: Bytes, crypto: &dyn Crypto) -> Self {
