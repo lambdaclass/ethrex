@@ -7,5 +7,7 @@
 //! "Synchronization algorithm".
 
 pub mod cursor;
+pub mod flat;
 
 pub use cursor::{DownloadCursor, HashRange};
+pub use flat::FlatState;
