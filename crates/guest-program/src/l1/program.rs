@@ -159,10 +159,20 @@ pub fn new_payload_request_to_block(
     // hash the producer set — honoring the empty-BAL special case. An empty
     // field means pre-Amsterdam: leave block_access_list_hash as None.
     if !payload.block_access_list.is_empty() {
-        use ethrex_rlp::decode::RLPDecode;
+        use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
         let bal_bytes: Vec<u8> = payload.block_access_list.iter().copied().collect();
         let bal = ethrex_common::types::block_access_list::BlockAccessList::decode(&bal_bytes)
             .map_err(|e| format!("block_access_list decode: {e}"))?;
+        // Decoding preserves the wire order while encoding sorts by address, and
+        // `compute_hash` re-encodes — so without these two checks a permuted or
+        // otherwise non-canonical BAL canonicalizes away and still produces the
+        // expected hash. `engine_newPayloadV5` hashes the raw bytes for the same
+        // reason (`rpc/engine/payload.rs`); the guest has to reject explicitly.
+        bal.validate_ordering()
+            .map_err(|e| format!("block_access_list ordering: {e}"))?;
+        if bal.encode_to_vec() != bal_bytes {
+            return Err("block access list is not canonically encoded".to_string());
+        }
         header.block_access_list_hash = Some(bal.compute_hash(crypto));
     }
 
