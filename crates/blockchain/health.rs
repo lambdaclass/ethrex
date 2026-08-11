@@ -922,6 +922,11 @@ mod tests {
 
     /// Captures everything `emit` writes, at every level.
     fn capture(event: &ProgressEvent) -> String {
+        capture_with(|| event.emit())
+    }
+
+    /// Captures every log line written by `body`, at every level.
+    fn capture_with(body: impl FnOnce()) -> String {
         use std::io::Write;
         use std::sync::{Arc, Mutex as StdMutex};
 
@@ -953,7 +958,7 @@ mod tests {
             .with_ansi(false)
             .without_time()
             .finish();
-        tracing::subscriber::with_default(subscriber, || event.emit());
+        tracing::subscriber::with_default(subscriber, body);
         let bytes = sink.0.lock().expect("buffer poisoned").clone();
         String::from_utf8(bytes).expect("log output was not utf-8")
     }
@@ -1104,6 +1109,133 @@ mod tests {
     #[test]
     fn the_quiet_event_writes_nothing() {
         assert_eq!(capture(&ProgressEvent::Quiet), "");
+    }
+
+    /// The flip-block halt, end to end, as it would read in `docker logs -f`.
+    ///
+    /// This is the case the module exists for. The chain is advancing; the
+    /// binary-tree activation block arrives and executes and validates cleanly;
+    /// every forkchoice update naming it is then declined because the
+    /// reachability gate asks the MPT about a binary-trie root; the head number
+    /// never moves again. Before this change the node logged nothing above WARN
+    /// for the rest of its life and the halt was found by watching head numbers
+    /// over RPC.
+    ///
+    /// Asserts the whole shape: silence while advancing, one ERROR when the
+    /// stall is first concluded, silence for the rest of that minute, and the
+    /// ERROR again after it — the halt keeps saying so instead of scrolling
+    /// away.
+    #[test]
+    fn the_flip_block_halt_reads_as_a_repeating_error() {
+        let health = ChainHealth::manual();
+        let flip_block = 4_927;
+
+        let log = capture_with(|| {
+            // Healthy: a block every 12s, forkchoice updates applied.
+            for n in (flip_block - 4)..=flip_block {
+                health.record_forkchoice_update();
+                health
+                    .observe(ProgressObservation {
+                        head: n,
+                        synced: true,
+                    })
+                    .emit();
+                health.advance_clock(Duration::from_secs(12));
+            }
+
+            // The flip block's successors are refused; the head sits at
+            // `flip_block` for ten minutes of slots.
+            for _ in 0..50 {
+                health.record_forkchoice_update();
+                health.record_refusal(
+                    RefusalKind::StateNotReachable,
+                    "State root of the new head is not reachable from the database",
+                );
+                health
+                    .observe(ProgressObservation {
+                        head: flip_block,
+                        synced: true,
+                    })
+                    .emit();
+                health.advance_clock(Duration::from_secs(12));
+            }
+        });
+
+        let lines: Vec<&str> = log.lines().collect();
+        assert!(
+            lines.iter().all(|l| !l.contains("chain_idle")),
+            "the halt was reported as an idle chain:\n{log}"
+        );
+        assert!(
+            lines.iter().all(|l| !l.contains("chain_resumed")),
+            "a halted chain reported a recovery:\n{log}"
+        );
+
+        let stalls: Vec<&&str> = lines
+            .iter()
+            .filter(|l| l.contains("chain_stalled"))
+            .collect();
+        // Ten minutes of stall at a one-minute repeat.
+        assert!(
+            stalls.len() >= 9,
+            "the halt said so {} times in ten minutes, expected about ten:\n{log}",
+            stalls.len()
+        );
+        assert!(
+            stalls.len() <= 11,
+            "the halt flooded the log with {} lines in ten minutes:\n{log}",
+            stalls.len()
+        );
+        assert!(
+            stalls.iter().all(|l| l.contains("ERROR")),
+            "not every stall line is an ERROR:\n{log}"
+        );
+        assert!(
+            stalls
+                .iter()
+                .all(|l| l.contains(&format!("head={flip_block}"))),
+            "the stall lines do not name the head it stopped at:\n{log}"
+        );
+        assert!(
+            stalls
+                .iter()
+                .all(|l| l.contains("last_refusal_kind=\"state_not_reachable\"")),
+            "the stall lines do not name the refusal:\n{log}"
+        );
+
+        // The refusal count and elapsed time keep climbing, so a reader can see
+        // it is still happening rather than reading one repeated snapshot.
+        let first = stalls.first().expect("no stall line at all");
+        let last = stalls.last().expect("no stall line at all");
+        assert!(
+            first.contains("unchanged_for_secs=60"),
+            "first stall line did not fire at the threshold: {first}"
+        );
+        assert!(
+            last.contains("unchanged_for_secs=600"),
+            "last stall line did not report ten minutes: {last}"
+        );
+        assert!(
+            last.contains("forkchoice_refusals=50"),
+            "the refusal count did not accumulate: {last}"
+        );
+
+        // Nothing above DEBUG was said while the chain was advancing. (The
+        // capture runs at TRACE; a production node's default filter drops the
+        // per-block `chain_advancing` DEBUG line entirely.)
+        let noisy_while_advancing: Vec<&&str> = lines
+            .iter()
+            .take_while(|l| !l.contains("chain_stalled"))
+            .filter(|l| !l.contains("DEBUG") && !l.contains("TRACE"))
+            .collect();
+        assert!(
+            noisy_while_advancing.is_empty(),
+            "an advancing chain emitted {noisy_while_advancing:?}"
+        );
+        assert!(
+            lines.iter().any(|l| l.contains("chain_advancing")),
+            "the advancing phase left no trace even at DEBUG:\n{log}"
+        );
     }
 
     /// Refusal kinds keep distinct, stable names; a log filter is built on
