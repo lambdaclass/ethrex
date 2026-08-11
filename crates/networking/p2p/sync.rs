@@ -225,6 +225,28 @@ impl Syncer {
     async fn sync_cycle(&mut self, sync_head: H256, store: Store) -> Result<(), SyncError> {
         // Take picture of the current sync mode, we will update the original value when we need to
         if self.snap_enabled.load(Ordering::Relaxed) {
+            // A binary-tree-scheduled chain takes the `pbtsnap` cycle, and does
+            // so *before* the `MIN_FULL_BLOCKS` probe (Decision 11). The probe
+            // exists to avoid stalling on a barely-synced peer's header batch on
+            // a fresh devnet; the PBT cycle's own header phase reaches the same
+            // `HeaderPhase::FullSync` conclusion for a short chain, and reaching
+            // it there costs one header round trip instead of up to three probe
+            // attempts at five seconds each against peers that cannot answer.
+            //
+            // Legacy snap is not merely skipped here: `sync_cycle_snap` refuses
+            // outright on such a chain, so a caller entering it directly cannot
+            // get an MPT download either.
+            if store.get_chain_config().binary_tree_scheduled() {
+                return pbt_snap::sync_cycle_pbt(
+                    &mut self.peers,
+                    self.blockchain.clone(),
+                    &self.snap_enabled,
+                    sync_head,
+                    store,
+                    &self.diagnostics,
+                )
+                .await;
+            }
             // Probe the sync head's block number before committing to snap sync.
             // On a fresh devnet the chain head may be only a few blocks deep; the
             // existing in-loop `head_close_to_0` guard in `sync_cycle_snap`

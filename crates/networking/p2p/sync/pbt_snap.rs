@@ -43,6 +43,8 @@
 //! hash and only `ACCOUNT_CODES` answers that.
 
 use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use bytes::Bytes;
 use ethrex_binary_trie::embedding::{
@@ -51,17 +53,25 @@ use ethrex_binary_trie::embedding::{
     STORAGE_KEY_LENGTH, STORAGE_ZONE,
 };
 use ethrex_binary_trie::trie::{RangeProofError, increment_key, verify_range};
+use ethrex_blockchain::Blockchain;
+use ethrex_common::H256;
 use ethrex_common::constants::EMPTY_KECCAK_HASH;
 use ethrex_common::types::{BlockHeader, Code};
-use ethrex_common::H256;
 use ethrex_crypto::NativeCrypto;
 use ethrex_storage::Store;
 use ethrex_storage::error::StoreError;
-use tracing::{debug, info};
+use tokio_util::sync::CancellationToken;
+use tracing::{debug, info, warn};
 
-use crate::pbtsnap::client::{PbtProviderError, PbtSnapProvider};
+use crate::pbtsnap::client::{PbtProviderError, PbtSnapProvider, PeerPbtSnapProvider};
+use crate::peer_handler::PeerHandler;
 use crate::rlpx::pbtsnap::GetPbtLeafRange;
 use crate::snap::constants::{BYTECODE_CHUNK_SIZE, MAX_RESPONSE_BYTES};
+use crate::sync::SyncError;
+use crate::sync::snap_sync::{
+    HeaderPhase, SnapBlockSyncState, block_is_stale, download_headers_to_sync_head,
+    store_block_bodies, update_pivot,
+};
 
 #[cfg(test)]
 mod tests;
@@ -126,12 +136,227 @@ pub enum PbtSyncError {
     BytecodeCountMismatch { want: usize, got: usize },
     #[error("bytecode for {expected:#x} hashes to {actual:#x}")]
     BytecodeHashMismatch { expected: H256, actual: H256 },
-    #[error("bytecode for {hash:#x} is {actual} bytes, but its account's basic data says {expected}")]
+    #[error(
+        "bytecode for {hash:#x} is {actual} bytes, but its account's basic data says {expected}"
+    )]
     BytecodeSizeMismatch {
         hash: H256,
         expected: u32,
         actual: usize,
     },
+}
+
+/// How many pivots one cycle will try before giving up.
+///
+/// Pivot restart *is* the v1 healing story: a failed download has written
+/// nothing, so starting over on a fresher pivot is the whole recovery. It is
+/// bounded because with a serving window of roughly `DB_COMMIT_THRESHOLD`
+/// blocks, an unbounded retry loop on a link slower than that window is a
+/// livelock rather than a recovery — the pivot ages out faster than the state
+/// arrives, forever, silently.
+const MAX_PIVOTS_PER_CYCLE: u32 = 3;
+
+/// The `pbtsnap` sync cycle: headers, then a pivot's binary state, then the
+/// switch-over.
+///
+/// Reuses the snap cycle's header phase verbatim — headers are headers under
+/// either commitment — and replaces everything after it.
+pub(crate) async fn sync_cycle_pbt(
+    peers: &mut PeerHandler,
+    blockchain: Arc<Blockchain>,
+    snap_enabled: &AtomicBool,
+    sync_head: H256,
+    store: Store,
+    diagnostics: &Arc<tokio::sync::RwLock<super::SyncDiagnostics>>,
+) -> Result<(), SyncError> {
+    let mut block_sync_state = SnapBlockSyncState::new(store.clone());
+    diagnostics.write().await.sync_mode = "pbtsnap".to_string();
+
+    match download_headers_to_sync_head(
+        peers,
+        sync_head,
+        &store,
+        &mut block_sync_state,
+        diagnostics,
+    )
+    .await?
+    {
+        HeaderPhase::FullSync => {
+            info!("Sync head is found, switching to FullSync");
+            return fall_back_to_full(
+                peers,
+                blockchain,
+                snap_enabled,
+                sync_head,
+                store,
+                diagnostics,
+            )
+            .await;
+        }
+        HeaderPhase::Abandoned => return Ok(()),
+        HeaderPhase::Downloaded => {}
+    }
+
+    let provider = PeerPbtSnapProvider::new(peers.clone());
+    let mut pivot_header = {
+        let pivot_hash = *block_sync_state
+            .block_hashes
+            .last()
+            .ok_or(SyncError::NoBlockHeaders)?;
+        store
+            .get_block_header_by_hash(pivot_hash)?
+            .ok_or(SyncError::CorruptDB)?
+    };
+
+    let mut last_error = None;
+    for attempt in 1..=MAX_PIVOTS_PER_CYCLE {
+        while block_is_stale(&pivot_header) {
+            pivot_header = update_pivot(
+                pivot_header.number,
+                pivot_header.timestamp,
+                peers,
+                &mut block_sync_state,
+                diagnostics,
+            )
+            .await?;
+        }
+
+        // Decision 12. A pivot before the activation timestamp commits an MPT,
+        // which this protocol cannot download; that is a legitimate outcome on a
+        // chain whose flip has not happened yet, so it falls back rather than
+        // failing.
+        if !store
+            .get_chain_config()
+            .is_binary_tree_active(pivot_header.timestamp)
+        {
+            warn!(
+                pivot = pivot_header.number,
+                timestamp = pivot_header.timestamp,
+                "Pivot is before the binary-tree activation; falling back to full sync"
+            );
+            return fall_back_to_full(
+                peers,
+                blockchain,
+                snap_enabled,
+                sync_head,
+                store,
+                diagnostics,
+            )
+            .await;
+        }
+
+        {
+            let mut diag = diagnostics.write().await;
+            diag.current_phase = "pbt_leaves".to_string();
+            diag.pivot_block_number = Some(pivot_header.number);
+            diag.pivot_timestamp = Some(pivot_header.timestamp);
+        }
+        info!(
+            pivot = pivot_header.number,
+            attempt, "Downloading binary-tree state"
+        );
+
+        match sync_pbt_state(&provider, &store, &pivot_header).await {
+            Ok(root) => {
+                info!(pivot = pivot_header.number, %root, "Installed the pivot's binary state");
+                return finish_pbt_cycle(
+                    peers,
+                    snap_enabled,
+                    &store,
+                    &block_sync_state,
+                    &pivot_header,
+                )
+                .await;
+            }
+            Err(error) => {
+                // Nothing was written, so the only state to discard is the
+                // pivot itself. The commonest cause by far is a pivot that aged
+                // out of every peer's layer window, which a fresher one fixes.
+                warn!(
+                    pivot = pivot_header.number,
+                    attempt, %error, "Binary-tree state download failed; re-pivoting"
+                );
+                last_error = Some(error);
+                if attempt < MAX_PIVOTS_PER_CYCLE {
+                    pivot_header = update_pivot(
+                        pivot_header.number,
+                        pivot_header.timestamp,
+                        peers,
+                        &mut block_sync_state,
+                        diagnostics,
+                    )
+                    .await?;
+                }
+            }
+        }
+    }
+    Err(last_error
+        .map(SyncError::from)
+        .unwrap_or(SyncError::NoBlockHeaders))
+}
+
+/// Abandon the PBT cycle and full-sync instead.
+///
+/// Clears the snap checkpoint on the way out: leaving one behind makes the
+/// manager loop re-enter this branch after the full sync completes, which is
+/// the same cleanup `sync_cycle` does when it auto-switches on a short chain.
+async fn fall_back_to_full(
+    peers: &mut PeerHandler,
+    blockchain: Arc<Blockchain>,
+    snap_enabled: &AtomicBool,
+    sync_head: H256,
+    store: Store,
+    diagnostics: &Arc<tokio::sync::RwLock<super::SyncDiagnostics>>,
+) -> Result<(), SyncError> {
+    snap_enabled.store(false, Ordering::Relaxed);
+    store.clear_snap_state().await?;
+    super::full::sync_cycle_full(
+        peers,
+        blockchain,
+        CancellationToken::new(),
+        sync_head,
+        store,
+        diagnostics,
+    )
+    .await
+}
+
+/// The switch-over, mirroring `snap_sync`'s: the pivot's body, then the
+/// forkchoice update that makes it the head.
+async fn finish_pbt_cycle(
+    peers: &mut PeerHandler,
+    snap_enabled: &AtomicBool,
+    store: &Store,
+    block_sync_state: &SnapBlockSyncState,
+    pivot_header: &BlockHeader,
+) -> Result<(), SyncError> {
+    store_block_bodies(vec![pivot_header.clone()], peers.clone(), store.clone()).await?;
+    let block = store
+        .get_block_by_hash(pivot_header.hash())
+        .await?
+        .ok_or(SyncError::CorruptDB)?;
+    store.add_block(block).await?;
+
+    let numbers_and_hashes = block_sync_state
+        .block_hashes
+        .iter()
+        .rev()
+        .enumerate()
+        .map(|(i, hash)| (pivot_header.number - i as u64, *hash))
+        .collect::<Vec<_>>();
+    store
+        .forkchoice_update(
+            numbers_and_hashes,
+            pivot_header.number,
+            pivot_header.hash(),
+            None,
+            None,
+        )
+        .await?;
+
+    store.clear_snap_state().await?;
+    snap_enabled.store(false, Ordering::Relaxed);
+    Ok(())
 }
 
 /// Download the binary-tree state committed by `pivot`, verify it, and install
@@ -278,9 +503,9 @@ fn validate_keys(leaves: &[(Vec<u8>, [u8; 32])]) -> Result<(), PbtSyncError> {
         }
         if zone == ACCOUNT_ZONE {
             let sub_index = key[ACCOUNT_KEY_LENGTH - 1];
-            let header_storage =
-                (HEADER_STORAGE_OFFSET..HEADER_STORAGE_OFFSET + HEADER_STORAGE_SLOTS)
-                    .contains(&u64::from(sub_index));
+            let header_storage = (HEADER_STORAGE_OFFSET
+                ..HEADER_STORAGE_OFFSET + HEADER_STORAGE_SLOTS)
+                .contains(&u64::from(sub_index));
             let assigned = matches!(
                 sub_index,
                 BASIC_DATA_LEAF_KEY | CODE_HASH_LEAF_KEY | DELEGATION_LEAF_KEY

@@ -532,8 +532,7 @@ async fn legacy_snap_state_is_refused_on_a_scheduled_chain_and_served_otherwise(
             .expect("genesis header")
             .state_root;
 
-        let (server, _accept) =
-            spawn_node(server_key, server_store, pool.clone(), true).await;
+        let (server, _accept) = spawn_node(server_key, server_store, pool.clone(), true).await;
         let (client, _) = spawn_node(client_key, client_store, pool, false).await;
         let (mut connection, _) = connect(&client, &server).await;
 

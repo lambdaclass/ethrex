@@ -629,8 +629,8 @@ async fn a_short_bytecode_answer_is_rejected() {
 async fn a_bytecode_disagreeing_with_its_accounts_code_size_is_refused() {
     let (source, pivot) = store_with_state(0x11).await;
     let provider = Honest { store: source };
-    let (hash, real_size) = code_requests(&all_leaves(&provider.store, pivot.state_root))
-        .expect("requests")[0];
+    let (hash, real_size) =
+        code_requests(&all_leaves(&provider.store, pivot.state_root)).expect("requests")[0];
 
     download_codes(&provider, &[(hash, real_size)])
         .await
