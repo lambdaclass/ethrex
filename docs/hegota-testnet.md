@@ -148,7 +148,9 @@ passed / 0 failed**, `cargo test -p ethrex-rpc --lib` is 122 passed, and
   itself, so the patch cannot silently contradict upstream.
 - **Phase 9 Task 9.9** — local kurtosis validation. Prerequisite is an `ethrex` image
   build, and the three `REPLACE` placeholders in the config filled with throwaway local
-  values.
+  values. **This is the next step**, ahead of choosing a server: a local enclave
+  exercises everything except external reachability, so the only check it cannot
+  settle is check 8. See "Start here next session".
 
 ### Traps found the hard way — do not rediscover these
 
@@ -229,11 +231,23 @@ passed / 0 failed**, `cargo test -p ethrex-rpc --lib` is 122 passed, and
    `handoff_resume(branch="hegota-testnet", project="/home/edgar/dev/ethrex_2")`.
    Nothing below depends on that working: this file is the artifact and it is in git.
 1. Read this Progress block and the traps above.
-2. **Everything that can be done without a host is done.** What remains is Phase 7
-   Task 7.8, Phase 8 Tasks 8.7-8.9, Phase 9 Task 9.9 and the three `REPLACE`
-   placeholders in `fixtures/networks/hegota-testnet.yaml` — all of them need a live
-   enclave, a chosen server, or both. Start by picking the server and building the
-   `ethrex:hegota-testnet` image; nothing else unblocks until then.
+2. **Bring the enclave up locally first.** That is Phase 9 Task 9.9, and it no longer
+   waits on choosing a server. Two prerequisites: build the `ethrex:hegota-testnet`
+   image the config names (`make build-image` then tag it, since the config does not
+   use `ethrex:local`), and fill the three `REPLACE` placeholders in
+   `fixtures/networks/hegota-testnet.yaml` with throwaway local values — a fresh
+   mnemonic, three addresses derived from it, and `127.0.0.1` for the public IP.
+   **Do not commit the filled values**; the real ones are per-deployment and two of
+   them are secrets.
+
+   A local enclave clears Phase 7 Task 7.8 and eleven of the twelve checks. Only
+   check 8 cannot be done locally: it requires a node on a *different host* completing
+   discovery, and a loopback address proves nothing about NAT or the firewall. Run the
+   other eleven now and leave 8 for the real host.
+
+   Expect the `nat_exit_ip` / `--nat.extip` pair to be the first thing that bites: on
+   one host both must be the same literal address, and the config ships them as two
+   separate `REPLACE` markers precisely because nothing enforces that they agree.
 3. The single highest-value upstream item is the **EIP-7805 extension draft** EIP-8369
    asks for. Publishing it converts the two-endpoint rule, the code-byte budget and the
    slot count from divergences into a specification a second client can implement.
