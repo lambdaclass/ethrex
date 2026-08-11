@@ -1017,6 +1017,15 @@ pub async fn init_l1(
         info!("P2P is disabled");
     }
 
+    // Says, in the log, whether the head is moving — and when it is not, what
+    // the node is declining to do about it. A halted node was previously
+    // indistinguishable from an idle one without an RPC client to diff head
+    // numbers against. See `ethrex_blockchain::health`.
+    tracker.spawn(ethrex_blockchain::health::monitor_chain_progress(
+        blockchain.clone(),
+        cancel_token.clone(),
+    ));
+
     Ok((
         datadir.clone(),
         cancel_token,

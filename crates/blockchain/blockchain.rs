@@ -45,6 +45,7 @@
 pub mod constants;
 pub mod error;
 pub mod fork_choice;
+pub mod health;
 pub mod mempool;
 pub mod payload;
 pub mod prewarm;
@@ -60,6 +61,7 @@ use constants::{AMSTERDAM_MAX_INITCODE_SIZE, MAX_INITCODE_SIZE, POST_OSAKA_GAS_L
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH, MIN_BASE_FEE_PER_BLOB_GAS};
+use health::ChainHealth;
 
 use crossbeam::channel::{self as cb, TryRecvError, select};
 // Re-export stateless validation functions for backwards compatibility
@@ -247,6 +249,10 @@ pub struct Blockchain {
     /// Cache handoff slot from the mempool prewarmer to
     /// `execute_block_pipeline`; see `PrewarmedCache` and `crate::prewarm`.
     prewarmed: PrewarmedCache,
+    /// Whether the chain is advancing, and what the node is declining to do
+    /// when it is not. Read by `crate::health::monitor_chain_progress`; written
+    /// by the engine API's forkchoice handler. See [`crate::health`].
+    health: Arc<ChainHealth>,
 }
 
 /// Newtype around the prewarmer's cache-handoff slot so `Blockchain` can keep
@@ -473,6 +479,7 @@ impl Blockchain {
             options: blockchain_opts,
             merkle_pool: Self::build_merkle_pool(),
             prewarmed: PrewarmedCache::default(),
+            health: Arc::new(ChainHealth::new()),
         }
     }
 
@@ -495,6 +502,7 @@ impl Blockchain {
             options: BlockchainOptions::default(),
             merkle_pool: pool,
             prewarmed: PrewarmedCache::default(),
+            health: Arc::new(ChainHealth::new()),
         }
     }
 
@@ -508,6 +516,7 @@ impl Blockchain {
             options: BlockchainOptions::default(),
             merkle_pool: Self::build_merkle_pool(),
             prewarmed: PrewarmedCache::default(),
+            health: Arc::new(ChainHealth::new()),
         }
     }
 
@@ -535,6 +544,14 @@ impl Blockchain {
     /// orchestrator to drive the storage-side primitives.
     pub fn store(&self) -> &Store {
         &self.storage
+    }
+
+    /// The chain-progress tracker. The engine API's forkchoice handler reports
+    /// arrivals and refusals into it; `crate::health::monitor_chain_progress`
+    /// samples it. See [`crate::health`] for why a refused forkchoice update
+    /// and a frozen head are tracked together rather than separately.
+    pub fn health(&self) -> &Arc<ChainHealth> {
+        &self.health
     }
 
     /// Returns `true` while a deep-reorg apply pass is in flight. Set by

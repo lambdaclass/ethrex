@@ -3898,9 +3898,21 @@ impl Store {
         parent_hash: BlockHash,
         account_updates: &[AccountUpdate],
     ) -> Result<BinaryTrieAdvance, StoreError> {
-        let parent_root = self
-            .get_binary_trie_root(parent_hash)?
-            .ok_or(StoreError::MissingBinaryTrieRoot { parent_hash })?;
+        let parent_root = match self.get_binary_trie_root(parent_hash)? {
+            Some(root) => root,
+            None => {
+                // Loud, because this ends the chain: the caller turns it into a
+                // block-import failure, the CL keeps re-sending the block, and
+                // the head stops. Without a line here the only symptom is a head
+                // number that no longer moves.
+                error!(
+                    %parent_hash,
+                    %block_hash,
+                    "binary_trie_refused: no recorded root for the parent block; the binary trie is incomplete and cannot be extended, so this block cannot be imported"
+                );
+                return Err(StoreError::MissingBinaryTrieRoot { parent_hash });
+            }
+        };
 
         // Codes first and in a single batch, exactly as the direct-write path
         // does: the EVM fetches whole bytecode by hash and only `ACCOUNT_CODES`
@@ -3934,6 +3946,16 @@ impl Store {
                 .map_err(|e| StoreError::Custom(format!("binary root row read failed: {e}")))?
                 .is_some_and(|row| hash_stored_root(&row).is_ok_and(|hash| hash == parent_root));
             if !holds {
+                // Same shape as above and the same consequence. This is the
+                // condition that let a node resume on absent state after a
+                // restart and serve genesis-alloc values indefinitely, so it is
+                // reported rather than only returned.
+                error!(
+                    %parent_hash,
+                    %parent_root,
+                    %block_hash,
+                    "binary_trie_refused: the trie no longer holds the parent block's recorded root; it has been advanced past or parked elsewhere, and extending it would build on the wrong state"
+                );
                 return Err(StoreError::BinaryTrieRootNotHeld {
                     parent_hash,
                     parent_root,
@@ -6069,10 +6091,21 @@ fn check_binary_group_depth(
         .get(MISC_VALUES, BINARY_GROUP_DEPTH_KEY)?;
     match stored.as_deref() {
         Some([depth]) if usize::from(*depth) == configured.get() => Ok(()),
-        Some([depth]) => Err(StoreError::BinaryGroupDepthMismatch {
-            stored: usize::from(*depth),
-            configured: configured.get(),
-        }),
+        Some([depth]) => {
+            // At open, before the tracing subscriber has anything else to say
+            // about this datadir. The error propagates and the node refuses to
+            // start, but an operator reading `docker logs` sees this line first
+            // and with the two depths in it.
+            error!(
+                stored = usize::from(*depth),
+                configured = configured.get(),
+                "binary_trie_refused: datadir was written at a different binary-trie group depth; the group depth decides which nodes share a database row, so the two are not interchangeable"
+            );
+            Err(StoreError::BinaryGroupDepthMismatch {
+                stored: usize::from(*depth),
+                configured: configured.get(),
+            })
+        }
         // A marker that is not one byte was not written by this code. Treat it
         // as a mismatch rather than guessing: reporting a depth of 0 is
         // obviously wrong to a reader, where silently adopting would not be.
@@ -6087,6 +6120,10 @@ fn check_binary_group_depth(
                 .next()
                 .is_some();
             if holds_nodes {
+                error!(
+                    configured = configured.get(),
+                    "binary_trie_refused: datadir holds binary-trie nodes written before group depth was recorded (one node per row); they cannot be read at this depth and there is no in-place conversion"
+                );
                 return Err(StoreError::BinaryGroupDepthMissing {
                     configured: configured.get(),
                 });
