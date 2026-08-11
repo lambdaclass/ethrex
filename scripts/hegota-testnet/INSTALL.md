@@ -345,6 +345,16 @@ never an empty list, which a joiner would read as a chain with no peers.
 Fund it from the faucet account rather than a rich account, so a drained faucet cannot
 touch the accounts you hold for testing.
 
+Two things about running it as a container. `--env-file` is resolved at creation, so
+`docker inspect` prints `PRIVATE_KEY` in `Config.Env` rather than a reference to the file:
+anyone who can run docker here can already read the key from the host, so this grants
+nothing new, but it does mean inspect output is as sensitive as the env file and must not
+be pasted into a ticket or a chat. And `page.html` is baked into the image by `COPY`, so
+editing the page or `faucet.py` in a clone changes nothing that is being served — the
+image has to be rebuilt and the container recreated. Tag the outgoing image first
+(`docker tag hegota-faucet:latest hegota-faucet:pre-<change>`) so a bad page is one
+`docker run` from being reverted.
+
 ## 10. Firewall
 
 The full table is in `docs/hegota-testnet-joining.md`. The shape of it:
