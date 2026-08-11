@@ -6662,7 +6662,7 @@ fn commit_to_disk(
                 storage_trie_diff: journal_storage_trie,
                 account_flat_diff: journal_account_flat,
                 storage_flat_diff: journal_storage_flat,
-                binary_trie_diff: journal_binary_trie,
+                binary_row_diff: journal_binary_trie,
                 binary_flat_diff: journal_binary_flat,
             };
             result = write_tx.put(
@@ -7663,7 +7663,7 @@ mod state_history_tests {
                 storage_trie_diff: vec![],
                 account_flat_diff: vec![],
                 storage_flat_diff: vec![],
-                binary_trie_diff: vec![],
+                binary_row_diff: vec![],
                 binary_flat_diff: vec![],
             };
             tx.put(STATE_HISTORY, &n.to_be_bytes(), &entry.encode())
@@ -8255,7 +8255,7 @@ mod state_history_tests {
                     storage_trie_diff: vec![],
                     account_flat_diff: vec![],
                     storage_flat_diff: vec![],
-                    binary_trie_diff: vec![],
+                    binary_row_diff: vec![],
                     binary_flat_diff: vec![],
                 };
                 tx.put(STATE_HISTORY, &n.to_be_bytes(), &entry.encode())
@@ -8348,7 +8348,7 @@ mod state_history_tests {
                     storage_trie_diff: vec![],
                     account_flat_diff: vec![],
                     storage_flat_diff: vec![],
-                    binary_trie_diff: vec![],
+                    binary_row_diff: vec![],
                     binary_flat_diff: vec![],
                 };
                 tx.put(STATE_HISTORY, &n.to_be_bytes(), &entry.encode())
@@ -8594,7 +8594,7 @@ mod state_history_tests {
         );
         assert!(
             entry
-                .binary_trie_diff
+                .binary_row_diff
                 .iter()
                 .any(|(k, _)| *k == tree_key(0xa)),
             "the node section must still carry the node write"
@@ -8742,7 +8742,7 @@ mod state_history_tests {
                 storage_trie_diff: vec![],
                 account_flat_diff: vec![],
                 storage_flat_diff: vec![],
-                binary_trie_diff: vec![],
+                binary_row_diff: vec![],
                 binary_flat_diff: vec![
                     (tree_key(0xb1), Some(leaf_value(0xa1))),
                     (tree_key(0xb2), None),
@@ -9032,7 +9032,7 @@ mod state_history_tests {
         );
 
         let entry = decode_entry(&backend, 1);
-        assert_eq!(entry.binary_trie_diff, vec![(shared.clone(), None)]);
+        assert_eq!(entry.binary_row_diff, vec![(shared.clone(), None)]);
         assert_eq!(entry.binary_flat_diff, vec![(shared.clone(), None)]);
 
         // Now the direction that separates the pre-image maps: a second block
@@ -9051,7 +9051,7 @@ mod state_history_tests {
 
         let entry = decode_entry(&backend, 2);
         assert_eq!(
-            entry.binary_trie_diff,
+            entry.binary_row_diff,
             vec![(shared.clone(), Some(vec![0xa7]))],
             "the node's pre-image is the node's previous encoding"
         );

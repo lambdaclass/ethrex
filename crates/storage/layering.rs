@@ -1410,7 +1410,7 @@ impl Overlay {
         }
         // Its own map and its own filter: see the `binary_trie` field docs for
         // why key-length dispatch cannot serve here.
-        for (k, v) in entry.binary_trie_diff {
+        for (k, v) in entry.binary_row_diff {
             self.binary_bloom.insert(&k);
             self.binary_trie.insert(k, v);
         }
@@ -1609,7 +1609,7 @@ mod overlay_tests {
                 storage_trie_diff: vec![],
                 account_flat_diff: vec![],
                 storage_flat_diff: vec![],
-                binary_trie_diff: vec![],
+                binary_row_diff: vec![],
                 binary_flat_diff: vec![],
             };
             tx.put(STATE_HISTORY, &n.to_be_bytes(), &entry.encode())
@@ -1766,7 +1766,7 @@ mod overlay_tests {
                 storage_trie_diff: vec![],
                 account_flat_diff: vec![],
                 storage_flat_diff: vec![],
-                binary_trie_diff: vec![],
+                binary_row_diff: vec![],
                 binary_flat_diff: vec![],
             };
             tx.put(STATE_HISTORY, &n.to_be_bytes(), &entry.encode())
@@ -1912,7 +1912,7 @@ mod overlay_tests {
             storage_trie_diff: vec![(vec![0x20; 67], Some(b"stor-trie".to_vec()))],
             account_flat_diff: vec![(vec![0x30; 65], Some(b"acct-flat".to_vec()))],
             storage_flat_diff: vec![(vec![0x40; 131], None)],
-            binary_trie_diff: vec![],
+            binary_row_diff: vec![],
             binary_flat_diff: vec![],
         };
         let mut tx = backend.begin_write().unwrap();
@@ -2031,7 +2031,7 @@ mod overlay_tests {
             storage_trie_diff: vec![(vec![0x20; 67], Some(b"st".to_vec()))],
             account_flat_diff: vec![(vec![0x30; 65], None)],
             storage_flat_diff: vec![(vec![0x40; 131], Some(b"sf".to_vec()))],
-            binary_trie_diff: vec![],
+            binary_row_diff: vec![],
             binary_flat_diff: vec![],
         };
         let mut tx = backend.begin_write().unwrap();
@@ -2076,7 +2076,7 @@ mod overlay_tests {
         block: BlockNumber,
         parent_binary_root: H256,
         account_trie_diff: FlatDiff,
-        binary_trie_diff: FlatDiff,
+        binary_row_diff: FlatDiff,
     ) {
         let entry = JournalEntry {
             block_hash: h(block as u8),
@@ -2086,7 +2086,7 @@ mod overlay_tests {
             storage_trie_diff: vec![],
             account_flat_diff: vec![],
             storage_flat_diff: vec![],
-            binary_trie_diff,
+            binary_row_diff,
             binary_flat_diff: vec![],
         };
         let mut tx = backend.begin_write().unwrap();
@@ -2187,7 +2187,7 @@ mod overlay_tests {
         backend: &Arc<dyn StorageBackend>,
         block: BlockNumber,
         account_trie_diff: FlatDiff,
-        binary_trie_diff: FlatDiff,
+        binary_row_diff: FlatDiff,
         binary_flat_diff: FlatDiff,
     ) {
         let entry = JournalEntry {
@@ -2198,7 +2198,7 @@ mod overlay_tests {
             storage_trie_diff: vec![],
             account_flat_diff: vec![],
             storage_flat_diff: vec![],
-            binary_trie_diff,
+            binary_row_diff,
             binary_flat_diff,
         };
         let mut tx = backend.begin_write().unwrap();

@@ -1237,7 +1237,7 @@ mod tests {
                 storage_trie_diff: vec![],
                 account_flat_diff: vec![],
                 storage_flat_diff: vec![],
-                binary_trie_diff: vec![],
+                binary_row_diff: vec![],
                 binary_flat_diff: vec![(key.clone(), Some(vec![0x99; 32]))],
             };
             let mut tx = db.begin_write().unwrap();
