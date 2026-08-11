@@ -93,15 +93,20 @@ impl BinaryTrieDB for BackendBinaryTrieDB {
 /// this row"** per [`BinaryTrieDB::put_groups`]'s tombstone convention.
 ///
 /// A key is the DB key of a group *root* and a value is a whole `GroupRow`, so
-/// one entry here is a group of up to `2^g - 1` nodes rather than one node. The
-/// name is Task 6's to change; what it means changed here.
-pub type BinaryTrieNodes = Vec<(Vec<u8>, Vec<u8>)>;
+/// one entry here is a group of up to `2^g - 1` nodes rather than one node.
+///
+/// **Named `Rows`, not `Nodes`, deliberately.** It was `BinaryTrieNodes` while a
+/// row held exactly one node, and keeping that name once the container changed
+/// would have left `len()` reading as a node count at every call site that took
+/// it for one. A `Vec<(Vec<u8>, Vec<u8>)>` carries no evidence either way, so
+/// the alias is the only place a reader is told.
+pub type BinaryTrieRows = Vec<(Vec<u8>, Vec<u8>)>;
 
 /// Flat-mirror writes as they are staged and flushed: [`BINARY_FLATKEYVALUE`]
 /// key/value pairs, with an **empty value meaning "delete this row"** per
 /// [`BackendBinaryFlatDB::put_batch`]'s tombstone convention.
 ///
-/// Byte-identical in shape to [`BinaryTrieNodes`] and deliberately a distinct
+/// Byte-identical in shape to [`BinaryTrieRows`] and deliberately a distinct
 /// alias: the two key spaces overlap exactly (a 34-byte `BitPath` DB key and a
 /// 34-byte account-zone tree key are indistinguishable), so the type name is the
 /// only place a reader is told which table a `Vec<(Vec<u8>, Vec<u8>)>` is bound
@@ -390,7 +395,11 @@ pub const BINARY_FLAT_FRONTIER_COMPLETE: &[u8] = &[0xff];
 /// Shared buffer a [`LayeredBinaryTrieDB`] writes into. The trie owns its
 /// `Box<dyn BinaryTrieDB>`, so the caller keeps a handle on the buffer to
 /// collect the staged writes after committing.
-pub type StagedBinaryNodes = Arc<Mutex<BinaryTrieNodes>>;
+///
+/// **Rows, not nodes**, for the reason [`BinaryTrieRows`] gives: what a commit
+/// deposits here is one entry per group touched, and a caller reading `len()`
+/// as a node count reads it low by roughly the group's occupancy.
+pub type StagedBinaryRows = Arc<Mutex<BinaryTrieRows>>;
 
 /// [`BinaryTrieDB`] that reads through the in-memory diff-layer chain before
 /// disk, and **stages** its writes into a buffer instead of writing them.
@@ -429,7 +438,7 @@ pub struct LayeredBinaryTrieDB {
     /// the generator has not written.
     coverage: BinaryFlatCoverage,
     /// Where [`BinaryTrieDB::put_groups`] deposits this block's row writes.
-    staged: StagedBinaryNodes,
+    staged: StagedBinaryRows,
 }
 
 impl LayeredBinaryTrieDB {
@@ -442,7 +451,7 @@ impl LayeredBinaryTrieDB {
         db: BackendBinaryTrieDB,
         flat_db: BackendBinaryFlatDB,
         coverage: BinaryFlatCoverage,
-        staged: StagedBinaryNodes,
+        staged: StagedBinaryRows,
     ) -> Self {
         Self {
             binary_root,
@@ -455,7 +464,7 @@ impl LayeredBinaryTrieDB {
     }
 
     /// A fresh, empty staging buffer.
-    pub fn staging_buffer() -> StagedBinaryNodes {
+    pub fn staging_buffer() -> StagedBinaryRows {
         Arc::new(Mutex::new(Vec::new()))
     }
 }

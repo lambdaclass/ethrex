@@ -17,8 +17,8 @@ use crate::{
     backend::in_memory::InMemoryBackend,
     binary_trie::{
         BINARY_FLAT_FRONTIER_COMPLETE, BackendBinaryFlatDB, BackendBinaryTrieDB,
-        BinaryFlatCoverage, BinaryFlatLeaf, BinaryFlatWrites, BinaryTrieNodes, LayeredBinaryTrieDB,
-        StagedBinaryNodes,
+        BinaryFlatCoverage, BinaryFlatLeaf, BinaryFlatWrites, BinaryTrieRows, LayeredBinaryTrieDB,
+        StagedBinaryRows,
     },
     block_data_buffer::BlockDataBuffer,
     error::StoreError,
@@ -536,7 +536,7 @@ pub struct BinaryTrieAdvance {
     /// carries every node of one group. A removal that leaves the group with
     /// members arrives here as an ordinary rewrite holding the survivors; only
     /// a group that lost its last member arrives as an empty value.
-    pub nodes: BinaryTrieNodes,
+    pub nodes: BinaryTrieRows,
     /// The same block's writes to the flat leaf mirror, derived from the
     /// [`LeafChangelog`] the trie's own commit emitted: one
     /// `BINARY_FLATKEYVALUE` row per leaf the block created, changed or removed.
@@ -3117,7 +3117,7 @@ impl Store {
         &self,
         binary_root: H256,
         gate_root: H256,
-        staged: StagedBinaryNodes,
+        staged: StagedBinaryRows,
     ) -> Result<LayeredBinaryTrieDB, StoreError> {
         // One read view for both handles, so a node read and a mirror read
         // taken in one traversal see one consistent snapshot: the mirror is
@@ -5611,7 +5611,7 @@ impl Store {
     /// count, while the node count beside it is not, and the two have been
     /// compared against each other.
     #[cfg(any(test, feature = "testing"))]
-    pub fn binary_trie_nodes_for_test(&self) -> Result<BinaryTrieNodes, StoreError> {
+    pub fn binary_trie_nodes_for_test(&self) -> Result<BinaryTrieRows, StoreError> {
         use crate::api::tables::BINARY_TRIE_NODES;
         let read = self.backend.begin_read()?;
         read.prefix_iterator(BINARY_TRIE_NODES, &[])?

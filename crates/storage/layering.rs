@@ -127,7 +127,7 @@ use ethrex_trie::{Nibbles, TrieDB, TrieError};
 
 use crate::{
     api::{StorageBackend, tables::STATE_HISTORY},
-    binary_trie::{BinaryFlatWrites, BinaryTrieNodes},
+    binary_trie::{BinaryFlatWrites, BinaryTrieRows},
     error::StoreError,
     journal::{JournalDecodeError, JournalEntry},
     trie::classify_trie_key,
@@ -230,7 +230,7 @@ pub struct BinaryLayerUpdate {
     /// root a rollback returns to.
     pub parent_root: H256,
     /// `(BINARY_TRIE_NODES key, encoded node)` pairs; empty value = tombstone.
-    pub nodes: BinaryTrieNodes,
+    pub nodes: BinaryTrieRows,
     /// `(BINARY_FLATKEYVALUE key, 32-byte leaf value)` pairs for the flat mirror
     /// of the same block's leaf changes; empty value = the leaf was removed.
     ///
@@ -1004,7 +1004,7 @@ pub struct CommittedLayer {
     ///
     /// Written into the same `write_tx` as `nodes`, which is the point: the two
     /// tries advance on disk in one atomic step, never independently.
-    pub binary_nodes: BinaryTrieNodes,
+    pub binary_nodes: BinaryTrieRows,
     /// The same block's writes to the binary trie's flat leaf mirror, as
     /// `BINARY_FLATKEYVALUE` key/value pairs with an empty value meaning
     /// "delete this row". Empty on unscheduled chains.
