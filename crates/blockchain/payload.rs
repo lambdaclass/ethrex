@@ -293,6 +293,11 @@ impl PayloadBuildContext {
         }
 
         let is_amsterdam = config.is_amsterdam_activated(payload.header.timestamp);
+        let blobs_bundle_version = if config.is_osaka_activated(payload.header.timestamp) {
+            1
+        } else {
+            0
+        };
         let payload_size = payload.length() as u64;
         Ok(PayloadBuildContext {
             remaining_gas: payload.header.gas_limit,
@@ -307,7 +312,10 @@ impl PayloadBuildContext {
             block_value: U256::zero(),
             base_fee_per_blob_gas,
             payload,
-            blobs_bundle: BlobsBundle::default(),
+            blobs_bundle: BlobsBundle {
+                version: blobs_bundle_version,
+                ..BlobsBundle::default()
+            },
             store: storage.clone(),
             vm,
             account_updates: Vec::new(),
@@ -404,6 +412,10 @@ impl Blockchain {
     /// Starts a payload build process. The built payload can be retrieved by calling `get_payload`.
     /// The build process will run for the full block building timeslot or until `get_payload` is called
     pub async fn initiate_payload_build(self: Arc<Blockchain>, payload: Block, payload_id: u64) {
+        // EIP-8070: a node that builds payloads SHOULD permanently act as an eager
+        // provider, so it holds complete blob data for every blob tx it may include.
+        // Inert unless blob sampling is enabled.
+        self.mempool.latch_eager_provider();
         let self_clone = self.clone();
         let cancel_token = CancellationToken::new();
         let cancel_token_clone = cancel_token.clone();
@@ -686,7 +698,8 @@ impl Blockchain {
                 debug!("No more gas to run transactions");
                 break;
             };
-            if !blob_txs.is_empty() && context.blobs_bundle.blobs.len() >= max_blob_number_per_block
+            if !blob_txs.is_empty()
+                && context.blobs_bundle.commitments.len() >= max_blob_number_per_block
             {
                 debug!("No more blob gas to run blob transactions");
                 blob_txs.clear();
@@ -962,7 +975,31 @@ impl Blockchain {
         // no sidecar, so derive it from the tx's versioned hashes and leave the
         // blobs bundle empty (the EVM only needs the hashes, which are in the tx).
         let (blob_count, bundle) = match self.mempool.get_blobs_bundle(tx_hash)? {
-            Some(blobs_bundle) => (blobs_bundle.blobs.len(), Some(blobs_bundle)),
+            Some(stored_bundle) => {
+                // Resolve the bundle: if blobs are elided (eth/72 path), reconstruct
+                // them from the held cells. If reconstruction is impossible (< 64
+                // columns held), drop the tx non-fatally so the builder continues
+                // with other transactions.
+                let blobs_bundle = if stored_bundle.blobs.is_empty() {
+                    match self.mempool.reconstruct_blobs_bundle(tx_hash)? {
+                        Some(full) => {
+                            // Cache the reconstructed bundle so future build ticks reuse it.
+                            self.mempool.add_blobs_bundle(tx_hash, full.clone())?;
+                            full
+                        }
+                        None => {
+                            // Not enough cells to reconstruct; skip this tx non-fatally.
+                            return Err(EvmError::Custom(format!(
+                                "insufficient cells to reconstruct blobs for tx {tx_hash}"
+                            ))
+                            .into());
+                        }
+                    }
+                } else {
+                    stored_bundle
+                };
+                (blobs_bundle.blobs.len(), Some(blobs_bundle))
+            }
             None if context.explicit_build => ((**head).blob_versioned_hashes().len(), None),
             None => {
                 // No blob tx should enter the mempool without its blobs bundle so this is an internal error

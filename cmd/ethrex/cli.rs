@@ -489,6 +489,24 @@ pub struct Options {
     )]
     pub precompute_witnesses: bool,
     #[arg(
+        long = "blob-sampling",
+        action = ArgAction::SetTrue,
+        default_value = "false",
+        help = "Enable EIP-8070 PeerDAS blob sampling (sampler/provider state machine). Disabled by default; when off the node always acts as provider (p=1.0).",
+        help_heading = "P2P options",
+        env = "ETHREX_BLOB_SAMPLING"
+    )]
+    pub blob_sampling: bool,
+    #[arg(
+        long = "blob-eager-provider",
+        action = ArgAction::SetTrue,
+        default_value = "false",
+        help = "EIP-8070: always act as provider (p=1.0) for every blob tx, bypassing the pseudo-random role decision. Implies --blob-sampling. Not needed for validators: eager mode latches on permanently the first time the CL requests a payload build.",
+        help_heading = "P2P options",
+        env = "ETHREX_BLOB_EAGER_PROVIDER"
+    )]
+    pub blob_eager_provider: bool,
+    #[arg(
         long = "max-reorg-depth",
         value_name = "MAX_REORG_DEPTH",
         help = "Optional operator override for the maximum reorg depth. Omit for finality-bounded cap. Set to 0 to disable deep reorgs entirely. Set to d to reject reorgs of depth > d.",
@@ -593,6 +611,8 @@ impl Default for Options {
             no_bal_parallel_exec: false,
             no_bal_prefetch: false,
             no_bal_parallel_trie: false,
+            blob_sampling: false,
+            blob_eager_provider: false,
             max_reorg_depth: None,
         }
     }

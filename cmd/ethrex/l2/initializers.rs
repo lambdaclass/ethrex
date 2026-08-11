@@ -250,6 +250,8 @@ pub async fn init_l2(
         r#type: BlockchainType::L2(l2_config),
         perf_logs_enabled: true,
         max_blobs_per_block: None, // L2 doesn't support blob transactions
+        blob_sampling_enabled: false, // L2 rejects blob txs; no eth/72 sampling
+        blob_eager_provider: false,
         precompute_witnesses: opts.node_opts.precompute_witnesses,
         private_mempool: opts.node_opts.mempool_private,
         precompile_cache_enabled: true,
@@ -475,6 +477,8 @@ pub async fn init_native_rollup_l2(
         r#type: BlockchainType::L1,
         perf_logs_enabled: true,
         max_blobs_per_block: None,
+        blob_sampling_enabled: false, // L2 rejects blob txs; no eth/72 sampling
+        blob_eager_provider: false,
         precompute_witnesses: opts.node_opts.precompute_witnesses,
         precompile_cache_enabled: true,
         max_queued_txs_per_account: opts.node_opts.mempool_max_queued_txs_per_account,

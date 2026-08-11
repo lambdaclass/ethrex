@@ -84,8 +84,8 @@ fn validate_cheap_passes_with_invalid_kzg_proofs() {
 
     // Use valid commitments but zero out proofs to make KZG invalid
     let bundle = BlobsBundle {
-        blobs: blobs.clone(),
-        commitments: valid_bundle.commitments.clone(),
+        blobs,
+        commitments: valid_bundle.commitments,
         proofs: vec![[0u8; 48]], // invalid proof
         version: 0,
     };
