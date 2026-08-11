@@ -3999,9 +3999,39 @@ mod serde_impl {
         where
             S: serde::Serializer,
         {
-            let mut s = serializer.serialize_struct("FrameTransaction", 11)?;
+            let mut s = serializer.serialize_struct("FrameTransaction", 21)?;
             s.serialize_field("type", &TxType::Frame)?;
             s.serialize_field("chainId", &format!("{:#x}", self.chain_id))?;
+            // Standard transaction fields. A frame transaction has no single target,
+            // value or calldata -- each frame carries its own -- and its nonce lives in
+            // `nonceSeq`/`nonceKeys`. They are emitted anyway because `eth_getBlockByNumber`
+            // and `eth_getTransactionByHash` return transaction objects that every JSON-RPC
+            // client parses against the standard shape: a missing `gas` alone makes ethers,
+            // viem and web3 reject the *whole block*, so one frame transaction in a block
+            // breaks every consumer of that block, not just readers of the frame itself.
+            // `gas` mirrors `Transaction::gas_limit()`, and `nonce` mirrors
+            // `Transaction::nonce()`, so the RPC view agrees with the node's own accessors.
+            // `to` is null and `value`/`input` are empty rather than invented: the per-frame
+            // truth stays in `frames`, which is where a frame-aware client should read it.
+            s.serialize_field("gas", &format!("{:#x}", self.total_gas_limit()))?;
+            s.serialize_field("nonce", &format!("{:#x}", self.nonce_seq))?;
+            s.serialize_field("to", &Option::<Address>::None)?;
+            s.serialize_field("value", "0x0")?;
+            s.serialize_field("input", "0x")?;
+            // A frame transaction is authenticated by the `signatures` list, not by one
+            // ECDSA triple, and its authoritative sender is `sender` (`from` at the RPC
+            // layer). Clients nevertheless require a signature on every transaction object
+            // and reject the block without one. Zeroes are emitted rather than promoting
+            // the first entry of `signatures`: that entry need not be the sender's (a
+            // sponsored transaction's first signature is the payer's), so exposing it as
+            // *the* signature would invite callers to ecrecover a sender that is not the
+            // sender. An all-zero triple recovers nothing, so it cannot be mistaken for a
+            // real one.
+            let zero_sig = format!("{:#x}", H256::zero());
+            s.serialize_field("v", "0x0")?;
+            s.serialize_field("yParity", "0x0")?;
+            s.serialize_field("r", &zero_sig)?;
+            s.serialize_field("s", &zero_sig)?;
             s.serialize_field(
                 "nonceKeys",
                 &self
@@ -6657,5 +6687,49 @@ mod tests {
             got, expected,
             "blob-gas term missing from cost_without_base_fee() for EIP-4844"
         );
+    }
+}
+
+#[cfg(test)]
+mod frame_tx_rpc_shape_tests {
+    use super::*;
+
+    /// A frame transaction is returned by `eth_getBlockByNumber` and
+    /// `eth_getTransactionByHash` inside ordinary transaction objects, and every JSON-RPC
+    /// client validates those against the standard shape before it looks at any
+    /// type-specific field. Omitting one required field does not degrade the frame
+    /// transaction alone, it makes the client reject the entire block, so a single frame
+    /// transaction takes down every consumer of that block.
+    #[test]
+    fn frame_tx_rpc_json_carries_the_standard_transaction_fields() {
+        let tx = FrameTransaction {
+            chain_id: 3151908,
+            nonce_keys: vec![U256::zero()],
+            nonce_seq: 7,
+            sender: Address::from_low_u64_be(0xABCD),
+            max_priority_fee_per_gas: 1000,
+            max_fee_per_gas: 1028,
+            ..Default::default()
+        };
+        let v: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&tx).expect("serialize")).expect("json");
+
+        for field in [
+            "gas", "nonce", "to", "value", "input", "v", "yParity", "r", "s",
+        ] {
+            assert!(
+                v.get(field).is_some(),
+                "standard field `{field}` missing from the frame-tx RPC object; \
+                 clients reject the whole block when it is absent"
+            );
+        }
+        // `gas` must agree with the node's own accessor, not be an invented placeholder.
+        assert_eq!(v["gas"], format!("{:#x}", tx.total_gas_limit()));
+        assert_eq!(v["nonce"], format!("{:#x}", tx.nonce_seq));
+        assert!(v["to"].is_null(), "a frame tx has no single target");
+        // The real authentication material stays where a frame-aware client reads it.
+        assert!(v.get("signatures").is_some());
+        assert!(v.get("frames").is_some());
+        assert_eq!(v["sender"], format!("{:#x}", tx.sender));
     }
 }
