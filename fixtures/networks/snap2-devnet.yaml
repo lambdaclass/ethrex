@@ -43,15 +43,26 @@ participants:
     cl_type: lighthouse
     cl_image: ethpandaops/lighthouse:glamsterdam-devnet-7
     validator_count: 32
-  # Cross-client server. `--snap.v2` is what makes it one.
+  # Cross-client server, and today it cannot be one.
   #
-  # It proposes nothing. ethrex rejects geth's Amsterdam transition block —
-  # geth records a nonce change at block-access index 0 for the deterministic
-  # CREATE2 deployer (0x4e59b448...), and ethrex requires every index-0 change
-  # to belong to an account its pre-execution system calls actually touched, so
-  # the chain stalls on the first Amsterdam block. That is an EIP-7928
-  # disagreement, not a snap/2 one; with no validators here, ethrex builds every
-  # block and geth follows, which is all a serving peer has to do.
+  # ethrex and geth disagree on the access list of the Amsterdam transition
+  # block, in both directions. ethrex rejects geth's block because it records a
+  # nonce change at block-access index 0 for the deterministic CREATE2 deployer
+  # (0x4e59b448...), and ethrex requires every index-0 change to belong to an
+  # account its pre-execution system calls touched. geth rejects ethrex's block
+  # with a plain "access list hash mismatch". Neither can follow the other past
+  # the fork, so geth freezes one block short of Amsterdam and has no
+  # post-Amsterdam state to serve.
+  #
+  # It stays here, proposing nothing, because the joiner peering with a client
+  # that advertises snap/2 but cannot answer is itself worth exercising, and
+  # because this is where the interop check goes the moment the disagreement is
+  # settled. Until then the sync is ethrex-to-ethrex.
+  #
+  # That disagreement is EIP-7928's, not snap/2's, and which client is right is
+  # unresolved. One lead: the EIP-8282 builder predeploys below are preloaded
+  # rather than deployed by the generator, so a difference in whether their
+  # system calls run would show up exactly here.
   - el_type: geth
     el_image: ethpandaops/geth:glamsterdam-devnet-7
     el_extra_params: ["--snap.v2", "--syncmode=full", "--gcmode=archive"]

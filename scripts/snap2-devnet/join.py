@@ -191,6 +191,10 @@ def main() -> int:
 
     # Reuse the seeder's genesis and JWT rather than reconstructing them.
     workdir = f"/tmp/{args.name}"
+    # The previous run's datadir belongs to root, since that is who the
+    # container runs as, so it cannot be removed from here directly.
+    run("docker", "run", "--rm", "-v", "/tmp:/host-tmp", "busybox",
+        "rm", "-rf", f"/host-tmp/{args.name}", check=False)
     shutil.rmtree(workdir, ignore_errors=True)
     os.makedirs(workdir, exist_ok=True)
     for remote, local in (("/jwt/jwtsecret", "jwtsecret"), ("/network-configs/genesis.json", "genesis.json")):
