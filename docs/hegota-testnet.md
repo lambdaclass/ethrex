@@ -74,6 +74,7 @@ passed / 0 failed**, `cargo test -p ethrex-rpc --lib` is 122 passed, and
 | Phase 2 closed (Tasks 2.4/2.5/2.7) | | word-bounded grep, `0xB9` misattribution fixed, six test-target clippy errors fixed |
 | Local enclave validated (Tasks 7.8/9.9) | | eleven of twelve checks pass on a local kurtosis enclave; config and publication defects found and fixed |
 | Joining proven from the bundle | | a fresh ethrex+lighthouse pair built only from the published artifacts synced to the network's head number and hash |
+| Install runbook (Task 9.7) | | `scripts/hegota-testnet/INSTALL.md`, written against a fresh host rather than the devnet |
 
 ### Not complete
 
@@ -1478,7 +1479,7 @@ contract and the fork schedule, and leaves only reachability and DNS to prove on
       testnet's own with its own key, funded from a Task 9.2 account. The key is a
       secret: it belongs in the host's env file, never in this repository or in a
       kurtosis config.
-- [ ] Task 9.7: Write `scripts/hegota-testnet/INSTALL.md` covering, in order: host
+- [x] Task 9.7: Write `scripts/hegota-testnet/INSTALL.md` covering, in order: host
       prerequisites, the docker image build and tag, `make checkout-ethereum-package`,
       the kurtosis launch with our config, extracting the artifact set from
       `/network-configs`, the Caddy vhosts and the explorer port-forward unit, the faucet
