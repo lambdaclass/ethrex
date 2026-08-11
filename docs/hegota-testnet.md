@@ -1581,13 +1581,15 @@ Verified via `gh` while planning. **Refresh every row in Task 1.2** — states m
   `docs/hegota-devnet.md` records that execution and consensus upgrade atomically with
   no inert intermediate state. Addressed by Task 7.2 pinning `sigp/lighthouse@focil`
   before the first genesis, so the swap never has to happen on a live chain.
-- **`sigp/lighthouse@focil` cannot boot with Gloas at epoch 1 on generator 6.1.6.**
-  `fixtures/networks/focil.yaml` runs `gloas_fork_epoch: 0` with lodestar, while
-  `docs/hegota-devnet-genesis.md` requires Gloas at epoch ≥1 because Lighthouse rejects
-  a Gloas genesis state. Fallback if Task 7.8 hits it: schedule `gloas_fork_epoch: 0`
-  and `heze_fork_epoch: 1`, and verify the beacon genesis block root matches the EL
-  genesis hash before proceeding — that mismatch is the failure
-  `fixtures/networks/focil.yaml`'s comments describe.
+- **A FOCIL-capable Lighthouse cannot boot with Gloas at epoch 1.** Retired: the
+  Hegotá devnet runs `fulu 0 / gloas 1 / heze 2` under
+  `ethpandaops/lighthouse:focil` (`Lighthouse/v8.1.3-52e5197`), confirmed from that
+  chain's own `/eth/v1/config/spec` with its head in Heze. The concern came from
+  `fixtures/networks/focil.yaml`, which runs `gloas_fork_epoch: 0` under lodestar;
+  that fixture records lodestar's constraint, not the published image's. The
+  requirement in `docs/hegota-devnet-genesis.md` stands unchanged — Gloas must be
+  scheduled and must not be at epoch 0, because Lighthouse rejects a beacon genesis
+  state built at Gloas.
 - **The EIP-8250 in-atomic-batch payment-durability gap.** `docs/eip-8250.md` divergence
   #4 rejects a payment-scoped `APPROVE` inside an atomic batch rather than implementing
   durable consumption. EIPs#12109 statically disallows approval scope on atomic-batch
