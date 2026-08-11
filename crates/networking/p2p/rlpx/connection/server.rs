@@ -1323,21 +1323,7 @@ async fn handle_incoming_message(
     }
 
     // Rate-limit incoming data-serving requests to prevent resource exhaustion.
-    let is_data_request = matches!(
-        message,
-        Message::GetBlockHeaders(_)
-            | Message::GetBlockBodies(_)
-            | Message::GetReceipts68(_)
-            | Message::GetReceipts69(_)
-            | Message::GetReceipts70(_)
-            | Message::GetPooledTransactions(_)
-            | Message::GetAccountRange(_)
-            | Message::GetStorageRanges(_)
-            | Message::GetByteCodes(_)
-            | Message::GetTrieNodes(_)
-            | Message::GetPbtLeafRange(_)
-    );
-    if is_data_request && !check_serve_request_rate(state) {
+    if is_data_request(&message) && !check_serve_request_rate(state) {
         debug!(
             peer = %state.node,
             window_requests = state.serve_requests_in_window,
@@ -2068,5 +2054,94 @@ mod capability_tests {
         let capability = &SUPPORTED_PBTSNAP_CAPABILITIES[0];
         assert_eq!(capability.protocol(), "pbtsnap");
         assert_eq!(capability.version, 1);
+    }
+}
+
+/// Whether an incoming message asks this node to *serve* something, and so
+/// counts against the per-peer request-rate limit.
+///
+/// Extracted from the dispatcher so it can be asserted directly. The cost of
+/// getting it wrong is asymmetric and silent: a serving message missing from
+/// this list is unmetered work an attacker can ask for without limit, and
+/// nothing about the dispatcher's behaviour looks different until the node
+/// falls over.
+fn is_data_request(message: &Message) -> bool {
+    matches!(
+        message,
+        Message::GetBlockHeaders(_)
+            | Message::GetBlockBodies(_)
+            | Message::GetReceipts68(_)
+            | Message::GetReceipts69(_)
+            | Message::GetReceipts70(_)
+            | Message::GetPooledTransactions(_)
+            | Message::GetAccountRange(_)
+            | Message::GetStorageRanges(_)
+            | Message::GetByteCodes(_)
+            | Message::GetTrieNodes(_)
+            | Message::GetPbtLeafRange(_)
+    )
+}
+
+#[cfg(test)]
+mod rate_limit_tests {
+    use super::*;
+    use crate::rlpx::pbtsnap::{GetPbtLeafRange, PbtLeafRange};
+    use bytes::Bytes;
+
+    fn leaf_range_request() -> Message {
+        Message::GetPbtLeafRange(GetPbtLeafRange {
+            id: 1,
+            root_hash: H256::repeat_byte(1),
+            origin: Bytes::new(),
+            limit: Bytes::new(),
+            response_bytes: 1,
+        })
+    }
+
+    /// A `GetPbtLeafRange` is a whole-trie walk plus two boundary walks, which
+    /// is the most expensive thing a peer can ask this node for. Leaving it out
+    /// of the rate-limited set is unmetered work on request.
+    #[test]
+    fn a_leaf_range_request_counts_against_the_serve_rate_limit() {
+        assert!(is_data_request(&leaf_range_request()));
+    }
+
+    /// The *response* must not: counting it would let a peer we asked for data
+    /// spend our own serving budget by answering.
+    #[test]
+    fn a_leaf_range_response_does_not() {
+        assert!(!is_data_request(&Message::PbtLeafRange(PbtLeafRange {
+            id: 1,
+            leaves: vec![],
+            left_proof: vec![],
+            right_proof: vec![],
+        })));
+    }
+
+    #[test]
+    fn the_existing_serving_requests_are_still_counted() {
+        // The extraction must not have dropped one on the way out.
+        for message in [
+            Message::GetAccountRange(crate::rlpx::snap::GetAccountRange {
+                id: 1,
+                root_hash: H256::zero(),
+                starting_hash: H256::zero(),
+                limit_hash: H256::zero(),
+                response_bytes: 1,
+            }),
+            Message::GetByteCodes(crate::rlpx::snap::GetByteCodes {
+                id: 1,
+                hashes: vec![],
+                bytes: 1,
+            }),
+            Message::GetTrieNodes(crate::rlpx::snap::GetTrieNodes {
+                id: 1,
+                root_hash: H256::zero(),
+                paths: vec![],
+                bytes: 1,
+            }),
+        ] {
+            assert!(is_data_request(&message), "{message} must be rate limited");
+        }
     }
 }
