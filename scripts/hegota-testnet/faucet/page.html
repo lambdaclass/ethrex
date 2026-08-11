@@ -3,7 +3,7 @@
      Placeholders substituted at render time: {{CHAIN_ID}} {{AMOUNT}} {{RPC}} {{EXPLORER}} -->
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Hegotá devnet faucet</title>
+<title>Hegotá testnet faucet</title>
 <style>
   :root {
     --bg: #fbfbfd; --panel: #fff; --fg: #1a1a1f; --muted: #61616b;
@@ -58,7 +58,7 @@
 </style>
 
 <main>
-  <h1>Hegotá devnet faucet</h1>
+  <h1>Hegotá testnet faucet</h1>
   <p class="lede">
     A public test network running the <strong>frame-transaction</strong> family of EIPs on
     <a href="https://github.com/lambdaclass/ethrex">ethrex</a>. Test ETH has no value.
@@ -74,7 +74,7 @@
     <p id="out" aria-live="polite"></p>
   </div>
 
-  <h2>What this devnet enables</h2>
+  <h2>What this testnet enables</h2>
   <div class="panel">
     <table>
       <tr>
@@ -96,24 +96,24 @@
           execution without touching another account's mutable storage.</td>
       </tr>
       <tr>
-        <td><a href="https://eips.ethereum.org/EIPS/eip-7906">EIP-7906</a></td>
-        <td class="desc">Transaction assertions: a trailing read-only <code>POST_TX</code> frame
-          inspects the whole transaction's effects and can revert the body if an invariant broke.</td>
-      </tr>
-      <tr>
         <td><a href="https://eips.ethereum.org/EIPS/eip-7805">EIP-7805</a></td>
         <td class="desc">FOCIL: each slot a committee publishes inclusion lists that the next block
           must satisfy, so a builder cannot quietly censor a transaction. The only feature here that
           the consensus layer implements too.</td>
       </tr>
       <tr>
-        <td><a href="https://github.com/ethereum/EIPs/pull/12110">EIP-8312</a></td>
-        <td class="desc">UTXO frames: a one-shot payment object that is created once and spent once,
-          leaving a single spent bit rather than a permanent account. A full create-and-spend cycle
-          costs less than one ordinary transfer to a new account. Activates on its own timestamp,
-          separately from the rest.</td>
+        <td><a href="https://github.com/ethereum/EIPs/pull/12110">EIP-8369</a></td>
+        <td class="desc">VOPS profiles for FOCIL eligibility: the rule deciding which frame
+          transactions an inclusion list may demand, and when omitting one is unjustified.
+          Activates with the rest and has no off switch.</td>
       </tr>
     </table>
+    <p class="desc" style="margin:.9rem 0 0">
+      All five activate at one timestamp. Two EIPs are in the ethrex binary but
+      <strong>not</strong> part of this chain's rules: EIP-8312 (UTXO frames) never activates
+      because <code>utxoFramesTime</code> is unset, and EIP-7906 (transaction assertions) is
+      not in the build at all. Do not implement either against this network.
+    </p>
   </div>
 
   <h2>Inherited from Amsterdam</h2>
@@ -190,9 +190,8 @@ sig_hash  = keccak256(0x06 || rlp(envelope))      # empty-msg signature bytes el
         is invalid.</td></tr>
       <tr><td>mode 2</td><td class="desc"><code>SENDER</code>, executes with
         <code>tx.sender</code> as the caller.</td></tr>
-      <tr><td>mode 3</td><td class="desc"><code>POST_TX</code>, the read-only assertion suffix of
-        EIP-7906. Reverting one reverts the transaction body while the transaction itself stays
-        included with a failed status.</td></tr>
+      <tr><td>mode 3</td><td class="desc">Unassigned on this chain. EIP-7906 would have put its
+        read-only <code>POST_TX</code> assertion suffix here, but that EIP is not in the build.</td></tr>
     </table>
     <p style="margin:1rem 0 0;font-size:14px">
       The smallest useful transaction is therefore two frames: a <code>VERIFY</code> frame
