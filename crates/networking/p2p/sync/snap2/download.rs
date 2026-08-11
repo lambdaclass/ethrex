@@ -26,7 +26,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use ethrex_common::{
     H256, U256,
@@ -62,6 +62,11 @@ use crate::{
         get_account_storages_snapshot_file, get_account_storages_snapshots_dir,
     },
 };
+
+/// How long the download may make no progress at all before it is treated as
+/// wedged rather than slow. Generous, because a thin or busy peer set can go
+/// quiet for a while without anything being wrong.
+const STALL_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// A contract whose storage the download still owes, and the root to verify it
 /// against. The root holds only at the pivot whose response carried the account
@@ -231,6 +236,9 @@ pub async fn download_state(
     let storages_dir = get_account_storages_snapshots_dir(datadir);
     let mut writer = ChunkWriter::new(accounts_dir.clone(), storages_dir.clone()).await?;
 
+    // Tracks how long the download has gone without scheduling or collecting
+    // anything, to tell a slow sync apart from a wedged one.
+    let mut idle_since: Option<SystemTime> = None;
     let (tx, mut rx) = tokio::sync::mpsc::channel::<Response>(1024);
     let mut tasks: BTreeMap<RangeId, RangeTask> = cursor
         .pending_account_ranges()
@@ -247,6 +255,7 @@ pub async fn download_state(
         if block_is_stale(&pivot) {
             collect_inflight(
                 &mut tasks,
+                peers,
                 &mut rx,
                 &mut writer,
                 cursor,
@@ -297,6 +306,7 @@ pub async fn download_state(
         while let Ok(response) = rx.try_recv() {
             handle_response(
                 response,
+                peers,
                 &mut tasks,
                 &mut writer,
                 cursor,
@@ -343,8 +353,26 @@ pub async fn download_state(
         }
 
         let scheduled = schedule(peers, &mut tasks, &pivot, &tx).await?;
-        if !scheduled && !progressed {
+        if scheduled || progressed {
+            idle_since = None;
+        } else {
             // Everything is out with a peer, or no peer is free.
+            let since = *idle_since.get_or_insert_with(SystemTime::now);
+            if since.elapsed().is_ok_and(|idle| idle >= STALL_TIMEOUT) {
+                // Every peer that answers is unable to serve this pivot's
+                // state. Retrying forever looks identical to a slow sync from
+                // the outside and never resolves, so surface it: the caller
+                // discards the partial state and the next cycle picks a fresh
+                // pivot and peer set.
+                return Err(SyncError::Snap2CatchUpStalled(
+                    pivot.number,
+                    format!(
+                        "no range progress for {}s with {} ranges outstanding",
+                        STALL_TIMEOUT.as_secs(),
+                        tasks.len()
+                    ),
+                ));
+            }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }
@@ -504,6 +532,7 @@ fn next_storage_batch(task: &mut RangeTask) -> Option<Vec<(H256, StorageWork)>> 
 /// Fold one worker's answer back into its range.
 async fn handle_response(
     response: Response,
+    peers: &PeerHandler,
     tasks: &mut BTreeMap<RangeId, RangeTask>,
     writer: &mut ChunkWriter,
     cursor: &mut DownloadCursor,
@@ -516,8 +545,15 @@ async fn handle_response(
             };
             task.accounts_inflight = false;
             if !outcome.verified {
+                // Scoring this is what stops the range download reselecting a
+                // peer that cannot answer. A peer stalled behind a fork it
+                // could not follow still advertises snap/2 and still wins peer
+                // selection, so without this the download retries it forever at
+                // full score and never progresses.
+                let _ = peers.peer_table.record_failure(outcome.peer_id);
                 return Ok(());
             }
+            let _ = peers.peer_table.record_success(outcome.peer_id);
             let Some(served_through) = outcome
                 .accounts
                 .last()
@@ -575,12 +611,14 @@ async fn handle_response(
 
             if !outcome.verified {
                 // Nothing usable came back; every contract in the batch is
-                // still owed.
+                // still owed. Score the peer for the same reason as above.
+                let _ = peers.peer_table.record_failure(outcome.peer_id);
                 for (account_hash, work) in requested {
                     task.awaiting_storage.insert(account_hash, work);
                 }
                 return Ok(());
             }
+            let _ = peers.peer_table.record_success(outcome.peer_id);
 
             let owed: BTreeMap<H256, StorageWork> = requested.into_iter().collect();
             for served in outcome.served {
@@ -621,6 +659,7 @@ async fn handle_response(
 /// Collect every outstanding response before the pivot changes under them.
 async fn collect_inflight(
     tasks: &mut BTreeMap<RangeId, RangeTask>,
+    peers: &PeerHandler,
     rx: &mut tokio::sync::mpsc::Receiver<Response>,
     writer: &mut ChunkWriter,
     cursor: &mut DownloadCursor,
@@ -631,7 +670,7 @@ async fn collect_inflight(
             debug!("snap/2 download: response channel closed with work in flight");
             break;
         };
-        handle_response(response, tasks, writer, cursor, code_hash_collector).await?;
+        handle_response(response, peers, tasks, writer, cursor, code_hash_collector).await?;
     }
     Ok(())
 }
