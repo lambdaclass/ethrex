@@ -3,7 +3,7 @@
 //! This module contains the logic for snap synchronization mode where state is
 //! fetched via snap p2p requests while blocks and receipts are fetched in parallel.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
 #[cfg(feature = "rocksdb")]
 use std::path::PathBuf;
@@ -17,7 +17,7 @@ use ethrex_common::{
     H256,
     constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH},
 };
-use ethrex_rlp::decode::RLPDecode;
+use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::Store;
 #[cfg(feature = "rocksdb")]
 use ethrex_trie::Trie;
@@ -48,8 +48,6 @@ use super::{AccountStorageRoots, SyncError};
 
 #[cfg(not(feature = "rocksdb"))]
 use ethrex_common::U256;
-#[cfg(not(feature = "rocksdb"))]
-use ethrex_rlp::encode::RLPEncode;
 
 /// Persisted State during the Block Sync phase for SnapSync
 #[derive(Clone)]
@@ -377,13 +375,11 @@ pub async fn snap_sync(
         METRICS
             .current_step
             .set(CurrentStepValue::InsertingAccountRanges);
-        // We read the account leafs from the files in account_state_snapshots_dir, write it into
-        // the trie to compute the nodes and stores the accounts with storages for later use
-
-        // Variable `accounts_with_storage` unused if not in rocksdb
-        #[allow(unused_variables)]
-        let (computed_state_root, accounts_with_storage) = insert_accounts(
-            store.clone(),
+        // Read the account leafs from the files in account_state_snapshots_dir to
+        // learn which accounts hold storage and which code hashes to fetch. The
+        // account trie is built after the storage tries, so its leaves can carry
+        // reconstructed storage roots.
+        let accounts_with_storage = scan_accounts(
             &mut storage_accounts,
             &account_state_snapshots_dir,
             datadir,
@@ -391,9 +387,21 @@ pub async fn snap_sync(
         )
         .await?;
         debug!(
-            "Finished inserting account ranges, total storage accounts: {}",
+            "Finished scanning account ranges, total storage accounts: {}",
             storage_accounts.accounts_with_storage_root.len()
         );
+        // snap/1 builds the account trie from the served storage roots and relies
+        // on `heal_state_trie_wrap` below to refresh the stale ones before the
+        // storage download can verify against them. Reconstructed roots are a
+        // snap/2 concern: there, healing is gone and the roots come from the
+        // storage tries themselves.
+        let computed_state_root = insert_accounts(
+            store.clone(),
+            &BTreeMap::new(),
+            &account_state_snapshots_dir,
+            datadir,
+        )
+        .await?;
         *METRICS.account_tries_insert_end_time.lock().await = Some(SystemTime::now());
 
         debug!("Original state root: {state_root:?}");
@@ -1030,7 +1038,7 @@ pub fn validate_bytecodes(store: Store, state_root: H256) -> bool {
 // ============================================================================
 
 #[cfg(not(feature = "rocksdb"))]
-type StorageRoots = (H256, Vec<(ethrex_trie::Nibbles, Vec<u8>)>);
+type StorageRoots = (H256, H256, Vec<(ethrex_trie::Nibbles, Vec<u8>)>);
 
 #[cfg(not(feature = "rocksdb"))]
 fn compute_storage_roots(
@@ -1058,20 +1066,23 @@ fn compute_storage_roots(
         METRICS.storage_leaves_inserted.inc();
     }
 
-    let (_, changes) = storage_trie.collect_changes_since_last_hash(&ethrex_crypto::NativeCrypto);
+    let (storage_root, changes) =
+        storage_trie.collect_changes_since_last_hash(&ethrex_crypto::NativeCrypto);
 
-    Ok((account_hash, changes))
+    Ok((account_hash, storage_root, changes))
 }
 
+/// Read the downloaded account leaves and collect what the storage and bytecode
+/// downloads need from them: every code hash, and the served storage root of
+/// every contract account. See the rocksdb [`scan_accounts`] for why the
+/// account trie is not built here.
 #[cfg(not(feature = "rocksdb"))]
-async fn insert_accounts(
-    store: Store,
+async fn scan_accounts(
     storage_accounts: &mut AccountStorageRoots,
     account_state_snapshots_dir: &Path,
     _: &Path,
     code_hash_collector: &mut CodeHashCollector,
-) -> Result<(H256, BTreeSet<H256>), SyncError> {
-    let mut computed_state_root = *EMPTY_TRIE_HASH;
+) -> Result<BTreeSet<H256>, SyncError> {
     let snapshot_files = async_fs::read_dir_paths(account_state_snapshots_dir).await?;
     for snapshot_path in snapshot_files {
         debug!("Reading account file from {snapshot_path:?}");
@@ -1087,7 +1098,6 @@ async fn insert_accounts(
             }),
         );
 
-        // Collect valid code hashes from current account snapshot
         let code_hashes_from_snapshot: Vec<H256> = account_states_snapshot
             .iter()
             .filter_map(|(_, state)| {
@@ -1097,15 +1107,42 @@ async fn insert_accounts(
 
         code_hash_collector.extend(code_hashes_from_snapshot);
         code_hash_collector.flush_if_needed().await?;
+    }
+    Ok(BTreeSet::from_iter(
+        storage_accounts.accounts_with_storage_root.keys().copied(),
+    ))
+}
+
+/// Build the account trie from the downloaded leaves, writing each contract
+/// account's reconstructed storage root in place of the served one. See the
+/// rocksdb [`insert_accounts`] for why the served roots cannot be used.
+#[cfg(not(feature = "rocksdb"))]
+async fn insert_accounts(
+    store: Store,
+    storage_roots: &BTreeMap<H256, H256>,
+    account_state_snapshots_dir: &Path,
+    _: &Path,
+) -> Result<H256, SyncError> {
+    let mut computed_state_root = *EMPTY_TRIE_HASH;
+    let snapshot_files = async_fs::read_dir_paths(account_state_snapshots_dir).await?;
+    for snapshot_path in snapshot_files {
+        let snapshot_contents = async_fs::read_file(&snapshot_path).await?;
+        let account_states_snapshot: Vec<(H256, AccountState)> =
+            RLPDecode::decode(&snapshot_contents)
+                .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
 
         info!("Inserting accounts into the state trie");
 
         let store_clone = store.clone();
+        let storage_roots = storage_roots.clone();
         let current_state_root: Result<H256, SyncError> =
             tokio::task::spawn_blocking(move || -> Result<H256, SyncError> {
                 let mut trie = store_clone.open_direct_state_trie(computed_state_root)?;
 
-                for (account_hash, account) in account_states_snapshot {
+                for (account_hash, mut account) in account_states_snapshot {
+                    if let Some(root) = storage_roots.get(&account_hash) {
+                        account.storage_root = *root;
+                    }
                     trie.insert(account_hash.0.to_vec(), account.encode_to_vec())?;
                 }
                 info!("Comitting to disk");
@@ -1118,19 +1155,23 @@ async fn insert_accounts(
     }
     async_fs::remove_dir_all(account_state_snapshots_dir).await?;
     info!("computed_state_root {computed_state_root}");
-    Ok((computed_state_root, BTreeSet::new()))
+    Ok(computed_state_root)
 }
 
+/// Build every account's storage trie from the downloaded slots and return the
+/// root each one hashes to. See the rocksdb [`insert_storages`] for why the
+/// roots are returned rather than discarded.
 #[cfg(not(feature = "rocksdb"))]
 async fn insert_storages(
     store: Store,
     _: BTreeSet<H256>,
     account_storages_snapshots_dir: &Path,
     _: &Path,
-) -> Result<(), SyncError> {
+) -> Result<BTreeMap<H256, H256>, SyncError> {
     use crate::utils::AccountsWithStorage;
     use rayon::iter::IntoParallelIterator;
 
+    let mut storage_roots: BTreeMap<H256, H256> = BTreeMap::new();
     let snapshot_files = async_fs::read_dir_paths(account_storages_snapshots_dir).await?;
     for snapshot_path in snapshot_files {
         info!("Reading account storage file from {snapshot_path:?}");
@@ -1169,32 +1210,43 @@ async fn insert_storages(
         .await??;
         info!("Writing to db");
 
-        store
-            .write_storage_trie_nodes_batch(storage_trie_node_changes)
-            .await?;
+        // Accounts can be split across snapshot files and `compute_storage_roots`
+        // resumes from what is already on disk, so the last root computed for an
+        // account is the one covering all of its slots.
+        let mut node_changes = Vec::with_capacity(storage_trie_node_changes.len());
+        for (account_hash, storage_root, changes) in storage_trie_node_changes {
+            storage_roots.insert(account_hash, storage_root);
+            node_changes.push((account_hash, changes));
+        }
+
+        store.write_storage_trie_nodes_batch(node_changes).await?;
     }
 
     async_fs::remove_dir_all(account_storages_snapshots_dir).await?;
 
-    Ok(())
+    Ok(storage_roots)
 }
 
 // ============================================================================
 // Account and Storage Insertion (rocksdb)
 // ============================================================================
 
+/// Ingest the downloaded account leaves into the temp DB and collect what the
+/// storage and bytecode downloads need from them: every code hash, and the
+/// served storage root of every contract account.
+///
+/// The account trie is not built here. It is built by [`insert_accounts`] once
+/// the storage tries exist, so each leaf can carry the root its storage
+/// actually hashes to rather than the one served with it.
 #[cfg(feature = "rocksdb")]
-async fn insert_accounts(
-    store: Store,
+async fn scan_accounts(
     storage_accounts: &mut AccountStorageRoots,
     account_state_snapshots_dir: &Path,
     datadir: &Path,
     code_hash_collector: &mut CodeHashCollector,
-) -> Result<(H256, BTreeSet<H256>), SyncError> {
+) -> Result<BTreeSet<H256>, SyncError> {
     use crate::utils::get_rocksdb_temp_accounts_dir;
-    use ethrex_trie::trie_sorted::trie_from_sorted_accounts_wrap;
 
-    let trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
     let mut db_options = rocksdb::Options::default();
     db_options.create_if_missing(true);
     let db = rocksdb::DB::open(&db_options, get_rocksdb_temp_accounts_dir(datadir))
@@ -1207,59 +1259,106 @@ async fn insert_accounts(
     ingest_opts.set_move_files(true);
     db.ingest_external_file_opts(&ingest_opts, file_paths)
         .map_err(|err| SyncError::RocksDBError(err.into_string()))?;
-    let iter = db.full_iterator(rocksdb::IteratorMode::Start);
-    for account in iter {
-        let account = account.map_err(|err| SyncError::RocksDBError(err.into_string()))?;
-        let account_state = AccountState::decode(&account.1).map_err(SyncError::Rlp)?;
+
+    for account in db.full_iterator(rocksdb::IteratorMode::Start) {
+        let (account_hash, encoded) =
+            account.map_err(|err| SyncError::RocksDBError(err.into_string()))?;
+        let account_state = AccountState::decode(&encoded).map_err(SyncError::Rlp)?;
         if account_state.code_hash != *EMPTY_KECCAK_HASH {
             code_hash_collector.add(account_state.code_hash);
             code_hash_collector.flush_if_needed().await?;
         }
+        if account_state.storage_root != *EMPTY_TRIE_HASH {
+            storage_accounts.accounts_with_storage_root.insert(
+                H256::from_slice(&account_hash),
+                (Some(account_state.storage_root), Vec::new()),
+            );
+        }
     }
 
+    drop(db); // close db before it is reopened for the trie build
+
+    async_fs::remove_dir_all(account_state_snapshots_dir).await?;
+
+    Ok(BTreeSet::from_iter(
+        storage_accounts.accounts_with_storage_root.keys().copied(),
+    ))
+}
+
+/// Build the account trie from the ingested leaves, writing each contract
+/// account's reconstructed storage root in place of the served one.
+///
+/// The served roots come from whichever pivot was current when that account's
+/// range was answered, so they disagree with the slots on disk as soon as the
+/// pivot moves. `storage_roots` holds what each storage trie actually hashes
+/// to; accounts absent from it hold no storage and are written through
+/// unchanged.
+#[cfg(feature = "rocksdb")]
+async fn insert_accounts(
+    store: Store,
+    storage_roots: &BTreeMap<H256, H256>,
+    _: &Path,
+    datadir: &Path,
+) -> Result<H256, SyncError> {
+    use crate::utils::get_rocksdb_temp_accounts_dir;
+    use ethrex_trie::trie_sorted::trie_from_sorted_accounts_wrap;
+
+    let trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
+    let mut db_options = rocksdb::Options::default();
+    db_options.create_if_missing(true);
+    let db = rocksdb::DB::open(&db_options, get_rocksdb_temp_accounts_dir(datadir))
+        .map_err(|e| SyncError::AccountTempDBDirNotFound(e.to_string()))?;
+
     let iter = db.full_iterator(rocksdb::IteratorMode::Start);
-    let compute_state_root = trie_from_sorted_accounts_wrap(
+    let computed_state_root = trie_from_sorted_accounts_wrap(
         trie.db(),
         &mut iter
             .map(|k| k.expect("We shouldn't have a rocksdb error here")) // TODO: remove unwrap
-            .inspect(|(k, v)| {
+            .map(|(k, v)| {
                 METRICS
                     .account_tries_inserted
                     .fetch_add(1, Ordering::Relaxed);
-                let account_state = AccountState::decode(v).expect("We should have accounts here");
-                if account_state.storage_root != *EMPTY_TRIE_HASH {
-                    storage_accounts.accounts_with_storage_root.insert(
-                        H256::from_slice(k),
-                        (Some(account_state.storage_root), Vec::new()),
-                    );
+                let account_hash = H256::from_slice(&k);
+                match storage_roots.get(&account_hash) {
+                    Some(root) => {
+                        let mut account_state =
+                            AccountState::decode(&v).expect("We should have accounts here");
+                        account_state.storage_root = *root;
+                        (account_hash, account_state.encode_to_vec())
+                    }
+                    None => (account_hash, v.to_vec()),
                 }
-            })
-            .map(|(k, v)| (H256::from_slice(&k), v.to_vec())),
+            }),
     )
     .map_err(SyncError::TrieGenerationError)?;
 
     drop(db); // close db before removing directory
 
-    async_fs::remove_dir_all(account_state_snapshots_dir).await?;
     async_fs::remove_dir_all(&get_rocksdb_temp_accounts_dir(datadir)).await?;
 
-    let accounts_with_storage =
-        BTreeSet::from_iter(storage_accounts.accounts_with_storage_root.keys().copied());
-    Ok((compute_state_root, accounts_with_storage))
+    Ok(computed_state_root)
 }
 
+/// Build every account's storage trie from the downloaded slots and return the
+/// root each one hashes to.
+///
+/// The roots are what the account leaves are written with
+/// (see [`insert_accounts`]): the served roots come from a spread of pivots and
+/// only the reconstructed ones are consistent with the slots actually held.
 #[cfg(feature = "rocksdb")]
 async fn insert_storages(
     store: Store,
     accounts_with_storage: BTreeSet<H256>,
     account_storages_snapshots_dir: &Path,
     datadir: &Path,
-) -> Result<(), SyncError> {
+) -> Result<BTreeMap<H256, H256>, SyncError> {
     use crate::utils::get_rocksdb_temp_storage_dir;
     use crossbeam::channel::{bounded, unbounded};
     use ethrex_trie::{
         Nibbles, Node, ThreadPool,
-        trie_sorted::{BUFFER_COUNT, SIZE_TO_WRITE_DB, trie_from_sorted_accounts},
+        trie_sorted::{
+            BUFFER_COUNT, SIZE_TO_WRITE_DB, TrieGenerationError, trie_from_sorted_accounts,
+        },
     };
     use std::thread::scope;
 
@@ -1323,7 +1422,9 @@ async fn insert_storages(
         })
         .collect::<Vec<(H256, Trie)>>();
 
-    let (sender, receiver) = unbounded::<()>();
+    let (sender, receiver) = unbounded::<(H256, Result<H256, TrieGenerationError>)>();
+    let mut storage_roots: BTreeMap<H256, H256> = BTreeMap::new();
+    let mut failed: Vec<(H256, TrieGenerationError)> = Vec::new();
     let mut counter = 0;
     let thread_count = std::thread::available_parallelism()
         .map(|num| num.into())
@@ -1341,7 +1442,14 @@ async fn insert_storages(
             let buffer_sender = buffer_sender.clone();
             let buffer_receiver = buffer_receiver.clone();
             if counter >= thread_count - 1 {
-                let _ = receiver.recv();
+                if let Ok((account_hash, result)) = receiver.recv() {
+                    match result {
+                        Ok(root) => {
+                            storage_roots.insert(account_hash, root);
+                        }
+                        Err(err) => failed.push((account_hash, err)),
+                    }
+                }
                 counter -= 1;
             }
             counter += 1;
@@ -1356,24 +1464,41 @@ async fn insert_storages(
                     limit: *account_hash,
                 };
 
-                let _ = trie_from_sorted_accounts(
+                let result = trie_from_sorted_accounts(
                     trie.db(),
                     &mut iter.inspect(|_| METRICS.storage_leaves_inserted.inc()),
                     pool_clone,
                     buffer_sender,
                     buffer_receiver,
                 )
-                .inspect_err(|err: &ethrex_trie::trie_sorted::TrieGenerationError| {
+                .inspect_err(|err: &TrieGenerationError| {
                     error!(
                         "we found an error while inserting the storage trie for the account {account_hash:x}, err {err}"
                     );
-                })
-                .map_err(SyncError::TrieGenerationError);
-                let _ = sender.send(());
+                });
+                let _ = sender.send((*account_hash, result));
             });
             pool.execute(task);
         }
     });
+
+    // Drain the roots produced after the last backpressure wait. Every task has
+    // finished by now, so nothing is still in flight.
+    for (account_hash, result) in receiver.try_iter() {
+        match result {
+            Ok(root) => {
+                storage_roots.insert(account_hash, root);
+            }
+            Err(err) => failed.push((account_hash, err)),
+        }
+    }
+    if let Some((account_hash, err)) = failed.pop() {
+        error!(
+            "storage trie generation failed for {} accounts, first: {account_hash:x}",
+            failed.len() + 1
+        );
+        return Err(SyncError::TrieGenerationError(err));
+    }
 
     // close db before removing directory
     drop(snapshot);
@@ -1382,7 +1507,7 @@ async fn insert_storages(
     async_fs::remove_dir_all(account_storages_snapshots_dir).await?;
     async_fs::remove_dir_all(&get_rocksdb_temp_storage_dir(datadir)).await?;
 
-    Ok(())
+    Ok(storage_roots)
 }
 
 #[cfg(test)]
