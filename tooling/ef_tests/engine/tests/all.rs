@@ -58,9 +58,19 @@ fn print_fixture_summary() {
     );
 }
 
-// Path patterns: if any pattern is contained in the file path, the file is skipped
-// entirely. Entries are filled in once real failures are classified (Task 4.8).
-const SKIP_PATTERNS: &[&str] = &[];
+// Path patterns: if any pattern is contained in the file path, every fixture in
+// that file is counted as skipped and the reason is printed. A skip here means
+// the fixture cannot be run at all, never that it is expected to fail.
+const SKIP_PATTERNS: &[(&str, &str)] = &[(
+    "for_bogota/bogota/eip7805_focil/",
+    "tests-focil@v0.1.0 predates EIP-8282 (Builder Execution Requests, EIP-7773 \
+     Glamsterdam): its pre-state omits the builder deposit/exit predeploys, so every \
+     block fails EIP-8282's empty-code rule before the inclusion-list check runs. \
+     Supplying the predeploys is not an option either; they move the genesis state \
+     root, and the fixtures commit to a genesis hash computed without them. Re-enable \
+     when execution-specs publishes a FOCIL fixture release filled against an \
+     Amsterdam that carries EIP-8282.",
+)];
 
 static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
 
@@ -89,16 +99,20 @@ fn limit() -> Option<&'static Regex> {
 }
 
 fn engine_runner(path: &Path) -> datatest_stable::Result<()> {
-    // Skip entire file if path matches any skip pattern.
-    let path_str = path.to_string_lossy();
-    for pat in SKIP_PATTERNS {
-        if path_str.contains(pat) {
-            return Ok(());
-        }
-    }
-
     let raw = std::fs::read_to_string(path)?;
     let fixtures: EngineFixtureFile = serde_json::from_str(&raw)?;
+
+    // Skip the whole file if its path matches a skip pattern, counting its
+    // fixtures so the totals stay honest about what was not run.
+    let path_str = path.to_string_lossy();
+    if let Some((pat, reason)) = SKIP_PATTERNS.iter().find(|(pat, _)| path_str.contains(pat)) {
+        F_SKIPPED.fetch_add(fixtures.len(), Ordering::Relaxed);
+        eprintln!(
+            "skipping {} fixture(s) under {pat}: {reason}",
+            fixtures.len()
+        );
+        return Ok(());
+    }
 
     let opts = RunOptions::from_env();
     let limit = limit();

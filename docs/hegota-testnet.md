@@ -69,36 +69,41 @@ passed / 0 failed**, `cargo test -p ethrex-rpc --lib` is 122 passed, and
 | Canonical paymaster (Task 6.4) | `5d26cd5de` | `#12041`'s 355-byte runtime hash pinned; the trace exemption and the pending-cap exemption both fire now |
 | Access sets + bookkeeping (Tasks 6.5/6.6) | `d290f6547` | payer warmed on a payment-scope APPROVE; EIP-8272 BAL reads kept with justification |
 | Phase 6 closed (Tasks 6.7/6.8) | | divergence ledger swept; no consensus-visible row unresolved without a fallback |
+| FOCIL fixtures diagnosed (Task 5.7) | | `tests-focil@v0.1.0` predates EIP-8282; bundle skipped, engine suite clean |
 
 ### Not complete
 
-- **Phase 5 Task 5.7** — the checkpoint ran, and it is NOT clean. Everything else in
-  Phase 5 is done or superseded. `make -C tooling/ef_tests/engine test` gives
-  **74 458 passed / 24 failed**, and every failure is a FOCIL fixture:
-  `for_bogota/bogota/eip7805_focil/focil/` — 10 files, listed below. **Pre-existing, not
-  introduced by this session's work**: the identical 10 files / 24 fixtures fail at
-  `15c911c06`, the commit this session started from (verified by checking it out and
-  re-running the `focil` subset). Everything else in that suite passes, and
-  `make -C tooling/ef_tests/blockchain test` is fully clean at 14 744 + 3 138.
-  First use downloads a 646 MB bundle, so budget for that.
+- **Phase 5 Task 5.7** — the checkpoint is clean, with the whole FOCIL fixture bundle
+  skipped for a cause outside this tree.
+  `make -C tooling/ef_tests/engine test` gives **74 458 passed / 0 failed / 24 skipped**;
+  `make -C tooling/ef_tests/blockchain test` is fully clean at 14 744 + 3 138. First use
+  downloads a 646 MB bundle, so budget for that.
 
-  Failing files: `block_status_depends_on_pending_inclusion_list`,
-  `block_with_intrinsic_gas_too_low_pending_il_tx_is_valid`,
-  `block_with_invalid_signature_pending_il_tx_is_valid`,
-  `block_with_pending_blob_il_tx_is_valid`, `block_with_reverting_included_il_tx_is_valid`,
-  `block_with_same_sender_included_il_txs_is_valid`,
-  `pending_il_depends_on_7702_authorization_nonce_effect`,
-  `unsatisfied_when_block_tx_funds_pending_il_sender`,
-  `unsatisfied_with_contract_creating_pending_il_tx`,
-  `unsatisfied_with_typed_pending_il_tx`.
+  The 24 skipped fixtures are the 10 files under
+  `for_bogota/bogota/eip7805_focil/focil/`, and they are **unrunnable, not failing**.
+  `tests-focil@v0.1.0` (2026-06-22) was filled against an Amsterdam that predates
+  EIP-8282 (Builder Execution Requests), which the EIP-7773 meta now carries: its
+  `pre` allocates the EIP-2935, EIP-4788, EIP-7002, EIP-7251 and deposit predeploys but
+  neither `0x0000BFF4…0D8282` nor `0x000064D6…0E8282`. Every payload therefore dies in
+  `apply_system_calls` with `System contract: 0x0000…8282 has no code after deployment`,
+  which is EIP-8282's empty-code rule and the same rule EIP-7002 and EIP-7251 state,
+  long before any inclusion-list check runs. All 24 fail identically and none of them
+  reaches FOCIL code.
 
-  Two candidates ruled out by reading, not by running: `validate_fork_schedule` cannot
-  be it (the harness's FOCIL bridge at `tooling/ef_tests/engine/src/fixture.rs:208` sets
-  `hegotaTime = amsterdamTime`, and equal timestamps are legal), and Task 5.3's gates
-  cannot be it (the fork gate is a no-op with Hegotá active; the expiry gate only matches
-  `Transaction::FrameTransaction`, while these fixtures carry ordinary typed
-  transactions). Diagnosing these is real work and probably belongs ahead of Phase 6 —
-  they are the upstream conformance suite for the exact feature this branch enforces.
+  Supplying the two predeploys does not rescue them, verified rather than reasoned:
+  patching them into one fixture's `pre` moved the genesis state root, so the fixture's
+  own `genesisBlockHeader.hash` no longer described the genesis it was filled from and
+  the initial forkchoice answered `SYNCING` on an unknown head. The fixtures commit to a
+  genesis hash computed without EIP-8282, so no client carrying EIP-8282 can run them.
+  Only a FOCIL fixture release filled against a post-EIP-8282 Amsterdam fixes this;
+  `.fixtures_url_focil` should be bumped to it and the skip removed. The skip is
+  declared in `tooling/ef_tests/engine/tests/all.rs`, counts its fixtures rather than
+  hiding them, and prints the reason on every run.
+
+  Deliberately **not** done: a chain-config switch to hold EIP-8282 off for these
+  fixtures. That is the per-EIP knob this plan already rejected for EIP-7906, and it
+  would put a consensus-relevant off switch in the published rule set to satisfy a stale
+  test artifact.
 - **Phase 6 is complete.** The divergence ledger lives at
   `docs/hegota-testnet-divergences.md`; its §10 carries the sweep and the checkpoint.
   Historical note on what it found:
@@ -173,6 +178,14 @@ passed / 0 failed**, `cargo test -p ethrex-rpc --lib` is 122 passed, and
   epoch 1 without overriding either. Any constant justified by arithmetic at a 60M block
   is wrong here by more than 3×; Task 3.1's derived VERIFY budget was exactly that and
   has been replaced. Check the effective limit before reasoning from one.
+- **The two engine-fixture bundles disagree about what Amsterdam contains.** The suite
+  overlays `tests-glamsterdam-devnet@v7.2.0` (Amsterdam, EIP-8282 present in every
+  `pre`) and `tests-focil@v0.1.0` (Bogota, EIP-8282 absent from every `pre`) into one
+  `vectors/eest/` tree, so "the fixtures" is not one fork definition. A fixture bundle
+  pins a fork's EIP set as firmly as a chain config does, and a bundle filled before an
+  EIP joined the fork cannot be run by a client that implements it: the genesis hash it
+  commits to was computed without that EIP's predeploys. Check `pre` against the
+  implemented predeploy set before reading a system-call failure as a client bug.
 - **The three EIP-8272 write-gas figures on record are one curve, not a disagreement.**
   127 256 (ours, 64 non-zero calldata bytes), 127 244 (ethereum/EIPs#12131) and 127 196
   (ethrex `#7120`) differ only by how many zero bytes the `salt ‖ root` payload carries:
@@ -188,19 +201,18 @@ passed / 0 failed**, `cargo test -p ethrex-rpc --lib` is 122 passed, and
    `handoff_resume(branch="hegota-testnet", project="/home/edgar/dev/ethrex_2")`.
    Nothing below depends on that working: this file is the artifact and it is in git.
 1. Read this Progress block and the traps above.
-2. **Diagnose the 24 pre-existing FOCIL engine-fixture failures** described under "Not
-   complete". They are upstream's conformance suite for EIP-7805, which is the feature
-   this branch enforces, so they matter more than their age suggests. Start by running
-   one file with `cargo test -p ef_tests-engine --release focil` and reading what the
-   fixture expects against what ethrex returns.
-3. **Phase 6 is closed**, so Phases 7-9 are unblocked. Read
-   `docs/hegota-testnet-divergences.md` §10.1 first: four rows are carried by choice
-   rather than closed, and Phase 8's artifact set is where three of them have to be
+2. **Phase 8, the artifact set**, is the only unstarted phase and the last one before
+   bring-up. Read `docs/hegota-testnet-divergences.md` §10.1 first: four rows are
+   carried by choice rather than closed, and Phase 8 is where three of them have to be
    published (the five-EIP set and pins, `AA_VOPS_SLOT_COUNT = 4`, and the per-IL
    code-byte budget). A joining client cannot derive any of them from the genesis file.
-4. The single highest-value upstream item is the **EIP-7805 extension draft** EIP-8369
+3. The single highest-value upstream item is the **EIP-7805 extension draft** EIP-8369
    asks for. Publishing it converts the two-endpoint rule, the code-byte budget and the
    slot count from divergences into a specification a second client can implement.
+4. The 24 FOCIL engine fixtures are **skipped, diagnosed and closed**, not outstanding;
+   see "Not complete" above. The only action left on them is upstream: ask
+   `ethereum/execution-specs` for a FOCIL fixture release filled against a post-EIP-8282
+   Amsterdam, then bump `.fixtures_url_focil` and delete the skip.
 
 The engine fixtures live in their own cargo workspace, so `cargo test -p
 ef_tests-engine` fails from the repo root with "did not match any packages". Run them

@@ -409,10 +409,14 @@ Verified on 2026-08-10:
 | `cargo test -p ethrex-rpc --lib` | 122 passed / 0 failed |
 | `make -C tooling/ef_tests/blockchain test` | 14 744 + 3 138 passed / 0 failed |
 
-`make -C tooling/ef_tests/engine test` is **not** clean and is not gated on this phase:
-24 FOCIL fixtures fail, verified identical at the commit this work started from. They
-are recorded under "Not complete" in `docs/hegota-testnet.md`. That crate is its own
-cargo workspace, so it must be run through its Makefile.
+`make -C tooling/ef_tests/engine test` is clean at 74 458 passed / 0 failed, with the
+24 FOCIL fixtures skipped: `tests-focil@v0.1.0` was filled against an Amsterdam
+predating EIP-8282, so its `pre` omits the builder deposit/exit predeploys and every
+payload fails EIP-8282's empty-code rule before the inclusion-list check runs. The
+fixtures commit to a genesis hash computed without those predeploys, so supplying them
+is not available either. Diagnosis and evidence are under "Not complete" in
+`docs/hegota-testnet.md`. That crate is its own cargo workspace, so it must be run
+through its Makefile.
 
 **Phase 6 is complete.** Bring-up is unblocked as far as the ledger is concerned; the
 FOCIL fixture failures are the remaining item that predates it.
