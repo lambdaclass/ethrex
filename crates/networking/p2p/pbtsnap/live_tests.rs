@@ -37,6 +37,7 @@ use crate::rlpx::connection::server::PeerConnection;
 use crate::rlpx::message::Message;
 use crate::rlpx::p2p::Capability;
 use crate::rlpx::pbtsnap::{GetPbtLeafRange, PbtLeafRange};
+use crate::rlpx::snap::GetAccountRange;
 use crate::rlpx::utils::decompress_pubkey;
 use crate::snap::constants::MAX_RESPONSE_BYTES;
 use crate::types::{NetworkConfig, Node};
@@ -500,6 +501,72 @@ async fn a_range_served_from_another_tree_does_not_verify_against_the_pivot() {
         .is_err(),
         "a tampered leaf must not verify",
     );
+}
+
+/// A binary-tree-scheduled node does not serve `snap/1` state, and an
+/// unscheduled one still does.
+///
+/// The asymmetry this closes was real: `validate_sync_mode` refuses to *start*
+/// a scheduled node in snap mode, so ethrex declined to use legacy snap on these
+/// chains while the dispatcher went on serving it. A peer taking the offer would
+/// heal an MPT against roots that, past the activation timestamp, no header
+/// commits to.
+///
+/// Both halves are asserted in one test on purpose. The refusal alone would pass
+/// against a node that had simply lost the ability to serve account ranges —
+/// which is a much larger regression, and one the unscheduled leg is what rules
+/// out. The request is identical in both legs; only the schedule differs.
+#[tokio::test]
+async fn legacy_snap_state_is_refused_on_a_scheduled_chain_and_served_otherwise() {
+    for scheduled in [true, false] {
+        let (server_key, client_key) = keys();
+        let pool = shared_pool();
+        let (server_store, _) = served_store(scheduled).await;
+        let (client_store, _) = served_store(scheduled).await;
+
+        // The genesis MPT root, which both nodes genuinely hold whether or not
+        // they schedule the binary commitment.
+        let genesis_root = server_store
+            .get_block_header(0)
+            .expect("genesis header read")
+            .expect("genesis header")
+            .state_root;
+
+        let (server, _accept) = spawn_node(server_key, server_store, pool.clone(), true).await;
+        let (client, _) = spawn_node(client_key, client_store, pool, false).await;
+        let (mut connection, _) = connect(&client, &server).await;
+
+        let response = connection
+            .outgoing_request(
+                Message::GetAccountRange(GetAccountRange {
+                    id: 21,
+                    root_hash: genesis_root,
+                    starting_hash: H256::zero(),
+                    limit_hash: H256::repeat_byte(0xff),
+                    response_bytes: MAX_RESPONSE_BYTES,
+                }),
+                Duration::from_secs(15),
+            )
+            .await
+            .expect("a refusal is still a reply: the peer must not go silent");
+        let Message::AccountRange(response) = response else {
+            panic!("expected an AccountRange, got {response}");
+        };
+        assert_eq!(response.id, 21, "the request id must be mirrored");
+
+        if scheduled {
+            assert!(
+                response.accounts.is_empty() && response.proof.is_empty(),
+                "a scheduled node must not serve legacy snap state, got {} accounts",
+                response.accounts.len(),
+            );
+        } else {
+            assert!(
+                !response.accounts.is_empty(),
+                "an unscheduled node must serve exactly as it always did",
+            );
+        }
+    }
 }
 
 /// A scheduled chain and an unscheduled one are different chains, and the

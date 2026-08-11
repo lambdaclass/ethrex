@@ -122,10 +122,101 @@ pub async fn sync_cycle_snap(
     datadir: &Path,
     diagnostics: &Arc<tokio::sync::RwLock<super::SyncDiagnostics>>,
 ) -> Result<(), SyncError> {
-    // Request all block headers between the current head and the sync head
-    // We will begin from the current head so that we download the earliest state first
-    // This step is not parallelized
+    // A binary-tree-scheduled chain must never reach here: from the activation
+    // timestamp onwards a header's state root is a binary-trie root that
+    // addresses no MPT, so this would download and heal an MPT against a root
+    // nothing commits to and fail in a way nobody can debug. `sync_cycle`
+    // routes such a chain to `pbt_snap` and `validate_sync_mode` refuses the
+    // mode at startup; this is the third, defensive line, and it costs one
+    // config read per cycle.
+    if store.get_chain_config().binary_tree_scheduled() {
+        warn!(
+            "Refusing legacy snap sync on a binary-tree-scheduled chain; falling back to full sync"
+        );
+        snap_enabled.store(false, Ordering::Relaxed);
+        store.clear_snap_state().await?;
+        return super::full::sync_cycle_full(
+            peers,
+            blockchain,
+            tokio_util::sync::CancellationToken::new(),
+            sync_head,
+            store,
+            diagnostics,
+        )
+        .await;
+    }
+
     let mut block_sync_state = SnapBlockSyncState::new(store.clone());
+    diagnostics.write().await.sync_mode = "snap".to_string();
+    match download_headers_to_sync_head(
+        peers,
+        sync_head,
+        &store,
+        &mut block_sync_state,
+        diagnostics,
+    )
+    .await?
+    {
+        HeaderPhase::FullSync => {
+            info!("Sync head is found, switching to FullSync");
+            snap_enabled.store(false, Ordering::Relaxed);
+            return super::full::sync_cycle_full(
+                peers,
+                blockchain,
+                tokio_util::sync::CancellationToken::new(),
+                sync_head,
+                store.clone(),
+                diagnostics,
+            )
+            .await;
+        }
+        HeaderPhase::Abandoned => return Ok(()),
+        HeaderPhase::Downloaded => {}
+    }
+
+    snap_sync(peers, &store, &mut block_sync_state, datadir, diagnostics).await?;
+
+    store.clear_snap_state().await?;
+    snap_enabled.store(false, Ordering::Relaxed);
+
+    Ok(())
+}
+
+/// What the header phase concluded.
+///
+/// Extracted from `sync_cycle_snap` so that `pbt_snap`'s cycle can reuse it
+/// verbatim: the header phase is identical under either state commitment — it
+/// downloads headers, and headers are headers. What differs is only what is
+/// done with the pivot afterwards.
+pub(crate) enum HeaderPhase {
+    /// Headers through the sync head are stored; `block_sync_state` holds their
+    /// hashes and its last is the pivot.
+    Downloaded,
+    /// The chain is too short for a state download, or the sync head is already
+    /// local. The caller should full-sync instead.
+    FullSync,
+    /// Peers could not produce the target header this cycle. Not an error: the
+    /// caller returns and waits for a newer sync head.
+    Abandoned,
+}
+
+/// Download and store every header from the current head through `sync_head`.
+///
+/// The caller owns the mode-specific decisions — which diagnostics phase it is,
+/// what to do about [`HeaderPhase::FullSync`], and whether `snap_enabled` should
+/// be cleared — because those are the parts that differ between the MPT and
+/// binary-tree cycles.
+pub(crate) async fn download_headers_to_sync_head(
+    peers: &mut PeerHandler,
+    sync_head: H256,
+    store: &Store,
+    block_sync_state: &mut SnapBlockSyncState,
+    diagnostics: &Arc<tokio::sync::RwLock<super::SyncDiagnostics>>,
+) -> Result<HeaderPhase, SyncError> {
+    // Request all block headers between the current head and the sync head.
+    // We begin from the current head so that the earliest state is downloaded
+    // first. This step is not parallelized.
+    //
     // Check if we have some blocks downloaded from a previous sync attempt
     // This applies only to snap sync—full sync always starts fetching headers
     // from the canonical block, which updates as new block headers are fetched.
@@ -134,11 +225,7 @@ pub async fn sync_cycle_snap(
         .get_block_number(current_head)
         .await?
         .ok_or(SyncError::BlockNumber(current_head))?;
-    {
-        let mut diag = diagnostics.write().await;
-        diag.current_phase = "headers".to_string();
-        diag.sync_mode = "snap".to_string();
-    }
+    diagnostics.write().await.current_phase = "headers".to_string();
     debug!(
         "Syncing from current head {:?} to sync_head {:?}",
         current_head, sync_head
@@ -164,7 +251,7 @@ pub async fn sync_cycle_snap(
                 warn!(
                     "Sync failed to find target block header after {attempts} attempts, aborting to wait for a newer sync head"
                 );
-                return Ok(());
+                return Ok(HeaderPhase::Abandoned);
             }
             attempts += 1;
             debug!(
@@ -240,18 +327,8 @@ pub async fn sync_cycle_snap(
         let head_close_to_0 = last_block_number < MIN_FULL_BLOCKS;
 
         if head_found || head_close_to_0 {
-            // Too few blocks for a snap sync, switching to full sync
-            info!("Sync head is found, switching to FullSync");
-            snap_enabled.store(false, Ordering::Relaxed);
-            return super::full::sync_cycle_full(
-                peers,
-                blockchain,
-                tokio_util::sync::CancellationToken::new(),
-                sync_head,
-                store.clone(),
-                diagnostics,
-            )
-            .await;
+            // Too few blocks for a state download; the caller full-syncs.
+            return Ok(HeaderPhase::FullSync);
         }
 
         // Discard the first header as we already have it
@@ -273,16 +350,9 @@ pub async fn sync_cycle_snap(
         }
 
         if sync_head_found {
-            break;
+            return Ok(HeaderPhase::Downloaded);
         };
     }
-
-    snap_sync(peers, &store, &mut block_sync_state, datadir, diagnostics).await?;
-
-    store.clear_snap_state().await?;
-    snap_enabled.store(false, Ordering::Relaxed);
-
-    Ok(())
 }
 
 /// Main snap sync logic - downloads state via snap protocol
