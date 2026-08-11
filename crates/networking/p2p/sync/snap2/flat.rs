@@ -254,11 +254,12 @@ mod memory_impl {
                 let contents = async_fs::read_file(&path).await?;
                 let chunk: Vec<(H256, AccountState)> = RLPDecode::decode(&contents)
                     .map_err(|_| SyncError::SnapshotDecodeError(path.clone()))?;
-                let mut accounts = write(&self.accounts)?;
-                for (account_hash, account) in chunk {
-                    accounts.insert(account_hash, account.encode_to_vec());
+                {
+                    let mut accounts = write(&self.accounts)?;
+                    for (account_hash, account) in chunk {
+                        accounts.insert(account_hash, account.encode_to_vec());
+                    }
                 }
-                drop(accounts);
                 async_fs::remove_file(&path).await?;
             }
             Ok(())
@@ -274,16 +275,19 @@ mod memory_impl {
                             .collect()
                     })
                     .map_err(|_| SyncError::SnapshotDecodeError(path.clone()))?;
-                let mut storages = write(&self.storages)?;
-                for entry in chunk {
-                    for account_hash in entry.accounts {
-                        for (slot_hash, value) in &entry.storages {
-                            storages
-                                .insert(slot_key(account_hash, *slot_hash), value.encode_to_vec());
+                {
+                    let mut storages = write(&self.storages)?;
+                    for entry in chunk {
+                        for account_hash in entry.accounts {
+                            for (slot_hash, value) in &entry.storages {
+                                storages.insert(
+                                    slot_key(account_hash, *slot_hash),
+                                    value.encode_to_vec(),
+                                );
+                            }
                         }
                     }
                 }
-                drop(storages);
                 async_fs::remove_file(&path).await?;
             }
             Ok(())
