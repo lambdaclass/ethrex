@@ -44,30 +44,55 @@ participants:
     cl_image: ethpandaops/lighthouse:glamsterdam-devnet-7
     validator_count: 32
   # Cross-client server. `--snap.v2` is what makes it one.
+  #
+  # It proposes nothing. ethrex rejects geth's Amsterdam transition block —
+  # geth records a nonce change at block-access index 0 for the deterministic
+  # CREATE2 deployer (0x4e59b448...), and ethrex requires every index-0 change
+  # to belong to an account its pre-execution system calls actually touched, so
+  # the chain stalls on the first Amsterdam block. That is an EIP-7928
+  # disagreement, not a snap/2 one; with no validators here, ethrex builds every
+  # block and geth follows, which is all a serving peer has to do.
   - el_type: geth
     el_image: ethpandaops/geth:glamsterdam-devnet-7
     el_extra_params: ["--snap.v2", "--syncmode=full", "--gcmode=archive"]
     cl_type: lighthouse
     cl_image: ethpandaops/lighthouse:glamsterdam-devnet-7
-    validator_count: 32
+    validator_count: 0
 
 network_params:
-  # `minimal` shortens the epoch to 8 slots, so Amsterdam activates in minutes
-  # rather than hours.
-  preset: minimal
   seconds_per_slot: 6
-  genesis_delay: 30
   # Osaka/Fulu from genesis.
   fulu_fork_epoch: 0
-  # Amsterdam/Gloas at epoch 1. It must not be 0: a Gloas genesis state makes
-  # lighthouse refuse to decode its own genesis.
+  # Amsterdam/Gloas at epoch 1, matching the sibling devnet configs. Not 0: a
+  # Gloas genesis state is one lighthouse refuses to decode.
+  #
+  # The `minimal` preset is deliberately not used. It shortens the epoch to 8
+  # slots, which reaches Amsterdam sooner, but block production then stops dead
+  # at the Gloas transition: the validator client asks for
+  # `payload_attestation_data` and gets 404, builder registration returns 500,
+  # and every slot after the fork is empty. The mainnet preset is the
+  # combination the working devnets use.
   gloas_fork_epoch: 1
+
+  additional_preloaded_contracts:
+    "0x0000BFF46984E3725691FA540A8C7589300D8282":
+      balance: "0"
+      nonce: "1"
+      code: "0x3373fffffffffffffffffffffffffffffffffffffffe1461011c575f54807fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff146102705760015460088111605257506058565b60089003015b601190600182026001905f5b5f821115607f57810190830284830290049160010191906064565b90939004925050503660b814609f57366102705734610270575f5260205ff35b8034106102705760383567ffffffffffffffff1680633b9aca001161027057633b9aca00029034031061027057600154600101600155600354806006026004015f358155600101602035815560010160403581556001016060358155600101608035815560010160a035905560b85f5f3760b85fa0600101600355005b60035460025480820380604011610131575060405b5f5b8181146101d7578281016006026004018160b8028154815260200181600101548152602001816002015480825260401c67ffffffffffffffff16816010018160381c81600701538160301c81600601538160281c81600501538160201c81600401538160181c81600301538160101c81600201538160081c816001015353602001816003015481526020018160040154815260200190600501549052600101610133565b91018092146101e957906002556101f4565b90505f6002555f6003555b36610242575f54600154817fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1461023057600882820111610238575b50505f610264565b0160089003610264565b7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff5b5f555f60015560b8025ff35b5f5ffd"
+      storage:
+        "0x0000000000000000000000000000000000000000000000000000000000000000": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    "0x000064D678505AD48F8CCB093BC65613800E8282":
+      balance: "0"
+      nonce: "1"
+      code: "0x3373fffffffffffffffffffffffffffffffffffffffe1460e1575f54807fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff146101c65760015460028111605157506057565b60029003015b601190600182026001905f5b5f821115607e57810190830284830290049160010191906063565b909390049250505036603014609e57366101c657346101c6575f5260205ff35b34106101c657600154600101600155600354806003026004013381556001015f35815560010160203590553360601b5f5260305f60143760445fa0600101600355005b6003546002548082038060101160f5575060105b5f5b81811461012d5782810160030260040181604402815460601b8152601401816001015481526020019060020154905260010160f7565b910180921461013f579060025561014a565b90505f6002555f6003555b36610198575f54600154817fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff146101865760028282011161018e575b50505f6101ba565b01600290036101ba565b7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff5b5f555f6001556044025ff35b5f5ffd"
+      storage:
+        "0x0000000000000000000000000000000000000000000000000000000000000000": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
 
 # State has to be big enough that the download outlasts a pivot window,
 # otherwise the pivot never moves and the access-list catch-up — the part with
 # no other coverage — never runs. deploytx and evm-fuzz grow the account and
 # storage tries; eoatx keeps blocks non-empty so every block has a BAL.
-additional_services: [dora, spamoor]
+additional_services: [spamoor]
 spamoor_params:
   image: ethpandaops/spamoor:latest
   spammers:
@@ -77,8 +102,5 @@ spamoor_params:
       config: {throughput: 3}
     - scenario: evm-fuzz
       config: {throughput: 10}
-
-dora_params:
-  image: ethpandaops/dora:eip7928-support
 
 global_log_level: info

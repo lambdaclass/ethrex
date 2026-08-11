@@ -37,6 +37,8 @@ import time
 import urllib.error
 import urllib.request
 
+ZERO_HASH = "0x" + "00" * 32
+
 # The joiner's own knobs. These are what make a devnet-sized chain reach the
 # interesting code; see fixtures/networks/snap2-devnet.yaml and the
 # TEST-ONLY OVERRIDES block in crates/networking/p2p/snap/constants.rs.
@@ -234,10 +236,15 @@ def main() -> int:
         while time.time() < deadline:
             try:
                 block = rpc(source_rpc, "eth_getBlockByNumber", ["latest", False])
+                # safe and finalized are left zero, as a consensus client does
+                # before it knows finality. A non-zero hash the joiner has never
+                # seen is looked up and order-checked against the head, and that
+                # fails the forkchoice update outright instead of reporting
+                # SYNCING — which is the answer that starts the sync.
                 rpc(
                     joiner_engine, "engine_forkchoiceUpdatedV4",
-                    [{"headBlockHash": block["hash"], "safeBlockHash": block["hash"],
-                      "finalizedBlockHash": block["hash"]}, None],
+                    [{"headBlockHash": block["hash"], "safeBlockHash": ZERO_HASH,
+                      "finalizedBlockHash": ZERO_HASH}, None],
                     token=engine_token(secret),
                 )
             except (urllib.error.URLError, RuntimeError, ConnectionError) as err:
