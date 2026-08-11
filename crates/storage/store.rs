@@ -3125,6 +3125,19 @@ impl Store {
         // taken in one traversal see one consistent snapshot: the mirror is
         // written in the nodes' own `write_tx`, and reading the two through
         // different views could land either side of that batch.
+        //
+        // **On the RocksDB backend that snapshot does not exist.** `begin_read`
+        // there returns a handle on the live database — `RocksDBReadTx::get`
+        // calls `db.get_cf` directly — so what sharing the view actually buys
+        // is that both halves read the same *live* database, not that they read
+        // it at one sequence number. The in-memory backend does clone, so the
+        // guarantee holds there and not in production. Only
+        // `StorageBackend::begin_locked` takes a real `db.snapshot()`, and it is
+        // scoped to a single column family, so it cannot pin the node table and
+        // the mirror together. Anything that needs a genuinely pinned read
+        // across both must be written against that gap rather than this comment
+        // — see `Store::binary_leaf_range_proof`, which reads one structure and
+        // re-checks the root afterwards for exactly this reason.
         let read_view = self.backend.begin_read()?;
         Ok(LayeredBinaryTrieDB::new(
             binary_root,
