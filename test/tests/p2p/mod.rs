@@ -5,6 +5,7 @@ mod full_sync_tests;
 mod resume_gate_tests;
 mod rlpx;
 mod snap_server_tests;
+mod snap_v2_apply_tests;
 mod snap_v2_codec_tests;
 mod snap_v2_cursor_tests;
 mod snap_v2_e2e_tests;

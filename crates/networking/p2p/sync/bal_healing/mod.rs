@@ -6,6 +6,7 @@
 mod apply;
 
 pub use apply::apply_bal;
+pub(crate) use apply::store_code_sync;
 
 use std::collections::HashMap;
 use std::sync::Arc;

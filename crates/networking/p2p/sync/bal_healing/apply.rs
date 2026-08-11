@@ -176,7 +176,7 @@ pub fn apply_bal(
 }
 
 /// Write a `Code` entry to the store synchronously.
-fn store_code_sync(store: &Store, code: Code) -> Result<(), SyncError> {
+pub(crate) fn store_code_sync(store: &Store, code: Code) -> Result<(), SyncError> {
     let hash_key_bytes = code.hash.0.to_vec();
     let buf = encode_code(&code);
     let metadata = (code.len() as u64).to_be_bytes().to_vec();

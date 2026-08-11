@@ -226,16 +226,22 @@ mod memory_impl {
     use super::*;
     use crate::utils::AccountsWithStorage;
     use std::collections::BTreeMap;
+    use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
     /// A storage chunk file as written by the download: groups of accounts
     /// sharing a storage root, each with that root's slots.
     type StorageChunk = Vec<(Vec<H256>, Vec<(H256, U256)>)>;
 
     /// Flat state held in memory, for builds without the on-disk backend.
+    ///
+    /// The stores are behind locks so that the API matches the on-disk one,
+    /// which takes `&self` throughout because the backend does its own
+    /// synchronization. The download shares one flat state across its workers
+    /// and cannot hand out `&mut`.
     #[derive(Default)]
     pub struct FlatState {
-        accounts: BTreeMap<H256, Vec<u8>>,
-        storages: BTreeMap<[u8; 64], Vec<u8>>,
+        accounts: RwLock<BTreeMap<H256, Vec<u8>>>,
+        storages: RwLock<BTreeMap<[u8; 64], Vec<u8>>>,
     }
 
     impl FlatState {
@@ -243,20 +249,22 @@ mod memory_impl {
             Ok(Self::default())
         }
 
-        pub async fn absorb_account_chunks(&mut self, dir: &Path) -> Result<(), SyncError> {
+        pub async fn absorb_account_chunks(&self, dir: &Path) -> Result<(), SyncError> {
             for path in async_fs::read_dir_paths(dir).await? {
                 let contents = async_fs::read_file(&path).await?;
                 let chunk: Vec<(H256, AccountState)> = RLPDecode::decode(&contents)
                     .map_err(|_| SyncError::SnapshotDecodeError(path.clone()))?;
+                let mut accounts = write(&self.accounts)?;
                 for (account_hash, account) in chunk {
-                    self.accounts.insert(account_hash, account.encode_to_vec());
+                    accounts.insert(account_hash, account.encode_to_vec());
                 }
+                drop(accounts);
                 async_fs::remove_file(&path).await?;
             }
             Ok(())
         }
 
-        pub async fn absorb_storage_chunks(&mut self, dir: &Path) -> Result<(), SyncError> {
+        pub async fn absorb_storage_chunks(&self, dir: &Path) -> Result<(), SyncError> {
             for path in async_fs::read_dir_paths(dir).await? {
                 let contents = async_fs::read_file(&path).await?;
                 let chunk: Vec<AccountsWithStorage> = RLPDecode::decode(&contents)
@@ -266,37 +274,39 @@ mod memory_impl {
                             .collect()
                     })
                     .map_err(|_| SyncError::SnapshotDecodeError(path.clone()))?;
+                let mut storages = write(&self.storages)?;
                 for entry in chunk {
                     for account_hash in entry.accounts {
                         for (slot_hash, value) in &entry.storages {
-                            self.storages
+                            storages
                                 .insert(slot_key(account_hash, *slot_hash), value.encode_to_vec());
                         }
                     }
                 }
+                drop(storages);
                 async_fs::remove_file(&path).await?;
             }
             Ok(())
         }
 
         pub fn get_account(&self, account_hash: H256) -> Result<Option<AccountState>, SyncError> {
-            match self.accounts.get(&account_hash) {
+            match read(&self.accounts)?.get(&account_hash) {
                 Some(encoded) => Ok(Some(AccountState::decode(encoded)?)),
                 None => Ok(None),
             }
         }
 
         pub fn put_account(
-            &mut self,
+            &self,
             account_hash: H256,
             account: &AccountState,
         ) -> Result<(), SyncError> {
-            self.accounts.insert(account_hash, account.encode_to_vec());
+            write(&self.accounts)?.insert(account_hash, account.encode_to_vec());
             Ok(())
         }
 
-        pub fn delete_account(&mut self, account_hash: H256) -> Result<(), SyncError> {
-            self.accounts.remove(&account_hash);
+        pub fn delete_account(&self, account_hash: H256) -> Result<(), SyncError> {
+            write(&self.accounts)?.remove(&account_hash);
             Ok(())
         }
 
@@ -305,49 +315,66 @@ mod memory_impl {
             account_hash: H256,
             slot_hash: H256,
         ) -> Result<Option<U256>, SyncError> {
-            match self.storages.get(&slot_key(account_hash, slot_hash)) {
+            match read(&self.storages)?.get(&slot_key(account_hash, slot_hash)) {
                 Some(encoded) => Ok(Some(U256::decode(encoded)?)),
                 None => Ok(None),
             }
         }
 
         pub fn put_slot(
-            &mut self,
+            &self,
             account_hash: H256,
             slot_hash: H256,
             value: U256,
         ) -> Result<(), SyncError> {
-            self.storages
-                .insert(slot_key(account_hash, slot_hash), value.encode_to_vec());
+            write(&self.storages)?.insert(slot_key(account_hash, slot_hash), value.encode_to_vec());
             Ok(())
         }
 
-        pub fn delete_slot(
-            &mut self,
-            account_hash: H256,
-            slot_hash: H256,
-        ) -> Result<(), SyncError> {
-            self.storages.remove(&slot_key(account_hash, slot_hash));
+        pub fn delete_slot(&self, account_hash: H256, slot_hash: H256) -> Result<(), SyncError> {
+            write(&self.storages)?.remove(&slot_key(account_hash, slot_hash));
             Ok(())
         }
 
-        pub fn iter_accounts(
-            &self,
-        ) -> impl Iterator<Item = Result<(H256, Vec<u8>), SyncError>> + '_ {
-            self.accounts
-                .iter()
-                .map(|(hash, encoded)| Ok((*hash, encoded.clone())))
+        /// Every account in hash order, as the RLP the trie build consumes.
+        ///
+        /// Snapshots the store rather than holding the lock across the trie
+        /// build, which writes as it goes.
+        pub fn iter_accounts(&self) -> impl Iterator<Item = Result<(H256, Vec<u8>), SyncError>> {
+            match read(&self.accounts) {
+                Ok(accounts) => accounts
+                    .iter()
+                    .map(|(hash, encoded)| Ok((*hash, encoded.clone())))
+                    .collect::<Vec<_>>(),
+                Err(err) => vec![Err(err)],
+            }
+            .into_iter()
         }
 
-        pub fn iter_slots(&self, account_hash: H256) -> impl Iterator<Item = (H256, Vec<u8>)> + '_ {
-            self.storages
+        /// One account's slots in hash order, as the RLP the trie build
+        /// consumes.
+        pub fn iter_slots(&self, account_hash: H256) -> impl Iterator<Item = (H256, Vec<u8>)> {
+            let Ok(storages) = read(&self.storages) else {
+                return Vec::new().into_iter();
+            };
+            storages
                 .range(slot_key(account_hash, H256::zero())..)
-                .take_while(move |(key, _)| key[..32] == account_hash.0)
+                .take_while(|(key, _)| key[..32] == account_hash.0)
                 .map(|(key, value)| (H256::from_slice(&key[32..]), value.clone()))
+                .collect::<Vec<_>>()
+                .into_iter()
         }
 
         pub async fn destroy(self) -> Result<(), SyncError> {
             Ok(())
         }
+    }
+
+    fn read<T>(lock: &RwLock<T>) -> Result<RwLockReadGuard<'_, T>, SyncError> {
+        lock.read().map_err(|_| SyncError::FlatStatePoisoned)
+    }
+
+    fn write<T>(lock: &RwLock<T>) -> Result<RwLockWriteGuard<'_, T>, SyncError> {
+        lock.write().map_err(|_| SyncError::FlatStatePoisoned)
     }
 }

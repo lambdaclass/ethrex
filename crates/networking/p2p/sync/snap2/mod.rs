@@ -6,8 +6,10 @@
 //! it. The algorithm is specified in devp2p `caps/snap.md`,
 //! "Synchronization algorithm".
 
+pub mod apply;
 pub mod cursor;
 pub mod flat;
 
+pub use apply::{FlatApplyStats, apply_bal_flat};
 pub use cursor::{DownloadCursor, HashRange};
 pub use flat::FlatState;

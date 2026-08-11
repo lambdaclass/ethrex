@@ -406,6 +406,8 @@ pub enum SyncError {
     StorageTempDBDirNotFound(String),
     #[error("RocksDB Error: {0}")]
     RocksDBError(String),
+    #[error("Flat state lock poisoned")]
+    FlatStatePoisoned,
     #[error("Bytecode file error")]
     BytecodeFileError,
     #[error("Error in Peer Table: {0}")]
@@ -463,6 +465,7 @@ impl SyncError {
             | SyncError::AccountTempDBDirNotFound(_)
             | SyncError::StorageTempDBDirNotFound(_)
             | SyncError::RocksDBError(_)
+            | SyncError::FlatStatePoisoned
             | SyncError::BytecodeFileError
             | SyncError::NoLatestCanonical
             | SyncError::MissingFullsyncBatch
