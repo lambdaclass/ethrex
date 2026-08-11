@@ -1079,24 +1079,28 @@ pub async fn regenerate_head_state(
     // durable, so it is exactly how far we can replay. An absent marker means a legacy or
     // fresh database where everything is durable, so fall back to the canonical head.
     let canonical_head = store.get_latest_block_number().await?;
-    let head_block_number = match store.read_flushed_upto_opt()? {
-        Some(flushed) => flushed,
-        None => canonical_head,
-    };
-    debug!(
-        "regenerate_head_state resuming from durable block {head_block_number}          (canonical head {canonical_head})"
-    );
-
+    let frontier = store.read_flushed_upto_opt()?;
+    let head_block_number = frontier.unwrap_or(canonical_head);
     // Blocks executed during full sync but not yet canonicalized have no
     // CANONICAL_BLOCK_HASHES entry, so resolve headers through the full-sync table too.
     let last_header = match header_by_number(store, head_block_number).await? {
         Some(header) => header,
-        // The full-sync header table is cleared between sync cycles, so the durable frontier
-        // is not always resolvable. Fall back to the canonical head rather than failing.
+        // The full-sync header table is cleared between sync cycles, so the frontier is not
+        // always resolvable — a reorg that lowers the canonical head below an older frontier
+        // lands here too. Fall back to the canonical head rather than failing.
         None => store.get_block_header(canonical_head)?.ok_or_else(|| {
             eyre::eyre!("no header for canonical head {canonical_head}; database is corrupt")
         })?,
     };
+
+    // Take the replay target from the header we actually resolved, never from the frontier
+    // we hoped to resolve. Tracking them separately lets the fallback above leave the target
+    // at an unreachable height, and the replay loop then aborts on `Block {i} not found`.
+    let head_block_number = last_header.number;
+    debug!(
+        "regenerate_head_state resuming from block {head_block_number} \
+         (durable frontier {frontier:?}, canonical head {canonical_head})"
+    );
 
     let mut current_last_header = last_header;
 
