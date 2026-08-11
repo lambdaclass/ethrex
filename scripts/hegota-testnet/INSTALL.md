@@ -245,8 +245,17 @@ rather than replaces, and a duplicated `Access-Control-Allow-Origin` is hard-rej
 browsers and by MetaMask's request layer. The Caddyfile at
 `scripts/eip8141-devnet/Caddyfile` does add them; do not copy that part of it.
 
+The hostnames above are illustrative. The zone this deployment actually uses is written
+in exactly one place — `scripts/hegota-testnet/USER-GUIDE.md`, which says how to
+substitute it — so do not spread it through the runbook.
+
 Only execution node 0's RPC (32003) is proxied. Nodes 1 and 2 keep their RPC closed so a
 client cannot be pointed at a node the operator is not watching.
+
+The `artifacts` vhost is not the only route to the bootnode lists: the faucet serves the
+same three lists as JSON at `/bootnodes`, read from the same bundle. That is deliberate
+redundancy — the lists are the one part of the bundle a joiner needs after it is already
+running, when a peer set has gone stale.
 
 The explorer sits at a fixed 31500 because `port_publisher.additional_services` pins it.
 The Hegotá devnet needed a socat unit to give the explorer a stable local port; this chain
@@ -258,6 +267,22 @@ Run the faucet with **its own key**, funded from the `FAUCET_ADDR` account, and 
 key in a host env file — never in the repository, never in the kurtosis config. Point it
 at `http://localhost:32003` and give it the public RPC and explorer URLs for its own
 links. `scripts/hegota-testnet/faucet/` is a working reference implementation.
+
+Give it the artifact bundle read-only, so it can serve the bootnode lists on its landing
+page and at `GET /bootnodes`:
+
+```
+docker run … \
+  -v /srv/hegota-testnet/artifacts:/srv/hegota-testnet/artifacts:ro \
+  -e BUNDLE_DIR=/srv/hegota-testnet/artifacts …
+```
+
+Read-only is the whole of the protection here, so keep the flag: the faucet has no reason
+to write the bundle and the bundle is what every joiner trusts. The lists are re-read
+whenever the files change, so section 7 can be re-run without restarting the faucet, and a
+faucet started before the first publish picks them up on its own. With no bundle mounted
+the peering section is simply absent from the page and `/bootnodes` answers `503` —
+never an empty list, which a joiner would read as a chain with no peers.
 
 Fund it from the faucet account rather than a rich account, so a drained faucet cannot
 touch the accounts you hold for testing.

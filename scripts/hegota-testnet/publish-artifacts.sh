@@ -95,10 +95,15 @@ done
 # ---------------------------------------------------------------------------
 # 2. Bootnodes
 #
-# Enodes come from each execution node's admin_nodeInfo, ENRs from each beacon
-# node's /eth/v1/node/identity. Both report an address resolved inside the
-# enclave, so the host part is rewritten to PUBLIC_IP. The ports are NOT
-# rewritten: they are the published ones and are already correct.
+# Enodes and execution-layer ENRs both come from each execution node's
+# admin_nodeInfo; consensus ENRs from each beacon node's
+# /eth/v1/node/identity. An enode reports the address the node resolved inside
+# the enclave, which no outside peer can reach, so its host part is rewritten to
+# PUBLIC_IP; the ports are NOT rewritten, being the published ones already. An
+# ENR is signed over the address the node advertises and cannot be rewritten at
+# all, so it is published as reported and is correct exactly when the node was
+# started with the right advertised address — which is what `nat_exit_ip` and
+# `--nat.extip` are for.
 # ---------------------------------------------------------------------------
 
 # Service names are assigned by the package as el-<n>-<el>-<cl> / cl-<n>-<cl>-<el>,
@@ -132,29 +137,42 @@ rewrite_host() {
   sed -E "s#@[^:]+:#@$PUBLIC_IP:#"
 }
 
-echo "==> collecting ${#EL_SERVICES[@]} enode(s)"
+echo "==> collecting ${#EL_SERVICES[@]} enode(s) and execution ENR(s)"
 : > "$STAGE/bootnodes.txt"
+: > "$STAGE/bootnodes-enr.txt"
 for svc in "${EL_SERVICES[@]}"; do
   url="$(endpoint "$svc" rpc)"
-  enode="$(
+  info="$(
     curl -sf -X POST -H 'Content-Type: application/json' \
       --data '{"jsonrpc":"2.0","id":1,"method":"admin_nodeInfo","params":[]}' \
-      "$url" | jq -r '.result.enode // empty'
+      "$url"
   )"
+  enode="$(jq -r '.result.enode // empty' <<<"$info")"
   [[ -n "$enode" ]] || { echo "no enode from $svc (is the admin namespace enabled?)" >&2; exit 1; }
   echo "$enode" | rewrite_host >> "$STAGE/bootnodes.txt"
+
+  # The ENR carries the discovery and RLPx ports and the fork id, so a client
+  # speaking discv5 gets a complete record from it where an enode gives only an
+  # address. ethrex reports an empty string when it could not build a record
+  # (`crates/networking/rpc/admin/mod.rs`), which is a node worth naming but not
+  # a reason to withhold a genesis bundle — the enode above still reaches it.
+  enr="$(jq -r '.result.enr // empty' <<<"$info")"
+  if [[ -n "$enr" ]]; then
+    echo "$enr" >> "$STAGE/bootnodes-enr.txt"
+  else
+    echo "warning: $svc reports no ENR; publishing its enode only" >&2
+  fi
 done
 
-echo "==> collecting ${#CL_SERVICES[@]} ENR(s)"
+[[ -s "$STAGE/bootnodes-enr.txt" ]] \
+  || { echo "no execution ENR from any node: check the advertised address" >&2; exit 1; }
+
+echo "==> collecting ${#CL_SERVICES[@]} consensus ENR(s)"
 : > "$STAGE/bootnodes-cl.txt"
 for svc in "${CL_SERVICES[@]}"; do
   url="$(endpoint "$svc" http)"
   enr="$(curl -sf "$url/eth/v1/node/identity" | jq -r '.data.enr // empty')"
   [[ -n "$enr" ]] || { echo "no ENR from $svc" >&2; exit 1; }
-  # An ENR is a signed, base64url-encoded record: its embedded IP cannot be
-  # rewritten without invalidating the signature. It is published as reported,
-  # and it is correct as long as the node was started with the right advertised
-  # address — which is what `nat_exit_ip` and `--nat.extip` are for.
   echo "$enr" >> "$STAGE/bootnodes-cl.txt"
 done
 
@@ -173,6 +191,14 @@ done
 
 mkdir -p "$OUT_DIR"
 cp -a "$STAGE"/. "$OUT_DIR"/
+
+# The bundle is read by two other users than the one that publishes it: the
+# reverse proxy serves it, and the faucet mounts it to serve the bootnode lists.
+# `cp -a` preserves whatever modes the generator's artifact happened to carry, so
+# the readable bit is set here rather than left to that. Every file is public by
+# construction — the allowlist above is what keeps a secret out.
+chmod 0755 "$OUT_DIR"
+find "$OUT_DIR" -maxdepth 1 -type f -exec chmod 0644 {} +
 
 echo "==> published $(wc -l < "$OUT_DIR/MANIFEST.txt") file(s) to $OUT_DIR"
 echo

@@ -23,11 +23,15 @@ Config (env):
   PORT                                                           (default 8080)
   PUBLIC_RPC_URL           shown on the landing page             (optional)
   EXPLORER_URL             shown on the landing page             (optional)
+  BUNDLE_DIR               published artifact bundle, read for
+                           the bootnode lists on `/` and
+                           `/bootnodes`   (default /srv/hegota-testnet/artifacts)
 
 Deployment note: only `TRUSTED_PROXIES` peers may set the client IP. Publish the
 port to loopback on the host and put the reverse proxy in front; a directly
 reachable port lets callers choose their own rate-limit bucket.
 """
+import html
 import ipaddress
 import json
 import os
@@ -55,6 +59,7 @@ BIND_ADDR = os.environ.get("BIND_ADDR", "0.0.0.0")
 PORT = int(os.environ.get("PORT", "8080"))
 PUBLIC_RPC_URL = os.environ.get("PUBLIC_RPC_URL", "")
 EXPLORER_URL = os.environ.get("EXPLORER_URL", "")
+BUNDLE_DIR = pathlib.Path(os.environ.get("BUNDLE_DIR", "/srv/hegota-testnet/artifacts"))
 
 # A reverse proxy always reaches us from loopback or a private address, and a
 # public client cannot spoof a private source address. Anything else must not be
@@ -244,30 +249,137 @@ SENDER = Sender()
 SLOTS = threading.BoundedSemaphore(MAX_CONCURRENT)
 
 
-def render_page():
+# The published bootnode lists, as `publish-artifacts.sh` writes them into the
+# bundle: which key each file answers to on `/bootnodes`, and the record prefix
+# every line must carry. A file whose lines lack the prefix is not a bootnode
+# list, which is what BUNDLE_DIR pointing at the wrong directory looks like.
+BOOTNODE_LISTS = (
+    ("el", "bootnodes.txt", "enode://"),
+    ("el_enr", "bootnodes-enr.txt", "enr:"),
+    ("cl", "bootnodes-cl.txt", "enr:"),
+)
+
+
+def bundle_stamp():
+    """Identity of the published bundle, so a re-publish is picked up.
+
+    `publish-artifacts.sh` rewrites these files in place on every re-genesis and
+    on any change of advertised address. Reading them once at startup would
+    leave the faucet serving the previous chain's peers.
+    """
+    stamp = []
+    for _, name, _ in BOOTNODE_LISTS:
+        try:
+            st = (BUNDLE_DIR / name).stat()
+            stamp.append((st.st_mtime_ns, st.st_size))
+        except OSError:
+            stamp.append(None)
+    return tuple(stamp)
+
+
+def read_bootnodes():
+    """The published lists, keyed as on `/bootnodes`; absent files are omitted.
+
+    `publish-artifacts.sh` owns these addresses and this reads what it wrote:
+    the enodes are rewritten there to the host's public IP, and an ENR is signed
+    over the address its node advertises and cannot be rewritten at all. One
+    source for both is the only shape in which the page and the bundle cannot
+    disagree.
+    """
+    lists = {}
+    for key, name, prefix in BOOTNODE_LISTS:
+        try:
+            lines = (BUNDLE_DIR / name).read_text().splitlines()
+        except OSError:
+            continue
+        records = [ln.strip() for ln in lines if ln.strip().startswith(prefix)]
+        if records:
+            lists[key] = records
+    return lists
+
+
+def render_bootnodes(lists):
+    """The peering block for the landing page: the two lists a joiner passes.
+
+    The execution ENRs are served on `/bootnodes` but not shown here — they name
+    the same nodes as the enodes, and no client's flag takes them.
+    """
+    shown = (
+        ("Execution bootnodes", "--bootnodes", lists.get("el", [])),
+        ("Consensus bootnodes", "--boot-nodes", lists.get("cl", [])),
+    )
+    blocks = []
+    for title, flag, records in shown:
+        if not records:
+            continue
+        body = html.escape("\n".join(records))
+        blocks.append(
+            f'<p style="margin:0 0 .35rem;font-size:14px"><strong>{title}</strong> '
+            f"(<code>{flag}</code>)</p>\n"
+            f'<pre class="list">{body}</pre>'
+        )
+    if not blocks:
+        return ""
+    return (
+        '<p style="margin:0 0 .8rem;font-size:14px">The current lists, also served as JSON '
+        'at <a href="/bootnodes">/bootnodes</a>:</p>\n' + "\n".join(blocks)
+    )
+
+
+CHAIN_ID_TEXT = None
+
+
+def chain_id_text():
+    """Chain ID for the page, resolved once and then remembered.
+
+    Left unresolved when the node is unreachable so a faucet started before the
+    chain does not advertise `unknown` for the rest of its life.
+    """
+    global CHAIN_ID_TEXT
+    if CHAIN_ID_TEXT is None:
+        try:
+            raw = int(rpc("eth_chainId", [], timeout=5), 16)
+            CHAIN_ID_TEXT = f"{raw} ({hex(raw)})"
+        except Exception:
+            return "unknown"
+    return CHAIN_ID_TEXT
+
+
+def render_page(lists):
     path = pathlib.Path(__file__).with_name("page.html")
     try:
-        html = path.read_text()
+        template = path.read_text()
     except OSError:
         return b"<h1>Hegota devnet faucet</h1><p>POST /api/claim {\"address\": \"0x...\"}</p>"
     rpc_row = f"<dt>RPC</dt><dd>{PUBLIC_RPC_URL}</dd>" if PUBLIC_RPC_URL else ""
     explorer_row = (f'<dt>Explorer</dt><dd><a href="{EXPLORER_URL}">{EXPLORER_URL}</a></dd>'
                     if EXPLORER_URL else "")
-    chain_id = "unknown"
-    try:
-        raw = int(rpc("eth_chainId", [], timeout=5), 16)
-        chain_id = f"{raw} ({hex(raw)})"
-    except Exception:
-        pass
     amount = f"{AMOUNT_WEI / 10**18:g}"
-    return (html
-            .replace("{{CHAIN_ID}}", chain_id)
+    return (template
+            .replace("{{CHAIN_ID}}", chain_id_text())
             .replace("{{AMOUNT}}", amount)
             .replace("{{RPC}}", rpc_row)
-            .replace("{{EXPLORER}}", explorer_row)).encode()
+            .replace("{{EXPLORER}}", explorer_row)
+            .replace("{{BOOTNODES}}", render_bootnodes(lists))).encode()
 
 
-PAGE = render_page()
+BUNDLE_LOCK = threading.Lock()
+BUNDLE_VIEW = None  # (stamp, lists, page bytes)
+
+
+def bundle_view():
+    """The bootnode lists and the rendered page for the bundle as published now.
+
+    One stat sweep per request; the page is re-rendered only when the bundle
+    changes, which is once per publish.
+    """
+    global BUNDLE_VIEW
+    stamp = bundle_stamp()
+    with BUNDLE_LOCK:
+        if BUNDLE_VIEW is None or BUNDLE_VIEW[0] != stamp:
+            lists = read_bootnodes()
+            BUNDLE_VIEW = (stamp, lists, render_page(lists))
+        return BUNDLE_VIEW[1], BUNDLE_VIEW[2]
 
 
 def load_guide():
@@ -366,11 +478,21 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = self._path()
         if path in ("", "/index.html"):
+            _, page = bundle_view()
             self.send_response(200)
             self.send_header("content-type", "text/html; charset=utf-8")
-            self.send_header("content-length", str(len(PAGE)))
+            self.send_header("content-length", str(len(page)))
             self.end_headers()
-            self.wfile.write(PAGE)
+            self.wfile.write(page)
+        elif path == "/bootnodes":
+            lists, _ = bundle_view()
+            if lists:
+                self._reply(200, lists)
+            else:
+                # Distinguish "no bundle published here" from "this chain has no
+                # peers": a joiner acting on an empty list would conclude the
+                # latter and stop looking.
+                self._reply(503, {"msg": "bootnode lists not published"})
         elif path in ("/eips", "/eips.html") and GUIDE is not None:
             self.send_response(200)
             self.send_header("content-type", "text/html; charset=utf-8")

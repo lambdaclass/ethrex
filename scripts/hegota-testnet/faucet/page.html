@@ -1,6 +1,7 @@
 <!-- Faucet landing page. Self-contained: no external fonts, scripts or images,
      so it works behind a strict CSP and on an air-gapped devnet.
-     Placeholders substituted at render time: {{CHAIN_ID}} {{AMOUNT}} {{RPC}} {{EXPLORER}} -->
+     Placeholders substituted at render time:
+     {{CHAIN_ID}} {{AMOUNT}} {{RPC}} {{EXPLORER}} {{BOOTNODES}} -->
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Hegotá testnet faucet</title>
@@ -54,6 +55,11 @@
   .note { margin-top: 1.5rem; padding: .9rem 1rem; border-radius: 10px;
           background: var(--accent-soft); color: var(--fg); font-size: 14px; }
   code { font: 13px var(--mono); background: var(--accent-soft); padding: .1rem .3rem; border-radius: 4px; }
+  /* Bootnode records are one long unbroken token each, so they wrap rather than
+     scroll: a joiner copies a line, and a horizontally scrolled line hides that
+     there are more of them. */
+  pre.list { margin: 0 0 1rem; padding: .8rem; border-radius: 8px; background: var(--accent-soft);
+             font: 12px/1.6 var(--mono); white-space: pre-wrap; word-break: break-all; }
   footer { margin-top: 2.5rem; color: var(--muted); font-size: 13px; }
 </style>
 
@@ -229,6 +235,7 @@ sig_hash  = keccak256(0x06 || rlp(envelope))      # empty-msg signature bytes el
       omit <code>--nat.extip</code> and you advertise whatever local address was found, which
       no external peer can dial back.
     </p>
+    {{BOOTNODES}}
     <div class="note">
       <strong>The consensus client must be FOCIL-aware.</strong> From the Hegotá fork on, this
       chain rejects <code>engine_newPayloadV5</code> and <code>engine_forkchoiceUpdatedV4</code>,

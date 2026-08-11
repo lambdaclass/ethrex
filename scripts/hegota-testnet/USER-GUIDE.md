@@ -22,6 +22,7 @@ gated; see "Become a validator" below.
 | Explorer | `https://dora.hegota-testnet.ethrex.xyz` |
 | Faucet | `https://faucet.hegota-testnet.ethrex.xyz` |
 | Artifact bundle | `https://artifacts.hegota-testnet.ethrex.xyz` |
+| Bootnodes | `https://faucet.hegota-testnet.ethrex.xyz/bootnodes` |
 | Deposit contract | `0x00000000219ab540356cBB839Cbe05303d7705Fa` |
 | Deposit gater | `0x00000000a11acc355c0de0000a11acc355c0de00` |
 
@@ -77,12 +78,26 @@ so a missing file fails at startup rather than at first use.
 
 ```
 mkdir hegota-testnet && cd hegota-testnet
-for f in genesis.json genesis.ssz config.yaml bootnodes.txt bootnodes-cl.txt \
+for f in genesis.json genesis.ssz config.yaml \
+         bootnodes.txt bootnodes-enr.txt bootnodes-cl.txt \
          deposit_contract.txt deposit_contract_block.txt \
          deposit_contract_block_hash.txt genesis_validators_root.txt; do
   curl -fsSLO "https://artifacts.hegota-testnet.ethrex.xyz/$f"
 done
 ```
+
+The three bootnode files are also served live as JSON, so peers can be checked or
+re-fetched without pulling the whole bundle:
+
+```
+curl -s https://faucet.hegota-testnet.ethrex.xyz/bootnodes
+{"el": ["enode://…"], "el_enr": ["enr:…"], "cl": ["enr:…"]}
+```
+
+`el` and `el_enr` name the same three execution nodes. Pass `el` to `--bootnodes`;
+`el_enr` is for a client that seeds discv5 from a record, and it is the stricter of the
+two, because an ENR is signed by the node over the address it advertises while an enode
+is just an address this deployment writes by hand.
 
 Execution layer:
 

@@ -176,8 +176,16 @@ per file.
 | `deposit_contract_block_hash.txt` | deposit contract deployment block hash |
 | `genesis_validators_root.txt` | beacon genesis validators root |
 | `bootnodes.txt` | three execution-layer `enode://` URLs |
+| `bootnodes-enr.txt` | the same three execution nodes as ENRs |
 | `bootnodes-cl.txt` | three beacon-node ENRs |
 | `MANIFEST.txt` | sha256 of every file above |
+
+The two execution files name the same nodes. `bootnodes.txt` is what `--bootnodes` takes;
+`bootnodes-enr.txt` is for a client that seeds discv5 from a record rather than an
+address, and it is the more trustworthy of the two, because an enode carries an address
+this deployment rewrites by hand while an ENR is signed by the node over the address it
+actually advertises. The lists are also served as JSON at `/bootnodes` on the faucet host,
+which is the one place they can be read without downloading the bundle.
 
 Fetch **all** of them into one directory and keep the filenames. A consensus client is
 pointed at that directory as a whole — Lighthouse takes it as `--testnet-dir` — and it
