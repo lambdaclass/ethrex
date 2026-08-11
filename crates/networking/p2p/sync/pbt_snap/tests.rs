@@ -7,7 +7,7 @@
 
 use super::*;
 use crate::rlpx::pbtsnap::{PbtLeaf, PbtLeafRange};
-use ethrex_common::types::{ChainConfig, GenesisAccount};
+use ethrex_common::types::{AccountUpdate, ChainConfig, GenesisAccount};
 use ethrex_common::{Address, U256};
 use ethrex_storage::{EngineType, Store};
 use std::collections::BTreeMap;
@@ -646,6 +646,74 @@ async fn a_bytecode_disagreeing_with_its_accounts_code_size_is_refused() {
                 if got == hash && expected == real_size + 1 && actual == real_size as usize
         ),
         "expected a size mismatch naming the code, got {error}",
+    );
+}
+
+/// The plan's open question 2, answered: a node that has installed a snapshot
+/// **cannot** silently rebuild from its old chain.
+///
+/// The hazard was that `install_binary_snapshot` parks the single-version trie
+/// at the pivot's state while `BINARY_TRIE_ROOTS` still records roots for every
+/// earlier block, so a later `advance_binary_trie_for_block` from one of those
+/// blocks would find its row, open a path-keyed trie at a root the disk no
+/// longer holds, and commit a root computed over the wrong base with nothing
+/// downstream able to tell.
+///
+/// It does not: `advance_binary_trie_for_block` re-reads the root group through
+/// its own layered db and refuses with `BinaryTrieRootNotHeld` when it does not
+/// hash to the recorded root. The guard is already in the store and its comment
+/// already names the snapshot-install case; what was missing was a test that a
+/// snapshot install actually trips it. The node stays *sound* — it just cannot
+/// recover in place, and the operator has to wipe the datadir.
+#[tokio::test]
+async fn replaying_the_old_chain_after_an_install_fails_loudly() {
+    let (source, pivot) = store_with_state(0x11).await;
+    let target = target_store(&pivot).await;
+    let old_head = target
+        .get_canonical_block_hash(1)
+        .await
+        .expect("canonical read")
+        .expect("the target has its own head");
+    let old_root = target
+        .get_binary_trie_root(old_head)
+        .expect("root read")
+        .expect("the target has its own state");
+
+    // Before the install, extending the old chain is ordinary business.
+    target
+        .advance_binary_trie_for_block(
+            H256::repeat_byte(0xa1),
+            old_head,
+            &[AccountUpdate::removed(Address::repeat_byte(0x99))],
+        )
+        .expect("the old chain extends while the trie still holds its root");
+
+    sync_pbt_state(&Honest { store: source }, &target, &pivot)
+        .await
+        .expect("sync");
+
+    // The row survives the install — it is durable and the nodes are not — so
+    // the lookup still succeeds and only the re-check stands between here and a
+    // root built on the wrong base.
+    assert_eq!(
+        target.get_binary_trie_root(old_head).expect("root read"),
+        Some(old_root),
+        "the pre-install root row is still recorded, which is what makes the guard necessary",
+    );
+    let error = target
+        .advance_binary_trie_for_block(
+            H256::repeat_byte(0xa2),
+            old_head,
+            &[AccountUpdate::removed(Address::repeat_byte(0x99))],
+        )
+        .expect_err("a snapshot install must make the old chain unextendable");
+    assert!(
+        matches!(
+            error,
+            StoreError::BinaryTrieRootNotHeld { parent_hash, parent_root }
+                if parent_hash == old_head && parent_root == old_root
+        ),
+        "expected an explicit refusal naming the unheld root, got {error}",
     );
 }
 
