@@ -16,7 +16,10 @@ pub mod range;
 
 pub use binary_trie::{BinaryTrie, Committed, LeafBatch, LeafChangelog};
 pub use db::{BinaryTrieDB, InMemoryBinaryTrieDB};
-pub use group::{GroupDepth, GroupRow, MAX_GROUP_DEPTH};
+pub use group::{
+    DEFAULT_GROUP_DEPTH, GroupDepth, GroupRow, MAX_GROUP_DEPTH, group_root, relative_bits,
+    starts_a_group,
+};
 pub use node::EMPTY_TRIE_ROOT;
 pub use path::BitPath;
 pub use prefix::KeyPrefix;
@@ -26,14 +29,49 @@ pub use range::{RangeProofError, RangeSlice, VerifiedRange, prove_range, verify_
 /// The hash a stored node commits to.
 ///
 /// A node's stored bytes are exactly its hashing preimage (see
-/// `BinaryTrie::commit`), so this re-derives the hash of whatever is at a
-/// path. A storage layer uses it to answer "does this database really hold the
-/// trie named by `root`" — read the node at [`BitPath::new`] and check it
-/// hashes to `root` — which is the binary analogue of re-hashing the MPT root
-/// node. Nodes are keyed by path, not by hash, so opening a trie at a root
-/// proves nothing on its own.
+/// `BinaryTrie::commit`), so this re-derives the hash of a node encoding held
+/// in hand — a proof step, a range slice.
+///
+/// A caller holding a **stored row** wants [`hash_stored_root`] instead. What
+/// the store keeps under a group root's key is a row, not a node, and hashing
+/// a row yields a value no root will ever equal.
 pub fn hash_stored_node(encoded: &[u8]) -> ethereum_types::H256 {
     node::blake3_hash(encoded)
+}
+
+/// The root hash a stored **root row** commits to.
+///
+/// A storage layer uses it to answer "does this database really hold the trie
+/// named by `root`" — read the row at [`BitPath::new`] and check its root
+/// member hashes to `root` — which is the binary analogue of re-hashing the MPT
+/// root node. Rows are keyed by path, not by hash, so opening a trie at a root
+/// proves nothing on its own.
+///
+/// One helper rather than a row-unwrapping at each call site, because the call
+/// sites in `crates/storage` read the node table directly and so do *not* fail
+/// to compile when the stored unit changes — a shared helper is what makes the
+/// change visible at all.
+///
+/// **The root group always has a member at the empty relative path.** A group
+/// can have no root member in general — a branch whose prefix jumps a band
+/// boundary puts both children in the next group and neither at its root — but
+/// the *root* group is exempt by construction: the trie's root node is at bit
+/// depth 0, which is the root group's own root, at every group depth. That is
+/// checked here rather than assumed.
+///
+/// # Errors
+///
+/// [`BinaryTrieError`](crate::error::BinaryTrieError)`::MalformedNode` if `row`
+/// is not a row this trie could have written, or holds no member at the empty
+/// relative path.
+pub fn hash_stored_root(row: &[u8]) -> Result<ethereum_types::H256, crate::error::BinaryTrieError> {
+    let row = GroupRow::decode(row)?;
+    let root = row
+        .get(&[])
+        .ok_or(crate::error::BinaryTrieError::MalformedNode(
+            "root row has no member at the root path",
+        ))?;
+    Ok(node::blake3_hash(root))
 }
 
 /// Longest accepted key, in bytes. Bounds branch-prefix bit counts

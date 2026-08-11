@@ -212,7 +212,8 @@ pub struct JournalEntry {
     /// Reverse diff for `STORAGE_FLATKEYVALUE`. Keys carry the nibble-encoded
     /// account-hash prefix as written on disk.
     pub storage_flat_diff: FlatDiff,
-    /// Reverse diff for `BINARY_TRIE_NODES`, keyed by `BitPath::to_db_key()`.
+    /// Reverse diff for `BINARY_TRIE_NODES`, keyed by `BitPath::to_db_key()` of
+    /// a group *root*, with whole group rows as values.
     ///
     /// A `None` pre-image means the commit created the node, so a rollback
     /// deletes the key — which is also how the binary trie spells a tombstone,

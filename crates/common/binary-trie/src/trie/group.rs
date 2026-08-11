@@ -25,6 +25,16 @@ use super::path::BitPath;
 /// `g <= 8`.
 pub const MAX_GROUP_DEPTH: usize = 8;
 
+/// Group depth a backend uses when nothing has told it otherwise.
+///
+/// **Not settled.** It is the current default, chosen on marginal cost
+/// and on max row size against the 16 KiB block, and `g = 7` is a live
+/// alternative — so nothing outside this constant may assume the value.
+/// Every geometry function takes the depth as an argument and every test
+/// that touches geometry sweeps 1..=[`MAX_GROUP_DEPTH`]; changing this
+/// line must not change a single assertion.
+pub const DEFAULT_GROUP_DEPTH: GroupDepth = GroupDepth(6);
+
 /// How many levels of tree one stored row spans.
 ///
 /// A validated newtype rather than a bare `usize` because every

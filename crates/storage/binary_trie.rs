@@ -55,26 +55,27 @@ impl BackendBinaryTrieDB {
 }
 
 impl BinaryTrieDB for BackendBinaryTrieDB {
-    fn get(&self, path: &BitPath) -> Result<Option<Vec<u8>>, BinaryTrieError> {
+    fn get_group(&self, group_root: &BitPath) -> Result<Option<Vec<u8>>, BinaryTrieError> {
         self.read_view
-            .get(BINARY_TRIE_NODES, &path.to_db_key())
+            .get(BINARY_TRIE_NODES, &group_root.to_db_key())
             .map_err(backend_error)
     }
 
-    /// Writes every entry in one transaction, so a commit either lands
+    /// Writes every row in one transaction, so a commit either lands
     /// whole or not at all.
     ///
-    /// An empty value is a tombstone, not a node: it deletes the key
-    /// rather than storing zero bytes at it, so a later [`get`] answers
-    /// `None`. Storing the empty value instead would make the path read
-    /// back as a node the trie never wrote, and decoding would fail.
+    /// An empty value is a tombstone, not a row: it deletes the key
+    /// rather than storing zero bytes at it, so a later [`get_group`]
+    /// answers `None`. Storing the empty value instead would make the
+    /// row read back as a group the trie never wrote, and decoding would
+    /// fail.
     ///
-    /// [`get`]: BinaryTrieDB::get
-    fn put_batch(&self, entries: Vec<(BitPath, Vec<u8>)>) -> Result<(), BinaryTrieError> {
+    /// [`get_group`]: BinaryTrieDB::get_group
+    fn put_groups(&self, rows: Vec<(BitPath, Vec<u8>)>) -> Result<(), BinaryTrieError> {
         let mut tx = self.db.begin_write().map_err(backend_error)?;
-        let mut writes = Vec::with_capacity(entries.len());
-        for (path, encoded) in entries {
-            let key = path.to_db_key();
+        let mut writes = Vec::with_capacity(rows.len());
+        for (group_root, encoded) in rows {
+            let key = group_root.to_db_key();
             if encoded.is_empty() {
                 tx.delete(BINARY_TRIE_NODES, &key).map_err(backend_error)?;
             } else {
@@ -87,9 +88,13 @@ impl BinaryTrieDB for BackendBinaryTrieDB {
     }
 }
 
-/// Binary-trie node writes as they are stored and flushed: `BINARY_TRIE_NODES`
-/// key/value pairs, with an **empty value meaning "delete this key"** per
-/// [`BinaryTrieDB::put_batch`]'s tombstone convention.
+/// Binary-trie **group row** writes as they are stored and flushed:
+/// `BINARY_TRIE_NODES` key/value pairs, with an **empty value meaning "delete
+/// this row"** per [`BinaryTrieDB::put_groups`]'s tombstone convention.
+///
+/// A key is the DB key of a group *root* and a value is a whole `GroupRow`, so
+/// one entry here is a group of up to `2^g - 1` nodes rather than one node. The
+/// name is Task 6's to change; what it means changed here.
 pub type BinaryTrieNodes = Vec<(Vec<u8>, Vec<u8>)>;
 
 /// Flat-mirror writes as they are staged and flushed: [`BINARY_FLATKEYVALUE`]
@@ -185,7 +190,7 @@ impl BackendBinaryFlatDB {
     /// **Two kinds of zero, and they mean opposite things.** An *empty* value is
     /// a tombstone: the key left the tree, so the row is deleted and a later
     /// [`get`] answers `None` — the same convention
-    /// [`BinaryTrieDB::put_batch`] uses for nodes. A value of *32 zero bytes* is
+    /// [`BinaryTrieDB::put_groups`] uses for rows. A value of *32 zero bytes* is
     /// an invariant violation and is refused: the state embedding resolves a
     /// zero-valued leaf to a removal ("zero means absent"), so the trie never
     /// holds one, and storing it here would put a row in the mirror for a key
@@ -423,7 +428,7 @@ pub struct LayeredBinaryTrieDB {
     /// which is the harmless direction; the other direction would read a row
     /// the generator has not written.
     coverage: BinaryFlatCoverage,
-    /// Where [`BinaryTrieDB::put_batch`] deposits this block's node writes.
+    /// Where [`BinaryTrieDB::put_groups`] deposits this block's row writes.
     staged: StagedBinaryNodes,
 }
 
@@ -469,8 +474,8 @@ impl BinaryTrieDB for LayeredBinaryTrieDB {
     /// on-disk trie still holds the node this block removed. The overlay's
     /// `Some(None)` means the same thing one level down: the node did not exist
     /// at the pivot, so disk must not be consulted for it either.
-    fn get(&self, path: &BitPath) -> Result<Option<Vec<u8>>, BinaryTrieError> {
-        let key = path.to_db_key();
+    fn get_group(&self, group_root: &BitPath) -> Result<Option<Vec<u8>>, BinaryTrieError> {
+        let key = group_root.to_db_key();
         if let Some(value) = self.cache.binary_get(self.binary_root, &key) {
             return Ok(value);
         }
@@ -482,21 +487,28 @@ impl BinaryTrieDB for LayeredBinaryTrieDB {
         {
             return Ok(value);
         }
-        self.db.get(path)
+        self.db.get_group(group_root)
     }
 
-    /// Stages every entry, writing nothing. Tombstones are staged verbatim as
+    /// Stages every row, writing nothing. Tombstones are staged verbatim as
     /// empty values so the layer represents "this key is deleted" faithfully —
     /// both for a reader walking the chain and for the eventual disk flush,
     /// which turns an empty value back into a `delete`.
-    fn put_batch(&self, entries: Vec<(BitPath, Vec<u8>)>) -> Result<(), BinaryTrieError> {
+    ///
+    /// **Reads do not see what this staged.** A handle stages a whole commit
+    /// and is then dropped, so nothing reads back through it; a caller that
+    /// committed twice through one handle would have the second commit read a
+    /// pre-first-commit picture of any row it had to rebuild from the store.
+    /// `BinaryTrie::commit` supplies rows from memory instead of re-reading
+    /// them, which is what keeps that from mattering.
+    fn put_groups(&self, rows: Vec<(BitPath, Vec<u8>)>) -> Result<(), BinaryTrieError> {
         let mut staged = self
             .staged
             .lock()
             .map_err(|_| BinaryTrieError::Backend("binary staging buffer poisoned".to_string()))?;
-        staged.reserve(entries.len());
-        for (path, encoded) in entries {
-            staged.push((path.to_db_key(), encoded));
+        staged.reserve(rows.len());
+        for (group_root, encoded) in rows {
+            staged.push((group_root.to_db_key(), encoded));
         }
         Ok(())
     }
@@ -614,10 +626,10 @@ mod tests {
         let left = BitPath::from_bits(&[0, 1, 0]);
         let deep = BitPath::from_bits(&[1; 17]);
 
-        assert_eq!(handle(&db).get(&root_path).unwrap(), None);
+        assert_eq!(handle(&db).get_group(&root_path).unwrap(), None);
 
         handle(&db)
-            .put_batch(vec![
+            .put_groups(vec![
                 (root_path.clone(), vec![0x01, 0x02]),
                 (left.clone(), vec![0x03]),
                 (deep.clone(), vec![0x04, 0x05, 0x06]),
@@ -625,16 +637,25 @@ mod tests {
             .unwrap();
 
         let reader = handle(&db);
-        assert_eq!(reader.get(&root_path).unwrap(), Some(vec![0x01, 0x02]));
-        assert_eq!(reader.get(&left).unwrap(), Some(vec![0x03]));
-        assert_eq!(reader.get(&deep).unwrap(), Some(vec![0x04, 0x05, 0x06]));
-        assert_eq!(reader.get(&BitPath::from_bits(&[1, 1, 1])).unwrap(), None);
+        assert_eq!(
+            reader.get_group(&root_path).unwrap(),
+            Some(vec![0x01, 0x02])
+        );
+        assert_eq!(reader.get_group(&left).unwrap(), Some(vec![0x03]));
+        assert_eq!(
+            reader.get_group(&deep).unwrap(),
+            Some(vec![0x04, 0x05, 0x06])
+        );
+        assert_eq!(
+            reader.get_group(&BitPath::from_bits(&[1, 1, 1])).unwrap(),
+            None
+        );
 
         // Single-version storage: writing a path again overwrites it.
         handle(&db)
-            .put_batch(vec![(left.clone(), vec![0x07])])
+            .put_groups(vec![(left.clone(), vec![0x07])])
             .unwrap();
-        assert_eq!(handle(&db).get(&left).unwrap(), Some(vec![0x07]));
+        assert_eq!(handle(&db).get_group(&left).unwrap(), Some(vec![0x07]));
     }
 
     #[test]
@@ -643,20 +664,28 @@ mod tests {
         let path = BitPath::from_bits(&[1, 0, 1]);
 
         handle(&db)
-            .put_batch(vec![(path.clone(), vec![0xaa, 0xbb])])
+            .put_groups(vec![(path.clone(), vec![0xaa, 0xbb])])
             .unwrap();
-        assert_eq!(handle(&db).get(&path).unwrap(), Some(vec![0xaa, 0xbb]));
+        assert_eq!(
+            handle(&db).get_group(&path).unwrap(),
+            Some(vec![0xaa, 0xbb])
+        );
 
-        handle(&db).put_batch(vec![(path.clone(), vec![])]).unwrap();
-        // `None`, not `Some(vec![])`: the node left the tree, and a
-        // zero-byte value would decode as a malformed node.
-        assert_eq!(handle(&db).get(&path).unwrap(), None);
+        handle(&db)
+            .put_groups(vec![(path.clone(), vec![])])
+            .unwrap();
+        // `None`, not `Some(vec![])`: the group lost its last member, and
+        // a zero-byte value would decode as a malformed row.
+        assert_eq!(handle(&db).get_group(&path).unwrap(), None);
 
         // Tombstoning a path that was never written is not an error.
         handle(&db)
-            .put_batch(vec![(BitPath::from_bits(&[0]), vec![])])
+            .put_groups(vec![(BitPath::from_bits(&[0]), vec![])])
             .unwrap();
-        assert_eq!(handle(&db).get(&BitPath::from_bits(&[0])).unwrap(), None);
+        assert_eq!(
+            handle(&db).get_group(&BitPath::from_bits(&[0])).unwrap(),
+            None
+        );
     }
 
     #[test]
@@ -673,7 +702,7 @@ mod tests {
         let zero = BitPath::from_bits(&[0]);
 
         handle(&db)
-            .put_batch(vec![
+            .put_groups(vec![
                 (short.clone(), vec![0x01]),
                 (long.clone(), vec![0x02]),
                 (longer.clone(), vec![0x03]),
@@ -683,18 +712,20 @@ mod tests {
             .unwrap();
 
         let reader = handle(&db);
-        assert_eq!(reader.get(&short).unwrap(), Some(vec![0x01]));
-        assert_eq!(reader.get(&long).unwrap(), Some(vec![0x02]));
-        assert_eq!(reader.get(&longer).unwrap(), Some(vec![0x03]));
-        assert_eq!(reader.get(&root).unwrap(), Some(vec![0x04]));
-        assert_eq!(reader.get(&zero).unwrap(), Some(vec![0x05]));
+        assert_eq!(reader.get_group(&short).unwrap(), Some(vec![0x01]));
+        assert_eq!(reader.get_group(&long).unwrap(), Some(vec![0x02]));
+        assert_eq!(reader.get_group(&longer).unwrap(), Some(vec![0x03]));
+        assert_eq!(reader.get_group(&root).unwrap(), Some(vec![0x04]));
+        assert_eq!(reader.get_group(&zero).unwrap(), Some(vec![0x05]));
 
         // And a tombstone at one of them leaves its neighbours alone.
-        handle(&db).put_batch(vec![(long.clone(), vec![])]).unwrap();
+        handle(&db)
+            .put_groups(vec![(long.clone(), vec![])])
+            .unwrap();
         let reader = handle(&db);
-        assert_eq!(reader.get(&long).unwrap(), None);
-        assert_eq!(reader.get(&short).unwrap(), Some(vec![0x01]));
-        assert_eq!(reader.get(&longer).unwrap(), Some(vec![0x03]));
+        assert_eq!(reader.get_group(&long).unwrap(), None);
+        assert_eq!(reader.get_group(&short).unwrap(), Some(vec![0x01]));
+        assert_eq!(reader.get_group(&longer).unwrap(), Some(vec![0x03]));
     }
 
     #[test]

@@ -31,7 +31,7 @@ use crate::{
 
 use ethrex_binary_trie::trie::{
     BinaryTrie, BinaryTrieDB, BitPath, EMPTY_TRIE_ROOT as BINARY_EMPTY_TRIE_ROOT, LeafChangelog,
-    hash_stored_node,
+    hash_stored_root,
 };
 use ethrex_common::{
     Address, H256, U256,
@@ -520,8 +520,13 @@ pub struct BinaryTrieAdvance {
     /// parent's header carries an MPT root, and the parent layer is usually
     /// already on disk).
     pub parent_root: H256,
-    /// `(BINARY_TRIE_NODES key, encoded node)` pairs; an empty value is a
+    /// `(BINARY_TRIE_NODES key, encoded group row)` pairs; an empty value is a
     /// tombstone, per `BinaryTrieDB`'s convention.
+    ///
+    /// A key addresses a group *root* and a value is a whole row, so one entry
+    /// carries every node of one group. A removal that leaves the group with
+    /// members arrives here as an ordinary rewrite holding the survivors; only
+    /// a group that lost its last member arrives as an empty value.
     pub nodes: BinaryTrieNodes,
     /// The same block's writes to the flat leaf mirror, derived from the
     /// [`LeafChangelog`] the trie's own commit emitted: one
@@ -3345,13 +3350,20 @@ impl Store {
             return Ok(true);
         }
         let db = self.layered_binary_trie_db(root, root, LayeredBinaryTrieDB::staging_buffer())?;
-        let Some(encoded) = db
-            .get(&BitPath::new())
-            .map_err(|e| StoreError::Custom(format!("binary root node read failed: {e}")))?
+        let Some(row) = db
+            .get_group(&BitPath::new())
+            .map_err(|e| StoreError::Custom(format!("binary root row read failed: {e}")))?
         else {
             return Ok(false);
         };
-        Ok(hash_stored_node(&encoded) == root)
+        // A row, not a node: what the table holds at the root path is the root
+        // *group*, and the root node is its member at the empty relative path.
+        // Hashing the row bytes would compare a container to a root and never
+        // match — silently, because this reads the table directly and nothing
+        // about the stored unit is in the type.
+        Ok(hash_stored_root(&row)
+            .map_err(|e| StoreError::Custom(format!("binary root row is malformed: {e}")))?
+            == root)
     }
 
     /// Up to `max_leaves` of the binary trie's leaves at `binary_root`, in
@@ -3646,9 +3658,9 @@ impl Store {
         // spuriously refusing a live import.
         if parent_root != BINARY_EMPTY_TRIE_ROOT {
             let holds = db
-                .get(&BitPath::new())
-                .map_err(|e| StoreError::Custom(format!("binary root node read failed: {e}")))?
-                .is_some_and(|encoded| hash_stored_node(&encoded) == parent_root);
+                .get_group(&BitPath::new())
+                .map_err(|e| StoreError::Custom(format!("binary root row read failed: {e}")))?
+                .is_some_and(|row| hash_stored_root(&row).is_ok_and(|hash| hash == parent_root));
             if !holds {
                 return Err(StoreError::BinaryTrieRootNotHeld {
                     parent_hash,
@@ -5514,9 +5526,31 @@ impl Store {
     #[cfg(any(test, feature = "testing"))]
     pub fn binary_trie_node_count_for_test(&self) -> Result<usize, StoreError> {
         use crate::api::tables::BINARY_TRIE_NODES;
+        use ethrex_binary_trie::trie::GroupRow;
         let read = self.backend.begin_read()?;
-        let count = read.prefix_iterator(BINARY_TRIE_NODES, &[])?.count();
+        // Rows decoded and *members* counted: a row holds a whole group, so
+        // counting rows would answer a different question under the same name
+        // — and would still read zero on an untouched chain, which is the one
+        // case this is used for and the one where the bug would not show.
+        let mut count = 0usize;
+        for entry in read.prefix_iterator(BINARY_TRIE_NODES, &[])? {
+            let (_, row) = entry?;
+            count += GroupRow::decode(&row)
+                .map_err(|e| StoreError::Custom(format!("binary trie row is malformed: {e}")))?
+                .members()
+                .len();
+        }
         Ok(count)
+    }
+
+    /// Number of *rows* in the binary-trie node table. For testing only —
+    /// the companion to [`Store::binary_trie_node_count_for_test`], which
+    /// counts the nodes inside them. The two agree only at group depth 1.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn binary_trie_row_count_for_test(&self) -> Result<usize, StoreError> {
+        use crate::api::tables::BINARY_TRIE_NODES;
+        let read = self.backend.begin_read()?;
+        Ok(read.prefix_iterator(BINARY_TRIE_NODES, &[])?.count())
     }
 
     /// Every `(tree key, leaf value)` row in the binary flat mirror. For
@@ -5551,10 +5585,16 @@ impl Store {
         Ok(count)
     }
 
-    /// Every `(key, value)` pair in the binary-trie node table. For testing
-    /// only — the counterpart of [`Store::binary_trie_node_count_for_test`] for
-    /// tests that must compare *which* nodes reached disk, not just how many
-    /// (the reorg-discard assertion).
+    /// Every `(row key, encoded group row)` pair in the binary-trie node table.
+    /// For testing only — the counterpart of
+    /// [`Store::binary_trie_node_count_for_test`] for tests that must compare
+    /// *which* state reached disk, not just how much (the reorg-discard
+    /// assertion).
+    ///
+    /// **Rows, not nodes.** A caller comparing two stores must decode these and
+    /// compare members, or it is comparing containers: `len()` here is a row
+    /// count, while the node count beside it is not, and the two have been
+    /// compared against each other.
     #[cfg(any(test, feature = "testing"))]
     pub fn binary_trie_nodes_for_test(&self) -> Result<BinaryTrieNodes, StoreError> {
         use crate::api::tables::BINARY_TRIE_NODES;
@@ -6385,8 +6425,15 @@ fn commit_to_disk(
             };
 
             let new_value = if value.is_empty() {
-                // Tombstone: the node left the tree. Storing zero bytes would
-                // make the path read back as a node the trie never wrote.
+                // Tombstone: the group lost its last member. Storing zero bytes
+                // would make the key read back as a row the trie never wrote.
+                //
+                // **Not "a node left the tree".** A removal usually retires one
+                // member of a group that still holds others, and the trie sends
+                // that as a rewrite carrying the survivors — so this arm firing
+                // for a partially emptied group would delete live nodes. The
+                // distinction is made in `BinaryTrie::build_rows`; what this
+                // loop must not do is re-interpret it.
                 result = write_tx.delete(BINARY_TRIE_NODES, key);
                 None
             } else {
@@ -6794,8 +6841,7 @@ fn binary_flat_generator_with_batch(
         // A fresh read view per pass, so state written while the sweep was
         // paused is visible after the Continue.
         let read_tx = backend.begin_read()?;
-        let Some(encoded_root) = read_tx.get(BINARY_TRIE_NODES, &BitPath::new().to_db_key())?
-        else {
+        let Some(root_row) = read_tx.get(BINARY_TRIE_NODES, &BitPath::new().to_db_key())? else {
             // No binary trie on disk: an unscheduled chain, or a scheduled one
             // whose genesis has not landed yet. Nothing to mirror, and marking
             // an empty keyspace complete here would be a claim about a trie
@@ -6803,7 +6849,13 @@ fn binary_flat_generator_with_batch(
             info!("No binary trie on disk; binary flat generation has nothing to do.");
             return Ok(());
         };
-        let root = hash_stored_node(&encoded_root);
+        // The root *group*'s row, from which the root node is the member at the
+        // empty relative path. This read goes straight at the table rather than
+        // through a `BinaryTrieDB`, so it did not fail to compile when the
+        // stored unit became a row — `hash_stored_root` is what makes the
+        // difference visible.
+        let root = hash_stored_root(&root_row)
+            .map_err(|e| StoreError::Custom(format!("binary root row is malformed: {e}")))?;
 
         let mut frontier = read_tx
             .get(MISC_VALUES, BINARY_LAST_WRITTEN_KEY)?
@@ -10140,8 +10192,13 @@ mod binary_trie_block_tests {
         (store, dir)
     }
 
-    /// How many binary-trie nodes the database currently holds.
-    fn nodes_on_disk(backend: &Arc<dyn StorageBackend>) -> usize {
+    /// How many binary-trie **rows** the database currently holds.
+    ///
+    /// Rows, not nodes: an entry in this table is a whole group. The
+    /// counter it is compared against counts rows too, so the ratio
+    /// below is rows-to-rows and means what it says — but the two have
+    /// to move together, which is why both names changed at once.
+    fn rows_on_disk(backend: &Arc<dyn StorageBackend>) -> usize {
         backend
             .begin_read()
             .unwrap()
@@ -10154,23 +10211,27 @@ mod binary_trie_block_tests {
     /// through it, so a test can state how much of the trie a block
     /// actually rewrote rather than assuming the dirty tracking works.
     ///
-    /// Counted per entry, not per batch: what matters is how many nodes
-    /// were touched, not how many transactions carried them. Deletes
+    /// Counted per entry, not per batch: what matters is how much of the
+    /// table was touched, not how many transactions carried it. Deletes
     /// count too — a tombstone is a write.
+    ///
+    /// An entry is a **row**, so this is a row count and no longer a node
+    /// count; the two differ by the group occupancy. Every comparison it
+    /// feeds is against another row count.
     #[derive(Debug)]
     struct CountingBackend {
         inner: Arc<dyn StorageBackend>,
-        node_writes: Arc<AtomicUsize>,
+        row_writes: Arc<AtomicUsize>,
     }
 
     /// A fresh counting backend and the counter it reports into.
     fn counting_backend() -> (Arc<dyn StorageBackend>, Arc<AtomicUsize>) {
-        let node_writes = Arc::new(AtomicUsize::new(0));
+        let row_writes = Arc::new(AtomicUsize::new(0));
         let backend: Arc<dyn StorageBackend> = Arc::new(CountingBackend {
             inner: Arc::new(InMemoryBackend::open().unwrap()),
-            node_writes: node_writes.clone(),
+            row_writes: row_writes.clone(),
         });
-        (backend, node_writes)
+        (backend, row_writes)
     }
 
     impl StorageBackend for CountingBackend {
@@ -10185,7 +10246,7 @@ mod binary_trie_block_tests {
         fn begin_write(&self) -> Result<Box<dyn StorageWriteBatch + 'static>, StoreError> {
             Ok(Box::new(CountingWriteBatch {
                 inner: self.inner.begin_write()?,
-                node_writes: self.node_writes.clone(),
+                row_writes: self.row_writes.clone(),
             }))
         }
 
@@ -10207,7 +10268,7 @@ mod binary_trie_block_tests {
 
     struct CountingWriteBatch {
         inner: Box<dyn StorageWriteBatch>,
-        node_writes: Arc<AtomicUsize>,
+        row_writes: Arc<AtomicUsize>,
     }
 
     impl StorageWriteBatch for CountingWriteBatch {
@@ -10217,14 +10278,14 @@ mod binary_trie_block_tests {
             batch: Vec<(Vec<u8>, Vec<u8>)>,
         ) -> Result<(), StoreError> {
             if table == BINARY_TRIE_NODES {
-                self.node_writes.fetch_add(batch.len(), Ordering::Relaxed);
+                self.row_writes.fetch_add(batch.len(), Ordering::Relaxed);
             }
             self.inner.put_batch(table, batch)
         }
 
         fn delete(&mut self, table: &'static str, key: &[u8]) -> Result<(), StoreError> {
             if table == BINARY_TRIE_NODES {
-                self.node_writes.fetch_add(1, Ordering::Relaxed);
+                self.row_writes.fetch_add(1, Ordering::Relaxed);
             }
             self.inner.delete(table, key)
         }
@@ -10336,8 +10397,8 @@ mod binary_trie_block_tests {
     }
 
     #[tokio::test]
-    async fn a_block_writes_far_fewer_nodes_than_the_trie_holds() {
-        let (backend, node_writes) = counting_backend();
+    async fn a_block_writes_far_fewer_rows_than_the_trie_holds() {
+        let (backend, row_writes) = counting_backend();
         let (store, _dir) = store_over(backend.clone());
 
         let accounts: Vec<Address> = (1..=200u64).map(Address::from_low_u64_be).collect();
@@ -10351,8 +10412,8 @@ mod binary_trie_block_tests {
             .await
             .unwrap();
 
-        let trie_nodes = nodes_on_disk(&backend);
-        node_writes.store(0, Ordering::Relaxed);
+        let trie_rows = rows_on_disk(&backend);
+        row_writes.store(0, Ordering::Relaxed);
 
         let block_root = store
             .apply_account_updates_to_binary_trie(
@@ -10372,16 +10433,16 @@ mod binary_trie_block_tests {
         // A block touching two of two hundred accounts must rewrite the
         // two root-to-leaf paths and nothing else, so an order of
         // magnitude below the trie's size is a generous ceiling.
-        let written = node_writes.load(Ordering::Relaxed);
+        let written = row_writes.load(Ordering::Relaxed);
         assert!(
-            written * 10 < trie_nodes,
-            "block rewrote {written} of {trie_nodes} nodes"
+            written * 10 < trie_rows,
+            "block rewrote {written} of {trie_rows} rows"
         );
     }
 
     #[tokio::test]
     async fn an_empty_update_list_is_a_no_op() {
-        let (backend, node_writes) = counting_backend();
+        let (backend, row_writes) = counting_backend();
         let (store, _dir) = store_over(backend.clone());
         let genesis_root = store
             .setup_genesis_binary_trie(alloc(vec![
@@ -10391,7 +10452,7 @@ mod binary_trie_block_tests {
             .await
             .unwrap();
 
-        node_writes.store(0, Ordering::Relaxed);
+        row_writes.store(0, Ordering::Relaxed);
         assert_eq!(
             store
                 .apply_account_updates_to_binary_trie(genesis_root, &[])
@@ -10399,7 +10460,7 @@ mod binary_trie_block_tests {
                 .unwrap(),
             genesis_root
         );
-        assert_eq!(node_writes.load(Ordering::Relaxed), 0);
+        assert_eq!(row_writes.load(Ordering::Relaxed), 0);
 
         // And over an empty parent, where there is not even a root node
         // to leave alone.
@@ -10410,7 +10471,7 @@ mod binary_trie_block_tests {
                 .unwrap(),
             EMPTY_TRIE_ROOT
         );
-        assert_eq!(node_writes.load(Ordering::Relaxed), 0);
+        assert_eq!(row_writes.load(Ordering::Relaxed), 0);
     }
 
     #[tokio::test]

@@ -64,6 +64,7 @@ use crate::error::BinaryTrieError;
 use super::MAX_KEY_LENGTH;
 use super::bits::{bits_start_with, bytes_to_bits};
 use super::db::{BinaryTrieDB, InMemoryBinaryTrieDB};
+use super::group::{GroupDepth, GroupRow, group_root, group_start, relative_bits};
 use super::node::{
     EMPTY_TRIE_ROOT, StoredNode, blake3_hash, branch_hash, decode, encode_branch, encode_leaf,
     leaf_hash,
@@ -482,39 +483,116 @@ impl BinaryTrie {
     /// Load the node `node_ref` points at, caching it in place so the
     /// next traversal finds it loaded.
     ///
-    /// `path` must be the bit path of `node_ref` itself: that is the
-    /// key it was written under.
+    /// `path` must be the bit path of `node_ref` itself: that is what
+    /// selects both the row it was written into and its place inside
+    /// that row.
     ///
-    /// The node arrives clean, with its hash already known: the
-    /// reference being replaced *was* that hash, and the bytes it was
-    /// decoded from are the ones on disk. So a read costs no hashing
-    /// and leaves nothing for the next commit to write.
+    /// **One backend read per *group*, not per node.** The row holding
+    /// the wanted node holds up to `2^g - 1` of the nodes around it, and
+    /// every one of them that sits below the wanted node is installed in
+    /// the same pass — so a descent that crosses `n` group boundaries
+    /// issues `n` reads rather than one per level. Children whose paths
+    /// fall in the *next* group stay [`NodeRef::Stored`], because their
+    /// bytes are in a different row.
+    ///
+    /// Every node installed arrives clean, with its hash already known:
+    /// each is reached through the reference that named it — the parent's
+    /// child hash, or for the entry node the reference being replaced —
+    /// and the bytes it was decoded from are the ones on disk. So a read
+    /// costs no hashing and leaves nothing for the next commit to write.
+    ///
+    /// A member the row does not hold is left `Stored` rather than
+    /// rejected here: that keeps loading exactly as lazy as it was, so a
+    /// tree with a hole in it fails when a descent reaches the hole and
+    /// not when it reads a row near one. The rejection still happens —
+    /// one level down, when `resolve` is called on that reference and
+    /// finds no member at its relative path.
     fn resolve<'a>(
         db: &dyn BinaryTrieDB,
         node_ref: &'a mut NodeRef,
         path: &BitPath,
     ) -> Result<&'a mut Node, BinaryTrieError> {
         if let NodeRef::Stored(hash) = *node_ref {
-            let encoded = db.get(path)?.ok_or_else(|| {
+            let group_depth = db.group_depth();
+            let row_root = group_root(path, group_depth);
+            let stored = db.get_group(&row_root)?.ok_or_else(|| {
+                BinaryTrieError::Backend(format!("no group row stored for the path of {hash:#x}"))
+            })?;
+            let row = GroupRow::decode(&stored)?;
+            let relative = relative_bits(path, group_depth);
+            let encoded = row.get(relative).ok_or_else(|| {
                 BinaryTrieError::Backend(format!("no node stored at the path of {hash:#x}"))
             })?;
-            let node = match decode(&encoded)? {
-                StoredNode::Leaf { key, value } => Node::Leaf { key, value },
-                StoredNode::Branch {
-                    prefix,
-                    left,
-                    right,
-                } => Node::Branch {
-                    prefix,
-                    left: NodeRef::Stored(left),
-                    right: NodeRef::Stored(right),
-                },
-            };
-            *node_ref = NodeRef::resolved(node, hash);
+            *node_ref = Self::load_member(encoded, hash, relative, &row, group_depth)?;
         }
         match node_ref {
             NodeRef::Loaded { node, .. } => Ok(node),
             NodeRef::Stored(_) => unreachable!("just replaced with a loaded node"),
+        }
+    }
+
+    /// Decode the member at `relative` and, recursively, every member of
+    /// the same row below it.
+    ///
+    /// `hash` is what the reference to this node said it was, so the
+    /// node comes back clean and already hashed. The recursion is
+    /// bounded by the group depth, at most [`MAX_GROUP_DEPTH`] levels.
+    ///
+    /// [`MAX_GROUP_DEPTH`]: super::group::MAX_GROUP_DEPTH
+    fn load_member(
+        encoded: &[u8],
+        hash: H256,
+        relative: &[u8],
+        row: &GroupRow,
+        group_depth: GroupDepth,
+    ) -> Result<NodeRef, BinaryTrieError> {
+        let node = match decode(encoded)? {
+            StoredNode::Leaf { key, value } => Node::Leaf { key, value },
+            StoredNode::Branch {
+                prefix,
+                left,
+                right,
+            } => {
+                // A child's relative path inside the row is this node's,
+                // plus the bits the branch prefix consumes, plus the
+                // branching bit — the same arithmetic `BitPath::child`
+                // does one level up, in absolute terms.
+                let mut child = Vec::with_capacity(relative.len() + prefix.len() + 1);
+                child.extend_from_slice(relative);
+                child.extend_from_slice(&prefix);
+                child.push(0);
+                let left = Self::load_child(&child, left, row, group_depth)?;
+                child.pop();
+                child.push(1);
+                let right = Self::load_child(&child, right, row, group_depth)?;
+                Node::Branch {
+                    prefix,
+                    left,
+                    right,
+                }
+            }
+        };
+        Ok(NodeRef::resolved(node, hash))
+    }
+
+    /// The reference to install for a child at relative path `child`:
+    /// the loaded node if this row holds it, and otherwise the stored
+    /// hash, to be resolved when and if a descent reaches it.
+    fn load_child(
+        child: &[u8],
+        hash: H256,
+        row: &GroupRow,
+        group_depth: GroupDepth,
+    ) -> Result<NodeRef, BinaryTrieError> {
+        // At or past the group depth the child is the next group's
+        // business, and this row cannot hold it — `GroupRow::push`
+        // refuses to put one there.
+        if child.len() >= group_depth.get() {
+            return Ok(NodeRef::Stored(hash));
+        }
+        match row.get(child) {
+            None => Ok(NodeRef::Stored(hash)),
+            Some(encoded) => Self::load_member(encoded, hash, child, row, group_depth),
         }
     }
 
@@ -1507,11 +1585,17 @@ impl BinaryTrie {
     /// Committing an unchanged trie writes nothing at all, not even an
     /// empty batch.
     ///
-    /// Removals ride along in the same batch as empty-valued entries —
-    /// a tombstone the backend turns into a delete, following the MPT's
+    /// **What lands in the store is a row, not a node.** Every node the
+    /// commit touches is folded into the row of its group, together with
+    /// every other member of that row, and the row is written whole. See
+    /// [`BinaryTrie::build_rows`] for how the members are gathered and
+    /// why a removal is usually a rewrite rather than a delete.
+    ///
+    /// Removals ride along in the same batch as empty-valued rows — a
+    /// tombstone the backend turns into a delete, following the MPT's
     /// `pending_removal` rather than adding a delete method to
-    /// [`BinaryTrieDB`]. An empty value cannot be confused for a node:
-    /// `decode` rejects empty input outright.
+    /// [`BinaryTrieDB`]. An empty value cannot be confused for a row:
+    /// `GroupRow::decode` rejects empty input outright.
     ///
     /// A path that is being written is never tombstoned. Delete a key
     /// and put it back before committing and the tree ends up the shape
@@ -1534,10 +1618,19 @@ impl BinaryTrie {
     /// write, so the nodes *and* the leaf changes are offered again next
     /// time.
     pub fn commit(&mut self) -> Result<Committed, BinaryTrieError> {
+        let group_depth = self.db.group_depth();
         let mut entries = Vec::new();
+        let mut incomplete = BTreeSet::new();
         let root = match &self.root {
             None => EMPTY_TRIE_ROOT,
-            Some(node_ref) => Self::collect(node_ref, BitPath::new(), &mut entries),
+            Some(node_ref) => Self::collect(
+                node_ref,
+                BitPath::new(),
+                group_depth,
+                false,
+                &mut entries,
+                &mut incomplete,
+            ),
         };
         let written: HashSet<&BitPath> = entries.iter().map(|(path, _)| path).collect();
         let tombstones: Vec<BitPath> = self
@@ -1547,10 +1640,9 @@ impl BinaryTrie {
             .cloned()
             .collect();
         drop(written);
-        entries.extend(tombstones.into_iter().map(|path| (path, Vec::new())));
-        if entries.is_empty() {
+        if entries.is_empty() && tombstones.is_empty() {
             // Nothing was written, so nothing was filtered: every
-            // pending removal would have made it into `entries`, and
+            // pending removal would have made it into `tombstones`, and
             // there were none. The changelog is drained all the same
             // rather than asserted empty — every leaf change dirties a
             // node, so there is nothing in it, and taking it is cheaper
@@ -1560,7 +1652,14 @@ impl BinaryTrie {
                 leaves: self.take_leaf_changelog(),
             });
         }
-        self.db.put_batch(entries)?;
+        let rows = Self::build_rows(
+            self.db.as_ref(),
+            group_depth,
+            entries,
+            tombstones,
+            &incomplete,
+        )?;
+        self.db.put_groups(rows)?;
         self.pending_removal.clear();
         if let Some(node_ref) = &mut self.root {
             Self::mark_clean(node_ref);
@@ -1582,13 +1681,34 @@ impl BinaryTrie {
             .collect()
     }
 
-    /// Hash of the subtree at `path`, pushing every dirty node in it
-    /// onto `entries` as (path, encoded bytes).
-    fn collect(node_ref: &NodeRef, path: BitPath, entries: &mut Vec<(BitPath, Vec<u8>)>) -> H256 {
+    /// Hash of the subtree at `path`, pushing onto `entries`, as (path,
+    /// encoded bytes), every node in it that the next write must carry.
+    ///
+    /// That is every **dirty** node, as it always was, and additionally
+    /// every **clean** node sharing a row with one. A row is written
+    /// whole, so a clean member of a touched row has to be in hand;
+    /// `in_touched_row` says whether this node shares a row with a
+    /// parent that is already being written, and it is what stops the
+    /// walk from degenerating into a full traversal — it goes false
+    /// again at every group boundary, so a clean subtree hanging below
+    /// one is pruned exactly as before.
+    ///
+    /// `incomplete` collects the rows this walk could *not* fully supply
+    /// from memory, so [`BinaryTrie::build_rows`] knows the few it has to
+    /// read back. See [`BinaryTrie::collect_child`] for what puts a row
+    /// in there.
+    fn collect(
+        node_ref: &NodeRef,
+        path: BitPath,
+        group_depth: GroupDepth,
+        in_touched_row: bool,
+        entries: &mut Vec<(BitPath, Vec<u8>)>,
+        incomplete: &mut BTreeSet<BitPath>,
+    ) -> H256 {
         let (node, hash) = match node_ref {
             NodeRef::Stored(hash) => return *hash,
             NodeRef::Loaded { node, hash, dirty } => {
-                if !*dirty {
+                if !*dirty && !in_touched_row {
                     // The database already has this node, and — by the
                     // invariant [`BinaryTrie::commit`] documents —
                     // everything below it as well.
@@ -1606,8 +1726,23 @@ impl BinaryTrie {
                 left,
                 right,
             } => {
-                let left_hash = Self::collect(left, path.child(prefix, 0), entries);
-                let right_hash = Self::collect(right, path.child(prefix, 1), entries);
+                let row_start = group_start(path.len(), group_depth);
+                let left_hash = Self::collect_child(
+                    left,
+                    path.child(prefix, 0),
+                    row_start,
+                    group_depth,
+                    entries,
+                    incomplete,
+                );
+                let right_hash = Self::collect_child(
+                    right,
+                    path.child(prefix, 1),
+                    row_start,
+                    group_depth,
+                    entries,
+                    incomplete,
+                );
                 encode_branch(prefix, left_hash, right_hash)
             }
         };
@@ -1616,7 +1751,152 @@ impl BinaryTrie {
         // A dirty node may still hold a cached hash — `root()` fills
         // caches without cleaning anything — and it agrees with what
         // was just computed, since both describe the current subtree.
+        //
+        // A *clean* node carried along for its row already holds the
+        // hash `resolve` gave it, and `get_or_init` keeps that one; the
+        // re-encoding above reproduces the bytes it was decoded from,
+        // since a preimage is a pure function of what `decode` returned.
         *hash.get_or_init(|| computed)
+    }
+
+    /// [`BinaryTrie::collect`] one level down, deciding as it goes
+    /// whether `child` will be written and, if not, whether that leaves
+    /// a row short.
+    ///
+    /// `row_start` is the bit depth at which the *parent's* row begins.
+    /// A child sharing it is a member of a row already being rewritten,
+    /// so it is carried along whether or not it is dirty; a child past it
+    /// is the entry of a different row, written only if it is dirty.
+    ///
+    /// A child that will not be written and yet may be a member of a row
+    /// this commit writes puts that row in `incomplete`. Two ways that
+    /// happens, and the second is the one an implementation will miss:
+    ///
+    /// - a [`NodeRef::Stored`] child *inside* the row — a member no
+    ///   descent ever loaded, whose bytes exist only on disk;
+    /// - a clean-or-stored child that *starts* a row. Normally harmless,
+    ///   because a clean subtree means nothing below it changed and its
+    ///   row is not written at all. But a group can be entered at **two**
+    ///   nodes with no member at its root — a branch whose prefix jumps a
+    ///   band boundary puts both its children in the next group — and
+    ///   then a commit under one entry writes a row whose other entry
+    ///   this walk just declined to visit. Measured at 24.8% of rows at
+    ///   `g = 6`, so not an edge case.
+    ///
+    /// Rows named here that no commit writes cost nothing: `build_rows`
+    /// only consults this set for rows it is already building.
+    fn collect_child(
+        child: &NodeRef,
+        child_path: BitPath,
+        row_start: usize,
+        group_depth: GroupDepth,
+        entries: &mut Vec<(BitPath, Vec<u8>)>,
+        incomplete: &mut BTreeSet<BitPath>,
+    ) -> H256 {
+        let shares_row = group_start(child_path.len(), group_depth) == row_start;
+        let missing = match child {
+            NodeRef::Stored(_) => true,
+            NodeRef::Loaded { dirty, .. } => !shares_row && !*dirty,
+        };
+        if missing {
+            incomplete.insert(group_root(&child_path, group_depth));
+        }
+        Self::collect(
+            child,
+            child_path,
+            group_depth,
+            shares_row,
+            entries,
+            incomplete,
+        )
+    }
+
+    /// Fold node writes and node removals into the rows that carry them.
+    ///
+    /// A row is rebuilt from the members [`BinaryTrie::collect`] gathered
+    /// from memory, minus the removals — and, for the few rows memory
+    /// could not fully supply, on top of the row the store already holds.
+    ///
+    /// **Reading a row back is the thing this must not do routinely.**
+    /// Re-reading each touched row at commit would pay a second time,
+    /// inside the write, exactly the reads grouping just removed from the
+    /// descent. So the store is consulted only where `collect` said it
+    /// had to be — a member never loaded, a group entered at two nodes
+    /// with only one side walked — or where the row's every change is a
+    /// removal, which leaves nothing in hand to rebuild it from.
+    ///
+    /// **A removal is a rewrite, not a delete, unless it takes the last
+    /// member.** This is where a live node is easiest to lose: a group
+    /// holds up to `2^g - 1` nodes and a removal usually retires one of
+    /// them, so writing an empty value would take the whole row and every
+    /// survivor in it. The empty value is emitted only when the member
+    /// map comes out empty.
+    ///
+    /// # Errors
+    ///
+    /// [`BinaryTrieError::Backend`] if reading a stored row fails, and
+    /// [`BinaryTrieError::MalformedNode`] if one does not decode or if
+    /// the rebuilt row will not accept a member — both of which mean the
+    /// store holds something this trie could not have written.
+    fn build_rows(
+        db: &dyn BinaryTrieDB,
+        group_depth: GroupDepth,
+        entries: Vec<(BitPath, Vec<u8>)>,
+        tombstones: Vec<BitPath>,
+        incomplete: &BTreeSet<BitPath>,
+    ) -> Result<Vec<(BitPath, Vec<u8>)>, BinaryTrieError> {
+        // Members are keyed by `(relative depth, relative bits)`, which
+        // is `GroupRow`'s own order, so a `BTreeMap` hands them back
+        // ready to push rather than needing a sort. Rows are keyed by
+        // their group root for the same reason `pending_removal` is
+        // ordered: a commit batch that varies in order between two runs
+        // over the same tree is a difference nothing downstream can
+        // explain.
+        type Members = BTreeMap<(usize, Vec<u8>), Option<Vec<u8>>>;
+        let mut touched: BTreeMap<BitPath, Members> = BTreeMap::new();
+        let changes = entries
+            .into_iter()
+            .map(|(path, encoded)| (path, Some(encoded)))
+            .chain(tombstones.into_iter().map(|path| (path, None)));
+        for (path, change) in changes {
+            let relative = relative_bits(&path, group_depth).to_vec();
+            touched
+                .entry(group_root(&path, group_depth))
+                .or_default()
+                .insert((relative.len(), relative), change);
+        }
+
+        let mut rows = Vec::with_capacity(touched.len());
+        for (row_root, changes) in touched {
+            let mut members: BTreeMap<(usize, Vec<u8>), Vec<u8>> = BTreeMap::new();
+            // Nothing written into this row means nothing to rebuild it
+            // from: every change is a removal, and the survivors — if
+            // any — are only on disk.
+            let all_removals = changes.values().all(Option::is_none);
+            if (all_removals || incomplete.contains(&row_root))
+                && let Some(stored) = db.get_group(&row_root)?
+            {
+                for (relative, encoded) in GroupRow::decode(&stored)?.members() {
+                    members.insert((relative.len(), relative.clone()), encoded.clone());
+                }
+            }
+            for (member, change) in changes {
+                match change {
+                    Some(encoded) => members.insert(member, encoded),
+                    None => members.remove(&member),
+                };
+            }
+            if members.is_empty() {
+                rows.push((row_root, Vec::new()));
+                continue;
+            }
+            let mut row = GroupRow::new();
+            for ((_, relative), encoded) in members {
+                row.push(&relative, encoded, group_depth)?;
+            }
+            rows.push((row_root, row.encode()));
+        }
+        Ok(rows)
     }
 
     /// Mark the subtree at `node_ref` as matching the database, having
@@ -1643,19 +1923,27 @@ mod tests {
     use super::*;
     use crate::error::BinaryTrieError;
     use crate::trie::db::{BinaryTrieDB, InMemoryBinaryTrieDB, NodeMap};
+    use crate::trie::group::MAX_GROUP_DEPTH;
     use crate::trie::node::EMPTY_TRIE_ROOT;
     use crate::trie::path::BitPath;
     use hex_literal::hex;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-    /// Nodes read and nodes written, counted per node rather than per
-    /// call: what matters is how much of the tree was touched, not how
-    /// many batches it arrived in.
+    /// Rows read and rows written, counted per row rather than per call:
+    /// what matters is how much of the store was touched, not how many
+    /// batches it arrived in.
+    ///
+    /// **A row, not a node** — that is the whole point of grouping, and
+    /// it is why these numbers moved. One read brings back a whole group
+    /// and one write replaces one.
     #[derive(Clone, Default)]
     struct Counts {
         reads: Arc<AtomicUsize>,
         writes: Arc<AtomicUsize>,
+        /// Nodes inside the rows written, which is what "how many nodes
+        /// did this write" now means and what `writes` no longer says.
+        members: Arc<AtomicUsize>,
     }
 
     impl Counts {
@@ -1666,6 +1954,77 @@ mod tests {
         fn writes(&self) -> usize {
             self.writes.load(Ordering::Relaxed)
         }
+
+        fn members(&self) -> usize {
+            self.members.load(Ordering::Relaxed)
+        }
+    }
+
+    /// The node the store holds at `path`, or `None` if it holds none
+    /// there.
+    ///
+    /// The row-aware form of "is there a node here", which is what these
+    /// tests have always meant: a store lookup at a node path now finds
+    /// a row keyed by the node's *group* root, and the node itself is a
+    /// member inside it. Reading the raw value back would answer the
+    /// wrong question — a row survives its members.
+    fn stored_node(map: &NodeMap, path: &BitPath) -> Option<Vec<u8>> {
+        let db = InMemoryBinaryTrieDB::new(Arc::clone(map));
+        let group_depth = db.group_depth();
+        let row = db.get_group(&group_root(path, group_depth)).unwrap()?;
+        GroupRow::decode(&row)
+            .unwrap()
+            .get(relative_bits(path, group_depth))
+            .map(<[u8]>::to_vec)
+    }
+
+    /// Every node the store holds, found by decoding rows and counting
+    /// members.
+    ///
+    /// Row count stopped meaning node count the moment a row held a
+    /// group, so a test that wants "how many nodes are on disk" has to
+    /// look inside. Counting rows instead would still pass on an empty
+    /// tree and on a `g = 1` store, which is exactly the shape of a test
+    /// that has quietly stopped asserting anything.
+    fn stored_members(map: &NodeMap) -> usize {
+        map.lock()
+            .unwrap()
+            .values()
+            .map(|row| GroupRow::decode(row).unwrap().members().len())
+            .sum()
+    }
+
+    /// Take the node at `path` out of the store, leaving the rest of its
+    /// row intact, and report whether it was there.
+    ///
+    /// The row-aware form of dropping one node's entry: removing the
+    /// whole row instead would take the node's neighbours with it, and a
+    /// test that meant to hole one node would be testing a hole the size
+    /// of a group.
+    fn remove_stored_node(map: &NodeMap, path: &BitPath) -> bool {
+        let group_depth = InMemoryBinaryTrieDB::new(Arc::clone(map)).group_depth();
+        let row_key = group_root(path, group_depth).to_db_key();
+        let relative = relative_bits(path, group_depth).to_vec();
+        let mut stored = map.lock().unwrap();
+        let Some(bytes) = stored.get(&row_key) else {
+            return false;
+        };
+        let decoded = GroupRow::decode(bytes).unwrap();
+        if decoded.get(&relative).is_none() {
+            return false;
+        }
+        let mut kept = GroupRow::new();
+        for (member, encoded) in decoded.members() {
+            if member != &relative {
+                kept.push(member, encoded.clone(), group_depth).unwrap();
+            }
+        }
+        if kept.is_empty() {
+            stored.remove(&row_key);
+        } else {
+            stored.insert(row_key, kept.encode());
+        }
+        true
     }
 
     /// A backend that counts reads and writes, so a test can assert
@@ -1690,16 +2049,29 @@ mod tests {
     }
 
     impl BinaryTrieDB for CountingDB {
-        fn get(&self, path: &BitPath) -> Result<Option<Vec<u8>>, BinaryTrieError> {
-            self.counts.reads.fetch_add(1, Ordering::Relaxed);
-            self.inner.get(path)
+        fn group_depth(&self) -> GroupDepth {
+            self.inner.group_depth()
         }
 
-        fn put_batch(&self, entries: Vec<(BitPath, Vec<u8>)>) -> Result<(), BinaryTrieError> {
-            self.counts
-                .writes
-                .fetch_add(entries.len(), Ordering::Relaxed);
-            self.inner.put_batch(entries)
+        fn get_group(&self, group_root: &BitPath) -> Result<Option<Vec<u8>>, BinaryTrieError> {
+            self.counts.reads.fetch_add(1, Ordering::Relaxed);
+            self.inner.get_group(group_root)
+        }
+
+        fn put_groups(&self, rows: Vec<(BitPath, Vec<u8>)>) -> Result<(), BinaryTrieError> {
+            self.counts.writes.fetch_add(rows.len(), Ordering::Relaxed);
+            let members: usize = rows
+                .iter()
+                .filter(|(_, row)| !row.is_empty())
+                .map(|(_, row)| {
+                    GroupRow::decode(row)
+                        .expect("a written row decodes")
+                        .members()
+                        .len()
+                })
+                .sum();
+            self.counts.members.fetch_add(members, Ordering::Relaxed);
+            self.inner.put_groups(rows)
         }
     }
 
@@ -1750,12 +2122,16 @@ mod tests {
     }
 
     impl BinaryTrieDB for MirroredDB {
-        fn get(&self, path: &BitPath) -> Result<Option<Vec<u8>>, BinaryTrieError> {
-            self.inner.get(path)
+        fn group_depth(&self) -> GroupDepth {
+            self.inner.group_depth()
         }
 
-        fn put_batch(&self, entries: Vec<(BitPath, Vec<u8>)>) -> Result<(), BinaryTrieError> {
-            self.inner.put_batch(entries)
+        fn get_group(&self, group_root: &BitPath) -> Result<Option<Vec<u8>>, BinaryTrieError> {
+            self.inner.get_group(group_root)
+        }
+
+        fn put_groups(&self, rows: Vec<(BitPath, Vec<u8>)>) -> Result<(), BinaryTrieError> {
+            self.inner.put_groups(rows)
         }
 
         fn binary_flat_computed(&self, _key: &[u8]) -> bool {
@@ -2296,8 +2672,13 @@ mod tests {
     fn decode_failure_surfaces() {
         let db = InMemoryBinaryTrieDB::new_empty();
         let map = db.inner();
-        db.put_batch(vec![(BitPath::new(), vec![0x7f, 0x01, 0x02])])
+        // A well-formed row carrying a member that is not a node: the
+        // row decodes, the member does not, and the error must be the
+        // node's rather than being swallowed by the container.
+        let mut row = GroupRow::new();
+        row.push(&[], vec![0x7f, 0x01, 0x02], db.group_depth())
             .unwrap();
+        db.put_groups(vec![(BitPath::new(), row.encode())]).unwrap();
 
         let mut trie = BinaryTrie::open(Box::new(InMemoryBinaryTrieDB::new(map)), H256([0x11; 32]));
         assert!(matches!(
@@ -2603,26 +2984,25 @@ mod tests {
         let entries = lopsided_entries();
         let (map, root) = commit_entries(&entries);
 
-        let store = InMemoryBinaryTrieDB::new(map.clone());
-        assert!(store.get(&lopsided_removed_leaf_path()).unwrap().is_some());
-        assert!(store.get(&lopsided_survivor_path()).unwrap().is_some());
+        assert!(stored_node(&map, &lopsided_removed_leaf_path()).is_some());
+        assert!(stored_node(&map, &lopsided_survivor_path()).is_some());
 
-        let mut trie = BinaryTrie::open(Box::new(InMemoryBinaryTrieDB::new(map)), root);
+        let mut trie = BinaryTrie::open(Box::new(InMemoryBinaryTrieDB::new(map.clone())), root);
         trie.remove(&wide_key(LOPSIDED_ODD_ONE)).unwrap();
         trie.commit().unwrap();
 
         assert_eq!(
-            store.get(&lopsided_removed_leaf_path()).unwrap(),
+            stored_node(&map, &lopsided_removed_leaf_path()),
             None,
             "the removed leaf's path must not still hold a node"
         );
         assert_eq!(
-            store.get(&lopsided_survivor_path()).unwrap(),
+            stored_node(&map, &lopsided_survivor_path()),
             None,
             "the survivor moved up, so its old path is garbage"
         );
         assert!(
-            store.get(&BitPath::new()).unwrap().is_some(),
+            stored_node(&map, &BitPath::new()).is_some(),
             "the survivor's new path is the root's"
         );
     }
@@ -3075,7 +3455,7 @@ mod tests {
         // merely unreachable: a canonical trie over `kept` has
         // `2 * 32 - 1` nodes and the store must hold exactly those.
         assert_eq!(
-            map.lock().unwrap().len(),
+            stored_members(&map),
             2 * kept.len() - 1,
             "the orphaned subtree must not still be on disk"
         );
@@ -3095,9 +3475,9 @@ mod tests {
         // very much in the tree. That is the case the two-phase
         // collection exists for; a walk that failed on its first node
         // would not test it at all.
-        let victim = BitPath::from_bits(&[0, 0, 0, 0, 0, 1, 0, 0]).to_db_key();
-        assert!(map.lock().unwrap().remove(&victim).is_some());
-        let before = map.lock().unwrap().len();
+        let victim = BitPath::from_bits(&[0, 0, 0, 0, 0, 1, 0, 0]);
+        assert!(remove_stored_node(&map, &victim));
+        let before = stored_members(&map);
 
         let mut trie = BinaryTrie::open(Box::new(InMemoryBinaryTrieDB::new(map.clone())), root);
         assert!(matches!(
@@ -3110,7 +3490,7 @@ mod tests {
         // paths the failed walk collected belong to live nodes.
         trie.commit().unwrap();
         assert_eq!(
-            map.lock().unwrap().len(),
+            stored_members(&map),
             before,
             "a failed removal must leave no tombstones behind"
         );
@@ -3124,18 +3504,36 @@ mod tests {
         // A fold that is off by a bit somewhere can still produce a
         // well-formed trie, but not one of the right size.
         let entries = two_byte_entries(1000);
-        let (db, counts) = CountingDB::over(InMemoryBinaryTrieDB::new_empty().inner());
+        let map: NodeMap = Default::default();
+        let (db, counts) = CountingDB::over(Arc::clone(&map));
 
         let mut trie = BinaryTrie::from_sorted_leaves(Box::new(db), sorted(&entries)).unwrap();
         let root = trie.commit().unwrap().root;
 
         assert_eq!(root, root_from_scratch(&entries));
+        // Counted as *members*, not as rows: the fold writes one node
+        // per leaf and one per divergence, however many rows those get
+        // packed into.
         assert_eq!(
-            counts.writes(),
+            counts.members(),
             2 * entries.len() - 1,
             "{} leaves plus {} branches",
             entries.len(),
             entries.len() - 1
+        );
+        assert_eq!(
+            stored_members(&map),
+            2 * entries.len() - 1,
+            "and every one of them is in the store"
+        );
+        // The rows are fewer, which is the whole point — and this is the
+        // assertion that would fail if grouping quietly stopped
+        // happening while the member count stayed right.
+        assert!(
+            counts.writes() < counts.members(),
+            "{} rows for {} nodes",
+            counts.writes(),
+            counts.members()
         );
         assert_eq!(
             counts.reads(),
@@ -3382,10 +3780,10 @@ mod tests {
         // leaves the mirror one block behind for ever.
         struct FailingDB;
         impl BinaryTrieDB for FailingDB {
-            fn get(&self, _path: &BitPath) -> Result<Option<Vec<u8>>, BinaryTrieError> {
+            fn get_group(&self, _group_root: &BitPath) -> Result<Option<Vec<u8>>, BinaryTrieError> {
                 Ok(None)
             }
-            fn put_batch(&self, _entries: Vec<(BitPath, Vec<u8>)>) -> Result<(), BinaryTrieError> {
+            fn put_groups(&self, _rows: Vec<(BitPath, Vec<u8>)>) -> Result<(), BinaryTrieError> {
                 Err(BinaryTrieError::Backend("write refused".to_string()))
             }
         }
@@ -3667,6 +4065,724 @@ mod tests {
             counts.reads(),
             0,
             "no fallback descent: the miss is the answer"
+        );
+    }
+    // ---- Group-granular reads -----------------------------------------
+    //
+    // Everything below sweeps `1..=MAX_GROUP_DEPTH`. The default depth is
+    // not settled — `g = 7` is a live alternative to `g = 6` — so a test
+    // that held only at the default would be an assertion about a
+    // constant rather than about the code.
+
+    /// A key set whose trie has a node at many different bit depths, so a
+    /// descent to its deepest leaf crosses many group boundaries at any
+    /// depth.
+    ///
+    /// A caterpillar: the all-zero key is the spine, and the `r`th key
+    /// flips the single bit at `3 + 3r`, so it agrees with the spine up to
+    /// there and diverges. That puts a branch every three bits, which is
+    /// coprime with most of `1..=8` and therefore lands boundaries at
+    /// varied offsets rather than at a repeating one. Random keys would
+    /// not do: they diverge within the first `log2(n)` bits and leave the
+    /// whole trie inside one or two groups.
+    fn ladder_entries(rungs: usize) -> Entries {
+        let mut entries = vec![(vec![0x00u8; 34], [0u8; 32])];
+        for rung in 0..rungs {
+            let bit = 3 + rung * 3;
+            assert!(bit < 34 * 8, "the flipped bit has to be inside the key");
+            let mut key = vec![0x00u8; 34];
+            key[bit / 8] |= 1 << (7 - bit % 8);
+            entries.push((key, [(rung + 1) as u8; 32]));
+        }
+        entries
+    }
+
+    /// The bit path a `BINARY_TRIE_NODES` key was built from.
+    ///
+    /// The inverse of [`BitPath::to_db_key`], written out here rather than
+    /// obtained from the geometry it is used to check — a helper that
+    /// called `group_root` would agree with the code under any mutation.
+    fn bits_from_db_key(key: &[u8]) -> Vec<u8> {
+        let count = u32::from_be_bytes(key[..4].try_into().expect("four-byte count")) as usize;
+        let packed = &key[4..];
+        (0..count)
+            .map(|i| (packed[i / 8] >> (7 - i % 8)) & 1)
+            .collect()
+    }
+
+    /// Every node the store holds, keyed by its **absolute** bit path,
+    /// reassembled from the row key and the member's relative path.
+    fn stored_paths(map: &NodeMap) -> BTreeMap<BitPath, Vec<u8>> {
+        map.lock()
+            .unwrap()
+            .iter()
+            .flat_map(|(row_key, row)| {
+                let row_bits = bits_from_db_key(row_key);
+                GroupRow::decode(row)
+                    .expect("a stored row decodes")
+                    .members()
+                    .iter()
+                    .map(|(relative, encoded)| {
+                        let mut bits = row_bits.clone();
+                        bits.extend_from_slice(relative);
+                        (BitPath::from_bits(&bits), encoded.clone())
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
+    fn depth_of(levels: usize) -> GroupDepth {
+        GroupDepth::new(levels).expect("valid group depth")
+    }
+
+    /// Commit `entries` into a fresh store whose rows span `group_depth`
+    /// levels.
+    fn commit_entries_at(entries: &Entries, group_depth: GroupDepth) -> (NodeMap, H256) {
+        let db = InMemoryBinaryTrieDB::new_empty().at_group_depth(group_depth);
+        let map = db.inner();
+        let mut trie = BinaryTrie::new(Box::new(db));
+        for (key, value) in entries {
+            trie.insert(key.clone(), *value).unwrap();
+        }
+        let root = trie.commit().unwrap().root;
+        (map, root)
+    }
+
+    /// A cold trie over `map` at `root`, counting the rows it reads.
+    ///
+    /// Cold matters: a warm trie answers from nodes it already holds, so
+    /// a read-count assertion against one would pass whatever `resolve`
+    /// does.
+    fn cold_counting_trie(
+        map: &NodeMap,
+        root: H256,
+        group_depth: GroupDepth,
+    ) -> (BinaryTrie, Counts) {
+        let counts = Counts::default();
+        let db = CountingDB {
+            inner: InMemoryBinaryTrieDB::new(Arc::clone(map)).at_group_depth(group_depth),
+            counts: counts.clone(),
+        };
+        (BinaryTrie::open(Box::new(db), root), counts)
+    }
+
+    /// The stored node paths a descent to `key` passes through: every
+    /// node path that is a bit prefix of the key, which is exactly the
+    /// root-to-leaf chain, since a node's path is shared by every key
+    /// below it.
+    fn descent_paths(paths: &BTreeMap<BitPath, Vec<u8>>, key: &[u8]) -> Vec<BitPath> {
+        let bits = bytes_to_bits(key);
+        paths
+            .keys()
+            .filter(|path| path.len() <= bits.len() && path.as_bits() == &bits[..path.len()])
+            .cloned()
+            .collect()
+    }
+
+    #[test]
+    fn a_descent_reads_one_row_per_band_it_crosses() {
+        let entries = ladder_entries(40);
+        let spine = entries[0].0.clone();
+        let mut folded = 0usize;
+        for levels in 1..=MAX_GROUP_DEPTH {
+            let group_depth = depth_of(levels);
+            let (map, root) = commit_entries_at(&entries, group_depth);
+            let paths = stored_paths(&map);
+
+            // Worked out from the stored paths, not from the trie: the
+            // rows a descent must touch are the distinct groups its nodes
+            // fall into, and nothing more.
+            let on_path = descent_paths(&paths, &spine);
+            let bands: BTreeSet<BitPath> = on_path
+                .iter()
+                .map(|path| group_root(path, group_depth))
+                .collect();
+
+            let (mut trie, counts) = cold_counting_trie(&map, root, group_depth);
+            assert_eq!(trie.get(&spine).unwrap(), Some(entries[0].1));
+            assert_eq!(
+                counts.reads(),
+                bands.len(),
+                "g={levels}: one read per band, over {} nodes",
+                on_path.len()
+            );
+            folded += on_path.len() - bands.len();
+        }
+        // Not vacuous. The equality above says nothing at a depth where
+        // every node happens to sit in its own band — `g = 1` always, and
+        // this key set at `g = 2` and `g = 3`, whose nodes are three bits
+        // apart. Somewhere in the sweep the descent has to be folding
+        // several nodes into one read, or a `resolve` that quietly stayed
+        // node-granular would satisfy every assertion above.
+        assert!(
+            folded > 0,
+            "no depth folded any node into a shared read, so this test asserted nothing"
+        );
+    }
+
+    #[test]
+    fn a_member_read_makes_its_row_neighbours_free() {
+        let entries = ladder_entries(40);
+        let spine = entries[0].0.clone();
+        let mut neighbours = 0usize;
+        for levels in 1..=MAX_GROUP_DEPTH {
+            let group_depth = depth_of(levels);
+            let (map, root) = commit_entries_at(&entries, group_depth);
+            let paths = stored_paths(&map);
+
+            // A leaf sharing a row with the spine node above it. Reading
+            // the spine loads that row whole, so the leaf must cost
+            // nothing — it is already in memory, at a path no descent
+            // went to.
+            let on_spine: BTreeSet<BitPath> = descent_paths(&paths, &spine).into_iter().collect();
+            let free: Vec<(Vec<u8>, [u8; 32])> = entries[1..]
+                .iter()
+                .filter(|(key, _)| {
+                    let leaf = descent_paths(&paths, key)
+                        .into_iter()
+                        .next_back()
+                        .expect("every key has a leaf");
+                    // An *ancestor* on the spine, inside the same row.
+                    // Sharing the row is not enough: the two entries of a
+                    // rootless group share a row and neither is below the
+                    // other, so loading one leaves the other on disk.
+                    !on_spine.contains(&leaf)
+                        && on_spine.iter().any(|path| {
+                            path.len() < leaf.len()
+                                && leaf.as_bits().starts_with(path.as_bits())
+                                && group_root(path, group_depth) == group_root(&leaf, group_depth)
+                        })
+                })
+                .cloned()
+                .collect();
+            // `g = 1` puts every node in a row of its own, so nothing is
+            // ever a neighbour and there is nothing here to assert; the
+            // count below makes sure that is not the whole sweep.
+            neighbours += free.len();
+
+            let (mut trie, counts) = cold_counting_trie(&map, root, group_depth);
+            assert_eq!(trie.get(&spine).unwrap(), Some(entries[0].1));
+            let after_spine = counts.reads();
+            for (key, value) in &free {
+                assert_eq!(trie.get(key).unwrap(), Some(*value), "g={levels}");
+            }
+            assert_eq!(
+                counts.reads(),
+                after_spine,
+                "g={levels}: {} row neighbours cost {} extra reads",
+                free.len(),
+                counts.reads() - after_spine
+            );
+        }
+        assert!(
+            neighbours > 0,
+            "no depth produced a row neighbour, so this test asserted nothing"
+        );
+    }
+
+    /// A row with no member at the empty relative path, its two entries,
+    /// and a leaf key reachable under each — or `None` if this state has
+    /// no such row at this depth.
+    ///
+    /// The shape Decision 5 names and an implementation assumes away: a
+    /// branch whose prefix jumps a band boundary puts both its children
+    /// in the next group, and neither lands at that group's root.
+    fn a_group_entered_at_two_nodes(
+        map: &NodeMap,
+        group_depth: GroupDepth,
+    ) -> Option<(BitPath, Vec<Vec<u8>>)> {
+        let paths = stored_paths(map);
+        let mut rows: BTreeMap<BitPath, Vec<BitPath>> = BTreeMap::new();
+        for path in paths.keys() {
+            rows.entry(group_root(path, group_depth))
+                .or_default()
+                .push(path.clone());
+        }
+        rows.into_iter().find_map(|(row_root, members)| {
+            if members.contains(&row_root) {
+                return None;
+            }
+            // The entries: members with no parent inside the row.
+            let entries: Vec<BitPath> = members
+                .iter()
+                .filter(|path| {
+                    !members.iter().any(|other| {
+                        other.len() < path.len() && path.as_bits().starts_with(other.as_bits())
+                    })
+                })
+                .cloned()
+                .collect();
+            assert_eq!(
+                entries.len(),
+                2,
+                "a rootless group has exactly two entries, by the argument in Decision 5"
+            );
+            // One leaf key below each entry, so a test can descend into
+            // both sides.
+            let keys: Vec<Vec<u8>> = entries
+                .iter()
+                .filter_map(|entry| {
+                    paths.iter().find_map(|(path, encoded)| {
+                        (path.as_bits().starts_with(entry.as_bits()))
+                            .then(|| match decode(encoded) {
+                                Ok(StoredNode::Leaf { key, .. }) => Some(key),
+                                _ => None,
+                            })
+                            .flatten()
+                    })
+                })
+                .collect();
+            (keys.len() == 2).then_some((row_root, keys))
+        })
+    }
+
+    #[test]
+    fn a_group_with_no_root_member_resolves_at_both_entries() {
+        let entries = ladder_entries(40);
+        let expected: BTreeMap<Vec<u8>, [u8; 32]> = entries.iter().cloned().collect();
+        let mut depths_covered = 0usize;
+        for levels in 1..=MAX_GROUP_DEPTH {
+            let group_depth = depth_of(levels);
+            let (map, root) = commit_entries_at(&entries, group_depth);
+            let Some((row_root, keys)) = a_group_entered_at_two_nodes(&map, group_depth) else {
+                // `g = 1` cannot produce one: every node is its own row
+                // and therefore its own root member.
+                continue;
+            };
+            depths_covered += 1;
+
+            // Stated over the bytes as well as over the reconstructed
+            // paths: the row really has no member at `[]`.
+            let stored = map
+                .lock()
+                .unwrap()
+                .get(&row_root.to_db_key())
+                .cloned()
+                .expect("the row exists");
+            assert_eq!(
+                GroupRow::decode(&stored).unwrap().get(&[]),
+                None,
+                "g={levels}: this row is supposed to have no root member"
+            );
+
+            // Both entries resolve, from a cold handle, in either order.
+            for order in [[0, 1], [1, 0]] {
+                let (mut trie, counts) = cold_counting_trie(&map, root, group_depth);
+                for index in order {
+                    let key = &keys[index];
+                    assert_eq!(
+                        trie.get(key).unwrap(),
+                        Some(expected[key]),
+                        "g={levels}: entry {index} must resolve"
+                    );
+                }
+                assert!(counts.reads() > 0, "g={levels}: the reads were counted");
+            }
+        }
+        assert!(
+            depths_covered > 0,
+            "no depth produced a rootless group, so this test asserted nothing"
+        );
+    }
+
+    #[test]
+    fn committing_under_one_entry_keeps_the_other_entrys_members() {
+        // The write half of the rootless-group case, and the place a live
+        // node is easiest to lose: a commit that touches one entry of a
+        // two-entry row rewrites the whole row, and the other entry's
+        // members are not below anything the walk visited.
+        let entries = ladder_entries(40);
+        let expected: BTreeMap<Vec<u8>, [u8; 32]> = entries.iter().cloned().collect();
+        let mut depths_covered = 0usize;
+        for levels in 1..=MAX_GROUP_DEPTH {
+            let group_depth = depth_of(levels);
+            let (map, root) = commit_entries_at(&entries, group_depth);
+            let Some((row_root, keys)) = a_group_entered_at_two_nodes(&map, group_depth) else {
+                continue;
+            };
+            depths_covered += 1;
+            let before = stored_paths(&map);
+
+            // Cold, and descending into one entry only: the other side is
+            // never resolved, so nothing of it is in memory when the row
+            // is written back.
+            let mut trie = BinaryTrie::open(
+                Box::new(InMemoryBinaryTrieDB::new(Arc::clone(&map)).at_group_depth(group_depth)),
+                root,
+            );
+            trie.insert(keys[0].clone(), [0x5a; 32]).unwrap();
+            let new_root = trie.commit().unwrap().root;
+            drop(trie);
+
+            let after = stored_paths(&map);
+            // Every node under the untouched entry is still there, byte
+            // for byte. `row_root` is the row both entries live in.
+            for (path, encoded) in &before {
+                if group_root(path, group_depth) == row_root
+                    && !path
+                        .as_bits()
+                        .starts_with(&bytes_to_bits(&keys[0])[..path.len()])
+                {
+                    assert_eq!(
+                        after.get(path),
+                        Some(encoded),
+                        "g={levels}: a member of the rewritten row was lost"
+                    );
+                }
+            }
+
+            // And the whole trie still reads, from a cold handle.
+            let mut reopened = BinaryTrie::open(
+                Box::new(InMemoryBinaryTrieDB::new(Arc::clone(&map)).at_group_depth(group_depth)),
+                new_root,
+            );
+            for (key, value) in &entries {
+                let want = if key == &keys[0] { [0x5a; 32] } else { *value };
+                assert_eq!(
+                    reopened.get(key).unwrap(),
+                    Some(want),
+                    "g={levels}: key {key:02x?} must survive the rewrite"
+                );
+            }
+            let _ = &expected;
+        }
+        assert!(
+            depths_covered > 0,
+            "no depth produced a rootless group, so this test asserted nothing"
+        );
+    }
+
+    #[test]
+    fn a_missing_row_errors_rather_than_reading_as_absent() {
+        // A hole in the store is corruption, not an answer. Returning
+        // `None` would report a key the trie commits to as absent, and
+        // the root would still be whatever the parent's hash said.
+        let entries = ladder_entries(40);
+        for levels in 1..=MAX_GROUP_DEPTH {
+            let group_depth = depth_of(levels);
+            let (map, root) = commit_entries_at(&entries, group_depth);
+            let paths = stored_paths(&map);
+            let spine = entries[0].0.clone();
+
+            // The deepest row on the spine's descent, so the read that
+            // hits the hole is one the descent really makes.
+            let victim = descent_paths(&paths, &spine)
+                .into_iter()
+                .map(|path| group_root(&path, group_depth))
+                .next_back()
+                .expect("the descent crosses at least the root row");
+
+            // The same read, before the hole: it has to succeed, or the
+            // error below would prove nothing about the missing row.
+            let mut intact = BinaryTrie::open(
+                Box::new(InMemoryBinaryTrieDB::new(Arc::clone(&map)).at_group_depth(group_depth)),
+                root,
+            );
+            assert_eq!(
+                intact.get(&spine).unwrap(),
+                Some(entries[0].1),
+                "g={levels}"
+            );
+            drop(intact);
+
+            assert!(
+                map.lock().unwrap().remove(&victim.to_db_key()).is_some(),
+                "g={levels}: the row to hole must have been there"
+            );
+
+            let mut trie = BinaryTrie::open(
+                Box::new(InMemoryBinaryTrieDB::new(Arc::clone(&map)).at_group_depth(group_depth)),
+                root,
+            );
+            assert!(
+                matches!(trie.get(&spine), Err(BinaryTrieError::Backend(_))),
+                "g={levels}: a hole must surface as an error"
+            );
+        }
+    }
+
+    #[test]
+    fn a_removal_that_empties_part_of_a_row_rewrites_it() {
+        // The distinction the tombstone rule turns on. A group holds many
+        // nodes; retiring one of them must leave the others, and only a
+        // group that lost its last member may be deleted.
+        let entries = ladder_entries(40);
+        for levels in 1..=MAX_GROUP_DEPTH {
+            let group_depth = depth_of(levels);
+            let (map, root) = commit_entries_at(&entries, group_depth);
+            let before = stored_paths(&map);
+
+            let removed = entries.last().expect("a last rung").0.clone();
+            let mut trie = BinaryTrie::open(
+                Box::new(InMemoryBinaryTrieDB::new(Arc::clone(&map)).at_group_depth(group_depth)),
+                root,
+            );
+            assert!(trie.remove(&removed).unwrap().is_some());
+            let new_root = trie.commit().unwrap().root;
+            drop(trie);
+
+            let after = stored_paths(&map);
+            assert!(
+                after.len() < before.len(),
+                "g={levels}: a removal has to take nodes away"
+            );
+            let survivors: Entries = entries[..entries.len() - 1].to_vec();
+            assert_eq!(
+                new_root,
+                root_from_scratch(&survivors),
+                "g={levels}: the root after the removal is the canonical one"
+            );
+            let mut reopened = BinaryTrie::open(
+                Box::new(InMemoryBinaryTrieDB::new(Arc::clone(&map)).at_group_depth(group_depth)),
+                new_root,
+            );
+            for (key, value) in &survivors {
+                assert_eq!(
+                    reopened.get(key).unwrap(),
+                    Some(*value),
+                    "g={levels}: {key:02x?} must survive the rewrite"
+                );
+            }
+            assert_eq!(reopened.get(&removed).unwrap(), None, "g={levels}");
+        }
+    }
+
+    #[test]
+    fn a_trie_emptied_of_every_leaf_leaves_no_rows_behind() {
+        // The other side of the tombstone rule: a group that really did
+        // lose its last member has to go, or the store keeps rows no root
+        // commits to.
+        let entries = ladder_entries(20);
+        for levels in 1..=MAX_GROUP_DEPTH {
+            let group_depth = depth_of(levels);
+            let (map, root) = commit_entries_at(&entries, group_depth);
+            let mut trie = BinaryTrie::open(
+                Box::new(InMemoryBinaryTrieDB::new(Arc::clone(&map)).at_group_depth(group_depth)),
+                root,
+            );
+            for (key, _) in &entries {
+                assert!(trie.remove(key).unwrap().is_some(), "g={levels}");
+            }
+            let committed = trie.commit().unwrap();
+            drop(trie);
+            assert_eq!(committed.root, EMPTY_TRIE_ROOT, "g={levels}");
+            assert_eq!(
+                map.lock().unwrap().len(),
+                0,
+                "g={levels}: an empty trie must leave an empty table"
+            );
+        }
+    }
+
+    #[test]
+    fn the_trie_round_trips_at_every_group_depth() {
+        // The whole surface at every depth 1..=8, against the canonical
+        // from-scratch root: grouping is a storage change, so the root it
+        // produces has to be the one an ungrouped trie produces.
+        let entries = ladder_entries(30);
+        for levels in 1..=MAX_GROUP_DEPTH {
+            let group_depth = depth_of(levels);
+            let (map, root) = commit_entries_at(&entries, group_depth);
+            assert_eq!(root, root_from_scratch(&entries), "g={levels}");
+
+            // A second commit through a fresh handle: insert, remove and
+            // re-insert, then check against the canonical answer again.
+            let mut trie = BinaryTrie::open(
+                Box::new(InMemoryBinaryTrieDB::new(Arc::clone(&map)).at_group_depth(group_depth)),
+                root,
+            );
+            let mut expected: BTreeMap<Vec<u8>, [u8; 32]> = entries.iter().cloned().collect();
+            for (index, (key, _)) in entries.iter().enumerate() {
+                match index % 3 {
+                    0 => {
+                        trie.insert(key.clone(), [0xa5; 32]).unwrap();
+                        expected.insert(key.clone(), [0xa5; 32]);
+                    }
+                    1 => {
+                        trie.remove(key).unwrap();
+                        expected.remove(key);
+                    }
+                    _ => {}
+                }
+            }
+            let committed = trie.commit().unwrap();
+            drop(trie);
+
+            let survivors: Entries = expected.iter().map(|(k, v)| (k.clone(), *v)).collect();
+            assert_eq!(
+                committed.root,
+                root_from_scratch(&survivors),
+                "g={levels}: the grouped store must reach the canonical root"
+            );
+
+            let mut reopened = BinaryTrie::open(
+                Box::new(InMemoryBinaryTrieDB::new(Arc::clone(&map)).at_group_depth(group_depth)),
+                committed.root,
+            );
+            assert_eq!(reopened.root(), committed.root, "g={levels}");
+            for (key, _) in &entries {
+                assert_eq!(
+                    reopened.get(key).unwrap(),
+                    expected.get(key).copied(),
+                    "g={levels}: {key:02x?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn committing_twice_writes_nothing_the_second_time() {
+        let entries = ladder_entries(20);
+        for levels in 1..=MAX_GROUP_DEPTH {
+            let group_depth = depth_of(levels);
+            let (map, root) = commit_entries_at(&entries, group_depth);
+            let (mut trie, counts) = cold_counting_trie(&map, root, group_depth);
+            trie.insert(entries[0].0.clone(), [0x11; 32]).unwrap();
+            trie.commit().unwrap();
+            let after_first = counts.writes();
+            assert!(after_first > 0, "g={levels}");
+            trie.commit().unwrap();
+            assert_eq!(
+                counts.writes(),
+                after_first,
+                "g={levels}: a second commit has nothing to write"
+            );
+        }
+    }
+
+    #[test]
+    fn a_commit_reads_no_row_it_can_supply_from_memory() {
+        // The reason `build_rows` does not simply re-read every row it
+        // writes: that would pay, inside the commit, exactly the reads
+        // grouping just took out of the descent. A bulk build has every
+        // node in hand, so it must read nothing at all.
+        let entries = ladder_entries(40);
+        for levels in 1..=MAX_GROUP_DEPTH {
+            let group_depth = depth_of(levels);
+            let counts = Counts::default();
+            let db = CountingDB {
+                inner: InMemoryBinaryTrieDB::new_empty().at_group_depth(group_depth),
+                counts: counts.clone(),
+            };
+            let map = db.inner.inner();
+            let mut trie = BinaryTrie::from_sorted_leaves(Box::new(db), sorted(&entries)).unwrap();
+            trie.commit().unwrap();
+            assert_eq!(
+                counts.reads(),
+                0,
+                "g={levels}: a bulk build builds from its input alone"
+            );
+            assert!(counts.writes() > 0, "g={levels}");
+            assert_eq!(stored_members(&map), 2 * entries.len() - 1, "g={levels}");
+        }
+    }
+    #[test]
+    fn changing_one_leaf_writes_only_the_rows_on_its_path() {
+        // Grouping must not widen what a commit writes. A changed leaf
+        // dirties its root-to-leaf chain and nothing else, so the rows
+        // written are the distinct groups that chain falls into — the
+        // same ones the descent read. A walk that carried clean nodes
+        // across a group boundary would still produce the right tree and
+        // rewrite most of the trie to do it.
+        //
+        // The key changed is the *shallowest* rung, whose leaf hangs off
+        // the root branch: its path covers a small part of the table, so
+        // "wrote everything" is a visibly different answer. Changing the
+        // deepest one would not distinguish them, the spine running
+        // through every row.
+        let entries = ladder_entries(40);
+        let spine = entries[0].0.clone();
+        let shallow = entries[1].0.clone();
+        for levels in 1..=MAX_GROUP_DEPTH {
+            let group_depth = depth_of(levels);
+            let (map, root) = commit_entries_at(&entries, group_depth);
+            let paths = stored_paths(&map);
+            let expected: BTreeSet<BitPath> = descent_paths(&paths, &shallow)
+                .iter()
+                .map(|path| group_root(path, group_depth))
+                .collect();
+            assert!(
+                expected.len() * 4 < map.lock().unwrap().len(),
+                "g={levels}: this key's path is not a small part of the table"
+            );
+
+            let (mut trie, counts) = cold_counting_trie(&map, root, group_depth);
+            trie.insert(shallow.clone(), [0x3c; 32]).unwrap();
+            trie.commit().unwrap();
+            assert_eq!(
+                counts.writes(),
+                expected.len(),
+                "g={levels}: one changed leaf must rewrite {} rows",
+                expected.len()
+            );
+
+            // And again over a trie that has *read* far more than it
+            // changed. Everything the earlier descent loaded is clean and
+            // in memory, and none of it may be written: pruning at the
+            // group boundary is the only thing standing between one
+            // changed leaf and a rewrite of every row the block looked at.
+            let (map, root) = commit_entries_at(&entries, group_depth);
+            let (mut trie, counts) = cold_counting_trie(&map, root, group_depth);
+            assert_eq!(trie.get(&spine).unwrap(), Some(entries[0].1), "g={levels}");
+            let before = counts.writes();
+            trie.insert(shallow.clone(), [0x4d; 32]).unwrap();
+            trie.commit().unwrap();
+            assert_eq!(
+                counts.writes() - before,
+                expected.len(),
+                "g={levels}: a warm trie must still write only the changed path's rows"
+            );
+        }
+    }
+
+    #[test]
+    fn a_member_past_the_group_depth_is_not_installed_from_the_row() {
+        // A row decodes without knowing the depth it was written under —
+        // `GroupRow::decode` can only bound a relative path by
+        // `MAX_GROUP_DEPTH` — so a row carried over from a store built at
+        // a larger depth can hold a member that belongs to the *next*
+        // group. Installing it would put a node at a path this row does
+        // not address, and the descent would sail past a row that is
+        // missing without ever asking for it.
+        let narrow = depth_of(2);
+        let wide = depth_of(4);
+        // Bits 0 and 1 of the key are both zero, so the descent goes left
+        // twice and arrives at relative path [0, 0] — the depth-2 group
+        // boundary.
+        let key = vec![0x2bu8; 34];
+        assert_eq!(bytes_to_bits(&key)[..2], [0, 0]);
+        let leaf = encode_leaf(&key, &[0x11; 32]);
+        let inner = encode_branch(&[], blake3_hash(&leaf), blake3_hash(&leaf));
+        let top = encode_branch(&[], blake3_hash(&inner), blake3_hash(&inner));
+
+        let mut row = GroupRow::new();
+        row.push(&[], top.clone(), wide).unwrap();
+        row.push(&[0], inner, wide).unwrap();
+        row.push(&[0, 0], leaf, wide).unwrap();
+
+        let db = InMemoryBinaryTrieDB::new_empty().at_group_depth(narrow);
+        let map = db.inner();
+        db.put_groups(vec![(BitPath::new(), row.encode())]).unwrap();
+
+        // At depth 2 the member at [0, 0] is the *next* row's root, so
+        // the reference to it must stay stored and be looked for in that
+        // row — which was never written, so the descent errors instead of
+        // answering from a member of the wrong group.
+        let counts = Counts::default();
+        let counting = CountingDB {
+            inner: InMemoryBinaryTrieDB::new(map).at_group_depth(narrow),
+            counts: counts.clone(),
+        };
+        let mut trie = BinaryTrie::open(Box::new(counting), blake3_hash(&top));
+        assert!(
+            matches!(trie.get(&key), Err(BinaryTrieError::Backend(_))),
+            "an out-of-band member must not stand in for the next group's root"
+        );
+        assert_eq!(
+            counts.reads(),
+            2,
+            "the root row, then the row the boundary child really belongs to"
         );
     }
 }
