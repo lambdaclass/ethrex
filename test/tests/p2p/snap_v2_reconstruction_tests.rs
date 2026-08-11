@@ -146,6 +146,73 @@ async fn a_stale_served_storage_root_is_replaced() {
     flat.destroy().await.expect("destroy");
 }
 
+/// A contract large enough to take the bulk sorted-trie builder hashes to the
+/// same root as one built slot by slot.
+///
+/// Reconstruction picks between the two by slot count, so the threshold is a
+/// place the root can silently change: both paths are exercised on every real
+/// sync, and only the combined state root would show a disagreement, far from
+/// the contract that caused it. 1500 slots is over the cutoff, the small
+/// contracts above are under it.
+#[tokio::test]
+async fn a_bulk_built_storage_trie_matches_a_slot_by_slot_one() {
+    use ethrex_rlp::encode::RLPEncode;
+
+    let store = store();
+    let flat = FlatState::open(&temp_dir("bulk-storage")).expect("open");
+
+    let contract = at(1);
+    const SLOTS: u64 = 1500;
+
+    flat.put_account(
+        contract,
+        &AccountState {
+            nonce: 1,
+            balance: U256::from(10),
+            ..Default::default()
+        },
+    )
+    .expect("write account");
+    for slot in 1..=SLOTS {
+        flat.put_slot(contract, at(slot), U256::from(slot * 7))
+            .expect("write slot");
+    }
+
+    // The reference: the same slots inserted one at a time through the store's
+    // own trie API, which is the path reconstruction takes below the cutoff.
+    let mut storage_trie = store
+        .open_direct_storage_trie(contract, *ethrex_common::constants::EMPTY_TRIE_HASH)
+        .expect("open storage trie");
+    for slot in 1..=SLOTS {
+        storage_trie
+            .insert(at(slot).0.to_vec(), U256::from(slot * 7).encode_to_vec())
+            .expect("insert slot");
+    }
+    let incremental_root = storage_trie
+        .hash(&ethrex_crypto::NativeCrypto)
+        .expect("hash storage trie");
+
+    let root = expected_root(
+        &store,
+        &[(
+            contract,
+            AccountState {
+                nonce: 1,
+                balance: U256::from(10),
+                storage_root: incremental_root,
+                ..Default::default()
+            },
+        )],
+    )
+    .await;
+
+    reconstruct_and_verify(&store, &flat, &header(10, root))
+        .await
+        .expect("the bulk builder must agree with the incremental one");
+
+    flat.destroy().await.expect("destroy");
+}
+
 /// A flat state that does not describe the pivot is rejected. Nothing
 /// downstream would catch it.
 #[tokio::test]

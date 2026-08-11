@@ -22,7 +22,7 @@ use ethrex_common::{
 };
 use ethrex_crypto::NativeCrypto;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_storage::Store;
+use ethrex_storage::{Store, store::StorageUpdates};
 use ethrex_trie::trie_sorted::trie_from_sorted_accounts_wrap;
 use tracing::{debug, info};
 
@@ -54,37 +54,77 @@ pub async fn reconstruct_and_verify(
     Ok(())
 }
 
+/// A contract with at least this many slots is built with the bulk sorted-trie
+/// builder rather than slot by slot.
+///
+/// The builder constructs bottom-up from sorted leaves instead of descending
+/// from the root once per slot, but it spawns its own writer pool per call. For
+/// a contract with a handful of slots that pool costs more than the descents it
+/// saves, and most contracts have a handful of slots.
+const BULK_STORAGE_TRIE_SLOTS: usize = 1024;
+
+/// Storage trie nodes buffered before a write transaction is opened.
+///
+/// Writing each contract as it is built opens one transaction per contract,
+/// which on a full state is the dominant cost of this pass.
+const STORAGE_WRITE_BATCH_NODES: usize = 20_000;
+
 /// Build one storage trie per account holding slots, returning what each hashes
 /// to.
 ///
-/// Single-threaded, unlike the snap/1 storage insert which fans out across a
-/// thread pool. Parallelising means handing worker threads their own cursors
-/// over the flat state, which the store does not expose yet.
+/// Single-threaded across accounts, unlike the snap/1 storage insert which fans
+/// out across a thread pool.
 async fn build_storage_tries(
     store: &Store,
     flat: &FlatState,
 ) -> Result<std::collections::BTreeMap<H256, H256>, SyncError> {
     let mut storage_roots = std::collections::BTreeMap::new();
+    let mut pending: StorageUpdates = Vec::new();
+    let mut pending_nodes = 0usize;
     let mut contracts = 0u64;
 
     // The account stream names every account; only those with slots get a trie.
     for entry in flat.iter_accounts() {
         let (account_hash, _) = entry?;
-        let mut trie = store.open_direct_storage_trie(account_hash, *EMPTY_TRIE_HASH)?;
-        let mut slots = 0u64;
-        for (slot_hash, encoded_value) in flat.iter_slots(account_hash) {
-            trie.insert(slot_hash.0.to_vec(), encoded_value)?;
-            slots += 1;
-        }
-        if slots == 0 {
+        let mut slots = flat.iter_slots(account_hash);
+
+        // Take enough slots to tell the two builders apart without materializing
+        // a large contract, which is exactly the case the bulk path exists for.
+        let head: Vec<(H256, Vec<u8>)> = slots.by_ref().take(BULK_STORAGE_TRIE_SLOTS).collect();
+        if head.is_empty() {
             continue;
         }
-        let (storage_root, changes) = trie.collect_changes_since_last_hash(&NativeCrypto);
-        store
-            .write_storage_trie_nodes_batch(vec![(account_hash, changes)])
-            .await?;
+
+        let trie = store.open_direct_storage_trie(account_hash, *EMPTY_TRIE_HASH)?;
+        let storage_root = if head.len() < BULK_STORAGE_TRIE_SLOTS {
+            let mut trie = trie;
+            for (slot_hash, value) in head {
+                trie.insert(slot_hash.0.to_vec(), value)?;
+            }
+            let (storage_root, changes) = trie.collect_changes_since_last_hash(&NativeCrypto);
+            pending_nodes += changes.len();
+            pending.push((account_hash, changes));
+            if pending_nodes >= STORAGE_WRITE_BATCH_NODES {
+                store
+                    .write_storage_trie_nodes_batch(std::mem::take(&mut pending))
+                    .await?;
+                pending_nodes = 0;
+            }
+            storage_root
+        } else {
+            // The bulk builder writes through the trie's own db, so these nodes
+            // never join the batch above.
+            let mut sorted = head.into_iter().chain(slots);
+            trie_from_sorted_accounts_wrap(trie.db(), &mut sorted)
+                .map_err(SyncError::TrieGenerationError)?
+        };
+
         storage_roots.insert(account_hash, storage_root);
         contracts += 1;
+    }
+
+    if !pending.is_empty() {
+        store.write_storage_trie_nodes_batch(pending).await?;
     }
 
     debug!("snap/2 reconstruction built {contracts} storage tries");
