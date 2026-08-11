@@ -99,7 +99,15 @@ pub async fn request_account_range(
         debug!(%peer_id, "snap/2 account range request failed");
         return failed();
     };
-    if accounts.is_empty() {
+    // devp2p `caps/snap.md` has a peer answer with at least one account whenever
+    // it holds the state, falling back to the first account past `limit_hash` if
+    // the range itself is empty. So an empty answer with no proof is the peer
+    // saying it does not hold this root, and is a failure. An empty answer that
+    // does carry a proof proves the range holds nothing, which is the only
+    // possible answer past the last account of the trie; `verify_range` checks
+    // that proof of absence, and the range is then served in full.
+    if accounts.is_empty() && proof.is_empty() {
+        debug!(%peer_id, "snap/2 peer does not hold the requested state root");
         return failed();
     }
 
