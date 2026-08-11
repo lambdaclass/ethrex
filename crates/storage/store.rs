@@ -6297,7 +6297,7 @@ fn commit_to_disk(
                 .flat_map(|l| l.binary_rows.iter().map(|(k, _)| k))
                 .collect();
             overlay
-                .iter_binary_entries()
+                .iter_binary_row_entries()
                 .filter(|(key, _)| !layer_keys.contains(key))
                 .map(|(key, value)| (key.clone(), value.clone().unwrap_or_default()))
                 .collect()

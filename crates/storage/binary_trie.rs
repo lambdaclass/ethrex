@@ -485,14 +485,14 @@ impl BinaryTrieDB for LayeredBinaryTrieDB {
     /// at the pivot, so disk must not be consulted for it either.
     fn get_group(&self, group_root: &BitPath) -> Result<Option<Vec<u8>>, BinaryTrieError> {
         let key = group_root.to_db_key();
-        if let Some(value) = self.cache.binary_get(self.binary_root, &key) {
+        if let Some(value) = self.cache.binary_row_get(self.binary_root, &key) {
             return Ok(value);
         }
         // Gated on the binary root, not the header state root: before activation
         // those differ, and this reader only ever holds the binary one. See
         // `TrieLayerCache::overlay_serves_binary`.
         if self.cache.overlay_serves_binary(self.binary_root)
-            && let Some(value) = self.cache.lookup_binary_overlay(&key)
+            && let Some(value) = self.cache.lookup_binary_row_overlay(&key)
         {
             return Ok(value);
         }
