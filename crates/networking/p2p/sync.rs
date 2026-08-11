@@ -8,6 +8,7 @@ pub mod bal_healing;
 mod code_collector;
 mod full;
 mod healing;
+pub mod snap2;
 mod snap_sync;
 
 /// Test-only re-export of the full-sync resume-point predicate so integration tests can
