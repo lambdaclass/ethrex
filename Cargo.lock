@@ -4466,6 +4466,7 @@ dependencies = [
  "cita_trie",
  "ethereum-types 0.15.1",
  "ethrex",
+ "ethrex-binary-trie",
  "ethrex-blockchain",
  "ethrex-common",
  "ethrex-crypto",

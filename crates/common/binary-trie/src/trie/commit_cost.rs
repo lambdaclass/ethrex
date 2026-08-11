@@ -69,7 +69,7 @@ impl RecordingDB {
         let log = Arc::new(Mutex::new(Recorded::default()));
         (
             Self {
-                inner: InMemoryBinaryTrieDB::new(map),
+                inner: harness_db(map),
                 log: log.clone(),
             },
             log,
@@ -78,9 +78,13 @@ impl RecordingDB {
 }
 
 impl BinaryTrieDB for RecordingDB {
-    fn get(&self, path: &BitPath) -> Result<Option<Vec<u8>>, BinaryTrieError> {
+    fn group_depth(&self) -> GroupDepth {
+        self.inner.group_depth()
+    }
+
+    fn get_group(&self, group_root: &BitPath) -> Result<Option<Vec<u8>>, BinaryTrieError> {
         let start = Instant::now();
-        let got = self.inner.get(path);
+        let got = self.inner.get_group(group_root);
         let elapsed = start.elapsed();
         let mut log = self.log.lock().expect("log");
         log.reads += 1;
@@ -88,13 +92,13 @@ impl BinaryTrieDB for RecordingDB {
         got
     }
 
-    fn put_batch(&self, entries: Vec<(BitPath, Vec<u8>)>) -> Result<(), BinaryTrieError> {
+    fn put_groups(&self, rows: Vec<(BitPath, Vec<u8>)>) -> Result<(), BinaryTrieError> {
         self.log
             .lock()
             .expect("log")
             .written
-            .extend(entries.iter().cloned());
-        self.inner.put_batch(entries)
+            .extend(rows.iter().cloned());
+        self.inner.put_groups(rows)
     }
 }
 
@@ -103,11 +107,15 @@ impl BinaryTrieDB for RecordingDB {
 struct SinkDB(InMemoryBinaryTrieDB);
 
 impl BinaryTrieDB for SinkDB {
-    fn get(&self, path: &BitPath) -> Result<Option<Vec<u8>>, BinaryTrieError> {
-        self.0.get(path)
+    fn group_depth(&self) -> GroupDepth {
+        self.0.group_depth()
     }
 
-    fn put_batch(&self, _entries: Vec<(BitPath, Vec<u8>)>) -> Result<(), BinaryTrieError> {
+    fn get_group(&self, group_root: &BitPath) -> Result<Option<Vec<u8>>, BinaryTrieError> {
+        self.0.get_group(group_root)
+    }
+
+    fn put_groups(&self, _rows: Vec<(BitPath, Vec<u8>)>) -> Result<(), BinaryTrieError> {
         Ok(())
     }
 }
@@ -129,15 +137,19 @@ struct StagingDB {
 type StagedNodes = Arc<Mutex<Vec<(Vec<u8>, Vec<u8>)>>>;
 
 impl BinaryTrieDB for StagingDB {
-    fn get(&self, path: &BitPath) -> Result<Option<Vec<u8>>, BinaryTrieError> {
-        self.inner.get(path)
+    fn group_depth(&self) -> GroupDepth {
+        self.inner.group_depth()
     }
 
-    fn put_batch(&self, entries: Vec<(BitPath, Vec<u8>)>) -> Result<(), BinaryTrieError> {
+    fn get_group(&self, group_root: &BitPath) -> Result<Option<Vec<u8>>, BinaryTrieError> {
+        self.inner.get_group(group_root)
+    }
+
+    fn put_groups(&self, rows: Vec<(BitPath, Vec<u8>)>) -> Result<(), BinaryTrieError> {
         let mut staged = self.staged.lock().expect("staging buffer");
-        staged.reserve(entries.len());
-        for (path, encoded) in entries {
-            staged.push((path.to_db_key(), encoded));
+        staged.reserve(rows.len());
+        for (group_root, encoded) in rows {
+            staged.push((group_root.to_db_key(), encoded));
         }
         Ok(())
     }
@@ -153,7 +165,7 @@ fn build(leaf_count: usize, seed: u64) -> (NodeMap, ethereum_types::H256, Vec<Ve
     leaves.sort_by(|a, b| a.0.cmp(&b.0));
     leaves.dedup_by(|a, b| a.0 == b.0);
 
-    let db = InMemoryBinaryTrieDB::new_empty();
+    let db = harness_db(Default::default());
     let map = db.inner();
     let mut trie = BinaryTrie::from_sorted_leaves(Box::new(db), leaves.clone())
         .expect("bulk build over sorted unique keys");
@@ -214,7 +226,7 @@ fn round(
 
     // Commit arm with no backend at all: the trie's own commit cost —
     // recursion, encoding, hashing, path building, mark_clean.
-    let scratch = InMemoryBinaryTrieDB::new(Arc::clone(map));
+    let scratch = harness_db(Arc::clone(map));
     let mut trie = BinaryTrie::open(Box::new(SinkDB(scratch)), root);
     apply_all(&mut trie);
     let start = Instant::now();
@@ -225,7 +237,7 @@ fn round(
     // Commit arm shaped like production: entries pushed into a staging
     // vector under their database keys, nothing touching disk.
     let staging = StagingDB {
-        inner: InMemoryBinaryTrieDB::new(Arc::clone(map)),
+        inner: harness_db(Arc::clone(map)),
         staged: Arc::new(Mutex::new(Vec::new())),
     };
     let mut trie = BinaryTrie::open(Box::new(staging), root);
@@ -250,16 +262,20 @@ fn round(
 /// decoded real nodes measures the same work `collect` did, without a
 /// per-node timer distorting it.
 fn replay(written: &[(BitPath, Vec<u8>)], reps: u32) -> (Duration, Duration, Duration, Duration) {
-    let nodes: Vec<StoredNode> = written
+    // Unwrapped once, up front: the timed loops below measure hashing and
+    // encoding of *nodes*, which is the work `collect` does, and timing
+    // them over row bytes would fold in the row container instead.
+    let encodings: Vec<Vec<u8>> = written.iter().map(|(_, row)| node_bytes(row)).collect();
+    let nodes: Vec<StoredNode> = encodings
         .iter()
-        .map(|(_, encoded)| decode(encoded).expect("commit wrote a decodable node"))
+        .map(|encoded| decode(encoded).expect("commit wrote a decodable node"))
         .collect();
 
     // Hashing: blake3 over each node's stored bytes.
     let start = Instant::now();
     let mut sink = 0u8;
     for _ in 0..reps {
-        for (_, encoded) in written {
+        for encoded in &encodings {
             sink ^= blake3_hash(std::hint::black_box(encoded)).0[0];
         }
     }
@@ -307,6 +323,31 @@ fn replay(written: &[(BitPath, Vec<u8>)], reps: u32) -> (Duration, Duration, Dur
 
     std::hint::black_box(sink);
     (hash, encode, db_key, path_build)
+}
+
+/// The harness stores one node per row, so `map` stays a node-granular
+/// picture and [`rows_at`] can bucket it into rows at *any* depth from
+/// outside. Grouping at the store would fix the depth at build time and
+/// leave the sweep unable to compare depths over one state.
+const HARNESS_DEPTH: GroupDepth = match GroupDepth::new(1) {
+    Some(depth) => depth,
+    None => unreachable!(),
+};
+
+/// A stored backend for the harness: one node per row, so a row key is
+/// a node path and a row holds exactly one member.
+fn harness_db(map: NodeMap) -> InMemoryBinaryTrieDB {
+    InMemoryBinaryTrieDB::new(map).at_group_depth(HARNESS_DEPTH)
+}
+
+/// The node inside a one-member row, which is what every stored value in
+/// this harness is.
+fn node_bytes(row: &[u8]) -> Vec<u8> {
+    let row = GroupRow::decode(row).expect("harness wrote a decodable row");
+    let members = row.members();
+    assert_eq!(members.len(), 1, "harness rows hold exactly one node");
+    assert!(members[0].0.is_empty(), "the one member is the row's root");
+    members[0].1.clone()
 }
 
 fn micros(d: Duration) -> f64 {
@@ -373,7 +414,7 @@ fn dirty_nodes_per_changed_leaf() {
         let leaves = r
             .written
             .iter()
-            .filter(|(_, encoded)| matches!(decode(encoded), Ok(StoredNode::Leaf { .. })))
+            .filter(|(_, row)| matches!(decode(&node_bytes(row)), Ok(StoredNode::Leaf { .. })))
             .count();
         let depths: Vec<usize> = r.written.iter().map(|(path, _)| path.len()).collect();
         let max_depth = depths.iter().copied().max().unwrap_or(0);
@@ -415,9 +456,9 @@ fn path_from_db_key(key: &[u8]) -> BitPath {
 /// ones, and it cannot be measured from the dirty set alone.
 fn rows_at(map: &NodeMap, group_depth: GroupDepth) -> BTreeMap<Vec<u8>, GroupRow> {
     let nodes = map.lock().expect("map");
-    let mut by_path: Vec<(BitPath, &Vec<u8>)> = nodes
+    let mut by_path: Vec<(BitPath, Vec<u8>)> = nodes
         .iter()
-        .map(|(key, encoded)| (path_from_db_key(key), encoded))
+        .map(|(key, row)| (path_from_db_key(key), node_bytes(row)))
         .collect();
     // Sorted by (depth, bits) so members go into each row in the order
     // `GroupRow::push` demands.

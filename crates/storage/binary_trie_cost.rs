@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use ethrex_binary_trie::BinaryTrieError;
-use ethrex_binary_trie::trie::{BinaryTrie, BinaryTrieDB, BitPath};
+use ethrex_binary_trie::trie::{BinaryTrie, BinaryTrieDB, BitPath, GroupDepth, group_root};
 
 use crate::api::StorageBackend;
 use crate::backend::rocksdb::{RocksDBBackend, RocksDBConfig};
@@ -74,9 +74,9 @@ impl TimedStagingDB {
 }
 
 impl BinaryTrieDB for TimedStagingDB {
-    fn get(&self, path: &BitPath) -> Result<Option<Vec<u8>>, BinaryTrieError> {
+    fn get_group(&self, group_root: &BitPath) -> Result<Option<Vec<u8>>, BinaryTrieError> {
         let start = Instant::now();
-        let got = self.inner.get(path);
+        let got = self.inner.get_group(group_root);
         let elapsed = start.elapsed();
         let mut reads = self.reads.lock().expect("reads");
         reads.0 += 1;
@@ -84,12 +84,12 @@ impl BinaryTrieDB for TimedStagingDB {
         got
     }
 
-    fn put_batch(&self, entries: Vec<(BitPath, Vec<u8>)>) -> Result<(), BinaryTrieError> {
+    fn put_groups(&self, rows: Vec<(BitPath, Vec<u8>)>) -> Result<(), BinaryTrieError> {
         let start = Instant::now();
         let mut staged = self.staged.lock().expect("staged");
-        staged.reserve(entries.len());
-        for (path, encoded) in entries {
-            staged.push((path.to_db_key(), encoded));
+        staged.reserve(rows.len());
+        for (group_root, encoded) in rows {
+            staged.push((group_root.to_db_key(), encoded));
         }
         let elapsed = start.elapsed();
         *self.stage_time.lock().expect("stage time") += elapsed;
@@ -141,11 +141,14 @@ fn round(
     // same counters rather than moving the one holding them.
     struct Handle(Arc<TimedStagingDB>);
     impl BinaryTrieDB for Handle {
-        fn get(&self, path: &BitPath) -> Result<Option<Vec<u8>>, BinaryTrieError> {
-            self.0.get(path)
+        fn group_depth(&self) -> GroupDepth {
+            self.0.group_depth()
         }
-        fn put_batch(&self, entries: Vec<(BitPath, Vec<u8>)>) -> Result<(), BinaryTrieError> {
-            self.0.put_batch(entries)
+        fn get_group(&self, group_root: &BitPath) -> Result<Option<Vec<u8>>, BinaryTrieError> {
+            self.0.get_group(group_root)
+        }
+        fn put_groups(&self, rows: Vec<(BitPath, Vec<u8>)>) -> Result<(), BinaryTrieError> {
+            self.0.put_groups(rows)
         }
     }
 
@@ -161,15 +164,15 @@ fn round(
 
     let (read_count, read_time) = *db.reads.lock().expect("reads");
     let stage_time = *db.stage_time.lock().expect("stage time");
-    let dirty = db.staged.lock().expect("staged").len();
+    let rows = db.staged.lock().expect("staged").len();
 
     println!(
-        "changed={changed:<5} dirty={dirty:<7} ({:>5.1}/leaf)  node_reads={read_count:<7}\n  \
+        "changed={changed:<5} rows={rows:<7} ({:>5.1}/leaf)  row_reads={read_count:<7}\n  \
          apply           {:>10.1} us   of which RocksDB reads {:>10.1} us ({:>4.1}%) \
          at {:>6.2} us/read\n  \
-         commit          {:>10.1} us   of which staging put_batch {:>8.1} us ({:>4.1}%)\n  \
+         commit          {:>10.1} us   of which staging put_groups {:>8.1} us ({:>4.1}%)\n  \
          block total     {:>10.1} us   read share of block {:>4.1}%",
-        dirty as f64 / changed as f64,
+        rows as f64 / changed as f64,
         micros(apply),
         micros(read_time),
         100.0 * micros(read_time) / micros(apply),
@@ -244,9 +247,14 @@ fn control_read_cost(backend: Arc<dyn StorageBackend>, keys: &[Vec<u8>]) {
     // rejects for almost nothing — which would make the control look
     // faster than the descent for a reason that has nothing to do with
     // the descent.
+    // Truncated to their group roots first: a lookup is a *row* lookup now,
+    // and a 20-bit path addresses no row unless 20 is a multiple of the group
+    // depth. Probing the raw paths would filter almost everything out and
+    // measure a table of misses.
     let probes: Vec<BitPath> = probes
         .into_iter()
-        .filter(|path| db.get(path).expect("get").is_some())
+        .map(|path| group_root(&path, db.group_depth()))
+        .filter(|row| db.get_group(row).expect("get_group").is_some())
         .collect();
 
     // `keys` is sorted, so probing it in order is a *sequential* scan and
@@ -264,8 +272,8 @@ fn control_read_cost(backend: Arc<dyn StorageBackend>, keys: &[Vec<u8>]) {
         for pass in 0..2 {
             let start = Instant::now();
             let mut hits = 0usize;
-            for path in set {
-                if db.get(path).expect("get").is_some() {
+            for row in set {
+                if db.get_group(row).expect("get_group").is_some() {
                     hits += 1;
                 }
             }

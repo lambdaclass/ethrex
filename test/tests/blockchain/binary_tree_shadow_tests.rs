@@ -43,6 +43,7 @@ use std::sync::Arc;
 use std::{fs::File, io::BufReader, path::PathBuf};
 
 use bytes::Bytes;
+use ethrex_binary_trie::trie::GroupRow;
 use ethrex_blockchain::{
     Blockchain,
     error::{ChainError, InvalidBlockError, InvalidForkChoice},
@@ -2891,13 +2892,30 @@ async fn build_staged_chain(count: u64) -> StagedChain {
     }
 }
 
-/// Every `(key, value)` pair currently in `BINARY_TRIE_NODES`, as the ground
-/// truth for "what actually reached disk".
-fn binary_nodes_on_disk(store: &Store) -> BTreeMap<Vec<u8>, Vec<u8>> {
+/// Every **node** currently in `BINARY_TRIE_NODES`, keyed by `(row key,
+/// relative path within the row)`, as the ground truth for "what actually
+/// reached disk".
+///
+/// Rows are decoded rather than compared whole. A row is a container for up to
+/// `2^g - 1` nodes, so comparing raw values would compare containers: two
+/// stores holding the same nodes could differ by a row boundary, and — the
+/// direction that matters — `len()` would be a row count while every caller
+/// here reads it as a node count. That is exactly what
+/// `binary_trie_node_count_for_test` returns, and the two are compared against
+/// each other.
+fn binary_nodes_on_disk(store: &Store) -> BTreeMap<(Vec<u8>, Vec<u8>), Vec<u8>> {
     store
         .binary_trie_nodes_for_test()
         .expect("binary node dump")
         .into_iter()
+        .flat_map(|(row_key, row)| {
+            GroupRow::decode(&row)
+                .expect("a stored binary row decodes")
+                .members()
+                .iter()
+                .map(|(relative, encoded)| ((row_key.clone(), relative.clone()), encoded.clone()))
+                .collect::<Vec<_>>()
+        })
         .collect()
 }
 
