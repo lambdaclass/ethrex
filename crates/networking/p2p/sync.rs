@@ -256,11 +256,12 @@ impl Syncer {
             // response is intentionally discarded; on the snap path the loop
             // re-fetches headers, which keeps `sync_cycle_snap`'s entry simple.
             if let Some(sync_head_number) = probe_sync_head_number(&mut self.peers, sync_head).await
-                && sync_head_number < MIN_FULL_BLOCKS
+                && sync_head_number < *MIN_FULL_BLOCKS
             {
                 info!(
                     sync_head_number,
-                    "Sync head below MIN_FULL_BLOCKS ({MIN_FULL_BLOCKS}), using full sync"
+                    min_full_blocks = *MIN_FULL_BLOCKS,
+                    "Sync head below MIN_FULL_BLOCKS, using full sync"
                 );
                 self.snap_enabled.store(false, Ordering::Relaxed);
                 // Clear any stale snap checkpoint so the manager loop in
