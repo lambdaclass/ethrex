@@ -912,6 +912,200 @@ mod tests {
         }
     }
 
+    // ----------------------------------------------------------------------
+    // What actually reaches the log.
+    //
+    // The events above are the decision; these are the lines an operator sees.
+    // A message nobody asserts on is a message that silently stops working, and
+    // the whole point of this module is the text in a `docker logs` tail.
+    // ----------------------------------------------------------------------
+
+    /// Captures everything `emit` writes, at every level.
+    fn capture(event: &ProgressEvent) -> String {
+        use std::io::Write;
+        use std::sync::{Arc, Mutex as StdMutex};
+
+        #[derive(Clone)]
+        struct Buffer(Arc<StdMutex<Vec<u8>>>);
+        impl Write for Buffer {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0
+                    .lock()
+                    .expect("buffer poisoned")
+                    .extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Buffer {
+            type Writer = Buffer;
+            fn make_writer(&'a self) -> Self::Writer {
+                self.clone()
+            }
+        }
+
+        let sink = Buffer(Arc::new(StdMutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(sink.clone())
+            .with_max_level(tracing::Level::TRACE)
+            .with_ansi(false)
+            .without_time()
+            .finish();
+        tracing::subscriber::with_default(subscriber, || event.emit());
+        let bytes = sink.0.lock().expect("buffer poisoned").clone();
+        String::from_utf8(bytes).expect("log output was not utf-8")
+    }
+
+    /// The flip-block halt's line: ERROR, greppable token, head number, how
+    /// long it has been still, how many updates were declined, and which
+    /// refusal it was.
+    #[test]
+    fn a_stall_on_a_synced_node_logs_an_error_carrying_the_facts() {
+        let line = capture(&ProgressEvent::Stalled {
+            head: 4_927,
+            unchanged_for: 312,
+            refusals: 26,
+            last_refusal: Refusal {
+                kind: RefusalKind::StateNotReachable,
+                detail: "State root of the new head is not reachable from the database".to_string(),
+            },
+            last_fcu_ago: Some(3),
+            synced: true,
+        });
+        assert!(line.contains("ERROR"), "not an ERROR: {line}");
+        assert!(line.contains("chain_stalled"), "missing token: {line}");
+        assert!(line.contains("head=4927"), "missing head: {line}");
+        assert!(
+            line.contains("unchanged_for_secs=312"),
+            "missing elapsed: {line}"
+        );
+        assert!(
+            line.contains("forkchoice_refusals=26"),
+            "missing refusal count: {line}"
+        );
+        assert!(
+            line.contains("last_refusal_kind=\"state_not_reachable\""),
+            "missing refusal kind: {line}"
+        );
+        assert!(
+            line.contains("State root of the new head is not reachable from the database"),
+            "missing refusal detail: {line}"
+        );
+        assert!(
+            line.contains("last_forkchoice_update_secs_ago=\"3\""),
+            "missing forkchoice age: {line}"
+        );
+    }
+
+    /// The same facts from a node that never synced, without the halt claim.
+    #[test]
+    fn a_stall_on_an_unsynced_node_logs_a_warning_not_an_error() {
+        let line = capture(&ProgressEvent::Stalled {
+            head: 12,
+            unchanged_for: 300,
+            refusals: 5,
+            last_refusal: Refusal {
+                kind: RefusalKind::Syncing,
+                detail: "The node has not finished syncing.".to_string(),
+            },
+            last_fcu_ago: Some(1),
+            synced: false,
+        });
+        assert!(line.contains("WARN"), "not a WARN: {line}");
+        assert!(!line.contains("ERROR"), "escalated to ERROR: {line}");
+        assert!(line.contains("chain_stalled"), "missing token: {line}");
+        assert!(
+            line.contains("has not completed a sync"),
+            "the line does not say why it is not an error: {line}"
+        );
+    }
+
+    /// An idle node's line is INFO, states facts, and renders no verdict. A
+    /// devnet between slots must not read as broken.
+    #[test]
+    fn an_idle_line_is_info_and_claims_nothing() {
+        let line = capture(&ProgressEvent::Idle {
+            head: 900,
+            unchanged_for: 120,
+            last_fcu_ago: Some(4),
+        });
+        assert!(line.contains("INFO"), "not an INFO: {line}");
+        assert!(!line.contains("WARN") && !line.contains("ERROR"), "{line}");
+        assert!(line.contains("chain_idle"), "missing token: {line}");
+        assert!(line.contains("head=900"), "missing head: {line}");
+        assert!(
+            line.contains("unchanged_for_secs=120"),
+            "missing elapsed: {line}"
+        );
+        assert!(
+            line.contains("last_forkchoice_update_secs_ago=\"4\""),
+            "missing forkchoice age: {line}"
+        );
+        for word in ["stall", "halt", "wedge", "stuck"] {
+            assert!(
+                !line.to_lowercase().contains(word),
+                "idle line renders a verdict ({word}): {line}"
+            );
+        }
+    }
+
+    /// A node with no consensus client says so rather than reporting an age it
+    /// does not have.
+    #[test]
+    fn an_idle_line_with_no_forkchoice_update_says_never() {
+        let line = capture(&ProgressEvent::Idle {
+            head: 0,
+            unchanged_for: 900,
+            last_fcu_ago: None,
+        });
+        assert!(
+            line.contains("last_forkchoice_update_secs_ago=\"never\""),
+            "{line}"
+        );
+    }
+
+    /// Recovery is INFO and says a stall ended, so a log tail shows the halt
+    /// closing rather than just going quiet.
+    #[test]
+    fn recovery_from_a_stall_logs_that_it_was_a_stall() {
+        let line = capture(&ProgressEvent::Resumed {
+            head: 4_928,
+            was_still_for: 327,
+            was_stalled: true,
+        });
+        assert!(line.contains("INFO"), "not an INFO: {line}");
+        assert!(line.contains("chain_resumed"), "missing token: {line}");
+        assert!(line.contains("head=4928"), "missing head: {line}");
+        assert!(
+            line.contains("was_still_for_secs=327"),
+            "missing elapsed: {line}"
+        );
+        assert!(
+            line.contains("stall"),
+            "does not say it was a stall: {line}"
+        );
+
+        let plain = capture(&ProgressEvent::Resumed {
+            head: 4_928,
+            was_still_for: 90,
+            was_stalled: false,
+        });
+        assert!(plain.contains("chain_resumed"), "{plain}");
+        assert!(
+            !plain.contains("stall"),
+            "an idle recovery claims a stall: {plain}"
+        );
+    }
+
+    /// The quiet case writes nothing at all. A node whose head is advancing
+    /// must not emit a periodic line every fifteen seconds for ever.
+    #[test]
+    fn the_quiet_event_writes_nothing() {
+        assert_eq!(capture(&ProgressEvent::Quiet), "");
+    }
+
     /// Refusal kinds keep distinct, stable names; a log filter is built on
     /// these.
     #[test]

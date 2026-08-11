@@ -35,6 +35,7 @@ tokio-util.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }
+tracing-subscriber.workspace = true
 ethrex-levm.workspace = true
 tempfile.workspace = true
 
