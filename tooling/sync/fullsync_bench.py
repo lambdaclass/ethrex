@@ -22,6 +22,7 @@ import json
 import os
 import shutil
 import socket
+import statistics
 import subprocess
 import sys
 import time
@@ -92,6 +93,7 @@ if KEEP_GENERATIONS < 2:
     )
 
 STOP_TIMEOUT_SECONDS = 300  # graceful; SIGKILL corrupts the resume state (see #7111)
+LOG_DRAIN_TIMEOUT_SECONDS = 30  # let `docker logs -f` flush its tail before we parse it
 
 # One round per day. The base advances at chain rate, so measuring more often just resamples
 # a window that has barely moved: the extra points are not independent and would make the
@@ -403,8 +405,9 @@ def run_leg(net, target_block, log_path, timeout_seconds):
     since = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
     start_node(net)
 
+    log_handle = open(log_path, "w")
     logger = subprocess.Popen(["docker", "logs", "-f", "--since", since, f"ethrex-{net}"],
-                              stdout=open(log_path, "w"), stderr=subprocess.STDOUT)
+                              stdout=log_handle, stderr=subprocess.STDOUT)
     status, head = "ok", None
     try:
         deadline = started + timeout_seconds
@@ -421,7 +424,20 @@ def run_leg(net, target_block, log_path, timeout_seconds):
             time.sleep(POLL_SECONDS)
     finally:
         stop_node(net)
-        logger.terminate()
+        # `docker logs -f` exits by itself once the container stops. Wait for it and close
+        # the file before parsing: killing it immediately can drop the tail of the log, and
+        # the tail is where the final `[METRICS]` batches are — losing them silently
+        # undercounts a sample or reports a valid run as `no_batches`.
+        try:
+            logger.wait(timeout=LOG_DRAIN_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            log(f"{net}: log follower did not exit; terminating (tail may be truncated)")
+            logger.terminate()
+            try:
+                logger.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                logger.kill()
+        log_handle.close()
 
     if status == "ok" and not exited_cleanly(net):
         # An OOM-kill or crash leaves the DB in a state we must not promote to a base.
@@ -450,7 +466,16 @@ def cycle(net, state_root, results_dir):
     cfg = NETWORKS[net]
     base = base_dir(state_root, net, 0)
     if not os.path.isdir(base):
-        raise SystemExit(f"no base for {net} at {base}; run with --bootstrap first")
+        # A run killed between rotation and the rename leaves the previous base one slot
+        # down. Promote it rather than demanding a manual re-bootstrap.
+        previous = base_dir(state_root, net, 1)
+        if os.path.isdir(previous):
+            log(f"{net}: base.0 missing; promoting base.1 (interrupted rotation)")
+            os.rename(previous, base)
+        else:
+            # Deliberately not SystemExit: that is a BaseException, so it escapes the
+            # per-network handler in `main` and takes the other networks down with it.
+            raise RuntimeError(f"no base for {net} at {base}; run with --bootstrap first")
 
     assert_same_filesystem(net, state_root)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -516,9 +541,16 @@ def cycle(net, state_root, results_dir):
         log(f"{net}: new base failed its health check; keeping the previous base")
         return result
 
+    # Build the replacement first, then swap it in. Rotating before the snapshot leaves
+    # `base.0` absent for the length of an rsync — minutes on mainnet — and if the snapshot
+    # then fails the next cycle finds no base at all and the watch stops, even though the
+    # previous base is sitting intact in `base.1`. Staging reduces that window to a rename.
+    staging = os.path.join(state_root, net, "base.incoming")
+    shutil.rmtree(staging, ignore_errors=True)
+    snapshot(net, staging, link_dest=base_dir(state_root, net, 0))
+    write_base_head(staging, advanced["reached_block"])
     rotate_generations(state_root, net)
-    snapshot(net, base_dir(state_root, net, 0), link_dest=base_dir(state_root, net, 1))
-    write_base_head(base_dir(state_root, net, 0), advanced["reached_block"])
+    os.rename(staging, base_dir(state_root, net, 0))
     log(f"{net}: base advanced to {advanced['reached_block']}")
     return result
 
@@ -664,8 +696,7 @@ def summarise(result, history):
     previous = [h["throughput_ggas_s"]["mean"] for h in history
                 if h.get("timestamp") != result.get("timestamp")]
     if len(previous) >= 3:
-        ordered = sorted(previous)
-        median = ordered[len(ordered) // 2]
+        median = statistics.median(previous)
         line += f" — {100 * (mean - median) / median:+.1f}% vs {len(previous)}-run median"
     else:
         line += " — baseline still building"
@@ -694,8 +725,7 @@ def _network_line(result, history):
                 if h.get("timestamp") != result.get("timestamp")
                 and h["throughput_ggas_s"]["mean"]]
     if len(previous) >= 3:
-        ordered = sorted(previous)
-        median = ordered[len(ordered) // 2]
+        median = statistics.median(previous)
         line += f" — `{100 * (mean - median) / median:+.1f}%` vs {len(previous)}-run median"
     else:
         line += f" — baseline building ({len(previous) + 1}/4)"

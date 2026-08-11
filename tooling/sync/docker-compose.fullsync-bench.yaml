@@ -10,8 +10,9 @@
 #   1. `--syncmode` defaults to full — this measures execution, not snap-sync completion.
 #      Bootstrapping the first base overrides it to snap via BENCH_SYNCMODE.
 #   2. `mem_limit` — a memory leak must OOM-kill the container, not take down the box.
-#   3. the beacon APIs are published, because the runner reads the consensus head to
-#      compute each cycle's gap-maintaining advance target.
+#   3. the beacon APIs are published on loopback only, because the runner reads the
+#      consensus head to compute each cycle's gap-maintaining advance target and nothing
+#      off-box has any business reaching them.
 #   4. data lives in bind mounts under BENCH_DATA_ROOT rather than named volumes, so the
 #      node data and the base snapshots share one filesystem. `rsync --link-dest` only
 #      hardlinks within a filesystem; split across two it degrades to full copies without
@@ -44,7 +45,7 @@ services:
       - secrets-hoodi:/secrets
       - ${BENCH_DATA_ROOT:-/mnt/raid10/fullsync-bench}/consensus/hoodi:/root/.lighthouse
     ports:
-      - "5052:5052"
+      - "127.0.0.1:5052:5052"
     command: >
       lighthouse bn
       --network hoodi
@@ -60,7 +61,7 @@ services:
       - secrets-sepolia:/secrets
       - ${BENCH_DATA_ROOT:-/mnt/raid10/fullsync-bench}/consensus/sepolia:/root/.lighthouse
     ports:
-      - "5053:5052"
+      - "127.0.0.1:5053:5052"
     command: >
       lighthouse bn
       --network sepolia
@@ -76,7 +77,7 @@ services:
       - secrets-mainnet:/secrets
       - ${BENCH_DATA_ROOT:-/mnt/raid10/fullsync-bench}/consensus/mainnet:/root/.lighthouse
     ports:
-      - "5054:5052"
+      - "127.0.0.1:5054:5052"
     command: >
       lighthouse bn
       --network mainnet
