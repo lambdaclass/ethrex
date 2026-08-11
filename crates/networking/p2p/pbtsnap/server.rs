@@ -290,6 +290,30 @@ mod tests {
         );
     }
 
+    /// The budget invariant stated against a worst case spelled out here, not
+    /// against [`MAX_LEAF_WIRE_BYTES`].
+    ///
+    /// Asserting it through the constant is asserting that the constant agrees
+    /// with itself: setting the per-leaf charge to the shorter account-zone key
+    /// shrinks both sides of such a comparison at once and nothing fails, while
+    /// a real range of overflow-storage leaves (66-byte keys) would overrun the
+    /// budget the peer set. A mutation check caught exactly that.
+    #[test]
+    fn the_leaf_count_cannot_overrun_the_budget_even_for_all_storage_keys() {
+        // The longest tree key the embedding defines, plus the leaf value.
+        const WORST_CASE_LEAF: u64 = 66 + 32;
+        for budget in [0u64, 1, 97, 98, 200, 1_000, MAX_RESPONSE_BYTES, u64::MAX] {
+            let bytes = leaf_budget(budget) as u64 * WORST_CASE_LEAF;
+            // The progress rule outranks the budget for the first leaf, and the
+            // server's own cap outranks a peer asking for more.
+            let allowance = budget.min(MAX_RESPONSE_BYTES).max(WORST_CASE_LEAF);
+            assert!(
+                bytes <= allowance,
+                "budget {budget} admits {bytes} worst-case bytes, over {allowance}",
+            );
+        }
+    }
+
     #[test]
     fn the_leaf_budget_never_reaches_zero() {
         for budget in [0u64, 1, MAX_LEAF_WIRE_BYTES - 1] {
