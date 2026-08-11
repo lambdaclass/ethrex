@@ -67,7 +67,10 @@ ere = ["dep:ere-platform-core"]
 # Crypto providers, one per zkVM.
 zkvm-interface = ["dep:zkvm-interface"]
 sp1 = ["zkvm-interface"]
-zisk = ["zkvm-interface"]
+# `ethrex-common/zisk` swaps the tx/block `OnceCell` for the single-threaded
+# `unsync_cell` one on riscv64, matching what `guest-program/bin/zisk` already
+# enables. Without it the two ZisK guests compile different cell types.
+zisk = ["zkvm-interface", "ethrex-common/zisk"]
 openvm = [
     "dep:openvm-ecc-guest",
     "dep:openvm-sha2",
@@ -79,3 +82,28 @@ openvm = [
     "dep:openvm-kzg",
     "dep:bls12_381",
 ]
+
+# Mirrors the `[patch]` in `bin/openvm/Cargo.toml`. Without it this crate resolves
+# different openvm versions than the real guest build, so `--features openvm` failed
+# to compile here (`is_in_correct_subgroup` not found) and the provider could not be
+# checked or tested outside the tag-time Ere docker build.
+[patch."https://github.com/openvm-org/openvm.git"]
+openvm = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
+openvm-algebra-complex-macros = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
+openvm-algebra-guest = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
+openvm-algebra-moduli-macros = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
+openvm-custom-insn = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
+openvm-ecc-guest = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
+openvm-ecc-sw-macros = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
+openvm-k256 = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0", package = "k256" }
+openvm-keccak256 = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
+openvm-keccak256-guest = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
+openvm-macros-common = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
+openvm-p256 = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0", package = "p256" }
+openvm-pairing = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
+openvm-pairing-guest = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
+openvm-platform = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
+openvm-rv32im-guest = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
+openvm-sha2 = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
+openvm-sha2-guest = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
+

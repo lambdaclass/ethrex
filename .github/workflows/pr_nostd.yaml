@@ -75,8 +75,45 @@ jobs:
             echo "::endgroup::"
           done
 
-          # openvm is deliberately absent: its crates need a newer rustc than the
-          # pinned toolchain, and the openvm bin carries a `[patch]` this crate
-          # does not, so a check here resolves different versions than the real
-          # build. `extern crate alloc` is crate-level, so the zkvm-interface
-          # check above still guards the regression that hit `crypto/openvm.rs`.
+          # openvm is absent from THIS loop only because its crates need a newer
+          # rustc than the pinned toolchain; it is checked in the step below on a
+          # newer one. The crate now carries the same `[patch]` as `bin/openvm`,
+          # so it resolves the versions the real build uses.
+
+      # `crypto/openvm.rs` is the largest provider and used to be compiled first by
+      # the tag-time Ere docker build, which meant a break in it was found at release
+      # time. It needs rustc >= 1.91.1, so it gets its own toolchain rather than
+      # holding back the pinned one.
+      - name: Accelerated crypto agrees with the host provider
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.93.0 --profile minimal --no-self-update
+          cd crates/guest-program/stateless-validator
+          # Compiles the openvm provider, and asserts it returns what NativeCrypto
+          # returns for the precompiles it overrides. A divergence here would make a
+          # guest prove a different post-state than the node computed.
+          cargo +1.93.0 test --features openvm,host --test crypto_parity
+
+      - name: Field elements are serialized only via fp_be
+        working-directory: crates/guest-program/stateless-validator
+        run: |
+          set -euo pipefail
+          # OpenVM does not constrain field element limbs to be < p after arithmetic
+          # (IntMod::assert_reduced). Serializing raw limbs would let a prover pick
+          # between `v` and `v + p` as precompile return data and fork execution, so
+          # every serialization must go through `fp_be`, which asserts first.
+          #
+          # This is a textual guard because the clippy `disallowed-methods` rule in
+          # clippy.toml cannot fire here: `crypto/openvm.rs` is only compiled with the
+          # `openvm` feature, which the matrix above excludes on toolchain grounds.
+          # Delete this once that file is compiled in CI and clippy runs on it.
+          offenders=$(grep -n 'as_le_bytes\|to_be_bytes' src/crypto/openvm.rs \
+                      | grep -v 'fn fp_be' \
+                      | grep -v '^\s*[0-9]*://' \
+                      | grep -v 'v.to_be_bytes()' || true)
+          if [ -n "$offenders" ]; then
+            echo "::error::serialize field elements via fp_be(), which calls assert_reduced()"
+            echo "$offenders"
+            exit 1
+          fi
+          echo "ok  no raw field-element serialization outside fp_be"
