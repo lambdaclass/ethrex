@@ -1015,20 +1015,92 @@ pub fn migrate_datadir_if_needed(
 
 /// Re-apply blocks from the last on-disk state root up to the head block,
 /// rebuilding the in-memory trie diff-layers lost across a restart.
+/// Resolve a full block by number, falling back to the full-sync header table.
+///
+/// Same reason as [`header_by_number`]: blocks executed during full sync but not yet
+/// canonicalized have no `CANONICAL_BLOCK_HASHES` entry, so the canonical lookup misses
+/// them. The body is stored by hash and is durable up to `flushed_upto`, so once the
+/// header resolves the body is there.
+async fn block_by_number(
+    store: &Store,
+    number: ethrex_common::types::BlockNumber,
+) -> eyre::Result<Option<ethrex_common::types::Block>> {
+    if let Some(block) = store.get_block_by_number(number).await? {
+        return Ok(Some(block));
+    }
+    let Some(header) = header_by_number(store, number).await? else {
+        return Ok(None);
+    };
+    let Some(body) = store.get_block_body_by_hash(header.hash()).await? else {
+        return Ok(None);
+    };
+    Ok(Some(ethrex_common::types::Block { header, body }))
+}
+
+/// Resolve a header by block number, falling back to the full-sync header table.
+///
+/// `get_block_header` goes through `CANONICAL_BLOCK_HASHES`, which only `forkchoice_update`
+/// writes — so blocks that were executed during full sync but not yet canonicalized are
+/// invisible to it. Full sync keeps the headers it downloaded keyed by number, which covers
+/// exactly that range. A miss is normal (the table is cleared between cycles) and simply
+/// means the block cannot be resolved that way.
+async fn header_by_number(
+    store: &Store,
+    number: ethrex_common::types::BlockNumber,
+) -> eyre::Result<Option<ethrex_common::types::BlockHeader>> {
+    if let Some(header) = store.get_block_header(number)? {
+        return Ok(Some(header));
+    }
+    Ok(store
+        .read_fullsync_batch(number, 1)
+        .await?
+        .into_iter()
+        .next()
+        .flatten())
+}
+
 pub async fn regenerate_head_state(
     store: &Store,
     blockchain: &Arc<Blockchain>,
 ) -> eyre::Result<()> {
-    // Precondition: the store was opened via `add_initial_state`/`load_initial_state`,
-    // which clamp `LatestBlockNumber` to `flushed_upto`. All blocks up to
-    // `head_block_number` are therefore on disk; callers that skip that clamp
-    // would break this assumption.
-    let head_block_number = store.get_latest_block_number().await?;
-    debug!("regenerate_head_state head clamped to durable block {head_block_number}");
-
-    let Some(last_header) = store.get_block_header(head_block_number)? else {
-        unreachable!("Database is empty, genesis block should be present");
+    // Resume from the durability frontier, not from the canonical head.
+    //
+    // The two drift apart in both directions. After a crash `LatestBlockNumber` can be
+    // *ahead* of `flushed_upto` (forkchoice writes the head synchronously while bodies are
+    // still buffered), and during full sync it is *behind*, because blocks execute and their
+    // trie state commits long before a forkchoice update canonicalizes them.
+    //
+    // That second case is fatal if we start here from the canonical head: the on-disk trie is
+    // single-version, so the commits made above the canonical head have already overwritten
+    // the canonical head's own state. Walking back from it can never find a root, and the
+    // node reports "Unknown state found in DB" on a database that is perfectly recoverable.
+    //
+    // `flushed_upto` is the right answer for both: it is exactly how far block data is
+    // durable, so it is exactly how far we can replay. An absent marker means a legacy or
+    // fresh database where everything is durable, so fall back to the canonical head.
+    let canonical_head = store.get_latest_block_number().await?;
+    let frontier = store.read_flushed_upto_opt()?;
+    let head_block_number = frontier.unwrap_or(canonical_head);
+    // Blocks executed during full sync but not yet canonicalized have no
+    // CANONICAL_BLOCK_HASHES entry, so resolve headers through the full-sync table too.
+    let last_header = match header_by_number(store, head_block_number).await? {
+        Some(header) => header,
+        // The full-sync header table is cleared between sync cycles, so the frontier is not
+        // always resolvable — a reorg that lowers the canonical head below an older frontier
+        // lands here too. Fall back to the canonical head rather than failing.
+        None => store.get_block_header(canonical_head)?.ok_or_else(|| {
+            eyre::eyre!("no header for canonical head {canonical_head}; database is corrupt")
+        })?,
     };
+
+    // Take the replay target from the header we actually resolved, never from the frontier
+    // we hoped to resolve. Tracking them separately lets the fallback above leave the target
+    // at an unreachable height, and the replay loop then aborts on `Block {i} not found`.
+    let head_block_number = last_header.number;
+    debug!(
+        "regenerate_head_state resuming from block {head_block_number} \
+         (durable frontier {frontier:?}, canonical head {canonical_head})"
+    );
 
     let mut current_last_header = last_header;
 
@@ -1043,7 +1115,7 @@ pub async fn regenerate_head_state(
 
         debug!("Need to regenerate state for block {parent_number}");
 
-        let Some(parent_header) = store.get_block_header(parent_number)? else {
+        let Some(parent_header) = header_by_number(store, parent_number).await? else {
             return Err(eyre::eyre!(
                 "Parent header for block {parent_number} not found"
             ));
@@ -1065,8 +1137,7 @@ pub async fn regenerate_head_state(
     for i in (last_state_number + 1)..=head_block_number {
         debug!("Re-applying block {i} to regenerate state");
 
-        let block = store
-            .get_block_by_number(i)
+        let block = block_by_number(store, i)
             .await?
             .ok_or_else(|| eyre::eyre!("Block {i} not found"))?;
 
