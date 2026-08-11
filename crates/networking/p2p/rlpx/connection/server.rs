@@ -31,7 +31,7 @@ use crate::{
             SUPPORTED_ETH_CAPABILITIES, SUPPORTED_PBTSNAP_CAPABILITIES,
             SUPPORTED_SNAP_CAPABILITIES,
         },
-        snap::TrieNodes,
+        snap::{AccountRange, StorageRanges, TrieNodes},
     },
     snap::{
         process_account_range_request, process_byte_codes_request, process_storage_ranges_request,
@@ -1381,7 +1381,16 @@ async fn handle_incoming_message(
             };
         }
         Message::GetAccountRange(req) => {
-            let response = process_account_range_request(req, state.storage.clone()).await?;
+            let response = if serves_legacy_snap_state(state) {
+                process_account_range_request(req, state.storage.clone()).await?
+            } else {
+                refused_legacy_snap_request(state, "GetAccountRange");
+                AccountRange {
+                    id: req.id,
+                    accounts: vec![],
+                    proof: vec![],
+                }
+            };
             send(state, Message::AccountRange(response)).await?
         }
         Message::GetPbtLeafRange(req) => {
@@ -1729,7 +1738,16 @@ async fn handle_incoming_message(
             }
         }
         Message::GetStorageRanges(req) => {
-            let response = process_storage_ranges_request(req, state.storage.clone()).await?;
+            let response = if serves_legacy_snap_state(state) {
+                process_storage_ranges_request(req, state.storage.clone()).await?
+            } else {
+                refused_legacy_snap_request(state, "GetStorageRanges");
+                StorageRanges {
+                    id: req.id,
+                    slots: vec![],
+                    proof: vec![],
+                }
+            };
             send(state, Message::StorageRanges(response)).await?
         }
         Message::GetByteCodes(req) => {
@@ -1745,9 +1763,16 @@ async fn handle_incoming_message(
         }
         Message::GetTrieNodes(req) => {
             let id = req.id;
-            match process_trie_nodes_request(req, state.storage.clone()).await {
-                Ok(response) => send(state, Message::TrieNodes(response)).await?,
-                Err(_) => send(state, Message::TrieNodes(TrieNodes { id, nodes: vec![] })).await?,
+            if !serves_legacy_snap_state(state) {
+                refused_legacy_snap_request(state, "GetTrieNodes");
+                send(state, Message::TrieNodes(TrieNodes { id, nodes: vec![] })).await?
+            } else {
+                match process_trie_nodes_request(req, state.storage.clone()).await {
+                    Ok(response) => send(state, Message::TrieNodes(response)).await?,
+                    Err(_) => {
+                        send(state, Message::TrieNodes(TrieNodes { id, nodes: vec![] })).await?
+                    }
+                }
             }
         }
         #[cfg(feature = "l2")]
@@ -2064,6 +2089,41 @@ mod capability_tests {
         assert_eq!(capability.protocol(), "pbtsnap");
         assert_eq!(capability.version, 1);
     }
+}
+
+/// Whether this node answers `snap/1` **state** requests at all.
+///
+/// False on a binary-tree-scheduled chain, which closes an asymmetry that was
+/// otherwise real: `validate_sync_mode` refuses to start such a node in snap
+/// mode, so ethrex declined to *use* legacy snap on these chains — while the
+/// dispatcher went on *serving* it. A peer that took the offer would heal an
+/// MPT against roots that, from the activation timestamp onwards, no header
+/// commits to.
+///
+/// Gated on `binary_tree_scheduled` rather than on the tree being *active*, so
+/// that it is the same predicate the startup guard uses and the two cannot
+/// drift apart. Nothing honest is lost by the wider gate: a scheduled and an
+/// unscheduled chain cannot peer at all (`binary_tree_time` joins the timestamp
+/// fork list, so `validate_status` rejects on the fork id — measured in
+/// `pbtsnap::live_tests`), so every peer that can reach this node is on the
+/// scheduled chain, and on that chain ethrex refuses to start a legacy snap
+/// sync in the first place.
+///
+/// `GetByteCodes` is deliberately **not** covered. Code is content-addressed
+/// and self-verifying, it is the same bytes under either commitment, and
+/// `pbtsnap` sync depends on being able to ask for it.
+fn serves_legacy_snap_state(state: &Established) -> bool {
+    !state.storage.get_chain_config().binary_tree_scheduled()
+}
+
+/// One line per refusal, at debug: on a healthy scheduled chain no honest peer
+/// sends these, so any volume here is a peer worth looking at.
+fn refused_legacy_snap_request(state: &Established, message: &str) {
+    debug!(
+        peer=%state.node,
+        %message,
+        "Refusing a legacy snap state request on a binary-tree-scheduled chain",
+    );
 }
 
 /// Whether an incoming message asks this node to *serve* something, and so
