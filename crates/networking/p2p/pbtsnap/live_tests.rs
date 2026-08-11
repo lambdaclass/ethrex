@@ -534,8 +534,8 @@ fn a_scheduled_chain_and_an_unscheduled_one_cannot_peer() {
 
     let fork_id = |genesis: Genesis| {
         ForkId::new(
-            genesis.config.clone(),
-            genesis.get_block().header.clone(),
+            genesis.config,
+            genesis.get_block().header,
             PIVOT_TIMESTAMP,
             1,
         )
