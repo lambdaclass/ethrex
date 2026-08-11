@@ -6285,10 +6285,11 @@ fn commit_to_disk(
         }
         None => Vec::new(),
     };
-    // The same bridge for `BINARY_TRIE_NODES`, kept as a separate list because
-    // these keys go to one fixed column family and, crucially, cannot be routed
-    // by length: a `BitPath` key overlaps every range `classify_trie_key`
-    // dispatches on, so folding them into `extra_writes` would write binary nodes
+    // The same bridge for `BINARY_TRIE_NODES`, carrying whole group **rows**
+    // keyed by group root. Kept as a separate list because these keys go to one
+    // fixed column family and, crucially, cannot be routed by length: a row key
+    // is `4 + ceil(bits/8)` bytes and overlaps every range `classify_trie_key`
+    // dispatches on, so folding them into `extra_writes` would write binary rows
     // into `ACCOUNT_TRIE_NODES` and corrupt the MPT.
     let binary_extra_writes: Vec<(Vec<u8>, Vec<u8>)> = match &overlay_for_reconciliation {
         Some(overlay) => {
@@ -6341,11 +6342,11 @@ fn commit_to_disk(
     // For large state diffs this is O(N) extra reads on the per-block critical path.
     // A follow-up could batch these via `multi_get_cf` if profiling shows it's significant.
     let mut overlay: HashMap<Vec<u8>, Option<Vec<u8>>> = HashMap::new();
-    // The same intra-batch pre-image map for `BINARY_TRIE_NODES`, and separate
-    // for the same reason the overlay's binary map is: a `BitPath` key can be
-    // byte-identical to an account-trie path, so one shared map would let a
-    // binary write supply an MPT pre-image (or the reverse) and silently
-    // corrupt whichever reverse diff read it second.
+    // The same intra-batch pre-image map for `BINARY_TRIE_NODES`, holding whole
+    // previous rows, and separate for the same reason the overlay's binary map
+    // is: a row key can be byte-identical to an account-trie path, so one shared
+    // map would let a binary write supply an MPT pre-image (or the reverse) and
+    // silently corrupt whichever reverse diff read it second.
     //
     // PERF: same shape as above — one `read_view.get` per first-touched binary
     // key, so a scheduled chain pays roughly twice the pre-image reads an
@@ -6460,7 +6461,7 @@ fn commit_to_disk(
             }
         }
 
-        // The same block's EIP-8297 binary-trie nodes, into the SAME write
+        // The same block's EIP-8297 binary-trie group rows, into the SAME write
         // batch. That is the whole flush-parity guarantee: `write_tx` commits
         // once at the end, so the two tries advance on disk together or not at
         // all, and a crash can never leave the MPT at block N with the binary
