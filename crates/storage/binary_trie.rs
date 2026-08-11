@@ -1186,7 +1186,7 @@ mod tests {
                 BinaryLayerUpdate {
                     root,
                     parent_root: H256::zero(),
-                    nodes: vec![],
+                    rows: vec![],
                     flat: vec![
                         (staged.clone(), vec![0x44; 32]),
                         (overwritten.clone(), vec![0x55; 32]),

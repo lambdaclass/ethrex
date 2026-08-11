@@ -506,8 +506,8 @@ pub struct UpdateBatch {
     pub wait_for_flush: bool,
 }
 
-/// One block's EIP-8297 binary-trie advance: the root it reached and the node
-/// writes that got it there, **staged** rather than written.
+/// One block's EIP-8297 binary-trie advance: the root it reached and the
+/// **group row** writes that got it there, **staged** rather than written.
 ///
 /// Produced by [`Store::advance_binary_trie_for_block`] and carried through
 /// [`UpdateBatch`] into the block's diff layer. Nothing here has touched disk;
@@ -533,10 +533,11 @@ pub struct BinaryTrieAdvance {
     /// tombstone, per `BinaryTrieDB`'s convention.
     ///
     /// A key addresses a group *root* and a value is a whole row, so one entry
-    /// carries every node of one group. A removal that leaves the group with
-    /// members arrives here as an ordinary rewrite holding the survivors; only
-    /// a group that lost its last member arrives as an empty value.
-    pub nodes: BinaryTrieRows,
+    /// carries every node of one group and `rows.len()` is a row count, not a
+    /// node count. A removal that leaves the group with members arrives here as
+    /// an ordinary rewrite holding the survivors; only a group that lost its
+    /// last member arrives as an empty value.
+    pub rows: BinaryTrieRows,
     /// The same block's writes to the flat leaf mirror, derived from the
     /// [`LeafChangelog`] the trie's own commit emitted: one
     /// `BINARY_FLATKEYVALUE` row per leaf the block created, changed or removed.
@@ -558,7 +559,7 @@ impl From<BinaryTrieAdvance> for BinaryLayerUpdate {
         BinaryLayerUpdate {
             root: advance.root,
             parent_root: advance.parent_root,
-            nodes: advance.nodes,
+            rows: advance.rows,
             flat: advance.flat,
         }
     }
@@ -3694,12 +3695,12 @@ impl Store {
         let flat = flat_writes_from_changelog(committed.leaves);
         drop(trie);
 
-        let nodes = std::mem::take(&mut *staged.lock().map_err(|_| StoreError::LockError)?);
+        let rows = std::mem::take(&mut *staged.lock().map_err(|_| StoreError::LockError)?);
         self.set_binary_trie_root(block_hash, root)?;
         Ok(BinaryTrieAdvance {
             root,
             parent_root,
-            nodes,
+            rows,
             flat,
         })
     }
@@ -6293,7 +6294,7 @@ fn commit_to_disk(
         Some(overlay) => {
             let layer_keys: rustc_hash::FxHashSet<&Vec<u8>> = committed_layers
                 .iter()
-                .flat_map(|l| l.binary_nodes.iter().map(|(k, _)| k))
+                .flat_map(|l| l.binary_rows.iter().map(|(k, _)| k))
                 .collect();
             overlay
                 .iter_binary_entries()
@@ -6351,7 +6352,7 @@ fn commit_to_disk(
     // unscheduled one does. That is the same doubling shadow tracking already
     // imposes on the write side, and it buys the only thing that makes a deep
     // reorg recoverable past activation. Untouched on unscheduled chains, where
-    // `layer.binary_nodes` is empty and this map stays so.
+    // `layer.binary_rows` is empty and this map stays so.
     let mut binary_overlay: HashMap<Vec<u8>, Option<Vec<u8>>> = HashMap::new();
     // A third intra-batch pre-image map, for `BINARY_FLATKEYVALUE`, separate
     // from `binary_overlay` for the sharper form of the same reason that one is
@@ -6482,7 +6483,7 @@ fn commit_to_disk(
         } else {
             &[]
         };
-        for (key, value) in layer.binary_nodes.iter().chain(binary_extra.iter()) {
+        for (key, value) in layer.binary_rows.iter().chain(binary_extra.iter()) {
             // Pre-image first, from the intra-batch map or disk, exactly as the
             // MPT loop above does — a multi-layer commit must record each
             // block's own pre-state, not the pre-batch one.
@@ -8508,7 +8509,7 @@ mod state_history_tests {
         block: BlockNumber,
         binary_root: H256,
         parent_binary_root: H256,
-        binary_nodes: Vec<(Vec<u8>, Vec<u8>)>,
+        binary_rows: Vec<(Vec<u8>, Vec<u8>)>,
         binary_flat: Vec<(Vec<u8>, Vec<u8>)>,
     ) {
         {
@@ -8523,7 +8524,7 @@ mod state_history_tests {
                 BinaryLayerUpdate {
                     root: binary_root,
                     parent_root: parent_binary_root,
-                    nodes: binary_nodes,
+                    rows: binary_rows,
                     flat: binary_flat,
                 },
             );
@@ -8811,7 +8812,7 @@ mod state_history_tests {
                 BinaryLayerUpdate {
                     root: H256::repeat_byte(0x81),
                     parent_root: H256::zero(),
-                    nodes: vec![],
+                    rows: vec![],
                     flat: vec![(tree_key(0x01), leaf_value(0x11))],
                 },
             );
@@ -8965,7 +8966,7 @@ mod state_history_tests {
                 BinaryLayerUpdate {
                     root: H256::repeat_byte(0x81),
                     parent_root: H256::zero(),
-                    nodes: vec![],
+                    rows: vec![],
                     flat: vec![
                         (tree_key(0x01), leaf_value(0x11)),
                         (tree_key(0x02), vec![0u8; 32]),
