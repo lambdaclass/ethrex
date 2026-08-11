@@ -7,6 +7,7 @@
 mod code_collector;
 mod full;
 mod healing;
+mod pbt_snap;
 mod snap_sync;
 
 /// Test-only re-export of the full-sync resume-point predicate so integration tests can
@@ -410,6 +411,8 @@ pub enum SyncError {
     MissingFullsyncBatch,
     #[error("Snap error: {0}")]
     Snap(#[from] crate::snap::SnapError),
+    #[error("PBT state sync error: {0}")]
+    PbtSnap(#[from] pbt_snap::PbtSyncError),
 }
 
 impl SyncError {
@@ -456,7 +459,13 @@ impl SyncError {
             | SyncError::InvalidRangeReceived
             | SyncError::BlockNumber(_)
             | SyncError::NoBlocks
-            | SyncError::NoBlockHeaders => true,
+            | SyncError::NoBlockHeaders
+            // Recoverable on purpose, and it is the whole v1 healing story: a
+            // failed PBT download writes nothing, so retrying the cycle picks a
+            // fresh pivot and starts over. That covers the expected failure —
+            // a pivot that aged out of every peer's layer window — as well as
+            // the byzantine ones, which cost a peer its score on the way past.
+            | SyncError::PbtSnap(_) => true,
             // PeerHandler handled above by delegation
             SyncError::PeerHandler(_) => unreachable!(),
         }
