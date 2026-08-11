@@ -133,7 +133,10 @@ mod tests {
             Address::repeat_byte(0x11),
             genesis_account(1, 1_000, &[(1, 2), (900, 3)]),
         );
-        alloc.insert(Address::repeat_byte(0x22), genesis_account(2, 500, &[(5, 7)]));
+        alloc.insert(
+            Address::repeat_byte(0x22),
+            genesis_account(2, 500, &[(5, 7)]),
+        );
         alloc.insert(Address::repeat_byte(0x33), genesis_account(0, 1, &[]));
         let root = store
             .setup_genesis_binary_trie(alloc)
@@ -207,9 +210,10 @@ mod tests {
     async fn a_root_this_node_does_not_hold_is_refused() {
         let (store, _header) = served_store().await;
         let unknown = H256::repeat_byte(9);
-        let error = process_pbt_leaf_range_request(whole_keyspace(unknown, MAX_RESPONSE_BYTES), store)
-            .await
-            .expect_err("an unheld root must not be served");
+        let error =
+            process_pbt_leaf_range_request(whole_keyspace(unknown, MAX_RESPONSE_BYTES), store)
+                .await
+                .expect_err("an unheld root must not be served");
         assert!(
             matches!(error, PbtSnapError::UnservableRoot(root) if root == unknown),
             "got {error}",
@@ -222,10 +226,12 @@ mod tests {
     #[tokio::test]
     async fn a_budget_below_one_leaf_still_returns_and_proves_the_first_leaf() {
         let (store, header) = served_store().await;
-        let whole =
-            process_pbt_leaf_range_request(whole_keyspace(header.state_root, MAX_RESPONSE_BYTES), store.clone())
-                .await
-                .expect("serve");
+        let whole = process_pbt_leaf_range_request(
+            whole_keyspace(header.state_root, MAX_RESPONSE_BYTES),
+            store.clone(),
+        )
+        .await
+        .expect("serve");
         let starved = process_pbt_leaf_range_request(whole_keyspace(header.state_root, 0), store)
             .await
             .expect("serve");
@@ -255,10 +261,12 @@ mod tests {
     async fn the_response_never_exceeds_the_budget_it_was_given() {
         let (store, header) = served_store().await;
         for budget in [0u64, 1, MAX_LEAF_WIRE_BYTES, 3 * MAX_LEAF_WIRE_BYTES] {
-            let response =
-                process_pbt_leaf_range_request(whole_keyspace(header.state_root, budget), store.clone())
-                    .await
-                    .expect("serve");
+            let response = process_pbt_leaf_range_request(
+                whole_keyspace(header.state_root, budget),
+                store.clone(),
+            )
+            .await
+            .expect("serve");
             let leaf_bytes: u64 = response
                 .leaves
                 .iter()

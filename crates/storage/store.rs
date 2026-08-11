@@ -12499,7 +12499,10 @@ mod pbtsnap_serving_tests {
                     Address::repeat_byte(0x22),
                     genesis_account(2, 500, vec![0x60; 40], &[(5, 7)]),
                 ),
-                (Address::repeat_byte(0x33), genesis_account(0, 1, vec![], &[])),
+                (
+                    Address::repeat_byte(0x33),
+                    genesis_account(0, 1, vec![], &[]),
+                ),
             ]))
             .await
             .expect("genesis");

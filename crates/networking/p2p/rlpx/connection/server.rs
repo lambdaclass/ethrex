@@ -28,7 +28,8 @@ use crate::{
         message::EthCapVersion,
         p2p::{
             self, Capability, DisconnectMessage, DisconnectReason, PingMessage, PongMessage,
-            SUPPORTED_ETH_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES,
+            SUPPORTED_ETH_CAPABILITIES, SUPPORTED_PBTSNAP_CAPABILITIES,
+            SUPPORTED_SNAP_CAPABILITIES,
         },
         snap::TrieNodes,
     },
@@ -266,6 +267,10 @@ pub struct Established {
     pub(crate) capabilities: Vec<Capability>,
     pub(crate) negotiated_eth_capability: Option<Capability>,
     pub(crate) negotiated_snap_capability: Option<Capability>,
+    /// The experimental binary-tree state-sync capability, negotiated only
+    /// when *this* node's chain schedules the binary tree. An unscheduled
+    /// node never advertises it and so never reaches this field.
+    pub(crate) negotiated_pbtsnap_capability: Option<Capability>,
     pub(crate) last_block_range_update_block: u64,
     /// Maps request ID to (original announcement, actually requested hashes, request time).
     /// The announcement is kept for response validation; the hashes track in-flight state.
@@ -1090,18 +1095,14 @@ async fn exchange_hello_messages<S>(
 where
     S: Unpin + Stream<Item = Result<Message, PeerConnectionError>>,
 {
-    // This allow is because in l2 we mut the capabilities
-    // to include the l2 cap
-    #[allow(unused_mut)]
-    let mut supported_capabilities: Vec<Capability> = [
-        &SUPPORTED_ETH_CAPABILITIES[..],
-        &SUPPORTED_SNAP_CAPABILITIES[..],
-    ]
-    .concat();
     #[cfg(feature = "l2")]
-    if state.l2_state.is_supported() {
-        supported_capabilities.push(crate::rlpx::l2::SUPPORTED_BASED_CAPABILITIES[0].clone());
-    }
+    let based_supported = state.l2_state.is_supported();
+    #[cfg(not(feature = "l2"))]
+    let based_supported = false;
+    let supported_capabilities = advertised_capabilities(
+        state.storage.get_chain_config().binary_tree_scheduled(),
+        based_supported,
+    );
     let hello_msg = Message::Hello(p2p::HelloMessage::new(
         supported_capabilities,
         PublicKey::from_secret_key(secp256k1::SECP256K1, &state.signer),
@@ -1120,6 +1121,7 @@ where
         Message::Hello(hello_message) => {
             let mut negotiated_eth_version = 0;
             let mut negotiated_snap_version = 0;
+            let mut negotiated_pbtsnap_version = 0;
 
             trace!(
                 peer=%state.node,
@@ -1144,6 +1146,17 @@ where
                             negotiated_snap_version = cap.version;
                         }
                     }
+                    // Gated on our own schedule as well as the peer's offer: a
+                    // peer may advertise pbtsnap while we have no binary trie
+                    // at all, and negotiating it then would leave us answering
+                    // requests we cannot serve.
+                    "pbtsnap"
+                        if state.storage.get_chain_config().binary_tree_scheduled()
+                            && SUPPORTED_PBTSNAP_CAPABILITIES.contains(cap)
+                            && cap.version > negotiated_pbtsnap_version =>
+                    {
+                        negotiated_pbtsnap_version = cap.version;
+                    }
                     #[cfg(feature = "l2")]
                     "based" if state.l2_state.is_supported() => {
                         state.l2_state.set_established()?;
@@ -1163,6 +1176,15 @@ where
             if negotiated_snap_version != 0 {
                 debug!("Negotiated snap version: snap/{}", negotiated_snap_version);
                 state.negotiated_snap_capability = Some(Capability::snap(negotiated_snap_version));
+            }
+
+            if negotiated_pbtsnap_version != 0 {
+                debug!(
+                    "Negotiated pbtsnap version: pbtsnap/{}",
+                    negotiated_pbtsnap_version
+                );
+                state.negotiated_pbtsnap_capability =
+                    Some(Capability::pbtsnap(negotiated_pbtsnap_version));
             }
 
             state.node.version = Some(hello_message.client_id);
@@ -1313,6 +1335,7 @@ async fn handle_incoming_message(
             | Message::GetStorageRanges(_)
             | Message::GetByteCodes(_)
             | Message::GetTrieNodes(_)
+            | Message::GetPbtLeafRange(_)
     );
     if is_data_request && !check_serve_request_rate(state) {
         debug!(
@@ -1374,6 +1397,32 @@ async fn handle_incoming_message(
         Message::GetAccountRange(req) => {
             let response = process_account_range_request(req, state.storage.clone()).await?;
             send(state, Message::AccountRange(response)).await?
+        }
+        Message::GetPbtLeafRange(req) => {
+            let id = req.id;
+            // A serving failure answers with an *empty* range, mirroring the
+            // `TrieNodes` precedent. An empty response is not a silent gap: it
+            // fails the client's own verification, because the completeness
+            // rule rejects a forged emptiness, so the client retries or
+            // re-pivots. The common failure here is a pivot that has aged out
+            // of this node's layer window, which is expected rather than
+            // exceptional.
+            let response =
+                match crate::pbtsnap::process_pbt_leaf_range_request(req, state.storage.clone())
+                    .await
+                {
+                    Ok(response) => response,
+                    Err(error) => {
+                        debug!(peer=%state.node, %error, "Refusing a pbtsnap leaf range");
+                        crate::rlpx::pbtsnap::PbtLeafRange {
+                            id,
+                            leaves: vec![],
+                            left_proof: vec![],
+                            right_proof: vec![],
+                        }
+                    }
+                };
+            send(state, Message::PbtLeafRange(response)).await?
         }
         Message::Transactions(txs) if peer_supports_eth => {
             // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#transactions-0x02
@@ -1943,5 +1992,81 @@ async fn retry_on_alternates(
         if let Err(e) = conn.enqueue_tx_requests(announcement, hash_list) {
             debug!(error = %e, "Failed to enqueue tx requests on alternate peer");
         }
+    }
+}
+
+/// The capability list this node puts in its hello.
+///
+/// A function rather than four lines inline, because the property that matters
+/// is not what it returns but what it returns *unchanged*: a node whose chain
+/// does not schedule the binary tree must advertise exactly what it advertised
+/// before `pbtsnap` existed. The devnets assert zero behavioural drift on
+/// unscheduled chains, and a hello is the first thing every peer reads.
+fn advertised_capabilities(binary_tree_scheduled: bool, based_supported: bool) -> Vec<Capability> {
+    #[allow(unused_mut)]
+    let mut capabilities: Vec<Capability> = [
+        &SUPPORTED_ETH_CAPABILITIES[..],
+        &SUPPORTED_SNAP_CAPABILITIES[..],
+    ]
+    .concat();
+
+    #[cfg(feature = "l2")]
+    if based_supported {
+        capabilities.push(crate::rlpx::l2::SUPPORTED_BASED_CAPABILITIES[0].clone());
+    }
+    #[cfg(not(feature = "l2"))]
+    let _ = based_supported;
+
+    // Appended last, and only on a scheduled chain. There is no binary trie on
+    // an unscheduled chain to serve or to sync, so offering the capability
+    // there would change every existing devnet's hello bytes for nothing.
+    if binary_tree_scheduled {
+        capabilities.extend(SUPPORTED_PBTSNAP_CAPABILITIES.iter().cloned());
+    }
+    capabilities
+}
+
+#[cfg(test)]
+mod capability_tests {
+    use super::*;
+
+    fn baseline() -> Vec<Capability> {
+        [
+            &SUPPORTED_ETH_CAPABILITIES[..],
+            &SUPPORTED_SNAP_CAPABILITIES[..],
+        ]
+        .concat()
+    }
+
+    #[test]
+    fn an_unscheduled_chain_advertises_what_it_did_before_pbtsnap() {
+        let advertised = advertised_capabilities(false, false);
+        assert_eq!(advertised, baseline());
+        assert!(
+            !advertised.iter().any(|cap| cap.protocol() == "pbtsnap"),
+            "an unscheduled node must not offer a capability it cannot serve",
+        );
+    }
+
+    #[test]
+    fn a_scheduled_chain_appends_pbtsnap_without_disturbing_the_rest() {
+        let baseline = baseline();
+        let advertised = advertised_capabilities(true, false);
+        assert_eq!(
+            advertised[..baseline.len()],
+            baseline[..],
+            "pbtsnap must be appended, never interleaved: a peer reads this list in order",
+        );
+        assert_eq!(
+            &advertised[baseline.len()..],
+            &SUPPORTED_PBTSNAP_CAPABILITIES[..],
+        );
+    }
+
+    #[test]
+    fn the_pbtsnap_capability_is_named_and_versioned_as_the_spec_says() {
+        let capability = &SUPPORTED_PBTSNAP_CAPABILITIES[0];
+        assert_eq!(capability.protocol(), "pbtsnap");
+        assert_eq!(capability.version, 1);
     }
 }
