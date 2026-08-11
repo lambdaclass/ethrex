@@ -461,9 +461,9 @@ fn prefix_rejection_atomic_batch_in_prefix() {
 #[test]
 fn prefix_rejection_gas_budget_exceeded() {
     // Give the self_verify frame a gas_limit that, combined with sig cost,
-    // exceeds MAX_VERIFY_GAS (100_000). Sig cost for one SECP256K1 = 2800.
+    // exceeds MAX_VERIFY_GAS. Sig cost for one SECP256K1 = 2800.
     let mut frame = self_verify_frame();
-    frame.gas_limit = FRAME_TX_MAX_VERIFY_GAS; // 100_000 alone already == limit
+    frame.gas_limit = FRAME_TX_MAX_VERIFY_GAS; // the budget alone already == limit
     let mut tx = base_frame_tx_with_frames(vec![frame]);
     // Ensure exactly one SECP256K1 sig so sig cost = 2800.
     tx.signatures = vec![FrameSignature {
@@ -473,7 +473,59 @@ fn prefix_rejection_gas_budget_exceeded() {
         signature: Bytes::from(vec![0u8; 65]),
     }];
     let prefix = tx.validation_prefix().expect("SelfVerify recognized");
-    // 100_000 + 2_800 > 100_000 → budget exceeded.
+    // budget + 2_800 > budget → exceeded.
+    assert!(matches!(
+        tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
+            .unwrap_err(),
+        FrameValidationError::VerifyGasBudgetExceeded { .. }
+    ));
+}
+
+/// The reason `FRAME_TX_MAX_VERIFY_GAS` deviates from EIP-8141's 100_000.
+///
+/// Under EIP-8037 repricing, bringing an account into existence costs
+/// `STATE_BYTES_PER_NEW_ACCOUNT` (120) * `cost_per_state_byte` (1530) = 183_600
+/// gas before any code is deposited, and CREATE2-deploying a minimal proxy
+/// measures ~292_000 end to end. At a 100_000 budget the deploy frame could not
+/// declare enough gas to cover that at *any* contract size, so counterfactual
+/// deployment — the whole point of the `DeploySelfVerify` shape — was
+/// impossible. Pin that a realistically-sized deploy prefix now fits, so a
+/// revert of the constant fails here with a clear reason rather than silently
+/// re-breaking account deployment.
+#[test]
+fn deploy_self_verify_prefix_fits_a_real_account_deployment() {
+    const MEASURED_PROXY_DEPLOY_COST: u64 = 292_000;
+
+    let mut deploy = deploy_frame();
+    deploy.gas_limit = MEASURED_PROXY_DEPLOY_COST;
+    let mut tx = base_frame_tx_with_frames(vec![deploy, self_verify_frame()]);
+    tx.signatures = vec![FrameSignature {
+        scheme: FRAME_SIG_SCHEME_SECP256K1,
+        signer: Some(sender_addr()),
+        msg: Bytes::new(),
+        signature: Bytes::from(vec![0u8; 65]),
+    }];
+
+    let prefix = tx
+        .validation_prefix()
+        .expect("should recognize DeploySelfVerify");
+    assert_eq!(prefix.shape, PrefixShape::DeploySelfVerify);
+    tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
+        .expect("a real account deployment must fit the verify budget");
+
+    // And the budget is still a budget: the same shape with a second
+    // constructor-initialized storage slot's worth of gas (~111_500 each) must
+    // not fit, which is the documented remaining limitation.
+    let mut too_big = deploy_frame();
+    too_big.gas_limit = MEASURED_PROXY_DEPLOY_COST + 2 * 111_500;
+    let mut tx = base_frame_tx_with_frames(vec![too_big, self_verify_frame()]);
+    tx.signatures = vec![FrameSignature {
+        scheme: FRAME_SIG_SCHEME_SECP256K1,
+        signer: Some(sender_addr()),
+        msg: Bytes::new(),
+        signature: Bytes::from(vec![0u8; 65]),
+    }];
+    let prefix = tx.validation_prefix().expect("still DeploySelfVerify");
     assert!(matches!(
         tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
             .unwrap_err(),

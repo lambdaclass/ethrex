@@ -2219,7 +2219,29 @@ pub const FRAME_SIG_SCHEME_P256: u8 = 2;
 /// validation prefix. Signature validation counts against this budget (rule #6),
 /// so a frame tx whose `signature_verification_cost()` alone exceeds it can never
 /// satisfy the prefix budget and must be rejected at admission.
-pub const FRAME_TX_MAX_VERIFY_GAS: u64 = 100_000;
+///
+/// DELIBERATE DEVIATION: EIP-8141 specifies 100_000. This chain raises it to
+/// 500_000 because 100_000 makes counterfactual account deployment — the
+/// `DeploySelfVerify` / `DeployOnlyVerifyPay` prefix shapes this very module
+/// defines — structurally impossible under EIP-8037 state-gas repricing, at any
+/// contract size.
+///
+/// Creating an account costs `STATE_BYTES_PER_NEW_ACCOUNT` (120) *
+/// `cost_per_state_byte` (1530) = 183_600 gas before a single byte of code is
+/// deposited, so even a zero-byte contract is 1.84x over a 100_000 budget. The
+/// deploy frame is part of the validation prefix and correctly counts against
+/// the budget (exempting it would defeat the point of bounding what the mempool
+/// must simulate), so the constant is the only lever. Measured end-to-end on
+/// this chain: CREATE2-deploying an EIP-1167 minimal proxy costs ~261k and a
+/// 66-byte proxy ~292k, leaving room for a VERIFY frame plus roughly one
+/// constructor-initialized storage slot (~111.5k each). Accounts that write two
+/// or more slots at construction still will not fit.
+///
+/// 500_000 stays inside the `1 << 20` per-transaction verify budget EIP-8369
+/// assumes for FOCIL eligibility, so raising it here does not push frame
+/// transactions outside what the inclusion-list work is designed to simulate.
+/// Revisit if EIP-8141 reconciles `MAX_VERIFY_GAS` with EIP-8037 upstream.
+pub const FRAME_TX_MAX_VERIFY_GAS: u64 = 500_000;
 /// EIP-8141 APPROVE scope-restriction values (bits 0-1 of `Frame.flags`).
 /// Used by VERIFY and PAY frames to declare which capabilities they grant.
 pub const APPROVE_PAYMENT: u8 = 0x1;

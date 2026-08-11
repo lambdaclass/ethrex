@@ -920,12 +920,12 @@ async fn mempool_rejects_frame_tx_exceeding_max_verify_gas() {
     let blockchain = Blockchain::default_with_store(store);
 
     // EIP-8141 §Mempool rule #6: signature validation counts against
-    // MAX_VERIFY_GAS (100_000). P256 sigs cost 6700 each, so 15 sigs cost
-    // 100_500 > MAX_VERIFY_GAS and the tx must be rejected at admission BEFORE
-    // any per-signature crypto runs. The signature bytes need not be valid:
-    // the cap rejects first. Static constraints only require a known scheme and
-    // an empty-or-32-byte msg, which these satisfy.
-    let n_sigs = (FRAME_TX_MAX_VERIFY_GAS / 6700) as usize + 1; // 15
+    // MAX_VERIFY_GAS. P256 sigs cost 6700 each, so the first count that overruns
+    // the budget must be rejected at admission BEFORE any per-signature crypto
+    // runs. The signature bytes need not be valid: the cap rejects first. Static
+    // constraints only require a known scheme and an empty-or-32-byte msg, which
+    // these satisfy. Derived from the constant so the test tracks the budget.
+    let n_sigs = (FRAME_TX_MAX_VERIFY_GAS / 6700) as usize + 1;
     let mut frame_tx = minimal_valid_frame_tx();
     frame_tx.signatures = (0..n_sigs)
         .map(|_| FrameSignature {

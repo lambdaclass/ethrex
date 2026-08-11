@@ -30,10 +30,12 @@ use ethrex_common::types::{FrameTransaction, Transaction, TxType, is_eip7702_del
 /// EIP-8369 `MAX_VERIFY_GAS_PER_TX`: the largest VERIFY budget a single
 /// Profile 2 candidate may declare.
 ///
-/// Deliberately higher than EIP-8141's `MAX_VERIFY_GAS = 100_000` public mempool
-/// cap, "because FOCIL eligibility and public mempool admission are separate
-/// policies". This is a consensus-relevant classification input, so it is a
-/// constant here and must never be read from node configuration.
+/// Deliberately higher than the public mempool `MAX_VERIFY_GAS` cap (EIP-8141
+/// specifies 100_000; this chain raises it to 500_000, see
+/// [`ethrex_common::types::FRAME_TX_MAX_VERIFY_GAS`]), "because FOCIL
+/// eligibility and public mempool admission are separate policies". This is a
+/// consensus-relevant classification input, so it is a constant here and must
+/// never be read from node configuration.
 pub const MAX_VERIFY_GAS_PER_TX: u64 = 1 << 20;
 
 /// EIP-8369 `MAX_VERIFY_GAS_PER_IL`: the VERIFY budget one inclusion list may
