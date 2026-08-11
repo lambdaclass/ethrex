@@ -15,7 +15,7 @@
 //! the client can conclude from the bytes it got back.
 
 use std::collections::BTreeMap;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -23,7 +23,7 @@ use bytes::Bytes;
 use ethereum_types::H256;
 use ethrex_binary_trie::trie::{RangeProofError, verify_range};
 use ethrex_blockchain::Blockchain;
-use ethrex_common::types::{BlockHeader, ChainConfig, Genesis, GenesisAccount};
+use ethrex_common::types::{BlockHeader, ChainConfig, ForkId, Genesis, GenesisAccount};
 use ethrex_common::{Address, U256};
 use ethrex_storage::{EngineType, Store};
 use secp256k1::{PublicKey, SECP256K1, SecretKey};
@@ -44,6 +44,9 @@ use crate::types::{NetworkConfig, Node};
 /// The pivot header's timestamp. Anything past the schedule works; this is well
 /// clear of it so the header is unambiguously post-flip.
 const PIVOT_TIMESTAMP: u64 = 1_000;
+
+/// When the binary-tree commitment activates: after genesis, before the pivot.
+const SCHEDULE_TIMESTAMP: u64 = 500;
 
 /// Long enough that a slow CI box does not fail a handshake that would have
 /// completed, short enough that a genuinely stuck connection fails the test
@@ -78,9 +81,13 @@ fn genesis_account(nonce: u64, balance: u64, storage: &[(u64, u64)]) -> GenesisA
 /// between two differently-configured stores never reaches `Established` and
 /// nothing below it could be tested at all.
 ///
-/// `binary_tree_time` is set, which is what makes `binary_tree_scheduled()`
-/// true and is the sole gate on both advertising and negotiating `pbtsnap`.
-fn shared_genesis() -> Genesis {
+/// The schedule is in the *future*, which is the shape every real chain has and
+/// the only one usable here. Activation at or before genesis makes
+/// `Genesis::compute_state_root` commit the binary root in the genesis header,
+/// which changes the genesis hash — so two nodes differing only in whether they
+/// schedule would fail `validate_status` on the genesis check and never reach
+/// `Established` at all.
+fn shared_genesis(scheduled: bool) -> Genesis {
     let mut alloc = BTreeMap::new();
     alloc.insert(
         Address::repeat_byte(0x11),
@@ -94,7 +101,7 @@ fn shared_genesis() -> Genesis {
     Genesis {
         config: ChainConfig {
             chain_id: 3151908,
-            binary_tree_time: Some(0),
+            binary_tree_time: scheduled.then_some(SCHEDULE_TIMESTAMP),
             ..Default::default()
         },
         alloc,
@@ -108,19 +115,26 @@ fn shared_genesis() -> Genesis {
 /// header committing the genesis binary root — the minimum shape a node needs
 /// to be able to serve a `pbtsnap` range, and the same shape the unit-level
 /// server fixture builds.
-async fn served_store(pivot_state: bool) -> (Store, BlockHeader) {
+///
+/// The unscheduled variant keeps the same *height* deliberately, so the two
+/// nodes' fork ids are computed over the same latest header and the handshake
+/// cannot fail for a reason unrelated to what is being tested.
+async fn served_store(scheduled: bool) -> (Store, BlockHeader) {
     let mut store = Store::new("", EngineType::InMemory).expect("in-memory store");
-    let genesis = shared_genesis();
+    let genesis = shared_genesis(scheduled);
     let genesis_hash = genesis.get_block().hash();
     store
         .add_initial_state(genesis)
         .await
         .expect("genesis lands");
 
+    // An unscheduled chain does no binary-trie work at all, so there is no root
+    // to commit and the pivot header is a placeholder that only keeps the two
+    // nodes at the same height.
     let root = store
         .get_binary_trie_root(genesis_hash)
         .expect("root read")
-        .expect("a scheduled chain seeds its binary trie at genesis");
+        .unwrap_or_default();
 
     let header = BlockHeader {
         number: 1,
@@ -140,7 +154,7 @@ async fn served_store(pivot_state: bool) -> (Store, BlockHeader) {
         .expect("fcu");
     // The half that makes the state *servable*: without it the root resolves to
     // no canonical block and every request is refused.
-    if pivot_state {
+    if scheduled {
         store.set_binary_trie_root(hash, root).expect("record root");
     }
     (store, header)
@@ -318,12 +332,26 @@ async fn a_pbtsnap_leaf_range_crosses_a_live_connection() {
 
     let (mut connection, capabilities) = connect(&client, &server).await;
 
-    // The negotiation arm ran, and it produced the capability the request
-    // below travels under. Asserted through the peer table, which is where the
-    // rest of the node looks for it.
+    // The peer's *advertised* list, carried in its Hello and recorded in the
+    // dialer's peer table. Advertisement rather than negotiation on purpose:
+    // `Established::negotiated_pbtsnap_capability` is written and never read by
+    // anything — the same is true of `negotiated_snap_capability`, so this is
+    // the codebase's existing shape rather than a pbtsnap omission — and what
+    // peer selection actually filters on is this list.
     assert!(
         capabilities.contains(&Capability::pbtsnap(1)),
-        "pbtsnap/1 must be negotiated on a scheduled chain, got {capabilities:?}",
+        "a scheduled peer must advertise pbtsnap/1, got {capabilities:?}",
+    );
+    // The call a sync driver makes, which is the only thing that turns the
+    // advertisement into a usable peer.
+    assert!(
+        client
+            .table
+            .get_best_peer(vec![Capability::pbtsnap(1)])
+            .await
+            .expect("peer table responds")
+            .is_some(),
+        "a pbtsnap peer must be selectable by capability",
     );
 
     let root = pivot.state_root;
@@ -471,5 +499,51 @@ async fn a_range_served_from_another_tree_does_not_verify_against_the_pivot() {
         )
         .is_err(),
         "a tampered leaf must not verify",
+    );
+}
+
+/// A scheduled chain and an unscheduled one are different chains, and the
+/// handshake says so before any capability is looked at.
+///
+/// This started as a wire test of the advertisement gate — connect a scheduled
+/// client to an unscheduled server and assert the peer offers no `pbtsnap`.
+/// That test cannot exist. The two nodes never reach `Established`: their
+/// genesis hashes agree (a schedule after genesis leaves the genesis header
+/// MPT-committed, which is why a real network always schedules into the future)
+/// but `binary_tree_time` joins the timestamp fork list, so `validate_status`
+/// rejects on the fork id. Measured, not assumed: the pair above produces
+/// `0x81f73ca3` and `0xe933f004`.
+///
+/// Recorded as a test rather than a comment because it is the *stronger* form
+/// of the property the devnets care about. An unscheduled node is not merely
+/// quiet about `pbtsnap`; it cannot peer with a scheduled one at all, so no
+/// amount of capability-gate breakage could expose it to a pbtsnap request from
+/// a chain it does not run. The gate itself stays unit-tested in
+/// `rlpx::connection::server`'s `capability_tests`, which is the only level at
+/// which it is observable.
+#[test]
+fn a_scheduled_chain_and_an_unscheduled_one_cannot_peer() {
+    let scheduled = shared_genesis(true);
+    let unscheduled = shared_genesis(false);
+
+    assert_eq!(
+        scheduled.get_block().hash(),
+        unscheduled.get_block().hash(),
+        "the schedule is after genesis, so it must not move the genesis hash",
+    );
+
+    let fork_id = |genesis: Genesis| {
+        ForkId::new(
+            genesis.config.clone(),
+            genesis.get_block().header.clone(),
+            PIVOT_TIMESTAMP,
+            1,
+        )
+    };
+    assert_ne!(
+        fork_id(scheduled),
+        fork_id(unscheduled),
+        "scheduling the binary tree must change the fork id, or a node on one \
+         chain could peer with a node on the other",
     );
 }
