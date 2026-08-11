@@ -19,7 +19,7 @@ use ethrex_common::{
 };
 use ethrex_crypto::NativeCrypto;
 use ethrex_p2p::sync::SyncError;
-use ethrex_p2p::sync::bal_healing::{ApplyBalError, apply_bal, try_apply_bal_block};
+use ethrex_p2p::sync::bal_healing::{ApplyBalError, BalApplyMode, apply_bal, try_apply_bal_block};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::{
     EngineType, Store,
@@ -86,7 +86,7 @@ fn apply_bal_empty_bal_returns_same_root() {
     let bal = BlockAccessList::new();
     let root = H256::from([0xABu8; 32]);
     let header = header_with_root(root);
-    let result = apply_bal(&store, root, &bal, &header).unwrap();
+    let result = apply_bal(&store, root, &bal, &header, BalApplyMode::Verified).unwrap();
     assert_eq!(result, root, "empty BAL must return unchanged root");
 }
 
@@ -114,7 +114,14 @@ fn apply_bal_account_creation() {
     let (expected_root, _) = expected_trie.collect_changes_since_last_hash(&NativeCrypto);
 
     let header = header_with_root(expected_root);
-    let new_root = apply_bal(&store, *EMPTY_TRIE_HASH, &bal, &header).unwrap();
+    let new_root = apply_bal(
+        &store,
+        *EMPTY_TRIE_HASH,
+        &bal,
+        &header,
+        BalApplyMode::Verified,
+    )
+    .unwrap();
     assert_eq!(
         new_root, expected_root,
         "creation should produce correct root"
@@ -146,7 +153,7 @@ fn apply_bal_account_destruction() {
     bal.add_account_changes(changes);
 
     let header = header_with_root(*EMPTY_TRIE_HASH);
-    let new_root = apply_bal(&store, pre_root, &bal, &header).unwrap();
+    let new_root = apply_bal(&store, pre_root, &bal, &header, BalApplyMode::Verified).unwrap();
     assert_eq!(
         new_root, *EMPTY_TRIE_HASH,
         "destroyed account should yield empty root"
@@ -209,7 +216,7 @@ fn apply_bal_storage_slot_deletion() {
     let (expected_root, _) = expected_state_trie.collect_changes_since_last_hash(&NativeCrypto);
 
     let header = header_with_root(expected_root);
-    let new_root = apply_bal(&store, pre_root, &bal, &header).unwrap();
+    let new_root = apply_bal(&store, pre_root, &bal, &header, BalApplyMode::Verified).unwrap();
     assert_eq!(
         new_root, expected_root,
         "slot deletion should produce correct root"
@@ -243,7 +250,14 @@ fn apply_bal_code_deployment() {
     let (expected_root, _) = expected_state_trie.collect_changes_since_last_hash(&NativeCrypto);
 
     let header = header_with_root(expected_root);
-    let new_root = apply_bal(&store, *EMPTY_TRIE_HASH, &bal, &header).unwrap();
+    let new_root = apply_bal(
+        &store,
+        *EMPTY_TRIE_HASH,
+        &bal,
+        &header,
+        BalApplyMode::Verified,
+    )
+    .unwrap();
     assert_eq!(
         new_root, expected_root,
         "code deploy should produce correct root"
@@ -295,7 +309,7 @@ fn apply_bal_storage_slot_fresh_creation() {
     let (expected_root, _) = expected_state_trie.collect_changes_since_last_hash(&NativeCrypto);
 
     let header = header_with_root(expected_root);
-    let new_root = apply_bal(&store, pre_root, &bal, &header).unwrap();
+    let new_root = apply_bal(&store, pre_root, &bal, &header, BalApplyMode::Verified).unwrap();
     assert_eq!(
         new_root, expected_root,
         "fresh storage slot write should produce correct root"
@@ -315,7 +329,13 @@ fn apply_bal_detects_bad_state_root() {
     let bad_root = H256::from([0xFFu8; 32]);
     let header = header_with_root(bad_root);
 
-    let result = apply_bal(&store, *EMPTY_TRIE_HASH, &bal, &header);
+    let result = apply_bal(
+        &store,
+        *EMPTY_TRIE_HASH,
+        &bal,
+        &header,
+        BalApplyMode::Verified,
+    );
     assert!(
         matches!(result, Err(SyncError::StateRootMismatch(_, _))),
         "apply_bal must return StateRootMismatch when header root doesn't match computed root"
@@ -352,7 +372,7 @@ fn apply_bal_delegation_clear() {
     let (expected_root, _) = expected_state_trie.collect_changes_since_last_hash(&NativeCrypto);
 
     let header = header_with_root(expected_root);
-    let new_root = apply_bal(&store, pre_root, &bal, &header).unwrap();
+    let new_root = apply_bal(&store, pre_root, &bal, &header, BalApplyMode::Verified).unwrap();
     assert_eq!(
         new_root, expected_root,
         "delegation clear should produce correct root"
@@ -410,8 +430,15 @@ fn try_apply_bal_block_happy_path() {
     let parent_hash = H256::from([0xCDu8; 32]);
     let header = post_amsterdam_header_for(parent_hash, parent_state_root, &bal);
 
-    let new_root =
-        try_apply_bal_block(&store, &header, &bal, parent_state_root, parent_hash).unwrap();
+    let new_root = try_apply_bal_block(
+        &store,
+        &header,
+        &bal,
+        parent_state_root,
+        parent_hash,
+        BalApplyMode::Verified,
+    )
+    .unwrap();
     assert_eq!(
         new_root, parent_state_root,
         "empty BAL preserves state root"
@@ -430,8 +457,15 @@ fn try_apply_bal_block_rejects_wrong_parent() {
     let wrong_expected = H256::from([0x22u8; 32]);
     let header = post_amsterdam_header_for(actual_parent, *EMPTY_TRIE_HASH, &bal);
 
-    let err = try_apply_bal_block(&store, &header, &bal, *EMPTY_TRIE_HASH, wrong_expected)
-        .expect_err("parent mismatch must fail");
+    let err = try_apply_bal_block(
+        &store,
+        &header,
+        &bal,
+        *EMPTY_TRIE_HASH,
+        wrong_expected,
+        BalApplyMode::Verified,
+    )
+    .expect_err("parent mismatch must fail");
     assert!(matches!(
         err,
         ApplyBalError::BadParent {
@@ -454,8 +488,15 @@ fn try_apply_bal_block_rejects_bad_bal_hash() {
         ..Default::default()
     };
 
-    let err = try_apply_bal_block(&store, &header, &bal, *EMPTY_TRIE_HASH, parent_hash)
-        .expect_err("bad BAL hash must fail");
+    let err = try_apply_bal_block(
+        &store,
+        &header,
+        &bal,
+        *EMPTY_TRIE_HASH,
+        parent_hash,
+        BalApplyMode::Verified,
+    )
+    .expect_err("bad BAL hash must fail");
     assert!(matches!(err, ApplyBalError::BadHash { .. }));
 
     // Failure must NOT have persisted the BAL.
@@ -485,8 +526,15 @@ fn try_apply_bal_block_rejects_bad_state_root() {
         ..Default::default()
     };
 
-    let err = try_apply_bal_block(&store, &header, &bal, *EMPTY_TRIE_HASH, parent_hash)
-        .expect_err("bad post-state root must fail");
+    let err = try_apply_bal_block(
+        &store,
+        &header,
+        &bal,
+        *EMPTY_TRIE_HASH,
+        parent_hash,
+        BalApplyMode::Verified,
+    )
+    .expect_err("bad post-state root must fail");
     assert!(matches!(err, ApplyBalError::BadStateRoot { .. }));
 }
 
@@ -508,7 +556,15 @@ fn try_apply_bal_block_chain_of_three_advances_state_root() {
             block_access_list_hash: Some(bal.compute_hash(&NativeCrypto)),
             ..Default::default()
         };
-        let new_root = try_apply_bal_block(&store, &header, &bal, state_root, parent_hash).unwrap();
+        let new_root = try_apply_bal_block(
+            &store,
+            &header,
+            &bal,
+            state_root,
+            parent_hash,
+            BalApplyMode::Verified,
+        )
+        .unwrap();
         assert_eq!(new_root, state_root, "empty BAL preserves root each block");
         parent_hash = header.hash();
         state_root = new_root;

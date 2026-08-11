@@ -36,7 +36,7 @@ use crate::snap::{
     },
     request_account_range, request_bytecodes, request_storage_ranges,
 };
-use crate::sync::bal_healing::advance_state_via_bals;
+use crate::sync::bal_healing::{BalApplyMode, advance_state_via_bals};
 use crate::sync::code_collector::CodeHashCollector;
 use crate::sync::healing::{heal_state_trie_wrap, heal_storage_trie};
 use crate::utils::{
@@ -546,7 +546,17 @@ pub async fn snap_sync(
         };
 
         if let Some(base) = catchup_base {
-            match advance_state_via_bals(store, peers, base, pivot_header.hash(), diagnostics).await
+            // `Verified` is correct here: the base is a pivot the local state matches in
+            // full, so every intermediate root must reproduce its header's.
+            match advance_state_via_bals(
+                store,
+                peers,
+                base,
+                pivot_header.hash(),
+                BalApplyMode::Verified,
+                diagnostics,
+            )
+            .await
             {
                 // Step 7: the replayed span must reproduce the pivot's state root.
                 Ok(new_root) if new_root == pivot_header.state_root => {

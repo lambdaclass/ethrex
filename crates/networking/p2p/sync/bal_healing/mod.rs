@@ -5,7 +5,7 @@
 
 mod apply;
 
-pub use apply::apply_bal;
+pub use apply::{BalApplyMode, apply_bal};
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -61,6 +61,7 @@ pub fn try_apply_bal_block(
     bal: &BlockAccessList,
     parent_state_root: H256,
     expected_parent_hash: H256,
+    mode: BalApplyMode,
 ) -> Result<H256, ApplyBalError> {
     bal.validate_ordering()
         .map_err(ApplyBalError::BadOrdering)?;
@@ -83,7 +84,7 @@ pub fn try_apply_bal_block(
         });
     }
 
-    match apply_bal(store, parent_state_root, bal, header) {
+    match apply_bal(store, parent_state_root, bal, header, mode) {
         Ok(new_root) => {
             if let Err(e) = store.store_block_access_list(header.hash(), bal) {
                 warn!(
@@ -122,6 +123,7 @@ pub async fn advance_state_via_bals(
     peers: &mut PeerHandler,
     start_block: BlockHeader,
     target_block_hash: H256,
+    mode: BalApplyMode,
     diagnostics: &Arc<tokio::sync::RwLock<SyncDiagnostics>>,
 ) -> Result<H256, SyncError> {
     // Step 1: load headers from start+1 to target.
@@ -244,7 +246,14 @@ pub async fn advance_state_via_bals(
                         let header = &batch_headers[next];
                         let block_hash = batch_hashes[next];
 
-                        match try_apply_bal_block(store, header, &bal, current_root, parent_hash) {
+                        match try_apply_bal_block(
+                            store,
+                            header,
+                            &bal,
+                            current_root,
+                            parent_hash,
+                            mode,
+                        ) {
                             Ok(new_root) => {
                                 current_root = new_root;
                                 parent_hash = block_hash;
