@@ -2221,21 +2221,20 @@ pub const FRAME_SIG_SCHEME_P256: u8 = 2;
 /// satisfy the prefix budget and must be rejected at admission.
 ///
 /// DELIBERATE DEVIATION: EIP-8141 specifies 100_000. This chain raises it to
-/// 500_000 because 100_000 makes counterfactual account deployment — the
-/// `DeploySelfVerify` / `DeployOnlyVerifyPay` prefix shapes this very module
-/// defines — structurally impossible under EIP-8037 state-gas repricing, at any
-/// contract size.
+/// 500_000 because under EIP-8037 state-gas repricing 100_000 does not cover
+/// even a minimal counterfactual account deployment — the `DeploySelfVerify` /
+/// `DeployOnlyVerifyPay` prefix shapes this very module defines.
 ///
-/// Creating an account costs `STATE_BYTES_PER_NEW_ACCOUNT` (120) *
-/// `cost_per_state_byte` (1530) = 183_600 gas before a single byte of code is
-/// deposited, so even a zero-byte contract is 1.84x over a 100_000 budget. The
-/// deploy frame is part of the validation prefix and correctly counts against
-/// the budget (exempting it would defeat the point of bounding what the mempool
-/// must simulate), so the constant is the only lever. Measured end-to-end on
-/// this chain: CREATE2-deploying an EIP-1167 minimal proxy costs ~261k and a
-/// 66-byte proxy ~292k, leaving room for a VERIFY frame plus roughly one
-/// constructor-initialized storage slot (~111.5k each). Accounts that write two
-/// or more slots at construction still will not fit.
+/// Measured on this chain: the deploy frame of a self-paid deployment that
+/// CREATE2s a 66-byte account costs **112_103 gas** and succeeds once the frame
+/// is given 120_000, so the bare minimum already exceeds a 100_000 total prefix
+/// budget. Cost scales from there: 1530 gas per deposited code byte, ~111_500
+/// per constructor-initialized storage slot, and a further 183_600
+/// (`STATE_BYTES_PER_NEW_ACCOUNT` 120 * `cost_per_state_byte` 1530) if the
+/// account is genuinely new rather than a pre-funded counterfactual address.
+/// The deploy frame is part of the validation prefix and correctly counts
+/// against the budget — exempting it would defeat the point of bounding what
+/// the mempool must simulate — so the constant is the only lever.
 ///
 /// 500_000 stays inside the `1 << 20` per-transaction verify budget EIP-8369
 /// assumes for FOCIL eligibility, so raising it here does not push frame

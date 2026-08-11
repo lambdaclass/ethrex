@@ -483,18 +483,21 @@ fn prefix_rejection_gas_budget_exceeded() {
 
 /// The reason `FRAME_TX_MAX_VERIFY_GAS` deviates from EIP-8141's 100_000.
 ///
-/// Under EIP-8037 repricing, bringing an account into existence costs
-/// `STATE_BYTES_PER_NEW_ACCOUNT` (120) * `cost_per_state_byte` (1530) = 183_600
-/// gas before any code is deposited, and CREATE2-deploying a minimal proxy
-/// measures ~292_000 end to end. At a 100_000 budget the deploy frame could not
-/// declare enough gas to cover that at *any* contract size, so counterfactual
-/// deployment — the whole point of the `DeploySelfVerify` shape — was
-/// impossible. Pin that a realistically-sized deploy prefix now fits, so a
-/// revert of the constant fails here with a clear reason rather than silently
-/// re-breaking account deployment.
+/// Measured against the running chain: a self-paid deployment whose deploy
+/// frame CREATE2s a 66-byte account into a pre-funded counterfactual address
+/// consumes 112_103 gas and succeeds once that frame is given 120_000. A
+/// 100_000 total prefix budget cannot express that, so the `DeploySelfVerify`
+/// shape had no usable gas configuration. Real accounts cost more still: 1530
+/// per deposited code byte, ~111_500 per constructor-initialized storage slot,
+/// plus 183_600 if the account is genuinely new rather than pre-funded.
+///
+/// Pin both sides so a revert of the constant fails here with a clear reason
+/// rather than silently re-breaking account deployment.
 #[test]
 fn deploy_self_verify_prefix_fits_a_real_account_deployment() {
-    const MEASURED_PROXY_DEPLOY_COST: u64 = 292_000;
+    /// Measured deploy-frame gas for a 66-byte counterfactual account, rounded
+    /// up to the smallest limit observed to succeed on-chain.
+    const MEASURED_PROXY_DEPLOY_COST: u64 = 120_000;
 
     let mut deploy = deploy_frame();
     deploy.gas_limit = MEASURED_PROXY_DEPLOY_COST;
@@ -513,11 +516,15 @@ fn deploy_self_verify_prefix_fits_a_real_account_deployment() {
     tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
         .expect("a real account deployment must fit the verify budget");
 
-    // And the budget is still a budget: the same shape with a second
-    // constructor-initialized storage slot's worth of gas (~111_500 each) must
-    // not fit, which is the documented remaining limitation.
+    // And the budget is still a budget. A genuinely-new (not pre-funded)
+    // account that also writes two constructor storage slots costs the base
+    // deploy plus 183_600 for account creation plus ~111_500 per slot, which
+    // overruns 500_000 — the documented remaining limitation.
+    const NEW_ACCOUNT_STATE_GAS: u64 = 183_600;
+    const PER_CONSTRUCTOR_SLOT: u64 = 111_500;
     let mut too_big = deploy_frame();
-    too_big.gas_limit = MEASURED_PROXY_DEPLOY_COST + 2 * 111_500;
+    too_big.gas_limit =
+        MEASURED_PROXY_DEPLOY_COST + NEW_ACCOUNT_STATE_GAS + 2 * PER_CONSTRUCTOR_SLOT;
     let mut tx = base_frame_tx_with_frames(vec![too_big, self_verify_frame()]);
     tx.signatures = vec![FrameSignature {
         scheme: FRAME_SIG_SCHEME_SECP256K1,
