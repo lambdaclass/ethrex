@@ -41,7 +41,7 @@ pub(crate) const MAX_POOLED_TRANSACTIONS_BYTES: usize = 4 * 1024 * 1024;
 /// so what we emit stays well under any peer's inbound decode cap
 /// ([`MAX_POOLED_TRANSACTIONS_BYTES`]). Partial responses are protocol-legal — the requester
 /// re-requests whatever it still needs.
-const MAX_POOLED_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
+pub(crate) const MAX_POOLED_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
 
 // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#transactions-0x02
 // Broadcast message

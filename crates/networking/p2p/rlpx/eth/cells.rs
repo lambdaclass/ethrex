@@ -1,10 +1,14 @@
 use crate::rlpx::{
+    eth::transactions::{MAX_POOLED_RESPONSE_BYTES, MAX_POOLED_TRANSACTIONS_BYTES},
     message::RLPxMessage,
-    utils::{snappy_compress, snappy_decompress},
+    utils::{snappy_compress, snappy_decompress_bounded},
 };
 use bytes::BufMut;
 use ethrex_blockchain::mempool::Mempool;
-use ethrex_common::{H256, types::BYTES_PER_CELL};
+use ethrex_common::{
+    H256,
+    types::{BYTES_PER_CELL, CELLS_PER_EXT_BLOB, MAX_BLOB_COUNT},
+};
 use ethrex_rlp::{
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},
@@ -20,9 +24,34 @@ pub type Cell = [u8; BYTES_PER_CELL];
 pub const MAX_CELL_REQUEST_HASHES: usize = 256;
 
 /// Upper bound on cells per transaction in a `Cells` message: at most
-/// MAX_BLOBS_PER_TX (6) blobs * CELLS_PER_EXT_BLOB (128) columns. Bounds the
-/// per-tx inner-vec allocation at decode time.
-pub const MAX_CELLS_PER_TX: usize = 6 * 128;
+/// `MAX_BLOB_COUNT` blobs * `CELLS_PER_EXT_BLOB` columns. Bounds the per-tx
+/// inner-vec allocation at decode time.
+pub const MAX_CELLS_PER_TX: usize = MAX_BLOB_COUNT * CELLS_PER_EXT_BLOB;
+
+/// Upper bound on the decompressed size of a `GetCells` request: a request id, at
+/// most [`MAX_CELL_REQUEST_HASHES`] 32-byte hashes (33 bytes each once RLP-tagged)
+/// and a 16-byte mask, with slack for the list headers. Rejects an oversized frame
+/// by its declared length, before the hash-count check can run on decoded data.
+const MAX_GET_CELLS_BYTES: usize = MAX_CELL_REQUEST_HASHES * 33 + 256;
+
+/// Cell budget for a `Cells` response we *serve*, derived from the
+/// `PooledTransactions` soft serve limit ([`MAX_POOLED_RESPONSE_BYTES`]). We stop
+/// before a transaction would push the response past it, so what we emit stays
+/// under any peer's inbound cap. EIP-8070 lets a responder "truncate its `Cells`
+/// response depending on its current capacity", so a partial response is
+/// protocol-legal.
+pub const MAX_CELLS_SERVED: usize = MAX_POOLED_RESPONSE_BYTES / BYTES_PER_CELL;
+
+/// Worst-case cells one requested hash can pull, used to size a `GetCells`
+/// request so a peer applying [`MAX_CELLS_SERVED`] can answer it in full.
+pub const fn cells_per_hash(cell_mask: u128) -> usize {
+    let columns = cell_mask.count_ones() as usize;
+    if columns == 0 {
+        1
+    } else {
+        columns * MAX_BLOB_COUNT
+    }
+}
 
 // https://eips.ethereum.org/EIPS/eip-8070#getcells-0x14
 //
@@ -70,7 +99,10 @@ impl RLPxMessage for GetCells {
 
     fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
         use bytes::Bytes;
-        let decompressed_data = snappy_decompress(msg_data)?;
+        // A well-formed request is a request id, at most MAX_CELL_REQUEST_HASHES
+        // hashes and a 16-byte mask; bound the declared length so an oversized
+        // frame is rejected before it is materialized.
+        let decompressed_data = snappy_decompress_bounded(msg_data, MAX_GET_CELLS_BYTES)?;
         let decoder = Decoder::new(&decompressed_data)?;
         let (id, decoder): (u64, _) = decoder.decode_field("request-id")?;
         let (transaction_hashes, decoder): (Vec<H256>, _) =
@@ -183,7 +215,9 @@ impl RLPxMessage for Cells {
 
     fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
         use bytes::Bytes;
-        let decompressed_data = snappy_decompress(msg_data)?;
+        // Reject an oversized response by its declared decompressed length before
+        // materializing the cell matrix, as the `PooledTransactions` path does.
+        let decompressed_data = snappy_decompress_bounded(msg_data, MAX_POOLED_TRANSACTIONS_BYTES)?;
         let decoder = Decoder::new(&decompressed_data)?;
         let (id, decoder): (u64, _) = decoder.decode_field("request-id")?;
         let (transaction_hashes, decoder): (Vec<H256>, _) =
@@ -202,7 +236,7 @@ impl RLPxMessage for Cells {
                 "Cells: cells count must equal transaction_hashes count".to_string(),
             ));
         }
-        // Bound per-tx cell count to MAX_BLOBS_PER_TX (6) * CELLS_PER_EXT_BLOB (128)
+        // Bound per-tx cell count to MAX_BLOB_COUNT blobs * CELLS_PER_EXT_BLOB columns
         // so a peer can't force a multi-hundred-MB allocation before snappy limits.
         if cells.iter().any(|v| v.len() > MAX_CELLS_PER_TX) {
             return Err(RLPDecodeError::Custom(
@@ -246,6 +280,13 @@ impl GetCells {
     /// for the whole batch. This is a protocol-level limitation of the single
     /// per-message `cell_mask`, not a bug; callers should request hashes they
     /// expect us to hold together.
+    ///
+    /// The response is capped at [`MAX_CELLS_SERVED`] cells: an unbounded reply would
+    /// let a peer pull `MAX_CELL_REQUEST_HASHES * MAX_CELLS_PER_TX` cells (~384 MiB)
+    /// per request. Trailing hashes that no longer fit are dropped from the response
+    /// entirely, which EIP-8070 permits ("the responder MAY truncate its `Cells`
+    /// response depending on its current capacity") and which a requester sizing its
+    /// batch with [`cells_per_hash`] never triggers.
     pub fn handle(&self, mempool: &Mempool) -> Cells {
         // Use available_cell_mask (real availability) for the intersection, so a
         // full-payload provider with u128::MAX availability actually serves all
@@ -254,12 +295,19 @@ impl GetCells {
         for &tx_hash in &self.transaction_hashes {
             served &= mempool.available_cell_mask(tx_hash);
         }
+        let mut served_hashes: Vec<H256> = Vec::with_capacity(self.transaction_hashes.len());
         let mut all_cells: Vec<Vec<Cell>> = Vec::with_capacity(self.transaction_hashes.len());
+        let mut budget = MAX_CELLS_SERVED;
         for &tx_hash in &self.transaction_hashes {
             let cells = get_cells_for_tx(mempool, tx_hash, served);
+            if cells.len() > budget {
+                break;
+            }
+            budget -= cells.len();
+            served_hashes.push(tx_hash);
             all_cells.push(cells);
         }
-        Cells::new(self.id, self.transaction_hashes.clone(), all_cells, served)
+        Cells::new(self.id, served_hashes, all_cells, served)
     }
 }
 

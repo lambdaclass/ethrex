@@ -17,6 +17,8 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "c-kzg")]
 use super::BYTES_PER_CELL;
 use super::{BYTES_PER_BLOB, CELLS_PER_EXT_BLOB, SAFE_BYTES_PER_BLOB};
+#[cfg(feature = "c-kzg")]
+use super::{MAX_BLOB_COUNT, MAX_BLOB_COUNT_ELECTRA};
 
 pub type Bytes48 = [u8; 48];
 pub type Blob = [u8; BYTES_PER_BLOB];
@@ -351,11 +353,6 @@ impl AddAssign for BlobsBundle {
         self.version = self.version.max(rhs.version);
     }
 }
-
-#[cfg(feature = "c-kzg")]
-const MAX_BLOB_COUNT: usize = 6;
-#[cfg(feature = "c-kzg")]
-const MAX_BLOB_COUNT_ELECTRA: usize = 9;
 
 #[cfg(feature = "c-kzg")]
 fn max_blobs_per_block(fork: crate::types::Fork) -> usize {
