@@ -12832,11 +12832,68 @@ mod pbtsnap_serving_tests {
     #[tokio::test]
     async fn a_root_this_node_does_not_hold_is_refused() {
         let served = active_store().await;
+        let error = served
+            .store
+            .binary_leaf_range_proof(H256::repeat_byte(9), UNBOUNDED, UNBOUNDED, PLENTY)
+            .expect_err("an unheld root must not be served");
+        // The *up-front* gate, not the post-walk one. Both refuse, so a bare
+        // `is_err` passes either way — and the difference is a whole tree walk
+        // a peer can trigger by naming roots at random.
         assert!(
-            served
-                .store
-                .binary_leaf_range_proof(H256::repeat_byte(9), UNBOUNDED, UNBOUNDED, PLENTY)
-                .is_err(),
+            error.to_string().contains("does not resolve to that root"),
+            "an unheld root must be refused before the walk, not detected after it: {error}"
+        );
+    }
+
+    /// The root is recorded for a canonical, post-activation block, and the
+    /// trie still does not resolve to it. `BINARY_TRIE_ROOTS` is a mapping the
+    /// importer writes; it is not evidence that the state survived, and after a
+    /// restart or a commit past it the rows are simply gone. Only re-hashing
+    /// the stored root row answers, which is the half of
+    /// `has_binary_trie_state` that a recorded-root check alone would skip.
+    #[tokio::test]
+    async fn a_recorded_root_the_trie_cannot_resolve_is_not_served() {
+        let (mut store, _backend, _dir) = test_store();
+        let config = ChainConfig {
+            binary_tree_time: Some(0),
+            ..Default::default()
+        };
+        store.set_chain_config(&config).await.expect("chain config");
+
+        // No genesis trie at all: the header names a binary root, the mapping
+        // agrees, and there is nothing on disk under it.
+        let phantom = H256::repeat_byte(0x3c);
+        let header = BlockHeader {
+            number: 1,
+            timestamp: ACTIVE_TIMESTAMP,
+            state_root: phantom,
+            ..Default::default()
+        };
+        let hash = header.hash();
+        store
+            .add_block_header(hash, header.clone())
+            .await
+            .expect("header");
+        store
+            .write(
+                CANONICAL_BLOCK_HASHES,
+                1u64.to_le_bytes().to_vec(),
+                hash.encode_to_vec(),
+            )
+            .expect("canonical");
+        store.latest_block_header.update(header);
+        store.set_binary_trie_root(hash, phantom).expect("record");
+
+        assert_eq!(
+            store.get_binary_trie_root(hash).expect("read"),
+            Some(phantom)
+        );
+        assert!(
+            store
+                .canonical_block_for_binary_root(phantom)
+                .expect("resolve")
+                .is_none(),
+            "a recorded root the trie cannot resolve must not be servable"
         );
     }
 
