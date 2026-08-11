@@ -5715,7 +5715,11 @@ fn get_proof_request(
 /// map over an empty database — so a node that does not hash to what its parent
 /// points at is unreachable and the lookup fails rather than silently
 /// succeeding. Nothing in here consults the store.
-fn account_proven_by(root: H256, address: Address, proof_nodes: &[Vec<u8>]) -> Option<AccountState> {
+fn account_proven_by(
+    root: H256,
+    address: Address,
+    proof_nodes: &[Vec<u8>],
+) -> Option<AccountState> {
     let mut nodes = BTreeMap::new();
     for encoded in proof_nodes {
         let node = Node::decode(encoded).ok()?;
