@@ -63,7 +63,7 @@ libssz-types.workspace = true
 ethrex-guest-program = { path = "../guest-program" }
 
 [build-dependencies]
-vergen-git2 = { version = "1.0.7" }
+vergen-git2 = { version = "9.1" }
 
 [dev-dependencies]
 anyhow = "1.0.86"
