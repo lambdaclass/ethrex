@@ -615,6 +615,40 @@ async fn a_short_bytecode_answer_is_rejected() {
     nothing_installed(&target, &pivot);
 }
 
+/// The code-size cross-check, exercised on `download_codes` directly.
+///
+/// It cannot be reached through a provider, and a mutation check is what
+/// established that: deleting the check left the whole suite green. Keccak
+/// already pins a bytecode's content and therefore its length, so a provider
+/// serving genuine leaves and genuine code can never disagree with the size its
+/// own basic-data leaf states — the two would have to come from different
+/// states, which the pivot root rejects first. What the check buys is the
+/// error *message* when a chain is internally inconsistent: a named hash and
+/// two lengths, instead of an opaque root mismatch several steps later.
+#[tokio::test]
+async fn a_bytecode_disagreeing_with_its_accounts_code_size_is_refused() {
+    let (source, pivot) = store_with_state(0x11).await;
+    let provider = Honest { store: source };
+    let (hash, real_size) = code_requests(&all_leaves(&provider.store, pivot.state_root))
+        .expect("requests")[0];
+
+    download_codes(&provider, &[(hash, real_size)])
+        .await
+        .expect("the truthful size must be accepted");
+
+    let error = download_codes(&provider, &[(hash, real_size + 1)])
+        .await
+        .expect_err("a size the code cannot have must be refused");
+    assert!(
+        matches!(
+            error,
+            PbtSyncError::BytecodeSizeMismatch { hash: got, expected, actual }
+                if got == hash && expected == real_size + 1 && actual == real_size as usize
+        ),
+        "expected a size mismatch naming the code, got {error}",
+    );
+}
+
 // --------------------------------------------------- the client's own rules
 
 /// The one check the root cannot make for us.
