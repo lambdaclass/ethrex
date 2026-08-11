@@ -68,6 +68,7 @@ pub mod discv4;
 pub mod discv5;
 pub(crate) mod metrics;
 pub mod network;
+pub mod pbtsnap;
 pub mod peer_handler;
 pub mod peer_table;
 pub mod rlpx;

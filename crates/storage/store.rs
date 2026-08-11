@@ -31,7 +31,8 @@ use crate::{
 
 use ethrex_binary_trie::trie::{
     BinaryTrie, BinaryTrieDB, BitPath, DEFAULT_GROUP_DEPTH,
-    EMPTY_TRIE_ROOT as BINARY_EMPTY_TRIE_ROOT, GroupDepth, LeafChangelog, hash_stored_root,
+    EMPTY_TRIE_ROOT as BINARY_EMPTY_TRIE_ROOT, GroupDepth, LeafChangelog,
+    MAX_KEY_LENGTH as MAX_BINARY_KEY_LENGTH, RangeSlice, hash_stored_root, prove_range,
 };
 use ethrex_common::{
     Address, H256, U256,
@@ -3124,6 +3125,19 @@ impl Store {
         // taken in one traversal see one consistent snapshot: the mirror is
         // written in the nodes' own `write_tx`, and reading the two through
         // different views could land either side of that batch.
+        //
+        // **On the RocksDB backend that snapshot does not exist.** `begin_read`
+        // there returns a handle on the live database — `RocksDBReadTx::get`
+        // calls `db.get_cf` directly — so what sharing the view actually buys
+        // is that both halves read the same *live* database, not that they read
+        // it at one sequence number. The in-memory backend does clone, so the
+        // guarantee holds there and not in production. Only
+        // `StorageBackend::begin_locked` takes a real `db.snapshot()`, and it is
+        // scoped to a single column family, so it cannot pin the node table and
+        // the mirror together. Anything that needs a genuinely pinned read
+        // across both must be written against that gap rather than this comment
+        // — see `Store::binary_leaf_range_proof`, which reads one structure and
+        // re-checks the root afterwards for exactly this reason.
         let read_view = self.backend.begin_read()?;
         Ok(LayeredBinaryTrieDB::new(
             binary_root,
@@ -3542,6 +3556,132 @@ impl Store {
             )));
         }
         Ok(Some(H256::from_slice(&raw)))
+    }
+
+    /// The canonical block whose post-state is the binary trie named by
+    /// `root`, if this node can still serve that state.
+    ///
+    /// A `pbtsnap` request carries a root, but reachability is keyed by block
+    /// hash — [`Self::has_binary_trie_state`] needs both — so serving one
+    /// starts here.
+    ///
+    /// **The walk is bounded at [`DB_COMMIT_THRESHOLD`], and that bound is the
+    /// answer, not a heuristic.** The binary trie is single-version: the disk
+    /// holds one tree and the diff layers hold what sits above it, so a root
+    /// older than the layer window does not resolve at all. A longer walk could
+    /// only ever find blocks this method must then refuse. It is a coincidence
+    /// worth not relying on that snap's own `SNAP_LIMIT` is the same number.
+    ///
+    /// Three things must hold, and the third is the substantive one:
+    /// the canonical header at that number must carry `root`; its timestamp
+    /// must put it past the binary-tree activation (a pre-flip header's
+    /// `state_root` names an MPT, and serving binary leaves against it would be
+    /// answering a question nobody asked); and the layered binary trie must
+    /// really resolve to `root`, which is a re-hash of the stored root row
+    /// rather than a lookup.
+    ///
+    /// Deliberately not an eager root → block index. `BINARY_TRIE_ROOTS`
+    /// already stores block → root, the canonical walk gets reorg handling for
+    /// free, and the walk is at most `DB_COMMIT_THRESHOLD` header reads on a
+    /// path that then does real trie work.
+    pub fn canonical_block_for_binary_root(
+        &self,
+        root: H256,
+    ) -> Result<Option<BlockHash>, StoreError> {
+        let latest = self.latest_block_header.get().number;
+        let floor = latest.saturating_sub(DB_COMMIT_THRESHOLD as u64);
+        for number in (floor..=latest).rev() {
+            let Some(hash) = self.get_canonical_block_hash_sync(number)? else {
+                continue;
+            };
+            let Some(header) = self.get_block_header_by_hash(hash)? else {
+                continue;
+            };
+            if header.state_root != root || !self.header_addresses_binary_trie(&header) {
+                continue;
+            }
+            if self.has_binary_trie_state(hash, root)? {
+                return Ok(Some(hash));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Up to `max_leaves` leaves at `root` from `origin` through `limit`, with
+    /// the two boundary walks that pin them to `root`.
+    ///
+    /// The serving primitive behind `pbtsnap/1`'s `PbtLeafRange`. See
+    /// [`prove_range`] for the progress and terminator rules, which are the
+    /// response's contract and not this store's.
+    ///
+    /// **Leaves and proofs both come from the trie, and that is a correctness
+    /// requirement rather than a preference.** [`Self::binary_flat_range`] is
+    /// the faster source for the leaves — a seek into the mirror instead of a
+    /// tree walk — and a response that mixed the two would still be *sound*,
+    /// because `verify_range` re-merkleizes whatever it is handed and the right
+    /// walk has to end at the last leaf. What it would not be is *attributable*.
+    /// The mirror scan pins its view with
+    /// [`begin_locked`](crate::api::StorageBackend::begin_locked) while a trie
+    /// walk reads through [`begin_read`](crate::api::StorageBackend::begin_read),
+    /// and on the RocksDB backend that is not a snapshot at all — it is a handle
+    /// on the live database. The two halves are therefore two different views by
+    /// construction, and a flush between them makes an honest server emit a
+    /// range that fails its own proof: `OriginMismatch` on the first leaf,
+    /// `RightProofMismatch` on the last, `RootMismatch` in between. Every one of
+    /// those looks like a lie to the client, which scores the peer down for it.
+    /// Reading one structure removes the divergence instead of detecting it.
+    ///
+    /// **The root is re-checked after the walk, for the same reason.** The trie
+    /// is path-keyed and single-version, so a commit landing mid-walk overwrites
+    /// rows underneath an unpinned cursor without changing any key. Asking
+    /// again whether the layered view still resolves to `root` turns that race
+    /// into a refusal — which a client answers by re-pivoting — instead of into
+    /// a response assembled from two trees. It is not a substitute for a pinned
+    /// cross-table read view, which this backend does not offer; it is what
+    /// makes the gap loud.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Custom`] if this node does not hold `root`, if it stopped
+    /// holding it while the range was being read, or if a node the walk reached
+    /// could not be loaded.
+    pub fn binary_leaf_range_proof(
+        &self,
+        root: H256,
+        origin: &[u8],
+        limit: &[u8],
+        max_leaves: usize,
+    ) -> Result<RangeSlice, StoreError> {
+        if !self.binary_trie_holds_root(root)? {
+            return Err(StoreError::Custom(format!(
+                "cannot serve a binary leaf range at {root:#x}: the binary trie does not resolve \
+                 to that root"
+            )));
+        }
+        // An empty `limit` means "no upper bound", matching
+        // [`Self::binary_flat_range`] and the wire format. `prove_range` has no
+        // such convention — it compares `key > limit` directly, and every
+        // non-empty key is greater than the empty one, so passing an empty
+        // `limit` straight through makes the *first* leaf the terminator and
+        // caps every whole-keyspace request at one leaf. The two sibling range
+        // APIs read the same sentinel oppositely; this is where they are
+        // reconciled, and it is a silent one-leaf response if they are not.
+        let unbounded = vec![0xffu8; MAX_BINARY_KEY_LENGTH];
+        let limit = if limit.is_empty() { &unbounded } else { limit };
+
+        let mut trie = self.open_binary_trie(root)?;
+        let slice = prove_range(&mut trie, origin, limit, max_leaves).map_err(|e| {
+            StoreError::Custom(format!(
+                "binary leaf range at {root:#x} could not be proved: {e}"
+            ))
+        })?;
+        if !self.binary_trie_holds_root(root)? {
+            return Err(StoreError::Custom(format!(
+                "binary trie moved off {root:#x} while its leaf range was being read; the range \
+                 and its proofs may come from different trees"
+            )));
+        }
+        Ok(slice)
     }
 
     /// Record `root` as `block_hash`'s binary-trie root.
@@ -12316,5 +12456,479 @@ mod binary_group_depth_marker_tests {
         assert_eq!(GroupDepth::new(0), None);
         assert_eq!(GroupDepth::new(MAX_GROUP_DEPTH + 1), None);
         assert!(GroupDepth::new(DEFAULT_GROUP_DEPTH.get()).is_some());
+    }
+}
+
+/// The `pbtsnap/1` serving seams: resolving a request's root to a block this
+/// node can answer for, and producing a range that verifies against it.
+///
+/// Adversarial rather than round-trip. A server that hands a client leaves it
+/// already agrees with proves nothing; what matters is that a range served at
+/// one root does not verify against another, that a budget cannot suppress the
+/// progress rule, and that a root this node has moved off is refused rather
+/// than answered from whatever the single-version trie now holds.
+#[cfg(test)]
+mod pbtsnap_serving_tests {
+    use super::genesis_binary_trie_tests::{alloc, genesis_account, test_store};
+    use super::*;
+    use ethrex_binary_trie::trie::{RangeProofError, increment_key, verify_range};
+
+    /// No upper bound, spelled as the empty key — the same sentinel
+    /// `binary_flat_range` uses.
+    const UNBOUNDED: &[u8] = &[];
+    /// Far more leaves than these fixtures build, so a range is bounded by its
+    /// keys rather than silently truncated by the count.
+    const PLENTY: usize = 10_000;
+    /// Genesis is at timestamp 0 and the served block well past it, so the
+    /// activation predicate is exercised with a real gap rather than a tie.
+    const ACTIVE_TIMESTAMP: u64 = 1_000;
+
+    struct Served {
+        store: Store,
+        hash: BlockHash,
+        header: BlockHeader,
+        root: H256,
+        _dir: tempfile::TempDir,
+    }
+
+    /// A store holding binary state at one canonical block, wired the way a
+    /// running node's would be: chain config scheduled, header stored and
+    /// canonical, latest-header cache pointed at it, root recorded.
+    async fn served_store(binary_tree_time: Option<u64>, timestamp: u64) -> Served {
+        let (mut store, _backend, dir) = test_store();
+        let config = ChainConfig {
+            binary_tree_time,
+            ..Default::default()
+        };
+        store.set_chain_config(&config).await.expect("chain config");
+
+        let root = store
+            .setup_genesis_binary_trie(alloc(vec![
+                (
+                    Address::repeat_byte(0x11),
+                    genesis_account(1, 1_000, vec![], &[(1, 2), (900, 3)]),
+                ),
+                (
+                    Address::repeat_byte(0x22),
+                    genesis_account(2, 500, vec![0x60; 40], &[(5, 7)]),
+                ),
+                (
+                    Address::repeat_byte(0x33),
+                    genesis_account(0, 1, vec![], &[]),
+                ),
+            ]))
+            .await
+            .expect("genesis");
+
+        let header = BlockHeader {
+            number: 1,
+            timestamp,
+            state_root: root,
+            ..Default::default()
+        };
+        let hash = header.hash();
+        store
+            .add_block_header(hash, header.clone())
+            .await
+            .expect("header");
+        store
+            .write(
+                CANONICAL_BLOCK_HASHES,
+                1u64.to_le_bytes().to_vec(),
+                hash.encode_to_vec(),
+            )
+            .expect("canonical");
+        store.latest_block_header.update(header.clone());
+        store.set_binary_trie_root(hash, root).expect("record root");
+
+        Served {
+            store,
+            hash,
+            header,
+            root,
+            _dir: dir,
+        }
+    }
+
+    async fn active_store() -> Served {
+        served_store(Some(0), ACTIVE_TIMESTAMP).await
+    }
+
+    // ---- root resolution -------------------------------------------------
+
+    #[tokio::test]
+    async fn the_served_root_resolves_to_its_canonical_block() {
+        let served = active_store().await;
+        assert_eq!(
+            served
+                .store
+                .canonical_block_for_binary_root(served.root)
+                .expect("resolve"),
+            Some(served.hash),
+        );
+    }
+
+    #[tokio::test]
+    async fn a_root_this_node_never_held_resolves_to_nothing() {
+        let served = active_store().await;
+        assert_eq!(
+            served
+                .store
+                .canonical_block_for_binary_root(H256::repeat_byte(9))
+                .expect("resolve"),
+            None,
+        );
+    }
+
+    /// The header carries the root and the trie holds it, but the header's
+    /// timestamp is before the activation, so its `state_root` names an MPT.
+    /// Serving binary leaves against it would answer a question nobody asked.
+    #[tokio::test]
+    async fn a_pre_activation_header_is_not_a_binary_root_to_serve() {
+        let served = served_store(Some(ACTIVE_TIMESTAMP + 1), ACTIVE_TIMESTAMP).await;
+        assert!(
+            served
+                .store
+                .canonical_block_for_binary_root(served.root)
+                .expect("resolve")
+                .is_none(),
+        );
+    }
+
+    /// An unscheduled chain has no binary tree at any height, so nothing is
+    /// servable however the roots happen to line up.
+    #[tokio::test]
+    async fn an_unscheduled_chain_serves_no_root() {
+        let served = served_store(None, ACTIVE_TIMESTAMP).await;
+        assert!(
+            served
+                .store
+                .canonical_block_for_binary_root(served.root)
+                .expect("resolve")
+                .is_none(),
+        );
+    }
+
+    /// Past the layer window the single-version trie no longer resolves the
+    /// root, so a longer walk could only find blocks that must then be
+    /// refused. Moving the head far above the block leaves it outside the
+    /// bounded walk.
+    #[tokio::test]
+    async fn a_block_below_the_layer_window_is_out_of_reach() {
+        let served = active_store().await;
+        let far_head = BlockHeader {
+            number: 1 + DB_COMMIT_THRESHOLD as u64 + 1,
+            timestamp: ACTIVE_TIMESTAMP + 1,
+            state_root: H256::repeat_byte(0x5a),
+            ..Default::default()
+        };
+        served.store.latest_block_header.update(far_head);
+        assert!(
+            served
+                .store
+                .canonical_block_for_binary_root(served.root)
+                .expect("resolve")
+                .is_none(),
+        );
+    }
+
+    /// The block is known and its root recorded, but it is not the canonical
+    /// hash at its number — the branch it belongs to lost. A server that
+    /// answered for it would be serving a root no canonical header commits to.
+    #[tokio::test]
+    async fn a_non_canonical_block_is_not_served() {
+        let served = active_store().await;
+        served
+            .store
+            .write(
+                CANONICAL_BLOCK_HASHES,
+                1u64.to_le_bytes().to_vec(),
+                H256::repeat_byte(0xcc).encode_to_vec(),
+            )
+            .expect("recanonicalize");
+        // The latest-header cache short-circuits `get_block_header_by_hash`, so
+        // point it away from the abandoned block too.
+        served.store.latest_block_header.update(BlockHeader {
+            number: 1,
+            timestamp: ACTIVE_TIMESTAMP,
+            state_root: H256::repeat_byte(0x5a),
+            ..Default::default()
+        });
+        assert!(
+            served
+                .store
+                .canonical_block_for_binary_root(served.root)
+                .expect("resolve")
+                .is_none(),
+        );
+    }
+
+    // ---- range serving ---------------------------------------------------
+
+    #[tokio::test]
+    async fn a_served_range_verifies_against_the_pivot_root() {
+        let served = active_store().await;
+        let slice = served
+            .store
+            .binary_leaf_range_proof(served.root, UNBOUNDED, UNBOUNDED, PLENTY)
+            .expect("range");
+        assert!(!slice.leaves.is_empty(), "the fixture has state");
+
+        let verified = verify_range(
+            served.root,
+            UNBOUNDED,
+            &slice.leaves,
+            &slice.left_proof,
+            &slice.right_proof,
+        )
+        .expect("an honestly served whole-tree range must verify");
+        assert!(
+            !verified.has_more,
+            "an unbounded range over the whole tree leaves nothing after it"
+        );
+    }
+
+    /// The attribution property, and the reason leaves and proofs are read from
+    /// one structure: a range that is internally consistent still must not
+    /// verify against a root it was not served at.
+    #[tokio::test]
+    async fn a_range_served_at_one_root_does_not_verify_against_another() {
+        let served = active_store().await;
+        let slice = served
+            .store
+            .binary_leaf_range_proof(served.root, UNBOUNDED, UNBOUNDED, PLENTY)
+            .expect("range");
+        let other = H256::repeat_byte(0x77);
+        assert!(other != served.root);
+        assert!(matches!(
+            verify_range(
+                other,
+                UNBOUNDED,
+                &slice.leaves,
+                &slice.left_proof,
+                &slice.right_proof,
+            ),
+            Err(RangeProofError::Proof(_)) | Err(RangeProofError::RootMismatch),
+        ));
+    }
+
+    /// The progress rule is structural, not advisory: a budget of zero leaves
+    /// still returns the first leaf at or after the origin, and the response
+    /// still verifies. Without it a client could not tell an exhausted budget
+    /// from an exhausted tree.
+    #[tokio::test]
+    async fn a_zero_budget_still_returns_and_proves_the_first_leaf() {
+        let served = active_store().await;
+        let whole = served
+            .store
+            .binary_leaf_range_proof(served.root, UNBOUNDED, UNBOUNDED, PLENTY)
+            .expect("range");
+        let one = served
+            .store
+            .binary_leaf_range_proof(served.root, UNBOUNDED, UNBOUNDED, 0)
+            .expect("range");
+
+        assert_eq!(one.leaves.len(), 1, "the floor is one leaf, not zero");
+        assert_eq!(one.leaves[0], whole.leaves[0]);
+        assert!(
+            one.leaves.len() < whole.leaves.len(),
+            "the fixture is bigger"
+        );
+
+        let verified = verify_range(
+            served.root,
+            UNBOUNDED,
+            &one.leaves,
+            &one.left_proof,
+            &one.right_proof,
+        )
+        .expect("a budget-capped range must still verify");
+        assert!(
+            verified.has_more,
+            "one leaf out of many leaves more to ask for"
+        );
+    }
+
+    /// Resuming from the last key returned must reach the end of the tree
+    /// without a gap and without a repeat — the client-side loop the progress
+    /// rule exists to make terminating.
+    #[tokio::test]
+    async fn resuming_from_the_last_key_walks_the_whole_tree() {
+        let served = active_store().await;
+        let whole = served
+            .store
+            .binary_leaf_range_proof(served.root, UNBOUNDED, UNBOUNDED, PLENTY)
+            .expect("range");
+
+        let mut collected: Vec<(Vec<u8>, [u8; 32])> = Vec::new();
+        let mut origin: Vec<u8> = Vec::new();
+        loop {
+            let slice = served
+                .store
+                .binary_leaf_range_proof(served.root, &origin, UNBOUNDED, 2)
+                .expect("range");
+            let verified = verify_range(
+                served.root,
+                &origin,
+                &slice.leaves,
+                &slice.left_proof,
+                &slice.right_proof,
+            )
+            .expect("every resumed range must verify at its own origin");
+            collected.extend(slice.leaves.iter().cloned());
+            if !verified.has_more {
+                break;
+            }
+            let last = slice.leaves.last().expect("has_more implies a last leaf");
+            origin = increment_key(&last.0).expect("a 34- or 66-byte key is not all-0xff");
+        }
+        assert_eq!(collected, whole.leaves);
+    }
+
+    /// An origin past every leaf is the provable-emptiness case: no leaves, no
+    /// right walk, and a left walk that shows there is nothing above it.
+    #[tokio::test]
+    async fn an_origin_past_every_leaf_serves_a_verifiable_empty_range() {
+        let served = active_store().await;
+        let past_everything = vec![0xffu8; 66];
+        let slice = served
+            .store
+            .binary_leaf_range_proof(served.root, &past_everything, UNBOUNDED, PLENTY)
+            .expect("range");
+        assert!(slice.leaves.is_empty());
+        assert!(slice.right_proof.is_empty(), "no last leaf to walk");
+
+        let verified = verify_range(
+            served.root,
+            &past_everything,
+            &[],
+            &slice.left_proof,
+            &slice.right_proof,
+        )
+        .expect("provable emptiness must verify");
+        assert!(!verified.has_more);
+    }
+
+    /// The terminator: the response carries the first leaf *past* the limit, so
+    /// a client sees where the interval ended instead of trusting a claim.
+    #[tokio::test]
+    async fn the_range_carries_the_first_leaf_past_the_limit() {
+        let served = active_store().await;
+        let whole = served
+            .store
+            .binary_leaf_range_proof(served.root, UNBOUNDED, UNBOUNDED, PLENTY)
+            .expect("range");
+        assert!(whole.leaves.len() >= 3, "the fixture needs room to cut");
+
+        let limit = whole.leaves[0].0.clone();
+        let slice = served
+            .store
+            .binary_leaf_range_proof(served.root, UNBOUNDED, &limit, PLENTY)
+            .expect("range");
+        assert_eq!(
+            slice.leaves.len(),
+            2,
+            "the leaf at the limit plus the terminator past it"
+        );
+        assert_eq!(slice.leaves[1], whole.leaves[1]);
+        verify_range(
+            served.root,
+            UNBOUNDED,
+            &slice.leaves,
+            &slice.left_proof,
+            &slice.right_proof,
+        )
+        .expect("a limited range must verify");
+    }
+
+    /// A root this node does not resolve to is refused before any walk, not
+    /// answered from whatever the single-version trie currently holds. The
+    /// client reads a refusal as "re-pivot", never as "this state does not
+    /// exist".
+    #[tokio::test]
+    async fn a_root_this_node_does_not_hold_is_refused() {
+        let served = active_store().await;
+        let error = served
+            .store
+            .binary_leaf_range_proof(H256::repeat_byte(9), UNBOUNDED, UNBOUNDED, PLENTY)
+            .expect_err("an unheld root must not be served");
+        // The *up-front* gate, not the post-walk one. Both refuse, so a bare
+        // `is_err` passes either way — and the difference is a whole tree walk
+        // a peer can trigger by naming roots at random.
+        assert!(
+            error.to_string().contains("does not resolve to that root"),
+            "an unheld root must be refused before the walk, not detected after it: {error}"
+        );
+    }
+
+    /// The root is recorded for a canonical, post-activation block, and the
+    /// trie still does not resolve to it. `BINARY_TRIE_ROOTS` is a mapping the
+    /// importer writes; it is not evidence that the state survived, and after a
+    /// restart or a commit past it the rows are simply gone. Only re-hashing
+    /// the stored root row answers, which is the half of
+    /// `has_binary_trie_state` that a recorded-root check alone would skip.
+    #[tokio::test]
+    async fn a_recorded_root_the_trie_cannot_resolve_is_not_served() {
+        let (mut store, _backend, _dir) = test_store();
+        let config = ChainConfig {
+            binary_tree_time: Some(0),
+            ..Default::default()
+        };
+        store.set_chain_config(&config).await.expect("chain config");
+
+        // No genesis trie at all: the header names a binary root, the mapping
+        // agrees, and there is nothing on disk under it.
+        let phantom = H256::repeat_byte(0x3c);
+        let header = BlockHeader {
+            number: 1,
+            timestamp: ACTIVE_TIMESTAMP,
+            state_root: phantom,
+            ..Default::default()
+        };
+        let hash = header.hash();
+        store
+            .add_block_header(hash, header.clone())
+            .await
+            .expect("header");
+        store
+            .write(
+                CANONICAL_BLOCK_HASHES,
+                1u64.to_le_bytes().to_vec(),
+                hash.encode_to_vec(),
+            )
+            .expect("canonical");
+        store.latest_block_header.update(header);
+        store.set_binary_trie_root(hash, phantom).expect("record");
+
+        assert_eq!(
+            store.get_binary_trie_root(hash).expect("read"),
+            Some(phantom)
+        );
+        assert!(
+            store
+                .canonical_block_for_binary_root(phantom)
+                .expect("resolve")
+                .is_none(),
+            "a recorded root the trie cannot resolve must not be servable"
+        );
+    }
+
+    /// The header the resolution returns is the one whose `state_root` a
+    /// client would verify against, so the two must be the same value.
+    #[tokio::test]
+    async fn the_resolved_block_is_the_one_whose_root_was_asked_for() {
+        let served = active_store().await;
+        let hash = served
+            .store
+            .canonical_block_for_binary_root(served.root)
+            .expect("resolve")
+            .expect("resolvable");
+        let header = served
+            .store
+            .get_block_header_by_hash(hash)
+            .expect("header")
+            .expect("stored");
+        assert_eq!(header.state_root, served.root);
+        assert_eq!(header.number, served.header.number);
     }
 }

@@ -22,6 +22,14 @@ pub const SUPPORTED_ETH_CAPABILITIES: [Capability; 4] = [
 ];
 pub const SUPPORTED_SNAP_CAPABILITIES: [Capability; 1] = [Capability::snap(1)];
 
+/// The experimental binary-tree state-sync capability.
+///
+/// Advertised **only** on a chain whose configuration schedules the binary tree.
+/// On any other chain there is no binary trie to serve and the capability is
+/// meaningless, so offering it would change this node's hello bytes for every
+/// existing peer in exchange for nothing.
+pub const SUPPORTED_PBTSNAP_CAPABILITIES: [Capability; 1] = [Capability::pbtsnap(1)];
+
 /// The version of the base P2P protocol we support.
 /// This is sent at the start of the Hello message instead of the capabilities list.
 pub const SUPPORTED_P2P_CAPABILITY_VERSION: u8 = 5;
@@ -70,6 +78,17 @@ impl Capability {
     pub const fn based(version: u8) -> Self {
         Capability {
             protocol: pad_right(b"based"),
+            version,
+        }
+    }
+
+    /// `pbtsnap` — state sync for the EIP-8297 binary tree.
+    ///
+    /// Seven characters, so it fits the eight-byte capability name without the
+    /// `pad_right` assertion firing.
+    pub const fn pbtsnap(version: u8) -> Self {
+        Capability {
+            protocol: pad_right(b"pbtsnap"),
             version,
         }
     }
