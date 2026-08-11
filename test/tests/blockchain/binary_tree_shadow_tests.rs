@@ -66,6 +66,7 @@ use ethrex_crypto::NativeCrypto;
 use ethrex_l2_rpc::signer::{LocalSigner, Signable, Signer};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store, error::StoreError};
+use ethrex_trie::{Node, Trie};
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, VmDatabase};
 use secp256k1::SecretKey;
 use tokio_util::sync::CancellationToken;
@@ -5658,4 +5659,287 @@ async fn a_leaf_the_snapshot_does_not_contain_does_not_survive_the_install() {
         target.get_binary_account_info(root, sender).unwrap(),
         source.store.get_binary_account_info(root, sender).unwrap(),
     );
+}
+
+// ===========================================================================
+// Phase D4 — `eth_getProof` across the boundary.
+//
+// The other four state RPCs can follow a header into whichever trie its root
+// addresses, because their answers are *values*, and a value is the same value
+// out of either trie. A proof is not. `eth_getProof`'s response type is the
+// MPT's shape — a list of RLP-encoded MPT nodes from root to leaf, plus a
+// `storageHash` naming a per-account storage subtrie — and under EIP-8297
+// neither exists: an account is scattered across sub-indices of a stem and
+// there is no per-account storage root at all.
+//
+// The unit tests beside the handler (`crates/networking/rpc/eth/account.rs`)
+// cover the branch using a genesis that is *itself* active. That shape cannot
+// exhibit the failure this section exists for: with activation at genesis there
+// is no MPT on disk to serve by mistake. Only a chain that flips mid-history has
+// a real, complete, still-readable MPT frozen behind it — which is exactly the
+// state a stale-root bug would serve from. These tests use one.
+//
+// They also drive the handler through `map_http_requests`, the public dispatch
+// surface, rather than calling it directly, so the method name, the parameter
+// encoding and the error variant a caller actually observes are all in scope.
+// ===========================================================================
+
+/// An `eth_getProof` request encoded the way a caller sends it over the wire.
+fn get_proof_request(
+    address: Address,
+    storage_keys: &[H256],
+    block: u64,
+) -> ethrex_rpc::utils::RpcRequest {
+    ethrex_rpc::utils::RpcRequest {
+        method: "eth_getProof".to_string(),
+        params: Some(vec![
+            serde_json::json!(format!("{address:#x}")),
+            serde_json::json!(
+                storage_keys
+                    .iter()
+                    .map(|key| format!("{:#x}", U256::from_big_endian(&key.0)))
+                    .collect::<Vec<_>>()
+            ),
+            serde_json::json!(format!("{block:#x}")),
+        ]),
+        ..Default::default()
+    }
+}
+
+/// Reassembles the MPT that `proof_nodes` describes and returns the account they
+/// prove, **only if** those nodes really chain up to `root`.
+///
+/// This is a verification and not a re-derivation: the nodes are keyed by their
+/// own keccak hashes, `Trie::from_nodes` refuses a `root` that is not among
+/// them, and every interior child reference is resolved by hash against the same
+/// map over an empty database — so a node that does not hash to what its parent
+/// points at is unreachable and the lookup fails rather than silently
+/// succeeding. Nothing in here consults the store.
+fn account_proven_by(
+    root: H256,
+    address: Address,
+    proof_nodes: &[Vec<u8>],
+) -> Option<AccountState> {
+    let mut nodes = BTreeMap::new();
+    for encoded in proof_nodes {
+        let node = Node::decode(encoded).ok()?;
+        nodes.insert(keccak(encoded), node);
+    }
+    let trie = Trie::from_nodes(root, &nodes).ok()?;
+    let encoded_account = trie
+        .get(keccak(address.to_fixed_bytes()).as_bytes())
+        .ok()??;
+    AccountState::decode(&encoded_account).ok()
+}
+
+/// Pulls the `accountProof` node list out of an `eth_getProof` response.
+fn account_proof_nodes(response: &serde_json::Value) -> Vec<Vec<u8>> {
+    response["accountProof"]
+        .as_array()
+        .expect("accountProof must be an array")
+        .iter()
+        .map(|node| {
+            let hex = node.as_str().expect("proof node must be a hex string");
+            hex::decode(hex.trim_start_matches("0x")).expect("proof node must be hex")
+        })
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
+// D4.1 Pre-activation blocks keep their MPT proof; every block from the flip
+//      onward is refused.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn get_proof_serves_pre_flip_blocks_and_refuses_from_the_flip_onward() {
+    let chains = build_boundary_chains(FLIP_BLOCK + 1).await;
+    let blocks = &chains.scheduled_blocks;
+    let flip_index = (FLIP_BLOCK - 1) as usize;
+    let last_pre_flip = &blocks[flip_index - 1];
+    let flip = &blocks[flip_index];
+    let after_flip = &blocks[flip_index + 1];
+
+    // Non-vacuity: the boundary is where this test assumes it is, and the
+    // post-flip headers really do commit binary roots rather than MPT ones.
+    assert!(last_pre_flip.header.timestamp < chains.activation);
+    assert!(flip.header.timestamp >= chains.activation);
+    for block in [flip, after_flip] {
+        assert_eq!(
+            block.header.state_root,
+            binary_root(&chains.scheduled_store, block),
+            "block {} must commit the binary root for this test to mean anything",
+            block.header.number
+        );
+    }
+
+    // `build_chain` imports without a forkchoice update, so make the chain
+    // canonical: `eth_getProof` resolves its block parameter by number, which
+    // only the canonical index answers.
+    forkchoice_to(&chains.scheduled_store, after_flip)
+        .await
+        .expect("the built chain must be acceptable as head");
+
+    let sender = sender_from_key(&test_secret_key());
+    let context =
+        ethrex_rpc::test_utils::default_context_with_storage(chains.scheduled_store.clone()).await;
+
+    // Every pre-activation block, genesis included, still answers — and the
+    // proof it answers with verifies against that block's own state root.
+    for block_number in 0..=last_pre_flip.header.number {
+        let response = ethrex_rpc::map_http_requests(
+            &get_proof_request(sender, &[H256::from_low_u64_be(1)], block_number),
+            context.clone(),
+        )
+        .await
+        .unwrap_or_else(|error| {
+            panic!(
+                "block {block_number} is before the flip and must still have an MPT proof: {error:?}"
+            )
+        });
+
+        let header = chains
+            .scheduled_store
+            .get_block_header(block_number)
+            .unwrap()
+            .expect("canonical header");
+        let proven = account_proven_by(header.state_root, sender, &account_proof_nodes(&response))
+            .unwrap_or_else(|| {
+                panic!("block {block_number}: accountProof must verify against its own state root")
+            });
+
+        // The proof and the account fields beside it have to agree, or the
+        // response is self-contradictory whatever it verifies against.
+        let reported_nonce = u64::from_str_radix(
+            response["nonce"].as_str().unwrap().trim_start_matches("0x"),
+            16,
+        )
+        .unwrap();
+        assert_eq!(proven.nonce, reported_nonce);
+        assert_eq!(
+            format!("{:#x}", proven.balance),
+            response["balance"].as_str().unwrap()
+        );
+        assert_eq!(
+            format!("{:#x}", proven.storage_root),
+            response["storageHash"].as_str().unwrap()
+        );
+    }
+
+    // And from the flip onward it refuses, naming itself and the reason.
+    for block in [flip, after_flip] {
+        let number = block.header.number;
+        let result = ethrex_rpc::map_http_requests(
+            &get_proof_request(sender, &[H256::from_low_u64_be(1)], number),
+            context.clone(),
+        )
+        .await;
+        match result {
+            Err(ethrex_rpc::RpcErr::UnsupportedFork(message)) => {
+                assert!(
+                    message.contains("eth_getProof"),
+                    "block {number}: the refusal must name the method, got {message:?}"
+                );
+                assert!(
+                    message.to_lowercase().contains("binary"),
+                    "block {number}: the refusal must say why, got {message:?}"
+                );
+            }
+            Err(other) => {
+                panic!("block {number}: expected an unsupported-fork refusal, got {other:?}")
+            }
+            Ok(value) => panic!(
+                "block {number} commits a binary root, yet eth_getProof answered {value}. \
+                 A Merkle-Patricia proof is never a valid answer there."
+            ),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// D4.2 Why it must refuse rather than fall back.
+// ---------------------------------------------------------------------------
+
+/// The frozen pre-flip MPT is still complete and still readable, so a handler
+/// that reached for it would produce a well-formed proof — one that verifies
+/// against a root the chain stopped committing to at the flip. That is strictly
+/// worse than an error, because it verifies.
+///
+/// This also pins the store-level guard underneath the handler, driven with a
+/// *real* binary root taken off a real flipped chain rather than a synthetic
+/// one: handed that root, `get_account_proof` must fail rather than return the
+/// frozen MPT's account beside an empty proof — an account object next to an
+/// empty `accountProof` reads as a valid *exclusion* proof for an account that
+/// demonstrably exists.
+#[tokio::test]
+async fn the_frozen_mpt_is_still_serveable_but_proves_nothing_about_the_binary_root() {
+    let chains = build_boundary_chains(FLIP_BLOCK).await;
+    let blocks = &chains.scheduled_blocks;
+    let last_pre_flip = &blocks[(FLIP_BLOCK - 1) as usize - 1];
+    let flip = &blocks[(FLIP_BLOCK - 1) as usize];
+    let store = &chains.scheduled_store;
+    let sender = sender_from_key(&test_secret_key());
+
+    // The frozen MPT is still there and still answers. This is the material a
+    // stale-root bug would serve, so it has to exist for the rest of this test
+    // to be about anything.
+    let frozen = store
+        .get_account_proof(last_pre_flip.header.state_root, sender, &[])
+        .await
+        .expect("the pre-flip MPT root is still held")
+        .expect("the pre-flip MPT root is still held");
+    assert!(!frozen.proof.is_empty());
+    let proven = account_proven_by(last_pre_flip.header.state_root, sender, &frozen.proof)
+        .expect("the frozen proof verifies against the root it was taken at");
+    assert_eq!(proven.nonce, frozen.account.nonce);
+    assert!(proven.nonce > 0, "the sender must have sent transactions");
+
+    // `account_proven_by` is only evidence of anything if it rejects proofs
+    // that are wrong, so establish that before relying on it below. Corrupting
+    // any single node breaks the hash that named it, and a proof missing its
+    // last node no longer reaches the leaf.
+    for index in 0..frozen.proof.len() {
+        let mut tampered = frozen.proof.clone();
+        tampered[index][0] ^= 0xff;
+        assert!(
+            account_proven_by(last_pre_flip.header.state_root, sender, &tampered).is_none(),
+            "a proof with node {index} corrupted must not verify"
+        );
+    }
+    assert!(
+        account_proven_by(
+            last_pre_flip.header.state_root,
+            sender,
+            &frozen.proof[..frozen.proof.len() - 1]
+        )
+        .is_none(),
+        "a truncated proof must not verify"
+    );
+
+    // But it proves nothing about the chain's current commitment: the flip
+    // block's root is a binary root, and these MPT nodes do not chain up to it.
+    assert_eq!(
+        flip.header.state_root,
+        binary_root(store, flip),
+        "the flip block must commit the binary root"
+    );
+    assert_ne!(flip.header.state_root, last_pre_flip.header.state_root);
+    assert!(
+        account_proven_by(flip.header.state_root, sender, &frozen.proof).is_none(),
+        "an MPT proof must not verify against the binary root the chain now commits to"
+    );
+
+    // And the store refuses to build a proof at the binary root at all, rather
+    // than handing back the frozen MPT's account with an empty proof beside it.
+    match store
+        .get_account_proof(flip.header.state_root, sender, &[])
+        .await
+    {
+        Err(_) | Ok(None) => {}
+        Ok(Some(proof)) => panic!(
+            "get_account_proof answered at a binary root: account {:?} with {} proof nodes. \
+             With an empty proof this reads as an exclusion proof for an account that exists.",
+            proof.account,
+            proof.proof.len()
+        ),
+    }
 }
