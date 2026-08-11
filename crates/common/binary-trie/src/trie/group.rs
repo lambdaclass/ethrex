@@ -27,12 +27,27 @@ pub const MAX_GROUP_DEPTH: usize = 8;
 
 /// Group depth a backend uses when nothing has told it otherwise.
 ///
-/// **Not settled.** It is the current default, chosen on marginal cost
-/// and on max row size against the 16 KiB block, and `g = 7` is a live
-/// alternative — so nothing outside this constant may assume the value.
-/// Every geometry function takes the depth as an argument and every test
-/// that touches geometry sweeps 1..=[`MAX_GROUP_DEPTH`]; changing this
-/// line must not change a single assertion.
+/// Chosen on marginal write cost, on max row size against the 16 KiB
+/// block, and — since — on the clock:
+/// `binary_trie_cost.rs::group_depth_wall_clock` times a real block
+/// against a real RocksDB at each candidate depth. `g = 7` was the live
+/// alternative and lost, by 30% on the block at 10⁶ leaves and by 5–8%
+/// on read time alone, having won at 3×10⁵; the sign runs against it as
+/// state grows.
+///
+/// **Still not settled at mainnet scale.** The mechanism behind that
+/// flip is where a group boundary falls relative to the depth the tree
+/// fans out at, which moves with the leaf count — and the sign changed
+/// *inside* the measured range, so the result does not extrapolate from
+/// 10⁶ to 10⁹. Nothing outside this constant may assume the value. Every
+/// geometry function takes the depth as an argument and every test that
+/// touches geometry sweeps 1..=[`MAX_GROUP_DEPTH`]; changing this line
+/// must not change a single assertion.
+///
+/// The measurement also found that the block is minimised at `g = 3` and
+/// that `g = 6` is slower than storing one node per row, because a
+/// commit rewrites whole rows. That is a question about the design, not
+/// about this constant, and it is open — see the plan's Open Question 1b.
 pub const DEFAULT_GROUP_DEPTH: GroupDepth = GroupDepth(6);
 
 /// How many levels of tree one stored row spans.

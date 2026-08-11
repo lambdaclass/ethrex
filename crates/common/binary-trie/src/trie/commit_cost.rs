@@ -491,14 +491,18 @@ fn rows_at(map: &NodeMap, group_depth: GroupDepth) -> BTreeMap<Vec<u8>, GroupRow
 #[test]
 #[ignore = "measurement harness, not a correctness test"]
 fn group_depth_sweep() {
-    // Two state sizes, because the row count is *not* monotonic in the
+    // Four state sizes, because the row count is *not* monotonic in the
     // group depth: a band boundary that lands just above the depth the
     // tree fans out at splits far more rows than one that lands just
     // below. The depth distribution moves with the leaf count, so a
-    // ranking taken at one size is not evidence about another, and the
-    // second size is what says whether the winner is a real optimum or
-    // an artefact of where the bands happened to fall.
-    for leaf_count in [100_000usize, 1_000_000] {
+    // ranking taken at one size is not evidence about another.
+    //
+    // Four rather than two because two was not enough: the *saturation*
+    // argument for `g = 6` held at 10⁵ and 10⁶ and was withdrawn once
+    // the intermediate sizes showed `g = 8`'s benefit still rising. Any
+    // criterion read off this sweep has to be checked for a trend across
+    // the whole column, not for agreement at the ends.
+    for leaf_count in [100_000usize, 300_000, 600_000, 1_000_000] {
         sweep_at(leaf_count);
     }
 }
