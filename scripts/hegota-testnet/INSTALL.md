@@ -228,9 +228,9 @@ The zone is `privacy.ethrex.xyz` and it has five names — `rpc1`, `rpc2`, `rpc3
 bundle is served from a path under the faucet host:
 
 ```
-rpc1.privacy.ethrex.xyz { reverse_proxy localhost:32003 }
-rpc2.privacy.ethrex.xyz { reverse_proxy localhost:32010 }
-rpc3.privacy.ethrex.xyz { reverse_proxy localhost:32017 }
+rpc1.privacy.ethrex.xyz { reverse_proxy localhost:8645 }
+rpc2.privacy.ethrex.xyz { reverse_proxy localhost:8645 }
+rpc3.privacy.ethrex.xyz { reverse_proxy localhost:8645 }
 
 dora.privacy.ethrex.xyz { reverse_proxy localhost:31500 }
 
@@ -257,6 +257,56 @@ One RPC hostname per execution node, rather than one hostname for node 0. Three-
 agreement on head *hash* is the check this chain asks users to run, and they cannot run it
 against a single endpoint. The nodes' RPC ports stay closed at the firewall; reaching them
 goes through this proxy, which is what the operator watches.
+
+All three RPC hostnames proxy to **8645, the namespace guard**, not to a node port
+directly. See section 8a: publishing a node port as it comes out of `ethereum-package`
+publishes `debug_setHead` and `admin_addPeer` to the internet. The guard routes by `Host`,
+which is why the three vhosts share one port.
+
+## 8a. RPC namespace guard
+
+`ethereum-package` launches every execution client with its whole API surface — for ethrex
+`--http.api=eth,net,web3,debug,admin,txpool` in `src/el/ethrex/ethrex_launcher.star` —
+because the package is written for private devnets where the port is unreachable. A public
+reverse proxy in front of that port hands the internet `debug_setHead`, `debug_trace*`,
+`admin_addPeer` and `admin_setLogLevel`.
+
+That cannot be fixed at the launch command. Repeated `--http.api` flags take the **union**
+rather than replacing — `cmd/ethrex/cli.rs` pins this in
+`http_api_repeated_flags_accumulate` — so a narrower second flag only ever adds. And the
+node cannot simply drop `admin`, because the package's own enode discovery calls
+`admin_nodeInfo`, as does `publish-artifacts.sh`.
+
+So the split is made by reachability. `scripts/hegota-testnet/rpc-guard.py` sits between
+Caddy and the nodes and forwards only the allowed namespaces; anything on the host that
+talks to a node port directly still has the full API.
+
+```
+[Unit]
+Description=Hegota testnet JSON-RPC namespace guard
+After=network-online.target
+
+[Service]
+Environment=UPSTREAMS=rpc1.privacy.ethrex.xyz=127.0.0.1:32003,rpc2.privacy.ethrex.xyz=127.0.0.1:32010,rpc3.privacy.ethrex.xyz=127.0.0.1:32017
+ExecStart=/usr/bin/python3 /usr/local/bin/rpc-guard.py
+Restart=always
+DynamicUser=yes
+
+[Install]
+WantedBy=multi-user.target
+```
+
+The default allowed set is `eth,net,web3,txpool,ethrex`. **`ethrex` belongs there**: it
+holds one read-only method, `ethrex_simulateFrameTransaction`, and it is a separate
+namespace precisely so simulating a type-0x06 envelope can be public without enabling
+`debug_`. On a chain where no wallet can build a frame transaction, that call is the point
+of the endpoint.
+
+The guard adds no CORS headers of its own and relays the node's, so the single
+`Access-Control-Allow-Origin` rule above still holds. It refuses a batch as a whole if any
+member is denied, caps the batch at 100 calls and the body at 1 MiB, and fails closed on a
+body it cannot parse. An unknown `Host` is refused rather than sent to a default node, so
+Caddy must pass the original `Host` through — which it does by default, unlike nginx.
 
 The bundle path is not the only route to the bootnode lists: the faucet serves the same
 three lists as JSON at `/bootnodes`, read from the same directory. That is deliberate
