@@ -1603,6 +1603,27 @@ mod overlay_tests {
     use super::*;
     use crate::backend::in_memory::InMemoryBackend;
     use crate::journal::FlatDiff;
+    use ethrex_binary_trie::trie::{BitPath, DEFAULT_GROUP_DEPTH, group_root};
+
+    /// A real `BINARY_TRIE_NODES` **row** key that collides byte-for-byte, by
+    /// length, with an account-trie path and an account-zone tree key.
+    ///
+    /// Derived from the geometry rather than written down, for the reason
+    /// `journal::tests::colliding_row_key` gives: under grouping the key that
+    /// reaches the table is the group *root*'s, not the node's, so the fixture
+    /// has to be computed through the same truncation the storage path applies.
+    /// The length assertion is load-bearing — if grouping ever stopped yielding
+    /// a 34-byte row key, this test must fail rather than go on exercising a
+    /// collision that no longer happens.
+    fn colliding_row_key() -> Vec<u8> {
+        let key = group_root(&BitPath::from_bits(&[1u8; 240]), DEFAULT_GROUP_DEPTH).to_db_key();
+        assert_eq!(
+            key.len(),
+            34,
+            "a node at bit-depth 240 must still reach the table under a 34-byte row key"
+        );
+        key
+    }
 
     fn h(b: u8) -> H256 {
         H256::repeat_byte(b)
@@ -2222,20 +2243,25 @@ mod overlay_tests {
     /// The Decision 6 collision at the overlay level, all three ways at once.
     ///
     /// A 34-byte key is a legal `ACCOUNT_TRIE_NODES` path, a legal
-    /// `BINARY_TRIE_NODES` path (bit-depth 240) and a legal
-    /// `BINARY_FLATKEYVALUE` tree key (account zone). `absorb` puts each in its
-    /// own map behind its own filter, and each lookup must answer with its own
-    /// pre-image — because on reconciliation each stream is written to a
-    /// different column family with no further interpretation.
+    /// `BINARY_TRIE_NODES` **row** key (the group root of a node at bit-depth
+    /// 240) and a legal `BINARY_FLATKEYVALUE` tree key (account zone). `absorb`
+    /// puts each in its own map behind its own filter, and each lookup must
+    /// answer with its own pre-image — because on reconciliation each stream is
+    /// written to a different column family with no further interpretation.
+    ///
+    /// **Re-derived under grouping, not merely re-run.** The key comes from
+    /// `colliding_row_key`, which applies the group truncation the storage path
+    /// applies and asserts the resulting length; the collision it exercises is
+    /// therefore the one production actually meets.
     #[test]
     fn all_three_colliding_sections_resolve_independently_in_the_overlay() {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
-        let shared = vec![0x07; 34];
+        let shared = colliding_row_key();
         seed_all_three(
             &backend,
             1,
             vec![(shared.clone(), Some(b"mpt".to_vec()))],
-            vec![(shared.clone(), Some(b"binary-node".to_vec()))],
+            vec![(shared.clone(), Some(b"binary-row".to_vec()))],
             vec![(shared.clone(), Some(vec![0xf5; 32]))],
         );
         let overlay = Overlay::from_journal(backend.as_ref(), 1, 1, |_| None).unwrap();
@@ -2246,7 +2272,7 @@ mod overlay_tests {
         );
         assert_eq!(
             overlay.binary_row_lookup(&shared),
-            Some(Some(b"binary-node".to_vec()))
+            Some(Some(b"binary-row".to_vec()))
         );
         assert_eq!(
             overlay.binary_flat_lookup(&shared),

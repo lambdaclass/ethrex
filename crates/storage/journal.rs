@@ -748,9 +748,35 @@ fn key_to_block_number(key: &[u8]) -> Option<BlockNumber> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ethrex_binary_trie::trie::{BitPath, DEFAULT_GROUP_DEPTH, GroupDepth, group_root};
 
     fn h(b: u8) -> H256 {
         H256::repeat_byte(b)
+    }
+
+    /// A real `BINARY_TRIE_NODES` **row** key that is byte-length-identical to
+    /// an account-zone tree key, derived rather than written down.
+    ///
+    /// The collision the section boundaries defend against is a fact about
+    /// geometry, so the fixture is computed from the geometry: take a node at
+    /// bit-depth 240, truncate it to its group root exactly as the storage path
+    /// does, and key it exactly as `BackendBinaryTrieDB` does. The assertion
+    /// that the result is 34 bytes is the whole point — if grouping ever stopped
+    /// producing a 34-byte row key, these tests would say so instead of quietly
+    /// continuing to exercise a collision that no longer occurs.
+    ///
+    /// Pinned at every depth 1..=MAX_GROUP_DEPTH by
+    /// `ethrex_binary_trie::trie::group`'s `key_lengths_are_a_subset_of_todays`;
+    /// taken here at the configured depth, which is the one production runs at.
+    fn colliding_row_key(depth: GroupDepth) -> Vec<u8> {
+        let key = group_root(&BitPath::from_bits(&[1u8; 240]), depth).to_db_key();
+        assert_eq!(
+            key.len(),
+            34,
+            "a node at bit-depth 240 must still reach the table under a 34-byte row key, \
+             which is exactly an account-zone tree key's length"
+        );
+        key
     }
 
     fn round_trip(entry: &JournalEntry) {
@@ -1120,17 +1146,25 @@ mod tests {
     }
 
     /// The binary section must be addressed by its position in the record, not
-    /// by key length. A `BitPath` key is `4 + ceil(bits/8)` bytes, which lands
-    /// squarely inside every range `classify_trie_key` uses, so a key that is
-    /// byte-identical to an account-trie path must still come back in the binary
-    /// section and only there.
+    /// by key length. A row key is `BitPath::to_db_key` of a group *root*, so
+    /// `4 + ceil(bits/8)` bytes with the bit count a multiple of the group
+    /// depth — which lands squarely inside every range `classify_trie_key`
+    /// uses. A key that is byte-identical to an account-trie path must still
+    /// come back in the binary section and only there.
+    ///
+    /// **Grouping did not weaken this.** The row key is shorter than the node
+    /// path's key would have been whenever the node sits mid-group, but the set
+    /// of lengths it can take is a *subset* of the set the one-node-per-row
+    /// table produced, so every collision that existed still exists and no new
+    /// one appeared. `colliding_row_key` derives the fixture from that geometry
+    /// rather than asserting it.
     ///
     /// This is the property that makes the fifth section necessary rather than
     /// merely tidy: folding binary pre-images into `account_trie_diff` would put
     /// them in `ACCOUNT_TRIE_NODES` on rollback and corrupt the MPT.
     #[test]
     fn binary_and_account_sections_do_not_bleed_at_a_shared_key() {
-        let shared_key = vec![0x07; 34];
+        let shared_key = colliding_row_key(DEFAULT_GROUP_DEPTH);
         let entry = JournalEntry {
             block_hash: h(0x01),
             parent_state_root: h(0x02),
@@ -1157,20 +1191,22 @@ mod tests {
 
     /// The Decision 6 collision at its sharpest: the two *binary* sections.
     ///
-    /// A `BitPath` DB key at bit-depth 240 is 34 bytes and an account-zone tree
-    /// key is 34 bytes. Nothing in the bytes distinguishes them, and there are
-    /// no section tags — sections are positional — so the section boundary is
-    /// the only thing that routes a key to `BINARY_TRIE_NODES` rather than
-    /// `BINARY_FLATKEYVALUE`. Folding the two together would, on rollback,
-    /// restore a leaf value into the node table and a node encoding into the
-    /// mirror, at the same key, in the same commit.
+    /// A binary *row* key for a node at bit-depth 240 is 34 bytes and an
+    /// account-zone tree key is 34 bytes. Nothing in the bytes distinguishes
+    /// them, and there are no section tags — sections are positional — so the
+    /// section boundary is the only thing that routes a key to
+    /// `BINARY_TRIE_NODES` rather than `BINARY_FLATKEYVALUE`. Folding the two
+    /// together would, on rollback, restore a leaf value into the node table and
+    /// a whole group row into the mirror, at the same key, in the same commit —
+    /// and a group row is now the *larger* of the two mistakes, since it carries
+    /// several nodes rather than one.
     ///
     /// The direct analogue of
     /// [`binary_and_account_sections_do_not_bleed_at_a_shared_key`], and the one
     /// existing tests cannot cover because the collision is new.
     #[test]
     fn binary_flat_and_binary_node_sections_do_not_bleed_at_a_shared_key() {
-        let shared_key = vec![0x07; 34];
+        let shared_key = colliding_row_key(DEFAULT_GROUP_DEPTH);
         let entry = JournalEntry {
             block_hash: h(0x01),
             parent_state_root: h(0x02),
