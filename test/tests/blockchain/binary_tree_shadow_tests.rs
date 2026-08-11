@@ -3014,6 +3014,19 @@ async fn binary_nodes_are_not_written_until_the_commit_gate_allows_it() {
         chain.store.binary_trie_node_count_for_test().unwrap() > chain.genesis_binary_nodes,
         "flushing the layer backlog must put this chain's binary nodes on disk"
     );
+
+    // And what reached disk is *grouped*: a row carries several nodes, so
+    // the two counters above and below this line answer different
+    // questions. Every other assertion in this file counts nodes, and
+    // would read the same on a store that had never grouped anything —
+    // this is the one that says a production `Store` really does put a
+    // subtree in a row, at whatever `DEFAULT_GROUP_DEPTH` currently is.
+    let rows = chain.store.binary_trie_row_count_for_test().unwrap();
+    let nodes = chain.store.binary_trie_node_count_for_test().unwrap();
+    assert!(
+        rows < nodes,
+        "the flushed trie must be grouped: {rows} rows holding {nodes} nodes"
+    );
 }
 
 // ---------------------------------------------------------------------------
