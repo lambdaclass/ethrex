@@ -26,6 +26,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::{Duration, SystemTime};
 
 use ethrex_common::{
@@ -37,6 +38,7 @@ use ethrex_storage::Store;
 use tracing::{debug, info, warn};
 
 use crate::{
+    metrics::METRICS,
     peer_handler::PeerHandler,
     peer_table::PeerTableServerProtocol as _,
     rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES,
@@ -607,6 +609,9 @@ async fn handle_response(
                     },
                 );
             }
+            METRICS
+                .downloaded_account_tries
+                .fetch_add(outcome.accounts.len() as u64, Ordering::Relaxed);
             writer.accounts.extend(outcome.accounts);
 
             // The frontier moves to here once this batch's storage is in. A
@@ -661,6 +666,9 @@ async fn handle_response(
 
             let owed: BTreeMap<H256, StorageWork> = requested.into_iter().collect();
             for served in outcome.served {
+                METRICS
+                    .storage_leaves_downloaded
+                    .inc_by(served.slots.len() as u64);
                 writer.push_storages(served.account_hash, served.slots);
                 match served.remaining {
                     Some(next_slot) => {
