@@ -1,5 +1,5 @@
 .PHONY: build lint test clean run-image build-image clean-vectors \
-		setup-hive test-pattern-default run-hive run-hive-debug clean-hive-logs \
+		setup-hive test-pattern-default run-hive run-hive-debug clean-hive-logs run-hive-snap2 \
 		load-test-fibonacci load-test-io run-hive-eels-blobs run-hive-eels-amsterdam \
 		run-hive-eels-bal-quick run-hive-build-block bench-rlp
 
@@ -151,6 +151,9 @@ run-hive-debug: build-image setup-hive ## 🐞 Run Hive testing suite in debug m
 TEST_PATTERN_EELS ?= .*fork_Paris.*|.*fork_Shanghai.*|.*fork_Cancun.*|.*fork_Prague.*
 run-hive-eels: build-image setup-hive ## 🧪 Generic command for running Hive EELS tests. Specify EELS_SIM
 	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim $(EELS_SIM) --sim.limit "$(TEST_PATTERN_EELS)" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) --sim.buildarg fixtures=$(shell cat tooling/ef_tests/.fixtures_url)
+
+run-hive-snap2: build-image ## 🧪 Run the hive devp2p snap/2 (EIP-8189) conformance suite
+	cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim devp2p --sim.limit "snap2" --sim.loglevel $(SIM_LOG_LEVEL)
 
 run-hive-eels-engine: ## Run hive EELS Engine tests
 	$(MAKE) run-hive-eels EELS_SIM=ethereum/eels/consume-engine

@@ -242,6 +242,7 @@ impl Syncer {
                     "Sync head below MIN_FULL_BLOCKS ({MIN_FULL_BLOCKS}), using full sync"
                 );
                 self.snap_enabled.store(false, Ordering::Relaxed);
+                self.blockchain.set_snap_syncing(false);
                 // Clear any stale snap checkpoint so the manager loop in
                 // `sync_manager.rs` doesn't keep re-entering this branch
                 // after the full sync completes. Mirrors the cleanup done

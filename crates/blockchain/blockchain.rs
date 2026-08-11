@@ -231,6 +231,8 @@ pub struct Blockchain {
     /// Set to true after initial sync completes, never reset to false.
     /// Does not reflect whether an ongoing sync is in progress.
     is_synced: AtomicBool,
+    /// Whether a snap state sync is currently in progress.
+    snap_syncing: AtomicBool,
     /// Set while a deep-reorg apply pass is in flight. Concurrent
     /// FCUs from the engine API short-circuit to SYNCING while this is set,
     /// and journal pruning in `forkchoice_update_inner` defers until the apply
@@ -503,6 +505,7 @@ impl Blockchain {
             storage: store,
             mempool: Mempool::new(blockchain_opts.max_mempool_size),
             is_synced: AtomicBool::new(false),
+            snap_syncing: AtomicBool::new(false),
             reorg_in_progress: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: blockchain_opts,
@@ -525,6 +528,7 @@ impl Blockchain {
             storage: store,
             mempool: Mempool::new(MAX_MEMPOOL_SIZE_DEFAULT),
             is_synced: AtomicBool::new(false),
+            snap_syncing: AtomicBool::new(false),
             reorg_in_progress: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: BlockchainOptions::default(),
@@ -538,6 +542,7 @@ impl Blockchain {
             storage: store,
             mempool: Mempool::new(MAX_MEMPOOL_SIZE_DEFAULT),
             is_synced: AtomicBool::new(false),
+            snap_syncing: AtomicBool::new(false),
             reorg_in_progress: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: BlockchainOptions::default(),
@@ -3932,6 +3937,21 @@ impl Blockchain {
     /// The node should accept incoming p2p transactions if this method returns true
     pub fn is_synced(&self) -> bool {
         self.is_synced.load(Ordering::Relaxed)
+    }
+
+    /// Records whether a snap state sync is in progress.
+    pub fn set_snap_syncing(&self, syncing: bool) {
+        self.snap_syncing.store(syncing, Ordering::Relaxed);
+    }
+
+    /// Returns whether a snap state sync is in progress.
+    ///
+    /// Unlike [`Self::is_synced`], which only says whether the chain is up to date,
+    /// this tracks the state sync itself. It is what decides whether snap/2 may be
+    /// offered to a peer: reconciling the state trie needs snap/1's `GetTrieNodes`,
+    /// so a node in the middle of a snap sync must keep negotiating snap/1.
+    pub fn is_snap_syncing(&self) -> bool {
+        self.snap_syncing.load(Ordering::Relaxed)
     }
 
     pub fn get_p2p_transaction_by_hash(&self, hash: &H256) -> Result<P2PTransaction, StoreError> {

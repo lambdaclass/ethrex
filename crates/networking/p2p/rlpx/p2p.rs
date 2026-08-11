@@ -32,13 +32,19 @@ pub const SNAP1_ONLY_CAPABILITIES: [Capability; 1] = [Capability::snap(1)];
 /// EIP-8189 ("Backwards Compatibility") tells a node that is synchronizing data to use a
 /// single snap version for state sync, and to serve both only once synchronization is
 /// complete. ethrex's state sync reconciles the trie with `GetTrieNodes`, which snap/2
-/// removes, so offering snap/2 before the initial sync finishes would negotiate away the
-/// only healing mechanism it has and leave the sync with no peer able to serve it.
-pub const fn advertised_snap_capabilities(is_synced: bool) -> &'static [Capability] {
-    if is_synced {
-        &SUPPORTED_SNAP_CAPABILITIES
-    } else {
+/// removes, so a node running a snap sync must keep negotiating snap/1 or it would
+/// negotiate away the only healing mechanism it has.
+///
+/// The gate is the snap sync itself, not whether the chain is at the head: a node that
+/// is not state-syncing never asks for trie nodes, so it can serve both versions even
+/// while it is behind. Gating on "caught up" instead would leave a node that imported
+/// its chain by other means, which is how the hive devp2p suite runs one, permanently
+/// unable to negotiate snap/2.
+pub const fn advertised_snap_capabilities(is_snap_syncing: bool) -> &'static [Capability] {
+    if is_snap_syncing {
         &SNAP1_ONLY_CAPABILITIES
+    } else {
+        &SUPPORTED_SNAP_CAPABILITIES
     }
 }
 
@@ -47,15 +53,15 @@ mod capability_tests {
     use super::*;
 
     #[test]
-    fn syncing_node_withholds_snap2() {
-        let advertised = advertised_snap_capabilities(false);
+    fn snap_syncing_node_withholds_snap2() {
+        let advertised = advertised_snap_capabilities(true);
         assert!(advertised.contains(&Capability::snap(1)));
         assert!(!advertised.contains(&Capability::snap(2)));
     }
 
     #[test]
-    fn synced_node_offers_both_versions() {
-        let advertised = advertised_snap_capabilities(true);
+    fn node_not_snap_syncing_offers_both_versions() {
+        let advertised = advertised_snap_capabilities(false);
         assert!(advertised.contains(&Capability::snap(1)));
         assert!(advertised.contains(&Capability::snap(2)));
     }
