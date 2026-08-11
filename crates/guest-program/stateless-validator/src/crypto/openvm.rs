@@ -37,6 +37,28 @@ const BLS_FP_LEN: usize = 48;
 const BLS_G1_LEN: usize = 96;
 const BLS_G2_LEN: usize = 192;
 
+/// Serializes a field element big-endian, enforcing the canonical representation.
+///
+/// OpenVM does not constrain a field element's limbs to be less than the modulus after
+/// arithmetic: the EC and exponentiation chips constrain results only up to congruence
+/// mod p, and [`IntMod::assert_reduced`] is the documented mechanism for pinning the
+/// unique representative. Serializing unreduced limbs would let a prover choose between
+/// `v` and `v + p` as precompile return data and fork guest execution, since both fit the
+/// limb width (BN254 p < 2^254 in 32 bytes, BLS12-381 p < 2^382 in 48).
+///
+/// Every serialization of a *computed* field element must go through this function.
+/// Values parsed from input are already canonical: `from_be_bytes` rejects non-canonical
+/// encodings, which is why the `read_*` helpers do not need this.
+///
+/// Do not reintroduce `as_le_bytes`/`to_be_bytes` at a call site; see the guard in
+/// `.github/workflows/pr_nostd.yaml`.
+#[inline]
+#[allow(clippy::disallowed_methods)] // the one audited call site, guarded by the assert above
+fn fp_be<F: IntMod>(v: &F) -> F::Repr {
+    v.assert_reduced();
+    v.to_be_bytes()
+}
+
 /// Returns a [`Crypto`] implementation backed by OpenVM guest libraries.
 #[inline]
 pub(super) fn crypto() -> Arc<dyn Crypto> {
@@ -331,7 +353,9 @@ fn accelerated_modexp_bn254_fr(base: &[u8], exp: &[u8]) -> Vec<u8> {
     padded[padded_len - base.len()..].copy_from_slice(base);
     let base_fr = bn::Scalar::reduce_be_bytes(&padded);
 
-    base_fr.exp_bytes(true, exp).to_be_bytes().as_ref().to_vec()
+    // `reduce_be_bytes` ends in `assert_reduced`, so the base is canonical, but
+    // `exp_bytes` is a plain square-and-multiply chain with no final assert.
+    fp_be(&base_fr.exp_bytes(true, exp)).as_ref().to_vec()
 }
 
 // Helper functions for BN254 operations
@@ -394,13 +418,8 @@ fn read_bn_g2_point(input: &[u8]) -> Result<bn::G2Affine, CryptoError> {
 #[inline]
 fn encode_bn_g1_point(point: bn::G1Affine) -> [u8; BN_G1_LEN] {
     let mut output = [0u8; BN_G1_LEN];
-
-    let x_bytes: &[u8] = point.x().as_le_bytes();
-    let y_bytes: &[u8] = point.y().as_le_bytes();
-    for i in 0..BN_FQ_LEN {
-        output[i] = x_bytes[BN_FQ_LEN - 1 - i];
-        output[i + BN_FQ_LEN] = y_bytes[BN_FQ_LEN - 1 - i];
-    }
+    output[..BN_FQ_LEN].copy_from_slice(fp_be(point.x()).as_ref());
+    output[BN_FQ_LEN..].copy_from_slice(fp_be(point.y()).as_ref());
     output
 }
 
@@ -487,17 +506,15 @@ fn read_bls_scalar(input: &[u8; 32]) -> bls::Scalar {
 
 #[inline]
 fn encode_bls_g1_point(point: &bls::G1Affine) -> [u8; BLS_G1_LEN] {
+    // Only encodes the identity; it constrains nothing. `is_identity` is `self == IDENTITY`
+    // over a derived `PartialEq`, so `&&` short-circuits on `x` and never compares `y`.
     if point.is_identity() {
         return [0u8; BLS_G1_LEN];
     }
 
     let mut output = [0u8; BLS_G1_LEN];
-    let x_bytes: &[u8] = point.x().as_le_bytes();
-    let y_bytes: &[u8] = point.y().as_le_bytes();
-    for i in 0..BLS_FP_LEN {
-        output[i] = x_bytes[BLS_FP_LEN - 1 - i];
-        output[i + BLS_FP_LEN] = y_bytes[BLS_FP_LEN - 1 - i];
-    }
+    output[..BLS_FP_LEN].copy_from_slice(fp_be(point.x()).as_ref());
+    output[BLS_FP_LEN..].copy_from_slice(fp_be(point.y()).as_ref());
     output
 }
 
@@ -508,17 +525,9 @@ fn encode_bls_g2_point(point: &bls::G2Affine) -> [u8; BLS_G2_LEN] {
     }
 
     let mut output = [0u8; BLS_G2_LEN];
-    let x = point.x();
-    let y = point.y();
-    let x_c0 = x.c0.as_le_bytes();
-    let x_c1 = x.c1.as_le_bytes();
-    let y_c0 = y.c0.as_le_bytes();
-    let y_c1 = y.c1.as_le_bytes();
-    for i in 0..BLS_FP_LEN {
-        output[i] = x_c0[BLS_FP_LEN - 1 - i];
-        output[i + BLS_FP_LEN] = x_c1[BLS_FP_LEN - 1 - i];
-        output[i + (2 * BLS_FP_LEN)] = y_c0[BLS_FP_LEN - 1 - i];
-        output[i + (3 * BLS_FP_LEN)] = y_c1[BLS_FP_LEN - 1 - i];
+    let (x, y) = (point.x(), point.y());
+    for (i, limb) in [&x.c0, &x.c1, &y.c0, &y.c1].into_iter().enumerate() {
+        output[i * BLS_FP_LEN..(i + 1) * BLS_FP_LEN].copy_from_slice(fp_be(limb).as_ref());
     }
     output
 }
