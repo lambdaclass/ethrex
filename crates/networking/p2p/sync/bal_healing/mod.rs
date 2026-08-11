@@ -329,7 +329,7 @@ pub async fn advance_state_via_bals(
 }
 
 /// Load headers from `start_number` up to (and including) the block with hash `target_hash`.
-pub(super) async fn load_headers_range(
+pub(crate) async fn load_headers_range(
     store: &Store,
     start_number: u64,
     target_hash: H256,

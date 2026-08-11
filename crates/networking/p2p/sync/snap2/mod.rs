@@ -7,9 +7,16 @@
 //! "Synchronization algorithm".
 
 pub mod apply;
+pub mod catchup;
 pub mod cursor;
+pub mod download;
 pub mod flat;
+pub mod generate;
+pub mod worker;
 
 pub use apply::{FlatApplyStats, apply_bal_flat};
+pub use catchup::{MAX_CATCH_UP_BLOCKS, catch_up, catch_up_exceeds_retention};
 pub use cursor::{DownloadCursor, HashRange};
+pub use download::download_state;
 pub use flat::FlatState;
+pub use generate::reconstruct_and_verify;

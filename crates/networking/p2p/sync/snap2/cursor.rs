@@ -178,6 +178,21 @@ impl DownloadCursor {
         }
     }
 
+    /// The slot ranges a contract still owes, if its storage is part-served.
+    ///
+    /// The download reads this to resume a large contract where it left off
+    /// after a pivot move, rather than restarting its slot space.
+    pub fn storage_ranges(&self, account_hash: H256) -> Option<&[HashRange]> {
+        self.storage_ranges
+            .get(&account_hash)
+            .map(|ranges| ranges.as_slice())
+    }
+
+    /// Whether a contract's storage has been served in full.
+    pub fn is_storage_complete(&self, account_hash: H256) -> bool {
+        self.storage_completed.contains(&account_hash)
+    }
+
     /// Open a set of slot ranges for a contract whose storage needs more than
     /// one request.
     pub fn open_storage_ranges(&mut self, account_hash: H256, ranges: Vec<HashRange>) {

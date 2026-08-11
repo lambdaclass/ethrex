@@ -44,7 +44,7 @@ impl SyncManager {
         datadir: PathBuf,
     ) -> Self {
         let snap_enabled = Arc::new(AtomicBool::new(matches!(sync_mode, SyncMode::Snap)));
-        blockchain.set_snap_syncing(snap_enabled.load(Ordering::Relaxed));
+        blockchain.set_state_sync_needs_trie_nodes(snap_enabled.load(Ordering::Relaxed));
 
         // Fetch checkpoint once to avoid duplicate DB reads
         let has_checkpoint = store
@@ -73,7 +73,7 @@ impl SyncManager {
             if is_synced {
                 info!("Node has synced state (block {latest_block}), switching to full sync");
                 snap_enabled.store(false, Ordering::Relaxed);
-                blockchain.set_snap_syncing(false);
+                blockchain.set_state_sync_needs_trie_nodes(false);
                 if has_checkpoint && let Err(e) = store.clear_snap_state().await {
                     warn!("Failed to clear stale snap state: {e}");
                 }
@@ -127,7 +127,7 @@ impl SyncManager {
     /// Disables snapsync mode
     pub fn disable_snap(&self) {
         self.snap_enabled.store(false, Ordering::Relaxed);
-        self.blockchain.set_snap_syncing(false);
+        self.blockchain.set_state_sync_needs_trie_nodes(false);
     }
 
     /// Returns a snapshot of the current sync diagnostics with live values.

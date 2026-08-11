@@ -3939,18 +3939,22 @@ impl Blockchain {
         self.is_synced.load(Ordering::Relaxed)
     }
 
-    /// Records whether a snap state sync is in progress.
-    pub fn set_snap_syncing(&self, syncing: bool) {
-        self.snap_syncing.store(syncing, Ordering::Relaxed);
+    /// Records whether this node's state sync still depends on `GetTrieNodes`.
+    pub fn set_state_sync_needs_trie_nodes(&self, needs: bool) {
+        self.snap_syncing.store(needs, Ordering::Relaxed);
     }
 
-    /// Returns whether a snap state sync is in progress.
+    /// Returns whether this node's state sync still depends on `GetTrieNodes`.
     ///
-    /// Unlike [`Self::is_synced`], which only says whether the chain is up to date,
-    /// this tracks the state sync itself. It is what decides whether snap/2 may be
-    /// offered to a peer: reconciling the state trie needs snap/1's `GetTrieNodes`,
-    /// so a node in the middle of a snap sync must keep negotiating snap/1.
-    pub fn is_snap_syncing(&self) -> bool {
+    /// This is what decides whether snap/2 may be offered to a peer. snap/2
+    /// removes `GetTrieNodes`, so negotiating it costs a node the only trie
+    /// reconciliation snap/1 has. A snap sync therefore starts out withholding
+    /// snap/2 and only offers it once it has committed to the snap/2 path,
+    /// which never asks for trie nodes.
+    ///
+    /// Unlike [`Self::is_synced`], which only says whether the chain is up to
+    /// date, this tracks the state sync itself.
+    pub fn state_sync_needs_trie_nodes(&self) -> bool {
         self.snap_syncing.load(Ordering::Relaxed)
     }
 

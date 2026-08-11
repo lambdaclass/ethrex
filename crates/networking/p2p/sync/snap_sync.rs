@@ -31,14 +31,15 @@ use crate::rlpx::p2p::{Capability, SUPPORTED_ETH_CAPABILITIES};
 use crate::snap::{
     async_fs,
     constants::{
-        BYTECODE_CHUNK_SIZE, MAX_HEADER_FETCH_ATTEMPTS, MIN_FULL_BLOCKS, MISSING_SLOTS_PERCENTAGE,
-        SECONDS_PER_BLOCK, SNAP_LIMIT,
+        ACCOUNT_RANGE_CHUNK_COUNT, BYTECODE_CHUNK_SIZE, MAX_HEADER_FETCH_ATTEMPTS, MIN_FULL_BLOCKS,
+        MISSING_SLOTS_PERCENTAGE, SECONDS_PER_BLOCK, SNAP_LIMIT,
     },
     request_account_range, request_bytecodes, request_storage_ranges,
 };
 use crate::sync::bal_healing::advance_state_via_bals;
 use crate::sync::code_collector::CodeHashCollector;
 use crate::sync::healing::{heal_state_trie_wrap, heal_storage_trie};
+use crate::sync::snap2::{DownloadCursor, FlatState, download_state, reconstruct_and_verify};
 use crate::utils::{
     current_unix_time, get_account_state_snapshots_dir, get_account_storages_snapshots_dir,
     get_code_hashes_snapshots_dir,
@@ -276,7 +277,15 @@ pub async fn sync_cycle_snap(
         };
     }
 
-    snap_sync(peers, &store, &mut block_sync_state, datadir, diagnostics).await?;
+    snap_sync(
+        peers,
+        &store,
+        &mut block_sync_state,
+        blockchain.clone(),
+        datadir,
+        diagnostics,
+    )
+    .await?;
 
     store.clear_snap_state().await?;
     snap_enabled.store(false, Ordering::Relaxed);
@@ -289,6 +298,7 @@ pub async fn snap_sync(
     peers: &mut PeerHandler,
     store: &Store,
     block_sync_state: &mut SnapBlockSyncState,
+    blockchain: Arc<Blockchain>,
     datadir: &Path,
     diagnostics: &Arc<tokio::sync::RwLock<super::SyncDiagnostics>>,
 ) -> Result<(), SyncError> {
@@ -341,6 +351,24 @@ pub async fn snap_sync(
     // Create collector to store code hashes in files
     let mut code_hash_collector: CodeHashCollector =
         CodeHashCollector::new(code_hashes_snapshot_dir.clone());
+
+    // EIP-8189: "if both snap/1 and snap/2 are supported, it should use either
+    // snap/1 or snap/2 for state sync; running both simultaneously is not
+    // recommended". snap/2 needs access lists, so it needs a post-Amsterdam
+    // pivot and a peer that speaks it.
+    if pivot_header.block_access_list_hash.is_some() && snap2_peer_available(peers).await {
+        return snap2_sync(
+            peers,
+            store,
+            block_sync_state,
+            blockchain,
+            pivot_header,
+            code_hash_collector,
+            datadir,
+            diagnostics,
+        )
+        .await;
+    }
 
     let mut storage_accounts = AccountStorageRoots::default();
     if !std::env::var("SKIP_START_SNAP_SYNC").is_ok_and(|var| !var.is_empty()) {
@@ -623,6 +651,96 @@ pub async fn snap_sync(
 
     debug!("Finished healing");
 
+    finish_snap_sync(
+        peers,
+        store,
+        block_sync_state,
+        &pivot_header,
+        code_hash_collector,
+        datadir,
+        diagnostics,
+    )
+    .await
+}
+
+/// Synchronize state with snap/2 (EIP-8189).
+///
+/// The shape is devp2p `caps/snap.md`, "Synchronization algorithm": download
+/// the flat state while patching it with each block's access list as the pivot
+/// advances, then reconstruct the tries and verify the root once. There is no
+/// healing phase — snap/2 removes `GetTrieNodes`, so the root check at the end
+/// is the only thing standing between a bad download and a bad chain.
+#[allow(clippy::too_many_arguments)]
+async fn snap2_sync(
+    peers: &mut PeerHandler,
+    store: &Store,
+    block_sync_state: &mut SnapBlockSyncState,
+    blockchain: Arc<Blockchain>,
+    pivot_header: BlockHeader,
+    mut code_hash_collector: CodeHashCollector,
+    datadir: &Path,
+    diagnostics: &Arc<tokio::sync::RwLock<super::SyncDiagnostics>>,
+) -> Result<(), SyncError> {
+    info!(
+        pivot = pivot_header.number,
+        "Starting snap/2 state sync (BAL-based, no trie healing)"
+    );
+    diagnostics.write().await.current_phase = "snap2_download".to_string();
+    // From here the sync never asks for trie nodes, so snap/2 can be offered to
+    // peers again. Until this point a snap sync might still have fallen back to
+    // snap/1, which cannot reconcile without them.
+    blockchain.set_state_sync_needs_trie_nodes(false);
+
+    let flat = FlatState::open(datadir)?;
+    let mut cursor = DownloadCursor::new(ACCOUNT_RANGE_CHUNK_COUNT);
+
+    let pivot_header = download_state(
+        peers,
+        store,
+        &flat,
+        &mut cursor,
+        pivot_header,
+        block_sync_state,
+        &mut code_hash_collector,
+        datadir,
+        diagnostics,
+    )
+    .await?;
+
+    diagnostics.write().await.current_phase = "snap2_reconstruction".to_string();
+    *METRICS.heal_start_time.lock().await = Some(SystemTime::now());
+    reconstruct_and_verify(store, &flat, &pivot_header).await?;
+    *METRICS.heal_end_time.lock().await = Some(SystemTime::now());
+
+    flat.destroy().await?;
+    store.generate_flatkeyvalue()?;
+
+    finish_snap_sync(
+        peers,
+        store,
+        block_sync_state,
+        &pivot_header,
+        code_hash_collector,
+        datadir,
+        diagnostics,
+    )
+    .await
+}
+
+/// Download the bytecodes the state references, store the pivot block, and make
+/// it the canonical head.
+///
+/// Shared by snap/1 and snap/2: both arrive here with the state at `pivot_header`
+/// on disk, however they reconciled it.
+async fn finish_snap_sync(
+    peers: &mut PeerHandler,
+    store: &Store,
+    block_sync_state: &SnapBlockSyncState,
+    pivot_header: &BlockHeader,
+    code_hash_collector: CodeHashCollector,
+    datadir: &Path,
+    diagnostics: &Arc<tokio::sync::RwLock<super::SyncDiagnostics>>,
+) -> Result<(), SyncError> {
     // Finish code hash collection
     code_hash_collector.finish().await?;
 

@@ -243,7 +243,7 @@ impl Syncer {
                     "Sync head below MIN_FULL_BLOCKS ({MIN_FULL_BLOCKS}), using full sync"
                 );
                 self.snap_enabled.store(false, Ordering::Relaxed);
-                self.blockchain.set_snap_syncing(false);
+                self.blockchain.set_state_sync_needs_trie_nodes(false);
                 // Clear any stale snap checkpoint so the manager loop in
                 // `sync_manager.rs` doesn't keep re-entering this branch
                 // after the full sync completes. Mirrors the cleanup done
@@ -408,6 +408,8 @@ pub enum SyncError {
     RocksDBError(String),
     #[error("Flat state lock poisoned")]
     FlatStatePoisoned,
+    #[error("snap/2 catch-up stalled at block {0}: {1}")]
+    Snap2CatchUpStalled(u64, String),
     #[error("Bytecode file error")]
     BytecodeFileError,
     #[error("Error in Peer Table: {0}")]
@@ -466,6 +468,7 @@ impl SyncError {
             | SyncError::StorageTempDBDirNotFound(_)
             | SyncError::RocksDBError(_)
             | SyncError::FlatStatePoisoned
+            | SyncError::Snap2CatchUpStalled(_, _)
             | SyncError::BytecodeFileError
             | SyncError::NoLatestCanonical
             | SyncError::MissingFullsyncBatch

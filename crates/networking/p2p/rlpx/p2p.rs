@@ -31,17 +31,16 @@ pub const SNAP1_ONLY_CAPABILITIES: [Capability; 1] = [Capability::snap(1)];
 ///
 /// EIP-8189 ("Backwards Compatibility") tells a node that is synchronizing data to use a
 /// single snap version for state sync, and to serve both only once synchronization is
-/// complete. ethrex's state sync reconciles the trie with `GetTrieNodes`, which snap/2
-/// removes, so a node running a snap sync must keep negotiating snap/1 or it would
-/// negotiate away the only healing mechanism it has.
+/// complete. snap/2 removes `GetTrieNodes`, so negotiating it costs a node running a
+/// snap/1 state sync the only trie reconciliation it has.
 ///
-/// The gate is the snap sync itself, not whether the chain is at the head: a node that
-/// is not state-syncing never asks for trie nodes, so it can serve both versions even
-/// while it is behind. Gating on "caught up" instead would leave a node that imported
-/// its chain by other means, which is how the hive devp2p suite runs one, permanently
-/// unable to negotiate snap/2.
-pub const fn advertised_snap_capabilities(is_snap_syncing: bool) -> &'static [Capability] {
-    if is_snap_syncing {
+/// The gate is that dependency, not whether the chain is at the head: a node that is not
+/// state-syncing never asks for trie nodes, and neither does one on the snap/2 path,
+/// which reconciles by applying access lists instead. Gating on "caught up" would leave
+/// a node that imported its chain by other means, which is how the hive devp2p suite
+/// runs one, permanently unable to negotiate snap/2.
+pub const fn advertised_snap_capabilities(needs_trie_nodes: bool) -> &'static [Capability] {
+    if needs_trie_nodes {
         &SNAP1_ONLY_CAPABILITIES
     } else {
         &SUPPORTED_SNAP_CAPABILITIES
@@ -53,14 +52,14 @@ mod capability_tests {
     use super::*;
 
     #[test]
-    fn snap_syncing_node_withholds_snap2() {
+    fn a_node_that_still_needs_trie_nodes_withholds_snap2() {
         let advertised = advertised_snap_capabilities(true);
         assert!(advertised.contains(&Capability::snap(1)));
         assert!(!advertised.contains(&Capability::snap(2)));
     }
 
     #[test]
-    fn node_not_snap_syncing_offers_both_versions() {
+    fn a_node_with_no_trie_node_dependency_offers_both_versions() {
         let advertised = advertised_snap_capabilities(false);
         assert!(advertised.contains(&Capability::snap(1)));
         assert!(advertised.contains(&Capability::snap(2)));
