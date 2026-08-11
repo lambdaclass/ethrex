@@ -24,8 +24,6 @@ rkyv.workspace = true
 k256.workspace = true
 tracing.workspace = true
 
-secp256k1 = { workspace = true, optional = true }
-
 [lints.clippy]
 unwrap_used = "deny"
 expect_used = "deny"
@@ -37,7 +35,9 @@ redundant_clone = "warn"
 
 [features]
 default = ["secp256k1"]
-secp256k1 = ["dep:secp256k1"]
+# Kept as a no-op toggle: the guest-program crates still switch on it, but the
+# signature work it used to gate now goes through k256, which is unconditional.
+secp256k1 = []
 risc0 = []
 sp1 = []
 zisk = []
