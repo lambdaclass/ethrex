@@ -120,16 +120,21 @@ network_params:
 
 # State has to be big enough that the download outlasts a pivot window,
 # otherwise the pivot never moves and the access-list catch-up — the part with
-# no other coverage — never runs. deploytx and evm-fuzz grow the account and
+# no other coverage — never runs. storagespam and evm-fuzz grow the account and
 # storage tries; eoatx keeps blocks non-empty so every block has a BAL.
+#
+# storagespam rather than deploytx: deploytx refuses to start without an
+# explicit `bytecodes` list ("no bytecodes provided"), and a spammer that dies
+# at startup is invisible from the chain, which reads as a devnet that simply
+# grows slowly.
 additional_services: [spamoor]
 spamoor_params:
   image: ethpandaops/spamoor:latest
   spammers:
     - scenario: eoatx
       config: {throughput: 20}
-    - scenario: deploytx
-      config: {throughput: 3}
+    - scenario: storagespam
+      config: {throughput: 30}
     - scenario: evm-fuzz
       config: {throughput: 10}
 
