@@ -116,6 +116,10 @@ jobs:
         run: |
           cargo test -p ethrex-test --features l2 --test ethrex_tests l2::native_rollup_l1_messages_root
           cargo test -p ethrex-test --features l2 --test ethrex_tests l2::ssz_round_trip
+          # Pins NativeRollup.sol's byte offsets and constants against the Rust
+          # encoding. NativeRollup is immutable once deployed, so a drift here is
+          # not recoverable in place — it must fail on the PR that causes it.
+          cargo test -p ethrex-test --features l2 --test ethrex_tests l2::native_rollup_sol_offsets
 
       - name: Run cargo fmt
         run: |

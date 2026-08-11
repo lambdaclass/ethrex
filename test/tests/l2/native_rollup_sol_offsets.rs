@@ -33,26 +33,50 @@ fn read_contract() -> String {
         .unwrap_or_else(|e| panic!("failed to read {NATIVE_ROLLUP_SOL}: {e}"))
 }
 
-/// Parse `uint256 constant <name> = <value>;` out of the contract source. Anchors
-/// on `uint256 constant <name>` so it matches the declaration, not a comment.
+/// Parse `uint<N> constant <name> = <value>;` out of the contract source.
+///
+/// Anchors on `constant <name>` so it matches the declaration rather than a comment,
+/// then asserts the declared type is some `uint`. Accepts any width and both decimal
+/// and `0x` hex literals: pinning `uint16 constant EXPECTED_SCHEMA_ID = 0x1501` needs
+/// both, and an earlier `uint256`-and-decimal-only version silently could not read it,
+/// which left the schema id as the one constant with no drift guard.
 fn sol_uint_const(src: &str, name: &str) -> usize {
-    let needle = format!("uint256 constant {name}");
+    let needle = format!("constant {name}");
     let start = src
         .find(&needle)
-        .unwrap_or_else(|| panic!("`uint256 constant {name}` not found in NativeRollup.sol"));
+        .unwrap_or_else(|| panic!("`constant {name}` not found in NativeRollup.sol"));
+
+    let declared_type = src[..start]
+        .trim_end()
+        .rsplit(char::is_whitespace)
+        .next()
+        .unwrap_or("");
+    assert!(
+        declared_type.starts_with("uint"),
+        "{name} is declared `{declared_type}`, expected a uint type"
+    );
+
     let after = &src[start + needle.len()..];
     let eq = after
         .find('=')
         .unwrap_or_else(|| panic!("no `=` after constant {name}"));
-    // Solidity allows `_` digit separators (e.g. `300_000`); strip them.
-    let value: String = after[eq + 1..]
-        .trim_start()
+    let literal = after[eq + 1..].trim_start();
+
+    // Solidity allows `_` digit separators (e.g. `300_000`) and `0x` hex literals.
+    let (radix, digits) = match literal
+        .strip_prefix("0x")
+        .or_else(|| literal.strip_prefix("0X"))
+    {
+        Some(hex) => (16, hex),
+        None => (10, literal),
+    };
+    let value: String = digits
         .chars()
-        .take_while(|c| c.is_ascii_digit() || *c == '_')
+        .take_while(|c| c.is_digit(radix) || *c == '_')
         .filter(|c| *c != '_')
         .collect();
-    value
-        .parse()
+    assert!(!value.is_empty(), "could not parse value for {name}");
+    usize::from_str_radix(&value, radix)
         .unwrap_or_else(|_| panic!("could not parse value for {name}"))
 }
 
@@ -282,5 +306,25 @@ fn sol_max_l2_gas_limit_matches_rust() {
         sol,
         ethrex_common::constants::TX_MAX_GAS_LIMIT_AMSTERDAM,
         "MAX_L2_GAS_LIMIT in NativeRollup.sol drifted from TX_MAX_GAS_LIMIT_AMSTERDAM"
+    );
+}
+
+/// The deployed contract rejects any proof whose schema id is not its own compiled-in
+/// `EXPECTED_SCHEMA_ID`. Bumping `STATELESS_INPUT_SCHEMA_ID` for a new fork without
+/// redeploying therefore reverts every `advance()` and wedges the rollup, and because
+/// the contract is immutable that is not recoverable in place.
+///
+/// The other assertions in this file build their buffers from the Rust constant and so
+/// cannot catch this: comparing the Rust value to itself is a tautology with respect to
+/// the Solidity literal. This reads the `.sol` value directly.
+#[test]
+fn sol_expected_schema_id_matches_rust() {
+    let src = read_contract();
+    let sol = sol_uint_const(&src, "EXPECTED_SCHEMA_ID") as u16;
+    assert_eq!(
+        sol,
+        ethrex_common::types::stateless_ssz::STATELESS_INPUT_SCHEMA_ID,
+        "EXPECTED_SCHEMA_ID in NativeRollup.sol drifted from STATELESS_INPUT_SCHEMA_ID; \
+         deploying this would revert every advance()"
     );
 }
