@@ -212,11 +212,16 @@ dora_params:
 # The running devnet publishes its CL block at 33000, inside that range; this
 # chain must also stay reachable from outside, so it does not carry that risk.
 #
-# `nat_exit_ip: auto` makes the package resolve the host's public address and
-# hand it to the launchers that accept one. The ethrex EL is not among them —
-# see `--nat.extip` above.
+# `nat_exit_ip` carries the host's public address to the launchers that accept
+# one. The ethrex EL is not among them, so it also needs `--nat.extip` above.
+#
+# It must be the literal address, not `auto`. `auto` is resolved at run time by
+# the package's own `get_public_ip`, so it cannot be templated into
+# `--nat.extip`, and the two would then be free to disagree: the CL would
+# advertise whatever the package resolved while the EL advertised whatever was
+# written here. One address, written once, is the only shape that cannot drift.
 port_publisher:
-  nat_exit_ip: auto
+  nat_exit_ip: "REPLACE_WITH_HOST_PUBLIC_IP"
   el:
     enabled: true
     public_port_start: 32000

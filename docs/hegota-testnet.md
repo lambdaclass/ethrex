@@ -69,7 +69,8 @@ passed / 0 failed**, `cargo test -p ethrex-rpc --lib` is 122 passed, and
 | Canonical paymaster (Task 6.4) | `5d26cd5de` | `#12041`'s 355-byte runtime hash pinned; the trace exemption and the pending-cap exemption both fire now |
 | Access sets + bookkeeping (Tasks 6.5/6.6) | `d290f6547` | payer warmed on a payment-scope APPROVE; EIP-8272 BAL reads kept with justification |
 | Phase 6 closed (Tasks 6.7/6.8) | | divergence ledger swept; no consensus-visible row unresolved without a fallback |
-| FOCIL fixtures diagnosed (Task 5.7) | | `tests-focil@v0.1.0` predates EIP-8282; bundle skipped, engine suite clean |
+| FOCIL fixtures diagnosed (Task 5.7) | `92966fec9` | `tests-focil@v0.1.0` predates EIP-8282; bundle skipped, engine suite clean |
+| Artifact set (Tasks 8.1-8.6) | | `docs/hegota-testnet-joining.md`, `publish-artifacts.sh`, checks 8-12; the five-EIP set and the four non-genesis consensus inputs published |
 
 ### Not complete
 
@@ -117,7 +118,33 @@ passed / 0 failed**, `cargo test -p ethrex-rpc --lib` is 122 passed, and
 - **Phase 7 Task 7.3** (generator revision) is satisfied by pinning the generator image
   in the config instead of bumping `ETHEREUM_PACKAGE_REVISION`; **Task 7.8** needs a
   live enclave.
-- **Phase 8** — the artifact set and firewall surface: not started.
+- **Phase 8 Tasks 8.7-8.9** need a live production host and cannot be done from here.
+  Tasks 8.1-8.6 are landed: `docs/hegota-testnet-joining.md` (identity, five-EIP rule
+  set and pins, fork schedule, the four consensus inputs absent from genesis, engine
+  surface, artifact list, ports and firewall, how to start a node),
+  `scripts/hegota-testnet/publish-artifacts.sh`, the reachability block in
+  `fixtures/networks/hegota-testnet.yaml`, and checks 8-12 in
+  `docs/hegota-devnet-genesis.md`.
+
+  Two places Phase 8's text was wrong about the branch, both corrected in the
+  artifacts rather than followed:
+
+  - **Task 8.5 says "all four in-scope EIPs activate at that one timestamp".** It is
+    five. EIP-8369 is active with no off switch, and the divergence ledger §10.1
+    requires publication to name the exact five-EIP set and the pins, never the fork
+    name. The joining doc names five.
+  - **Task 8.3 says to rewrite any container-internal host to `<PUBLIC_IP>` in the
+    ENRs.** An ENR is signed over its own contents, so rewriting its IP invalidates
+    the signature and produces a bootnode entry every client discards. Enodes are
+    rewritten, ENRs are published as reported, and it is `nat_exit_ip` that has to be
+    right for them; that is why Task 8.1 requires the literal address rather than
+    `auto`.
+
+  Unverifiable from here, and stated as such in the joining doc rather than asserted:
+  the `eip8250TransitionTimestamp` / `eip8272TransitionTimestamp` chainspec key names
+  are this repository's guess at Nethermind's convention. No Nethermind release is
+  known to read them. The script fails loudly if the generator ever emits either key
+  itself, so the patch cannot silently contradict upstream.
 - **Phase 9 Task 9.9** — local kurtosis validation. Prerequisite is an `ethrex` image
   build, and the three `REPLACE` placeholders in the config filled with throwaway local
   values.
@@ -201,18 +228,24 @@ passed / 0 failed**, `cargo test -p ethrex-rpc --lib` is 122 passed, and
    `handoff_resume(branch="hegota-testnet", project="/home/edgar/dev/ethrex_2")`.
    Nothing below depends on that working: this file is the artifact and it is in git.
 1. Read this Progress block and the traps above.
-2. **Phase 8, the artifact set**, is the only unstarted phase and the last one before
-   bring-up. Read `docs/hegota-testnet-divergences.md` §10.1 first: four rows are
-   carried by choice rather than closed, and Phase 8 is where three of them have to be
-   published (the five-EIP set and pins, `AA_VOPS_SLOT_COUNT = 4`, and the per-IL
-   code-byte budget). A joining client cannot derive any of them from the genesis file.
+2. **Everything that can be done without a host is done.** What remains is Phase 7
+   Task 7.8, Phase 8 Tasks 8.7-8.9, Phase 9 Task 9.9 and the three `REPLACE`
+   placeholders in `fixtures/networks/hegota-testnet.yaml` — all of them need a live
+   enclave, a chosen server, or both. Start by picking the server and building the
+   `ethrex:hegota-testnet` image; nothing else unblocks until then.
 3. The single highest-value upstream item is the **EIP-7805 extension draft** EIP-8369
    asks for. Publishing it converts the two-endpoint rule, the code-byte budget and the
    slot count from divergences into a specification a second client can implement.
+   `docs/hegota-testnet-joining.md` §"Consensus inputs not present in the genesis file"
+   is the draft's content already written out; it needs restating in EIP form, not
+   rediscovering.
 4. The 24 FOCIL engine fixtures are **skipped, diagnosed and closed**, not outstanding;
    see "Not complete" above. The only action left on them is upstream: ask
    `ethereum/execution-specs` for a FOCIL fixture release filled against a post-EIP-8282
    Amsterdam, then bump `.fixtures_url_focil` and delete the skip.
+5. `docs/hegota-testnet-joining.md` is the artifact a joining client reads. Anything
+   this branch changes that a second client must agree on belongs there in the same
+   commit, or the chain and its specification drift apart silently.
 
 The engine fixtures live in their own cargo workspace, so `cargo test -p
 ef_tests-engine` fails from the repo root with "did not match any packages". Run them
@@ -227,11 +260,15 @@ The two things that decide whether this succeeds:
    requires an access token to deposit. That asymmetry is what makes the network both
    open to a third party and controlled by us.
 
-Companion documents on this branch: `docs/hegota-devnet.md` (branch composition,
-opcode allocation, per-EIP divergences, spec pins), `docs/hegota-devnet-genesis.md`
-(genesis requirements and the post-deploy verification pass), `docs/eip-8141.md`,
-`docs/eip-8250.md`, `docs/eip-8272.md`, `scripts/hegota-devnet/USER-GUIDE.md`,
-`scripts/hegota-devnet/UPGRADE-GUIDE.md`.
+Companion documents on this branch: `docs/hegota-testnet-joining.md` (**the published
+specification** — the five-EIP set, the pins, the consensus inputs no genesis file
+carries, the artifact list and the firewall surface),
+`docs/hegota-testnet-divergences.md` (the ledger that gates bring-up),
+`docs/hegota-testnet-permissioning.md` (validator gating policy and runbook),
+`docs/hegota-devnet.md` (branch composition, opcode allocation, per-EIP divergences,
+spec pins), `docs/hegota-devnet-genesis.md` (genesis requirements and the twelve-check
+post-deploy pass), `docs/eip-8141.md`, `docs/eip-8250.md`, `docs/eip-8272.md`,
+`scripts/hegota-devnet/USER-GUIDE.md`, `scripts/hegota-devnet/UPGRADE-GUIDE.md`.
 
 ## Overview
 
@@ -1147,7 +1184,7 @@ Why this phase: an enclave that only its own host can reach is not a testnet a t
 party can join, and the seven-point verification pass in
 `docs/hegota-devnet-genesis.md` predates FOCIL and the gated deposit contract.
 
-- [ ] Task 8.1: Set the reachability block in
+- [x] Task 8.1: Set the reachability block in
       `fixtures/networks/hegota-testnet.yaml`: `port_publisher.nat_exit_ip:
       "<PUBLIC_IP>"` (the literal address, not `"auto"` — `auto` resolves at run time
       via `get_public_ip` (called at `src/package_io/input_parser.star:356,385`,
@@ -1162,7 +1199,7 @@ party can join, and the seven-point verification pass in
       races kurtosis' own dynamic allocations and loses; on a production host the NAT
       and floor constraints compose, because every port an external peer must reach has
       to be both fixed and below the floor.
-- [ ] Task 8.2: Write the port and firewall surface into
+- [x] Task 8.2: Write the port and firewall surface into
       `docs/hegota-testnet-joining.md`, derived from the package's stride of 7 ports per
       EL and per CL node (`shared_utils.MAX_PORTS_PER_EL_NODE = 7`,
       `MAX_PORTS_PER_CL_NODE = 7`, index 0 = discovery TCP+UDP, 1 = engine/HTTP,
@@ -1183,7 +1220,7 @@ party can join, and the seven-point verification pass in
       State that the RPC and explorer go through the reverse proxy rather than being
       opened directly, following `scripts/eip8141-devnet/Caddyfile`, and that the
       engine ports carry the JWT-authenticated payload API and must never be reachable.
-- [ ] Task 8.3: Create `scripts/hegota-testnet/publish-artifacts.sh` that extracts the
+- [x] Task 8.3: Create `scripts/hegota-testnet/publish-artifacts.sh` that extracts the
       joiner bundle from a running enclave and writes it to a directory the reverse
       proxy serves: every file under `/network-configs/` (which the generator populates
       from `/data/metadata/*` — `genesis.json`, `chainspec.json`, `besu.json`,
@@ -1193,7 +1230,7 @@ party can join, and the seven-point verification pass in
       enodes from each EL's `admin_nodeInfo` and the ENRs from each beacon node's
       `/eth/v1/node/identity`, and rewrite any container-internal host to `<PUBLIC_IP>`
       before writing them out. Emit a `MANIFEST.txt` with the sha256 of every file.
-- [ ] Task 8.4: Patch the published chainspec for the two EIPs the generator does not
+- [x] Task 8.4: Patch the published chainspec for the two EIPs the generator does not
       know about. `apps/el-gen/generate_genesis.sh:922-949` at 6.1.6 emits only
       `eip7805TransitionTimestamp` and `eip8141TransitionTimestamp` for heze, so
       `publish-artifacts.sh` must add `eip8250TransitionTimestamp` and
@@ -1203,7 +1240,7 @@ party can join, and the seven-point verification pass in
       the authoritative key names must be confirmed with Nethermind, and that ethrex
       itself reads `bogotaTime` from `genesis.json` through the `hezeTime` / `bogotaTime`
       serde aliases on `ChainConfig::hegota_time` (`crates/common/types/genesis.rs:272-284`).
-- [ ] Task 8.5: Write the joining instructions into `docs/hegota-testnet-joining.md`:
+- [x] Task 8.5: Write the joining instructions into `docs/hegota-testnet-joining.md`:
       the exact artifact list and where to fetch it; chain ID `8141`; the four fork
       timestamps a joiner must agree on (`osaka`/`fulu` at genesis, `amsterdamTime` /
       Gloas at epoch 1, `hegotaTime` / `bogotaTime` / heze at epoch 2, and that all
@@ -1217,7 +1254,7 @@ party can join, and the seven-point verification pass in
       permissioned. The token-minting runbook in
       `docs/hegota-testnet-permissioning.md` is the separate step that turns a joined
       node into a validator.
-- [ ] Task 8.6: Extend the verification pass in `docs/hegota-devnet-genesis.md` from
+- [x] Task 8.6: Extend the verification pass in `docs/hegota-devnet-genesis.md` from
       seven checks to twelve, keeping the existing seven and adding: (8) every EL
       advertises `<PUBLIC_IP>` in its enode and an external `ethrex --bootnodes` node
       on a different host completes discovery and reaches the head; (9)

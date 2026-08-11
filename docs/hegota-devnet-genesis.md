@@ -132,3 +132,35 @@ above are all silent until a specific fork boundary.
 6. Every EL agrees on the head number **and hash**.
 7. A frame transaction mines with status `0x1` and per-frame `frameReceipts`, plus a
    regular EIP-1559 transaction.
+
+Checks 8 to 12 apply to the Hegotá **testnet** and not to a local devnet: they cover
+external reachability, FOCIL, the EIP-8272 predeploy and the gated deposit contract,
+none of which a single-host devnet exercises. Ports and firewall surface are in
+`docs/hegota-testnet-joining.md`.
+
+8. Every EL advertises `<PUBLIC_IP>` in its `admin_nodeInfo` enode, and an `ethrex
+   --bootnodes` node started **on a different host** completes discovery and reaches
+   the head. Reachability cannot be verified from the host itself: a rule that opens
+   only TCP, or a node advertising a container-internal address, both look healthy
+   from inside and are unreachable from outside.
+9. `engine_getInclusionListV1` returns a non-empty list on a slot with a full mempool,
+   an inclusion list delivered on `engine_newPayloadV6` is honoured by the builder,
+   and an omitted frame transaction is excused rather than yielding
+   `inclusionListSatisfied: false`. Confirm the third one against a frame transaction
+   that is genuinely ineligible under EIP-8369 Profile 2, not merely absent: an
+   eligible omission is *supposed* to report unsatisfied, so a test that cannot tell
+   the two apart proves nothing.
+10. `eth_getCode` on `0x…8272` returns exactly the 144-byte `RECENT_ROOT_CODE`, and a
+    plain EOA transaction to it with 64 bytes of calldata writes an entry that a
+    subsequent frame transaction successfully references. Record the observed gas: it
+    is emergent from the EVM rather than a constant, so it is a measurement, not an
+    assertion.
+11. A deposit from an address holding no gater token reverts with "Not enough tokens",
+    and the same deposit succeeds after `gating-cli mint`. Both halves are required:
+    only the second proves the gate is not simply broken for everyone.
+12. That deposit produces a standard `DepositEvent` that appears in the block's
+    `requestsHash`, and the consensus client activates the validator. `eth_getLogs` on
+    the deposit address shows `DEPOSIT_TOPIC`
+    `0x649bbc62d0e31342afea4e5cd82d4049e7e1ee912fc0889aa790803be39038c5` and **no
+    additional event** — an extra event would mean the gated contract is not
+    transparent to the execution layer after all.
