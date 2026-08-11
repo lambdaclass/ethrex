@@ -177,10 +177,26 @@ passed / 0 failed**, `cargo test -p ethrex-rpc --lib` is 122 passed, and
     comment asserting the opposite. Removed, which also collapses the advertised address
     to the single `nat_exit_ip` the config always claimed it was.
 
-  `docs/hegota-testnet-upgrading.md` is new and covers the no-regenesis binary swap, the
-  kurtosis CLI/engine version lockstep, re-publishing, gater-admin rotation and what
-  forces a re-genesis. `scripts/hegota-testnet/gen-deployment-keys.sh` generates the
-  per-deployment key material, including the ten funded accounts.
+  Measurements worth keeping, because they are emergent rather than asserted:
+
+  - **EIP-8272 write: 127 244 gas** for a 64-byte `salt ‖ root` payload carrying exactly
+    one zero byte. That lands on the same curve as the 127 256 recorded for an
+    all-non-zero payload, 12 gas per zero byte above the EIP-7623 floor, which is the
+    third independent confirmation that the three figures on record are one curve.
+  - **`MAX_VERIFY_GAS_PER_TX = 2**20` gates eligibility end to end.** Two frame
+    transactions identical at 199 bytes apart from the VERIFY frame's gas limit, one
+    either side of the constant, submitted against the same built payload through
+    `newPayloadV6`: the over-budget one's omission reports
+    `inclusionListSatisfied: true` (excused, not a Profile 2 candidate), the under-budget
+    one reports `false`. An empty list reports `true` as the control.
+  - The FOCIL inclusion-list builder returns 2 entries from a 40-transaction mempool
+    because `DEFAULT_PER_SENDER_CAP = 2` and all 40 shared a sender. Not a bug; worth
+    knowing before reading a short list as a failure.
+
+  `docs/hegota-testnet-upgrading.md` is new and covers the upgrade paths and when each
+  applies, the kurtosis CLI/engine version lockstep, re-publishing, gater-admin rotation
+  and what forces a re-genesis. `scripts/hegota-testnet/gen-deployment-keys.sh` generates
+  the per-deployment key material, including the ten funded accounts.
 
 ### Traps found the hard way — do not rediscover these
 
