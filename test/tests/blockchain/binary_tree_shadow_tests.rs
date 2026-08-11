@@ -3433,6 +3433,53 @@ struct DeepReorgFixture {
     loser: Vec<Block>,
 }
 
+/// Block until both flat mirrors have durably recorded a finished backfill.
+///
+/// `apply_fork_choice_with_deep_reorg` refuses a journal-backed deep reorg
+/// while either generator is still sweeping (`fork_choice.rs`, the
+/// `flatkeyvalue_fully_generated` and `binary_flat_generation_pending` gates),
+/// and that refusal is correct, not a bug to work around: `commit_to_disk`
+/// skips both the write *and* the journal push for a flat key past the
+/// generator frontier (`store.rs` — `key > last_written` for the MPT,
+/// `!binary_flat_frontier_covers(..)` for the binary mirror), so an entry
+/// journaled mid-sweep has no pre-image for those keys and an unwind through it
+/// would restore stale flat values. Deferring returns `Syncing`, which the CL
+/// retries, so the node is not stranded — the *test* is the thing that has to
+/// synchronise.
+///
+/// Both generators run on one background thread that `commit_to_disk` kicks
+/// with a `Continue`, so by the time the fixture's last flush returns they are
+/// runnable but not necessarily finished. Under CPU pressure they lose the race
+/// with this thread often enough to be seen (~3% of runs on a loaded 16-core
+/// box), which is exactly the flake this replaces.
+///
+/// Not a sleep-and-hope: the loop re-reads the same two durable markers the
+/// production gate reads and returns the instant they say "settled". The 1 ms
+/// backoff exists to hand the CPU to the generator thread rather than spin
+/// against it, and the deadline turns a genuinely stuck generator into a named
+/// failure instead of a hang.
+async fn wait_for_flat_generation(store: &Store) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    loop {
+        let mpt_settled = store
+            .flatkeyvalue_fully_generated()
+            .expect("reading the flat-KV completion marker");
+        let binary_settled = !store
+            .binary_flat_generation_pending()
+            .expect("reading the binary mirror frontier");
+        if mpt_settled && binary_settled {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "flat mirror generation never settled (flat-KV done: {mpt_settled}, binary mirror \
+             done: {binary_settled}); the deep-reorg path defers for ever in this state, so the \
+             fixture cannot be built"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+    }
+}
+
 /// Builds two competing branches past the activation, flushes the *loser* to
 /// disk, then drops every diff layer.
 ///
@@ -3536,10 +3583,10 @@ async fn build_deep_reorg_fixture(
             <= pivot_number + 1,
         "the journal must reach back to the block above the pivot"
     );
-    assert!(
-        chain.store.flatkeyvalue_fully_generated().unwrap(),
-        "the deep path defers while flat-KV generation is in flight"
-    );
+    // The deep path *defers* — correctly — while either flat mirror is
+    // mid-sweep, so the fixture has to wait for the same condition rather than
+    // assume the background generator won the race with this thread.
+    wait_for_flat_generation(&chain.store).await;
 
     let canonical: Vec<Block> = chain.blocks.iter().cloned().chain(winner.clone()).collect();
     DeepReorgFixture {
