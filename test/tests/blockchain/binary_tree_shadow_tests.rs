@@ -5889,6 +5889,28 @@ async fn the_frozen_mpt_is_still_serveable_but_proves_nothing_about_the_binary_r
     assert_eq!(proven.nonce, frozen.account.nonce);
     assert!(proven.nonce > 0, "the sender must have sent transactions");
 
+    // `account_proven_by` is only evidence of anything if it rejects proofs
+    // that are wrong, so establish that before relying on it below. Corrupting
+    // any single node breaks the hash that named it, and a proof missing its
+    // last node no longer reaches the leaf.
+    for index in 0..frozen.proof.len() {
+        let mut tampered = frozen.proof.clone();
+        tampered[index][0] ^= 0xff;
+        assert!(
+            account_proven_by(last_pre_flip.header.state_root, sender, &tampered).is_none(),
+            "a proof with node {index} corrupted must not verify"
+        );
+    }
+    assert!(
+        account_proven_by(
+            last_pre_flip.header.state_root,
+            sender,
+            &frozen.proof[..frozen.proof.len() - 1]
+        )
+        .is_none(),
+        "a truncated proof must not verify"
+    );
+
     // But it proves nothing about the chain's current commitment: the flip
     // block's root is a binary root, and these MPT nodes do not chain up to it.
     assert_eq!(
