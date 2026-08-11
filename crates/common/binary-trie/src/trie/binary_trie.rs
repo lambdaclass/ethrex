@@ -1746,7 +1746,12 @@ impl BinaryTrie {
                 encode_branch(prefix, left_hash, right_hash)
             }
         };
-        let computed = blake3_hash(&encoded);
+        // Lazily: a clean member carried along for its row already holds
+        // the hash `resolve` gave it, and `get_or_init` would discard a
+        // freshly computed one anyway. Computing it eagerly hashed every
+        // clean member of every touched row and threw the result away —
+        // at `g = 6` that is most of a row, every row, every commit.
+        let computed = *hash.get_or_init(|| blake3_hash(&encoded));
         entries.push((path, encoded));
         // A dirty node may still hold a cached hash — `root()` fills
         // caches without cleaning anything — and it agrees with what
@@ -1756,7 +1761,7 @@ impl BinaryTrie {
         // hash `resolve` gave it, and `get_or_init` keeps that one; the
         // re-encoding above reproduces the bytes it was decoded from,
         // since a preimage is a pure function of what `decode` returned.
-        *hash.get_or_init(|| computed)
+        computed
     }
 
     /// [`BinaryTrie::collect`] one level down, deciding as it goes
