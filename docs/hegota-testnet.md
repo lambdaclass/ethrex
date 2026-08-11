@@ -130,7 +130,7 @@ passed / 0 failed**, `cargo test -p ethrex-rpc --lib` is 122 passed, and
   surface, artifact list, ports and firewall, how to start a node),
   `scripts/hegota-testnet/publish-artifacts.sh`, the reachability block in
   `fixtures/networks/hegota-testnet.yaml`, and checks 8-12 in
-  `docs/hegota-devnet-genesis.md`.
+  `docs/hegota-testnet-verification.md`.
 
   Two places Phase 8's text was wrong about the branch, both corrected in the
   artifacts rather than followed:
@@ -154,7 +154,7 @@ passed / 0 failed**, `cargo test -p ethrex-rpc --lib` is 122 passed, and
   definition is the fork timestamp plus the five-EIP rule set, which a client whose
   config format is not geth-style must translate itself.
 - **Phase 9 Task 9.9 is closed.** A local kurtosis enclave ran eleven of the twelve
-  checks in `docs/hegota-devnet-genesis.md`; only check 8 (external reachability) is
+  checks in `docs/hegota-testnet-verification.md`; only check 8 (external reachability) is
   left, and it needs a second host by definition. Beyond the checks, a fresh
   ethrex+lighthouse pair built from nothing but the published artifact bundle synced to
   the network's head number and hash, which is the property the whole branch exists for.
@@ -324,10 +324,9 @@ carries, the artifact list and the firewall surface),
 `docs/hegota-testnet-divergences.md` (the ledger that gates bring-up),
 `docs/hegota-testnet-permissioning.md` (validator gating policy and runbook),
 `docs/hegota-testnet-upgrading.md` (changing a live deployment without a re-genesis),
-`docs/hegota-devnet.md` (branch composition, opcode allocation, per-EIP divergences,
-spec pins), `docs/hegota-devnet-genesis.md` (genesis requirements and the twelve-check
-post-deploy pass), `docs/eip-8141.md`, `docs/eip-8250.md`, `docs/eip-8272.md`,
-`scripts/hegota-devnet/USER-GUIDE.md`, `scripts/hegota-devnet/UPGRADE-GUIDE.md`.
+`docs/hegota-testnet-verification.md` (genesis requirements and the twelve-check
+post-deploy pass), `scripts/hegota-testnet/INSTALL.md` (the install runbook),
+`docs/eip-8141.md`, `docs/eip-8250.md`, `docs/eip-8272.md`.
 
 ## Overview
 
@@ -372,7 +371,7 @@ Inferred:
   only `eip7805TransitionTimestamp` and `eip8141TransitionTimestamp` for heze).
 - FOCIL forces the engine API to V5/V6, so the consensus client must be FOCIL-aware.
   Execution and consensus upgrade together with no inert intermediate state
-  (`docs/hegota-devnet.md`, EIP-7805 section).
+  (`docs/hegota-testnet-joining.md`, "Engine API").
 - Proving stays disabled. `docs/eip-8272.md` records the prover caveat and no prover
   runs on this network.
 
@@ -409,7 +408,7 @@ Assumptions, each stated so it can be falsified:
 - **EIP-8025** stateless proving and any prover integration.
 - **Bare-metal / non-kurtosis deployment.** No systemd units, no non-kurtosis node
   packaging.
-- **A public faucet build-out beyond what `scripts/hegota-devnet/faucet/` already is.**
+- **A public faucet build-out beyond what `scripts/hegota-testnet/faucet/` already is.**
   It carries across unchanged; no new features, no hardening pass.
 - **A long-lived testnet ops story**: no monitoring/alerting stack, no on-call
   runbook, no key rotation policy, no genesis re-spin automation.
@@ -422,18 +421,20 @@ Assumptions, each stated so it can be falsified:
 
 ## Existing Patterns
 
-- **`docs/hegota-devnet.md`** — the convention for this family of documents: a
-  Composition block, an opcode-allocation table, a per-EIP divergence list where each
-  entry says whether it is a divergence *or* explicitly "not a divergence", and a
-  fenced ```pins``` block giving `eip-<n> <commit> <class> <date> [source]`. New docs
-  follow that shape. The `/hegota-eips` skill reads the pins block.
-- **`docs/hegota-devnet-genesis.md`** — genesis requirements written as "every item
+- **`docs/hegota-devnet.md`, on the `hegota-devnet` branch** — the convention for this
+  family of documents: a Composition block, an opcode-allocation table, a per-EIP
+  divergence list where each entry says whether it is a divergence *or* explicitly
+  "not a divergence", and a fenced ```pins``` block giving
+  `eip-<n> <commit> <class> <date> [source]`. New docs follow that shape. The
+  `/hegota-eips` skill reads the pins block from that branch, not from the working
+  tree, so it is unaffected by which branch is checked out here.
+- **`docs/hegota-testnet-verification.md`** — genesis requirements written as "every item
   here is load-bearing", each with the failure mode it prevents and the misleading
   symptom it produces. Extend, do not replace.
 - **`docs/CONTRIBUTING_DOCS.md`** — mdBook + `mdbook-linkcheck2`; `lychee.toml` runs
   `lychee --config lychee.toml docs/` over the **whole** directory, so every external
   link in a new doc must resolve (2xx, or 429/503). `docs/SUMMARY.md` does *not* list
-  `docs/eip-8141.md` or `docs/hegota-devnet.md`, so Hegotá working notes are
+  `docs/eip-8141.md` or `docs/hegota-testnet-verification.md`, so Hegotá working notes are
   deliberately outside the book nav: **do not add `hegota-testnet.md` to `SUMMARY.md`.**
 - **`crates/vm/system_contracts.rs`** — predeploys as `SystemContract { address, name,
   active_since_fork }` plus a `*_RUNTIME_BYTECODE` byte array, installed at the fork
@@ -441,7 +442,7 @@ Assumptions, each stated so it can be falsified:
   `apply_system_calls` (`crates/vm/backends/levm/mod.rs`, `crates/vm/backends/mod.rs`).
   `install_nonce_manager_code` is the reference implementation of the spec's
   three-case activation rule (create / adopt-empty / leave-alone).
-- **`fixtures/networks/hegota-devnet.yaml`** — kurtosis config convention: every
+- **`fixtures/networks/hegota-testnet.yaml`** — kurtosis config convention: every
   non-obvious knob carries a comment naming the failure it prevents. `port_publisher`
   blocks below the ephemeral floor; `additional_preloaded_contracts` for the EIP-8282
   inhibitor; `dora_params.image` pinned to a frame-tx-aware build.
@@ -1224,7 +1225,7 @@ re-genesis, which is exactly what we promised a third party we would not do.
       ethpandaops/ethereum-genesis-generator:6.1.6`. The pinned revision
       `d47e98799c84a71d94371472e05f5e93030b3a7b` defaults to `6.0.7`
       (`ethereum-package/src/package_io/constants.star:111-113`) while
-      `docs/hegota-devnet-genesis.md` requires 6.1.4+ for the EIP-8282 predeploys.
+      `docs/hegota-testnet-verification.md` requires 6.1.4+ for the EIP-8282 predeploys.
       Verified at 6.1.6: `apps/el-gen/system-contracts.yaml` still ships
       `eip8282_deposit` with the comment "No storage (no excess inhibitor)" while
       `eip8282_exit` has storage, so the `additional_preloaded_contracts` preload in
@@ -1292,7 +1293,7 @@ re-genesis, which is exactly what we promised a third party we would not do.
 
 Why this phase: an enclave that only its own host can reach is not a testnet a third
 party can join, and the seven-point verification pass in
-`docs/hegota-devnet-genesis.md` predates FOCIL and the gated deposit contract.
+`docs/hegota-testnet-verification.md` predates FOCIL and the gated deposit contract.
 
 - [x] Task 8.1: Set the reachability block in
       `fixtures/networks/hegota-testnet.yaml`: `port_publisher.nat_exit_ip:
@@ -1364,7 +1365,7 @@ party can join, and the seven-point verification pass in
       permissioned. The token-minting runbook in
       `docs/hegota-testnet-permissioning.md` is the separate step that turns a joined
       node into a validator.
-- [x] Task 8.6: Extend the verification pass in `docs/hegota-devnet-genesis.md` from
+- [x] Task 8.6: Extend the verification pass in `docs/hegota-testnet-verification.md` from
       seven checks to twelve, keeping the existing seven and adding: (8) every EL
       advertises `<PUBLIC_IP>` in its enode and an external `ethrex --bootnodes` node
       on a different host completes discovery and reaches the head; (9)
@@ -1578,8 +1579,8 @@ Verified via `gh` while planning. **Refresh every row in Task 1.2** — states m
 - **Nethermind cannot enable EIP-8250/EIP-8272 from the generated chainspec.**
   Addressed by Task 8.4's patch and its stale-patch guard.
 - **The consensus client is not FOCIL-aware, and swapping it is not reversible.**
-  `docs/hegota-devnet.md` records that execution and consensus upgrade atomically with
-  no inert intermediate state. Addressed by Task 7.2 pinning `sigp/lighthouse@focil`
+  Execution and consensus upgrade atomically, with no inert intermediate state.
+  Addressed by Task 7.2 pinning `sigp/lighthouse@focil`
   before the first genesis, so the swap never has to happen on a live chain.
 - **A FOCIL-capable Lighthouse cannot boot with Gloas at epoch 1.** Retired: the
   Hegotá devnet runs `fulu 0 / gloas 1 / heze 2` under
@@ -1587,7 +1588,7 @@ Verified via `gh` while planning. **Refresh every row in Task 1.2** — states m
   chain's own `/eth/v1/config/spec` with its head in Heze. The concern came from
   `fixtures/networks/focil.yaml`, which runs `gloas_fork_epoch: 0` under lodestar;
   that fixture records lodestar's constraint, not the published image's. The
-  requirement in `docs/hegota-devnet-genesis.md` stands unchanged — Gloas must be
+  requirement in `docs/hegota-testnet-verification.md` stands unchanged — Gloas must be
   scheduled and must not be at epoch 0, because Lighthouse rejects a beacon genesis
   state built at Gloas.
 - **The EIP-8250 in-atomic-batch payment-durability gap.** `docs/eip-8250.md` divergence
@@ -1622,13 +1623,13 @@ Verified via `gh` while planning. **Refresh every row in Task 1.2** — states m
   static-context revert and revert-rollback, each asserting measured gas.
 - `docs/hegota-testnet-divergences.md` has one row per audited item with a non-empty
   action, and no consensus-visible row is unresolved without a stated fallback.
-- The ```pins``` block in `docs/hegota-devnet.md` matches `diff_eip` head for
-  `eip-8141`, `eip-8250`, `eip-8272` and `eip-7805`.
+- The pinned revisions in `docs/hegota-testnet-joining.md`'s rule-set table match
+  `diff_eip` head for `eip-8141`, `eip-8250`, `eip-8272` and `eip-7805`.
 - `eth_chainId` returns `0x1fcd` (8141) on all three nodes, and all three report the
   same genesis hash and the same `amsterdamTime` / `hegotaTime` from
   `debug_chainConfig`.
 - All twelve checks of the extended verification pass in
-  `docs/hegota-devnet-genesis.md` pass on the production host, with the observed values
+  `docs/hegota-testnet-verification.md` pass on the production host, with the observed values
   recorded in `docs/hegota-testnet.md`.
 - An ethrex node on a host outside the enclave joins using only the published bundle,
   completes discovery against the published enodes and reaches the same head hash.

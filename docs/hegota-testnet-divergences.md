@@ -11,8 +11,8 @@ Spec lookups go through `eipmcp`; PR state through `gh`. Audited against
 
 ## 1. Drift since the pinned revisions
 
-`diff_eip(n, since=<pin>)` for each core EIP, against the ```pins``` block in
-`docs/hegota-devnet.md`.
+`diff_eip(n, since=<pin>)` for each core EIP, against the pinned revisions in the rule-set
+table of `docs/hegota-testnet-joining.md`.
 
 | EIP | Pin | Drift to head | Consensus-visible | Action | Owner |
 | --- | --- | --- | --- | --- | --- |

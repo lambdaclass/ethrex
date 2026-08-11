@@ -11,7 +11,7 @@ as an upgrade. Everything below is arranged so the common cases avoid it.
 
 Companion documents: `docs/hegota-testnet-joining.md` (what joiners consume),
 `docs/hegota-testnet-permissioning.md` (validator gating),
-`docs/hegota-devnet-genesis.md` (the twelve-check verification pass).
+`docs/hegota-testnet-verification.md` (the twelve-check verification pass).
 
 ## Before touching anything
 
@@ -140,5 +140,5 @@ Plan for this before launch by keeping the genesis admin cold.
 
 When one is unavoidable, treat it as a new launch: fresh keys from
 `scripts/hegota-testnet/gen-deployment-keys.sh`, a fresh enclave, the full twelve-check
-pass from `docs/hegota-devnet-genesis.md`, a re-published bundle, and an announcement
+pass from `docs/hegota-testnet-verification.md`, a re-published bundle, and an announcement
 that the old chain is dead. Do not reuse the previous deployment's mnemonics.

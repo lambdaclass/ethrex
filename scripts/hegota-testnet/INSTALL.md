@@ -10,7 +10,7 @@ another client can join with.
 Companion documents: `docs/hegota-testnet-joining.md` (what joiners consume, and the
 firewall surface), `docs/hegota-testnet-permissioning.md` (validator gating),
 `docs/hegota-testnet-upgrading.md` (changing it later),
-`docs/hegota-devnet-genesis.md` (the twelve verification checks).
+`docs/hegota-testnet-verification.md` (the twelve verification checks).
 
 ## 0. Before you start
 
@@ -182,7 +182,7 @@ left behind, and run it again with an absolute path to the package directory.
 
 ## 6. Verify
 
-Run the twelve checks in `docs/hegota-devnet-genesis.md`. Do not skip them: most of the
+Run the twelve checks in `docs/hegota-testnet-verification.md`. Do not skip them: most of the
 failure modes are silent until a specific fork boundary, and a chain that starts is not a
 chain that works.
 
@@ -257,7 +257,7 @@ does not, and you should not add one.
 Run the faucet with **its own key**, funded from the `FAUCET_ADDR` account, and keep that
 key in a host env file — never in the repository, never in the kurtosis config. Point it
 at `http://localhost:32003` and give it the public RPC and explorer URLs for its own
-links. `scripts/hegota-devnet/faucet/` is a working reference implementation.
+links. `scripts/hegota-testnet/faucet/` is a working reference implementation.
 
 Fund it from the faucet account rather than a rich account, so a drained faucet cannot
 touch the accounts you hold for testing.
