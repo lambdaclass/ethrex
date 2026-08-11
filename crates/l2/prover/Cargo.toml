@@ -52,7 +52,7 @@ openvm-sdk = { git = "https://github.com/openvm-org/openvm.git", package = "open
     "parallel",
 ] }
 openvm-continuations = { git = "https://github.com/openvm-org/openvm.git", package = "openvm-continuations", optional = true }
-openvm-stark-sdk = { git = "https://github.com/openvm-org/stark-backend.git", package = "openvm-stark-sdk", tag = "v1.2.1", optional = true }
+openvm-stark-sdk = { git = "https://github.com/openvm-org/stark-backend.git", package = "openvm-stark-sdk", tag = "v1.3.0", optional = true }
 
 [dev-dependencies]
 ethrex-storage.workspace = true

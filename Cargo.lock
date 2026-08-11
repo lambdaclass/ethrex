@@ -4109,7 +4109,7 @@ dependencies = [
  "hex",
  "openvm-continuations",
  "openvm-sdk",
- "openvm-stark-sdk 1.2.1",
+ "openvm-stark-sdk",
  "risc0-zkp",
  "risc0-zkvm",
  "rkyv",
@@ -4282,7 +4282,7 @@ dependencies = [
  "ethrex-vm",
  "openvm-continuations",
  "openvm-sdk",
- "openvm-stark-sdk 1.2.1",
+ "openvm-stark-sdk",
  "risc0-zkp",
  "risc0-zkvm",
  "rkyv",
@@ -5274,35 +5274,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "halo2curves"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b756596082144af6e57105a20403b7b80fe9dccd085700b74fae3af523b74dba"
-dependencies = [
- "blake2",
- "digest 0.10.7",
- "ff 0.13.1",
- "group 0.13.0",
- "halo2derive",
- "hex",
- "lazy_static",
- "num-bigint 0.4.6",
- "num-integer",
- "num-traits",
- "pairing 0.23.0",
- "paste",
- "rand 0.8.5",
- "rand_core 0.6.4",
- "rayon",
- "serde",
- "serde_arrays 0.1.0",
- "sha2",
- "static_assertions",
- "subtle",
- "unroll",
-]
-
-[[package]]
 name = "halo2curves-axiom"
 version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5355,20 +5326,6 @@ dependencies = [
  "static_assertions",
  "subtle",
  "unroll",
-]
-
-[[package]]
-name = "halo2derive"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bdb99e7492b4f5ff469d238db464131b86c2eaac814a78715acba369f64d2c76"
-dependencies = [
- "num-bigint 0.4.6",
- "num-integer",
- "num-traits",
- "proc-macro2",
- "quote",
- "syn 1.0.109",
 ]
 
 [[package]]
@@ -7791,8 +7748,8 @@ dependencies = [
  "openvm-mod-circuit-builder",
  "openvm-rv32-adapters",
  "openvm-rv32im-circuit",
- "openvm-stark-backend 1.3.0",
- "openvm-stark-sdk 1.3.0",
+ "openvm-stark-backend",
+ "openvm-stark-sdk",
  "rand 0.9.4",
  "serde",
  "serde_with",
@@ -7883,7 +7840,7 @@ dependencies = [
  "openvm-algebra-guest 1.5.0",
  "openvm-instructions",
  "openvm-instructions-derive",
- "openvm-stark-backend 1.3.0",
+ "openvm-stark-backend",
  "openvm-transpiler",
  "rrs-lib",
  "strum 0.26.3",
@@ -7909,8 +7866,8 @@ dependencies = [
  "openvm-rv32-adapters",
  "openvm-rv32im-circuit",
  "openvm-rv32im-transpiler",
- "openvm-stark-backend 1.3.0",
- "openvm-stark-sdk 1.3.0",
+ "openvm-stark-backend",
+ "openvm-stark-sdk",
  "rand 0.9.4",
  "serde",
 ]
@@ -7933,7 +7890,7 @@ dependencies = [
  "openvm-instructions",
  "openvm-instructions-derive",
  "openvm-rv32im-transpiler",
- "openvm-stark-backend 1.3.0",
+ "openvm-stark-backend",
  "openvm-transpiler",
  "rrs-lib",
  "strum 0.26.3",
@@ -7977,8 +7934,8 @@ dependencies = [
  "openvm-cuda-common",
  "openvm-instructions",
  "openvm-poseidon2-air",
- "openvm-stark-backend 1.3.0",
- "openvm-stark-sdk 1.3.0",
+ "openvm-stark-backend",
+ "openvm-stark-sdk",
  "p3-baby-bear 0.4.1",
  "p3-field 0.4.1",
  "rand 0.9.4",
@@ -8014,7 +7971,7 @@ dependencies = [
  "openvm-cuda-backend",
  "openvm-cuda-builder",
  "openvm-cuda-common",
- "openvm-stark-backend 1.3.0",
+ "openvm-stark-backend",
  "rand 0.9.4",
  "tracing",
 ]
@@ -8038,8 +7995,8 @@ dependencies = [
  "openvm-circuit",
  "openvm-native-compiler",
  "openvm-native-recursion",
- "openvm-stark-backend 1.3.0",
- "openvm-stark-sdk 1.3.0",
+ "openvm-stark-backend",
+ "openvm-stark-sdk",
  "p3-bn254",
  "serde",
  "static_assertions",
@@ -8059,8 +8016,8 @@ dependencies = [
  "metrics",
  "openvm-cuda-builder",
  "openvm-cuda-common",
- "openvm-stark-backend 1.3.0",
- "openvm-stark-sdk 1.3.0",
+ "openvm-stark-backend",
+ "openvm-stark-sdk",
  "p3-baby-bear 0.4.1",
  "p3-commit 0.4.1",
  "p3-dft 0.4.1",
@@ -8145,8 +8102,8 @@ dependencies = [
  "openvm-instructions",
  "openvm-mod-circuit-builder",
  "openvm-rv32-adapters",
- "openvm-stark-backend 1.3.0",
- "openvm-stark-sdk 1.3.0",
+ "openvm-stark-backend",
+ "openvm-stark-sdk",
  "rand 0.9.4",
  "serde",
  "serde_with",
@@ -8219,7 +8176,7 @@ dependencies = [
  "openvm-ecc-guest 1.5.0",
  "openvm-instructions",
  "openvm-instructions-derive",
- "openvm-stark-backend 1.3.0",
+ "openvm-stark-backend",
  "openvm-transpiler",
  "rrs-lib",
  "strum 0.26.3",
@@ -8236,7 +8193,7 @@ dependencies = [
  "num-bigint 0.4.6",
  "num-traits",
  "openvm-instructions-derive",
- "openvm-stark-backend 1.3.0",
+ "openvm-stark-backend",
  "serde",
  "strum 0.26.3",
  "strum_macros 0.26.4",
@@ -8270,8 +8227,8 @@ dependencies = [
  "openvm-instructions",
  "openvm-keccak256-transpiler",
  "openvm-rv32im-circuit",
- "openvm-stark-backend 1.3.0",
- "openvm-stark-sdk 1.3.0",
+ "openvm-stark-backend",
+ "openvm-stark-sdk",
  "p3-keccak-air 0.4.1",
  "rand 0.9.4",
  "serde",
@@ -8295,7 +8252,7 @@ dependencies = [
  "openvm-instructions",
  "openvm-instructions-derive",
  "openvm-keccak256-guest",
- "openvm-stark-backend 1.3.0",
+ "openvm-stark-backend",
  "openvm-transpiler",
  "rrs-lib",
  "strum 0.26.3",
@@ -8348,8 +8305,8 @@ dependencies = [
  "openvm-cuda-builder",
  "openvm-cuda-common",
  "openvm-instructions",
- "openvm-stark-backend 1.3.0",
- "openvm-stark-sdk 1.3.0",
+ "openvm-stark-backend",
+ "openvm-stark-sdk",
  "rand 0.8.5",
  "rand 0.9.4",
  "tracing",
@@ -8377,8 +8334,8 @@ dependencies = [
  "openvm-poseidon2-air",
  "openvm-rv32im-circuit",
  "openvm-rv32im-transpiler",
- "openvm-stark-backend 1.3.0",
- "openvm-stark-sdk 1.3.0",
+ "openvm-stark-backend",
+ "openvm-stark-sdk",
  "p3-field 0.4.1",
  "rand 0.9.4",
  "serde",
@@ -8400,8 +8357,8 @@ dependencies = [
  "openvm-instructions-derive",
  "openvm-native-compiler-derive",
  "openvm-rv32im-transpiler",
- "openvm-stark-backend 1.3.0",
- "openvm-stark-sdk 1.3.0",
+ "openvm-stark-backend",
+ "openvm-stark-sdk",
  "serde",
  "snark-verifier-sdk",
  "strum 0.26.3",
@@ -8431,8 +8388,8 @@ dependencies = [
  "openvm-native-circuit",
  "openvm-native-compiler",
  "openvm-native-compiler-derive",
- "openvm-stark-backend 1.3.0",
- "openvm-stark-sdk 1.3.0",
+ "openvm-stark-backend",
+ "openvm-stark-sdk",
  "p3-dft 0.4.1",
  "p3-fri 0.4.1",
  "p3-merkle-tree 0.4.1",
@@ -8504,8 +8461,8 @@ dependencies = [
  "openvm-pairing-guest 1.5.0",
  "openvm-pairing-transpiler",
  "openvm-rv32im-circuit",
- "openvm-stark-backend 1.3.0",
- "openvm-stark-sdk 1.3.0",
+ "openvm-stark-backend",
+ "openvm-stark-sdk",
  "rand 0.9.4",
  "serde",
  "strum 0.26.3",
@@ -8559,7 +8516,7 @@ source = "git+https://github.com/openvm-org/openvm.git#69373ff1d06b613025fe4e7a0
 dependencies = [
  "openvm-instructions",
  "openvm-pairing-guest 1.5.0",
- "openvm-stark-backend 1.3.0",
+ "openvm-stark-backend",
  "openvm-transpiler",
  "rrs-lib",
  "strum 0.26.3",
@@ -8593,8 +8550,8 @@ dependencies = [
  "derivative",
  "lazy_static",
  "openvm-cuda-builder",
- "openvm-stark-backend 1.3.0",
- "openvm-stark-sdk 1.3.0",
+ "openvm-stark-backend",
+ "openvm-stark-sdk",
  "p3-poseidon2 0.4.1",
  "p3-poseidon2-air",
  "p3-symmetric 0.4.1",
@@ -8614,8 +8571,8 @@ dependencies = [
  "openvm-circuit-primitives-derive",
  "openvm-instructions",
  "openvm-rv32im-circuit",
- "openvm-stark-backend 1.3.0",
- "openvm-stark-sdk 1.3.0",
+ "openvm-stark-backend",
+ "openvm-stark-sdk",
  "rand 0.9.4",
 ]
 
@@ -8639,8 +8596,8 @@ dependencies = [
  "openvm-cuda-common",
  "openvm-instructions",
  "openvm-rv32im-transpiler",
- "openvm-stark-backend 1.3.0",
- "openvm-stark-sdk 1.3.0",
+ "openvm-stark-backend",
+ "openvm-stark-sdk",
  "rand 0.9.4",
  "serde",
  "strum 0.26.3",
@@ -8674,7 +8631,7 @@ dependencies = [
  "openvm-instructions",
  "openvm-instructions-derive",
  "openvm-rv32im-guest 1.5.0",
- "openvm-stark-backend 1.3.0",
+ "openvm-stark-backend",
  "openvm-transpiler",
  "rrs-lib",
  "serde",
@@ -8722,8 +8679,8 @@ dependencies = [
  "openvm-rv32im-transpiler",
  "openvm-sha256-circuit",
  "openvm-sha256-transpiler",
- "openvm-stark-backend 1.3.0",
- "openvm-stark-sdk 1.3.0",
+ "openvm-stark-backend",
+ "openvm-stark-sdk",
  "openvm-transpiler",
  "p3-bn254",
  "p3-fri 0.4.1",
@@ -8746,7 +8703,7 @@ version = "1.5.0"
 source = "git+https://github.com/openvm-org/openvm.git#69373ff1d06b613025fe4e7a02d735a1609412c4"
 dependencies = [
  "openvm-circuit-primitives",
- "openvm-stark-backend 1.3.0",
+ "openvm-stark-backend",
  "rand 0.9.4",
  "sha2",
 ]
@@ -8769,8 +8726,8 @@ dependencies = [
  "openvm-rv32im-circuit",
  "openvm-sha256-air",
  "openvm-sha256-transpiler",
- "openvm-stark-backend 1.3.0",
- "openvm-stark-sdk 1.3.0",
+ "openvm-stark-backend",
+ "openvm-stark-sdk",
  "rand 0.9.4",
  "serde",
  "sha2",
@@ -8793,37 +8750,10 @@ dependencies = [
  "openvm-instructions",
  "openvm-instructions-derive",
  "openvm-sha256-guest",
- "openvm-stark-backend 1.3.0",
+ "openvm-stark-backend",
  "openvm-transpiler",
  "rrs-lib",
  "strum 0.26.3",
-]
-
-[[package]]
-name = "openvm-stark-backend"
-version = "1.2.1"
-source = "git+https://github.com/openvm-org/stark-backend.git?tag=v1.2.1#dde6cdaf105cc57d1609fd49568c7bce0a066cc2"
-dependencies = [
- "bitcode",
- "cfg-if",
- "derivative",
- "derive-new 0.7.0",
- "eyre",
- "itertools 0.14.0",
- "p3-air 0.1.0",
- "p3-challenger 0.1.0",
- "p3-commit 0.1.0",
- "p3-field 0.1.0",
- "p3-matrix 0.1.0",
- "p3-maybe-rayon 0.1.0",
- "p3-uni-stark 0.1.0",
- "p3-util 0.1.0",
- "rayon",
- "rustc-hash 2.1.2",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tracing",
 ]
 
 [[package]]
@@ -8855,43 +8785,6 @@ dependencies = [
 
 [[package]]
 name = "openvm-stark-sdk"
-version = "1.2.1"
-source = "git+https://github.com/openvm-org/stark-backend.git?tag=v1.2.1#dde6cdaf105cc57d1609fd49568c7bce0a066cc2"
-dependencies = [
- "dashmap",
- "derivative",
- "derive_more 1.0.0",
- "ff 0.13.1",
- "itertools 0.14.0",
- "metrics",
- "metrics-tracing-context",
- "metrics-util",
- "openvm-stark-backend 1.2.1",
- "p3-baby-bear 0.1.0",
- "p3-blake3 0.1.0",
- "p3-bn254-fr 0.1.0",
- "p3-dft 0.1.0",
- "p3-fri 0.1.0",
- "p3-goldilocks 0.1.0",
- "p3-keccak 0.1.0",
- "p3-koala-bear 0.1.0",
- "p3-merkle-tree 0.1.0",
- "p3-poseidon 0.1.0",
- "p3-poseidon2 0.1.0",
- "p3-symmetric 0.1.0",
- "rand 0.8.5",
- "serde",
- "serde_json",
- "static_assertions",
- "toml",
- "tracing",
- "tracing-forest",
- "tracing-subscriber 0.3.23",
- "zkhash 0.2.0 (git+https://github.com/HorizenLabs/poseidon2.git?rev=bb476b9)",
-]
-
-[[package]]
-name = "openvm-stark-sdk"
 version = "1.3.0"
 source = "git+https://github.com/openvm-org/stark-backend.git?tag=v1.3.0#a3ef723240b92b3b56a8f24ab23434004c148514"
 dependencies = [
@@ -8904,17 +8797,17 @@ dependencies = [
  "metrics-tracing-context",
  "metrics-util",
  "num-bigint 0.4.6",
- "openvm-stark-backend 1.3.0",
+ "openvm-stark-backend",
  "p3-baby-bear 0.4.1",
- "p3-blake3 0.4.1",
+ "p3-blake3",
  "p3-bn254",
  "p3-dft 0.4.1",
  "p3-fri 0.4.1",
- "p3-goldilocks 0.4.1",
- "p3-keccak 0.4.1",
+ "p3-goldilocks",
+ "p3-keccak",
  "p3-koala-bear 0.4.1",
  "p3-merkle-tree 0.4.1",
- "p3-poseidon 0.4.1",
+ "p3-poseidon",
  "p3-poseidon2 0.4.1",
  "p3-symmetric 0.4.1",
  "rand 0.9.4",
@@ -8937,7 +8830,7 @@ dependencies = [
  "eyre",
  "openvm-instructions",
  "openvm-platform 1.5.0",
- "openvm-stark-backend 1.3.0",
+ "openvm-stark-backend",
  "rrs-lib",
  "thiserror 1.0.69",
 ]
@@ -8977,15 +8870,6 @@ dependencies = [
 
 [[package]]
 name = "p3-air"
-version = "0.1.0"
-source = "git+https://github.com/Plonky3/Plonky3.git?rev=539bbc84085efb609f4f62cb03cf49588388abdb#539bbc84085efb609f4f62cb03cf49588388abdb"
-dependencies = [
- "p3-field 0.1.0",
- "p3-matrix 0.1.0",
-]
-
-[[package]]
-name = "p3-air"
 version = "0.2.3-succinct"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d05a97452c4b1cfa8626e69181d901fc8231d99ff7d87e9701a2e6b934606615"
@@ -9002,20 +8886,6 @@ checksum = "60414dc4fe4b8676bd4b6136b309185e6b3c006eb5564ef4cf5dfae6d9d47f32"
 dependencies = [
  "p3-field 0.4.1",
  "p3-matrix 0.4.1",
-]
-
-[[package]]
-name = "p3-baby-bear"
-version = "0.1.0"
-source = "git+https://github.com/Plonky3/Plonky3.git?rev=539bbc84085efb609f4f62cb03cf49588388abdb#539bbc84085efb609f4f62cb03cf49588388abdb"
-dependencies = [
- "p3-field 0.1.0",
- "p3-mds 0.1.0",
- "p3-monty-31 0.1.0",
- "p3-poseidon2 0.1.0",
- "p3-symmetric 0.1.0",
- "rand 0.8.5",
- "serde",
 ]
 
 [[package]]
@@ -9042,20 +8912,10 @@ dependencies = [
  "p3-challenger 0.4.1",
  "p3-field 0.4.1",
  "p3-mds 0.4.1",
- "p3-monty-31 0.4.1",
+ "p3-monty-31",
  "p3-poseidon2 0.4.1",
  "p3-symmetric 0.4.1",
  "rand 0.9.4",
-]
-
-[[package]]
-name = "p3-blake3"
-version = "0.1.0"
-source = "git+https://github.com/Plonky3/Plonky3.git?rev=539bbc84085efb609f4f62cb03cf49588388abdb#539bbc84085efb609f4f62cb03cf49588388abdb"
-dependencies = [
- "blake3",
- "p3-symmetric 0.1.0",
- "p3-util 0.1.0",
 ]
 
 [[package]]
@@ -9087,21 +8947,6 @@ dependencies = [
 
 [[package]]
 name = "p3-bn254-fr"
-version = "0.1.0"
-source = "git+https://github.com/Plonky3/Plonky3.git?rev=539bbc84085efb609f4f62cb03cf49588388abdb#539bbc84085efb609f4f62cb03cf49588388abdb"
-dependencies = [
- "ff 0.13.1",
- "halo2curves",
- "num-bigint 0.4.6",
- "p3-field 0.1.0",
- "p3-poseidon2 0.1.0",
- "p3-symmetric 0.1.0",
- "rand 0.8.5",
- "serde",
-]
-
-[[package]]
-name = "p3-bn254-fr"
 version = "0.2.3-succinct"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c0dd4d095d254783098bd09fc5fdf33fd781a1be54608ab93cb3ed4bd723da54"
@@ -9128,18 +8973,6 @@ dependencies = [
  "p3-symmetric 0.3.2-succinct",
  "rand 0.8.5",
  "serde",
-]
-
-[[package]]
-name = "p3-challenger"
-version = "0.1.0"
-source = "git+https://github.com/Plonky3/Plonky3.git?rev=539bbc84085efb609f4f62cb03cf49588388abdb#539bbc84085efb609f4f62cb03cf49588388abdb"
-dependencies = [
- "p3-field 0.1.0",
- "p3-maybe-rayon 0.1.0",
- "p3-symmetric 0.1.0",
- "p3-util 0.1.0",
- "tracing",
 ]
 
 [[package]]
@@ -9178,24 +9011,10 @@ checksum = "b8a66da8af6115b9e2df4363cd55efebf2c6d30de0af3e99dac56dd7b77aff24"
 dependencies = [
  "p3-field 0.4.1",
  "p3-maybe-rayon 0.4.1",
- "p3-monty-31 0.4.1",
+ "p3-monty-31",
  "p3-symmetric 0.4.1",
  "p3-util 0.4.1",
  "tracing",
-]
-
-[[package]]
-name = "p3-commit"
-version = "0.1.0"
-source = "git+https://github.com/Plonky3/Plonky3.git?rev=539bbc84085efb609f4f62cb03cf49588388abdb#539bbc84085efb609f4f62cb03cf49588388abdb"
-dependencies = [
- "itertools 0.14.0",
- "p3-challenger 0.1.0",
- "p3-dft 0.1.0",
- "p3-field 0.1.0",
- "p3-matrix 0.1.0",
- "p3-util 0.1.0",
- "serde",
 ]
 
 [[package]]
@@ -9225,19 +9044,6 @@ dependencies = [
  "p3-matrix 0.4.1",
  "p3-util 0.4.1",
  "serde",
-]
-
-[[package]]
-name = "p3-dft"
-version = "0.1.0"
-source = "git+https://github.com/Plonky3/Plonky3.git?rev=539bbc84085efb609f4f62cb03cf49588388abdb#539bbc84085efb609f4f62cb03cf49588388abdb"
-dependencies = [
- "itertools 0.14.0",
- "p3-field 0.1.0",
- "p3-matrix 0.1.0",
- "p3-maybe-rayon 0.1.0",
- "p3-util 0.1.0",
- "tracing",
 ]
 
 [[package]]
@@ -9344,25 +9150,6 @@ dependencies = [
 
 [[package]]
 name = "p3-fri"
-version = "0.1.0"
-source = "git+https://github.com/Plonky3/Plonky3.git?rev=539bbc84085efb609f4f62cb03cf49588388abdb#539bbc84085efb609f4f62cb03cf49588388abdb"
-dependencies = [
- "itertools 0.14.0",
- "p3-challenger 0.1.0",
- "p3-commit 0.1.0",
- "p3-dft 0.1.0",
- "p3-field 0.1.0",
- "p3-interpolation 0.1.0",
- "p3-matrix 0.1.0",
- "p3-maybe-rayon 0.1.0",
- "p3-util 0.1.0",
- "rand 0.8.5",
- "serde",
- "tracing",
-]
-
-[[package]]
-name = "p3-fri"
 version = "0.2.3-succinct"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a0c274dab2dcd060cdea9ab3f8f7129f5fa5f08917d6092dc2b297a31d883aa0"
@@ -9403,23 +9190,6 @@ dependencies = [
 
 [[package]]
 name = "p3-goldilocks"
-version = "0.1.0"
-source = "git+https://github.com/Plonky3/Plonky3.git?rev=539bbc84085efb609f4f62cb03cf49588388abdb#539bbc84085efb609f4f62cb03cf49588388abdb"
-dependencies = [
- "num-bigint 0.4.6",
- "p3-dft 0.1.0",
- "p3-field 0.1.0",
- "p3-mds 0.1.0",
- "p3-poseidon 0.1.0",
- "p3-poseidon2 0.1.0",
- "p3-symmetric 0.1.0",
- "p3-util 0.1.0",
- "rand 0.8.5",
- "serde",
-]
-
-[[package]]
-name = "p3-goldilocks"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "85324dc45db4196ce0083971393124f5ed03741507f9165d5c923c97890b4838"
@@ -9435,17 +9205,6 @@ dependencies = [
  "paste",
  "rand 0.9.4",
  "serde",
-]
-
-[[package]]
-name = "p3-interpolation"
-version = "0.1.0"
-source = "git+https://github.com/Plonky3/Plonky3.git?rev=539bbc84085efb609f4f62cb03cf49588388abdb#539bbc84085efb609f4f62cb03cf49588388abdb"
-dependencies = [
- "p3-field 0.1.0",
- "p3-matrix 0.1.0",
- "p3-maybe-rayon 0.1.0",
- "p3-util 0.1.0",
 ]
 
 [[package]]
@@ -9469,18 +9228,6 @@ dependencies = [
  "p3-matrix 0.4.1",
  "p3-maybe-rayon 0.4.1",
  "p3-util 0.4.1",
-]
-
-[[package]]
-name = "p3-keccak"
-version = "0.1.0"
-source = "git+https://github.com/Plonky3/Plonky3.git?rev=539bbc84085efb609f4f62cb03cf49588388abdb#539bbc84085efb609f4f62cb03cf49588388abdb"
-dependencies = [
- "itertools 0.14.0",
- "p3-field 0.1.0",
- "p3-symmetric 0.1.0",
- "p3-util 0.1.0",
- "tiny-keccak",
 ]
 
 [[package]]
@@ -9526,20 +9273,6 @@ dependencies = [
 
 [[package]]
 name = "p3-koala-bear"
-version = "0.1.0"
-source = "git+https://github.com/Plonky3/Plonky3.git?rev=539bbc84085efb609f4f62cb03cf49588388abdb#539bbc84085efb609f4f62cb03cf49588388abdb"
-dependencies = [
- "p3-field 0.1.0",
- "p3-mds 0.1.0",
- "p3-monty-31 0.1.0",
- "p3-poseidon2 0.1.0",
- "p3-symmetric 0.1.0",
- "rand 0.8.5",
- "serde",
-]
-
-[[package]]
-name = "p3-koala-bear"
 version = "0.3.2-succinct"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eb1f52bcb6be38bdc8fa6b38b3434d4eedd511f361d4249fd798c6a5ef817b40"
@@ -9561,25 +9294,10 @@ checksum = "8afd15711536b88cfbc30497b34b0182a82f2482bcd73b9211f9bacedcc4ccda"
 dependencies = [
  "p3-challenger 0.4.1",
  "p3-field 0.4.1",
- "p3-monty-31 0.4.1",
+ "p3-monty-31",
  "p3-poseidon2 0.4.1",
  "p3-symmetric 0.4.1",
  "rand 0.9.4",
-]
-
-[[package]]
-name = "p3-matrix"
-version = "0.1.0"
-source = "git+https://github.com/Plonky3/Plonky3.git?rev=539bbc84085efb609f4f62cb03cf49588388abdb#539bbc84085efb609f4f62cb03cf49588388abdb"
-dependencies = [
- "itertools 0.14.0",
- "p3-field 0.1.0",
- "p3-maybe-rayon 0.1.0",
- "p3-util 0.1.0",
- "rand 0.8.5",
- "serde",
- "tracing",
- "transpose",
 ]
 
 [[package]]
@@ -9632,9 +9350,6 @@ dependencies = [
 name = "p3-maybe-rayon"
 version = "0.1.0"
 source = "git+https://github.com/Plonky3/Plonky3.git?rev=539bbc84085efb609f4f62cb03cf49588388abdb#539bbc84085efb609f4f62cb03cf49588388abdb"
-dependencies = [
- "rayon",
-]
 
 [[package]]
 name = "p3-maybe-rayon"
@@ -9658,20 +9373,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0db6a290f867061aed54593d48f0dfd7ff2d0f706a603d03209fd0eac79518f3"
 dependencies = [
  "rayon",
-]
-
-[[package]]
-name = "p3-mds"
-version = "0.1.0"
-source = "git+https://github.com/Plonky3/Plonky3.git?rev=539bbc84085efb609f4f62cb03cf49588388abdb#539bbc84085efb609f4f62cb03cf49588388abdb"
-dependencies = [
- "itertools 0.14.0",
- "p3-dft 0.1.0",
- "p3-field 0.1.0",
- "p3-matrix 0.1.0",
- "p3-symmetric 0.1.0",
- "p3-util 0.1.0",
- "rand 0.8.5",
 ]
 
 [[package]]
@@ -9719,23 +9420,6 @@ dependencies = [
 
 [[package]]
 name = "p3-merkle-tree"
-version = "0.1.0"
-source = "git+https://github.com/Plonky3/Plonky3.git?rev=539bbc84085efb609f4f62cb03cf49588388abdb#539bbc84085efb609f4f62cb03cf49588388abdb"
-dependencies = [
- "itertools 0.14.0",
- "p3-commit 0.1.0",
- "p3-field 0.1.0",
- "p3-matrix 0.1.0",
- "p3-maybe-rayon 0.1.0",
- "p3-symmetric 0.1.0",
- "p3-util 0.1.0",
- "rand 0.8.5",
- "serde",
- "tracing",
-]
-
-[[package]]
-name = "p3-merkle-tree"
 version = "0.2.3-succinct"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f159e073afbee02c00d22390bf26ebb9ce03bbcd3e6dcd13c6a7a3811ab39608"
@@ -9772,27 +9456,6 @@ dependencies = [
 
 [[package]]
 name = "p3-monty-31"
-version = "0.1.0"
-source = "git+https://github.com/Plonky3/Plonky3.git?rev=539bbc84085efb609f4f62cb03cf49588388abdb#539bbc84085efb609f4f62cb03cf49588388abdb"
-dependencies = [
- "itertools 0.14.0",
- "num-bigint 0.4.6",
- "p3-dft 0.1.0",
- "p3-field 0.1.0",
- "p3-matrix 0.1.0",
- "p3-maybe-rayon 0.1.0",
- "p3-mds 0.1.0",
- "p3-poseidon2 0.1.0",
- "p3-symmetric 0.1.0",
- "p3-util 0.1.0",
- "rand 0.8.5",
- "serde",
- "tracing",
- "transpose",
-]
-
-[[package]]
-name = "p3-monty-31"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f124f989bc5697728a9e71d2094eda673c45a536c6a8b8ec87b7f3660393aad0"
@@ -9817,17 +9480,6 @@ dependencies = [
 
 [[package]]
 name = "p3-poseidon"
-version = "0.1.0"
-source = "git+https://github.com/Plonky3/Plonky3.git?rev=539bbc84085efb609f4f62cb03cf49588388abdb#539bbc84085efb609f4f62cb03cf49588388abdb"
-dependencies = [
- "p3-field 0.1.0",
- "p3-mds 0.1.0",
- "p3-symmetric 0.1.0",
- "rand 0.8.5",
-]
-
-[[package]]
-name = "p3-poseidon"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0dc0930e45272609b239052346e2abe8965adaf22b8237eddb679d659af53f28"
@@ -9836,18 +9488,6 @@ dependencies = [
  "p3-mds 0.4.1",
  "p3-symmetric 0.4.1",
  "rand 0.9.4",
-]
-
-[[package]]
-name = "p3-poseidon2"
-version = "0.1.0"
-source = "git+https://github.com/Plonky3/Plonky3.git?rev=539bbc84085efb609f4f62cb03cf49588388abdb#539bbc84085efb609f4f62cb03cf49588388abdb"
-dependencies = [
- "gcd",
- "p3-field 0.1.0",
- "p3-mds 0.1.0",
- "p3-symmetric 0.1.0",
- "rand 0.8.5",
 ]
 
 [[package]]
@@ -9908,16 +9548,6 @@ dependencies = [
 
 [[package]]
 name = "p3-symmetric"
-version = "0.1.0"
-source = "git+https://github.com/Plonky3/Plonky3.git?rev=539bbc84085efb609f4f62cb03cf49588388abdb#539bbc84085efb609f4f62cb03cf49588388abdb"
-dependencies = [
- "itertools 0.14.0",
- "p3-field 0.1.0",
- "serde",
-]
-
-[[package]]
-name = "p3-symmetric"
 version = "0.2.3-succinct"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "edb439bea1d822623b41ff4b51e3309e80d13cadf8b86d16ffd5e6efb9fdc360"
@@ -9947,24 +9577,6 @@ dependencies = [
  "itertools 0.14.0",
  "p3-field 0.4.1",
  "serde",
-]
-
-[[package]]
-name = "p3-uni-stark"
-version = "0.1.0"
-source = "git+https://github.com/Plonky3/Plonky3.git?rev=539bbc84085efb609f4f62cb03cf49588388abdb#539bbc84085efb609f4f62cb03cf49588388abdb"
-dependencies = [
- "itertools 0.14.0",
- "p3-air 0.1.0",
- "p3-challenger 0.1.0",
- "p3-commit 0.1.0",
- "p3-dft 0.1.0",
- "p3-field 0.1.0",
- "p3-matrix 0.1.0",
- "p3-maybe-rayon 0.1.0",
- "p3-util 0.1.0",
- "serde",
- "tracing",
 ]
 
 [[package]]
@@ -13005,7 +12617,7 @@ dependencies = [
  "p3-maybe-rayon 0.2.3-succinct",
  "p3-poseidon2 0.2.3-succinct",
  "p3-symmetric 0.2.3-succinct",
- "p3-uni-stark 0.2.3-succinct",
+ "p3-uni-stark",
  "p3-util 0.2.3-succinct",
  "pathdiff",
  "rand 0.8.5",
@@ -13200,7 +12812,7 @@ dependencies = [
  "p3-fri 0.2.3-succinct",
  "p3-matrix 0.2.3-succinct",
  "p3-symmetric 0.2.3-succinct",
- "p3-uni-stark 0.2.3-succinct",
+ "p3-uni-stark",
  "p3-util 0.2.3-succinct",
  "rand 0.8.5",
  "rayon",
@@ -13385,7 +12997,7 @@ dependencies = [
  "p3-merkle-tree 0.2.3-succinct",
  "p3-poseidon2 0.2.3-succinct",
  "p3-symmetric 0.2.3-succinct",
- "p3-uni-stark 0.2.3-succinct",
+ "p3-uni-stark",
  "p3-util 0.2.3-succinct",
  "rayon-scan",
  "serde",
