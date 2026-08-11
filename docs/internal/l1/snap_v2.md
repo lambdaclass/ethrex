@@ -251,6 +251,16 @@ Both builders must agree on the root, since a real state exercises both and only
 the combined state root would show a disagreement, far from the contract that
 caused it. `a_bulk_built_storage_trie_matches_a_slot_by_slot_one` pins that.
 
+Measured on the devnet at ~201,500 storage slots, one contract holding 98,871 of
+them, three interleaved runs per side against the same chain: reconstruction went
+from 854 ms to 293 ms, roughly 2.9x. Both sides reconstruct to the same roots, so
+this is a like-for-like comparison and not a behaviour change.
+
+Do not measure this by comparing runs at different state sizes. The per-contract
+costs are fixed costs, so they amortize as the state grows, and a comparison that
+lets the state grow between the two sides credits that amortization to the code.
+Doing exactly that overstated the gain here as 4.9x.
+
 On success the sync latches `snap2_reconstructed_block` in the diagnostics.
 That is the terminal evidence the snap/2 path ran to completion, and it is what
 test harnesses should assert on.
