@@ -489,7 +489,12 @@ impl ChainHealth {
 
         let last_fcu_ago = inner.last_fcu_at.map(|at| now.saturating_sub(at).as_secs());
 
-        let (phase, repeat) = match inner.last_refusal {
+        // The refusal record is what separates the two verdicts, so it selects
+        // the phase, its repeat cadence and the event in one place — there is
+        // no arrangement here where a `Stalled` event has to invent a refusal
+        // it does not have.
+        let last_refusal = inner.last_refusal.clone();
+        let (phase, repeat) = match last_refusal {
             Some(_) => (Phase::Stalled, STALLED_REPEAT),
             None => (Phase::Idle, IDLE_REPEAT),
         };
@@ -502,26 +507,20 @@ impl ChainHealth {
         inner.phase = phase;
         inner.last_emit_at = now;
 
-        match phase {
-            Phase::Stalled => ProgressEvent::Stalled {
+        match last_refusal {
+            Some(last_refusal) => ProgressEvent::Stalled {
                 head: obs.head,
                 unchanged_for: unchanged.as_secs(),
                 refusals: inner.refusals,
-                // Set: the match arm above selected this phase on `Some`.
-                last_refusal: inner.last_refusal.clone().unwrap_or_else(|| Refusal {
-                    kind: RefusalKind::StoreError,
-                    detail: "unknown".to_string(),
-                }),
+                last_refusal,
                 last_fcu_ago,
                 synced: obs.synced,
             },
-            Phase::Idle => ProgressEvent::Idle {
+            None => ProgressEvent::Idle {
                 head: obs.head,
                 unchanged_for: unchanged.as_secs(),
                 last_fcu_ago,
             },
-            // Unreachable: the match above only yields Stalled or Idle.
-            Phase::Advancing => ProgressEvent::Quiet,
         }
     }
 }
