@@ -62,6 +62,70 @@ recording the target from `engine_newPayload` is actively harmful and was
 reverted: during catch-up the payload's number *is* the local head, so it
 converts an honest `Unknown` into a misleading `Known`.
 
+### Chain-progress logging does not replace `eth_syncing`, and does not try to
+
+**Where:** `crates/blockchain/health.rs`, spawned from `init_l1` in
+`cmd/ethrex/initializers.rs`; refusals reported from
+`crates/networking/rpc/engine/fork_choice.rs`.
+
+A node that has stopped advancing now says so in the log: `chain_stalled` at
+`ERROR`, repeated once a minute, carrying the head it stopped at, how long it
+has been still, how many forkchoice updates were declined, and which refusal
+declined them. A frozen head with nothing declined is `chain_idle` at `INFO`,
+which states the same facts and renders no verdict — a devnet between slots and
+a node with no peers both land there and neither is halted.
+
+This deliberately does **not** answer "is this node healthy". It answers "is the
+head moving, and if not, is the node declining to move it". The distinction
+matters because the `eth_syncing` issue above is what happens when a status
+signal renders a verdict it cannot back: two fixes passed their unit tests and
+were refuted by the devnet, because the tests supplied a `highestBlock` that
+production almost never has.
+
+Two consequences worth knowing before reading the lines:
+
+- **`chain_idle` is not a health check.** It cannot distinguish a chain with
+  nothing to do from a chain whose *producers* have stopped. It reports the
+  facts it has and leaves the conclusion to the reader.
+- **A stall on a node that never completed a sync is `WARN`, not `ERROR`**, and
+  an initial sync's own `SYNCING` answer is not counted as a refusal at all
+  (`countable_refusal`). Otherwise a mainnet sync would print a stall line once
+  a minute for days, which is how real warnings get filtered out.
+
+**Removal:** nothing to remove. Recorded here so the next person adding a status
+signal on this branch reads the `eth_syncing` entry first.
+
+### Snap sync cannot be exercised on a local network, and silently full-syncs instead
+
+**Where:** `MIN_FULL_BLOCKS` in `crates/networking/p2p/snap/constants.rs`, gating
+`download_headers_to_sync_head` in `crates/networking/p2p/sync/snap_sync.rs` and
+`sync_cycle` in `crates/networking/p2p/sync.rs`.
+
+**What:** A node whose sync head is below `MIN_FULL_BLOCKS` (10 000) falls back to
+full sync, whatever `--syncmode` says. The threshold is right for its stated
+purpose — after a state download, execute at least that many recent blocks so
+recent execution history exists — and 10 000 blocks is about 33 hours of
+mainnet. But a kurtosis devnet is a few hundred blocks, three orders of
+magnitude short, so on any local network that branch is taken unconditionally.
+
+**Why it matters more than it looks:** the fallback is **silent, and invisible
+from the outside**. A node that full-synced ends up at the same head with the
+same state root as one that snap-synced. Distinguishing them requires asking for
+something only a replaying node has — `eth_getBalance` at a pre-pivot block
+answers on a full-syncing node and errors on a state-downloading one. Any local
+validation of snap sync that does not make that check is validating full sync
+wearing a snap-sync flag.
+
+**Scope:** this gate sits upstream of both legacy MPT snap and `pbtsnap/1`, so it
+applies to snap sync generally and is not specific to the binary tree. It is not
+a binary-tree regression: legacy snap sync has never been live-testable on a
+devnet either.
+
+**Workaround:** `MIN_FULL_BLOCKS` is overridable by environment variable under
+the `sync-test` feature, mirroring `EXECUTE_BATCH_SIZE`. A release build has no
+override and behaves exactly as before. `fixtures/networks/binary-tree-devnet.yaml`
+documents the late-join recipe that uses it.
+
 ### Deep reorgs into a full-synced range are refused
 
 **Where:** `crates/storage/journal.rs` (see its "Batch mode (full sync)" section),
