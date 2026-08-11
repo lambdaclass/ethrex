@@ -165,9 +165,20 @@ kurtosis run --enclave hegota-testnet ./ethereum-package --args-file ~/hegota-te
 kurtosis enclave inspect hegota-testnet
 ```
 
-Expect six client services (`el-1..3`, `cl-1..3`) plus `dora`, all `RUNNING`. The chain
-reaches Amsterdam at genesis+192s and Hegotá at genesis+384s, so give it ~7 minutes before
-judging it.
+Expect six client services (`el-1..3`, `cl-1..3`) plus `dora`, all `RUNNING`, alongside
+three validator clients and the keystore generator. The chain reaches Amsterdam at
+genesis+192s and Hegotá at genesis+384s, so give it ~7 minutes before judging it.
+
+A run issued while the engine is still coming up — the first one after a CLI upgrade, in
+particular — can fail with:
+
+```
+No 'kurtosis.yml' file was found in the package root so fell back to Docker Compose package
+```
+
+This says nothing about the package, which is fine. Confirm `kurtosis engine status`
+reports the expected version, `kurtosis enclave rm -f hegota-testnet` the empty enclave it
+left behind, and run it again with an absolute path to the package directory.
 
 ## 6. Verify
 
