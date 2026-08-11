@@ -32,12 +32,3 @@ as_conversions = "deny"
 unnecessary_cast = "warn"
 panic = "deny"
 redundant_clone = "warn"
-
-[features]
-default = ["secp256k1"]
-# Kept as a no-op toggle: the guest-program crates still switch on it, but the
-# signature work it used to gate now goes through k256, which is unconditional.
-secp256k1 = []
-risc0 = []
-sp1 = []
-zisk = []
