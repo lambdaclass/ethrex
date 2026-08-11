@@ -19,7 +19,7 @@ use crate::{
             block_access_lists::{BlockAccessLists, GetBlockAccessLists},
             blocks::{BlockBodies, BlockHeaders},
             cells::{
-                CellsResponseError, GetCells, MAX_CELL_REQUEST_HASHES, MAX_CELLS_SERVED,
+                CellsResponseError, GET_CELLS_SOFT_LIMIT_HASHES, GetCells, MAX_CELLS_SERVED,
                 cells_per_hash,
             },
             eth72::{
@@ -1757,8 +1757,13 @@ async fn handle_incoming_message(
         Message::NewPooledTransactionHashes72(announcement) if peer_supports_eth => {
             if state.blockchain.is_synced() {
                 let peer_id = state.node.node_id();
-                // Record peer cell availability from the announced mask.
-                if let Some(mask) = announcement.cell_mask
+                // Record peer cell availability from the announced mask, but only when
+                // the announcement carries a blob tx: otherwise a peer sending an
+                // all-zero mask on a non-blob announcement would overwrite its real
+                // availability with an empty set and stop us sampling from it for good.
+                // See `NewPooledTransactionHashes72::announces_blob_tx`.
+                if announcement.announces_blob_tx()
+                    && let Some(mask) = announcement.cell_mask
                     && let Err(e) = state
                         .blockchain
                         .mempool
@@ -2560,13 +2565,14 @@ async fn flush_pending_cell_requests(state: &mut Established) -> Result<(), Peer
         }
     }
 
-    // Size the batch so a peer applying the `MAX_CELLS_SERVED` budget can answer it
-    // in full: it truncates trailing hashes, and a truncated tail is not re-requested
+    // Stay under the devp2p `caps/eth.md` soft limit of 64 hashes per GetCells, and
+    // tighten it further so a peer applying the `MAX_CELLS_SERVED` budget can answer
+    // in full: it omits trailing transactions, and an omitted tail is not re-requested
     // until the next announcement or custody change. The widest mask in the batch
     // bounds every chunk's mask, so this is conservative.
     let widest_mask = all_masks.iter().fold(0u128, |acc, &m| acc | m);
     let hashes_per_request =
-        (MAX_CELLS_SERVED / cells_per_hash(widest_mask)).clamp(1, MAX_CELL_REQUEST_HASHES);
+        (MAX_CELLS_SERVED / cells_per_hash(widest_mask)).clamp(1, GET_CELLS_SOFT_LIMIT_HASHES);
     for (i, chunk) in all_hashes.chunks(hashes_per_request).enumerate() {
         let offset = i * hashes_per_request;
         let chunk_len = chunk.len();

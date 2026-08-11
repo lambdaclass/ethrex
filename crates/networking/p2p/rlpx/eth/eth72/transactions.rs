@@ -158,6 +158,18 @@ impl NewPooledTransactionHashes72 {
         )
     }
 
+    /// Whether this announcement carries a blob (type 3) transaction.
+    ///
+    /// devp2p `caps/eth.md` ("NewPooledTransactionHashes (0x08)") types `cells` as
+    /// `B_16` and says it "is only relevant for those entries that refer to blob
+    /// transactions, and can be ignored when no blob transactions are announced";
+    /// EIP-8070 instead says the field is nil in that case. A peer following devp2p
+    /// therefore sends 16 zero bytes on every non-blob announcement, so the mask
+    /// carries an availability claim only when this returns true.
+    pub fn announces_blob_tx(&self) -> bool {
+        self.transaction_types.contains(&3)
+    }
+
     /// Build from pre-computed raw fields.
     pub fn from_raw(
         transaction_types: Bytes,
