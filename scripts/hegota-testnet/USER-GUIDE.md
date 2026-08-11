@@ -58,6 +58,14 @@ All three are installed by the client at the Hegotá boundary and need no genesi
 Add a custom network with the chain ID and RPC URL above. The currency symbol is ETH
 and it is worthless.
 
+The three RPC hostnames are three different nodes, so comparing a block *hash* between
+`rpc1` and `rpc2` is a real agreement check and not the same node answering twice.
+
+They serve `eth`, `net`, `web3`, `txpool` and `ethrex` — the last of which is
+`ethrex_simulateFrameTransaction`, the one way to dry-run a type-`0x06` envelope without
+submitting it. `debug` and `admin` are not served here; run your own node from the bundle
+if you need them, where they are yours to enable.
+
 **Budget more gas than you expect.** Under EIP-8037 a plain transfer that *creates* an
 account costs far more than the historical 21,000 — closer to 210,000 — because account
 creation is charged as state growth. Estimate gas rather than hardcoding it; tooling
