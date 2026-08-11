@@ -56,6 +56,29 @@ pub enum StoreError {
         parent_hash: H256,
         parent_root: H256,
     },
+    /// The datadir was built at a different binary-trie group depth.
+    ///
+    /// `BINARY_TRIE_NODES` is keyed by *group root*, so the depth decides which
+    /// nodes share a row and where every row boundary falls. Reading a table
+    /// written at one depth with a trie configured for another does not fail
+    /// loudly: `group_root` computes a key that exists, the row decodes, and the
+    /// member at the relative path is simply the wrong node or absent. Refusing
+    /// at open is the only cheap place to catch it.
+    #[error(
+        "this datadir stores binary-trie nodes at group depth {stored}, but this node is configured for depth {configured}: the group depth decides which nodes share a database row, so the two are not interchangeable — rebuild the datadir, or run at depth {stored}"
+    )]
+    BinaryGroupDepthMismatch { stored: usize, configured: usize },
+    /// The datadir holds binary-trie nodes but records no group depth, which
+    /// means they were written one-node-per-row, before grouping existed.
+    ///
+    /// Distinguished from a fresh datadir by the table being non-empty: an
+    /// absent marker over an *empty* table is adopted rather than refused, so
+    /// that ordinary MPT-only datadirs — which have never held a binary node
+    /// and vastly outnumber the pre-grouping ones — keep opening.
+    #[error(
+        "this datadir holds binary-trie nodes written before group depth was recorded (one node per row): they cannot be read at depth {configured} and there is no in-place conversion, because a bare node's first byte is indistinguishable from a group row's version byte — rebuild the datadir"
+    )]
+    BinaryGroupDepthMissing { configured: usize },
     #[error("missing store: is an execution DB being used instead?")]
     MissingStore,
     /// A read was requested against a state root this node does not hold.

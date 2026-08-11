@@ -30,8 +30,8 @@ use crate::{
 };
 
 use ethrex_binary_trie::trie::{
-    BinaryTrie, BinaryTrieDB, BitPath, EMPTY_TRIE_ROOT as BINARY_EMPTY_TRIE_ROOT, LeafChangelog,
-    hash_stored_root,
+    BinaryTrie, BinaryTrieDB, BitPath, DEFAULT_GROUP_DEPTH,
+    EMPTY_TRIE_ROOT as BINARY_EMPTY_TRIE_ROOT, GroupDepth, LeafChangelog, hash_stored_root,
 };
 use ethrex_common::{
     Address, H256, U256,
@@ -203,6 +203,15 @@ const BAD_BLOCKS_KEY: &[u8] = b"bad_blocks";
 /// - **the 1-byte sentinel `[0xff]`** — complete. Unambiguous because no tree
 ///   key is one byte long; they are 34 or 66.
 pub(crate) const BINARY_LAST_WRITTEN_KEY: &[u8] = b"binary_last_written";
+
+/// `MISC_VALUES` key recording the group depth `BINARY_TRIE_NODES` was written
+/// at, as a single byte.
+///
+/// The depth is not stored in the rows themselves on purpose. A row's key is
+/// its *group root*, so the depth is already baked into every key in the table;
+/// repeating it per row would let two rows disagree, and there is no sensible
+/// answer when they do. One datadir-wide marker cannot disagree with itself.
+pub(crate) const BINARY_GROUP_DEPTH_KEY: &[u8] = b"binary_group_depth";
 
 /// Whether `commit_to_disk` is the writer responsible for `key` — i.e. whether
 /// it should both write the mirror row and journal its pre-image.
@@ -2215,6 +2224,12 @@ impl Store {
         // and in-memory — so there is no second place to remember. On a journal
         // with no stale bottom entry this is one `first_key` plus one `get`.
         crate::journal::drain_stale_journal_entries(backend.as_ref())?;
+
+        // Refuse a datadir whose binary nodes were grouped differently, before
+        // anything can read one. Same funnel as the drain above, and for the
+        // same reason: every construction path passes through here, so there is
+        // no second place to remember.
+        check_binary_group_depth(backend.as_ref(), DEFAULT_GROUP_DEPTH)?;
 
         let (fkv_tx, fkv_rx) = std::sync::mpsc::sync_channel(0);
         let persist_cap = persist_channel_capacity.max(1); // clamp: 0 would be a rendezvous channel
@@ -5766,6 +5781,68 @@ fn decode_flushed_upto(bytes: &[u8]) -> Result<BlockNumber, StoreError> {
         .try_into()
         .map_err(|_| StoreError::Custom("Invalid flushed_upto bytes".to_string()))?;
     Ok(BlockNumber::from_le_bytes(arr))
+}
+
+/// Reconcile the datadir's recorded binary-trie group depth with the one this
+/// node is configured for, adopting the depth on a datadir that has yet to hold
+/// a binary node.
+///
+/// Four cases, and the third is why this is not simply "absent is an error" as
+/// first planned:
+///
+/// - **Marker present, agrees** — nothing to do.
+/// - **Marker present, disagrees** — [`StoreError::BinaryGroupDepthMismatch`].
+/// - **Marker absent, `BINARY_TRIE_NODES` empty** — a fresh datadir, or any of
+///   the MPT-only datadirs that predate the binary trie entirely. Record the
+///   configured depth and continue. Refusing here would refuse every existing
+///   node's datadir, a far larger blast radius than the case being defended
+///   against.
+/// - **Marker absent, `BINARY_TRIE_NODES` non-empty** — nodes written one per
+///   row, before grouping. [`StoreError::BinaryGroupDepthMissing`].
+///
+/// The emptiness probe is one `prefix_iterator` taking a single item, not a
+/// count: the table is on the order of 10^9 rows at mainnet scale and this runs
+/// on every open.
+fn check_binary_group_depth(
+    backend: &dyn StorageBackend,
+    configured: GroupDepth,
+) -> Result<(), StoreError> {
+    let stored = backend
+        .begin_read()?
+        .get(MISC_VALUES, BINARY_GROUP_DEPTH_KEY)?;
+    match stored.as_deref() {
+        Some([depth]) if usize::from(*depth) == configured.get() => Ok(()),
+        Some([depth]) => Err(StoreError::BinaryGroupDepthMismatch {
+            stored: usize::from(*depth),
+            configured: configured.get(),
+        }),
+        // A marker that is not one byte was not written by this code. Treat it
+        // as a mismatch rather than guessing: reporting a depth of 0 is
+        // obviously wrong to a reader, where silently adopting would not be.
+        Some(_) => Err(StoreError::BinaryGroupDepthMismatch {
+            stored: 0,
+            configured: configured.get(),
+        }),
+        None => {
+            let holds_nodes = backend
+                .begin_read()?
+                .prefix_iterator(BINARY_TRIE_NODES, &[])?
+                .next()
+                .is_some();
+            if holds_nodes {
+                return Err(StoreError::BinaryGroupDepthMissing {
+                    configured: configured.get(),
+                });
+            }
+            let mut tx = backend.begin_write()?;
+            tx.put(
+                MISC_VALUES,
+                BINARY_GROUP_DEPTH_KEY,
+                &[configured.get() as u8],
+            )?;
+            tx.commit()
+        }
+    }
 }
 
 /// RCU-swap the block-data buffer. The persist worker is the sole caller in
@@ -12020,5 +12097,210 @@ mod stale_state_root_read_tests {
             store.has_state_root(EMPTY_TRIE_HASH).unwrap(),
             "the empty trie is always available"
         );
+    }
+}
+
+/// Task 7 of the node-grouping plan: the datadir's group-depth marker.
+///
+/// The property under test is that a table written at one group depth is never
+/// read at another. That failure is silent by construction — `group_root`
+/// computes a key that exists, the row decodes, and the member at the relative
+/// path is merely wrong — so every case here asserts a refusal, not a value.
+#[cfg(test)]
+mod binary_group_depth_marker_tests {
+    use super::*;
+    use crate::backend::in_memory::InMemoryBackend;
+    use ethrex_binary_trie::trie::MAX_GROUP_DEPTH;
+
+    fn backend() -> Arc<dyn StorageBackend> {
+        Arc::new(InMemoryBackend::open().unwrap())
+    }
+
+    fn open(backend: &Arc<dyn StorageBackend>) -> Result<(Store, tempfile::TempDir), StoreError> {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(
+            backend.clone(),
+            dir.path().to_path_buf(),
+            1,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )?;
+        Ok((store, dir))
+    }
+
+    fn marker(backend: &Arc<dyn StorageBackend>) -> Option<Vec<u8>> {
+        backend
+            .begin_read()
+            .unwrap()
+            .get(MISC_VALUES, BINARY_GROUP_DEPTH_KEY)
+            .unwrap()
+    }
+
+    fn write_marker(backend: &Arc<dyn StorageBackend>, bytes: &[u8]) {
+        let mut tx = backend.begin_write().unwrap();
+        tx.put(MISC_VALUES, BINARY_GROUP_DEPTH_KEY, bytes).unwrap();
+        tx.commit().unwrap();
+    }
+
+    /// A row that is *shaped* like one, so the emptiness probe is answering a
+    /// question about the table rather than about decodability.
+    fn write_a_node_row(backend: &Arc<dyn StorageBackend>) {
+        let mut tx = backend.begin_write().unwrap();
+        tx.put(
+            BINARY_TRIE_NODES,
+            &BitPath::new().to_db_key(),
+            &[0x01, 0x00],
+        )
+        .unwrap();
+        tx.commit().unwrap();
+    }
+
+    #[test]
+    fn a_fresh_datadir_records_the_configured_depth() {
+        let backend = backend();
+        assert_eq!(marker(&backend), None, "nothing recorded before the open");
+
+        let (_store, _dir) = open(&backend).expect("a fresh datadir opens");
+
+        assert_eq!(
+            marker(&backend),
+            Some(vec![DEFAULT_GROUP_DEPTH.get() as u8]),
+            "the open records the depth it built the table at"
+        );
+    }
+
+    /// The case that keeps every existing node's datadir working. An MPT-only
+    /// datadir has no marker and has never held a binary node; refusing it
+    /// would be a far worse regression than the one being defended against.
+    #[test]
+    fn a_datadir_that_has_never_held_a_binary_node_adopts_the_depth() {
+        let backend = backend();
+        // Populated elsewhere, so "empty" is specifically about the node table.
+        let mut tx = backend.begin_write().unwrap();
+        tx.put(MISC_VALUES, b"last_written", &[0xff]).unwrap();
+        tx.commit().unwrap();
+
+        let (_store, _dir) = open(&backend).expect("an MPT-only datadir opens");
+
+        assert_eq!(
+            marker(&backend),
+            Some(vec![DEFAULT_GROUP_DEPTH.get() as u8])
+        );
+    }
+
+    #[test]
+    fn a_datadir_built_at_another_depth_is_refused() {
+        let backend = backend();
+        let other = DEFAULT_GROUP_DEPTH.get() as u8 + 1;
+        write_marker(&backend, &[other]);
+        write_a_node_row(&backend);
+
+        let err = open(&backend).err().expect("the open is refused");
+
+        assert!(
+            matches!(
+                err,
+                StoreError::BinaryGroupDepthMismatch { stored, configured }
+                    if stored == usize::from(other) && configured == DEFAULT_GROUP_DEPTH.get()
+            ),
+            "expected a depth mismatch naming both depths, got {err:?}"
+        );
+    }
+
+    /// The refusal must not be destructive: a node started at the wrong depth
+    /// has to be restartable at the right one, and that is only true if the
+    /// failed open left the table and the marker alone.
+    #[test]
+    fn a_refused_open_leaves_the_table_and_the_marker_untouched() {
+        let backend = backend();
+        let other = DEFAULT_GROUP_DEPTH.get() as u8 + 1;
+        write_marker(&backend, &[other]);
+        write_a_node_row(&backend);
+
+        open(&backend).err().expect("the open is refused");
+
+        assert_eq!(
+            marker(&backend),
+            Some(vec![other]),
+            "the refusal did not overwrite the recorded depth"
+        );
+        assert_eq!(
+            backend
+                .begin_read()
+                .unwrap()
+                .get(BINARY_TRIE_NODES, &BitPath::new().to_db_key())
+                .unwrap(),
+            Some(vec![0x01, 0x00]),
+            "the refusal did not touch the node table"
+        );
+    }
+
+    /// The pre-grouping datadir: nodes written one per row, before the marker
+    /// existed. This is the case that must not silently succeed.
+    #[test]
+    fn a_datadir_holding_ungrouped_nodes_is_refused() {
+        let backend = backend();
+        write_a_node_row(&backend);
+        assert_eq!(marker(&backend), None, "no marker, as before grouping");
+
+        let err = open(&backend).err().expect("the open is refused");
+
+        assert!(
+            matches!(
+                err,
+                StoreError::BinaryGroupDepthMissing { configured }
+                    if configured == DEFAULT_GROUP_DEPTH.get()
+            ),
+            "expected the ungrouped-datadir refusal, got {err:?}"
+        );
+        assert_eq!(
+            marker(&backend),
+            None,
+            "a refused open records nothing, so the next one refuses too"
+        );
+    }
+
+    /// A marker this code did not write is a mismatch, not an adoption. The
+    /// alternative — treating an unreadable marker as absent — would fall
+    /// through to the emptiness probe and adopt on an empty table, which is
+    /// exactly the silent acceptance the marker exists to prevent.
+    #[test]
+    fn a_marker_that_is_not_one_byte_is_refused() {
+        for bytes in [vec![], vec![6, 0], vec![0]] {
+            let backend = backend();
+            write_marker(&backend, &bytes);
+
+            let err = open(&backend)
+                .err()
+                .unwrap_or_else(|| panic!("expected a refusal for marker {bytes:?}"));
+
+            assert!(
+                matches!(err, StoreError::BinaryGroupDepthMismatch { .. }),
+                "expected a mismatch for marker {bytes:?}, got {err:?}"
+            );
+        }
+    }
+
+    /// Reopening at the depth the datadir was built at is the ordinary case,
+    /// and it must stay silent — otherwise every restart is a rebuild.
+    #[test]
+    fn reopening_at_the_recorded_depth_succeeds() {
+        let backend = backend();
+        let (store, dir) = open(&backend).expect("first open");
+        drop(store);
+        drop(dir);
+        write_a_node_row(&backend);
+
+        let (_store, _dir) = open(&backend).expect("the same depth reopens over real rows");
+    }
+
+    /// An out-of-range depth cannot reach the store at all: `GroupDepth` is a
+    /// validated newtype, so there is no value to pass. Recorded here because
+    /// the plan asks for a startup error rather than go-ethereum's panic on
+    /// first write, and the answer is that the state is unrepresentable.
+    #[test]
+    fn an_out_of_range_depth_is_unrepresentable_rather_than_a_startup_error() {
+        assert_eq!(GroupDepth::new(0), None);
+        assert_eq!(GroupDepth::new(MAX_GROUP_DEPTH + 1), None);
+        assert!(GroupDepth::new(DEFAULT_GROUP_DEPTH.get()).is_some());
     }
 }
