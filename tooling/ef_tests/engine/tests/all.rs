@@ -67,9 +67,10 @@ const SKIP_PATTERNS: &[(&str, &str)] = &[(
      Glamsterdam): its pre-state omits the builder deposit/exit predeploys, so every \
      block fails EIP-8282's empty-code rule before the inclusion-list check runs. \
      Supplying the predeploys is not an option either; they move the genesis state \
-     root, and the fixtures commit to a genesis hash computed without them. Re-enable \
-     when execution-specs publishes a FOCIL fixture release filled against an \
-     Amsterdam that carries EIP-8282.",
+     root, and the fixtures commit to a genesis hash computed without them. Nothing \
+     in this tree can fix it: it takes a FOCIL fixture release filled against an \
+     Amsterdam that carries EIP-8282. If one ever appears, bump \
+     .fixtures_url_focil and delete this entry.",
 )];
 
 static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();

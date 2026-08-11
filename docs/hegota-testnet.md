@@ -97,10 +97,12 @@ passed / 0 failed**, `cargo test -p ethrex-rpc --lib` is 122 passed, and
   own `genesisBlockHeader.hash` no longer described the genesis it was filled from and
   the initial forkchoice answered `SYNCING` on an unknown head. The fixtures commit to a
   genesis hash computed without EIP-8282, so no client carrying EIP-8282 can run them.
-  Only a FOCIL fixture release filled against a post-EIP-8282 Amsterdam fixes this;
-  `.fixtures_url_focil` should be bumped to it and the skip removed. The skip is
-  declared in `tooling/ef_tests/engine/tests/all.rs`, counts its fixtures rather than
-  hiding them, and prints the reason on every run.
+  Nothing in this tree can fix that; it takes a FOCIL fixture release filled against a
+  post-EIP-8282 Amsterdam, and `tests-focil@v0.1.0` is the newest upstream has. **This
+  is closed, not pending.** If such a release ever appears, bump `.fixtures_url_focil`
+  and delete the skip. The skip is declared in
+  `tooling/ef_tests/engine/tests/all.rs`, counts its fixtures rather than hiding them,
+  and prints the reason on every run.
 
   Deliberately **not** done: a chain-config switch to hold EIP-8282 off for these
   fixtures. That is the per-EIP knob this plan already rejected for EIP-7906, and it
@@ -254,10 +256,9 @@ passed / 0 failed**, `cargo test -p ethrex-rpc --lib` is 122 passed, and
    `docs/hegota-testnet-joining.md` §"Consensus inputs not present in the genesis file"
    is the draft's content already written out; it needs restating in EIP form, not
    rediscovering.
-4. The 24 FOCIL engine fixtures are **skipped, diagnosed and closed**, not outstanding;
-   see "Not complete" above. The only action left on them is upstream: ask
-   `ethereum/execution-specs` for a FOCIL fixture release filled against a post-EIP-8282
-   Amsterdam, then bump `.fixtures_url_focil` and delete the skip.
+4. The 24 FOCIL engine fixtures are **skipped, diagnosed and closed**. No action is
+   outstanding on them, upstream or here; see "Not complete" above for why the bundle
+   is unrunnable and why that cannot be fixed from this tree.
 5. `docs/hegota-testnet-joining.md` is the artifact a joining client reads. Anything
    this branch changes that a second client must agree on belongs there in the same
    commit, or the chain and its specification drift apart silently.
