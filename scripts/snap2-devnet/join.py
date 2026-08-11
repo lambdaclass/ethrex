@@ -98,15 +98,25 @@ def engine_token(secret_hex: str) -> str:
 
 
 def enclave_services(enclave: str) -> dict[str, str]:
-    """Service name -> container name, for the running enclave."""
-    raw = run("docker", "ps", "--format", "{{.Names}}")
+    """Service name -> container name, for this enclave only.
+
+    Filtered by enclave label rather than by name shape. Any other kurtosis
+    enclave on the host has identically shaped service names, so matching on
+    those alone would mix two networks together and could sync the joiner
+    against the wrong chain.
+    """
+    raw = run(
+        "docker", "ps",
+        "--filter", f"label=com.kurtosistech.enclave-name={enclave}",
+        "--format", "{{.Names}}",
+    )
     services = {}
     for container in raw.splitlines():
         # Kurtosis names containers "<service>--<uuid>".
         if "--" in container:
             services[container.rsplit("--", 1)[0]] = container
     if not services:
-        raise SystemExit(f"no running containers found; is enclave {enclave!r} up?")
+        raise SystemExit(f"no running containers for enclave {enclave!r}; is it up?")
     return services
 
 
