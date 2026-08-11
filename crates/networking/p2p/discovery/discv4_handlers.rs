@@ -531,7 +531,7 @@ impl DiscoveryServer {
 
         let local_fork_id = ForkId::new(
             chain_config,
-            genesis_header.clone(),
+            genesis_header,
             latest_block_header.timestamp,
             latest_block_number,
         );
