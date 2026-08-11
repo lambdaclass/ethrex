@@ -63,9 +63,14 @@ use crate::{
     },
 };
 
-/// How long the download may make no progress at all before it is treated as
-/// wedged rather than slow. Generous, because a thin or busy peer set can go
-/// quiet for a while without anything being wrong.
+/// How long the download may go without its frontier moving before it is
+/// treated as wedged rather than slow. Generous, because a thin or busy peer
+/// set can go quiet for a while without anything being wrong.
+///
+/// This is measured against the frontier, not against request activity. A
+/// download that keeps handing work to a peer which never answers usefully is
+/// busy by every local measure and still getting nowhere, so "did we dispatch
+/// anything" cannot tell the two apart.
 const STALL_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// A contract whose storage the download still owes, and the root to verify it
@@ -236,9 +241,10 @@ pub async fn download_state(
     let storages_dir = get_account_storages_snapshots_dir(datadir);
     let mut writer = ChunkWriter::new(accounts_dir.clone(), storages_dir.clone()).await?;
 
-    // Tracks how long the download has gone without scheduling or collecting
-    // anything, to tell a slow sync apart from a wedged one.
-    let mut idle_since: Option<SystemTime> = None;
+    // The frontier's last observed position and when it last moved, to tell a
+    // slow download apart from a wedged one.
+    let mut last_remaining = usize::MAX;
+    let mut progress_at = SystemTime::now();
     let (tx, mut rx) = tokio::sync::mpsc::channel::<Response>(1024);
     let mut tasks: BTreeMap<RangeId, RangeTask> = cursor
         .pending_account_ranges()
@@ -352,27 +358,31 @@ pub async fn download_state(
             continue;
         }
 
+        if tasks.len() < last_remaining {
+            last_remaining = tasks.len();
+            progress_at = SystemTime::now();
+        } else if progress_at
+            .elapsed()
+            .is_ok_and(|idle| idle >= STALL_TIMEOUT)
+        {
+            // The frontier has not moved for long enough that no peer is
+            // serving usefully. Retrying forever is indistinguishable from a
+            // slow sync and never resolves, so surface it: the caller discards
+            // the partial state and the next cycle picks a fresh pivot and
+            // peer set.
+            return Err(SyncError::Snap2CatchUpStalled(
+                pivot.number,
+                format!(
+                    "frontier stalled for {}s with {} ranges outstanding",
+                    STALL_TIMEOUT.as_secs(),
+                    tasks.len()
+                ),
+            ));
+        }
+
         let scheduled = schedule(peers, &mut tasks, &pivot, &tx).await?;
-        if scheduled || progressed {
-            idle_since = None;
-        } else {
+        if !scheduled && !progressed {
             // Everything is out with a peer, or no peer is free.
-            let since = *idle_since.get_or_insert_with(SystemTime::now);
-            if since.elapsed().is_ok_and(|idle| idle >= STALL_TIMEOUT) {
-                // Every peer that answers is unable to serve this pivot's
-                // state. Retrying forever looks identical to a slow sync from
-                // the outside and never resolves, so surface it: the caller
-                // discards the partial state and the next cycle picks a fresh
-                // pivot and peer set.
-                return Err(SyncError::Snap2CatchUpStalled(
-                    pivot.number,
-                    format!(
-                        "no range progress for {}s with {} ranges outstanding",
-                        STALL_TIMEOUT.as_secs(),
-                        tasks.len()
-                    ),
-                ));
-            }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }
