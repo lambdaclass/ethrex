@@ -34,7 +34,7 @@ SSZ-encoded StatelessInput (NewPayloadRequest + ExecutionWitness + ChainConfig)
   5. Execute block via LEVM
   6. Return StatelessValidationResult (SSZ)
         |
-  Returns SSZ-encoded (new_payload_request_root, successful_validation, chain_config) or reverts
+  Returns SSZ-encoded (new_payload_request_root, successful_validation, chain_id, schema_id) or reverts
 ```
 
 ## EXECUTE Precompile
@@ -65,10 +65,11 @@ The `NewPayloadRequest` contains:
 SSZ-encoded `StatelessValidationResult`:
 
 ```rust
-pub struct StatelessValidationResult {
+pub struct SszStatelessValidationResult {
     pub new_payload_request_root: [u8; 32],  // hash_tree_root of NewPayloadRequest
     pub successful_validation: bool,          // Whether execution was valid
-    pub chain_config: SszChainConfig,         // chain_id (echo back)
+    pub chain_id: u64,                        // echoed from the input
+    pub schema_id: u16,                       // fork/encoding the guest decoded
 }
 ```
 
@@ -241,33 +242,22 @@ The native-rollup EXECUTE precompile, the stateless-validation pipeline, and all
 
 **Runtime gate:** the EXECUTE precompile body executes only when `fork >= Fork::LStar && vm_type == VMType::L1`. On any other fork or VM type the precompile is a no-op CALL.
 
-The only remaining cargo feature is **`eip-8025`**, which controls the guest-program input/output format. The SSZ dep chain is:
+There is no longer an `eip-8025` cargo feature. It was removed along with the legacy guest path, so
+`libssz` and the SSZ types are unconditional dependencies of `ethrex-common`, and the guest has a
+single wire format rather than one per feature setting. A `grep eip-8025 -- '*.toml'` returns no
+feature declarations.
 
-```toml
-# crates/guest-program/Cargo.toml  (guest only — not the host)
-eip-8025 = [
-    "ethrex-common/eip-8025",
-    "ethrex-vm/eip-8025",
-    "dep:libssz",
-    "dep:libssz-merkle",
-    "dep:libssz-types",
-    "dep:libssz-derive",
-]
+The guest input/output format is now fixed:
 
-# crates/blockchain/Cargo.toml
-eip-8025 = ["ethrex-common/eip-8025", "ethrex-vm/eip-8025"]
+- **Input:** a 2-byte big-endian schema-id prefix (`STATELESS_INPUT_SCHEMA_ID`, currently `0x1501`)
+  followed by the SSZ-encoded `SszStatelessInput`. A wrong or missing prefix is rejected before the
+  body is parsed.
+- **Output:** 43 bytes, laid out as
+  `new_payload_request_root (32) || successful_validation (1) || chain_id (8) || schema_id (2)`,
+  with `schema_id` little-endian at offset 41.
 
-# crates/common/Cargo.toml
-eip-8025 = ["ethrex-trie/eip-8025"]   # guest-only trie SSZ support; the always-compiled stateless SSZ types do not need it
-```
-
-When `eip-8025` is compiled into the guest program:
-- Input format: `NewPayloadRequest` (SSZ) + `ExecutionWitness` (rkyv) — the EIP-8025 wire format
-- Output format: `ProgramOutput { new_payload_request_root: [u8; 32], valid: bool }` — 33 bytes
-
-Without `eip-8025`:
-- Input/output use the legacy rkyv `ProgramInput`/`ProgramOutput` format
-- The host (node) always has the SSZ types compiled in for the EXECUTE precompile
+The 43-byte layout is pinned against `NativeRollup.sol` by
+`test/tests/l2/native_rollup_sol_offsets.rs`.
 
 ## Summary Table (vs l2beat native-rollups spec; see divergences note above)
 

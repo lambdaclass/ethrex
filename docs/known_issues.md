@@ -49,3 +49,45 @@ the stateless run. Every test in the `tests-zkevm` bundle it read is
 at all while reporting success. `parse_and_execute` now fails any stateless
 fixture file that runs zero tests without a named skip, so a structural skip
 cannot silently empty the suite again.
+
+---
+
+### ZisK guest program hash changes with the `unsync_cell` gate
+
+**Where:** `crates/common/types/block.rs`, `transaction.rs`.
+
+The gate on the single-threaded `unsync_cell::OnceCell` moved from
+`all(feature = "eip-8025", target_arch = "riscv64")` to
+`all(feature = "zisk", target_arch = "riscv64")` when the `eip-8025` feature was removed.
+
+The guest ELFs were previously built `--features "<zkvm>-build-elf,ci"`, which never enabled
+`eip-8025`, so they compiled the atomic `once_cell` variant. `bin/zisk/Cargo.toml` does enable
+`ethrex-common/zisk`, so **the ZisK guest now compiles the `unsafe impl Sync` cell instead**.
+That changes the ELF bytes and therefore the program hash and verification key.
+
+This is intended (the guest is single-threaded, so the unsync cell is sound and cheaper), but it
+is a VK change rather than a no-op refactor, and the diffstat presents it as a file rename
+(`eip8025_cell.rs` → `unsync_cell.rs`). Anyone pinning a ZisK VK across this change must
+re-register it. The `stateless-validator` crate now forwards `ethrex-common/zisk` from its own
+`zisk` feature so the two ZisK guests do not disagree on the cell type.
+
+---
+
+### Release signing key is an unprotected repository secret
+
+**Where:** `.github/workflows/tag_release.yaml`.
+
+`MINISIGN_SECRET_KEY` is a plain repository secret. There is no `environment:` on
+`finalize-release` or `dry-run-release-assets`, and `gh api repos/lambdaclass/ethrex/rulesets`
+shows only branch-targeted rulesets, so the `github.ref_type == 'tag'` condition is a workflow
+check rather than an enforced boundary: anyone who can push a tag can reach the signing key.
+
+This is a repository-settings change, not a code change, so it is recorded here rather than
+fixed in the tree. Recommended:
+
+1. Move `MINISIGN_SECRET_KEY` / `MINISIGN_PASSWORD` into a GitHub **Environment** with required
+   reviewers, and add `environment:` to the two jobs that sign.
+2. Add a ruleset targeting `refs/tags/v*` restricting who may create release tags.
+
+Until then, the compromise of that key is silent and durable: signatures would still verify
+against the committed `.github/minisign.pub`.
