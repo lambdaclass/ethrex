@@ -67,10 +67,16 @@ supplies the inhibitor the generator omits.
 **Keep that block until the generator arms the deposit predeploy's inhibitor**, then
 delete it so the predeploys come from one place.
 
-**Hegotá predeploys** — `0x…8141` (`EXPIRY_VERIFIER`) and `0x…8250`
-(`NONCE_MANAGER`) are installed by ethrex at the fork and need no genesis entry.
-`0x…8272` (`RECENT_ROOT_ADDRESS`) is intentionally empty-code; its 64-byte write is
-handled natively.
+**Hegotá predeploys** — `0x…8141` (`EXPIRY_VERIFIER`), `0x…8250` (`NONCE_MANAGER`)
+and `0x…8272` (`RECENT_ROOT_ADDRESS`) are installed by ethrex at the fork and need no
+genesis entry.
+
+`0x…8272` must be empty-code **at genesis** and not merely absent from it. EIP-8272
+"Activation" requires the address to hold empty code and empty storage in the parent
+state of the first post-fork payload, and declares the payload invalid otherwise;
+ethrex then sets its code to `RECENT_ROOT_CODE` at the boundary. Post-fork the
+address therefore holds code, which is what check 10 asserts — an address still
+empty after the boundary means the activation transition did not run.
 
 ## ethrex-only chain-config fields
 
