@@ -56,11 +56,19 @@ remains the full advertised list because `admin_peers` reports it.
 `response_bytes` is a soft cap; `0` means "use the default" (2 MiB).
 
 `Snap2BlockAccessLists` carries `[id, [entries...]]` with one entry per
-requested hash, in order. An unavailable BAL is encoded as the RLP empty
-string `0x80` (NOT the empty list `0xc0` — that is eth/71's `OptionalBal`
-convention, a different protocol). The codec test
-`snap2_bal_none_uses_0x80_sentinel` locks the sentinel byte against
-regressions.
+requested hash, in order. devp2p `caps/snap.md` types the response as
+`[reqID: P, bals: [bal1: B, bal2: B, ...]]`, so every entry is an RLP **byte
+string**, matching how snap carries all of its other payloads (`node1: B`,
+`code1: B`, `accBody: B`):
+
+- present  → a byte string whose content is the RLP-encoded `BlockAccessList`
+- absent   → the RLP empty string `0x80`
+
+This is deliberately not eth/71's `BlockAccessLists` (0x13) shape, which
+splices the BAL in as a bare list; the two protocols differ here. Hashing is
+unaffected either way, since `keccak256` covers the inner bytes and not the
+string header. The codec tests `snap2_bal_entries_are_rlp_byte_strings` and
+`snap2_bal_none_uses_0x80_sentinel` lock both halves against regressions.
 
 ```rust
 pub struct Snap2GetBlockAccessLists {
@@ -83,8 +91,12 @@ lookup is needed: BAL storage is gated on the Amsterdam fork, so a stored BAL
 implies a post-Amsterdam block and is served directly, while a pre-Amsterdam,
 pruned, or unknown block has nothing stored and yields `None`.
 
-The byte budget is tracked via `bal.length()` (the zero-allocation
-`RLPEncode` trait method) and capped at `min(response_bytes, 2 MiB)`. When
+The byte budget is tracked via `snap2_entry_encoded_len` (the zero-allocation
+`RLPEncode` length plus its byte-string header) and capped at
+`min(response_bytes, 2 MiB)`. `response_bytes` is the requester's soft limit
+and 2 MiB is the recommendation that applies when it names none; the spec also
+lets a responder impose its own QoS limits, so a request can only lower the cap
+and never raise it. When
 the cap is exceeded the loop breaks, preserving order up to the cutoff and
 keeping at least one entry. The handler always returns a response — never
 drops the request — and serves orphaned (non-canonical) blocks the same as

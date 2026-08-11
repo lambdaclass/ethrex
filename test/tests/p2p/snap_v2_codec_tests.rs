@@ -1,12 +1,14 @@
 //! snap/2 codec round-trip tests (EIP-8189).
 //!
 //! Exercises `Snap2GetBlockAccessLists` / `Snap2BlockAccessLists` encode/decode
-//! plus the spec-mandated `0x80` None sentinel (§50, §58).
+//! plus the byte-string entry shape and `0x80` unavailable sentinel that devp2p
+//! `caps/snap.md` ("BlockAccessLists (0x09)") mandates.
 
 use ethrex_common::{H256, types::block_access_list::BlockAccessList};
 use ethrex_p2p::rlpx::message::RLPxMessage;
 use ethrex_p2p::rlpx::snap::{Snap2BlockAccessLists, Snap2GetBlockAccessLists};
 use ethrex_p2p::rlpx::utils::snappy_decompress;
+use ethrex_rlp::encode::RLPEncode;
 
 fn sample_bal() -> BlockAccessList {
     BlockAccessList::default()
@@ -122,4 +124,36 @@ fn snap2_bal_none_uses_0x80_sentinel() {
         !decompressed.contains(&0xc0),
         "decompressed payload must not contain the eth/71 0xc0 empty-list sentinel"
     );
+}
+
+#[test]
+fn snap2_bal_entries_are_rlp_byte_strings() {
+    // devp2p caps/snap.md types the response as `[reqID, bals: [bal1: B, ...]]`, so a
+    // present BAL is a byte string wrapping its own RLP, not the bare list eth/71's
+    // BlockAccessLists (0x13) splices in. Getting this wrong is a silent wire
+    // incompatibility: a peer decoding `bals[i]` as `B` hits a list header instead.
+    let bal = sample_bal();
+    let inner = bal.encode_to_vec();
+    let mut expected_entry = vec![];
+    <[u8] as RLPEncode>::encode(&inner, &mut expected_entry);
+    assert_ne!(
+        expected_entry, inner,
+        "the byte-string wrapper must add a header over the BAL's own encoding"
+    );
+
+    let msg = Snap2BlockAccessLists {
+        id: 7,
+        bals: vec![Some(bal)],
+    };
+    let mut buf = vec![];
+    msg.encode(&mut buf).expect("encode");
+    let decompressed = snappy_decompress(&buf).expect("decompress");
+    assert!(
+        decompressed
+            .windows(expected_entry.len())
+            .any(|w| w == expected_entry),
+        "entry must be the RLP byte string wrapping the BAL's own encoding"
+    );
+
+    assert_eq!(roundtrip_bal(msg.clone()).bals, msg.bals);
 }

@@ -27,4 +27,4 @@ pub use messages::{
 };
 
 // Re-export message codes for protocol handling
-pub use codec::codes;
+pub use codec::{codes, snap2_entry_encoded_len};
