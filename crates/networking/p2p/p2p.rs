@@ -71,6 +71,7 @@ pub mod network;
 pub mod peer_handler;
 pub mod peer_table;
 pub mod rlpx;
+pub mod pbtsnap;
 pub mod snap;
 pub mod sync;
 pub mod sync_manager;
