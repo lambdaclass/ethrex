@@ -570,13 +570,16 @@ async fn handle_response(
             }
             let _ = peers.peer_table.record_success(outcome.peer_id);
             diagnostics.write().await.snap2_ranges_served += 1;
-            let Some(served_through) = outcome
+            // A verified response holding no account inside this range means
+            // the range is exhausted: every account the peer had from here on
+            // belongs to a later range and was filtered out. Treat it as served
+            // to the end, or the range is rescheduled forever and the frontier
+            // never moves, while every response still verifies.
+            let served_through = outcome
                 .accounts
                 .last()
                 .map(|(account_hash, _)| *account_hash)
-            else {
-                return Ok(());
-            };
+                .unwrap_or(task.last);
 
             for (account_hash, account) in &outcome.accounts {
                 if account.code_hash != *EMPTY_KECCAK_HASH {
@@ -614,6 +617,12 @@ async fn handle_response(
             } else {
                 task.last
             });
+            debug_assert!(
+                task.served_through
+                    .is_some_and(|through| through >= task.next)
+                    || task.next > task.last,
+                "frontier must not move backwards"
+            );
         }
         Response::Storage {
             range,
