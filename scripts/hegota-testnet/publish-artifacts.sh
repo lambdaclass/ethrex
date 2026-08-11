@@ -21,13 +21,10 @@ GENESIS_ARTIFACT="el_cl_genesis_data"
 # inside the enclave, which no outside peer can reach.
 : "${PUBLIC_IP:?set PUBLIC_IP to the address external peers dial}"
 
-# The single Hegotá activation timestamp, in the Nethermind chainspec's
-# per-EIP form (see "patch the chainspec" below).
-BOGOTA_KEY="bogotaTime"
-
 for bin in kurtosis jq curl sha256sum; do
   command -v "$bin" >/dev/null || { echo "missing required binary: $bin" >&2; exit 1; }
 done
+
 
 kurtosis enclave inspect "$ENCLAVE" >/dev/null 2>&1 \
   || { echo "enclave '$ENCLAVE' is not running" >&2; exit 1; }
@@ -57,9 +54,43 @@ if [[ ! -f "$SRC/genesis.json" && -f "$SRC/network-configs/genesis.json" ]]; the
 fi
 [[ -f "$SRC/genesis.json" ]] || { echo "genesis.json not found in the artifact" >&2; exit 1; }
 
+# Publish an explicit allowlist, never the whole directory.
+#
+# `/network-configs` is the generator's working output, not a joiner bundle: it
+# also contains `mnemonics.yaml`, which is the BIP-39 phrase every genesis
+# validator key is derived from. OUT_DIR is served publicly, so copying the
+# directory wholesale hands out the validator set's signing keys. Anything a
+# joiner needs is named here; anything not named here does not leave the host.
+#
+# This list is the artifact table in docs/hegota-testnet-joining.md. Keep them
+# in step: a file added here without a row there is undocumented, and a row
+# there without an entry here is a broken download.
+PUBLISHED_FILES=(
+  genesis.json
+  chainspec.json
+  besu.json
+  config.yaml
+  genesis.ssz
+  deposit_contract.txt
+  deposit_contract_block.txt
+  deposit_contract_block_hash.txt
+  genesis_validators_root.txt
+)
+
 STAGE="$WORK_DIR/stage"
 mkdir -p "$STAGE"
-cp -a "$SRC"/. "$STAGE"/
+for f in "${PUBLISHED_FILES[@]}"; do
+  [[ -f "$SRC/$f" ]] || { echo "generator output is missing $f" >&2; exit 1; }
+  cp -a "$SRC/$f" "$STAGE/$f"
+done
+
+# Refuse to publish a secret even if the allowlist is edited carelessly later.
+for forbidden in mnemonics.yaml validator_names.yaml; do
+  if [[ -e "$STAGE/$forbidden" ]]; then
+    echo "refusing to publish $forbidden: it carries validator key material" >&2
+    exit 1
+  fi
+done
 
 # ---------------------------------------------------------------------------
 # 2. Bootnodes
@@ -72,14 +103,19 @@ cp -a "$SRC"/. "$STAGE"/
 
 # Service names are assigned by the package as el-<n>-<el>-<cl> / cl-<n>-<cl>-<el>,
 # so match on the prefix rather than hardcoding the client names.
-mapfile -t EL_SERVICES < <(
-  kurtosis enclave inspect "$ENCLAVE" -o json \
-    | jq -r '.services | keys[] | select(startswith("el-"))' | sort
-)
-mapfile -t CL_SERVICES < <(
-  kurtosis enclave inspect "$ENCLAVE" -o json \
-    | jq -r '.services | keys[] | select(startswith("cl-"))' | sort
-)
+#
+# Read from the human-readable table: `kurtosis enclave inspect` has no
+# machine-readable output mode in any release through 1.20.0, where the only
+# flags are `--full-uuids` and `--help`. The name is the one field on its row
+# that starts with the prefix, which survives the column widths shifting.
+list_services() {
+  kurtosis enclave inspect "$ENCLAVE" \
+    | awk -v p="^$1[0-9]+-" '{for (i = 1; i <= NF; i++) if ($i ~ p) print $i}' \
+    | sort -u
+}
+
+mapfile -t EL_SERVICES < <(list_services "el-")
+mapfile -t CL_SERVICES < <(list_services "cl-")
 
 [[ ${#EL_SERVICES[@]} -gt 0 ]] || { echo "no el-* services in $ENCLAVE" >&2; exit 1; }
 [[ ${#CL_SERVICES[@]} -gt 0 ]] || { echo "no cl-* services in $ENCLAVE" >&2; exit 1; }
@@ -123,43 +159,14 @@ for svc in "${CL_SERVICES[@]}"; do
 done
 
 # ---------------------------------------------------------------------------
-# 3. Patch the chainspec for the two EIPs the generator does not know about
+# 3. Manifest and publish
 #
-# The Nethermind chainspec format activates per EIP. At generator v6.1.6
-# (apps/el-gen/generate_genesis.sh) this fork emits only
-# eip7805TransitionTimestamp and eip8141TransitionTimestamp, so EIP-8250 and
-# EIP-8272 have no key at all. Both activate at the same timestamp as the rest.
-#
-# If the generator has caught up and already writes either key, this patch is
-# stale and could contradict it, so refuse rather than overwrite.
-# ---------------------------------------------------------------------------
-CHAINSPEC="$STAGE/chainspec.json"
-if [[ -f "$CHAINSPEC" ]]; then
-  for key in eip8250TransitionTimestamp eip8272TransitionTimestamp; do
-    if jq -e --arg k "$key" '.params | has($k)' "$CHAINSPEC" >/dev/null; then
-      echo "chainspec.json already carries $key: the generator has caught up and this patch is stale" >&2
-      echo "remove the chainspec patch from $0 and re-run" >&2
-      exit 1
-    fi
-  done
-
-  BOGOTA_TIME="$(jq -r --arg k "$BOGOTA_KEY" '.config[$k] // empty' "$STAGE/genesis.json")"
-  [[ -n "$BOGOTA_TIME" ]] || { echo "genesis.json has no $BOGOTA_KEY" >&2; exit 1; }
-
-  # Nethermind reads these as hex strings, matching the keys the generator
-  # already emits for the same fork.
-  HEX_TIME="$(printf '0x%x' "$BOGOTA_TIME")"
-  jq --arg t "$HEX_TIME" \
-     '.params.eip8250TransitionTimestamp = $t | .params.eip8272TransitionTimestamp = $t' \
-     "$CHAINSPEC" > "$CHAINSPEC.patched"
-  mv "$CHAINSPEC.patched" "$CHAINSPEC"
-  echo "==> chainspec: added eip8250/eip8272 transition timestamps at $HEX_TIME"
-else
-  echo "==> chainspec.json absent from the artifact; skipping the per-EIP patch" >&2
-fi
-
-# ---------------------------------------------------------------------------
-# 4. Manifest and publish
+# Everything the generator wrote is published as it was written. Only
+# genesis.json is a supported artifact: it is the geth-style execution genesis
+# ethrex reads, and with the fork timestamp and the five-EIP rule set in
+# docs/hegota-testnet-joining.md it is the complete definition of this chain.
+# The generator's other execution-genesis formats ship because it emits them,
+# not because this chain vouches for them.
 # ---------------------------------------------------------------------------
 ( cd "$STAGE" && find . -type f ! -name MANIFEST.txt -printf '%P\n' | sort \
     | xargs sha256sum > MANIFEST.txt )

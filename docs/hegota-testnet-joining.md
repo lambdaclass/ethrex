@@ -166,31 +166,42 @@ per file.
 
 | File | Purpose |
 | --- | --- |
-| `genesis.json` | geth-style execution genesis; ethrex and geth consume this |
-| `chainspec.json` | Nethermind-format execution genesis |
-| `besu.json` | Besu-format execution genesis |
+| `genesis.json` | geth-style execution genesis; ethrex reads this. **The only supported execution genesis.** |
+| `chainspec.json` | generator output, unmaintained (see below) |
+| `besu.json` | generator output, unmaintained (see below) |
 | `config.yaml` | consensus-layer config |
 | `genesis.ssz` | beacon genesis state |
+| `deposit_contract.txt` | deposit contract address |
+| `deposit_contract_block.txt` | deposit contract deployment block number |
 | `deposit_contract_block_hash.txt` | deposit contract deployment block hash |
 | `genesis_validators_root.txt` | beacon genesis validators root |
 | `bootnodes.txt` | three execution-layer `enode://` URLs |
 | `bootnodes-cl.txt` | three beacon-node ENRs |
 | `MANIFEST.txt` | sha256 of every file above |
 
-### A note on `chainspec.json`
+Fetch **all** of them into one directory and keep the filenames. A consensus client is
+pointed at that directory as a whole — Lighthouse takes it as `--testnet-dir` — and it
+reads more than the two obviously-consensus files: a directory missing
+`deposit_contract_block.txt` fails at startup with `Unable to open testnet dir`, before
+any networking happens. The execution client needs only `genesis.json` and
+`bootnodes.txt`.
 
-The genesis generator emits per-EIP transition keys for the Nethermind format, and at
-generator `v6.1.6` it writes only `eip7805TransitionTimestamp` and
-`eip8141TransitionTimestamp` for this fork. `publish-artifacts.sh` adds
-`eip8250TransitionTimestamp` and `eip8272TransitionTimestamp` at the same value.
+### `chainspec.json` and `besu.json` are not supported
 
-**The key names must be confirmed with Nethermind before relying on them.** They are
-this repository's guess at the naming convention, not a name any Nethermind release is
-known to read. The authoritative activation statement is the fork timestamp plus the
-five-EIP set above; the chainspec keys are a convenience for one client's
-configuration parser and nothing in this chain's definition depends on them. ethrex
-does not read them at all: it takes `bogotaTime` from `genesis.json` through the
-`hezeTime` / `bogotaTime` aliases.
+They ship because the genesis generator emits them, and they are published exactly as
+it wrote them. Nothing here verifies or maintains them, and they are not a statement of
+this chain's rule set.
+
+Their format activates per EIP rather than per fork, and the generator writes only the
+EIPs it knows about: at `6.1.6` that is `eip7805TransitionTimestamp` and
+`eip8141TransitionTimestamp` at the Hegotá timestamp, with no key for EIP-8250 or
+EIP-8272. A client configured from those files alone would run two of this chain's five
+EIPs and diverge on the first transaction using either of the missing ones.
+
+**The supported definition is `genesis.json` plus the five-EIP rule set and pins above.**
+A client whose configuration format is not geth-style must translate that definition
+itself. ethrex takes `bogotaTime` from `genesis.json` through the `hezeTime` /
+`bogotaTime` aliases and reads nothing else.
 
 ## Ports and firewall surface
 
@@ -204,6 +215,7 @@ for an execution node 3 is JSON-RPC. With `el.public_port_start: 32000`,
 | --- | --- | --- | --- |
 | EL discv4 + RLPx | 32000, 32007, 32014 | TCP **and** UDP | must be public for peering |
 | CL discv5 + libp2p | 31000, 31007, 31014 | TCP **and** UDP | must be public for peering |
+| CL QUIC | 31003, 31010, 31017 | UDP | open for QUIC peers; TCP is the fallback |
 | EL JSON-RPC (node 0 only) | 32003 | TCP | public via reverse proxy |
 | Dora explorer | 31500 | TCP | public via reverse proxy |
 | EL engine authrpc | 32001, 32008, 32015 | TCP | must stay closed |
@@ -217,10 +229,20 @@ node that accepts inbound RLPx from peers that already know it and is never
 discovered by anyone else, which reads as slow peering rather than as a firewall
 error.
 
+The CL's QUIC port is a separate UDP port from its discovery port, one stride above the
+node's block. Leaving it closed is not fatal — libp2p falls back to TCP — but it costs
+peers that offer QUIC only.
+
 The JSON-RPC and explorer ports are served through a reverse proxy rather than opened
 directly, following `scripts/eip8141-devnet/Caddyfile`. The engine ports carry the
 JWT-authenticated payload API; reaching them is equivalent to controlling the node's
 head, and they must never be publicly reachable.
+
+**The JWT is not a secret on a kurtosis deployment.** `ethereum-package` ships one
+`jwtsecret` as a committed static file and mounts that same value into every client, so
+it is identical on every deployment anyone has ever run. Authentication therefore stops
+nobody who can reach the port: the firewall is the whole of the control. Generate a
+fresh secret per host if the engine ports are ever exposed beyond loopback.
 
 Every published port sits below 32768, the default floor of
 `/proc/sys/net/ipv4/ip_local_port_range`. Kurtosis hands dynamic host ports to

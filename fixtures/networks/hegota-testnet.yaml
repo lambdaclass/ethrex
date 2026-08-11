@@ -17,40 +17,30 @@
 # they are not committed here.
 
 participants:
-  # `--nat.extip` is required, not optional. The ethrex kurtosis launcher is the
-  # only EL launcher that never emits an external-IP flag, so `port_publisher`'s
-  # `nat_exit_ip` below does not reach the EL: without this flag ethrex
-  # advertises a container-internal address in discovery and its ENR, and no
-  # external peer can dial in. `--p2p.addr` is the *bind* address and is not a
-  # substitute.
+  # The address these nodes advertise comes from `port_publisher.nat_exit_ip`
+  # below and nothing else. The ethrex launcher templates it into `--nat.extip`
+  # unconditionally (`src/el/ethrex/ethrex_launcher.star`), which is what puts
+  # it in discovery and in the ENR; a node that advertises a container-internal
+  # address instead cannot be dialed by any external peer. `--p2p.addr` is the
+  # *bind* address and is not a substitute.
+  #
+  # Do not restate the address in `el_extra_params`. The launcher already emits
+  # it, a second copy is a duplicate flag whose value nothing checks against the
+  # first, and one address written in one place is the only shape that cannot
+  # drift. The same applies to `--syncmode`, which the launcher also sets.
   - el_type: ethrex
     el_image: ethrex:hegota-testnet
-    el_extra_params:
-      - "--syncmode"
-      - "full"
-      - "--nat.extip"
-      - "REPLACE_WITH_HOST_PUBLIC_IP"
     cl_type: lighthouse
     cl_image: ethpandaops/lighthouse:focil
     validator_count: 32
     supernode: true
   - el_type: ethrex
     el_image: ethrex:hegota-testnet
-    el_extra_params:
-      - "--syncmode"
-      - "full"
-      - "--nat.extip"
-      - "REPLACE_WITH_HOST_PUBLIC_IP"
     cl_type: lighthouse
     cl_image: ethpandaops/lighthouse:focil
     validator_count: 32
   - el_type: ethrex
     el_image: ethrex:hegota-testnet
-    el_extra_params:
-      - "--syncmode"
-      - "full"
-      - "--nat.extip"
-      - "REPLACE_WITH_HOST_PUBLIC_IP"
     cl_type: lighthouse
     cl_image: ethpandaops/lighthouse:focil
     validator_count: 32
@@ -105,16 +95,33 @@ network_params:
   # Generate a fresh mnemonic per deployment and keep it on the host.
   preregistered_validator_keys_mnemonic: "REPLACE_WITH_A_FRESHLY_GENERATED_MNEMONIC"
 
-  # Accounts we control, funded at genesis. Each address is REPLACE:
+  # Accounts we control, funded at genesis. Every address is REPLACE:
   #   - the faucet's funding account
   #   - the deposit-gater admin, which mints access tokens; it must also appear in
   #     DEPOSIT_CONTRACT_ADMINS below, and it must NOT be derived from any public
   #     mnemonic
   #   - a deployer for contract deployment
+  #   - ten general-purpose funded accounts, for testing, tooling and handing to
+  #     people who need a working key without going through the faucet
+  #
+  # None of these may come from the kurtosis default mnemonic, and none of their
+  # private keys belong in this repository. Generate the whole set with
+  # `scripts/hegota-testnet/gen-deployment-keys.sh`, which writes the keys to a
+  # host-only file and prints the block to paste here.
   prefunded_accounts: '{
     "REPLACE_WITH_FAUCET_ADDRESS": {"balance": "1000000ETH"},
     "REPLACE_WITH_GATER_ADMIN_ADDRESS": {"balance": "1000ETH"},
-    "REPLACE_WITH_DEPLOYER_ADDRESS": {"balance": "1000ETH"}
+    "REPLACE_WITH_DEPLOYER_ADDRESS": {"balance": "1000ETH"},
+    "REPLACE_WITH_RICH_ADDRESS_01": {"balance": "100000ETH"},
+    "REPLACE_WITH_RICH_ADDRESS_02": {"balance": "100000ETH"},
+    "REPLACE_WITH_RICH_ADDRESS_03": {"balance": "100000ETH"},
+    "REPLACE_WITH_RICH_ADDRESS_04": {"balance": "100000ETH"},
+    "REPLACE_WITH_RICH_ADDRESS_05": {"balance": "100000ETH"},
+    "REPLACE_WITH_RICH_ADDRESS_06": {"balance": "100000ETH"},
+    "REPLACE_WITH_RICH_ADDRESS_07": {"balance": "100000ETH"},
+    "REPLACE_WITH_RICH_ADDRESS_08": {"balance": "100000ETH"},
+    "REPLACE_WITH_RICH_ADDRESS_09": {"balance": "100000ETH"},
+    "REPLACE_WITH_RICH_ADDRESS_10": {"balance": "100000ETH"}
   }'
 
   # EIP-8282 builder execution requests. Both builder predeploys are part of
@@ -190,7 +197,7 @@ ethereum_genesis_generator_params:
   # freeze at the Amsterdam boundary. Gating itself is older than both and works on
   # either. Pinned explicitly here rather than by bumping the whole package, so the
   # generator version this chain depends on is visible in one place.
-  image: ethpandaops/ethereum-genesis-generator:v6.1.6
+  image: ethpandaops/ethereum-genesis-generator:6.1.6
   extra_env:
     DEPOSIT_CONTRACT_GATED: "true"
     DEPOSIT_CONTRACT_ADMINS: '["REPLACE_WITH_GATER_ADMIN_ADDRESS"]'
@@ -212,14 +219,15 @@ dora_params:
 # The running devnet publishes its CL block at 33000, inside that range; this
 # chain must also stay reachable from outside, so it does not carry that risk.
 #
-# `nat_exit_ip` carries the host's public address to the launchers that accept
-# one. The ethrex EL is not among them, so it also needs `--nat.extip` above.
+# `nat_exit_ip` is the single source of the address every node advertises. The
+# package resolves it once and hands it to each launcher, which is how it
+# reaches the EL's `--nat.extip`, the CL's advertised address, and from there
+# every enode and ENR this chain publishes.
 #
-# It must be the literal address, not `auto`. `auto` is resolved at run time by
-# the package's own `get_public_ip`, so it cannot be templated into
-# `--nat.extip`, and the two would then be free to disagree: the CL would
-# advertise whatever the package resolved while the EL advertised whatever was
-# written here. One address, written once, is the only shape that cannot drift.
+# Prefer the literal address over `auto`. `auto` resolves at run time through
+# the package's own `get_public_ip`, so the deployment's identity depends on
+# what a third-party lookup returned that day and is not visible in this file.
+# A literal keeps the published bootnodes reproducible from the config alone.
 port_publisher:
   nat_exit_ip: "REPLACE_WITH_HOST_PUBLIC_IP"
   el:

@@ -72,6 +72,8 @@ passed / 0 failed**, `cargo test -p ethrex-rpc --lib` is 122 passed, and
 | FOCIL fixtures diagnosed (Task 5.7) | `92966fec9` | `tests-focil@v0.1.0` predates EIP-8282; bundle skipped, engine suite clean |
 | Artifact set (Tasks 8.1-8.6) | `8fdeddc43` | `docs/hegota-testnet-joining.md`, `publish-artifacts.sh`, checks 8-12; the five-EIP set and the four non-genesis consensus inputs published |
 | Phase 2 closed (Tasks 2.4/2.5/2.7) | | word-bounded grep, `0xB9` misattribution fixed, six test-target clippy errors fixed |
+| Local enclave validated (Tasks 7.8/9.9) | | eleven of twelve checks pass on a local kurtosis enclave; config and publication defects found and fixed |
+| Joining proven from the bundle | | a fresh ethrex+lighthouse pair built only from the published artifacts synced to the network's head number and hash |
 
 ### Not complete
 
@@ -119,8 +121,8 @@ passed / 0 failed**, `cargo test -p ethrex-rpc --lib` is 122 passed, and
   testnet runs at 200M, where it was ~3× the constant and put committee replay at a
   quarter of the block. See the divergence ledger §3.1.
 - **Phase 7 Task 7.3** (generator revision) is satisfied by pinning the generator image
-  in the config instead of bumping `ETHEREUM_PACKAGE_REVISION`; **Task 7.8** needs a
-  live enclave.
+  in the config instead of bumping `ETHEREUM_PACKAGE_REVISION`. **Task 7.8 is closed**
+  by the local enclave run below.
 - **Phase 8 Tasks 8.7-8.9** need a live production host and cannot be done from here.
   Tasks 8.1-8.6 are landed: `docs/hegota-testnet-joining.md` (identity, five-EIP rule
   set and pins, fork schedule, the four consensus inputs absent from genesis, engine
@@ -143,16 +145,42 @@ passed / 0 failed**, `cargo test -p ethrex-rpc --lib` is 122 passed, and
     right for them; that is why Task 8.1 requires the literal address rather than
     `auto`.
 
-  Unverifiable from here, and stated as such in the joining doc rather than asserted:
-  the `eip8250TransitionTimestamp` / `eip8272TransitionTimestamp` chainspec key names
-  are this repository's guess at Nethermind's convention. No Nethermind release is
-  known to read them. The script fails loudly if the generator ever emits either key
-  itself, so the patch cannot silently contradict upstream.
-- **Phase 9 Task 9.9** — local kurtosis validation. Prerequisite is an `ethrex` image
-  build, and the three `REPLACE` placeholders in the config filled with throwaway local
-  values. **This is the next step**, ahead of choosing a server: a local enclave
-  exercises everything except external reachability, so the only check it cannot
-  settle is check 8. See "Start here next session".
+  The chainspec patch is gone. `publish-artifacts.sh` used to add
+  `eip8250TransitionTimestamp` / `eip8272TransitionTimestamp` on a guess at Nethermind's
+  naming convention, which no release is known to read. Only `genesis.json` is a
+  supported artifact now; the generator's other execution-genesis formats ship as it
+  wrote them, unverified and unmaintained, and the joining doc says so. The supported
+  definition is the fork timestamp plus the five-EIP rule set, which a client whose
+  config format is not geth-style must translate itself.
+- **Phase 9 Task 9.9 is closed.** A local kurtosis enclave ran eleven of the twelve
+  checks in `docs/hegota-devnet-genesis.md`; only check 8 (external reachability) is
+  left, and it needs a second host by definition. Beyond the checks, a fresh
+  ethrex+lighthouse pair built from nothing but the published artifact bundle synced to
+  the network's head number and hash, which is the property the whole branch exists for.
+
+  What the run found, none of it visible from reading the config:
+
+  - `ethereum_genesis_generator_params.image` named `:v6.1.6`, a tag that has never
+    existed — the launch died at genesis generation. The registry publishes unprefixed
+    tags.
+  - `publish-artifacts.sh` copied all of `/network-configs` into the publicly served
+    `OUT_DIR`, which includes `mnemonics.yaml`: **the phrase every genesis validator key
+    derives from**. It now publishes an explicit allowlist and refuses to stage that file
+    or `validator_names.yaml`.
+  - The artifact table was missing `deposit_contract_block.txt`, without which a
+    consensus client refuses to start (`Unable to open testnet dir`). The directory copy
+    had been shipping it by accident, so fixing the leak is what exposed the gap.
+  - The script's service discovery used `kurtosis enclave inspect -o json`, a flag that
+    exists in no release through 1.20.0, so it aborted on a healthy enclave. It had
+    never been run successfully.
+  - Both `el_extra_params` entries duplicated flags the launcher already emits, on a
+    comment asserting the opposite. Removed, which also collapses the advertised address
+    to the single `nat_exit_ip` the config always claimed it was.
+
+  `docs/hegota-testnet-upgrading.md` is new and covers the no-regenesis binary swap, the
+  kurtosis CLI/engine version lockstep, re-publishing, gater-admin rotation and what
+  forces a re-genesis. `scripts/hegota-testnet/gen-deployment-keys.sh` generates the
+  per-deployment key material, including the ten funded accounts.
 
 ### Traps found the hard way — do not rediscover these
 
@@ -233,23 +261,20 @@ passed / 0 failed**, `cargo test -p ethrex-rpc --lib` is 122 passed, and
    `handoff_resume(branch="hegota-testnet", project="/home/edgar/dev/ethrex_2")`.
    Nothing below depends on that working: this file is the artifact and it is in git.
 1. Read this Progress block and the traps above.
-2. **Bring the enclave up locally first.** That is Phase 9 Task 9.9, and it no longer
-   waits on choosing a server. Two prerequisites: build the `ethrex:hegota-testnet`
-   image the config names (`make build-image` then tag it, since the config does not
-   use `ethrex:local`), and fill the three `REPLACE` placeholders in
-   `fixtures/networks/hegota-testnet.yaml` with throwaway local values — a fresh
-   mnemonic, three addresses derived from it, and `127.0.0.1` for the public IP.
-   **Do not commit the filled values**; the real ones are per-deployment and two of
-   them are secrets.
+2. **The local enclave is done** (Phase 9 Task 9.9, Phase 7 Task 7.8). What remains is
+   the production host: Tasks 9.5-9.8 and Phase 8 Tasks 8.7-8.9, plus check 8, which
+   needs a second machine.
 
-   A local enclave clears Phase 7 Task 7.8 and eleven of the twelve checks. Only
-   check 8 cannot be done locally: it requires a node on a *different host* completing
-   discovery, and a loopback address proves nothing about NAT or the firewall. Run the
-   other eleven now and leave 8 for the real host.
+   To bring another local enclave up: `make build-image TAG=hegota-testnet`, then
+   `scripts/hegota-testnet/gen-deployment-keys.sh` for the mnemonics and the thirteen
+   funded addresses, fill the `REPLACE` markers, and
+   `kurtosis run --enclave hegota-testnet ethereum-package --args-file <filled>`.
+   **Never commit the filled values.**
 
-   Expect the `nat_exit_ip` / `--nat.extip` pair to be the first thing that bites: on
-   one host both must be the same literal address, and the config ships them as two
-   separate `REPLACE` markers precisely because nothing enforces that they agree.
+   Use the host's LAN address, not `127.0.0.1`, for `nat_exit_ip`. Containers cannot
+   reach the host's loopback, so a loopback advertisement makes every node publish an
+   address its peers dial into their own namespace: discovery looks healthy, peering
+   never happens, and the ELs silently never agree on a head.
 3. The single highest-value upstream item is the **EIP-7805 extension draft** EIP-8369
    asks for. Publishing it converts the two-endpoint rule, the code-byte budget and the
    slot count from divergences into a specification a second client can implement.
@@ -281,6 +306,7 @@ specification** — the five-EIP set, the pins, the consensus inputs no genesis 
 carries, the artifact list and the firewall surface),
 `docs/hegota-testnet-divergences.md` (the ledger that gates bring-up),
 `docs/hegota-testnet-permissioning.md` (validator gating policy and runbook),
+`docs/hegota-testnet-upgrading.md` (changing a live deployment without a re-genesis),
 `docs/hegota-devnet.md` (branch composition, opcode allocation, per-EIP divergences,
 spec pins), `docs/hegota-devnet-genesis.md` (genesis requirements and the twelve-check
 post-deploy pass), `docs/eip-8141.md`, `docs/eip-8250.md`, `docs/eip-8272.md`,
