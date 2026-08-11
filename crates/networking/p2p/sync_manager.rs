@@ -44,7 +44,17 @@ impl SyncManager {
         datadir: PathBuf,
     ) -> Self {
         let snap_enabled = Arc::new(AtomicBool::new(matches!(sync_mode, SyncMode::Snap)));
-        blockchain.set_state_sync_needs_trie_nodes(snap_enabled.load(Ordering::Relaxed));
+        // Only a snap/1 state sync depends on `GetTrieNodes`, and that is the
+        // sync this node runs exactly when its chain has no Amsterdam, since
+        // snap/2 reconciles with access lists that do not exist before it.
+        //
+        // Keying this on "a snap sync is running" instead would be circular and
+        // would strand the snap/2 path permanently: withholding snap/2 means
+        // never negotiating it, which means never finding a snap/2 peer, which
+        // means always falling back to snap/1 and never clearing the flag.
+        let needs_trie_nodes = snap_enabled.load(Ordering::Relaxed)
+            && store.get_chain_config().amsterdam_time.is_none();
+        blockchain.set_state_sync_needs_trie_nodes(needs_trie_nodes);
 
         // Fetch checkpoint once to avoid duplicate DB reads
         let has_checkpoint = store
