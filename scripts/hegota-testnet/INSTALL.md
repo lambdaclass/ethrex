@@ -53,6 +53,17 @@ sudo dpkg -i kurtosis-cli_1.20.0_linux_amd64.deb
 kurtosis version
 ```
 
+Without `gh`, the same asset is a direct download:
+
+```
+curl -sSL -o kurtosis.deb https://github.com/kurtosis-tech/kurtosis-cli-release-artifacts/\
+releases/download/1.20.0/kurtosis-cli_1.20.0_linux_amd64.deb
+```
+
+Upgrading over an existing install is a plain `dpkg -i`; stop the old engine first
+(`kurtosis engine stop`), because the CLI refuses to talk to a mismatched engine and
+restarts it at the new version on next use.
+
 The CLI and the engine must be the same version; the CLI refuses to talk to a mismatched
 engine. On a fresh host the engine starts on first use and will match.
 
@@ -85,9 +96,15 @@ boundary.
 ## 3. Generate the deployment's keys
 
 ```
-./scripts/hegota-testnet/gen-deployment-keys.sh > /root/hegota-testnet-keys.env
-chmod 600 /root/hegota-testnet-keys.env
+umask 077
+./scripts/hegota-testnet/gen-deployment-keys.sh > ~/hegota-testnet-keys.env
+chmod 600 ~/hegota-testnet-keys.env
 ```
+
+Keep the keys and the filled config in the home directory of **the account that runs
+kurtosis**, not under `/root`. `kurtosis run` reads the args file as the invoking user,
+so a root-owned `0600` file is unreadable to it and the launch fails on a path that
+looks present.
 
 This writes two independent BIP-39 mnemonics and thirteen addresses with their private
 keys: a faucet, the deposit-gater admin, a deployer, and ten funded accounts. It also
@@ -105,10 +122,13 @@ switch or a new genesis. Keep that key offline and delegate a runtime admin for 
 Copy the config somewhere outside the repository so a filled copy can never be committed:
 
 ```
-cp fixtures/networks/hegota-testnet.yaml /root/hegota-testnet.yaml
+cp fixtures/networks/hegota-testnet.yaml ~/hegota-testnet.yaml
+chmod 600 ~/hegota-testnet.yaml
 ```
 
-Replace every `REPLACE_WITH_*` marker in `/root/hegota-testnet.yaml`:
+It holds the validator mnemonic once filled, so it is as sensitive as the key file.
+
+Replace every `REPLACE_WITH_*` marker in `~/hegota-testnet.yaml`:
 
 | Marker | Value |
 | --- | --- |
@@ -122,7 +142,7 @@ Replace every `REPLACE_WITH_*` marker in `/root/hegota-testnet.yaml`:
 Then confirm nothing was missed:
 
 ```
-grep -n 'REPLACE_WITH' /root/hegota-testnet.yaml     # expect no output
+grep -n 'REPLACE_WITH' ~/hegota-testnet.yaml     # expect no output
 ```
 
 The gater admin address appears in both `prefunded_accounts` and
@@ -137,8 +157,11 @@ already emits it, and a second copy is a value nothing checks against the first.
 
 ## 5. Launch
 
+Install the firewall **before** this, not after. See section 10: the moment the enclave
+starts, every port it publishes is reachable, engine authrpc included.
+
 ```
-kurtosis run --enclave hegota-testnet ethereum-package --args-file /root/hegota-testnet.yaml
+kurtosis run --enclave hegota-testnet ./ethereum-package --args-file ~/hegota-testnet.yaml
 kurtosis enclave inspect hegota-testnet
 ```
 
@@ -254,6 +277,37 @@ the node's head, and the JWT does not protect you: `ethereum-package` ships one 
 `jwtsecret` static file and mounts that same value into every client, so the token is
 identical on every kurtosis deployment in existence. The firewall is the whole of the
 control. Generate a fresh secret if those ports ever leave loopback.
+
+### Where the rules go
+
+**In the `DOCKER-USER` chain, not `ufw` and not `INPUT`.** Docker publishes a port by
+DNAT'ing it in `nat/PREROUTING`, so the packet is *forwarded* to the container and never
+traverses `INPUT`. A `ufw deny` on the engine port therefore reports itself as active and
+blocks nothing. `DOCKER-USER` is the one chain docker guarantees it will not rewrite, and
+it is consulted from `FORWARD` before docker's own accept rules.
+
+Match on the in-interface, since the packet's destination address is already the
+container's by the time the chain sees it:
+
+```
+EXT=$(ip -4 route show default | awk '{print $5; exit}')
+iptables -A DOCKER-USER -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN
+iptables -A DOCKER-USER -i tailscale0 -j RETURN
+iptables -A DOCKER-USER -i lo -j RETURN
+iptables -A DOCKER-USER ! -i "$EXT" -j RETURN
+iptables -A DOCKER-USER -i "$EXT" -p tcp -m multiport --dports 32000,32007,32014,31000,31007,31014 -j RETURN
+iptables -A DOCKER-USER -i "$EXT" -p udp -m multiport --dports 32000,32007,32014,31000,31007,31014 -j RETURN
+iptables -A DOCKER-USER -i "$EXT" -p udp -m multiport --dports 31003,31010,31017 -j RETURN
+iptables -A DOCKER-USER -i "$EXT" -j DROP
+```
+
+The trailing `DROP` is what closes engine, metrics and beacon REST; the table above is
+then a description of what the preceding `RETURN`s allow rather than a separate list to
+maintain. Nothing here touches `INPUT`, so ssh cannot be locked out by a mistake in it.
+
+Persist with `apt install iptables-persistent && netfilter-persistent save`, and check the
+default `INPUT` policy while you are there — a host that ships `-P INPUT ACCEPT` with no
+rules is relying entirely on this chain.
 
 ## 11. Granting validator slots
 
