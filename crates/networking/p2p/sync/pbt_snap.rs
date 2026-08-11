@@ -63,6 +63,9 @@ use crate::pbtsnap::client::{PbtProviderError, PbtSnapProvider};
 use crate::rlpx::pbtsnap::GetPbtLeafRange;
 use crate::snap::constants::{BYTECODE_CHUNK_SIZE, MAX_RESPONSE_BYTES};
 
+#[cfg(test)]
+mod tests;
+
 /// How many times one range request is re-asked after an answer that did not
 /// verify.
 ///
