@@ -694,7 +694,7 @@ async fn snap2_sync(
     let flat = FlatState::open(datadir)?;
     let mut cursor = DownloadCursor::new(ACCOUNT_RANGE_CHUNK_COUNT);
 
-    let pivot_header = download_state(
+    let pivot_header = match download_state(
         peers,
         store,
         &flat,
@@ -705,11 +705,17 @@ async fn snap2_sync(
         datadir,
         diagnostics,
     )
-    .await?;
+    .await
+    {
+        Ok(pivot_header) => pivot_header,
+        Err(err) => return Err(discard_partial_state(flat, datadir, err).await),
+    };
 
     diagnostics.write().await.current_phase = "snap2_reconstruction".to_string();
     *METRICS.heal_start_time.lock().await = Some(SystemTime::now());
-    reconstruct_and_verify(store, &flat, &pivot_header).await?;
+    if let Err(err) = reconstruct_and_verify(store, &flat, &pivot_header).await {
+        return Err(discard_partial_state(flat, datadir, err).await);
+    }
     *METRICS.heal_end_time.lock().await = Some(SystemTime::now());
 
     flat.destroy().await?;
@@ -725,6 +731,33 @@ async fn snap2_sync(
         diagnostics,
     )
     .await
+}
+
+/// Throw away everything a failed snap/2 attempt downloaded, and return the
+/// error that caused it.
+///
+/// caps/snap.md leaves one remedy for a sync that cannot be made consistent —
+/// "discard partial state and restart synchronization" — and the discard has to
+/// be real. Leaving the flat state behind would let the next attempt reuse
+/// leaves for accounts that no longer exist, which no later check would catch:
+/// the frontier would have moved past them, so the access lists that deleted
+/// them are never applied again.
+async fn discard_partial_state(flat: FlatState, datadir: &Path, err: SyncError) -> SyncError {
+    warn!("snap/2 sync failed ({err}); discarding partial state and restarting");
+    if let Err(cleanup) = flat.destroy().await {
+        error!("failed to discard the snap/2 flat state: {cleanup}");
+    }
+    for dir in [
+        get_account_state_snapshots_dir(datadir),
+        get_account_storages_snapshots_dir(datadir),
+    ] {
+        if dir.exists()
+            && let Err(cleanup) = async_fs::remove_dir_all(&dir).await
+        {
+            error!("failed to discard {dir:?}: {cleanup}");
+        }
+    }
+    err
 }
 
 /// Download the bytecodes the state references, store the pivot block, and make

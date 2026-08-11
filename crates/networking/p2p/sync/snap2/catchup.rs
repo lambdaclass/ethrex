@@ -24,7 +24,6 @@ use crate::{
     snap::constants::{BAL_MAX_RETRIES_PER_BLOCK, BAL_REQUEST_BATCH_SIZE},
     sync::{
         SyncDiagnostics, SyncError,
-        bal_healing::load_headers_range,
         snap2::{DownloadCursor, FlatState, apply_bal_flat},
     },
 };
@@ -69,7 +68,7 @@ pub async fn catch_up(
     if to.number <= from.number {
         return Ok(());
     }
-    let headers = load_headers_range(store, from.number + 1, to.hash()).await?;
+    let headers = gap_headers(store, from, to)?;
     info!(
         from = from.number,
         to = to.number,
@@ -77,7 +76,6 @@ pub async fn catch_up(
         "snap/2 catch-up: rolling flat state forward"
     );
 
-    let mut parent_hash = from.hash();
     for batch in headers.chunks(BAL_REQUEST_BATCH_SIZE) {
         let mut applied = 0usize;
         let mut attempts = 0u32;
@@ -127,12 +125,6 @@ pub async fn catch_up(
                     break;
                 };
 
-                if header.parent_hash != parent_hash {
-                    return Err(SyncError::ChainReorgDetected {
-                        expected_parent: parent_hash,
-                        actual_parent: header.parent_hash,
-                    });
-                }
                 bal.validate_ordering().map_err(|err| {
                     SyncError::Snap2CatchUpStalled(header.number, format!("bad ordering: {err}"))
                 })?;
@@ -165,7 +157,6 @@ pub async fn catch_up(
                     warn!(block = header.number, "failed to persist a BAL: {err}");
                 }
 
-                parent_hash = header.hash();
                 applied += 1;
                 attempts = 0;
                 diagnostics.write().await.snap2_blocks_replayed += 1;
@@ -176,4 +167,48 @@ pub async fn catch_up(
     }
 
     Ok(())
+}
+
+/// The headers of every block in `(from, to]`, resolved by walking parent
+/// hashes back from `to`.
+///
+/// The target header is the trusted one — it came from a peer as the new pivot
+/// — so the chain is resolved from it rather than read forwards out of the
+/// canonical index. During a snap sync there is no canonical index to read:
+/// headers downloaded ahead of the pivot are stored by hash, and the chain is
+/// only made canonical once the sync commits the pivot at the very end.
+///
+/// Walking backwards is also what detects a reorg past the pivot. If the chain
+/// behind `to` does not reach `from`, the old pivot was orphaned and the flat
+/// state built against it describes an abandoned fork. caps/snap.md allows
+/// recovering that state by diffing the two forks' access lists; ethrex takes
+/// the escape hatch the same section gives instead, and discards. A reorg
+/// deeper than the pivot's distance from the head has not occurred on mainnet
+/// and is bounded by finality.
+pub fn gap_headers(
+    store: &Store,
+    from: &BlockHeader,
+    to: &BlockHeader,
+) -> Result<Vec<BlockHeader>, SyncError> {
+    let span = to.number.saturating_sub(from.number) as usize;
+    let mut headers = Vec::with_capacity(span);
+    let mut current = to.clone();
+
+    while current.number > from.number + 1 {
+        let parent = store
+            .get_block_header_by_hash(current.parent_hash)?
+            .ok_or(SyncError::MissingHeaderForBal(current.parent_hash))?;
+        headers.push(current);
+        current = parent;
+    }
+
+    if current.parent_hash != from.hash() {
+        return Err(SyncError::ChainReorgDetected {
+            expected_parent: from.hash(),
+            actual_parent: current.parent_hash,
+        });
+    }
+    headers.push(current);
+    headers.reverse();
+    Ok(headers)
 }

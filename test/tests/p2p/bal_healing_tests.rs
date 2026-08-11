@@ -368,15 +368,27 @@ fn apply_bal_delegation_clear() {
 }
 
 #[test]
-fn chain_reorg_is_not_recoverable() {
-    // SyncError::ChainReorgDetected must be non-recoverable so the outer sync
-    // loop falls back to snap/1 healing instead of retrying with the same
-    // peer/data, which would re-trigger the same mismatch.
+fn a_reorg_past_the_pivot_restarts_the_sync_rather_than_stopping_the_node() {
+    // caps/snap.md leaves one remedy for a catch-up that cannot be finished:
+    // "the syncing node **must** discard partial state and restart
+    // synchronization". A non-recoverable error stops ethrex instead, which on
+    // the snap/2 path would turn a deep reorg into an outage.
+    //
+    // snap/1 is unaffected either way: its healing loop handles this variant
+    // itself and it never reaches the recoverability check.
     let err = SyncError::ChainReorgDetected {
         expected_parent: H256::from([1u8; 32]),
         actual_parent: H256::from([2u8; 32]),
     };
-    assert!(!err.is_recoverable());
+    assert!(err.is_recoverable());
+}
+
+#[test]
+fn a_stalled_catch_up_restarts_the_sync_rather_than_stopping_the_node() {
+    // Same remedy when the access lists the catch-up needs cannot be had,
+    // whether they aged past the retention window or no peer will serve them.
+    let err = SyncError::Snap2CatchUpStalled(1_234, "no peer".to_string());
+    assert!(err.is_recoverable());
 }
 
 // ---------------------------------------------------------------------------

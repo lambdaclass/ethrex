@@ -15,7 +15,7 @@ pub mod generate;
 pub mod worker;
 
 pub use apply::{FlatApplyStats, apply_bal_flat};
-pub use catchup::{MAX_CATCH_UP_BLOCKS, catch_up, catch_up_exceeds_retention};
+pub use catchup::{MAX_CATCH_UP_BLOCKS, catch_up, catch_up_exceeds_retention, gap_headers};
 pub use cursor::{DownloadCursor, HashRange};
 pub use download::download_state;
 pub use flat::FlatState;

@@ -237,3 +237,138 @@ fn a_pivot_that_did_not_move_is_within_retention() {
         &header(999, H256::zero())
     ));
 }
+
+// ---------------------------------------------------------------------------
+// Resolving the block span a catch-up has to apply.
+//
+// This is also where a reorg past the pivot is detected, so both the happy path
+// and the divergence are pinned here.
+// ---------------------------------------------------------------------------
+
+use ethrex_p2p::sync::snap2::gap_headers;
+
+fn linked(number: u64, parent: H256) -> BlockHeader {
+    BlockHeader {
+        number,
+        parent_hash: parent,
+        // Distinguish otherwise-identical headers so sibling forks hash apart.
+        state_root: at(number),
+        ..Default::default()
+    }
+}
+
+/// Headers ahead of the pivot are stored by hash during a snap sync and only
+/// become canonical when the sync commits at the very end. Resolving the span
+/// has to work from the hash chain alone; reading it out of the canonical index
+/// would find nothing.
+#[tokio::test]
+async fn the_span_resolves_from_headers_that_are_not_canonical() {
+    let store = store();
+
+    let from = linked(100, H256::repeat_byte(0x11));
+    let mut chain = vec![from.clone()];
+    for number in 101..=105 {
+        let parent = chain.last().expect("previous header").hash();
+        chain.push(linked(number, parent));
+    }
+    // Stored by hash only: no forkchoice_update, so nothing is canonical.
+    store
+        .add_block_headers(chain[1..].to_vec())
+        .await
+        .expect("store headers");
+    assert!(
+        store
+            .get_canonical_block_hash(103)
+            .await
+            .expect("read canonical")
+            .is_none(),
+        "the span must not be canonical, or this is not testing the real case"
+    );
+
+    let to = chain.last().expect("target header").clone();
+    let span = gap_headers(&store, &from, &to).expect("resolve span");
+
+    let numbers: Vec<u64> = span.iter().map(|header| header.number).collect();
+    assert_eq!(numbers, vec![101, 102, 103, 104, 105]);
+    assert_eq!(span.last().expect("last").hash(), to.hash());
+}
+
+/// The shortest span is the one block between adjacent pivots.
+#[tokio::test]
+async fn an_adjacent_pivot_resolves_to_one_block() {
+    let store = store();
+    let from = linked(100, H256::repeat_byte(0x11));
+    let to = linked(101, from.hash());
+    store
+        .add_block_headers(vec![to.clone()])
+        .await
+        .expect("store header");
+
+    let span = gap_headers(&store, &from, &to).expect("resolve span");
+    assert_eq!(span.len(), 1);
+    assert_eq!(span[0].hash(), to.hash());
+}
+
+/// A pivot the new chain does not descend from was reorged out. Its flat state
+/// describes an abandoned fork, so the catch-up must refuse rather than roll
+/// the wrong diffs onto it.
+#[tokio::test]
+async fn a_pivot_the_new_chain_does_not_reach_is_reported_as_a_reorg() {
+    let store = store();
+
+    // Two forks from a shared ancestor.
+    let ancestor = linked(100, H256::repeat_byte(0x11));
+    let orphaned = BlockHeader {
+        state_root: H256::repeat_byte(0xaa),
+        ..linked(101, ancestor.hash())
+    };
+    let mut canonical = vec![linked(101, ancestor.hash())];
+    for number in 102..=104 {
+        let parent = canonical.last().expect("previous header").hash();
+        canonical.push(linked(number, parent));
+    }
+    assert_ne!(orphaned.hash(), canonical[0].hash());
+
+    store
+        .add_block_headers(canonical.clone())
+        .await
+        .expect("store headers");
+
+    let to = canonical.last().expect("target").clone();
+    let err = gap_headers(&store, &orphaned, &to).expect_err("must detect the reorg");
+    assert!(
+        matches!(err, ethrex_p2p::sync::SyncError::ChainReorgDetected { .. }),
+        "expected a reorg, got: {err}"
+    );
+}
+
+/// A hole in the header chain is not silently treated as a reorg: the span
+/// simply cannot be resolved.
+#[tokio::test]
+async fn a_missing_header_in_the_span_is_reported_as_missing() {
+    let store = store();
+
+    let from = linked(100, H256::repeat_byte(0x11));
+    let mut chain = vec![from.clone()];
+    for number in 101..=104 {
+        let parent = chain.last().expect("previous header").hash();
+        chain.push(linked(number, parent));
+    }
+    // Store everything except block 102.
+    let stored: Vec<BlockHeader> = chain[1..]
+        .iter()
+        .filter(|header| header.number != 102)
+        .cloned()
+        .collect();
+    store
+        .add_block_headers(stored)
+        .await
+        .expect("store headers");
+
+    let to = chain.last().expect("target").clone();
+    let err = gap_headers(&store, &from, &to).expect_err("must not resolve");
+    assert!(
+        matches!(err, ethrex_p2p::sync::SyncError::MissingHeaderForBal(_)),
+        "expected a missing header, got: {err}"
+    );
+}

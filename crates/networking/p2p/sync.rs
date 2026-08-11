@@ -468,7 +468,6 @@ impl SyncError {
             | SyncError::StorageTempDBDirNotFound(_)
             | SyncError::RocksDBError(_)
             | SyncError::FlatStatePoisoned
-            | SyncError::Snap2CatchUpStalled(_, _)
             | SyncError::BytecodeFileError
             | SyncError::NoLatestCanonical
             | SyncError::MissingFullsyncBatch
@@ -476,12 +475,20 @@ impl SyncError {
             | SyncError::FileSystem(_) => false,
             // A peer switch may resolve this (the BAL was wrong).
             SyncError::StateRootMismatch(_, _) => true,
+            // A header the catch-up span needs is not stored, which means the
+            // header download that came with the new pivot was short. Retrying
+            // the cycle re-downloads it; the snap/2 path discards its partial
+            // state first, so the retry starts clean.
+            SyncError::MissingHeaderForBal(_) => true,
             // DB inconsistency — not recoverable by switching peers.
-            SyncError::MissingHeaderForBal(_) => false,
             SyncError::MissingCanonicalBlock(_) => false,
-            // Local chain view differs from peer's; same peer will keep
-            // returning the same BAL. Fall back to snap/1 healing.
-            SyncError::ChainReorgDetected { .. } => false,
+            // caps/snap.md gives one remedy for a catch-up that cannot finish,
+            // whether the access lists ran out or the chain moved under it:
+            // "the syncing node **must** discard partial state and restart
+            // synchronization". The snap/2 path discards before returning
+            // these, so retrying the cycle is the restart.
+            SyncError::Snap2CatchUpStalled(_, _) => true,
+            SyncError::ChainReorgDetected { .. } => true,
             // A timed-out actor request is transient (mailbox pressure or a
             // slow handler — requests use spawned-concurrency's 5s default
             // timeout); a stopped actor means p2p is shutting down and must
