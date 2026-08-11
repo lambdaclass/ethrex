@@ -263,6 +263,18 @@ mod tests {
         }
     }
 
+    /// The offset assertion above is the *only* guard against pbtsnap
+    /// shadowing `based`: with the `l2` feature off, the based decode arm is
+    /// `#[cfg]`-ed out, so a pbtsnap offset that collided with based would
+    /// still route every id to pbtsnap and every other test would pass.
+    #[cfg(feature = "l2")]
+    #[test]
+    fn the_based_slot_count_covers_every_based_message_code() {
+        use crate::rlpx::l2::messages::{BatchSealed, NewBlock};
+        assert!(NewBlock::CODE < BASED_CAPABILITY_SLOT_COUNT);
+        assert!(BatchSealed::CODE < BASED_CAPABILITY_SLOT_COUNT);
+    }
+
     #[test]
     fn the_reserved_slots_are_accounted_for() {
         // Two implemented plus two reserved. The count is what a capability
