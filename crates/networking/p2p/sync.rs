@@ -98,6 +98,14 @@ pub struct SyncDiagnostics {
     pub snap2_storage_requeued: u64,
     /// Contracts served only in part, still owed slots from a later request.
     pub snap2_storage_partial: u64,
+    /// Pivot whose state root the snap/2 reconstruction reproduced, once it has.
+    ///
+    /// The phase fields describe the sync only while it is running, and a state
+    /// small enough to download between two polls leaves no trace in them at
+    /// all. This is the terminal fact — the sync took the snap/2 path and the
+    /// state it built hashes to the pivot's root — so it is latched rather than
+    /// sampled.
+    pub snap2_reconstructed_block: Option<u64>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]

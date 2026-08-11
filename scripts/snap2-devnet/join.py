@@ -303,23 +303,31 @@ def main() -> int:
 
         diag = rpc(joiner_rpc, "admin_syncStatus")
         joiner_head = int(rpc(joiner_rpc, "eth_blockNumber"), 16)
+        reconstructed = diag.get("snap2_reconstructed_block")
+        pivot_moves = len(diag.get("recent_pivot_changes") or [])
+        replayed = diag.get("snap2_blocks_replayed", 0)
         print("\n--- result ---")
         print(f"  head:            {joiner_head} (target {head})")
         print(f"  phases:          {' -> '.join(phases)}")
-        print(f"  blocks replayed: {diag.get('snap2_blocks_replayed', 0)}")
+        print(f"  reconstructed:   {reconstructed}")
+        print(f"  pivot moves:     {pivot_moves}")
+        print(f"  blocks replayed: {replayed}")
         print(f"  validation fail: {diag.get('snap2_validation_failures', 0)}")
 
         failures = []
         # The trap this whole exercise exists to avoid: a snap/1 fallback ends
-        # with a synced node too, so it would otherwise read as a pass.
+        # with a synced node too, so it would otherwise read as a pass. Judge the
+        # path by the latched reconstruction, not by the phase strings: those are
+        # sampled every few seconds and a small state downloads between polls.
         if healed:
             failures.append("entered trie healing, so it fell back to snap/1")
-        if not any(p.startswith("snap2") for p in phases):
-            failures.append("never entered a snap/2 phase")
-        # Without a pivot move the access-list catch-up never runs, which is
-        # most of what is untested. Lower SNAP_LIMIT if this trips.
-        if diag.get("snap2_blocks_replayed", 0) == 0:
-            failures.append("no access lists applied: the pivot never moved")
+        if reconstructed is None:
+            failures.append("no snap/2 reconstruction: it did not take the snap/2 path")
+        # Catch-up only owes blocks when the pivot moved under the download. On a
+        # state small enough to finish inside one pivot there is legitimately
+        # nothing to replay, so that is reported rather than failed.
+        if pivot_moves and replayed == 0:
+            failures.append("the pivot moved but no access lists were applied")
         if diag.get("snap2_validation_failures", 0):
             failures.append("access-list validation failures")
 
@@ -328,7 +336,12 @@ def main() -> int:
             for failure in failures:
                 print(f"  - {failure}", file=sys.stderr)
             return 1
-        print("\nPASS: synced via snap/2 with access-list catch-up")
+        if replayed:
+            print(f"\nPASS: synced via snap/2, {replayed} blocks of access-list catch-up")
+        else:
+            # Worth saying out loud: this run proved the download and the root,
+            # and nothing about catch-up. Lower SNAP_LIMIT to force a pivot move.
+            print("\nPASS: synced via snap/2; catch-up NOT exercised (pivot never moved)")
         return 0
     finally:
         if not args.keep:

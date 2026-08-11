@@ -717,6 +717,7 @@ async fn snap2_sync(
         return Err(discard_partial_state(flat, datadir, err).await);
     }
     *METRICS.heal_end_time.lock().await = Some(SystemTime::now());
+    diagnostics.write().await.snap2_reconstructed_block = Some(pivot_header.number);
 
     flat.destroy().await?;
     store.generate_flatkeyvalue()?;
