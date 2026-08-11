@@ -88,13 +88,13 @@ point of the pin is to make "what changed since we aligned" an exact question.
 `/hegota-eips` diffs these against the head of each pinned source.
 
 ```pins
-eip-8141  4a9ad32cf2  core      2026-07-30
-eip-8250  81b976ac01  core      2026-08-03
-eip-8272  d8636a330d  core      2026-08-03
+eip-8141  4093c21847  core      2026-08-10
+eip-8250  4093c21847  core      2026-08-10
+eip-8272  4093c21847  core      2026-08-10
 eip-7906  ab022ace2a  core      2026-07-29
 eip-8312  a5da3f608c  core      2026-08-05  nerolation/EIPs@nerolation/utxo-frame
-eip-7805  9a345f96c2  focil     2026-02-20
-eip-8369  ad8571028a  focil     2026-08-07  soispoke/EIPs@codex/vops-profiles-focil
+eip-7805  4093c21847  focil     2026-08-10
+eip-8369  6f818e27dd  focil     2026-08-10  soispoke/EIPs@codex/vops-profiles-focil
 eip-7928  6c666b8d64  adjacent  2026-07-09
 eip-8037  5a8c80897a  adjacent  2026-07-31
 ```
