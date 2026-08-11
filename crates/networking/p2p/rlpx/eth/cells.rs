@@ -1,5 +1,4 @@
 use crate::rlpx::{
-    eth::transactions::{MAX_POOLED_RESPONSE_BYTES, MAX_POOLED_TRANSACTIONS_BYTES},
     message::RLPxMessage,
     utils::{snappy_compress, snappy_decompress_bounded},
 };
@@ -23,6 +22,11 @@ pub type Cell = [u8; BYTES_PER_CELL];
 /// Caps allocation from a malicious peer; mirrors the GetBlockBodies-style limits.
 pub const MAX_CELL_REQUEST_HASHES: usize = 256;
 
+/// Recommended soft limit for a `GetCells` request, per devp2p `caps/eth.md`
+/// ("GetCells (0x14)"). We never ask for more in one message; a peer may enforce
+/// an arbitrary limit on the response, which is not a protocol violation.
+pub const GET_CELLS_SOFT_LIMIT_HASHES: usize = 64;
+
 /// Upper bound on cells per transaction in a `Cells` message: at most
 /// `MAX_BLOB_COUNT` blobs * `CELLS_PER_EXT_BLOB` columns. Bounds the per-tx
 /// inner-vec allocation at decode time.
@@ -34,13 +38,22 @@ pub const MAX_CELLS_PER_TX: usize = MAX_BLOB_COUNT * CELLS_PER_EXT_BLOB;
 /// by its declared length, before the hash-count check can run on decoded data.
 const MAX_GET_CELLS_BYTES: usize = MAX_CELL_REQUEST_HASHES * 33 + 256;
 
-/// Cell budget for a `Cells` response we *serve*, derived from the
-/// `PooledTransactions` soft serve limit ([`MAX_POOLED_RESPONSE_BYTES`]). We stop
-/// before a transaction would push the response past it, so what we emit stays
-/// under any peer's inbound cap. EIP-8070 lets a responder "truncate its `Cells`
-/// response depending on its current capacity", so a partial response is
-/// protocol-legal.
-pub const MAX_CELLS_SERVED: usize = MAX_POOLED_RESPONSE_BYTES / BYTES_PER_CELL;
+/// Recommended soft limit for a `Cells` response, per devp2p `caps/eth.md`
+/// ("Cells (0x15)"). Bounds what one `GetCells` can pull out of us.
+const MAX_CELLS_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
+
+/// Upper bound on the decompressed size of a `Cells` response, enforced before
+/// decompression so an oversized reply is rejected without materializing it.
+/// Twice the soft serve limit, leaving room for a peer that overshoots by a
+/// transaction, the same headroom the `PooledTransactions` path allows.
+const MAX_CELLS_BYTES: usize = 2 * MAX_CELLS_RESPONSE_BYTES;
+
+/// Cell budget for a `Cells` response we *serve*, derived from
+/// [`MAX_CELLS_RESPONSE_BYTES`]. We stop before a transaction would push the
+/// response past it. devp2p `caps/eth.md` lets a peer "omit entire transactions
+/// from the list [...] if they are unavailable or constrained", so a partial
+/// response is protocol-legal.
+pub const MAX_CELLS_SERVED: usize = MAX_CELLS_RESPONSE_BYTES / BYTES_PER_CELL;
 
 /// Worst-case cells one requested hash can pull, used to size a `GetCells`
 /// request so a peer applying [`MAX_CELLS_SERVED`] can answer it in full.
@@ -217,7 +230,8 @@ impl RLPxMessage for Cells {
         use bytes::Bytes;
         // Reject an oversized response by its declared decompressed length before
         // materializing the cell matrix, as the `PooledTransactions` path does.
-        let decompressed_data = snappy_decompress_bounded(msg_data, MAX_POOLED_TRANSACTIONS_BYTES)?;
+        // See `MAX_CELLS_BYTES`.
+        let decompressed_data = snappy_decompress_bounded(msg_data, MAX_CELLS_BYTES)?;
         let decoder = Decoder::new(&decompressed_data)?;
         let (id, decoder): (u64, _) = decoder.decode_field("request-id")?;
         let (transaction_hashes, decoder): (Vec<H256>, _) =

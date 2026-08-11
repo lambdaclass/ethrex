@@ -310,3 +310,21 @@ fn cells_rejects_a_response_over_the_inbound_budget() {
     let msg = Cells::new(1, hashes, vec![per_tx; 3], u128::MAX);
     assert!(Cells::decode(&encode(&msg)).is_err());
 }
+
+#[test]
+fn an_all_zero_mask_on_a_non_blob_announcement_is_not_an_availability_claim() {
+    // devp2p caps/eth.md types `cells` as B_16 and says it can be ignored when no
+    // blob transactions are announced, so a conformant peer sends 16 zero bytes on
+    // every non-blob announcement. Treating that as "holds no columns" would wipe
+    // the peer's recorded availability and stop sampling from it.
+    let non_blob = NewPooledTransactionHashes72::from_raw(
+        Bytes::from(vec![2u8, 2u8]),
+        vec![100, 200],
+        vec![H256::from_low_u64_be(1), H256::from_low_u64_be(2)],
+        Some(0),
+    );
+    assert!(!non_blob.announces_blob_tx());
+
+    let with_blob = npth(Some(0xFF));
+    assert!(with_blob.announces_blob_tx());
+}
