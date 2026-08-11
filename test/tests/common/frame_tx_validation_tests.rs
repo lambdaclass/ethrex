@@ -1169,7 +1169,7 @@ fn an_actor_is_covered_only_by_its_own_signature_over_the_spend_hash() {
         "the correctly-signed spend must pass, or the rejection below proves nothing"
     );
 
-    let mut wrong_signer = tx.clone();
+    let mut wrong_signer = tx;
     wrong_signer
         .signatures
         .push(spend_sig_entry(Address::from_low_u64_be(0x5151), hash));

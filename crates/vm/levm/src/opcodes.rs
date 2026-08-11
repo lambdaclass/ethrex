@@ -697,9 +697,9 @@ mod tests {
         (0xB5, "RECENTROOTREFLOAD"),
     ];
 
-    /// Bytes adjacent to the surface that no EIP in the Hegotá set assigns.
-    /// `0xB9` was EIP-7906's `NONCEKEYLOAD` and is free again; leaving it
-    /// unpinned is how a re-added opcode would reach a chain unnoticed.
+    /// Bytes adjacent to the frame surface that no EIP in the Hegotá set
+    /// assigns. Leaving them unpinned is how an opcode outside the set would
+    /// reach a chain unnoticed.
     const UNASSIGNED: [usize; 4] = [0xB6, 0xB7, 0xB8, 0xB9];
 
     #[test]

@@ -49,8 +49,9 @@ All five activate together at one timestamp. There is no per-EIP activation and 
 intermediate state in which some are live and others are not.
 
 EIP-8369 is in the set because EIP-7805 enforcement over frame transactions is
-undefined without an eligibility rule, and EIP-8369 is that rule. It has no activation
-switch of its own, which has a consequence stated under "Consensus inputs" below.
+undefined without an eligibility rule, and EIP-8369 is that rule. It activates with
+the fork exactly like the other four; what it does not have is an independent off
+switch, which has a consequence stated under "Consensus inputs" below.
 
 Also relevant, and inherited rather than chosen by this chain: the fork sits on top of
 Amsterdam (EIP-7773), and every EIP in that meta is live, including EIP-7928

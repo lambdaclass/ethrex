@@ -972,7 +972,7 @@ fn canonical_paymaster_is_exempt_from_the_noncanonical_pending_cap() {
     let mut near_miss = CANONICAL_PAYMASTER_RUNTIME.to_vec();
     near_miss[0] ^= 0x01;
     let other = Address::from_low_u64_be(0x9A11_D002);
-    let mut submit = |sender: Address, seq: u64| {
+    let submit = |sender: Address, seq: u64| {
         let (hash, tx) = phantom(sender, seq);
         mempool.add_transaction(
             hash,
@@ -4849,7 +4849,7 @@ fn utxo_admission_gas_matches_the_eip_schedule() {
     // Documented ceiling: each account output carries a full new-account reserve,
     // so two fresh-account outputs already exceed the default budget even though
     // such a spend is consensus-valid. Pinned so the consequence stays visible.
-    let mut two_account_outs = spend.clone();
+    let mut two_account_outs = spend;
     two_account_outs.utxo_outs.clear();
     two_account_outs.account_outs = vec![
         SpendOutput {

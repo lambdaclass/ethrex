@@ -4664,7 +4664,6 @@ mod signature_validation_touches_no_precompile {
     use super::*;
     use ethrex_common::types::{FRAME_SIG_SCHEME_SECP256K1, FrameSignature};
     use k256::ecdsa::SigningKey;
-    use k256::elliptic_curve::sec1::ToEncodedPoint;
 
     fn key_and_address(seed: u8) -> (SigningKey, Address) {
         let signing_key = SigningKey::from_bytes(&[seed; 32].into()).unwrap();

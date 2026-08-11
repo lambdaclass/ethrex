@@ -70,7 +70,8 @@ passed / 0 failed**, `cargo test -p ethrex-rpc --lib` is 122 passed, and
 | Access sets + bookkeeping (Tasks 6.5/6.6) | `d290f6547` | payer warmed on a payment-scope APPROVE; EIP-8272 BAL reads kept with justification |
 | Phase 6 closed (Tasks 6.7/6.8) | | divergence ledger swept; no consensus-visible row unresolved without a fallback |
 | FOCIL fixtures diagnosed (Task 5.7) | `92966fec9` | `tests-focil@v0.1.0` predates EIP-8282; bundle skipped, engine suite clean |
-| Artifact set (Tasks 8.1-8.6) | | `docs/hegota-testnet-joining.md`, `publish-artifacts.sh`, checks 8-12; the five-EIP set and the four non-genesis consensus inputs published |
+| Artifact set (Tasks 8.1-8.6) | `8fdeddc43` | `docs/hegota-testnet-joining.md`, `publish-artifacts.sh`, checks 8-12; the five-EIP set and the four non-genesis consensus inputs published |
+| Phase 2 closed (Tasks 2.4/2.5/2.7) | | word-bounded grep, `0xB9` misattribution fixed, six test-target clippy errors fixed |
 
 ### Not complete
 
@@ -728,18 +729,51 @@ proof that the active EIP set is the intended one must land first.
       `NONCEKEYLOAD = 0xB9` enum entry, table slot and Hegotá registration plus its
       not-before-Hegota test from `crates/vm/levm/src/opcodes.rs`, and its gas constant
       from `crates/vm/levm/src/gas_cost.rs` (the surface `f27362cb4` added).
-- [ ] Task 2.4: Prove the deletion is complete. `grep -rn -iE
+- [x] Task 2.4: Prove the deletion is complete. `grep -rn -iE
       '7906|TXTRACE|EVENTDATACOPY|TXDIFF|POST_TX|PostTx|NONCEKEYLOAD|NonceKeyLoad'
       crates/ cmd/ test/ tooling/ fixtures/ docs/` must return nothing outside
       `docs/hegota-testnet*.md`. Run `cargo check --workspace` and `cargo clippy
       --workspace -- -D warnings`; use `cargo fix` for the cascade of unused imports.
-- [ ] Task 2.5: Update `docs/hegota-devnet.md` on this branch: rewrite the Composition
+
+      **Run the grep with `-E '\b(…)\b'`, not `-iE` on bare alternatives.** As written
+      it is unusable: `7906` matches mainnet genesis allocations and vendored
+      bytecode, `TxTrace` matches the generic parameter in
+      `crates/networking/rpc/tracing.rs`, and `PostTx` matches `post_tx_index`, the
+      EIP-7928 BAL cursor. Word-bounded, the surviving hits are three deliberate
+      statements that the EIP is *absent* — `docs/eip-8250.md`,
+      `fixtures/networks/hegota-testnet.yaml` and `fixtures/networks/hegota-devnet.yaml` —
+      and no residual code.
+
+      One real defect the grep did find: `crates/vm/levm/src/opcodes.rs` attributed
+      `NONCEKEYLOAD` (`0xB9`) to EIP-7906. It was ethrex-local for EIP-8250, which
+      exposes `len(nonce_keys)`, the digest and `nonce_keys[0]` and deliberately
+      provides no per-index accessor. Corrected.
+
+      **`cargo clippy --workspace` does not lint test targets.** The command as
+      written passes while six lint errors sit in `test/tests/`. Run it with
+      `--all-targets`; that is what caught the unused import in `eip8141_tests.rs`,
+      the redundant `mut` in `mempool_tests.rs` and four redundant clones. All fixed.
+- [x] Task 2.5: Update `docs/hegota-devnet.md` on this branch: rewrite the Composition
       block to `main + eip-8250 + eip-8272 + eip-7805`, delete the EIP-7906 divergence
       section and the `0xB6`/`0xB7`/`0xB8`/`0xB9` rows from the opcode-allocation table
       (leaving `0xB5 = RECENTROOTREFLOAD` needing no dedup), delete the EIP-7906 pin
       line from the ```pins``` block, and remove the EIP-7906 paragraphs from
       `scripts/hegota-devnet/UPGRADE-GUIDE.md` and `scripts/hegota-devnet/USER-GUIDE.md`.
       Rename the branch references from `hegota-devnet` to `hegota-testnet`.
+
+      Done as far as it should be: the EIP-7906 divergence section, its opcode rows and
+      its pin line are gone from `docs/hegota-devnet.md`, and the EIP-7906 paragraphs
+      are gone from both `scripts/hegota-devnet/` guides.
+
+      **The rename is deliberately not done, and must not be.** Hegotá devnet is a
+      different network from Hegotá testnet — different branch, different chain ID,
+      different EIP set, its own config and its own bring-up. `docs/hegota-devnet.md`
+      and `fixtures/networks/hegota-devnet.yaml` describe that network and are not
+      drafts of this one. Rewriting them to say `hegota-testnet` would leave the devnet
+      undocumented and put two competing divergence lists on one chain. This chain's
+      documents are `docs/hegota-testnet-joining.md` (the published specification),
+      `docs/hegota-testnet-divergences.md` (the ledger) and this file. Nothing about
+      the testnet belongs in a `hegota-devnet` file.
 - [x] Task 2.6: `git merge origin/main`. Expect conflicts in
       `crates/vm/levm/src/vm.rs`, `crates/vm/levm/src/gas_cost.rs`,
       `crates/blockchain/blockchain.rs`, `crates/blockchain/mempool.rs`,
@@ -748,13 +782,31 @@ proof that the active EIP set is the intended one must land first.
       confirm `crates/vm/levm/src/opcode_handlers/frame_tx.rs`'s `SIGPARAM 0x04` pops
       `[mem_offset, data_offset, length]` (the `c45a95df9` order) and not `main`'s
       pre-`4a9ad32cf` `[length, data_offset, mem_offset]`.
-- [ ] Task 2.7: **Checkpoint: Verify Phase 2 complete.** Confirm Tasks 2.1-2.6 with:
+- [x] Task 2.7: **Checkpoint: Verify Phase 2 complete.** Confirm Tasks 2.1-2.6 with:
       the grep in 2.4 clean; `cargo check --workspace`, `cargo clippy --workspace -- -D
       warnings`, `cargo fmt --check` clean; `cargo test --workspace --exclude
       'ethrex-l2*' --exclude ethrex-prover --exclude ethrex-guest-program` green;
       `make -C tooling/ef_tests/blockchain test` green; `make -C tooling/ef_tests/engine
       test` green (this pulls the FOCIL fixtures via `focil-vectors` from
       `.fixtures_url_focil`, `tests-focil@v0.1.0`). List each task and its status.
+
+      | Task | Status |
+      | --- | --- |
+      | 2.1 branch cut from `origin/hegota-devnet` | done, `87fb3f700` |
+      | 2.2 EIP-7906 deleted | done, `e862b2fa1` |
+      | 2.3 `NONCEKEYLOAD` deleted | done, `f598130c0` |
+      | 2.4 deletion proven | done; grep word-bounded, `0xB9` misattribution fixed |
+      | 2.5 devnet docs | 7906 removals done; rename correctly refused |
+      | 2.6 `origin/main` merged | done, `b1c21e7b0` |
+
+      | Check | Result |
+      | --- | --- |
+      | word-bounded 2.4 grep | clean — only three statements that the EIP is absent |
+      | `cargo clippy --workspace --all-targets -- -D warnings` | clean after six test-target fixes |
+      | `cargo fmt --check` | clean |
+      | `cargo test --workspace` (l2/prover/guest excluded) | 47 binaries, 0 failed |
+      | `make -C tooling/ef_tests/blockchain test` | 14 744 + 3 138 passed / 0 failed |
+      | `make -C tooling/ef_tests/engine test` | 74 458 passed / 0 failed / 24 skipped |
 
 ### Phase 3: Complete EIP-8369 enforcement, prove EIP-8312 inert, enumerate the surface
 
