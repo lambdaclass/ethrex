@@ -9311,6 +9311,18 @@ mod binary_flat_backfill_tests {
             trie.insert(key.clone(), *value).unwrap();
         }
         trie.commit().unwrap();
+        // Record the depth these rows were grouped at, which in production the
+        // open that preceded them would have done. Without it the backend is
+        // indistinguishable from a pre-grouping datadir — grouped rows, no
+        // marker — and `check_binary_group_depth` refuses it, correctly.
+        let mut tx = backend.begin_write().unwrap();
+        tx.put(
+            MISC_VALUES,
+            BINARY_GROUP_DEPTH_KEY,
+            &[DEFAULT_GROUP_DEPTH.get() as u8],
+        )
+        .unwrap();
+        tx.commit().unwrap();
         backend
     }
 
@@ -12194,7 +12206,7 @@ mod binary_group_depth_marker_tests {
         write_marker(&backend, &[other]);
         write_a_node_row(&backend);
 
-        let err = open(&backend).err().expect("the open is refused");
+        let err = open(&backend).expect_err("the open is refused");
 
         assert!(
             matches!(
@@ -12216,7 +12228,7 @@ mod binary_group_depth_marker_tests {
         write_marker(&backend, &[other]);
         write_a_node_row(&backend);
 
-        open(&backend).err().expect("the open is refused");
+        open(&backend).expect_err("the open is refused");
 
         assert_eq!(
             marker(&backend),
@@ -12242,7 +12254,7 @@ mod binary_group_depth_marker_tests {
         write_a_node_row(&backend);
         assert_eq!(marker(&backend), None, "no marker, as before grouping");
 
-        let err = open(&backend).err().expect("the open is refused");
+        let err = open(&backend).expect_err("the open is refused");
 
         assert!(
             matches!(
