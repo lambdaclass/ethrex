@@ -145,6 +145,28 @@ fn micros(d: Duration) -> f64 {
     d.as_secs_f64() * 1e6
 }
 
+/// A comma-separated list of numbers from `var`, or `fallback`.
+///
+/// The sweep's axes — which depths, which state sizes, how many blocks —
+/// are the thing one wants to move while chasing a result, and moving
+/// them by editing a literal means a recompile of `ethrex-storage`
+/// against RocksDB for every question asked. Reading them from the
+/// environment keeps the committed defaults as the documented run while
+/// leaving the axes open.
+fn numbers_from_env(var: &str, fallback: &[usize]) -> Vec<usize> {
+    match std::env::var(var) {
+        Err(_) => fallback.to_vec(),
+        Ok(raw) => raw
+            .split(',')
+            .map(|part| {
+                part.trim()
+                    .parse()
+                    .unwrap_or_else(|_| panic!("{var}: {part:?} is not a number"))
+            })
+            .collect(),
+    }
+}
+
 /// Build an `leaf_count`-leaf binary trie into `backend`, returning the
 /// root and the keys.
 fn build(
@@ -601,25 +623,32 @@ fn time_interleaved(stores: &[Store], blocks: usize, changed: usize) -> Vec<Dept
 #[test]
 #[ignore = "measurement harness, not a correctness test"]
 fn group_depth_wall_clock() {
-    const BLOCKS: usize = 15;
     const CHANGED: usize = 1_000;
 
-    // 5 and 8 are along for the ride, as controls. The question is
-    // `6` against `7`, but a two-point comparison cannot say whether
-    // either is a local optimum or whether the block is simply getting
-    // cheaper in one direction, and `g = 8` is the depth the projected
-    // rows-touched column liked best while criterion (b) excludes it —
-    // so it is worth seeing what it does to a real block.
-    let candidates: Vec<GroupDepth> = (5..=8)
+    let blocks: usize = numbers_from_env("ETHREX_GD_BLOCKS", &[15])[0];
+    // `g = 1` is the ungrouped control — one node per row, which is what
+    // the table held before this plan — so the run says not only which
+    // depth is best but whether grouping is winning at all. 5 and 8
+    // bracket the two candidates: a two-point comparison cannot say
+    // whether either is a local optimum, and `g = 8` is the depth the
+    // projected rows-touched column liked best while criterion (b)
+    // excludes it, so it is worth seeing what it does to a real block.
+    let candidates: Vec<GroupDepth> = numbers_from_env("ETHREX_GD_DEPTHS", &[1, 4, 5, 6, 7, 8])
+        .into_iter()
         .map(|levels| GroupDepth::new(levels).expect("in range"))
         .collect();
+    let leaf_counts = numbers_from_env("ETHREX_GD_LEAVES", &[300_000, 600_000, 1_000_000]);
+    let cache_sizes: Vec<usize> = numbers_from_env("ETHREX_GD_CACHE_MIB", &[8, 64])
+        .into_iter()
+        .map(|mib| mib * 1024 * 1024)
+        .collect();
 
-    for &leaf_count in &[300_000usize, 600_000, 1_000_000] {
-        for &block_cache_size in &[8 * 1024 * 1024usize, 64 * 1024 * 1024] {
+    for &leaf_count in &leaf_counts {
+        for &block_cache_size in &cache_sizes {
             let cache_mib = block_cache_size / (1024 * 1024);
             println!(
                 "\n\n######## group depth wall clock: {leaf_count} leaves, \
-                 {cache_mib} MiB block cache, {BLOCKS} interleaved blocks of \
+                 {cache_mib} MiB block cache, {blocks} interleaved blocks of \
                  {CHANGED} changed leaves ########"
             );
 
@@ -627,7 +656,7 @@ fn group_depth_wall_clock() {
                 .iter()
                 .map(|&depth| prepare_store(leaf_count, block_cache_size, depth))
                 .collect();
-            let results = time_interleaved(&stores, BLOCKS, CHANGED);
+            let results = time_interleaved(&stores, blocks, CHANGED);
 
             for r in &results {
                 let (low, high) = r.spread();
