@@ -271,8 +271,11 @@ mod tests {
     #[test]
     fn the_based_slot_count_covers_every_based_message_code() {
         use crate::rlpx::l2::messages::{BatchSealed, NewBlock};
-        assert!(NewBlock::CODE < BASED_CAPABILITY_SLOT_COUNT);
-        assert!(BatchSealed::CODE < BASED_CAPABILITY_SLOT_COUNT);
+        // `const` blocks, not plain assertions: both sides are compile-time
+        // constants, so a runtime `assert!` is folded away and guards nothing.
+        // This way a collision fails the build.
+        const { assert!(NewBlock::CODE < BASED_CAPABILITY_SLOT_COUNT) };
+        const { assert!(BatchSealed::CODE < BASED_CAPABILITY_SLOT_COUNT) };
     }
 
     #[test]
@@ -281,7 +284,7 @@ mod tests {
         // stacked above this one would offset by, so it must include the
         // reserved pair or a later healing protocol would collide.
         assert_eq!(PBTSNAP_CAPABILITY_SLOT_COUNT, 4);
-        assert!(codes::RESERVED_PBT_NODES < PBTSNAP_CAPABILITY_SLOT_COUNT);
+        const { assert!(codes::RESERVED_PBT_NODES < PBTSNAP_CAPABILITY_SLOT_COUNT) };
     }
 
     #[test]

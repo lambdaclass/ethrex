@@ -314,7 +314,7 @@ mod tests {
             let bytes = leaf_budget(budget) as u64 * WORST_CASE_LEAF;
             // The progress rule outranks the budget for the first leaf, and the
             // server's own cap outranks a peer asking for more.
-            let allowance = budget.min(MAX_RESPONSE_BYTES).max(WORST_CASE_LEAF);
+            let allowance = budget.clamp(WORST_CASE_LEAF, MAX_RESPONSE_BYTES);
             assert!(
                 bytes <= allowance,
                 "budget {budget} admits {bytes} worst-case bytes, over {allowance}",
