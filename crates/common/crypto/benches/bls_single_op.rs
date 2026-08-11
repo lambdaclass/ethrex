@@ -14,8 +14,8 @@ use blst::{
     blst_scalar_from_bendian,
 };
 use criterion::{Criterion, criterion_group, criterion_main};
-use std::hint::black_box;
 use ethrex_crypto::{Crypto, NativeCrypto};
+use std::hint::black_box;
 
 fn scalar_bytes(seed: u64) -> [u8; 32] {
     let mut s = [0u8; 32];
