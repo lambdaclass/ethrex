@@ -12,8 +12,22 @@
 #
 # Launch:
 #   make build-image-sync-test
-#   make localnet ENCLAVE=snap2 KURTOSIS_CONFIG_FILE=fixtures/networks/snap2-devnet.yaml
-#   ./scripts/snap2-devnet/join.sh          # once the chain is past MIN_FULL_BLOCKS
+#   kurtosis run --enclave snap2 ethereum-package --args-file fixtures/networks/snap2-devnet.yaml
+#   ./scripts/snap2-devnet/join.py          # once the chain is past MIN_FULL_BLOCKS
+#
+# KEEP THE ENCLAVE RUNNING between attempts. Reaching the depth snap sync needs
+# takes roughly fifteen minutes, and that is the whole cost of a test cycle;
+# the node under test takes seconds to rebuild and rejoin. Iterating on ethrex
+# is `make build-image-sync-test` then `join.py` again, with the enclave
+# untouched — join.py only ever removes its own joiner container.
+#
+# Only a change to genesis or network_params below needs a teardown, since
+# those are baked in at enclave creation. Everything else does not.
+#
+# Leaving it up also improves the test: the chain keeps growing, so the depth
+# gate is satisfied permanently and later joins start immediately, against a
+# larger state whose download is more likely to span a pivot window and
+# exercise the access-list catch-up. It costs about a gigabyte.
 #
 # geth serves as well as ethrex so the joiner can be pointed at either. geth's
 # snap/2 is behind `--snap.v2` ("not safe on public networks yet"); without that

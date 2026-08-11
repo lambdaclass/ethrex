@@ -15,6 +15,11 @@ still ends with a synced node, so "it synced" proves nothing: this checks which
 path executed, and fails if the node ever entered trie healing or never applied
 an access list.
 
+This removes and recreates only its own joiner container, never the enclave.
+The enclave is the expensive part — roughly fifteen minutes to reach the depth
+snap sync needs — so it is meant to be left running across attempts, and the
+chain it keeps building makes each later attempt start sooner and test more.
+
 Usage:
     ./join.py                       # join enclave "snap2", run to completion
     ./join.py --enclave my-devnet
