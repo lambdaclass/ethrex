@@ -433,15 +433,31 @@ mod tests {
             // lengths. Grouping removes neither collision at any depth,
             // so no positional-routing argument in `crates/storage` may
             // be relaxed on the strength of it.
-            assert!(
-                (0..=600)
-                    .any(|bits| group_db_key(&BitPath::from_bits(&vec![1u8; bits]), g).len() == 34),
-                "g={levels} still produces a 34-byte key"
+            //
+            // Asserted at the two bit-depths the `crates/storage`
+            // collision fixtures name rather than as "some depth
+            // produces one", because that is the claim those fixtures
+            // rest on: a *node* at 240 (resp. 496) must still reach the
+            // table under a 34-byte (resp. 66-byte) key once its path
+            // has been truncated to its group root. Existence at some
+            // other depth would not license the fixtures.
+            //
+            // It holds at every depth 1..=8 and not merely at the
+            // divisors of 240: a row key is 34 bytes for any group-root
+            // bit count in 233..=240 and 66 bytes for any in 489..=496,
+            // and eight consecutive integers contain a multiple of every
+            // `g <= MAX_GROUP_DEPTH`. So the collision is a property of
+            // the key *shape*, and moving to `g = 7` cannot argue it
+            // away.
+            assert_eq!(
+                group_db_key(&BitPath::from_bits(&vec![1u8; 240]), g).len(),
+                34,
+                "g={levels}: a node at bit-depth 240 must still land on a 34-byte row key"
             );
-            assert!(
-                (0..=600)
-                    .any(|bits| group_db_key(&BitPath::from_bits(&vec![1u8; bits]), g).len() == 66),
-                "g={levels} still produces a 66-byte key"
+            assert_eq!(
+                group_db_key(&BitPath::from_bits(&vec![1u8; 496]), g).len(),
+                66,
+                "g={levels}: a node at bit-depth 496 must still land on a 66-byte row key"
             );
         }
     }
