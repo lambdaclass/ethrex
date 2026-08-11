@@ -4132,6 +4132,21 @@ mod tests {
             .collect()
     }
 
+    /// Every **row** the store holds, verbatim: the container view, key
+    /// and encoded bytes, deliberately not decoded.
+    ///
+    /// The counterpart of [`stored_paths`], which is the content view.
+    /// A cross-depth comparison needs both, and needs them to disagree:
+    /// if the rows matched too, the two stores would be the same store
+    /// and the agreement at the member level would mean nothing.
+    fn stored_rows(map: &NodeMap) -> BTreeMap<Vec<u8>, Vec<u8>> {
+        map.lock()
+            .unwrap()
+            .iter()
+            .map(|(key, row)| (key.clone(), row.clone()))
+            .collect()
+    }
+
     fn depth_of(levels: usize) -> GroupDepth {
         GroupDepth::new(levels).expect("valid group depth")
     }
@@ -4628,6 +4643,119 @@ mod tests {
                     "g={levels}: {key:02x?}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn two_depths_differ_at_the_row_level_and_agree_at_the_member_level() {
+        // "A change of container, not of content", stated so it can fail.
+        // Two stores built from the same entries at two group depths must
+        // hold *different rows* and the *same nodes*: same absolute paths,
+        // same encodings byte-for-byte, same root.
+        //
+        // `g = 1` is the control, and it is a control rather than a second
+        // reading of the same thing: at depth 1 a row is one node, which is
+        // the pre-grouping format. A grouping bug that loses a member, or
+        // installs one at the wrong path, cannot hide there — a row with one
+        // member has no siblings to drop and no relative path to misplace.
+        //
+        // The member view is reassembled as `row key bits ++ relative bits`
+        // by `stored_paths`/`bits_from_db_key`, which never calls the group
+        // geometry, so the two sides are not two calls to the code under
+        // test. Note this is what makes the member equality meaningful at
+        // *any* split point: it is the content that has to match, and the
+        // row-level assertion below is what stops the container matching too.
+        let entries = ladder_entries(30);
+        let (control_map, control_root) = commit_entries_at(&entries, depth_of(1));
+        let control_members = stored_paths(&control_map);
+        let control_rows = stored_rows(&control_map);
+        assert_eq!(
+            control_rows.len(),
+            control_members.len(),
+            "at g = 1 a row holds exactly one node, or the control is not a control"
+        );
+        assert!(
+            control_members.len() > entries.len(),
+            "the control must hold interior nodes too, or there is nothing to group"
+        );
+
+        // The same mutation at every depth, so the incremental path is
+        // compared as well as the from-scratch one: a commit that gathers
+        // a row's untouched members wrongly shows up here and not above.
+        let touched: Entries = entries
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| index % 3 == 0)
+            .map(|(_, (key, _))| (key.clone(), [0xa5u8; 32]))
+            .collect();
+        let dropped: Vec<Vec<u8>> = entries
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| index % 3 == 1)
+            .map(|(_, (key, _))| key.clone())
+            .collect();
+        assert!(!touched.is_empty() && !dropped.is_empty());
+
+        let mutate = |map: &NodeMap, root: H256, group_depth: GroupDepth| -> H256 {
+            let mut trie = BinaryTrie::open(
+                Box::new(InMemoryBinaryTrieDB::new(Arc::clone(map)).at_group_depth(group_depth)),
+                root,
+            );
+            for (key, value) in &touched {
+                trie.insert(key.clone(), *value).unwrap();
+            }
+            for key in &dropped {
+                trie.remove(key).unwrap();
+            }
+            trie.commit().unwrap().root
+        };
+
+        let control_after = mutate(&control_map, control_root, depth_of(1));
+        let control_members_after = stored_paths(&control_map);
+        let control_rows_after = stored_rows(&control_map);
+        assert_ne!(control_after, control_root);
+
+        for levels in 2..=MAX_GROUP_DEPTH {
+            let group_depth = depth_of(levels);
+            let (map, root) = commit_entries_at(&entries, group_depth);
+            let members = stored_paths(&map);
+            let rows = stored_rows(&map);
+
+            // Content.
+            assert_eq!(
+                root, control_root,
+                "g={levels}: the root is consensus-visible"
+            );
+            assert_eq!(
+                members, control_members,
+                "g={levels}: grouping moved, dropped or altered a node"
+            );
+
+            // Container. Strictly fewer rows than nodes is the whole claim
+            // of the change, and it is what stops the equality above from
+            // being an equality between two identical stores.
+            assert!(
+                rows.len() < members.len(),
+                "g={levels}: {} rows for {} nodes — nothing was grouped",
+                rows.len(),
+                members.len()
+            );
+            assert_ne!(rows, control_rows, "g={levels}: the rows must not match");
+
+            // And again after the same insert/remove sequence.
+            let after = mutate(&map, root, group_depth);
+            let members_after = stored_paths(&map);
+            let rows_after = stored_rows(&map);
+            assert_eq!(after, control_after, "g={levels}: after the mutation");
+            assert_eq!(
+                members_after, control_members_after,
+                "g={levels}: the mutated tries hold different nodes"
+            );
+            assert!(
+                rows_after.len() < members_after.len(),
+                "g={levels}: the mutated store stopped grouping"
+            );
+            assert_ne!(rows_after, control_rows_after, "g={levels}");
         }
     }
 
