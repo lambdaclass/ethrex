@@ -43,26 +43,15 @@ participants:
     cl_type: lighthouse
     cl_image: ethpandaops/lighthouse:glamsterdam-devnet-7
     validator_count: 32
-  # Cross-client server, and today it cannot be one.
+  # Cross-client server.
   #
-  # ethrex and geth disagree on the access list of the Amsterdam transition
-  # block, in both directions. ethrex rejects geth's block because it records a
-  # nonce change at block-access index 0 for the deterministic CREATE2 deployer
-  # (0x4e59b448...), and ethrex requires every index-0 change to belong to an
-  # account its pre-execution system calls touched. geth rejects ethrex's block
-  # with a plain "access list hash mismatch". Neither can follow the other past
-  # the fork, so geth freezes one block short of Amsterdam and has no
-  # post-Amsterdam state to serve.
+  # It proposes nothing, only follows and serves. That is not a workaround for
+  # a disagreement any more, just the smallest thing this devnet needs from it.
   #
-  # It stays here, proposing nothing, because the joiner peering with a client
-  # that advertises snap/2 but cannot answer is itself worth exercising, and
-  # because this is where the interop check goes the moment the disagreement is
-  # settled. Until then the sync is ethrex-to-ethrex.
-  #
-  # That disagreement is EIP-7928's, not snap/2's, and which client is right is
-  # unresolved. One lead: the EIP-8282 builder predeploys below are preloaded
-  # rather than deployed by the generator, so a difference in whether their
-  # system calls run would show up exactly here.
+  # The disagreement it used to hit was the EIP-7997 factory missing from
+  # genesis, see the preloaded contracts below. With the factory present geth
+  # injects nothing at the fork and the two clients agree, so the joiner can be
+  # pointed at either with `--source-el`.
   - el_type: geth
     el_image: ethpandaops/geth:glamsterdam-devnet-7
     el_extra_params: ["--snap.v2", "--syncmode=full", "--gcmode=archive"]
@@ -86,6 +75,22 @@ network_params:
   gloas_fork_epoch: 1
 
   additional_preloaded_contracts:
+    # EIP-7997 deterministic CREATE2 factory. The chain's state MUST include it
+    # with a nonzero nonce, satisfied here by genesis since this devnet's gas
+    # parameters cannot carry its keyless deployment transaction.
+    #
+    # Without it the two clients disagree on the Amsterdam transition block and
+    # neither can follow the other. geth still injects the factory at the fork
+    # when it is absent, which an earlier draft of the EIP specified; the
+    # current text replaced that with genesis-or-transaction delivery and says
+    # client software "MUST NOT check for the existence of the contract at the
+    # fork boundary". ethrex implements the current text, i.e. nothing, so
+    # geth's injection shows up as a block-access index 0 nonce change for an
+    # account ethrex never touched.
+    "0x4e59b44847b379578588920cA78FbF26c0B4956C":
+      balance: "0"
+      nonce: "1"
+      code: "0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3"
     "0x0000BFF46984E3725691FA540A8C7589300D8282":
       balance: "0"
       nonce: "1"
