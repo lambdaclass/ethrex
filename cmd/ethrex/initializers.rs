@@ -737,31 +737,54 @@ fn resolve_binary_tree_time(
     }
 }
 
-/// Refuses snap sync on a chain that schedules the EIP-8297 binary-tree
-/// commitment.
+/// Decides whether `--syncmode snap` can work on a chain that schedules the
+/// EIP-8297 binary-tree commitment.
 ///
-/// Snap sync is MPT-shaped: it pivots on a recent header and downloads the
-/// trie behind that header's `state_root`. Once `binaryTreeTime` has passed,
-/// a header's `state_root` is a binary-trie root that addresses no MPT, so
-/// the pivot resolves to nothing and the node fails in a way nobody can
-/// debug. Binary-trie snap sync is tracked separately; until it exists, full
-/// sync is the only supported mode on a scheduled chain.
+/// This guard used to refuse the combination outright, because the only state
+/// download that existed was MPT-shaped: it pivots on a recent header and
+/// downloads the trie behind that header's `state_root`, and from
+/// `binaryTreeTime` onwards that root is a binary-trie root addressing no MPT.
+/// `pbtsnap/1` is that missing download, so the *post-flip* half of the
+/// refusal is lifted: `Syncer::sync_cycle` routes a scheduled chain to
+/// `sync_cycle_pbt`, which downloads binary-trie leaves and verifies them
+/// against the same pivot root the header commits to.
 ///
-/// No auto-fallback to full sync — a silent mode switch surprises operators —
-/// so the error names the fix instead.
+/// What the old guard protected against is still refused, in two halves:
+///
+/// - **Legacy MPT snap never runs on such a chain.** That is not this
+///   function's doing any more, and could not be: which downloader runs is a
+///   runtime fact. It is enforced where the mode is used — the router in
+///   `sync_cycle`, `sync_cycle_snap`'s own bail-out, and the server's refusal
+///   to answer `GetAccountRange`/`GetStorageRanges`/`GetTrieNodes` on a
+///   scheduled chain.
+/// - **A pre-flip pivot has no binary root to download**, so a node started in
+///   snap mode before the activation timestamp is still refused here, with the
+///   same fix named. `sync_cycle_pbt` would fall back to full sync (Decision
+///   12) rather than break, but that is a silent mode switch, and this branch's
+///   contract is to tell the operator instead. The check is against wall clock,
+///   which is an approximation of "which side of the flip will the pivot land
+///   on" — deliberately the cheap, early, obvious-mistake half; the runtime
+///   fallback stays as the authoritative answer for a node that is already
+///   running when the flip arrives.
 ///
 /// Callers must pass the *finalized* chain config (after
 /// [`resolve_binary_tree_time`], so both a genesis-JSON `binaryTreeTime` and
-/// `--experimental.binary-tree-delay` are covered) and the *effective* sync
-/// mode: `--dev` never p2p-syncs and forces full in `init_rpc_api`, so it
-/// must not trip this.
-fn validate_sync_mode(config: &ChainConfig, syncmode: &SyncMode) -> eyre::Result<()> {
-    if config.binary_tree_scheduled() && *syncmode == SyncMode::Snap {
+/// `--experimental.binary-tree-delay` are covered), the *effective* sync mode
+/// (`--dev` never p2p-syncs and forces full in `init_rpc_api`, so it must not
+/// trip this), and the current unix time.
+fn validate_sync_mode(config: &ChainConfig, syncmode: &SyncMode, now: u64) -> eyre::Result<()> {
+    if config.binary_tree_scheduled()
+        && *syncmode == SyncMode::Snap
+        && !config.is_binary_tree_active(now)
+    {
+        let activation = config.binary_tree_time.unwrap_or_default();
         return Err(eyre::eyre!(
-            "snap sync is not supported on a binary-tree-scheduled chain (binaryTreeTime is set): \
-             snap sync downloads the MPT behind a pivot header's state root, but from the \
-             activation timestamp onwards a state root is a binary-trie root that addresses no \
-             MPT. Restart with --syncmode full."
+            "snap sync cannot start on this chain yet: the EIP-8297 binary-tree commitment \
+             activates at timestamp {activation}, which is still {} seconds away. Snap sync on a \
+             scheduled chain means pbtsnap, which downloads the binary trie behind a post-flip \
+             pivot; before the flip there is no such pivot to download. Restart with \
+             --syncmode full.",
+            activation.saturating_sub(now)
         ));
     }
     Ok(())
@@ -859,7 +882,14 @@ pub async fn init_l1(
     } else {
         &opts.syncmode
     };
-    validate_sync_mode(&genesis.config, effective_syncmode)?;
+    validate_sync_mode(
+        &genesis.config,
+        effective_syncmode,
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|since_epoch| since_epoch.as_secs())
+            .unwrap_or_default(),
+    )?;
     validate_genesis_binary_tree_embeddable(&genesis)?;
     display_chain_initialization(&genesis);
     debug!("Preloading KZG trusted setup");
@@ -1385,50 +1415,73 @@ mod tests {
         assert!(err.contains("--experimental.binary-tree-delay"), "{err}");
     }
 
-    // --- snap sync on a scheduled chain (Task B1) -------------------------
+    // --- snap sync on a scheduled chain (Task B1, revised by pbtsnap) -----
 
     use super::validate_sync_mode;
     use ethrex_common::types::ChainConfig;
     use ethrex_p2p::sync::SyncMode;
+
+    const ACTIVATION: u64 = 1_700_000_120;
 
     /// A config with the commitment scheduled for a timestamp well after
     /// genesis: `binary_tree_scheduled()` holds, which is what the guard keys
     /// off.
     fn scheduled_config() -> ChainConfig {
         ChainConfig {
-            binary_tree_time: Some(1_700_000_120),
+            binary_tree_time: Some(ACTIVATION),
             ..Default::default()
         }
     }
 
-    /// Snap sync pivots on a recent header's `state_root` and downloads the
-    /// MPT behind it. After the flip that root is a binary-trie root
-    /// addressing no MPT, so refuse at startup rather than fail
-    /// undebuggably later — and name the fix.
+    /// The half of the old refusal that `pbtsnap/1` lifts. Past the activation
+    /// timestamp a pivot commits a binary root, which is exactly what
+    /// `sync_cycle_pbt` downloads, so the mode must now start.
     #[test]
-    fn snap_sync_on_a_scheduled_chain_is_rejected_naming_the_fix() {
-        let err = validate_sync_mode(&scheduled_config(), &SyncMode::Snap)
+    fn snap_sync_after_the_flip_is_accepted_and_means_pbtsnap() {
+        validate_sync_mode(&scheduled_config(), &SyncMode::Snap, ACTIVATION)
+            .expect("at the activation timestamp the pivot is binary-committed");
+        validate_sync_mode(&scheduled_config(), &SyncMode::Snap, ACTIVATION + 3_600)
+            .expect("well past the flip, snap sync means pbtsnap and must start");
+    }
+
+    /// The half that survives: before the flip every pivot commits an MPT, so
+    /// there is no binary trie to download. `sync_cycle_pbt` would fall back to
+    /// full sync, but a silent mode switch is what this branch refuses to do —
+    /// the error names the fix instead.
+    #[test]
+    fn snap_sync_before_the_flip_is_rejected_naming_the_fix() {
+        let err = validate_sync_mode(&scheduled_config(), &SyncMode::Snap, ACTIVATION - 1)
             .unwrap_err()
             .to_string();
         assert!(
             err.contains("--syncmode full"),
             "the error must tell the operator the fix (--syncmode full), got: {err}"
         );
+        assert!(
+            err.contains(&ACTIVATION.to_string()),
+            "the error must name the activation timestamp the operator has to wait for, got: {err}"
+        );
     }
 
-    /// Full sync is binary-tree aware, so a scheduled chain boots normally.
+    /// Full sync is binary-tree aware, so a scheduled chain boots normally on
+    /// either side of the flip.
     #[test]
     fn full_sync_on_a_scheduled_chain_is_accepted() {
-        validate_sync_mode(&scheduled_config(), &SyncMode::Full)
-            .expect("full sync is the supported mode on a scheduled chain");
+        validate_sync_mode(&scheduled_config(), &SyncMode::Full, ACTIVATION - 1)
+            .expect("full sync is supported before the flip");
+        validate_sync_mode(&scheduled_config(), &SyncMode::Full, ACTIVATION + 1)
+            .expect("full sync is supported after the flip");
     }
 
-    /// Today's default (snap, no `binaryTreeTime`) must be untouched.
+    /// Today's default (snap, no `binaryTreeTime`) must be untouched, at any
+    /// wall-clock time: an unscheduled chain never reaches the pbtsnap router.
     #[test]
     fn snap_sync_on_an_unscheduled_chain_is_accepted() {
         let config = ChainConfig::default();
         assert!(!config.binary_tree_scheduled());
-        validate_sync_mode(&config, &SyncMode::Snap)
+        validate_sync_mode(&config, &SyncMode::Snap, 0)
+            .expect("an unscheduled chain must be unaffected by this guard");
+        validate_sync_mode(&config, &SyncMode::Snap, ACTIVATION + 3_600)
             .expect("an unscheduled chain must be unaffected by this guard");
     }
 
