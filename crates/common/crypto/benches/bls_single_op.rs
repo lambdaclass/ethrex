@@ -13,7 +13,8 @@ use blst::{
     blst_p2_from_affine, blst_p2_generator, blst_p2_mult, blst_p2_to_affine, blst_scalar,
     blst_scalar_from_bendian,
 };
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
+use std::hint::black_box;
 use ethrex_crypto::{Crypto, NativeCrypto};
 
 fn scalar_bytes(seed: u64) -> [u8; 32] {
