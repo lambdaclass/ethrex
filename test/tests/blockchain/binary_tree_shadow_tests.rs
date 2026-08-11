@@ -2119,7 +2119,7 @@ async fn post_flip_journal_entries_carry_no_mpt_sections() {
             // ...but the entry is not vacuously empty: the binary trie moved,
             // and its reverse diff is what a deep reorg unwinds with.
             assert!(
-                !entry.binary_trie_diff.is_empty(),
+                !entry.binary_row_diff.is_empty(),
                 "block {}: the binary trie did advance, so its section must be populated",
                 block.header.number
             );

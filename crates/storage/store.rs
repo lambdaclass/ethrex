@@ -17,8 +17,8 @@ use crate::{
     backend::in_memory::InMemoryBackend,
     binary_trie::{
         BINARY_FLAT_FRONTIER_COMPLETE, BackendBinaryFlatDB, BackendBinaryTrieDB,
-        BinaryFlatCoverage, BinaryFlatLeaf, BinaryFlatWrites, BinaryTrieNodes, LayeredBinaryTrieDB,
-        StagedBinaryNodes,
+        BinaryFlatCoverage, BinaryFlatLeaf, BinaryFlatWrites, BinaryTrieRows, LayeredBinaryTrieDB,
+        StagedBinaryRows,
     },
     block_data_buffer::BlockDataBuffer,
     error::StoreError,
@@ -506,8 +506,8 @@ pub struct UpdateBatch {
     pub wait_for_flush: bool,
 }
 
-/// One block's EIP-8297 binary-trie advance: the root it reached and the node
-/// writes that got it there, **staged** rather than written.
+/// One block's EIP-8297 binary-trie advance: the root it reached and the
+/// **group row** writes that got it there, **staged** rather than written.
 ///
 /// Produced by [`Store::advance_binary_trie_for_block`] and carried through
 /// [`UpdateBatch`] into the block's diff layer. Nothing here has touched disk;
@@ -533,10 +533,11 @@ pub struct BinaryTrieAdvance {
     /// tombstone, per `BinaryTrieDB`'s convention.
     ///
     /// A key addresses a group *root* and a value is a whole row, so one entry
-    /// carries every node of one group. A removal that leaves the group with
-    /// members arrives here as an ordinary rewrite holding the survivors; only
-    /// a group that lost its last member arrives as an empty value.
-    pub nodes: BinaryTrieNodes,
+    /// carries every node of one group and `rows.len()` is a row count, not a
+    /// node count. A removal that leaves the group with members arrives here as
+    /// an ordinary rewrite holding the survivors; only a group that lost its
+    /// last member arrives as an empty value.
+    pub rows: BinaryTrieRows,
     /// The same block's writes to the flat leaf mirror, derived from the
     /// [`LeafChangelog`] the trie's own commit emitted: one
     /// `BINARY_FLATKEYVALUE` row per leaf the block created, changed or removed.
@@ -558,7 +559,7 @@ impl From<BinaryTrieAdvance> for BinaryLayerUpdate {
         BinaryLayerUpdate {
             root: advance.root,
             parent_root: advance.parent_root,
-            nodes: advance.nodes,
+            rows: advance.rows,
             flat: advance.flat,
         }
     }
@@ -3117,7 +3118,7 @@ impl Store {
         &self,
         binary_root: H256,
         gate_root: H256,
-        staged: StagedBinaryNodes,
+        staged: StagedBinaryRows,
     ) -> Result<LayeredBinaryTrieDB, StoreError> {
         // One read view for both handles, so a node read and a mirror read
         // taken in one traversal see one consistent snapshot: the mirror is
@@ -3694,12 +3695,12 @@ impl Store {
         let flat = flat_writes_from_changelog(committed.leaves);
         drop(trie);
 
-        let nodes = std::mem::take(&mut *staged.lock().map_err(|_| StoreError::LockError)?);
+        let rows = std::mem::take(&mut *staged.lock().map_err(|_| StoreError::LockError)?);
         self.set_binary_trie_root(block_hash, root)?;
         Ok(BinaryTrieAdvance {
             root,
             parent_root,
-            nodes,
+            rows,
             flat,
         })
     }
@@ -5611,7 +5612,7 @@ impl Store {
     /// count, while the node count beside it is not, and the two have been
     /// compared against each other.
     #[cfg(any(test, feature = "testing"))]
-    pub fn binary_trie_nodes_for_test(&self) -> Result<BinaryTrieNodes, StoreError> {
+    pub fn binary_trie_nodes_for_test(&self) -> Result<BinaryTrieRows, StoreError> {
         use crate::api::tables::BINARY_TRIE_NODES;
         let read = self.backend.begin_read()?;
         read.prefix_iterator(BINARY_TRIE_NODES, &[])?
@@ -6284,19 +6285,20 @@ fn commit_to_disk(
         }
         None => Vec::new(),
     };
-    // The same bridge for `BINARY_TRIE_NODES`, kept as a separate list because
-    // these keys go to one fixed column family and, crucially, cannot be routed
-    // by length: a `BitPath` key overlaps every range `classify_trie_key`
-    // dispatches on, so folding them into `extra_writes` would write binary nodes
+    // The same bridge for `BINARY_TRIE_NODES`, carrying whole group **rows**
+    // keyed by group root. Kept as a separate list because these keys go to one
+    // fixed column family and, crucially, cannot be routed by length: a row key
+    // is `4 + ceil(bits/8)` bytes and overlaps every range `classify_trie_key`
+    // dispatches on, so folding them into `extra_writes` would write binary rows
     // into `ACCOUNT_TRIE_NODES` and corrupt the MPT.
     let binary_extra_writes: Vec<(Vec<u8>, Vec<u8>)> = match &overlay_for_reconciliation {
         Some(overlay) => {
             let layer_keys: rustc_hash::FxHashSet<&Vec<u8>> = committed_layers
                 .iter()
-                .flat_map(|l| l.binary_nodes.iter().map(|(k, _)| k))
+                .flat_map(|l| l.binary_rows.iter().map(|(k, _)| k))
                 .collect();
             overlay
-                .iter_binary_entries()
+                .iter_binary_row_entries()
                 .filter(|(key, _)| !layer_keys.contains(key))
                 .map(|(key, value)| (key.clone(), value.clone().unwrap_or_default()))
                 .collect()
@@ -6340,18 +6342,18 @@ fn commit_to_disk(
     // For large state diffs this is O(N) extra reads on the per-block critical path.
     // A follow-up could batch these via `multi_get_cf` if profiling shows it's significant.
     let mut overlay: HashMap<Vec<u8>, Option<Vec<u8>>> = HashMap::new();
-    // The same intra-batch pre-image map for `BINARY_TRIE_NODES`, and separate
-    // for the same reason the overlay's binary map is: a `BitPath` key can be
-    // byte-identical to an account-trie path, so one shared map would let a
-    // binary write supply an MPT pre-image (or the reverse) and silently
-    // corrupt whichever reverse diff read it second.
+    // The same intra-batch pre-image map for `BINARY_TRIE_NODES`, holding whole
+    // previous rows, and separate for the same reason the overlay's binary map
+    // is: a row key can be byte-identical to an account-trie path, so one shared
+    // map would let a binary write supply an MPT pre-image (or the reverse) and
+    // silently corrupt whichever reverse diff read it second.
     //
     // PERF: same shape as above — one `read_view.get` per first-touched binary
     // key, so a scheduled chain pays roughly twice the pre-image reads an
     // unscheduled one does. That is the same doubling shadow tracking already
     // imposes on the write side, and it buys the only thing that makes a deep
     // reorg recoverable past activation. Untouched on unscheduled chains, where
-    // `layer.binary_nodes` is empty and this map stays so.
+    // `layer.binary_rows` is empty and this map stays so.
     let mut binary_overlay: HashMap<Vec<u8>, Option<Vec<u8>>> = HashMap::new();
     // A third intra-batch pre-image map, for `BINARY_FLATKEYVALUE`, separate
     // from `binary_overlay` for the sharper form of the same reason that one is
@@ -6459,7 +6461,7 @@ fn commit_to_disk(
             }
         }
 
-        // The same block's EIP-8297 binary-trie nodes, into the SAME write
+        // The same block's EIP-8297 binary-trie group rows, into the SAME write
         // batch. That is the whole flush-parity guarantee: `write_tx` commits
         // once at the end, so the two tries advance on disk together or not at
         // all, and a crash can never leave the MPT at block N with the binary
@@ -6482,7 +6484,7 @@ fn commit_to_disk(
         } else {
             &[]
         };
-        for (key, value) in layer.binary_nodes.iter().chain(binary_extra.iter()) {
+        for (key, value) in layer.binary_rows.iter().chain(binary_extra.iter()) {
             // Pre-image first, from the intra-batch map or disk, exactly as the
             // MPT loop above does — a multi-layer commit must record each
             // block's own pre-state, not the pre-batch one.
@@ -6661,7 +6663,7 @@ fn commit_to_disk(
                 storage_trie_diff: journal_storage_trie,
                 account_flat_diff: journal_account_flat,
                 storage_flat_diff: journal_storage_flat,
-                binary_trie_diff: journal_binary_trie,
+                binary_row_diff: journal_binary_trie,
                 binary_flat_diff: journal_binary_flat,
             };
             result = write_tx.put(
@@ -7662,7 +7664,7 @@ mod state_history_tests {
                 storage_trie_diff: vec![],
                 account_flat_diff: vec![],
                 storage_flat_diff: vec![],
-                binary_trie_diff: vec![],
+                binary_row_diff: vec![],
                 binary_flat_diff: vec![],
             };
             tx.put(STATE_HISTORY, &n.to_be_bytes(), &entry.encode())
@@ -8254,7 +8256,7 @@ mod state_history_tests {
                     storage_trie_diff: vec![],
                     account_flat_diff: vec![],
                     storage_flat_diff: vec![],
-                    binary_trie_diff: vec![],
+                    binary_row_diff: vec![],
                     binary_flat_diff: vec![],
                 };
                 tx.put(STATE_HISTORY, &n.to_be_bytes(), &entry.encode())
@@ -8347,7 +8349,7 @@ mod state_history_tests {
                     storage_trie_diff: vec![],
                     account_flat_diff: vec![],
                     storage_flat_diff: vec![],
-                    binary_trie_diff: vec![],
+                    binary_row_diff: vec![],
                     binary_flat_diff: vec![],
                 };
                 tx.put(STATE_HISTORY, &n.to_be_bytes(), &entry.encode())
@@ -8508,7 +8510,7 @@ mod state_history_tests {
         block: BlockNumber,
         binary_root: H256,
         parent_binary_root: H256,
-        binary_nodes: Vec<(Vec<u8>, Vec<u8>)>,
+        binary_rows: Vec<(Vec<u8>, Vec<u8>)>,
         binary_flat: Vec<(Vec<u8>, Vec<u8>)>,
     ) {
         {
@@ -8523,7 +8525,7 @@ mod state_history_tests {
                 BinaryLayerUpdate {
                     root: binary_root,
                     parent_root: parent_binary_root,
-                    nodes: binary_nodes,
+                    rows: binary_rows,
                     flat: binary_flat,
                 },
             );
@@ -8593,7 +8595,7 @@ mod state_history_tests {
         );
         assert!(
             entry
-                .binary_trie_diff
+                .binary_row_diff
                 .iter()
                 .any(|(k, _)| *k == tree_key(0xa)),
             "the node section must still carry the node write"
@@ -8741,7 +8743,7 @@ mod state_history_tests {
                 storage_trie_diff: vec![],
                 account_flat_diff: vec![],
                 storage_flat_diff: vec![],
-                binary_trie_diff: vec![],
+                binary_row_diff: vec![],
                 binary_flat_diff: vec![
                     (tree_key(0xb1), Some(leaf_value(0xa1))),
                     (tree_key(0xb2), None),
@@ -8811,7 +8813,7 @@ mod state_history_tests {
                 BinaryLayerUpdate {
                     root: H256::repeat_byte(0x81),
                     parent_root: H256::zero(),
-                    nodes: vec![],
+                    rows: vec![],
                     flat: vec![(tree_key(0x01), leaf_value(0x11))],
                 },
             );
@@ -8965,7 +8967,7 @@ mod state_history_tests {
                 BinaryLayerUpdate {
                     root: H256::repeat_byte(0x81),
                     parent_root: H256::zero(),
-                    nodes: vec![],
+                    rows: vec![],
                     flat: vec![
                         (tree_key(0x01), leaf_value(0x11)),
                         (tree_key(0x02), vec![0u8; 32]),
@@ -9031,7 +9033,7 @@ mod state_history_tests {
         );
 
         let entry = decode_entry(&backend, 1);
-        assert_eq!(entry.binary_trie_diff, vec![(shared.clone(), None)]);
+        assert_eq!(entry.binary_row_diff, vec![(shared.clone(), None)]);
         assert_eq!(entry.binary_flat_diff, vec![(shared.clone(), None)]);
 
         // Now the direction that separates the pre-image maps: a second block
@@ -9050,7 +9052,7 @@ mod state_history_tests {
 
         let entry = decode_entry(&backend, 2);
         assert_eq!(
-            entry.binary_trie_diff,
+            entry.binary_row_diff,
             vec![(shared.clone(), Some(vec![0xa7]))],
             "the node's pre-image is the node's previous encoding"
         );

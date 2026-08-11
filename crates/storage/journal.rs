@@ -5,8 +5,15 @@
 //!
 //! Each entry captures the previous on-disk values (or absence markers) for every
 //! account-trie node, storage-trie node, account flat-key-value, storage
-//! flat-key-value and EIP-8297 binary-trie path that a single layer commit
-//! overwrites. Codes are content-addressed and not journaled.
+//! flat-key-value and EIP-8297 binary-trie **group row** that a single layer
+//! commit overwrites. Codes are content-addressed and not journaled.
+//!
+//! The binary-trie section records *rows*, not nodes: one entry per group the
+//! commit touched, keyed by the group root, holding the whole previous row. A
+//! commit that changed one node in a group of five journals that group's five
+//! nodes as one pre-image and restores all five together. The section
+//! boundaries and [`JOURNAL_VERSION`] are unchanged by that — only the meaning
+//! of the fifth section's keys and values is.
 //!
 //! ## Why the binary trie is journaled too
 //!
@@ -46,7 +53,7 @@
 //! `block_hash` (32 bytes), `parent_state_root` (32 bytes),
 //! `parent_binary_root` (32 bytes), then six varint-prefixed reverse-diff
 //! sections in order: account-trie, storage-trie, account flat-KV, storage
-//! flat-KV, binary-trie, binary flat-KV. RLP/bincode/postcard are skipped — the
+//! flat-KV, binary-trie rows, binary flat-KV. RLP/bincode/postcard are skipped — the
 //! access pattern (write-once, read-on-reorg, large volume) makes encode/decode
 //! cost matter.
 //!
@@ -59,8 +66,11 @@
 //! The two binary sections must stay apart from *each other* for a sharper
 //! version of that reason. A `BitPath` DB key at bit-depth 240 is 34 bytes and
 //! at bit-depth 496 is 66 bytes — byte-for-byte the lengths of account-zone and
-//! storage-zone tree keys. Binary nodes and binary flat entries are not
-//! distinguishable by length from each other either, so the only thing that
+//! storage-zone tree keys — and grouping does not remove either collision,
+//! since a row key is the group *root*'s key and every eight consecutive bit
+//! counts contain a multiple of every supported group depth. Binary rows and
+//! binary flat entries are not distinguishable by length from each other
+//! either, so the only thing that
 //! routes a key to `BINARY_TRIE_NODES` rather than `BINARY_FLATKEYVALUE` is
 //! which section it arrived in.
 //!
@@ -197,7 +207,7 @@ pub struct JournalEntry {
     /// exactly this value.
     ///
     /// `H256::zero()` on a chain that does not schedule the commitment, where
-    /// `binary_trie_diff` is empty too. Zero is never a real root, so the gate
+    /// `binary_row_diff` is empty too. Zero is never a real root, so the gate
     /// can treat it as "this overlay carries no binary state".
     ///
     /// [`Overlay::serves_binary_root`]: crate::layering::Overlay::serves_binary_root
@@ -215,14 +225,24 @@ pub struct JournalEntry {
     /// Reverse diff for `BINARY_TRIE_NODES`, keyed by `BitPath::to_db_key()` of
     /// a group *root*, with whole group rows as values.
     ///
-    /// A `None` pre-image means the commit created the node, so a rollback
-    /// deletes the key — which is also how the binary trie spells a tombstone,
-    /// so the rollback and the trie's own convention agree by construction.
+    /// **Rows, not nodes** — `binary_row_diff`, not `binary_trie_diff`, which is
+    /// what it was called while a row held one node. The **section boundaries
+    /// did not move and [`JOURNAL_VERSION`] did not change**; what changed is
+    /// what this section's keys and values mean. That is exactly the kind of
+    /// change a name is the last defence against, since the wire shape gives a
+    /// reader no signal at all.
+    ///
+    /// A `None` pre-image means the commit created the *row* — the group had no
+    /// member on disk before it — so a rollback deletes the key, which is also
+    /// how the binary trie spells a tombstone; the rollback and the trie's own
+    /// convention agree by construction. A group that merely gained or lost a
+    /// member has a `Some` pre-image holding the whole previous row, and a
+    /// rollback restores it wholesale.
     ///
     /// Empty on every chain that does not schedule `binaryTreeTime`, which is
     /// the whole cost an unscheduled chain pays: one extra `0` count byte per
     /// entry.
-    pub binary_trie_diff: FlatDiff,
+    pub binary_row_diff: FlatDiff,
     /// Reverse diff for `BINARY_FLATKEYVALUE`, keyed by the embedding's own tree
     /// key (34 or 66 bytes).
     ///
@@ -232,7 +252,7 @@ pub struct JournalEntry {
     /// into garbage instead of failing; appended last it fails as
     /// [`JournalDecodeError::Truncated`].
     ///
-    /// Its own section rather than a share of `binary_trie_diff`: the two key
+    /// Its own section rather than a share of `binary_row_diff`: the two key
     /// spaces have identical length ranges and only the section boundary says
     /// which of the two column families a key belongs to.
     ///
@@ -285,7 +305,7 @@ impl JournalEntry {
             + diff_byte_estimate(&self.storage_trie_diff)
             + diff_byte_estimate(&self.account_flat_diff)
             + diff_byte_estimate(&self.storage_flat_diff)
-            + diff_byte_estimate(&self.binary_trie_diff)
+            + diff_byte_estimate(&self.binary_row_diff)
             + diff_byte_estimate(&self.binary_flat_diff);
         let mut out = Vec::with_capacity(approx);
 
@@ -298,7 +318,7 @@ impl JournalEntry {
         encode_flat_diff(&mut out, &self.storage_trie_diff);
         encode_flat_diff(&mut out, &self.account_flat_diff);
         encode_flat_diff(&mut out, &self.storage_flat_diff);
-        encode_flat_diff(&mut out, &self.binary_trie_diff);
+        encode_flat_diff(&mut out, &self.binary_row_diff);
         // Last, always. The module docs explain why the position is a format
         // guarantee: it is what makes a stale five-section record fail as
         // `Truncated` instead of parsing into garbage.
@@ -332,7 +352,7 @@ impl JournalEntry {
         let storage_trie_diff = decode_flat_diff(&mut cur)?;
         let account_flat_diff = decode_flat_diff(&mut cur)?;
         let storage_flat_diff = decode_flat_diff(&mut cur)?;
-        let binary_trie_diff = decode_flat_diff(&mut cur)?;
+        let binary_row_diff = decode_flat_diff(&mut cur)?;
         // The sixth and last section. On a five-section record written before
         // v2 was redefined in place, the cursor is already at `bytes.len()`
         // here (`encode` is exact-length), so this read fails as `Truncated` —
@@ -356,7 +376,7 @@ impl JournalEntry {
             storage_trie_diff,
             account_flat_diff,
             storage_flat_diff,
-            binary_trie_diff,
+            binary_row_diff,
             binary_flat_diff,
         })
     }
@@ -728,9 +748,35 @@ fn key_to_block_number(key: &[u8]) -> Option<BlockNumber> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ethrex_binary_trie::trie::{BitPath, DEFAULT_GROUP_DEPTH, GroupDepth, group_root};
 
     fn h(b: u8) -> H256 {
         H256::repeat_byte(b)
+    }
+
+    /// A real `BINARY_TRIE_NODES` **row** key that is byte-length-identical to
+    /// an account-zone tree key, derived rather than written down.
+    ///
+    /// The collision the section boundaries defend against is a fact about
+    /// geometry, so the fixture is computed from the geometry: take a node at
+    /// bit-depth 240, truncate it to its group root exactly as the storage path
+    /// does, and key it exactly as `BackendBinaryTrieDB` does. The assertion
+    /// that the result is 34 bytes is the whole point — if grouping ever stopped
+    /// producing a 34-byte row key, these tests would say so instead of quietly
+    /// continuing to exercise a collision that no longer occurs.
+    ///
+    /// Pinned at every depth 1..=MAX_GROUP_DEPTH by
+    /// `ethrex_binary_trie::trie::group`'s `key_lengths_are_a_subset_of_todays`;
+    /// taken here at the configured depth, which is the one production runs at.
+    fn colliding_row_key(depth: GroupDepth) -> Vec<u8> {
+        let key = group_root(&BitPath::from_bits(&[1u8; 240]), depth).to_db_key();
+        assert_eq!(
+            key.len(),
+            34,
+            "a node at bit-depth 240 must still reach the table under a 34-byte row key, \
+             which is exactly an account-zone tree key's length"
+        );
+        key
     }
 
     fn round_trip(entry: &JournalEntry) {
@@ -749,7 +795,7 @@ mod tests {
             storage_trie_diff: vec![],
             account_flat_diff: vec![],
             storage_flat_diff: vec![],
-            binary_trie_diff: vec![],
+            binary_row_diff: vec![],
             binary_flat_diff: vec![],
         };
         round_trip(&entry);
@@ -774,7 +820,7 @@ mod tests {
             storage_flat_diff: vec![(vec![0xbb; 131], None)],
             // 34-byte `BitPath::to_db_key()` shape, plus a tombstoned key whose
             // pre-image is `None` (the commit created it).
-            binary_trie_diff: vec![
+            binary_row_diff: vec![
                 (vec![0x0c; 34], Some(vec![0xcc, 0xdd])),
                 (vec![0x0d; 5], None),
             ],
@@ -799,7 +845,7 @@ mod tests {
             storage_trie_diff: vec![],
             account_flat_diff: vec![(vec![0xaa; 32], None)],
             storage_flat_diff: vec![],
-            binary_trie_diff: vec![(vec![0x0c; 34], None)],
+            binary_row_diff: vec![(vec![0x0c; 34], None)],
             binary_flat_diff: vec![],
         };
         round_trip(&entry);
@@ -825,7 +871,7 @@ mod tests {
             storage_trie_diff: vec![],
             account_flat_diff: vec![],
             storage_flat_diff: vec![],
-            binary_trie_diff: vec![],
+            binary_row_diff: vec![],
             binary_flat_diff: vec![],
         };
         round_trip(&entry);
@@ -858,7 +904,7 @@ mod tests {
             storage_trie_diff: vec![],
             account_flat_diff: vec![],
             storage_flat_diff: vec![],
-            binary_trie_diff: vec![],
+            binary_row_diff: vec![],
             binary_flat_diff: vec![],
         };
         let bytes = entry.encode();
@@ -1007,7 +1053,7 @@ mod tests {
             storage_trie_diff: vec![],
             account_flat_diff: vec![],
             storage_flat_diff: vec![],
-            binary_trie_diff: vec![],
+            binary_row_diff: vec![],
             binary_flat_diff: vec![],
         };
         let mut bytes = entry.encode();
@@ -1047,7 +1093,7 @@ mod tests {
                 storage_trie_diff: b,
                 account_flat_diff: c,
                 storage_flat_diff: d,
-                binary_trie_diff: e,
+                binary_row_diff: e,
                 binary_flat_diff: f,
             });
         proptest!(|(entry in entry_strategy)| {
@@ -1085,7 +1131,7 @@ mod tests {
             storage_trie_diff: vec![(vec![0x0a; 67], None)],
             account_flat_diff: vec![(vec![0xcc; 65], Some(vec![0xdd]))],
             storage_flat_diff: vec![],
-            binary_trie_diff: vec![(vec![0x0e; 34], Some(vec![0xef]))],
+            binary_row_diff: vec![(vec![0x0e; 34], Some(vec![0xef]))],
             binary_flat_diff: vec![],
         };
         let baseline = entry.encode();
@@ -1100,17 +1146,25 @@ mod tests {
     }
 
     /// The binary section must be addressed by its position in the record, not
-    /// by key length. A `BitPath` key is `4 + ceil(bits/8)` bytes, which lands
-    /// squarely inside every range `classify_trie_key` uses, so a key that is
-    /// byte-identical to an account-trie path must still come back in the binary
-    /// section and only there.
+    /// by key length. A row key is `BitPath::to_db_key` of a group *root*, so
+    /// `4 + ceil(bits/8)` bytes with the bit count a multiple of the group
+    /// depth — which lands squarely inside every range `classify_trie_key`
+    /// uses. A key that is byte-identical to an account-trie path must still
+    /// come back in the binary section and only there.
+    ///
+    /// **Grouping did not weaken this.** The row key is shorter than the node
+    /// path's key would have been whenever the node sits mid-group, but the set
+    /// of lengths it can take is a *subset* of the set the one-node-per-row
+    /// table produced, so every collision that existed still exists and no new
+    /// one appeared. `colliding_row_key` derives the fixture from that geometry
+    /// rather than asserting it.
     ///
     /// This is the property that makes the fifth section necessary rather than
     /// merely tidy: folding binary pre-images into `account_trie_diff` would put
     /// them in `ACCOUNT_TRIE_NODES` on rollback and corrupt the MPT.
     #[test]
     fn binary_and_account_sections_do_not_bleed_at_a_shared_key() {
-        let shared_key = vec![0x07; 34];
+        let shared_key = colliding_row_key(DEFAULT_GROUP_DEPTH);
         let entry = JournalEntry {
             block_hash: h(0x01),
             parent_state_root: h(0x02),
@@ -1119,7 +1173,7 @@ mod tests {
             storage_trie_diff: vec![],
             account_flat_diff: vec![],
             storage_flat_diff: vec![],
-            binary_trie_diff: vec![(shared_key.clone(), Some(vec![0xb2]))],
+            binary_row_diff: vec![(shared_key.clone(), Some(vec![0xb2]))],
             binary_flat_diff: vec![],
         };
         let decoded = JournalEntry::decode(&entry.encode()).unwrap();
@@ -1129,7 +1183,7 @@ mod tests {
             "the account-trie pre-image must survive the shared key"
         );
         assert_eq!(
-            decoded.binary_trie_diff,
+            decoded.binary_row_diff,
             vec![(shared_key, Some(vec![0xb2]))],
             "the binary pre-image must survive it too, with its own value"
         );
@@ -1137,20 +1191,22 @@ mod tests {
 
     /// The Decision 6 collision at its sharpest: the two *binary* sections.
     ///
-    /// A `BitPath` DB key at bit-depth 240 is 34 bytes and an account-zone tree
-    /// key is 34 bytes. Nothing in the bytes distinguishes them, and there are
-    /// no section tags — sections are positional — so the section boundary is
-    /// the only thing that routes a key to `BINARY_TRIE_NODES` rather than
-    /// `BINARY_FLATKEYVALUE`. Folding the two together would, on rollback,
-    /// restore a leaf value into the node table and a node encoding into the
-    /// mirror, at the same key, in the same commit.
+    /// A binary *row* key for a node at bit-depth 240 is 34 bytes and an
+    /// account-zone tree key is 34 bytes. Nothing in the bytes distinguishes
+    /// them, and there are no section tags — sections are positional — so the
+    /// section boundary is the only thing that routes a key to
+    /// `BINARY_TRIE_NODES` rather than `BINARY_FLATKEYVALUE`. Folding the two
+    /// together would, on rollback, restore a leaf value into the node table and
+    /// a whole group row into the mirror, at the same key, in the same commit —
+    /// and a group row is now the *larger* of the two mistakes, since it carries
+    /// several nodes rather than one.
     ///
     /// The direct analogue of
     /// [`binary_and_account_sections_do_not_bleed_at_a_shared_key`], and the one
     /// existing tests cannot cover because the collision is new.
     #[test]
     fn binary_flat_and_binary_node_sections_do_not_bleed_at_a_shared_key() {
-        let shared_key = vec![0x07; 34];
+        let shared_key = colliding_row_key(DEFAULT_GROUP_DEPTH);
         let entry = JournalEntry {
             block_hash: h(0x01),
             parent_state_root: h(0x02),
@@ -1159,12 +1215,12 @@ mod tests {
             storage_trie_diff: vec![],
             account_flat_diff: vec![],
             storage_flat_diff: vec![],
-            binary_trie_diff: vec![(shared_key.clone(), Some(vec![0xb2]))],
+            binary_row_diff: vec![(shared_key.clone(), Some(vec![0xb2]))],
             binary_flat_diff: vec![(shared_key.clone(), Some(vec![0xf3; 32]))],
         };
         let decoded = JournalEntry::decode(&entry.encode()).unwrap();
         assert_eq!(
-            decoded.binary_trie_diff,
+            decoded.binary_row_diff,
             vec![(shared_key.clone(), Some(vec![0xb2]))],
             "the node pre-image must survive the shared key with its own value"
         );
@@ -1178,12 +1234,12 @@ mod tests {
         // read as a `None` in the other, because a rollback turns it into a
         // delete against a different column family.
         let asymmetric = JournalEntry {
-            binary_trie_diff: vec![(shared_key.clone(), None)],
+            binary_row_diff: vec![(shared_key.clone(), None)],
             binary_flat_diff: vec![(shared_key.clone(), Some(vec![0xf3; 32]))],
             ..entry
         };
         let decoded = JournalEntry::decode(&asymmetric.encode()).unwrap();
-        assert_eq!(decoded.binary_trie_diff, vec![(shared_key.clone(), None)]);
+        assert_eq!(decoded.binary_row_diff, vec![(shared_key.clone(), None)]);
         assert_eq!(
             decoded.binary_flat_diff,
             vec![(shared_key, Some(vec![0xf3; 32]))]
@@ -1272,7 +1328,7 @@ mod tests {
             storage_trie_diff: vec![(vec![0x03; 67], None)],
             account_flat_diff: vec![(vec![0x04; 65], Some(vec![0xa4; 3]))],
             storage_flat_diff: vec![(vec![0x05; 131], None)],
-            binary_trie_diff: vec![(vec![0x06; 34], Some(vec![0xa6; 2]))],
+            binary_row_diff: vec![(vec![0x06; 34], Some(vec![0xa6; 2]))],
             binary_flat_diff: vec![],
         };
         let encoded = entry.encode();
@@ -1288,7 +1344,7 @@ mod tests {
         encode_flat_diff(&mut five, &entry.storage_trie_diff);
         encode_flat_diff(&mut five, &entry.account_flat_diff);
         encode_flat_diff(&mut five, &entry.storage_flat_diff);
-        encode_flat_diff(&mut five, &entry.binary_trie_diff);
+        encode_flat_diff(&mut five, &entry.binary_row_diff);
 
         assert_eq!(
             &encoded[..five.len()],
@@ -1318,7 +1374,7 @@ mod tests {
             storage_trie_diff: vec![],
             account_flat_diff: vec![],
             storage_flat_diff: vec![],
-            binary_trie_diff: vec![],
+            binary_row_diff: vec![],
             binary_flat_diff: vec![],
         };
         let mut bytes = entry.encode();
@@ -1377,7 +1433,7 @@ mod tests {
             storage_trie_diff: vec![],
             account_flat_diff: vec![],
             storage_flat_diff: vec![],
-            binary_trie_diff: vec![],
+            binary_row_diff: vec![],
             binary_flat_diff: vec![],
         }
         .encode()
@@ -1587,7 +1643,7 @@ mod tests {
             storage_trie_diff: vec![(vec![0x02; 67], None)],
             account_flat_diff: vec![(vec![0x03; 65], Some(vec![0xa3; 200]))],
             storage_flat_diff: vec![(vec![0x04; 131], Some(vec![0xa4; 5]))],
-            binary_trie_diff: vec![(vec![0x05; 34], Some(vec![0xa5; 9]))],
+            binary_row_diff: vec![(vec![0x05; 34], Some(vec![0xa5; 9]))],
             binary_flat_diff: vec![
                 (vec![0x06; 34], Some(vec![0xa6; 32])),
                 (vec![0x07; 66], None),

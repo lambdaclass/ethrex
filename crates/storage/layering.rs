@@ -127,7 +127,7 @@ use ethrex_trie::{Nibbles, TrieDB, TrieError};
 
 use crate::{
     api::{StorageBackend, tables::STATE_HISTORY},
-    binary_trie::{BinaryFlatWrites, BinaryTrieNodes},
+    binary_trie::{BinaryFlatWrites, BinaryTrieRows},
     error::StoreError,
     journal::{JournalDecodeError, JournalEntry},
     trie::classify_trie_key,
@@ -139,22 +139,31 @@ const FALSE_POSITIVE_RATE: f64 = 0.02;
 #[derive(Debug, Clone)]
 struct TrieLayer {
     nodes: FxHashMap<Vec<u8>, Vec<u8>>,
-    /// The same block's EIP-8297 binary-trie node writes, keyed by
-    /// `BitPath::to_db_key()` — the exact `BINARY_TRIE_NODES` key.
+    /// The same block's EIP-8297 binary-trie **group row** writes, keyed by
+    /// `BitPath::to_db_key()` of the group *root* — the exact
+    /// `BINARY_TRIE_NODES` key.
+    ///
+    /// **Rows, not nodes**, and `len()` is a row count. One entry carries every
+    /// node of one group, so a block that touched a thousand nodes leaves far
+    /// fewer than a thousand entries here, and a reader who takes this map's
+    /// size for a node count is out by the groups' occupancy. The map is keyed
+    /// and valued exactly as the disk table is; nothing in it is per-node.
     ///
     /// Held in the *same* layer as `nodes` rather than in a parallel cache, so
-    /// the two node sets are staged, flushed and discarded as one unit. They
-    /// have to be: persisting the MPT at block N alongside the binary trie at
-    /// block N-5 is a recovery problem, and a single layer gets atomicity by
-    /// construction instead of by keeping two structures in step.
+    /// the two sets are staged, flushed and discarded as one unit. They have to
+    /// be: persisting the MPT at block N alongside the binary trie at block N-5
+    /// is a recovery problem, and a single layer gets atomicity by construction
+    /// instead of by keeping two structures in step.
     ///
     /// Empty on every chain that does not schedule `binaryTreeTime`, which is
     /// the whole cost an unscheduled chain pays for this.
     ///
-    /// An empty *value* is a tombstone, matching `BinaryTrieDB`'s convention:
-    /// the node left the tree, so a reader must answer "absent" and must not
-    /// fall through to the stale node still on disk at that path.
-    binary_nodes: FxHashMap<Vec<u8>, Vec<u8>>,
+    /// An empty *value* is a tombstone, matching `BinaryTrieDB`'s convention —
+    /// and it means the **whole group** left the tree, not one node. A removal
+    /// that leaves the group with survivors arrives as an ordinary rewrite
+    /// holding them. Either way a reader must answer from this map and must not
+    /// fall through to the stale row still on disk at that key.
+    binary_rows: FxHashMap<Vec<u8>, Vec<u8>>,
     /// The same block's writes to the flat mirror of the binary trie's leaves,
     /// keyed by the embedding's own tree key — the exact `BINARY_FLATKEYVALUE`
     /// key, 34 or 66 bytes.
@@ -165,14 +174,14 @@ struct TrieLayer {
     /// nodes it mirrors. A mirror persisted at a different block than the trie
     /// is the recovery problem this module's header refuses.
     ///
-    /// It cannot share `binary_nodes`: a `BitPath` DB key is
+    /// It cannot share `binary_rows`: a `BitPath` DB key is
     /// `4 + ceil(bits/8)` bytes, so a node at bit-depth 240 has a 34-byte key
     /// and a node at bit-depth 496 a 66-byte one — byte-for-byte the lengths of
     /// account-zone and storage-zone tree keys. The two key spaces are not
     /// distinguishable from each other at all, and only the map they live in
     /// says which is which.
     ///
-    /// An empty *value* is a tombstone, matching `binary_nodes`: the leaf left
+    /// An empty *value* is a tombstone, matching `binary_rows`: the leaf left
     /// the tree, so a reader must answer "absent" and must not fall through to
     /// the row a previous block left on the single-version disk table. Note the
     /// second kind of zero this is one typo from: a *32-zero-byte* value is an
@@ -182,7 +191,7 @@ struct TrieLayer {
     ///
     /// Empty on every chain that does not schedule `binaryTreeTime`.
     binary_flat: FxHashMap<Vec<u8>, Vec<u8>>,
-    /// Binary-trie root this layer's `binary_nodes` produce, i.e. the root the
+    /// Binary-trie root this layer's `binary_rows` produce, i.e. the root the
     /// block's binary post-state is addressed by. `H256::zero()` when the chain
     /// is not binary-tree-scheduled and this layer holds no binary nodes.
     ///
@@ -215,11 +224,11 @@ struct TrieLayer {
 }
 
 /// One block's binary-trie contribution to a diff layer: the root its writes
-/// produce, and the writes themselves as `BINARY_TRIE_NODES` key/value pairs
-/// (an empty value being a tombstone).
+/// produce, and the writes themselves as `BINARY_TRIE_NODES` **group row**
+/// key/value pairs (an empty value being a tombstone).
 ///
 /// [`Default`] is the "this chain does not schedule the commitment" case: a
-/// zero root and no nodes, which stages nothing and indexes nothing.
+/// zero root and no rows, which stages nothing and indexes nothing.
 #[derive(Debug, Clone, Default)]
 pub struct BinaryLayerUpdate {
     /// Binary-trie root after this block's writes. `H256::zero()` means "no
@@ -229,20 +238,25 @@ pub struct BinaryLayerUpdate {
     /// layer so the journal entry written when the layer flushes can name the
     /// root a rollback returns to.
     pub parent_root: H256,
-    /// `(BINARY_TRIE_NODES key, encoded node)` pairs; empty value = tombstone.
-    pub nodes: BinaryTrieNodes,
+    /// `(BINARY_TRIE_NODES key, encoded group row)` pairs; empty value =
+    /// tombstone.
+    ///
+    /// One entry per group the block touched, keyed by the group *root*, not
+    /// one entry per node: `rows.len()` is a row count and is what sizes the
+    /// bloom insert loop and the disk write batch.
+    pub rows: BinaryTrieRows,
     /// `(BINARY_FLATKEYVALUE key, 32-byte leaf value)` pairs for the flat mirror
     /// of the same block's leaf changes; empty value = the leaf was removed.
     ///
     /// Derived from the leaf changelog `BinaryTrie::commit` emits, one entry per
     /// leaf the block created, changed or removed — one row against the
-    /// `1 + branch_depth` node rows beside it.
+    /// handful of group rows beside it.
     pub flat: BinaryFlatWrites,
 }
 
 impl BinaryLayerUpdate {
     /// Whether this update carries binary state at all. A zero root means the
-    /// chain does not schedule the commitment; nodes without a root would be
+    /// chain does not schedule the commitment; rows without a root would be
     /// unaddressable, so both are required.
     fn is_present(&self) -> bool {
         !self.root.is_zero()
@@ -285,15 +299,21 @@ pub struct TrieLayerCache {
     /// discarded branch's binary root stops resolving at exactly the moment its
     /// nodes are dropped.
     binary_index: FxHashMap<H256, H256>,
-    /// Bloom filter over every binary-trie key in every layer, the binary
-    /// counterpart of `bloom`.
+    /// Bloom filter over every binary-trie **row** key in every layer — group
+    /// roots, not node paths — the binary counterpart of `bloom`.
     ///
     /// Separate rather than shared so that an unscheduled chain's MPT lookups
     /// keep exactly the false-positive rate they had: binary keys are 34 bytes
     /// and would otherwise crowd the same filter.
-    binary_bloom: AtomicBloomFilter<FxBuildHasher>,
+    ///
+    /// Grouping made this filter *smaller* at the same layer depth — one insert
+    /// per group touched rather than one per node — but it did not change the
+    /// key space it covers, because a row key is `BitPath::to_db_key` of the
+    /// group root and the set of such keys is a subset of the node keys it held
+    /// before. No sizing or collision argument here rests on the change.
+    binary_row_bloom: AtomicBloomFilter<FxBuildHasher>,
     /// Bloom filter over every binary *flat-mirror* key in every layer — a third
-    /// filter, not a share of `binary_bloom`.
+    /// filter, not a share of `binary_row_bloom`.
     ///
     /// Sharing would cost only false positives, never correctness: both lookups
     /// resolve in their own map, so a filter hit at most buys a wasted walk. It
@@ -347,7 +367,7 @@ impl Default for TrieLayerCache {
         Self {
             bloom: Self::create_filter(BLOOM_SIZE),
             binary_index: Default::default(),
-            binary_bloom: Self::create_filter(BLOOM_SIZE),
+            binary_row_bloom: Self::create_filter(BLOOM_SIZE),
             binary_flat_bloom: Self::create_filter(BLOOM_SIZE),
             last_id: 0,
             layers: Default::default(),
@@ -372,7 +392,7 @@ impl TrieLayerCache {
         Self {
             bloom: Self::create_filter(BLOOM_SIZE),
             binary_index: Default::default(),
-            binary_bloom: Self::create_filter(BLOOM_SIZE),
+            binary_row_bloom: Self::create_filter(BLOOM_SIZE),
             binary_flat_bloom: Self::create_filter(BLOOM_SIZE),
             last_id: 0,
             layers: Default::default(),
@@ -457,8 +477,8 @@ impl TrieLayerCache {
     /// same three-state contract as [`Self::lookup_overlay`]. No CF
     /// classification: binary keys have exactly one destination table, and their
     /// lengths could not be classified anyway.
-    pub fn lookup_binary_overlay(&self, key: &[u8]) -> Option<Option<Vec<u8>>> {
-        self.overlay.as_ref()?.binary_lookup(key)
+    pub fn lookup_binary_row_overlay(&self, key: &[u8]) -> Option<Option<Vec<u8>>> {
+        self.overlay.as_ref()?.binary_row_lookup(key)
     }
 
     /// Returns true if a layer with the given `state_root` is present in the cache.
@@ -515,26 +535,31 @@ impl TrieLayerCache {
         None
     }
 
-    /// Looks up an EIP-8297 binary-trie node `key` (a `BINARY_TRIE_NODES` key)
-    /// as of `binary_root`, walking the same layer chain the MPT walks.
+    /// Looks up an EIP-8297 binary-trie **group row** as of `binary_root`,
+    /// walking the same layer chain the MPT walks. `key` is a
+    /// `BINARY_TRIE_NODES` key — the group *root*'s `BitPath::to_db_key` — and
+    /// the value is a whole encoded row, which the caller decodes to reach the
+    /// node it actually wanted.
     ///
     /// Three-state return, because the binary trie's tombstone convention makes
     /// "absent" load-bearing:
-    /// - `None` — no layer on this chain wrote the key. The caller falls
+    /// - `None` — no layer on this chain wrote the row. The caller falls
     ///   through to disk.
-    /// - `Some(None)` — a layer tombstoned it. The node left the tree, so the
-    ///   caller must answer "absent" and must **not** consult disk, which is
-    ///   path-keyed and single-version and still holds the superseded node.
+    /// - `Some(None)` — a layer tombstoned it. The whole group left the tree, so
+    ///   the caller must answer "absent" and must **not** consult disk, which is
+    ///   path-keyed and single-version and still holds the superseded row. A
+    ///   group that merely lost *some* members comes back as `Some(Some(v))`
+    ///   holding the survivors; a tombstone here is the empty-group case only.
     /// - `Some(Some(v))` — the newest layer that wrote it holds `v`.
     ///
     /// `binary_root` resolves through [`Self::binary_index`](Self) to the
     /// layer's own key, after which the walk follows `parent` exactly as
     /// [`Self::get`] does: the binary chain and the MPT chain are the same
     /// chain of blocks, so one set of parent links serves both. Layers with no
-    /// binary nodes (an unscheduled stretch) simply miss and the walk goes on.
-    pub fn binary_get(&self, binary_root: H256, key: &[u8]) -> Option<Option<Vec<u8>>> {
+    /// binary rows (an unscheduled stretch) simply miss and the walk goes on.
+    pub fn binary_row_get(&self, binary_root: H256, key: &[u8]) -> Option<Option<Vec<u8>>> {
         // Same fast path as `get`: a bloom miss is proof no layer has the key.
-        if !self.binary_bloom.contains(key) {
+        if !self.binary_row_bloom.contains(key) {
             return None;
         }
         let mut current = *self.binary_index.get(&binary_root)?;
@@ -545,7 +570,7 @@ impl TrieLayerCache {
         // into the same links).
         let max_steps = self.layers.len();
         while let Some(layer) = self.layers.get(&current) {
-            if let Some(value) = layer.binary_nodes.get(key) {
+            if let Some(value) = layer.binary_rows.get(key) {
                 return Some((!value.is_empty()).then(|| value.clone()));
             }
             current = layer.parent;
@@ -558,7 +583,7 @@ impl TrieLayerCache {
     }
 
     /// Looks up a `BINARY_FLATKEYVALUE` key (a tree key, 34 or 66 bytes) as of
-    /// `binary_root`, walking the same layer chain [`Self::binary_get`] walks.
+    /// `binary_root`, walking the same layer chain [`Self::binary_row_get`] walks.
     ///
     /// Same three-state return, and `Some(None)` carries the same weight: the
     /// mirror is single-version on disk, so "this leaf is not in the trie at
@@ -566,16 +591,16 @@ impl TrieLayerCache {
     /// block wrote there.
     ///
     /// Resolution goes through the same [`binary_index`](Self) and the same
-    /// bounded parent walk as `binary_get` — one chain of blocks carries all
+    /// bounded parent walk as `binary_row_get` — one chain of blocks carries all
     /// three sets, and the index is a second entry point into it, so like
-    /// `binary_get` this walk has no "state cycle" invariant to lean on and
+    /// `binary_row_get` this walk has no "state cycle" invariant to lean on and
     /// caps itself instead.
     ///
     /// The only thing that distinguishes a flat key from a node key is which of
     /// the two maps is consulted; see the `binary_flat` field docs.
     pub fn binary_flat_get(&self, binary_root: H256, key: &[u8]) -> Option<Option<Vec<u8>>> {
         // A bloom miss is proof no layer has the key. Its own filter, not
-        // `binary_bloom`: see the `binary_flat_bloom` field docs.
+        // `binary_row_bloom`: see the `binary_flat_bloom` field docs.
         if !self.binary_flat_bloom.contains(key) {
             return None;
         }
@@ -771,7 +796,7 @@ impl TrieLayerCache {
     /// One layer, two node sets: they are staged together, flushed together by
     /// [`Self::commit`] and discarded together when a branch is abandoned. The
     /// binary root is additionally recorded in
-    /// [`binary_index`](Self::binary_get) so a reader holding only a binary
+    /// [`binary_index`](Self::binary_row_get) so a reader holding only a binary
     /// root can find the layer — necessary because before activation a block's
     /// binary root is nowhere in its header.
     ///
@@ -789,7 +814,7 @@ impl TrieLayerCache {
     ) {
         if parent == state_root
             && key_values.is_empty()
-            && binary.nodes.is_empty()
+            && binary.rows.is_empty()
             && binary.flat.is_empty()
         {
             return;
@@ -809,8 +834,8 @@ impl TrieLayerCache {
         for (p, _) in &key_values {
             self.bloom.insert(p.as_ref());
         }
-        for (p, _) in &binary.nodes {
-            self.binary_bloom.insert(p);
+        for (p, _) in &binary.rows {
+            self.binary_row_bloom.insert(p);
         }
         for (p, _) in &binary.flat {
             self.binary_flat_bloom.insert(p);
@@ -823,13 +848,13 @@ impl TrieLayerCache {
         let binary_present = binary.is_present();
         let binary_root = binary.root;
         let parent_binary_root = binary.parent_root;
-        let binary_nodes: FxHashMap<Vec<u8>, Vec<u8>> = binary.nodes.into_iter().collect();
+        let binary_rows: FxHashMap<Vec<u8>, Vec<u8>> = binary.rows.into_iter().collect();
         let binary_flat: FxHashMap<Vec<u8>, Vec<u8>> = binary.flat.into_iter().collect();
 
         self.last_id += 1;
         let entry = TrieLayer {
             nodes,
-            binary_nodes,
+            binary_rows,
             binary_flat,
             binary_root,
             parent_binary_root,
@@ -860,7 +885,7 @@ impl TrieLayerCache {
         let total_binary_keys: usize = self
             .layers
             .values()
-            .map(|layer| layer.binary_nodes.len())
+            .map(|layer| layer.binary_rows.len())
             .sum();
         let total_binary_flat_keys: usize = self
             .layers
@@ -877,7 +902,7 @@ impl TrieLayerCache {
             for path in layer.nodes.keys() {
                 filter.insert(path);
             }
-            for path in layer.binary_nodes.keys() {
+            for path in layer.binary_rows.keys() {
                 binary_filter.insert(path);
             }
             for path in layer.binary_flat.keys() {
@@ -886,7 +911,7 @@ impl TrieLayerCache {
         });
 
         self.bloom = filter;
-        self.binary_bloom = binary_filter;
+        self.binary_row_bloom = binary_filter;
         self.binary_flat_bloom = binary_flat_filter;
         self.binary_index = self
             .layers
@@ -970,7 +995,7 @@ impl TrieLayerCache {
                 parent_state_root: layer.parent,
                 parent_binary_root: layer.parent_binary_root,
                 nodes: layer.nodes.into_iter().collect(),
-                binary_nodes: layer.binary_nodes.into_iter().collect(),
+                binary_rows: layer.binary_rows.into_iter().collect(),
                 binary_flat: layer.binary_flat.into_iter().collect(),
             })
             .collect();
@@ -998,18 +1023,23 @@ pub struct CommittedLayer {
     pub parent_binary_root: H256,
     /// Merged trie node updates in oldest-first order, ready for a sequential disk write.
     pub nodes: Vec<(Vec<u8>, Vec<u8>)>,
-    /// The same block's EIP-8297 binary-trie node updates, as
+    /// The same block's EIP-8297 binary-trie **group row** updates, as
     /// `BINARY_TRIE_NODES` key/value pairs with an empty value meaning
-    /// "delete this key". Empty on unscheduled chains.
+    /// "delete this row". Empty on unscheduled chains.
+    ///
+    /// One entry per group, keyed by the group root. Unlike `nodes` beside it —
+    /// which is one entry per MPT node — `binary_rows.len()` is not a node
+    /// count, and the two must not be compared as though they measured the same
+    /// thing.
     ///
     /// Written into the same `write_tx` as `nodes`, which is the point: the two
     /// tries advance on disk in one atomic step, never independently.
-    pub binary_nodes: BinaryTrieNodes,
+    pub binary_rows: BinaryTrieRows,
     /// The same block's writes to the binary trie's flat leaf mirror, as
     /// `BINARY_FLATKEYVALUE` key/value pairs with an empty value meaning
     /// "delete this row". Empty on unscheduled chains.
     ///
-    /// Written into the same `write_tx` as `nodes` and `binary_nodes`, for the
+    /// Written into the same `write_tx` as `nodes` and `binary_rows`, for the
     /// stronger version of the same reason: the mirror is *derived* from the
     /// binary trie, so a mirror persisted at a different block than the trie it
     /// mirrors is not merely inconsistent, it is a mirror that disagrees with
@@ -1193,15 +1223,15 @@ pub struct Overlay {
     storage_trie: FxHashMap<Vec<u8>, Option<Vec<u8>>>,
     account_flat: FxHashMap<Vec<u8>, Option<Vec<u8>>>,
     storage_flat: FxHashMap<Vec<u8>, Option<Vec<u8>>>,
-    /// Reverse diff for `BINARY_TRIE_NODES`, in its own map rather than one of
-    /// the four above.
+    /// Reverse diff for `BINARY_TRIE_NODES`, keyed by group root and holding
+    /// whole group rows, in its own map rather than one of the four above.
     ///
     /// It cannot share: the four are dispatched by
     /// [`OverlayCf::classify_by_key_length`], and a `BitPath` key is
     /// `4 + ceil(bits/8)` bytes — a range that overlaps every MPT bucket, so a
     /// binary key would be served as (and, on reconciliation, written as) an
     /// account-trie node.
-    binary_trie: FxHashMap<Vec<u8>, Option<Vec<u8>>>,
+    binary_rows: FxHashMap<Vec<u8>, Option<Vec<u8>>>,
     /// Reverse diff for `BINARY_FLATKEYVALUE`, in a sixth map of its own.
     ///
     /// It cannot share the four MPT maps for the reason `binary_trie` gives, and
@@ -1217,8 +1247,8 @@ pub struct Overlay {
     /// Bloom filter over `binary_trie`, kept separate from `bloom` for the same
     /// reason [`TrieLayerCache`]'s is: an unscheduled chain's MPT lookups keep
     /// exactly the false-positive rate they had.
-    binary_bloom: AtomicBloomFilter<FxBuildHasher>,
-    /// Bloom filter over `binary_flat`, kept separate from `binary_bloom` for
+    binary_row_bloom: AtomicBloomFilter<FxBuildHasher>,
+    /// Bloom filter over `binary_flat`, kept separate from `binary_row_bloom` for
     /// the reason [`TrieLayerCache`]'s `binary_flat_bloom` gives: the two key
     /// spaces collide exactly, so a shared filter would make every key present
     /// in only one of the maps a deterministic false positive for the other's
@@ -1256,7 +1286,7 @@ impl fmt::Debug for Overlay {
             .field("storage_trie_len", &self.storage_trie.len())
             .field("account_flat_len", &self.account_flat.len())
             .field("storage_flat_len", &self.storage_flat.len())
-            .field("binary_trie_len", &self.binary_trie.len())
+            .field("binary_row_len", &self.binary_rows.len())
             .field("binary_flat_len", &self.binary_flat.len())
             .field("from_block", &self.from_block)
             .field("to_block", &self.to_block)
@@ -1271,12 +1301,12 @@ impl Default for Overlay {
             storage_trie: FxHashMap::default(),
             account_flat: FxHashMap::default(),
             storage_flat: FxHashMap::default(),
-            binary_trie: FxHashMap::default(),
+            binary_rows: FxHashMap::default(),
             binary_flat: FxHashMap::default(),
             bloom: AtomicBloomFilter::with_false_pos(FALSE_POSITIVE_RATE)
                 .hasher(FxBuildHasher)
                 .expected_items(Self::BLOOM_INITIAL_CAPACITY),
-            binary_bloom: AtomicBloomFilter::with_false_pos(FALSE_POSITIVE_RATE)
+            binary_row_bloom: AtomicBloomFilter::with_false_pos(FALSE_POSITIVE_RATE)
                 .hasher(FxBuildHasher)
                 .expected_items(Self::BLOOM_INITIAL_CAPACITY),
             binary_flat_bloom: AtomicBloomFilter::with_false_pos(FALSE_POSITIVE_RATE)
@@ -1391,9 +1421,9 @@ impl Overlay {
         }
         // Its own map and its own filter: see the `binary_trie` field docs for
         // why key-length dispatch cannot serve here.
-        for (k, v) in entry.binary_trie_diff {
-            self.binary_bloom.insert(&k);
-            self.binary_trie.insert(k, v);
+        for (k, v) in entry.binary_row_diff {
+            self.binary_row_bloom.insert(&k);
+            self.binary_rows.insert(k, v);
         }
         // A sixth loop, its own map and its own filter. The two binary key
         // spaces are the same lengths, so nothing but the section it arrived in
@@ -1404,22 +1434,23 @@ impl Overlay {
         }
     }
 
-    /// Looks up a `BINARY_TRIE_NODES` key in the overlay, with the same
-    /// three-state contract as [`Self::lookup`].
+    /// Looks up a `BINARY_TRIE_NODES` **row** key in the overlay — a group root
+    /// — with the same three-state contract as [`Self::lookup`]. The value is a
+    /// whole encoded row.
     ///
     /// `Some(None)` is load-bearing on this side in a way it is not for the MPT:
     /// the binary node table is path-keyed and single-version, so "absent at the
     /// pivot" cannot be answered by falling through to disk, which still holds
-    /// the abandoned chain's node at that exact path.
-    pub fn binary_lookup(&self, key: &[u8]) -> Option<Option<Vec<u8>>> {
-        if !self.binary_bloom.contains(key) {
+    /// the abandoned chain's row at that exact key.
+    pub fn binary_row_lookup(&self, key: &[u8]) -> Option<Option<Vec<u8>>> {
+        if !self.binary_row_bloom.contains(key) {
             return None;
         }
-        self.binary_trie.get(key).cloned()
+        self.binary_rows.get(key).cloned()
     }
 
     /// Looks up a `BINARY_FLATKEYVALUE` key in the overlay, with the same
-    /// three-state contract as [`Self::binary_lookup`].
+    /// three-state contract as [`Self::binary_row_lookup`].
     ///
     /// `Some(None)` is load-bearing here for the same reason it is for nodes:
     /// the mirror is single-version, so "this leaf was not in the trie at the
@@ -1461,7 +1492,7 @@ impl Overlay {
             + self.storage_trie.len()
             + self.account_flat.len()
             + self.storage_flat.len()
-            + self.binary_trie.len()
+            + self.binary_rows.len()
             + self.binary_flat.len()
     }
 
@@ -1479,7 +1510,7 @@ impl Overlay {
             &self.storage_trie,
             &self.account_flat,
             &self.storage_flat,
-            &self.binary_trie,
+            &self.binary_rows,
             &self.binary_flat,
         ]
         .iter()
@@ -1523,7 +1554,7 @@ impl Overlay {
     ///
     /// Binary entries are deliberately **not** included: this stream feeds a
     /// writer that picks a column family by key length, which cannot classify a
-    /// `BitPath` key. They come out of [`Self::iter_binary_entries`] instead and
+    /// `BitPath` key. They come out of [`Self::iter_binary_row_entries`] instead and
     /// go straight to `BINARY_TRIE_NODES`.
     pub fn iter_all_entries(
         &self,
@@ -1551,14 +1582,14 @@ impl Overlay {
     /// Iterates the binary-trie reverse diff as `(key, value)`. The binary
     /// counterpart of [`Self::iter_all_entries`], separate because these all
     /// target one column family and need no classification.
-    pub fn iter_binary_entries(&self) -> impl Iterator<Item = (&Vec<u8>, &Option<Vec<u8>>)> {
-        self.binary_trie.iter()
+    pub fn iter_binary_row_entries(&self) -> impl Iterator<Item = (&Vec<u8>, &Option<Vec<u8>>)> {
+        self.binary_rows.iter()
     }
 
     /// Iterates the binary flat-mirror reverse diff as `(key, value)`, for the
     /// reconciliation bridge in `commit_to_disk`.
     ///
-    /// Separate from [`Self::iter_binary_entries`] because the two streams feed
+    /// Separate from [`Self::iter_binary_row_entries`] because the two streams feed
     /// writers targeting *different* column families and nothing in the key
     /// bytes distinguishes them — merging the two would silently write leaves
     /// into `BINARY_TRIE_NODES` and nodes into `BINARY_FLATKEYVALUE`.
@@ -1572,6 +1603,27 @@ mod overlay_tests {
     use super::*;
     use crate::backend::in_memory::InMemoryBackend;
     use crate::journal::FlatDiff;
+    use ethrex_binary_trie::trie::{BitPath, DEFAULT_GROUP_DEPTH, group_root};
+
+    /// A real `BINARY_TRIE_NODES` **row** key that collides byte-for-byte, by
+    /// length, with an account-trie path and an account-zone tree key.
+    ///
+    /// Derived from the geometry rather than written down, for the reason
+    /// `journal::tests::colliding_row_key` gives: under grouping the key that
+    /// reaches the table is the group *root*'s, not the node's, so the fixture
+    /// has to be computed through the same truncation the storage path applies.
+    /// The length assertion is load-bearing — if grouping ever stopped yielding
+    /// a 34-byte row key, this test must fail rather than go on exercising a
+    /// collision that no longer happens.
+    fn colliding_row_key() -> Vec<u8> {
+        let key = group_root(&BitPath::from_bits(&[1u8; 240]), DEFAULT_GROUP_DEPTH).to_db_key();
+        assert_eq!(
+            key.len(),
+            34,
+            "a node at bit-depth 240 must still reach the table under a 34-byte row key"
+        );
+        key
+    }
 
     fn h(b: u8) -> H256 {
         H256::repeat_byte(b)
@@ -1590,7 +1642,7 @@ mod overlay_tests {
                 storage_trie_diff: vec![],
                 account_flat_diff: vec![],
                 storage_flat_diff: vec![],
-                binary_trie_diff: vec![],
+                binary_row_diff: vec![],
                 binary_flat_diff: vec![],
             };
             tx.put(STATE_HISTORY, &n.to_be_bytes(), &entry.encode())
@@ -1747,7 +1799,7 @@ mod overlay_tests {
                 storage_trie_diff: vec![],
                 account_flat_diff: vec![],
                 storage_flat_diff: vec![],
-                binary_trie_diff: vec![],
+                binary_row_diff: vec![],
                 binary_flat_diff: vec![],
             };
             tx.put(STATE_HISTORY, &n.to_be_bytes(), &entry.encode())
@@ -1893,7 +1945,7 @@ mod overlay_tests {
             storage_trie_diff: vec![(vec![0x20; 67], Some(b"stor-trie".to_vec()))],
             account_flat_diff: vec![(vec![0x30; 65], Some(b"acct-flat".to_vec()))],
             storage_flat_diff: vec![(vec![0x40; 131], None)],
-            binary_trie_diff: vec![],
+            binary_row_diff: vec![],
             binary_flat_diff: vec![],
         };
         let mut tx = backend.begin_write().unwrap();
@@ -2012,7 +2064,7 @@ mod overlay_tests {
             storage_trie_diff: vec![(vec![0x20; 67], Some(b"st".to_vec()))],
             account_flat_diff: vec![(vec![0x30; 65], None)],
             storage_flat_diff: vec![(vec![0x40; 131], Some(b"sf".to_vec()))],
-            binary_trie_diff: vec![],
+            binary_row_diff: vec![],
             binary_flat_diff: vec![],
         };
         let mut tx = backend.begin_write().unwrap();
@@ -2057,7 +2109,7 @@ mod overlay_tests {
         block: BlockNumber,
         parent_binary_root: H256,
         account_trie_diff: FlatDiff,
-        binary_trie_diff: FlatDiff,
+        binary_row_diff: FlatDiff,
     ) {
         let entry = JournalEntry {
             block_hash: h(block as u8),
@@ -2067,7 +2119,7 @@ mod overlay_tests {
             storage_trie_diff: vec![],
             account_flat_diff: vec![],
             storage_flat_diff: vec![],
-            binary_trie_diff,
+            binary_row_diff,
             binary_flat_diff: vec![],
         };
         let mut tx = backend.begin_write().unwrap();
@@ -2098,13 +2150,13 @@ mod overlay_tests {
             Some(Some(b"mpt".to_vec()))
         );
         assert_eq!(
-            overlay.binary_lookup(&shared),
+            overlay.binary_row_lookup(&shared),
             Some(Some(b"binary".to_vec()))
         );
         // And the binary entry is not in the CF-classified stream that feeds the
         // length-dispatching writer.
         assert_eq!(overlay.iter_all_entries().count(), 1);
-        assert_eq!(overlay.iter_binary_entries().count(), 1);
+        assert_eq!(overlay.iter_binary_row_entries().count(), 1);
         assert_eq!(overlay.len(), 2);
     }
 
@@ -2139,7 +2191,7 @@ mod overlay_tests {
         );
 
         let overlay = Overlay::from_journal(backend.as_ref(), 5, 3, |_| None).unwrap();
-        assert_eq!(overlay.binary_lookup(&key), Some(Some(vec![0x33])));
+        assert_eq!(overlay.binary_row_lookup(&key), Some(Some(vec![0x33])));
         // `serves_binary_root` comes from the entry at `to_block`, which is the
         // one that unwinds `to_block -> pivot`.
         assert_eq!(overlay.serves_binary_root(), h(0xb3));
@@ -2157,8 +2209,8 @@ mod overlay_tests {
         seed_binary(&backend, 1, h(0xb1), vec![], vec![(created.clone(), None)]);
         let overlay = Overlay::from_journal(backend.as_ref(), 1, 1, |_| None).unwrap();
 
-        assert_eq!(overlay.binary_lookup(&created), Some(None));
-        assert_eq!(overlay.binary_lookup(&[0x0c; 34]), None);
+        assert_eq!(overlay.binary_row_lookup(&created), Some(None));
+        assert_eq!(overlay.binary_row_lookup(&[0x0c; 34]), None);
     }
 
     /// Seeds one entry carrying *all three* colliding sections at the same key
@@ -2168,7 +2220,7 @@ mod overlay_tests {
         backend: &Arc<dyn StorageBackend>,
         block: BlockNumber,
         account_trie_diff: FlatDiff,
-        binary_trie_diff: FlatDiff,
+        binary_row_diff: FlatDiff,
         binary_flat_diff: FlatDiff,
     ) {
         let entry = JournalEntry {
@@ -2179,7 +2231,7 @@ mod overlay_tests {
             storage_trie_diff: vec![],
             account_flat_diff: vec![],
             storage_flat_diff: vec![],
-            binary_trie_diff,
+            binary_row_diff,
             binary_flat_diff,
         };
         let mut tx = backend.begin_write().unwrap();
@@ -2191,20 +2243,25 @@ mod overlay_tests {
     /// The Decision 6 collision at the overlay level, all three ways at once.
     ///
     /// A 34-byte key is a legal `ACCOUNT_TRIE_NODES` path, a legal
-    /// `BINARY_TRIE_NODES` path (bit-depth 240) and a legal
-    /// `BINARY_FLATKEYVALUE` tree key (account zone). `absorb` puts each in its
-    /// own map behind its own filter, and each lookup must answer with its own
-    /// pre-image — because on reconciliation each stream is written to a
-    /// different column family with no further interpretation.
+    /// `BINARY_TRIE_NODES` **row** key (the group root of a node at bit-depth
+    /// 240) and a legal `BINARY_FLATKEYVALUE` tree key (account zone). `absorb`
+    /// puts each in its own map behind its own filter, and each lookup must
+    /// answer with its own pre-image — because on reconciliation each stream is
+    /// written to a different column family with no further interpretation.
+    ///
+    /// **Re-derived under grouping, not merely re-run.** The key comes from
+    /// `colliding_row_key`, which applies the group truncation the storage path
+    /// applies and asserts the resulting length; the collision it exercises is
+    /// therefore the one production actually meets.
     #[test]
     fn all_three_colliding_sections_resolve_independently_in_the_overlay() {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
-        let shared = vec![0x07; 34];
+        let shared = colliding_row_key();
         seed_all_three(
             &backend,
             1,
             vec![(shared.clone(), Some(b"mpt".to_vec()))],
-            vec![(shared.clone(), Some(b"binary-node".to_vec()))],
+            vec![(shared.clone(), Some(b"binary-row".to_vec()))],
             vec![(shared.clone(), Some(vec![0xf5; 32]))],
         );
         let overlay = Overlay::from_journal(backend.as_ref(), 1, 1, |_| None).unwrap();
@@ -2214,8 +2271,8 @@ mod overlay_tests {
             Some(Some(b"mpt".to_vec()))
         );
         assert_eq!(
-            overlay.binary_lookup(&shared),
-            Some(Some(b"binary-node".to_vec()))
+            overlay.binary_row_lookup(&shared),
+            Some(Some(b"binary-row".to_vec()))
         );
         assert_eq!(
             overlay.binary_flat_lookup(&shared),
@@ -2227,7 +2284,7 @@ mod overlay_tests {
         // the length-classified stream (which would write them into an MPT CF)
         // nor in the node stream (which would write them into BINARY_TRIE_NODES).
         assert_eq!(overlay.iter_all_entries().count(), 1);
-        assert_eq!(overlay.iter_binary_entries().count(), 1);
+        assert_eq!(overlay.iter_binary_row_entries().count(), 1);
         assert_eq!(overlay.iter_binary_flat_entries().count(), 1);
         assert_eq!(overlay.len(), 3);
         assert!(overlay.byte_size() >= 34 * 3);
@@ -2251,7 +2308,7 @@ mod overlay_tests {
         let overlay = Overlay::from_journal(backend.as_ref(), 1, 1, |_| None).unwrap();
 
         assert_eq!(
-            overlay.binary_lookup(&shared),
+            overlay.binary_row_lookup(&shared),
             Some(None),
             "the node did not exist at the pivot"
         );
@@ -2321,7 +2378,7 @@ mod overlay_tests {
             BinaryLayerUpdate {
                 root: h(0xb2),
                 parent_root: h(0xb1),
-                nodes: vec![(vec![0x0e; 34], vec![9])],
+                rows: vec![(vec![0x0e; 34], vec![9])],
                 flat: vec![],
             },
         );
@@ -2351,7 +2408,7 @@ mod overlay_tests {
     fn no_overlay_serves_no_binary_root() {
         let cache = TrieLayerCache::default();
         assert!(!cache.overlay_serves_binary(h(0xb1)));
-        assert_eq!(cache.lookup_binary_overlay(&[0x0f; 34]), None);
+        assert_eq!(cache.lookup_binary_row_overlay(&[0x0f; 34]), None);
     }
 }
 
@@ -2614,7 +2671,7 @@ mod tests {
                 // The parent block's binary root, i.e. the previous layer's, by
                 // the same `0x80 + n` convention.
                 parent_root: h256(0x80 + n - 1),
-                nodes: binary,
+                rows: binary,
                 flat: vec![],
             },
         );
@@ -2630,14 +2687,14 @@ mod tests {
 
         assert!(cache.has_binary_layer(h256(0x81)));
         assert_eq!(
-            cache.binary_get(h256(0x81), &bkey(0xa)),
+            cache.binary_row_get(h256(0x81), &bkey(0xa)),
             Some(Some(vec![0x11]))
         );
         // The MPT root is not a binary root: asking with the layer's own key
         // must find nothing, or the two indexes have been conflated.
-        assert_eq!(cache.binary_get(h256(1), &bkey(0xa)), None);
+        assert_eq!(cache.binary_row_get(h256(1), &bkey(0xa)), None);
         // An unknown binary root falls through to disk.
-        assert_eq!(cache.binary_get(h256(0xff), &bkey(0xa)), None);
+        assert_eq!(cache.binary_row_get(h256(0xff), &bkey(0xa)), None);
     }
 
     /// The walk follows the MPT parent links — one chain of blocks serves both
@@ -2656,21 +2713,21 @@ mod tests {
 
         let tip = h256(0x83);
         assert_eq!(
-            cache.binary_get(tip, &bkey(0xa)),
+            cache.binary_row_get(tip, &bkey(0xa)),
             Some(Some(vec![0x22])),
             "the newest layer that wrote the key must win"
         );
         assert_eq!(
-            cache.binary_get(tip, &bkey(0xb)),
+            cache.binary_row_get(tip, &bkey(0xb)),
             Some(Some(vec![0xbb])),
             "a key only the oldest layer wrote must still be found"
         );
         // Reading at an older root must not see a newer layer's write.
         assert_eq!(
-            cache.binary_get(h256(0x81), &bkey(0xa)),
+            cache.binary_row_get(h256(0x81), &bkey(0xa)),
             Some(Some(vec![0x11]))
         );
-        assert_eq!(cache.binary_get(h256(0x81), &bkey(0xc)), None);
+        assert_eq!(cache.binary_row_get(h256(0x81), &bkey(0xc)), None);
     }
 
     /// The tombstone rule, which the MPT does not need: an empty value means
@@ -2683,13 +2740,13 @@ mod tests {
         put_dual(&mut cache, h256(1), 2, vec![(bkey(0xa), vec![])]);
 
         assert_eq!(
-            cache.binary_get(h256(0x82), &bkey(0xa)),
+            cache.binary_row_get(h256(0x82), &bkey(0xa)),
             Some(None),
             "Some(None) is 'deleted here'; a bare None would send the caller to disk"
         );
         // The layer below still holds the value at its own root.
         assert_eq!(
-            cache.binary_get(h256(0x81), &bkey(0xa)),
+            cache.binary_row_get(h256(0x81), &bkey(0xa)),
             Some(Some(vec![0x11]))
         );
     }
@@ -2705,18 +2762,18 @@ mod tests {
 
         let committed = cache.commit(safe).expect("layer 1 is committable");
         assert_eq!(committed.len(), 1);
-        assert_eq!(committed[0].binary_nodes, vec![(bkey(0xa), vec![0x11])]);
+        assert_eq!(committed[0].binary_rows, vec![(bkey(0xa), vec![0x11])]);
         assert!(
             !committed[0].nodes.is_empty(),
             "the same CommittedLayer must carry the MPT nodes: one flush, not two"
         );
 
         assert!(!cache.has_binary_layer(h256(0x81)));
-        assert_eq!(cache.binary_get(h256(0x81), &bkey(0xa)), None);
+        assert_eq!(cache.binary_row_get(h256(0x81), &bkey(0xa)), None);
         // The layer above survives, index entry intact.
         assert!(cache.has_binary_layer(h256(0x82)));
         assert_eq!(
-            cache.binary_get(h256(0x82), &bkey(0xb)),
+            cache.binary_row_get(h256(0x82), &bkey(0xb)),
             Some(Some(vec![0x22]))
         );
     }
@@ -2731,7 +2788,7 @@ mod tests {
     /// collision the single-version on-disk table cannot represent and that
     /// made write-through unsafe.
     #[test]
-    fn committing_one_branch_discards_the_abandoned_branchs_binary_nodes() {
+    fn committing_one_branch_discards_the_abandoned_branchs_binary_rows() {
         let base = h256(1);
         let (mut cache, _cell) = cache_with_cell(4, H256::zero());
         put_dual(&mut cache, H256::zero(), 1, vec![(bkey(0x01), vec![0x01])]);
@@ -2750,7 +2807,7 @@ mod tests {
         let committed = cache.commit(h256(2)).expect("the winner's first block");
         let flushed: Vec<(&Vec<u8>, &Vec<u8>)> = committed
             .iter()
-            .flat_map(|layer| layer.binary_nodes.iter().map(|(k, v)| (k, v)))
+            .flat_map(|layer| layer.binary_rows.iter().map(|(k, v)| (k, v)))
             .collect();
         assert_eq!(
             flushed,
@@ -2762,9 +2819,9 @@ mod tests {
             !cache.has_binary_layer(h256(0x89)),
             "the abandoned branch's binary root must stop resolving"
         );
-        assert_eq!(cache.binary_get(h256(0x89), &bkey(0xff)), None);
+        assert_eq!(cache.binary_row_get(h256(0x89), &bkey(0xff)), None);
         assert_eq!(
-            cache.binary_get(h256(0x83), &bkey(0x03)),
+            cache.binary_row_get(h256(0x83), &bkey(0x03)),
             Some(Some(vec![0x33])),
             "the surviving branch's still-resident layer is untouched"
         );
@@ -2780,11 +2837,11 @@ mod tests {
 
         assert!(!cache.has_binary_layer(h256(1)));
         assert!(!cache.has_binary_layer(H256::zero()));
-        assert_eq!(cache.binary_get(h256(1), &bkey(0xa)), None);
+        assert_eq!(cache.binary_row_get(h256(1), &bkey(0xa)), None);
 
         let committed = cache.commit(safe).expect("committable");
         assert!(
-            committed.iter().all(|layer| layer.binary_nodes.is_empty()),
+            committed.iter().all(|layer| layer.binary_rows.is_empty()),
             "an unscheduled chain must flush no binary nodes"
         );
         assert!(
@@ -2818,7 +2875,7 @@ mod tests {
         cache: &mut TrieLayerCache,
         parent: H256,
         n: u8,
-        nodes: Vec<(Vec<u8>, Vec<u8>)>,
+        rows: Vec<(Vec<u8>, Vec<u8>)>,
         flat: Vec<(Vec<u8>, Vec<u8>)>,
     ) {
         cache.put_batch_with_binary(
@@ -2830,7 +2887,7 @@ mod tests {
             BinaryLayerUpdate {
                 root: h256(0x80 + n),
                 parent_root: h256(0x80 + n - 1),
-                nodes,
+                rows,
                 flat,
             },
         );
@@ -2960,7 +3017,7 @@ mod tests {
 
         let committed = cache.commit(safe).expect("layer 1 is committable");
         assert_eq!(committed.len(), 1);
-        assert_eq!(committed[0].binary_nodes, vec![(bkey(0xa), vec![0x11])]);
+        assert_eq!(committed[0].binary_rows, vec![(bkey(0xa), vec![0x11])]);
         assert_eq!(committed[0].binary_flat, vec![(fkey(0xa), fval(0x11))]);
         assert!(
             !committed[0].nodes.is_empty(),
@@ -3062,7 +3119,7 @@ mod tests {
         );
 
         assert_eq!(
-            cache.binary_get(h256(0x81), &shared),
+            cache.binary_row_get(h256(0x81), &shared),
             Some(Some(vec![0xa7])),
             "the node lookup must read the node map"
         );
@@ -3082,7 +3139,7 @@ mod tests {
             vec![],
         );
         assert_eq!(
-            cache.binary_get(h256(0x82), &shared),
+            cache.binary_row_get(h256(0x82), &shared),
             Some(None),
             "the node is tombstoned at this root"
         );

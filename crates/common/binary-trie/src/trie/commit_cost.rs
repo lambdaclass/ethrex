@@ -124,17 +124,17 @@ impl BinaryTrieDB for SinkDB {
 /// into an in-memory staging vector under their database keys.
 ///
 /// Mirrors `LayeredBinaryTrieDB::put_batch` in `crates/storage`, which
-/// writes nothing to disk — the staged nodes reach RocksDB later, at the
+/// writes nothing to disk — the staged rows reach RocksDB later, at the
 /// layer flush. The in-memory backend's `put_batch` is a `BTreeMap`
 /// insert instead, which is *not* the production shape and costs far
 /// more, so timing a commit against it overstates the write.
 struct StagingDB {
     inner: InMemoryBinaryTrieDB,
-    staged: StagedNodes,
+    staged: StagedRows,
 }
 
-/// The staging buffer's type, matching `StagedBinaryNodes` in `crates/storage`.
-type StagedNodes = Arc<Mutex<Vec<(Vec<u8>, Vec<u8>)>>>;
+/// The staging buffer's type, matching `StagedBinaryRows` in `crates/storage`.
+type StagedRows = Arc<Mutex<Vec<(Vec<u8>, Vec<u8>)>>>;
 
 impl BinaryTrieDB for StagingDB {
     fn group_depth(&self) -> GroupDepth {
