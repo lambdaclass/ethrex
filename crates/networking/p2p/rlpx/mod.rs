@@ -6,6 +6,7 @@ pub mod initiator;
 pub mod l2;
 pub mod message;
 pub mod p2p;
+pub mod pbtsnap;
 pub mod snap;
 pub mod utils;
 pub use message::Message;
