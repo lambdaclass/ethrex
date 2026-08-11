@@ -206,6 +206,74 @@ sig_hash  = keccak256(0x06 || rlp(envelope))      # empty-msg signature bytes el
       is the single most common reason a hand-built frame transaction is refused.
     </div>
   </div>
+
+  <h2>Run a node</h2>
+  <div class="panel">
+    <p style="margin:0 0 .8rem">
+      Anyone may sync, peer and transact here without permission. You need
+      <strong>both</strong> an execution client and a consensus client: an execution client
+      alone will peer and then sit at genesis, because nothing is driving fork choice.
+    </p>
+    <p style="margin:0 0 .8rem">
+      Start from the published artifact bundle, which carries the genesis, the consensus
+      config and the bootnode lists. A consensus client consumes that directory as a whole,
+      so a missing file fails at startup rather than at first use.
+    </p>
+<pre style="margin:0 0 1rem;overflow-x:auto;font:12px/1.5 var(--mono);background:var(--accent-soft);padding:.8rem;border-radius:8px">ethrex --network genesis.json \
+       --bootnodes "$(paste -sd, bootnodes.txt)" \
+       --nat.extip &lt;your public IP&gt; \
+       --syncmode full</pre>
+    <p style="margin:0 0 .8rem;font-size:14px">
+      <code>--nat.extip</code> is what your node advertises in discovery and in its ENR.
+      <code>--p2p.addr</code> is the bind address and is <strong>not</strong> a substitute:
+      omit <code>--nat.extip</code> and you advertise whatever local address was found, which
+      no external peer can dial back.
+    </p>
+    <div class="note">
+      <strong>The consensus client must be FOCIL-aware.</strong> From the Hegotá fork on, this
+      chain rejects <code>engine_newPayloadV5</code> and <code>engine_forkchoiceUpdatedV4</code>,
+      because only the V6/V5 pair carries inclusion lists. A client speaking only the older pair
+      halts at the boundary — there is no inert intermediate state. Discovery also needs
+      <strong>both</strong> TCP and UDP; opening only TCP gives you a node nobody discovers,
+      which reads as slow peering rather than as a firewall mistake.
+    </div>
+  </div>
+
+  <h2>Become a validator</h2>
+  <div class="panel">
+    <p style="margin:0 0 .8rem">
+      Validator entry is the one permissioned thing on this network. Depositing requires a
+      token held by the address that <strong>sends</strong> the deposit transaction — not the
+      withdrawal address, and not the validator public key. That is the most common mistake.
+      Ask the operators to mint one to your depositing address; without it the deposit reverts
+      with <code>Not enough tokens</code>.
+    </p>
+    <p style="margin:0 0 .6rem"><strong>Withdrawal credentials.</strong> BLS credentials are
+      blocked outright, so use an execution-layer form:</p>
+    <table>
+      <tr><td><code>0x00</code></td><td class="desc">BLS — <strong>blocked</strong>, the deposit reverts.</td></tr>
+      <tr><td><code>0x01</code></td><td class="desc">Execution-layer withdrawal address. The usual choice.</td></tr>
+      <tr><td><code>0x02</code></td><td class="desc">Compounding.</td></tr>
+      <tr><td><code>0x03</code></td><td class="desc">Builder, since this chain runs Gloas.</td></tr>
+      <tr><td><code>0xffff</code></td><td class="desc">Top-up to an existing validator. Never gated, no token needed.</td></tr>
+    </table>
+    <p style="margin:1rem 0 .8rem;font-size:14px">
+      Generate deposit data signed against this chain's genesis fork version
+      <code>0x10000038</code>, then send it to the deposit contract with 32 ETH. A successful
+      deposit burns exactly one token and emits the standard <code>DepositEvent</code>.
+      It then enters the pending-deposit queue and is processed at an epoch boundary, so
+      activation is not immediate.
+    </p>
+    <div class="note">
+      <strong>Run a validator client for it.</strong> A deposited validator with nothing
+      signing on its behalf starts accruing missed-attestation penalties the moment it
+      activates. Exiting is possible either through a consensus-layer voluntary exit or the
+      EIP-7002 predeploy, but only after the validator has been active for 256 epochs, about
+      14 hours here. An exit request made before then is accepted and paid for by the
+      execution layer and then silently ignored, so a successful transaction is not evidence
+      that the exit took.
+    </div>
+  </div>
 </main>
 
 <script>
