@@ -356,7 +356,7 @@ pub async fn snap_sync(
     // snap/1 or snap/2 for state sync; running both simultaneously is not
     // recommended". snap/2 needs access lists, so it needs a post-Amsterdam
     // pivot and a peer that speaks it.
-    if pivot_header.block_access_list_hash.is_some() && snap2_peer_available(peers).await {
+    if pivot_header.block_access_list_hash.is_some() && wait_for_snap2_peer(peers).await {
         return snap2_sync(
             peers,
             store,
@@ -1109,6 +1109,37 @@ pub fn calculate_staleness_timestamp(timestamp: u64) -> u64 {
 /// time is not the mainnet 12s.
 fn staleness_window() -> u64 {
     (*SNAP_LIMIT as u64) * *SECONDS_PER_BLOCK
+}
+
+/// Wait briefly for a peer that speaks snap/2, and report whether one arrived.
+///
+/// The sync starts within a couple of seconds of the node coming up, while
+/// discovery has typically not produced a single completed handshake yet.
+/// Sampling peer capabilities once at that moment answers "no peer speaks
+/// snap/2" for a node whose peers all do, and the whole sync then runs on
+/// snap/1 — which looks like a working sync, just not the one that was asked
+/// for. Wait for the answer to mean something.
+///
+/// A post-Amsterdam network is expected to have snap/2 peers, so reaching the
+/// deadline is the unusual case and snap/1 is the fallback.
+async fn wait_for_snap2_peer(peers: &PeerHandler) -> bool {
+    const DEADLINE: Duration = Duration::from_secs(30);
+    const POLL: Duration = Duration::from_millis(500);
+
+    let start = SystemTime::now();
+    loop {
+        if snap2_peer_available(peers).await {
+            return true;
+        }
+        if start.elapsed().is_ok_and(|elapsed| elapsed >= DEADLINE) {
+            warn!(
+                "No snap/2 peer after {}s; falling back to snap/1 trie healing",
+                DEADLINE.as_secs()
+            );
+            return false;
+        }
+        tokio::time::sleep(POLL).await;
+    }
 }
 
 /// Whether any connected peer negotiated snap/2 and can serve block access lists.
