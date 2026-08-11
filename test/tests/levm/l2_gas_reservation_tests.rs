@@ -156,6 +156,7 @@ fn make_env(gas_limit: u64) -> Environment {
         is_privileged: false,
         fee_token: None,
         disable_balance_check: false,
+        disable_nonce_check: false,
         is_system_call: false,
     }
 }
@@ -186,6 +187,12 @@ fn make_db_with_accounts(
 
 /// A transaction with gas_limit = intrinsic_gas (21000) should be rejected upfront
 /// when L1 fee config is set, because there's no room for l1_gas after intrinsic gas.
+///
+/// The variant must be `L1GasReservationTooLow`, not `IntrinsicGasTooLow`: the
+/// shortfall is against the reserved `l1_gas`, which tracks L1 fees and the block's
+/// gas price, so the same tx can succeed in a later block. The payload builders
+/// evict on `IntrinsicGasTooLow`, so conflating the two would drop recoverable txs
+/// from the mempool.
 #[test]
 fn test_insufficient_gas_for_l1_fee_rejected() {
     let gas_limit = 21_000;
@@ -205,6 +212,7 @@ fn test_insufficient_gas_for_l1_fee_rejected() {
         LevmCallTracer::disabled(),
         VMType::L2(fee_config()),
         &NativeCrypto,
+        None,
     )
     .unwrap();
 
@@ -212,9 +220,11 @@ fn test_insufficient_gas_for_l1_fee_rejected() {
     assert!(
         matches!(
             result,
-            Err(VMError::TxValidation(TxValidationError::IntrinsicGasTooLow))
+            Err(VMError::TxValidation(
+                TxValidationError::L1GasReservationTooLow
+            ))
         ),
-        "Expected IntrinsicGasTooLow, got {result:?}"
+        "Expected L1GasReservationTooLow, got {result:?}"
     );
 }
 
@@ -242,6 +252,7 @@ fn test_gas_limit_exactly_covers_intrinsic_plus_l1() {
         LevmCallTracer::disabled(),
         VMType::L2(fee_config()),
         &NativeCrypto,
+        None,
     )
     .unwrap();
 
@@ -274,6 +285,7 @@ fn test_no_l1_fee_config_21000_is_enough() {
         LevmCallTracer::disabled(),
         VMType::L2(no_l1_fee_config),
         &NativeCrypto,
+        None,
     )
     .unwrap();
 
@@ -303,6 +315,7 @@ fn test_l1_fee_vault_receives_full_payment() {
         LevmCallTracer::disabled(),
         VMType::L2(fee_config()),
         &NativeCrypto,
+        None,
     )
     .unwrap();
 
@@ -369,6 +382,7 @@ fn test_contract_execution_with_l1_gas_reservation() {
         LevmCallTracer::disabled(),
         VMType::L2(fee_config()),
         &NativeCrypto,
+        None,
     )
     .unwrap();
 
@@ -433,6 +447,7 @@ fn test_oog_revert_still_pays_l1_fee_vault() {
         LevmCallTracer::disabled(),
         VMType::L2(fee_config()),
         &NativeCrypto,
+        None,
     )
     .unwrap();
 
@@ -520,6 +535,7 @@ fn test_eip7623_floor_plus_l1_gas_rejected_when_insufficient() {
         LevmCallTracer::disabled(),
         VMType::L2(fee_config()),
         &NativeCrypto,
+        None,
     )
     .unwrap();
 
@@ -527,9 +543,11 @@ fn test_eip7623_floor_plus_l1_gas_rejected_when_insufficient() {
     assert!(
         matches!(
             result,
-            Err(VMError::TxValidation(TxValidationError::IntrinsicGasTooLow))
+            Err(VMError::TxValidation(
+                TxValidationError::L1GasReservationTooLow
+            ))
         ),
-        "Expected IntrinsicGasTooLow when gas_limit < floor + l1_gas, got {result:?}"
+        "Expected L1GasReservationTooLow when gas_limit < floor + l1_gas, got {result:?}"
     );
 }
 
@@ -560,6 +578,7 @@ fn test_eip7623_floor_plus_l1_gas_exactly_covered_succeeds() {
         LevmCallTracer::disabled(),
         VMType::L2(fee_config()),
         &NativeCrypto,
+        None,
     )
     .unwrap();
 

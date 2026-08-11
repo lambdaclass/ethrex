@@ -129,10 +129,16 @@ pub enum MempoolError {
     InvalidPooledTxSize,
     #[error("Requested pooled transaction was not received")]
     RequestedPooledTxNotFound,
+    #[error("Received a duplicate pooled transaction (more txs than requested)")]
+    DuplicatePooledTx,
     #[error("Transaction sender is invalid {0}")]
     InvalidTxSender(#[from] ethrex_crypto::CryptoError),
     #[error("Attempted to replace a pooled transaction with an underpriced transaction")]
     UnderpricedReplacement,
+    #[error(
+        "Attempted to replace a pooled transaction with one of a different category (blob vs. non-blob)"
+    )]
+    ReplacementTypeMismatch,
     #[error("Frame transactions (EIP-8141) are not supported before the Hegota fork")]
     FrameTxPreFork,
     #[error("Frame transaction expiry deadline has passed")]
@@ -141,8 +147,6 @@ pub enum MempoolError {
     InvalidFrameTransaction(String),
     #[error("Invalid frame transaction signature")]
     InvalidFrameSignature,
-    #[error("Frame transaction signature is malleable (high-s)")]
-    FrameTxMalleableSignature,
     #[error("Frame transaction blobs are not yet supported")]
     FrameTxBlobsUnsupported,
     #[error("Frame transaction signature verification cost exceeds MAX_VERIFY_GAS")]

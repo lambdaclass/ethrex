@@ -238,6 +238,7 @@ fn fee_token_storage_rolled_back_on_validation_failure() {
         is_privileged: false,
         fee_token: Some(fee_token_addr),
         disable_balance_check: false,
+        disable_nonce_check: false,
         is_system_call: false,
     };
 
@@ -264,6 +265,7 @@ fn fee_token_storage_rolled_back_on_validation_failure() {
         LevmCallTracer::disabled(),
         VMType::L2(fee_config),
         &NativeCrypto,
+        None,
     )
     .unwrap();
 
@@ -350,6 +352,7 @@ fn finalize_mutation_failure_reverts_all_changes() {
         LevmCallTracer::disabled(),
         VMType::L2(fee_config),
         &NativeCrypto,
+        None,
     )
     .unwrap();
 
@@ -445,6 +448,7 @@ fn fee_token_revert_during_finalize_triggers_rollback() {
         is_privileged: false,
         fee_token: Some(fee_token_addr),
         disable_balance_check: false,
+        disable_nonce_check: false,
         is_system_call: false,
     };
 
@@ -471,6 +475,7 @@ fn fee_token_revert_during_finalize_triggers_rollback() {
         LevmCallTracer::disabled(),
         VMType::L2(fee_config),
         &NativeCrypto,
+        None,
     )
     .unwrap();
 
@@ -553,6 +558,7 @@ fn privileged_tx_intrinsic_gas_failure_preserves_sender_balance() {
         is_privileged: true,
         fee_token: None,
         disable_balance_check: false,
+        disable_nonce_check: false,
         is_system_call: false,
     };
 
@@ -585,6 +591,7 @@ fn privileged_tx_intrinsic_gas_failure_preserves_sender_balance() {
         LevmCallTracer::disabled(),
         VMType::L2(fee_config),
         &NativeCrypto,
+        None,
     )
     .expect("VM creation should succeed");
 
@@ -704,6 +711,7 @@ fn undo_last_transaction_restores_storage_slots() {
         LevmCallTracer::disabled(),
         VMType::L2(fee_config),
         &NativeCrypto,
+        None,
     )
     .unwrap();
 
