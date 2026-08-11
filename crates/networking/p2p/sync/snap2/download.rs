@@ -74,15 +74,24 @@ struct StorageWork {
 
 /// One account-hash range being served, with the storage its accounts raised.
 ///
-/// `next` is the frontier reported to the cursor, and only moves once the range
-/// finishes in full. Partial progress inside it is deliberately not durable: a
-/// pivot move invalidates the roots the outstanding storage would verify
-/// against, and re-requesting is the only way back to a consistent pivot.
+/// The unit of progress is one account response and the storage it raises, not
+/// the whole range. `next` moves only when such a batch is complete, and that
+/// is also when the cursor is told, so the two never disagree: an account below
+/// `next` has been served together with its storage, and an account above it
+/// has not been served at all. Anything in between would be a leaf the
+/// catch-up skips as unfetched and the download never re-serves, which is a
+/// silently wrong state root.
+///
+/// A range therefore has at most one batch outstanding. Concurrency comes from
+/// running every range at once, not from pipelining within one.
 struct RangeTask {
     next: H256,
     last: H256,
     accounts_done: bool,
     accounts_inflight: bool,
+    /// The highest account hash of the batch in flight, once its accounts have
+    /// landed. `next` moves here when the batch's storage is all in.
+    served_through: Option<H256>,
     awaiting_storage: BTreeMap<H256, StorageWork>,
     storage_inflight: usize,
 }
@@ -94,14 +103,23 @@ impl RangeTask {
             last: range.last,
             accounts_done: false,
             accounts_inflight: false,
+            served_through: None,
             awaiting_storage: BTreeMap::new(),
             storage_inflight: 0,
         }
     }
 
+    /// Whether a batch's accounts and storage are all in, so the frontier can
+    /// move to `served_through`.
+    fn batch_ready(&self) -> bool {
+        self.served_through.is_some()
+            && self.awaiting_storage.is_empty()
+            && self.storage_inflight == 0
+    }
+
     /// Whether everything this range owns is downloaded.
     fn is_complete(&self) -> bool {
-        self.accounts_done && self.awaiting_storage.is_empty() && self.storage_inflight == 0
+        self.accounts_done && self.served_through.is_none()
     }
 
     /// Whether anything is still out with a peer.
@@ -113,15 +131,21 @@ impl RangeTask {
 /// A worker's answer, tagged with the range that raised it.
 enum Response {
     Accounts {
-        range: usize,
+        range: RangeId,
         outcome: Box<AccountRangeOutcome>,
     },
     Storage {
-        range: usize,
+        range: RangeId,
         requested: Vec<(H256, StorageWork)>,
         outcome: Box<StorageRangeOutcome>,
     },
 }
+
+/// Identifies a range for the lifetime of the download. Ranges are dropped as
+/// they finish, so a position in the collection would name a different range
+/// once an earlier one is gone, and a response still in flight would be folded
+/// into the wrong frontier.
+type RangeId = usize;
 
 /// Buffers leaves and spills them to the sorted chunk files the flat state
 /// absorbs in bulk. Writing each response straight through would turn the
@@ -208,11 +232,12 @@ pub async fn download_state(
     let mut writer = ChunkWriter::new(accounts_dir.clone(), storages_dir.clone()).await?;
 
     let (tx, mut rx) = tokio::sync::mpsc::channel::<Response>(1024);
-    let mut tasks: Vec<RangeTask> = cursor
+    let mut tasks: BTreeMap<RangeId, RangeTask> = cursor
         .pending_account_ranges()
         .iter()
         .copied()
-        .map(RangeTask::new)
+        .enumerate()
+        .map(|(id, range)| (id, RangeTask::new(range)))
         .collect();
 
     while !tasks.is_empty() {
@@ -256,11 +281,13 @@ pub async fn download_state(
             pivot = next;
 
             // The roots the outstanding storage would verify against belong to
-            // the old pivot. Those accounts are still inside a pending range,
-            // so they are re-served and their storage resumes from whatever
-            // the cursor already holds.
-            for task in &mut tasks {
+            // the old pivot, and the batch they came from is abandoned: its
+            // accounts sit below no frontier, so the catch-up just skipped
+            // them and only re-serving at the new pivot can make them right.
+            // `next` is untouched, so the work lost is one batch per range.
+            for task in tasks.values_mut() {
                 task.awaiting_storage.clear();
+                task.served_through = None;
                 task.accounts_done = false;
             }
             continue;
@@ -283,17 +310,30 @@ pub async fn download_state(
             writer.flush()?;
         }
 
-        // A finished range is only published once its leaves are readable, or
-        // an access list gated on the new frontier would patch keys the flat
-        // state does not hold yet.
-        if tasks.iter().any(RangeTask::is_complete) {
+        // A frontier only moves once the leaves behind it are readable, or an
+        // access list gated on it would patch keys the flat state does not hold
+        // yet.
+        if tasks.values().any(RangeTask::batch_ready) {
             publish(&mut writer, flat, &accounts_dir, &storages_dir).await?;
-            for index in (0..tasks.len()).rev() {
-                if tasks[index].is_complete() {
-                    cursor.advance_accounts(tasks[index].last);
-                    tasks.remove(index);
+            for task in tasks.values_mut() {
+                if !task.batch_ready() {
+                    continue;
+                }
+                let Some(served_through) = task.served_through.take() else {
+                    continue;
+                };
+                cursor.advance_accounts(served_through);
+                // Reaching the range's end finishes it. Without this the range
+                // would keep requesting a span that starts past its own last
+                // hash and never complete.
+                task.accounts_done = served_through >= task.last;
+                match next_hash(served_through) {
+                    Some(next) => task.next = next,
+                    // Served through the top of the whole hash space.
+                    None => task.accounts_done = true,
                 }
             }
+            tasks.retain(|_, task| !task.is_complete());
             diagnostics
                 .write()
                 .await
@@ -337,13 +377,13 @@ async fn publish(
 /// anything was scheduled.
 async fn schedule(
     peers: &mut PeerHandler,
-    tasks: &mut [RangeTask],
+    tasks: &mut BTreeMap<RangeId, RangeTask>,
     pivot: &BlockHeader,
     tx: &tokio::sync::mpsc::Sender<Response>,
 ) -> Result<bool, SyncError> {
     let mut scheduled = false;
 
-    for (index, task) in tasks.iter_mut().enumerate() {
+    for (&index, task) in tasks.iter_mut() {
         // Storage first: it is what holds a range back from advancing.
         while !task.awaiting_storage.is_empty() {
             let Some(batch) = next_storage_batch(task) else {
@@ -388,7 +428,10 @@ async fn schedule(
             });
         }
 
-        if task.accounts_done || task.accounts_inflight {
+        // One batch at a time: the next account request may only go out once
+        // this range's frontier has caught up to the last one, or the two
+        // batches would overlap in the window the catch-up gate reads.
+        if task.accounts_done || task.accounts_inflight || task.served_through.is_some() {
             continue;
         }
         let Some((peer_id, connection, permit)) = peers
@@ -417,6 +460,14 @@ async fn schedule(
     }
 
     Ok(scheduled)
+}
+
+/// The first hash after `hash`, or `None` at the top of the space.
+fn next_hash(hash: H256) -> Option<H256> {
+    use ethrex_common::BigEndianHash;
+    hash.into_uint()
+        .checked_add(U256::one())
+        .map(|next| H256::from_uint(&next))
 }
 
 /// Take the next set of contracts to request storage for.
@@ -453,20 +504,27 @@ fn next_storage_batch(task: &mut RangeTask) -> Option<Vec<(H256, StorageWork)>> 
 /// Fold one worker's answer back into its range.
 async fn handle_response(
     response: Response,
-    tasks: &mut [RangeTask],
+    tasks: &mut BTreeMap<RangeId, RangeTask>,
     writer: &mut ChunkWriter,
     cursor: &mut DownloadCursor,
     code_hash_collector: &mut CodeHashCollector,
 ) -> Result<(), SyncError> {
     match response {
         Response::Accounts { range, outcome } => {
-            let Some(task) = tasks.get_mut(range) else {
+            let Some(task) = tasks.get_mut(&range) else {
                 return Ok(());
             };
             task.accounts_inflight = false;
             if !outcome.verified {
                 return Ok(());
             }
+            let Some(served_through) = outcome
+                .accounts
+                .last()
+                .map(|(account_hash, _)| *account_hash)
+            else {
+                return Ok(());
+            };
 
             for (account_hash, account) in &outcome.accounts {
                 if account.code_hash != *EMPTY_KECCAK_HASH {
@@ -496,17 +554,21 @@ async fn handle_response(
             }
             writer.accounts.extend(outcome.accounts);
 
-            match outcome.remaining {
-                Some(next) => task.next = next,
-                None => task.accounts_done = true,
-            }
+            // The frontier moves to here once this batch's storage is in. A
+            // response that ends the range still has to wait for that, so the
+            // range is only marked done after the commit.
+            task.served_through = Some(if outcome.remaining.is_some() {
+                served_through
+            } else {
+                task.last
+            });
         }
         Response::Storage {
             range,
             requested,
             outcome,
         } => {
-            let Some(task) = tasks.get_mut(range) else {
+            let Some(task) = tasks.get_mut(&range) else {
                 return Ok(());
             };
             task.storage_inflight -= 1;
@@ -558,13 +620,13 @@ async fn handle_response(
 
 /// Collect every outstanding response before the pivot changes under them.
 async fn collect_inflight(
-    tasks: &mut [RangeTask],
+    tasks: &mut BTreeMap<RangeId, RangeTask>,
     rx: &mut tokio::sync::mpsc::Receiver<Response>,
     writer: &mut ChunkWriter,
     cursor: &mut DownloadCursor,
     code_hash_collector: &mut CodeHashCollector,
 ) -> Result<(), SyncError> {
-    while tasks.iter().any(RangeTask::is_inflight) {
+    while tasks.values().any(RangeTask::is_inflight) {
         let Some(response) = rx.recv().await else {
             debug!("snap/2 download: response channel closed with work in flight");
             break;
