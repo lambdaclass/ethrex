@@ -6,8 +6,10 @@ A public test network running the frame-transaction family of EIPs on
 Anyone may sync, peer and transact without permission. Only **validator entry** is
 gated; see "Become a validator" below.
 
-> The DNS zone below is `hegota-testnet.ethrex.xyz`. If devops publishes a different
-> one, that string is the only thing to change in this document.
+> The zone is `privacy.ethrex.xyz`. Five names exist: `rpc1`, `rpc2`, `rpc3`, `dora` and
+> `faucet`. There is no `artifacts` name and the apex has no address record, so the
+> artifact bundle is served from a path under the faucet host rather than a host of its
+> own. Add an `artifacts` record and it can move, with the path left as a redirect.
 
 ## Network details
 
@@ -18,11 +20,11 @@ gated; see "Become a validator" below.
 | Block gas limit | 200,000,000 |
 | Execution client | ethrex, Hegotá testnet build |
 | Consensus client | Lighthouse (`ethpandaops/lighthouse:focil`) |
-| RPC | `https://rpc1.hegota-testnet.ethrex.xyz` (also `rpc2`, `rpc3`) |
-| Explorer | `https://dora.hegota-testnet.ethrex.xyz` |
-| Faucet | `https://faucet.hegota-testnet.ethrex.xyz` |
-| Artifact bundle | `https://artifacts.hegota-testnet.ethrex.xyz` |
-| Bootnodes | `https://faucet.hegota-testnet.ethrex.xyz/bootnodes` |
+| RPC | `https://rpc1.privacy.ethrex.xyz` (also `rpc2`, `rpc3`) |
+| Explorer | `https://dora.privacy.ethrex.xyz` |
+| Faucet | `https://faucet.privacy.ethrex.xyz` |
+| Artifact bundle | `https://faucet.privacy.ethrex.xyz/artifacts` |
+| Bootnodes | `https://faucet.privacy.ethrex.xyz/bootnodes` |
 | Deposit contract | `0x00000000219ab540356cBB839Cbe05303d7705Fa` |
 | Deposit gater | `0x00000000a11acc355c0de0000a11acc355c0de00` |
 
@@ -82,7 +84,7 @@ for f in genesis.json genesis.ssz config.yaml \
          bootnodes.txt bootnodes-enr.txt bootnodes-cl.txt \
          deposit_contract.txt deposit_contract_block.txt \
          deposit_contract_block_hash.txt genesis_validators_root.txt; do
-  curl -fsSLO "https://artifacts.hegota-testnet.ethrex.xyz/$f"
+  curl -fsSLO "https://faucet.privacy.ethrex.xyz/artifacts/$f"
 done
 ```
 
@@ -90,7 +92,7 @@ The three bootnode files are also served live as JSON, so peers can be checked o
 re-fetched without pulling the whole bundle:
 
 ```
-curl -s https://faucet.hegota-testnet.ethrex.xyz/bootnodes
+curl -s https://faucet.privacy.ethrex.xyz/bootnodes
 {"el": ["enode://…"], "el_enr": ["enr:…"], "cl": ["enr:…"]}
 ```
 
@@ -195,7 +197,7 @@ ethdo validator depositdata \
 ### 4. Deposit
 
 ```
-cast send --rpc-url https://rpc1.hegota-testnet.ethrex.xyz \
+cast send --rpc-url https://rpc1.privacy.ethrex.xyz \
   --private-key <DEPOSITOR_KEY> --value 32ether \
   0x00000000219ab540356cBB839Cbe05303d7705Fa <CALLDATA>
 ```
@@ -296,7 +298,7 @@ Dry-run before sending:
 ```
 curl -s -X POST -H 'content-type: application/json' \
   -d '{"jsonrpc":"2.0","method":"ethrex_simulateFrameTransaction","params":["<RAW_TX>"],"id":1}' \
-  https://rpc1.hegota-testnet.ethrex.xyz
+  https://rpc1.privacy.ethrex.xyz
 ```
 
 This reports validity, the resolved payer, the prefix shape and per-frame gas before

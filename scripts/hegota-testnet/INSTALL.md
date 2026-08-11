@@ -218,26 +218,34 @@ startup rather than at first use.
 ## 8. Reverse proxy
 
 Serve the RPC, the explorer, the faucet and the artifact bundle over HTTPS. Caddy gets
-certificates automatically from the hostnames you declare:
+certificates automatically from the hostnames you declare, which means **every name in
+the Caddyfile must already resolve to this host**: a name without an address record fails
+its ACME challenge and spends the Let's Encrypt failed-validation budget, five per
+hostname per hour, for the whole deployment.
+
+The zone is `privacy.ethrex.xyz` and it has five names — `rpc1`, `rpc2`, `rpc3`, `dora`,
+`faucet`. There is no `artifacts` name and the apex carries no address record, so the
+bundle is served from a path under the faucet host:
 
 ```
-rpc.hegota.example {
-    reverse_proxy localhost:32003
-}
+rpc1.privacy.ethrex.xyz { reverse_proxy localhost:32003 }
+rpc2.privacy.ethrex.xyz { reverse_proxy localhost:32010 }
+rpc3.privacy.ethrex.xyz { reverse_proxy localhost:32017 }
 
-explorer.hegota.example {
-    reverse_proxy localhost:31500
-}
+dora.privacy.ethrex.xyz { reverse_proxy localhost:31500 }
 
-faucet.hegota.example {
+faucet.privacy.ethrex.xyz {
+    handle_path /artifacts/* {
+        root * /srv/hegota-testnet/artifacts
+        file_server browse
+    }
     reverse_proxy localhost:8080
 }
-
-artifacts.hegota.example {
-    root * /srv/hegota-testnet/artifacts
-    file_server browse
-}
 ```
+
+`handle_path`, not `handle`: the prefix has to be stripped before the request reaches the
+filesystem root, or `/artifacts/genesis.json` is looked up at
+`/srv/hegota-testnet/artifacts/artifacts/genesis.json`.
 
 **Do not add `header Access-Control-*` directives.** ethrex's RPC server already sends a
 complete permissive CORS set (`CorsLayer::permissive()`), Caddy's `header` *appends*
@@ -245,15 +253,13 @@ rather than replaces, and a duplicated `Access-Control-Allow-Origin` is hard-rej
 browsers and by MetaMask's request layer. The Caddyfile at
 `scripts/eip8141-devnet/Caddyfile` does add them; do not copy that part of it.
 
-The hostnames above are illustrative. The zone this deployment actually uses is written
-in exactly one place — `scripts/hegota-testnet/USER-GUIDE.md`, which says how to
-substitute it — so do not spread it through the runbook.
+One RPC hostname per execution node, rather than one hostname for node 0. Three-node
+agreement on head *hash* is the check this chain asks users to run, and they cannot run it
+against a single endpoint. The nodes' RPC ports stay closed at the firewall; reaching them
+goes through this proxy, which is what the operator watches.
 
-Only execution node 0's RPC (32003) is proxied. Nodes 1 and 2 keep their RPC closed so a
-client cannot be pointed at a node the operator is not watching.
-
-The `artifacts` vhost is not the only route to the bootnode lists: the faucet serves the
-same three lists as JSON at `/bootnodes`, read from the same bundle. That is deliberate
+The bundle path is not the only route to the bootnode lists: the faucet serves the same
+three lists as JSON at `/bootnodes`, read from the same directory. That is deliberate
 redundancy — the lists are the one part of the bundle a joiner needs after it is already
 running, when a peer set has gone stale.
 
@@ -265,8 +271,10 @@ does not, and you should not add one.
 
 Run the faucet with **its own key**, funded from the `FAUCET_ADDR` account, and keep that
 key in a host env file — never in the repository, never in the kurtosis config. Point it
-at `http://localhost:32003` and give it the public RPC and explorer URLs for its own
-links. `scripts/hegota-testnet/faucet/` is a working reference implementation.
+at `http://localhost:32003` and give it the public RPC, explorer and bundle URLs for its
+own links — `PUBLIC_RPC_URL`, `EXPLORER_URL`, `ARTIFACTS_URL`; each row is simply absent
+from the page when its variable is unset. `scripts/hegota-testnet/faucet/` is a working
+reference implementation.
 
 Give it the artifact bundle read-only, so it can serve the bootnode lists on its landing
 page and at `GET /bootnodes`:

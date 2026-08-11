@@ -23,6 +23,8 @@ Config (env):
   PORT                                                           (default 8080)
   PUBLIC_RPC_URL           shown on the landing page             (optional)
   EXPLORER_URL             shown on the landing page             (optional)
+  ARTIFACTS_URL            artifact bundle, linked from the
+                           landing page                          (optional)
   BUNDLE_DIR               published artifact bundle, read for
                            the bootnode lists on `/` and
                            `/bootnodes`   (default /srv/hegota-testnet/artifacts)
@@ -59,6 +61,7 @@ BIND_ADDR = os.environ.get("BIND_ADDR", "0.0.0.0")
 PORT = int(os.environ.get("PORT", "8080"))
 PUBLIC_RPC_URL = os.environ.get("PUBLIC_RPC_URL", "")
 EXPLORER_URL = os.environ.get("EXPLORER_URL", "")
+ARTIFACTS_URL = os.environ.get("ARTIFACTS_URL", "")
 BUNDLE_DIR = pathlib.Path(os.environ.get("BUNDLE_DIR", "/srv/hegota-testnet/artifacts"))
 
 # A reverse proxy always reaches us from loopback or a private address, and a
@@ -301,29 +304,39 @@ def read_bootnodes():
 def render_bootnodes(lists):
     """The peering block for the landing page: the two lists a joiner passes.
 
-    The execution ENRs are served on `/bootnodes` but not shown here — they name
-    the same nodes as the enodes, and no client's flag takes them.
+    Styling lives in page.html; this emits the classes it defines. The execution
+    ENRs are served on `/bootnodes` but not shown here — they name the same nodes
+    as the enodes, and no client's flag takes them.
     """
     shown = (
-        ("Execution bootnodes", "--bootnodes", lists.get("el", [])),
-        ("Consensus bootnodes", "--boot-nodes", lists.get("cl", [])),
+        ("Execution", "--bootnodes", lists.get("el", [])),
+        ("Consensus", "--boot-nodes", lists.get("cl", [])),
     )
     blocks = []
     for title, flag, records in shown:
         if not records:
             continue
-        body = html.escape("\n".join(records))
+        items = "".join(f"<li>{html.escape(r)}</li>" for r in records)
         blocks.append(
-            f'<p style="margin:0 0 .35rem;font-size:14px"><strong>{title}</strong> '
-            f"(<code>{flag}</code>)</p>\n"
-            f'<pre class="list">{body}</pre>'
+            f'<div class="peerset">'
+            f'<h3 class="peerset-title">{title} <span class="flag">{flag}</span></h3>'
+            f'<ul class="records">{items}</ul>'
+            f"</div>"
         )
     if not blocks:
         return ""
     return (
-        '<p style="margin:0 0 .8rem;font-size:14px">The current lists, also served as JSON '
-        'at <a href="/bootnodes">/bootnodes</a>:</p>\n' + "\n".join(blocks)
+        '<div class="peers">'
+        '<p class="peers-lede">Peers as published, also served as JSON at '
+        '<a href="/bootnodes">/bootnodes</a>:</p>'
+        + "".join(blocks)
+        + "</div>"
     )
+
+
+def host_of(url):
+    """Link text for a URL: the host and any path, without the scheme."""
+    return url.split("://", 1)[-1].rstrip("/")
 
 
 CHAIN_ID_TEXT = None
@@ -351,15 +364,23 @@ def render_page(lists):
         template = path.read_text()
     except OSError:
         return b"<h1>Hegota devnet faucet</h1><p>POST /api/claim {\"address\": \"0x...\"}</p>"
+    # The RPC URL is shown in full rather than linked: it answers POSTs, so
+    # following it in a browser is an error page, and it is the one value here
+    # that gets pasted into a config where the scheme matters. The other two are
+    # pages, so they link and show the host — a wrapped URL in a 17rem rail
+    # breaks mid-token and reads as damage.
     rpc_row = f"<dt>RPC</dt><dd>{PUBLIC_RPC_URL}</dd>" if PUBLIC_RPC_URL else ""
-    explorer_row = (f'<dt>Explorer</dt><dd><a href="{EXPLORER_URL}">{EXPLORER_URL}</a></dd>'
-                    if EXPLORER_URL else "")
+    explorer_row = (f'<dt>Explorer</dt><dd><a href="{EXPLORER_URL}">'
+                    f"{host_of(EXPLORER_URL)}</a></dd>" if EXPLORER_URL else "")
+    artifacts_row = (f'<dt>Bundle</dt><dd><a href="{ARTIFACTS_URL}">'
+                     f"{host_of(ARTIFACTS_URL)}</a></dd>" if ARTIFACTS_URL else "")
     amount = f"{AMOUNT_WEI / 10**18:g}"
     return (template
             .replace("{{CHAIN_ID}}", chain_id_text())
             .replace("{{AMOUNT}}", amount)
             .replace("{{RPC}}", rpc_row)
             .replace("{{EXPLORER}}", explorer_row)
+            .replace("{{ARTIFACTS}}", artifacts_row)
             .replace("{{BOOTNODES}}", render_bootnodes(lists))).encode()
 
 
