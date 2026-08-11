@@ -247,6 +247,50 @@ fn nothing_installed(store: &Store, pivot: &BlockHeader) {
     );
 }
 
+/// The landing seam's own refusal, reached directly because no adversarial
+/// case above gets that far — they all die at `verify_range` first.
+///
+/// The property is that a refused snapshot is *inert*: `install_binary_snapshot`
+/// merkleizes into an in-memory overlay and compares before it retracts the flat
+/// frontier or clears a table, so a node handed a bad snapshot still has the
+/// state it started with. Were the order reversed, a single bad answer would
+/// cost a node its whole database.
+#[tokio::test]
+async fn a_refused_snapshot_leaves_the_nodes_own_state_intact() {
+    let (source, pivot) = store_with_state(0x11).await;
+    let target = target_store(&pivot).await;
+    let own_head = target
+        .get_canonical_block_hash(1)
+        .await
+        .expect("canonical read")
+        .expect("own head");
+    let own_root = target
+        .get_binary_trie_root(own_head)
+        .expect("root read")
+        .expect("own root");
+    let own_leaves = all_leaves(&target, own_root);
+
+    // Genuine leaves, one value flipped: a set that cannot merkleize to the
+    // root the pivot header commits to.
+    let mut leaves = all_leaves(&source, pivot.state_root);
+    leaves[0].1[0] ^= 1;
+    let error = target
+        .install_binary_snapshot(pivot.hash(), leaves, vec![])
+        .await
+        .expect_err("a snapshot that does not merkleize to the header root must be refused");
+    assert!(
+        error.to_string().contains("merkleizes to"),
+        "expected the root comparison to be what refused it, got {error}",
+    );
+
+    nothing_installed(&target, &pivot);
+    assert_eq!(
+        all_leaves(&target, own_root),
+        own_leaves,
+        "a refused snapshot must not have touched the state the node already had",
+    );
+}
+
 // -------------------------------------------------------------------- honest
 
 #[tokio::test]
