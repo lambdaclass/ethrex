@@ -31,8 +31,8 @@ use crate::rlpx::p2p::{Capability, SUPPORTED_ETH_CAPABILITIES};
 use crate::snap::{
     async_fs,
     constants::{
-        BYTECODE_CHUNK_SIZE, MAX_HEADER_FETCH_ATTEMPTS, MIN_FULL_BLOCKS, MISSING_SLOTS_PERCENTAGE,
-        SECONDS_PER_BLOCK, SNAP_LIMIT,
+        BYTECODE_CHUNK_SIZE, MAX_BAL_CATCHUP_PASSES, MAX_HEADER_FETCH_ATTEMPTS, MIN_FULL_BLOCKS,
+        MISSING_SLOTS_PERCENTAGE, SECONDS_PER_BLOCK, SNAP_LIMIT,
     },
     request_account_range, request_bytecodes, request_storage_ranges,
 };
@@ -344,6 +344,23 @@ pub async fn snap_sync(
     let mut code_hash_collector: CodeHashCollector =
         CodeHashCollector::new(code_hashes_snapshot_dir.clone());
 
+    // devp2p `caps/snap.md` ("Synchronization algorithm"): the range download starts at
+    // this pivot's root and is made consistent afterwards by replaying the block access
+    // lists of the span it covers. That replaces trie healing, so the two reconciliation
+    // strategies are chosen once, here, rather than mixed.
+    let initial_pivot = pivot_header.clone();
+    let use_bal_reconciliation =
+        initial_pivot.block_access_list_hash.is_some() && snap2_peer_available(peers).await;
+    if use_bal_reconciliation {
+        debug!(
+            "snap/2: reconciling by BAL replay from pivot {}; trie healing is not used",
+            initial_pivot.number
+        );
+    }
+    // Root of the trie built from the downloaded ranges. It matches no header: its values
+    // come from whichever roots were current as each range was served.
+    let mut downloaded_state_root: Option<H256> = None;
+
     let mut storage_accounts = AccountStorageRoots::default();
     if !std::env::var("SKIP_START_SNAP_SYNC").is_ok_and(|var| !var.is_empty()) {
         // We start by downloading all of the leafs of the trie of accounts
@@ -398,6 +415,7 @@ pub async fn snap_sync(
 
         debug!("Original state root: {state_root:?}");
         debug!("Computed state root after request_account_ranges: {computed_state_root:?}");
+        downloaded_state_root = Some(computed_state_root);
 
         diagnostics.write().await.current_phase = "storage_ranges".to_string();
         *METRICS.storage_tries_download_start_time.lock().await = Some(SystemTime::now());
@@ -417,18 +435,24 @@ pub async fn snap_sync(
                 )
                 .await?;
             }
-            // heal_state_trie_wrap returns false if we ran out of time before fully healing the trie
-            // We just need to update the pivot and start again
-            if !heal_state_trie_wrap(
-                pivot_header.state_root,
-                store.clone(),
-                peers,
-                calculate_staleness_timestamp(pivot_header.timestamp),
-                &mut state_leafs_healed,
-                &mut storage_accounts,
-                &mut code_hash_collector,
-            )
-            .await?
+            // snap/1 reconciles the account trie here so the storage roots driving the
+            // storage download are trustworthy. snap/2 has no `GetTrieNodes`: it downloads
+            // storage against the roots the account ranges carried and lets the BAL replay
+            // correct whatever moved, so this step is skipped entirely.
+            //
+            // heal_state_trie_wrap returns false if we ran out of time before fully healing
+            // the trie. We just need to update the pivot and start again.
+            if !use_bal_reconciliation
+                && !heal_state_trie_wrap(
+                    pivot_header.state_root,
+                    store.clone(),
+                    peers,
+                    calculate_staleness_timestamp(pivot_header.timestamp),
+                    &mut state_leafs_healed,
+                    &mut storage_accounts,
+                    &mut code_hash_collector,
+                )
+                .await?
             {
                 continue;
             };
@@ -514,9 +538,73 @@ pub async fn snap_sync(
     let mut global_state_leafs_healed: u64 = 0;
     let mut global_storage_leafs_healed: u64 = 0;
     let mut healing_done = false;
-    // The pivot the local state is known to match in full. `None` until a healing pass
-    // completes, since BAL replay can only build on a state whose root was verified.
+    // The pivot the local state is known to match in full. `None` until a reconciliation
+    // pass completes, since verified BAL replay can only build on a state whose root
+    // was checked.
     let mut completed_pivot: Option<BlockHeader> = None;
+
+    // snap/2 reconciliation (devp2p `caps/snap.md`, "Synchronization algorithm" steps
+    // 3-5): replay the BALs of every block from the pivot the download started at up to
+    // the one it must end at, then assert the root once. The pivot can advance while a
+    // pass runs, so each pass re-targets and resumes from the last block it applied.
+    if use_bal_reconciliation && let Some(start_root) = downloaded_state_root {
+        let mut replay_base = initial_pivot.clone();
+        let mut current_root = start_root;
+        for pass in 0..MAX_BAL_CATCHUP_PASSES {
+            while block_is_stale(&pivot_header) {
+                pivot_header = update_pivot(
+                    pivot_header.number,
+                    pivot_header.timestamp,
+                    peers,
+                    block_sync_state,
+                    diagnostics,
+                )
+                .await?;
+            }
+            if pivot_header.number <= replay_base.number {
+                break;
+            }
+            let progress = match advance_state_via_bals(
+                store,
+                peers,
+                replay_base.clone(),
+                current_root,
+                pivot_header.hash(),
+                BalApplyMode::CatchUp,
+                diagnostics,
+            )
+            .await
+            {
+                Ok(progress) => progress,
+                Err(e) => {
+                    warn!("snap/2 BAL reconciliation failed ({e}); reconciling by healing");
+                    break;
+                }
+            };
+            current_root = progress.state_root;
+            let Some(applied) = progress.last_applied else {
+                warn!("snap/2 BAL reconciliation made no progress on pass {pass}");
+                break;
+            };
+            replay_base = applied;
+            if current_root == pivot_header.state_root {
+                debug!(
+                    "snap/2 BAL reconciliation reached pivot {} on pass {pass}",
+                    pivot_header.number
+                );
+                completed_pivot = Some(pivot_header.clone());
+                healing_done = true;
+                break;
+            }
+        }
+        if !healing_done {
+            warn!(
+                "snap/2 BAL reconciliation did not reach {:?}; falling back to trie healing, which needs snap/1 peers",
+                pivot_header.state_root
+            );
+        }
+    }
+
     while !healing_done {
         // This if is an edge case for the skip snap sync scenario
         if block_is_stale(&pivot_header) {
@@ -548,10 +636,12 @@ pub async fn snap_sync(
         if let Some(base) = catchup_base {
             // `Verified` is correct here: the base is a pivot the local state matches in
             // full, so every intermediate root must reproduce its header's.
+            let base_root = base.state_root;
             match advance_state_via_bals(
                 store,
                 peers,
                 base,
+                base_root,
                 pivot_header.hash(),
                 BalApplyMode::Verified,
                 diagnostics,
@@ -559,15 +649,15 @@ pub async fn snap_sync(
             .await
             {
                 // Step 7: the replayed span must reproduce the pivot's state root.
-                Ok(new_root) if new_root == pivot_header.state_root => {
+                Ok(progress) if progress.state_root == pivot_header.state_root => {
                     completed_pivot = Some(pivot_header.clone());
                     healing_done = true;
                     continue;
                 }
-                Ok(new_root) => {
+                Ok(progress) => {
                     warn!(
-                        "snap/2 BAL replay reached {new_root:?}, want {:?}; healing the remainder",
-                        pivot_header.state_root
+                        "snap/2 BAL replay reached {:?}, want {:?}; healing the remainder",
+                        progress.state_root, pivot_header.state_root
                     );
                 }
                 Err(SyncError::ChainReorgDetected {

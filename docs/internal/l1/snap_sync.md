@@ -15,25 +15,16 @@ for the `block_access_list_hash` header field.
 
 ## Capability negotiation
 
-What a connection advertises depends on sync state, via
-`advertised_snap_capabilities(is_synced)`. EIP-8189 ("Backwards Compatibility")
-says a node synchronizing data should use one snap version for state sync and
-serve both only once synchronization is complete. ethrex's state sync reconciles
-the trie with `GetTrieNodes`, which snap/2 removes, so a node that offered
-snap/2 while still syncing would negotiate away its only healing mechanism and
-then find no peer able to serve it — `heal_state_trie` would re-queue its batch
-and spin. So an unsynced node advertises `snap/1` alone and a synced one
-advertises both.
-
-The consequence is that BAL replay is currently reachable only on the serving
-side: state sync always runs unsynced, so it always negotiates snap/1. The
-client half becomes live once the download-loop catch-up (EIP-8189 step 4) lands
-and healing is no longer required.
+Every connection advertises both snap versions, via
+`advertised_snap_capabilities()`. State sync picks one reconciliation strategy for
+the whole run: with snap/2 peers it replays block access lists and never asks for
+trie nodes, and without them it falls back to snap/1 `GetTrieNodes` healing.
+Advertising both is what leaves peers available for whichever it picks; per-connection
+negotiation still settles on a single version with each peer.
 
 The Hello exchange picks the highest snap version common to the peer's list and
-the set this connection advertised — matching against the advertised set rather
-than `SUPPORTED_SNAP_CAPABILITIES`, so a version withheld by the gate above is
-not negotiated back. The result lives on `Established.negotiated_snap_capability`
+the set this connection advertised. The result lives on
+`Established.negotiated_snap_capability`
 and is mirrored into the codec via
 `RLPxCodec.snap_version: Arc<RwLock<Option<SnapCapVersion>>>` so cross-version
 codes are rejected at decode time. `SnapCapVersion::V1` accepts codes
@@ -154,26 +145,43 @@ snap/1 healing for the remainder.
 
 ## Snap-sync integration
 
-BAL replay implements EIP-8189 steps 5 and 7, and runs only in the
-post-bulk-download healing loop. The healing pass inside the storage-ranges
-download loop stays on snap/1: a BAL carries state changes, not the state trie,
-so a diff like `balance(X): a→b` needs an existing local value to apply to, and
-during bulk download most accounts do not have one yet.
+`snap_sync` chooses between the two strategies once, before the range download, and
+records the choice in `use_bal_reconciliation`: the initial pivot must be
+post-Amsterdam and at least one peer must have negotiated snap/2.
 
-The loop tracks `completed_pivot` — the pivot whose state a healing pass
-verified in full. That is the only valid starting point for a replay, because
-the diffs are applied on top of it. Replaying from the *current* pivot instead
-would apply a span of changes to a state that does not correspond to its first
-block, and the resulting root would be wrong in a way the per-block check
-cannot attribute.
+On the snap/2 path the flow is devp2p `caps/snap.md`, "Synchronization algorithm":
 
-While `completed_pivot` is `None` — the first pass, and after any reorg — the
-loop heals. Once a pass sets it and the chain advances, a later pivot is reached
-by replaying the span between them and checking the result against
-`pivot_header.state_root` (step 7). A short root, a peer failure, or an
-unavailable BAL falls back to healing for that pass; `SyncError::ChainReorgDetected`
-additionally clears the anchor, since a reorg past the pivot means the state it
-names belongs to an abandoned fork.
+1. bulk-download accounts and storage starting at the initial pivot's root;
+2. replay the BALs of every block from that pivot up to the current one;
+3. assert the resulting root against the current pivot, once.
+
+Reconciliation therefore happens after the whole download, not during it. The
+pre-storage `heal_state_trie_wrap` call is skipped: snap/1 runs it so the storage
+roots driving the storage download are trustworthy, while snap/2 downloads against
+whatever roots the account ranges carried and lets the replay correct what moved.
+
+The root the replay starts from is `downloaded_state_root`, the root of the trie
+built from the ranges. It matches no header, because its values come from a mix of
+the roots that were current as each range was served, which is why the replay runs
+in `BalApplyMode::CatchUp` and the per-block state-root check is deferred to the
+single final comparison. The pivot can advance while a pass runs, so each pass
+re-targets and resumes from `BalReplayProgress.last_applied` rather than restarting
+from the original base, bounded by `MAX_BAL_CATCHUP_PASSES`.
+
+Correctness rests on the download covering the whole keyspace, not on its values
+being consistent: a key touched anywhere in the replayed span is rewritten by the
+BALs in block order and ends at its final value, and a key touched nowhere in the
+span still holds the value it had at the initial pivot.
+
+If the replay cannot reach the pivot's root, the loop below falls back to trie
+healing, which needs snap/1 peers. That is the degraded path, not the intended one.
+
+The `completed_pivot` anchor and its `BalApplyMode::Verified` replay remain for
+pivot advancement *after* a reconciliation pass has succeeded. There the base is a
+pivot the local state matches in full, so every intermediate root must reproduce
+its header's, and the per-block check stays on. `SyncError::ChainReorgDetected`
+clears the anchor, since a reorg past the pivot means the state it names belongs to
+an abandoned fork.
 
 Note that a BAL cannot supply an account's `storage_root`: EIP-7928's
 `AccountChanges` is `[address, storage_changes, storage_reads, balance_changes,

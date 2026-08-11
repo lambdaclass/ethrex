@@ -570,3 +570,53 @@ fn try_apply_bal_block_chain_of_three_advances_state_root() {
         state_root = new_root;
     }
 }
+
+#[test]
+fn catch_up_mode_skips_the_per_block_state_root_check() {
+    // Reconciling the snap range download replays BALs onto a trie whose values come
+    // from a mix of the roots that were current while each range was served, so no
+    // intermediate root matches any header. `CatchUp` must apply the diff anyway and
+    // leave the single consistency check to the caller's final pivot comparison, where
+    // `Verified` rejects the same input.
+    let store = empty_store();
+    let addr = Address::from([0xBAu8; 20]);
+
+    let mut changes = AccountChanges::new(addr);
+    changes.add_balance_change(BalanceChange::new(0, U256::from(999u64)));
+    let mut bal = BlockAccessList::new();
+    bal.add_account_changes(changes);
+
+    let unrelated_root = H256::from([0xFFu8; 32]);
+    let header = header_with_root(unrelated_root);
+
+    assert!(
+        matches!(
+            apply_bal(
+                &store,
+                *EMPTY_TRIE_HASH,
+                &bal,
+                &header,
+                BalApplyMode::Verified
+            ),
+            Err(SyncError::StateRootMismatch(..))
+        ),
+        "Verified must reject a root that does not reproduce the header's"
+    );
+
+    let new_root = apply_bal(
+        &store,
+        *EMPTY_TRIE_HASH,
+        &bal,
+        &header,
+        BalApplyMode::CatchUp,
+    )
+    .expect("CatchUp must apply the diff without checking the header's root");
+    assert_ne!(
+        new_root, unrelated_root,
+        "the running root is synthetic, not the header's"
+    );
+    assert_ne!(
+        new_root, *EMPTY_TRIE_HASH,
+        "the balance change must have been applied"
+    );
+}

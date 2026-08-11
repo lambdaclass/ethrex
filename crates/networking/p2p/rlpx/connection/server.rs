@@ -1117,7 +1117,7 @@ where
 {
     // This allow is because in l2 we mut the capabilities
     // to include the l2 cap
-    let snap_capabilities = advertised_snap_capabilities(state.blockchain.is_synced());
+    let snap_capabilities = advertised_snap_capabilities();
     #[allow(unused_mut)]
     let mut supported_capabilities: Vec<Capability> =
         [&SUPPORTED_ETH_CAPABILITIES[..], snap_capabilities].concat();
