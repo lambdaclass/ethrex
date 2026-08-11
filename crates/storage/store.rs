@@ -3715,6 +3715,122 @@ impl Store {
         self.delete(BINARY_TRIE_ROOTS, block_hash.as_bytes().to_vec())
     }
 
+    /// Install a downloaded binary-trie state as `block_hash`'s post-state.
+    ///
+    /// The landing seam for `pbtsnap` sync, and the third writer of the binary
+    /// trie after genesis and block import. `leaves` must be the **complete**
+    /// leaf set of the state in ascending key order — the account and overflow
+    /// storage zones as downloaded, plus the code-zone chunks the caller
+    /// derives from `codes`. Nothing is written unless those leaves merkleize
+    /// to the header's own root, which makes the check a whole-state
+    /// differential: any disagreement between served leaves and fetched
+    /// bytecode surfaces here at the latest.
+    ///
+    /// **The trie is replaced, not merged.** `BINARY_TRIE_NODES` is
+    /// path-keyed and single-version, so whatever the node held before —
+    /// genesis, on a fresh joiner — would otherwise stay on disk at paths the
+    /// new tree does not define. They are unreachable from the new root, but
+    /// leaving them makes a later corruption unreadable. Installing *over* a
+    /// live trie is not a supported operation and the sync driver must not
+    /// attempt it: the diff layers above the old tree are not discarded here,
+    /// and neither is the deep-reorg journal, both of which describe a tree
+    /// that no longer exists.
+    ///
+    /// **The flat mirror is rebuilt in the same breath, and skipping it would
+    /// be silently fatal.** A read below the mirror's frontier does not fall
+    /// back to a trie descent (see `BackendBinaryTrieDB::binary_flat_computed`),
+    /// so a joiner that seeded its mirror at genesis and then installed a
+    /// snapshot over the nodes alone would answer every account read from the
+    /// genesis leaf — authoritatively, and wrong. The write order handles the
+    /// crash window in one direction only, which is the recoverable one: the
+    /// completion marker is retracted *before* any row is dropped, so a crash
+    /// mid-install leaves an absent marker, and `Store::new` clears the mirror
+    /// on an absent marker at open.
+    ///
+    /// Returns the installed root.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Custom`] if `block_hash` is unknown, if its header is
+    /// pre-activation (a pre-flip `state_root` names an MPT and there is no
+    /// binary root to commit to), or if `leaves` do not merkleize to it. All
+    /// three refuse before anything is written.
+    pub async fn install_binary_snapshot(
+        &self,
+        block_hash: BlockHash,
+        leaves: Vec<(Vec<u8>, [u8; 32])>,
+        codes: Vec<Code>,
+    ) -> Result<H256, StoreError> {
+        let Some(header) = self.get_block_header_by_hash(block_hash)? else {
+            return Err(StoreError::Custom(format!(
+                "cannot install a binary snapshot for block {block_hash:#x}: no such header"
+            )));
+        };
+        if !self.header_addresses_binary_trie(&header) {
+            return Err(StoreError::Custom(format!(
+                "cannot install a binary snapshot at block {block_hash:#x}: its timestamp {} is \
+                 before the binary-tree activation, so its state root names an MPT",
+                header.timestamp
+            )));
+        }
+
+        // Built against the backend but not through it: `from_sorted_leaves`
+        // folds the whole input into an in-memory overlay and `root()`
+        // merkleizes that overlay, reading and writing nothing. The equality
+        // check below therefore happens with the database untouched, which is
+        // what lets a bad snapshot be refused rather than rolled back.
+        let mut trie = BinaryTrie::from_sorted_leaves(
+            Box::new(BackendBinaryTrieDB::new(self.backend.clone())?),
+            leaves,
+        )
+        .map_err(|e| {
+            StoreError::Custom(format!(
+                "binary snapshot for block {block_hash:#x} is not a valid ascending leaf set: {e}"
+            ))
+        })?;
+        let root = trie.root();
+        if root != header.state_root {
+            return Err(StoreError::Custom(format!(
+                "binary snapshot for block {block_hash:#x} merkleizes to {root:#x}, but its \
+                 header commits to {:#x}",
+                header.state_root
+            )));
+        }
+
+        // Retract the mirror first, durably, and only then drop rows. The
+        // in-memory frontier is what live readers gate on and the durable
+        // marker is what a restart reads, so both have to stop claiming
+        // coverage before the rows backing that claim go away.
+        self.publish_binary_flat_frontier(&[])?;
+        let mut tx = self.backend.begin_write()?;
+        tx.delete(MISC_VALUES, BINARY_LAST_WRITTEN_KEY)?;
+        tx.commit()?;
+        self.backend.clear_table(BINARY_TRIE_NODES)?;
+        self.backend.clear_table(BINARY_FLATKEYVALUE)?;
+
+        let committed = trie.commit()?;
+
+        // Rows and marker in one batch, after the nodes — the same ordering
+        // `setup_genesis_binary_trie` uses, and for the same reason: nodes
+        // without a marker is recoverable, a marker without rows is not.
+        let mut tx = self.backend.begin_write()?;
+        stage_binary_flat_leaves(&mut tx, &committed.leaves)?;
+        tx.put(
+            MISC_VALUES,
+            BINARY_LAST_WRITTEN_KEY,
+            BINARY_FLAT_FRONTIER_COMPLETE,
+        )?;
+        tx.commit()?;
+        self.publish_binary_flat_frontier(BINARY_FLAT_FRONTIER_COMPLETE)?;
+
+        // The trie commits to code as chunks; the EVM fetches whole bytecode
+        // by hash, and only `ACCOUNT_CODES` answers that.
+        self.write_account_code_batch(codes.into_iter().map(|code| (code.hash, code)).collect())
+            .await?;
+        self.set_binary_trie_root(block_hash, committed.root)?;
+        Ok(committed.root)
+    }
+
     /// Shadow-tracking step: advance the binary trie by one block and
     /// record where it landed.
     ///

@@ -1764,7 +1764,16 @@ async fn handle_incoming_message(
         | message @ Message::Receipts68(_)
         | message @ Message::Receipts69(_)
         | message @ Message::Receipts70(_)
-        | message @ Message::BlockAccessLists(_) => {
+        | message @ Message::BlockAccessLists(_)
+        // `pbtsnap`'s only response. Omitting it does not fail loudly: the
+        // message decodes, falls through to `MessageNotHandled` — which
+        // `process_cast_error` does not treat as fatal — and the requester's
+        // oneshot is simply never fired, so `outgoing_request` reports a
+        // `Timeout` after `PEER_REPLY_TIMEOUT` against a peer that answered
+        // correctly and on time. That is what this arm being unreachable by
+        // any test cost, and `a_pbtsnap_leaf_range_crosses_a_live_connection`
+        // is what now reaches it.
+        | message @ Message::PbtLeafRange(_) => {
             if let Some((_, tx)) = message
                 .request_id()
                 .and_then(|id| state.current_requests.remove(&id))
