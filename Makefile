@@ -62,6 +62,17 @@ build-image: ## 🐳 Build the Docker image (override tag with TAG=foo)
 		--build-arg VERSION=$(VERSION) \
 		-t $(IMAGE) .
 
+# Enables the `sync-test` feature, which lets MIN_FULL_BLOCKS, SNAP_LIMIT and
+# SECONDS_PER_BLOCK be set from the environment. A devnet cannot reach snap
+# sync at their production values. Never deploy this image.
+build-image-sync-test: ## 🐳 Build a Docker image whose sync thresholds can be overridden
+	docker build \
+		--build-arg GIT_SHA=$(GIT_SHA) \
+		--build-arg GIT_BRANCH=$(GIT_BRANCH) \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg BUILD_FLAGS="--features sync-test" \
+		-t ethrex:sync-test .
+
 run-image: build-image ## 🏃 Run the Docker image
 	docker run --rm -p 127.0.0.1:8545:8545 $(IMAGE) --http.addr 0.0.0.0
 

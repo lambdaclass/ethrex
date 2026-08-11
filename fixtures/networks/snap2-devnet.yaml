@@ -1,0 +1,84 @@
+# snap/2 devnet — exercising EIP-8189 state sync against a real peer.
+#
+# Nothing else we run reaches this code. `daily_snapsync.yaml` syncs against
+# hoodi/sepolia, which are pre-Amsterdam, so `block_access_list_hash` is absent
+# and ethrex takes the snap/1 path. Hive's `ethereum/sync` snapsync suite is
+# client-against-client but its chain generator stops at Osaka, so it has no
+# block access lists either.
+#
+# The nodes here seed and serve the chain. They do NOT snap sync: every kurtosis
+# participant starts at genesis and has nothing to sync. The node under test
+# joins afterwards, via `scripts/snap2-devnet/join.sh`.
+#
+# Launch:
+#   make build-image-sync-test
+#   make localnet ENCLAVE=snap2 KURTOSIS_CONFIG_FILE=fixtures/networks/snap2-devnet.yaml
+#   ./scripts/snap2-devnet/join.sh          # once the chain is past MIN_FULL_BLOCKS
+#
+# geth serves as well as ethrex so the joiner can be pointed at either. geth's
+# snap/2 is behind `--snap.v2` ("not safe on public networks yet"); without that
+# flag it advertises snap/1 only and the node under test silently falls back to
+# healing, which looks exactly like a pass. The whole point of this devnet is
+# that path, so the flag is not optional.
+#
+# glamsterdam-devnet-7 matches ethrex main. geth's snap/2 wire and serving code
+# (protocol.go, handlers.go, handler.go, bal_apply.go) is byte-identical between
+# devnet-7 and devnet-8; only geth's own client differs, which does not matter
+# when geth is the server. So there is no reason to pull the glam-8 fork rules
+# into the first test of an unproven sync path.
+participants:
+  # Seeder and snap/2 server.
+  - el_type: ethrex
+    el_image: ethrex:local
+    el_extra_params: ["--syncmode", "full", "--http.api", "eth,net,web3,debug,admin,txpool"]
+    cl_type: lighthouse
+    cl_image: ethpandaops/lighthouse:glamsterdam-devnet-7
+    validator_count: 32
+    supernode: true
+  # Second ethrex, so the joiner has more than one peer to range-request from
+  # and a peer failure does not stall the download.
+  - el_type: ethrex
+    el_image: ethrex:local
+    el_extra_params: ["--syncmode", "full", "--http.api", "eth,net,web3,debug,admin,txpool"]
+    cl_type: lighthouse
+    cl_image: ethpandaops/lighthouse:glamsterdam-devnet-7
+    validator_count: 32
+  # Cross-client server. `--snap.v2` is what makes it one.
+  - el_type: geth
+    el_image: ethpandaops/geth:glamsterdam-devnet-7
+    el_extra_params: ["--snap.v2", "--syncmode=full", "--gcmode=archive"]
+    cl_type: lighthouse
+    cl_image: ethpandaops/lighthouse:glamsterdam-devnet-7
+    validator_count: 32
+
+network_params:
+  # `minimal` shortens the epoch to 8 slots, so Amsterdam activates in minutes
+  # rather than hours.
+  preset: minimal
+  seconds_per_slot: 6
+  genesis_delay: 30
+  # Osaka/Fulu from genesis.
+  fulu_fork_epoch: 0
+  # Amsterdam/Gloas at epoch 1. It must not be 0: a Gloas genesis state makes
+  # lighthouse refuse to decode its own genesis.
+  gloas_fork_epoch: 1
+
+# State has to be big enough that the download outlasts a pivot window,
+# otherwise the pivot never moves and the access-list catch-up — the part with
+# no other coverage — never runs. deploytx and evm-fuzz grow the account and
+# storage tries; eoatx keeps blocks non-empty so every block has a BAL.
+additional_services: [dora, spamoor]
+spamoor_params:
+  image: ethpandaops/spamoor:latest
+  spammers:
+    - scenario: eoatx
+      config: {throughput: 20}
+    - scenario: deploytx
+      config: {throughput: 3}
+    - scenario: evm-fuzz
+      config: {throughput: 10}
+
+dora_params:
+  image: ethpandaops/dora:eip7928-support
+
+global_log_level: info

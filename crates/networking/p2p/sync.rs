@@ -236,11 +236,11 @@ impl Syncer {
             // response is intentionally discarded; on the snap path the loop
             // re-fetches headers, which keeps `sync_cycle_snap`'s entry simple.
             if let Some(sync_head_number) = probe_sync_head_number(&mut self.peers, sync_head).await
-                && sync_head_number < MIN_FULL_BLOCKS
+                && sync_head_number < *MIN_FULL_BLOCKS
             {
                 info!(
                     sync_head_number,
-                    "Sync head below MIN_FULL_BLOCKS ({MIN_FULL_BLOCKS}), using full sync"
+                    "Sync head below MIN_FULL_BLOCKS ({}), using full sync", *MIN_FULL_BLOCKS
                 );
                 self.snap_enabled.store(false, Ordering::Relaxed);
                 self.blockchain.set_state_sync_needs_trie_nodes(false);

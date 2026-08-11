@@ -21,7 +21,7 @@ pub const MAX_RESPONSE_BYTES: u64 = 512 * 1024;
 /// This magic number is not part of the protocol specification and is taken
 /// from geth. See:
 /// <https://github.com/ethereum/go-ethereum/blob/2585776aabbd4ae9b00050403b42afb0cee968ec/eth/downloader/downloader.go#L42-L43>
-pub const SNAP_LIMIT: usize = 128;
+pub const SNAP_LIMIT_DEFAULT: usize = 128;
 
 // =============================================================================
 // HASH BOUNDARIES
@@ -134,13 +134,13 @@ pub const MAX_BODY_FETCH_ATTEMPTS: u64 = MAX_HEADER_FETCH_ATTEMPTS;
 ///
 /// After snap syncing state, we full sync at least this many recent blocks
 /// to ensure we have complete execution history for recent blocks.
-pub const MIN_FULL_BLOCKS: u64 = 10_000;
+pub const MIN_FULL_BLOCKS_DEFAULT: u64 = 10_000;
 
 /// Number of blocks to execute in a single batch during full sync.
 pub const EXECUTE_BATCH_SIZE_DEFAULT: usize = 1024;
 
 /// Average time between blocks (used for timestamp-based calculations).
-pub const SECONDS_PER_BLOCK: u64 = 12;
+pub const SECONDS_PER_BLOCK_DEFAULT: u64 = 12;
 
 /// Assumed percentage of slots that are missing blocks.
 ///
@@ -181,3 +181,45 @@ pub const BAL_MAX_RETRIES_PER_BLOCK: u32 = 3;
 /// defends against a flood of hashes sent to force expensive per-hash storage
 /// lookups, as the snap/1 handler already does for trie-node lookups.
 pub const BAL_MAX_REQUEST_HASHES: usize = 1024;
+
+// =============================================================================
+// TEST-ONLY OVERRIDES
+// =============================================================================
+//
+// A devnet cannot exercise snap sync at production values. `MIN_FULL_BLOCKS`
+// alone means the chain has to be 10,000 blocks deep before snap sync engages
+// at all, and `SNAP_LIMIT` sets the pivot's lifetime to ~25 minutes, so a small
+// devnet finishes its download before the pivot ever moves — leaving the whole
+// access-list catch-up path unexercised.
+//
+// `SECONDS_PER_BLOCK` is here for a subtler reason: `update_pivot` estimates
+// how far the chain advanced by dividing elapsed time by it. A devnet running
+// faster slots than this value makes that estimate wrong by the ratio, so the
+// new pivot lands short of the head and can be stale on arrival.
+//
+// Only overridable under `sync-test`, so a release binary cannot be talked into
+// a degraded sync by its environment.
+
+#[cfg(feature = "sync-test")]
+fn override_from_env<T: std::str::FromStr>(name: &str, default: T) -> T {
+    match std::env::var(name) {
+        Ok(value) => value
+            .parse()
+            .unwrap_or_else(|_| panic!("{name} is not a valid number: {value:?}")),
+        Err(_) => default,
+    }
+}
+
+#[cfg(feature = "sync-test")]
+lazy_static::lazy_static! {
+    pub static ref SNAP_LIMIT: usize = override_from_env("SNAP_LIMIT", SNAP_LIMIT_DEFAULT);
+    pub static ref MIN_FULL_BLOCKS: u64 = override_from_env("MIN_FULL_BLOCKS", MIN_FULL_BLOCKS_DEFAULT);
+    pub static ref SECONDS_PER_BLOCK: u64 = override_from_env("SECONDS_PER_BLOCK", SECONDS_PER_BLOCK_DEFAULT);
+}
+
+#[cfg(not(feature = "sync-test"))]
+lazy_static::lazy_static! {
+    pub static ref SNAP_LIMIT: usize = SNAP_LIMIT_DEFAULT;
+    pub static ref MIN_FULL_BLOCKS: u64 = MIN_FULL_BLOCKS_DEFAULT;
+    pub static ref SECONDS_PER_BLOCK: u64 = SECONDS_PER_BLOCK_DEFAULT;
+}

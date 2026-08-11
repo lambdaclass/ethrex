@@ -237,7 +237,7 @@ pub async fn sync_cycle_snap(
         // Or the head is very close to 0. A pre-check in `sync.rs::sync_cycle`
         // also gates on `< MIN_FULL_BLOCKS`; keep both — this one stays as a
         // safety net for callers that enter `sync_cycle_snap` directly.
-        let head_close_to_0 = last_block_number < MIN_FULL_BLOCKS;
+        let head_close_to_0 = last_block_number < *MIN_FULL_BLOCKS;
 
         if head_found || head_close_to_0 {
             // Too few blocks for a snap sync, switching to full sync
@@ -334,7 +334,7 @@ pub async fn snap_sync(
         diag.pivot_timestamp = Some(pivot_header.timestamp);
         let pivot_age = current_unix_time().saturating_sub(pivot_header.timestamp);
         diag.pivot_age_seconds = Some(pivot_age);
-        diag.staleness_threshold_seconds = (SNAP_LIMIT as u64) * SECONDS_PER_BLOCK;
+        diag.staleness_threshold_seconds = staleness_window();
         diag.sync_mode = "snap".to_string();
         METRICS
             .pivot_timestamp
@@ -919,7 +919,7 @@ pub async fn update_pivot(
 
     // We multiply the estimation by 0.9 in order to account for missing slots (~9% in tesnets)
     let new_pivot_block_number = block_number
-        + ((current_unix_time().saturating_sub(block_timestamp) / SECONDS_PER_BLOCK) as f64
+        + ((current_unix_time().saturating_sub(block_timestamp) / *SECONDS_PER_BLOCK) as f64
             * MISSING_SLOTS_PERCENTAGE) as u64;
     debug!(
         "Current pivot is stale (number: {}, timestamp: {}). New pivot number: {}",
@@ -1085,7 +1085,7 @@ pub fn block_is_stale(block_header: &BlockHeader) -> bool {
     let is_stale = threshold < now;
     if is_stale {
         let pivot_age = now.saturating_sub(block_header.timestamp);
-        let staleness_limit = (SNAP_LIMIT as u64) * SECONDS_PER_BLOCK;
+        let staleness_limit = staleness_window();
         debug!(
             pivot_number = block_header.number,
             pivot_timestamp = block_header.timestamp,
@@ -1098,7 +1098,17 @@ pub fn block_is_stale(block_header: &BlockHeader) -> bool {
 }
 
 pub fn calculate_staleness_timestamp(timestamp: u64) -> u64 {
-    timestamp + (SNAP_LIMIT as u64 * 12)
+    timestamp + staleness_window()
+}
+
+/// How long a pivot stays servable: peers hold state for roughly `SNAP_LIMIT`
+/// blocks, which is that many block times.
+///
+/// The staleness check and the figure reported in diagnostics have to come from
+/// here and not be spelled out twice, or they drift apart the moment the block
+/// time is not the mainnet 12s.
+fn staleness_window() -> u64 {
+    (*SNAP_LIMIT as u64) * *SECONDS_PER_BLOCK
 }
 
 /// Whether any connected peer negotiated snap/2 and can serve block access lists.
