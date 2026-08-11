@@ -11,7 +11,7 @@ use std::{
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_blockchain::{
     BlockchainOptions, BlockchainType, DEFAULT_BLOB_PRICE_BUMP_PERCENT,
-    DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD, DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT,
+    DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD, DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT, DEFAULT_MIN_TIP_WEI,
     DEFAULT_PRICE_BUMP_PERCENT, L2Config,
     error::{ChainError, InvalidBlockError},
 };
@@ -239,6 +239,15 @@ pub struct Options {
         env = "ETHREX_MEMPOOL_MAX_SIZE"
     )]
     pub mempool_max_size: usize,
+    #[arg(
+        help = "Minimum priority-fee cap (in wei) required for a transaction to be admitted into the mempool. Compared against the raw tip cap: `max_priority_fee_per_gas` for typed transactions, `gas_price` for legacy transactions (independent of current base fee, so admission stays stable as base fee oscillates). Set to 0 to disable the floor.",
+        long = "mempool.min-tip",
+        default_value_t = DEFAULT_MIN_TIP_WEI,
+        value_name = "MIN_TIP_WEI",
+        help_heading = "Node options",
+        env = "ETHREX_MEMPOOL_MIN_TIP"
+    )]
+    pub mempool_min_tip: u64,
     #[arg(
         long = "mempool.private",
         default_value_t = false,
@@ -575,6 +584,7 @@ impl Default for Options {
             dev: Default::default(),
             force: false,
             mempool_max_size: Default::default(),
+            mempool_min_tip: DEFAULT_MIN_TIP_WEI,
             mempool_private: false,
             mempool_price_bump: DEFAULT_PRICE_BUMP_PERCENT,
             mempool_blob_price_bump: DEFAULT_BLOB_PRICE_BUMP_PERCENT,

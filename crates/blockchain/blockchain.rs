@@ -302,6 +302,10 @@ impl Drop for ReorgGuard<'_> {
     }
 }
 
+/// Default min-tip floor (wei). Matches geth's mempool `PriceLimit = 1 wei`.
+/// Effectively just rejects zero-tip transactions at admission.
+pub const DEFAULT_MIN_TIP_WEI: u64 = 1;
+
 /// Configuration options for the blockchain.
 #[derive(Debug, Clone)]
 pub struct BlockchainOptions {
@@ -327,6 +331,12 @@ pub struct BlockchainOptions {
     /// warmer thread and the executor. Set to false (via `--no-precompile-cache`) to
     /// disable the cache for benchmarking purposes.
     pub precompile_cache_enabled: bool,
+    /// Minimum priority-fee *cap* (in wei) required for a transaction to be
+    /// admitted into the mempool. Compared against the raw tip cap
+    /// (`max_priority_fee_per_gas` for typed txs, `gas_price` for legacy), NOT
+    /// the base-fee-dependent effective tip — matching geth's `PriceLimit`
+    /// check on `tx.GasTipCap()`. Set to 0 to disable the floor.
+    pub min_tip_wei: u64,
     /// Minimum fee-field bump (in percent) required to replace a non-blob
     /// transaction at the same `(sender, nonce)`. Matches the 10%
     /// default of every peer EL client.
@@ -379,6 +389,7 @@ impl Default for BlockchainOptions {
             precompute_witnesses: false,
             private_mempool: false,
             precompile_cache_enabled: true,
+            min_tip_wei: DEFAULT_MIN_TIP_WEI,
             price_bump_percent: DEFAULT_PRICE_BUMP_PERCENT,
             blob_price_bump_percent: DEFAULT_BLOB_PRICE_BUMP_PERCENT,
             max_queued_txs_per_account: DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT,
@@ -533,14 +544,26 @@ impl Blockchain {
         }
     }
 
+    /// Test-permissive `Blockchain` constructor. Mirrors `BlockchainOptions::default`
+    /// but disables admission-policy gates (e.g. the min-tip floor) so that
+    /// unrelated tests don't need to set every mempool option explicitly.
+    ///
+    /// **Do not use in production.** Despite the name, this is not a "sensible
+    /// default" constructor: it deliberately weakens mempool admission. Node
+    /// startup builds its `BlockchainOptions` from the CLI instead (see
+    /// `cmd/ethrex/initializers.rs`). Every current caller is a test harness.
     pub fn default_with_store(store: Store) -> Self {
+        let options = BlockchainOptions {
+            min_tip_wei: 0,
+            ..BlockchainOptions::default()
+        };
         Self {
             storage: store,
             mempool: Mempool::new(MAX_MEMPOOL_SIZE_DEFAULT),
             is_synced: AtomicBool::new(false),
             reorg_in_progress: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
-            options: BlockchainOptions::default(),
+            options,
             merkle_pool: Self::build_merkle_pool(),
             prewarmed: PrewarmedCache::default(),
         }
@@ -3605,6 +3628,28 @@ impl Blockchain {
         // Check priority fee is less or equal than gas fee gap
         if tx.max_priority_fee().unwrap_or(0) > tx.max_fee_per_gas().unwrap_or(0) {
             return Err(MempoolError::TxTipAboveFeeCapError);
+        }
+
+        // Admission-time minimum tip floor. Compares the raw tip cap
+        // (`max_priority_fee_per_gas` for typed txs, `gas_price` for legacy)
+        // against `min_tip_wei`, matching geth's `PriceLimit` check on
+        // `tx.GasTipCap()` and reth's check on `max_priority_fee_per_gas`.
+        // Using the raw tip cap keeps the admission decision independent of
+        // the current base fee, so a tx that paid the floor at admission
+        // doesn't get reclassified as under-floor when base fee oscillates.
+        // A floor of 0 disables the check.
+        if self.options.min_tip_wei > 0 {
+            // Saturate to u64::MAX on overflow: a U256 tip cap above u64::MAX
+            // wei is astronomically larger than any sane floor, so clamping
+            // (and therefore admitting) is the correct direction here. Do not
+            // reuse this pattern where truncation would flip a comparison.
+            let tip_cap = u64::try_from(tx.gas_tip_cap()).unwrap_or(u64::MAX);
+            if tip_cap < self.options.min_tip_wei {
+                return Err(MempoolError::TipBelowMinimum {
+                    actual: tip_cap,
+                    limit: self.options.min_tip_wei,
+                });
+            }
         }
 
         // EIP-7702 type-4 structural validation, mirroring LEVM's
