@@ -4,12 +4,12 @@ use ethrex_common::{
     Address, H256,
     types::{
         BYTES_PER_BLOB, BYTES_PER_CELL, BlobsBundle, CELLS_PER_EXT_BLOB, EIP4844Transaction,
-        MempoolTransaction, P2PTransaction, Transaction, WrappedEIP4844Transaction,
+        MAX_BLOB_COUNT, MempoolTransaction, P2PTransaction, Transaction, WrappedEIP4844Transaction,
     },
 };
 use ethrex_p2p::rlpx::{
     eth::{
-        cells::{Cells, CellsResponseError, GetCells, MAX_CELL_REQUEST_HASHES},
+        cells::{Cells, CellsResponseError, GetCells, MAX_CELL_REQUEST_HASHES, MAX_CELLS_SERVED},
         eth72::transactions::{
             NewPooledTransactionHashes72, PooledTransactions72, b16_to_u128, u128_to_b16,
         },
@@ -291,4 +291,58 @@ fn get_cells_does_not_serve_a_private_transaction() {
         response.cells.iter().all(|c| c.is_empty()),
         "no cells may be served for a private tx"
     );
+}
+
+/// Store every column of `blob_count` blobs for `tx_hash`, so the whole 128-column
+/// mask is available and each served column costs `blob_count` cells.
+fn store_full_columns(mempool: &Mempool, tx_hash: H256, blob_count: usize) {
+    let cells = (0..blob_count)
+        .flat_map(|blob_idx| {
+            (0..CELLS_PER_EXT_BLOB)
+                .map(move |col| (blob_idx, col, Box::new([0xCDu8; BYTES_PER_CELL])))
+        })
+        .collect();
+    mempool
+        .store_cells(tx_hash, blob_count, cells)
+        .expect("store cells");
+}
+
+#[test]
+fn get_cells_truncates_at_the_serve_budget() {
+    // Two max-width transactions ask for 2 * MAX_BLOB_COUNT * CELLS_PER_EXT_BLOB
+    // cells, past the serve budget. EIP-8070 lets the responder truncate, so the
+    // second transaction is dropped from the response rather than served.
+    let mempool = Mempool::new(64);
+    let first = H256::from_low_u64_be(11);
+    let second = H256::from_low_u64_be(12);
+    store_full_columns(&mempool, first, MAX_BLOB_COUNT);
+    store_full_columns(&mempool, second, MAX_BLOB_COUNT);
+
+    let request = GetCells::new(1, vec![first, second], u128::MAX);
+    let response = request.handle(&mempool);
+
+    assert_eq!(
+        response.transaction_hashes,
+        vec![first],
+        "the over-budget transaction is dropped, not served empty"
+    );
+    let served: usize = response.cells.iter().map(Vec::len).sum();
+    assert!(
+        served <= MAX_CELLS_SERVED,
+        "served {served} cells, budget is {MAX_CELLS_SERVED}"
+    );
+    response
+        .validate_requested(&request.transaction_hashes, request.cell_mask)
+        .expect("a truncated response is still a subset of the request");
+}
+
+#[test]
+fn cells_rejects_a_response_over_the_inbound_budget() {
+    // Each transaction stays within MAX_CELLS_PER_TX, but together they exceed the
+    // decode budget; the declared decompressed length must be rejected before the
+    // cell matrix is materialized.
+    let per_tx = vec![[0u8; BYTES_PER_CELL]; MAX_BLOB_COUNT * CELLS_PER_EXT_BLOB];
+    let hashes: Vec<H256> = (0..3).map(H256::from_low_u64_be).collect();
+    let msg = Cells::new(1, hashes, vec![per_tx; 3], u128::MAX);
+    assert!(Cells::decode(&encode(&msg)).is_err());
 }

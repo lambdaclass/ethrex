@@ -293,6 +293,22 @@ pub fn encode_elided_canonical(wrapped: &WrappedEIP4844Transaction) -> Vec<u8> {
     out
 }
 
+/// A transaction as it appears in an eth/72 `PooledTransactions`: an RLP byte
+/// string holding the canonical encoding, with the blob payload elided for type 3.
+struct Elided<'a>(&'a P2PTransaction);
+
+impl RLPEncode for Elided<'_> {
+    fn encode(&self, buf: &mut dyn BufMut) {
+        let canonical = match self.0 {
+            P2PTransaction::EIP4844TransactionWithBlobs(wrapped) => {
+                encode_elided_canonical(wrapped)
+            }
+            other => other.encode_canonical_to_vec(),
+        };
+        <[u8] as RLPEncode>::encode(&canonical, buf);
+    }
+}
+
 // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#pooledtransactions-0x0a
 // eth/72 variant: blob transactions encoded with ELIDED blob payload.
 #[derive(Debug, Clone)]
@@ -408,39 +424,13 @@ impl RLPxMessage for PooledTransactions72 {
     const CODE: u8 = 0x0A;
 
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
-        use ethrex_rlp::encode::encode_length;
-
-        // Build each tx's canonical bytes: blob txs use elided encoding.
-        let mut txs_bytes = vec![];
-        for tx in &self.pooled_transactions {
-            let canonical = match tx {
-                P2PTransaction::EIP4844TransactionWithBlobs(wrapped) => {
-                    encode_elided_canonical(wrapped)
-                }
-                other => other.encode_canonical_to_vec(),
-            };
-            // Encode as RLP byte string (same as P2PTransaction::encode for typed txs).
-            <[u8] as RLPEncode>::encode(&canonical, &mut txs_bytes);
-        }
-
-        // Build inner content: id_encoded || txs_list
-        let mut id_encoded = vec![];
-        self.id.encode(&mut id_encoded);
-
-        let mut txs_list = vec![];
-        encode_length(txs_bytes.len(), &mut txs_list);
-        txs_list.extend_from_slice(&txs_bytes);
-
-        let mut inner = vec![];
-        inner.extend_from_slice(&id_encoded);
-        inner.extend_from_slice(&txs_list);
-
-        // Wrap in top-level RLP list: encode_length writes the 0xC0/0xF7 prefix
-        let mut top = vec![];
-        encode_length(inner.len(), &mut top);
-        top.extend_from_slice(&inner);
-
-        let msg_data = snappy_compress(top)?;
+        let elided: Vec<Elided<'_>> = self.pooled_transactions.iter().map(Elided).collect();
+        let mut encoded_data = vec![];
+        Encoder::new(&mut encoded_data)
+            .encode_field(&self.id)
+            .encode_field(&elided)
+            .finish();
+        let msg_data = snappy_compress(encoded_data)?;
         buf.put_slice(&msg_data);
         Ok(())
     }
