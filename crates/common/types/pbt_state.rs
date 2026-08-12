@@ -168,11 +168,35 @@ pub fn get_account_info(
     let code_hash = trie.get(&get_tree_key_for_code_hash(&address32))?;
     let delegation = trie.get(&get_tree_key_for_delegation(&address32))?;
     let basic_data = trie.get(&get_tree_key_for_basic_data(&address32))?;
+    Ok(account_info_from_header_leaves(
+        basic_data, code_hash, delegation,
+    ))
+}
+
+/// [`get_account_info`]'s decision, taken over three leaves that are already in
+/// hand rather than over a trie.
+///
+/// Split out because a *proof* server holds exactly these three leaves and
+/// nothing else: it has walked to each of the account's header keys and the
+/// walk terminal is either the leaf or an exclusion witness. Feeding those
+/// three values through the same function the trie read uses is what stops the
+/// proven leaves and the account fields reported beside them from being able to
+/// disagree — a second copy of this decision in the RPC layer could drift from
+/// this one, and the drift would show up as a response whose own proof
+/// contradicts it.
+///
+/// See [`get_account_info`] for what makes an account present and how a
+/// delegated account's code hash is derived.
+pub fn account_info_from_header_leaves(
+    basic_data: Option<[u8; 32]>,
+    code_hash: Option<[u8; 32]>,
+    delegation: Option<[u8; 32]>,
+) -> Option<AccountInfo> {
     if code_hash.is_none() && delegation.is_none() && basic_data.is_none() {
-        return Ok(None);
+        return None;
     }
     let (nonce, balance) = basic_data.map_or((0, U256::zero()), |data| decode_basic_data(&data));
-    Ok(Some(AccountInfo {
+    Some(AccountInfo {
         code_hash: match (code_hash, delegation) {
             // The two leaves are exclusive by construction — every
             // write that emits one removes the other — so the
@@ -185,7 +209,7 @@ pub fn get_account_info(
         },
         balance,
         nonce,
-    }))
+    })
 }
 
 /// An account as the binary trie is able to describe it.
