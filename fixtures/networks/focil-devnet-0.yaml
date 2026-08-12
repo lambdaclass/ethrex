@@ -10,13 +10,22 @@
 #         lodestar:focil   2026-06-22   ✅
 #         lighthouse:focil 2026-06-16   ✅
 #
-# Matrix (2 ELs × 3 CLs) plus one extra ethrex running --mempool.private, so
+# Matrix (2 ELs × 2 CLs) plus one extra ethrex running --mempool.private, so
 # private vs gossiping mempool behaviour is observable on the same chain:
 #
-#   ethrex × lodestar     besu × lodestar
 #   ethrex × lighthouse   besu × lighthouse
 #   ethrex × teku         besu × teku
-#   ethrex × lodestar  (--mempool.private)
+#   ethrex × lighthouse  (--mempool.private)
+#
+# lodestar is left out, not by preference — its focil image can no longer read
+# the genesis this devnet needs. lodestar:focil is v1.43.0/6506bf4 (2026-06-22)
+# and the Gloas `BeaconState` container gained variable-length fields after it
+# was cut, so any generator new enough to emit `PAYLOAD_DUE_BPS` for teku hands
+# lodestar a state it aborts on:
+#   "Error: First offset must equal to fixedEnd 3134845 != 3134333"
+#   (@chainsafe/ssz readVariableOffsets, initBeaconState).
+# Nothing on the EL side can bridge that; it needs a rebuilt lodestar:focil.
+# Put the two lodestar rows back the moment one is published.
 #
 # All CLs: supernode=true (PeerDAS satisfaction at fulu/gloas).
 #
@@ -34,12 +43,6 @@
 participants:
   - el_type: ethrex
     el_image: ethrex:focil-devnet-0
-    cl_type: lodestar
-    cl_image: ethpandaops/lodestar:focil
-    supernode: true
-    count: 1
-  - el_type: ethrex
-    el_image: ethrex:focil-devnet-0
     cl_type: lighthouse
     cl_image: ethpandaops/lighthouse:focil
     supernode: true
@@ -48,12 +51,6 @@ participants:
     el_image: ethrex:focil-devnet-0
     cl_type: teku
     cl_image: ethpandaops/teku:focil
-    supernode: true
-    count: 1
-  - el_type: besu
-    el_image: ethpandaops/besu:focil
-    cl_type: lodestar
-    cl_image: ethpandaops/lodestar:focil
     supernode: true
     count: 1
   - el_type: besu
@@ -72,8 +69,8 @@ participants:
     el_image: ethrex:focil-devnet-0
     el_extra_params:
       - "--mempool.private"
-    cl_type: lodestar
-    cl_image: ethpandaops/lodestar:focil
+    cl_type: lighthouse
+    cl_image: ethpandaops/lighthouse:focil
     supernode: true
     count: 1
 
