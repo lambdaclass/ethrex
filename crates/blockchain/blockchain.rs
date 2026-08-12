@@ -54,8 +54,9 @@ pub mod tracing;
 pub mod vm;
 
 use ::tracing::{error, info, instrument, warn};
-// Every `debug!` call site lives in the rayon warmer path, so the import is
-// unused in any configuration that compiles that path out.
+// Every *bare* `debug!` call site lives in the rayon warmer path, so the import
+// is unused in any configuration that compiles that path out. Call sites outside
+// that path spell out `::tracing::debug!` rather than widen this cfg.
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ::tracing::debug;
 use constants::{AMSTERDAM_MAX_INITCODE_SIZE, MAX_INITCODE_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
@@ -2943,7 +2944,7 @@ impl Blockchain {
             let generated_witness = match generated {
                 Ok(witness) => Some(witness),
                 Err(ChainError::BinaryCommittedHeader(number)) if !force_witness => {
-                    debug!(
+                    ::tracing::debug!(
                         "not caching an MPT execution witness for block {number}: it is past the \
                          binary-tree commitment (EIP-8297)"
                     );
