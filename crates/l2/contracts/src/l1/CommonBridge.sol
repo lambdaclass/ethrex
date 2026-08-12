@@ -658,19 +658,19 @@ contract CommonBridge is
     ) external override whenNotPaused {
         require(
             batchWithdrawalLogsMerkleRoots[batchNumber] != bytes32(0),
-            "CommonBridge: the batch that emitted the message was not committed"
+            "CommonBridge: the batch that emitted the intent was not committed"
         );
         require(
             batchNumber <=
                 IOnChainProposer(ON_CHAIN_PROPOSER).lastVerifiedBatch(),
-            "CommonBridge: the batch that emitted the message was not verified"
+            "CommonBridge: the batch that emitted the intent was not verified"
         );
 
         bytes32 messageHash = intentHash(senderOnL2, msg.sender, payloadHash);
         bytes32 leaf = _messageLeaf(messageHash, messageId);
         require(
             consumedIntents[leaf] == false,
-            "CommonBridge: the message was already consumed"
+            "CommonBridge: the intent was already consumed"
         );
         require(
             MerkleProof.verify(
@@ -682,7 +682,7 @@ contract CommonBridge is
         );
 
         consumedIntents[leaf] = true;
-        emit MessageConsumed(batchNumber, messageId, messageHash);
+        emit IntentConsumed(batchNumber, messageId, messageHash);
     }
 
     /// @inheritdoc ICommonBridge

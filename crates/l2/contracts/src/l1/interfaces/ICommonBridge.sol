@@ -43,15 +43,15 @@ interface ICommonBridge {
     /// @param newL2GasLimit The new L2 gas limit.
     event L2GasLimitUpdated(uint256 newL2GasLimit);
 
-    /// @notice A message from L2 has been consumed.
-    /// @dev Event emitted when a message is verified and marked as consumed.
-    /// @param batchNumber the batch number where the message was emitted.
-    /// @param messageId the message Id of the consumed message.
-    /// @param messageHash the hash that was sent from L2.
-    event MessageConsumed(
+    /// @notice An intent from L2 has been consumed.
+    /// @dev Event emitted when an intent is verified and marked as consumed.
+    /// @param batchNumber the batch number where the intent was emitted.
+    /// @param messageId the message Id of the consumed intent.
+    /// @param intentHash the hash that was sent from L2.
+    event IntentConsumed(
         uint256 indexed batchNumber,
         uint256 indexed messageId,
-        bytes32 indexed messageHash
+        bytes32 indexed intentHash
     );
 
     struct SendValues {
@@ -254,14 +254,14 @@ interface ICommonBridge {
         uint256 messageId
     ) external view returns (bool);
 
-    /// @notice Verifies a data-only message from L2 and marks it as consumed.
-    /// @dev The message must belong to a batch that was committed and verified.
+    /// @notice Verifies an intent from L2 and marks it as consumed.
+    /// @dev The intent must belong to a batch that was committed and verified.
     /// @dev The caller must be the consumer the sender named on L2, and can only
-    /// @dev consume the message once.
-    /// @param senderOnL2 the address that sent the message on L2.
+    /// @dev consume the intent once.
+    /// @param senderOnL2 the address that sent the intent on L2.
     /// @param payloadHash the payload the sender committed to.
-    /// @param batchNumber the batch number where the message was emitted.
-    /// @param messageId the message Id of the message.
+    /// @param batchNumber the batch number where the intent was emitted.
+    /// @param messageId the message Id of the intent.
     /// @param proof the merkle path to the message log.
     function verifyAndConsume(
         address senderOnL2,

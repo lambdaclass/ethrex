@@ -1095,7 +1095,7 @@ async fn test_erc20_withdraw_l1_address_mismatch(
     Ok(deploy_fees + approve_fees + withdraw_fees)
 }
 
-/// Test sending a data-only message to L1 and consuming it there
+/// Test sending an intent to L1 and consuming it there
 /// 1. Sends an intent from L2, carrying the payload an ETH withdrawal would have produced
 /// 2. Checks that an address other than the named consumer cannot consume it
 /// 3. Consumes the message on L1 once its batch is verified
@@ -1210,7 +1210,7 @@ async fn test_send_intent_to_l1(
         .await;
     assert!(
         replay_result.is_err(),
-        "Expected eth_call to fail because the message was already consumed"
+        "Expected eth_call to fail because the intent was already consumed"
     );
     let error_message = replay_result.unwrap_err().to_string();
     assert!(
