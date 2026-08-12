@@ -20,6 +20,34 @@ AMSTERDAM_STAMP := $(SPECTEST_VECTORS_DIR)/.amsterdam_overlay
 # EIP-7805 (FOCIL) engine fixtures. The tarball nests them under
 # fixtures/blockchain_tests_engine/for_bogota/. The datatest harness walks
 # vectors/eest/ recursively, so they're discovered wherever they land in the tree.
+#
+# KNOWN RED as of 2026-08-12, and not because of the FOCIL code. The pinned
+# release, tests-focil@v0.1.0, was filled on 2026-06-22 from execution-specs
+# `devnets/focil/0`, whose Amsterdam base is two months behind the one this
+# branch implements (glamsterdam-devnet-8). All 24 fixtures fail on the fork
+# scope around FOCIL rather than on any inclusion-list assertion:
+#
+#   * their genesis predeploys no EIP-8282 builder deposit/exit contracts, so
+#     every block dies at "System contract: 0x0000...8282 has no code after
+#     deployment" before the IL check is even reached;
+#   * with that rule bypassed 7 of 24 pass and the other 17 fail on a BAL
+#     coinbase balance mismatch (BAL=63000 vs exec=45000 on a plain transfer) --
+#     the fixtures carry the pre-EIP-8038 gas schedule.
+#
+# There is no compatible release to move to yet. The successor branch,
+# execution-specs `eips/bogota/eip-7805` @ e5dc8456f, does not fill at all
+# against its own Amsterdam base: `check_inclusion_list_transactions` is handed
+# decoded transactions where it expects `LegacyTransaction | Bytes` (t8n calls
+# `convert_transaction` without `encode_transaction`, tripping the assert in
+# `get_transaction_hash`), and once that is patched locally the tests hit
+# "Block access list exceeds gas limit, 30 items exceeds limit of 22" because
+# helpers.py pins the block gas limit to exactly the gas the included txs use,
+# leaving no room for the EIP-7928 BAL. Both are upstream fixes.
+#
+# Re-pin FOCIL_URL as soon as a tests-focil release built on the current
+# Amsterdam exists; the assertions themselves are covered meanwhile by the
+# in-repo suite (test/tests/blockchain/focil_tests.rs and the inclusion_list_*
+# tests, ported from the same execution-specs intent).
 FOCIL_FIXTURES_FILE := .fixtures_url_focil
 FOCIL_ARTIFACT := focil-tests.tar.gz
 FOCIL_URL := $(shell cat $(FOCIL_FIXTURES_FILE))
