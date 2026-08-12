@@ -3897,6 +3897,112 @@ fn atomic_batch_revert_drops_the_batch_writes_from_the_bal() {
     );
 }
 
+/// EIP-7928: a frame that reverts on its own — with no atomic batch involved —
+/// commits no state, so the recorder must forget its writes exactly as it does
+/// for an unrolled batch. The slot is still *accessed*, so it must be reported
+/// as a read: dropping the write without re-filing it would leave the slot in
+/// neither `storage_changes` nor `storage_reads`, and re-execution (whose shadow
+/// recorder sees the raw SLOAD) then rejects the block the builder just made.
+///
+/// The write-then-read order is the load-bearing part: `record_storage_read`
+/// suppresses a read for a slot that is already written, so the read leaves no
+/// record of its own and the reverted write is the only thing standing in for it.
+#[test]
+fn reverted_frame_refiles_its_writes_as_reads_in_the_bal() {
+    use ethrex_common::types::Frame;
+
+    let target = Address::from_low_u64_be(0x8141_0101);
+    let slot = U256::from(5);
+
+    // SSTORE(5, 1) ; SLOAD(5) ; POP ; REVERT(0, 0)
+    let code = Bytes::from(vec![
+        0x60, 0x01, 0x60, 0x05, 0x55, // SSTORE(5, 1)
+        0x60, 0x05, 0x54, 0x50, // SLOAD(5) ; POP
+        0x60, 0x00, 0x60, 0x00, 0xFD, // REVERT(0, 0)
+    ]);
+
+    let accounts: Vec<SeededAccount> = vec![
+        (
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        ),
+        (target, U256::zero(), 0, code),
+    ];
+
+    let verify = Frame {
+        mode: u8::from(FrameMode::Verify),
+        flags: 0x03,
+        target: Some(FUNDED_SENDER),
+        gas_limit: 80_000,
+        value: U256::zero(),
+        data: Bytes::new(),
+    };
+    // A plain DEFAULT frame: no atomic-batch flag, so the batch unroll path that
+    // already reconciles the recorder is deliberately not exercised here.
+    let reverting = Frame {
+        mode: u8::from(FrameMode::Default),
+        flags: 0x00,
+        target: Some(target),
+        gas_limit: 300_000,
+        value: U256::zero(),
+        data: Bytes::new(),
+    };
+
+    let tx = frame_tx_with_frames(vec![verify, reverting]);
+    let mut db = seeded_db(&accounts);
+    db.enable_bal_recording();
+    let env = frame_tx_env(&tx);
+    let transaction = Transaction::FrameTransaction(tx);
+    {
+        let mut vm = VM::new(
+            env,
+            &mut db,
+            &transaction,
+            LevmCallTracer::disabled(),
+            VMType::L1,
+            &NativeCrypto,
+            None,
+        )
+        .expect("VM::new should succeed for a frame tx");
+        vm.execute()
+            .expect("a reverting DEFAULT frame must not error the tx");
+    }
+
+    // The frame reverted, so the write must not survive in state.
+    let live = db
+        .current_accounts_state
+        .get(&target)
+        .and_then(|acc| acc.storage.get(&H256::from_low_u64_be(5)).copied())
+        .unwrap_or_default();
+    assert!(
+        live.is_zero(),
+        "the frame reverted, so the write must not survive; got {live}"
+    );
+
+    let bal = db
+        .bal_recorder
+        .take()
+        .expect("BAL recording was enabled")
+        .build();
+    let entry = bal
+        .accounts()
+        .iter()
+        .find(|acc| acc.address == target)
+        .expect("the reverting frame's target was accessed, so it must be in the BAL");
+    assert!(
+        entry.storage_changes.iter().all(|c| c.slot != slot),
+        "the BAL must not claim a storage change for a slot whose write was reverted"
+    );
+    assert!(
+        entry.storage_reads.contains(&slot),
+        "the reverted write must be re-filed as a read so the slot is still \
+         reported as accessed; otherwise re-execution rejects the block \
+         (slot missing from both storage_changes and storage_reads)"
+    );
+}
+
 /// EIP-8141: when an atomic batch unrolls, "logs emitted by frames that executed
 /// before the failure are discarded together with their state changes [...] Those
 /// frame receipts retain their execution status and gas used, with empty logs."
