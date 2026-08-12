@@ -2524,6 +2524,8 @@ async fn store_block_drops_a_post_flip_mpt_diff_even_when_its_caller_merkleized_
                 receipts: vec![],
                 requests: vec![],
                 block_gas_used: sibling.header.gas_used,
+                // EIP-8079, LStar+; `None` before it, which this block is.
+                burned_fees: None,
                 tx_gas_breakdowns: Vec::new(),
             },
         )
