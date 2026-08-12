@@ -98,10 +98,15 @@ dora_params:
 # `PayloadDueBps` template variable the package now passes, so its config.yaml
 # carries no `PAYLOAD_DUE_BPS` and teku:focil rejects it outright:
 # "The specified network configuration had missing or invalid values for
-# constants PAYLOAD_DUE_BPS" (GloasBuilder.validate). `:6.2.0` is the first tag
-# that emits it.
+# constants PAYLOAD_DUE_BPS" (GloasBuilder.validate).
+#
+# `:6.2.0` emits PAYLOAD_DUE_BPS but is one tag too far: it also carries
+# generator PR #313, which deletes the besu and nethermind chainspec templates,
+# while the ethereum-package revision pinned in the Makefile still starts besu
+# with `--genesis-file=/network-configs/besu.json`. `:6.1.7` is the last tag
+# with both PAYLOAD_DUE_BPS and tpl-besu.json.
 ethereum_genesis_generator_params:
-  image: ethpandaops/ethereum-genesis-generator:6.2.0
+  image: ethpandaops/ethereum-genesis-generator:6.1.7
 
 spamoor_params:
   spammers:
