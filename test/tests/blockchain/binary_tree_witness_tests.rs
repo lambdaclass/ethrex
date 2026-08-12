@@ -68,8 +68,10 @@ use ethrex_rpc::test_utils::default_context_with_storage;
 use ethrex_rpc::types::block_identifier::BlockIdentifier;
 use ethrex_rpc::utils::RpcErr;
 
+use ethrex_storage::Store;
+
 use super::binary_tree_shadow_tests::{
-    BoundaryChains, FLIP_BLOCK, binary_root, build_boundary_chains,
+    BoundaryChains, FLIP_BLOCK, binary_root, build_boundary_chains, store_from_genesis,
 };
 
 /// Assert the chain really flipped where these tests assume it did.
@@ -389,6 +391,115 @@ async fn the_mpt_generator_refuses_a_batch_that_crosses_the_boundary() {
     assert_ne!(
         first.header.number, FLIP_BLOCK,
         "the named block must not be the batch's first, or this proves nothing"
+    );
+}
+
+// --- the other generator: the block-import path ------------------------------
+
+/// Replay `blocks` onto a fresh store built from the scheduled genesis, stopping
+/// before `up_to` (exclusive, by block number).
+///
+/// A second store rather than `chains.scheduled_store`, because these tests need
+/// to import the flip block themselves and it is already imported there.
+async fn replay_up_to(chains: &BoundaryChains, up_to: u64) -> (Store, Blockchain) {
+    let store = store_from_genesis(chains.scheduled_genesis.clone()).await;
+    let blockchain = Blockchain::default_with_store(store.clone());
+    for block in &chains.scheduled_blocks {
+        if block.header.number >= up_to {
+            break;
+        }
+        blockchain
+            .add_block_pipeline(block.clone(), None)
+            .unwrap_or_else(|error| panic!("replaying block {}: {error}", block.header.number));
+    }
+    (store, blockchain)
+}
+
+/// `generate_witness_from_account_updates` is the *other* MPT generator: it runs
+/// during block import and its output is written to the witness cache. The
+/// engine API's by-hash reader consults that cache before the generator, so an
+/// unguarded import path poisons a reader that never reaches the guard.
+///
+/// `add_block_pipeline_with_witness` is `engine_newPayloadWithWitness`'s entry
+/// point — a caller who explicitly asked for a witness, and so must get the
+/// refusal rather than a witness for the wrong trie.
+#[tokio::test]
+async fn the_import_path_generator_refuses_a_binary_committed_block() {
+    let chains = build_boundary_chains(FLIP_BLOCK).await;
+    assert_flip_shape(&chains);
+    let flip = chains
+        .scheduled_blocks
+        .last()
+        .expect("chain is non-empty")
+        .clone();
+    assert_eq!(flip.header.number, FLIP_BLOCK);
+
+    let (_store, blockchain) = replay_up_to(&chains, FLIP_BLOCK).await;
+
+    // Non-vacuity: the block *before* the flip goes through this exact path and
+    // yields a witness, so the refusal below is caused by the commitment and not
+    // by the harness failing to produce a witness at all.
+    let pre_flip = chains.scheduled_blocks[FLIP_BLOCK as usize - 2].clone();
+    assert!(pre_flip.header.timestamp < chains.activation);
+    let (_store, pre_flip_chain) = replay_up_to(&chains, pre_flip.header.number).await;
+    let witness = pre_flip_chain
+        .add_block_pipeline_with_witness(pre_flip.clone(), None)
+        .unwrap_or_else(|error| {
+            panic!("a pre-activation block must still be witnessable on import: {error}")
+        });
+    let witness = RpcExecutionWitness::try_from(witness).expect("witness converts to RPC form");
+    assert!(
+        !witness.state.is_empty(),
+        "the pre-activation import witness must be non-empty"
+    );
+
+    let error = match blockchain.add_block_pipeline_with_witness(flip.clone(), None) {
+        Ok(_) => panic!("the import path must refuse a witness for a binary-committed block"),
+        Err(error) => error,
+    };
+    assert_refused_as_binary_committed(&error, FLIP_BLOCK);
+}
+
+/// The other half of the same rule: the *opportunistic* cache must not fail the
+/// import.
+///
+/// A binary-committed block has no MPT witness, and that is a fact about the
+/// block rather than a defect in it. If the refusal propagated here, a scheduled
+/// chain running with `--precompute-witnesses` would halt permanently at its
+/// activation block — the failure mode this project has already paid for once.
+#[tokio::test]
+async fn the_opportunistic_witness_cache_does_not_fail_a_binary_committed_import() {
+    let chains = build_boundary_chains(FLIP_BLOCK).await;
+    assert_flip_shape(&chains);
+    let flip = chains
+        .scheduled_blocks
+        .last()
+        .expect("chain is non-empty")
+        .clone();
+
+    let (store, blockchain) = replay_up_to(&chains, FLIP_BLOCK).await;
+    blockchain
+        .add_block_pipeline(flip.clone(), None)
+        .expect("a binary-committed block must still import when no witness can be built");
+
+    // It really is imported, and with the binary root — so the import was not
+    // quietly skipped along with the witness.
+    assert_eq!(
+        store
+            .get_block_header_by_hash(flip.hash())
+            .expect("header read")
+            .expect("the flip block must be stored")
+            .state_root,
+        flip.header.state_root
+    );
+    // And nothing was cached for it: a cached MPT witness here would be the
+    // wrong-trie witness the guard exists to prevent.
+    assert!(
+        store
+            .get_witness_json_bytes(flip.header.number, flip.hash())
+            .expect("witness cache read")
+            .is_none(),
+        "no MPT witness may be cached for a binary-committed block"
     );
 }
 
