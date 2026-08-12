@@ -251,7 +251,36 @@ commitment the guard is inert, which is why L2 behaviour is unchanged.
 give the L2 stack real EIP-8297 support. Refusing at startup is the smaller of
 the two and matches what L1 already does for other unsupported combinations.
 
-### Amsterdam gas schedule is behind EIP-8038, and has no fixture coverage
+### Account destruction under EIP-8297 leaves storage leaves behind
+
+**Where:** the destruction path in `crates/common/types/pbt_state.rs`
+(`apply_account_update`'s `removed` branch), against `VmDatabase::has_storage`
+at `crates/blockchain/vm.rs:279`.
+
+**What:** two tests from execution-specs PR #3207 (the binary-trie tracking
+branch) fail, and both are account destruction under PBT:
+
+- `state_divergence/create2_after_eip161_clear_of_storage_holding_account` —
+  `StateRootMismatch`. A *deliberate* MPT-vs-PBT divergence test: under EIP-8297
+  an address has non-empty storage exactly when a slot leaf exists, so deleting
+  the account removes its storage leaves, no collision remains, and the CREATE2
+  proceeds. Under MPT the orphaned storage trie keeps `account_has_storage`
+  true and the CREATE2 is rejected.
+- `account_lifecycle/selfdestruct_same_transaction_leaves_no_account` —
+  `ReceiptsRootMismatch`, so a gas difference rather than a state one. EIP-6780
+  requires create-and-destroy in one transaction to leave no trace, "including
+  any storage it wrote".
+
+ethrex has the right architecture: `has_storage` reads slot leaves rather than a
+`storage_root`, and that is pinned by a test. The likely gap is that destruction
+does not remove the storage leaves, so `has_storage` stays true into the next
+block. **Not confirmed** — the failure mode is consistent with that reading but
+the cause was not isolated.
+
+**Removal:** fix the destruction path, then re-run the fixtures per the recipe
+in the entry below.
+
+### Amsterdam gas schedule is behind EIP-8038 — now measured against fixtures
 
 **Where:** `crates/vm/levm/src/gas_cost.rs:213-222` (the "EIP-8038 Amsterdam
 values (merged EIPs#11802)" block), and `tooling/ef_tests/.fixtures_url_amsterdam`.
@@ -306,11 +335,43 @@ numbers, and the two forks' fills are byte-identical in `gasUsed` and
 `receiptTrie`. The binary-tree work is not implicated — its genesis roots match
 the spec exactly.
 
+Re-measured 2026-08-12 against a fresh fill of the PR #3207 tracking branch
+(`ethereum/execution-specs:projects/binary-trie` @ `9dffd419`), which yields a
+wider suite — 56 `blockchain_tests` rather than the 24 above:
+
+| run | passed | failed |
+|---|---|---|
+| `BinaryTree`, ethrex as-is | 8 | 48 |
+| `BinaryTree`, the seven constants aligned | **54** | **2** |
+| *Amsterdam* `eip2780` from the same revision, as-is | 27 | 32 |
+
+The third row is the control that settles attribution: plain Amsterdam tests
+from the same spec revision fail too, so this is not a binary-trie problem.
+`transactions.py` is byte-identical between `forks/amsterdam` and
+`forks/binary_tree`, so the binary-trie fork changes no gas rule at all. The
+two survivors at 54/56 are the account-destruction cases in the entry above.
+
+**Why CI never caught it:** the pinned bundle is `tests-glamsterdam-devnet@v7.2.0`,
+whose `for_amsterdam/` tree holds only `eip7928_block_level_access_lists` and
+`eip8025_optional_proofs` — no EIP-2780 or EIP-8038 tests exist in it.
+
+**Not established:** which side reflects the ratified EIP-8038. Only that this
+execution-specs revision and ethrex disagree. Confirm before changing the
+constants — they feed EIP-8037 state-gas accounting.
+
 **Removal:** Resync the seven constants above against
 `src/ethereum/forks/amsterdam/vm/gas.py`. Separately, confirm whether CI
 exercises Amsterdam at all — if `.fixtures_url_amsterdam` points at a bundle
 with no `eip8037`/`eip8038` coverage, re-pin it so the next drift is caught by
 CI rather than by accident.
+
+**Reproducing.** execution-specs is now a monorepo with EEST vendored at
+`packages/testing/src/execution_testing/`, so no second clone is needed; the
+repo ships the recipe at `Justfile:163` (`binary-trie-fork`). `BinaryTree` is
+`deployed=False`, so pass `--fork BinaryTree` and omit `--until`. Fixtures carry
+`"network": "BinaryTree"`, which the existing `fork.rs` wiring already matches —
+no ethrex change is needed to consume them. Note `ef_tests-blockchain` is not a
+workspace member: build it from `tooling/ef_tests/blockchain/`.
 
 ### `eth_getProofV2`'s response format is an ethrex dialect, not a standard
 
