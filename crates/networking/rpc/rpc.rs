@@ -638,13 +638,46 @@ pub async fn bind_api(
     // Consensus-liveness channel: the sender lives in the Auth-RPC handler state (so it
     // drops when the servers stop); the receiver is handed to `serve` to spawn the monitor.
     let (timer_sender, timer_receiver) = tokio::sync::watch::channel(());
+
+    // Clone the sender for the engine REST watchdog-reset layer below.
+    let rest_timer_sender = timer_sender.clone();
     let authrpc_handler = move |ctx, auth, body| async move {
         let _ = timer_sender.send(());
         handle_authrpc_request(ctx, auth, body).await
     };
+
+    // Reset the consensus-layer activity watchdog on engine REST requests too, so
+    // a CL using only the REST/SSZ transport doesn't continuously trip the
+    // "No messages from the consensus layer" warning (mirrors authrpc_handler for
+    // the JSON-RPC path).
+    //
+    // The reset MUST fire only for *authenticated* requests. The REST router
+    // applies JWT auth internally and rejects missing/invalid tokens with 401, so
+    // this layer (which wraps the router) runs the handler first and resets the
+    // timer only when the response is not 401. Resetting before auth would let any
+    // local process that can reach the auth port keep the watchdog quiet with
+    // unauthenticated or forged requests.
+    let engine_rest_router =
+        crate::engine_rest::router(service_context.clone()).layer(axum::middleware::from_fn(
+            move |req: axum::extract::Request, next: axum::middleware::Next| {
+                let timer = rest_timer_sender.clone();
+                async move {
+                    let response = next.run(req).await;
+                    if response.status() != StatusCode::UNAUTHORIZED {
+                        let _ = timer.send(());
+                    }
+                    response
+                }
+            },
+        ));
+
     let authrpc_router = Router::new()
         .route("/", post(authrpc_handler))
         .with_state(service_context.clone())
+        // Engine REST/SSZ (#793) is scoped under /engine/v1/... per refactor.md;
+        // the CL calls /engine/v1/payloads (fork in the Eth-Execution-Version
+        // header), /engine/v1/capabilities, etc.
+        .nest("/engine/v1", engine_rest_router)
         // Bump the body limit for the engine API to 256MB. This stays scoped to Auth-RPC:
         // it is never applied to the public HTTP/WS endpoints (which keep axum's default).
         .layer(DefaultBodyLimit::max(256 * 1024 * 1024));
