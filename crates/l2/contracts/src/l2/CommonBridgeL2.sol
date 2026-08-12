@@ -115,13 +115,25 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
 
     /// @inheritdoc ICommonBridgeL2
     function sendIntentToL1(
-        bytes32 payloadHash
+        bytes32 payloadHash,
+        address consumerOnL1
     ) external override returns (bytes32) {
         bytes32 intentHash = keccak256(
-            abi.encode(INTENT_DOMAIN, block.chainid, msg.sender, payloadHash)
+            abi.encode(
+                INTENT_DOMAIN,
+                block.chainid,
+                msg.sender,
+                consumerOnL1,
+                payloadHash
+            )
         );
         IMessenger(L1_MESSENGER).sendMessageToL1(intentHash);
-        emit IntentInitiated(msg.sender, payloadHash, intentHash);
+        emit IntentInitiated(
+            msg.sender,
+            consumerOnL1,
+            payloadHash,
+            intentHash
+        );
         return intentHash;
     }
 

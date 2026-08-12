@@ -86,6 +86,11 @@ contract CommonBridge is
     address public constant L2_PROXY_ADMIN =
         0x000000000000000000000000000000000000f000;
 
+    /// @notice Domain separator for messages sent through
+    /// CommonBridgeL2.sendIntentToL1, must match the one used there
+    bytes32 public constant INTENT_DOMAIN =
+        keccak256("ethrex.L2ToL1Intent.v1");
+
     /// @notice Mapping of unclaimed withdrawals. A withdrawal is claimed if
     /// there is a non-zero value in the mapping for the message id
     /// of the L2 transaction that requested the withdrawal.
@@ -646,11 +651,12 @@ contract CommonBridge is
 
     /// @inheritdoc ICommonBridge
     function verifyAndConsume(
-        bytes32 messageHash,
+        address senderOnL2,
+        bytes32 payloadHash,
         uint256 batchNumber,
         uint256 messageId,
         bytes32[] calldata proof
-    ) external override whenNotPaused returns (bool) {
+    ) external override whenNotPaused {
         require(
             batchWithdrawalLogsMerkleRoots[batchNumber] != bytes32(0),
             "CommonBridge: the batch that emitted the message was not committed"
@@ -661,6 +667,15 @@ contract CommonBridge is
             "CommonBridge: the batch that emitted the message was not verified"
         );
 
+        bytes32 messageHash = keccak256(
+            abi.encode(
+                INTENT_DOMAIN,
+                CHAIN_ID,
+                senderOnL2,
+                msg.sender,
+                payloadHash
+            )
+        );
         bytes32 leaf = keccak256(
             abi.encodePacked(L2_BRIDGE_ADDRESS, messageHash, messageId)
         );
@@ -668,8 +683,6 @@ contract CommonBridge is
             consumedMessages[leaf] == false,
             "CommonBridge: the message was already consumed"
         );
-        consumedMessages[leaf] = true;
-        emit MessageConsumed(batchNumber, messageId, messageHash);
         require(
             MerkleProof.verify(
                 proof,
@@ -678,7 +691,9 @@ contract CommonBridge is
             ),
             "CommonBridge: Invalid proof"
         );
-        return true;
+
+        consumedMessages[leaf] = true;
+        emit MessageConsumed(batchNumber, messageId, messageHash);
     }
 
     function _verifyMessageProof(

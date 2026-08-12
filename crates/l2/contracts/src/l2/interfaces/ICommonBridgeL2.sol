@@ -50,11 +50,13 @@ interface ICommonBridgeL2 {
     /// @notice An intent has been sent to L1.
     /// @dev Event emitted when a data-only message is sent to L1.
     /// @param senderOnL2 the caller on L2.
+    /// @param consumerOnL1 the address that can consume the message on L1.
     /// @param payloadHash the payload the caller committed to.
     /// @param intentHash the hash that was sent to L1.
     event IntentInitiated(
         address indexed senderOnL2,
-        bytes32 indexed payloadHash,
+        address indexed consumerOnL1,
+        bytes32 payloadHash,
         bytes32 indexed intentHash
     );
 
@@ -117,11 +119,16 @@ interface ICommonBridgeL2 {
 
     /// @notice Sends a data-only message to L1.
     /// @dev The bridge hashes the payload together with a domain separator, the
-    /// @dev chain id and the caller, so that an intent can never be read as a
-    /// @dev withdrawal and the caller cannot claim to be someone else.
+    /// @dev chain id, the caller and the consumer, so that an intent can never be
+    /// @dev read as a withdrawal, the caller cannot claim to be someone else and
+    /// @dev nobody but the consumer can spend the message on L1.
     /// @param payloadHash Hash of the payload the caller commits to
+    /// @param consumerOnL1 the only address allowed to consume the message on L1
     /// @return The hash sent to L1
-    function sendIntentToL1(bytes32 payloadHash) external returns (bytes32);
+    function sendIntentToL1(
+        bytes32 payloadHash,
+        address consumerOnL1
+    ) external returns (bytes32);
 
     /// @notice Transfer ERC20 tokens to the desired L2 chain.
     /// @dev This burns tokens on this L2 and sends a message to the destination L2

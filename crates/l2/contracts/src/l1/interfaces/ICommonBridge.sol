@@ -232,19 +232,20 @@ interface ICommonBridge {
 
     /// @notice Verifies a data-only message from L2 and marks it as consumed.
     /// @dev The message must belong to a batch that was committed and verified.
-    /// @dev Consumption is keyed by the message leaf, so a message can only be
-    /// @dev consumed once.
-    /// @param messageHash the hash that was sent from L2.
+    /// @dev The caller must be the consumer the sender named on L2, and can only
+    /// @dev consume the message once.
+    /// @param senderOnL2 the address that sent the message on L2.
+    /// @param payloadHash the payload the sender committed to.
     /// @param batchNumber the batch number where the message was emitted.
     /// @param messageId the message Id of the message.
     /// @param proof the merkle path to the message log.
-    /// @return True if the message was verified and consumed.
     function verifyAndConsume(
-        bytes32 messageHash,
+        address senderOnL2,
+        bytes32 payloadHash,
         uint256 batchNumber,
         uint256 messageId,
         bytes32[] calldata proof
-    ) external returns (bool);
+    ) external;
 
     /// @notice Checks if the sequencer has exceeded it's processing deadlines
     function hasExpiredPrivilegedTransactions() external view returns (bool);

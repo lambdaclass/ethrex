@@ -20,7 +20,7 @@ use ethrex_l2_rpc::clients::{
 };
 use ethrex_l2_rpc::signer::{LocalSigner, Signer};
 use ethrex_l2_sdk::{
-    COMMON_BRIDGE_L2_ADDRESS, address_to_word, bridge_address, calldata::encode_calldata,
+    COMMON_BRIDGE_L2_ADDRESS, bridge_address, calldata::encode_calldata,
     claim_erc20withdraw, claim_withdraw, compile_contract, create_deploy, deposit_erc20,
     get_address_alias, get_erc1967_slot, git_clone, wait_for_transaction_receipt,
 };
@@ -1097,9 +1097,10 @@ async fn test_erc20_withdraw_l1_address_mismatch(
 
 /// Test sending a data-only message to L1 and consuming it there
 /// 1. Sends an intent from L2, carrying the payload an ETH withdrawal would have produced
-/// 2. Consumes the message on L1 once its batch is verified
-/// 3. Checks that consuming the same message again reverts
-/// 4. Checks that the payload cannot be claimed as a withdrawal
+/// 2. Checks that an address other than the named consumer cannot consume it
+/// 3. Consumes the message on L1 once its batch is verified
+/// 4. Checks that consuming the same message again reverts
+/// 5. Checks that the payload cannot be claimed as a withdrawal
 async fn test_send_intent_to_l1(
     l1_client: EthClient,
     l2_client: EthClient,
@@ -1119,8 +1120,11 @@ async fn test_send_intent_to_l1(
     let payload_hash = keccak(&withdrawal_payload);
 
     println!("test_send_intent_to_l1: Sending intent on L2");
-    let intent_signature = "sendIntentToL1(bytes32)";
-    let intent_args = [Value::FixedBytes(payload_hash.0.to_vec().into())];
+    let intent_signature = "sendIntentToL1(bytes32,address)";
+    let intent_args = [
+        Value::FixedBytes(payload_hash.0.to_vec().into()),
+        Value::Address(rich_address),
+    ];
     let intent_receipt = test_send(
         &l2_client,
         &rich_wallet_private_key,
@@ -1135,13 +1139,6 @@ async fn test_send_intent_to_l1(
     let transaction_size =
         calculate_transaction_size(encode_calldata(intent_signature, &intent_args)?.into());
     let intent_fees = get_fees_details_l2(&intent_receipt, &l2_client, transaction_size).await?;
-
-    // What the bridge sent to L1: the payload wrapped with its domain, the chain id and the caller.
-    let mut intent_preimage = keccak(b"ethrex.L2ToL1Intent.v1").0.to_vec();
-    intent_preimage.extend_from_slice(&l2_client.get_chain_id().await?.to_big_endian());
-    intent_preimage.extend_from_slice(&address_to_word(rich_address).to_big_endian());
-    intent_preimage.extend_from_slice(&payload_hash.0);
-    let intent_hash = keccak(&intent_preimage);
 
     println!("test_send_intent_to_l1: Waiting for message proof on L2");
     let proof = wait_for_verified_proof(
@@ -1159,14 +1156,36 @@ async fn test_send_intent_to_l1(
             .collect(),
     );
 
-    println!("test_send_intent_to_l1: Consuming the message on L1");
-    let consume_signature = "verifyAndConsume(bytes32,uint256,uint256,bytes32[])";
+    println!("test_send_intent_to_l1: Attempting to consume the message as another address");
+    let consume_signature = "verifyAndConsume(address,bytes32,uint256,uint256,bytes32[])";
     let consume_args = [
-        Value::FixedBytes(intent_hash.0.to_vec().into()),
+        Value::Address(rich_address),
+        Value::FixedBytes(payload_hash.0.to_vec().into()),
         Value::Uint(proof.batch_number.into()),
         Value::Uint(proof.message_id),
         merkle_proof.clone(),
     ];
+    let stranger_result = l1_client
+        .call(
+            bridge_address()?,
+            encode_calldata(consume_signature, &consume_args)?.into(),
+            Overrides {
+                from: Some(Address::random()),
+                ..Default::default()
+            },
+        )
+        .await;
+    assert!(
+        stranger_result.is_err(),
+        "Expected eth_call to fail because the caller is not the consumer the intent named"
+    );
+    let error_message = stranger_result.unwrap_err().to_string();
+    assert!(
+        error_message.contains("Invalid proof"),
+        "Expected revert reason to contain 'Invalid proof', got: {error_message}"
+    );
+
+    println!("test_send_intent_to_l1: Consuming the message on L1");
     let consume_receipt = test_send(
         &l1_client,
         &rich_wallet_private_key,
