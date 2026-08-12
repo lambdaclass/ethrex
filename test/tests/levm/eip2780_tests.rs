@@ -8,8 +8,7 @@
 //!       * contract-creation: CREATE_ACCESS_AMSTERDAM = 12000 regular + new-account state gas
 //!       * else: cold_account_access_cost = 3000
 //!   - value transfer:
-//!       * zero value or self-transfer: 0
-//!       * non-zero value contract-creation: TRANSFER_LOG_COST_AMSTERDAM = 1756
+//!       * zero value, self-transfer, or contract-creation: 0
 //!       * else: TRANSFER_LOG_COST_AMSTERDAM + TX_VALUE_COST_AMSTERDAM = 1756 + 4244 = 6000
 //!
 //! These tests assert the intrinsic regular-gas decomposition at Amsterdam, the
@@ -252,16 +251,19 @@ fn test_intrinsic_create_zero_value_amsterdam() {
 
 #[test]
 fn test_intrinsic_create_nonzero_value_amsterdam() {
-    // contract-creation, value>0: base + CREATE_ACCESS + transfer log (no value cost).
+    // contract-creation, value>0: base + CREATE_ACCESS and NOTHING for the value.
+    // EELS `calculate_intrinsic_cost` charges the value only under
+    // `elif not is_self_transfer`, which the `if is_create` branch never reaches,
+    // so a create carrying ether costs exactly what a create of zero value costs.
     // As above, the NEW_ACCOUNT state gas is charged in-region, not at intrinsic time.
     let tx = call_tx(TxKind::Create, U256::from(1u64));
     let (regular, state) = intrinsic_with_parity(Fork::Amsterdam, &tx);
     assert_eq!(
         regular,
-        TX_BASE_COST_AMSTERDAM + CREATE_ACCESS_AMSTERDAM + TRANSFER_LOG_COST_AMSTERDAM,
-        "create value>0 regular gas (24000 + 1756 = 25756)"
+        TX_BASE_COST_AMSTERDAM + CREATE_ACCESS_AMSTERDAM,
+        "create value>0 regular gas (12000 + 12000 = 24000, no value component)"
     );
-    assert_eq!(regular, 25756, "create value>0 regular gas must be 25756");
+    assert_eq!(regular, 24000, "create value>0 regular gas must be 24000");
     assert_eq!(
         state, 0,
         "create intrinsic state gas is 0 (NEW_ACCOUNT moved in-region)"

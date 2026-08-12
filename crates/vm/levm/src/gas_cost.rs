@@ -330,23 +330,22 @@ pub fn recipient_regular_gas(to: &TxKind, value: U256, sender: Address, fork: Fo
         return 0;
     }
 
-    let is_create = matches!(to, TxKind::Create);
-    let regular_gas = if is_create {
-        CREATE_ACCESS_AMSTERDAM
-    } else {
-        cold_account_access_cost(fork)
-    };
+    // A creation pays `CREATE_ACCESS` and nothing for `tx.value`. EELS
+    // `calculate_intrinsic_cost` reaches the value charge only inside the
+    // `elif not is_self_transfer` branch, which the `if is_create` branch above
+    // it never falls through to, however much ether the creation carries.
+    if matches!(to, TxKind::Create) {
+        return CREATE_ACCESS_AMSTERDAM;
+    }
+
+    let regular_gas = cold_account_access_cost(fork);
 
     #[expect(
         clippy::arithmetic_side_effects,
         reason = "sum of small constant gas costs (<= ~17000), cannot overflow u64"
     )]
     if !value.is_zero() {
-        if is_create {
-            regular_gas + TRANSFER_LOG_COST_AMSTERDAM
-        } else {
-            regular_gas + TRANSFER_LOG_COST_AMSTERDAM + TX_VALUE_COST_AMSTERDAM
-        }
+        regular_gas + TRANSFER_LOG_COST_AMSTERDAM + TX_VALUE_COST_AMSTERDAM
     } else {
         regular_gas
     }
