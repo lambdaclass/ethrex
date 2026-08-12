@@ -1862,6 +1862,212 @@ async fn a_storage_only_account_exists_and_collides_on_both_paths() {
 }
 
 // ---------------------------------------------------------------------------
+// EIP-161 clearing of a storage-only account, and why the two tries answer
+// differently about what is left of it.
+//
+// EELS `move_ether` writes both parties through `modify_state`, whatever the
+// amount, and `modify_state` calls `destroy_account` on an account the write
+// leaves existing and empty. SELFDESTRUCT calls `move_ether` unconditionally,
+// so a sweep of a *zero* balance still destroys an empty beneficiary — which a
+// zero-value CALL does not, because `move_ether` is only reached there when
+// `value != 0`.
+//
+// Destroying it is observable for exactly one account shape, the storage-only
+// account above, and the two tries then diverge:
+//
+//   * `state_pbt.apply_changes_to_state` pops the address out of `_storage`
+//     when its account goes, so the slot leaves go with it and
+//     `account_has_storage` turns false — a later CREATE2 may land there.
+//   * `state_mpt.apply_changes_to_state` leaves `_storage_tries[address]`
+//     behind, orphaned, and `account_has_storage` stays true — the CREATE2 is
+//     still a collision.
+//
+// That divergence is deliberate and is what execution-specs PR #3207's
+// `state_divergence/create2_after_eip161_clear_of_storage_holding_account`
+// pins. So the clear is gated on *this header* having reached
+// `binaryTreeTime`, and the assertions below run the identical block on a
+// scheduled and an unscheduled chain to hold the MPT side fixed.
+// ---------------------------------------------------------------------------
+
+/// A genesis contract whose only act is to sweep its balance — zero — into
+/// [`storage_only_account`], making that account the beneficiary of a
+/// SELFDESTRUCT. Allocated at genesis because EIP-6780 restricts destruction to
+/// the creating transaction, and the beneficiary shape this needs cannot be
+/// built by execution either.
+fn selfdestructor_account() -> Address {
+    Address::from_low_u64_be(0x5709)
+}
+
+/// A second storage-only account that no transaction here touches. Without it
+/// the binary-side assertions would also pass against a change that dropped
+/// *every* account's storage.
+fn untouched_storage_only_account() -> Address {
+    Address::from_low_u64_be(0x570b)
+}
+
+/// `PUSH20 <beneficiary>; SELFDESTRUCT`.
+fn selfdestruct_bytecode(beneficiary: Address) -> Bytes {
+    let mut code = Vec::with_capacity(22);
+    code.push(0x73);
+    code.extend_from_slice(beneficiary.as_bytes());
+    code.push(0xff);
+    Bytes::from(code)
+}
+
+fn storage_only_alloc(slot: u64, value: u64) -> GenesisAccount {
+    GenesisAccount {
+        balance: U256::zero(),
+        code: Bytes::new(),
+        nonce: 0,
+        storage: [(U256::from(slot), U256::from(value))]
+            .into_iter()
+            .collect(),
+    }
+}
+
+/// Build and import one block whose single transaction calls
+/// [`selfdestructor_account`].
+async fn build_selfdestruct_block(store: &Store, blockchain: &Blockchain, chain_id: u64) -> Block {
+    let signer: Signer = LocalSigner::new(test_secret_key()).into();
+    let mut tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+        chain_id,
+        nonce: 0,
+        max_priority_fee_per_gas: 1,
+        max_fee_per_gas: TEST_MAX_FEE_PER_GAS,
+        gas_limit: TEST_GAS_LIMIT,
+        to: TxKind::Call(selfdestructor_account()),
+        value: U256::zero(),
+        data: Bytes::new(),
+        ..Default::default()
+    });
+    tx.sign_inplace(&signer).await.unwrap();
+    blockchain
+        .add_transaction_to_pool(tx)
+        .await
+        .expect("tx should enter pool");
+
+    let parent_header = store.get_block_header(0).unwrap().unwrap();
+    let block = build_block(store, blockchain, &parent_header).await;
+    assert_eq!(
+        block.body.transactions.len(),
+        1,
+        "the block must actually carry the SELFDESTRUCT transaction"
+    );
+    blockchain
+        .add_block(block.clone())
+        .expect("block should import");
+    block
+}
+
+/// Run the SELFDESTRUCT block on a chain whose `binaryTreeTime` is
+/// `binary_tree_time`, and return the store together with the imported block.
+async fn run_selfdestruct_into_storage_only(binary_tree_time: Option<u64>) -> (Store, Block) {
+    let sender = sender_from_key(&test_secret_key());
+    let extra = [
+        (
+            storage_only_account(),
+            storage_only_alloc(STORAGE_ONLY_SLOT, STORAGE_ONLY_VALUE),
+        ),
+        (
+            untouched_storage_only_account(),
+            storage_only_alloc(STORAGE_ONLY_SLOT, STORAGE_ONLY_VALUE),
+        ),
+        (
+            selfdestructor_account(),
+            GenesisAccount {
+                balance: U256::zero(),
+                code: selfdestruct_bytecode(storage_only_account()),
+                nonce: 1,
+                storage: Default::default(),
+            },
+        ),
+    ];
+
+    let genesis = load_funded_genesis_with(sender, binary_tree_time, &extra);
+    let chain_id = genesis.config.chain_id;
+    let store = store_from_genesis(genesis).await;
+    let blockchain = Blockchain::default_with_store(store.clone());
+    let block = build_selfdestruct_block(&store, &blockchain, chain_id).await;
+    (store, block)
+}
+
+#[tokio::test]
+async fn an_eip161_clear_of_a_storage_only_beneficiary_drops_its_leaves_on_the_binary_trie() {
+    // The activation lands on the first built block: `build_block` uses
+    // `parent.timestamp + BLOCK_TIME`, so scheduling it exactly there makes
+    // block 1 the first active header.
+    let probe = load_funded_genesis(sender_from_key(&test_secret_key()), None);
+    let activation = probe.timestamp + BLOCK_TIME;
+
+    let (store, block) = run_selfdestruct_into_storage_only(Some(activation)).await;
+    assert!(
+        block.header.timestamp >= activation,
+        "the block carrying the SELFDESTRUCT must be past the activation"
+    );
+    assert_eq!(
+        block.header.state_root,
+        binary_root(&store, &block),
+        "the block must commit a binary root, or the gate under test never fired"
+    );
+
+    let db = StoreVmDatabase::new(store, block.header.clone())
+        .expect("the block's own trie must hold its state");
+
+    assert!(
+        !db.has_storage(storage_only_account()).unwrap(),
+        "the write SELFDESTRUCT made to the beneficiary left it empty, so EIP-161 \
+         destroyed it and the binary trie has no slot leaf of it left"
+    );
+    assert!(
+        db.get_account_state(storage_only_account())
+            .unwrap()
+            .is_none(),
+        "destroying the account removes its whole header stem, code-hash leaf \
+         included — dropping only the storage would leave it readable"
+    );
+
+    // The control: nothing swept into this one, so it keeps everything. It is
+    // what separates the assertions above from a change that wiped the storage
+    // of every account, or from a `has_storage` that had started answering no.
+    assert!(
+        db.has_storage(untouched_storage_only_account()).unwrap(),
+        "an untouched storage-only account keeps its storage"
+    );
+    assert!(
+        db.get_account_state(untouched_storage_only_account())
+            .unwrap()
+            .is_some(),
+        "an untouched storage-only account is still there"
+    );
+}
+
+#[tokio::test]
+async fn the_same_eip161_clear_leaves_the_mpt_exactly_as_it_was() {
+    let (store, block) = run_selfdestruct_into_storage_only(None).await;
+    assert!(
+        store.has_state_root(block.header.state_root).unwrap(),
+        "an unscheduled chain commits an MPT root"
+    );
+
+    let db = StoreVmDatabase::new(store, block.header.clone())
+        .expect("the block's own trie must hold its state");
+
+    let account = db
+        .get_account_state(storage_only_account())
+        .unwrap()
+        .expect("the MPT keeps the account the binary trie destroys");
+    assert_ne!(
+        account.storage_root, *EMPTY_TRIE_HASH,
+        "and it keeps the storage under it"
+    );
+    assert!(
+        db.has_storage(storage_only_account()).unwrap(),
+        "so EIP-7610 still rejects a CREATE here, which is the divergence \
+         `create2_after_eip161_clear_of_storage_holding_account` pins"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Phase D10 — what became of the MPT: it is **frozen** at the flip.
 //
 // This replaces `the_mpt_keeps_advancing_after_the_flip_but_is_no_longer_addressable_by_header_root`,

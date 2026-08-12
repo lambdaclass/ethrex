@@ -667,7 +667,19 @@ impl GeneralizedDatabase {
             // "At the end of the transaction, any account touched by the execution of that transaction which is now empty SHALL instead become non-existent (i.e. deleted)."
             // ethrex is a post-Merge client, empty accounts have already been pruned from the trie on Mainnet by the Merge (see EIP-161), so we won't have any empty accounts in the trie.
             let was_empty = initial_state_account.is_empty();
-            let removed = new_state_account.is_empty() && !was_empty;
+            // EELS destroys an account that a write leaves empty even when it
+            // was *already* empty (`modify_state` -> `destroy_account`), which
+            // `!was_empty` alone misses. The only account for which that has
+            // anything to delete is one holding storage and nothing else, and
+            // the only thing that reaches this branch for one is
+            // `VM::clear_storage_of_emptied_account` — which runs solely on a
+            // header past `binaryTreeTime`, so the MPT sees exactly what it
+            // always did. `initial_state_account.exists` keeps the ordinary
+            // same-transaction create-and-destroy out of it: that account was
+            // absent before the transaction, so `was_empty` is true for it too
+            // and there is nothing in either trie to remove.
+            let cleared_while_empty = was_destroyed && was_empty && initial_state_account.exists;
+            let removed = new_state_account.is_empty() && (!was_empty || cleared_while_empty);
 
             if !removed && !acc_info_updated && !storage_updated && !removed_storage {
                 // Account hasn't been updated
@@ -771,7 +783,19 @@ impl GeneralizedDatabase {
             // "At the end of the transaction, any account touched by the execution of that transaction which is now empty SHALL instead become non-existent (i.e. deleted)."
             // ethrex is a post-Merge client, empty accounts have already been pruned from the trie on Mainnet by the Merge (see EIP-161), so we won't have any empty accounts in the trie.
             let was_empty = initial_state_account.is_empty();
-            let removed = new_state_account.is_empty() && !was_empty;
+            // EELS destroys an account that a write leaves empty even when it
+            // was *already* empty (`modify_state` -> `destroy_account`), which
+            // `!was_empty` alone misses. The only account for which that has
+            // anything to delete is one holding storage and nothing else, and
+            // the only thing that reaches this branch for one is
+            // `VM::clear_storage_of_emptied_account` — which runs solely on a
+            // header past `binaryTreeTime`, so the MPT sees exactly what it
+            // always did. `initial_state_account.exists` keeps the ordinary
+            // same-transaction create-and-destroy out of it: that account was
+            // absent before the transaction, so `was_empty` is true for it too
+            // and there is nothing in either trie to remove.
+            let cleared_while_empty = was_destroyed && was_empty && initial_state_account.exists;
+            let removed = new_state_account.is_empty() && (!was_empty || cleared_while_empty);
 
             if !removed && !acc_info_updated && !storage_updated && !removed_storage {
                 // Account hasn't been updated
@@ -926,6 +950,75 @@ impl<'a> VM<'a> {
             self.increase_account_balance(to, value)?;
         }
 
+        Ok(())
+    }
+
+    /// Destroy an account that a write has just left empty, as EIP-161
+    /// requires and EELS `modify_state` does: it calls `destroy_account`
+    /// after *every* write that leaves the account existing and empty, and
+    /// `destroy_account` takes the account's storage with it.
+    ///
+    /// # Why `removed` does not already cover this
+    ///
+    /// [`get_state_transitions`] raises `removed` only for an account that
+    /// *stopped* being non-empty (`is_empty() && !was_empty`). That is
+    /// deliberate and right for the Merkle Patricia Trie: an account that was
+    /// already empty was pruned at the Merge, so there is nothing in the state
+    /// trie to delete and emitting a removal would be pure churn.
+    ///
+    /// Exactly one shape survives that pruning — an account holding *only*
+    /// storage, with zero balance, zero nonce and no code. A genesis alloc can
+    /// build one; execution cannot (EIP-7610 exists because 28 of them are on
+    /// mainnet). For that account the write above is observable, and this is
+    /// the only case where it is: destroying an empty account with no storage
+    /// removes nothing on either trie.
+    ///
+    /// # What the caller must have checked
+    ///
+    /// That the destruction is observable *and* that this header commits an
+    /// EIP-8297 binary root. Under the binary trie an account's storage leaves
+    /// are its only presence in the tree, so dropping them is what makes
+    /// `has_storage` — and through it EIP-7610's create-collision check —
+    /// answer false afterwards. The MPT answers the opposite, keeping the
+    /// orphaned storage trie and its `storage_root`, and that divergence is
+    /// deliberate: it is what `state_pbt.apply_changes_to_state` popping
+    /// `_storage[address]` and `state_mpt.apply_changes_to_state` not popping
+    /// `_storage_tries[address]` mean, and what
+    /// `create2_after_eip161_clear_of_storage_holding_account` pins. So the
+    /// caller gates on *this header's* timestamp, never on whether the chain
+    /// schedules the fork, and a pre-activation block writes the MPT exactly
+    /// as it did before.
+    ///
+    /// Marking the account `DestroyedModified` is what makes
+    /// [`get_state_transitions`] emit `removed_storage`, which is the update
+    /// flag that already means "drop this account's storage, keep the
+    /// account".
+    pub fn clear_storage_of_emptied_account(
+        &mut self,
+        address: Address,
+    ) -> Result<(), InternalError> {
+        // Back the cached slots up individually: `backup_account_info` saves an
+        // account's info, status and flags but never its storage map, so a
+        // reverting ancestor frame would otherwise not get these values back.
+        let cached_slots: Vec<(H256, U256)> = self
+            .db
+            .get_account(address)?
+            .storage
+            .iter()
+            .map(|(key, value)| (*key, *value))
+            .collect();
+        for (key, value) in cached_slots {
+            self.backup_storage_slot(address, key, value)?;
+        }
+
+        let account = self.get_account_mut(address)?;
+        account.storage.clear();
+        account.has_storage = false;
+        // `Destroyed` first, then `Modified`, which promotes it to
+        // `DestroyedModified` — the status `get_state_transitions` reads as
+        // "storage is gone but the account entry is not".
+        account.mark_destroyed();
+        account.mark_modified();
         Ok(())
     }
 

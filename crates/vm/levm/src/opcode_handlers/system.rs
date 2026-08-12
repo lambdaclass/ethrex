@@ -791,6 +791,36 @@ impl OpcodeHandler for OpSelfDestructHandler {
                 vm.transfer(to, beneficiary, balance)?;
             }
 
+            // EELS `move_ether` writes the beneficiary through `modify_state`
+            // whatever the amount, and `modify_state` destroys an account that
+            // the write leaves existing and empty. `vm.transfer` above returns
+            // early on a zero balance, so nothing marked the beneficiary — and
+            // even a non-zero transfer would not, because `removed` only fires
+            // for an account that *stopped* being non-empty.
+            //
+            // That gap is observable for exactly one account shape, a
+            // storage-only account (see
+            // `clear_storage_of_emptied_account`), and only under EIP-8297,
+            // where an account's storage leaves are its only presence in the
+            // tree. Asked of *this header's* timestamp, never of the chain: a
+            // pre-activation block commits an MPT root and has to keep the
+            // orphaned storage trie the MPT has always kept.
+            //
+            // The two cheap local checks come first so a chain that never
+            // schedules `binaryTreeTime` — and every ordinary SELFDESTRUCT on
+            // one that does — never reaches the config lookup.
+            let beneficiary_account = vm.db.get_account(beneficiary)?;
+            if beneficiary_account.is_empty()
+                && beneficiary_account.has_storage
+                && vm
+                    .db
+                    .store
+                    .get_chain_config()?
+                    .is_binary_tree_active(vm.env.timestamp)
+            {
+                vm.clear_storage_of_emptied_account(beneficiary)?;
+            }
+
             // Selfdestruct is executed in the same transaction as the contract was created
             if vm.substate.is_account_created(&to) {
                 // [EIP-8246] (Amsterdam+): balance is NOT burned; nonce/code/storage are cleared
