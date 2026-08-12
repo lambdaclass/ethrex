@@ -15,6 +15,8 @@ pub mod process;
 #[cfg(feature = "api")]
 pub mod profiling;
 #[cfg(any(feature = "api", feature = "metrics"))]
+pub mod pruning;
+#[cfg(any(feature = "api", feature = "metrics"))]
 pub mod reorg;
 #[cfg(feature = "api")]
 pub mod rpc;

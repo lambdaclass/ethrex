@@ -3256,6 +3256,7 @@ dependencies = [
  "ethrex-vm",
  "eyre",
  "hex",
+ "humantime",
  "itertools 0.14.0",
  "lazy_static",
  "local-ip-address",
@@ -3855,6 +3856,7 @@ dependencies = [
  "bytes",
  "ethrex-common 23.0.0",
  "ethrex-crypto",
+ "ethrex-metrics",
  "ethrex-rlp 23.0.0",
  "ethrex-trie 23.0.0",
  "fastbloom",
@@ -3866,6 +3868,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
  "tracing",
 ]
 

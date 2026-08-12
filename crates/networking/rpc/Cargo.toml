@@ -60,6 +60,9 @@ hex-literal = "0.4.1"
 
 [dev-dependencies]
 hex-literal = "0.4.1"
+# `testing` exposes Store::prune_block_heights_for_test, used by the pruning RPC
+# tests to simulate a pruned datadir. The primitive itself is crate-private.
+ethrex-storage = { workspace = true, features = ["testing"] }
 
 [lib]
 path = "./lib.rs"

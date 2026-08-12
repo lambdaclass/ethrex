@@ -26,8 +26,8 @@ use ethrex_p2p::{
     utils::public_key_from_signing_key,
 };
 use ethrex_storage::{
-    DB_COMMIT_THRESHOLD, EngineType, Store, StoreConfig, error::StoreError, has_valid_db,
-    read_chain_id_from_db,
+    DB_COMMIT_THRESHOLD, EngineType, HistoryPruner, Store, StoreConfig, error::StoreError,
+    has_valid_db, read_chain_id_from_db,
 };
 use local_ip_address::{local_ip, local_ipv6};
 use rand::rngs::OsRng;
@@ -731,10 +731,22 @@ async fn set_sync_block(store: &Store) {
     }
 }
 
+/// The final element is the history pruner's task handle, present only when
+/// `--history.retention` is set. Shutdown must await it before `Store::shutdown`:
+/// the pruner commits through its own write transactions rather than the persist
+/// worker, so a pass still in flight would otherwise land its batch after the final
+/// fsync and force WAL recovery on the next start.
 pub async fn init_l1(
     opts: Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
-) -> eyre::Result<(PathBuf, CancellationToken, PeerTable, NodeRecord, Store)> {
+) -> eyre::Result<(
+    PathBuf,
+    CancellationToken,
+    PeerTable,
+    NodeRecord,
+    Store,
+    Option<tokio::task::JoinHandle<()>>,
+)> {
     let network = get_network(&opts);
     let datadir = crate::cli::compute_effective_datadir(&opts.datadir, &network, opts.dev);
 
@@ -821,6 +833,24 @@ pub async fn init_l1(
 
     let cancel_token = tokio_util::sync::CancellationToken::new();
 
+    // History pruner — only when --history.retention is set. Spawned with the
+    // cancel token so shutdown stops further passes before `Store::shutdown`
+    // fsyncs; the pruner writes outside the persist worker, so a late batch would
+    // leave the DB needing WAL recovery.
+    // Handed back to the caller so shutdown can await this specific task before
+    // `Store::shutdown` fsyncs. The shared `tracker` is unsuitable: awaiting it would
+    // also wait on p2p/RPC tasks that are not guaranteed to stop promptly.
+    let pruner_handle = opts.history_retention.map(|retention| {
+        info!(
+            retention_secs = retention.as_secs(),
+            "History pruning enabled: block bodies, receipts and transaction locations older \
+             than the retention window will be deleted permanently (canonical headers are kept). \
+             This cannot be undone without a resync"
+        );
+        let pruner = HistoryPruner::new(store.clone(), retention);
+        tokio::spawn(pruner.run(cancel_token.clone()))
+    });
+
     let p2p_context = P2PContext::new(
         local_p2p_node.clone(),
         network_config,
@@ -882,6 +912,7 @@ pub async fn init_l1(
         peer_handler.peer_table,
         local_node_record,
         store,
+        pruner_handle,
     ))
 }
 
@@ -1033,7 +1064,19 @@ pub async fn regenerate_head_state(
 
     let mut current_last_header = last_header;
 
-    // Find the last block with a known state root
+    // Find the last block with a known state root.
+    //
+    // `has_state_root` (not `has_state_root_on_disk`) is correct here only because
+    // this runs before any block executes in this process, so the in-memory
+    // `TrieLayerCache` it reads through is still empty and it answers purely from
+    // disk. `Store::get_latest_persisted_state_block` — the history pruner's floor —
+    // must land on the same boundary this loop finds, and deliberately uses the
+    // `_on_disk` variant because it runs on a live node where the cache would make
+    // `has_state_root` report the head as persisted.
+    //
+    // If a future change warms the trie cache before this point, switch this call to
+    // `has_state_root_on_disk` too: otherwise regeneration would stop short of the
+    // real durable boundary and the pruner's floor would no longer match it.
     while !store.has_state_root(current_last_header.state_root)? {
         if current_last_header.number == 0 {
             return Err(eyre::eyre!(

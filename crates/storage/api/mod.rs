@@ -81,11 +81,48 @@ pub trait StorageReadView: Send + Sync {
         keys.iter().map(|k| self.get(table, k)).collect()
     }
 
+    /// Like [`multi_get`](Self::multi_get), but asks the backend not to admit the
+    /// blocks it touches into the block cache.
+    ///
+    /// For one-shot scans over cold, effectively random keys — the history pruner
+    /// reading `TRANSACTION_LOCATIONS` for a batch of old transactions is the
+    /// motivating case — cache admission is pure harm: the blocks will not be read
+    /// again, and admitting them evicts the hot working set (on RocksDB the cache is
+    /// shared across every column family, so this displaces state-trie and
+    /// flat-key-value blocks that block execution depends on).
+    ///
+    /// Only a hint. Backends without a per-read cache policy fall back to
+    /// [`multi_get`](Self::multi_get), so results are always identical.
+    fn multi_get_uncached(
+        &self,
+        table: &'static str,
+        keys: &[&[u8]],
+    ) -> Vec<Result<Option<Vec<u8>>, StoreError>> {
+        self.multi_get(table, keys)
+    }
+
     /// Returns an iterator over all key-value pairs with the given prefix.
     fn prefix_iterator(
         &self,
         table: &'static str,
         prefix: &[u8],
+    ) -> Result<Box<dyn Iterator<Item = PrefixResult> + '_>, StoreError>;
+
+    /// Returns an iterator over every key-value pair in the table, in
+    /// lexicographic key order.
+    ///
+    /// Unlike [`prefix_iterator`](Self::prefix_iterator), this is guaranteed
+    /// to traverse the entire CF regardless of any prefix-extractor / bloom
+    /// configuration on the backend. May be slow on large tables — intended
+    /// for migrations and similar maintenance tasks rather than hot paths.
+    ///
+    /// Laziness is backend-dependent and is *not* part of this contract: the
+    /// RocksDB backend streams, but the in-memory backend materializes and sorts
+    /// the whole table before yielding its first item. Callers that need bounded
+    /// heap on an arbitrary backend must bound the table, not rely on the iterator.
+    fn full_scan(
+        &self,
+        table: &'static str,
     ) -> Result<Box<dyn Iterator<Item = PrefixResult> + '_>, StoreError>;
 
     /// Returns the lowest key in `table` by lexicographic order, or `None` if the table is
@@ -124,11 +161,13 @@ pub trait StorageWriteBatch: Send {
     ///
     /// Half-open range; `end` is exclusive. Equivalent to enumerating each key
     /// in the range and calling [`delete`], but backends with native range-delete
-    /// support (e.g. RocksDB's `delete_range_cf`) can implement it more efficiently.
+    /// support (e.g. RocksDB's `delete_range_cf`) can implement it more efficiently
+    /// — a single range tombstone instead of N point deletes.
     ///
     /// Lexicographic byte order is used for the range bounds — callers using
     /// numeric keys must encode them in a representation whose lex order matches
-    /// numeric order (e.g. `u64::to_be_bytes()`).
+    /// numeric order (e.g. `u64::to_be_bytes()`). A little-endian-keyed CF (such
+    /// as `CANONICAL_BLOCK_HASHES`) would delete the wrong set of keys.
     fn delete_range(
         &mut self,
         table: &'static str,

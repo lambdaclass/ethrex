@@ -409,6 +409,31 @@ impl StorageReadView for RocksDBReadTx {
             .collect()
     }
 
+    fn multi_get_uncached(
+        &self,
+        table: &'static str,
+        keys: &[&[u8]],
+    ) -> Vec<Result<Option<Vec<u8>>, StoreError>> {
+        let Some(cf) = self.db.cf_handle(table) else {
+            let err_msg = format!("Table {} not found", table);
+            return (0..keys.len())
+                .map(|_| Err(StoreError::Custom(err_msg.clone())))
+                .collect();
+        };
+        // `fill_cache(false)` keeps this scan's data blocks out of the shared block
+        // cache. Correctness is unaffected — it only suppresses cache admission.
+        let mut opts = rocksdb::ReadOptions::default();
+        opts.fill_cache(false);
+        self.db
+            .batched_multi_get_cf_opt(&cf, keys.iter().copied(), false, &opts)
+            .into_iter()
+            .map(|res| {
+                res.map(|opt| opt.map(|slice| slice.to_vec()))
+                    .map_err(|e| StoreError::Custom(format!("multi_get_uncached {}: {}", table, e)))
+            })
+            .collect()
+    }
+
     fn prefix_iterator(
         &self,
         table: &'static str,
@@ -422,6 +447,30 @@ impl StorageReadView for RocksDBReadTx {
         let iter = self.db.prefix_iterator_cf(&cf, prefix).map(|result| {
             result.map_err(|e| StoreError::Custom(format!("Failed to iterate: {e}")))
         });
+        Ok(Box::new(iter))
+    }
+
+    fn full_scan(
+        &self,
+        table: &'static str,
+    ) -> Result<Box<dyn Iterator<Item = PrefixResult> + '_>, StoreError> {
+        let cf = self
+            .db
+            .cf_handle(table)
+            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
+
+        // Use `iterator_cf(IteratorMode::Start)` rather than
+        // `prefix_iterator_cf(_, &[])`: the latter is subject to prefix-search
+        // semantics (prefix_same_as_start, prefix-bloom early-termination)
+        // when a prefix extractor is configured, which would silently truncate
+        // a "full scan". This unconditional scan is the same primitive used
+        // by `clear_table`.
+        let iter = self
+            .db
+            .iterator_cf(&cf, rocksdb::IteratorMode::Start)
+            .map(|result| {
+                result.map_err(|e| StoreError::Custom(format!("Failed to iterate: {e}")))
+            });
         Ok(Box::new(iter))
     }
 

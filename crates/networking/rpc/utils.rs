@@ -24,6 +24,7 @@ use ethrex_blockchain::error::MempoolError;
 /// - `-32000`: Generic server error
 /// - `-38001` to `-38006`: Engine API specific errors
 /// - `3`: Execution reverted/halted
+/// - `4444`: Pruned history unavailable (matches geth/reth)
 #[derive(Debug, thiserror::Error)]
 pub enum RpcErr {
     #[error("Method not found: {0}")]
@@ -73,6 +74,16 @@ pub enum RpcErr {
     InvalidPayload(String),
     #[error("Proof generation unavailable: {0}")]
     ProofGenerationUnavailable(String),
+    /// The request names history this node no longer stores, because it was
+    /// pruned (`--history.retention`) or never fetched (snap-sync pre-pivot
+    /// range). Distinct from an empty result: the data may well exist on the
+    /// chain, this node just cannot serve it, so the caller should retry
+    /// against an archive node rather than record the empty answer.
+    ///
+    /// Code `4444` matches geth (`core/history`: "pruned history unavailable")
+    /// and reth, so existing clients recognise it.
+    #[error("Pruned history unavailable: {0}")]
+    PrunedHistoryUnavailable(String),
 }
 
 impl From<RpcErr> for RpcErrorMetadata {
@@ -204,6 +215,11 @@ impl From<RpcErr> for RpcErrorMetadata {
                 code: -39004,
                 data: None,
                 message: format!("Proof generation unavailable: {context}"),
+            },
+            RpcErr::PrunedHistoryUnavailable(context) => RpcErrorMetadata {
+                code: 4444,
+                data: None,
+                message: format!("pruned history unavailable: {context}"),
             },
         }
     }

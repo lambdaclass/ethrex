@@ -149,6 +149,11 @@ Node options:
           
           [env: ETHREX_PRECOMPUTE_WITNESSES=]
 
+      --history.retention <DURATION>
+          Enable history pruning. Bodies/receipts/tx-locations older than this wall-clock duration are deleted (canonical headers preserved). Example: --history.retention=30d
+          
+          [env: ETHREX_HISTORY_RETENTION=]
+
       --max-reorg-depth <MAX_REORG_DEPTH>
           Optional operator override for the maximum reorg depth. Omit for finality-bounded cap. Set to 0 to disable deep reorgs entirely. Set to d to reject reorgs of depth > d.
           
