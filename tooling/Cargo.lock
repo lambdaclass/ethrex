@@ -3280,11 +3280,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethrex-binary-trie"
+version = "23.0.0"
+dependencies = [
+ "blake3",
+ "ethereum-types",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "ethrex-blockchain"
 version = "23.0.0"
 dependencies = [
  "bytes",
  "crossbeam",
+ "ethrex-binary-trie",
  "ethrex-common 23.0.0",
  "ethrex-crypto",
  "ethrex-guest-program",
@@ -3337,6 +3347,7 @@ dependencies = [
  "bytes",
  "crc32fast",
  "ethereum-types",
+ "ethrex-binary-trie",
  "ethrex-crypto",
  "ethrex-rlp 23.0.0",
  "ethrex-trie 23.0.0",
@@ -3655,6 +3666,7 @@ dependencies = [
  "crossbeam",
  "ctr",
  "ethereum-types",
+ "ethrex-binary-trie",
  "ethrex-blockchain",
  "ethrex-common 23.0.0",
  "ethrex-crypto",
@@ -3762,6 +3774,7 @@ dependencies = [
  "bytes",
  "envy",
  "ethereum-types",
+ "ethrex-binary-trie",
  "ethrex-blockchain",
  "ethrex-common 23.0.0",
  "ethrex-crypto",
@@ -3853,6 +3866,7 @@ version = "23.0.0"
 dependencies = [
  "anyhow",
  "bytes",
+ "ethrex-binary-trie",
  "ethrex-common 23.0.0",
  "ethrex-crypto",
  "ethrex-rlp 23.0.0",

@@ -2,6 +2,7 @@ use bytes::BufMut;
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use std::fmt::Display;
 
+use crate::rlpx::pbtsnap::{GetPbtLeafRange, PbtLeafRange};
 use crate::rlpx::snap::{
     AccountRange, ByteCodes, GetAccountRange, GetByteCodes, GetStorageRanges, GetTrieNodes,
     StorageRanges, TrieNodes,
@@ -38,6 +39,23 @@ const BASED_CAPABILITY_OFFSET_ETH_69: u8 = 0x31;
 const BASED_CAPABILITY_OFFSET_ETH_70: u8 = 0x31;
 const BASED_CAPABILITY_OFFSET_ETH_71: u8 = 0x33;
 
+/// Message codes `based` occupies: `NewBlock` (0x00) and `BatchSealed` (0x01).
+///
+/// Named rather than folded into a per-version `pbtsnap` constant because it is
+/// the *reason* pbtsnap sits where it does. Every offset below this one is a
+/// hard-coded per-version value that foreign peers already depend on; every
+/// capability stacked above is derived, so adding one cannot move an existing
+/// message id by accident.
+pub const BASED_CAPABILITY_SLOT_COUNT: u8 = 2;
+
+/// Message codes `pbtsnap/1` occupies: `GetPbtLeafRange` (0x00) and
+/// `PbtLeafRange` (0x01), plus two reserved for a future healing pair.
+///
+/// The reserved pair is counted. A capability stacked above pbtsnap must offset
+/// past it, or adding healing later would silently shift that capability's ids
+/// on the wire.
+pub const PBTSNAP_CAPABILITY_SLOT_COUNT: u8 = 4;
+
 #[derive(Debug, Clone, Copy, Default)]
 pub enum EthCapVersion {
     #[default]
@@ -68,6 +86,22 @@ impl EthCapVersion {
             EthCapVersion::V70 => BASED_CAPABILITY_OFFSET_ETH_70,
             EthCapVersion::V71 => BASED_CAPABILITY_OFFSET_ETH_71,
         }
+    }
+
+    /// Where `pbtsnap/1`'s message ids start: directly above `based`.
+    ///
+    /// Derived rather than tabulated, unlike every offset below it. The
+    /// hard-coded table exists because those offsets are what foreign peers
+    /// already speak and must not move; pbtsnap is ours alone, so the safest
+    /// thing it can be is a value that cannot be edited out of step with the
+    /// capability underneath it.
+    ///
+    /// Independent of the `l2` feature. `based` occupies its slot range whether
+    /// or not this build can speak it, so a node compiled without `l2` and one
+    /// compiled with it agree on where pbtsnap sits — otherwise the two could
+    /// not talk to each other.
+    pub const fn pbtsnap_capability_offset(&self) -> u8 {
+        self.based_capability_offset() + BASED_CAPABILITY_SLOT_COUNT
     }
 }
 
@@ -120,6 +154,9 @@ pub enum Message {
     // based capability
     #[cfg(feature = "l2")]
     L2(messages::L2Message),
+    // pbtsnap capability (ethrex-experimental; see docs/eip-draft-pbtsnap.md)
+    GetPbtLeafRange(GetPbtLeafRange),
+    PbtLeafRange(PbtLeafRange),
 }
 
 impl Message {
@@ -181,6 +218,14 @@ impl Message {
             Message::ByteCodes(_) => eth_version.snap_capability_offset() + ByteCodes::CODE,
             Message::GetTrieNodes(_) => eth_version.snap_capability_offset() + GetTrieNodes::CODE,
             Message::TrieNodes(_) => eth_version.snap_capability_offset() + TrieNodes::CODE,
+
+            // pbtsnap capability
+            Message::GetPbtLeafRange(_) => {
+                eth_version.pbtsnap_capability_offset() + GetPbtLeafRange::CODE
+            }
+            Message::PbtLeafRange(_) => {
+                eth_version.pbtsnap_capability_offset() + PbtLeafRange::CODE
+            }
 
             #[cfg(feature = "l2")]
             // based capability
@@ -290,7 +335,7 @@ impl Message {
                 TrieNodes::CODE => Ok(Message::TrieNodes(TrieNodes::decode(data)?)),
                 _ => Err(RLPDecodeError::MalformedData),
             }
-        } else {
+        } else if msg_id < eth_version.pbtsnap_capability_offset() {
             // based capability
             #[cfg(feature = "l2")]
             return Ok(Message::L2(
@@ -309,6 +354,18 @@ impl Message {
 
             #[cfg(not(feature = "l2"))]
             Err(RLPDecodeError::MalformedData)
+        } else {
+            // pbtsnap capability. The two reserved codes (0x02 GetPbtNodes,
+            // 0x03 PbtNodes) fall through to the same error as any unknown id:
+            // a peer speaking a future pbtsnap with healing must be told we do
+            // not understand it, not have its bytes read as something else.
+            match msg_id - eth_version.pbtsnap_capability_offset() {
+                GetPbtLeafRange::CODE => {
+                    Ok(Message::GetPbtLeafRange(GetPbtLeafRange::decode(data)?))
+                }
+                PbtLeafRange::CODE => Ok(Message::PbtLeafRange(PbtLeafRange::decode(data)?)),
+                _ => Err(RLPDecodeError::MalformedData),
+            }
         }
     }
 
@@ -352,6 +409,8 @@ impl Message {
             Message::ByteCodes(msg) => msg.encode(buf),
             Message::GetTrieNodes(msg) => msg.encode(buf),
             Message::TrieNodes(msg) => msg.encode(buf),
+            Message::GetPbtLeafRange(msg) => msg.encode(buf),
+            Message::PbtLeafRange(msg) => msg.encode(buf),
             #[cfg(feature = "l2")]
             Message::L2(l2_msg) => match l2_msg {
                 L2Message::BatchSealed(msg) => msg.encode(buf),
@@ -384,6 +443,8 @@ impl Message {
             Message::TrieNodes(message) => Some(message.id),
             Message::GetBlockAccessLists(message) => Some(message.id),
             Message::BlockAccessLists(message) => Some(message.id),
+            Message::GetPbtLeafRange(message) => Some(message.id),
+            Message::PbtLeafRange(message) => Some(message.id),
             // The rest of the message types does not have a request id.
             Message::Hello(_)
             | Message::Disconnect(_)
@@ -439,6 +500,8 @@ impl Message {
             Message::ByteCodes(_) => "ByteCodes",
             Message::GetTrieNodes(_) => "GetTrieNodes",
             Message::TrieNodes(_) => "TrieNodes",
+            Message::GetPbtLeafRange(_) => "GetPbtLeafRange",
+            Message::PbtLeafRange(_) => "PbtLeafRange",
             #[cfg(feature = "l2")]
             Message::L2(l2_msg) => match l2_msg {
                 L2Message::NewBlock(_) => "L2NewBlock",
@@ -484,6 +547,8 @@ impl Display for Message {
             Message::ByteCodes(_) => "snap:ByteCodes".fmt(f),
             Message::GetTrieNodes(_) => "snap:GetTrieNodes".fmt(f),
             Message::TrieNodes(_) => "snap:TrieNodes".fmt(f),
+            Message::GetPbtLeafRange(_) => "pbtsnap:GetPbtLeafRange".fmt(f),
+            Message::PbtLeafRange(_) => "pbtsnap:PbtLeafRange".fmt(f),
             #[cfg(feature = "l2")]
             Message::L2(l2_msg) => match l2_msg {
                 L2Message::BatchSealed(_) => "based:BatchSealed".fmt(f),

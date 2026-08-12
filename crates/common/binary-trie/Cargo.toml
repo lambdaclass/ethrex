@@ -1,0 +1,24 @@
+[package]
+name = "ethrex-binary-trie"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
+license.workspace = true
+description = "EIP-8297 Partitioned Binary Tree for the ethrex Ethereum execution client"
+repository.workspace = true
+
+[dependencies]
+ethereum-types.workspace = true
+blake3.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+hex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+hex-literal.workspace = true
+proptest = "1.0.0"
+
+[lints]
+workspace = true

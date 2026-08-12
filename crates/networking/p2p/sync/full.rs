@@ -10,7 +10,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use ethrex_blockchain::{BatchBlockProcessingFailure, Blockchain, error::ChainError};
 use ethrex_common::{
     H256,
-    types::{Block, BlockBody, BlockHeader, block_access_list::BlockAccessList},
+    types::{Block, BlockBody, BlockHeader, BlockNumber, block_access_list::BlockAccessList},
 };
 use ethrex_storage::{DB_COMMIT_THRESHOLD, Store};
 use tokio::sync::RwLock;
@@ -95,7 +95,37 @@ async fn request_bodies_with_retry(
 /// on them fails forever with `state root missing`, so full sync must keep and re-execute
 /// them rather than skip them as "already canonical".
 pub fn is_resume_point(store: &Store, header: &BlockHeader) -> Result<bool, SyncError> {
-    Ok(store.is_canonical_sync(header.hash())? && store.has_state_root(header.state_root)?)
+    let hash = header.hash();
+    // Per header, not per root: past `binaryTreeTime` the post-state lives in
+    // the binary trie and a root-only check calls every such block stateless,
+    // which would re-execute the whole post-activation chain every cycle.
+    Ok(store.is_canonical_sync(hash)? && store.has_state_for_header(hash, header)?)
+}
+
+/// Whether this node holds the post-state of the block at `hash`.
+///
+/// An unknown header answers `false`: the sync cycle uses this to decide
+/// whether it can execute the blocks stacked on top of that one, and a block
+/// it has never seen is not a base it can build on.
+///
+/// The sync cycle asks this in three places — before executing pending blocks
+/// on a rewound head, before re-executing from a resume point, and before
+/// executing a downloaded batch. All three spelled it out inline, which is why
+/// all three had to be found and fixed by hand when a root-only check turned
+/// out to be wrong past `binaryTreeTime`, and why none of them had a test.
+pub fn state_available_at(store: &Store, hash: H256) -> Result<bool, SyncError> {
+    let Some(header) = store.get_block_header_by_hash(hash)? else {
+        return Ok(false);
+    };
+    Ok(store.has_state_for_header(hash, &header)?)
+}
+
+/// [`state_available_at`] for a canonical block identified by number.
+pub fn state_available_at_number(store: &Store, number: BlockNumber) -> Result<bool, SyncError> {
+    let Some(header) = store.get_block_header(number)? else {
+        return Ok(false);
+    };
+    Ok(store.has_state_for_header(header.hash(), &header)?)
 }
 
 /// Index of the first resume point in a single newest->oldest header batch, or `None` if the
@@ -179,12 +209,11 @@ pub async fn sync_cycle_full(
     // header-fetch abort below returns without executing `pending_blocks`, each retry runs
     // against a head that has moved further ahead, and the node trails the chain
     // indefinitely, never reporting synced and answering every newPayload with SYNCING.
-    if !pending_blocks.is_empty() && store.is_canonical_sync(sync_head)? {
-        let parent_has_state = match store.get_block_header_by_hash(sync_head)? {
-            Some(parent) => store.has_state_root(parent.state_root)?,
-            None => false,
-        };
-        if parent_has_state {
+    if !pending_blocks.is_empty()
+        && store.is_canonical_sync(sync_head)?
+        && state_available_at(&store, sync_head)?
+    {
+        {
             info!(
                 "Executing {} pending blocks for full sync (gap fully covered by blocks from the consensus client, no peer download needed). First block hash: {:#?} Last block hash: {:#?}",
                 pending_blocks.len(),
@@ -280,6 +309,11 @@ pub async fn sync_cycle_full(
             sync_target_logged = true;
             let (target, target_ts) =
                 fcu_head.unwrap_or((first_header.number, first_header.timestamp));
+            // Record it before the `behind` gate below: a node that is stuck
+            // needs `eth_syncing` to report this target precisely when it
+            // cannot resolve the head hash itself, and that is independent of
+            // whether the distance was worth logging.
+            diagnostics.write().await.sync_target = Some(target);
             let local_head = store.get_latest_block_number().await?;
             let behind = target.saturating_sub(local_head);
             if behind > FOLLOW_DISTANCE {
@@ -354,11 +388,7 @@ pub async fn sync_cycle_full(
             // pruned canonical block and failed at block N; the stateful-resume-point gate now walks
             // past it to genesis, so this guard is required to avoid a doomed re-exec from block 0.)
             let resume_parent_number = start_block_number.saturating_sub(1);
-            let resume_parent_has_state = match store.get_block_header(resume_parent_number)? {
-                Some(parent) => store.has_state_root(parent.state_root)?,
-                None => false,
-            };
-            if !resume_parent_has_state {
+            if !state_available_at_number(&store, resume_parent_number)? {
                 let local_head = store.get_latest_block_number().await?;
                 warn!(
                     resume_parent_number,
@@ -558,12 +588,7 @@ pub async fn sync_cycle_full(
     // presence rather than `reached_target`: the common follow-head case has no gap to download
     // (nothing is sent, so `reached_target` stays false) yet the parent state is already on disk.
     if let Some(oldest_pending) = pending_blocks.first() {
-        let parent_has_state =
-            match store.get_block_header_by_hash(oldest_pending.header.parent_hash)? {
-                Some(parent) => store.has_state_root(parent.state_root)?,
-                None => false,
-            };
-        if !parent_has_state {
+        if !state_available_at(&store, oldest_pending.header.parent_hash)? {
             let local_head = store.get_latest_block_number().await?;
             warn!(
                 local_head,

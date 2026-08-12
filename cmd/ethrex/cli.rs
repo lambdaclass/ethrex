@@ -121,6 +121,29 @@ pub struct Options {
         env = "ETHREX_ROCKSDB_BLOCK_CACHE_SIZE",
     )]
     pub rocksdb_block_cache_size: usize,
+    #[arg(
+        long = "rocksdb.statistics",
+        default_value = "false",
+        help = "Collect RocksDB statistics (bloom hit/miss, cache hit/miss, read \
+                latency). Costs throughput; for diagnostic runs only.",
+        long_help = "Installs a RocksDB Statistics object, making bloom-filter and \
+                     block-cache hit/miss tickers and read/write latency histograms \
+                     readable, and dumps them (with per-table key counts and sizes) \
+                     to the log on graceful shutdown.\n\
+                     \n\
+                     Off by default because RocksDB documents statistics collection \
+                     as costing roughly 5-10% throughput. Turn it on for a devnet or \
+                     a performance investigation, not for a production node.\n\
+                     \n\
+                     Independent of --metrics.enabled: that starts the Prometheus \
+                     endpoint and is cheap enough to leave on, whereas this is a \
+                     measurable tax on every read and write.\n\
+                     \n\
+                     ETHREX_ROCKSDB_STATISTICS sets the same value.",
+        help_heading = "Storage options",
+        env = "ETHREX_ROCKSDB_STATISTICS"
+    )]
+    pub rocksdb_enable_statistics: bool,
     #[arg(long = "syncmode", default_value = "snap", value_name = "SYNC_MODE", value_parser = utils::parse_sync_mode, help = "The way in which the node will sync its state.", long_help = "Can be either \"full\" or \"snap\" with \"snap\" as default value.", help_heading = "P2P options", env = "ETHREX_SYNCMODE")]
     pub syncmode: SyncMode,
     #[arg(
@@ -505,6 +528,19 @@ pub struct Options {
         env = "ETHREX_MAX_REORG_DEPTH"
     )]
     pub max_reorg_depth: Option<u64>,
+    #[arg(
+        long = "experimental.binary-tree-delay",
+        value_name = "SECONDS",
+        help = "EXPERIMENTAL: schedule the EIP-8297 binary-tree state commitment this many seconds after the genesis timestamp.",
+        long_help = "EXPERIMENTAL, devnets only. Schedules the EIP-8297 binary-tree state commitment at `genesis.timestamp + SECONDS`; from the first block at or after that time, header.state_root is the binary-trie root instead of the Merkle-Patricia-Trie root.\n\
+                     \n\
+                     The delay is relative, not an absolute timestamp, so that a network definition written before genesis exists still gives every node the same absolute schedule. Mutually exclusive with a `binaryTreeTime` in the genesis config; passing both is rejected.\n\
+                     \n\
+                     NOT PERSISTED. The derived timestamp lives only in the running process, so every boot must re-supply the identical value. A node restarted without it reopens unscheduled and will reject the first post-activation block.",
+        help_heading = "Node options",
+        env = "ETHREX_EXPERIMENTAL_BINARY_TREE_DELAY"
+    )]
+    pub experimental_binary_tree_delay: Option<u64>,
 }
 
 impl Options {
@@ -577,6 +613,7 @@ impl Default for Options {
             bootnodes: Default::default(),
             datadir: Default::default(),
             rocksdb_block_cache_size: ethrex_storage::DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
+            rocksdb_enable_statistics: false,
             syncmode: Default::default(),
             metrics_addr: "0.0.0.0".to_owned(),
             metrics_port: Default::default(),
@@ -604,6 +641,7 @@ impl Default for Options {
             no_bal_prefetch: false,
             no_bal_parallel_trie: false,
             max_reorg_depth: None,
+            experimental_binary_tree_delay: None,
         }
     }
 }
@@ -1511,5 +1549,19 @@ mod tests {
                 RpcNamespace::Admin,
             ]
         );
+    }
+
+    /// The exact spelling is load-bearing: scheduled devnet definitions pass it
+    /// verbatim, and every node in the network must agree on the value.
+    #[test]
+    fn experimental_binary_tree_delay_parses_and_defaults_to_unset() {
+        assert_eq!(
+            CLI::parse_from(["ethrex"])
+                .opts
+                .experimental_binary_tree_delay,
+            None
+        );
+        let cli = CLI::parse_from(["ethrex", "--experimental.binary-tree-delay=120"]);
+        assert_eq!(cli.opts.experimental_binary_tree_delay, Some(120));
     }
 }

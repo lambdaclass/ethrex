@@ -3,8 +3,18 @@ use tracing::debug;
 
 use crate::rpc::{RpcApiContext, RpcHandler};
 use crate::types::account_proof::{AccountProof, StorageProof};
+use crate::types::binary_account_proof::{
+    AccountField, AccountFieldProof, BINARY_PROOF_FORMAT, BinaryAccountProof, BinaryStorageProof,
+    StorageZone,
+};
 use crate::types::block_identifier::{BlockIdentifierOrHash, BlockTag};
 use crate::utils::RpcErr;
+use ethrex_binary_trie::embedding::{
+    HEADER_STORAGE_SLOTS, address20_to_address32, get_tree_key_for_basic_data,
+    get_tree_key_for_code_hash, get_tree_key_for_delegation, get_tree_key_for_storage_slot,
+};
+use ethrex_binary_trie::trie::{WalkEnd, verify_walk};
+use ethrex_common::types::pbt_state::account_info_from_header_leaves;
 use ethrex_common::{Address, BigEndianHash, H256, U256, serde_utils};
 
 pub struct GetBalanceRequest {
@@ -29,6 +39,27 @@ pub struct GetTransactionCountRequest {
 }
 
 pub struct GetProofRequest {
+    pub address: Address,
+    pub storage_keys: Vec<H256>,
+    pub block: BlockIdentifierOrHash,
+}
+
+/// `eth_getProofV2` — the EIP-8297 binary-trie counterpart of
+/// [`GetProofRequest`].
+///
+/// Same parameters as `eth_getProof`, a different response type, and the exact
+/// mirror of its guard: this one serves binary-committed headers and refuses
+/// pre-flip ones, pointing at `eth_getProof`. Between the two, every header on
+/// every chain has exactly one method that will prove it, and neither method
+/// ever answers for a root of the shape it cannot express.
+///
+/// Why a separate method rather than a shape inside `eth_getProof`: see
+/// `crate::types::binary_account_proof`. In short, EIP-8297 says nothing about
+/// `eth_getProof`, no other client has shipped a format, and the response shape
+/// is user-visible API — so this carries its own name and its own
+/// `proofFormat`, and can be superseded without touching the standard method's
+/// schema.
+pub struct GetProofV2Request {
     pub address: Address,
     pub storage_keys: Vec<H256>,
     pub block: BlockIdentifierOrHash,
@@ -221,6 +252,42 @@ impl RpcHandler for GetProofRequest {
         let Some(header) = storage.get_block_header(block_number)? else {
             return Ok(Value::Null);
         };
+        // Past the EIP-8297 activation `header.state_root` is a binary-trie
+        // root, and there is no MPT behind it to prove against. Refuse, rather
+        // than serve anything.
+        //
+        // The other four state RPCs can follow the header into the binary trie
+        // because their answers are values, and a value is the same value out of
+        // either trie. A proof is not: it is a witness of a *shape*, and this
+        // response type is the MPT's shape — a list of RLP-encoded MPT nodes
+        // from root to leaf, plus a `storageHash` naming a per-account storage
+        // subtrie. The binary trie has neither. Producing a binary-trie proof
+        // format is a separate piece of work with its own wire type, and
+        // inventing one here would be worse than an error: clients verify these
+        // against `header.stateRoot`, so any shape we improvise would either
+        // fail verification or, worse, be accepted by a client that does not
+        // check what it is verifying.
+        //
+        // What must never happen is the third option, and it is the reason this
+        // check is here rather than left to fail somewhere downstream: an
+        // account object beside an empty `accountProof` array reads as a valid
+        // *exclusion* proof for an account that exists. `Store::get_account_proof`
+        // guards its own root for exactly that reason; this makes the refusal say
+        // why instead of reporting a missing state root for state that is
+        // present, just in the other trie.
+        //
+        // Per header, never per chain: a pre-activation block on the same chain
+        // still has a real MPT proof, and still serves it.
+        if storage
+            .get_chain_config()
+            .is_binary_tree_active(header.timestamp)
+        {
+            return Err(RpcErr::UnsupportedFork(format!(
+                "eth_getProof is not available at block {block_number}: the chain has reached \
+                 the binary-tree commitment (EIP-8297), whose state root cannot be proven in \
+                 the Merkle-Patricia format this method returns"
+            )));
+        }
         // Create account proof
         let Some(account_proof) = storage
             .get_account_proof(header.state_root, self.address, &self.storage_keys)
@@ -248,6 +315,192 @@ impl RpcHandler for GetProofRequest {
             storage_proof,
         };
         serde_json::to_value(account_proof).map_err(|error| RpcErr::Internal(error.to_string()))
+    }
+}
+
+/// What a verified walk says about `key`: `Some(value)` if the walk ends at
+/// `key`'s own leaf, `None` if it ends anywhere else.
+///
+/// This is the exclusion judgement `verify_walk` deliberately leaves to its
+/// caller, and it is the *same* judgement the format's documentation tells a
+/// client to make — see `crate::types::binary_account_proof`. Running it here
+/// costs one verification per key and buys the property that the response can
+/// never contradict its own proofs: the value beside a walk is read out of that
+/// walk and nowhere else.
+///
+/// It is a self-consistency check on the server, not evidence for anyone: a
+/// client that skipped verifying because we verified has verified nothing.
+fn leaf_proven_by(
+    state_root: H256,
+    key: &[u8],
+    proof: &[Vec<u8>],
+) -> Result<Option<[u8; 32]>, RpcErr> {
+    let (_steps, end) = verify_walk(state_root, key, proof).map_err(|error| {
+        RpcErr::Internal(format!(
+            "this node produced a binary walk proof that does not verify against its own state \
+             root {state_root:#x}: {error}"
+        ))
+    })?;
+    Ok(match end {
+        WalkEnd::AtLeaf { key: found, value } if found == key => Some(value),
+        // Somebody else's leaf, a subtree the key diverges from, or an empty
+        // tree: all three are proofs that this key is absent.
+        WalkEnd::AtLeaf { .. } | WalkEnd::Diverged { .. } | WalkEnd::Empty => None,
+    })
+}
+
+impl RpcHandler for GetProofV2Request {
+    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let params = params
+            .as_ref()
+            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+        if params.len() != 3 {
+            return Err(RpcErr::BadParams("Expected 3 params".to_owned()));
+        };
+        let storage_keys: Vec<U256> = serde_json::from_value(params[1].clone())?;
+        let storage_keys = storage_keys.iter().map(H256::from_uint).collect();
+        Ok(GetProofV2Request {
+            address: serde_json::from_value(params[0].clone())?,
+            storage_keys,
+            block: BlockIdentifierOrHash::parse(params[2].clone(), 2)?,
+        })
+    }
+
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        let storage = &context.storage;
+        debug!(
+            "Requested binary-trie proof for account {} at block {} with storage keys: {:?}",
+            self.address, self.block, self.storage_keys
+        );
+        let Some(block_number) = self.block.resolve_block_number(storage).await? else {
+            return Ok(Value::Null);
+        };
+        let Some(header) = storage.get_block_header(block_number)? else {
+            return Ok(Value::Null);
+        };
+        // The exact mirror of `eth_getProof`'s guard, and per header for the
+        // same reason: on a chain that flips mid-history the two methods each
+        // own a contiguous stretch of the same chain's history, and a
+        // chain-level test would hand every pre-flip block to the wrong one.
+        if !storage
+            .get_chain_config()
+            .is_binary_tree_active(header.timestamp)
+        {
+            return Err(RpcErr::UnsupportedFork(format!(
+                "eth_getProofV2 is not available at block {block_number}: that block predates the \
+                 binary-tree commitment (EIP-8297), so its state root is a Merkle-Patricia root \
+                 and has no binary-trie proof — use eth_getProof"
+            )));
+        }
+
+        let address32 = address20_to_address32(self.address);
+        // The response's order, and it is fixed: basic data, code hash,
+        // delegation. All three are proven whether or not the account holds
+        // them, because the code hash and the delegation indicator are mutually
+        // exclusive and "the other one is absent" has to be a witness rather
+        // than a silence.
+        let account_fields = [
+            (
+                AccountField::BasicData,
+                get_tree_key_for_basic_data(&address32),
+            ),
+            (
+                AccountField::CodeHash,
+                get_tree_key_for_code_hash(&address32),
+            ),
+            (
+                AccountField::Delegation,
+                get_tree_key_for_delegation(&address32),
+            ),
+        ];
+        let slots: Vec<(U256, Vec<u8>)> = self
+            .storage_keys
+            .iter()
+            .map(|slot| {
+                let index = slot.into_uint();
+                (index, get_tree_key_for_storage_slot(&address32, index))
+            })
+            .collect();
+
+        // One batch rather than a call per key: `Store::binary_walk_proofs`
+        // opens once and brackets the whole set with the same root check, so
+        // every walk below is a walk through one tree. Split into separate
+        // calls, a commit landing between them would split the response across
+        // two trees, each half verifying against a root the caller was told was
+        // one root.
+        let keys: Vec<Vec<u8>> = account_fields
+            .iter()
+            .map(|(_, key)| key.clone())
+            .chain(slots.iter().map(|(_, key)| key.clone()))
+            .collect();
+        let expected = keys.len();
+        let walks = storage.binary_walk_proofs(header.state_root, &keys)?;
+        if walks.len() != expected {
+            return Err(RpcErr::Internal(format!(
+                "expected {expected} binary walk proofs, got {}",
+                walks.len()
+            )));
+        }
+        let mut walks = walks.into_iter();
+
+        let mut header_leaves: Vec<Option<[u8; 32]>> = Vec::with_capacity(account_fields.len());
+        let mut account_proof = Vec::with_capacity(account_fields.len());
+        for (field, tree_key) in account_fields {
+            let proof = walks
+                .next()
+                .ok_or_else(|| RpcErr::Internal("missing account walk proof".to_owned()))?;
+            let value = leaf_proven_by(header.state_root, &tree_key, &proof)?;
+            header_leaves.push(value);
+            account_proof.push(AccountFieldProof {
+                field,
+                tree_key,
+                value,
+                proof,
+            });
+        }
+        // Decoded by the same function the trie read uses, over the leaves
+        // these very walks pin, so the fields below cannot drift from them.
+        let account = account_info_from_header_leaves(
+            header_leaves.first().copied().flatten(),
+            header_leaves.get(1).copied().flatten(),
+            header_leaves.get(2).copied().flatten(),
+        )
+        .unwrap_or_default();
+
+        let mut storage_proof = Vec::with_capacity(slots.len());
+        for (slot, tree_key) in slots {
+            let proof = walks
+                .next()
+                .ok_or_else(|| RpcErr::Internal("missing storage walk proof".to_owned()))?;
+            let value = leaf_proven_by(header.state_root, &tree_key, &proof)?;
+            storage_proof.push(BinaryStorageProof {
+                key: slot,
+                zone: if slot < U256::from(HEADER_STORAGE_SLOTS) {
+                    StorageZone::AccountHeader
+                } else {
+                    StorageZone::Storage
+                },
+                tree_key,
+                // Absent reads as zero, the same convention `eth_getProof` and
+                // the EVM use: a slot written to zero is stored as absent.
+                value: value.map_or(U256::zero(), |bytes| U256::from_big_endian(&bytes)),
+                proof,
+            });
+        }
+
+        serde_json::to_value(BinaryAccountProof {
+            proof_format: BINARY_PROOF_FORMAT,
+            address: self.address,
+            block_number,
+            block_hash: header.hash(),
+            state_root: header.state_root,
+            balance: account.balance,
+            nonce: account.nonce,
+            code_hash: account.code_hash,
+            account_proof,
+            storage_proof,
+        })
+        .map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
 
@@ -365,6 +618,164 @@ mod tests {
         assert_eq!(pending, json!("0x59"));
     }
 
+    /// A state root no block on this chain ever produced. ethrex keeps one
+    /// version of the state trie on disk plus a bounded chain of in-memory diff
+    /// layers, so this is the shape of any block past the retention window: the
+    /// header survives, the state behind it does not.
+    const UNHELD_STATE_ROOT: H256 = H256::repeat_byte(0xaa);
+
+    /// Appends a canonical block whose header claims [`UNHELD_STATE_ROOT`]
+    /// without that state ever being written. Returns its number.
+    async fn append_block_with_unheld_state_root(context: &RpcApiContext) -> u64 {
+        use ethrex_common::types::{Block, BlockBody, BlockHeader};
+        let storage = &context.storage;
+        let genesis_hash = storage
+            .get_canonical_block_hash(0)
+            .await
+            .unwrap()
+            .expect("genesis is canonical");
+        let header = BlockHeader {
+            number: 1,
+            parent_hash: genesis_hash,
+            state_root: UNHELD_STATE_ROOT,
+            ..Default::default()
+        };
+        let hash = header.hash();
+        storage
+            .add_block(Block::new(header, BlockBody::default()))
+            .await
+            .unwrap();
+        storage
+            .forkchoice_update(vec![(1, hash)], 1, hash, None, None)
+            .await
+            .unwrap();
+        1
+    }
+
+    fn block_id(number: u64) -> BlockIdentifierOrHash {
+        use crate::types::block_identifier::BlockIdentifier;
+        BlockIdentifierOrHash::Identifier(BlockIdentifier::Number(number))
+    }
+
+    #[track_caller]
+    fn assert_state_unavailable(result: Result<Value, RpcErr>, method: &str) {
+        match result {
+            Err(RpcErr::Internal(message)) => assert!(
+                message.contains("state root missing"),
+                "{method}: expected a missing-state error, got {message:?}"
+            ),
+            Err(other) => panic!("{method}: expected a missing-state error, got {other:?}"),
+            Ok(value) => panic!(
+                "{method}: answered {value} from a state this node does not hold. \
+                 The store-level guard did not reach the caller."
+            ),
+        }
+    }
+
+    /// The store-level guard has to survive the trip out through the RPC layer.
+    /// Every one of these handlers ends in an `unwrap_or_default()` over an
+    /// `Option`, so a guard that only reported "no such account" would be
+    /// flattened into `0x0` / `0x` and the user-visible bug would be untouched.
+    /// What must happen instead is what `eth_call` has always done at the same
+    /// block: fail, and say why.
+    #[tokio::test]
+    async fn account_reads_at_an_unheld_state_root_error() {
+        let address = Address::from_low_u64_be(0xabcd);
+        let context = context_with_account_nonce(address, 0x59).await;
+        let number = append_block_with_unheld_state_root(&context).await;
+
+        assert_state_unavailable(
+            GetBalanceRequest {
+                address,
+                block: block_id(number),
+            }
+            .handle(context.clone())
+            .await,
+            "eth_getBalance",
+        );
+        assert_state_unavailable(
+            GetCodeRequest {
+                address,
+                block: block_id(number),
+            }
+            .handle(context.clone())
+            .await,
+            "eth_getCode",
+        );
+        assert_state_unavailable(
+            GetTransactionCountRequest {
+                address,
+                block: block_id(number),
+            }
+            .handle(context.clone())
+            .await,
+            "eth_getTransactionCount",
+        );
+        assert_state_unavailable(
+            GetStorageAtRequest {
+                address,
+                storage_slot: H256::from_low_u64_be(1),
+                block: block_id(number),
+            }
+            .handle(context.clone())
+            .await,
+            "eth_getStorageAt",
+        );
+        assert_state_unavailable(
+            GetProofRequest {
+                address,
+                storage_keys: vec![H256::from_low_u64_be(1)],
+                block: block_id(number),
+            }
+            .handle(context.clone())
+            .await,
+            "eth_getProof",
+        );
+    }
+
+    /// The same handlers at a block whose state the node does hold keep working.
+    #[tokio::test]
+    async fn account_reads_at_a_held_state_root_still_answer() {
+        let address = Address::from_low_u64_be(0xabcd);
+        let context = context_with_account_nonce(address, 0x59).await;
+        // Genesis is still canonical and its state is on disk.
+        append_block_with_unheld_state_root(&context).await;
+
+        let balance = GetBalanceRequest {
+            address,
+            block: block_id(0),
+        }
+        .handle(context.clone())
+        .await
+        .expect("genesis state is held");
+        assert_eq!(balance, json!("0x56bc75e2d63100000"));
+
+        let nonce = GetTransactionCountRequest {
+            address,
+            block: block_id(0),
+        }
+        .handle(context.clone())
+        .await
+        .expect("genesis state is held");
+        assert_eq!(nonce, json!("0x59"));
+
+        let proof = GetProofRequest {
+            address,
+            storage_keys: vec![],
+            block: block_id(0),
+        }
+        .handle(context.clone())
+        .await
+        .expect("genesis state is held");
+        assert!(
+            !proof["accountProof"]
+                .as_array()
+                .expect("accountProof array")
+                .is_empty(),
+            "a held root must produce a non-empty account proof"
+        );
+    }
+
     /// A pending tx above the on-chain nonce still advances `pending`.
     #[tokio::test]
     async fn pending_nonce_advances_past_latest() {
@@ -379,5 +790,521 @@ mod tests {
             .unwrap();
 
         assert_eq!(pending, json!("0x5a"));
+    }
+
+    // =======================================================================
+    // EIP-8297 — the state RPCs past the binary-tree activation.
+    //
+    // From `binaryTreeTime` onward a header's `state_root` is a binary-trie
+    // root, which names no MPT. Every handler below therefore has to ask
+    // `is_binary_tree_active(header.timestamp)` of *the header being queried*
+    // and read the trie that root actually addresses. The question is never
+    // chain-level: a chain that merely *schedules* the commitment still has a
+    // pre-activation history whose headers commit MPT roots forever, which
+    // `scheduled_but_pre_activation_blocks_still_read_the_mpt` pins.
+    //
+    // Activation at genesis is a test-only shape — it changes the genesis hash,
+    // and hence the chain's identity (see `Genesis::compute_state_root`) — but
+    // it is the cheapest way to get an *active header* without building blocks,
+    // and one active header is all a per-header branch needs to be exercised.
+    // The cross-boundary version, on a real chain that flips mid-history, lives
+    // in `test/tests/blockchain/binary_tree_shadow_tests.rs`.
+    // =======================================================================
+
+    /// Address of the account the binary-tree tests probe.
+    fn probe_address() -> Address {
+        Address::from_low_u64_be(0x5eed)
+    }
+
+    const PROBE_BALANCE: u64 = 0x1234;
+    const PROBE_NONCE: u64 = 7;
+    const PROBE_SLOT: u64 = 1;
+    const PROBE_SLOT_VALUE: u64 = 0x2a;
+
+    /// A probe account carrying all four things the state RPCs read: a balance,
+    /// a nonce, code, and one non-zero storage slot.
+    fn probe_account() -> ethrex_common::types::GenesisAccount {
+        use ethrex_common::types::GenesisAccount;
+        GenesisAccount {
+            code: bytes::Bytes::from_static(&[0x60, 0x00, 0x60, 0x00, 0xf3]),
+            storage: [(U256::from(PROBE_SLOT), U256::from(PROBE_SLOT_VALUE))]
+                .into_iter()
+                .collect(),
+            balance: U256::from(PROBE_BALANCE),
+            nonce: PROBE_NONCE,
+        }
+    }
+
+    /// Builds a context whose genesis carries [`probe_account`] and whose chain
+    /// config schedules `binaryTreeTime` at `binary_tree_time`.
+    ///
+    /// Passing genesis' own timestamp makes genesis itself active, so its header
+    /// commits the binary root and `add_initial_state` seeds the persistent
+    /// binary trie from the alloc. Passing a far-future timestamp gives a
+    /// *scheduled but not active* chain; `None` gives an ordinary MPT chain.
+    async fn binary_tree_context(binary_tree_time: Option<u64>) -> RpcApiContext {
+        use crate::test_utils::{TEST_GENESIS, default_context_with_storage};
+        use ethrex_common::types::Genesis;
+        use ethrex_storage::{EngineType, Store};
+
+        let mut genesis: Genesis = serde_json::from_str(TEST_GENESIS).unwrap();
+        genesis.alloc.insert(probe_address(), probe_account());
+        genesis.config.binary_tree_time = binary_tree_time;
+        let mut store = Store::new("", EngineType::InMemory).unwrap();
+        store.add_initial_state(genesis).await.unwrap();
+        default_context_with_storage(store).await
+    }
+
+    /// A context whose genesis header is already past the activation.
+    async fn active_at_genesis_context() -> RpcApiContext {
+        let context = binary_tree_context(Some(genesis_timestamp())).await;
+        // Guard against a vacuous pass: if genesis were not active the whole
+        // section below would be testing the MPT path under a binary name.
+        assert!(
+            context
+                .storage
+                .get_chain_config()
+                .is_binary_tree_active(genesis_timestamp()),
+            "genesis must be past the activation for these tests to mean anything"
+        );
+        context
+    }
+
+    /// The fixture genesis' timestamp, read from the fixture rather than pinned
+    /// here so a change to it cannot silently un-schedule these tests.
+    fn genesis_timestamp() -> u64 {
+        use crate::test_utils::TEST_GENESIS;
+        use ethrex_common::types::Genesis;
+        let genesis: Genesis = serde_json::from_str(TEST_GENESIS).unwrap();
+        genesis.timestamp
+    }
+
+    /// Appends a canonical block at `timestamp` whose header claims
+    /// [`UNHELD_STATE_ROOT`], with no state of either shape behind it. On an
+    /// active timestamp that means no *binary* state is recorded for it, which
+    /// is the binary-side counterpart of the unheld-MPT-root case.
+    async fn append_block_at(context: &RpcApiContext, timestamp: u64) -> u64 {
+        use ethrex_common::types::{Block, BlockBody, BlockHeader};
+        let storage = &context.storage;
+        let genesis_hash = storage
+            .get_canonical_block_hash(0)
+            .await
+            .unwrap()
+            .expect("genesis is canonical");
+        let header = BlockHeader {
+            number: 1,
+            parent_hash: genesis_hash,
+            state_root: UNHELD_STATE_ROOT,
+            timestamp,
+            ..Default::default()
+        };
+        let hash = header.hash();
+        storage
+            .add_block(Block::new(header, BlockBody::default()))
+            .await
+            .unwrap();
+        storage
+            .forkchoice_update(vec![(1, hash)], 1, hash, None, None)
+            .await
+            .unwrap();
+        1
+    }
+
+    /// 1. Balance, nonce, code and storage all answer at an active header, out
+    ///    of the binary trie, with the values the alloc put there.
+    #[tokio::test]
+    async fn state_reads_answer_from_the_binary_trie_at_an_active_header() {
+        let context = active_at_genesis_context().await;
+        let address = probe_address();
+
+        let balance = GetBalanceRequest {
+            address,
+            block: block_id(0),
+        }
+        .handle(context.clone())
+        .await
+        .expect("eth_getBalance must resolve through the binary trie");
+        assert_eq!(balance, json!(format!("{:#x}", PROBE_BALANCE)));
+
+        let nonce = GetTransactionCountRequest {
+            address,
+            block: block_id(0),
+        }
+        .handle(context.clone())
+        .await
+        .expect("eth_getTransactionCount must resolve through the binary trie");
+        assert_eq!(nonce, json!(format!("0x{:x}", PROBE_NONCE)));
+
+        let code = GetCodeRequest {
+            address,
+            block: block_id(0),
+        }
+        .handle(context.clone())
+        .await
+        .expect("eth_getCode must resolve through the binary trie");
+        assert_eq!(code, json!("0x60006000f3"));
+
+        let slot = GetStorageAtRequest {
+            address,
+            storage_slot: H256::from_low_u64_be(PROBE_SLOT),
+            block: block_id(0),
+        }
+        .handle(context.clone())
+        .await
+        .expect("eth_getStorageAt must resolve through the binary trie");
+        assert_eq!(
+            slot,
+            json!(format!("{:#x}", H256::from_low_u64_be(PROBE_SLOT_VALUE)))
+        );
+
+        // An unwritten slot reads as zero, not as some other slot's value.
+        let empty_slot = GetStorageAtRequest {
+            address,
+            storage_slot: H256::from_low_u64_be(0xdead),
+            block: block_id(0),
+        }
+        .handle(context.clone())
+        .await
+        .expect("an absent slot is not an error");
+        assert_eq!(empty_slot, json!(format!("{:#x}", H256::zero())));
+
+        // An account the alloc never mentioned is absent, not a stray hit.
+        let absent = GetBalanceRequest {
+            address: Address::from_low_u64_be(0xffff_ffff),
+            block: block_id(0),
+        }
+        .handle(context.clone())
+        .await
+        .expect("an absent account is not an error");
+        assert_eq!(absent, json!("0x0"));
+    }
+
+    /// 2. A chain that merely *schedules* the commitment still reads its
+    ///    pre-activation headers through the MPT. This is the falsification
+    ///    target: swapping the per-header `is_binary_tree_active(timestamp)` for
+    ///    a chain-level `binary_tree_scheduled()` makes every read here try the
+    ///    binary trie at an MPT root and fail.
+    #[tokio::test]
+    async fn scheduled_but_pre_activation_blocks_still_read_the_mpt() {
+        let far_future = genesis_timestamp() + 1_000_000;
+        let context = binary_tree_context(Some(far_future)).await;
+        assert!(context.storage.get_chain_config().binary_tree_scheduled());
+        assert!(
+            !context
+                .storage
+                .get_chain_config()
+                .is_binary_tree_active(genesis_timestamp())
+        );
+        let address = probe_address();
+
+        let balance = GetBalanceRequest {
+            address,
+            block: block_id(0),
+        }
+        .handle(context.clone())
+        .await
+        .expect("a scheduled-but-inactive header still resolves against the MPT");
+        assert_eq!(balance, json!(format!("{:#x}", PROBE_BALANCE)));
+
+        let nonce = GetTransactionCountRequest {
+            address,
+            block: block_id(0),
+        }
+        .handle(context.clone())
+        .await
+        .expect("a scheduled-but-inactive header still resolves against the MPT");
+        assert_eq!(nonce, json!(format!("0x{:x}", PROBE_NONCE)));
+
+        let slot = GetStorageAtRequest {
+            address,
+            storage_slot: H256::from_low_u64_be(PROBE_SLOT),
+            block: block_id(0),
+        }
+        .handle(context.clone())
+        .await
+        .expect("a scheduled-but-inactive header still resolves against the MPT");
+        assert_eq!(
+            slot,
+            json!(format!("{:#x}", H256::from_low_u64_be(PROBE_SLOT_VALUE)))
+        );
+
+        // And `eth_getProof` is a real MPT proof here, not the binary-tree
+        // refusal: the block is before the flip.
+        let proof = GetProofRequest {
+            address,
+            storage_keys: vec![H256::from_low_u64_be(PROBE_SLOT)],
+            block: block_id(0),
+        }
+        .handle(context.clone())
+        .await
+        .expect("a pre-activation header still has an MPT proof");
+        assert!(
+            !proof["accountProof"]
+                .as_array()
+                .expect("accountProof array")
+                .is_empty()
+        );
+    }
+
+    /// 3. The staleness guard still fires on the binary side: an active header
+    ///    whose binary state this node does not hold must error rather than
+    ///    answer from whatever the single-version binary trie currently holds.
+    #[tokio::test]
+    async fn active_header_without_binary_state_errors() {
+        let context = active_at_genesis_context().await;
+        let address = probe_address();
+        // One second past genesis, so the header is active — and no binary root
+        // was ever recorded for it.
+        let number = append_block_at(&context, genesis_timestamp() + 1).await;
+
+        assert_state_unavailable(
+            GetBalanceRequest {
+                address,
+                block: block_id(number),
+            }
+            .handle(context.clone())
+            .await,
+            "eth_getBalance",
+        );
+        assert_state_unavailable(
+            GetCodeRequest {
+                address,
+                block: block_id(number),
+            }
+            .handle(context.clone())
+            .await,
+            "eth_getCode",
+        );
+        assert_state_unavailable(
+            GetTransactionCountRequest {
+                address,
+                block: block_id(number),
+            }
+            .handle(context.clone())
+            .await,
+            "eth_getTransactionCount",
+        );
+        assert_state_unavailable(
+            GetStorageAtRequest {
+                address,
+                storage_slot: H256::from_low_u64_be(PROBE_SLOT),
+                block: block_id(number),
+            }
+            .handle(context.clone())
+            .await,
+            "eth_getStorageAt",
+        );
+    }
+
+    /// 4. `eth_getProof` on an active header refuses, clearly and permanently.
+    ///
+    /// The binary trie has no MPT-shaped proof to give and this branch does not
+    /// invent one, so the only two honest answers are "refuse" and "serve a
+    /// different format". What must never happen is the third thing — an
+    /// account object beside an empty `accountProof`, which reads as a valid
+    /// exclusion proof for an account that exists.
+    #[tokio::test]
+    async fn get_proof_refuses_on_an_active_header_and_is_never_self_inconsistent() {
+        let context = active_at_genesis_context().await;
+        let result = GetProofRequest {
+            address: probe_address(),
+            storage_keys: vec![H256::from_low_u64_be(PROBE_SLOT)],
+            block: block_id(0),
+        }
+        .handle(context.clone())
+        .await;
+
+        match result {
+            Err(RpcErr::UnsupportedFork(message)) => {
+                assert!(
+                    message.contains("eth_getProof"),
+                    "the refusal must name the method, got {message:?}"
+                );
+                assert!(
+                    message.to_lowercase().contains("binary"),
+                    "the refusal must say why, got {message:?}"
+                );
+            }
+            Err(other) => panic!("expected an unsupported-fork refusal, got {other:?}"),
+            Ok(value) => panic!(
+                "eth_getProof answered {value} at a binary-tree block. \
+                 A proof over a trie whose shape it cannot express is never a valid answer."
+            ),
+        }
+    }
+
+    /// 5. An unscheduled chain is untouched: no branch, no behaviour change.
+    #[tokio::test]
+    async fn unscheduled_chains_are_unchanged() {
+        let context = binary_tree_context(None).await;
+        assert!(!context.storage.get_chain_config().binary_tree_scheduled());
+        let address = probe_address();
+
+        let balance = GetBalanceRequest {
+            address,
+            block: block_id(0),
+        }
+        .handle(context.clone())
+        .await
+        .unwrap();
+        assert_eq!(balance, json!(format!("{:#x}", PROBE_BALANCE)));
+
+        let proof = GetProofRequest {
+            address,
+            storage_keys: vec![H256::from_low_u64_be(PROBE_SLOT)],
+            block: block_id(0),
+        }
+        .handle(context.clone())
+        .await
+        .expect("an unscheduled chain still proves");
+        assert!(
+            !proof["accountProof"]
+                .as_array()
+                .expect("accountProof array")
+                .is_empty()
+        );
+        assert_eq!(
+            proof["storageProof"][0]["value"],
+            json!(format!("{:#x}", PROBE_SLOT_VALUE))
+        );
+
+        // And its mirror refuses here, because there is no binary trie at all.
+        assert!(matches!(
+            GetProofV2Request {
+                address,
+                storage_keys: vec![],
+                block: block_id(0),
+            }
+            .handle(context.clone())
+            .await,
+            Err(RpcErr::UnsupportedFork(_))
+        ));
+    }
+
+    /// 6. `eth_getProofV2` answers on an active header, and every walk it
+    ///    serves verifies against that header's own state root.
+    ///
+    /// The cross-boundary version — on a chain that really flips, with the six
+    /// tampering cases — lives in `test/tests/blockchain/binary_tree_shadow_tests.rs`.
+    /// What this adds is coverage beside the handler itself.
+    #[tokio::test]
+    async fn get_proof_v2_answers_on_an_active_header() {
+        let context = active_at_genesis_context().await;
+        let address = probe_address();
+        let header = context
+            .storage
+            .get_block_header(0)
+            .unwrap()
+            .expect("genesis header");
+
+        let response = GetProofV2Request {
+            address,
+            storage_keys: vec![H256::from_low_u64_be(PROBE_SLOT)],
+            block: block_id(0),
+        }
+        .handle(context.clone())
+        .await
+        .expect("an active header must be provable");
+
+        assert_eq!(response["proofFormat"], json!(BINARY_PROOF_FORMAT));
+        assert_eq!(
+            response["stateRoot"],
+            json!(format!("{:#x}", header.state_root))
+        );
+        // `storageHash` has no referent in this trie, so the field must not
+        // exist rather than carry a value that means nothing.
+        assert!(response.get("storageHash").is_none());
+        assert_eq!(response["nonce"], json!(format!("0x{PROBE_NONCE:x}")));
+        assert_eq!(response["balance"], json!(format!("{PROBE_BALANCE:#x}")));
+
+        // All three header fields are present as entries whether or not the
+        // account holds the leaf, and every walk verifies against the root the
+        // header commits — re-deriving each key rather than reading the one the
+        // response carries.
+        let entries = response["accountProof"]
+            .as_array()
+            .expect("accountProof array");
+        let fields: Vec<&str> = entries
+            .iter()
+            .map(|entry| entry["field"].as_str().unwrap())
+            .collect();
+        assert_eq!(fields, vec!["basicData", "codeHash", "delegation"]);
+
+        let address32 = address20_to_address32(address);
+        let keys = [
+            get_tree_key_for_basic_data(&address32),
+            get_tree_key_for_code_hash(&address32),
+            get_tree_key_for_delegation(&address32),
+        ];
+        for (entry, key) in entries.iter().zip(keys.iter()) {
+            let proof: Vec<Vec<u8>> = entry["proof"]
+                .as_array()
+                .expect("proof array")
+                .iter()
+                .map(|node| hex::decode(node.as_str().unwrap().trim_start_matches("0x")).unwrap())
+                .collect();
+            let (_steps, end) = verify_walk(header.state_root, key, &proof)
+                .unwrap_or_else(|error| panic!("{:?} must verify: {error}", entry["field"]));
+            let present = matches!(&end, WalkEnd::AtLeaf { key: found, .. } if found == key);
+            assert_eq!(
+                present,
+                !entry["value"].is_null(),
+                "{:?}: the reported value and the proof must agree on presence",
+                entry["field"]
+            );
+        }
+        // The probe has code, so it is the delegation leaf that is absent —
+        // and it is absent *with* an exclusion proof, not by omission.
+        assert_eq!(entries[2]["value"], Value::Null);
+        assert!(!entries[2]["proof"].as_array().unwrap().is_empty());
+
+        assert_eq!(
+            response["storageProof"][0]["value"],
+            json!(format!("{PROBE_SLOT_VALUE:#x}"))
+        );
+        assert_eq!(response["storageProof"][0]["zone"], json!("accountHeader"));
+    }
+
+    /// 7. `eth_getProofV2` refuses a header before the flip, and says where to
+    ///    go instead. The mirror of test 4, and per header for the same reason:
+    ///    a scheduled chain's pre-activation blocks belong to `eth_getProof`
+    ///    forever.
+    #[tokio::test]
+    async fn get_proof_v2_refuses_a_pre_activation_header() {
+        let far_future = genesis_timestamp() + 1_000_000;
+        let context = binary_tree_context(Some(far_future)).await;
+        assert!(context.storage.get_chain_config().binary_tree_scheduled());
+        assert!(
+            !context
+                .storage
+                .get_chain_config()
+                .is_binary_tree_active(genesis_timestamp()),
+            "the header under test must be pre-activation for this to mean anything"
+        );
+
+        match (GetProofV2Request {
+            address: probe_address(),
+            storage_keys: vec![H256::from_low_u64_be(PROBE_SLOT)],
+            block: block_id(0),
+        })
+        .handle(context.clone())
+        .await
+        {
+            Err(RpcErr::UnsupportedFork(message)) => {
+                assert!(
+                    message.contains("eth_getProofV2"),
+                    "the refusal must name the method, got {message:?}"
+                );
+                assert!(
+                    message.contains("use eth_getProof"),
+                    "the refusal must point at the method that does serve it, got {message:?}"
+                );
+            }
+            Err(other) => panic!("expected an unsupported-fork refusal, got {other:?}"),
+            Ok(value) => panic!(
+                "eth_getProofV2 answered {value} at a Merkle-Patricia block. There is no binary \
+                 trie behind that root for the walks to come from."
+            ),
+        }
     }
 }

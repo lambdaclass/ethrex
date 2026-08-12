@@ -7,12 +7,15 @@
 mod code_collector;
 mod full;
 mod healing;
+mod pbt_snap;
 mod snap_sync;
 
 /// Test-only re-export of the full-sync resume-point predicate so integration tests can
 /// assert that canonical-but-stateless blocks are not treated as already-executed.
 #[cfg(feature = "test-utils")]
-pub use full::{first_resume_point_in_batch, is_resume_point};
+pub use full::{
+    first_resume_point_in_batch, is_resume_point, state_available_at, state_available_at_number,
+};
 
 use crate::metrics::METRICS;
 use crate::peer_handler::{BlockRequestOrder, HeaderFetchOutcome, PeerHandler, PeerHandlerError};
@@ -69,6 +72,13 @@ pub struct SyncDiagnostics {
     /// this rather than the canonical pointer so the node isn't shown as near-synced
     /// while it has no state up to the tip.
     pub executed_head: u64,
+    /// The consensus-provided sync target the last cycle worked toward.
+    ///
+    /// `eth_syncing` reports this as `highestBlock` when the forkchoice head
+    /// hash cannot be resolved locally — the state of a node too far behind to
+    /// have downloaded the target. Without it that case fell back to the local
+    /// head, so a node stuck 128 blocks behind reported that it had arrived.
+    pub sync_target: Option<u64>,
     pub pivot_block_number: Option<u64>,
     pub pivot_timestamp: Option<u64>,
     pub pivot_age_seconds: Option<u64>,
@@ -215,6 +225,28 @@ impl Syncer {
     async fn sync_cycle(&mut self, sync_head: H256, store: Store) -> Result<(), SyncError> {
         // Take picture of the current sync mode, we will update the original value when we need to
         if self.snap_enabled.load(Ordering::Relaxed) {
+            // A binary-tree-scheduled chain takes the `pbtsnap` cycle, and does
+            // so *before* the `MIN_FULL_BLOCKS` probe (Decision 11). The probe
+            // exists to avoid stalling on a barely-synced peer's header batch on
+            // a fresh devnet; the PBT cycle's own header phase reaches the same
+            // `HeaderPhase::FullSync` conclusion for a short chain, and reaching
+            // it there costs one header round trip instead of up to three probe
+            // attempts at five seconds each against peers that cannot answer.
+            //
+            // Legacy snap is not merely skipped here: `sync_cycle_snap` refuses
+            // outright on such a chain, so a caller entering it directly cannot
+            // get an MPT download either.
+            if store.get_chain_config().binary_tree_scheduled() {
+                return pbt_snap::sync_cycle_pbt(
+                    &mut self.peers,
+                    self.blockchain.clone(),
+                    &self.snap_enabled,
+                    sync_head,
+                    store,
+                    &self.diagnostics,
+                )
+                .await;
+            }
             // Probe the sync head's block number before committing to snap sync.
             // On a fresh devnet the chain head may be only a few blocks deep; the
             // existing in-loop `head_close_to_0` guard in `sync_cycle_snap`
@@ -224,11 +256,12 @@ impl Syncer {
             // response is intentionally discarded; on the snap path the loop
             // re-fetches headers, which keeps `sync_cycle_snap`'s entry simple.
             if let Some(sync_head_number) = probe_sync_head_number(&mut self.peers, sync_head).await
-                && sync_head_number < MIN_FULL_BLOCKS
+                && sync_head_number < *MIN_FULL_BLOCKS
             {
                 info!(
                     sync_head_number,
-                    "Sync head below MIN_FULL_BLOCKS ({MIN_FULL_BLOCKS}), using full sync"
+                    min_full_blocks = *MIN_FULL_BLOCKS,
+                    "Sync head below MIN_FULL_BLOCKS, using full sync"
                 );
                 self.snap_enabled.store(false, Ordering::Relaxed);
                 // Clear any stale snap checkpoint so the manager loop in
@@ -401,6 +434,8 @@ pub enum SyncError {
     MissingFullsyncBatch,
     #[error("Snap error: {0}")]
     Snap(#[from] crate::snap::SnapError),
+    #[error("PBT state sync error: {0}")]
+    PbtSnap(#[from] pbt_snap::PbtSyncError),
 }
 
 impl SyncError {
@@ -447,7 +482,13 @@ impl SyncError {
             | SyncError::InvalidRangeReceived
             | SyncError::BlockNumber(_)
             | SyncError::NoBlocks
-            | SyncError::NoBlockHeaders => true,
+            | SyncError::NoBlockHeaders
+            // Recoverable on purpose, and it is the whole v1 healing story: a
+            // failed PBT download writes nothing, so retrying the cycle picks a
+            // fresh pivot and starts over. That covers the expected failure —
+            // a pivot that aged out of every peer's layer window — as well as
+            // the byzantine ones, which cost a peer its score on the way past.
+            | SyncError::PbtSnap(_) => true,
             // PeerHandler handled above by delegation
             SyncError::PeerHandler(_) => unreachable!(),
         }

@@ -12,9 +12,12 @@ use std::{
 };
 use tracing::warn;
 
+use ethrex_binary_trie::trie::{BinaryTrie, InMemoryBinaryTrieDB};
+
 use super::{
-    AccountState, Block, BlockBody, BlockHeader, BlockNumber, INITIAL_BASE_FEE,
-    compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
+    AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHeader, BlockNumber, Code,
+    INITIAL_BASE_FEE, compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
+    pbt_state::apply_account_updates,
 };
 use crate::{
     constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, EMPTY_BLOCK_ACCESS_LIST_HASH},
@@ -283,6 +286,19 @@ pub struct ChainConfig {
     pub hegota_time: Option<u64>,
     pub lstar_time: Option<u64>,
 
+    /// `binaryTreeTime` in genesis JSON. Timestamp at which the EIP-8297
+    /// binary-tree state commitment activates: from the first block at or after
+    /// it, `header.state_root` is the binary-trie root instead of the
+    /// Merkle-Patricia-Trie root.
+    ///
+    /// **Deliberately not a `Fork` enum variant, and it must stay that way.**
+    /// The commitment is orthogonal to EVM semantics. A variant ordered after
+    /// the latest fork would make `get_fork()` report it for every post-flip
+    /// block, which would drag the wrong blob-schedule fallbacks and the wrong
+    /// fork reporting along with it. Branch on
+    /// [`ChainConfig::is_binary_tree_active`] instead.
+    pub binary_tree_time: Option<u64>,
+
     /// Amount of total difficulty reached by the network that triggers the consensus upgrade.
     #[serde(default, with = "crate::serde_utils::u128::hex_str_opt")]
     pub terminal_total_difficulty: Option<u128>,
@@ -381,6 +397,26 @@ impl From<Fork> for &str {
 }
 
 impl ChainConfig {
+    /// Whether this chain has an EIP-8297 binary-tree commitment scheduled at
+    /// all, regardless of whether it has been reached yet.
+    ///
+    /// Chain-level question: use it to decide whether to do work that must be
+    /// ready *before* the flip (e.g. maintaining the shadow binary trie).
+    pub fn binary_tree_scheduled(&self) -> bool {
+        self.binary_tree_time.is_some()
+    }
+
+    /// Whether the binary-tree commitment is active at `block_timestamp`, i.e.
+    /// scheduled and the schedule is at or before that timestamp.
+    ///
+    /// Per-header question: always pass the timestamp of the header being
+    /// resolved, never a chain-level flag. Pre-flip headers genuinely carry MPT
+    /// roots and must keep resolving against the MPT even after the flip.
+    pub fn is_binary_tree_active(&self, block_timestamp: u64) -> bool {
+        self.binary_tree_time
+            .is_some_and(|time| time <= block_timestamp)
+    }
+
     pub fn is_hegota_activated(&self, block_timestamp: u64) -> bool {
         self.hegota_time.is_some_and(|time| time <= block_timestamp)
     }
@@ -468,6 +504,14 @@ impl ChainConfig {
             output.push_str(&active_forks.join("\n"));
         } else {
             output.push_str("Network is at Paris\n\n");
+        }
+
+        // Not a hard fork — a state-commitment schedule — so it gets its own row
+        // rather than joining the fork list above.
+        if let Some(time) = self.binary_tree_time {
+            output.push_str(&format!(
+                "\n\nState commitment schedule:\n- BinaryTree (EIP-8297): @{time:<10}"
+            ));
         }
 
         output
@@ -712,6 +756,10 @@ impl ChainConfig {
             self.amsterdam_time,
             self.hegota_time,
             self.verkle_time,
+            // Not an EVM fork, but a scheduled change to the state commitment:
+            // it must join the fork id so that nodes with mismatched schedules
+            // split at the flip instead of silently diverging.
+            self.binary_tree_time,
         ]
         .into_iter()
         .flatten()
@@ -721,7 +769,10 @@ impl ChainConfig {
         timestamp_based_forks.sort();
         timestamp_based_forks.dedup();
 
-        // Filter forks before genesis
+        // Filter forks before genesis. An at-or-before-genesis activation is
+        // already baked into the genesis hash that seeds the ForkId checksum,
+        // so including it would be redundant; this retain covers every
+        // timestamp-scheduled field, `binary_tree_time` included.
         block_number_based_forks.retain(|block_number| *block_number != 0);
         timestamp_based_forks.retain(|block_timestamp| *block_timestamp > genesis_header.timestamp);
 
@@ -828,6 +879,18 @@ impl Genesis {
     }
 
     pub fn compute_state_root(&self) -> H256 {
+        // Per-header rule, applied to the only header a `Genesis` describes: ask
+        // whether the commitment is active at *genesis' own timestamp*, not
+        // whether the chain schedules one. A chain scheduling `binaryTreeTime`
+        // for later has an MPT-committed genesis, forever — that is what keeps
+        // the genesis hash, and hence the chain's identity and its fork-id
+        // checksum, the one standard tooling computed.
+        //
+        // Activation at or before genesis is therefore a test-only shape; see
+        // `docs/binary-trie-genesis-hash-problem.md`.
+        if self.config.is_binary_tree_active(self.timestamp) {
+            return self.compute_binary_state_root();
+        }
         let iter = self.alloc.iter().map(|(addr, account)| {
             (
                 keccak_hash(addr).to_vec(),
@@ -835,6 +898,54 @@ impl Genesis {
             )
         });
         Trie::compute_hash_from_unsorted_iter(iter, &NativeCrypto)
+    }
+
+    /// The EIP-8297 binary-trie root over the genesis alloc.
+    ///
+    /// Built in memory and thrown away: this answers "what does the genesis
+    /// header commit to", which is a pure function of the alloc. Seeding the
+    /// *persistent* binary trie is `Store::setup_genesis_binary_trie`'s job, and
+    /// it routes through the same `pbt_state::apply_account_updates` embedding,
+    /// so the two agree by construction.
+    ///
+    /// # Panics
+    ///
+    /// If the alloc cannot be embedded — in practice a balance at or above
+    /// `2^128`, which the 16-byte basic-data field cannot hold. Startup rejects
+    /// such an alloc outright whenever `binary_tree_scheduled()`
+    /// (`validate_genesis_binary_tree_embeddable` in `cmd/ethrex/initializers.rs`),
+    /// so nothing that reaches here can fail silently, and a caller that built a
+    /// `Genesis` in memory without that guard has a bug rather than a runtime
+    /// condition.
+    fn compute_binary_state_root(&self) -> H256 {
+        let updates: Vec<AccountUpdate> = self
+            .alloc
+            .iter()
+            .map(|(address, account)| {
+                let code = Code::from_bytecode(account.code.clone(), &NativeCrypto);
+                AccountUpdate {
+                    address: *address,
+                    removed: false,
+                    info: Some(AccountInfo {
+                        code_hash: code.hash,
+                        balance: account.balance,
+                        nonce: account.nonce,
+                    }),
+                    code: Some(code),
+                    added_storage: account
+                        .storage
+                        .iter()
+                        .map(|(slot, value)| (H256(slot.to_big_endian()), *value))
+                        .collect(),
+                    removed_storage: false,
+                }
+            })
+            .collect();
+
+        let mut trie = BinaryTrie::new(Box::new(InMemoryBinaryTrieDB::new_empty()));
+        apply_account_updates(&mut trie, &updates)
+            .expect("genesis alloc must be embeddable in the binary trie");
+        trie.root()
     }
 }
 #[cfg(test)]
@@ -1483,5 +1594,204 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(config.next_fork(0), None);
+    }
+
+    // --- binary_tree_time (EIP-8297 commitment schedule) -------------------
+
+    #[test]
+    fn binary_tree_unset_is_neither_scheduled_nor_active() {
+        let config = ChainConfig {
+            chain_id: 1,
+            deposit_contract_address: Address::default(),
+            ..Default::default()
+        };
+        assert!(!config.binary_tree_scheduled());
+        assert!(!config.is_binary_tree_active(0));
+        assert!(!config.is_binary_tree_active(u64::MAX));
+    }
+
+    #[test]
+    fn binary_tree_scheduled_in_the_future_is_not_yet_active() {
+        let config = ChainConfig {
+            chain_id: 1,
+            deposit_contract_address: Address::default(),
+            binary_tree_time: Some(1_000),
+            ..Default::default()
+        };
+        assert!(config.binary_tree_scheduled());
+        assert!(!config.is_binary_tree_active(0));
+        assert!(!config.is_binary_tree_active(999));
+    }
+
+    #[test]
+    fn binary_tree_activates_at_the_boundary_second_and_after() {
+        let config = ChainConfig {
+            chain_id: 1,
+            deposit_contract_address: Address::default(),
+            binary_tree_time: Some(1_000),
+            ..Default::default()
+        };
+        assert!(!config.is_binary_tree_active(999));
+        assert!(config.is_binary_tree_active(1_000));
+        assert!(config.is_binary_tree_active(1_001));
+        assert!(config.is_binary_tree_active(u64::MAX));
+    }
+
+    /// `Genesis::compute_state_root` follows the same per-header rule every
+    /// other header does, asked of genesis' own timestamp.
+    #[test]
+    fn genesis_state_root_is_the_binary_root_only_when_active_at_genesis() {
+        let mut genesis = Genesis {
+            timestamp: 1_000,
+            ..Default::default()
+        };
+        genesis.alloc.insert(
+            H160::from_low_u64_be(0xABCD),
+            GenesisAccount {
+                balance: U256::from(42u64),
+                nonce: 7,
+                code: Bytes::new(),
+                storage: BTreeMap::from([(U256::one(), U256::from(9u64))]),
+            },
+        );
+
+        let mpt_root = genesis.compute_state_root();
+
+        // Scheduled but not yet reached: genesis keeps its MPT root, which is
+        // what keeps the genesis hash (and the fork-id checksum seeded by it)
+        // the one standard tooling computed.
+        genesis.config.binary_tree_time = Some(genesis.timestamp + 1);
+        assert_eq!(genesis.compute_state_root(), mpt_root);
+
+        // Active at genesis' own second (test-only shape): the binary root.
+        genesis.config.binary_tree_time = Some(genesis.timestamp);
+        let binary_root = genesis.compute_state_root();
+        assert_ne!(binary_root, mpt_root);
+        // ...and the header that `get_block` builds carries it.
+        assert_eq!(genesis.get_block().header.state_root, binary_root);
+
+        // Activation strictly before genesis is active too.
+        genesis.config.binary_tree_time = Some(genesis.timestamp - 1);
+        assert_eq!(genesis.compute_state_root(), binary_root);
+    }
+
+    #[test]
+    fn binary_tree_time_parses_from_genesis_json() {
+        let json = r#"{
+            "chainId": 1,
+            "depositContractAddress": "0x0000000000000000000000000000000000000000",
+            "binaryTreeTime": 1700000000
+        }"#;
+        let config: ChainConfig =
+            serde_json::from_str(json).expect("binaryTreeTime should deserialize");
+        assert_eq!(config.binary_tree_time, Some(1_700_000_000));
+        assert!(config.binary_tree_scheduled());
+    }
+
+    /// The commitment is deliberately not a `Fork` variant: `get_fork` must keep
+    /// reporting the EVM fork for a post-activation timestamp.
+    #[test]
+    fn binary_tree_does_not_affect_the_evm_fork() {
+        let config = ChainConfig {
+            chain_id: 1,
+            deposit_contract_address: Address::default(),
+            shanghai_time: Some(0),
+            cancun_time: Some(0),
+            prague_time: Some(0),
+            binary_tree_time: Some(1_000),
+            ..Default::default()
+        };
+        assert_eq!(config.get_fork(2_000), Fork::Prague);
+        assert_eq!(config.next_fork(0), None);
+        assert_eq!(config.get_last_scheduled_fork(), Fork::Prague);
+    }
+
+    fn genesis_header_at(timestamp: u64) -> BlockHeader {
+        BlockHeader {
+            timestamp,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn scheduled_binary_tree_time_joins_the_timestamp_fork_list() {
+        let config = ChainConfig {
+            shanghai_time: Some(0),
+            cancun_time: Some(0),
+            prague_time: Some(100),
+            binary_tree_time: Some(500),
+            ..Default::default()
+        };
+        let (_, timestamp_forks) = config.gather_forks(genesis_header_at(0));
+        assert_eq!(timestamp_forks, vec![100, 500]);
+    }
+
+    /// An unscheduled chain must advertise exactly what it advertised before the
+    /// field existed.
+    #[test]
+    fn unscheduled_binary_tree_leaves_the_fork_list_untouched() {
+        let config = ChainConfig {
+            homestead_block: Some(0),
+            london_block: Some(5),
+            shanghai_time: Some(0),
+            cancun_time: Some(0),
+            prague_time: Some(100),
+            osaka_time: Some(200),
+            binary_tree_time: None,
+            ..Default::default()
+        };
+        let (block_forks, timestamp_forks) = config.gather_forks(genesis_header_at(0));
+        assert_eq!(block_forks, vec![5]);
+        assert_eq!(timestamp_forks, vec![100, 200]);
+    }
+
+    /// An at-or-before-genesis activation is already baked into the genesis hash
+    /// that seeds the ForkId checksum, so it must not join the fork list.
+    /// `gather_forks` already drops `timestamp <= genesis.timestamp` for every
+    /// scheduled field; this pins that it covers `binary_tree_time` too.
+    #[test]
+    fn at_or_before_genesis_binary_tree_time_does_not_join_the_fork_list() {
+        let genesis_timestamp = 1_000;
+        for activation in [0, 999, 1_000] {
+            let config = ChainConfig {
+                binary_tree_time: Some(activation),
+                ..Default::default()
+            };
+            let (_, timestamp_forks) = config.gather_forks(genesis_header_at(genesis_timestamp));
+            assert!(
+                timestamp_forks.is_empty(),
+                "binaryTreeTime {activation} must not join the fork list at genesis {genesis_timestamp}"
+            );
+        }
+
+        // One second after genesis is a real fork boundary and must join.
+        let config = ChainConfig {
+            binary_tree_time: Some(genesis_timestamp + 1),
+            ..Default::default()
+        };
+        let (_, timestamp_forks) = config.gather_forks(genesis_header_at(genesis_timestamp));
+        assert_eq!(timestamp_forks, vec![genesis_timestamp + 1]);
+    }
+
+    #[test]
+    fn display_config_lists_a_scheduled_binary_tree_time() {
+        let config = ChainConfig {
+            chain_id: 1,
+            deposit_contract_address: Address::default(),
+            cancun_time: Some(0),
+            binary_tree_time: Some(1_700_000_000),
+            ..Default::default()
+        };
+        let output = config.display_config();
+        assert!(output.contains("BinaryTree"), "{output}");
+        assert!(output.contains("1700000000"), "{output}");
+
+        let unscheduled = ChainConfig {
+            chain_id: 1,
+            deposit_contract_address: Address::default(),
+            cancun_time: Some(0),
+            ..Default::default()
+        };
+        assert!(!unscheduled.display_config().contains("BinaryTree"));
     }
 }

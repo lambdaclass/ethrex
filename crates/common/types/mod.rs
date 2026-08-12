@@ -1,5 +1,6 @@
 mod account;
 mod account_update;
+pub mod binary_execution_witness;
 pub mod blobs_bundle;
 mod block;
 pub mod block_access_list;
@@ -13,6 +14,7 @@ mod fork_id;
 mod genesis;
 pub mod l2;
 pub mod payload;
+pub mod pbt_state;
 pub mod prover;
 mod receipt;
 pub mod requests;

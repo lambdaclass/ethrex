@@ -108,6 +108,18 @@ lazy_static! {
         ..*BPO2_TO_AMSTERDAM_AT_15K_CONFIG
     };
 
+    /// Amsterdam with the EIP-8297 binary-tree commitment active from genesis.
+    ///
+    /// Activating at genesis is refused on a live network, because it changes
+    /// the genesis state root and so the genesis hash the consensus layer holds
+    /// in its beacon state. A fixture has no consensus layer, so the objection
+    /// does not apply and `Genesis::compute_state_root` already handles this
+    /// shape explicitly.
+    pub static ref BINARY_TREE_CONFIG: ChainConfig = ChainConfig {
+        binary_tree_time: Some(0),
+        ..*AMSTERDAM_CONFIG
+    };
+
 }
 
 /// Most of the fork variants are just for parsing the tests
@@ -151,6 +163,7 @@ pub enum Fork {
     BPO4ToBPO5AtTime15k,
     BPO2ToAmsterdamAtTime15k,
     Amsterdam,
+    BinaryTree,
 }
 
 impl Fork {
@@ -172,6 +185,7 @@ impl Fork {
             Fork::BPO4ToBPO5AtTime15k => &BPO4_TO_BPO5_AT_15K_CONFIG,
             Fork::BPO2ToAmsterdamAtTime15k => &BPO2_TO_AMSTERDAM_AT_15K_CONFIG,
             Fork::Amsterdam => &AMSTERDAM_CONFIG,
+            Fork::BinaryTree => &BINARY_TREE_CONFIG,
             _ => {
                 panic!("Ethrex doesn't support pre-Merge forks: {self:?}")
             }

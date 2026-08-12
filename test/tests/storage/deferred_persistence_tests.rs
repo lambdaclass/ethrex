@@ -83,6 +83,7 @@ fn minimal_batch(number: BlockNumber, parent_hash: H256) -> (Block, UpdateBatch)
         receipts: vec![(block.hash(), vec![])],
         blocks: vec![block.clone()],
         code_updates: vec![],
+        binary_update: None,
         commit_depth: None,
         wait_for_flush: false,
     };
@@ -494,6 +495,7 @@ async fn batch_path_advances_flushed_upto() {
         receipts,
         blocks,
         code_updates: vec![],
+        binary_update: None,
         commit_depth: Some(BATCH_COMMIT_THRESHOLD),
         wait_for_flush: true,
     };
@@ -1066,6 +1068,7 @@ async fn shutdown_does_not_force_commit_trie_layers() {
             receipts: vec![(hash_a, vec![])],
             blocks: vec![block_a],
             code_updates: vec![],
+            binary_update: None,
             commit_depth: None,
             wait_for_flush: false,
         };

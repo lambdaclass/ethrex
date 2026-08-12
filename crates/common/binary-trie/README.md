@@ -1,0 +1,141 @@
+## Ethrex-Binary-Trie
+
+Implementation of the [EIP-8297](https://eips.ethereum.org/EIPS/eip-8297)
+Partitioned Binary Tree: the binary trie proposed to replace the Merkle
+Patricia Trie as Ethereum's state commitment.
+
+The crate has two halves:
+
+- `trie` — the raw tree: a compressed binary radix trie mapping
+  prefix-free variable-length keys to 32-byte values, committing to its
+  contents with BLAKE3 over tagged leaf/branch preimages
+  (`blake3(0x00 ‖ key ‖ value)`, `blake3(0x01 ‖ prefix ‖ left ‖ right)`)
+  up to a single root. The empty tree's root is the 32-zero-byte
+  sentinel `EMPTY_TRIE_ROOT`.
+- `embedding` — the state embedding: how accounts, storage and code map
+  onto tree keys and values. Zone-prefixed keys, per-account header
+  stems (basic data, the code hash *or* an EIP-7702 delegation
+  indicator, and the first 64 storage slots under one stem), overflow
+  storage and content-addressed code key derivation
+  (`get_tree_key_for_storage_slot`, `get_tree_key_for_code_chunk`),
+  code chunking (`chunkify_code`) and basic-data packing
+  (`encode_basic_data`). Code is not keyed by account: every chunk
+  lives in the code zone addressed by code hash, so contracts with
+  identical bytecode share their chunk leaves.
+
+### The trie
+
+`trie::BinaryTrie` is incremental: it inserts, updates and removes in
+place. Its canonical structure is update-order independent — any
+sequence of insertions and removals arriving at the same key/value set
+yields the same root. Insertion splits a node in two when keys diverge
+inside its prefix; removal is the inverse, collapsing the parent branch
+of the removed leaf into its surviving sibling, which absorbs the bits
+the branch consumed. Correctness is pinned by the spec conformance
+vectors rather than by a second in-crate implementation.
+
+Keys can also be addressed by the bit prefix they share, through
+`trie::KeyPrefix`: `contains_prefix` answers whether any key lives under
+one — stopping at the first node whose whole subtree does, so it is a
+walk and not a scan — and `remove_prefix` takes the whole subtree away.
+These are what let the embedding's deliberate co-location pay off: an
+account's header stem, its header storage and the whole of its overflow
+storage are each one prefix, and the last of those is unbounded and not
+enumerable from outside the trie at all.
+
+`BinaryTrie::from_sorted_leaves` builds a whole trie at once from
+leaves already in bit order — which, for prefix-free keys, is plain
+ascending byte order. Because the structure is canonical, sorted input
+determines it: one bottom-up fold builds every node in its final shape,
+instead of descending from the root once per key and splitting branches
+that a later key splits again. It is what genesis wants, and later
+snapshot import. Input is validated, not trusted: keys out of order or
+repeated are rejected. The build is in-memory — nothing is written
+until `commit()` — so it suits allocs and snapshots that fit in memory
+rather than an unbounded stream.
+
+### Storage
+
+The trie is storage-backed. `trie::BinaryTrieDB` is the node store —
+`get(path)` / `put_batch`, keyed by a node's bit path from the root, the
+same path-keyed single-version model the MPT's `TrieDB` uses — and
+`trie::InMemoryBinaryTrieDB` is the implementation this crate ships;
+the RocksDB one belongs to `crates/storage`. A child is either loaded
+or the hash of a subtree still in the database, so `open` costs
+nothing, `root()` reads nothing (a stored reference already is its
+hash), and reads and inserts load only the nodes on their path.
+
+A loaded node also caches its own hash and tracks whether the
+database's copy of it is stale. `root()` therefore hashes each node at
+most once, and `commit()` writes only the nodes that changed —
+committing an unchanged trie writes nothing at all. An update clears
+both, on every node from the root down to what it changed, so neither
+cache can outlive the subtree it describes.
+
+A removal leaves nodes behind in the store: the removed leaf, and the
+collapsed branch's surviving child, which moves up one level. `commit()`
+carries those paths in the same batch as empty-valued entries, which
+the backend deletes — the tombstone convention the MPT's `TrieDB`
+already uses, so `BinaryTrieDB` needs no removal method. Nothing below
+the survivor moves: it absorbs exactly the bits its old path loses, so
+the paths of its whole subtree are unchanged and none of it is
+rewritten.
+
+### Test vectors
+
+`tests/vectors/binary_trie_vectors.json` is **vendored** from the EELS
+reference implementation, which owns the generator and its schema
+documentation:
+
+    ethereum/execution-specs, branch projects/binary-trie
+    tests/binary_trie/vectors/
+
+**Vendored from:** `projects/binary-trie` @ `ad84d306`
+
+### Proofs and state sync
+
+Proofs are no longer a non-goal. `BinaryTrie::prove_walk` emits the
+root-to-terminal sequence of stored-node encodings for one key,
+`trie::proof::verify_walk` checks it against a root, and
+`trie::range::prove_range` / `verify_range` build a range proof out of two
+boundary walks — the left walk of the request origin and the right walk of
+the last returned leaf — by recomputing the root from the frontier those two
+walks pin.
+
+Those three are the primitives under `pbtsnap/1`, the experimental RLPx
+capability that lets a node join a binary-tree chain after the flip without
+replaying it: it range-downloads the pivot block's leaves, verifies every
+range against the pivot header's `state_root`, and lands them with
+`Store::install_binary_snapshot`, which re-merkleizes the whole leaf set
+before it writes a row. Bytecode rides `snap/1 GetByteCodes`; there is no
+reverse embedding, because the leaves on the wire are the trie's own keys and
+values.
+
+Two limits are worth stating here rather than leaving to the driver:
+
+- **A server can only serve a root it still holds.** The persistent trie is
+  single-version and sits near `head - DB_COMMIT_THRESHOLD`, with the roots
+  above it addressable only through the layer cache, so a pivot goes
+  unservable after roughly that many blocks. There is no healing protocol in
+  v1: a stale pivot restarts the download against a fresh one, bounded at
+  three attempts per cycle.
+- **A node that syncs this way has no pre-pivot state.** Balances, storage,
+  tracing and `debug_*` for blocks below the pivot fail explicitly — the same
+  contract MPT snap sync has always had. `eth_getProof` additionally refuses
+  every post-activation block on *any* node, snap-synced or not: the response
+  shape is the MPT's and a binary root has no MPT behind it.
+
+Spec: `docs/eip-draft-pbtsnap.md` (ethrex-experimental draft, no upstream
+standing). Plan and decision record: `docs/plans/2026-07-26-pbt-snap-sync.md`.
+
+### Non-goals (today)
+
+No fork wiring in this crate — activation scheduling lives in the chain
+config and the blockchain crate, not here.
+
+### Spec discrepancy
+
+`encode_basic_data` packs `code_size` as 4 bytes at offset 4, following
+the EELS branch this crate is ported from; EIP-7864 specifies a 3-byte
+field at offset 5. The conformance fixture pins the EELS choice —
+revisit when EIP-8297's final layout lands.

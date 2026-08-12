@@ -3,6 +3,9 @@ use crate::debug::bad_blocks::GetBadBlocksRequest;
 use crate::debug::chain_config::ChainConfigRequest;
 use crate::debug::execution_witness::ExecutionWitnessRequest;
 use crate::debug::execution_witness_by_hash::ExecutionWitnessByBlockHashRequest;
+use crate::debug::execution_witness_v2::{
+    ExecutionWitnessV2ByBlockHashRequest, ExecutionWitnessV2Request,
+};
 use crate::debug::set_head::SetHeadRequest;
 use crate::engine::blobs::{BlobsV2Request, BlobsV3Request};
 use crate::engine::client_version::GetClientVersionV1Request;
@@ -26,7 +29,7 @@ use crate::engine::{
 use crate::eth::client::Config;
 use crate::eth::{
     account::{
-        GetBalanceRequest, GetCodeRequest, GetProofRequest, GetStorageAtRequest,
+        GetBalanceRequest, GetCodeRequest, GetProofRequest, GetProofV2Request, GetStorageAtRequest,
         GetTransactionCountRequest,
     },
     block::{
@@ -1346,7 +1349,8 @@ pub async fn map_authrpc_requests(
 /// - Transaction operations: `eth_sendRawTransaction`, `eth_getTransactionByHash`, `eth_getTransactionReceipt`
 /// - Gas estimation: `eth_estimateGas`, `eth_gasPrice`, `eth_maxPriorityFeePerGas`, `eth_feeHistory`
 /// - Filters: `eth_newFilter`, `eth_getFilterChanges`, `eth_uninstallFilter`, `eth_getLogs`
-/// - Misc: `eth_chainId`, `eth_syncing`, `eth_createAccessList`, `eth_getProof`
+/// - Misc: `eth_chainId`, `eth_syncing`, `eth_createAccessList`, `eth_getProof`,
+///   `eth_getProofV2`
 pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "eth_chainId" => ChainId::call(req, context).await,
@@ -1391,6 +1395,10 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
         }
         "eth_sendRawTransaction" => SendRawTransactionRequest::call(req, context).await,
         "eth_getProof" => GetProofRequest::call(req, context).await,
+        // The binary-trie counterpart of `eth_getProof`, for headers past the
+        // EIP-8297 activation. Each refuses what the other serves; see
+        // `crate::types::binary_account_proof` for why the shape is not shared.
+        "eth_getProofV2" => GetProofV2Request::call(req, context).await,
         "eth_gasPrice" => GasPrice::call(req, context).await,
         "eth_maxPriorityFeePerGas" => {
             eth::max_priority_fee::MaxPriorityFee::call(req, context).await
@@ -1429,6 +1437,12 @@ pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Res
         "debug_executionWitness" => ExecutionWitnessRequest::call(req, context).await,
         "debug_executionWitnessByBlockHash" => {
             ExecutionWitnessByBlockHashRequest::call(req, context).await
+        }
+        // The EIP-8297 pair. V1 answers for MPT-committed headers and V2 for
+        // binary-committed ones; each refuses the other's and says so.
+        "debug_executionWitnessV2" => ExecutionWitnessV2Request::call(req, context).await,
+        "debug_executionWitnessV2ByBlockHash" => {
+            ExecutionWitnessV2ByBlockHashRequest::call(req, context).await
         }
         "debug_chainConfig" => ChainConfigRequest::call(req, context).await,
         "debug_getBadBlocks" => GetBadBlocksRequest::call(req, context).await,
@@ -1813,6 +1827,7 @@ mod tests {
                             "amsterdamTime": null,
                             "hegotaTime": null,
                             "lstarTime": null,
+                            "binaryTreeTime": null,
                             "terminalTotalDifficulty": "0x0",
                             "terminalTotalDifficultyPassed": true,
                             "blobSchedule": blob_schedule,

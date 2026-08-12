@@ -15,6 +15,7 @@ ethrex-rlp.workspace = true
 ethrex-common.workspace = true
 ethrex-crypto.workspace = true
 ethrex-trie.workspace = true
+ethrex-binary-trie.workspace = true
 
 anyhow = "1.0.86"
 bytes.workspace = true
@@ -35,6 +36,7 @@ rocksdb = ["dep:rocksdb"]
 testing = []
 
 [dev-dependencies]
+hex.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["full"] }
 proptest = "1.0.0"

@@ -19,6 +19,11 @@ ethrex-rlp.workspace = true
 # `ethrex-trie`'s no_std path is verified in isolation by the `no_std` CI job
 # (`-p ethrex-trie --no-default-features`), not through this dependency.
 ethrex-trie.workspace = true
+# Same shape as the `ethrex-trie` dependency above: `ethrex-binary-trie` is kept
+# standalone and dependency-light (it is extracted verbatim to a separate
+# benchmarking repo), so the glue that speaks ethrex's own types — `types::pbt_state`,
+# which applies `AccountUpdate`s to the trie — lives here rather than in that crate.
+ethrex-binary-trie.workspace = true
 ethrex-crypto.workspace = true
 
 tracing.workspace = true

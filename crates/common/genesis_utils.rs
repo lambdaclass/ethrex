@@ -36,6 +36,7 @@ fn sort_config(genesis_map: &Map<String, Value>) -> Result<Map<String, Value>, S
         "hegotaTime",
         "lstarTime",
         "verkleTime",
+        "binaryTreeTime",
         "ethash",
         "depositContractAddress",
         "blobSchedule",

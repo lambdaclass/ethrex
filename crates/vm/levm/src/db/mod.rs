@@ -1,6 +1,7 @@
 use crate::{errors::DatabaseError, precompiles::PrecompileCache};
 use ethrex_common::{
     Address, H256, U256,
+    constants::EMPTY_TRIE_HASH,
     types::{AccountState, ChainConfig, Code, CodeMetadata},
 };
 use rustc_hash::FxHashMap;
@@ -23,6 +24,14 @@ type CodeCache = FxHashMap<H256, Code>;
 /// Touched-key snapshot returned by [`CachingDatabase::touched_keys_where`].
 pub struct TouchedKeys {
     /// Touched accounts with their storage roots.
+    ///
+    /// A *merkle-patricia* storage root, and only meaningful as one. Past the
+    /// EIP-8297 activation there are no per-account storage roots and this is
+    /// `EMPTY_TRIE_HASH` for every account — which must not be read as "the
+    /// account has no storage"; that question is
+    /// `ethrex_vm::VmDatabase::has_storage`. The sole consumer,
+    /// `ethrex_blockchain::prewarm::warm_merkle_paths`, is MPT-only by nature
+    /// and refuses to run on an active chain for exactly this reason.
     pub accounts: Vec<(Address, H256)>,
     /// Touched storage slots as `(account address, slot key)`.
     pub slots: Vec<(Address, H256)>,
@@ -35,6 +44,35 @@ pub trait Database: Send + Sync {
     fn get_chain_config(&self) -> Result<ChainConfig, DatabaseError>;
     fn get_account_code(&self, code_hash: H256) -> Result<Code, DatabaseError>;
     fn get_code_metadata(&self, code_hash: H256) -> Result<CodeMetadata, DatabaseError>;
+    /// Whether `address` holds any storage at all. `false` for an account that
+    /// is not there.
+    ///
+    /// # Why this is a method and not `storage_root != EMPTY_TRIE_HASH`
+    ///
+    /// Because on the EIP-8297 binary trie there is no per-account storage
+    /// root to compare — storage there is leaves of one unified tree, not a
+    /// subtrie per account — so a binary-backed read reports the empty root for
+    /// every account and the comparison answers "no storage" for the whole
+    /// chain. `ethrex_vm::VmDatabase::has_storage` documents this at length.
+    ///
+    /// # The default is right for MPT-shaped backends only
+    ///
+    /// It derives the answer from `storage_root`, which is correct for any
+    /// backend that stores MPT accounts — including every test double in this
+    /// workspace, which is why the default exists at all rather than being
+    /// boilerplate on two dozen impls.
+    ///
+    /// **A layer that wraps another `Database` must override it and forward.**
+    /// Inheriting the default there is not merely a missed optimisation: a
+    /// wrapper's own `AccountState` (cached or logged) is MPT-shaped whatever
+    /// the backend underneath it is, so deriving from it discards the real
+    /// answer the backend had. `CachingDatabase` is the live example —
+    /// `a_storage_only_account_exists_and_collides_on_both_paths` reads through
+    /// it specifically to catch that.
+    fn has_storage(&self, address: Address) -> Result<bool, DatabaseError> {
+        Ok(self.get_account_state(address)?.storage_root != *EMPTY_TRIE_HASH)
+    }
+
     /// Access the precompile cache, if available at this database layer.
     fn precompile_cache(&self) -> Option<&PrecompileCache> {
         None
@@ -107,6 +145,20 @@ pub struct CachingDatabase {
     inner: Arc<dyn Database>,
     /// Cached account states (balance, nonce, code_hash, storage_root)
     accounts: RwLock<AccountCache>,
+    /// Cached "does this account hold storage" answers.
+    ///
+    /// Kept apart from `accounts` rather than folded into its value because the
+    /// two are filled by different reads: `prefetch_accounts` warms `accounts`
+    /// through the backend's batch path, which has no batched form of this
+    /// question, so a combined entry would have to invent a placeholder for the
+    /// flag and could then be mistaken for a real answer. A separate map is
+    /// simply absent until asked.
+    ///
+    /// Satisfies the cross-block-boundary invariant above without a handoff
+    /// guard: whether an account holds storage is a function of the parent
+    /// state root alone, exactly as `accounts` is, and depends on nothing about
+    /// the block being executed.
+    has_storage: RwLock<FxHashMap<Address, bool>>,
     /// Cached storage values
     storage: RwLock<StorageCache>,
     /// Cached contract code
@@ -123,6 +175,7 @@ impl CachingDatabase {
         Self {
             inner,
             accounts: RwLock::new(FxHashMap::default()),
+            has_storage: RwLock::new(FxHashMap::default()),
             storage: RwLock::new(FxHashMap::default()),
             code: RwLock::new(FxHashMap::default()),
             precompile_cache: precompile_cache_enabled.then(PrecompileCache::new),
@@ -256,6 +309,34 @@ impl Database for CachingDatabase {
         self.write_accounts()?.insert(address, state);
 
         Ok(state)
+    }
+
+    /// Forwarded to the backend, never derived from the cached `AccountState`.
+    ///
+    /// The cached state is MPT-shaped whatever the backend is: on a binary-trie
+    /// chain its `storage_root` is `EMPTY_TRIE_HASH` for every account, so the
+    /// trait's default would answer "no storage" for the whole chain past the
+    /// activation, silently turning off EIP-7610 and the destroyed-account
+    /// storage wipe. Only the backend knows.
+    fn has_storage(&self, address: Address) -> Result<bool, DatabaseError> {
+        if let Some(answer) = self
+            .has_storage
+            .read()
+            .map_err(poison_error_to_db_error)?
+            .get(&address)
+            .copied()
+        {
+            return Ok(answer);
+        }
+
+        let answer = self.inner.has_storage(address)?;
+
+        self.has_storage
+            .write()
+            .map_err(poison_error_to_db_error)?
+            .insert(address, answer);
+
+        Ok(answer)
     }
 
     fn get_storage_value(&self, address: Address, key: H256) -> Result<U256, DatabaseError> {

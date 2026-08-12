@@ -1,6 +1,7 @@
 use ethrex_blockchain::{
     error::{ChainError, InvalidForkChoice},
     fork_choice::apply_fork_choice_with_deep_reorg,
+    health::{RefusalKind, countable_refusal},
     payload::{BuildPayloadArgs, create_payload},
 };
 use ethrex_common::types::{BlockHeader, ELASTICITY_MULTIPLIER};
@@ -225,11 +226,19 @@ async fn handle_forkchoice(
         "New fork choice update",
     );
 
+    // Every arrival, whatever the outcome. A node whose head is frozen because
+    // no consensus client is talking to it is not halted, and this is what
+    // distinguishes the two. See `ethrex_blockchain::health`.
+    context.blockchain.health().record_forkchoice_update();
+
     if let Some(latest_valid_hash) = context
         .storage
         .get_latest_valid_ancestor(fork_choice_state.head_block_hash)
         .await?
     {
+        record_refusal(&context, RefusalKind::InvalidHead, || {
+            InvalidForkChoice::InvalidAncestor(latest_valid_hash).to_string()
+        });
         return Ok((
             None,
             ForkChoiceResponse::from(PayloadStatus::invalid_with(
@@ -253,6 +262,9 @@ async fn handle_forkchoice(
             .storage
             .set_latest_valid_ancestor(head_block.hash(), latest_valid_hash)
             .await?;
+        record_refusal(&context, RefusalKind::InvalidHead, || {
+            InvalidForkChoice::InvalidAncestor(latest_valid_hash).to_string()
+        });
         return Ok((
             None,
             ForkChoiceResponse::from(PayloadStatus::invalid_with(
@@ -267,6 +279,9 @@ async fn handle_forkchoice(
     // from the DB, and the later head update can overwrite changes made by the syncer
     // process, corrupting the forkchoice state (see #5547)
     if syncer.sync_mode() == SyncMode::Snap {
+        record_refusal(&context, RefusalKind::Syncing, || {
+            "forkchoice update ignored while snap-syncing".to_string()
+        });
         syncer.sync_to_head(fork_choice_state.head_block_hash);
         return Ok((None, PayloadStatus::syncing().into()));
     }
@@ -349,6 +364,9 @@ async fn handle_forkchoice(
             ))
         }
         Err(forkchoice_error) => {
+            if let Some(kind) = refusal_kind(&forkchoice_error) {
+                record_refusal(&context, kind, || forkchoice_error.to_string());
+            }
             let forkchoice_response = match forkchoice_error {
                 InvalidForkChoice::NewHeadAlreadyCanonical => {
                     // execution-apis PR 786: when head references a VALID ancestor of
@@ -416,6 +434,46 @@ async fn handle_forkchoice(
             };
             Ok((None, forkchoice_response))
         }
+    }
+}
+
+/// Which [`RefusalKind`] a declined forkchoice update is, or `None` when the
+/// outcome was not a refusal at all.
+///
+/// `NewHeadAlreadyCanonical` is the one error variant that is a *success*:
+/// execution-apis PR 786 has the node answer VALID for a head at or below the
+/// finalized block, and the chain is not being held back by it.
+///
+/// The match is exhaustive on purpose. A new `InvalidForkChoice` variant should
+/// fail to compile here rather than silently join the set of refusals that go
+/// unreported — the whole point of this module is that a refusal to advance
+/// says so.
+fn refusal_kind(error: &InvalidForkChoice) -> Option<RefusalKind> {
+    match error {
+        InvalidForkChoice::NewHeadAlreadyCanonical => None,
+        InvalidForkChoice::StateNotReachable => Some(RefusalKind::StateNotReachable),
+        InvalidForkChoice::Syncing => Some(RefusalKind::Syncing),
+        InvalidForkChoice::UnlinkedHead => Some(RefusalKind::UnlinkedHead),
+        InvalidForkChoice::TooDeepReorg { .. } => Some(RefusalKind::TooDeepReorg),
+        InvalidForkChoice::InvalidHead
+        | InvalidForkChoice::InvalidHeadHash
+        | InvalidForkChoice::InvalidAncestor(_) => Some(RefusalKind::InvalidHead),
+        InvalidForkChoice::Disconnected(_, _)
+        | InvalidForkChoice::ElementNotFound(_)
+        | InvalidForkChoice::Unordered
+        | InvalidForkChoice::PreMergeBlock => Some(RefusalKind::Inconsistent),
+        InvalidForkChoice::StoreError(_) => Some(RefusalKind::StoreError),
+    }
+}
+
+/// Reports a declined forkchoice update to the chain-progress tracker, unless
+/// it is one [`countable_refusal`] excludes.
+///
+/// `detail` is a closure so the error's `Display` is not formatted on the
+/// excluded path — this runs on every forkchoice update of a syncing node.
+fn record_refusal(context: &RpcApiContext, kind: RefusalKind, detail: impl FnOnce() -> String) {
+    if countable_refusal(kind, context.blockchain.is_synced()) {
+        context.blockchain.health().record_refusal(kind, detail());
     }
 }
 
@@ -639,9 +697,77 @@ async fn build_payload_v4(
 
 #[cfg(test)]
 mod tests {
-    use super::{validate_attributes_v2, validate_attributes_v2_pre_shanghai};
+    use super::{refusal_kind, validate_attributes_v2, validate_attributes_v2_pre_shanghai};
     use crate::types::fork_choice::PayloadAttributesV3;
+    use ethrex_blockchain::error::{ForkChoiceElement, InvalidForkChoice};
+    use ethrex_blockchain::health::RefusalKind;
     use ethrex_common::types::{BlockHeader, Withdrawal};
+    use ethrex_storage::error::StoreError;
+
+    /// The one outcome that is a success despite being an `Err`. Reporting it
+    /// as a refusal would make every finalized-ancestor forkchoice update look
+    /// like the node declining to advance, and a node that is fine would be
+    /// reported as stalled — a signal that is wrong is worse than none.
+    #[test]
+    fn a_head_already_canonical_is_not_a_refusal() {
+        assert_eq!(
+            refusal_kind(&InvalidForkChoice::NewHeadAlreadyCanonical),
+            None
+        );
+    }
+
+    /// Every other variant is a refusal, and the flip-block halt's variant maps
+    /// to its own kind rather than being lumped in with the rest.
+    #[test]
+    fn every_other_forkchoice_error_is_a_reported_refusal() {
+        let cases = [
+            (
+                InvalidForkChoice::StateNotReachable,
+                RefusalKind::StateNotReachable,
+            ),
+            (InvalidForkChoice::Syncing, RefusalKind::Syncing),
+            (InvalidForkChoice::UnlinkedHead, RefusalKind::UnlinkedHead),
+            (
+                InvalidForkChoice::TooDeepReorg {
+                    reorg_depth: 10,
+                    limit: 5,
+                },
+                RefusalKind::TooDeepReorg,
+            ),
+            (InvalidForkChoice::InvalidHead, RefusalKind::InvalidHead),
+            (InvalidForkChoice::InvalidHeadHash, RefusalKind::InvalidHead),
+            (
+                InvalidForkChoice::InvalidAncestor(Default::default()),
+                RefusalKind::InvalidHead,
+            ),
+            (
+                InvalidForkChoice::Disconnected(
+                    ForkChoiceElement::Head,
+                    ForkChoiceElement::Finalized,
+                ),
+                RefusalKind::Inconsistent,
+            ),
+            (
+                InvalidForkChoice::ElementNotFound(ForkChoiceElement::Safe),
+                RefusalKind::Inconsistent,
+            ),
+            (InvalidForkChoice::Unordered, RefusalKind::Inconsistent),
+            (InvalidForkChoice::PreMergeBlock, RefusalKind::Inconsistent),
+            (
+                InvalidForkChoice::StoreError(StoreError::MissingLatestBlockNumber),
+                RefusalKind::StoreError,
+            ),
+        ];
+        for (error, expected) in cases {
+            let rendered = error.to_string();
+            assert_eq!(
+                refusal_kind(&error),
+                Some(expected),
+                "{rendered} was not reported as {}",
+                expected.as_str()
+            );
+        }
+    }
 
     #[test]
     fn forkchoice_updated_v2_returns_invalid_payload_attributes_when_withdrawals_missing() {

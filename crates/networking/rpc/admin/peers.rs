@@ -40,6 +40,15 @@ struct Protocols {
     eth: Option<ProtocolData>,
     #[serde(skip_serializing_if = "Option::is_none")]
     snap: Option<ProtocolData>,
+    /// `pbtsnap/1` — state sync for the EIP-8297 binary tree.
+    ///
+    /// Additive: the key is absent for every peer that does not advertise the
+    /// capability, so a response from a peer set without it is byte-identical
+    /// to what this method returned before. Without this arm a `pbtsnap` peer
+    /// showed the capability only in the raw `caps` list, which is not where an
+    /// operator looks to see what a peer speaks.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pbtsnap: Option<ProtocolData>,
     #[serde(skip_serializing_if = "Option::is_none")]
     p2p: Option<ProtocolData>,
 }
@@ -64,6 +73,11 @@ impl From<PeerData> for RpcPeer {
                 }
                 "snap" => {
                     protocols.snap = Some(ProtocolData {
+                        version: cap.version,
+                    })
+                }
+                "pbtsnap" => {
+                    protocols.pbtsnap = Some(ProtocolData {
                         version: cap.version,
                     })
                 }
@@ -219,5 +233,92 @@ mod tests {
         let serialized_peer =
             serde_json::to_string(&RpcPeer::from(peer)).expect("Failed to serialize peer");
         assert_eq!(serialized_peer, expected_serialized_peer);
+    }
+
+    /// A `pbtsnap/1` peer must show the capability where an operator reads what
+    /// a peer speaks — the `protocols` object — and not only in the raw `caps`
+    /// list.
+    ///
+    /// Observed on a live devnet before this arm existed: all three peers
+    /// advertised `pbtsnap/1` in `caps` and `protocols` said nothing about it.
+    #[test]
+    fn a_pbtsnap_peer_reports_the_capability_under_protocols() {
+        let node = Node::from_enode_url("enode://4aeb4ab6c14b23e2c4cfdce879c04b0748a20d8e9b59e25ded2a08143e265c6c25936e74cbc8e641e3312ca288673d91f2f93f8e277de3cfa444ecdaaf982052@157.90.35.166:30303").unwrap();
+        let record = NodeRecord::from_node(&node, 17, &SecretKey::new(&mut OsRng)).unwrap();
+        let mut peer = PeerData::new(
+            node,
+            Some(record),
+            None,
+            vec![
+                Capability::eth(68),
+                Capability::snap(1),
+                Capability::pbtsnap(1),
+            ],
+        );
+        peer.is_connection_inbound = false;
+        peer.node.version = Some("ethrex/test".to_string());
+
+        let serialized = serde_json::to_value(RpcPeer::from(peer)).expect("peer must serialize");
+
+        // The capability is in `caps`, which is what was already true and is
+        // not what this test is about. Asserting it establishes that the peer
+        // really does advertise `pbtsnap/1`, so the check below is not passing
+        // because the fixture forgot to.
+        assert_eq!(
+            serialized["caps"],
+            serde_json::json!(["eth/68", "snap/1", "pbtsnap/1"]),
+        );
+        // The claim: it is under `protocols` too, at its negotiated version.
+        assert_eq!(
+            serialized["protocols"]["pbtsnap"],
+            serde_json::json!({ "version": 1 }),
+            "a pbtsnap peer must report the protocol, got {}",
+            serialized["protocols"],
+        );
+        // And the pre-existing keys are untouched, so this is additive.
+        assert_eq!(
+            serialized["protocols"]["eth"],
+            serde_json::json!({ "version": 68 }),
+        );
+        assert_eq!(
+            serialized["protocols"]["snap"],
+            serde_json::json!({ "version": 1 }),
+        );
+    }
+
+    /// The other half of "additive": a peer that does not speak `pbtsnap` must
+    /// serialize without the key at all, so the response shape a non-binary
+    /// deployment sees is byte-identical to what it was before.
+    ///
+    /// `test_peer_data_to_serialized_peer` above pins that exact string; this
+    /// states the invariant it depends on, so a later change from
+    /// `Option<ProtocolData>` to something that renders `null` is caught here
+    /// with a message that says why rather than only as a string diff.
+    #[test]
+    fn a_peer_without_pbtsnap_omits_the_key_entirely() {
+        let node = Node::from_enode_url("enode://4aeb4ab6c14b23e2c4cfdce879c04b0748a20d8e9b59e25ded2a08143e265c6c25936e74cbc8e641e3312ca288673d91f2f93f8e277de3cfa444ecdaaf982052@157.90.35.166:30303").unwrap();
+        let record = NodeRecord::from_node(&node, 17, &SecretKey::new(&mut OsRng)).unwrap();
+        let mut peer = PeerData::new(
+            node,
+            Some(record),
+            None,
+            vec![Capability::eth(68), Capability::snap(1)],
+        );
+        peer.is_connection_inbound = false;
+        peer.node.version = Some("ethrex/test".to_string());
+
+        let serialized = serde_json::to_value(RpcPeer::from(peer)).expect("peer must serialize");
+
+        assert!(
+            serialized["protocols"].get("pbtsnap").is_none(),
+            "a peer that does not advertise pbtsnap must not carry the key, got {}",
+            serialized["protocols"],
+        );
+        // Non-vacuity: `protocols` is populated at all, so the assertion above
+        // is not passing because the object is empty.
+        assert_eq!(
+            serialized["protocols"]["eth"],
+            serde_json::json!({ "version": 68 }),
+        );
     }
 }

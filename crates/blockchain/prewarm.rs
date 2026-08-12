@@ -489,6 +489,30 @@ fn run_pass(blockchain: &Blockchain, pool: &rayon::ThreadPool, req: PrewarmReque
 /// proof walks pull them into the RocksDB block cache during the idle window.
 /// Proof outputs are discarded — the reads are the product. Returns the
 /// number of newly walked paths.
+///
+/// # MPT only, and it says so up front
+///
+/// Every read below is merkle-patricia-shaped: `open_state_trie` at the
+/// parent's `state_root`, and one storage trie per account opened at that
+/// account's storage root. Past the EIP-8297 activation the parent's
+/// `state_root` is a *binary* root, which names no MPT node, and there are no
+/// per-account storage roots at all — `StoreVmDatabase` reports
+/// `EMPTY_TRIE_HASH` for every account there, because that is the only honest
+/// value a field typed as a root can hold when no root exists.
+///
+/// So on an active chain this whole function warms nothing: the state trie
+/// opens at a root it will never resolve, and the storage loop skips every
+/// account on the empty-root check. Nothing is *wrong* — the reads simply miss
+/// — but it is a slot's worth of pointless RocksDB traffic per pass, and the
+/// empty roots would be dangerously easy to misread as "these accounts have no
+/// storage" by anyone extending this later. They mean no such thing; the
+/// storage question lives on `VmDatabase::has_storage` now. Bailing here keeps
+/// the MPT assumption stated in one place instead of implied by two
+/// coincidences.
+///
+/// Asked per header, exactly as `StoreVmDatabase` asks it: the warm targets the
+/// child of `parent`, and a pre-activation parent keeps a real MPT root (and
+/// real storage roots) forever, so warming stays right up to the flip.
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 fn warm_merkle_paths(
     blockchain: &Blockchain,
@@ -502,6 +526,14 @@ fn warm_merkle_paths(
     use ethrex_common::utils::keccak;
     use ethrex_storage::hash_key;
     use tracing::debug;
+
+    if blockchain
+        .storage
+        .get_chain_config()
+        .is_binary_tree_active(parent.timestamp)
+    {
+        return 0;
+    }
 
     // Collect only the delta: keys not walked in an earlier pass this slot.
     // The cache grows monotonically, so filtering here keeps the per-pass

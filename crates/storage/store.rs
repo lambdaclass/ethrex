@@ -1,28 +1,40 @@
 #[cfg(feature = "rocksdb")]
-use crate::backend::rocksdb::RocksDBBackend;
+use crate::backend::rocksdb::{RocksDBBackend, RocksDBConfig};
 use crate::{
     STORE_METADATA_FILENAME, STORE_SCHEMA_VERSION,
     api::{
-        StorageBackend, StorageReadView, StorageWriteBatch,
+        StorageBackend, StorageReadView, StorageStats, StorageWriteBatch,
         tables::{
             ACCOUNT_CODE_METADATA, ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES,
-            BAD_BLOCKS, BLOCK_ACCESS_LISTS, BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES,
-            CHAIN_DATA, EXECUTION_WITNESSES, FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS,
-            MISC_VALUES, PENDING_BLOCKS, RECEIPTS_V2, SNAP_STATE, STATE_HISTORY,
-            STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
+            BAD_BLOCKS, BINARY_FLATKEYVALUE, BINARY_TRIE_NODES, BINARY_TRIE_ROOTS,
+            BLOCK_ACCESS_LISTS, BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA,
+            EXECUTION_WITNESSES, FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS, MISC_VALUES,
+            PENDING_BLOCKS, RECEIPTS_V2, SNAP_STATE, STATE_HISTORY, STORAGE_FLATKEYVALUE,
+            STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
         },
     },
     apply_prefix,
     backend::in_memory::InMemoryBackend,
+    binary_trie::{
+        BINARY_FLAT_FRONTIER_COMPLETE, BackendBinaryFlatDB, BackendBinaryTrieDB,
+        BinaryFlatCoverage, BinaryFlatLeaf, BinaryFlatWrites, BinaryTrieRows, LayeredBinaryTrieDB,
+        StagedBinaryRows,
+    },
     block_data_buffer::BlockDataBuffer,
     error::StoreError,
     journal::{FlatDiff, JournalEntry},
-    layering::{Overlay, TrieLayerCache, TrieWrapper},
+    layering::{BinaryLayerUpdate, Overlay, TrieLayerCache, TrieWrapper},
     rlp::{BlockBodyRLP, BlockHeaderRLP, BlockRLP},
     trie::{BackendTrieDB, BackendTrieDBLocked, classify_trie_key},
     utils::{ChainDataIndex, SnapStateIndex},
 };
 
+use ethrex_binary_trie::trie::{
+    BinaryTrie, BinaryTrieDB, BitPath, DEFAULT_GROUP_DEPTH,
+    EMPTY_TRIE_ROOT as BINARY_EMPTY_TRIE_ROOT, GroupDepth, LeafChangelog,
+    MAX_KEY_LENGTH as MAX_BINARY_KEY_LENGTH, RangeSlice, RecordingBinaryTrieDB, WitnessNodes,
+    hash_stored_root, prove_range,
+};
 use ethrex_common::{
     Address, H256, U256,
     types::{
@@ -31,6 +43,7 @@ use ethrex_common::{
         Receipt, Transaction,
         block_access_list::BlockAccessList,
         block_execution_witness::{ExecutionWitness, RpcExecutionWitness},
+        pbt_state::{self, BinaryAccount, apply_account_updates},
     },
     utils::keccak,
 };
@@ -111,6 +124,14 @@ pub struct StoreConfig {
     /// the effective ceiling on RocksDB's resident memory. Ignored for
     /// in-memory backends.
     pub rocksdb_block_cache_size: usize,
+    /// Install a RocksDB `Statistics` object so bloom hit/miss, block-cache
+    /// hit/miss and read/write latency histograms become readable via
+    /// [`Store::storage_stats`], and get dumped once on shutdown.
+    ///
+    /// **Off by default.** RocksDB documents statistics collection as costing
+    /// roughly 5-10% throughput. This is a diagnostic switch for devnet runs,
+    /// not something to leave on. Ignored for in-memory backends.
+    pub rocksdb_enable_statistics: bool,
     /// Bound on the persist worker's channel: number of staged (acked) live
     /// messages whose flush may still be in flight. Once full, the next send
     /// blocks — that is the backpressure that throttles `newPayload`.
@@ -122,9 +143,52 @@ impl Default for StoreConfig {
     fn default() -> Self {
         Self {
             rocksdb_block_cache_size: DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
+            rocksdb_enable_statistics: false,
             persist_channel_capacity: DEFAULT_PERSIST_CHANNEL_CAPACITY,
         }
     }
+}
+
+/// Projects the store-wide config onto the subset the RocksDB backend takes,
+/// so the backend never sees knobs it has no say over (e.g. the persist
+/// channel) and new backend tunables have exactly one place to be threaded.
+#[cfg(feature = "rocksdb")]
+impl From<StoreConfig> for RocksDBConfig {
+    fn from(config: StoreConfig) -> Self {
+        Self {
+            block_cache_size: config.rocksdb_block_cache_size,
+            enable_statistics: config.rocksdb_enable_statistics,
+        }
+    }
+}
+
+/// Emits the storage-engine diagnostics to the log, once, on graceful shutdown.
+///
+/// Deliberately silent unless statistics were explicitly enabled, so a default
+/// node's shutdown output is unchanged. The per-table figures are free to read,
+/// but the flag is what says "this run is a diagnostic run".
+///
+/// This exists because the 2026-08-08 devnet had to stop the node, count SST
+/// files on disk and parse RocksDB's `LOG` by hand to obtain exactly these
+/// numbers.
+fn log_storage_stats(backend: &dyn StorageBackend) {
+    let Some(stats) = backend.stats() else {
+        return;
+    };
+    let Some(engine_statistics) = stats.engine_statistics else {
+        return;
+    };
+    for table in &stats.tables {
+        info!(
+            table = table.table,
+            estimated_keys = table.estimated_keys,
+            sst_bytes = table.sst_bytes,
+            live_data_bytes = table.live_data_bytes,
+            memtable_bytes = table.memtable_bytes,
+            "storage table stats"
+        );
+    }
+    info!("storage engine statistics:\n{engine_statistics}");
 }
 
 /// Control messages for the FlatKeyValue generator
@@ -142,6 +206,103 @@ const FLUSHED_UPTO_KEY: &[u8] = b"bodies_flushed_upto";
 
 /// Single key under which the bounded list of bad blocks is stored in `BAD_BLOCKS`.
 const BAD_BLOCKS_KEY: &[u8] = b"bad_blocks";
+
+/// `MISC_VALUES` key holding the binary flat mirror's durable backfill frontier.
+///
+/// A named constant rather than a repeated literal, which is where the MPT's
+/// equivalent went wrong: it spells `"last_written"` inline at eight sites and
+/// has no constant, unlike [`FLUSHED_UPTO_KEY`].
+///
+/// Three durable states, per the plan's Decision 2:
+/// - **absent** — no backfill generator has ever run;
+/// - **a real tree key** — the generator has swept up to and including it;
+/// - **the 1-byte sentinel `[0xff]`** — complete. Unambiguous because no tree
+///   key is one byte long; they are 34 or 66.
+pub(crate) const BINARY_LAST_WRITTEN_KEY: &[u8] = b"binary_last_written";
+
+/// `MISC_VALUES` key recording the group depth `BINARY_TRIE_NODES` was written
+/// at, as a single byte.
+///
+/// The depth is not stored in the rows themselves on purpose. A row's key is
+/// its *group root*, so the depth is already baked into every key in the table;
+/// repeating it per row would let two rows disagree, and there is no sensible
+/// answer when they do. One datadir-wide marker cannot disagree with itself.
+pub(crate) const BINARY_GROUP_DEPTH_KEY: &[u8] = b"binary_group_depth";
+
+/// Whether `commit_to_disk` is the writer responsible for `key` — i.e. whether
+/// it should both write the mirror row and journal its pre-image.
+///
+/// This is the binary counterpart of the MPT's frontier skip
+/// (`key > last_written` -> skip both the write and the journal push, because
+/// "keys past the frontier aren't written to disk yet, so they must not be
+/// journaled either": a `Some(None)` pre-image recorded for a key that was
+/// never put would make a rollback delete a row that never existed).
+///
+/// **This is a *write-ownership* question, not a coverage claim, and the
+/// distinction is deliberate.** Task 9 of the plan builds the backfill
+/// generator that makes this marker non-absent; until then the marker is always
+/// absent, and the three cases resolve as:
+///
+/// - **absent** — no generator exists, so no generator owns any part of the
+///   keyspace, so this write path owns all of it. Skip nothing. That is the
+///   honest answer to "who writes this row", and it is *not* the answer to "may
+///   a reader trust the mirror here", which is `false`: nothing has seeded the
+///   genesis alloc leaves (that is Task 8), so the mirror is a strict subset of
+///   the trie until a generator or a genesis seed says otherwise. Task 7's
+///   `binary_flat_computed` must answer that second question separately and must
+///   **not** reuse this function — Decision 1 is explicit that a coverage
+///   predicate must never return `true` for a key whose row might be missing.
+/// - **a real tree key** — the live case once Task 9 lands. Keys at or below the
+///   frontier are ours; keys above it belong to the generator, which has not
+///   written them yet. This arm needs no further change when Task 9 lands.
+/// - **`[0xff]`** — complete; the generator owns nothing, we own everything.
+///
+/// The `[0xff]` case cannot be folded into the ordinary comparison, and the
+/// explicit arm is load-bearing rather than tidy: a storage-zone tree key begins
+/// with the zone byte `0xff` and continues, so `[0xff, ..] > [0xff]`
+/// lexicographically and every overflow-storage leaf would be skipped on a
+/// *complete* mirror.
+/// Fold a [`BinaryTrie::commit`] changelog into [`BINARY_FLATKEYVALUE`] inside
+/// an existing write batch: `Some` writes the 32-byte value, `None` deletes
+/// the row.
+///
+/// Takes the batch rather than opening one so a caller can land the rows in the
+/// same transaction as whatever else the commit implies — for genesis, the
+/// completion marker.
+///
+/// # Errors
+///
+/// [`StoreError::Custom`] on a 32-zero-byte value, the same refusal
+/// [`BackendBinaryFlatDB::put_batch`] and `commit_to_disk` make and for the same
+/// reason: "zero means absent", so the trie removed that leaf, and a row
+/// written for it would put a key in the mirror the trie's root does not commit
+/// to. Nothing is written for that entry, and the caller's batch is expected to
+/// be dropped rather than committed.
+fn stage_binary_flat_leaves(
+    tx: &mut Box<dyn crate::api::StorageWriteBatch>,
+    leaves: &LeafChangelog,
+) -> Result<(), StoreError> {
+    for (key, value) in leaves {
+        match value {
+            Some(value) if value.iter().all(|byte| *byte == 0) => {
+                return Err(StoreError::Custom(format!(
+                    "refusing to seed a 32-zero-byte binary flat value for key {key:?}: zero \
+                     means absent, so the trie holds no such leaf"
+                )));
+            }
+            Some(value) => tx.put(BINARY_FLATKEYVALUE, key, value)?,
+            None => tx.delete(BINARY_FLATKEYVALUE, key)?,
+        }
+    }
+    Ok(())
+}
+
+fn binary_flat_frontier_covers(frontier: &[u8], key: &[u8]) -> bool {
+    if frontier.is_empty() || frontier == BINARY_FLAT_FRONTIER_COMPLETE {
+        return true;
+    }
+    key <= frontier
+}
 
 /// Maximum number of bad blocks retained for `debug_getBadBlocks`.
 const MAX_BAD_BLOCKS: usize = 16;
@@ -221,6 +382,18 @@ pub struct Store {
     /// Last computed FlatKeyValue for incremental updates.
     last_computed_flatkeyvalue: Arc<RwLock<Vec<u8>>>,
 
+    /// In-memory copy of the binary flat mirror's backfill frontier, in the
+    /// **durable** three-state shape (absent / a tree key / `[0xff]`) rather
+    /// than the MPT's padded in-memory form — the marker's states are already
+    /// distinguishable here, and padding a 34- or 66-byte keyspace to one
+    /// length would make an all-zero pad compare as *covering* every account
+    /// key, which is the wrong direction to be wrong in.
+    ///
+    /// Kept beside `last_computed_flatkeyvalue` and read the same way: the
+    /// generator advances it at batch commit, so it lags the durable marker
+    /// and readers under-claim coverage.
+    binary_last_computed: Arc<RwLock<Vec<u8>>>,
+
     /// Cache for account bytecodes, keyed by the bytecode hash.
     /// Note that we don't remove entries on account code changes, since
     /// those changes already affect the code hash stored in the account, and only
@@ -288,6 +461,21 @@ pub enum EngineType {
     RocksDB,
 }
 
+/// Whether a root-addressed read must first prove that this node actually holds
+/// the state behind that root.
+///
+/// Trie nodes are keyed by path, so a read at a root the store no longer holds
+/// silently falls through to whatever version the on-disk trie currently is.
+/// See [`Store::ensure_trie_holds_state_root`].
+#[derive(Clone, Copy)]
+enum RootCheck {
+    /// Verify the root, naming the given block in the error when it is known.
+    Verify(Option<BlockNumber>),
+    /// Skip the check: the caller has already verified the root, or deliberately
+    /// addresses state by root with no block behind it.
+    Skip,
+}
+
 /// Batch of updates to apply to the store atomically.
 ///
 /// Used during block execution to collect all state changes before
@@ -303,6 +491,16 @@ pub struct UpdateBatch {
     pub receipts: Vec<(H256, Vec<Receipt>)>,
     /// Contract code updates (code hash -> bytecode).
     pub code_updates: Vec<(H256, Code)>,
+    /// This block's EIP-8297 binary-trie advance, staged rather than written.
+    ///
+    /// `None` on every chain that does not schedule `binaryTreeTime`, and on
+    /// the re-store paths that do not re-advance the trie (witness
+    /// regeneration), where the nodes are already staged or on disk.
+    ///
+    /// Carried in the *same* batch as the MPT's nodes so both land in one
+    /// diff layer and one disk write. See
+    /// [`Store::advance_binary_trie_for_block`].
+    pub binary_update: Option<BinaryTrieAdvance>,
     /// Commit gate for this batch's trie layers (independent of `wait_for_flush`).
     ///
     /// - `None`: live path (`newPayload`). The persist worker commits by the canonical
@@ -322,6 +520,80 @@ pub struct UpdateBatch {
     ///   batch path, where a single message carries ~1024 blocks (~1 GB of trie diff) and two
     ///   in flight would be a real memory cost.
     pub wait_for_flush: bool,
+}
+
+/// One block's EIP-8297 binary-trie advance: the root it reached and the
+/// **group row** writes that got it there, **staged** rather than written.
+///
+/// Produced by [`Store::advance_binary_trie_for_block`] and carried through
+/// [`UpdateBatch`] into the block's diff layer. Nothing here has touched disk;
+/// dropping it (a rejected block, an abandoned branch) discards the block's
+/// binary state completely, which is the property the whole staging exercise
+/// exists for.
+#[derive(Debug, Clone)]
+pub struct BinaryTrieAdvance {
+    /// Binary-trie root after this block's updates. Recorded in
+    /// `BINARY_TRIE_ROOTS` by the producer, and the key the layer's secondary
+    /// index uses.
+    pub root: H256,
+    /// The parent block's binary-trie root, i.e. the root these updates were
+    /// applied on top of.
+    ///
+    /// Carried alongside the new root because the reverse-diff journal has to
+    /// record it: unwinding this block's nodes returns the trie to *this* root,
+    /// and nothing else in the layer knows what it is (before activation the
+    /// parent's header carries an MPT root, and the parent layer is usually
+    /// already on disk).
+    pub parent_root: H256,
+    /// `(BINARY_TRIE_NODES key, encoded group row)` pairs; an empty value is a
+    /// tombstone, per `BinaryTrieDB`'s convention.
+    ///
+    /// A key addresses a group *root* and a value is a whole row, so one entry
+    /// carries every node of one group and `rows.len()` is a row count, not a
+    /// node count. A removal that leaves the group with members arrives here as
+    /// an ordinary rewrite holding the survivors; only a group that lost its
+    /// last member arrives as an empty value.
+    pub rows: BinaryTrieRows,
+    /// The same block's writes to the flat leaf mirror, derived from the
+    /// [`LeafChangelog`] the trie's own commit emitted: one
+    /// `BINARY_FLATKEYVALUE` row per leaf the block created, changed or removed.
+    ///
+    /// A removal (`None` in the changelog) becomes an **empty value**, which is
+    /// the tombstone convention every layer downstream already speaks. It must
+    /// not become 32 zero bytes: "zero means absent" is what put the removal in
+    /// the changelog in the first place, and a zero row would be a mirror entry
+    /// for a key the trie's root does not commit to.
+    ///
+    /// Taken from `commit` rather than reconstructed at the call sites, so
+    /// `remove_prefix` — whose retired leaves only the trie knows — is covered
+    /// by construction.
+    pub flat: BinaryFlatWrites,
+}
+
+impl From<BinaryTrieAdvance> for BinaryLayerUpdate {
+    fn from(advance: BinaryTrieAdvance) -> Self {
+        BinaryLayerUpdate {
+            root: advance.root,
+            parent_root: advance.parent_root,
+            rows: advance.rows,
+            flat: advance.flat,
+        }
+    }
+}
+
+/// Turn the trie's [`LeafChangelog`] into `BINARY_FLATKEYVALUE` writes.
+///
+/// `Some(value)` is the 32 raw bytes, no tag and no length prefix. `None` is a
+/// removal and becomes an empty value — the tombstone every consumer of these
+/// pairs already understands, and deliberately *not* 32 zero bytes.
+fn flat_writes_from_changelog(leaves: LeafChangelog) -> BinaryFlatWrites {
+    leaves
+        .into_iter()
+        .map(|(key, value)| match value {
+            Some(value) => (key, value.to_vec()),
+            None => (key, Vec::new()),
+        })
+        .collect()
 }
 
 /// Storage trie updates grouped by account address hash.
@@ -479,10 +751,24 @@ impl Store {
                 .map_err(|e| StoreError::Custom(format!("shutdown ack: {e}")))??;
             // Worker has flushed block data to the WAL/memtables; make it durable
             // and recovery-free.
-            backend.flush()
+            backend.flush()?;
+            // After the flush, so the per-table SST figures describe the whole
+            // dataset rather than whatever happened to have been flushed. This
+            // is the moment the 2026-08-08 devnet took its measurements by hand.
+            log_storage_stats(backend.as_ref());
+            Ok(())
         })
         .await
         .map_err(|e| StoreError::Custom(format!("shutdown join: {e}")))?
+    }
+
+    /// Storage-engine diagnostics, or `None` for a backend with no such notion.
+    ///
+    /// Per-table sizes and key counts are always populated;
+    /// [`StorageStats::engine_statistics`] needs
+    /// [`StoreConfig::rocksdb_enable_statistics`].
+    pub fn storage_stats(&self) -> Option<StorageStats> {
+        self.backend.stats()
     }
 
     /// Add a block in a single transaction.
@@ -1773,6 +2059,7 @@ impl Store {
             blocks,
             receipts,
             code_updates,
+            binary_update,
             commit_depth,
             wait_for_flush,
         } = update_batch;
@@ -1818,6 +2105,7 @@ impl Store {
                 child_state_root: last_state_root,
                 account_updates,
                 storage_updates,
+                binary_update,
                 commit_depth,
                 wait_for_flush,
                 block_number: last_block_number,
@@ -1886,10 +2174,7 @@ impl Store {
                     // Open backend, run migrations, then drop obsolete CFs.
                     // Cleanup must happen AFTER migrations so legacy CFs (e.g.
                     // `receipts`) are still readable during the migration.
-                    let rocksdb = Arc::new(RocksDBBackend::open(
-                        &path,
-                        config.rocksdb_block_cache_size,
-                    )?);
+                    let rocksdb = Arc::new(RocksDBBackend::open(&path, config.into())?);
                     crate::migrations::run_pending_migrations(rocksdb.as_ref(), &db_path, v)?;
                     rocksdb.drop_obsolete_cfs(&path);
                     let backend: Arc<dyn crate::api::StorageBackend> = rocksdb;
@@ -1912,7 +2197,7 @@ impl Store {
         match engine_type {
             #[cfg(feature = "rocksdb")]
             EngineType::RocksDB => {
-                let rocksdb = RocksDBBackend::open(&path, config.rocksdb_block_cache_size)?;
+                let rocksdb = RocksDBBackend::open(&path, config.into())?;
                 rocksdb.drop_obsolete_cfs(&path);
                 let backend: Arc<dyn StorageBackend> = Arc::new(rocksdb);
                 Self::from_backend(
@@ -1941,11 +2226,33 @@ impl Store {
         persist_channel_capacity: usize,
     ) -> Result<Self, StoreError> {
         debug!("Initializing Store with {commit_threshold} in-memory diff-layers");
+
+        // Drain journal entries left by a previous codec version before the
+        // `Store` exists, which is the only point at which nothing can yet be
+        // holding a fork-choice update. `compute_reorg_ceiling` reads the journal
+        // floor via `lowest_state_history_block_number`; leaving stale entries in
+        // place would advertise reach the decoder refuses to serve, so the reorg
+        // would be accepted and then fail mid-flight with `StateNotReachable`.
+        // Draining first makes the floor honest and turns that halt into a clean
+        // `-38006 TooDeepReorg`. See `journal::drain_stale_journal_entries` for the
+        // exact semantics (contiguous bottom run only) and the cost.
+        //
+        // Every construction path funnels through here — fresh open, migration,
+        // and in-memory — so there is no second place to remember. On a journal
+        // with no stale bottom entry this is one `first_key` plus one `get`.
+        crate::journal::drain_stale_journal_entries(backend.as_ref())?;
+
+        // Refuse a datadir whose binary nodes were grouped differently, before
+        // anything can read one. Same funnel as the drain above, and for the
+        // same reason: every construction path passes through here, so there is
+        // no second place to remember.
+        check_binary_group_depth(backend.as_ref(), DEFAULT_GROUP_DEPTH)?;
+
         let (fkv_tx, fkv_rx) = std::sync::mpsc::sync_channel(0);
         let persist_cap = persist_channel_capacity.max(1); // clamp: 0 would be a rendezvous channel
         let (persist_tx, persist_rx) = std::sync::mpsc::sync_channel(persist_cap);
 
-        let (last_written, initial_flushed_upto) = {
+        let (last_written, binary_last_written, initial_flushed_upto) = {
             let tx = backend.begin_read()?;
             let last_written = tx
                 .get(MISC_VALUES, "last_written".as_bytes())?
@@ -1955,12 +2262,39 @@ impl Store {
             } else {
                 last_written
             };
+            // Kept verbatim, unlike the MPT frontier above: the binary marker's
+            // three states are already unambiguous, so there is nothing to
+            // expand and no length to guess. See the `binary_last_computed`
+            // field docs.
+            let binary_last_written = tx
+                .get(MISC_VALUES, BINARY_LAST_WRITTEN_KEY)?
+                .unwrap_or_default();
             let initial_flushed_upto = match tx.get(MISC_VALUES, FLUSHED_UPTO_KEY)? {
                 Some(bytes) => decode_flushed_upto(&bytes)?,
                 None => 0,
             };
-            (last_written, initial_flushed_upto)
+            (last_written, binary_last_written, initial_flushed_upto)
         };
+
+        // The binary mirror's cold-start wipe, taken here rather than inside
+        // the backfill generator where the MPT takes it.
+        //
+        // An absent marker means no sweep and no genesis seed has ever claimed
+        // this table, so whatever is in it is of unknown provenance — rows an
+        // abandoned sweep left behind for leaves the trie has since dropped
+        // would make the mirror a *superset*, and a range served from it would
+        // carry leaves the root does not commit to.
+        //
+        // It happens at open because Task 6's write-ownership rule reads an
+        // absent marker as "the commit path owns the whole keyspace": blocks
+        // imported before the generator's first `Continue` write mirror rows,
+        // and a lazy wipe would truncate the table underneath them. Doing it
+        // before the store exists makes that rule true instead of merely
+        // usually-true. A partial frontier is left alone — that is a resume,
+        // and its rows are exactly what the frontier claims.
+        if binary_last_written.is_empty() {
+            backend.clear_table(BINARY_FLATKEYVALUE)?;
+        }
         let mut initial_buffer = BlockDataBuffer::new();
         initial_buffer.set_flushed_upto(initial_flushed_upto);
 
@@ -1980,6 +2314,7 @@ impl Store {
             persist_tx,
             pending_trie_roots: Arc::new(PendingTrieRoots::default()),
             last_computed_flatkeyvalue: Arc::new(RwLock::new(last_written)),
+            binary_last_computed: Arc::new(RwLock::new(binary_last_written)),
             account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
             code_metadata_cache: Arc::new(Mutex::new(rustc_hash::FxHashMap::default())),
             fcu_lock: Arc::new(tokio::sync::Mutex::new(())),
@@ -1989,6 +2324,7 @@ impl Store {
         };
         let backend_clone = store.backend.clone();
         let last_computed_fkv = store.last_computed_flatkeyvalue.clone();
+        let binary_last_computed = store.binary_last_computed.clone();
         background_threads.push(std::thread::spawn(move || {
             let rx = fkv_rx;
             // Wait for the first Continue to start generation
@@ -2005,6 +2341,19 @@ impl Store {
 
             let _ = flatkeyvalue_generator(&backend_clone, &last_computed_fkv, &rx)
                 .inspect_err(|err| error!("Error while generating FlatKeyValue: {err}"));
+            // The binary mirror's sweep runs here, on this thread and over this
+            // same channel, rather than on a second one. `commit_to_disk`'s
+            // `Stop` is a rendezvous send that blocks the persist worker until
+            // a generator receives it; a second independent rendezvous channel
+            // would make the worker wait on two generators in series. Sharing
+            // means one `Stop` pauses whichever sweep is running, and adds no
+            // message to that critical path.
+            //
+            // Sequenced rather than chained on the MPT sweep's result: the two
+            // are independent backfills, and an MPT failure is no reason to
+            // leave the binary mirror unbuilt.
+            let _ = binary_flat_generator(&backend_clone, &binary_last_computed, &rx)
+                .inspect_err(|err| error!("Error while generating the binary flat mirror: {err}"));
         }));
         // The single persist worker: sole swapper of `block_data_buffer`, sole
         // builder of trie diff-layers. One DB transaction per `Block` message.
@@ -2062,6 +2411,7 @@ impl Store {
                             bp.block_hash,
                             bp.account_updates,
                             bp.storage_updates,
+                            bp.binary_update,
                         ) {
                             error!("persist worker trie phase-1 failed: {err}");
                             if bp.wait_for_flush {
@@ -2185,14 +2535,38 @@ impl Store {
         }
     }
 
+    /// Serves `eth_getBalance` (and the mempool's sender lookups), and through
+    /// [`Self::get_code_by_account_address`] and
+    /// [`Self::get_nonce_by_account_address`] also `eth_getCode` and
+    /// `eth_getTransactionCount`. Errors with [`StoreError::MissingStateRoot`]
+    /// for a known block whose state this node no longer holds, rather than
+    /// answering from the on-disk trie's current state; `Ok(None)` keeps meaning
+    /// "no such account".
+    ///
+    /// Resolves against whichever trie *this block's header* addresses — see
+    /// [`Self::header_addresses_binary_trie`] — so a pre-activation block keeps
+    /// answering out of the MPT after the chain has flipped, and both sides
+    /// carry their own availability guard.
+    ///
+    /// [`AccountInfo`] rather than an `AccountState` is what makes one shared
+    /// path possible across the two tries: it has no `storage_root`, which the
+    /// binary trie has no value for (see `pbt_state::get_account_info`). All
+    /// three account RPCs only ever wanted the balance, the nonce and the code
+    /// hash, so none of them pays for the storage question
+    /// [`Self::get_binary_account`] asks on execution's behalf.
     pub fn get_account_info_by_hash(
         &self,
         block_hash: BlockHash,
         address: Address,
     ) -> Result<Option<AccountInfo>, StoreError> {
-        let Some(state_trie) = self.state_trie(block_hash)? else {
+        let Some(header) = self.get_block_header_by_hash(block_hash)? else {
             return Ok(None);
         };
+        if self.header_addresses_binary_trie(&header) {
+            self.ensure_binary_trie_state(block_hash, &header)?;
+            return self.get_binary_account_info(header.state_root, address);
+        }
+        let state_trie = self.state_trie_checked_for_header(&header)?;
         let hashed_address = hash_address_fixed(&address);
 
         let Some(encoded_state) = state_trie.get(hashed_address.as_bytes())? else {
@@ -2237,6 +2611,13 @@ impl Store {
         ))
     }
 
+    /// Serves `eth_getCode`. See [`Self::get_account_info_by_hash`] for which
+    /// trie the block's header resolves against, and for the behaviour at a
+    /// block whose state this node no longer holds.
+    ///
+    /// The bytecode itself is unaffected by the activation: it is fetched from
+    /// the code table by hash, which is one table for both tries. Only reaching
+    /// the hash goes through state.
     pub async fn get_code_by_account_address(
         &self,
         block_number: BlockNumber,
@@ -2245,17 +2626,15 @@ impl Store {
         let Some(block_hash) = self.get_canonical_block_hash(block_number).await? else {
             return Ok(None);
         };
-        let Some(state_trie) = self.state_trie(block_hash)? else {
+        let Some(account_info) = self.get_account_info_by_hash(block_hash, address)? else {
             return Ok(None);
         };
-        let hashed_address = hash_address_fixed(&address);
-        let Some(encoded_state) = state_trie.get(hashed_address.as_bytes())? else {
-            return Ok(None);
-        };
-        let account_state = AccountState::decode(&encoded_state)?;
-        self.get_account_code(account_state.code_hash)
+        self.get_account_code(account_info.code_hash)
     }
 
+    /// Serves `eth_getTransactionCount`. See [`Self::get_account_info_by_hash`]
+    /// for which trie the block's header resolves against, and for the behaviour
+    /// at a block whose state this node no longer holds.
     pub async fn get_nonce_by_account_address(
         &self,
         block_number: BlockNumber,
@@ -2264,15 +2643,9 @@ impl Store {
         let Some(block_hash) = self.get_canonical_block_hash(block_number).await? else {
             return Ok(None);
         };
-        let Some(state_trie) = self.state_trie(block_hash)? else {
-            return Ok(None);
-        };
-        let hashed_address = hash_address_fixed(&address);
-        let Some(encoded_state) = state_trie.get(hashed_address.as_bytes())? else {
-            return Ok(None);
-        };
-        let account_state = AccountState::decode(&encoded_state)?;
-        Ok(Some(account_state.nonce))
+        Ok(self
+            .get_account_info_by_hash(block_hash, address)?
+            .map(|account_info| account_info.nonce))
     }
 
     /// Applies account updates based on the block's latest storage state
@@ -2514,6 +2887,1241 @@ impl Store {
         Ok(state_root)
     }
 
+    /// Adds all genesis accounts to the EIP-8297 binary trie, persists
+    /// it, and returns its root: the counterpart of
+    /// [`Store::setup_genesis_state_trie`].
+    ///
+    /// The two differ in more than the trie. The MPT keeps an account's
+    /// state in two places — one leaf in the state trie, one storage
+    /// subtrie per account — and keeps code out of the trie entirely.
+    /// The binary trie is a single tree in which every part of an
+    /// account, code chunks included, is a leaf; there are no subtries
+    /// to build and no root to thread into an account leaf.
+    ///
+    /// Code is nevertheless *also* written to the code table, exactly
+    /// as the MPT path writes it. The two are not alternatives: the
+    /// trie commits to code as chunks, while the EVM fetches whole
+    /// bytecode by hash, and only the table answers that.
+    ///
+    /// **Per-account updates, not the bulk load.** [`BinaryTrie::from_sorted_leaves`]
+    /// exists for exactly this shape of input, but it takes *leaves*,
+    /// and reaching them from an alloc means deriving each account's
+    /// keys — a second copy of the embedding, which could then disagree
+    /// with the one block import uses. Routing through
+    /// [`apply_account_updates`] instead makes the genesis path and the
+    /// import path the same code by construction, which matters more
+    /// here than anywhere else: genesis is the anchor every later block
+    /// builds on. The cost is bounded — mainnet's alloc is under ten
+    /// thousand accounts, and this runs once.
+    pub async fn setup_genesis_binary_trie(
+        &self,
+        genesis_accounts: BTreeMap<Address, GenesisAccount>,
+    ) -> Result<H256, StoreError> {
+        let mut updates = Vec::with_capacity(genesis_accounts.len());
+        for (address, account) in genesis_accounts {
+            let code = Code::from_bytecode(account.code, &NativeCrypto);
+            self.add_account_code(code.clone()).await?;
+
+            updates.push(AccountUpdate {
+                address,
+                removed: false,
+                info: Some(AccountInfo {
+                    code_hash: code.hash,
+                    balance: account.balance,
+                    nonce: account.nonce,
+                }),
+                code: Some(code),
+                // Zero-valued slots are not filtered out here, unlike
+                // in the MPT path: `apply_account_updates` resolves a
+                // zero value to an absent leaf itself, for every leaf
+                // kind and not just storage.
+                added_storage: account
+                    .storage
+                    .into_iter()
+                    .map(|(slot, value)| (H256(slot.to_big_endian()), value))
+                    .collect(),
+                removed_storage: false,
+            });
+        }
+
+        let mut trie = BinaryTrie::new(Box::new(BackendBinaryTrieDB::new(self.backend.clone())?));
+        apply_account_updates(&mut trie, &updates)?;
+        let committed = trie.commit()?;
+
+        // Seed the flat mirror from the same changelog the commit reported,
+        // and declare it complete. A chain that starts from genesis therefore
+        // never runs the backfill generator: the mirror has covered the whole
+        // keyspace since block 0, and every later block maintains it through
+        // `commit_to_disk`.
+        //
+        // **Rows and marker in one batch, and after the nodes.** The nodes went
+        // to disk in `commit`'s own transaction, so a crash can land between
+        // the two — which is why the marker rides with the rows rather than
+        // ahead of them, and why it is written last in program order. Nodes
+        // without a marker is the recoverable state: coverage reads as
+        // `Nothing`, no reader trusts the mirror, and Task 9's generator
+        // rebuilds it. A marker without rows would be the unrecoverable one.
+        let mut tx = self.backend.begin_write()?;
+        stage_binary_flat_leaves(&mut tx, &committed.leaves)?;
+        tx.put(
+            MISC_VALUES,
+            BINARY_LAST_WRITTEN_KEY,
+            BINARY_FLAT_FRONTIER_COMPLETE,
+        )?;
+        tx.commit()?;
+        // Only now: the in-memory frontier is what readers gate on, so
+        // publishing it before the batch landed would open the gate on a
+        // mirror a failed commit left empty.
+        self.publish_binary_flat_frontier(BINARY_FLAT_FRONTIER_COMPLETE)?;
+
+        Ok(committed.root)
+    }
+
+    /// Replace the in-memory copy of the mirror's backfill frontier.
+    ///
+    /// Separate from the durable write on purpose: the durable marker is what
+    /// survives a restart and the in-memory one is what readers gate on, so
+    /// the in-memory copy must be published *after* the batch carrying the
+    /// rows has committed. Publishing first would claim coverage a failed
+    /// write never delivered.
+    fn publish_binary_flat_frontier(&self, frontier: &[u8]) -> Result<(), StoreError> {
+        *self
+            .binary_last_computed
+            .write()
+            .map_err(|_| StoreError::LockError)? = frontier.to_vec();
+        Ok(())
+    }
+
+    /// Advances the EIP-8297 binary trie by one block: opens it at
+    /// `parent_root`, applies `account_updates`, persists the nodes
+    /// that changed, and returns the new root. The binary-trie
+    /// counterpart of [`Store::apply_account_updates_from_trie_batch`],
+    /// and the step that follows [`Store::setup_genesis_binary_trie`]'s
+    /// anchor.
+    ///
+    /// **Storage layer only, deliberately.** Nothing here reads or
+    /// writes a block header. Block import reaches it through
+    /// [`Store::advance_binary_trie_for_block`], which is what supplies
+    /// the parent root and records the result; no header commits to a
+    /// binary-trie root yet, so there is still nothing to validate
+    /// against.
+    ///
+    /// **Why this is cheap.** Opening at `parent_root` loads no nodes —
+    /// the root is a bare [`NodeRef::Stored`] hash until something
+    /// touches it. Applying the updates loads only the root-to-leaf
+    /// paths they reach, and [`BinaryTrie::commit`] writes only the
+    /// nodes those paths dirtied. A block therefore costs its own
+    /// footprint, not the trie's size.
+    ///
+    /// [`NodeRef::Stored`]: ethrex_binary_trie::trie::NodeRef::Stored
+    ///
+    /// **Code goes to the code table too**, exactly as the genesis path
+    /// and the MPT path write it. The trie commits to code as chunks,
+    /// but the EVM fetches whole bytecode by hash, and only
+    /// `ACCOUNT_CODES` answers that.
+    ///
+    /// **No diff layer is involved: nodes land on disk immediately.** This is
+    /// the direct-write primitive, kept for the paths that genuinely have no
+    /// block and therefore no layer to stage into — the genesis anchor and the
+    /// storage-layer tests that exercise the trie in isolation. Block import
+    /// does *not* use it; it goes through
+    /// [`Store::advance_binary_trie_for_block`], which stages.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::PbtState`] if the updates cannot be embedded — see
+    /// [`Store::apply_account_updates_to_binary_trie_blocking`]. Nothing
+    /// is committed in that case, so `parent_root` remains the state on
+    /// disk.
+    pub async fn apply_account_updates_to_binary_trie(
+        &self,
+        parent_root: H256,
+        account_updates: &[AccountUpdate],
+    ) -> Result<H256, StoreError> {
+        self.apply_account_updates_to_binary_trie_blocking(parent_root, account_updates)
+    }
+
+    /// [`Store::apply_account_updates_to_binary_trie`] without the `async`.
+    ///
+    /// The async form is the ergonomic one for callers already in a
+    /// runtime; this one exists because block import is not. Every entry
+    /// point that advances the chain — [`crate::Store::add_block`]'s
+    /// callers in `crates/blockchain` — is a synchronous function called
+    /// from inside a tokio worker, so `block_on` is not available to it
+    /// and making the whole import path async for one storage call is
+    /// not a trade worth making.
+    ///
+    /// The two are the same work: the trie itself is CPU-bound and was
+    /// never awaited, and the code writes go through one write batch
+    /// instead of one `spawn_blocking` per account.
+    pub fn apply_account_updates_to_binary_trie_blocking(
+        &self,
+        parent_root: H256,
+        account_updates: &[AccountUpdate],
+    ) -> Result<H256, StoreError> {
+        // Codes first and in a single batch: the EVM fetches whole
+        // bytecode by hash and only `ACCOUNT_CODES` answers that, while
+        // the trie only ever commits to code as chunks.
+        self.write_account_codes(account_updates)?;
+
+        let mut trie = BinaryTrie::open(
+            Box::new(BackendBinaryTrieDB::new(self.backend.clone())?),
+            parent_root,
+        );
+        apply_account_updates(&mut trie, account_updates)?;
+        let committed = trie.commit()?;
+
+        // The mirror follows the nodes here too. This path bypasses the diff
+        // layers, so nothing downstream would ever fold its leaf changes into
+        // `BINARY_FLATKEYVALUE` — and after genesis marks the frontier
+        // complete, a mirror that skipped a commit is not merely stale but
+        // *authoritative and wrong*, since a read below the frontier does not
+        // fall back to a descent. Cheap insurance: one row per changed leaf,
+        // which the changelog already has in hand.
+        let mut tx = self.backend.begin_write()?;
+        stage_binary_flat_leaves(&mut tx, &committed.leaves)?;
+        tx.commit()?;
+
+        Ok(committed.root)
+    }
+
+    /// The binary-trie root `account_updates` produce on top of
+    /// `parent_root`, **without persisting or staging anything**.
+    ///
+    /// [`BinaryTrie::root`] merkleizes the in-memory overlay; only the
+    /// root-to-leaf paths the updates reach are loaded, and no node,
+    /// code entry or root mapping is written. That is what payload
+    /// building needs: a proposed block's root has to be known before
+    /// the block exists, and most proposals are never imported.
+    ///
+    /// The reads still go through the diff layers, gated on `parent_hash`, or
+    /// a payload built on a parent whose own nodes are still in memory would be
+    /// merkleized over stale on-disk state and commit a root no importer can
+    /// reproduce.
+    ///
+    /// The block that *is* imported recomputes the same root through
+    /// [`Store::advance_binary_trie_for_block`], which stages it.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::PbtState`] if the updates cannot be embedded — see
+    /// [`Store::apply_account_updates_to_binary_trie_blocking`].
+    pub fn compute_binary_trie_root(
+        &self,
+        parent_hash: BlockHash,
+        parent_root: H256,
+        account_updates: &[AccountUpdate],
+    ) -> Result<H256, StoreError> {
+        let mut trie = BinaryTrie::open(
+            Box::new(self.layered_binary_trie_db(
+                parent_root,
+                self.binary_layer_gate(parent_hash, parent_root)?,
+                LayeredBinaryTrieDB::staging_buffer(),
+            )?),
+            parent_root,
+        );
+        apply_account_updates(&mut trie, account_updates)?;
+        Ok(trie.root())
+    }
+
+    /// The binary root a block built on `parent` starts from.
+    ///
+    /// **Not simply `parent.state_root`.** That is only the binary root once the
+    /// activation has been reached; the *first* binary-committed block has a
+    /// pre-flip parent whose header commits an MPT root, and its binary
+    /// pre-state is what shadow tracking recorded under
+    /// [`BINARY_TRIE_ROOTS`](crate::api::tables::BINARY_TRIE_ROOTS). Reading the
+    /// header field unconditionally would hand an MPT root to the binary trie,
+    /// which is the same class of mistake as opening an MPT at a binary root.
+    ///
+    /// Per header, never per chain: the question is asked of `parent`'s own
+    /// timestamp, the same way `StoreVmDatabase::open` asks it.
+    ///
+    /// `Ok(None)` means this node has no binary pre-state for that parent,
+    /// which for a pre-flip parent means shadow tracking never recorded one.
+    pub fn binary_pre_state_root(&self, parent: &BlockHeader) -> Result<Option<H256>, StoreError> {
+        if self.chain_config.is_binary_tree_active(parent.timestamp) {
+            return Ok(Some(parent.state_root));
+        }
+        self.get_binary_trie_root(parent.hash())
+    }
+
+    /// A binary trie at `binary_root`, recording every node encoding it serves.
+    ///
+    /// The witness-generation counterpart of [`Self::compute_binary_trie_root`]:
+    /// same layered read view, same gate, but wrapped so that what the
+    /// traversal touches can be collected. Reads one node per backend row
+    /// rather than one row per read — see [`RecordingBinaryTrieDB`] for why
+    /// that is the point and not a regression.
+    ///
+    /// The returned handle shares the recorder with the trie; read it after the
+    /// traversal, not before.
+    pub fn binary_trie_recording_view(
+        &self,
+        parent_hash: BlockHash,
+        binary_root: H256,
+    ) -> Result<(BinaryTrie, Arc<Mutex<WitnessNodes>>), StoreError> {
+        let inner = self.layered_binary_trie_db(
+            binary_root,
+            self.binary_layer_gate(parent_hash, binary_root)?,
+            LayeredBinaryTrieDB::staging_buffer(),
+        )?;
+        let recorder = RecordingBinaryTrieDB::new(Box::new(inner));
+        let recorded = recorder.recorded();
+        Ok((BinaryTrie::open(Box::new(recorder), binary_root), recorded))
+    }
+
+    /// A [`LayeredBinaryTrieDB`] reading at `binary_root` through the layer
+    /// cache snapshot taken at `gate_root`, staging its writes into `staged`.
+    ///
+    /// `gate_root` is the *layer* key to wait on before snapshotting (see
+    /// [`Self::binary_layer_gate`]); `binary_root` is what the read walk starts
+    /// from. They differ for every pre-activation block.
+    fn layered_binary_trie_db(
+        &self,
+        binary_root: H256,
+        gate_root: H256,
+        staged: StagedBinaryRows,
+    ) -> Result<LayeredBinaryTrieDB, StoreError> {
+        // One read view for both handles, so a node read and a mirror read
+        // taken in one traversal see one consistent snapshot: the mirror is
+        // written in the nodes' own `write_tx`, and reading the two through
+        // different views could land either side of that batch.
+        //
+        // **On the RocksDB backend that snapshot does not exist.** `begin_read`
+        // there returns a handle on the live database — `RocksDBReadTx::get`
+        // calls `db.get_cf` directly — so what sharing the view actually buys
+        // is that both halves read the same *live* database, not that they read
+        // it at one sequence number. The in-memory backend does clone, so the
+        // guarantee holds there and not in production. Only
+        // `StorageBackend::begin_locked` takes a real `db.snapshot()`, and it is
+        // scoped to a single column family, so it cannot pin the node table and
+        // the mirror together. Anything that needs a genuinely pinned read
+        // across both must be written against that gap rather than this comment
+        // — see `Store::binary_leaf_range_proof`, which reads one structure and
+        // re-checks the root afterwards for exactly this reason.
+        let read_view = self.backend.begin_read()?;
+        Ok(LayeredBinaryTrieDB::new(
+            binary_root,
+            self.gated_snapshot(gate_root)?,
+            BackendBinaryTrieDB::with_view(self.backend.clone(), read_view.clone()),
+            BackendBinaryFlatDB::with_view(self.backend.clone(), read_view),
+            self.binary_flat_coverage()?,
+            staged,
+        ))
+    }
+
+    /// How much of the keyspace a read may trust the binary flat mirror for,
+    /// from the in-memory frontier.
+    ///
+    /// The **read** gate. Its write-side sibling `binary_flat_frontier_covers`
+    /// answers the opposite question for an absent marker; see
+    /// [`BinaryFlatCoverage`] for why the two must not be unified.
+    fn binary_flat_coverage(&self) -> Result<BinaryFlatCoverage, StoreError> {
+        let frontier = self
+            .binary_last_computed
+            .read()
+            .map_err(|_| StoreError::LockError)?;
+        Ok(BinaryFlatCoverage::from_marker(Some(frontier.as_slice())))
+    }
+
+    /// Whether the binary flat mirror's backfill has finished, read from the
+    /// **durable** marker rather than the in-memory frontier — the same choice
+    /// [`Self::flatkeyvalue_fully_generated`] makes, and for the same reason:
+    /// the in-memory copy lags by design.
+    ///
+    /// Gates journal-backed deep reorgs, which the mirror cannot survive
+    /// mid-sweep: entries journaled while the generator runs omit pre-images
+    /// for keys past the frontier.
+    pub fn binary_flat_fully_generated(&self) -> Result<bool, StoreError> {
+        let tx = self.backend.begin_read()?;
+        let marker = tx.get(MISC_VALUES, BINARY_LAST_WRITTEN_KEY)?;
+        Ok(BinaryFlatCoverage::from_marker(marker.as_deref()).is_complete())
+    }
+
+    /// Whether the binary mirror's backfill is still outstanding on a chain
+    /// that has one — the gate a deep reorg must not cross.
+    ///
+    /// **Conditional on the schedule, and that is load-bearing.** An
+    /// unscheduled chain has no binary trie and never writes the frontier
+    /// marker, so an unconditional completeness check would read as "still
+    /// generating" for ever and defer every deep reorg on every existing MPT
+    /// chain. The binary hazard only exists where the binary mirror does.
+    pub fn binary_flat_generation_pending(&self) -> Result<bool, StoreError> {
+        if !self.get_chain_config().binary_tree_scheduled() {
+            return Ok(false);
+        }
+        Ok(!self.binary_flat_fully_generated()?)
+    }
+
+    /// The root to gate a binary read at `parent_hash` on: the parent's
+    /// *header* state root, because that is what its diff layer is keyed by and
+    /// what [`PendingTrieRoots`] tracks.
+    ///
+    /// This is the one place the two roots genuinely diverge. Before activation
+    /// a block's header carries an MPT root while its binary root lives only in
+    /// `BINARY_TRIE_ROOTS`, so gating on the binary root would wait for nothing
+    /// and could snapshot a cache that does not yet hold the parent's layer —
+    /// the reader would then fall through to disk, where the parent's binary
+    /// nodes are not. After activation the two coincide and this is a no-op.
+    ///
+    /// Falls back to `binary_root` when the parent header is unknown (genesis
+    /// on a fresh store, tests driving the storage layer directly): there is no
+    /// layer to wait for in that case.
+    fn binary_layer_gate(
+        &self,
+        parent_hash: BlockHash,
+        binary_root: H256,
+    ) -> Result<H256, StoreError> {
+        Ok(self
+            .get_block_header_by_hash(parent_hash)?
+            .map(|header| header.state_root)
+            .unwrap_or(binary_root))
+    }
+
+    /// Open the persistent binary trie at `root` for reading.
+    ///
+    /// Opening loads nothing: the root is a bare stored reference until a
+    /// traversal touches it, so this costs a cache snapshot and a backend
+    /// handle. Reads cascade diff layers -> disk, so a block whose nodes are
+    /// still staged is readable at its own root.
+    ///
+    /// The gate is `root` itself, which is correct because every caller is a
+    /// read at an *active* header, where the header state root and the binary
+    /// root are the same value.
+    fn open_binary_trie(&self, root: H256) -> Result<BinaryTrie, StoreError> {
+        Ok(BinaryTrie::open(
+            Box::new(self.layered_binary_trie_db(
+                root,
+                root,
+                LayeredBinaryTrieDB::staging_buffer(),
+            )?),
+            root,
+        ))
+    }
+
+    /// Root-addressed account read against the binary trie: the counterpart of
+    /// [`Self::get_account_state_by_root`] for a header past the binary-tree
+    /// activation, whose `state_root` addresses the binary trie and no MPT.
+    ///
+    /// Returns an [`AccountInfo`] rather than an `AccountState` because the
+    /// binary trie has no storage root to put in one — storage is not a
+    /// per-account subtrie there. The caller that needs an `AccountState` wants
+    /// [`Self::get_binary_account`], which also asks whether the account holds
+    /// any storage, and decides what to put in the field; see `StoreVmDatabase`
+    /// in `crates/blockchain/vm.rs`.
+    ///
+    /// Deliberately unchecked, exactly as [`Self::get_account_state_by_root`]
+    /// is: `StoreVmDatabase::new` gates on [`Self::has_binary_trie_state`] once
+    /// up front.
+    pub fn get_binary_account_info(
+        &self,
+        state_root: H256,
+        address: Address,
+    ) -> Result<Option<AccountInfo>, StoreError> {
+        let mut trie = self.open_binary_trie(state_root)?;
+        Ok(pbt_state::get_account_info(&mut trie, address)?)
+    }
+
+    /// [`Self::get_binary_account_info`] plus the "does this account hold any
+    /// storage" answer, for the caller that has to fill an MPT-shaped
+    /// `AccountState`.
+    ///
+    /// A separate method rather than more work inside
+    /// [`Self::get_binary_account_info`] because the two callers want different
+    /// things. The account RPCs want the balance, the nonce and the code hash
+    /// and nothing else, and would pay two extra trie walks per call for a
+    /// field they never read; execution needs the storage answer for EIP-7610.
+    ///
+    /// Both come out of one open trie, so the header-storage half of the
+    /// storage question re-walks nodes the account read has already loaded —
+    /// see `pbt_state::get_account`.
+    pub fn get_binary_account(
+        &self,
+        state_root: H256,
+        address: Address,
+    ) -> Result<Option<BinaryAccount>, StoreError> {
+        let mut trie = self.open_binary_trie(state_root)?;
+        Ok(pbt_state::get_account(&mut trie, address)?)
+    }
+
+    /// Root-addressed storage read against the binary trie, the counterpart of
+    /// [`Self::get_storage_at_root`].
+    ///
+    /// No account lookup precedes it: the slot's key is derived from the
+    /// address and the slot alone, so unlike the MPT there is no storage root
+    /// to fetch first and no second trie to open.
+    pub fn get_binary_storage_slot(
+        &self,
+        state_root: H256,
+        address: Address,
+        storage_key: H256,
+    ) -> Result<Option<U256>, StoreError> {
+        let mut trie = self.open_binary_trie(state_root)?;
+        Ok(pbt_state::get_storage_slot(
+            &mut trie,
+            address,
+            &storage_key,
+        )?)
+    }
+
+    /// Whether this node holds the binary-trie state `state_root` names for
+    /// `block_hash` — the binary-trie counterpart of [`Self::has_state_root`],
+    /// and the gate `StoreVmDatabase::new` runs before executing on an active
+    /// header.
+    ///
+    /// **Why it takes a block hash and not just a root.** [`Self::has_state_root`]
+    /// can verify an MPT root against the nodes on disk: it reads the root node
+    /// by path and hashes it. The same trick is not available here —
+    /// [`BinaryTrie::open`] records the root it was given and caches it as the
+    /// hash of whatever node it later resolves at that path, so a wrong root is
+    /// indistinguishable from a right one through the public API, and this crate
+    /// does not reach inside `ethrex_binary_trie` to hash nodes itself. What the
+    /// node does know is which binary root it computed for which block, which is
+    /// exactly [`BINARY_TRIE_ROOTS`]. An active header whose own recorded root
+    /// matches the one it commits to is a header this node has binary state for.
+    ///
+    /// **What used to sit behind this, and no longer does.** The write path
+    /// once committed straight to disk, so after a reorg the path-keyed,
+    /// single-version node table held the abandoned branch's state while both
+    /// branches' roots stayed recorded, and this check could not tell them
+    /// apart. Diff layers removed the cause: a reorg within the layer window
+    /// discards the abandoned branch's nodes before they are ever written, so
+    /// the recorded root and the nodes agree again
+    /// (see [`Self::advance_binary_trie_for_block`]).
+    ///
+    /// A reorg *deeper* than the layer cache — where the abandoned branch's
+    /// nodes were already flushed — is now covered too: `STATE_HISTORY` carries
+    /// a binary reverse-diff, so the deep-reorg overlay puts the on-disk trie
+    /// back at the pivot before any new-chain block executes. The presence check
+    /// below reads through that overlay like any other reader, so it answers for
+    /// the unwound trie rather than the abandoned one.
+    ///
+    /// **What remains**: the journal does not cover full sync, which writes one
+    /// layer per ~1024 blocks and skips journaling entirely, so a reorg into a
+    /// batch-imported range is out of reach on both tries alike.
+    ///
+    /// [`BINARY_TRIE_ROOTS`]: crate::api::tables::BINARY_TRIE_ROOTS
+    /// **Two questions, both required.** The mapping answers "is `state_root`
+    /// the root this block committed", and [`Self::binary_trie_holds_root`]
+    /// answers "does this node still hold that trie". The mapping alone is not
+    /// enough, and believing it caused a devnet node to wedge permanently:
+    /// `advance_binary_trie_for_block` writes the mapping row durably at import
+    /// while the nodes behind it are only staged into the in-memory diff layer,
+    /// and `Store::shutdown` deliberately leaves those layers in memory. After
+    /// a restart the row survives for every block the node ever executed and
+    /// the nodes do not, so a bookkeeping-only check claims state that cannot
+    /// be read. The node then resumes on absent state, serves genesis values
+    /// for every post-activation block and never recovers — strictly worse than
+    /// re-executing, which is what it did when the check was merely pessimistic.
+    pub fn has_binary_trie_state(
+        &self,
+        block_hash: BlockHash,
+        state_root: H256,
+    ) -> Result<bool, StoreError> {
+        if self.get_binary_trie_root(block_hash)? != Some(state_root) {
+            return Ok(false);
+        }
+        self.binary_trie_holds_root(state_root)
+    }
+
+    /// Whether the binary trie this node can read really resolves to `root`.
+    ///
+    /// The binary counterpart of [`Self::trie_holds_state_root`], and it exists
+    /// for the same reason: binary-trie nodes are keyed by path, not by hash,
+    /// so opening a trie at a root records the request without validating it.
+    /// Reading the node at the root path and re-hashing it is what turns that
+    /// into a real answer.
+    ///
+    /// The read goes through the layered DB, so it cascades cache-then-disk
+    /// exactly as the MPT check does: state staged in a diff layer counts as
+    /// held for a running node, and only what reached disk counts for one that
+    /// has just restarted.
+    fn binary_trie_holds_root(&self, root: H256) -> Result<bool, StoreError> {
+        if root == BINARY_EMPTY_TRIE_ROOT {
+            return Ok(true);
+        }
+        let db = self.layered_binary_trie_db(root, root, LayeredBinaryTrieDB::staging_buffer())?;
+        let Some(row) = db
+            .get_group(&BitPath::new())
+            .map_err(|e| StoreError::Custom(format!("binary root row read failed: {e}")))?
+        else {
+            return Ok(false);
+        };
+        // A row, not a node: what the table holds at the root path is the root
+        // *group*, and the root node is its member at the empty relative path.
+        // Hashing the row bytes would compare a container to a root and never
+        // match — silently, because this reads the table directly and nothing
+        // about the stored unit is in the type.
+        Ok(hash_stored_root(&row)
+            .map_err(|e| StoreError::Custom(format!("binary root row is malformed: {e}")))?
+            == root)
+    }
+
+    /// Up to `max_leaves` of the binary trie's leaves at `binary_root`, in
+    /// ascending key order, from the first key at or after `origin` and
+    /// stopping at `limit` **inclusive**.
+    ///
+    /// The ordered range primitive. Leaves come from the flat mirror, not from
+    /// the trie: the disk half is a seek into [`BINARY_FLATKEYVALUE`] on a
+    /// pinned view, the layer half is the layer stack's `binary_flat` entries
+    /// materialized into a `BTreeMap`, and the two are merged with layer
+    /// entries winning and a tombstone suppressing the disk row.
+    ///
+    /// **Boundaries.** `origin` is inclusive and an empty `origin` starts at
+    /// the first leaf. `limit` is inclusive; an empty `limit` means no upper
+    /// bound, which is the only reading that makes an empty `limit` usable at
+    /// all, since as a key it would sort below everything. A `limit` below
+    /// `origin` yields nothing. `max_leaves` of zero yields nothing.
+    ///
+    /// **Not the snap serving rules, deliberately.** A range server has a
+    /// progress rule (the first leaf at or after `origin` must be returned even
+    /// if it is past `limit`) and a terminator rule (stop *after* the first
+    /// leaf past `limit`), and neither is applied here: both exist to make a
+    /// response provably complete over an interval, which is a property of the
+    /// response, not of the store. A caller wanting the terminator asks for one
+    /// more leaf from
+    /// [`increment_key(limit)`](ethrex_binary_trie::trie::increment_key) — which
+    /// is what that function is for on this side, the resume successor being the
+    /// other.
+    ///
+    /// **Two gates, and both refuse rather than truncate.** A short range is
+    /// indistinguishable from a complete one at the call site and produces a
+    /// response that fails its own proof, so neither failure may be silent:
+    ///
+    /// - The mirror must be fully backfilled. Mid-sweep it is a strict subset
+    ///   of the trie, and rows past the frontier are simply missing.
+    /// - `binary_root` must be a root this node's binary trie really resolves
+    ///   to, by the same re-hash [`Self::binary_trie_holds_root`] does for point
+    ///   reads. The trie is single-version, so a root the disk has advanced past
+    ///   is not servable even though its rows partly remain.
+    ///
+    /// **The layer map is built before the disk view is pinned, and the order is
+    /// load-bearing.** Pinning first would leave a window in which a flush moves
+    /// a layer's entries onto disk: the layer is then gone from the cache the
+    /// materialization reads, and the pinned view predates the write, so those
+    /// leaves appear in neither half and the range has a hole. Built first, a
+    /// flush in the same window is harmless — the map still holds the entries by
+    /// value and the pinned view now holds them too, so the merge sees a
+    /// duplicate key and the layer wins with the identical value.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Custom`] if either gate refuses, or if a mirror row or
+    /// layer entry is not exactly 32 bytes.
+    pub fn binary_flat_range(
+        &self,
+        binary_root: H256,
+        origin: &[u8],
+        limit: &[u8],
+        max_leaves: usize,
+    ) -> Result<Vec<BinaryFlatLeaf>, StoreError> {
+        if max_leaves == 0 {
+            return Ok(Vec::new());
+        }
+        if !self.binary_flat_coverage()?.is_complete() {
+            return Err(StoreError::Custom(
+                "cannot serve a binary flat range while the mirror's backfill is incomplete: \
+                 rows past the frontier are missing, so the range would have holes"
+                    .to_string(),
+            ));
+        }
+        if !self.binary_trie_holds_root(binary_root)? {
+            return Err(StoreError::Custom(format!(
+                "cannot serve a binary flat range at {binary_root:#x}: the binary trie does not \
+                 resolve to that root"
+            )));
+        }
+
+        // Layers first, disk second. See the note above — the reverse order has
+        // a window in which a flush drops leaves out of both halves.
+        let layer_entries = self
+            .gated_snapshot(binary_root)?
+            .binary_flat_entries_from(binary_root, origin)
+            .unwrap_or_default();
+
+        let flat = BackendBinaryFlatDB::new(self.backend.clone())?;
+        let view = flat.begin_locked()?;
+        let mut disk = view.range_from(origin)?;
+
+        // Both halves are already ordered and already start at `origin`, so
+        // this is a two-cursor merge with no sort and no buffering of the disk
+        // side.
+        let mut layers = layer_entries.into_iter().peekable();
+        let mut disk_next = disk.next().transpose()?;
+        let mut out = Vec::new();
+
+        while out.len() < max_leaves {
+            let disk_key = disk_next.as_ref().map(|(key, _)| key.as_slice());
+            let layer_key = layers.peek().map(|(key, _)| key.as_slice());
+            let next_key = match (disk_key, layer_key) {
+                (None, None) => break,
+                (Some(key), None) | (None, Some(key)) => key,
+                (Some(from_disk), Some(from_layer)) => from_disk.min(from_layer),
+            };
+            // An empty `limit` is "no upper bound"; any other is inclusive.
+            if !limit.is_empty() && next_key > limit {
+                break;
+            }
+
+            let take_disk = disk_key == Some(next_key);
+            let take_layer = layer_key == Some(next_key);
+            // Both sides advance on an equal key, so the layer's answer —
+            // value or tombstone — replaces the disk row rather than shadowing
+            // it into the next round.
+            let from_disk = if take_disk {
+                let entry = disk_next.take();
+                disk_next = disk.next().transpose()?;
+                entry
+            } else {
+                None
+            };
+
+            if take_layer {
+                let (key, value) = layers.next().ok_or_else(|| {
+                    StoreError::Custom("binary flat range: peeked layer entry vanished".to_string())
+                })?;
+                // A tombstone means the leaf left the tree, so it suppresses
+                // the disk row instead of falling through to it.
+                if let Some(value) = value {
+                    let value: [u8; 32] = value.as_slice().try_into().map_err(|_| {
+                        StoreError::Custom(format!(
+                            "binary flat layer entry for key {key:?} is {} bytes, not 32",
+                            value.len()
+                        ))
+                    })?;
+                    out.push((key, value));
+                }
+            } else if let Some(entry) = from_disk {
+                out.push(entry);
+            }
+        }
+
+        Ok(out)
+    }
+
+    /// The binary-trie root recorded for `block_hash`, if any.
+    ///
+    /// See [`BINARY_TRIE_ROOTS`] for why this mapping exists and how
+    /// narrow its scope is: block import consults it to find the root a
+    /// block must extend from, and nothing else ever reads it.
+    ///
+    /// [`BINARY_TRIE_ROOTS`]: crate::api::tables::BINARY_TRIE_ROOTS
+    pub fn get_binary_trie_root(&self, block_hash: BlockHash) -> Result<Option<H256>, StoreError> {
+        let Some(raw) = self.read(BINARY_TRIE_ROOTS, block_hash.as_bytes().to_vec())? else {
+            return Ok(None);
+        };
+        if raw.len() != 32 {
+            return Err(StoreError::Custom(format!(
+                "malformed binary-trie root recorded for block {block_hash:#x}: {} bytes",
+                raw.len()
+            )));
+        }
+        Ok(Some(H256::from_slice(&raw)))
+    }
+
+    /// The canonical block whose post-state is the binary trie named by
+    /// `root`, if this node can still serve that state.
+    ///
+    /// A `pbtsnap` request carries a root, but reachability is keyed by block
+    /// hash — [`Self::has_binary_trie_state`] needs both — so serving one
+    /// starts here.
+    ///
+    /// **The walk is bounded at [`DB_COMMIT_THRESHOLD`], and that bound is the
+    /// answer, not a heuristic.** The binary trie is single-version: the disk
+    /// holds one tree and the diff layers hold what sits above it, so a root
+    /// older than the layer window does not resolve at all. A longer walk could
+    /// only ever find blocks this method must then refuse. It is a coincidence
+    /// worth not relying on that snap's own `SNAP_LIMIT` is the same number.
+    ///
+    /// Three things must hold, and the third is the substantive one:
+    /// the canonical header at that number must carry `root`; its timestamp
+    /// must put it past the binary-tree activation (a pre-flip header's
+    /// `state_root` names an MPT, and serving binary leaves against it would be
+    /// answering a question nobody asked); and the layered binary trie must
+    /// really resolve to `root`, which is a re-hash of the stored root row
+    /// rather than a lookup.
+    ///
+    /// Deliberately not an eager root → block index. `BINARY_TRIE_ROOTS`
+    /// already stores block → root, the canonical walk gets reorg handling for
+    /// free, and the walk is at most `DB_COMMIT_THRESHOLD` header reads on a
+    /// path that then does real trie work.
+    pub fn canonical_block_for_binary_root(
+        &self,
+        root: H256,
+    ) -> Result<Option<BlockHash>, StoreError> {
+        let latest = self.latest_block_header.get().number;
+        let floor = latest.saturating_sub(DB_COMMIT_THRESHOLD as u64);
+        for number in (floor..=latest).rev() {
+            let Some(hash) = self.get_canonical_block_hash_sync(number)? else {
+                continue;
+            };
+            let Some(header) = self.get_block_header_by_hash(hash)? else {
+                continue;
+            };
+            if header.state_root != root || !self.header_addresses_binary_trie(&header) {
+                continue;
+            }
+            if self.has_binary_trie_state(hash, root)? {
+                return Ok(Some(hash));
+            }
+        }
+        Ok(None)
+    }
+
+    /// One boundary walk per key in `keys`, all taken from a single open trie
+    /// at `root`.
+    ///
+    /// The per-key serving primitive behind `eth_getProofV2`. Each element is
+    /// what `ethrex_binary_trie::trie::verify_walk` takes: the stored-node
+    /// encodings from the root to
+    /// the key's terminal, root first, and nothing else. A walk is returned for
+    /// an absent key too — that is the exclusion proof, and it is the reason
+    /// the return type is not an `Option`.
+    ///
+    /// **Batched rather than per-key, because attributability is the point.**
+    /// The trie is path-keyed and single-version, so a commit landing between
+    /// two separate calls would silently split one response across two trees:
+    /// every walk would verify on its own, against roots the caller was told
+    /// were one root. Opening once and bracketing the whole batch with the same
+    /// root check [`Self::binary_leaf_range_proof`] uses turns that into a
+    /// refusal instead. Callers that want several keys proven *together* must
+    /// therefore ask for them together.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Custom`] if this node does not hold `root`, if it stopped
+    /// holding it while the walks were being taken, or if a node a walk reached
+    /// could not be loaded.
+    pub fn binary_walk_proofs(
+        &self,
+        root: H256,
+        keys: &[Vec<u8>],
+    ) -> Result<Vec<Vec<Vec<u8>>>, StoreError> {
+        if !self.binary_trie_holds_root(root)? {
+            return Err(StoreError::Custom(format!(
+                "cannot serve binary walk proofs at {root:#x}: the binary trie does not resolve \
+                 to that root"
+            )));
+        }
+        let mut trie = self.open_binary_trie(root)?;
+        let mut proofs = Vec::with_capacity(keys.len());
+        for key in keys {
+            proofs.push(trie.prove_walk(key).map_err(|e| {
+                StoreError::Custom(format!(
+                    "binary walk at {root:#x} could not be proved for key {key:?}: {e}"
+                ))
+            })?);
+        }
+        if !self.binary_trie_holds_root(root)? {
+            return Err(StoreError::Custom(format!(
+                "binary trie moved off {root:#x} while walk proofs were being taken; they may \
+                 come from different trees"
+            )));
+        }
+        Ok(proofs)
+    }
+
+    /// Up to `max_leaves` leaves at `root` from `origin` through `limit`, with
+    /// the two boundary walks that pin them to `root`.
+    ///
+    /// The serving primitive behind `pbtsnap/1`'s `PbtLeafRange`. See
+    /// [`prove_range`] for the progress and terminator rules, which are the
+    /// response's contract and not this store's.
+    ///
+    /// **Leaves and proofs both come from the trie, and that is a correctness
+    /// requirement rather than a preference.** [`Self::binary_flat_range`] is
+    /// the faster source for the leaves — a seek into the mirror instead of a
+    /// tree walk — and a response that mixed the two would still be *sound*,
+    /// because `verify_range` re-merkleizes whatever it is handed and the right
+    /// walk has to end at the last leaf. What it would not be is *attributable*.
+    /// The mirror scan pins its view with
+    /// [`begin_locked`](crate::api::StorageBackend::begin_locked) while a trie
+    /// walk reads through [`begin_read`](crate::api::StorageBackend::begin_read),
+    /// and on the RocksDB backend that is not a snapshot at all — it is a handle
+    /// on the live database. The two halves are therefore two different views by
+    /// construction, and a flush between them makes an honest server emit a
+    /// range that fails its own proof: `OriginMismatch` on the first leaf,
+    /// `RightProofMismatch` on the last, `RootMismatch` in between. Every one of
+    /// those looks like a lie to the client, which scores the peer down for it.
+    /// Reading one structure removes the divergence instead of detecting it.
+    ///
+    /// **The root is re-checked after the walk, for the same reason.** The trie
+    /// is path-keyed and single-version, so a commit landing mid-walk overwrites
+    /// rows underneath an unpinned cursor without changing any key. Asking
+    /// again whether the layered view still resolves to `root` turns that race
+    /// into a refusal — which a client answers by re-pivoting — instead of into
+    /// a response assembled from two trees. It is not a substitute for a pinned
+    /// cross-table read view, which this backend does not offer; it is what
+    /// makes the gap loud.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Custom`] if this node does not hold `root`, if it stopped
+    /// holding it while the range was being read, or if a node the walk reached
+    /// could not be loaded.
+    pub fn binary_leaf_range_proof(
+        &self,
+        root: H256,
+        origin: &[u8],
+        limit: &[u8],
+        max_leaves: usize,
+    ) -> Result<RangeSlice, StoreError> {
+        if !self.binary_trie_holds_root(root)? {
+            return Err(StoreError::Custom(format!(
+                "cannot serve a binary leaf range at {root:#x}: the binary trie does not resolve \
+                 to that root"
+            )));
+        }
+        // An empty `limit` means "no upper bound", matching
+        // [`Self::binary_flat_range`] and the wire format. `prove_range` has no
+        // such convention — it compares `key > limit` directly, and every
+        // non-empty key is greater than the empty one, so passing an empty
+        // `limit` straight through makes the *first* leaf the terminator and
+        // caps every whole-keyspace request at one leaf. The two sibling range
+        // APIs read the same sentinel oppositely; this is where they are
+        // reconciled, and it is a silent one-leaf response if they are not.
+        let unbounded = vec![0xffu8; MAX_BINARY_KEY_LENGTH];
+        let limit = if limit.is_empty() { &unbounded } else { limit };
+
+        let mut trie = self.open_binary_trie(root)?;
+        let slice = prove_range(&mut trie, origin, limit, max_leaves).map_err(|e| {
+            StoreError::Custom(format!(
+                "binary leaf range at {root:#x} could not be proved: {e}"
+            ))
+        })?;
+        if !self.binary_trie_holds_root(root)? {
+            return Err(StoreError::Custom(format!(
+                "binary trie moved off {root:#x} while its leaf range was being read; the range \
+                 and its proofs may come from different trees"
+            )));
+        }
+        Ok(slice)
+    }
+
+    /// Record `root` as `block_hash`'s binary-trie root.
+    pub fn set_binary_trie_root(
+        &self,
+        block_hash: BlockHash,
+        root: H256,
+    ) -> Result<(), StoreError> {
+        self.write(
+            BINARY_TRIE_ROOTS,
+            block_hash.as_bytes().to_vec(),
+            root.as_bytes().to_vec(),
+        )
+    }
+
+    /// Forget the binary-trie root recorded for `block_hash`.
+    ///
+    /// Used when a block is rejected *after* its binary root was
+    /// computed. From activation onward the root has to exist before the
+    /// header can be validated against it, so a header carrying the
+    /// wrong root would otherwise leave a recorded root behind for a
+    /// block that never entered the chain — and a later block naming it
+    /// as parent would then extend a branch nobody accepted.
+    ///
+    /// Only the mapping needs undoing. The nodes the rejected block produced
+    /// were staged into a [`BinaryTrieAdvance`] the caller is about to drop,
+    /// never written, so there is nothing on disk to undo — which is exactly
+    /// what the diff layers bought. Removing the mapping is still required:
+    /// it is the only thing a later block consults.
+    pub fn remove_binary_trie_root(&self, block_hash: BlockHash) -> Result<(), StoreError> {
+        self.delete(BINARY_TRIE_ROOTS, block_hash.as_bytes().to_vec())
+    }
+
+    /// Install a downloaded binary-trie state as `block_hash`'s post-state.
+    ///
+    /// The landing seam for `pbtsnap` sync, and the third writer of the binary
+    /// trie after genesis and block import. `leaves` must be the **complete**
+    /// leaf set of the state in ascending key order — the account and overflow
+    /// storage zones as downloaded, plus the code-zone chunks the caller
+    /// derives from `codes`. Nothing is written unless those leaves merkleize
+    /// to the header's own root, which makes the check a whole-state
+    /// differential: any disagreement between served leaves and fetched
+    /// bytecode surfaces here at the latest.
+    ///
+    /// **The trie is replaced, not merged.** `BINARY_TRIE_NODES` is
+    /// path-keyed and single-version, so whatever the node held before —
+    /// genesis, on a fresh joiner — would otherwise stay on disk at paths the
+    /// new tree does not define. They are unreachable from the new root, but
+    /// leaving them makes a later corruption unreadable. Installing *over* a
+    /// live trie is not a supported operation and the sync driver must not
+    /// attempt it: the diff layers above the old tree are not discarded here,
+    /// and neither is the deep-reorg journal, both of which describe a tree
+    /// that no longer exists.
+    ///
+    /// **The flat mirror is rebuilt in the same breath, and skipping it would
+    /// be silently fatal.** A read below the mirror's frontier does not fall
+    /// back to a trie descent (see `BackendBinaryTrieDB::binary_flat_computed`),
+    /// so a joiner that seeded its mirror at genesis and then installed a
+    /// snapshot over the nodes alone would answer every account read from the
+    /// genesis leaf — authoritatively, and wrong. The write order handles the
+    /// crash window in one direction only, which is the recoverable one: the
+    /// completion marker is retracted *before* any row is dropped, so a crash
+    /// mid-install leaves an absent marker, and `Store::new` clears the mirror
+    /// on an absent marker at open.
+    ///
+    /// Returns the installed root.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Custom`] if `block_hash` is unknown, if its header is
+    /// pre-activation (a pre-flip `state_root` names an MPT and there is no
+    /// binary root to commit to), or if `leaves` do not merkleize to it. All
+    /// three refuse before anything is written.
+    pub async fn install_binary_snapshot(
+        &self,
+        block_hash: BlockHash,
+        leaves: Vec<(Vec<u8>, [u8; 32])>,
+        codes: Vec<Code>,
+    ) -> Result<H256, StoreError> {
+        let Some(header) = self.get_block_header_by_hash(block_hash)? else {
+            return Err(StoreError::Custom(format!(
+                "cannot install a binary snapshot for block {block_hash:#x}: no such header"
+            )));
+        };
+        if !self.header_addresses_binary_trie(&header) {
+            return Err(StoreError::Custom(format!(
+                "cannot install a binary snapshot at block {block_hash:#x}: its timestamp {} is \
+                 before the binary-tree activation, so its state root names an MPT",
+                header.timestamp
+            )));
+        }
+
+        // Built against the backend but not through it: `from_sorted_leaves`
+        // folds the whole input into an in-memory overlay and `root()`
+        // merkleizes that overlay, reading and writing nothing. The equality
+        // check below therefore happens with the database untouched, which is
+        // what lets a bad snapshot be refused rather than rolled back.
+        let mut trie = BinaryTrie::from_sorted_leaves(
+            Box::new(BackendBinaryTrieDB::new(self.backend.clone())?),
+            leaves,
+        )
+        .map_err(|e| {
+            StoreError::Custom(format!(
+                "binary snapshot for block {block_hash:#x} is not a valid ascending leaf set: {e}"
+            ))
+        })?;
+        let root = trie.root();
+        if root != header.state_root {
+            return Err(StoreError::Custom(format!(
+                "binary snapshot for block {block_hash:#x} merkleizes to {root:#x}, but its \
+                 header commits to {:#x}",
+                header.state_root
+            )));
+        }
+
+        // Retract the mirror first, durably, and only then drop rows. The
+        // in-memory frontier is what live readers gate on and the durable
+        // marker is what a restart reads, so both have to stop claiming
+        // coverage before the rows backing that claim go away.
+        self.publish_binary_flat_frontier(&[])?;
+        let mut tx = self.backend.begin_write()?;
+        tx.delete(MISC_VALUES, BINARY_LAST_WRITTEN_KEY)?;
+        tx.commit()?;
+        self.backend.clear_table(BINARY_TRIE_NODES)?;
+        self.backend.clear_table(BINARY_FLATKEYVALUE)?;
+
+        let committed = trie.commit()?;
+
+        // Rows and marker in one batch, after the nodes — the same ordering
+        // `setup_genesis_binary_trie` uses, and for the same reason: nodes
+        // without a marker is recoverable, a marker without rows is not.
+        let mut tx = self.backend.begin_write()?;
+        stage_binary_flat_leaves(&mut tx, &committed.leaves)?;
+        tx.put(
+            MISC_VALUES,
+            BINARY_LAST_WRITTEN_KEY,
+            BINARY_FLAT_FRONTIER_COMPLETE,
+        )?;
+        tx.commit()?;
+        self.publish_binary_flat_frontier(BINARY_FLAT_FRONTIER_COMPLETE)?;
+
+        // The trie commits to code as chunks; the EVM fetches whole bytecode
+        // by hash, and only `ACCOUNT_CODES` answers that.
+        self.write_account_code_batch(codes.into_iter().map(|code| (code.hash, code)).collect())
+            .await?;
+        self.set_binary_trie_root(block_hash, committed.root)?;
+        Ok(committed.root)
+    }
+
+    /// Shadow-tracking step: advance the binary trie by one block and
+    /// record where it landed.
+    ///
+    /// Looks up `parent_hash`'s recorded binary root, applies
+    /// `account_updates` on top of it, and records the resulting root
+    /// under `block_hash`. Callers gate this on
+    /// [`ChainConfig::binary_tree_scheduled`]; on a chain that never
+    /// schedules the commitment it is not called at all, so an
+    /// unscheduled node pays nothing — no lookup, no write, no column
+    /// family touched.
+    ///
+    /// **Cost.** On a scheduled chain this roughly doubles the per-block
+    /// state-write work for the whole pre-activation period: every
+    /// account and slot a block touches is written into two tries rather
+    /// than one. That is the price of carry-over — the first active
+    /// block commits the *full* state, so the binary trie has to have
+    /// been kept current all along. The alternative is a stop-the-world
+    /// conversion at the flip, which does not scale and which EIP-8297
+    /// does not specify.
+    ///
+    /// **Not a validation step.** The returned root is recorded and
+    /// nothing more: no header carries it and nothing is compared
+    /// against it until activation.
+    ///
+    /// **Staged, not written.** The nodes this produces go into the returned
+    /// [`BinaryTrieAdvance`], which the caller carries in the block's
+    /// [`UpdateBatch`]; from there they join the same diff layer as the block's
+    /// MPT nodes and reach disk only when that layer clears the safe-commit
+    /// gate, in the same write batch. Three things follow, and they are the
+    /// point of Phase E:
+    ///
+    /// - the two tries are persisted atomically, so disk never holds the MPT at
+    ///   block N alongside the binary trie at block N-5;
+    /// - a reorg discards the abandoned branch's binary nodes with its layer,
+    ///   instead of stranding them on a path-keyed store with no other version
+    ///   to fall back to;
+    /// - competing blocks at one height cannot overwrite each other at shared
+    ///   paths, because neither has written anything.
+    ///
+    /// Reads during the advance cascade through the layer chain, so a parent
+    /// whose own nodes are still staged resolves correctly.
+    ///
+    /// The recorded root *is* written immediately, because it is what a later
+    /// block consults to find the root it must extend, and because a rejected
+    /// block un-records it ([`Self::remove_binary_trie_root`]).
+    ///
+    /// A reorg *deeper* than the layer window is covered by the other half of
+    /// the same machinery: when the layer does flush, `commit_to_disk` records a
+    /// reverse diff of these nodes in `STATE_HISTORY` alongside the MPT's, and
+    /// the deep-reorg overlay replays it to put the on-disk trie back at the
+    /// pivot. See the module docs in `layering.rs`.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::MissingBinaryTrieRoot`] when the parent has no
+    /// recorded root. That is a hard error by design: it means the
+    /// shadow trie has a gap, and quietly restarting from an empty trie
+    /// would defer the failure to the flip block, where it is
+    /// unrecoverable.
+    ///
+    /// [`ChainConfig::binary_tree_scheduled`]: ethrex_common::types::ChainConfig::binary_tree_scheduled
+    pub fn advance_binary_trie_for_block(
+        &self,
+        block_hash: BlockHash,
+        parent_hash: BlockHash,
+        account_updates: &[AccountUpdate],
+    ) -> Result<BinaryTrieAdvance, StoreError> {
+        let parent_root = match self.get_binary_trie_root(parent_hash)? {
+            Some(root) => root,
+            None => {
+                // Loud, because this ends the chain: the caller turns it into a
+                // block-import failure, the CL keeps re-sending the block, and
+                // the head stops. Without a line here the only symptom is a head
+                // number that no longer moves.
+                error!(
+                    %parent_hash,
+                    %block_hash,
+                    "binary_trie_refused: no recorded root for the parent block; the binary trie is incomplete and cannot be extended, so this block cannot be imported"
+                );
+                return Err(StoreError::MissingBinaryTrieRoot { parent_hash });
+            }
+        };
+
+        // Codes first and in a single batch, exactly as the direct-write path
+        // does: the EVM fetches whole bytecode by hash and only `ACCOUNT_CODES`
+        // answers that, while the trie only ever commits to code as chunks.
+        // Content-addressed, so writing them ahead of the layer flush is safe —
+        // an abandoned branch leaves unreferenced code, never wrong code.
+        self.write_account_codes(account_updates)?;
+
+        let staged = LayeredBinaryTrieDB::staging_buffer();
+        let gate_root = self.binary_layer_gate(parent_hash, parent_root)?;
+        let db = self.layered_binary_trie_db(parent_root, gate_root, staged.clone())?;
+
+        // The mapping row says which root this block must extend. It does not
+        // say the trie still *holds* it — the row is durable and the nodes are
+        // not, so a trie advanced past that root (or parked elsewhere by a
+        // snapshot install) still answers the lookup above. `BinaryTrie::open`
+        // records a root without validating it, and a path-keyed walk then
+        // resolves whatever is on disk, so without this the commit would be a
+        // root computed over the wrong base with nothing downstream able to
+        // tell.
+        //
+        // Checked through `db` rather than via `binary_trie_holds_root`: that
+        // helper gates its layer read on the root itself, but for a
+        // pre-activation block the layer is keyed by the parent's *header*
+        // root, which is an MPT root. `binary_layer_gate` above is what
+        // resolves that, so the check has to run against this db to avoid
+        // spuriously refusing a live import.
+        if parent_root != BINARY_EMPTY_TRIE_ROOT {
+            let holds = db
+                .get_group(&BitPath::new())
+                .map_err(|e| StoreError::Custom(format!("binary root row read failed: {e}")))?
+                .is_some_and(|row| hash_stored_root(&row).is_ok_and(|hash| hash == parent_root));
+            if !holds {
+                // Same shape as above and the same consequence. This is the
+                // condition that let a node resume on absent state after a
+                // restart and serve genesis-alloc values indefinitely, so it is
+                // reported rather than only returned.
+                error!(
+                    %parent_hash,
+                    %parent_root,
+                    %block_hash,
+                    "binary_trie_refused: the trie no longer holds the parent block's recorded root; it has been advanced past or parked elsewhere, and extending it would build on the wrong state"
+                );
+                return Err(StoreError::BinaryTrieRootNotHeld {
+                    parent_hash,
+                    parent_root,
+                });
+            }
+        }
+
+        let mut trie = BinaryTrie::open(Box::new(db), parent_root);
+        apply_account_updates(&mut trie, account_updates)?;
+        let committed = trie.commit()?;
+        let root = committed.root;
+        // The leaf changelog is the mirror's only input: every path that can
+        // retire a leaf (`remove_prefix` above all) reports through it, so a
+        // future caller cannot add a mutation path that bypasses the mirror.
+        let flat = flat_writes_from_changelog(committed.leaves);
+        drop(trie);
+
+        let rows = std::mem::take(&mut *staged.lock().map_err(|_| StoreError::LockError)?);
+        self.set_binary_trie_root(block_hash, root)?;
+        Ok(BinaryTrieAdvance {
+            root,
+            parent_root,
+            rows,
+            flat,
+        })
+    }
+
+    /// Write every code carried by `account_updates` into `ACCOUNT_CODES` and
+    /// `ACCOUNT_CODE_METADATA`, in one batch. Shared by the direct-write and
+    /// staged binary-trie paths.
+    fn write_account_codes(&self, account_updates: &[AccountUpdate]) -> Result<(), StoreError> {
+        let codes: Vec<_> = account_updates
+            .iter()
+            .filter_map(|update| update.code.as_ref())
+            .collect();
+        if codes.is_empty() {
+            return Ok(());
+        }
+        let mut tx = self.backend.begin_write()?;
+        for code in codes {
+            let hash_key = code.hash.0.to_vec();
+            tx.put(ACCOUNT_CODES, &hash_key, &encode_code(code))?;
+            tx.put(
+                ACCOUNT_CODE_METADATA,
+                &hash_key,
+                &(code.len() as u64).to_be_bytes(),
+            )?;
+        }
+        tx.commit()
+    }
+
     // Key format: block_number (8 bytes, big-endian) + block_hash (32 bytes)
     fn make_witness_key(block_number: u64, block_hash: &BlockHash) -> Vec<u8> {
         let mut composite_key = Vec::with_capacity(8 + 32);
@@ -2739,8 +4347,49 @@ impl Store {
         }
         // Store genesis accounts
         // TODO: Should we use this root instead of computing it before the block hash check?
+        //
+        // On a chain with `binaryTreeTime` scheduled the same alloc also seeds
+        // the EIP-8297 binary trie, so shadow tracking has an anchor to extend
+        // from: block 1 looks up genesis' recorded binary root and builds on
+        // the alloc, exactly as it builds on the alloc in the MPT. Genesis
+        // itself normally still commits the MPT root in its header — activation
+        // at genesis would change the genesis hash and hence the chain's
+        // identity, which is why the schedule is always in the future on any
+        // real network.
+        //
+        // The alloc is cloned only when scheduled; unscheduled chains keep the
+        // move into `setup_genesis_state_trie` and do no binary-trie work.
+        let binary_tree_alloc = genesis
+            .config
+            .binary_tree_scheduled()
+            .then(|| genesis.alloc.clone());
+        // Per-header rule, at genesis: the header commits whichever root is
+        // active at *genesis' own timestamp*. Under the degenerate, test-only
+        // genesis activation that is the binary root, and the MPT root computed
+        // here is then a shadow root that no header names — so it is only
+        // compared against the header when the header is actually MPT-committed.
+        let binary_tree_active_at_genesis = genesis.config.is_binary_tree_active(genesis.timestamp);
         let genesis_state_root = self.setup_genesis_state_trie(genesis.alloc).await?;
-        debug_assert_eq!(genesis_state_root, genesis_block.header.state_root);
+        debug_assert!(
+            binary_tree_active_at_genesis || genesis_state_root == genesis_block.header.state_root
+        );
+
+        // Reached only on a fresh datadir: the branches above return early when
+        // a genesis header is already stored. That is the right behaviour for a
+        // reopen — the binary trie is persistent, so a restarted node resumes
+        // from what is on disk with no replay. It also means enabling the
+        // schedule on a datadir that was synced without it does not silently
+        // half-seed: genesis is skipped, and the next block fails loudly with
+        // `MissingBinaryTrieRoot` naming its parent, which is accurate — the
+        // shadow trie cannot be built without reprocessing from genesis.
+        if let Some(alloc) = binary_tree_alloc {
+            let genesis_binary_root = self.setup_genesis_binary_trie(alloc).await?;
+            self.set_binary_trie_root(genesis_hash, genesis_binary_root)?;
+            info!(
+                genesis_binary_root = %genesis_binary_root,
+                "Seeded the EIP-8297 binary trie from the genesis alloc"
+            );
+        }
 
         // Store genesis block
         info!(hash = %genesis_hash, "Storing genesis block");
@@ -2765,23 +4414,62 @@ impl Store {
         Ok(())
     }
 
+    /// Serves `eth_getStorageAt`. Guarded: a known block whose state this node no
+    /// longer holds is [`StoreError::MissingStateRoot`], not a successful read of
+    /// the on-disk trie's current slot value.
+    ///
+    /// Resolves against whichever trie *this block's header* addresses — see
+    /// [`Self::header_addresses_binary_trie`].
+    ///
+    /// The binary side does no account lookup first, and does not need one: the
+    /// slot's leaf key is derived from the address and the slot alone, so there
+    /// is no storage root to fetch and no second trie to open (see
+    /// [`Self::get_binary_storage_slot`]). The two paths still agree on the
+    /// answer for a nonexistent account, because an account with no state has no
+    /// slot leaves either, so both report `None`.
     pub fn get_storage_at(
         &self,
         block_number: BlockNumber,
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
-        match self.get_block_header(block_number)? {
-            Some(header) => self.get_storage_at_root(header.state_root, address, storage_key),
-            None => Ok(None),
+        let Some(header) = self.get_block_header(block_number)? else {
+            return Ok(None);
+        };
+        if self.header_addresses_binary_trie(&header) {
+            self.ensure_binary_trie_state(header.hash(), &header)?;
+            return self.get_binary_storage_slot(header.state_root, address, storage_key);
         }
+        self.get_storage_at_root_inner(
+            header.state_root,
+            address,
+            storage_key,
+            RootCheck::Verify(Some(header.number)),
+        )
     }
 
+    /// Root-addressed storage read.
+    ///
+    /// Deliberately unchecked, for store-internal callers that address state by
+    /// root directly and expect a root with no diff layer to fall through to disk
+    /// (the deep-reorg overlay tests read at roots the overlay does not serve, and
+    /// assert exactly that). [`Self::get_storage_at`], the block-addressed entry
+    /// point the RPC layer uses, is the guarded one.
     pub fn get_storage_at_root(
         &self,
         state_root: H256,
         address: Address,
         storage_key: H256,
+    ) -> Result<Option<U256>, StoreError> {
+        self.get_storage_at_root_inner(state_root, address, storage_key, RootCheck::Skip)
+    }
+
+    fn get_storage_at_root_inner(
+        &self,
+        state_root: H256,
+        address: Address,
+        storage_key: H256,
+        check: RootCheck,
     ) -> Result<Option<U256>, StoreError> {
         let account_hash = hash_address_fixed(&address);
 
@@ -2799,6 +4487,21 @@ impl Store {
             && !cache.overlay_serves(state_root);
 
         let storage_root = if use_fkv {
+            // The flat-KV fast path reads the account by path and never touches
+            // the state root, so a guarded read has to check it explicitly.
+            // Opening a state trie here is wrapper construction only — the read
+            // view, layer snapshot and FKV cursor it needs are already in hand —
+            // so the guard costs one root-node read plus one keccak, not a second
+            // trie setup.
+            if let RootCheck::Verify(block) = check {
+                let state_trie = self.open_state_trie_shared(
+                    state_root,
+                    read_view.clone(),
+                    cache.clone(),
+                    last_written.clone(),
+                )?;
+                Self::ensure_trie_holds_state_root(&state_trie, state_root, block)?;
+            }
             // We will use FKVs, we don't need the root
             EMPTY_TRIE_HASH
         } else {
@@ -2808,6 +4511,11 @@ impl Store {
                 cache.clone(),
                 last_written.clone(),
             )?;
+            // Runs against the trie already opened for the account lookup, so the
+            // guard adds no second open here either.
+            if let RootCheck::Verify(block) = check {
+                Self::ensure_trie_holds_state_root(&state_trie, state_root, block)?;
+            }
             let Some(encoded_account) = state_trie.get(account_hash.as_bytes())? else {
                 return Ok(None);
             };
@@ -2990,12 +4698,97 @@ impl Store {
         Ok(Some(header.state_root))
     }
 
-    /// Obtain the storage trie for the given block
+    /// Obtain the storage trie for the given block.
+    ///
+    /// Unchecked: the returned trie will happily read through to the on-disk
+    /// trie even when this node no longer holds the block's state (see
+    /// [`Self::trie_holds_state_root`]). Kept unchecked for the block-execution
+    /// and L2 callers that open a parent's trie to build state on top of it, and
+    /// for snap sync, where the pivot's state is incomplete by construction.
+    /// Read paths that answer user queries must use [`Self::state_trie_checked`].
     pub fn state_trie(&self, block_hash: BlockHash) -> Result<Option<Trie>, StoreError> {
         let Some(header) = self.get_block_header_by_hash(block_hash)? else {
             return Ok(None);
         };
         Ok(Some(self.open_state_trie(header.state_root)?))
+    }
+
+    /// [`Self::state_trie`], but refusing to serve a block whose state this node
+    /// no longer holds.
+    ///
+    /// `Ok(None)` still means "no such block". A known block whose state has
+    /// fallen out of the retention window (or belongs to an abandoned fork) is
+    /// now [`StoreError::MissingStateRoot`] instead of a successful read of some
+    /// other block's state.
+    ///
+    /// Costs one root-node read and one keccak over the happy path — no extra
+    /// header lookup and no extra trie open, since the check runs against the
+    /// trie this function had to open anyway.
+    fn state_trie_checked(&self, block_hash: BlockHash) -> Result<Option<Trie>, StoreError> {
+        let Some(header) = self.get_block_header_by_hash(block_hash)? else {
+            return Ok(None);
+        };
+        Ok(Some(self.state_trie_checked_for_header(&header)?))
+    }
+
+    /// [`Self::state_trie_checked`] for a header the caller already has, so the
+    /// state-reading RPCs can decide which trie a header addresses (see
+    /// [`Self::header_addresses_binary_trie`]) without reading the header twice.
+    fn state_trie_checked_for_header(&self, header: &BlockHeader) -> Result<Trie, StoreError> {
+        let trie = self.open_state_trie(header.state_root)?;
+        Self::ensure_trie_holds_state_root(&trie, header.state_root, Some(header.number))?;
+        Ok(trie)
+    }
+
+    /// The per-header trie question: does *this header's* `state_root` address
+    /// the EIP-8297 binary trie, or the MPT?
+    ///
+    /// **Per header, never per chain**, and this is the whole rule the state
+    /// RPCs turn on. It mirrors `StoreVmDatabase::open` (`crates/blockchain/vm.rs`),
+    /// which decides the same thing the same way for block execution; the two
+    /// must not drift, or a block would execute against one trie and be queried
+    /// against the other.
+    ///
+    /// A header from before the activation genuinely carries an MPT root and has
+    /// to keep resolving against the MPT forever — after the flip, across
+    /// restarts, and on either side of a reorg. Asking a chain-level question
+    /// instead (`binary_tree_scheduled()`, "have we passed it") makes the whole
+    /// pre-flip history unqueryable, which is what
+    /// `state_rpc_reads_at_pre_flip_blocks_keep_using_the_mpt_after_the_flip`
+    /// (in `test/tests/blockchain/binary_tree_shadow_tests.rs`) falsifies.
+    ///
+    /// Nothing maps a block hash to an MPT root here or anywhere else: each
+    /// header names the trie that answers for it through `header.state_root`
+    /// alone.
+    fn header_addresses_binary_trie(&self, header: &BlockHeader) -> bool {
+        self.chain_config.is_binary_tree_active(header.timestamp)
+    }
+
+    /// The binary-trie counterpart of [`Self::ensure_trie_holds_state_root`]:
+    /// refuse a header whose binary state this node does not hold.
+    ///
+    /// Without it the binary reads below would answer from whatever the
+    /// single-version binary trie currently holds — the same silently-wrong
+    /// answer the MPT guard was added to stop, just on the other trie. What
+    /// "holding it" means, and the reorg case it cannot yet see, are documented
+    /// on [`Self::has_binary_trie_state`].
+    ///
+    /// The error is [`StoreError::MissingStateRoot`], identical in shape to the
+    /// MPT side, so a caller cannot tell (and does not need to tell) which trie
+    /// was missing.
+    fn ensure_binary_trie_state(
+        &self,
+        block_hash: BlockHash,
+        header: &BlockHeader,
+    ) -> Result<(), StoreError> {
+        if self.has_binary_trie_state(block_hash, header.state_root)? {
+            Ok(())
+        } else {
+            Err(StoreError::MissingStateRoot {
+                block: Some(header.number),
+                state_root: header.state_root,
+            })
+        }
     }
 
     /// Obtain the storage trie for the given account on the given block
@@ -3025,6 +4818,20 @@ impl Store {
         )?))
     }
 
+    /// Block-addressed account read. See [`Self::state_trie_checked`] for the
+    /// behaviour at a block whose state this node no longer holds.
+    ///
+    /// **MPT only, deliberately.** It returns an `AccountState`, whose
+    /// `storage_root` the binary trie cannot report at all (see
+    /// `StoreVmDatabase::account_state_from_binary_trie` in
+    /// `crates/blockchain/vm.rs`), so past the activation this fails loudly with
+    /// [`StoreError::MissingStateRoot`] rather than answering with a field that
+    /// says nothing — execution can accept the empty root there because it asks
+    /// the storage question separately through `VmDatabase::has_storage`, and a
+    /// caller of this method has no such second channel. Nothing on the RPC path
+    /// uses it:
+    /// the account RPCs go through [`Self::get_account_info_by_hash`], which is
+    /// `AccountInfo`-shaped and therefore has no such field to invent.
     pub async fn get_account_state(
         &self,
         block_number: BlockNumber,
@@ -3033,12 +4840,21 @@ impl Store {
         let Some(block_hash) = self.get_canonical_block_hash(block_number).await? else {
             return Ok(None);
         };
-        let Some(state_trie) = self.state_trie(block_hash)? else {
+        let Some(state_trie) = self.state_trie_checked(block_hash)? else {
             return Ok(None);
         };
         self.get_account_state_from_trie(&state_trie, address)
     }
 
+    /// Root-addressed account read.
+    ///
+    /// Deliberately unchecked. This is the per-account read `StoreVmDatabase`
+    /// issues for every account an execution touches, and that caller has already
+    /// gated on [`Self::has_state_root`] once at `StoreVmDatabase::new`
+    /// (`crates/blockchain/vm.rs`). Verifying here would add a root-node read and
+    /// a keccak to every account access during block execution to re-prove
+    /// something established before the first one. Callers that address state by
+    /// block should use [`Self::get_account_state`], which is guarded.
     pub fn get_account_state_by_root(
         &self,
         state_root: H256,
@@ -3504,11 +5320,17 @@ impl Store {
         address: Address,
         storage_keys: &[H256],
     ) -> Result<Option<AccountProof>, StoreError> {
-        // TODO: check state root
-        // let Some(state_trie) = self.open_state_trie(state_trie)? else {
-        //     return Ok(None);
-        // };
         let state_trie = self.open_state_trie(state_root)?;
+        // Without this the response contradicts itself at a root this node does
+        // not hold: `Trie::get_proof` uses the *checked* node accessor and bails
+        // to an empty proof, while the account lookup beside it goes through the
+        // unchecked `Trie::get` and returns the on-disk trie's current account.
+        // `eth_getProof` would then answer with a live-looking account and no
+        // proof at all. Blocked at the source instead.
+        //
+        // The block number is not reported here because this method is addressed
+        // by root; the state root in the message identifies it.
+        Self::ensure_trie_holds_state_root(&state_trie, state_root, None)?;
         let address_path = hash_address_fixed(&address);
         let proof = state_trie.get_proof(address_path.as_bytes())?;
         let account_opt = state_trie
@@ -3867,6 +5689,101 @@ impl Store {
             return Ok(true);
         }
         let trie = self.open_state_trie(state_root)?;
+        Self::trie_holds_state_root(&trie, state_root)
+    }
+
+    /// Does this node hold the state `header` commits to?
+    ///
+    /// The header-addressed form of [`Self::has_state_root`], and the one any
+    /// caller holding a header should reach for. A bare `state_root` cannot
+    /// answer this question on a scheduled chain: from the activation timestamp
+    /// onwards a header's `state_root` is a binary-trie root that resolves
+    /// against no MPT node, so [`Self::has_state_root`] reports `false` for
+    /// state the node holds perfectly well. Only the header carries the
+    /// timestamp that says which trie is being named — the same per-header rule
+    /// block execution and the state RPCs turn on (see
+    /// [`Self::header_addresses_binary_trie`]).
+    ///
+    /// `block_hash` must be `header`'s own hash; the binary side is keyed by it
+    /// because the binary trie is single-version and its recorded root is what
+    /// distinguishes "this block's state" from whatever the trie holds now.
+    ///
+    /// Forkchoice is why this exists: its reachability gate ran on the bare root
+    /// and so refused every post-activation head, halting a devnet at the flip
+    /// block with the block itself executing and validating cleanly
+    /// (`forkchoice_accepts_every_block_across_the_flip` in
+    /// `test/tests/blockchain/binary_tree_shadow_tests.rs`).
+    pub fn has_state_for_header(
+        &self,
+        block_hash: BlockHash,
+        header: &BlockHeader,
+    ) -> Result<bool, StoreError> {
+        if self.header_addresses_binary_trie(header) {
+            return self.has_binary_trie_state(block_hash, header.state_root);
+        }
+        self.has_state_root(header.state_root)
+    }
+
+    /// Walking back from `head_block_number`, the highest block whose post-state
+    /// this node holds — the point a restart can resume execution from.
+    ///
+    /// `Ok(None)` means the walk reached genesis without finding held state,
+    /// which callers report as an unrecoverable database. In practice genesis
+    /// state is always present, so a walk that reaches block 0 and stops there
+    /// returns `Ok(Some(0))` and the caller replays the whole chain.
+    ///
+    /// Lives here because there were two hand-maintained copies of this walk —
+    /// `ethrex::initializers::regenerate_head_state` and the L2 committer's
+    /// `find_last_known_state_root` — with the same structure and the same
+    /// error text. Both asked [`Self::has_state_root`] about a header, and both
+    /// had to be fixed by hand when that turned out to be wrong past
+    /// `binaryTreeTime`. One copy means one place to get it right.
+    pub fn last_block_with_state(
+        &self,
+        head_block_number: BlockNumber,
+    ) -> Result<Option<BlockNumber>, StoreError> {
+        let Some(mut header) = self.get_block_header(head_block_number)? else {
+            return Ok(None);
+        };
+
+        while !self.has_state_for_header(header.hash(), &header)? {
+            if header.number == 0 {
+                return Ok(None);
+            }
+            let parent_number = header.number - 1;
+            // One line per step, so a walk that descends further than expected
+            // is diagnosable from a log rather than only from its aftermath.
+            debug!("State for block {} not held; walking back", header.number);
+            let Some(parent) = self.get_block_header(parent_number)? else {
+                return Err(StoreError::Custom(format!(
+                    "parent header for block {parent_number} not found"
+                )));
+            };
+            header = parent;
+        }
+
+        Ok(Some(header.number))
+    }
+
+    /// Whether `trie`, already opened at `state_root`, really resolves to that
+    /// root on this node.
+    ///
+    /// This is the body of [`Self::has_state_root`] with the trie open factored
+    /// out, so read paths that have *already* opened the state trie can run the
+    /// check without paying for a second open — a second layer-cache snapshot, a
+    /// second `last_written` read and a second backend read view. What is left is
+    /// one read of the root node plus one keccak over it.
+    ///
+    /// The check is necessary because trie nodes are keyed by path, not by hash:
+    /// `Trie::open` records the requested root without validating it, and
+    /// `Trie::get` re-reads the root by path and discards that hash. An unheld
+    /// root therefore reads whatever the on-disk trie's current root is, and
+    /// answers from the wrong version of state instead of failing.
+    fn trie_holds_state_root(trie: &Trie, state_root: H256) -> Result<bool, StoreError> {
+        // Empty state trie is always available
+        if state_root == EMPTY_TRIE_HASH {
+            return Ok(true);
+        }
         // NOTE: here we hash the root because the trie doesn't check the state root is correct
         let Some(root) = trie.db().get(Nibbles::default())? else {
             return Ok(false);
@@ -3875,6 +5792,25 @@ impl Store {
             .compute_hash(&NativeCrypto)
             .finalize(&NativeCrypto);
         Ok(state_root == root_hash)
+    }
+
+    /// [`Self::trie_holds_state_root`] as a guard.
+    ///
+    /// Fails with [`StoreError::MissingStateRoot`] when this node does not hold
+    /// the state behind `state_root`, mirroring what `StoreVmDatabase::new`
+    /// already reports for `eth_call` at the same block, so a single node cannot
+    /// answer "what was the balance at block N" and "run this call at block N"
+    /// two different ways.
+    fn ensure_trie_holds_state_root(
+        trie: &Trie,
+        state_root: H256,
+        block: Option<BlockNumber>,
+    ) -> Result<(), StoreError> {
+        if Self::trie_holds_state_root(trie, state_root)? {
+            Ok(())
+        } else {
+            Err(StoreError::MissingStateRoot { block, state_root })
+        }
     }
 
     // ===========================================================================
@@ -3955,6 +5891,29 @@ impl Store {
         Ok(())
     }
 
+    /// Test-only: the decoded `STATE_HISTORY` entry at `block_number`, or
+    /// `None` if that block was never journaled (batch-mode import, or a block
+    /// whose layer has not been committed yet).
+    ///
+    /// The counterpart of [`Self::put_state_history_entry_for_test`], for tests
+    /// that need to inspect *which sections* a real commit produced rather than
+    /// merely that an entry exists — the EIP-8297 freeze, for instance, is
+    /// visible here as post-flip entries whose four MPT sections are empty while
+    /// their binary sections are not.
+    #[doc(hidden)]
+    pub fn state_history_entry_for_test(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<JournalEntry>, StoreError> {
+        let read = self.backend.begin_read()?;
+        let Some(bytes) = read.get(STATE_HISTORY, &block_number.to_be_bytes())? else {
+            return Ok(None);
+        };
+        JournalEntry::decode(&bytes)
+            .map(Some)
+            .map_err(|err| StoreError::Custom(format!("journal decode at {block_number}: {err}")))
+    }
+
     /// Atomically prepares the store for a deep-reorg apply pass.
     ///
     /// Builds an [`Overlay`] from journal entries in `[to_block, from_block]`
@@ -3996,10 +5955,36 @@ impl Store {
             TrieLayerCache::new_with_safe_commit(threshold, self.safe_commit_root.clone());
         fresh.set_overlay(Arc::new(overlay));
 
+        // The overlay bridges `BINARY_TRIE_NODES` as well as the four MPT/flat-KV
+        // CFs, so a scheduled chain's on-disk binary trie is unwound to the pivot
+        // along with its MPT and both are folded into the same reconciliation
+        // write. A zero `serves_binary_root` on a scheduled chain means the
+        // journal entry at the pivot's height carried no binary root, which
+        // should be impossible — shadow tracking runs from genesis on a
+        // scheduled chain — so it is reported rather than papered over: the
+        // replay would fall through to disk and read the abandoned branch.
+        if self.chain_config.binary_tree_scheduled()
+            && let Some(overlay) = fresh.overlay()
+            && overlay.serves_binary_root().is_zero()
+        {
+            warn!(
+                from_block,
+                to_block,
+                "deep reorg on a binary-tree-scheduled chain: the journal entry at the pivot \
+                 records no binary root, so the on-disk binary trie will NOT be unwound and may \
+                 hold the abandoned chain's state"
+            );
+        }
+
         // Wait for the persist worker to be idle before swapping the cache (see
         // [`Self::rendezvous_persist_worker`]).
         self.rendezvous_persist_worker("install_overlay_for_reorg")?;
 
+        // The fresh cache starts with no layers, so its binary-root index and
+        // binary bloom start empty too: the abandoned chain's staged binary
+        // nodes go away with its MPT layers, in one step, by construction.
+        // Anything the abandoned chain already *flushed* is handled by the
+        // overlay's binary reverse-diff, not here.
         let mut guard = self.trie_cache.write().map_err(|_| StoreError::LockError)?;
         *guard = Arc::new(fresh);
         Ok(())
@@ -4066,6 +6051,13 @@ impl Store {
     /// partially-built new-chain layers are discarded. On-disk state is
     /// untouched (still at the OLD chain's `D`), so subsequent FCU evaluations
     /// start from a clean foundation.
+    ///
+    /// That holds for the binary trie too, and for the same reason: the unwind
+    /// lives entirely in the overlay until the reconciliation commit folds it
+    /// into one write batch, so an abort before that point leaves
+    /// `BINARY_TRIE_NODES` exactly as the old chain left it. There is no partial
+    /// unwind to repair — the two tries abort together because they were only
+    /// ever going to be persisted together.
     pub fn abort_reorg(&self) -> Result<(), StoreError> {
         // Rendezvous with the persist worker before swapping, exactly like
         // `install_overlay_for_reorg`: the live-path ack fires BEFORE
@@ -4264,6 +6256,139 @@ impl Store {
         self.backend.begin_read()?.get(table, key)
     }
 
+    /// Number of entries in the binary-trie node table. For testing only —
+    /// lets a test assert that an *unscheduled* chain does literally no
+    /// binary-trie work, which is the property that makes shadow tracking safe
+    /// to land.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn binary_trie_node_count_for_test(&self) -> Result<usize, StoreError> {
+        use crate::api::tables::BINARY_TRIE_NODES;
+        use ethrex_binary_trie::trie::GroupRow;
+        let read = self.backend.begin_read()?;
+        // Rows decoded and *members* counted: a row holds a whole group, so
+        // counting rows would answer a different question under the same name
+        // — and would still read zero on an untouched chain, which is the one
+        // case this is used for and the one where the bug would not show.
+        let mut count = 0usize;
+        for entry in read.prefix_iterator(BINARY_TRIE_NODES, &[])? {
+            let (_, row) = entry?;
+            count += GroupRow::decode(&row)
+                .map_err(|e| StoreError::Custom(format!("binary trie row is malformed: {e}")))?
+                .members()
+                .len();
+        }
+        Ok(count)
+    }
+
+    /// Number of *rows* in the binary-trie node table. For testing only —
+    /// the companion to [`Store::binary_trie_node_count_for_test`], which
+    /// counts the nodes inside them. The two agree only at group depth 1.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn binary_trie_row_count_for_test(&self) -> Result<usize, StoreError> {
+        use crate::api::tables::BINARY_TRIE_NODES;
+        let read = self.backend.begin_read()?;
+        Ok(read.prefix_iterator(BINARY_TRIE_NODES, &[])?.count())
+    }
+
+    /// Every `(tree key, leaf value)` row in the binary flat mirror. For
+    /// testing only — the mirror side of the agreement invariant, which needs
+    /// *which* rows exist and not just how many, because a mirror that is a
+    /// superset of the trie is exactly as wrong as one that is a subset.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn binary_flat_rows_for_test(&self) -> Result<BinaryFlatWrites, StoreError> {
+        use crate::api::tables::BINARY_FLATKEYVALUE;
+        let read = self.backend.begin_read()?;
+        read.prefix_iterator(BINARY_FLATKEYVALUE, &[])?
+            .map(|entry| entry.map(|(k, v)| (k.into_vec(), v.into_vec())))
+            .collect()
+    }
+
+    /// The mirror's durable backfill frontier marker, verbatim. For testing
+    /// only: `None` is absent, `Some([0xff])` is complete, anything else is a
+    /// tree key the sweep has reached.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn binary_flat_frontier_for_test(&self) -> Result<Option<Vec<u8>>, StoreError> {
+        self.backend
+            .begin_read()?
+            .get(MISC_VALUES, BINARY_LAST_WRITTEN_KEY)
+    }
+
+    /// Number of recorded block-hash -> binary-root entries. For testing only;
+    /// companion to [`Store::binary_trie_node_count_for_test`].
+    #[cfg(any(test, feature = "testing"))]
+    pub fn binary_trie_root_count_for_test(&self) -> Result<usize, StoreError> {
+        let read = self.backend.begin_read()?;
+        let count = read.prefix_iterator(BINARY_TRIE_ROOTS, &[])?.count();
+        Ok(count)
+    }
+
+    /// Every `(row key, encoded group row)` pair in the binary-trie node table.
+    /// For testing only — the counterpart of
+    /// [`Store::binary_trie_node_count_for_test`] for tests that must compare
+    /// *which* state reached disk, not just how much (the reorg-discard
+    /// assertion).
+    ///
+    /// **Rows, not nodes.** A caller comparing two stores must decode these and
+    /// compare members, or it is comparing containers: `len()` here is a row
+    /// count, while the node count beside it is not, and the two have been
+    /// compared against each other.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn binary_trie_nodes_for_test(&self) -> Result<BinaryTrieRows, StoreError> {
+        use crate::api::tables::BINARY_TRIE_NODES;
+        let read = self.backend.begin_read()?;
+        read.prefix_iterator(BINARY_TRIE_NODES, &[])?
+            .map(|entry| entry.map(|(k, v)| (k.into_vec(), v.into_vec())))
+            .collect()
+    }
+
+    /// Number of entries in the MPT's account-trie node table. For testing
+    /// only — the MPT baseline the binary-trie flush is compared against, so a
+    /// test can state that the two land at the same commit point rather than
+    /// independently.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn account_trie_node_count_for_test(&self) -> Result<usize, StoreError> {
+        let read = self.backend.begin_read()?;
+        let count = read.prefix_iterator(ACCOUNT_TRIE_NODES, &[])?.count();
+        Ok(count)
+    }
+
+    /// Force the trie-layer commit gate at `root` and wait for the flush.
+    ///
+    /// For testing only. Live nodes reach this through `forkchoice_update`,
+    /// which advances the safe-commit cell to the canonical `head - 128` root
+    /// and pokes the persist worker; a test that wants to observe a flush
+    /// without building 128 blocks needs the same two steps without the depth
+    /// requirement. `root` must be a canonical state root, exactly as the real
+    /// gate's would be.
+    #[cfg(any(test, feature = "testing"))]
+    pub async fn commit_trie_layers_for_test(&self, root: H256) -> Result<(), StoreError> {
+        self.set_safe_commit_root(root)?;
+        let tx = self.persist_tx.clone();
+        tokio::task::spawn_blocking(move || tx.send(PersistMessage::Commit(root)))
+            .await
+            .map_err(|e| StoreError::Custom(format!("commit poke join failed: {e}")))?
+            .map_err(|e| StoreError::Custom(format!("commit poke send failed: {e}")))?;
+        self.wait_for_persistence_idle().await
+    }
+
+    /// Drop every in-memory trie diff-layer, keeping whatever has reached disk.
+    ///
+    /// This is what a process restart does to a node: `Store::shutdown`
+    /// force-flushes the block-data buffer but deliberately leaves the trie
+    /// diff-layers in memory, so they are simply gone on the next boot. Tests
+    /// that assert what a restarted node can still *see* need to reproduce that
+    /// loss without spawning a process.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn drop_trie_layers_for_test(&self) -> Result<(), StoreError> {
+        let mut guard = self.trie_cache.write().map_err(|_| StoreError::LockError)?;
+        let threshold = guard.commit_threshold();
+        *guard = Arc::new(TrieLayerCache::new_with_safe_commit(
+            threshold,
+            self.safe_commit_root.clone(),
+        ));
+        Ok(())
+    }
+
     /// Insert a block plus associated codes into the in-memory buffer without
     /// writing to disk.  For testing only — proves the buffer overlay resolves
     /// code that has not been persisted yet.
@@ -4380,6 +6505,83 @@ fn decode_flushed_upto(bytes: &[u8]) -> Result<BlockNumber, StoreError> {
     Ok(BlockNumber::from_le_bytes(arr))
 }
 
+/// Reconcile the datadir's recorded binary-trie group depth with the one this
+/// node is configured for, adopting the depth on a datadir that has yet to hold
+/// a binary node.
+///
+/// Four cases, and the third is why this is not simply "absent is an error" as
+/// first planned:
+///
+/// - **Marker present, agrees** — nothing to do.
+/// - **Marker present, disagrees** — [`StoreError::BinaryGroupDepthMismatch`].
+/// - **Marker absent, `BINARY_TRIE_NODES` empty** — a fresh datadir, or any of
+///   the MPT-only datadirs that predate the binary trie entirely. Record the
+///   configured depth and continue. Refusing here would refuse every existing
+///   node's datadir, a far larger blast radius than the case being defended
+///   against.
+/// - **Marker absent, `BINARY_TRIE_NODES` non-empty** — nodes written one per
+///   row, before grouping. [`StoreError::BinaryGroupDepthMissing`].
+///
+/// The emptiness probe is one `prefix_iterator` taking a single item, not a
+/// count: the table is on the order of 10^9 rows at mainnet scale and this runs
+/// on every open.
+fn check_binary_group_depth(
+    backend: &dyn StorageBackend,
+    configured: GroupDepth,
+) -> Result<(), StoreError> {
+    let stored = backend
+        .begin_read()?
+        .get(MISC_VALUES, BINARY_GROUP_DEPTH_KEY)?;
+    match stored.as_deref() {
+        Some([depth]) if usize::from(*depth) == configured.get() => Ok(()),
+        Some([depth]) => {
+            // At open, before the tracing subscriber has anything else to say
+            // about this datadir. The error propagates and the node refuses to
+            // start, but an operator reading `docker logs` sees this line first
+            // and with the two depths in it.
+            error!(
+                stored = usize::from(*depth),
+                configured = configured.get(),
+                "binary_trie_refused: datadir was written at a different binary-trie group depth; the group depth decides which nodes share a database row, so the two are not interchangeable"
+            );
+            Err(StoreError::BinaryGroupDepthMismatch {
+                stored: usize::from(*depth),
+                configured: configured.get(),
+            })
+        }
+        // A marker that is not one byte was not written by this code. Treat it
+        // as a mismatch rather than guessing: reporting a depth of 0 is
+        // obviously wrong to a reader, where silently adopting would not be.
+        Some(_) => Err(StoreError::BinaryGroupDepthMismatch {
+            stored: 0,
+            configured: configured.get(),
+        }),
+        None => {
+            let holds_nodes = backend
+                .begin_read()?
+                .prefix_iterator(BINARY_TRIE_NODES, &[])?
+                .next()
+                .is_some();
+            if holds_nodes {
+                error!(
+                    configured = configured.get(),
+                    "binary_trie_refused: datadir holds binary-trie nodes written before group depth was recorded (one node per row); they cannot be read at this depth and there is no in-place conversion"
+                );
+                return Err(StoreError::BinaryGroupDepthMissing {
+                    configured: configured.get(),
+                });
+            }
+            let mut tx = backend.begin_write()?;
+            tx.put(
+                MISC_VALUES,
+                BINARY_GROUP_DEPTH_KEY,
+                &[configured.get() as u8],
+            )?;
+            tx.commit()
+        }
+    }
+}
+
 /// RCU-swap the block-data buffer. The persist worker is the sole caller in
 /// production (no lost-update race); test helpers also call this on one thread.
 fn mutate_block_buffer(
@@ -4407,6 +6609,10 @@ struct BlockPersist {
     child_state_root: H256,
     account_updates: TrieNodesUpdate,
     storage_updates: Vec<(H256, TrieNodesUpdate)>,
+    /// The same unit's staged EIP-8297 binary-trie advance, if the chain
+    /// schedules the commitment. Installed into the same diff layer as
+    /// `account_updates` / `storage_updates`.
+    binary_update: Option<BinaryTrieAdvance>,
     commit_depth: Option<usize>,
     wait_for_flush: bool,
     /// Number of the block whose layer this update represents (the last block in
@@ -4592,6 +6798,7 @@ fn apply_trie_phase1(
     block_hash: H256,
     account_updates: TrieNodesUpdate,
     storage_updates: Vec<(H256, TrieNodesUpdate)>,
+    binary_update: Option<BinaryTrieAdvance>,
 ) -> Result<(), StoreError> {
     let build: Result<(), StoreError> = (|| {
         let new_layer = storage_updates
@@ -4608,12 +6815,17 @@ fn apply_trie_phase1(
             .map_err(|_| StoreError::LockError)?
             .clone();
         let mut trie_mut = (*trie).clone();
-        trie_mut.put_batch(
+        // One layer, both node sets: they must be staged, flushed and dropped
+        // as a unit, so there is exactly one insertion here and never two.
+        trie_mut.put_batch_with_binary(
             parent_state_root,
             child_state_root,
             block_number,
             block_hash,
             new_layer,
+            binary_update
+                .map(BinaryLayerUpdate::from)
+                .unwrap_or_default(),
         );
         *trie_cache.write().map_err(|_| StoreError::LockError)? = Arc::new(trie_mut);
         Ok(())
@@ -4728,6 +6940,14 @@ fn commit_to_disk(
     let last_written = read_view
         .get(MISC_VALUES, "last_written".as_bytes())?
         .unwrap_or_default();
+    // The binary mirror's frontier, read from the same pre-write view for the
+    // same reason. Absent until Task 9's generator exists, which
+    // [`binary_flat_frontier_covers`] reads as "this write path owns the whole
+    // keyspace" — a write-ownership answer, not a coverage claim. See that
+    // function's docs.
+    let binary_last_written = read_view
+        .get(MISC_VALUES, BINARY_LAST_WRITTEN_KEY)?
+        .unwrap_or_default();
 
     let mut write_tx = backend.begin_write()?;
 
@@ -4807,6 +7027,48 @@ fn commit_to_disk(
         }
         None => Vec::new(),
     };
+    // The same bridge for `BINARY_TRIE_NODES`, carrying whole group **rows**
+    // keyed by group root. Kept as a separate list because these keys go to one
+    // fixed column family and, crucially, cannot be routed by length: a row key
+    // is `4 + ceil(bits/8)` bytes and overlaps every range `classify_trie_key`
+    // dispatches on, so folding them into `extra_writes` would write binary rows
+    // into `ACCOUNT_TRIE_NODES` and corrupt the MPT.
+    let binary_extra_writes: Vec<(Vec<u8>, Vec<u8>)> = match &overlay_for_reconciliation {
+        Some(overlay) => {
+            let layer_keys: rustc_hash::FxHashSet<&Vec<u8>> = committed_layers
+                .iter()
+                .flat_map(|l| l.binary_rows.iter().map(|(k, _)| k))
+                .collect();
+            overlay
+                .iter_binary_row_entries()
+                .filter(|(key, _)| !layer_keys.contains(key))
+                .map(|(key, value)| (key.clone(), value.clone().unwrap_or_default()))
+                .collect()
+        }
+        None => Vec::new(),
+    };
+    // And the same bridge again for `BINARY_FLATKEYVALUE`. A third list, not a
+    // share of `binary_extra_writes`: the two binary key spaces have identical
+    // length ranges, so a merged list would write mirror rows into
+    // `BINARY_TRIE_NODES` and node encodings into the mirror, with nothing in
+    // the bytes to tell them apart. An overlay `None` becomes an empty value,
+    // which the write loop below turns into a delete — the "absent at the pivot"
+    // semantics, and the reason a reorg cannot leave a stale row behind for a
+    // leaf the new chain does not have.
+    let binary_flat_extra_writes: Vec<(Vec<u8>, Vec<u8>)> = match &overlay_for_reconciliation {
+        Some(overlay) => {
+            let layer_keys: rustc_hash::FxHashSet<&Vec<u8>> = committed_layers
+                .iter()
+                .flat_map(|l| l.binary_flat.iter().map(|(k, _)| k))
+                .collect();
+            overlay
+                .iter_binary_flat_entries()
+                .filter(|(key, _)| !layer_keys.contains(key))
+                .map(|(key, value)| (key.clone(), value.clone().unwrap_or_default()))
+                .collect()
+        }
+        None => Vec::new(),
+    };
     // Pivot heights (T, D) for the reconciliation commit; `None` in steady state.
     let reorg_heights = overlay_for_reconciliation
         .as_ref()
@@ -4822,6 +7084,27 @@ fn commit_to_disk(
     // For large state diffs this is O(N) extra reads on the per-block critical path.
     // A follow-up could batch these via `multi_get_cf` if profiling shows it's significant.
     let mut overlay: HashMap<Vec<u8>, Option<Vec<u8>>> = HashMap::new();
+    // The same intra-batch pre-image map for `BINARY_TRIE_NODES`, holding whole
+    // previous rows, and separate for the same reason the overlay's binary map
+    // is: a row key can be byte-identical to an account-trie path, so one shared
+    // map would let a binary write supply an MPT pre-image (or the reverse) and
+    // silently corrupt whichever reverse diff read it second.
+    //
+    // PERF: same shape as above — one `read_view.get` per first-touched binary
+    // key, so a scheduled chain pays roughly twice the pre-image reads an
+    // unscheduled one does. That is the same doubling shadow tracking already
+    // imposes on the write side, and it buys the only thing that makes a deep
+    // reorg recoverable past activation. Untouched on unscheduled chains, where
+    // `layer.binary_rows` is empty and this map stays so.
+    let mut binary_overlay: HashMap<Vec<u8>, Option<Vec<u8>>> = HashMap::new();
+    // A third intra-batch pre-image map, for `BINARY_FLATKEYVALUE`, separate
+    // from `binary_overlay` for the sharper form of the same reason that one is
+    // separate from `overlay`: a `BitPath` DB key at bit-depth 240 is 34 bytes
+    // and an account-zone tree key is 34 bytes, so the two spaces are not
+    // distinguishable at all. One shared map would let a node write supply a
+    // leaf's pre-image, and a multi-layer commit would then journal a reverse
+    // diff that restores a node encoding into the mirror.
+    let mut binary_flat_overlay: HashMap<Vec<u8>, Option<Vec<u8>>> = HashMap::new();
 
     let mut result = Ok(());
     'layers: for layer in &committed_layers {
@@ -4834,6 +7117,8 @@ fn commit_to_disk(
         let mut journal_storage_trie: FlatDiff = Vec::new();
         let mut journal_account_flat: FlatDiff = Vec::new();
         let mut journal_storage_flat: FlatDiff = Vec::new();
+        let mut journal_binary_trie: FlatDiff = Vec::new();
+        let mut journal_binary_flat: FlatDiff = Vec::new();
 
         // The reconciliation commit is single-layer at `T`; fold the overlay bridge entries
         // into that layer's writes so they land in T's journal entry. `extra` is empty in
@@ -4918,6 +7203,162 @@ fn commit_to_disk(
             }
         }
 
+        // The same block's EIP-8297 binary-trie group rows, into the SAME write
+        // batch. That is the whole flush-parity guarantee: `write_tx` commits
+        // once at the end, so the two tries advance on disk together or not at
+        // all, and a crash can never leave the MPT at block N with the binary
+        // trie at some earlier block.
+        //
+        // Empty on unscheduled chains, so they do exactly the work they did.
+        //
+        // Journaled exactly as the MPT's are, into their own section of the
+        // entry: the node table is path-keyed and single-version, so this write
+        // destroys the previous version and only a recorded pre-image can put it
+        // back. Reorgs within the layer window never reach here (the nodes stay
+        // staged), so the reverse diff is only ever consumed by a reorg deeper
+        // than the cache — which is precisely the case that was unrecoverable
+        // before.
+        //
+        // `binary_extra` folds the overlay's binary bridge into the single
+        // reconciliation layer, mirroring `extra` above.
+        let binary_extra: &[(Vec<u8>, Vec<u8>)] = if is_reconciliation_layer {
+            &binary_extra_writes
+        } else {
+            &[]
+        };
+        for (key, value) in layer.binary_rows.iter().chain(binary_extra.iter()) {
+            // Pre-image first, from the intra-batch map or disk, exactly as the
+            // MPT loop above does — a multi-layer commit must record each
+            // block's own pre-state, not the pre-batch one.
+            let prev_value = if !is_batch {
+                match binary_overlay.get(key) {
+                    Some(v) => Some(v.clone()),
+                    None => match read_view.get(BINARY_TRIE_NODES, key) {
+                        Ok(v) => Some(v),
+                        Err(e) => {
+                            result = Err(e);
+                            break 'layers;
+                        }
+                    },
+                }
+            } else {
+                None
+            };
+
+            let new_value = if value.is_empty() {
+                // Tombstone: the group lost its last member. Storing zero bytes
+                // would make the key read back as a row the trie never wrote.
+                //
+                // **Not "a node left the tree".** A removal usually retires one
+                // member of a group that still holds others, and the trie sends
+                // that as a rewrite carrying the survivors — so this arm firing
+                // for a partially emptied group would delete live nodes. The
+                // distinction is made in `BinaryTrie::build_rows`; what this
+                // loop must not do is re-interpret it.
+                result = write_tx.delete(BINARY_TRIE_NODES, key);
+                None
+            } else {
+                result = write_tx.put(BINARY_TRIE_NODES, key, value);
+                Some(value.clone())
+            };
+            if result.is_err() {
+                break 'layers;
+            }
+
+            if let Some(prev) = prev_value {
+                journal_binary_trie.push((key.clone(), prev));
+                binary_overlay.insert(key.clone(), new_value);
+            }
+        }
+
+        // The same block's writes to the flat leaf mirror, into the SAME write
+        // batch again. The mirror is *derived* from the binary trie, so this is
+        // stronger than the flush parity above: a mirror persisted at a
+        // different block than the trie does not merely lag, it disagrees with
+        // the root it is a view of, and a range served from it would carry
+        // leaves the root does not commit to.
+        //
+        // Empty on unscheduled chains.
+        //
+        // `binary_flat_extra` folds the overlay's mirror bridge into the single
+        // reconciliation layer, mirroring `extra` and `binary_extra` above.
+        let binary_flat_extra: &[(Vec<u8>, Vec<u8>)] = if is_reconciliation_layer {
+            &binary_flat_extra_writes
+        } else {
+            &[]
+        };
+        for (key, value) in layer.binary_flat.iter().chain(binary_flat_extra.iter()) {
+            // The frontier skip, the binary counterpart of the MPT one above:
+            // a key this write path does not own is neither written nor
+            // journaled, because a `Some(None)` pre-image for a row that was
+            // never put would make a rollback delete something that never
+            // existed. The frontier is absent until Task 9 builds the generator,
+            // which reads as "we own everything"; see
+            // `binary_flat_frontier_covers` for why that is a write-ownership
+            // answer and not a coverage claim.
+            if !binary_flat_frontier_covers(&binary_last_written, key) {
+                continue;
+            }
+
+            // "Zero means absent", enforced at the writer because that is where
+            // the invariant is. A leaf whose encoding is 32 zero bytes was
+            // *removed* from the trie, so the mirror must delete the row, not
+            // store zeros. Storing them would put a row in the mirror for a key
+            // the trie's root does not commit to; a range served from the mirror
+            // and proved against that root fails on it. The empty value is the
+            // tombstone; 32 zero bytes is a corruption signal, and refusing the
+            // whole commit is the right response to one.
+            //
+            // The same check `BackendBinaryFlatDB::put_batch` makes, repeated
+            // here because this path writes through `write_tx` directly — it has
+            // to, to stay in one transaction with the nodes — and so does not go
+            // through that writer.
+            if !value.is_empty() && value.iter().all(|byte| *byte == 0) {
+                result = Err(StoreError::Custom(format!(
+                    "refusing to commit a 32-zero-byte binary flat value for key {key:?} at \
+                     block {}: zero means absent, so the trie removed this leaf and the row \
+                     must be deleted with an empty value, not written as zeros",
+                    layer.block_number
+                )));
+                break 'layers;
+            }
+
+            // Pre-image first, from the intra-batch map or disk, exactly as the
+            // two loops above do.
+            let prev_value = if !is_batch {
+                match binary_flat_overlay.get(key) {
+                    Some(v) => Some(v.clone()),
+                    None => match read_view.get(BINARY_FLATKEYVALUE, key) {
+                        Ok(v) => Some(v),
+                        Err(e) => {
+                            result = Err(e);
+                            break 'layers;
+                        }
+                    },
+                }
+            } else {
+                None
+            };
+
+            let new_value = if value.is_empty() {
+                // Tombstone: the leaf left the tree. The row must go, not become
+                // zeros — see above.
+                result = write_tx.delete(BINARY_FLATKEYVALUE, key);
+                None
+            } else {
+                result = write_tx.put(BINARY_FLATKEYVALUE, key, value);
+                Some(value.clone())
+            };
+            if result.is_err() {
+                break 'layers;
+            }
+
+            if let Some(prev) = prev_value {
+                journal_binary_flat.push((key.clone(), prev));
+                binary_flat_overlay.insert(key.clone(), new_value);
+            }
+        }
+
         // Reconciliation: BEFORE writing this block's journal entry, wipe the
         // obsolete OLD-chain entries in `[T, D]` so the new T entry (below) isn't clobbered
         // by the range delete. Fires only for the single reconciliation layer at height T.
@@ -4959,10 +7400,13 @@ fn commit_to_disk(
             let entry = JournalEntry {
                 block_hash: layer.block_hash,
                 parent_state_root: layer.parent_state_root,
+                parent_binary_root: layer.parent_binary_root,
                 account_trie_diff: journal_account_trie,
                 storage_trie_diff: journal_storage_trie,
                 account_flat_diff: journal_account_flat,
                 storage_flat_diff: journal_storage_flat,
+                binary_row_diff: journal_binary_trie,
+                binary_flat_diff: journal_binary_flat,
             };
             result = write_tx.put(
                 STATE_HISTORY,
@@ -5140,6 +7584,187 @@ fn flatkeyvalue_generator(
     }
 }
 
+/// Leaves per write batch in the binary mirror's backfill sweep. The MPT
+/// generator's figure, unchanged: large enough that the per-batch overhead
+/// disappears, small enough that a stop is honoured promptly and a dropped
+/// batch is cheap to redo.
+const BINARY_FLAT_BATCH: usize = 10_000;
+
+/// Backfill [`BINARY_FLATKEYVALUE`] from the on-disk binary trie, advancing the
+/// durable frontier as it goes.
+///
+/// The MPT's `flatkeyvalue_generator`, transposed, with one structural
+/// simplification: that sweep is *nested* — accounts outer, each account's
+/// storage trie inner — which is the only reason the MPT needs a second,
+/// stricter coverage predicate that slices `[0..64]` off its frontier. This
+/// trie is one tree over one keyspace, so a single linear pass and a single
+/// `key <= frontier` compare are sufficient (plan Decision 2).
+///
+/// **It runs on the MPT generator's thread and shares its control channel**,
+/// which is the one thing the plan says not to copy about the MPT. That
+/// channel is `sync_channel(0)` — a rendezvous — so `commit_to_disk`'s `Stop`
+/// *blocks the persist worker* until the generator reaches its next
+/// `try_recv`. A second independent rendezvous channel on that path would make
+/// the worker wait on two generators in series, each between checks that can
+/// sit behind a trie open. Sharing means one `Stop` pauses whichever sweep is
+/// running and one `Continue` resumes it, with no new message on the critical
+/// path at all.
+///
+/// Four behaviours are copied deliberately:
+///
+/// - **`clear_table` on a cold start.** An absent marker means no sweep has
+///   ever run, so whatever is in the table is of unknown provenance and is
+///   wiped rather than trusted.
+/// - **The cursor rides in the same batch as the data.** One extra small write
+///   per leaf buys crash safety by construction: the durable marker can never
+///   run ahead of the durable rows it claims.
+/// - **The in-memory frontier advances only at batch commit**, so it lags the
+///   durable one and readers under-claim coverage — the conservative direction.
+/// - **Start-once.** A `Continue` arriving mid-sweep is an error, exactly as it
+///   is for the MPT: it would mean two drivers think they own this sweep.
+fn binary_flat_generator(
+    backend: &Arc<dyn StorageBackend>,
+    binary_last_computed: &RwLock<Vec<u8>>,
+    control_rx: &std::sync::mpsc::Receiver<FKVGeneratorControlMessage>,
+) -> Result<(), StoreError> {
+    binary_flat_generator_with_batch(backend, binary_last_computed, control_rx, BINARY_FLAT_BATCH)
+}
+
+/// [`binary_flat_generator`] with the batch size exposed, so a test can drive
+/// several batches over a handful of leaves rather than needing ten thousand.
+fn binary_flat_generator_with_batch(
+    backend: &Arc<dyn StorageBackend>,
+    binary_last_computed: &RwLock<Vec<u8>>,
+    control_rx: &std::sync::mpsc::Receiver<FKVGeneratorControlMessage>,
+    batch: usize,
+) -> Result<(), StoreError> {
+    let initial = backend
+        .begin_read()?
+        .get(MISC_VALUES, BINARY_LAST_WRITTEN_KEY)?
+        .unwrap_or_default();
+    if initial == BINARY_FLAT_FRONTIER_COMPLETE {
+        info!("Binary flat mirror already generated. Skipping.");
+        return Ok(());
+    }
+    // The cold-start wipe is *not* here, unlike the MPT's, and the difference
+    // is forced by Task 6's write-ownership rule. The MPT reads an absent
+    // marker as an all-zero frontier, so its commit path writes almost nothing
+    // and a lazy `clear_table` discards almost nothing. The binary rule is the
+    // opposite — absent means "the commit path owns the whole keyspace" — so a
+    // wipe here would delete rows blocks imported since startup had already
+    // written. Those rows are uncovered and re-derived by this sweep, so it is
+    // not a correctness bug, but it is a race, and a background thread
+    // truncating a table under the write path is not a thing to leave in.
+    // `Store::from_backend` does the wipe once, before any block can commit.
+    info!("Generation of the binary flat mirror started.");
+
+    loop {
+        // A fresh read view per pass, so state written while the sweep was
+        // paused is visible after the Continue.
+        let read_tx = backend.begin_read()?;
+        let Some(root_row) = read_tx.get(BINARY_TRIE_NODES, &BitPath::new().to_db_key())? else {
+            // No binary trie on disk: an unscheduled chain, or a scheduled one
+            // whose genesis has not landed yet. Nothing to mirror, and marking
+            // an empty keyspace complete here would be a claim about a trie
+            // that does not exist.
+            info!("No binary trie on disk; binary flat generation has nothing to do.");
+            return Ok(());
+        };
+        // The root *group*'s row, from which the root node is the member at the
+        // empty relative path. This read goes straight at the table rather than
+        // through a `BinaryTrieDB`, so it did not fail to compile when the
+        // stored unit became a row — `hash_stored_root` is what makes the
+        // difference visible.
+        let root = hash_stored_root(&root_row)
+            .map_err(|e| StoreError::Custom(format!("binary root row is malformed: {e}")))?;
+
+        let mut frontier = read_tx
+            .get(MISC_VALUES, BINARY_LAST_WRITTEN_KEY)?
+            .unwrap_or_default();
+        debug!("Starting binary flat loop pivot={frontier:?} root={root:x}");
+
+        let outcome = (|| -> Result<(), StoreError> {
+            loop {
+                // Reopened per batch, on purpose: the walk caches every node it
+                // resolves, so one instance held across a whole sweep would
+                // accumulate the entire trie in memory. A batch costs one
+                // root-to-leaf descent to get back to the frontier.
+                let mut trie = BinaryTrie::open(
+                    Box::new(BackendBinaryTrieDB::with_view(
+                        backend.clone(),
+                        read_tx.clone(),
+                    )),
+                    root,
+                );
+                // `+ 1` when resuming: `leaves_from`'s origin is inclusive, so
+                // the frontier leaf comes back and is dropped below.
+                let resuming = !frontier.is_empty();
+                let mut leaves = trie
+                    .leaves_from(&frontier, batch + usize::from(resuming))
+                    .map_err(|e| StoreError::Custom(format!("binary flat sweep failed: {e}")))?;
+                if resuming && leaves.first().is_some_and(|(key, _)| key == &frontier) {
+                    leaves.remove(0);
+                }
+                if leaves.is_empty() {
+                    return Ok(());
+                }
+
+                let mut write_txn = backend.begin_write()?;
+                for (key, value) in &leaves {
+                    if value.iter().all(|byte| *byte == 0) {
+                        return Err(StoreError::Custom(format!(
+                            "binary trie holds a 32-zero-byte leaf at {key:?}: zero means absent, \
+                             so this leaf should not exist"
+                        )));
+                    }
+                    // Cursor first and in the same batch, so a crash between
+                    // batches leaves the marker naming a row that is on disk.
+                    write_txn.put(MISC_VALUES, BINARY_LAST_WRITTEN_KEY, key)?;
+                    write_txn.put(BINARY_FLATKEYVALUE, key, value)?;
+                    fkv_check_for_stop_msg(control_rx)?;
+                }
+                write_txn.commit()?;
+
+                frontier = leaves.last().expect("the batch is non-empty").0.clone();
+                // Only after the batch is durable: an in-memory frontier ahead
+                // of disk would have readers trusting rows a crash would take
+                // back.
+                *binary_last_computed
+                    .write()
+                    .map_err(|_| StoreError::LockError)? = frontier.clone();
+            }
+        })();
+
+        match outcome {
+            Err(StoreError::PivotChanged) => match control_rx.recv() {
+                Ok(FKVGeneratorControlMessage::Continue) => {}
+                Ok(FKVGeneratorControlMessage::Stop) => {
+                    return Err(StoreError::Custom("Unexpected Stop message".to_string()));
+                }
+                Err(std::sync::mpsc::RecvError) => {
+                    info!("Store closed, stopping binary flat generation.");
+                    return Ok(());
+                }
+            },
+            Err(err) => return Err(err),
+            Ok(()) => {
+                let mut write_txn = backend.begin_write()?;
+                write_txn.put(
+                    MISC_VALUES,
+                    BINARY_LAST_WRITTEN_KEY,
+                    BINARY_FLAT_FRONTIER_COMPLETE,
+                )?;
+                write_txn.commit()?;
+                *binary_last_computed
+                    .write()
+                    .map_err(|_| StoreError::LockError)? = BINARY_FLAT_FRONTIER_COMPLETE.to_vec();
+                info!("Binary flat mirror generation finished.");
+                return Ok(());
+            }
+        }
+    }
+}
+
 fn fkv_check_for_stop_msg(
     control_rx: &std::sync::mpsc::Receiver<FKVGeneratorControlMessage>,
 ) -> Result<(), StoreError> {
@@ -5165,12 +7790,14 @@ fn state_trie_locked_backend(
     BackendTrieDBLocked::new(backend, last_written)
 }
 
+#[derive(Debug)]
 pub struct AccountProof {
     pub proof: Vec<NodeRLP>,
     pub account: AccountState,
     pub storage_proof: Vec<StorageSlotProof>,
 }
 
+#[derive(Debug)]
 pub struct StorageSlotProof {
     pub proof: Vec<NodeRLP>,
     pub key: H256,
@@ -5367,7 +7994,7 @@ pub fn read_chain_id_from_db(path: &Path) -> Option<u64> {
     {
         // The cache size is irrelevant for this one-shot chain-id read (the LRU
         // is sized as a ceiling, not pre-allocated), so we use the default.
-        let backend = match RocksDBBackend::open(path, DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES) {
+        let backend = match RocksDBBackend::open(path, RocksDBConfig::default()) {
             Ok(backend) => backend,
             Err(e) => {
                 warn!("Failed to open RocksDB at {path:?} to read chain ID: {e}");
@@ -5508,6 +8135,7 @@ mod state_history_tests {
                 blocks: vec![block1],
                 receipts: vec![],
                 code_updates: vec![],
+                binary_update: None,
                 commit_depth: None,
                 wait_for_flush: false,
             })
@@ -5526,6 +8154,7 @@ mod state_history_tests {
                 blocks: vec![block2],
                 receipts: vec![],
                 code_updates: vec![],
+                binary_update: None,
                 commit_depth: None,
                 wait_for_flush: false,
             })
@@ -5553,6 +8182,7 @@ mod state_history_tests {
                 blocks: vec![block3],
                 receipts: vec![],
                 code_updates: vec![],
+                binary_update: None,
                 commit_depth: None,
                 wait_for_flush: false,
             })
@@ -5605,6 +8235,7 @@ mod state_history_tests {
                     blocks: vec![block],
                     receipts: vec![],
                     code_updates: vec![],
+                    binary_update: None,
                     commit_depth: Some(3),
                     wait_for_flush: false,
                 })
@@ -5677,6 +8308,7 @@ mod state_history_tests {
                     blocks: vec![block],
                     receipts: vec![],
                     code_updates: vec![],
+                    binary_update: None,
                     commit_depth: Some(BATCH_COMMIT_THRESHOLD),
                     wait_for_flush: true,
                 })
@@ -5724,6 +8356,7 @@ mod state_history_tests {
                 blocks: vec![block1],
                 receipts: vec![],
                 code_updates: vec![],
+                binary_update: None,
                 commit_depth: None,
                 wait_for_flush: false,
             })
@@ -5741,6 +8374,7 @@ mod state_history_tests {
                 blocks: vec![block2],
                 receipts: vec![],
                 code_updates: vec![],
+                binary_update: None,
                 commit_depth: None,
                 wait_for_flush: false,
             })
@@ -5767,10 +8401,13 @@ mod state_history_tests {
             let entry = JournalEntry {
                 block_hash: H256::repeat_byte(*n as u8),
                 parent_state_root: H256::zero(),
+                parent_binary_root: H256::zero(),
                 account_trie_diff: vec![(vec![*n as u8], None)],
                 storage_trie_diff: vec![],
                 account_flat_diff: vec![],
                 storage_flat_diff: vec![],
+                binary_row_diff: vec![],
+                binary_flat_diff: vec![],
             };
             tx.put(STATE_HISTORY, &n.to_be_bytes(), &entry.encode())
                 .unwrap();
@@ -5964,6 +8601,130 @@ mod state_history_tests {
             store.lowest_state_history_block_number().unwrap(),
             Some(3),
             "min over present entries"
+        );
+    }
+
+    /// A stale-version (v1) entry as the previous binary wrote it: version byte
+    /// 1, `block_hash`, `parent_state_root`, then four diff sections — no
+    /// `parent_binary_root` and no binary section. The v1 encoder is gone, so
+    /// the shape is written out by hand.
+    fn encode_stale_journal_entry(block_number: BlockNumber) -> Vec<u8> {
+        let mut bytes = vec![1u8];
+        bytes.extend_from_slice(H256::repeat_byte(block_number as u8).as_bytes());
+        bytes.extend_from_slice(H256::zero().as_bytes());
+        // Four sections, all with a zero count.
+        bytes.extend_from_slice(&[0u8; 4]);
+        bytes
+    }
+
+    /// Seeds `STATE_HISTORY` on a raw backend, before any `Store` is built over it.
+    fn seed_raw_journal_entries(
+        backend: &Arc<dyn StorageBackend>,
+        entries: &[(BlockNumber, Vec<u8>)],
+    ) {
+        let mut tx = backend.begin_write().unwrap();
+        for (n, encoded) in entries {
+            tx.put(STATE_HISTORY, &n.to_be_bytes(), encoded).unwrap();
+        }
+        tx.commit().unwrap();
+    }
+
+    /// Opening a store over a journal written entirely by a previous codec
+    /// version SHALL drain it, so the floor `compute_reorg_ceiling` reads reports
+    /// no journal reach at all.
+    ///
+    /// Without the drain the floor would be 10 and the ceiling would advertise
+    /// reach back to block 9 — reach the decoder refuses to serve. The forkchoice
+    /// update would be accepted and then fail mid-flight with `StateNotReachable`
+    /// instead of being refused up front with `-38006 TooDeepReorg`.
+    #[tokio::test]
+    async fn startup_drains_an_all_stale_journal_and_clears_the_floor() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        seed_raw_journal_entries(
+            &backend,
+            &[
+                (10, encode_stale_journal_entry(10)),
+                (11, encode_stale_journal_entry(11)),
+                (12, encode_stale_journal_entry(12)),
+            ],
+        );
+
+        let store = Store::from_backend(
+            backend.clone(),
+            dir.path().to_path_buf(),
+            1,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
+
+        assert_eq!(
+            store.lowest_state_history_block_number().unwrap(),
+            None,
+            "an all-stale journal must be gone, leaving no journal reach to advertise"
+        );
+        assert_eq!(store.highest_state_history_block_number().unwrap(), None);
+    }
+
+    /// A node restarting a second time inside the upgrade window has already
+    /// written current-version entries above the stale ones. Startup SHALL drain
+    /// only the stale bottom and report the lowest survivor as the new floor —
+    /// reach the node can actually deliver.
+    #[tokio::test]
+    async fn startup_drain_reports_the_lowest_surviving_entry_as_the_floor() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        seed_raw_journal_entries(
+            &backend,
+            &[
+                (10, encode_stale_journal_entry(10)),
+                (11, encode_stale_journal_entry(11)),
+            ],
+        );
+        // Two entries the restarted binary wrote itself, in the current format.
+        seed_journal_entries(&backend, &[12, 13]);
+
+        let store = Store::from_backend(
+            backend.clone(),
+            dir.path().to_path_buf(),
+            1,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
+
+        assert_eq!(
+            store.lowest_state_history_block_number().unwrap(),
+            Some(12),
+            "the floor must be the lowest entry this binary can decode"
+        );
+        assert_eq!(
+            store.highest_state_history_block_number().unwrap(),
+            Some(13)
+        );
+        assert!(!journal_entry_exists(&backend, 10));
+        assert!(!journal_entry_exists(&backend, 11));
+    }
+
+    /// A journal written entirely by this binary SHALL survive startup intact;
+    /// the drain must not cost a node its reorg depth on an ordinary restart.
+    #[tokio::test]
+    async fn startup_leaves_a_current_version_journal_untouched() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        seed_journal_entries(&backend, &[10, 11, 12]);
+
+        let store = Store::from_backend(
+            backend.clone(),
+            dir.path().to_path_buf(),
+            1,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
+
+        assert_eq!(store.lowest_state_history_block_number().unwrap(), Some(10));
+        assert_eq!(
+            store.highest_state_history_block_number().unwrap(),
+            Some(12)
         );
     }
 
@@ -6232,10 +8993,13 @@ mod state_history_tests {
                 let entry = JournalEntry {
                     block_hash: H256::repeat_byte(n as u8),
                     parent_state_root: parent_root,
+                    parent_binary_root: H256::zero(),
                     account_trie_diff: vec![],
                     storage_trie_diff: vec![],
                     account_flat_diff: vec![],
                     storage_flat_diff: vec![],
+                    binary_row_diff: vec![],
+                    binary_flat_diff: vec![],
                 };
                 tx.put(STATE_HISTORY, &n.to_be_bytes(), &entry.encode())
                     .unwrap();
@@ -6346,10 +9110,13 @@ mod state_history_tests {
                 let entry = JournalEntry {
                     block_hash: H256::repeat_byte(n as u8),
                     parent_state_root: parent_root,
+                    parent_binary_root: H256::zero(),
                     account_trie_diff: vec![(vec![0x00, n as u8], None)],
                     storage_trie_diff: vec![],
                     account_flat_diff: vec![],
                     storage_flat_diff: vec![],
+                    binary_row_diff: vec![],
+                    binary_flat_diff: vec![],
                 };
                 tx.put(STATE_HISTORY, &n.to_be_bytes(), &entry.encode())
                     .unwrap();
@@ -6446,6 +9213,620 @@ mod state_history_tests {
         assert!(!store.is_state_in_layer_cache(roots[2]).unwrap());
         assert!(journal_entry_exists(&backend, 11));
         assert!(journal_entry_exists(&backend, 12));
+    }
+
+    // -----------------------------------------------------------------------
+    // The flat leaf mirror in `commit_to_disk`.
+    // -----------------------------------------------------------------------
+
+    /// A 34-byte account-zone tree key: zone byte `0x00`, digest, sub-index.
+    /// The same length a `BitPath` DB key has at bit-depth 240, which is the
+    /// collision these tests keep honest.
+    fn tree_key(b: u8) -> Vec<u8> {
+        let mut key = vec![0u8; 34];
+        key[1] = b;
+        key
+    }
+
+    /// A 66-byte overflow-storage tree key, beginning with the `0xff` zone byte.
+    /// It is `> [0xff]` lexicographically, which is why the frontier's `[0xff]`
+    /// completion sentinel needs an explicit arm rather than a comparison.
+    fn storage_tree_key(b: u8) -> Vec<u8> {
+        let mut key = vec![0u8; 66];
+        key[0] = 0xff;
+        key[1] = b;
+        key
+    }
+
+    /// A 32-byte leaf value.
+    fn leaf_value(b: u8) -> Vec<u8> {
+        vec![b; 32]
+    }
+
+    fn flat_row(backend: &Arc<dyn StorageBackend>, key: &[u8]) -> Option<Vec<u8>> {
+        backend
+            .begin_read()
+            .unwrap()
+            .get(BINARY_FLATKEYVALUE, key)
+            .unwrap()
+    }
+
+    fn decode_entry(backend: &Arc<dyn StorageBackend>, block: BlockNumber) -> JournalEntry {
+        let bytes = backend
+            .begin_read()
+            .unwrap()
+            .get(STATE_HISTORY, &block.to_be_bytes())
+            .unwrap()
+            .unwrap_or_else(|| panic!("journal entry for block {block}"));
+        JournalEntry::decode(&bytes).unwrap()
+    }
+
+    /// Stages one block's layer carrying MPT nodes, binary nodes and mirror
+    /// writes, then flushes it through `commit_to_disk`.
+    ///
+    /// Eight parameters because a layer genuinely has that many independent
+    /// dimensions here: two roots and a parent root, the block number, and the
+    /// two staged key sets. Grouping them into a struct would only move the
+    /// same list one level down for a fixture builder used in one module.
+    #[allow(clippy::too_many_arguments)]
+    fn stage_and_commit(
+        store: &Store,
+        parent: H256,
+        root: H256,
+        block: BlockNumber,
+        binary_root: H256,
+        parent_binary_root: H256,
+        binary_rows: Vec<(Vec<u8>, Vec<u8>)>,
+        binary_flat: Vec<(Vec<u8>, Vec<u8>)>,
+    ) {
+        {
+            let mut guard = store.trie_cache.write().unwrap();
+            let mut updated = (**guard).clone();
+            updated.put_batch_with_binary(
+                parent,
+                root,
+                block,
+                H256::repeat_byte(block as u8),
+                vec![(Nibbles::from_raw(&[0x01, block as u8], false), vec![1])],
+                BinaryLayerUpdate {
+                    root: binary_root,
+                    parent_root: parent_binary_root,
+                    rows: binary_rows,
+                    flat: binary_flat,
+                },
+            );
+            *guard = Arc::new(updated);
+        }
+        let trie = store.trie_cache.read().unwrap().clone();
+        commit_to_disk(
+            store.backend.as_ref(),
+            &store.flatkeyvalue_control_tx,
+            &store.trie_cache,
+            &trie,
+            root,
+            false,
+        )
+        .expect("commit");
+    }
+
+    fn test_store(backend: &Arc<dyn StorageBackend>) -> (Store, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(
+            backend.clone(),
+            dir.path().to_path_buf(),
+            1,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
+        (store, dir)
+    }
+
+    /// The mirror lands on disk in the same batch as the nodes, and its
+    /// pre-images land in the journal's sixth section — `None` for a row the
+    /// block created, the old value for one it overwrote.
+    #[tokio::test]
+    async fn a_blocks_mirror_writes_reach_disk_and_the_sixth_journal_section() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let (store, _dir) = test_store(&backend);
+
+        stage_and_commit(
+            &store,
+            H256::zero(),
+            H256::repeat_byte(1),
+            1,
+            H256::repeat_byte(0x81),
+            H256::zero(),
+            vec![(tree_key(0xa), vec![0xaa])],
+            vec![
+                (tree_key(0x01), leaf_value(0x11)),
+                (storage_tree_key(0x02), leaf_value(0x22)),
+            ],
+        );
+
+        assert_eq!(flat_row(&backend, &tree_key(0x01)), Some(leaf_value(0x11)));
+        assert_eq!(
+            flat_row(&backend, &storage_tree_key(0x02)),
+            Some(leaf_value(0x22)),
+            "an overflow-storage key must be written; it is the one the `[0xff]` \
+             frontier sentinel would wrongly exclude under a naive comparison"
+        );
+
+        let entry = decode_entry(&backend, 1);
+        let mut diff = entry.binary_flat_diff.clone();
+        diff.sort();
+        assert_eq!(
+            diff,
+            vec![(tree_key(0x01), None), (storage_tree_key(0x02), None),],
+            "both rows were created by this block, so both pre-images are absences"
+        );
+        assert!(
+            entry
+                .binary_row_diff
+                .iter()
+                .any(|(k, _)| *k == tree_key(0xa)),
+            "the node section must still carry the node write"
+        );
+
+        // Second block overwrites one row and removes the other.
+        stage_and_commit(
+            &store,
+            H256::repeat_byte(1),
+            H256::repeat_byte(2),
+            2,
+            H256::repeat_byte(0x82),
+            H256::repeat_byte(0x81),
+            vec![],
+            vec![
+                (tree_key(0x01), leaf_value(0x99)),
+                (storage_tree_key(0x02), vec![]),
+            ],
+        );
+
+        assert_eq!(flat_row(&backend, &tree_key(0x01)), Some(leaf_value(0x99)));
+        assert_eq!(
+            flat_row(&backend, &storage_tree_key(0x02)),
+            None,
+            "an empty value is a tombstone: the row must be deleted, not zeroed"
+        );
+
+        let entry = decode_entry(&backend, 2);
+        let mut diff = entry.binary_flat_diff;
+        diff.sort();
+        assert_eq!(
+            diff,
+            vec![
+                (tree_key(0x01), Some(leaf_value(0x11))),
+                (storage_tree_key(0x02), Some(leaf_value(0x22))),
+            ],
+            "pre-images must be the values block 1 left on disk"
+        );
+    }
+
+    /// The rollback direction, which is what the sixth section exists for:
+    /// applying the reverse diff must restore the parent's mirror exactly,
+    /// **including deletions** — a row the block created is removed, not left
+    /// behind with a stale value.
+    #[tokio::test]
+    async fn applying_the_sixth_section_restores_the_parents_mirror_including_deletions() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let (store, _dir) = test_store(&backend);
+
+        // Block 1 establishes two rows.
+        stage_and_commit(
+            &store,
+            H256::zero(),
+            H256::repeat_byte(1),
+            1,
+            H256::repeat_byte(0x81),
+            H256::zero(),
+            vec![],
+            vec![
+                (tree_key(0x01), leaf_value(0x11)),
+                (tree_key(0x02), leaf_value(0x22)),
+            ],
+        );
+        // Block 2 overwrites one, removes one, and creates a third.
+        stage_and_commit(
+            &store,
+            H256::repeat_byte(1),
+            H256::repeat_byte(2),
+            2,
+            H256::repeat_byte(0x82),
+            H256::repeat_byte(0x81),
+            vec![],
+            vec![
+                (tree_key(0x01), leaf_value(0x99)),
+                (tree_key(0x02), vec![]),
+                (tree_key(0x03), leaf_value(0x33)),
+            ],
+        );
+
+        // Apply block 2's reverse diff by hand, the way a rollback would:
+        // `Some(prev)` is a put, `None` is a delete.
+        let entry = decode_entry(&backend, 2);
+        {
+            let mut tx = backend.begin_write().unwrap();
+            for (key, prev) in &entry.binary_flat_diff {
+                match prev {
+                    Some(v) => tx.put(BINARY_FLATKEYVALUE, key, v).unwrap(),
+                    None => tx.delete(BINARY_FLATKEYVALUE, key).unwrap(),
+                }
+            }
+            tx.commit().unwrap();
+        }
+
+        assert_eq!(
+            flat_row(&backend, &tree_key(0x01)),
+            Some(leaf_value(0x11)),
+            "the overwritten row must be restored to block 1's value"
+        );
+        assert_eq!(
+            flat_row(&backend, &tree_key(0x02)),
+            Some(leaf_value(0x22)),
+            "the row block 2 removed must come back"
+        );
+        assert_eq!(
+            flat_row(&backend, &tree_key(0x03)),
+            None,
+            "the row block 2 created must be DELETED, not left with a stale value; \
+             this is the direction a missing `None` pre-image would silently break"
+        );
+    }
+
+    /// A deep-reorg reconciliation must bridge the overlay's mirror entries the
+    /// new chain did not rewrite, into the same batch and the same journal
+    /// entry, with an overlay `None` becoming a delete.
+    #[tokio::test]
+    async fn deep_reorg_reconciliation_bridges_untouched_mirror_keys() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let (store, _dir) = test_store(&backend);
+
+        // Old-chain disk state: three mirror rows.
+        {
+            let mut tx = backend.begin_write().unwrap();
+            for (k, v) in [
+                (tree_key(0xb1), leaf_value(0xb1)),
+                (tree_key(0xb2), leaf_value(0xb2)),
+                (tree_key(0xb3), leaf_value(0xb3)),
+            ] {
+                tx.put(BINARY_FLATKEYVALUE, &k, &v).unwrap();
+            }
+            tx.commit().unwrap();
+        }
+
+        // Journal entries for the old chain above the pivot, carrying mirror
+        // pre-images: `b1` had a different value at the pivot, `b2` did not
+        // exist at all, `b3` is not mentioned (so disk already holds the pivot
+        // value and no bridge entry is needed).
+        let pivot_root = H256::repeat_byte(0x09);
+        {
+            let mut tx = backend.begin_write().unwrap();
+            let entry = JournalEntry {
+                block_hash: H256::repeat_byte(10),
+                parent_state_root: pivot_root,
+                parent_binary_root: H256::repeat_byte(0x99),
+                account_trie_diff: vec![],
+                storage_trie_diff: vec![],
+                account_flat_diff: vec![],
+                storage_flat_diff: vec![],
+                binary_row_diff: vec![],
+                binary_flat_diff: vec![
+                    (tree_key(0xb1), Some(leaf_value(0xa1))),
+                    (tree_key(0xb2), None),
+                ],
+            };
+            tx.put(STATE_HISTORY, &10u64.to_be_bytes(), &entry.encode())
+                .unwrap();
+            tx.commit().unwrap();
+        }
+        store.install_overlay_for_reorg(10, 10, |_| None).unwrap();
+
+        // The new chain's block at T rewrites only `b1`.
+        stage_and_commit(
+            &store,
+            pivot_root,
+            H256::repeat_byte(10),
+            10,
+            H256::repeat_byte(0x8a),
+            H256::repeat_byte(0x99),
+            vec![],
+            vec![(tree_key(0xb1), leaf_value(0xc1))],
+        );
+
+        assert_eq!(
+            flat_row(&backend, &tree_key(0xb1)),
+            Some(leaf_value(0xc1)),
+            "the layer wins over the bridge for a key it rewrote"
+        );
+        assert_eq!(
+            flat_row(&backend, &tree_key(0xb2)),
+            None,
+            "an overlay `None` must become a DELETE: the leaf did not exist at \
+             the pivot, and leaving the old chain's row would make the mirror a \
+             superset of the trie"
+        );
+        assert_eq!(
+            flat_row(&backend, &tree_key(0xb3)),
+            Some(leaf_value(0xb3)),
+            "a key no entry mentions is already at its pivot value"
+        );
+
+        let entry = decode_entry(&backend, 10);
+        let keys: Vec<&Vec<u8>> = entry.binary_flat_diff.iter().map(|(k, _)| k).collect();
+        assert!(
+            keys.contains(&&tree_key(0xb1)) && keys.contains(&&tree_key(0xb2)),
+            "both the layer's key and the bridged key must be journaled in T's \
+             entry, got {keys:?}"
+        );
+    }
+
+    /// Batch mode (full sync) writes the mirror and journals nothing, matching
+    /// the rule the other five sections already follow.
+    #[tokio::test]
+    async fn a_batch_commit_writes_the_mirror_and_journals_nothing() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let (store, _dir) = test_store(&backend);
+
+        {
+            let mut guard = store.trie_cache.write().unwrap();
+            let mut updated = (**guard).clone();
+            updated.put_batch_with_binary(
+                H256::zero(),
+                H256::repeat_byte(1),
+                1,
+                H256::repeat_byte(1),
+                vec![(Nibbles::from_raw(&[0x01], false), vec![1])],
+                BinaryLayerUpdate {
+                    root: H256::repeat_byte(0x81),
+                    parent_root: H256::zero(),
+                    rows: vec![],
+                    flat: vec![(tree_key(0x01), leaf_value(0x11))],
+                },
+            );
+            *guard = Arc::new(updated);
+        }
+        let trie = store.trie_cache.read().unwrap().clone();
+        commit_to_disk(
+            store.backend.as_ref(),
+            &store.flatkeyvalue_control_tx,
+            &store.trie_cache,
+            &trie,
+            H256::repeat_byte(1),
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(
+            flat_row(&backend, &tree_key(0x01)),
+            Some(leaf_value(0x11)),
+            "batch mode still writes the mirror; only journaling is skipped"
+        );
+        assert!(
+            !journal_entry_exists(&backend, 1),
+            "batch mode must journal nothing"
+        );
+    }
+
+    /// The frontier skip. Task 9 builds the generator that makes this marker
+    /// non-absent; the skip is wired now so it fires the moment it does, and
+    /// this pins the behaviour of all three durable states.
+    #[tokio::test]
+    async fn the_frontier_skips_both_the_write_and_the_journal_push() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let (store, _dir) = test_store(&backend);
+
+        // A partial frontier: the generator has swept up to `tree_key(0x05)`.
+        {
+            let mut tx = backend.begin_write().unwrap();
+            tx.put(MISC_VALUES, BINARY_LAST_WRITTEN_KEY, &tree_key(0x05))
+                .unwrap();
+            tx.commit().unwrap();
+        }
+
+        stage_and_commit(
+            &store,
+            H256::zero(),
+            H256::repeat_byte(1),
+            1,
+            H256::repeat_byte(0x81),
+            H256::zero(),
+            vec![],
+            vec![
+                (tree_key(0x01), leaf_value(0x11)), // below the frontier: ours
+                (tree_key(0x05), leaf_value(0x55)), // at it: ours
+                (tree_key(0x09), leaf_value(0x99)), // past it: the generator's
+                (storage_tree_key(0x01), leaf_value(0xaa)), // far past it
+            ],
+        );
+
+        assert_eq!(flat_row(&backend, &tree_key(0x01)), Some(leaf_value(0x11)));
+        assert_eq!(
+            flat_row(&backend, &tree_key(0x05)),
+            Some(leaf_value(0x55)),
+            "the frontier is inclusive, matching the MPT's `key > last_written` skip"
+        );
+        assert_eq!(
+            flat_row(&backend, &tree_key(0x09)),
+            None,
+            "a key past the frontier is the generator's to write, not ours"
+        );
+        assert_eq!(flat_row(&backend, &storage_tree_key(0x01)), None);
+
+        let entry = decode_entry(&backend, 1);
+        let mut journaled: Vec<Vec<u8>> = entry
+            .binary_flat_diff
+            .iter()
+            .map(|(k, _)| k.clone())
+            .collect();
+        journaled.sort();
+        let mut expected = vec![tree_key(0x01), tree_key(0x05)];
+        expected.sort();
+        assert_eq!(
+            journaled, expected,
+            "the skip must jump over the journal push as well as the write: a \
+             `Some(None)` pre-image for an unwritten row would make a rollback \
+             delete a key that was never put"
+        );
+    }
+
+    /// The completion sentinel is one byte and an overflow-storage tree key
+    /// begins with `0xff`, so `[0xff, ..] > [0xff]` lexicographically. A naive
+    /// `key <= frontier` would silently drop every storage-zone leaf on a
+    /// *complete* mirror — the exact opposite of what "complete" means.
+    #[tokio::test]
+    async fn the_complete_sentinel_covers_the_storage_zone_it_sorts_below() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let (store, _dir) = test_store(&backend);
+        {
+            let mut tx = backend.begin_write().unwrap();
+            tx.put(
+                MISC_VALUES,
+                BINARY_LAST_WRITTEN_KEY,
+                BINARY_FLAT_FRONTIER_COMPLETE,
+            )
+            .unwrap();
+            tx.commit().unwrap();
+        }
+
+        stage_and_commit(
+            &store,
+            H256::zero(),
+            H256::repeat_byte(1),
+            1,
+            H256::repeat_byte(0x81),
+            H256::zero(),
+            vec![],
+            vec![
+                (tree_key(0x01), leaf_value(0x11)),
+                (storage_tree_key(0x01), leaf_value(0xaa)),
+            ],
+        );
+
+        assert_eq!(flat_row(&backend, &tree_key(0x01)), Some(leaf_value(0x11)));
+        assert_eq!(
+            flat_row(&backend, &storage_tree_key(0x01)),
+            Some(leaf_value(0xaa)),
+            "a complete frontier must cover the storage zone, which sorts ABOVE \
+             the one-byte `[0xff]` sentinel"
+        );
+        assert_eq!(decode_entry(&backend, 1).binary_flat_diff.len(), 2);
+    }
+
+    /// "Zero means absent" at the production writer. A 32-zero-byte value is not
+    /// a leaf the trie holds — the embedding resolved it to a removal — so a row
+    /// carrying one would put the mirror ahead of the trie's root, and a range
+    /// proved against that root would fail on it. Refuse the commit.
+    #[tokio::test]
+    async fn a_32_zero_byte_mirror_value_is_refused_rather_than_written() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let (store, _dir) = test_store(&backend);
+
+        {
+            let mut guard = store.trie_cache.write().unwrap();
+            let mut updated = (**guard).clone();
+            updated.put_batch_with_binary(
+                H256::zero(),
+                H256::repeat_byte(1),
+                1,
+                H256::repeat_byte(1),
+                vec![],
+                BinaryLayerUpdate {
+                    root: H256::repeat_byte(0x81),
+                    parent_root: H256::zero(),
+                    rows: vec![],
+                    flat: vec![
+                        (tree_key(0x01), leaf_value(0x11)),
+                        (tree_key(0x02), vec![0u8; 32]),
+                    ],
+                },
+            );
+            *guard = Arc::new(updated);
+        }
+        let trie = store.trie_cache.read().unwrap().clone();
+        let err = commit_to_disk(
+            store.backend.as_ref(),
+            &store.flatkeyvalue_control_tx,
+            &store.trie_cache,
+            &trie,
+            H256::repeat_byte(1),
+            false,
+        )
+        .expect_err("a zero-valued leaf must not be committed");
+        let message = err.to_string();
+        assert!(
+            message.contains("zero means absent"),
+            "the error must name the invariant, got: {message}"
+        );
+
+        // Nothing was written: the whole `write_tx` is abandoned, so even the
+        // valid row beside it does not land.
+        assert_eq!(flat_row(&backend, &tree_key(0x01)), None);
+        assert_eq!(flat_row(&backend, &tree_key(0x02)), None);
+        assert!(!journal_entry_exists(&backend, 1));
+    }
+
+    /// The Decision 6 collision at the journal level, end to end through
+    /// `commit_to_disk`: one 34-byte key written as a node and as a mirror row,
+    /// with different values, in one block. Each must reach its own section with
+    /// its own pre-image and land in its own column family.
+    #[tokio::test]
+    async fn a_shared_34_byte_key_is_committed_to_both_tables_independently() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let (store, _dir) = test_store(&backend);
+        let shared = tree_key(0x07);
+
+        stage_and_commit(
+            &store,
+            H256::zero(),
+            H256::repeat_byte(1),
+            1,
+            H256::repeat_byte(0x81),
+            H256::zero(),
+            vec![(shared.clone(), vec![0xa7])],
+            vec![(shared.clone(), leaf_value(0xf7))],
+        );
+
+        let read = backend.begin_read().unwrap();
+        assert_eq!(
+            read.get(BINARY_TRIE_NODES, &shared).unwrap(),
+            Some(vec![0xa7]),
+            "the node encoding must be in the node table"
+        );
+        assert_eq!(
+            read.get(BINARY_FLATKEYVALUE, &shared).unwrap(),
+            Some(leaf_value(0xf7)),
+            "the leaf value must be in the mirror, not the node's bytes"
+        );
+
+        let entry = decode_entry(&backend, 1);
+        assert_eq!(entry.binary_row_diff, vec![(shared.clone(), None)]);
+        assert_eq!(entry.binary_flat_diff, vec![(shared.clone(), None)]);
+
+        // Now the direction that separates the pre-image maps: a second block
+        // rewrites both, and each reverse diff must record its OWN previous
+        // value. A shared intra-batch map would cross them.
+        stage_and_commit(
+            &store,
+            H256::repeat_byte(1),
+            H256::repeat_byte(2),
+            2,
+            H256::repeat_byte(0x82),
+            H256::repeat_byte(0x81),
+            vec![(shared.clone(), vec![0xb8])],
+            vec![(shared.clone(), leaf_value(0xf8))],
+        );
+
+        let entry = decode_entry(&backend, 2);
+        assert_eq!(
+            entry.binary_row_diff,
+            vec![(shared.clone(), Some(vec![0xa7]))],
+            "the node's pre-image is the node's previous encoding"
+        );
+        assert_eq!(
+            entry.binary_flat_diff,
+            vec![(shared, Some(leaf_value(0xf7)))],
+            "the leaf's pre-image is the leaf's previous value, not the node's"
+        );
     }
 
     /// Adversarial regression for the journal-pruning race: while a deep-reorg
@@ -6660,6 +10041,307 @@ mod datadir_tests {
     }
 }
 
+/// The binary mirror's backfill sweep: the path an *existing* datadir takes,
+/// where the trie is on disk and the mirror is not. A chain that started from
+/// genesis never reaches any of this — genesis marks the frontier complete —
+/// so these drive the generator directly rather than through a store.
+#[cfg(test)]
+mod binary_flat_backfill_tests {
+    use super::*;
+    use crate::backend::in_memory::InMemoryBackend;
+    use ethrex_binary_trie::trie::BinaryTrie;
+
+    /// `n` leaves spanning both key lengths and all three zones, sorted — the
+    /// order the sweep must produce them in.
+    fn leaves(n: u8) -> Vec<(Vec<u8>, [u8; 32])> {
+        let mut out = Vec::new();
+        for i in 0..n {
+            for zone in [0x00u8, 0x01, 0xff] {
+                let mut key = vec![0x00; if zone == 0xff { 66 } else { 34 }];
+                key[0] = zone;
+                key[1] = i;
+                key[2] = i.wrapping_mul(31).wrapping_add(1);
+                out.push((key, [i.wrapping_add(zone) | 1; 32]));
+            }
+        }
+        out.sort();
+        out
+    }
+
+    /// A backend holding `leaves` as a committed binary trie and nothing in the
+    /// mirror.
+    fn backend_with_trie(leaves: &[(Vec<u8>, [u8; 32])]) -> Arc<dyn StorageBackend> {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let mut trie = BinaryTrie::new(Box::new(
+            BackendBinaryTrieDB::new(Arc::clone(&backend)).unwrap(),
+        ));
+        for (key, value) in leaves {
+            trie.insert(key.clone(), *value).unwrap();
+        }
+        trie.commit().unwrap();
+        // Record the depth these rows were grouped at, which in production the
+        // open that preceded them would have done. Without it the backend is
+        // indistinguishable from a pre-grouping datadir — grouped rows, no
+        // marker — and `check_binary_group_depth` refuses it, correctly.
+        let mut tx = backend.begin_write().unwrap();
+        tx.put(
+            MISC_VALUES,
+            BINARY_GROUP_DEPTH_KEY,
+            &[DEFAULT_GROUP_DEPTH.get() as u8],
+        )
+        .unwrap();
+        tx.commit().unwrap();
+        backend
+    }
+
+    fn marker(backend: &Arc<dyn StorageBackend>) -> Option<Vec<u8>> {
+        backend
+            .begin_read()
+            .unwrap()
+            .get(MISC_VALUES, BINARY_LAST_WRITTEN_KEY)
+            .unwrap()
+    }
+
+    fn rows(backend: &Arc<dyn StorageBackend>) -> Vec<(Vec<u8>, Vec<u8>)> {
+        backend
+            .begin_read()
+            .unwrap()
+            .prefix_iterator(BINARY_FLATKEYVALUE, &[])
+            .unwrap()
+            .map(|entry| {
+                let (k, v) = entry.unwrap();
+                (k.into_vec(), v.into_vec())
+            })
+            .collect()
+    }
+
+    /// Run the sweep to completion with no control traffic. The sender is held
+    /// for the call so a `try_recv` sees `Empty`, not `Disconnected` — a
+    /// disconnected channel is a stop signal.
+    fn sweep(backend: &Arc<dyn StorageBackend>, batch: usize) -> (Vec<u8>, Result<(), StoreError>) {
+        let (tx, rx) = std::sync::mpsc::sync_channel(0);
+        let frontier = RwLock::new(
+            backend
+                .begin_read()
+                .unwrap()
+                .get(MISC_VALUES, BINARY_LAST_WRITTEN_KEY)
+                .unwrap()
+                .unwrap_or_default(),
+        );
+        let result = binary_flat_generator_with_batch(backend, &frontier, &rx, batch);
+        drop(tx);
+        (frontier.into_inner().unwrap(), result)
+    }
+
+    #[test]
+    fn a_sweep_mirrors_every_leaf_and_marks_the_frontier_complete() {
+        let expected = leaves(9);
+        let backend = backend_with_trie(&expected);
+        assert!(rows(&backend).is_empty(), "the mirror starts empty");
+
+        let (in_memory, result) = sweep(&backend, 4);
+        result.unwrap();
+
+        assert_eq!(marker(&backend).as_deref(), Some([0xff].as_slice()));
+        assert_eq!(in_memory, vec![0xff]);
+        // Both directions with a count check, so neither can pass vacuously.
+        let rows = rows(&backend);
+        assert_eq!(rows.len(), expected.len());
+        for ((key, value), (expected_key, expected_value)) in rows.iter().zip(&expected) {
+            assert_eq!(key, expected_key, "and in key order");
+            assert_eq!(value.as_slice(), expected_value.as_slice());
+        }
+    }
+
+    #[test]
+    fn a_sweep_resumes_from_a_durable_frontier_rather_than_restarting() {
+        let expected = leaves(9);
+        let backend = backend_with_trie(&expected);
+        let split = expected.len() / 2;
+
+        // What a crash mid-sweep leaves behind: rows up to the frontier and a
+        // marker naming the last of them.
+        let mut tx = backend.begin_write().unwrap();
+        for (key, value) in &expected[..split] {
+            tx.put(BINARY_FLATKEYVALUE, key, value).unwrap();
+        }
+        // A deliberately wrong value *below* the frontier. A sweep that
+        // restarted would correct it; a sweep that resumed will not. That is
+        // what makes this a resume test rather than a completeness test.
+        tx.put(BINARY_FLATKEYVALUE, &expected[0].0, &[0xcd; 32])
+            .unwrap();
+        tx.put(MISC_VALUES, BINARY_LAST_WRITTEN_KEY, &expected[split - 1].0)
+            .unwrap();
+        tx.commit().unwrap();
+
+        sweep(&backend, 3).1.unwrap();
+
+        assert_eq!(marker(&backend).as_deref(), Some([0xff].as_slice()));
+        let rows = rows(&backend);
+        assert_eq!(rows.len(), expected.len(), "the sweep filled in the rest");
+        assert_eq!(
+            rows[0].1,
+            vec![0xcd; 32],
+            "a row below the frontier was not revisited"
+        );
+        for ((key, value), (expected_key, expected_value)) in rows.iter().zip(&expected).skip(1) {
+            assert_eq!(key, expected_key);
+            assert_eq!(value.as_slice(), expected_value.as_slice());
+        }
+    }
+
+    #[test]
+    fn a_completed_sweep_is_not_run_again() {
+        let expected = leaves(4);
+        let backend = backend_with_trie(&expected);
+        let mut tx = backend.begin_write().unwrap();
+        tx.put(MISC_VALUES, BINARY_LAST_WRITTEN_KEY, &[0xff])
+            .unwrap();
+        tx.commit().unwrap();
+
+        sweep(&backend, 4).1.unwrap();
+        assert!(
+            rows(&backend).is_empty(),
+            "a complete marker means the mirror is someone else's business"
+        );
+    }
+
+    #[test]
+    fn no_binary_trie_means_no_claim_of_completeness() {
+        // An unscheduled chain, or a scheduled one before genesis lands. There
+        // is nothing to mirror — and marking an empty keyspace complete would
+        // be a coverage claim about a trie that does not exist, which is
+        // exactly the "mirror is a subset" failure the read gate exists to
+        // prevent.
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        sweep(&backend, 4).1.unwrap();
+        assert_eq!(marker(&backend), None);
+        assert!(rows(&backend).is_empty());
+    }
+
+    #[test]
+    fn a_stop_pauses_the_sweep_and_a_continue_finishes_it() {
+        // The shared control channel, end to end. `Stop` is a rendezvous send,
+        // so it does not return until the sweep receives it — which makes this
+        // deterministic rather than timing-dependent.
+        let expected = leaves(30);
+        let backend = backend_with_trie(&expected);
+        let (tx, rx) = std::sync::mpsc::sync_channel(0);
+        let frontier = Arc::new(RwLock::new(Vec::new()));
+
+        let sweeping = {
+            let backend = Arc::clone(&backend);
+            let frontier = Arc::clone(&frontier);
+            std::thread::spawn(move || {
+                binary_flat_generator_with_batch(&backend, &frontier, &rx, 2)
+            })
+        };
+
+        // `Stop` fails only if the sweep already finished and dropped the
+        // receiver, which is a legal interleaving on a trie this small and not
+        // something to make the assertion depend on.
+        if tx.send(FKVGeneratorControlMessage::Stop).is_ok() {
+            // The send returned, so the sweep took the message and is now
+            // blocked in `recv`. Whatever it had committed is durable and the
+            // marker is not the completion sentinel: work stopped where it was
+            // told to, mid-sweep.
+            match marker(&backend) {
+                Some(paused) => {
+                    assert_ne!(paused, vec![0xff], "a stopped sweep has not completed");
+                    assert!(
+                        expected.iter().any(|(key, _)| key == &paused),
+                        "the durable frontier names a real leaf, never a partial batch"
+                    );
+                }
+                // Stopped inside the first batch, before anything committed.
+                None => assert!(rows(&backend).is_empty()),
+            }
+            tx.send(FKVGeneratorControlMessage::Continue).unwrap();
+        }
+        sweeping.join().unwrap().unwrap();
+
+        assert_eq!(marker(&backend).as_deref(), Some([0xff].as_slice()));
+        assert_eq!(rows(&backend).len(), expected.len());
+        assert_eq!(*frontier.read().unwrap(), vec![0xff]);
+    }
+
+    #[tokio::test]
+    async fn opening_a_store_with_an_absent_marker_wipes_a_stale_mirror() {
+        // Rows of unknown provenance are a *superset* hazard: a leaf the trie
+        // has since dropped would still be served by a range scan, and proved
+        // against the root it would fail. The wipe happens at open rather than
+        // in the generator because the commit path owns the whole keyspace
+        // while the marker is absent, so a lazy wipe would truncate the table
+        // under blocks already importing.
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let mut tx = backend.begin_write().unwrap();
+        tx.put(BINARY_FLATKEYVALUE, &[0x00; 34], &[0x77; 32])
+            .unwrap();
+        tx.commit().unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(
+            Arc::clone(&backend),
+            dir.path().to_path_buf(),
+            1,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
+        assert!(store.binary_flat_rows_for_test().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn opening_a_store_mid_backfill_keeps_the_rows_the_frontier_claims() {
+        // The other half: a partial frontier is a *resume*, and its rows are
+        // exactly what it claims. Wiping them would restart the sweep on every
+        // restart and never finish on a large trie.
+        let expected = leaves(4);
+        let backend = backend_with_trie(&expected);
+        let mut tx = backend.begin_write().unwrap();
+        tx.put(BINARY_FLATKEYVALUE, &expected[0].0, &expected[0].1)
+            .unwrap();
+        tx.put(MISC_VALUES, BINARY_LAST_WRITTEN_KEY, &expected[0].0)
+            .unwrap();
+        tx.commit().unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(
+            Arc::clone(&backend),
+            dir.path().to_path_buf(),
+            1,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
+        assert_eq!(store.binary_flat_rows_for_test().unwrap().len(), 1);
+        // And the in-memory frontier came back in its durable shape, so the
+        // read gate covers exactly that one key.
+        assert!(store.binary_flat_coverage().unwrap().covers(&expected[0].0));
+        assert!(!store.binary_flat_coverage().unwrap().covers(&expected[1].0));
+    }
+
+    #[tokio::test]
+    async fn a_deep_reorg_is_deferred_only_on_a_chain_that_has_a_mirror() {
+        // An unscheduled chain never writes the marker. An unconditional
+        // completeness check would therefore read as "still generating" for
+        // ever and defer every deep reorg on every existing MPT chain.
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(
+            Arc::clone(&backend),
+            dir.path().to_path_buf(),
+            1,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
+        assert!(!store.get_chain_config().binary_tree_scheduled());
+        assert!(!store.binary_flat_fully_generated().unwrap());
+        assert!(
+            !store.binary_flat_generation_pending().unwrap(),
+            "no binary tree, no binary hazard"
+        );
+    }
+}
+
 #[cfg(test)]
 mod flatkeyvalue_completeness_tests {
     use super::*;
@@ -6684,5 +10366,3195 @@ mod flatkeyvalue_completeness_tests {
         assert!(!Store::flatkeyvalue_generation_complete(Some(&[
             0xff, 0xff
         ])));
+    }
+}
+
+#[cfg(test)]
+mod genesis_binary_trie_tests {
+    use super::*;
+    use crate::backend::in_memory::InMemoryBackend;
+    use crate::binary_trie::BackendBinaryTrieDB;
+    use ethrex_binary_trie::embedding::{
+        address20_to_address32, chunkify_code, encode_basic_data, get_tree_key_for_basic_data,
+        get_tree_key_for_code_chunk, get_tree_key_for_code_hash, get_tree_key_for_storage_slot,
+    };
+    use ethrex_binary_trie::trie::{BinaryTrie, EMPTY_TRIE_ROOT};
+    use ethrex_common::Bytes;
+    use ethrex_common::constants::EMPTY_KECCAK_HASH;
+    use ethrex_common::types::pbt_state::apply_account_updates;
+    use rustc_hash::FxHashMap;
+    use serde::Deserialize;
+
+    pub(super) const ADDR_A: Address = Address::repeat_byte(0xaa);
+    pub(super) const ADDR_B: Address = Address::repeat_byte(0xbb);
+
+    /// A store over a fresh in-memory backend, plus the backend itself
+    /// so a test can open its own trie handle on the same bytes.
+    pub(super) fn test_store() -> (Store, Arc<dyn StorageBackend>, tempfile::TempDir) {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(
+            backend.clone(),
+            dir.path().to_path_buf(),
+            1,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
+        (store, backend, dir)
+    }
+
+    pub(super) fn genesis_account(
+        nonce: u64,
+        balance: u64,
+        code: Vec<u8>,
+        storage: &[(u64, u64)],
+    ) -> GenesisAccount {
+        GenesisAccount {
+            code: Bytes::from(code),
+            storage: storage
+                .iter()
+                .map(|(slot, value)| (U256::from(*slot), U256::from(*value)))
+                .collect(),
+            balance: U256::from(balance),
+            nonce,
+        }
+    }
+
+    pub(super) fn alloc(
+        entries: Vec<(Address, GenesisAccount)>,
+    ) -> BTreeMap<Address, GenesisAccount> {
+        entries.into_iter().collect()
+    }
+
+    pub(super) fn code_of(bytes: Vec<u8>) -> Code {
+        Code::from_bytecode(Bytes::from(bytes), &NativeCrypto)
+    }
+
+    pub(super) fn storage_map(slots: &[(u64, u64)]) -> FxHashMap<H256, U256> {
+        slots
+            .iter()
+            .map(|(slot, value)| (H256(U256::from(*slot).to_big_endian()), U256::from(*value)))
+            .collect()
+    }
+
+    /// The root the same accounts reach with no store in sight: the
+    /// plain path, built by hand rather than through the conversion the
+    /// store method performs, so the two are independent statements.
+    pub(super) fn plain_root(updates: &[AccountUpdate]) -> H256 {
+        let mut trie = BinaryTrie::new_temp();
+        apply_account_updates(&mut trie, updates).expect("updates apply");
+        trie.root()
+    }
+
+    /// A trie opened at `root` over a *fresh* handle on `backend`, so
+    /// nothing is inherited but what actually reached the database.
+    pub(super) fn reopen(backend: &Arc<dyn StorageBackend>, root: H256) -> BinaryTrie {
+        let db = BackendBinaryTrieDB::new(Arc::clone(backend)).expect("read view opens");
+        BinaryTrie::open(Box::new(db), root)
+    }
+
+    /// Every leaf the same updates produce on a store-less trie, as a
+    /// key -> value map: the mirror's expected contents computed independently
+    /// of the store, so an agreement assertion is two statements meeting
+    /// rather than one restated.
+    pub(super) fn plain_leaves(updates: &[AccountUpdate]) -> BTreeMap<Vec<u8>, [u8; 32]> {
+        let mut trie = BinaryTrie::new_temp();
+        apply_account_updates(&mut trie, updates).expect("updates apply");
+        trie.commit()
+            .expect("commit")
+            .leaves
+            .into_iter()
+            .filter_map(|(key, value)| value.map(|value| (key, value)))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn genesis_seeds_the_mirror_and_marks_it_complete() {
+        // A chain that starts from genesis never runs the backfill generator:
+        // the alloc *is* the whole state, so the changelog `commit` hands back
+        // is the whole mirror, and the frontier can be declared complete on the
+        // spot.
+        let (store, backend, _dir) = test_store();
+        // Both key lengths, all three zones, and a storage slot on each side of
+        // the header/overflow boundary.
+        let bytecode = vec![0x01u8; 31 * 130];
+        let storage = [(63u64, 0xaaaa), (64, 0xbbbb)];
+        let root = store
+            .setup_genesis_binary_trie(alloc(vec![
+                (ADDR_A, genesis_account(1, 7, bytecode.clone(), &storage)),
+                (ADDR_B, genesis_account(2, 9, vec![], &[])),
+            ]))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            store.binary_flat_frontier_for_test().unwrap().as_deref(),
+            Some([0xff].as_slice()),
+            "the mirror covers the whole keyspace from block 0"
+        );
+        assert!(store.binary_flat_fully_generated().unwrap());
+
+        let rows = store.binary_flat_rows_for_test().unwrap();
+        let expected = plain_leaves(&[
+            AccountUpdate {
+                address: ADDR_A,
+                info: Some(AccountInfo {
+                    code_hash: code_of(bytecode.clone()).hash,
+                    balance: U256::from(7u64),
+                    nonce: 1,
+                }),
+                code: Some(code_of(bytecode)),
+                added_storage: storage_map(&storage),
+                ..AccountUpdate::new(ADDR_A)
+            },
+            AccountUpdate {
+                address: ADDR_B,
+                info: Some(AccountInfo {
+                    code_hash: *EMPTY_KECCAK_HASH,
+                    balance: U256::from(9u64),
+                    nonce: 2,
+                }),
+                code: Some(code_of(vec![])),
+                ..AccountUpdate::new(ADDR_B)
+            },
+        ]);
+
+        // Both directions, so neither can pass vacuously: the mirror holds
+        // every leaf the trie does, and no leaf the trie does not.
+        assert_eq!(
+            rows.len(),
+            expected.len(),
+            "a superset is as wrong as a subset"
+        );
+        let mut trie = reopen(&backend, root);
+        for (key, value) in &rows {
+            assert_ne!(
+                value.as_slice(),
+                [0u8; 32].as_slice(),
+                "zero means absent, so no row may hold 32 zero bytes: {key:?}"
+            );
+            let value: [u8; 32] = value.as_slice().try_into().expect("32-byte leaf value");
+            assert_eq!(expected.get(key), Some(&value), "key {key:?}");
+            assert_eq!(
+                trie.get(key).unwrap(),
+                Some(value),
+                "the trie disagrees at {key:?}"
+            );
+        }
+
+        // And the rows came out of the table in tree-key order, which is what
+        // makes the mirror an ordered leaf index rather than just a cache.
+        let mut sorted = rows.iter().map(|(key, _)| key.clone()).collect::<Vec<_>>();
+        sorted.sort();
+        assert_eq!(
+            rows.into_iter().map(|(key, _)| key).collect::<Vec<_>>(),
+            sorted
+        );
+    }
+
+    #[tokio::test]
+    async fn the_embedding_reads_the_same_answers_with_the_mirror_on_and_off() {
+        // The composition that matters: not raw key reads, but the real
+        // `pbt_state` accessors, over a state shaped to hit every leaf kind the
+        // embedding produces. If the mirror and the descent ever disagreed
+        // here, the disagreement would reach consensus.
+        use crate::binary_trie::{BackendBinaryFlatDB, BinaryFlatCoverage};
+        use crate::layering::TrieLayerCache;
+        use ethrex_common::types::pbt_state::{get_account_info, get_storage_slot};
+
+        let (store, backend, _dir) = test_store();
+        // Identical bytecode from two senders, so their code-zone chunks are
+        // the same shared leaves; storage on both sides of the header/overflow
+        // boundary; and an account with zero balance and zero nonce, which
+        // exists but whose basic-data leaf is at its emptiest.
+        let shared_code = vec![0x60u8; 31 * 130];
+        let root = store
+            .setup_genesis_binary_trie(alloc(vec![
+                (
+                    ADDR_A,
+                    genesis_account(1, 7, shared_code.clone(), &[(63, 0xaaaa), (64, 0xbbbb)]),
+                ),
+                (ADDR_B, genesis_account(0, 0, shared_code.clone(), &[])),
+            ]))
+            .await
+            .unwrap();
+
+        // A delegation, applied on top so `CODE_HASH_LEAF_KEY` gives way to
+        // `DELEGATION_LEAF_KEY` for that account.
+        let delegated = Address::repeat_byte(0xcc);
+        let root = store
+            .apply_account_updates_to_binary_trie(
+                root,
+                &[AccountUpdate {
+                    address: delegated,
+                    info: Some(AccountInfo {
+                        code_hash: *EMPTY_KECCAK_HASH,
+                        balance: U256::from(5u64),
+                        nonce: 1,
+                    }),
+                    code: Some(code_of(
+                        [&[0xef, 0x01, 0x00][..], ADDR_A.as_bytes()].concat(),
+                    )),
+                    ..AccountUpdate::new(delegated)
+                }],
+            )
+            .await
+            .unwrap();
+
+        let read_at = |coverage: BinaryFlatCoverage| {
+            let mut trie = BinaryTrie::open(
+                Box::new(LayeredBinaryTrieDB::new(
+                    root,
+                    Arc::new(TrieLayerCache::default()),
+                    BackendBinaryTrieDB::new(Arc::clone(&backend)).unwrap(),
+                    BackendBinaryFlatDB::new(Arc::clone(&backend)).unwrap(),
+                    coverage,
+                    LayeredBinaryTrieDB::staging_buffer(),
+                )),
+                root,
+            );
+            let accounts: Vec<_> = [ADDR_A, ADDR_B, delegated, Address::repeat_byte(0xde)]
+                .into_iter()
+                .map(|address| get_account_info(&mut trie, address).unwrap())
+                .collect();
+            let slots: Vec<_> = [63u64, 64, 65]
+                .into_iter()
+                .map(|slot| {
+                    get_storage_slot(&mut trie, ADDR_A, &H256::from_low_u64_be(slot)).unwrap()
+                })
+                .collect();
+            (accounts, slots)
+        };
+
+        let covered = read_at(BinaryFlatCoverage::Everything);
+        assert_eq!(covered, read_at(BinaryFlatCoverage::Nothing));
+        // And the answers are not vacuously equal: the accounts are really
+        // there, the absent one is really absent, and the storage is real.
+        assert!(covered.0[0].is_some() && covered.0[1].is_some() && covered.0[2].is_some());
+        assert_eq!(covered.0[3], None);
+        assert_eq!(covered.1[0], Some(U256::from(0xaaaau64)));
+        assert_eq!(covered.1[1], Some(U256::from(0xbbbbu64)));
+        assert_eq!(covered.1[2], None);
+    }
+
+    #[tokio::test]
+    async fn an_empty_alloc_still_marks_the_mirror_complete() {
+        // An empty state is a *covered* state, not an uncovered one: every key
+        // is legitimately absent, so a reader may trust a miss. Leaving the
+        // marker off here would make a fresh chain run a backfill over nothing.
+        let (store, _backend, _dir) = test_store();
+        store
+            .setup_genesis_binary_trie(BTreeMap::new())
+            .await
+            .unwrap();
+        assert!(store.binary_flat_fully_generated().unwrap());
+        assert!(store.binary_flat_rows_for_test().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_unscheduled_chain_writes_no_mirror_rows() {
+        // The shadow-tracking property, extended to the mirror: a chain with no
+        // binary tree scheduled does literally no binary work, so the column
+        // family is untouched and the frontier marker is absent — which the
+        // read gate reads as "trust nothing", the only safe answer for a table
+        // nothing has populated.
+        let mut genesis = Genesis::default();
+        assert!(!genesis.config.binary_tree_scheduled());
+        genesis.alloc.insert(
+            ADDR_A,
+            genesis_account(1, 1_000, vec![0x60, 0x00], &[(1, 2)]),
+        );
+        let mut store = Store::new("", EngineType::InMemory).unwrap();
+        store.add_initial_state(genesis).await.unwrap();
+
+        assert_eq!(store.binary_trie_node_count_for_test().unwrap(), 0);
+        assert!(store.binary_flat_rows_for_test().unwrap().is_empty());
+        assert_eq!(store.binary_flat_frontier_for_test().unwrap(), None);
+        assert!(!store.binary_flat_fully_generated().unwrap());
+    }
+
+    #[tokio::test]
+    async fn an_empty_alloc_seeds_the_empty_root() {
+        let (store, _backend, _dir) = test_store();
+        assert_eq!(
+            store
+                .setup_genesis_binary_trie(BTreeMap::new())
+                .await
+                .unwrap(),
+            EMPTY_TRIE_ROOT
+        );
+    }
+
+    #[tokio::test]
+    async fn a_single_eoa_matches_the_plain_path() {
+        let (store, _backend, _dir) = test_store();
+        let root = store
+            .setup_genesis_binary_trie(alloc(vec![(
+                ADDR_A,
+                genesis_account(3, 1_000, vec![], &[]),
+            )]))
+            .await
+            .unwrap();
+
+        assert_ne!(root, EMPTY_TRIE_ROOT);
+        assert_eq!(
+            root,
+            plain_root(&[AccountUpdate {
+                address: ADDR_A,
+                info: Some(AccountInfo {
+                    code_hash: *EMPTY_KECCAK_HASH,
+                    balance: U256::from(1_000u64),
+                    nonce: 3,
+                }),
+                code: Some(code_of(vec![])),
+                ..AccountUpdate::new(ADDR_A)
+            }])
+        );
+    }
+
+    #[tokio::test]
+    async fn a_contract_with_overflow_code_and_boundary_storage_matches_the_plain_path() {
+        let (store, _backend, _dir) = test_store();
+        // 130 chunks: 128 in the header stem, 2 in the code zone. And
+        // storage on both sides of the slot-63/64 header boundary.
+        let bytecode = vec![0x01u8; 31 * 130];
+        let storage = [(63u64, 0xaaaa), (64, 0xbbbb)];
+        let root = store
+            .setup_genesis_binary_trie(alloc(vec![(
+                ADDR_A,
+                genesis_account(1, 7, bytecode.clone(), &storage),
+            )]))
+            .await
+            .unwrap();
+
+        let code = code_of(bytecode);
+        assert_eq!(
+            root,
+            plain_root(&[AccountUpdate {
+                address: ADDR_A,
+                info: Some(AccountInfo {
+                    code_hash: code.hash,
+                    balance: U256::from(7u64),
+                    nonce: 1,
+                }),
+                code: Some(code),
+                added_storage: storage_map(&storage),
+                ..AccountUpdate::new(ADDR_A)
+            }])
+        );
+    }
+
+    #[tokio::test]
+    async fn the_seeded_trie_is_readable_from_the_database() {
+        let (store, backend, _dir) = test_store();
+        let bytecode = vec![0x01u8; 31 * 130];
+        let code = code_of(bytecode.clone());
+        let root = store
+            .setup_genesis_binary_trie(alloc(vec![
+                (
+                    ADDR_A,
+                    genesis_account(1, 7, bytecode.clone(), &[(63, 0xaaaa), (64, 0xbbbb)]),
+                ),
+                (ADDR_B, genesis_account(2, 200, vec![], &[])),
+            ]))
+            .await
+            .unwrap();
+
+        let mut trie = reopen(&backend, root);
+        assert_eq!(trie.root(), root);
+
+        let a32 = address20_to_address32(ADDR_A);
+        assert_eq!(
+            trie.get(&get_tree_key_for_basic_data(&a32)).unwrap(),
+            Some(encode_basic_data(31 * 130, 1, U256::from(7u64)).unwrap())
+        );
+        assert_eq!(
+            trie.get(&get_tree_key_for_code_hash(&a32)).unwrap(),
+            Some(code.hash.0)
+        );
+        // A header-stem slot and an overflow-zone one.
+        assert_eq!(
+            trie.get(&get_tree_key_for_storage_slot(&a32, U256::from(63)))
+                .unwrap(),
+            Some(U256::from(0xaaaau64).to_big_endian())
+        );
+        assert_eq!(
+            trie.get(&get_tree_key_for_storage_slot(&a32, U256::from(64)))
+                .unwrap(),
+            Some(U256::from(0xbbbbu64).to_big_endian())
+        );
+        // A code chunk, which lives outside the account stem: chunks
+        // are content-addressed by code hash, never keyed by account.
+        assert_eq!(
+            trie.get(&get_tree_key_for_code_chunk(&code.hash.0, 129))
+                .unwrap(),
+            Some(chunkify_code(&bytecode)[129])
+        );
+
+        let b32 = address20_to_address32(ADDR_B);
+        assert_eq!(
+            trie.get(&get_tree_key_for_basic_data(&b32)).unwrap(),
+            Some(encode_basic_data(0, 2, U256::from(200u64)).unwrap())
+        );
+    }
+
+    #[tokio::test]
+    async fn account_code_is_retrievable_by_hash() {
+        let (store, _backend, _dir) = test_store();
+        let bytecode = vec![0x60u8, 0x01, 0x60, 0x02, 0x01];
+        let code = code_of(bytecode.clone());
+        store
+            .setup_genesis_binary_trie(alloc(vec![(
+                ADDR_A,
+                genesis_account(1, 7, bytecode.clone(), &[]),
+            )]))
+            .await
+            .unwrap();
+
+        // The trie commits code as chunks, but the EVM fetches bytecode
+        // by hash, so it must also be in the code table.
+        let stored = store
+            .get_account_code(code.hash)
+            .unwrap()
+            .expect("genesis code is stored");
+        assert_eq!(stored.code(), bytecode.as_slice());
+        assert_eq!(stored.hash, code.hash);
+    }
+
+    #[tokio::test]
+    async fn a_zero_valued_storage_slot_in_the_alloc_is_absent() {
+        let (store, backend, _dir) = test_store();
+        let with_zero = store
+            .setup_genesis_binary_trie(alloc(vec![(
+                ADDR_A,
+                genesis_account(1, 7, vec![], &[(5, 0), (6, 42)]),
+            )]))
+            .await
+            .unwrap();
+
+        let (other, _other_backend, _other_dir) = test_store();
+        let without_zero = other
+            .setup_genesis_binary_trie(alloc(vec![(
+                ADDR_A,
+                genesis_account(1, 7, vec![], &[(6, 42)]),
+            )]))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            with_zero, without_zero,
+            "a zero-valued slot must commit to nothing at all"
+        );
+
+        let a32 = address20_to_address32(ADDR_A);
+        let mut trie = reopen(&backend, with_zero);
+        assert_eq!(
+            trie.get(&get_tree_key_for_storage_slot(&a32, U256::from(5)))
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            trie.get(&get_tree_key_for_storage_slot(&a32, U256::from(6)))
+                .unwrap(),
+            Some(U256::from(42u64).to_big_endian())
+        );
+    }
+
+    /// Genesis seeding against the spec's own whole-state roots.
+    ///
+    /// The `pbt_state` section of the vendored fixture is a set of
+    /// complete states and the roots they commit to, produced by the
+    /// spec's `src/ethereum/state_pbt.py`. `crates/common`'s
+    /// `pbt_state_vectors.rs` runs them through
+    /// [`apply_account_updates`] directly; running the very same cases
+    /// through the store's genesis path pins the alloc conversion and
+    /// the storage round trip to the spec too, not merely to each
+    /// other.
+    mod spec_vectors {
+        use super::*;
+
+        #[derive(Deserialize)]
+        struct Fixture {
+            pbt_state: Vec<StateCase>,
+        }
+
+        #[derive(Deserialize)]
+        struct StateCase {
+            name: String,
+            /// Keyed by 20-byte address hex; order is not significant.
+            accounts: BTreeMap<String, AccountSpec>,
+            root: String,
+        }
+
+        #[derive(Deserialize)]
+        struct AccountSpec {
+            nonce: u64,
+            /// Hex: balances can exceed a JSON-safe integer.
+            balance: String,
+            code: String,
+            /// `keccak256(code)`, restated because overflow code chunk
+            /// keys are content-addressed by it.
+            code_hash: String,
+            /// Keyed by decimal slot number, values 32-byte hex.
+            storage: BTreeMap<String, String>,
+        }
+
+        fn unhex(s: &str) -> Vec<u8> {
+            hex::decode(s.strip_prefix("0x").unwrap_or(s)).expect("fixture hex string")
+        }
+
+        fn hex_u256(s: &str) -> U256 {
+            U256::from_str_radix(s.trim_start_matches("0x"), 16).expect("fixture hex integer")
+        }
+
+        fn genesis_alloc(case: &StateCase) -> BTreeMap<Address, GenesisAccount> {
+            case.accounts
+                .iter()
+                .map(|(address, account)| {
+                    let code = Bytes::from(unhex(&account.code));
+                    assert_eq!(
+                        Code::from_bytecode(code.clone(), &NativeCrypto)
+                            .hash
+                            .as_bytes(),
+                        unhex(&account.code_hash).as_slice(),
+                        "case {}: fixture code_hash is keccak256(code)",
+                        case.name
+                    );
+                    (
+                        Address::from_slice(&unhex(address)),
+                        GenesisAccount {
+                            code,
+                            storage: account
+                                .storage
+                                .iter()
+                                .map(|(slot, value)| {
+                                    (
+                                        U256::from_dec_str(slot).expect("fixture decimal slot"),
+                                        U256::from_big_endian(&unhex(value)),
+                                    )
+                                })
+                                .collect(),
+                            balance: hex_u256(&account.balance),
+                            nonce: account.nonce,
+                        },
+                    )
+                })
+                .collect()
+        }
+
+        #[tokio::test]
+        async fn seeded_genesis_roots_match_spec() {
+            let fixture: Fixture = serde_json::from_str(include_str!(
+                "../common/binary-trie/tests/vectors/binary_trie_vectors.json"
+            ))
+            .expect("fixture parses");
+            // The fixture is vendored and refreshed upstream, so its
+            // case count is expected to grow; assert only that the
+            // section did not arrive empty.
+            assert!(!fixture.pbt_state.is_empty(), "no pbt_state cases");
+
+            for case in &fixture.pbt_state {
+                let (store, _backend, _dir) = test_store();
+                let root = store
+                    .setup_genesis_binary_trie(genesis_alloc(case))
+                    .await
+                    .unwrap_or_else(|err| panic!("case {}: seeding: {err}", case.name));
+                assert_eq!(
+                    root.as_bytes(),
+                    unhex(&case.root).as_slice(),
+                    "genesis state root, case {}",
+                    case.name
+                );
+            }
+        }
+    }
+}
+
+/// The store's per-block binary-trie advance,
+/// [`Store::apply_account_updates_to_binary_trie`].
+///
+/// Every test seeds through [`Store::setup_genesis_binary_trie`] and
+/// then advances, so the two halves of the storage path — the anchor
+/// and the step — are exercised as one, and the helpers are shared with
+/// [`genesis_binary_trie_tests`] rather than restated.
+#[cfg(test)]
+mod binary_trie_block_tests {
+    use super::genesis_binary_trie_tests::{
+        ADDR_A, ADDR_B, alloc, code_of, genesis_account, plain_root, reopen, storage_map,
+        test_store,
+    };
+    use super::*;
+    use crate::api::tables::BINARY_TRIE_NODES;
+    use crate::api::{StorageLockedView, StorageReadView, StorageWriteBatch};
+    use crate::backend::in_memory::InMemoryBackend;
+    use ethrex_binary_trie::embedding::{
+        address20_to_address32, encode_basic_data, get_tree_key_for_basic_data,
+        get_tree_key_for_code_hash, get_tree_key_for_storage_slot,
+    };
+    use ethrex_binary_trie::trie::EMPTY_TRIE_ROOT;
+    use ethrex_common::constants::EMPTY_KECCAK_HASH;
+
+    const ADDR_C: Address = Address::repeat_byte(0xcc);
+
+    /// A block's update to a plain account: new nonce and balance, no
+    /// code and no storage.
+    fn eoa_update(address: Address, nonce: u64, balance: u64) -> AccountUpdate {
+        AccountUpdate {
+            info: Some(AccountInfo {
+                code_hash: *EMPTY_KECCAK_HASH,
+                balance: U256::from(balance),
+                nonce,
+            }),
+            ..AccountUpdate::new(address)
+        }
+    }
+
+    /// A block's update to an account's storage alone: no `info`, so
+    /// nothing about the account header is rewritten.
+    fn storage_update(address: Address, slots: &[(u64, u64)]) -> AccountUpdate {
+        AccountUpdate {
+            added_storage: storage_map(slots),
+            ..AccountUpdate::new(address)
+        }
+    }
+
+    fn contract_update(
+        address: Address,
+        nonce: u64,
+        balance: u64,
+        code: &Code,
+        slots: &[(u64, u64)],
+    ) -> AccountUpdate {
+        AccountUpdate {
+            info: Some(AccountInfo {
+                code_hash: code.hash,
+                balance: U256::from(balance),
+                nonce,
+            }),
+            code: Some(code.clone()),
+            added_storage: storage_map(slots),
+            ..AccountUpdate::new(address)
+        }
+    }
+
+    fn store_over(backend: Arc<dyn StorageBackend>) -> (Store, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(
+            backend,
+            dir.path().to_path_buf(),
+            1,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
+        (store, dir)
+    }
+
+    /// How many binary-trie **rows** the database currently holds.
+    ///
+    /// Rows, not nodes: an entry in this table is a whole group. The
+    /// counter it is compared against counts rows too, so the ratio
+    /// below is rows-to-rows and means what it says — but the two have
+    /// to move together, which is why both names changed at once.
+    fn rows_on_disk(backend: &Arc<dyn StorageBackend>) -> usize {
+        backend
+            .begin_read()
+            .unwrap()
+            .prefix_iterator(BINARY_TRIE_NODES, &[])
+            .unwrap()
+            .count()
+    }
+
+    /// A backend counting the [`BINARY_TRIE_NODES`] entries written
+    /// through it, so a test can state how much of the trie a block
+    /// actually rewrote rather than assuming the dirty tracking works.
+    ///
+    /// Counted per entry, not per batch: what matters is how much of the
+    /// table was touched, not how many transactions carried it. Deletes
+    /// count too — a tombstone is a write.
+    ///
+    /// An entry is a **row**, so this is a row count and no longer a node
+    /// count; the two differ by the group occupancy. Every comparison it
+    /// feeds is against another row count.
+    #[derive(Debug)]
+    struct CountingBackend {
+        inner: Arc<dyn StorageBackend>,
+        row_writes: Arc<AtomicUsize>,
+    }
+
+    /// A fresh counting backend and the counter it reports into.
+    fn counting_backend() -> (Arc<dyn StorageBackend>, Arc<AtomicUsize>) {
+        let row_writes = Arc::new(AtomicUsize::new(0));
+        let backend: Arc<dyn StorageBackend> = Arc::new(CountingBackend {
+            inner: Arc::new(InMemoryBackend::open().unwrap()),
+            row_writes: row_writes.clone(),
+        });
+        (backend, row_writes)
+    }
+
+    impl StorageBackend for CountingBackend {
+        fn clear_table(&self, table: &'static str) -> Result<(), StoreError> {
+            self.inner.clear_table(table)
+        }
+
+        fn begin_read(&self) -> Result<Arc<dyn StorageReadView>, StoreError> {
+            self.inner.begin_read()
+        }
+
+        fn begin_write(&self) -> Result<Box<dyn StorageWriteBatch + 'static>, StoreError> {
+            Ok(Box::new(CountingWriteBatch {
+                inner: self.inner.begin_write()?,
+                row_writes: self.row_writes.clone(),
+            }))
+        }
+
+        fn begin_locked(
+            &self,
+            table_name: &'static str,
+        ) -> Result<Box<dyn StorageLockedView + 'static>, StoreError> {
+            self.inner.begin_locked(table_name)
+        }
+
+        fn create_checkpoint(&self, path: &Path) -> Result<(), StoreError> {
+            self.inner.create_checkpoint(path)
+        }
+
+        fn flush(&self) -> Result<(), StoreError> {
+            self.inner.flush()
+        }
+    }
+
+    struct CountingWriteBatch {
+        inner: Box<dyn StorageWriteBatch>,
+        row_writes: Arc<AtomicUsize>,
+    }
+
+    impl StorageWriteBatch for CountingWriteBatch {
+        fn put_batch(
+            &mut self,
+            table: &'static str,
+            batch: Vec<(Vec<u8>, Vec<u8>)>,
+        ) -> Result<(), StoreError> {
+            if table == BINARY_TRIE_NODES {
+                self.row_writes.fetch_add(batch.len(), Ordering::Relaxed);
+            }
+            self.inner.put_batch(table, batch)
+        }
+
+        fn delete(&mut self, table: &'static str, key: &[u8]) -> Result<(), StoreError> {
+            if table == BINARY_TRIE_NODES {
+                self.row_writes.fetch_add(1, Ordering::Relaxed);
+            }
+            self.inner.delete(table, key)
+        }
+
+        fn delete_range(
+            &mut self,
+            table: &'static str,
+            start: &[u8],
+            end: &[u8],
+        ) -> Result<(), StoreError> {
+            self.inner.delete_range(table, start, end)
+        }
+
+        fn merge(
+            &mut self,
+            table: &'static str,
+            key: &[u8],
+            operand: &[u8],
+        ) -> Result<(), StoreError> {
+            self.inner.merge(table, key, operand)
+        }
+
+        fn commit(&mut self) -> Result<(), StoreError> {
+            self.inner.commit()
+        }
+    }
+
+    #[tokio::test]
+    async fn one_block_advances_the_root() {
+        let (store, _backend, _dir) = test_store();
+        let genesis_root = store
+            .setup_genesis_binary_trie(alloc(vec![
+                (ADDR_A, genesis_account(1, 100, vec![], &[])),
+                (ADDR_B, genesis_account(2, 200, vec![], &[])),
+            ]))
+            .await
+            .unwrap();
+
+        let block_root = store
+            .apply_account_updates_to_binary_trie(
+                genesis_root,
+                &[eoa_update(ADDR_A, 2, 150), eoa_update(ADDR_C, 0, 50)],
+            )
+            .await
+            .unwrap();
+
+        assert_ne!(block_root, genesis_root);
+        // The real assertion: advancing the stored trie by a block must
+        // land on the very trie the resulting state builds from scratch,
+        // not merely on some root that changed.
+        assert_eq!(
+            block_root,
+            plain_root(&[
+                eoa_update(ADDR_A, 2, 150),
+                eoa_update(ADDR_B, 2, 200),
+                eoa_update(ADDR_C, 0, 50),
+            ])
+        );
+    }
+
+    #[tokio::test]
+    async fn three_blocks_in_sequence_reach_the_final_state_root() {
+        let (store, _backend, _dir) = test_store();
+        let bytecode = vec![0x01u8; 31 * 3];
+        let code = code_of(bytecode.clone());
+        let mut root = store
+            .setup_genesis_binary_trie(alloc(vec![
+                (ADDR_A, genesis_account(1, 100, vec![], &[])),
+                (ADDR_B, genesis_account(1, 7, bytecode, &[(5, 7)])),
+            ]))
+            .await
+            .unwrap();
+
+        // Each block opens at the root the previous one returned, which
+        // is the whole point: nothing is carried over in memory.
+        let blocks = vec![
+            vec![eoa_update(ADDR_A, 2, 90), storage_update(ADDR_B, &[(5, 9)])],
+            // Slot 100 is past the header stem, so it lands in the
+            // overflow storage zone.
+            vec![
+                eoa_update(ADDR_A, 3, 80),
+                storage_update(ADDR_B, &[(100, 3)]),
+            ],
+            // A zero-valued slot is a removal, so slot 5 leaves the trie.
+            vec![storage_update(ADDR_B, &[(5, 0)]), eoa_update(ADDR_C, 0, 10)],
+        ];
+        let mut roots = Vec::new();
+        for block in &blocks {
+            root = store
+                .apply_account_updates_to_binary_trie(root, block)
+                .await
+                .unwrap();
+            roots.push(root);
+        }
+        assert_eq!(
+            roots.iter().collect::<HashSet<_>>().len(),
+            roots.len(),
+            "each block changed the state, so each root should be new"
+        );
+
+        assert_eq!(
+            root,
+            plain_root(&[
+                eoa_update(ADDR_A, 3, 80),
+                contract_update(ADDR_B, 1, 7, &code, &[(100, 3)]),
+                eoa_update(ADDR_C, 0, 10),
+            ])
+        );
+    }
+
+    #[tokio::test]
+    async fn a_block_writes_far_fewer_rows_than_the_trie_holds() {
+        let (backend, row_writes) = counting_backend();
+        let (store, _dir) = store_over(backend.clone());
+
+        let accounts: Vec<Address> = (1..=200u64).map(Address::from_low_u64_be).collect();
+        let genesis_root = store
+            .setup_genesis_binary_trie(alloc(
+                accounts
+                    .iter()
+                    .map(|address| (*address, genesis_account(1, 100, vec![], &[])))
+                    .collect(),
+            ))
+            .await
+            .unwrap();
+
+        let trie_rows = rows_on_disk(&backend);
+        row_writes.store(0, Ordering::Relaxed);
+
+        let block_root = store
+            .apply_account_updates_to_binary_trie(
+                genesis_root,
+                &[
+                    eoa_update(accounts[3], 2, 150),
+                    eoa_update(accounts[177], 5, 900),
+                ],
+            )
+            .await
+            .unwrap();
+        assert_ne!(block_root, genesis_root);
+
+        // Opening at a root loads nothing, applying loads only the
+        // paths touched, and committing writes only what changed — the
+        // property that makes per-block persistence affordable at all.
+        // A block touching two of two hundred accounts must rewrite the
+        // two root-to-leaf paths and nothing else, so an order of
+        // magnitude below the trie's size is a generous ceiling.
+        let written = row_writes.load(Ordering::Relaxed);
+        assert!(
+            written * 10 < trie_rows,
+            "block rewrote {written} of {trie_rows} rows"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_empty_update_list_is_a_no_op() {
+        let (backend, row_writes) = counting_backend();
+        let (store, _dir) = store_over(backend.clone());
+        let genesis_root = store
+            .setup_genesis_binary_trie(alloc(vec![
+                (ADDR_A, genesis_account(1, 100, vec![], &[])),
+                (ADDR_B, genesis_account(2, 200, vec![], &[])),
+            ]))
+            .await
+            .unwrap();
+
+        row_writes.store(0, Ordering::Relaxed);
+        assert_eq!(
+            store
+                .apply_account_updates_to_binary_trie(genesis_root, &[])
+                .await
+                .unwrap(),
+            genesis_root
+        );
+        assert_eq!(row_writes.load(Ordering::Relaxed), 0);
+
+        // And over an empty parent, where there is not even a root node
+        // to leave alone.
+        assert_eq!(
+            store
+                .apply_account_updates_to_binary_trie(EMPTY_TRIE_ROOT, &[])
+                .await
+                .unwrap(),
+            EMPTY_TRIE_ROOT
+        );
+        assert_eq!(row_writes.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn removing_an_account_reaches_the_trie_of_the_survivors() {
+        let (store, backend, _dir) = test_store();
+        // Slot 5 lives in the header stem, one prefix removal; the
+        // overflow zone, which takes a second one, is the case below.
+        let genesis_root = store
+            .setup_genesis_binary_trie(alloc(vec![
+                (ADDR_A, genesis_account(1, 100, vec![], &[])),
+                (ADDR_B, genesis_account(2, 200, vec![], &[(5, 7)])),
+                (ADDR_C, genesis_account(3, 300, vec![], &[])),
+            ]))
+            .await
+            .unwrap();
+
+        let block_root = store
+            .apply_account_updates_to_binary_trie(genesis_root, &[AccountUpdate::removed(ADDR_B)])
+            .await
+            .unwrap();
+
+        assert_eq!(
+            block_root,
+            plain_root(&[eoa_update(ADDR_A, 1, 100), eoa_update(ADDR_C, 3, 300)])
+        );
+
+        let mut trie = reopen(&backend, block_root);
+        let b32 = address20_to_address32(ADDR_B);
+        assert_eq!(trie.get(&get_tree_key_for_basic_data(&b32)).unwrap(), None);
+        assert_eq!(trie.get(&get_tree_key_for_code_hash(&b32)).unwrap(), None);
+        assert_eq!(
+            trie.get(&get_tree_key_for_storage_slot(&b32, U256::from(5)))
+                .unwrap(),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn removing_an_account_clears_its_overflow_storage_on_disk() {
+        let (store, backend, _dir) = test_store();
+        // ADDR_A's storage reaches past slot 63 into the overflow zone,
+        // which no bounded loop over the header stem can clear: the
+        // slots there are unenumerable from outside the trie, and this
+        // removal was once refused outright for that reason.
+        let overflow_slots: Vec<(u64, u64)> = [64u64, 255, 256, 5_000, 1_000_000]
+            .iter()
+            .map(|s| (*s, s + 1))
+            .collect();
+        let mut slots = vec![(5u64, 7u64)];
+        slots.extend(overflow_slots.iter().copied());
+        let genesis_root = store
+            .setup_genesis_binary_trie(alloc(vec![
+                (ADDR_A, genesis_account(1, 100, vec![], &slots)),
+                (ADDR_B, genesis_account(2, 200, vec![], &slots)),
+            ]))
+            .await
+            .unwrap();
+
+        let block_root = store
+            .apply_account_updates_to_binary_trie(genesis_root, &[AccountUpdate::removed(ADDR_A)])
+            .await
+            .unwrap();
+
+        // The removed account leaves nothing behind, and the root is the
+        // one a trie that never held it would have — the strong form,
+        // which a stranded leaf anywhere would break.
+        let survivor = store
+            .setup_genesis_binary_trie(alloc(vec![(
+                ADDR_B,
+                genesis_account(2, 200, vec![], &slots),
+            )]))
+            .await
+            .unwrap();
+        assert_eq!(block_root, survivor);
+
+        let a32 = address20_to_address32(ADDR_A);
+        let b32 = address20_to_address32(ADDR_B);
+        let mut trie = reopen(&backend, block_root);
+        assert_eq!(trie.get(&get_tree_key_for_basic_data(&a32)).unwrap(), None);
+        for (slot, value) in &slots {
+            assert_eq!(
+                trie.get(&get_tree_key_for_storage_slot(&a32, U256::from(*slot)))
+                    .unwrap(),
+                None,
+                "slot {slot} was stranded"
+            );
+            assert_eq!(
+                trie.get(&get_tree_key_for_storage_slot(&b32, U256::from(*slot)))
+                    .unwrap(),
+                Some(U256::from(*value).to_big_endian()),
+                "slot {slot} of the other account must be untouched"
+            );
+        }
+        // And the read path agrees: no orphaned storage under that
+        // address for a later `CREATE` to collide with.
+        assert_eq!(store.get_binary_account(block_root, ADDR_A).unwrap(), None);
+        assert!(
+            store
+                .get_binary_account(block_root, ADDR_B)
+                .unwrap()
+                .expect("the survivor is still there")
+                .has_storage
+        );
+    }
+
+    #[tokio::test]
+    async fn the_advanced_trie_is_readable_through_a_fresh_handle() {
+        let (store, backend, _dir) = test_store();
+        let genesis_root = store
+            .setup_genesis_binary_trie(alloc(vec![(ADDR_A, genesis_account(1, 100, vec![], &[]))]))
+            .await
+            .unwrap();
+
+        let bytecode = vec![0x60u8, 0x01, 0x60, 0x02, 0x01];
+        let code = code_of(bytecode.clone());
+        let block_root = store
+            .apply_account_updates_to_binary_trie(
+                genesis_root,
+                &[
+                    eoa_update(ADDR_A, 2, 150),
+                    contract_update(ADDR_B, 1, 9, &code, &[(5, 42)]),
+                ],
+            )
+            .await
+            .unwrap();
+
+        // A fresh handle inherits nothing but the bytes on disk.
+        let mut trie = reopen(&backend, block_root);
+        assert_eq!(trie.root(), block_root);
+
+        let a32 = address20_to_address32(ADDR_A);
+        assert_eq!(
+            trie.get(&get_tree_key_for_basic_data(&a32)).unwrap(),
+            Some(encode_basic_data(0, 2, U256::from(150u64)).unwrap())
+        );
+
+        let b32 = address20_to_address32(ADDR_B);
+        assert_eq!(
+            trie.get(&get_tree_key_for_basic_data(&b32)).unwrap(),
+            Some(encode_basic_data(bytecode.len() as u32, 1, U256::from(9u64)).unwrap())
+        );
+        assert_eq!(
+            trie.get(&get_tree_key_for_code_hash(&b32)).unwrap(),
+            Some(code.hash.0)
+        );
+        assert_eq!(
+            trie.get(&get_tree_key_for_storage_slot(&b32, U256::from(5)))
+                .unwrap(),
+            Some(U256::from(42u64).to_big_endian())
+        );
+
+        // The trie commits code as chunks, but the EVM fetches whole
+        // bytecode by hash, and only the code table answers that.
+        let stored = store
+            .get_account_code(code.hash)
+            .unwrap()
+            .expect("the block's code is stored");
+        assert_eq!(stored.code(), bytecode.as_slice());
+        assert_eq!(stored.hash, code.hash);
+    }
+}
+
+/// The binary flat mirror and the binary trie hold exactly the same leaves.
+///
+/// Nine tasks of derived state stand between a leaf and its mirror row — a
+/// changelog emitted at commit, a diff layer, a journal section, a write batch,
+/// a coverage gate, a genesis seed and a backfill sweep — and until this module
+/// nothing asserted that the two representations agree. Every other test in
+/// this file pins one of those hops; this one pins the property they exist to
+/// deliver.
+///
+/// **The check is bidirectional and the counts are asserted equal.** A mirror
+/// that is a *superset* of the trie is exactly as wrong as one that is a
+/// subset, and much harder to notice: a stray row never surfaces as a failed
+/// read — reads are point lookups that would simply never ask for it — it
+/// surfaces as a range scan serving a key the state does not contain, which a
+/// range proof against the trie's root then rejects. Without the count
+/// assertion either direction passes vacuously.
+///
+/// **The trie side reads nodes only.** `Store::open_binary_trie` consults the
+/// mirror behind the coverage gate, so comparing that handle against the mirror
+/// would be the mirror agreeing with itself. Every trie read here goes through
+/// a bare `BackendBinaryTrieDB`, whose `binary_flat_computed` takes the trait
+/// default of `false`.
+#[cfg(test)]
+mod binary_flat_agreement_tests {
+    use super::genesis_binary_trie_tests::{
+        alloc, code_of, genesis_account, storage_map, test_store,
+    };
+    use super::*;
+    use ethrex_binary_trie::embedding::{
+        ACCOUNT_KEY_LENGTH, DELEGATION_MARKER, STORAGE_KEY_LENGTH, address20_to_address32,
+        get_tree_key_for_basic_data, get_tree_key_for_code_chunk, get_tree_key_for_code_hash,
+        get_tree_key_for_delegation, get_tree_key_for_storage_slot,
+    };
+    use ethrex_binary_trie::trie::increment_key;
+    use ethrex_common::constants::EMPTY_KECCAK_HASH;
+
+    /// The account whose code is delegated, re-delegated and undelegated.
+    const EOA: Address = Address::repeat_byte(0x11);
+    /// Runs `shared` bytecode; survives everything.
+    const SHARED_ONE: Address = Address::repeat_byte(0x22);
+    /// Runs the same bytecode; removed in step 3, so the chunks must stay.
+    const SHARED_TWO: Address = Address::repeat_byte(0x33);
+    /// Holds more than 256 slots across both storage regions; self-destructs.
+    const FAT: Address = Address::repeat_byte(0x44);
+    /// Present from genesis and barely touched: the state the reorgs must not
+    /// disturb.
+    const BYSTANDER: Address = Address::repeat_byte(0x55);
+    const DELEGATE_ONE: Address = Address::repeat_byte(0x66);
+    const DELEGATE_TWO: Address = Address::repeat_byte(0x77);
+
+    /// How many leaves one [`BinaryTrie::leaves_from`] call asks for.
+    ///
+    /// Deliberately far smaller than the state these tests build, so the walk
+    /// is resumed some fifty times over and its inclusive-`origin` handling is
+    /// genuinely exercised rather than merely present. Must be at least two, or
+    /// a resumed batch consisting solely of the repeated leaf could never make
+    /// progress.
+    const WALK_BATCH: usize = 8;
+
+    fn block_hash(tag: u64) -> BlockHash {
+        H256::from_low_u64_be(0xb10c_0000 + tag)
+    }
+
+    fn eoa_update(address: Address, nonce: u64, balance: u64) -> AccountUpdate {
+        AccountUpdate {
+            info: Some(AccountInfo {
+                code_hash: *EMPTY_KECCAK_HASH,
+                balance: U256::from(balance),
+                nonce,
+            }),
+            ..AccountUpdate::new(address)
+        }
+    }
+
+    fn storage_update(address: Address, slots: &[(u64, u64)]) -> AccountUpdate {
+        AccountUpdate {
+            added_storage: storage_map(slots),
+            ..AccountUpdate::new(address)
+        }
+    }
+
+    fn contract_update(
+        address: Address,
+        nonce: u64,
+        balance: u64,
+        code: &Code,
+        slots: &[(u64, u64)],
+    ) -> AccountUpdate {
+        AccountUpdate {
+            info: Some(AccountInfo {
+                code_hash: code.hash,
+                balance: U256::from(balance),
+                nonce,
+            }),
+            code: Some(code.clone()),
+            added_storage: storage_map(slots),
+            ..AccountUpdate::new(address)
+        }
+    }
+
+    /// EIP-7702: the account's code becomes a delegation indicator, which the
+    /// embedding stores whole at `DELEGATION_LEAF_KEY` instead of as chunks —
+    /// and which displaces the code-hash leaf entirely.
+    fn delegation_update(
+        address: Address,
+        target: Address,
+        nonce: u64,
+        balance: u64,
+    ) -> AccountUpdate {
+        let indicator = [&DELEGATION_MARKER[..], target.as_bytes()].concat();
+        let code = code_of(indicator);
+        AccountUpdate {
+            info: Some(AccountInfo {
+                code_hash: code.hash,
+                balance: U256::from(balance),
+                nonce,
+            }),
+            code: Some(code),
+            ..AccountUpdate::new(address)
+        }
+    }
+
+    /// The other direction: empty code is not a delegation, so the indicator
+    /// leaf goes and the code-hash leaf comes back.
+    fn undelegation_update(address: Address, nonce: u64, balance: u64) -> AccountUpdate {
+        AccountUpdate {
+            info: Some(AccountInfo {
+                code_hash: *EMPTY_KECCAK_HASH,
+                balance: U256::from(balance),
+                nonce,
+            }),
+            code: Some(code_of(vec![])),
+            ..AccountUpdate::new(address)
+        }
+    }
+
+    fn mirror_row(store: &Store, key: &[u8]) -> Option<Vec<u8>> {
+        store
+            .backend
+            .begin_read()
+            .expect("read view")
+            .get(BINARY_FLATKEYVALUE, key)
+            .expect("mirror read")
+    }
+
+    /// Every leaf the trie at `binary_root` holds, taken from the **node table
+    /// alone** through [`BinaryTrie::leaves_from`], resumed a batch at a time.
+    ///
+    /// The walk was built in Task 9 for the backfill sweep and is an ordered,
+    /// resumable enumeration of the tree's leaves — exactly what this needs. It
+    /// also lets the assertion state the ordering claim on the way past: the
+    /// batch must come back sorted, and must not reach behind `origin`.
+    fn trie_leaves(store: &Store, binary_root: H256) -> BTreeMap<Vec<u8>, [u8; 32]> {
+        let mut leaves: BTreeMap<Vec<u8>, [u8; 32]> = BTreeMap::new();
+        let mut origin: Vec<u8> = Vec::new();
+        loop {
+            // Reopened per batch, as `leaves_from`'s own docs require: one
+            // handle held across the whole walk accumulates the entire tree in
+            // memory, which is the cost the resumability exists to avoid.
+            let db = BackendBinaryTrieDB::new(store.backend.clone()).expect("read view opens");
+            let mut trie = BinaryTrie::open(Box::new(db), binary_root);
+            let batch = trie.leaves_from(&origin, WALK_BATCH).expect("leaf walk");
+
+            let keys: Vec<Vec<u8>> = batch.iter().map(|(key, _)| key.clone()).collect();
+            let mut sorted = keys.clone();
+            sorted.sort();
+            assert_eq!(keys, sorted, "the walk must hand back leaves in key order");
+            if let Some(first) = keys.first() {
+                assert!(
+                    first.as_slice() >= origin.as_slice(),
+                    "the walk reached behind its origin"
+                );
+            }
+
+            let before = leaves.len();
+            for (key, value) in &batch {
+                leaves.insert(key.clone(), *value);
+            }
+            // `origin` is inclusive, so every resumed batch repeats the leaf it
+            // was resumed from; a batch that adds nothing new is the end.
+            if batch.len() < WALK_BATCH || leaves.len() == before {
+                return leaves;
+            }
+            origin = keys.last().expect("a full batch is non-empty").clone();
+        }
+    }
+
+    /// The invariant the whole feature rests on: `BINARY_FLATKEYVALUE` and the
+    /// binary trie at `binary_root` hold **exactly** the same leaves.
+    ///
+    /// Three statements, none of which is redundant:
+    ///
+    /// - every mirror row is a leaf of the trie with the same value, asked of
+    ///   the trie by *descent* rather than of the walk, so a walk that lost a
+    ///   subtree cannot make this direction pass by losing it twice;
+    /// - every trie leaf is a mirror row with the same value;
+    /// - the two counts are equal, without which either direction above is
+    ///   satisfied by the empty set.
+    ///
+    /// Plus the two encoding invariants that belong at the same place: a mirror
+    /// key is 34 or 66 bytes, and no row holds 32 zero bytes — "zero means
+    /// absent", so such a row would be a mirror entry for a key the trie's root
+    /// does not commit to.
+    fn assert_mirror_matches_trie(store: &Store, binary_root: H256, context: &str) {
+        // The mirror side: a full column-family scan. It is also where the
+        // ordering claim is cheapest to state, since the sorted CF *is* the
+        // ordered leaf index this feature exists to provide.
+        let rows = store.binary_flat_rows_for_test().expect("mirror scan");
+        let scanned: Vec<Vec<u8>> = rows.iter().map(|(key, _)| key.clone()).collect();
+        let mut sorted = scanned.clone();
+        sorted.sort();
+        assert_eq!(
+            scanned, sorted,
+            "[{context}] the mirror must scan in tree-key order"
+        );
+
+        let mut mirror: BTreeMap<Vec<u8>, [u8; 32]> = BTreeMap::new();
+        for (key, value) in rows {
+            assert!(
+                key.len() == ACCOUNT_KEY_LENGTH || key.len() == STORAGE_KEY_LENGTH,
+                "[{context}] {key:?} is {} bytes: a tree key is 34 or 66",
+                key.len()
+            );
+            let value: [u8; 32] = value.as_slice().try_into().unwrap_or_else(|_| {
+                panic!(
+                    "[{context}] the row at {key:?} is {} bytes, not a 32-byte leaf value",
+                    value.len()
+                )
+            });
+            assert_ne!(
+                value, [0u8; 32],
+                "[{context}] zero means absent, so no row may hold 32 zero bytes: {key:?}"
+            );
+            assert!(
+                mirror.insert(key.clone(), value).is_none(),
+                "[{context}] the scan returned {key:?} twice"
+            );
+        }
+
+        let leaves = trie_leaves(store, binary_root);
+
+        // Mirror -> trie, by descent.
+        let db = BackendBinaryTrieDB::new(store.backend.clone()).expect("read view opens");
+        let mut trie = BinaryTrie::open(Box::new(db), binary_root);
+        for (key, value) in &mirror {
+            assert_eq!(
+                trie.get(key).expect("descent"),
+                Some(*value),
+                "[{context}] the mirror holds {key:?} and the trie does not agree; a stray row \
+                 never surfaces as a failed read, it surfaces as a range serving a key the \
+                 state does not contain"
+            );
+        }
+
+        // Trie -> mirror.
+        for (key, value) in &leaves {
+            assert_eq!(
+                mirror.get(key),
+                Some(value),
+                "[{context}] the trie holds leaf {key:?} and the mirror does not"
+            );
+        }
+
+        assert_eq!(
+            mirror.len(),
+            leaves.len(),
+            "[{context}] the mirror holds {} leaves and the trie {}: a superset is exactly as \
+             wrong as a subset",
+            mirror.len(),
+            leaves.len()
+        );
+        assert!(
+            !leaves.is_empty(),
+            "[{context}] the state is empty, so agreement between the two says nothing"
+        );
+    }
+
+    /// A chain driven the way block import drives one: each block's binary
+    /// advance is **staged** into a diff layer by
+    /// [`Store::advance_binary_trie_for_block`] and then flushed through
+    /// `commit_to_disk`, so the mirror reaches disk on the production write
+    /// path and the journal's sixth section is written on the way past.
+    ///
+    /// The layer's state root is the binary root, which is the shape a chain
+    /// has past binary-tree activation: the header commits to the binary trie
+    /// and there is no second root to key the layer by.
+    struct Chain {
+        store: Store,
+        _dir: tempfile::TempDir,
+        number: BlockNumber,
+        hash: BlockHash,
+        root: H256,
+        /// `(number, hash, root)` per committed block, so a reorg can name a
+        /// pivot without recomputing it.
+        history: Vec<(BlockNumber, BlockHash, H256)>,
+    }
+
+    impl Chain {
+        async fn start(accounts: Vec<(Address, GenesisAccount)>) -> Chain {
+            let (store, _backend, dir) = test_store();
+            let root = store
+                .setup_genesis_binary_trie(alloc(accounts))
+                .await
+                .expect("genesis");
+            let hash = block_hash(0);
+            // Genesis writes the trie and seeds the mirror directly; it does
+            // not record a block-hash mapping, and block 1's advance needs one.
+            store.set_binary_trie_root(hash, root).expect("record");
+            Chain {
+                store,
+                _dir: dir,
+                number: 0,
+                hash,
+                root,
+                history: vec![(0, hash, root)],
+            }
+        }
+
+        /// Stage one block on top of `(parent_hash, parent_root)` **without**
+        /// flushing it, returning its binary root. Two calls on the same parent
+        /// stage two competing branches.
+        fn stage(
+            &self,
+            number: BlockNumber,
+            hash: BlockHash,
+            parent_hash: BlockHash,
+            parent_root: H256,
+            updates: &[AccountUpdate],
+        ) -> H256 {
+            let advance = self
+                .store
+                .advance_binary_trie_for_block(hash, parent_hash, updates)
+                .expect("advance");
+            assert_eq!(advance.parent_root, parent_root);
+            let root = advance.root;
+            let mut guard = self.store.trie_cache.write().expect("cache");
+            let mut updated = (**guard).clone();
+            updated.put_batch_with_binary(
+                parent_root,
+                root,
+                number,
+                hash,
+                // One MPT node per block, so the layer is not degenerate and
+                // the journal entry carries all six sections.
+                vec![(Nibbles::from_raw(&[0x01, number as u8], false), vec![1])],
+                BinaryLayerUpdate::from(advance),
+            );
+            *guard = Arc::new(updated);
+            root
+        }
+
+        fn flush(&self, root: H256) {
+            let trie = self.store.trie_cache.read().expect("cache").clone();
+            commit_to_disk(
+                self.store.backend.as_ref(),
+                &self.store.flatkeyvalue_control_tx,
+                &self.store.trie_cache,
+                &trie,
+                root,
+                false,
+            )
+            .expect("commit");
+        }
+
+        /// Extend the tip by one block, flush it, and assert agreement.
+        fn block(&mut self, updates: &[AccountUpdate], context: &str) -> H256 {
+            let number = self.number + 1;
+            let hash = block_hash(number);
+            let root = self.stage(number, hash, self.hash, self.root, updates);
+            self.flush(root);
+            self.adopt(number, hash, root);
+            assert_mirror_matches_trie(&self.store, root, context);
+            root
+        }
+
+        fn adopt(&mut self, number: BlockNumber, hash: BlockHash, root: H256) {
+            self.number = number;
+            self.hash = hash;
+            self.root = root;
+            self.history.push((number, hash, root));
+        }
+    }
+
+    /// The scripted sequence: every way a leaf can leave the trie, with the
+    /// agreement assertion after each step.
+    #[tokio::test]
+    async fn the_mirror_agrees_with_the_trie_through_every_way_a_leaf_can_leave() {
+        // Five chunks, so the code zone holds several leaves and a removal has
+        // something to leave behind.
+        let shared = code_of(vec![0x60u8; 31 * 5]);
+        let chunk_keys: Vec<Vec<u8>> = (0..5)
+            .map(|i| get_tree_key_for_code_chunk(&shared.hash.0, i))
+            .collect();
+
+        let mut chain = Chain::start(vec![
+            (
+                BYSTANDER,
+                genesis_account(1, 1_000, vec![], &[(1, 2), (70, 3)]),
+            ),
+            (EOA, genesis_account(1, 500, vec![], &[])),
+        ])
+        .await;
+        assert_mirror_matches_trie(&chain.store, chain.root, "genesis");
+
+        // --- Step 1: accounts, contracts, storage in both regions -----------
+        chain.block(
+            &[
+                contract_update(
+                    SHARED_ONE,
+                    1,
+                    10,
+                    &shared,
+                    &[(5, 0xaa), (63, 0xbb), (64, 0xcc), (900, 0xdd)],
+                ),
+                contract_update(SHARED_TWO, 1, 20, &shared, &[(7, 0xee), (5_000, 0xff)]),
+                eoa_update(EOA, 2, 400),
+            ],
+            "step 1: accounts, contracts and storage on both sides of the header boundary",
+        );
+        let one32 = address20_to_address32(SHARED_ONE);
+        let header_slot = get_tree_key_for_storage_slot(&one32, U256::from(5));
+        let overflow_slot = get_tree_key_for_storage_slot(&one32, U256::from(900));
+        assert_eq!(header_slot.len(), ACCOUNT_KEY_LENGTH);
+        assert_eq!(overflow_slot.len(), STORAGE_KEY_LENGTH);
+        assert!(mirror_row(&chain.store, &header_slot).is_some());
+        assert!(mirror_row(&chain.store, &overflow_slot).is_some());
+
+        // --- Step 2: a storage slot written to zero -------------------------
+        // `state_write`'s zero-collapse removes the leaf rather than storing
+        // zeros, in both regions.
+        chain.block(
+            &[storage_update(SHARED_ONE, &[(5, 0), (900, 0)])],
+            "step 2: a slot written to zero in each storage region",
+        );
+        assert!(
+            mirror_row(&chain.store, &header_slot).is_none(),
+            "a zeroed header-range slot must leave the mirror, not sit in it as zeros"
+        );
+        assert!(
+            mirror_row(&chain.store, &overflow_slot).is_none(),
+            "and the same in the overflow zone"
+        );
+
+        // --- Step 3: shared bytecode, one holder removed --------------------
+        for key in &chunk_keys {
+            assert!(mirror_row(&chain.store, key).is_some(), "chunk {key:?}");
+        }
+        let two32 = address20_to_address32(SHARED_TWO);
+        chain.block(
+            &[AccountUpdate::removed(SHARED_TWO)],
+            "step 3: one of two accounts running the same bytecode is removed",
+        );
+        for key in &chunk_keys {
+            assert!(
+                mirror_row(&chain.store, key).is_some(),
+                "code chunks are content-addressed and shared, so they must stay: {key:?}"
+            );
+        }
+        for key in [
+            get_tree_key_for_basic_data(&two32),
+            get_tree_key_for_code_hash(&two32),
+            get_tree_key_for_storage_slot(&two32, U256::from(7)),
+            get_tree_key_for_storage_slot(&two32, U256::from(5_000)),
+        ] {
+            assert!(
+                mirror_row(&chain.store, &key).is_none(),
+                "the removed account's header stem must go: {key:?}"
+            );
+        }
+
+        // --- Step 4: delegate, re-delegate, undelegate (EIP-7702) -----------
+        let eoa32 = address20_to_address32(EOA);
+        let delegation_key = get_tree_key_for_delegation(&eoa32);
+        let code_hash_key = get_tree_key_for_code_hash(&eoa32);
+        assert!(mirror_row(&chain.store, &code_hash_key).is_some());
+
+        chain.block(
+            &[delegation_update(EOA, DELEGATE_ONE, 3, 400)],
+            "step 4a: delegate",
+        );
+        let first = mirror_row(&chain.store, &delegation_key)
+            .expect("the delegation indicator leaf appears");
+        assert!(
+            mirror_row(&chain.store, &code_hash_key).is_none(),
+            "an account holds the code-hash leaf or the delegation leaf, never both"
+        );
+
+        chain.block(
+            &[delegation_update(EOA, DELEGATE_TWO, 4, 400)],
+            "step 4b: re-delegate",
+        );
+        let second = mirror_row(&chain.store, &delegation_key).expect("still delegated");
+        assert_ne!(first, second, "re-delegation must rewrite the indicator");
+
+        chain.block(&[undelegation_update(EOA, 5, 400)], "step 4c: undelegate");
+        assert!(
+            mirror_row(&chain.store, &delegation_key).is_none(),
+            "the indicator leaf must go"
+        );
+        assert!(
+            mirror_row(&chain.store, &code_hash_key).is_some(),
+            "and the code-hash leaf must come back"
+        );
+
+        // --- Step 5: a self-destruct across both storage regions ------------
+        // 320 slots: 64 in the header stem (0..=63) and 256 in the overflow
+        // zone (64..=319), which itself spans two 256-slot groups. Removing the
+        // account is two `remove_prefix` calls, and every retired leaf has to
+        // reach the changelog for the mirror to keep up.
+        let fat_slots: Vec<(u64, u64)> = (0..320u64).map(|slot| (slot, slot + 1)).collect();
+        chain.block(
+            &[contract_update(FAT, 1, 30, &shared, &fat_slots)],
+            "step 5a: an account with more than 256 slots across both regions",
+        );
+        let fat32 = address20_to_address32(FAT);
+        assert_eq!(
+            get_tree_key_for_storage_slot(&fat32, U256::from(63)).len(),
+            ACCOUNT_KEY_LENGTH,
+            "slot 63 is header storage"
+        );
+        assert_eq!(
+            get_tree_key_for_storage_slot(&fat32, U256::from(64)).len(),
+            STORAGE_KEY_LENGTH,
+            "slot 64 is the overflow zone"
+        );
+        for slot in [0u64, 63, 64, 255, 256, 319] {
+            assert!(
+                mirror_row(
+                    &chain.store,
+                    &get_tree_key_for_storage_slot(&fat32, U256::from(slot))
+                )
+                .is_some(),
+                "slot {slot} should be in the mirror"
+            );
+        }
+
+        chain.block(
+            &[AccountUpdate::removed(FAT)],
+            "step 5b: self-destruct, exercising remove_prefix over both regions",
+        );
+        for (slot, _) in &fat_slots {
+            assert!(
+                mirror_row(
+                    &chain.store,
+                    &get_tree_key_for_storage_slot(&fat32, U256::from(*slot))
+                )
+                .is_none(),
+                "slot {slot} was stranded in the mirror by remove_prefix"
+            );
+        }
+        assert!(mirror_row(&chain.store, &get_tree_key_for_basic_data(&fat32)).is_none());
+        for key in &chunk_keys {
+            assert!(
+                mirror_row(&chain.store, key).is_some(),
+                "the surviving holder still runs this bytecode: {key:?}"
+            );
+        }
+
+        // --- Step 6: a shallow reorg ----------------------------------------
+        // Two blocks staged on the same parent; committing one must discard the
+        // other's mirror writes along with its layer, never write them.
+        let parent_hash = chain.hash;
+        let parent_root = chain.root;
+        let number = chain.number + 1;
+        let abandoned = chain.stage(
+            number,
+            block_hash(900),
+            parent_hash,
+            parent_root,
+            &[
+                eoa_update(BYSTANDER, 9, 999),
+                storage_update(SHARED_ONE, &[(11, 0xa1)]),
+            ],
+        );
+        let kept_hash = block_hash(901);
+        let kept = chain.stage(
+            number,
+            kept_hash,
+            parent_hash,
+            parent_root,
+            &[
+                eoa_update(BYSTANDER, 9, 111),
+                storage_update(SHARED_ONE, &[(12, 0xb2)]),
+            ],
+        );
+        assert_ne!(abandoned, kept, "the two branches must differ");
+        chain.flush(kept);
+        chain.adopt(number, kept_hash, kept);
+        assert_mirror_matches_trie(&chain.store, kept, "step 6: shallow reorg");
+        assert!(
+            mirror_row(
+                &chain.store,
+                &get_tree_key_for_storage_slot(&one32, U256::from(11))
+            )
+            .is_none(),
+            "the abandoned branch's leaf must never reach the mirror"
+        );
+        assert!(
+            mirror_row(
+                &chain.store,
+                &get_tree_key_for_storage_slot(&one32, U256::from(12))
+            )
+            .is_some(),
+            "the committed branch's leaf must"
+        );
+
+        // --- Step 7: a reorg deeper than the layer cache --------------------
+        // Every block above was flushed, so the layer cache is empty and *any*
+        // reorg is deeper than it: the unwind can only come from the journal's
+        // sixth section, through an `Overlay`, and the new chain's first commit
+        // has to bridge every mirror key the overlay holds and the new block
+        // does not rewrite.
+        //
+        // The pivot is chosen so the unwind spans the self-destruct: block 5b
+        // removed 320 leaves, so undoing it is the largest possible bridge, and
+        // the new block below touches none of them.
+        let head = chain.number;
+        let (pivot_number, pivot_hash, pivot_root) = chain
+            .history
+            .iter()
+            .copied()
+            .find(|(number, _, _)| *number == head - 2)
+            .expect("a pivot two blocks back");
+        let staged_layers = chain.store.trie_cache.read().unwrap().layer_count();
+        assert!(
+            staged_layers < 2,
+            "the reorg must be deeper than what the layer cache can serve, but it holds \
+             {staged_layers} layers"
+        );
+        chain
+            .store
+            .install_overlay_for_reorg(head, pivot_number + 1, |_| None)
+            .expect("overlay");
+
+        let replacement_hash = block_hash(902);
+        let replacement = chain.stage(
+            pivot_number + 1,
+            replacement_hash,
+            pivot_hash,
+            pivot_root,
+            &[eoa_update(BYSTANDER, 30, 2_000)],
+        );
+        chain.flush(replacement);
+        chain.adopt(pivot_number + 1, replacement_hash, replacement);
+        assert_mirror_matches_trie(
+            &chain.store,
+            replacement,
+            "step 7: reorg deeper than the layer cache, through the journal",
+        );
+
+        // The unwound blocks' effects are gone and the pivot's are back — both
+        // directions of the sixth section, on disk.
+        assert!(
+            mirror_row(
+                &chain.store,
+                &get_tree_key_for_storage_slot(&one32, U256::from(12))
+            )
+            .is_none(),
+            "the abandoned block's leaf must be deleted, not left with a stale value"
+        );
+        for slot in [0u64, 63, 64, 255, 256, 319] {
+            assert!(
+                mirror_row(
+                    &chain.store,
+                    &get_tree_key_for_storage_slot(&fat32, U256::from(slot))
+                )
+                .is_some(),
+                "unwinding the self-destruct must restore slot {slot} to the mirror"
+            );
+        }
+        // And the reconciliation really did journal its sixth section.
+        let entry = {
+            let bytes = chain
+                .store
+                .backend
+                .begin_read()
+                .unwrap()
+                .get(STATE_HISTORY, &(pivot_number + 1).to_be_bytes())
+                .unwrap()
+                .expect("the reconciliation block's journal entry");
+            JournalEntry::decode(&bytes).unwrap()
+        };
+        assert!(
+            entry.binary_flat_diff.len() > 300,
+            "the bridge must journal the mirror keys the new block did not rewrite, got {}",
+            entry.binary_flat_diff.len()
+        );
+    }
+
+    // ---- Task 10: the ordered range primitive ---------------------------
+
+    /// No upper bound, spelled as the empty key.
+    const UNBOUNDED: &[u8] = &[];
+    /// Larger than any state these tests build, so a range is bounded by
+    /// `origin`/`limit` and never silently truncated by the count.
+    const PLENTY: usize = 10_000;
+
+    fn range(store: &Store, root: H256, origin: &[u8], limit: &[u8]) -> Vec<(Vec<u8>, [u8; 32])> {
+        store
+            .binary_flat_range(root, origin, limit, PLENTY)
+            .expect("range")
+    }
+
+    fn range_keys(store: &Store, root: H256, origin: &[u8], limit: &[u8]) -> Vec<Vec<u8>> {
+        range(store, root, origin, limit)
+            .into_iter()
+            .map(|(key, _)| key)
+            .collect()
+    }
+
+    /// A chain with enough state to have leaves in all three zones, flushed, so
+    /// the mirror is entirely on disk and no layer is involved.
+    async fn flushed_chain() -> Chain {
+        let code = code_of(vec![0x60u8; 31 * 3]);
+        let mut chain = Chain::start(vec![
+            (BYSTANDER, genesis_account(1, 1_000, vec![], &[(1, 2)])),
+            (EOA, genesis_account(1, 500, vec![], &[])),
+        ])
+        .await;
+        chain.block(
+            &[
+                contract_update(SHARED_ONE, 1, 10, &code, &[(5, 0xaa), (900, 0xdd)]),
+                eoa_update(EOA, 2, 400),
+            ],
+            "range fixture",
+        );
+        chain
+    }
+
+    /// The range is exactly the trie's leaves, in key order, and the four
+    /// cursor boundary cases hold on it.
+    ///
+    /// Tied to [`trie_leaves`] rather than to a hand-written list: the primitive
+    /// reads the mirror, the expectation comes from the node table, and the
+    /// point of the feature is that those two agree.
+    #[tokio::test]
+    async fn a_range_is_the_tries_leaves_in_order() {
+        let chain = flushed_chain().await;
+        let expected: Vec<Vec<u8>> = trie_leaves(&chain.store, chain.root)
+            .into_keys()
+            .collect::<Vec<_>>();
+        assert!(expected.len() > 8, "the fixture must be worth scanning");
+
+        let all = range_keys(&chain.store, chain.root, UNBOUNDED, UNBOUNDED);
+        assert_eq!(all, expected);
+
+        // Boundary 1: an origin equal to a key returns that key.
+        let pivot = &expected[3];
+        assert_eq!(
+            range_keys(&chain.store, chain.root, pivot, UNBOUNDED),
+            expected[3..].to_vec()
+        );
+
+        // Boundary 2: an origin between keys returns the successor.
+        //
+        // The gap has to be found rather than assumed: consecutive leaves in
+        // one stem differ only in their sub-index byte, so `increment_key`
+        // lands exactly *on* the next key there and would test boundary 1
+        // again. Pick the first pair with room between them.
+        let (index, between) = expected
+            .windows(2)
+            .enumerate()
+            .find_map(|(index, pair)| {
+                let next = increment_key(&pair[0])?;
+                (next < pair[1]).then_some((index, next))
+            })
+            .expect("two leaves with a gap between them");
+        assert!(between > expected[index] && between < expected[index + 1]);
+        assert_eq!(
+            range_keys(&chain.store, chain.root, &between, UNBOUNDED),
+            expected[index + 1..].to_vec()
+        );
+
+        // Boundary 3: an origin above every key returns empty.
+        assert!(range_keys(&chain.store, chain.root, &[0xff; 66], UNBOUNDED).is_empty());
+
+        // `limit` is inclusive, and `max_leaves` bounds the count.
+        assert_eq!(
+            range_keys(&chain.store, chain.root, UNBOUNDED, &expected[2]),
+            expected[..3].to_vec()
+        );
+        assert_eq!(
+            chain
+                .store
+                .binary_flat_range(chain.root, UNBOUNDED, UNBOUNDED, 3)
+                .expect("range")
+                .len(),
+            3
+        );
+        assert!(
+            chain
+                .store
+                .binary_flat_range(chain.root, UNBOUNDED, UNBOUNDED, 0)
+                .expect("range")
+                .is_empty()
+        );
+        // A limit below the origin yields nothing.
+        assert!(range_keys(&chain.store, chain.root, &expected[4], &expected[2]).is_empty());
+    }
+
+    /// Boundary 4: an empty trie returns empty rather than failing.
+    ///
+    /// The empty root is a real root the gate must accept — a chain can be
+    /// asked for a range before it holds any state — so this pins the gate as
+    /// much as the cursor.
+    #[tokio::test]
+    async fn a_range_over_an_empty_trie_is_empty() {
+        let (store, _backend, _dir) = test_store();
+        let root = store
+            .setup_genesis_binary_trie(alloc(vec![]))
+            .await
+            .expect("genesis");
+        assert_eq!(root, BINARY_EMPTY_TRIE_ROOT);
+        assert!(range(&store, root, UNBOUNDED, UNBOUNDED).is_empty());
+        assert!(range(&store, root, &[0x00; 34], UNBOUNDED).is_empty());
+    }
+
+    /// A range spanning the zone boundaries is contiguous and correctly
+    /// ordered.
+    ///
+    /// The three zones are the first key byte — `0x00` header, `0x01` code
+    /// chunks, `0xff` overflow storage — so this is the assertion that a scan
+    /// crossing `0x00 -> 0x01` and `0x01 -> 0xff` has no seam. It would catch a
+    /// merge that restarted its cursor per zone, or a table that sorted by
+    /// anything but the raw key.
+    #[tokio::test]
+    async fn a_range_crosses_the_zone_boundaries_without_a_seam() {
+        let chain = flushed_chain().await;
+        let keys = range_keys(&chain.store, chain.root, UNBOUNDED, UNBOUNDED);
+
+        let zones: Vec<u8> = keys.iter().map(|key| key[0]).collect();
+        assert!(
+            zones.contains(&0x00) && zones.contains(&0x01) && zones.contains(&0xff),
+            "the fixture must span all three zones, got {zones:?}"
+        );
+        let mut sorted = zones.clone();
+        sorted.sort_unstable();
+        assert_eq!(
+            zones, sorted,
+            "the zones must come out in order and grouped"
+        );
+
+        // Contiguity: a range starting inside the code zone is the tail of the
+        // full range from the same point, with nothing dropped at either seam.
+        let first_code = keys
+            .iter()
+            .position(|key| key[0] == 0x01)
+            .expect("a code-zone leaf");
+        assert_eq!(
+            range_keys(&chain.store, chain.root, &keys[first_code], UNBOUNDED),
+            keys[first_code..].to_vec()
+        );
+        let first_overflow = keys
+            .iter()
+            .position(|key| key[0] == 0xff)
+            .expect("an overflow-zone leaf");
+        assert_eq!(
+            range_keys(
+                &chain.store,
+                chain.root,
+                &keys[first_code],
+                &keys[first_overflow]
+            ),
+            keys[first_code..=first_overflow].to_vec()
+        );
+    }
+
+    /// The three layer interactions, on one staged-but-unflushed block so the
+    /// disk half is stale in every way at once: a leaf that exists only in the
+    /// layer, one the layer deleted, and one the layer overwrote.
+    ///
+    /// Staged, not flushed — `Chain::stage` puts the block in a diff layer and
+    /// leaves the mirror on disk at the parent. That is the state a range
+    /// server is in for the whole layer window, and the merge is the only thing
+    /// that makes it servable.
+    #[tokio::test]
+    async fn the_layer_stack_wins_over_the_disk_mirror() {
+        let chain = flushed_chain().await;
+        let parent_root = chain.root;
+        let one32 = address20_to_address32(SHARED_ONE);
+        let eoa32 = address20_to_address32(EOA);
+
+        let overwritten = get_tree_key_for_basic_data(&eoa32);
+        let deleted = get_tree_key_for_storage_slot(&one32, U256::from(900));
+        let added = get_tree_key_for_storage_slot(&one32, U256::from(901));
+
+        let on_disk = range(&chain.store, parent_root, UNBOUNDED, UNBOUNDED);
+        let disk_keys: Vec<Vec<u8>> = on_disk.iter().map(|(key, _)| key.clone()).collect();
+        assert!(
+            disk_keys.contains(&deleted),
+            "the fixture must hold slot 900"
+        );
+        assert!(!disk_keys.contains(&added), "and must not hold slot 901");
+        let disk_value = on_disk
+            .iter()
+            .find(|(key, _)| key == &overwritten)
+            .map(|(_, value)| *value)
+            .expect("the EOA's basic data is on disk");
+
+        // Stage a block that adds, deletes and overwrites, without flushing.
+        let number = chain.number + 1;
+        let hash = block_hash(number);
+        let staged = chain.stage(
+            number,
+            hash,
+            chain.hash,
+            parent_root,
+            &[
+                storage_update(SHARED_ONE, &[(900, 0), (901, 0x77)]),
+                eoa_update(EOA, 9, 999),
+            ],
+        );
+        assert_ne!(staged, parent_root);
+        // Nothing reached the mirror on disk, so every difference below comes
+        // from the merge and not from a flush that happened anyway.
+        assert_eq!(
+            range(&chain.store, parent_root, UNBOUNDED, UNBOUNDED),
+            on_disk,
+            "staging must not have moved the disk mirror"
+        );
+
+        let merged = range(&chain.store, staged, UNBOUNDED, UNBOUNDED);
+        let merged_keys: Vec<Vec<u8>> = merged.iter().map(|(key, _)| key.clone()).collect();
+
+        // (a) A leaf written only in the layer appears at its sorted position.
+        assert!(merged_keys.contains(&added));
+        let mut sorted = merged_keys.clone();
+        sorted.sort();
+        assert_eq!(merged_keys, sorted, "the merge must stay in key order");
+
+        // (b) A leaf deleted in a layer is absent, even though the disk row is
+        // still there. This is the tombstone doing its job.
+        assert!(
+            !merged_keys.contains(&deleted),
+            "a tombstoned leaf must not be served from the single-version disk row"
+        );
+        assert!(
+            mirror_row(&chain.store, &deleted).is_some(),
+            "the disk row must still exist, or (b) proved nothing"
+        );
+
+        // (c) A leaf overwritten in a layer returns the layer's value.
+        let merged_value = merged
+            .iter()
+            .find(|(key, _)| key == &overwritten)
+            .map(|(_, value)| *value)
+            .expect("the EOA is still in the range");
+        assert_ne!(
+            merged_value, disk_value,
+            "the layer's value must win over the disk row"
+        );
+
+        // The whole merged range is exactly the staged trie's leaves — the same
+        // tie to the node table the flushed case has, now across the layer.
+        let expected = trie_leaves_layered(&chain.store, staged);
+        assert_eq!(merged, expected.into_iter().collect::<Vec<_>>());
+
+        // And flushing changes nothing, which is what "the layer window is
+        // servable" has to mean.
+        chain.flush(staged);
+        assert_eq!(range(&chain.store, staged, UNBOUNDED, UNBOUNDED), merged);
+    }
+
+    /// [`trie_leaves`] against the **layered** node reader, so a staged block's
+    /// trie is walkable. The disk-only reader cannot see it.
+    fn trie_leaves_layered(store: &Store, binary_root: H256) -> BTreeMap<Vec<u8>, [u8; 32]> {
+        let mut leaves: BTreeMap<Vec<u8>, [u8; 32]> = BTreeMap::new();
+        let mut origin: Vec<u8> = Vec::new();
+        loop {
+            let mut trie = store.open_binary_trie(binary_root).expect("open");
+            let batch = trie.leaves_from(&origin, WALK_BATCH).expect("leaf walk");
+            let before = leaves.len();
+            for (key, value) in &batch {
+                leaves.insert(key.clone(), *value);
+            }
+            if batch.len() < WALK_BATCH || leaves.len() == before {
+                return leaves;
+            }
+            origin = batch.last().expect("non-empty").0.clone();
+        }
+    }
+
+    /// Both gates refuse rather than truncate.
+    ///
+    /// A short range is indistinguishable from a complete one at the call site
+    /// and produces a response that fails its own proof, so "return what we
+    /// have" is the wrong answer to either question.
+    #[tokio::test]
+    async fn a_range_refuses_an_unservable_root_and_an_incomplete_mirror() {
+        let chain = flushed_chain().await;
+
+        // A root the trie does not resolve to.
+        let bogus = H256::repeat_byte(0x5a);
+        assert!(
+            chain
+                .store
+                .binary_flat_range(bogus, UNBOUNDED, UNBOUNDED, PLENTY)
+                .is_err(),
+            "an unservable root must be refused, not answered from whatever is on disk"
+        );
+
+        // A mirror mid-backfill. Rewinding the frontier is exactly the state a
+        // node is in while the generator sweeps.
+        chain.store.publish_binary_flat_frontier(&[]).expect("mark");
+        assert!(
+            chain
+                .store
+                .binary_flat_range(chain.root, UNBOUNDED, UNBOUNDED, PLENTY)
+                .is_err(),
+            "an incomplete mirror must be refused: its rows past the frontier are missing"
+        );
+        // Restoring it makes the same call succeed, so the refusal was the
+        // gate and not the fixture.
+        chain
+            .store
+            .publish_binary_flat_frontier(BINARY_FLAT_FRONTIER_COMPLETE)
+            .expect("mark");
+        assert!(!range(&chain.store, chain.root, UNBOUNDED, UNBOUNDED).is_empty());
+    }
+}
+
+/// Regression tests for stale state-root reads.
+///
+/// ethrex keeps exactly one version of the state trie on disk — trie nodes are
+/// keyed by *path*, not by node hash, so block N+1 overwrites block N's node at
+/// the same path — plus a chain of in-memory diff layers keyed by state root
+/// ([`TrieLayerCache`]). A read at a state root the store no longer holds
+/// therefore falls through to whatever the on-disk trie currently is, and
+/// neither [`Trie::open`] nor [`Trie::get`] validate the root against the data
+/// they read. Left ungated, an account read at a pre-retention-window block
+/// answers from the wrong state and reports success.
+///
+/// `eth_call` has never had this problem: `StoreVmDatabase::new` gates on
+/// [`Store::has_state_root`] and errors. These tests pin the same contract on
+/// the account read paths, so one node cannot answer the same question two
+/// different ways.
+///
+/// The tests construct the failure directly rather than mining past
+/// `DB_COMMIT_THRESHOLD`: the bug is "a root with no diff layer and no matching
+/// on-disk root serves data anyway", and a fabricated root is exactly that
+/// (the in-memory backend also raises the threshold to
+/// `IN_MEMORY_COMMIT_THRESHOLD` precisely so tests can reach old state, which
+/// would otherwise have to be defeated first).
+#[cfg(test)]
+mod stale_state_root_read_tests {
+    use super::*;
+    use bytes::Bytes;
+
+    const ADDRESS: Address = Address::repeat_byte(0xa1);
+    const SLOT: u64 = 7;
+    const SLOT_VALUE: u64 = 0x1234;
+    const BALANCE: u64 = 0xbeef;
+    const NONCE: u64 = 3;
+    const CODE: &[u8] = &[0x60, 0x00, 0x60, 0x00, 0xf3];
+
+    /// A state root no block on this chain ever produced: the layer cache holds
+    /// no layer for it and it is not the root of the on-disk trie. This is the
+    /// same situation a caller lands in when it asks for a block whose state has
+    /// fallen out of the retention window, or for a superseded fork's root.
+    fn unheld_root() -> H256 {
+        H256::repeat_byte(0xaa)
+    }
+
+    fn slot_key() -> H256 {
+        H256::from_low_u64_be(SLOT)
+    }
+
+    async fn store_with_genesis_account() -> Store {
+        let mut genesis = Genesis::default();
+        genesis.alloc.insert(
+            ADDRESS,
+            GenesisAccount {
+                code: Bytes::from_static(CODE),
+                storage: BTreeMap::from([(U256::from(SLOT), U256::from(SLOT_VALUE))]),
+                balance: U256::from(BALANCE),
+                nonce: NONCE,
+            },
+        );
+        let mut store = Store::new("", EngineType::InMemory).expect("open in-memory store");
+        store.add_initial_state(genesis).await.expect("genesis");
+        store
+    }
+
+    /// Appends a canonical block whose header *claims* `state_root` while no such
+    /// state is ever written. This is what a node looks like when asked for a
+    /// block past the retention window: the header is still on disk, the state
+    /// behind it is not.
+    async fn append_block_claiming_root(store: &Store, state_root: H256) -> BlockNumber {
+        let genesis_hash = store
+            .get_canonical_block_hash(0)
+            .await
+            .expect("canonical hash")
+            .expect("genesis is canonical");
+        let header = BlockHeader {
+            number: 1,
+            parent_hash: genesis_hash,
+            state_root,
+            ..Default::default()
+        };
+        let hash = header.hash();
+        store
+            .add_block(Block::new(header, BlockBody::default()))
+            .await
+            .expect("add block");
+        store
+            .forkchoice_update(vec![(1, hash)], 1, hash, None, None)
+            .await
+            .expect("forkchoice");
+        1
+    }
+
+    #[track_caller]
+    fn assert_missing_state_root<T: Debug>(result: Result<T, StoreError>, what: &str) {
+        match result {
+            Err(StoreError::MissingStateRoot { state_root, .. }) => {
+                assert_eq!(state_root, unheld_root(), "{what}: wrong root reported");
+            }
+            Err(other) => panic!("{what}: expected MissingStateRoot, got {other:?}"),
+            Ok(value) => panic!(
+                "{what}: served state at a root the store does not hold: {value:?}. \
+                 This is the stale-state-root read bug: the on-disk trie answered \
+                 for a root it is not the root of."
+            ),
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // 1. Reads at a root the store does not hold must error, not serve data.
+    // ---------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn get_account_info_errors_at_unheld_root() {
+        let store = store_with_genesis_account().await;
+        let block = append_block_claiming_root(&store, unheld_root()).await;
+        assert_missing_state_root(
+            store.get_account_info(block, ADDRESS).await,
+            "eth_getBalance",
+        );
+    }
+
+    #[tokio::test]
+    async fn get_account_info_by_hash_errors_at_unheld_root() {
+        let store = store_with_genesis_account().await;
+        let block = append_block_claiming_root(&store, unheld_root()).await;
+        let hash = store
+            .get_canonical_block_hash(block)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_missing_state_root(
+            store.get_account_info_by_hash(hash, ADDRESS),
+            "get_account_info_by_hash",
+        );
+    }
+
+    #[tokio::test]
+    async fn get_code_errors_at_unheld_root() {
+        let store = store_with_genesis_account().await;
+        let block = append_block_claiming_root(&store, unheld_root()).await;
+        assert_missing_state_root(
+            store.get_code_by_account_address(block, ADDRESS).await,
+            "eth_getCode",
+        );
+    }
+
+    #[tokio::test]
+    async fn get_nonce_errors_at_unheld_root() {
+        let store = store_with_genesis_account().await;
+        let block = append_block_claiming_root(&store, unheld_root()).await;
+        assert_missing_state_root(
+            store.get_nonce_by_account_address(block, ADDRESS).await,
+            "eth_getTransactionCount",
+        );
+    }
+
+    #[tokio::test]
+    async fn get_storage_at_errors_at_unheld_root() {
+        let store = store_with_genesis_account().await;
+        let block = append_block_claiming_root(&store, unheld_root()).await;
+        assert_missing_state_root(
+            store.get_storage_at(block, ADDRESS, slot_key()),
+            "eth_getStorageAt",
+        );
+    }
+
+    #[tokio::test]
+    async fn get_account_state_errors_at_unheld_root() {
+        let store = store_with_genesis_account().await;
+        let block = append_block_claiming_root(&store, unheld_root()).await;
+        assert_missing_state_root(
+            store.get_account_state(block, ADDRESS).await,
+            "get_account_state",
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // 3. eth_getProof must error rather than return an account object beside
+    //    an empty proof array.
+    // ---------------------------------------------------------------------
+
+    /// Before the guard this returned `Ok(Some(..))` holding the *current*
+    /// account (read through the unchecked `Trie::get`) next to an **empty**
+    /// `proof` (`Trie::get_proof` does use the checked accessor and bails), i.e.
+    /// a response that contradicts itself.
+    #[tokio::test]
+    async fn get_account_proof_errors_at_unheld_root() {
+        let store = store_with_genesis_account().await;
+        assert_missing_state_root(
+            store
+                .get_account_proof(unheld_root(), ADDRESS, &[slot_key()])
+                .await,
+            "eth_getProof",
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // 2. The happy path is untouched: reads at a root the store does hold
+    //    return the real values.
+    // ---------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn reads_at_a_held_root_still_work() {
+        let store = store_with_genesis_account().await;
+        let genesis_hash = store.get_canonical_block_hash(0).await.unwrap().unwrap();
+        let state_root = store
+            .get_block_header_by_hash(genesis_hash)
+            .unwrap()
+            .unwrap()
+            .state_root;
+
+        let info = store
+            .get_account_info(0, ADDRESS)
+            .await
+            .expect("balance read")
+            .expect("account exists");
+        assert_eq!(info.balance, U256::from(BALANCE));
+        assert_eq!(info.nonce, NONCE);
+
+        assert_eq!(
+            store
+                .get_account_info_by_hash(genesis_hash, ADDRESS)
+                .unwrap()
+                .unwrap()
+                .balance,
+            U256::from(BALANCE)
+        );
+
+        assert_eq!(
+            store
+                .get_nonce_by_account_address(0, ADDRESS)
+                .await
+                .unwrap()
+                .unwrap(),
+            NONCE
+        );
+
+        assert_eq!(
+            store
+                .get_code_by_account_address(0, ADDRESS)
+                .await
+                .unwrap()
+                .unwrap()
+                .code(),
+            CODE
+        );
+
+        assert_eq!(
+            store
+                .get_storage_at(0, ADDRESS, slot_key())
+                .unwrap()
+                .unwrap(),
+            U256::from(SLOT_VALUE)
+        );
+
+        assert_eq!(
+            store
+                .get_account_state(0, ADDRESS)
+                .await
+                .unwrap()
+                .unwrap()
+                .nonce,
+            NONCE
+        );
+
+        let proof = store
+            .get_account_proof(state_root, ADDRESS, &[slot_key()])
+            .await
+            .expect("proof read")
+            .expect("state trie present");
+        assert_eq!(proof.account.balance, U256::from(BALANCE));
+        assert!(
+            !proof.proof.is_empty(),
+            "a held root must produce a non-empty account proof"
+        );
+        assert_eq!(proof.storage_proof.len(), 1);
+        assert_eq!(proof.storage_proof[0].value, U256::from(SLOT_VALUE));
+    }
+
+    /// A block that exists but whose account is absent still reports "no such
+    /// account" rather than an error: the guard must only fire on missing
+    /// *state*, never on a missing account within present state.
+    #[tokio::test]
+    async fn absent_account_at_a_held_root_is_still_none() {
+        let store = store_with_genesis_account().await;
+        let other = Address::repeat_byte(0xb2);
+        assert!(store.get_account_info(0, other).await.unwrap().is_none());
+        assert!(
+            store
+                .get_storage_at(0, other, slot_key())
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    /// An unknown block still yields `Ok(None)` — "I have no such block" is a
+    /// different answer from "I have the block but not its state".
+    #[tokio::test]
+    async fn unknown_block_is_still_none() {
+        let store = store_with_genesis_account().await;
+        assert!(store.get_account_info(99, ADDRESS).await.unwrap().is_none());
+        assert!(
+            store
+                .get_account_info_by_hash(H256::repeat_byte(0xcd), ADDRESS)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            store
+                .get_storage_at(99, ADDRESS, slot_key())
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // 4. The deliberately unchecked variants stay unchecked.
+    // ---------------------------------------------------------------------
+
+    /// `get_account_state_by_root` is the per-account read `StoreVmDatabase`
+    /// issues for every account an execution touches. Its caller has *already*
+    /// gated on `has_state_root` once, at `StoreVmDatabase::new`
+    /// (`crates/blockchain/vm.rs`), so re-verifying the root here would add a
+    /// root-node read and a keccak to every single account access during block
+    /// execution. It stays unchecked on purpose.
+    #[tokio::test]
+    async fn get_account_state_by_root_stays_unchecked() {
+        let store = store_with_genesis_account().await;
+        assert!(
+            store
+                .get_account_state_by_root(unheld_root(), ADDRESS)
+                .unwrap()
+                .is_some(),
+            "the VM's hot per-account read must stay unguarded; \
+             StoreVmDatabase::new checks the root once up front"
+        );
+    }
+
+    /// `get_storage_at_root` is the root-addressed sibling of `get_storage_at`
+    /// and is used by store-internal callers that address state by root directly
+    /// (see the deep-reorg overlay tests, which read at roots the overlay
+    /// deliberately does not serve). `get_storage_at`, the block-addressed entry
+    /// point the RPC layer uses, is the guarded one.
+    #[tokio::test]
+    async fn get_storage_at_root_stays_unchecked() {
+        let store = store_with_genesis_account().await;
+        assert_eq!(
+            store
+                .get_storage_at_root(unheld_root(), ADDRESS, slot_key())
+                .unwrap(),
+            Some(U256::from(SLOT_VALUE)),
+            "the root-addressed storage read must stay unguarded"
+        );
+    }
+
+    /// `has_state_root`, the detector all of the above now share, must agree
+    /// with them about what is and is not held.
+    #[tokio::test]
+    async fn has_state_root_agrees_with_the_guards() {
+        let store = store_with_genesis_account().await;
+        let genesis_root = store.get_block_header(0).unwrap().unwrap().state_root;
+        assert!(store.has_state_root(genesis_root).unwrap());
+        assert!(!store.has_state_root(unheld_root()).unwrap());
+        assert!(
+            store.has_state_root(EMPTY_TRIE_HASH).unwrap(),
+            "the empty trie is always available"
+        );
+    }
+}
+
+/// Task 7 of the node-grouping plan: the datadir's group-depth marker.
+///
+/// The property under test is that a table written at one group depth is never
+/// read at another. That failure is silent by construction — `group_root`
+/// computes a key that exists, the row decodes, and the member at the relative
+/// path is merely wrong — so every case here asserts a refusal, not a value.
+#[cfg(test)]
+mod binary_group_depth_marker_tests {
+    use super::*;
+    use crate::backend::in_memory::InMemoryBackend;
+    use ethrex_binary_trie::trie::MAX_GROUP_DEPTH;
+
+    fn backend() -> Arc<dyn StorageBackend> {
+        Arc::new(InMemoryBackend::open().unwrap())
+    }
+
+    fn open(backend: &Arc<dyn StorageBackend>) -> Result<(Store, tempfile::TempDir), StoreError> {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(
+            backend.clone(),
+            dir.path().to_path_buf(),
+            1,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )?;
+        Ok((store, dir))
+    }
+
+    fn marker(backend: &Arc<dyn StorageBackend>) -> Option<Vec<u8>> {
+        backend
+            .begin_read()
+            .unwrap()
+            .get(MISC_VALUES, BINARY_GROUP_DEPTH_KEY)
+            .unwrap()
+    }
+
+    fn write_marker(backend: &Arc<dyn StorageBackend>, bytes: &[u8]) {
+        let mut tx = backend.begin_write().unwrap();
+        tx.put(MISC_VALUES, BINARY_GROUP_DEPTH_KEY, bytes).unwrap();
+        tx.commit().unwrap();
+    }
+
+    /// A row that is *shaped* like one, so the emptiness probe is answering a
+    /// question about the table rather than about decodability.
+    fn write_a_node_row(backend: &Arc<dyn StorageBackend>) {
+        let mut tx = backend.begin_write().unwrap();
+        tx.put(
+            BINARY_TRIE_NODES,
+            &BitPath::new().to_db_key(),
+            &[0x01, 0x00],
+        )
+        .unwrap();
+        tx.commit().unwrap();
+    }
+
+    #[test]
+    fn a_fresh_datadir_records_the_configured_depth() {
+        let backend = backend();
+        assert_eq!(marker(&backend), None, "nothing recorded before the open");
+
+        let (_store, _dir) = open(&backend).expect("a fresh datadir opens");
+
+        assert_eq!(
+            marker(&backend),
+            Some(vec![DEFAULT_GROUP_DEPTH.get() as u8]),
+            "the open records the depth it built the table at"
+        );
+    }
+
+    /// The case that keeps every existing node's datadir working. An MPT-only
+    /// datadir has no marker and has never held a binary node; refusing it
+    /// would be a far worse regression than the one being defended against.
+    #[test]
+    fn a_datadir_that_has_never_held_a_binary_node_adopts_the_depth() {
+        let backend = backend();
+        // Populated elsewhere, so "empty" is specifically about the node table.
+        let mut tx = backend.begin_write().unwrap();
+        tx.put(MISC_VALUES, b"last_written", &[0xff]).unwrap();
+        tx.commit().unwrap();
+
+        let (_store, _dir) = open(&backend).expect("an MPT-only datadir opens");
+
+        assert_eq!(
+            marker(&backend),
+            Some(vec![DEFAULT_GROUP_DEPTH.get() as u8])
+        );
+    }
+
+    #[test]
+    fn a_datadir_built_at_another_depth_is_refused() {
+        let backend = backend();
+        let other = DEFAULT_GROUP_DEPTH.get() as u8 + 1;
+        write_marker(&backend, &[other]);
+        write_a_node_row(&backend);
+
+        let err = open(&backend).expect_err("the open is refused");
+
+        assert!(
+            matches!(
+                err,
+                StoreError::BinaryGroupDepthMismatch { stored, configured }
+                    if stored == usize::from(other) && configured == DEFAULT_GROUP_DEPTH.get()
+            ),
+            "expected a depth mismatch naming both depths, got {err:?}"
+        );
+    }
+
+    /// The refusal must not be destructive: a node started at the wrong depth
+    /// has to be restartable at the right one, and that is only true if the
+    /// failed open left the table and the marker alone.
+    #[test]
+    fn a_refused_open_leaves_the_table_and_the_marker_untouched() {
+        let backend = backend();
+        let other = DEFAULT_GROUP_DEPTH.get() as u8 + 1;
+        write_marker(&backend, &[other]);
+        write_a_node_row(&backend);
+
+        open(&backend).expect_err("the open is refused");
+
+        assert_eq!(
+            marker(&backend),
+            Some(vec![other]),
+            "the refusal did not overwrite the recorded depth"
+        );
+        assert_eq!(
+            backend
+                .begin_read()
+                .unwrap()
+                .get(BINARY_TRIE_NODES, &BitPath::new().to_db_key())
+                .unwrap(),
+            Some(vec![0x01, 0x00]),
+            "the refusal did not touch the node table"
+        );
+    }
+
+    /// The pre-grouping datadir: nodes written one per row, before the marker
+    /// existed. This is the case that must not silently succeed.
+    #[test]
+    fn a_datadir_holding_ungrouped_nodes_is_refused() {
+        let backend = backend();
+        write_a_node_row(&backend);
+        assert_eq!(marker(&backend), None, "no marker, as before grouping");
+
+        let err = open(&backend).expect_err("the open is refused");
+
+        assert!(
+            matches!(
+                err,
+                StoreError::BinaryGroupDepthMissing { configured }
+                    if configured == DEFAULT_GROUP_DEPTH.get()
+            ),
+            "expected the ungrouped-datadir refusal, got {err:?}"
+        );
+        assert_eq!(
+            marker(&backend),
+            None,
+            "a refused open records nothing, so the next one refuses too"
+        );
+    }
+
+    /// A marker this code did not write is a mismatch, not an adoption. The
+    /// alternative — treating an unreadable marker as absent — would fall
+    /// through to the emptiness probe and adopt on an empty table, which is
+    /// exactly the silent acceptance the marker exists to prevent.
+    #[test]
+    fn a_marker_that_is_not_one_byte_is_refused() {
+        for bytes in [vec![], vec![6, 0], vec![0]] {
+            let backend = backend();
+            write_marker(&backend, &bytes);
+
+            let err = open(&backend)
+                .err()
+                .unwrap_or_else(|| panic!("expected a refusal for marker {bytes:?}"));
+
+            assert!(
+                matches!(err, StoreError::BinaryGroupDepthMismatch { .. }),
+                "expected a mismatch for marker {bytes:?}, got {err:?}"
+            );
+        }
+    }
+
+    /// Reopening at the depth the datadir was built at is the ordinary case,
+    /// and it must stay silent — otherwise every restart is a rebuild.
+    #[test]
+    fn reopening_at_the_recorded_depth_succeeds() {
+        let backend = backend();
+        let (store, dir) = open(&backend).expect("first open");
+        drop(store);
+        drop(dir);
+        write_a_node_row(&backend);
+
+        let (_store, _dir) = open(&backend).expect("the same depth reopens over real rows");
+    }
+
+    /// An out-of-range depth cannot reach the store at all: `GroupDepth` is a
+    /// validated newtype, so there is no value to pass. Recorded here because
+    /// the plan asks for a startup error rather than go-ethereum's panic on
+    /// first write, and the answer is that the state is unrepresentable.
+    #[test]
+    fn an_out_of_range_depth_is_unrepresentable_rather_than_a_startup_error() {
+        assert_eq!(GroupDepth::new(0), None);
+        assert_eq!(GroupDepth::new(MAX_GROUP_DEPTH + 1), None);
+        assert!(GroupDepth::new(DEFAULT_GROUP_DEPTH.get()).is_some());
+    }
+}
+
+/// The `pbtsnap/1` serving seams: resolving a request's root to a block this
+/// node can answer for, and producing a range that verifies against it.
+///
+/// Adversarial rather than round-trip. A server that hands a client leaves it
+/// already agrees with proves nothing; what matters is that a range served at
+/// one root does not verify against another, that a budget cannot suppress the
+/// progress rule, and that a root this node has moved off is refused rather
+/// than answered from whatever the single-version trie now holds.
+#[cfg(test)]
+mod pbtsnap_serving_tests {
+    use super::genesis_binary_trie_tests::{alloc, genesis_account, test_store};
+    use super::*;
+    use ethrex_binary_trie::trie::{RangeProofError, increment_key, verify_range};
+
+    /// No upper bound, spelled as the empty key — the same sentinel
+    /// `binary_flat_range` uses.
+    const UNBOUNDED: &[u8] = &[];
+    /// Far more leaves than these fixtures build, so a range is bounded by its
+    /// keys rather than silently truncated by the count.
+    const PLENTY: usize = 10_000;
+    /// Genesis is at timestamp 0 and the served block well past it, so the
+    /// activation predicate is exercised with a real gap rather than a tie.
+    const ACTIVE_TIMESTAMP: u64 = 1_000;
+
+    struct Served {
+        store: Store,
+        hash: BlockHash,
+        header: BlockHeader,
+        root: H256,
+        _dir: tempfile::TempDir,
+    }
+
+    /// A store holding binary state at one canonical block, wired the way a
+    /// running node's would be: chain config scheduled, header stored and
+    /// canonical, latest-header cache pointed at it, root recorded.
+    async fn served_store(binary_tree_time: Option<u64>, timestamp: u64) -> Served {
+        let (mut store, _backend, dir) = test_store();
+        let config = ChainConfig {
+            binary_tree_time,
+            ..Default::default()
+        };
+        store.set_chain_config(&config).await.expect("chain config");
+
+        let root = store
+            .setup_genesis_binary_trie(alloc(vec![
+                (
+                    Address::repeat_byte(0x11),
+                    genesis_account(1, 1_000, vec![], &[(1, 2), (900, 3)]),
+                ),
+                (
+                    Address::repeat_byte(0x22),
+                    genesis_account(2, 500, vec![0x60; 40], &[(5, 7)]),
+                ),
+                (
+                    Address::repeat_byte(0x33),
+                    genesis_account(0, 1, vec![], &[]),
+                ),
+            ]))
+            .await
+            .expect("genesis");
+
+        let header = BlockHeader {
+            number: 1,
+            timestamp,
+            state_root: root,
+            ..Default::default()
+        };
+        let hash = header.hash();
+        store
+            .add_block_header(hash, header.clone())
+            .await
+            .expect("header");
+        store
+            .write(
+                CANONICAL_BLOCK_HASHES,
+                1u64.to_le_bytes().to_vec(),
+                hash.encode_to_vec(),
+            )
+            .expect("canonical");
+        store.latest_block_header.update(header.clone());
+        store.set_binary_trie_root(hash, root).expect("record root");
+
+        Served {
+            store,
+            hash,
+            header,
+            root,
+            _dir: dir,
+        }
+    }
+
+    async fn active_store() -> Served {
+        served_store(Some(0), ACTIVE_TIMESTAMP).await
+    }
+
+    // ---- root resolution -------------------------------------------------
+
+    #[tokio::test]
+    async fn the_served_root_resolves_to_its_canonical_block() {
+        let served = active_store().await;
+        assert_eq!(
+            served
+                .store
+                .canonical_block_for_binary_root(served.root)
+                .expect("resolve"),
+            Some(served.hash),
+        );
+    }
+
+    #[tokio::test]
+    async fn a_root_this_node_never_held_resolves_to_nothing() {
+        let served = active_store().await;
+        assert_eq!(
+            served
+                .store
+                .canonical_block_for_binary_root(H256::repeat_byte(9))
+                .expect("resolve"),
+            None,
+        );
+    }
+
+    /// The header carries the root and the trie holds it, but the header's
+    /// timestamp is before the activation, so its `state_root` names an MPT.
+    /// Serving binary leaves against it would answer a question nobody asked.
+    #[tokio::test]
+    async fn a_pre_activation_header_is_not_a_binary_root_to_serve() {
+        let served = served_store(Some(ACTIVE_TIMESTAMP + 1), ACTIVE_TIMESTAMP).await;
+        assert!(
+            served
+                .store
+                .canonical_block_for_binary_root(served.root)
+                .expect("resolve")
+                .is_none(),
+        );
+    }
+
+    /// An unscheduled chain has no binary tree at any height, so nothing is
+    /// servable however the roots happen to line up.
+    #[tokio::test]
+    async fn an_unscheduled_chain_serves_no_root() {
+        let served = served_store(None, ACTIVE_TIMESTAMP).await;
+        assert!(
+            served
+                .store
+                .canonical_block_for_binary_root(served.root)
+                .expect("resolve")
+                .is_none(),
+        );
+    }
+
+    /// Past the layer window the single-version trie no longer resolves the
+    /// root, so a longer walk could only find blocks that must then be
+    /// refused. Moving the head far above the block leaves it outside the
+    /// bounded walk.
+    #[tokio::test]
+    async fn a_block_below_the_layer_window_is_out_of_reach() {
+        let served = active_store().await;
+        let far_head = BlockHeader {
+            number: 1 + DB_COMMIT_THRESHOLD as u64 + 1,
+            timestamp: ACTIVE_TIMESTAMP + 1,
+            state_root: H256::repeat_byte(0x5a),
+            ..Default::default()
+        };
+        served.store.latest_block_header.update(far_head);
+        assert!(
+            served
+                .store
+                .canonical_block_for_binary_root(served.root)
+                .expect("resolve")
+                .is_none(),
+        );
+    }
+
+    /// The block is known and its root recorded, but it is not the canonical
+    /// hash at its number — the branch it belongs to lost. A server that
+    /// answered for it would be serving a root no canonical header commits to.
+    #[tokio::test]
+    async fn a_non_canonical_block_is_not_served() {
+        let served = active_store().await;
+        served
+            .store
+            .write(
+                CANONICAL_BLOCK_HASHES,
+                1u64.to_le_bytes().to_vec(),
+                H256::repeat_byte(0xcc).encode_to_vec(),
+            )
+            .expect("recanonicalize");
+        // The latest-header cache short-circuits `get_block_header_by_hash`, so
+        // point it away from the abandoned block too.
+        served.store.latest_block_header.update(BlockHeader {
+            number: 1,
+            timestamp: ACTIVE_TIMESTAMP,
+            state_root: H256::repeat_byte(0x5a),
+            ..Default::default()
+        });
+        assert!(
+            served
+                .store
+                .canonical_block_for_binary_root(served.root)
+                .expect("resolve")
+                .is_none(),
+        );
+    }
+
+    // ---- range serving ---------------------------------------------------
+
+    #[tokio::test]
+    async fn a_served_range_verifies_against_the_pivot_root() {
+        let served = active_store().await;
+        let slice = served
+            .store
+            .binary_leaf_range_proof(served.root, UNBOUNDED, UNBOUNDED, PLENTY)
+            .expect("range");
+        assert!(!slice.leaves.is_empty(), "the fixture has state");
+
+        let verified = verify_range(
+            served.root,
+            UNBOUNDED,
+            &slice.leaves,
+            &slice.left_proof,
+            &slice.right_proof,
+        )
+        .expect("an honestly served whole-tree range must verify");
+        assert!(
+            !verified.has_more,
+            "an unbounded range over the whole tree leaves nothing after it"
+        );
+    }
+
+    /// The attribution property, and the reason leaves and proofs are read from
+    /// one structure: a range that is internally consistent still must not
+    /// verify against a root it was not served at.
+    #[tokio::test]
+    async fn a_range_served_at_one_root_does_not_verify_against_another() {
+        let served = active_store().await;
+        let slice = served
+            .store
+            .binary_leaf_range_proof(served.root, UNBOUNDED, UNBOUNDED, PLENTY)
+            .expect("range");
+        let other = H256::repeat_byte(0x77);
+        assert!(other != served.root);
+        assert!(matches!(
+            verify_range(
+                other,
+                UNBOUNDED,
+                &slice.leaves,
+                &slice.left_proof,
+                &slice.right_proof,
+            ),
+            Err(RangeProofError::Proof(_)) | Err(RangeProofError::RootMismatch),
+        ));
+    }
+
+    /// The progress rule is structural, not advisory: a budget of zero leaves
+    /// still returns the first leaf at or after the origin, and the response
+    /// still verifies. Without it a client could not tell an exhausted budget
+    /// from an exhausted tree.
+    #[tokio::test]
+    async fn a_zero_budget_still_returns_and_proves_the_first_leaf() {
+        let served = active_store().await;
+        let whole = served
+            .store
+            .binary_leaf_range_proof(served.root, UNBOUNDED, UNBOUNDED, PLENTY)
+            .expect("range");
+        let one = served
+            .store
+            .binary_leaf_range_proof(served.root, UNBOUNDED, UNBOUNDED, 0)
+            .expect("range");
+
+        assert_eq!(one.leaves.len(), 1, "the floor is one leaf, not zero");
+        assert_eq!(one.leaves[0], whole.leaves[0]);
+        assert!(
+            one.leaves.len() < whole.leaves.len(),
+            "the fixture is bigger"
+        );
+
+        let verified = verify_range(
+            served.root,
+            UNBOUNDED,
+            &one.leaves,
+            &one.left_proof,
+            &one.right_proof,
+        )
+        .expect("a budget-capped range must still verify");
+        assert!(
+            verified.has_more,
+            "one leaf out of many leaves more to ask for"
+        );
+    }
+
+    /// Resuming from the last key returned must reach the end of the tree
+    /// without a gap and without a repeat — the client-side loop the progress
+    /// rule exists to make terminating.
+    #[tokio::test]
+    async fn resuming_from_the_last_key_walks_the_whole_tree() {
+        let served = active_store().await;
+        let whole = served
+            .store
+            .binary_leaf_range_proof(served.root, UNBOUNDED, UNBOUNDED, PLENTY)
+            .expect("range");
+
+        let mut collected: Vec<(Vec<u8>, [u8; 32])> = Vec::new();
+        let mut origin: Vec<u8> = Vec::new();
+        loop {
+            let slice = served
+                .store
+                .binary_leaf_range_proof(served.root, &origin, UNBOUNDED, 2)
+                .expect("range");
+            let verified = verify_range(
+                served.root,
+                &origin,
+                &slice.leaves,
+                &slice.left_proof,
+                &slice.right_proof,
+            )
+            .expect("every resumed range must verify at its own origin");
+            collected.extend(slice.leaves.iter().cloned());
+            if !verified.has_more {
+                break;
+            }
+            let last = slice.leaves.last().expect("has_more implies a last leaf");
+            origin = increment_key(&last.0).expect("a 34- or 66-byte key is not all-0xff");
+        }
+        assert_eq!(collected, whole.leaves);
+    }
+
+    /// An origin past every leaf is the provable-emptiness case: no leaves, no
+    /// right walk, and a left walk that shows there is nothing above it.
+    #[tokio::test]
+    async fn an_origin_past_every_leaf_serves_a_verifiable_empty_range() {
+        let served = active_store().await;
+        let past_everything = vec![0xffu8; 66];
+        let slice = served
+            .store
+            .binary_leaf_range_proof(served.root, &past_everything, UNBOUNDED, PLENTY)
+            .expect("range");
+        assert!(slice.leaves.is_empty());
+        assert!(slice.right_proof.is_empty(), "no last leaf to walk");
+
+        let verified = verify_range(
+            served.root,
+            &past_everything,
+            &[],
+            &slice.left_proof,
+            &slice.right_proof,
+        )
+        .expect("provable emptiness must verify");
+        assert!(!verified.has_more);
+    }
+
+    /// The terminator: the response carries the first leaf *past* the limit, so
+    /// a client sees where the interval ended instead of trusting a claim.
+    #[tokio::test]
+    async fn the_range_carries_the_first_leaf_past_the_limit() {
+        let served = active_store().await;
+        let whole = served
+            .store
+            .binary_leaf_range_proof(served.root, UNBOUNDED, UNBOUNDED, PLENTY)
+            .expect("range");
+        assert!(whole.leaves.len() >= 3, "the fixture needs room to cut");
+
+        let limit = whole.leaves[0].0.clone();
+        let slice = served
+            .store
+            .binary_leaf_range_proof(served.root, UNBOUNDED, &limit, PLENTY)
+            .expect("range");
+        assert_eq!(
+            slice.leaves.len(),
+            2,
+            "the leaf at the limit plus the terminator past it"
+        );
+        assert_eq!(slice.leaves[1], whole.leaves[1]);
+        verify_range(
+            served.root,
+            UNBOUNDED,
+            &slice.leaves,
+            &slice.left_proof,
+            &slice.right_proof,
+        )
+        .expect("a limited range must verify");
+    }
+
+    /// A root this node does not resolve to is refused before any walk, not
+    /// answered from whatever the single-version trie currently holds. The
+    /// client reads a refusal as "re-pivot", never as "this state does not
+    /// exist".
+    #[tokio::test]
+    async fn a_root_this_node_does_not_hold_is_refused() {
+        let served = active_store().await;
+        let error = served
+            .store
+            .binary_leaf_range_proof(H256::repeat_byte(9), UNBOUNDED, UNBOUNDED, PLENTY)
+            .expect_err("an unheld root must not be served");
+        // The *up-front* gate, not the post-walk one. Both refuse, so a bare
+        // `is_err` passes either way — and the difference is a whole tree walk
+        // a peer can trigger by naming roots at random.
+        assert!(
+            error.to_string().contains("does not resolve to that root"),
+            "an unheld root must be refused before the walk, not detected after it: {error}"
+        );
+    }
+
+    /// The root is recorded for a canonical, post-activation block, and the
+    /// trie still does not resolve to it. `BINARY_TRIE_ROOTS` is a mapping the
+    /// importer writes; it is not evidence that the state survived, and after a
+    /// restart or a commit past it the rows are simply gone. Only re-hashing
+    /// the stored root row answers, which is the half of
+    /// `has_binary_trie_state` that a recorded-root check alone would skip.
+    #[tokio::test]
+    async fn a_recorded_root_the_trie_cannot_resolve_is_not_served() {
+        let (mut store, _backend, _dir) = test_store();
+        let config = ChainConfig {
+            binary_tree_time: Some(0),
+            ..Default::default()
+        };
+        store.set_chain_config(&config).await.expect("chain config");
+
+        // No genesis trie at all: the header names a binary root, the mapping
+        // agrees, and there is nothing on disk under it.
+        let phantom = H256::repeat_byte(0x3c);
+        let header = BlockHeader {
+            number: 1,
+            timestamp: ACTIVE_TIMESTAMP,
+            state_root: phantom,
+            ..Default::default()
+        };
+        let hash = header.hash();
+        store
+            .add_block_header(hash, header.clone())
+            .await
+            .expect("header");
+        store
+            .write(
+                CANONICAL_BLOCK_HASHES,
+                1u64.to_le_bytes().to_vec(),
+                hash.encode_to_vec(),
+            )
+            .expect("canonical");
+        store.latest_block_header.update(header);
+        store.set_binary_trie_root(hash, phantom).expect("record");
+
+        assert_eq!(
+            store.get_binary_trie_root(hash).expect("read"),
+            Some(phantom)
+        );
+        assert!(
+            store
+                .canonical_block_for_binary_root(phantom)
+                .expect("resolve")
+                .is_none(),
+            "a recorded root the trie cannot resolve must not be servable"
+        );
+    }
+
+    /// The header the resolution returns is the one whose `state_root` a
+    /// client would verify against, so the two must be the same value.
+    #[tokio::test]
+    async fn the_resolved_block_is_the_one_whose_root_was_asked_for() {
+        let served = active_store().await;
+        let hash = served
+            .store
+            .canonical_block_for_binary_root(served.root)
+            .expect("resolve")
+            .expect("resolvable");
+        let header = served
+            .store
+            .get_block_header_by_hash(hash)
+            .expect("header")
+            .expect("stored");
+        assert_eq!(header.state_root, served.root);
+        assert_eq!(header.number, served.header.number);
     }
 }

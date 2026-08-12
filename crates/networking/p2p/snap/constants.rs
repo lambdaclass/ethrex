@@ -134,7 +134,32 @@ pub const MAX_BODY_FETCH_ATTEMPTS: u64 = MAX_HEADER_FETCH_ATTEMPTS;
 ///
 /// After snap syncing state, we full sync at least this many recent blocks
 /// to ensure we have complete execution history for recent blocks.
-pub const MIN_FULL_BLOCKS: u64 = 10_000;
+pub const MIN_FULL_BLOCKS_DEFAULT: u64 = 10_000;
+
+#[cfg(feature = "sync-test")]
+lazy_static::lazy_static! {
+    /// [`MIN_FULL_BLOCKS_DEFAULT`], overridable through the `MIN_FULL_BLOCKS`
+    /// environment variable under the `sync-test` feature — the same shape
+    /// `EXECUTE_BATCH_SIZE` uses in `sync.rs`, and for the same reason.
+    ///
+    /// Without an override no state download is reachable on a local network
+    /// at all: a chain shorter than this falls back to full sync in
+    /// `download_headers_to_sync_head`, and a kurtosis devnet is three orders
+    /// of magnitude shorter than 10 000 blocks. That gate is upstream of both
+    /// `snap` and `pbtsnap`, so both are untestable live without it.
+    pub static ref MIN_FULL_BLOCKS: u64 = std::env::var("MIN_FULL_BLOCKS")
+        .map(|var| var
+            .parse()
+            .expect("MIN_FULL_BLOCKS environmental variable is not a number"))
+        .unwrap_or(MIN_FULL_BLOCKS_DEFAULT);
+}
+
+#[cfg(not(feature = "sync-test"))]
+lazy_static::lazy_static! {
+    /// [`MIN_FULL_BLOCKS_DEFAULT`]. Only the `sync-test` build reads an
+    /// override; a release build has one value and no environment dependency.
+    pub static ref MIN_FULL_BLOCKS: u64 = MIN_FULL_BLOCKS_DEFAULT;
+}
 
 /// Number of blocks to execute in a single batch during full sync.
 pub const EXECUTE_BATCH_SIZE_DEFAULT: usize = 1024;

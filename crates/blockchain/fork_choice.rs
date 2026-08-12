@@ -126,14 +126,14 @@ pub async fn apply_fork_choice(
     // (the disk root has moved forward). Treating that FCU as a no-op would let the
     // CL move on and then fail downstream during `engine_getPayload` with a confusing
     // "state root missing" error. Falling through here lets the regular path detect
-    // the missing state via the `has_state_root` check below and route the FCU into
+    // the missing state via the `has_state_for_header` check below and route the FCU into
     // the deep-reorg apply path, which installs the overlay that makes head's state
     // readable again.
     if let Some(stored_finalized) = store.get_finalized_block_number().await?
         && head.number < latest
         && head.number <= stored_finalized
         && head_is_canonical
-        && store.has_state_root(head.state_root)?
+        && store.has_state_for_header(head_hash, &head)?
     {
         return Err(InvalidForkChoice::NewHeadAlreadyCanonical);
     }
@@ -215,7 +215,11 @@ pub async fn apply_fork_choice(
     // If the state can't be constructed from the DB, the caller starts a sync
     // toward the head instead of ignoring the FCU.
     // TODO(#5564): handle arbitrary reorgs
-    if !store.has_state_root(link_header.state_root)? {
+    // Asked of the *header*, not of the bare root: past `binaryTreeTime` a
+    // header's `state_root` is a binary-trie root that resolves against no MPT
+    // node, and a root-only check reports "not held" for every post-activation
+    // head. See `Store::has_state_for_header`.
+    if !store.has_state_for_header(link_block_hash, &link_header)? {
         warn!(
             link_block=%link_block_hash,
             link_number=%link_header.number,
@@ -351,6 +355,13 @@ async fn find_link_with_canonical_chain(
 ///    descending order to produce an `Overlay` that exposes the virtual state at
 ///    `pivot`. The layer cache is atomically replaced with a fresh empty cache
 ///    carrying the overlay. Reads now cascade: layer cache -> overlay -> disk.
+///
+///    On a chain that schedules EIP-8297 the same entries also carry the
+///    binary trie's reverse diff, so the overlay reconstructs *both*
+///    commitments at the pivot. The binary read cascade is gated on
+///    `Overlay::serves_binary_root` rather than `serves_root`, because before
+///    activation a header's state root is an MPT root and says nothing about
+///    which binary trie the pivot holds.
 /// 5. **Side-chain blocks `[T .. new_head]` are executed via the normal path.**
 ///    `Blockchain::add_block` is called for each block in ascending order. Reads
 ///    hit the layer cache (new-chain diffs) then the overlay (pivot baseline) then
@@ -358,7 +369,10 @@ async fn find_link_with_canonical_chain(
 /// 6. **First commit folds the overlay atomically.**
 ///    The first new-chain block that triggers a layer commit (via the reconciliation
 ///    path in `commit_to_disk`) writes the overlay entries plus the new layer together
-///    in a single RocksDB write batch, then clears the overlay.
+///    in a single RocksDB write batch, then clears the overlay. Binary-trie
+///    bridge entries go into the same batch but through their own list: their
+///    keys cannot be routed by length, so they are written straight to
+///    `BINARY_TRIE_NODES` instead of through the MPT's CF classifier.
 /// 7. **`AbortReorgGuard` resets cache on any failure.**
 ///    An `AbortReorgGuard` is armed immediately after overlay install. On any error
 ///    (side-chain execution failure, missing block body, fork-choice update error,
@@ -445,6 +459,22 @@ async fn reorg_apply_deep(
     // unwinds into them is still served correct state.
     if !store.flatkeyvalue_fully_generated()? {
         info!(%head_hash, "deferring deep-reorg apply: flat-KV generation still in progress");
+        return Err(InvalidForkChoice::Syncing);
+    }
+
+    // The same deferral for the binary trie's flat mirror, which inherits the
+    // same hole: `commit_to_disk` skips journaling mirror rows past the binary
+    // frontier, so entries written during a sweep are permanently missing
+    // those pre-images and an overlay would serve stale values. The binary read
+    // gate already switches the mirror off while an overlay is installed, so an
+    // unwind that lands there still reads correct state from the trie nodes —
+    // this closes the common case of a reorg arriving *during* generation.
+    //
+    // Gated on the schedule, not just on completeness: a chain with no binary
+    // tree never writes the marker, and an unconditional check would defer
+    // every deep reorg on every MPT chain for ever.
+    if store.binary_flat_generation_pending()? {
+        info!(%head_hash, "deferring deep-reorg apply: binary flat mirror generation still in progress");
         return Err(InvalidForkChoice::Syncing);
     }
 
@@ -762,6 +792,11 @@ fn map_chain_error_for_fcu(err: ChainError, last_valid_hash: H256) -> InvalidFor
         | ChainError::RLPDecodeError(_)
         | ChainError::EvmError(_)
         | ChainError::WitnessGeneration(_)
+        // Emphatically not a statement about the block: it says the caller asked
+        // for the wrong *witness format* for a perfectly valid binary-committed
+        // block. Classifying it as `InvalidAncestor` would let a witness-format
+        // mismatch reject a live branch.
+        | ChainError::BinaryCommittedHeader(_)
         | ChainError::Custom(_)
         | ChainError::UnknownPayload => InvalidForkChoice::StateNotReachable,
     }

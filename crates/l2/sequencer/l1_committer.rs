@@ -1684,34 +1684,14 @@ pub async fn find_last_known_state_root(
     store: &Store,
     head_block_number: u64,
 ) -> Result<u64, CommitterError> {
-    let Some(last_header) = store.get_block_header(head_block_number)? else {
-        unreachable!("Database is empty, genesis block should be present");
-    };
-
-    let mut current_last_header = last_header;
-
-    // Find the last block with a known state root
-    while !store.has_state_root(current_last_header.state_root)? {
-        if current_last_header.number == 0 {
-            return Err(CommitterError::FailedToCreateCheckpoint(
+    // Shares the L1 startup walk (`Store::last_block_with_state`) rather than
+    // keeping a second copy of it; the two drifted apart once already.
+    store
+        .last_block_with_state(head_block_number)?
+        .ok_or_else(|| {
+            CommitterError::FailedToCreateCheckpoint(
                 "unknown state found in DB. Please run `ethrex removedb` and restart node"
                     .to_string(),
-            ));
-        }
-        let parent_number = current_last_header.number - 1;
-
-        debug!("Need to regenerate state for block {parent_number}");
-
-        let Some(parent_header) = store.get_block_header(parent_number)? else {
-            return Err(CommitterError::FailedToCreateCheckpoint(format!(
-                "parent header for block {parent_number} not found"
-            )));
-        };
-
-        current_last_header = parent_header;
-    }
-
-    let last_state_number = current_last_header.number;
-
-    Ok(last_state_number)
+            )
+        })
 }

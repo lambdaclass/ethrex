@@ -222,6 +222,7 @@ pub async fn init_l2(
     let genesis = network.get_genesis()?;
     let store_config = StoreConfig {
         rocksdb_block_cache_size: opts.node_opts.rocksdb_block_cache_size,
+        rocksdb_enable_statistics: opts.node_opts.rocksdb_enable_statistics,
         ..StoreConfig::default()
     };
     let store = init_store_with_config(&datadir, genesis.clone(), store_config).await?;

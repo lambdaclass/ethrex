@@ -42,9 +42,11 @@
 //! blockchain.add_transaction_to_mempool(tx).await?;
 //! ```
 
+pub mod binary_witness;
 pub mod constants;
 pub mod error;
 pub mod fork_choice;
+pub mod health;
 pub mod mempool;
 pub mod payload;
 pub mod prewarm;
@@ -53,14 +55,16 @@ pub mod tracing;
 pub mod vm;
 
 use ::tracing::{error, info, instrument, warn};
-// Every `debug!` call site lives in the rayon warmer path, so the import is
-// unused in any configuration that compiles that path out.
+// Every *bare* `debug!` call site lives in the rayon warmer path, so the import
+// is unused in any configuration that compiles that path out. Call sites outside
+// that path spell out `::tracing::debug!` rather than widen this cfg.
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ::tracing::debug;
 use constants::{AMSTERDAM_MAX_INITCODE_SIZE, MAX_INITCODE_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH, MIN_BASE_FEE_PER_BLOB_GAS};
+use health::ChainHealth;
 
 use crossbeam::channel::{self as cb, TryRecvError, select};
 // Re-export stateless validation functions for backwards compatibility
@@ -92,8 +96,8 @@ use ethrex_rlp::constants::RLP_NULL;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{
-    AccountUpdatesList, DB_COMMIT_THRESHOLD, Store, UpdateBatch, error::StoreError, hash_address,
-    hash_key,
+    AccountUpdatesList, BinaryTrieAdvance, DB_COMMIT_THRESHOLD, Store, UpdateBatch,
+    error::StoreError, hash_address, hash_key,
 };
 use ethrex_trie::node::{BranchNode, ExtensionNode, LeafNode};
 use ethrex_trie::{Nibbles, Node, NodeRef, Trie, TrieError, TrieLogger, TrieNode};
@@ -254,6 +258,10 @@ pub struct Blockchain {
     /// Cache handoff slot from the mempool prewarmer to
     /// `execute_block_pipeline`; see `PrewarmedCache` and `crate::prewarm`.
     prewarmed: PrewarmedCache,
+    /// Whether the chain is advancing, and what the node is declining to do
+    /// when it is not. Read by `crate::health::monitor_chain_progress`; written
+    /// by the engine API's forkchoice handler. See [`crate::health`].
+    health: Arc<ChainHealth>,
 }
 
 /// Newtype around the prewarmer's cache-handoff slot so `Blockchain` can keep
@@ -519,6 +527,7 @@ impl Blockchain {
             options: blockchain_opts,
             merkle_pool: Self::build_merkle_pool(),
             prewarmed: PrewarmedCache::default(),
+            health: Arc::new(ChainHealth::new()),
         }
     }
 
@@ -541,6 +550,7 @@ impl Blockchain {
             options: BlockchainOptions::default(),
             merkle_pool: pool,
             prewarmed: PrewarmedCache::default(),
+            health: Arc::new(ChainHealth::new()),
         }
     }
 
@@ -566,6 +576,7 @@ impl Blockchain {
             options,
             merkle_pool: Self::build_merkle_pool(),
             prewarmed: PrewarmedCache::default(),
+            health: Arc::new(ChainHealth::new()),
         }
     }
 
@@ -593,6 +604,14 @@ impl Blockchain {
     /// orchestrator to drive the storage-side primitives.
     pub fn store(&self) -> &Store {
         &self.storage
+    }
+
+    /// The chain-progress tracker. The engine API's forkchoice handler reports
+    /// arrivals and refusals into it; `crate::health::monitor_chain_progress`
+    /// samples it. See [`crate::health`] for why a refused forkchoice update
+    /// and a frozen head are tracked together rather than separately.
+    pub fn health(&self) -> &Arc<ChainHealth> {
+        &self.health
     }
 
     /// Returns `true` while a deep-reorg apply pass is in flight. Set by
@@ -722,6 +741,29 @@ impl Blockchain {
 
         let chain_config = self.storage.get_chain_config();
 
+        // The raw, per-block `Vec<AccountUpdate>` is accumulated for two
+        // independent reasons, and the merkleizer must be told to keep it
+        // whenever *either* holds:
+        //
+        // - witness generation needs it to replay the block's state diff;
+        // - EIP-8297 shadow tracking needs it to advance the binary trie
+        //   (`AccountUpdatesList` is already MPT-shaped and cannot serve).
+        //
+        // This condition used to be `collect_witness` alone. A scheduled chain
+        // that happened not to be collecting witnesses would then reach
+        // `add_block_pipeline_inner` with no updates at all and silently skip
+        // the binary-trie advance, producing a trie with holes that only fails
+        // at activation.
+        let collect_updates = collect_witness || chain_config.binary_tree_scheduled();
+
+        // The EIP-8297 freeze, asked of *this* header exactly as
+        // `store_block_inner` asks it: from the flip onward the block's MPT diff
+        // is dropped rather than staged, so computing it is pure waste. Note
+        // this is the per-header question, not `binary_tree_scheduled()` — a
+        // pre-flip block on a scheduled chain still merkleizes, because its own
+        // header commits the root that comes out.
+        let merkleize_mpt = !chain_config.is_binary_tree_active(block.header.timestamp);
+
         // Validate the block pre-execution
         validate_block_pre_execution(block, parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
         self.validate_l1_transaction_types(block)?;
@@ -783,8 +825,13 @@ impl Blockchain {
         // executor (see `bal_parallel_exec_enabled` below) streams per-tx
         // updates over the channel, which only the streaming merkleizer
         // consumes — the synthesized path would leave the receiver dropped.
+        // A binary-tree-scheduled chain forces it for the same structural
+        // reason: only the streaming merkleizer accumulates the raw updates,
+        // and BAL synthesis is not a substitute (it never sets `removed` /
+        // `removed_storage`, so it cannot express account deletion to the
+        // binary trie).
         let optimistic_updates: Option<FxHashMap<Address, BalSynthesisItem>> =
-            if self.options.bal_parallel_trie_enabled && !collect_witness {
+            if self.options.bal_parallel_trie_enabled && !collect_updates {
                 bal.as_deref().map(synthesize_bal_updates)
             } else {
                 None
@@ -1126,7 +1173,8 @@ impl Blockchain {
                                 parent_header_ref,
                                 queue_length_ref,
                                 max_queue_length_ref,
-                                collect_witness,
+                                collect_updates,
+                                merkleize_mpt,
                             )?,
                         };
                         let merkle_end_instant = Instant::now();
@@ -1176,9 +1224,9 @@ impl Blockchain {
             merkleization_result?;
         let (execution_result, produced_bal, exec_end_instant) = execution_result?;
 
-        // Witness collection forces the streaming merkleizer (synthesized
-        // updates are disabled above), so the streaming witness is the only
-        // possible source of accumulated updates.
+        // Anything that needs the raw updates (witness generation, EIP-8297
+        // shadow tracking) forces the streaming merkleizer above, so the
+        // streaming accumulator is the only possible source of them.
         let accumulated_updates = streaming_witness;
 
         let exec_merkle_end_instant = Instant::now();
@@ -1208,14 +1256,34 @@ impl Blockchain {
         skip_all,
         fields(namespace = "block_execution")
     )]
+    /// `collect_updates` asks for the block's raw, merged
+    /// `Vec<AccountUpdate>` to be accumulated alongside the MPT work and
+    /// returned. Witness generation and EIP-8297 shadow tracking are the two
+    /// consumers; neither can be served from the `AccountUpdatesList`, which is
+    /// already MPT-shaped.
+    ///
+    /// `merkleize_mpt` is false from the EIP-8297 flip onward, where the MPT is
+    /// frozen (see [`Self::store_block_inner`]) and the sixteen shard workers
+    /// would be computing a root that is dropped on the floor. The stream is
+    /// still consumed to completion — see
+    /// [`Self::drain_updates_without_merkleizing`] for why that is not optional.
     fn handle_merkleization(
         &self,
         rx: Receiver<Vec<AccountUpdate>>,
         parent_header: &BlockHeader,
         queue_length: &AtomicUsize,
         max_queue_length: &mut usize,
-        collect_witness: bool,
+        collect_updates: bool,
+        merkleize_mpt: bool,
     ) -> Result<(AccountUpdatesList, Option<Vec<AccountUpdate>>), StoreError> {
+        if !merkleize_mpt {
+            return Ok(Self::drain_updates_without_merkleizing(
+                rx,
+                queue_length,
+                max_queue_length,
+                collect_updates,
+            ));
+        }
         let parent_state_root = parent_header.state_root;
 
         // Create 16 worker channels (crossbeam for select! support)
@@ -1287,12 +1355,12 @@ impl Blockchain {
             let mut has_storage: FxHashSet<H256> = Default::default();
 
             let mut accumulator: Option<FxHashMap<Address, AccountUpdate>> =
-                collect_witness.then(FxHashMap::default);
+                collect_updates.then(FxHashMap::default);
 
             for updates in rx {
                 let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
                 *max_queue_length = current_length.max(*max_queue_length);
-                // Accumulate updates for witness generation if enabled
+                // Accumulate the raw updates when a consumer asked for them
                 if let Some(acc) = &mut accumulator {
                     for update in updates.clone() {
                         match acc.entry(update.address) {
@@ -1419,6 +1487,82 @@ impl Blockchain {
         }
 
         result
+    }
+
+    /// [`Self::handle_merkleization`] with the MPT half removed: from the
+    /// EIP-8297 flip onward the MPT is frozen, so the sixteen shard workers have
+    /// nothing to produce that anything will read.
+    ///
+    /// **The stream must still be drained, and that is not a detail.** The
+    /// executor streams per-transaction updates down `rx` throughout execution;
+    /// dropping the receiver early makes its next `send` fail with "sending on a
+    /// closed channel", which surfaces as a spurious error racing whatever the
+    /// block's real outcome was. The same hazard is documented on the BAL path,
+    /// which drains for the same reason. Consuming `rx` to completion also keeps
+    /// the queue-depth accounting honest.
+    ///
+    /// Two things are still harvested from the stream, because they outlive the
+    /// MPT:
+    ///
+    /// - the merged raw `AccountUpdate`s, which are how the *binary* trie
+    ///   advances (`collect_updates` is unconditionally true on a scheduled
+    ///   chain, so past the flip this branch always accumulates);
+    /// - `code_updates`, because bytecode lives in its own content-addressed
+    ///   table shared by both tries and is not frozen with the MPT.
+    ///
+    /// `state_trie_hash` is deliberately `H256::zero()` rather than the parent's
+    /// root or the frozen MPT's. Nothing reads it past the flip — header
+    /// validation and payload building both take their binary-root branches —
+    /// and a zero root makes any future caller that wrongly reaches for it fail
+    /// its `validate_state_root` loudly instead of accepting a plausible-looking
+    /// hash computed over a trie that stopped advancing.
+    fn drain_updates_without_merkleizing(
+        rx: Receiver<Vec<AccountUpdate>>,
+        queue_length: &AtomicUsize,
+        max_queue_length: &mut usize,
+        collect_updates: bool,
+    ) -> (AccountUpdatesList, Option<Vec<AccountUpdate>>) {
+        let mut code_updates: Vec<(H256, Code)> = vec![];
+        let mut accumulator: Option<FxHashMap<Address, AccountUpdate>> =
+            collect_updates.then(FxHashMap::default);
+
+        for updates in rx {
+            let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
+            *max_queue_length = current_length.max(*max_queue_length);
+            if let Some(acc) = &mut accumulator {
+                for update in updates.clone() {
+                    match acc.entry(update.address) {
+                        Entry::Vacant(e) => {
+                            e.insert(update);
+                        }
+                        Entry::Occupied(mut e) => {
+                            e.get_mut().merge(update);
+                        }
+                    }
+                }
+            }
+            // Harvested per streamed message, and gated on `removed` exactly as
+            // the merkleizing path gates it, so the two produce the same list
+            // for the same block.
+            for update in updates {
+                if update.removed {
+                    continue;
+                }
+                if let (Some(info), Some(code)) = (&update.info, update.code) {
+                    code_updates.push((info.code_hash, code));
+                }
+            }
+        }
+
+        (
+            AccountUpdatesList {
+                state_trie_hash: H256::zero(),
+                state_updates: Vec::new(),
+                storage_updates: Vec::new(),
+                code_updates,
+            },
+            accumulator.map(|acc| acc.into_values().collect()),
+        )
     }
 
     /// Validation path synthesizes `BalSynthesisItem`s from the input BAL pre-execution and
@@ -1754,6 +1898,62 @@ impl Blockchain {
         collapse_root_node(&self.storage, parent_header.state_root, prefix, root)
     }
 
+    /// Refuse to build an MPT witness for a binary-committed header.
+    ///
+    /// **The guard belongs here, at the generator, not at the call sites.** An
+    /// [`ExecutionWitness`] is a flat list of RLP-encoded Merkle-Patricia nodes
+    /// that a verifier rebuilds a trie from and hashes against
+    /// `header.state_root`. Past the EIP-8297 activation that root is a *binary*
+    /// root, and no MPT witness can reproduce it — so there is no correct answer
+    /// to return, and every caller that reaches this code wants one. Guarding at
+    /// each call site instead only guards the call sites that exist today.
+    ///
+    /// **Per header, never per chain.** A block from before the activation on a
+    /// chain that has since flipped genuinely commits an MPT root, has a real
+    /// MPT witness, and must keep getting it — after the flip, across restarts,
+    /// and on either side of a reorg. Asking the chain-level question
+    /// (`binary_tree_scheduled()`) instead would make the whole pre-flip history
+    /// unwitnessable; that mistake wedged a devnet earlier on this branch. This
+    /// asks [`ChainConfig::is_binary_tree_active`] about *this header's*
+    /// timestamp, the same question `StoreVmDatabase::open`,
+    /// `Store::header_addresses_binary_trie` and the RPC guard
+    /// (`crates/networking/rpc/debug/witness_guard.rs`) ask.
+    ///
+    /// # Why refuse rather than dispatch to the binary generator
+    ///
+    /// [`Self::generate_binary_witness_for_blocks`] exists and could be called
+    /// from here, but it returns a `BinaryExecutionWitness` — a different type,
+    /// a different wire format, and a different verification procedure. The
+    /// callers of *this* function do not want "a witness", they want an MPT
+    /// witness:
+    ///
+    /// - the L2 committer feeds it to the prover's `ProgramInput`, whose guest
+    ///   program has no binary-trie support at all;
+    /// - the engine API encodes it in geth's `ExtWitness` RLP shape;
+    /// - the EF test runner hands it to a stateless backend;
+    /// - the JSON-RPC handlers already dispatch, at the method level
+    ///   (`debug_executionWitness` vs `debug_executionWitnessV2`), which is
+    ///   where the difference has to be visible anyway since the two responses
+    ///   have different schemas.
+    ///
+    /// Dispatching would therefore mean widening the return type to an enum and
+    /// making all of those callers reject the variant they cannot consume —
+    /// relocating this refusal to four places and creating four new ways to
+    /// forget it. Refusing here, once, is not the safe minimum; it is the
+    /// correct shape for a function that returns one format.
+    ///
+    /// [`ChainConfig::is_binary_tree_active`]: ethrex_common::types::ChainConfig::is_binary_tree_active
+    fn ensure_mpt_witnessable(&self, header: &BlockHeader) -> Result<(), ChainError> {
+        if self
+            .storage
+            .get_chain_config()
+            .is_binary_tree_active(header.timestamp)
+        {
+            return Err(ChainError::BinaryCommittedHeader(header.number));
+        }
+        Ok(())
+    }
+
     pub async fn generate_witness_for_blocks(
         &self,
         blocks: &[Block],
@@ -1784,6 +1984,15 @@ impl Blockchain {
                 "Empty block batch".to_string(),
             ))?
             .header;
+
+        // Every block, not just the first: a batch that starts before the
+        // activation and runs past it would open a perfectly good MPT parent
+        // trie and then merkleize into a root no header commits to. Checked
+        // before the trie is opened, so the refusal never depends on which side
+        // of the boundary the *parent* happens to sit on.
+        for block in blocks {
+            self.ensure_mpt_witnessable(&block.header)?;
+        }
 
         // Get state at previous block
         let trie = self
@@ -2112,6 +2321,18 @@ impl Blockchain {
         ))
     }
 
+    /// The other MPT witness generator: builds the witness from updates the
+    /// block pipeline already has, so an imported block can be witnessed without
+    /// re-execution.
+    ///
+    /// Guarded by the same per-header rule as
+    /// [`Self::generate_witness_for_blocks_with_fee_configs`], and for a sharper
+    /// reason: this one runs on the *import* path under `--precompute-witnesses`
+    /// and its output is written to the witness cache. Unguarded, the first
+    /// binary-committed block would seed that cache with a well-formed MPT
+    /// witness for the parent's state — and a poisoned cache is worse than a bad
+    /// generator, because a reader that never reaches the generator still gets
+    /// the wrong answer.
     pub fn generate_witness_from_account_updates(
         &self,
         account_updates: Vec<AccountUpdate>,
@@ -2119,6 +2340,8 @@ impl Blockchain {
         parent_header: BlockHeader,
         logger: &DatabaseLogger,
     ) -> Result<ExecutionWitness, ChainError> {
+        self.ensure_mpt_witnessable(&block.header)?;
+
         // Get state at previous block
         let trie = self
             .storage
@@ -2376,15 +2599,197 @@ impl Blockchain {
         execution_result: BlockExecutionResult,
         commit_depth: Option<usize>,
     ) -> Result<(), ChainError> {
-        // Check state root matches the one in block header
-        validate_state_root(&block.header, account_updates_list.state_trie_hash)?;
+        // No raw account updates in hand, so nothing to advance the binary trie
+        // *with*. Callers that extend the chain on a scheduled network go through
+        // [`Self::store_block_tracking_binary_trie`]; the ones that reach here
+        // re-store blocks the binary trie already holds (witness regeneration) or
+        // belong to an L2, which never schedules the commitment.
+        self.store_block_inner(
+            block,
+            account_updates_list,
+            execution_result,
+            commit_depth,
+            None,
+        )
+    }
 
+    /// [`Self::store_block_with_depth`] for the paths that also own the block's
+    /// raw account updates, and must therefore advance the EIP-8297 binary trie
+    /// with them.
+    ///
+    /// See [`Self::store_block_inner`] for the ordering this buys and why it
+    /// matters from activation onward.
+    fn store_block_tracking_binary_trie(
+        &self,
+        block: Block,
+        account_updates_list: AccountUpdatesList,
+        execution_result: BlockExecutionResult,
+        commit_depth: Option<usize>,
+        account_updates: &[AccountUpdate],
+    ) -> Result<(), ChainError> {
+        self.store_block_inner(
+            block,
+            account_updates_list,
+            execution_result,
+            commit_depth,
+            Some(account_updates),
+        )
+    }
+
+    /// Validate the header's state root, advance the EIP-8297 binary trie, and
+    /// stage the block.
+    ///
+    /// **Which root the header commits to is a per-header question.** It is
+    /// answered by `is_binary_tree_active(block.header.timestamp)` — the
+    /// timestamp of *this* header — never by a chain-level "has the commitment
+    /// been scheduled/reached" flag. Pre-activation headers genuinely carry MPT
+    /// roots and must keep validating and resolving against the MPT forever,
+    /// including after the flip, across restarts and across reorgs. A
+    /// chain-level check makes every pre-flip block in the chain's history
+    /// unimportable and its state unreadable.
+    ///
+    /// **Ordering.** For an *active* block the binary root has to exist before
+    /// the header can be validated, so shadow tracking runs first and a failed
+    /// validation un-records it. For a pre-activation block the order is the one
+    /// Phase C had — validate against the MPT root, then shadow-track — so a
+    /// block rejected before the flip still never touches the binary trie.
+    fn store_block_inner(
+        &self,
+        block: Block,
+        account_updates_list: AccountUpdatesList,
+        execution_result: BlockExecutionResult,
+        commit_depth: Option<usize>,
+        account_updates: Option<&[AccountUpdate]>,
+    ) -> Result<(), ChainError> {
+        let (block_hash, parent_hash) = (block.hash(), block.header.parent_hash);
+        // Per-header rule: ask the header being stored, not the chain.
+        let binary_tree_active = self
+            .storage
+            .get_chain_config()
+            .is_binary_tree_active(block.header.timestamp);
+
+        // The staged binary-trie advance, carried into this block's
+        // `UpdateBatch` so it joins the same diff layer as the MPT's nodes.
+        // Nothing here has written a node: dropping it on the error paths below
+        // discards the block's binary state completely.
+        let binary_update;
+
+        if binary_tree_active {
+            let (binary_root, recorded_here) = match account_updates {
+                Some(updates) => {
+                    let advance = self.storage.advance_binary_trie_for_block(
+                        block_hash,
+                        parent_hash,
+                        updates,
+                    )?;
+                    let root = advance.root;
+                    binary_update = Some(advance);
+                    (root, true)
+                }
+                // Re-storing a block the binary trie already advanced through
+                // (witness regeneration). Its recorded root is the answer; a
+                // missing one means the caller never shadow-tracked, which the
+                // header cannot be validated against. Nothing is re-staged: the
+                // nodes are already in a layer or on disk.
+                None => {
+                    binary_update = None;
+                    (
+                        self.storage
+                            .get_binary_trie_root(block_hash)?
+                            .ok_or_else(|| {
+                                ChainError::Custom(format!(
+                                    "block {block_hash:#x} is past the binary-tree activation but \
+                                     has no recorded binary root to validate its header against"
+                                ))
+                            })?,
+                        false,
+                    )
+                }
+            };
+            if let Err(err) = validate_state_root(&block.header, binary_root) {
+                if recorded_here {
+                    // The block is not entering the chain, so nothing may keep
+                    // pointing at the root it would have had — a later block
+                    // naming it as parent must not find one. The staged nodes go
+                    // with it: they are dropped here, unwritten.
+                    self.storage.remove_binary_trie_root(block_hash)?;
+                }
+                return Err(err);
+            }
+        } else {
+            // Pre-activation: the header commits the MPT root, exactly as it did
+            // before the commitment was ever scheduled.
+            validate_state_root(&block.header, account_updates_list.state_trie_hash)?;
+            binary_update = match account_updates {
+                Some(updates) => self.shadow_track_binary_trie(block_hash, parent_hash, updates)?,
+                None => None,
+            };
+        }
+
+        // Task D5 — the MPT is **frozen** at the flip. This reverses D2, which
+        // kept it advancing; the reasoning D2 deferred is now settled.
+        //
+        // From the first block whose header commits a binary root, this block's
+        // MPT diff is dropped and never reaches the store. The MPT stops where
+        // the last MPT-committing header left it and stays there.
+        //
+        // **Freezing loses nothing, because the MPT is single-version.** Its
+        // node tables are keyed by *path*, not by node hash, so block N+1
+        // overwrites block N's node at the same path: disk holds exactly one
+        // state (the canonical safe-commit root, `head - DB_COMMIT_THRESHOLD`)
+        // plus the in-memory diff layers above it. It can therefore only ever
+        // answer for a bounded, sliding window. Continuing to merkleize past the
+        // flip does not preserve history — it advances a trie past the last root
+        // any header names, computing nodes nothing can address (`has_state_root`
+        // is false for every active header, which is why `StoreVmDatabase` and
+        // the state RPCs resolve through the binary trie instead). Freezing
+        // keeps precisely the state that is still meaningful.
+        //
+        // It in fact *gains* a read. Today the last pre-flip root scrolls off
+        // the retention window ~128 blocks after the flip and becomes
+        // `MissingStateRoot` forever. Frozen, the commit gate flushes the
+        // pre-flip layers and then has nothing further to write, so disk parks
+        // on the last pre-flip state permanently and that root stays
+        // addressable. Pinned by
+        // `the_mpt_freezes_at_the_flip_and_keeps_serving_the_last_pre_flip_state`.
+        //
+        // **The layer chain still spans the boundary**, which is what makes the
+        // freeze free rather than a special case: layers are keyed by *header*
+        // state roots (`Store::apply_updates` keys on `last_block.header.state_root`),
+        // not by MPT roots, so a post-flip block still stages a layer — one
+        // carrying its binary nodes and an empty MPT set. Nothing in the commit
+        // gate, the safe-commit walk or the journal needs to know the MPT stopped:
+        // an empty node set commits to zero writes and journals to empty
+        // account-trie/storage-trie/flat-KV sections, with no special-casing.
+        //
+        // **Reorgs into MPT territory keep working.** Timestamps strictly
+        // increase along every chain (`TimestampNotGreaterThanParent`), so a
+        // branch containing pre-flip headers must diverge *below* the flip
+        // block. Such a reorg pivots below the flip, where the MPT was live and
+        // both the layers and the `STATE_HISTORY` reverse diffs exist; unwinding
+        // lands the MPT at the pivot and the new branch's pre-flip blocks
+        // re-advance it through the `else` arm above. Pinned by
+        // `a_reorg_to_a_pivot_below_the_flip_re_advances_the_frozen_mpt`.
+        //
+        // `code_updates` is deliberately *not* frozen: bytecode is
+        // content-addressed in its own table, shared by both tries, and the
+        // binary trie's code chunks do not replace `ACCOUNT_CODES` reads.
+        let (account_updates, storage_updates) = if binary_tree_active {
+            (Vec::new(), Vec::new())
+        } else {
+            (
+                account_updates_list.state_updates,
+                account_updates_list.storage_updates,
+            )
+        };
         let update_batch = UpdateBatch {
-            account_updates: account_updates_list.state_updates,
-            storage_updates: account_updates_list.storage_updates,
+            account_updates,
+            storage_updates,
             receipts: vec![(block.hash(), execution_result.receipts)],
             blocks: vec![block],
             code_updates: account_updates_list.code_updates,
+            // Staged with the MPT's nodes, flushed with them, dropped with them.
+            binary_update,
             commit_depth,
             // Per-block path: ack after staging so the next block's execution overlaps this
             // block's flush. Memory is bounded by `commit_depth` and the persist channel.
@@ -2396,16 +2801,110 @@ impl Blockchain {
             .map_err(|e| e.into())
     }
 
+    /// EIP-8297 shadow tracking: advance the binary trie by this block.
+    ///
+    /// A no-op unless `binaryTreeTime` is scheduled. On a chain that never
+    /// schedules the commitment this costs one `Option::is_some` and touches
+    /// no column family, so importing a block is byte-for-byte the work it was
+    /// before.
+    ///
+    /// When it *is* scheduled, every block advances the binary trie regardless
+    /// of whether the commitment is active yet, so the state is complete and
+    /// carried over when activation arrives. See
+    /// [`Store::advance_binary_trie_for_block`] for the cost this adds and why
+    /// a missing parent is fatal rather than a fresh start.
+    ///
+    /// This is the **pre-activation** half only. It runs after the header has
+    /// been validated against the MPT root, so a block rejected before the flip
+    /// never reaches the binary trie. From activation onward
+    /// [`Self::store_block_inner`] advances the trie itself, *before*
+    /// validation, because the header is validated against the root this
+    /// produces.
+    ///
+    /// **Every path that advances the chain must reach this (or the active-side
+    /// branch of [`Self::store_block_inner`]).** One that does not leaves a hole
+    /// in the shadow trie which nothing detects until the flip block, where it
+    /// is unrecoverable. Both are fed by [`Self::store_block_tracking_binary_trie`],
+    /// whose callers are [`Self::add_block`] and
+    /// [`Self::add_block_pipeline_inner`] — the latter covering the pipelined
+    /// engine-API route, the depth-bounded route and batch import, which all
+    /// funnel through it.
+    ///
+    /// Three other `store_block` callers deliberately do *not*:
+    /// - [`Self::generate_witness_for_blocks`] re-executes and re-stores blocks
+    ///   that were already imported, purely to repair state for the witness; the
+    ///   binary trie already holds them, and advancing again from the same
+    ///   parent root would recompute the identical root.
+    /// - the L2 sequencer's block producer and L1 committer checkpoints. An L2
+    ///   chain does not schedule `binaryTreeTime`; if one ever does, those need
+    ///   the same call.
+    ///
+    /// [`Store::advance_binary_trie_for_block`]: ethrex_storage::Store::advance_binary_trie_for_block
+    fn shadow_track_binary_trie(
+        &self,
+        block_hash: BlockHash,
+        parent_hash: BlockHash,
+        account_updates: &[AccountUpdate],
+    ) -> Result<Option<BinaryTrieAdvance>, ChainError> {
+        if !self.storage.get_chain_config().binary_tree_scheduled() {
+            return Ok(None);
+        }
+        Ok(Some(self.storage.advance_binary_trie_for_block(
+            block_hash,
+            parent_hash,
+            account_updates,
+        )?))
+    }
+
+    /// The `AccountUpdatesList` a frozen MPT produces for a block: no state or
+    /// storage diff at all, and only the code deployments, which are *not*
+    /// frozen with it — bytecode lives in its own content-addressed table that
+    /// both tries read.
+    ///
+    /// The serial counterpart of [`Self::drain_updates_without_merkleizing`],
+    /// which see for why `state_trie_hash` is zero rather than any real root.
+    /// The `removed` skip mirrors `Store::apply_account_updates_from_trie_batch`,
+    /// which `continue`s past a removed account before it reaches code
+    /// collection, so the two paths emit the same list for the same block.
+    fn frozen_mpt_updates_list(account_updates: &[AccountUpdate]) -> AccountUpdatesList {
+        let mut code_updates: Vec<(H256, Code)> = vec![];
+        for update in account_updates {
+            if update.removed {
+                continue;
+            }
+            if let (Some(info), Some(code)) = (&update.info, &update.code) {
+                code_updates.push((info.code_hash, code.clone()));
+            }
+        }
+        AccountUpdatesList {
+            state_trie_hash: H256::zero(),
+            state_updates: Vec::new(),
+            storage_updates: Vec::new(),
+            code_updates,
+        }
+    }
+
     pub fn add_block(&self, block: Block) -> Result<(), ChainError> {
         let since = Instant::now();
         let (res, updates) = self.execute_block(&block)?;
         let executed = Instant::now();
 
-        // Apply the account updates over the last block's state and compute the new state root
-        let account_updates_list = self
+        // Apply the account updates over the last block's state and compute the
+        // new state root — unless the EIP-8297 freeze has taken the MPT out of
+        // service for this header, in which case there is no root to compute
+        // and no diff to stage. Same per-header question `store_block_inner`
+        // asks, and the pipelined importer's `merkleize_mpt`.
+        let account_updates_list = if self
             .storage
-            .apply_account_updates_batch(block.header.parent_hash, &updates)?
-            .ok_or(ChainError::ParentStateNotFound)?;
+            .get_chain_config()
+            .is_binary_tree_active(block.header.timestamp)
+        {
+            Self::frozen_mpt_updates_list(&updates)
+        } else {
+            self.storage
+                .apply_account_updates_batch(block.header.parent_hash, &updates)?
+                .ok_or(ChainError::ParentStateNotFound)?
+        };
 
         let (gas_used, gas_limit, block_number, transactions_count) = (
             block.header.gas_used,
@@ -2413,9 +2912,9 @@ impl Blockchain {
             block.header.number,
             block.body.transactions.len(),
         );
-
         let merkleized = Instant::now();
-        let result = self.store_block(block, account_updates_list, res);
+        let result =
+            self.store_block_tracking_binary_trie(block, account_updates_list, res, None, &updates);
         let stored = Instant::now();
 
         if self.options.perf_logs_enabled {
@@ -2570,31 +3069,66 @@ impl Blockchain {
         );
         let block_hash = block.hash();
 
+        // EIP-8297 shadow tracking needs the same raw updates the witness
+        // generator consumes, and the generator takes them by value. Only clone
+        // when both want them; a chain that is not binary-tree-scheduled keeps
+        // the move it always had.
+        let binary_tree_scheduled = self.storage.get_chain_config().binary_tree_scheduled();
+        let mut accumulated_updates = accumulated_updates;
         let mut witness = None;
         if let Some(logger) = logger
-            && let Some(account_updates) = accumulated_updates
+            && let Some(account_updates) = if binary_tree_scheduled {
+                accumulated_updates.clone()
+            } else {
+                accumulated_updates.take()
+            }
         {
             let block_hash = block.hash();
-            let generated_witness = self.generate_witness_from_account_updates(
+            let generated = self.generate_witness_from_account_updates(
                 account_updates,
                 &block,
                 parent_header,
                 &logger,
-            )?;
-            match (should_store_witness, force_witness) {
-                (true, true) => {
-                    witness = Some(generated_witness.clone());
-                    self.storage
-                        .store_witness(block_hash, block_number, generated_witness)?;
+            );
+            // A binary-committed block has no MPT witness, and that is a fact
+            // about the block, not a defect in it. `should_store_witness` is the
+            // opportunistic cache behind `--precompute-witnesses`: failing the
+            // *import* because a debug convenience cannot be satisfied would
+            // halt a scheduled chain at its activation block, which is the
+            // failure mode this project has already paid for once. So the
+            // refusal is swallowed there and only there.
+            //
+            // `force_witness` is the caller who explicitly asked
+            // (`engine_newPayloadWithWitness` via `add_block_pipeline_with_witness`).
+            // That caller gets the error, because the alternative is handing it
+            // a witness for the wrong trie.
+            let generated_witness = match generated {
+                Ok(witness) => Some(witness),
+                Err(ChainError::BinaryCommittedHeader(number)) if !force_witness => {
+                    ::tracing::debug!(
+                        "not caching an MPT execution witness for block {number}: it is past the \
+                         binary-tree commitment (EIP-8297)"
+                    );
+                    None
                 }
-                (true, false) => {
-                    self.storage
-                        .store_witness(block_hash, block_number, generated_witness)?;
+                Err(error) => return Err(error),
+            };
+            if let Some(generated_witness) = generated_witness {
+                match (should_store_witness, force_witness) {
+                    (true, true) => {
+                        witness = Some(generated_witness.clone());
+                        self.storage
+                            .store_witness(block_hash, block_number, generated_witness)?;
+                    }
+                    (true, false) => {
+                        self.storage
+                            .store_witness(block_hash, block_number, generated_witness)?;
+                    }
+                    (false, true) => {
+                        witness = Some(generated_witness);
+                    }
+                    (false, false) => {}
                 }
-                (false, true) => {
-                    witness = Some(generated_witness);
-                }
-                (false, false) => {}
             }
         };
 
@@ -2608,7 +3142,27 @@ impl Blockchain {
             warn!("Failed to store block access list for block {block_hash}: {err}");
         }
 
-        let result = self.store_block_with_depth(block, account_updates_list, res, commit_depth);
+        let result = if binary_tree_scheduled {
+            // `collect_updates` in `execute_block_pipeline` is exactly this
+            // predicate OR witness collection, so on a scheduled chain the
+            // accumulator always ran. Absent updates here would mean that
+            // pairing has drifted, which would silently leave the binary
+            // trie with a hole; refuse rather than skip the block.
+            match accumulated_updates.as_deref() {
+                Some(account_updates) => self.store_block_tracking_binary_trie(
+                    block,
+                    account_updates_list,
+                    res,
+                    commit_depth,
+                    account_updates,
+                ),
+                None => Err(ChainError::Custom(
+                    "binary-tree shadow tracking is scheduled but the block pipeline produced no raw account updates".to_string(),
+                )),
+            }
+        } else {
+            self.store_block_with_depth(block, account_updates_list, res, commit_depth)
+        };
 
         let stored = Instant::now();
 
