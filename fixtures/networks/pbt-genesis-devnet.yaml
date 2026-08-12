@@ -1,10 +1,21 @@
 # EIP-8297 binary-tree devnet with the commitment active **at genesis**.
 #
-# The complement to `binary-tree-devnet.yaml`, not a replacement. That one
-# starts MPT-committed and flips a few slots in, which is the only shape that
-# exercises shadow tracking and the flip itself. This one has no MPT-committed
-# prefix at all, so it exercises the binary trie as the sole commitment from
-# block 0 — and nothing in the flip path runs. Run both.
+# NOT A SUPPORTED CONFIGURATION. Every chain this client targets starts
+# MPT-committed and flips later; `binary-tree-devnet.yaml` is the shape to run.
+# Kept because it is the only way to exercise the binary trie as the *sole*
+# commitment, with no MPT prefix and nothing in the flip path running — which
+# made it a useful control, and which is why `Genesis::compute_state_root`'s
+# binary branch describes activation at or before genesis as a test-only shape.
+#
+# Two consequences of that decision:
+#
+#   - The `ethereum-package` patch this needs was never filed upstream. It is
+#     pinned to `ETHEREUM_PACKAGE_REVISION` and will stop applying when that
+#     bumps. Nothing depends on it, so let it fail rather than chasing it.
+#   - The generator's silent discard of unknown chain-config keys — it drops
+#     `binaryTreeTime` without a warning — stops being our problem here, because
+#     an MPT-committed genesis is exactly what we want. It remains a footgun for
+#     anyone who does try this, which is why it is written down.
 #
 # REQUIRES A PATCHED ethereum-package. Apply it first:
 #
