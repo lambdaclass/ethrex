@@ -1,39 +1,36 @@
-# focil-devnet-0 — full EL × CL matrix over every client that currently ships a
-# FOCIL (EIP-7805) build.
+# focil-devnet-0 — EL × CL matrix over the FOCIL (EIP-7805) clients that are
+# up to date with the spec.
 #
-# Client census taken 2026-08-12 from the ethpandaops registry:
-#   ELs   besu:focil       2026-07-02   ✅ maintained
-#         ethrex:focil     2026-08-05   ✅ ours (this devnet builds from source)
-#         geth:focil       2025-07-31   ❌ over a year stale, excluded
-#         reth             only pellekrab-focil_impl (contributor branch), excluded
-#   CLs   teku:focil       2026-08-11   ✅
-#         lodestar:focil   2026-06-22   ✅
-#         lighthouse:focil 2026-06-16   ✅
+# Client census taken 2026-08-12 from the ethpandaops registry, with the
+# staleness verdict from actually booting each one on this devnet:
 #
-# Matrix (2 ELs × 2 CLs) plus one extra ethrex running --mempool.private, so
-# private vs gossiping mempool behaviour is observable on the same chain:
+#   ELs   ethrex          ✅ built from this branch
+#         besu:focil       2026-07-02  ✅ starts clean against the current genesis
+#         geth:focil       2025-07-31  ❌ over a year old
+#         reth                         ❌ only pellekrab-focil_impl, a contributor branch
+#   CLs   teku:focil       2026-08-11  ✅ current
+#         lodestar:focil   2026-06-22  ❌ stale
+#         lighthouse:focil 2026-06-16  ❌ stale
 #
-#   ethrex × lodestar     besu × lodestar
-#   ethrex × lighthouse   besu × lighthouse
-#   ethrex × lodestar  (--mempool.private)
+# lodestar and lighthouse are excluded because their focil images predate the
+# summer's Gloas `BeaconState` changes and cannot read a current genesis:
 #
-# teku is left out, and not by preference: the three FOCIL consensus clients
-# cannot currently share one genesis. The Gloas `BeaconState` container gained
-# variable-length fields over the summer, so the choice of genesis generator
-# picks which CLs can start at all:
+#   * against generator 6.1.7+ (the versions that emit `PAYLOAD_DUE_BPS`, which
+#     teku requires) lodestar dies in @chainsafe/ssz readVariableOffsets with
+#     "First offset must equal to fixedEnd 3134845 != 3134333", and lighthouse
+#     with "Built-in genesis state SSZ bytes are invalid: OffsetsAreDecreasing(0)";
+#   * against the older generator 6.0.6 lodestar starts, but lighthouse still
+#     fails with "Failed to build beacon chain: Head block not found in store",
+#     and teku refuses the config for the missing PAYLOAD_DUE_BPS.
 #
-#   * generator <= 6.0.6 emits the June-era state that lodestar:focil
-#     (v1.43.0/6506bf4, 2026-06-22) and lighthouse:focil (v8.1.3-52e5197,
-#     2026-06-16) were built against, but carries no `PAYLOAD_DUE_BPS`, so
-#     teku:focil (2026-08-11) refuses the config outright;
-#   * generator >= 6.1.7 emits `PAYLOAD_DUE_BPS` for teku, and then lodestar
-#     dies on "First offset must equal to fixedEnd 3134845 != 3134333"
-#     (@chainsafe/ssz readVariableOffsets) and lighthouse on "Built-in genesis
-#     state SSZ bytes are invalid: OffsetsAreDecreasing(0)".
+# So teku is the only consensus client currently able to run FOCIL against a
+# spec-current genesis. Add lodestar and lighthouse back when their focil images
+# are rebuilt.
 #
-# Nothing on the EL side bridges that. Two of the three have to sit out, so we
-# keep the two that pair with the most FOCIL-exercising setup and wait for
-# rebuilt lodestar/lighthouse focil images before adding teku back.
+# Matrix, plus one extra ethrex running --mempool.private so private vs
+# gossiping mempool behaviour is observable on the same chain:
+#
+#   ethrex × teku    besu × teku    ethrex × teku (--mempool.private)
 #
 # All CLs: supernode=true (PeerDAS satisfaction at fulu/gloas).
 #
@@ -51,34 +48,22 @@
 participants:
   - el_type: ethrex
     el_image: ethrex:focil-devnet-0
-    cl_type: lodestar
-    cl_image: ethpandaops/lodestar:focil
-    supernode: true
-    count: 1
-  - el_type: ethrex
-    el_image: ethrex:focil-devnet-0
-    cl_type: lighthouse
-    cl_image: ethpandaops/lighthouse:focil
+    cl_type: teku
+    cl_image: ethpandaops/teku:focil
     supernode: true
     count: 1
   - el_type: besu
     el_image: ethpandaops/besu:focil
-    cl_type: lodestar
-    cl_image: ethpandaops/lodestar:focil
-    supernode: true
-    count: 1
-  - el_type: besu
-    el_image: ethpandaops/besu:focil
-    cl_type: lighthouse
-    cl_image: ethpandaops/lighthouse:focil
+    cl_type: teku
+    cl_image: ethpandaops/teku:focil
     supernode: true
     count: 1
   - el_type: ethrex
     el_image: ethrex:focil-devnet-0
     el_extra_params:
       - "--mempool.private"
-    cl_type: lodestar
-    cl_image: ethpandaops/lodestar:focil
+    cl_type: teku
+    cl_image: ethpandaops/teku:focil
     supernode: true
     count: 1
 
@@ -95,15 +80,19 @@ additional_services:
 dora_params:
   image: bbusa/dora:focil
 
-# `:6.0.5` (default) and the experimental `:bbusa-fix-gloas-genesis` tag both
-# produce SSZ genesis states whose latest_block_header disagrees with the EL
-# genesis block root when gloas is active at epoch 0 with mainnet preset;
-# lodestar:focil aborts at startup with "Genesis block root ... does not match
-# genesis state latest block root". `:6.0.6` fixes that and is the newest tag
-# whose BeaconState layout the June-era lodestar and lighthouse focil images can
-# still deserialize -- see the teku note above before bumping it.
+# 6.0.6 is the last tag whose BeaconState the June-era lodestar/lighthouse focil
+# images can read, but it predates the `PayloadDueBps` template variable, so its
+# config.yaml carries no `PAYLOAD_DUE_BPS` and teku:focil refuses to start:
+# "The specified network configuration had missing or invalid values for
+# constants PAYLOAD_DUE_BPS" (GloasBuilder.validate).
+#
+# 6.2.0 emits it but is one tag too far: it also carries generator PR #313,
+# which deletes the besu and nethermind chainspec templates, while the
+# ethereum-package revision pinned in the Makefile still starts besu with
+# `--genesis-file=/network-configs/besu.json`. 6.1.7 is the last tag with both
+# `PAYLOAD_DUE_BPS` and tpl-besu.json.
 ethereum_genesis_generator_params:
-  image: ethpandaops/ethereum-genesis-generator:6.0.6
+  image: ethpandaops/ethereum-genesis-generator:6.1.7
 
 spamoor_params:
   spammers:
