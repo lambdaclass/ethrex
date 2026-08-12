@@ -62,10 +62,11 @@ jobs:
       - name: Check links
         uses: lycheeverse/lychee-action@v2
         with:
-          # lychee renamed its release tags to a `lychee-` prefix and removed the
-          # old aliases; the action's default (`v0.24.2`) now resolves to a
-          # deleted tag and the install 404s. Pin the prefixed tag explicitly.
-          lycheeVersion: lychee-v0.24.2
+          # lychee renamed its release tags to a `lychee-` prefix; the action's
+          # floating v2 tag now handles the prefix itself (pass the PLAIN
+          # version — it builds `download/lychee-<version>/`). Pinned explicitly
+          # so future default drift can't break the job silently again.
+          lycheeVersion: v0.24.2
           args: --no-progress --config lychee.toml docs/
           fail: true
 
