@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity =0.8.31;
 
+// Domain separator for messages sent through sendIntentToL1.
+bytes32 constant L2_TO_L1_INTENT_DOMAIN =
+    keccak256("ethrex.L2ToL1Intent.v1");
+
 /// @title Interface for the L2 side of the CommonBridge contract.
 /// @author LambdaClass
 /// @notice A CommonBridge contract is a contract that allows L1<->L2 communication
