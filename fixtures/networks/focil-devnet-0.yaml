@@ -9,9 +9,9 @@
 #         besu:focil       2026-07-02  ❌ see below
 #         geth:focil       2025-07-31  ❌ over a year old
 #         reth                         ❌ only pellekrab-focil_impl, a contributor branch
-#   CLs   teku:focil       2026-08-11  ✅
-#         lodestar:focil   2026-06-22  ✅
-#         lighthouse:focil 2026-06-16  ✅
+#   CLs   teku:focil       2026-08-11  ✅ produces inclusion lists
+#         lighthouse:focil 2026-06-16  ✅ fetches from the EL, verifies, republishes
+#         lodestar:focil   2026-06-22  ⚠️  runs the chain but performs no IL duty
 #
 # All three consensus clients work, but only once gloas is kept off genesis (see
 # the fork schedule note). With `gloas_fork_epoch: 0` lodestar and lighthouse
@@ -30,9 +30,18 @@
 # every branch — so besu needs a rebuild past that commit. A stuck besu is also
 # not harmless: its validators drag participation below the finality threshold.
 #
-# So the matrix is one EL against three CLs, plus a second ethrex on
-# --mempool.private so private vs gossiping mempool behaviour is observable on
-# the same chain.
+# lodestar is left out of the running set. Its focil build never requests an
+# inclusion list from the EL (`getInclusionListCommitteeDuties` only ever logged
+# a pre-heze warning), and with it in the mix the network split 2-2 on the
+# CONSENSUS layer -- teku on one branch, lodestar and lighthouse on another,
+# identical block numbers with different hashes -- so nothing finalised. All
+# four execution layers were ethrex and simply followed their own CL, so this is
+# a CL-side fork-choice disagreement, not an EL one. Worth reporting upstream;
+# re-add lodestar once it performs the IL duty.
+#
+# So the matrix is one EL against the two CLs that actually exercise FOCIL, plus
+# a second ethrex on --mempool.private so private vs gossiping mempool behaviour
+# is observable on the same chain.
 #
 # All CLs: supernode=true (PeerDAS satisfaction at fulu/gloas).
 #
@@ -58,12 +67,6 @@ participants:
     el_image: ethrex:focil-devnet-0
     cl_type: teku
     cl_image: ethpandaops/teku:focil
-    supernode: true
-    count: 1
-  - el_type: ethrex
-    el_image: ethrex:focil-devnet-0
-    cl_type: lodestar
-    cl_image: ethpandaops/lodestar:focil
     supernode: true
     count: 1
   - el_type: ethrex
