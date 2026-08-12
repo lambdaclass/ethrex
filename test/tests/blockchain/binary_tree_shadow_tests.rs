@@ -5980,6 +5980,34 @@ fn storage_proof_nodes(response: &serde_json::Value, slot: U256) -> Vec<Vec<u8>>
         .collect()
 }
 
+/// A never-written slot whose exclusion proof is more than one node deep.
+///
+/// The probe account's storage trie holds exactly two leaves, so its root is a
+/// branch and *most* absent slots diverge at that branch — their exclusion proof
+/// is the root alone, and every other proof in the response contains it. That is
+/// a real exclusion proof, but a shallow one: nothing about it exercises
+/// resolving a child by hash, which is where a withheld node would show up.
+///
+/// This picks a slot whose hashed key shares its first nibble with one of the
+/// two allocated slots, so the walk has to descend into that child and read the
+/// leaf sitting there before it can conclude anything. Chosen by hashing, not by
+/// asking the server, so the choice does not depend on what is under test.
+fn deep_absent_slot() -> U256 {
+    let first_nibble = |slot: u64| keccak(H256(U256::from(slot).to_big_endian()).as_bytes()).0[0] >> 4;
+    let occupied = [
+        first_nibble(V2_HEADER_SLOT),
+        first_nibble(V2_OVERFLOW_SLOT),
+    ];
+    (2u64..10_000)
+        .find(|slot| {
+            *slot != V2_HEADER_SLOT
+                && *slot != V2_OVERFLOW_SLOT
+                && occupied.contains(&first_nibble(*slot))
+        })
+        .map(U256::from)
+        .expect("some slot below 10000 must collide on the first nibble")
+}
+
 /// The `storageHash` an `eth_getProof` response reports, as an `H256`.
 fn reported_storage_hash(response: &serde_json::Value) -> H256 {
     let hex = response["storageHash"]
@@ -6173,6 +6201,7 @@ async fn get_proof_storage_proofs_verify_against_the_proven_storage_hash() {
     let present_slot = U256::from(V2_HEADER_SLOT);
     let other_slot = U256::from(V2_OVERFLOW_SLOT);
     let absent_slot = U256::from(V2_ABSENT_SLOT);
+    let deep_absent_slot = deep_absent_slot();
     let number = last_pre_flip.header.number;
 
     let response = ethrex_rpc::map_http_requests(
@@ -6182,6 +6211,7 @@ async fn get_proof_storage_proofs_verify_against_the_proven_storage_hash() {
                 H256(present_slot.to_big_endian()),
                 H256(other_slot.to_big_endian()),
                 H256(absent_slot.to_big_endian()),
+                H256(deep_absent_slot.to_big_endian()),
             ],
             number,
         ),
@@ -6216,10 +6246,21 @@ async fn get_proof_storage_proofs_verify_against_the_proven_storage_hash() {
     let present_proof = storage_proof_nodes(&response, present_slot);
     let other_proof = storage_proof_nodes(&response, other_slot);
     let absent_proof = storage_proof_nodes(&response, absent_slot);
+    let deep_absent_proof = storage_proof_nodes(&response, deep_absent_slot);
     assert!(
-        !present_proof.is_empty() && !other_proof.is_empty() && !absent_proof.is_empty(),
+        !present_proof.is_empty()
+            && !other_proof.is_empty()
+            && !absent_proof.is_empty()
+            && !deep_absent_proof.is_empty(),
         "a proof against a non-empty storage root cannot be empty; an empty one would \
          verify by short-circuit and prove nothing"
+    );
+    // The deep exclusion really is deep, or it is just the shallow one again.
+    assert!(
+        deep_absent_proof.len() > 1,
+        "slot {deep_absent_slot:#x} was chosen so its exclusion proof descends past the \
+         root, got {} node(s)",
+        deep_absent_proof.len()
     );
 
     // Inclusion, at both allocated slots.
@@ -6239,6 +6280,13 @@ async fn get_proof_storage_proofs_verify_against_the_proven_storage_hash() {
         Some(ProvenSlot::Absent),
         "slot {absent_slot:#x} was never written and must be proven absent"
     );
+    // The deep one: its walk descends into a child resolved by hash before it
+    // can conclude anything, so this exclusion is not the root branch alone.
+    assert_eq!(
+        slot_proven_by(storage_hash, deep_absent_slot, &deep_absent_proof),
+        Some(ProvenSlot::Absent),
+        "slot {deep_absent_slot:#x} was never written and must be proven absent"
+    );
 
     // The values beside the proofs have to agree with what the proofs prove, or
     // the response is self-contradictory whatever it verifies against.
@@ -6246,6 +6294,7 @@ async fn get_proof_storage_proofs_verify_against_the_proven_storage_hash() {
         (present_slot, V2_HEADER_SLOT_VALUE),
         (other_slot, V2_OVERFLOW_SLOT_VALUE),
         (absent_slot, 0),
+        (deep_absent_slot, 0),
     ] {
         let entry = response["storageProof"]
             .as_array()
@@ -6268,6 +6317,7 @@ async fn get_proof_storage_proofs_verify_against_the_proven_storage_hash() {
     for (name, slot, proof) in [
         ("inclusion", present_slot, &present_proof),
         ("exclusion", absent_slot, &absent_proof),
+        ("deep exclusion", deep_absent_slot, &deep_absent_proof),
     ] {
         for index in 0..proof.len() {
             let mut tampered = proof.clone();

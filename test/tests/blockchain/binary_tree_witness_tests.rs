@@ -71,8 +71,12 @@ use ethrex_rpc::utils::RpcErr;
 use ethrex_storage::Store;
 
 use super::binary_tree_shadow_tests::{
-    BoundaryChains, FLIP_BLOCK, binary_root, build_boundary_chains, store_from_genesis,
+    BoundaryChains, FLIP_BLOCK, binary_root, build_boundary_chains,
+    build_boundary_chains_paying_withdrawals, store_from_genesis, withdrawal_recipients,
 };
+use ethrex_common::{Address, U256};
+use ethrex_trie::{Node, Trie};
+use std::collections::BTreeMap;
 
 /// Assert the chain really flipped where these tests assume it did.
 ///
@@ -982,5 +986,218 @@ async fn v2_by_number_serves_a_binary_committed_header() {
     assert_eq!(
         replay(&witness, &head, &chains).expect("the by-number witness re-executes"),
         head.header.state_root
+    );
+}
+
+// ===========================================================================
+// Section 4 — withdrawals.
+//
+// Withdrawal credits are applied by the consensus layer, outside the EVM, so
+// the execution database logger never reports the recipients as accessed
+// accounts. Both witness generators therefore touch those addresses by hand
+// after execution — `crates/blockchain/binary_witness.rs` for the binary
+// witness, `crates/blockchain/blockchain.rs` for the MPT one — so the nodes on
+// their paths land in the witness.
+//
+// Every other chain in this suite builds blocks with an empty withdrawal list,
+// which made those branches unreachable: deleting either failed no test. The
+// chains here pay withdrawals in every block, to addresses that appear in no
+// genesis alloc and in no transaction, so the hand-touching is the only thing
+// that can put their nodes in a witness.
+// ===========================================================================
+
+/// What each recipient must hold after `count` blocks, given
+/// `binary_tree_shadow_tests`' schedule of `1_000 + block_number` Gwei per
+/// block per recipient.
+///
+/// Spelled out rather than read back from the chain: a balance compared against
+/// the store's own answer would agree with whatever the builder happened to
+/// credit, including nothing.
+fn expected_withdrawal_balance(count: u64) -> U256 {
+    let gwei: u64 = (1..=count).map(|number| 1_000 + number).sum();
+    U256::from(gwei) * U256::from(1_000_000_000u64)
+}
+
+/// The recipients really were paid, and paid by withdrawals alone.
+///
+/// Without this, everything below could pass over a chain whose blocks carry
+/// withdrawal lists that credit nothing — `LEVM::process_withdrawals` skips
+/// zero-amount entries, so "carries withdrawals" and "pays withdrawals" are
+/// different claims.
+fn assert_withdrawals_were_actually_paid(chains: &BoundaryChains, head: &Block, count: u64) {
+    let withdrawals = head
+        .body
+        .withdrawals
+        .as_ref()
+        .expect("a withdrawal-paying block must carry a withdrawal list");
+    assert!(
+        !withdrawals.is_empty() && withdrawals.iter().all(|w| w.amount > 0),
+        "every withdrawal must credit something, got {withdrawals:?}"
+    );
+    let expected = expected_withdrawal_balance(count);
+    assert!(!expected.is_zero());
+    for address in withdrawal_recipients() {
+        assert!(
+            withdrawals.iter().any(|w| w.address == address),
+            "the head block must pay {address:#x}"
+        );
+        let account = chains
+            .scheduled_store
+            .get_binary_account_info(head.header.state_root, address)
+            .expect("binary account read")
+            .unwrap_or_else(|| panic!("{address:#x} must exist after being paid"));
+        assert_eq!(
+            account.balance, expected,
+            "{address:#x} must hold exactly what the withdrawals paid it and nothing else — \
+             any other figure means something besides a withdrawal credited it"
+        );
+        assert_eq!(
+            account.nonce, 0,
+            "{address:#x} must be untouched by transactions"
+        );
+    }
+}
+
+/// The binary generator's withdrawal replay, made load-bearing.
+///
+/// Deleting the `block.body.withdrawals` branch of
+/// `generate_binary_witness_for_blocks` leaves this witness without the nodes
+/// on the recipients' paths, and the replay has nothing to apply the credits
+/// against.
+#[tokio::test]
+async fn a_v2_witness_over_a_block_paying_withdrawals_re_executes() {
+    let chains = build_boundary_chains_paying_withdrawals(FLIP_BLOCK).await;
+    assert_flip_shape(&chains);
+    let head = chains.scheduled_blocks.last().unwrap().clone();
+    assert_withdrawals_were_actually_paid(&chains, &head, FLIP_BLOCK);
+
+    let witness = v2_witness(&chains, &head).await;
+    assert_eq!(witness.format, BINARY_WITNESS_FORMAT);
+    assert!(!witness.state.is_empty());
+    assert_ne!(
+        witness.pre_state_root, head.header.state_root,
+        "the block must change the state, or the replay proves nothing"
+    );
+
+    assert_eq!(
+        replay(&witness, &head, &chains).expect("the witness must re-execute"),
+        head.header.state_root,
+        "the witness must reproduce the root the header commits, withdrawals included"
+    );
+}
+
+/// The same, two blocks deeper, where the parent is itself binary-committed and
+/// the recipients already exist in the pre-state — so the witness must carry
+/// their *inclusion* paths rather than the exclusion paths of accounts the
+/// block creates.
+#[tokio::test]
+async fn a_v2_witness_over_a_later_withdrawal_paying_block_re_executes() {
+    let count = FLIP_BLOCK + 2;
+    let chains = build_boundary_chains_paying_withdrawals(count).await;
+    assert_flip_shape(&chains);
+    let head = chains.scheduled_blocks.last().unwrap().clone();
+    let parent = &chains.scheduled_blocks[chains.scheduled_blocks.len() - 2];
+    assert!(parent.header.timestamp >= chains.activation);
+    assert_withdrawals_were_actually_paid(&chains, &head, count);
+
+    // What makes this the inclusion case rather than a repeat of the test above.
+    for address in withdrawal_recipients() {
+        assert!(
+            chains
+                .scheduled_store
+                .get_binary_account_info(parent.header.state_root, address)
+                .expect("binary account read")
+                .is_some(),
+            "{address:#x} must already exist in the parent state"
+        );
+    }
+
+    let witness = v2_witness(&chains, &head).await;
+    assert_eq!(
+        replay(&witness, &head, &chains).expect("the witness must re-execute"),
+        head.header.state_root
+    );
+}
+
+/// The MPT generator's withdrawal replay, made load-bearing.
+///
+/// There is no MPT equivalent of `recompute_post_state_root` to re-execute
+/// against, so this asserts the property the replay exists to produce: the
+/// witness must let a consumer *reach* each recipient's account in the
+/// pre-state trie. Rebuilding that trie from the witness nodes and walking to
+/// the recipient is what `apply_account_updates` does on the consumer side.
+///
+/// The walk distinguishes the two outcomes that matter. `BranchNode::get` and
+/// `ExtensionNode::get` raise `InconsistentTree` when a child reference cannot
+/// be resolved, so a witness missing the nodes on a recipient's path errors
+/// here rather than reporting the account absent — "the path is carried and the
+/// account is new" and "the path was never carried" do not look alike.
+#[tokio::test]
+async fn an_mpt_witness_over_a_block_paying_withdrawals_carries_the_recipients_paths() {
+    let chains = build_boundary_chains_paying_withdrawals(FLIP_BLOCK).await;
+    let blockchain = Blockchain::default_with_store(chains.scheduled_store.clone());
+
+    let mut checked = 0;
+    for block in &chains.scheduled_blocks {
+        // The MPT generator refuses binary-committed headers, so only the
+        // pre-flip blocks are in scope.
+        if block.header.timestamp >= chains.activation {
+            continue;
+        }
+        let number = block.header.number;
+        let withdrawals = block
+            .body
+            .withdrawals
+            .as_ref()
+            .expect("every block of this chain carries withdrawals");
+        assert!(
+            !withdrawals.is_empty() && withdrawals.iter().all(|w| w.amount > 0),
+            "block {number} must actually pay withdrawals"
+        );
+
+        let parent_state_root = chains
+            .scheduled_store
+            .get_block_header_by_hash(block.header.parent_hash)
+            .expect("reading the parent header must not error")
+            .unwrap_or_else(|| panic!("block {number} must have a stored parent"))
+            .state_root;
+
+        let witness = blockchain
+            .generate_witness_for_blocks(std::slice::from_ref(block))
+            .await
+            .unwrap_or_else(|error| panic!("block {number} must get an MPT witness: {error}"));
+        let witness = RpcExecutionWitness::try_from(witness).expect("witness converts to RPC form");
+
+        // Rebuilt from the witness alone, each node keyed by its own hash.
+        // Nothing here consults the store.
+        let mut nodes = BTreeMap::new();
+        for encoded in &witness.state {
+            let node = Node::decode(encoded).expect("a witness node must decode");
+            nodes.insert(keccak(encoded), node);
+        }
+        assert!(
+            nodes.contains_key(&parent_state_root),
+            "block {number}'s witness must be rooted at its parent's MPT root"
+        );
+        let trie = Trie::from_nodes(parent_state_root, &nodes)
+            .expect("the witness must rebuild the pre-state trie");
+
+        for withdrawal in withdrawals {
+            let address: Address = withdrawal.address;
+            let path = keccak(address.to_fixed_bytes());
+            trie.get(path.as_bytes()).unwrap_or_else(|error| {
+                panic!(
+                    "block {number}: the witness does not reach withdrawal recipient \
+                     {address:#x} in the pre-state trie: {error}. Without those nodes a \
+                     consumer cannot apply the credit."
+                )
+            });
+        }
+        checked += 1;
+    }
+    assert_eq!(
+        checked,
+        FLIP_BLOCK as usize - 1,
+        "the chain must really contain pre-flip withdrawal-paying blocks to check"
     );
 }
