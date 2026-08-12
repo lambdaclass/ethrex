@@ -136,7 +136,7 @@ pub async fn run_ef_test(
     // benefit in single-threaded zkVM guest builds. The non-stateless runs are the right
     // home for this check.
     #[cfg(not(feature = "stateless"))]
-    if test.network == Fork::Amsterdam {
+    if test.network >= Fork::Amsterdam {
         run_two_pass_parallel(test_key, test).await?;
     }
 
@@ -414,13 +414,28 @@ fn exception_in_rlp_decoding(block_fixture: &BlockWithRLP) -> bool {
         .iter()
         .any(|case| matches!(case, BlockChainExpectedException::TxtException(msg) if msg == "Nonce is max"));
 
+    // EIP-8141 structural frame rules (frame count, reserved modes, forbidden
+    // flag/target combinations) are enforced in ethrex's type-0x06 decoder, so a
+    // fixture expecting an invalid frame format legitimately fails to decode.
+    let expects_invalid_frame_format = block_fixture
+        .expect_exception
+        .as_ref()
+        .unwrap_or(&Vec::new())
+        .iter()
+        .any(|case| matches!(case, BlockChainExpectedException::InvalidFrameFormat));
+
     match CoreBlock::decode(block_fixture.rlp.as_ref()) {
         Ok(_) => {
             assert!(!expects_rlp_exception);
             false
         }
         Err(_) => {
-            assert!(expects_rlp_exception || expects_invalid_signature || expects_nonce_too_high);
+            assert!(
+                expects_rlp_exception
+                    || expects_invalid_signature
+                    || expects_nonce_too_high
+                    || expects_invalid_frame_format
+            );
             true
         }
     }

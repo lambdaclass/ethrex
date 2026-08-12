@@ -1798,6 +1798,21 @@ impl<'a> VM<'a> {
             // Set env.origin for this frame (ORIGIN opcode reads this)
             self.env.origin = caller;
 
+            // Log count of the scope this frame's backup will be committed into.
+            // The CallFrame branch below relies on `run_execution` having already
+            // committed the frame (merging its logs up into this scope), then
+            // slices `[substate_logs_before..]` to recover exactly this frame's
+            // logs without re-committing.
+            let substate_logs_before = self.substate.logs_len();
+
+            // Push substate backup for per-frame state isolation. Everything the
+            // frame warms — including its own target, charged just below — lives
+            // inside this backup, so a failed frame contributes no warmth to later
+            // frames. EIP-8141 §Execution shares the warm/cold journal across
+            // frames; EELS merges a frame's accessed set into that journal only
+            // when the frame succeeds, which is what reverting this backup does.
+            self.substate.push_backup();
+
             // Resolve any EIP-7702 delegation at the resolved target. For a non-delegated
             // target this is equivalent to `db.get_account_code(target)`; for a delegated
             // target it follows the 0xef0100 || addr indicator and returns the delegatee's
@@ -1807,12 +1822,9 @@ impl<'a> VM<'a> {
             // CallFrame receives the resolved `code_address`. Mirrors the pattern used at
             // top-level tx entry in default_hook::set_bytecode_and_code_address.
             //
-            // access_cost is intentionally discarded: this frame entry is analogous to a
-            // top-level tx entry (a call from 0xaa / tx.sender, not a CALL opcode), and
-            // default_hook.rs drops the same cost there. EIP-8141 §Execution is silent on
-            // billing the 7702 access cost for `resolved_target`, so we keep frame-entry
-            // behavior consistent with tx-entry behavior.
-            let (is_delegation_7702, _access_cost, code_address, bytecode) =
+            // Following the indicator is a second account access, and it is billed to
+            // the frame alongside the target access below.
+            let (is_delegation_7702, delegation_access_cost, code_address, bytecode) =
                 crate::utils::eip7702_get_code(
                     self.db,
                     &mut self.substate,
@@ -1827,15 +1839,47 @@ impl<'a> VM<'a> {
                 recorder.record_touched_address(code_address);
             }
 
-            // Log count of the scope this frame's backup will be committed into.
-            // The CallFrame branch below relies on `run_execution` having already
-            // committed the frame (merging its logs up into this scope), then
-            // slices `[substate_logs_before..]` to recover exactly this frame's
-            // logs without re-committing.
-            let substate_logs_before = self.substate.logs_len();
+            // Entering a frame reads its target's account (code, and the balance the
+            // warm/cold charge below is priced against), so EIP-7928 reconstructors
+            // must see the touch. Recorded before the frame runs and kept even when it
+            // halts: the read happened regardless of what the frame did afterwards.
+            if let Some(recorder) = self.db.bal_recorder.as_mut() {
+                recorder.record_touched_address(target);
+            }
 
-            // Push substate backup for per-frame state isolation
-            self.substate.push_backup();
+            // EIP-8141 §Execution: a VERIFY frame whose resolved target has no code
+            // runs the protocol default code *instead of* an EVM. It never builds a
+            // gas meter, so it neither pays the entry charges below nor leaves its
+            // target warm for later frames. Every other frame — including a SENDER or
+            // DEFAULT frame to a codeless account, which runs an EVM over empty code —
+            // is entered normally and pays.
+            let runs_default_verify_code = frame.execution_mode() == FrameMode::Verify
+                && bytecode.is_empty()
+                && !is_delegation_7702;
+
+            // EIP-8141 §Rationale: "Cold/warm access costs for the frame's target
+            // account are charged within the frame's own `gas_limit` through the
+            // normal EVM warm/cold accounting, not through the per-frame cost."
+            // The frame is entered from ENTRY_POINT (or tx.sender), so nothing else
+            // pays for reaching the target; without this a frame reads its target for
+            // free and every later frame re-pays the cold price for an account an
+            // earlier frame already touched.
+            let frame_entry_gas = if runs_default_verify_code {
+                0
+            } else {
+                let target_access = if self.substate.add_accessed_address(target) {
+                    crate::gas_cost::cold_account_access_cost(self.env.config.fork)
+                } else {
+                    crate::gas_cost::WARM_ADDRESS_ACCESS_COST
+                };
+                target_access.saturating_add(delegation_access_cost)
+            };
+
+            // The entry charges come out of the frame's own budget, so a frame that
+            // cannot afford to be entered fails without executing, forfeiting its
+            // whole gas limit (an exceptional halt, not a revert).
+            let frame_entry_unaffordable = frame_entry_gas > frame.gas_limit;
+            let frame_gas_after_entry = frame.gas_limit.saturating_sub(frame_entry_gas);
 
             // EIP-8141 top-level value transfer: the outer
             // frame call owns CALLVALUE delivery. We only CHECK affordability
@@ -1881,6 +1925,13 @@ impl<'a> VM<'a> {
             let state_gas_spill_at_frame_entry = self.state_gas_spill;
 
             let (frame_success, frame_gas_used, frame_logs) = if value_transfer_reverted {
+                // A frame whose sender cannot fund its `value` never starts, so it
+                // spends nothing — not even the entry charges, which are levied on
+                // the gas meter this branch never builds.
+                self.substate.revert_backup();
+                self.restore_cache_state()?;
+                (false, 0u64, Vec::new())
+            } else if frame_entry_unaffordable {
                 self.substate.revert_backup();
                 self.restore_cache_state()?;
                 (false, frame.gas_limit, Vec::new())
@@ -1907,11 +1958,11 @@ impl<'a> VM<'a> {
                             let mut this_frame_logs = self.substate.current_logs();
                             this_frame_logs.extend(logs);
                             self.substate.commit_backup();
-                            (true, gas_used, this_frame_logs)
+                            (true, frame_entry_gas + gas_used, this_frame_logs)
                         } else {
                             self.substate.revert_backup();
                             self.restore_cache_state()?;
-                            (false, gas_used, Vec::new())
+                            (false, frame_entry_gas + gas_used, Vec::new())
                         }
                     }
                     Err(_) => {
@@ -1931,12 +1982,12 @@ impl<'a> VM<'a> {
                     caller,                                    // msg_sender
                     target,                                    // to (delegator; ADDRESS/storage)
                     code_address,                              // code_address (delegatee when 7702)
-                    bytecode,           // bytecode (delegatee's code when 7702)
-                    frame.value,        // msg_value -- CALLVALUE
-                    frame.data.clone(), // calldata
-                    is_static,          // is_static
-                    frame.gas_limit,    // gas_limit
-                    0,                  // depth
+                    bytecode,              // bytecode (delegatee's code when 7702)
+                    frame.value,           // msg_value -- CALLVALUE
+                    frame.data.clone(),    // calldata
+                    is_static,             // is_static
+                    frame_gas_after_entry, // gas_limit (entry charges already taken)
+                    0,                     // depth
                     false, // should_transfer_value (do_frame_value_transfer! handles it)
                     false, // is_create
                     0,     // ret_offset
@@ -1974,13 +2025,13 @@ impl<'a> VM<'a> {
                             // logs, which would duplicate them into frame_receipts[i]).
                             let mut merged_logs = self.substate.current_logs();
                             let this_frame_logs = merged_logs.split_off(substate_logs_before);
-                            (true, gas_used, this_frame_logs)
+                            (true, frame_entry_gas + gas_used, this_frame_logs)
                         } else {
                             // A normal EVM revert reaches `handle_state_backup` inside
                             // `run_execution`, which already reverted the backup and
                             // restored the cache for this frame; repeating it here would
                             // revert an extra level.
-                            (false, gas_used, Vec::new())
+                            (false, frame_entry_gas + gas_used, Vec::new())
                         }
                     }
                     Err(_e) => {
