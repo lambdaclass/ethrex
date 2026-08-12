@@ -887,12 +887,17 @@ fn sender_frame_transfers_value_to_eoa() {
             data: Bytes::new(),
         },
     ]);
-    let accounts = [(
-        FUNDED_SENDER,
-        AUTO_SEED_SENDER_BALANCE,
-        0,
-        Bytes::from(APPROVE_BOTH_CODE.to_vec()),
-    )];
+    // Seeded with a balance so the recipient is already alive: reviving a dead
+    // account is a separate, priced case (`sender_frame_reviving_a_dead_target_pays_new_account`).
+    let accounts = [
+        (
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        ),
+        (eoa, U256::one(), 0, Bytes::new()),
+    ];
     let (result, db) = run_frame_tx(&accounts, tx);
     let report = result.expect("plain EOA transfer must be a VALID, SUCCESSFUL tx");
     // frame[1] (the SENDER frame) succeeded:
@@ -903,7 +908,11 @@ fn sender_frame_transfers_value_to_eoa() {
         "SENDER frame to a code-less EOA must succeed (default code = success)"
     );
     // The EOA actually received the value:
-    assert_eq!(balance_of(&db, eoa), value, "value not delivered to EOA");
+    assert_eq!(
+        balance_of(&db, eoa),
+        value.saturating_add(U256::one()),
+        "value not delivered to EOA"
+    );
 }
 
 #[test]
@@ -930,12 +939,15 @@ fn sender_frame_to_eoa_emits_transfer_log() {
             data: Bytes::new(),
         },
     ]);
-    let accounts = [(
-        FUNDED_SENDER,
-        AUTO_SEED_SENDER_BALANCE,
-        0,
-        Bytes::from(APPROVE_BOTH_CODE.to_vec()),
-    )];
+    let accounts = [
+        (
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        ),
+        (eoa, U256::one(), 0, Bytes::new()),
+    ];
     let (result, _db) = run_frame_tx(&accounts, tx);
     let report = result.expect("EOA transfer must be a valid, successful tx");
     let is_transfer_log = |l: &ethrex_common::types::Log| {
@@ -956,6 +968,88 @@ fn sender_frame_to_eoa_emits_transfer_log() {
     assert!(
         report.logs.iter().any(is_transfer_log),
         "EIP-7708 transfer log missing from report.logs"
+    );
+}
+
+/// A SENDER frame whose value transfer revives a dead account pays the EIP-8037
+/// NEW_ACCOUNT state cost at entry, from its own gas limit and before it runs
+/// (EELS `charge_value_transfer_to_non_alive_account`). A frame that cannot
+/// afford the charge never executes and forfeits its whole gas limit.
+///
+/// Found on a devnet, not by a fixture: ethrex charged nothing here and billed
+/// the frame 3_000 while Nethermind billed it the full limit, so the two split
+/// on the header `gasUsed` of the first frame transaction that paid a fresh
+/// address.
+#[test]
+fn sender_frame_reviving_a_dead_target_pays_new_account() {
+    let dead = Address::from_low_u64_be(0xDEAD1); // never seeded: not alive
+    let value = U256::from(5_000_000u64);
+    let accounts = [(
+        FUNDED_SENDER,
+        AUTO_SEED_SENDER_BALANCE,
+        0,
+        Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+    )];
+
+    let sender_frame = |gas_limit: u64| Frame {
+        mode: u8::from(FrameMode::Sender),
+        flags: 0,
+        target: Some(dead),
+        gas_limit,
+        value,
+        data: Bytes::new(),
+    };
+
+    // A frame limit that covers a cold access but not the account creation.
+    let tx = frame_tx_with_frames(vec![verify_frame(FUNDED_SENDER), sender_frame(50_000)]);
+    let (result, db) = run_frame_tx(&accounts, tx);
+    let report = result.expect("the transaction stays valid; only the frame fails");
+    let frame_results = report.frame_results.expect("frame results present");
+    assert_eq!(
+        frame_results[1].0,
+        ethrex_common::types::FRAME_RECEIPT_STATUS_FAILURE,
+        "a frame that cannot pay its entry charge must fail"
+    );
+    assert_eq!(
+        frame_results[1].1, 50_000,
+        "a frame that fails at entry forfeits its whole gas limit"
+    );
+    assert_eq!(
+        balance_of(&db, dead),
+        U256::zero(),
+        "the account must not be revived by a frame that never ran"
+    );
+
+    // The same frame with room for the charge runs, and is billed exactly the
+    // cold access plus the NEW_ACCOUNT state cost.
+    let tx = frame_tx_with_frames(vec![verify_frame(FUNDED_SENDER), sender_frame(10_000_000)]);
+    let (result, db) = run_frame_tx(&accounts, tx);
+    let report = result.expect("the funded frame must succeed");
+    let frame_results = report.frame_results.expect("frame results present");
+    assert_eq!(
+        frame_results[1].0,
+        ethrex_common::types::FRAME_RECEIPT_STATUS_SUCCESS,
+        "a frame that can pay the revival charge must succeed"
+    );
+    assert_eq!(
+        balance_of(&db, dead),
+        value,
+        "the revived account must receive the value"
+    );
+    let cold_access = ethrex_levm::gas_cost::cold_account_access_cost(Fork::Hegota);
+    let new_account = frame_results[1].1.saturating_sub(cold_access);
+    assert!(
+        new_account > 0,
+        "the frame must be billed a NEW_ACCOUNT state charge on top of the cold access, \
+         got {} total",
+        frame_results[1].1
+    );
+    assert!(
+        report.state_gas_used >= new_account,
+        "the NEW_ACCOUNT charge must also land in the state-gas dimension: \
+         state_gas_used {} < {}",
+        report.state_gas_used,
+        new_account
     );
 }
 
