@@ -7,8 +7,8 @@ use crate::system_contracts::{
     BUILDER_EXIT_CONTRACT_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
     EXPIRY_VERIFIER_PREDEPLOY, EXPIRY_VERIFIER_RUNTIME_BYTECODE, HISTORY_STORAGE_ADDRESS,
     NONCE_MANAGER_PREDEPLOY, NONCE_MANAGER_RUNTIME_BYTECODE, PRAGUE_SYSTEM_CONTRACTS,
-    RECENT_ROOT_ADDRESS, SYSTEM_ADDRESS, UTXO_VAULT_PREDEPLOY, UTXO_VAULT_RUNTIME_BYTECODE,
-    WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
+    RECENT_ROOT_ADDRESS, RECENT_ROOT_RUNTIME_BYTECODE, SYSTEM_ADDRESS, UTXO_VAULT_PREDEPLOY,
+    UTXO_VAULT_RUNTIME_BYTECODE, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
 use crate::{EvmError, ExecutionResult};
 use bytes::Bytes;
@@ -3485,33 +3485,39 @@ impl LEVM {
     }
 
     /// Install the EIP-8272 RECENT_ROOT_ADDRESS predeploy at Hegota activation.
-    /// The account carries NO runtime bytecode: the 64-byte `salt‖root` write is
-    /// handled natively by the VM (docs/eip-8272.md divergence #4), so the
-    /// predeploy exists only as a protocol-managed storage namespace — nonce 1,
-    /// empty code, balance preserved (an EOA may have sent value here pre-fork).
-    /// Idempotent: the nonce converges to `max(existing, 1)`, so exactly one
+    /// Idempotent: writes only when the existing code differs, so exactly one
     /// account update is produced (at the first Hegota block) and none after.
-    pub fn install_recent_root_code(db: &mut GeneralizedDatabase) -> Result<(), EvmError> {
+    pub fn install_recent_root_code(
+        db: &mut GeneralizedDatabase,
+        crypto: &dyn Crypto,
+    ) -> Result<(), EvmError> {
         // Predeploy convention (matches the genesis predeploys 4788/2935/7002/7251).
         const PREDEPLOY_NONCE: u64 = 1;
 
+        let current = db.get_account_code(RECENT_ROOT_ADDRESS.address)?;
+        if current.code() == RECENT_ROOT_RUNTIME_BYTECODE.as_slice() {
+            return Ok(());
+        }
+        // Balance is preserved because only code_hash and nonce are written: an EOA
+        // may have sent value here before the fork.
         let existing_nonce = db
             .get_account(RECENT_ROOT_ADDRESS.address)
             .map_err(EvmError::from)?
             .info
             .nonce;
-        if existing_nonce >= PREDEPLOY_NONCE {
-            return Ok(());
-        }
-        // Record the BAL nonce change if recording is active, so a BAL
-        // reconstructor reproduces the same post-state.
+        let new_nonce = existing_nonce.max(PREDEPLOY_NONCE);
+        let code = Code::from_bytecode(Bytes::from_static(&RECENT_ROOT_RUNTIME_BYTECODE), crypto);
+        let code_hash = code.hash;
         if let Some(recorder) = db.bal_recorder_mut() {
-            recorder.record_nonce_change(RECENT_ROOT_ADDRESS.address, PREDEPLOY_NONCE);
+            recorder.record_code_change(RECENT_ROOT_ADDRESS.address, code.code_bytes());
+            recorder.record_nonce_change(RECENT_ROOT_ADDRESS.address, new_nonce);
         }
         let acc = db
             .get_account_mut(RECENT_ROOT_ADDRESS.address)
             .map_err(EvmError::from)?;
-        acc.info.nonce = PREDEPLOY_NONCE;
+        acc.info.code_hash = code_hash;
+        acc.info.nonce = new_nonce;
+        db.codes.entry(code_hash).or_insert(code);
         Ok(())
     }
 
@@ -3882,8 +3888,8 @@ impl LEVM {
             Self::install_expiry_verifier_code(db, crypto)?;
             // EIP-8250: the keyed-nonce manager predeploy.
             Self::install_nonce_manager_code(db, crypto)?;
-            // EIP-8272: the recent-root storage-namespace predeploy.
-            Self::install_recent_root_code(db)?;
+            // EIP-8272: the recent-root predeploy.
+            Self::install_recent_root_code(db, crypto)?;
         }
 
         // EIP-8312: the UTXO vault. Gated on its own activation timestamp, not on
