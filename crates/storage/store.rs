@@ -4396,11 +4396,33 @@ impl Store {
         .expect("block_data_buffer lock poisoned");
     }
 
+    /// Insert a block and its receipts into the in-memory buffer without writing
+    /// to disk. For testing only — gates production code off.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn buffer_block_with_receipts_for_test(&self, block: &Block, receipts: Vec<Receipt>) {
+        mutate_block_buffer(&self.block_data_buffer, |b| {
+            b.insert(block.clone(), receipts.clone(), vec![])
+        })
+        .expect("block_data_buffer lock poisoned");
+    }
+
     /// Synchronously flush the block data buffer to disk.
     /// For testing only — gates production code off.
     #[cfg(any(test, feature = "testing"))]
     pub fn flush_block_data_for_test(&self) -> Result<(), StoreError> {
         flush_block_data(self.backend.as_ref(), &self.block_data_buffer)
+    }
+
+    /// Read a receipt by block hash, bypassing the canonical-hash lookup that
+    /// [`Store::get_receipt`] performs. For testing only — lets a test assert
+    /// what a flush wrote without staging a canonical chain.
+    #[cfg(any(test, feature = "testing"))]
+    pub async fn get_receipt_by_hash_for_test(
+        &self,
+        block_hash: BlockHash,
+        index: Index,
+    ) -> Result<Option<Receipt>, StoreError> {
+        self.get_receipt_by_block_hash(block_hash, index).await
     }
 
     /// Read a raw trie node straight from the on-disk account/storage trie-node
@@ -4656,10 +4678,14 @@ fn flush_block_data(
         let hash = b.header.hash();
         write_block_data(tx.as_mut(), b.number, hash, &b.header, &b.body)?;
         for (index, receipt) in b.receipts.iter().enumerate() {
+            // `RECEIPTS_V2` holds the internal storage codec, which for frame
+            // receipts carries `succeeded` and the aggregated logs that the
+            // consensus layout omits. Identical to `encode_to_vec` for non-frame
+            // receipts.
             tx.put(
                 RECEIPTS_V2,
                 &receipt_key(&hash, index as u64),
-                &receipt.encode_to_vec(),
+                &receipt.encode_storage(),
             )?;
         }
         max_number = max_number.max(b.number);

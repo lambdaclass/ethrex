@@ -443,11 +443,10 @@ impl ChainConfig {
         self.eip155_block.is_some_and(|num| num <= block_number)
     }
 
-    pub fn display_config(&self) -> String {
-        let network = NETWORK_NAMES.get(&self.chain_id).unwrap_or(&"unknown");
-        let mut output = format!("Chain ID: {} ({})\n\n", self.chain_id, network);
-
-        let post_merge_forks = [
+    /// The post-merge forks in activation order, paired with their configured
+    /// activation timestamps.
+    fn post_merge_schedule(&self) -> [(&'static str, Option<u64>); 7] {
+        [
             ("Shanghai", self.shanghai_time),
             ("Cancun", self.cancun_time),
             ("Prague", self.prague_time),
@@ -455,7 +454,38 @@ impl ChainConfig {
             ("Osaka", self.osaka_time),
             ("Amsterdam", self.amsterdam_time),
             ("Hegota", self.hegota_time),
-        ];
+        ]
+    }
+
+    /// Post-merge forks left unscheduled while a later fork is scheduled, in
+    /// activation order.
+    ///
+    /// Such a schedule is not a configuration a live network can have, and it
+    /// resolves inconsistently: fork *rules* come from the fork ordinal (see
+    /// [`ChainConfig::get_fork`]), so scheduling a fork silently activates the
+    /// rules of every fork below it, while each check keyed on a specific fork's
+    /// own timestamp field stays inactive. A chain that sets `hegotaTime` without
+    /// `amsterdamTime` therefore runs Amsterdam's EVM rules under a pre-Amsterdam
+    /// header schema.
+    ///
+    /// Verkle is excluded: it is a placeholder no schedule sets.
+    pub fn unscheduled_predecessor_forks(&self) -> Vec<&'static str> {
+        let schedule = self.post_merge_schedule();
+        let Some(last_scheduled) = schedule.iter().rposition(|(_, time)| time.is_some()) else {
+            return Vec::new();
+        };
+        schedule[..last_scheduled]
+            .iter()
+            .filter(|(name, time)| time.is_none() && *name != "Verkle")
+            .map(|(name, _)| *name)
+            .collect()
+    }
+
+    pub fn display_config(&self) -> String {
+        let network = NETWORK_NAMES.get(&self.chain_id).unwrap_or(&"unknown");
+        let mut output = format!("Chain ID: {} ({})\n\n", self.chain_id, network);
+
+        let post_merge_forks = self.post_merge_schedule();
 
         let active_forks: Vec<_> = post_merge_forks
             .iter()
@@ -468,6 +498,21 @@ impl ChainConfig {
             output.push_str(&active_forks.join("\n"));
         } else {
             output.push_str("Network is at Paris\n\n");
+        }
+
+        let unscheduled = self.unscheduled_predecessor_forks();
+        if !unscheduled.is_empty() {
+            output.push_str(&format!(
+                "\n\nWARNING: {} scheduled after an unscheduled fork ({}). Fork rules \
+                 resolve from the fork ordinal, so those rules are active while every \
+                 check keyed on their own activation timestamp is not.",
+                post_merge_forks
+                    .iter()
+                    .rev()
+                    .find_map(|(name, time)| time.map(|_| *name))
+                    .unwrap_or("A fork"),
+                unscheduled.join(", "),
+            ));
         }
 
         output
