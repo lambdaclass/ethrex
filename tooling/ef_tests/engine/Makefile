@@ -1,4 +1,4 @@
-.PHONY: download-test-vectors clean-vectors test test-rocksdb test-strict amsterdam-vectors help
+.PHONY: download-test-vectors clean-vectors test test-rocksdb test-strict amsterdam-vectors focil-vectors help
 
 VECTORS_ROOT := vectors
 FIXTURES_FILE := ../.fixtures_url
@@ -16,6 +16,15 @@ AMSTERDAM_URL := $(shell cat $(AMSTERDAM_FIXTURES_FILE))
 # whole fork boundary untested.
 AMSTERDAM_SUBTREES := for_amsterdam for_bpo2toamsterdamattime15k
 AMSTERDAM_STAMP := $(SPECTEST_VECTORS_DIR)/.amsterdam_overlay
+
+# EIP-7805 (FOCIL) engine fixtures. The tarball nests them under
+# fixtures/blockchain_tests_engine/for_bogota/. The datatest harness walks
+# vectors/eest/ recursively, so they're discovered wherever they land in the tree.
+FOCIL_FIXTURES_FILE := .fixtures_url_focil
+FOCIL_ARTIFACT := focil-tests.tar.gz
+FOCIL_URL := $(shell cat $(FOCIL_FIXTURES_FILE))
+FOCIL_SUBTREES := for_bogota
+FOCIL_STAMP := $(SPECTEST_VECTORS_DIR)/.focil_overlay
 
 VECTORS_TARGETS := $(SPECTEST_VECTORS_DIR)
 
@@ -52,20 +61,40 @@ amsterdam-vectors: | $(SPECTEST_VECTORS_DIR) ## 📥 Overlay Amsterdam fixtures,
 		echo "$(AMSTERDAM_URL)" > $(AMSTERDAM_STAMP); \
 	fi
 
+# Same URL-keyed overlay as the Amsterdam bundle above, for the same reason: the
+# FOCIL fixtures move with the devnet, so a subtree already on disk says nothing
+# about which release produced it.
+focil-vectors: | $(SPECTEST_VECTORS_DIR) ## 📥 Overlay EIP-7805 FOCIL engine fixtures, re-fetching when the pinned release changed
+	@have=$$(cat $(FOCIL_STAMP) 2>/dev/null); \
+	for subtree in $(FOCIL_SUBTREES); do \
+		[ -d $(SPECTEST_VECTORS_DIR)/$$subtree ] || have=; \
+	done; \
+	if [ "$$have" = "$(FOCIL_URL)" ]; then \
+		echo "FOCIL fixtures already overlaid from $(FOCIL_URL)"; \
+	else \
+		curl -fL -o $(FOCIL_ARTIFACT).part $(FOCIL_URL) && \
+		mv $(FOCIL_ARTIFACT).part $(FOCIL_ARTIFACT) && \
+		rm -rf $(addprefix $(SPECTEST_VECTORS_DIR)/,$(FOCIL_SUBTREES)) && \
+		tar -xzf $(FOCIL_ARTIFACT) --strip-components=2 -C $(SPECTEST_VECTORS_DIR) \
+			$(addprefix fixtures/blockchain_tests_engine/,$(FOCIL_SUBTREES)) && \
+		echo "$(FOCIL_URL)" > $(FOCIL_STAMP); \
+	fi
+
 help: ## 📚 Show help for each Makefile target
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
-download-test-vectors: $(VECTORS_TARGETS) amsterdam-vectors ## 📥 Download engine-format test vectors
+download-test-vectors: $(VECTORS_TARGETS) amsterdam-vectors focil-vectors ## 📥 Download engine-format test vectors
 
 clean-vectors: ## 🗑️  Clean test vectors
 	rm -rf $(VECTORS_ROOT)
-	rm -f $(SPECTEST_ARTIFACT) $(AMSTERDAM_ARTIFACT) $(AMSTERDAM_ARTIFACT).part
+	rm -f $(SPECTEST_ARTIFACT) $(AMSTERDAM_ARTIFACT) $(AMSTERDAM_ARTIFACT).part \
+		$(FOCIL_ARTIFACT) $(FOCIL_ARTIFACT).part
 
-test: $(VECTORS_TARGETS) amsterdam-vectors ## 🧪 Run engine-format fixture suite (InMemory, release)
+test: $(VECTORS_TARGETS) amsterdam-vectors focil-vectors ## 🧪 Run engine-format fixture suite (InMemory, release)
 	cargo test -p ef_tests-engine --release
 
-test-rocksdb: $(VECTORS_TARGETS) amsterdam-vectors ## 🧪 Run with RocksDB backend
+test-rocksdb: $(VECTORS_TARGETS) amsterdam-vectors focil-vectors ## 🧪 Run with RocksDB backend
 	cargo test -p ef_tests-engine --release --features rocksdb
 
-test-strict: $(VECTORS_TARGETS) amsterdam-vectors ## 🧪 Run with strict validationError checking
+test-strict: $(VECTORS_TARGETS) amsterdam-vectors focil-vectors ## 🧪 Run with strict validationError checking
 	ETHREX_ENGINE_STRICT_EXCEPTIONS=1 cargo test -p ef_tests-engine --release

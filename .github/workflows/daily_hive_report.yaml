@@ -210,6 +210,8 @@ jobs:
         uses: actions/checkout@v6
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+        with:
+          cache-pool: l1
 
       - name: Download all results
         continue-on-error: true

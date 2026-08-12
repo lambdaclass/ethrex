@@ -319,6 +319,22 @@ pub async fn init_rpc_api(
         None
     };
 
+    use ethrex_blockchain::inclusion_list_builder::IlPolicy;
+    let policy = match opts.il_policy.as_str() {
+        "production" => IlPolicy::Production,
+        "priority-fee" => IlPolicy::PriorityFee,
+        "random" => IlPolicy::Random,
+        other => {
+            tracing::warn!("unknown --il-policy '{other}', falling back to production");
+            IlPolicy::Production
+        }
+    };
+    let il_config = ethrex_rpc::IlConfig {
+        policy,
+        per_sender_cap: opts.il_per_sender_cap,
+        max_bytes: opts.il_max_bytes,
+    };
+
     // Reject conflicting listener addresses at config time, before anything binds, with an
     // error naming both flags to change.
     validate_rpc_addrs(
@@ -346,6 +362,7 @@ pub async fn init_rpc_api(
         opts.gas_limit,
         opts.extra_data.clone(),
         opts.http_api.iter().copied().collect(),
+        il_config,
     )
     .await?;
 
@@ -404,13 +421,23 @@ pub async fn init_dev_network(
 ) {
     info!("Running in DEV_MODE");
 
-    let head_block_hash = {
+    let chain_config = store.get_chain_config();
+
+    let (head_block_hash, target_gas_limit) = {
         let current_block_number = store.get_latest_block_number().await.unwrap();
-        store
+        let head_block_hash = store
             .get_canonical_block_hash(current_block_number)
             .await
             .unwrap()
+            .unwrap();
+        // Use the head block's gas limit as the V4 target so the dev chain holds
+        // its configured gas limit (execution-apis#796 requires target_gas_limit).
+        let target_gas_limit = store
+            .get_block_header(current_block_number)
             .unwrap()
+            .unwrap()
+            .gas_limit;
+        (head_block_hash, target_gas_limit)
     };
 
     // The producer stands in for the CL, so it supplies what a CL would: the
@@ -822,6 +849,7 @@ pub async fn init_l1(
             blob_eager_provider: opts.blob_eager_provider,
             max_reorg_depth: opts.max_reorg_depth,
             gap_admit_occupancy_threshold: opts.mempool_gap_admit_occupancy_threshold,
+            private_mempool: opts.mempool_private,
         },
     );
 

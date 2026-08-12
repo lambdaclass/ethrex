@@ -1,0 +1,83 @@
+# focil devnet — based on the upstream local-devnet-focil interop registry config
+#
+# Adds one extra ethrex node running --mempool.private so we can A/B
+# private vs gossiping mempool behavior on the same chain.
+#
+# Matrix:
+#   - 1 × besu+lodestar (reference EL)
+#   - 1 × ethrex+lodestar (default mempool, gossiping)
+#   - 1 × ethrex+lodestar with --mempool.private
+#
+# All CLs: supernode=true (PeerDAS satisfaction at fulu/gloas).
+#
+# Fork schedule (mainnet preset, 12s slots):
+#   * gloas at epoch 0 (active from genesis)
+#   * heze (= our Hegota / EIP-7805 FOCIL) at epoch 1
+#
+# Run with:
+#   KURTOSIS_CONFIG_FILE=./fixtures/networks/focil.yaml make localnet
+
+participants:
+  - el_type: besu
+    el_image: ethpandaops/besu:focil
+    cl_type: lodestar
+    cl_image: ethpandaops/lodestar:focil
+    supernode: true
+    count: 1
+  - el_type: ethrex
+    el_image: ethpandaops/ethrex:focil
+    cl_type: lodestar
+    cl_image: ethpandaops/lodestar:focil
+    supernode: true
+    count: 1
+  - el_type: ethrex
+    el_image: ethpandaops/ethrex:focil
+    el_extra_params:
+      - "--mempool.private"
+    cl_type: lodestar
+    cl_image: ethpandaops/lodestar:focil
+    supernode: true
+    count: 1
+
+network_params:
+  preset: mainnet
+  gloas_fork_epoch: 0
+  heze_fork_epoch: 1
+
+additional_services:
+  - dora
+  - tx_fuzz
+  - spamoor
+
+dora_params:
+  image: bbusa/dora:focil
+
+# `:6.0.5` (default) and the experimental `:bbusa-fix-gloas-genesis`
+# tag both produce SSZ genesis states whose latest_block_header
+# disagrees with the EL genesis block root when gloas is active at
+# epoch 0 with mainnet preset; lodestar:focil aborts at startup with
+# "Genesis block root ... does not match genesis state latest block
+# root". `:6.0.6` is the next published tag — try it first.
+ethereum_genesis_generator_params:
+  image: ethpandaops/ethereum-genesis-generator:6.0.6
+
+spamoor_params:
+  spammers:
+    - scenario: eoatx
+      config:
+        throughput: 100
+    - scenario: uniswap-swaps
+      config:
+        throughput: 100
+    - scenario: blob-combined
+      config:
+        throughput: 5
+
+port_publisher:
+  additional_services:
+    enabled: true
+    # Keep 30000 (not the upstream 65500) so the existing Caddy vhosts on
+    # ethrex-office-4 (dora.focil.ethrex.xyz → :30000,
+    # spamoor.focil.ethrex.xyz → :30002) keep working without rewiring
+    # the reverse-proxy + Cloudflare DNS.
+    public_port_start: 30000

@@ -113,15 +113,20 @@ Node options:
 
       --mempool.gap-admit-occupancy-threshold <PERCENTAGE>
           Mempool occupancy percentage (0-100) at or above which incoming transactions with a nonce gap relative to the sender's on-chain nonce are rejected. Setting to 100 disables the check.
-
+          
           [env: ETHREX_MEMPOOL_GAP_ADMIT_OCCUPANCY_THRESHOLD=]
           [default: 90]
 
       --mempool.max-queued-txs-per-account <MAX_QUEUED_TXS_PER_ACCOUNT>
           Maximum number of queued (future/nonce-gapped) transactions a single sender may hold in the mempool. Executable (contiguous-nonce) txs are not capped (geth AccountQueue-style).
-
+          
           [env: ETHREX_MEMPOOL_MAX_QUEUED_TXS_PER_ACCOUNT=]
           [default: 64]
+
+      --mempool.private
+          Keep RPC-submitted transactions private. They enter the mempool and may be included in blocks built locally, but are not propagated to peers. P2P-received transactions are unaffected. Mirrors reth's --txpool.no-local-transactions-propagation.
+          
+          [env: ETHREX_MEMPOOL_PRIVATE=]
 
       --precompute-witnesses
           Once synced, computes execution witnesses upon receiving newPayload messages and stores them in local storage
@@ -273,7 +278,7 @@ Block building options:
           Block extra data message.
           
           [env: ETHREX_BUILDER_EXTRA_DATA=]
-          [default: "ethrex 22.0.0"]
+          [default: "ethrex 23.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.
@@ -285,6 +290,25 @@ Block building options:
           EIP-7872: Maximum blobs per block for local building. Minimum of 1. Defaults to protocol max.
           
           [env: ETHREX_BUILDER_MAX_BLOBS=]
+
+EIP-7805 (FOCIL) options:
+      --il-policy <POLICY>
+          EIP-7805 (FOCIL) inclusion-list selection policy: production (default), priority-fee, or random
+          
+          [env: ETHREX_IL_POLICY=]
+          [default: production]
+
+      --il-per-sender-cap <N>
+          EIP-7805 (FOCIL) per-sender inclusion-list cap. Range 1..=64.
+          
+          [env: ETHREX_IL_PER_SENDER_CAP=]
+          [default: 2]
+
+      --il-max-bytes <BYTES>
+          EIP-7805 (FOCIL) inclusion-list byte cap. Hard-capped at 8192 in non-test builds; the spec mandates 8192.
+          
+          [env: ETHREX_IL_MAX_BYTES=]
+          [default: 8192]
 ```
 
 <!-- END_CLI_HELP -->
@@ -487,7 +511,7 @@ Block building options:
           Block extra data message.
 
           [env: ETHREX_BUILDER_EXTRA_DATA=]
-          [default: "ethrex 22.0.0"]
+          [default: "ethrex 23.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.

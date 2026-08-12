@@ -7,6 +7,7 @@ use ethrex_common::{
     types::BlockHeader,
 };
 use ethrex_crypto::Crypto;
+use ethrex_levm::StatelessValidator;
 use ethrex_levm::account::{AccountStatus, LevmAccount};
 use ethrex_levm::db::gen_db::CacheDB;
 use ethrex_levm::utils::get_base_fee_per_blob_gas;
@@ -32,6 +33,7 @@ impl LEVM {
         stop_index: Option<usize>,
         vm_type: VMType,
         crypto: &dyn Crypto,
+        stateless_validator: Option<&dyn StatelessValidator>,
     ) -> Result<(), EvmError> {
         Self::prepare_block(block, db, vm_type, crypto)?;
 
@@ -47,7 +49,15 @@ impl LEVM {
                 break;
             }
 
-            Self::execute_tx(tx, sender, &block.header, db, vm_type, crypto)?;
+            Self::execute_tx(
+                tx,
+                sender,
+                &block.header,
+                db,
+                vm_type,
+                crypto,
+                stateless_validator,
+            )?;
         }
 
         // Process withdrawals only if the whole block has been executed.
@@ -116,7 +126,15 @@ impl LEVM {
     ) -> Result<PrestateResult, EvmError> {
         let pre_snapshot: CacheDB = db.current_accounts_state.clone();
 
-        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, crypto)?;
+        let mut vm = VM::new(
+            env,
+            db,
+            tx,
+            LevmCallTracer::disabled(),
+            vm_type,
+            crypto,
+            None,
+        )?;
         vm.execute()?;
 
         preload_touched_codes(&pre_snapshot, db)?;
@@ -185,7 +203,15 @@ impl LEVM {
         vm_type: VMType,
         crypto: &dyn Crypto,
     ) -> Result<OpcodeTraceResult, EvmError> {
-        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, crypto)?;
+        let mut vm = VM::new(
+            env,
+            db,
+            tx,
+            LevmCallTracer::disabled(),
+            vm_type,
+            crypto,
+            None,
+        )?;
         vm.opcode_tracer = LevmOpcodeTracer::new(cfg);
         vm.execute()?;
         Ok(vm.opcode_tracer.take_result())
@@ -204,6 +230,7 @@ impl LEVM {
         log_index_base: u64,
         vm_type: VMType,
         crypto: &dyn Crypto,
+        stateless_validator: Option<&dyn StatelessValidator>,
     ) -> Result<CallTrace, EvmError> {
         let env = Self::setup_env(
             tx,
@@ -271,6 +298,7 @@ impl LEVM {
             LevmCallTracer::new(only_top_call, with_log, log_index_base),
             vm_type,
             crypto,
+            stateless_validator,
         )?;
 
         let report = vm.execute()?;

@@ -159,6 +159,7 @@ impl BlockProducer {
             version,
             elasticity_multiplier: self.elasticity_multiplier,
             gas_ceil: self.block_gas_limit,
+            inclusion_list_transactions: None,
         };
         let payload = create_payload(&args, &self.store, Bytes::new())?;
 
@@ -196,6 +197,7 @@ impl BlockProducer {
             requests: Vec::new(),
             // Use the block header's gas_used which was set during payload building
             block_gas_used: block.header.gas_used,
+            burned_fees: None,
             tx_gas_breakdowns: Vec::new(),
         };
 

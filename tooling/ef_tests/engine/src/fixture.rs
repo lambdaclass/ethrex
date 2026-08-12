@@ -6,6 +6,11 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
 
+/// The FOCIL fixture sentinel for an unsatisfied inclusion list. EIP-7805 reports
+/// that verdict as a `VALID` payload carrying `inclusionListSatisfied: false`;
+/// fixtures predating that structure name it as a third status value instead.
+pub const IL_UNSATISFIED_STATUS: &str = "INCLUSION_LIST_UNSATISFIED";
+
 /// One JSON file holds many fixtures keyed by test name.
 pub type EngineFixtureFile = BTreeMap<String, EngineFixture>;
 
@@ -76,6 +81,18 @@ pub struct FixturePayload {
     /// and compares the returned witness against it.
     #[serde(default, rename = "executionWitness")]
     pub execution_witness: Option<Value>,
+    /// EIP-7805 (FOCIL): the inclusion-list transactions for this payload,
+    /// carried by the fixture as a field SEPARATE from `params`. Present (and
+    /// possibly empty) only on FOCIL engine fixtures. When present it is
+    /// appended as the final `engine_newPayload` argument.
+    #[serde(default, rename = "inclusionListTransactions")]
+    pub inclusion_list_transactions: Option<Vec<Value>>,
+    /// Explicit expected payload status (e.g. `"INCLUSION_LIST_UNSATISFIED"`).
+    /// FOCIL fixtures use this third status value instead of the
+    /// `validationError`/`errorCode` VALID/INVALID model. `null` for ordinary
+    /// fixtures.
+    #[serde(default)]
+    pub status: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -86,9 +103,48 @@ pub enum ValidationError {
 }
 
 impl FixturePayload {
-    /// Returns `true` when neither `validationError` nor `errorCode` is set.
+    /// The expected engine payload `status` string. An explicit fixture
+    /// `status` (FOCIL's `INCLUSION_LIST_UNSATISFIED`, or a literal `VALID`)
+    /// wins; otherwise it derives from the VALID/INVALID model: `INVALID` when
+    /// a `validationError` is set, else `VALID`. `errorCode` (a JSON-RPC error)
+    /// is handled separately by the response checker.
+    pub fn expected_status(&self) -> &str {
+        if let Some(s) = &self.status {
+            return s;
+        }
+        if self.validation_error.is_some() {
+            "INVALID"
+        } else {
+            "VALID"
+        }
+    }
+
+    /// Returns `true` when the payload is expected to be accepted as the new
+    /// canonical head (status `VALID`, no JSON-RPC error). A FOCIL
+    /// `INCLUSION_LIST_UNSATISFIED` payload is NOT valid for head advancement:
+    /// the block executes but must not be attested, so the follow-up FCU is
+    /// skipped.
     pub fn valid(&self) -> bool {
-        self.validation_error.is_none() && self.error_code.is_none()
+        self.error_code.is_none() && self.expected_status() == "VALID"
+    }
+
+    /// The `engine_newPayload` version to call and the positional args for it.
+    ///
+    /// For FOCIL fixtures (`inclusionListTransactions` present) the IL is
+    /// appended as the final argument and the call is routed to ethrex's
+    /// IL-aware `engine_newPayloadV6` handler. As of tests-focil@v0.1.0 the
+    /// fixtures emit `newPayloadVersion: 6` directly (the V5→V6 bump landed in
+    /// execution-specs#3028), so forcing 6 here is idempotent; it stays as a
+    /// guard in case an IL-bearing fixture is ever tagged with a lower version.
+    pub fn engine_call(&self) -> (u8, Vec<Value>) {
+        match &self.inclusion_list_transactions {
+            Some(il) => {
+                let mut params = self.params.clone();
+                params.push(Value::Array(il.clone()));
+                (6, params)
+            }
+            None => (self.new_payload_version, self.params.clone()),
+        }
     }
 
     /// Extract `blockHash` from `params[0]` (the ExecutionPayload object).
@@ -130,10 +186,31 @@ impl EngineFixture {
     ///
     /// Mirrors what `hive/clients/ethrex/mapper.jq` does: assembles a Geth-style genesis
     /// JSON (alloc, config with fork activations, header fields) and deserializes it.
+    /// Whether this is an EIP-7805 (FOCIL) fixture, i.e. any payload carries an
+    /// inclusion list. ethrex gates FOCIL behind its Hegotá fork while EEST
+    /// folds it into Amsterdam, so FOCIL fixtures need Hegotá activated too.
+    pub fn is_focil(&self) -> bool {
+        self.engine_new_payloads
+            .iter()
+            .any(|p| p.inclusion_list_transactions.is_some())
+    }
+
     pub fn build_genesis(&self) -> anyhow::Result<Genesis> {
         let chain_id = parse_chain_id(&self.config)?;
         let (genesis_fork, transition) = self.schedule()?;
         let mut config_json = build_chain_config_json(genesis_fork, transition, chain_id);
+        // FOCIL bridge: EEST activates FOCIL under Amsterdam, but ethrex gates
+        // it behind Hegotá. Activate Hegotá at the same time as Amsterdam so
+        // engine_newPayloadV6's IL satisfaction check runs. Hegotá adds no
+        // genesis-header fields, so this does not change the genesis hash.
+        if self.is_focil()
+            && let Some(amsterdam_time) = config_json.get("amsterdamTime").cloned()
+        {
+            config_json
+                .as_object_mut()
+                .expect("config_json is an object")
+                .insert("hegotaTime".into(), amsterdam_time);
+        }
         // EEST fixtures carry their own per-fork blobSchedule (Cancun/Prague/Osaka/BPO*/Amsterdam)
         // with fork-name keys and hex-string values. Convert and inject; otherwise post-Cancun
         // payloads that rely on non-default blob params get rejected.
@@ -270,6 +347,10 @@ fn single_fork(s: &str) -> anyhow::Result<ethrex_common::types::Fork> {
         "BPO4" => Fork::BPO4,
         "BPO5" => Fork::BPO5,
         "Amsterdam" => Fork::Amsterdam,
+        // EIP-7805 (FOCIL) ships as the "Bogota" fork in execution-apis /
+        // execution-specs (tests-focil@v0.1.0+); ethrex names it "Hegota"
+        // internally (genesis already aliases bogotaTime → hegota_time).
+        "Bogota" | "Hegota" => Fork::Hegota,
         other => anyhow::bail!("Unknown network: {other}"),
     };
     Ok(f)

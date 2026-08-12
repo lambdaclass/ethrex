@@ -65,6 +65,16 @@ pub struct ExecutionPayload {
         default
     )]
     pub block_access_list: Option<BlockAccessList>,
+    // burned_fees (EIP-8079, LStar+): total base + blob fees burned in the block.
+    // Part of the header hash at LStar, so it must survive the getPayload →
+    // newPayload round-trip or a producer's own LStar block fails its block-hash
+    // check on import. `None` for pre-LStar payloads (skipped in serialization).
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        with = "serde_utils::u64::hex_str_opt",
+        default
+    )]
+    pub burned_fees: Option<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -153,6 +163,7 @@ impl ExecutionPayload {
             requests_hash,
             slot_number: self.slot_number,
             block_access_list_hash,
+            burned_fees: self.burned_fees,
             ..Default::default()
         };
 
@@ -185,6 +196,7 @@ impl ExecutionPayload {
             excess_blob_gas: block.header.excess_blob_gas,
             slot_number: block.header.slot_number,
             block_access_list,
+            burned_fees: block.header.burned_fees,
         }
     }
 }
@@ -201,6 +213,13 @@ pub struct PayloadStatus {
         with = "optional_hex_bytes"
     )]
     pub witness: Option<Bytes>,
+    /// EIP-7805 (FOCIL) `PayloadStatusV2.inclusionListSatisfied`: whether the
+    /// payload satisfied the inclusion list constraints. Carries a value only
+    /// when the payload is `VALID`; an unsatisfied inclusion list leaves the
+    /// payload `VALID` with `Some(false)`. Absent for every pre-Hegotá method,
+    /// whose responses are `PayloadStatusV1`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inclusion_list_satisfied: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -221,6 +240,7 @@ impl PayloadStatus {
             latest_valid_hash: Some(latest_valid_hash),
             validation_error: Some(error),
             witness: None,
+            inclusion_list_satisfied: None,
         }
     }
 
@@ -231,6 +251,7 @@ impl PayloadStatus {
             latest_valid_hash: None,
             validation_error: Some(error.to_string()),
             witness: None,
+            inclusion_list_satisfied: None,
         }
     }
 
@@ -241,6 +262,7 @@ impl PayloadStatus {
             latest_valid_hash: Some(hash),
             validation_error: None,
             witness: None,
+            inclusion_list_satisfied: None,
         }
     }
 
@@ -251,6 +273,7 @@ impl PayloadStatus {
             latest_valid_hash: None,
             validation_error: None,
             witness: None,
+            inclusion_list_satisfied: None,
         }
     }
 
@@ -261,6 +284,7 @@ impl PayloadStatus {
             latest_valid_hash: Some(hash),
             validation_error: None,
             witness: None,
+            inclusion_list_satisfied: None,
         }
     }
     /// Creates a PayloadStatus with valid status and latest valid hash
@@ -270,6 +294,7 @@ impl PayloadStatus {
             latest_valid_hash: None,
             validation_error: None,
             witness: None,
+            inclusion_list_satisfied: None,
         }
     }
 
@@ -283,7 +308,18 @@ impl PayloadStatus {
             latest_valid_hash: None,
             validation_error: None,
             witness: None,
+            inclusion_list_satisfied: None,
         }
+    }
+
+    /// Records the EIP-7805 (FOCIL) inclusion-list verdict on a `VALID`
+    /// payload status. Per execution-apis `PayloadStatusV2`, an unsatisfied
+    /// inclusion list does not change the status — the payload stays `VALID`
+    /// and only `inclusionListSatisfied` reports the verdict, so the consensus
+    /// layer knows not to attest to it.
+    pub fn with_inclusion_list_satisfied(mut self, satisfied: bool) -> Self {
+        self.inclusion_list_satisfied = Some(satisfied);
+        self
     }
 }
 
