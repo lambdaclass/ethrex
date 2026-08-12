@@ -3,7 +3,7 @@ use ethrex_common::types::block_execution_witness::RpcExecutionWitness;
 use serde_json::Value;
 use tracing::debug;
 
-use crate::{RpcApiContext, RpcErr, RpcHandler};
+use crate::{RpcApiContext, RpcErr, RpcHandler, debug::witness_guard::refuse_binary_committed};
 
 pub struct ExecutionWitnessByBlockHashRequest {
     pub block_hash: BlockHash,
@@ -38,6 +38,10 @@ impl RpcHandler for ExecutionWitnessByBlockHashRequest {
             .get_block_by_hash(self.block_hash)
             .await?
             .ok_or(RpcErr::Internal("Block not found".to_string()))?;
+
+        // Before the cache: a witness cached for a binary-committed block would
+        // be the same wrong MPT witness, served without reaching the generator.
+        refuse_binary_committed(&context.storage, &block.header)?;
 
         // Check if we have a cached witness for this block
         if let Some(json_bytes) = context
