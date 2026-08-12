@@ -252,7 +252,7 @@ fn eager_provider_wants_every_column_not_just_custody() {
     let missing = mp.blob_txs_missing_cells().unwrap();
     assert_eq!(
         missing.iter().find(|(h, _)| *h == tx_hash).unwrap().1,
-        u128::MAX & !0b1,
+        !0b1u128,
         "eager provider wants every column except the one already held"
     );
 }
