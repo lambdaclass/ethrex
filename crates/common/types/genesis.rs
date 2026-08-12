@@ -578,6 +578,17 @@ impl ChainConfig {
             Some(self.blob_schedule.bpo2)
         } else if self.is_bpo1_activated(block_timestamp) {
             Some(self.blob_schedule.bpo1)
+        } else if self.is_lstar_activated(block_timestamp)
+            || self.is_hegota_activated(block_timestamp)
+            || self.is_amsterdam_activated(block_timestamp)
+        {
+            // A genesis that jumps straight to Amsterdam or later without scheduling
+            // any BPO fork — the native-rollup L2 genesis does exactly this — still
+            // runs the post-BPO2 blob parameters, since Amsterdam is defined on top of
+            // them; falling through to the Osaka entry would under-report the limit.
+            // Below the whole BPO chain, so a network that does schedule its BPOs keeps
+            // inheriting the highest one it activated.
+            Some(self.blob_schedule.bpo2)
         } else if self.is_osaka_activated(block_timestamp) {
             Some(self.blob_schedule.osaka)
         } else if self.is_prague_activated(block_timestamp) {

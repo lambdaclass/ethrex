@@ -4175,6 +4175,7 @@ fn reverted_frame_refiles_its_writes_as_reads_in_the_bal() {
             LevmCallTracer::disabled(),
             VMType::L1,
             &NativeCrypto,
+            None,
         )
         .expect("VM::new should succeed for a frame tx");
         vm.execute()
