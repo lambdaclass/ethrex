@@ -1808,7 +1808,7 @@ impl<'a> VM<'a> {
             // Push substate backup for per-frame state isolation. Everything the
             // frame warms — including its own target, charged just below — lives
             // inside this backup, so a failed frame contributes no warmth to later
-            // frames. EIP-8141 §Execution shares the warm/cold journal across
+            // frames. The EIP's Execution section shares the warm/cold journal across
             // frames; EELS merges a frame's accessed set into that journal only
             // when the frame succeeds, which is what reverting this backup does.
             self.substate.push_backup();
@@ -1823,21 +1823,20 @@ impl<'a> VM<'a> {
             // top-level tx entry in default_hook::set_bytecode_and_code_address.
             //
             // Following the indicator is a second account access, and it is billed to
-            // the frame alongside the target access below.
-            let (is_delegation_7702, delegation_access_cost, code_address, bytecode) =
-                crate::utils::eip7702_get_code(
-                    self.db,
-                    &mut self.substate,
-                    target,
-                    self.env.config.fork,
-                )?;
-
-            // Mirror default_hook::set_bytecode_and_code_address: when delegation was
-            // followed, record the delegatee (code_address) as touched in BAL so EIP-7928
-            // reconstructors see the cross-address read.
-            if is_delegation_7702 && let Some(recorder) = self.db.bal_recorder.as_mut() {
-                recorder.record_touched_address(code_address);
-            }
+            // the frame alongside the target access below. Peek first: the delegate is
+            // only read once the frame is known to afford that access, so a frame that
+            // cannot pay halts before touching it. Reading it earlier would file the
+            // delegate in the EIP-7928 access list (and in execution witnesses) for a
+            // frame that never resolved it, which the receipts alone cannot contradict
+            // -- an unaffordable designation and a failure inside the delegate's code
+            // both forfeit the whole frame gas limit.
+            let (target_bytecode, delegation) = crate::utils::eip7702_peek_delegation(
+                self.db,
+                &self.substate,
+                target,
+                self.env.config.fork,
+            )?;
+            let delegation_access_cost = delegation.map_or(0, |(_, cost)| cost);
 
             // Entering a frame reads its target's account (code, and the balance the
             // warm/cold charge below is priced against), so EIP-7928 reconstructors
@@ -1847,17 +1846,17 @@ impl<'a> VM<'a> {
                 recorder.record_touched_address(target);
             }
 
-            // EIP-8141 §Execution: a VERIFY frame whose resolved target has no code
+            // EIP-8141, Execution: a VERIFY frame whose resolved target has no code
             // runs the protocol default code *instead of* an EVM. It never builds a
             // gas meter, so it neither pays the entry charges below nor leaves its
             // target warm for later frames. Every other frame — including a SENDER or
             // DEFAULT frame to a codeless account, which runs an EVM over empty code —
             // is entered normally and pays.
             let runs_default_verify_code = frame.execution_mode() == FrameMode::Verify
-                && bytecode.is_empty()
-                && !is_delegation_7702;
+                && target_bytecode.is_empty()
+                && delegation.is_none();
 
-            // EIP-8141 §Rationale: "Cold/warm access costs for the frame's target
+            // EIP-8141, Rationale: "Cold/warm access costs for the frame's target
             // account are charged within the frame's own `gas_limit` through the
             // normal EVM warm/cold accounting, not through the per-frame cost."
             // The frame is entered from ENTRY_POINT (or tx.sender), so nothing else
@@ -1897,6 +1896,24 @@ impl<'a> VM<'a> {
             // whole gas limit (an exceptional halt, not a revert).
             let frame_entry_unaffordable = frame_entry_gas > frame.gas_limit;
             let frame_gas_after_entry = frame.gas_limit.saturating_sub(frame_entry_gas);
+
+            // Now that the frame can pay for it, follow the designation: warm the
+            // delegate, read its code, and record the cross-address read for EIP-7928.
+            // EIP-8141 requires a delegated target to execute the delegatee's code while
+            // ADDRESS and storage stay tied to the delegator, which is why `to` below
+            // stays `target` and only `code_address` moves.
+            let (code_address, bytecode) = match delegation {
+                Some((auth_address, _)) if !frame_entry_unaffordable => {
+                    self.substate.add_accessed_address(auth_address);
+                    if let Some(recorder) = self.db.bal_recorder.as_mut() {
+                        recorder.record_touched_address(auth_address);
+                    }
+                    let code = self.db.get_account_code(auth_address)?.clone();
+                    (auth_address, code)
+                }
+                Some((auth_address, _)) => (auth_address, target_bytecode),
+                None => (target, target_bytecode),
+            };
 
             // EIP-8141 top-level value transfer: the outer
             // frame call owns CALLVALUE delivery. We only CHECK affordability
@@ -1974,12 +1991,15 @@ impl<'a> VM<'a> {
                 self.substate.revert_backup();
                 self.restore_cache_state()?;
                 (false, frame.gas_limit, Vec::new())
-            } else if bytecode.is_empty() && !is_delegation_7702 {
-                // Default code runs only when the target has NEITHER code NOR a delegation
-                // indicator (EIP-8141 §Execution). After eip7702_get_code,
-                // bytecode is the delegatee's code when delegated, so a delegation to an
-                // empty delegatee still falls into the CallFrame branch below and returns
-                // success without executing anything — NOT into the default-code path.
+            } else if runs_default_verify_code {
+                // EIP-8141, Execution: the protocol default code stands in for an EVM
+                // only for a VERIFY frame whose resolved target has no code. Every other
+                // frame runs a top-level call, which is what dispatches a precompile by
+                // address and follows a delegation indicator — a SENDER or DEFAULT frame
+                // to a codeless account takes the CallFrame branch below and returns
+                // success without executing anything, and one targeting a precompile runs
+                // it. Routing those through the default code instead would silently skip
+                // the precompile and report the frame as free.
                 // current_call_frame is the OUTER frame here; its backup is the
                 // one this branch's failure path restores, so the deferred
                 // transfer is correctly undone on a default-code revert.
