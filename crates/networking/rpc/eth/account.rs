@@ -1167,5 +1167,144 @@ mod tests {
             proof["storageProof"][0]["value"],
             json!(format!("{:#x}", PROBE_SLOT_VALUE))
         );
+
+        // And its mirror refuses here, because there is no binary trie at all.
+        assert!(matches!(
+            GetProofV2Request {
+                address,
+                storage_keys: vec![],
+                block: block_id(0),
+            }
+            .handle(context.clone())
+            .await,
+            Err(RpcErr::UnsupportedFork(_))
+        ));
+    }
+
+    /// 6. `eth_getProofV2` answers on an active header, and every walk it
+    ///    serves verifies against that header's own state root.
+    ///
+    /// The cross-boundary version — on a chain that really flips, with the six
+    /// tampering cases — lives in `test/tests/blockchain/binary_tree_shadow_tests.rs`.
+    /// What this adds is coverage beside the handler itself.
+    #[tokio::test]
+    async fn get_proof_v2_answers_on_an_active_header() {
+        let context = active_at_genesis_context().await;
+        let address = probe_address();
+        let header = context
+            .storage
+            .get_block_header(0)
+            .unwrap()
+            .expect("genesis header");
+
+        let response = GetProofV2Request {
+            address,
+            storage_keys: vec![H256::from_low_u64_be(PROBE_SLOT)],
+            block: block_id(0),
+        }
+        .handle(context.clone())
+        .await
+        .expect("an active header must be provable");
+
+        assert_eq!(response["proofFormat"], json!(BINARY_PROOF_FORMAT));
+        assert_eq!(
+            response["stateRoot"],
+            json!(format!("{:#x}", header.state_root))
+        );
+        // `storageHash` has no referent in this trie, so the field must not
+        // exist rather than carry a value that means nothing.
+        assert!(response.get("storageHash").is_none());
+        assert_eq!(response["nonce"], json!(format!("0x{PROBE_NONCE:x}")));
+        assert_eq!(response["balance"], json!(format!("{PROBE_BALANCE:#x}")));
+
+        // All three header fields are present as entries whether or not the
+        // account holds the leaf, and every walk verifies against the root the
+        // header commits — re-deriving each key rather than reading the one the
+        // response carries.
+        let entries = response["accountProof"]
+            .as_array()
+            .expect("accountProof array");
+        let fields: Vec<&str> = entries
+            .iter()
+            .map(|entry| entry["field"].as_str().unwrap())
+            .collect();
+        assert_eq!(fields, vec!["basicData", "codeHash", "delegation"]);
+
+        let address32 = address20_to_address32(address);
+        let keys = [
+            get_tree_key_for_basic_data(&address32),
+            get_tree_key_for_code_hash(&address32),
+            get_tree_key_for_delegation(&address32),
+        ];
+        for (entry, key) in entries.iter().zip(keys.iter()) {
+            let proof: Vec<Vec<u8>> = entry["proof"]
+                .as_array()
+                .expect("proof array")
+                .iter()
+                .map(|node| hex::decode(node.as_str().unwrap().trim_start_matches("0x")).unwrap())
+                .collect();
+            let (_steps, end) = verify_walk(header.state_root, key, &proof)
+                .unwrap_or_else(|error| panic!("{:?} must verify: {error}", entry["field"]));
+            let present = matches!(&end, WalkEnd::AtLeaf { key: found, .. } if found == key);
+            assert_eq!(
+                present,
+                !entry["value"].is_null(),
+                "{:?}: the reported value and the proof must agree on presence",
+                entry["field"]
+            );
+        }
+        // The probe has code, so it is the delegation leaf that is absent —
+        // and it is absent *with* an exclusion proof, not by omission.
+        assert_eq!(entries[2]["value"], Value::Null);
+        assert!(!entries[2]["proof"].as_array().unwrap().is_empty());
+
+        assert_eq!(
+            response["storageProof"][0]["value"],
+            json!(format!("{PROBE_SLOT_VALUE:#x}"))
+        );
+        assert_eq!(response["storageProof"][0]["zone"], json!("accountHeader"));
+    }
+
+    /// 7. `eth_getProofV2` refuses a header before the flip, and says where to
+    ///    go instead. The mirror of test 4, and per header for the same reason:
+    ///    a scheduled chain's pre-activation blocks belong to `eth_getProof`
+    ///    forever.
+    #[tokio::test]
+    async fn get_proof_v2_refuses_a_pre_activation_header() {
+        let far_future = genesis_timestamp() + 1_000_000;
+        let context = binary_tree_context(Some(far_future)).await;
+        assert!(context.storage.get_chain_config().binary_tree_scheduled());
+        assert!(
+            !context
+                .storage
+                .get_chain_config()
+                .is_binary_tree_active(genesis_timestamp()),
+            "the header under test must be pre-activation for this to mean anything"
+        );
+
+        match (GetProofV2Request {
+            address: probe_address(),
+            storage_keys: vec![H256::from_low_u64_be(PROBE_SLOT)],
+            block: block_id(0),
+        })
+        .handle(context.clone())
+        .await
+        {
+            Err(RpcErr::UnsupportedFork(message)) => {
+                assert!(
+                    message.contains("eth_getProofV2"),
+                    "the refusal must name the method, got {message:?}"
+                );
+                assert!(
+                    message.contains("use eth_getProof"),
+                    "the refusal must point at the method that does serve it, got {message:?}"
+                );
+            }
+            Err(other) => panic!("expected an unsupported-fork refusal, got {other:?}"),
+            Ok(value) => panic!(
+                "eth_getProofV2 answered {value} at a Merkle-Patricia block. There is no binary \
+                 trie behind that root for the walks to come from."
+            ),
+        }
     }
 }
