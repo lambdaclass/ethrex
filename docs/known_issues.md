@@ -251,193 +251,75 @@ commitment the guard is inert, which is why L2 behaviour is unchanged.
 give the L2 stack real EIP-8297 support. Refusing at startup is the smaller of
 the two and matches what L1 already does for other unsupported combinations.
 
-### The last two PR-#3207 failures: causes found, both blocked behind the gas drift
+### A same-block CREATE2 still sees a destroyed account's pre-block storage
 
-**Status.** Both causes are isolated. One is fixed; the other is a *second*
-Amsterdam gas drift and is filed with the EIP-8038 entry below rather than fixed
-here. Neither fixture passes yet, because **both of them also depend on the
-EIP-8038 drift**: the earlier reading that these two were separable from the
-other 46 was wrong. With the EIP-8038 constants corrected on top of the fix that
-did land, plus the one-line change described below, `for_binarytree` is
-**56 passed, 0 failed** (measured 2026-08-12). Without those, the suite stays at
-its previous 8 passed / 48 failed.
+**Where:** `GeneralizedDatabase::get_state_transitions` and its `removed`
+computation (`crates/vm/levm/src/db/gen_db.rs:585`), and the
+`clear_storage_of_emptied_account` call in `SELFDESTRUCT`
+(`crates/vm/levm/src/opcode_handlers/system.rs:821`).
 
-**What the earlier note here guessed, and what was actually wrong.** The
-suspicion recorded here — that `apply_account_update`'s `removed` branch in
-`crates/common/types/pbt_state.rs` fails to remove the storage leaves — was
-**wrong**. That branch is correct: it removes the whole header stem (basic data,
-code hash or delegation indicator, slots 0-63) and the overflow-storage zone,
-which is exactly what EELS `destroy_account` does. It was simply never reached.
-And the second fixture had nothing to do with storage, or with EIP-6780.
+**What:** an EIP-161 clear runs inside LEVM, but the removal reaches the trie
+only through the block's account updates, so a CREATE2 in a *later transaction
+of the same block* still sees the account's pre-block `has_storage`. EELS
+destroys within the transaction and would let that CREATE2 proceed.
 
-- `state_divergence/create2_after_eip161_clear_of_storage_holding_account`
-  (`StateRootMismatch`) — **fixed.** The block-1 SELFDESTRUCT's beneficiary was
-  never written. EELS `move_ether` writes both parties through `modify_state`
-  whatever the amount, and `modify_state` destroys an account the write leaves
-  existing and empty; ethrex's `vm.transfer` returns early on a zero value, and
-  `get_state_transitions`' `removed` fires only for an account that *stopped*
-  being non-empty. Fixed in `SELFDESTRUCT` (`clear_storage_of_emptied_account`)
-  plus the `removed` computation, gated on the header having reached
-  `binaryTreeTime` so the MPT keeps the orphaned storage trie that makes it
-  answer the other way. Pinned by
-  `an_eip161_clear_of_a_storage_only_beneficiary_drops_its_leaves_on_the_binary_trie`
-  and `the_same_eip161_clear_leaves_the_mpt_exactly_as_it_was`.
+**Why it is not currently a wrong-answer bug in practice:** no fixture covers
+it. Both PR-#3207 destruction tests put the CREATE2 in a later block, and both
+now pass (see the EIP-8038 entry below for the suite numbers).
 
-  Block 1 of the fixture now produces the expected state root; block 2 still
-  fails, on the EIP-8038 drift alone (it does two cold SSTOREs, so the gas — and
-  through it the sender and coinbase balances — moves).
+**Removal:** thread the destruction through the in-flight transaction state
+rather than only through the end-of-block account updates, and fill a fixture
+that puts the CREATE2 in the same block.
 
-- `account_lifecycle/selfdestruct_same_transaction_leaves_no_account`
-  (`ReceiptsRootMismatch`) — **not fixed; see the drift entry below.** It is not
-  a state problem and not an EIP-6780 problem. `validate_gas_used` passes, and
-  the receipt's logs (two EIP-7708 transfer logs) and status match the fixture
-  byte for byte; only `cumulativeGasUsed` moves. See "a value-bearing CREATE
-  overpays its intrinsic gas by 1756" below.
+### Amsterdam EIP-2780/EIP-8038 has no CI coverage at all
 
-**Still open — the same-block window.** The clear runs inside LEVM, but the
-removal reaches the trie only through the block's account updates, so a CREATE2
-in a *later transaction of the same block* still sees the account's pre-block
-`has_storage`. EELS destroys within the transaction and would let that CREATE2
-proceed. No fixture covers it: both PR-#3207 tests put the CREATE2 in a later
-block.
+**Status of the drift itself: CLOSED.** ethrex had implemented EIP-8038 as
+merged in `ethereum/EIPs#11802`; the EIP was later revised and ethrex was not
+resynced. Seven constants and one intrinsic-cost branch were wrong. Both are
+fixed — `crates/vm/levm/src/gas_cost.rs` now mirrors
+`src/ethereum/forks/amsterdam/vm/gas.py::GasCosts`, with `CALL_VALUE`,
+`CREATE_ACCESS`, the two access-list entries and `REFUND_STORAGE_CLEAR` written
+as the spec's derivations rather than as literals, so the next repricing moves
+one number. `recipient_regular_gas` no longer charges a creation transaction
+for the ether it carries (EELS reaches that charge only via
+`elif not is_self_transfer`, which a create never enters).
 
-**Removal:** correct the EIP-8038 constants and the CREATE intrinsic per the
-entry below, then re-run the fixtures with the recipe there; the two named tests
-should join the other 54.
+Measured against a fill of the PR #3207 tracking branch
+(`ethereum/execution-specs:projects/binary-trie` @ `9dffd419`), on 2026-08-12:
 
-### Amsterdam gas schedule is behind EIP-8038 — now measured against fixtures
-
-**Where:** `crates/vm/levm/src/gas_cost.rs:213-222` (the "EIP-8038 Amsterdam
-values (merged EIPs#11802)" block), and `tooling/ef_tests/.fixtures_url_amsterdam`.
-
-**Why:** ethrex implements EIP-8038 (State Access Gas Cost Increase) as merged in
-`ethereum/EIPs#11802`, which its own comment cites. The EIP has since been
-revised: cold **account** access rose to 3000, but cold **storage** access stayed
-at **2100**. ethrex raised both.
-
-| constant | ethrex | current spec |
+| suite | before | after |
 |---|---|---|
-| `COLD_STORAGE_ACCESS` | 3000 | **2100** |
-| `ACCESS_LIST_STORAGE_KEY` | 3000 | **2000** (`cold_storage − warm`) |
-| `ACCESS_LIST_ADDRESS` | 3000 | **2900** (`cold_account − warm`) |
-| `ACCOUNT_WRITE` | 8000 | **9000** |
-| `CALL_VALUE` | 10300 | **11300** (`account_write + 2300`) |
-| `CREATE_ACCESS` | 11000 | **12000** (`account_write + cold_account`) |
-| `STORAGE_CLEAR_REFUND` | 12480 | **11616** |
+| `for_binarytree` (56 `blockchain_tests`) | 8 passed / 48 failed | **56 / 0** |
+| Amsterdam `eip2780` from the same revision (59) | 27 passed / 32 failed | **59 / 0** |
 
-Really two root changes — `COLD_STORAGE_ACCESS` and `ACCOUNT_WRITE` — plus the
-access-list costs now being *derived* as `cold − warm` rather than flattened.
-Everything else agrees (`COLD_ACCOUNT_ACCESS` 3000, `STORAGE_WRITE` 10000,
-`TX_BASE` 12000, `PER_AUTH_BASE_COST` 7816, the EIP-8037 constants).
+The second row is the control that settles attribution: plain Amsterdam tests
+from the same spec revision were failing too, so this was never a binary-trie
+problem. `transactions.py` is byte-identical between `forks/amsterdam` and
+`forks/binary_tree`, so the binary-trie fork changes no gas rule at all.
 
-The divergence is exactly **900 per distinct cold storage slot**. On a contract
-touching two cold slots (`PUSH2/SLOAD/PUSH1/SSTORE/STOP`):
+**What is still open: CI cannot catch the next drift.** The pinned bundle is
+`tests-glamsterdam-devnet@v7.2.0`, whose `for_amsterdam/` tree holds only
+`eip7928_block_level_access_lists` and `eip8025_optional_proofs` — no EIP-2780
+and no EIP-8038 tests exist in it. That is why this drift went unnoticed for as
+long as it did, and why nothing in `make test-levm` would notice it coming back.
+Neither of the two suites in the table above is wired into CI; both were run
+from a scratch fill.
 
-```
-spec:   12000 + 3000 + 3 + 2100 + 3 + 2100 = 19206
-ethrex: 12000 + 3000 + 3 + 3000 + 3 + 3000 = 21006
-```
-
-**Coverage is suspect, but not established.** Running the on-disk vectors
-directly (`cargo test --manifest-path tooling/ef_tests/blockchain/Cargo.toml`)
-gives 0/1120 on `for_amsterdam`, failing on the genesis-hash assertion. That
-looked like "Amsterdam is untested", but the same run gives 196/392 on `cancun`
-and 145/469 on `prague` — forks that do not use the EIP-8038 constants at all.
-So the local vector tree is stale or partially downloaded, and these numbers
-measure that, not CI. `make test-levm` has download/refresh prerequisites that
-were not run.
-
-What remains solid is the constant divergence itself, which is a direct
-code-vs-spec comparison verified arithmetically and independent of any test
-infrastructure. Whether CI currently exercises Amsterdam is **open** and worth
-checking with a proper `make test-levm` run before drawing conclusions about how
-this went unnoticed.
-
-Found while running the EIP-8297 `BinaryTree` fixtures: 22 of 24 failed on
-`GasUsedMismatch`/`ReceiptsRootMismatch`. Filling the *same* tests at `Amsterdam`
-reproduced all 35 failing cases with byte-identical error variants and gas
-numbers, and the two forks' fills are byte-identical in `gasUsed` and
-`receiptTrie`. The binary-tree work is not implicated — its genesis roots match
-the spec exactly.
-
-Re-measured 2026-08-12 against a fresh fill of the PR #3207 tracking branch
-(`ethereum/execution-specs:projects/binary-trie` @ `9dffd419`), which yields a
-wider suite — 56 `blockchain_tests` rather than the 24 above:
-
-| run | passed | failed |
-|---|---|---|
-| `BinaryTree`, ethrex as-is | 8 | 48 |
-| `BinaryTree`, the seven constants aligned | **54** | **2** |
-| *Amsterdam* `eip2780` from the same revision, as-is | 27 | 32 |
-
-The third row is the control that settles attribution: plain Amsterdam tests
-from the same spec revision fail too, so this is not a binary-trie problem.
-`transactions.py` is byte-identical between `forks/amsterdam` and
-`forks/binary_tree`, so the binary-trie fork changes no gas rule at all. The
-two survivors at 54/56 are the account-destruction cases in the entry above.
-
-Re-measured again after the EIP-161 clear landed, with the seven constants
-aligned **and** the CREATE intrinsic corrected (below): **56 passed, 0 failed**.
-
-#### A value-bearing CREATE overpays its intrinsic gas by 1756
-
-A second, independent drift in the same file, found the same way and **not
-fixed** — it is a gas-schedule change with a deliberate test pinning the current
-behaviour, so it belongs to whoever settles the table above.
-
-**Where:** `recipient_regular_gas` in `crates/vm/levm/src/gas_cost.rs`; the
-behaviour is pinned by `test_intrinsic_create_nonzero_value_amsterdam` in
-`test/tests/levm/eip2780_tests.rs`.
-
-**What:** EELS `calculate_intrinsic_cost` reaches its value charge only through
-`elif not is_self_transfer`, a branch a creation transaction never enters — a
-create's recipient charge is `CREATE_ACCESS` and nothing else, however much
-ether it carries. ethrex adds `TRANSFER_LOG_COST_AMSTERDAM` (1756, EIP-2780's
-split of the spec's flat `TX_VALUE_COST` of 6000) to creates as well. The fix is
-to make the value charge conditional on `!is_create`; the existing test then has
-to be updated with it.
-
-**How it was measured.** Calling the spec's own `calculate_intrinsic_cost` on
-the fixture's transaction returns `execution=24422` = `TX_BASE` 12000 +
-`CREATE_ACCESS` 12000 + calldata 420 + initcode 2, with no value component. Then
-end to end: the spec's `t8n`, driven with the fixture's own pre-alloc, env and
-transaction, reproduces the fixture's `receiptsRoot`
-(`0x9cd7944b…`) and `stateRoot` exactly and settles at
-`cumulativeGasUsed = 518651`. ethrex, with the seven constants above aligned so
-they cannot confound it, gives **520407** — a difference of exactly **1756**.
-With ethrex's own constants the two drifts partly cancel and the gap is 656
-(`1756 − 1100`), which is what makes this one easy to miss.
-
-**Why the block-level check does not catch it.** EIP-7778 makes
-`header.gas_used` `max(regular_gas, state_gas)`, and on a deployment the state
-dimension usually dominates — 465120 versus 53019 here — so `validate_gas_used`
-passes and the error only reaches the receipt's `cumulativeGasUsed`, and through
-it the receipts root. That is why
-`account_lifecycle/selfdestruct_same_transaction_leaves_no_account` fails as
-`ReceiptsRootMismatch` rather than `GasUsedMismatch`, and why the failure looked
-like an EIP-6780 state problem when it is neither.
-
-**Why CI never caught it:** the pinned bundle is `tests-glamsterdam-devnet@v7.2.0`,
-whose `for_amsterdam/` tree holds only `eip7928_block_level_access_lists` and
-`eip8025_optional_proofs` — no EIP-2780 or EIP-8038 tests exist in it.
-
-**Not established:** which side reflects the ratified EIP-8038. Only that this
-execution-specs revision and ethrex disagree. Confirm before changing the
-constants — they feed EIP-8037 state-gas accounting.
-
-**Removal:** Resync the seven constants above against
-`src/ethereum/forks/amsterdam/vm/gas.py`. Separately, confirm whether CI
-exercises Amsterdam at all — if `.fixtures_url_amsterdam` points at a bundle
-with no `eip8037`/`eip8038` coverage, re-pin it so the next drift is caught by
-CI rather than by accident.
+**Removal:** re-pin `tooling/ef_tests/.fixtures_url_amsterdam` to a bundle that
+actually carries `eip2780`/`eip8037`/`eip8038` fixtures once EEST publishes one,
+or vendor the fill recipe below into CI. Until then the LEVM unit tests
+(`test/tests/levm/eip8038_tests.rs`, `eip2780_tests.rs`, `eip8037_tests.rs`) are
+the only guard, and they pin literals taken from the spec by hand.
 
 **Reproducing.** execution-specs is now a monorepo with EEST vendored at
 `packages/testing/src/execution_testing/`, so no second clone is needed; the
 repo ships the recipe at `Justfile:163` (`binary-trie-fork`). `BinaryTree` is
 `deployed=False`, so pass `--fork BinaryTree` and omit `--until`. Fixtures carry
 `"network": "BinaryTree"`, which the existing `fork.rs` wiring already matches —
-no ethrex change is needed to consume them. Note `ef_tests-blockchain` is not a
-workspace member: build it from `tooling/ef_tests/blockchain/`.
+no ethrex change is needed to consume them. To run a filled tree, copy it under
+`tooling/ef_tests/blockchain/vectors/eest/` and, from
+`tooling/ef_tests/blockchain/` (it is **not** a workspace member), run
+`cargo test --profile release-fast --test all -- <path-substring>`.
 
 ### `eth_getProofV2`'s response format is an ethrex dialect, not a standard
 
