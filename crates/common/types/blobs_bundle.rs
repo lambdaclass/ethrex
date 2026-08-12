@@ -1,5 +1,3 @@
-use std::ops::AddAssign;
-
 use crate::serde_utils;
 #[cfg(feature = "c-kzg")]
 use crate::types::Fork;
@@ -22,7 +20,7 @@ pub type Commitment = Bytes48;
 pub type Proof = Bytes48;
 pub type BlobTuple = (Box<Blob>, Commitment, Vec<Proof>);
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 /// Struct containing all the blobs for a blob transaction, along with the corresponding commitments and proofs
 pub struct BlobsBundle {
@@ -32,8 +30,25 @@ pub struct BlobsBundle {
     pub commitments: Vec<Commitment>,
     #[serde(with = "serde_utils::bytes48::vec")]
     pub proofs: Vec<Proof>,
-    #[serde(skip, default)]
+    /// Sidecar wrapper version. Empty accumulators default to v1 so payload
+    /// builders and validium paths stay consistent with the v1-only policy.
+    #[serde(skip, default = "default_blob_sidecar_version")]
     pub version: u8,
+}
+
+fn default_blob_sidecar_version() -> u8 {
+    1
+}
+
+impl Default for BlobsBundle {
+    fn default() -> Self {
+        Self {
+            blobs: Vec::new(),
+            commitments: Vec::new(),
+            proofs: Vec::new(),
+            version: default_blob_sidecar_version(),
+        }
+    }
 }
 
 pub fn blob_from_bytes(bytes: Bytes) -> Result<Blob, BlobsBundleError> {
@@ -76,6 +91,18 @@ pub fn kzg_commitment_to_versioned_hash(data: &Commitment) -> H256 {
     versioned_hash.into()
 }
 
+/// Compute a single EIP-4844 KZG polynomial proof for `blob`.
+///
+/// This is intentionally separate from `create_from_blobs` (which always produces
+/// v1 cell-proof sidecars). Use this only when a single KZG proof is needed for a
+/// non-P2P purpose, such as supplying `ProverInputData.blob_proof` to the ZK prover.
+#[cfg(feature = "c-kzg")]
+pub fn blob_to_kzg_proof(blob: &Blob) -> Result<Proof, BlobsBundleError> {
+    use ethrex_crypto::kzg::blob_to_kzg_commitment_and_proof;
+    let (_, proof) = blob_to_kzg_commitment_and_proof(blob)?;
+    Ok(proof)
+}
+
 impl BlobsBundle {
     pub fn empty() -> Self {
         Self::default()
@@ -87,34 +114,23 @@ impl BlobsBundle {
 
     // In the future we might want to provide a new method that calculates the commitments and proofs using the following.
     #[cfg(feature = "c-kzg")]
-    pub fn create_from_blobs(
-        blobs: &Vec<Blob>,
-        wrapper_version: Option<u8>,
-    ) -> Result<Self, BlobsBundleError> {
-        use ethrex_crypto::kzg::{
-            blob_to_commitment_and_cell_proofs, blob_to_kzg_commitment_and_proof,
-        };
+    pub fn create_from_blobs(blobs: &Vec<Blob>) -> Result<Self, BlobsBundleError> {
+        use ethrex_crypto::kzg::blob_to_commitment_and_cell_proofs;
         let mut commitments = Vec::new();
         let mut proofs = Vec::new();
 
-        // Populate the commitments and proofs
+        // Always produce v1 (EIP-7594) cell-proof sidecars.
         for blob in blobs {
-            if wrapper_version.unwrap_or(0) == 0 {
-                let (commitment, proof) = blob_to_kzg_commitment_and_proof(blob)?;
-                commitments.push(commitment);
-                proofs.push(proof);
-            } else {
-                let (commitment, cell_proofs) = blob_to_commitment_and_cell_proofs(blob)?;
-                commitments.push(commitment);
-                proofs.extend(cell_proofs);
-            }
+            let (commitment, cell_proofs) = blob_to_commitment_and_cell_proofs(blob)?;
+            commitments.push(commitment);
+            proofs.extend(cell_proofs);
         }
 
         Ok(Self {
             blobs: blobs.clone(),
             commitments,
             proofs,
-            version: wrapper_version.unwrap_or(0),
+            version: 1,
         })
     }
 
@@ -130,12 +146,48 @@ impl BlobsBundle {
     pub fn get_blob_tuple_by_index(&self, index: usize) -> Option<BlobTuple> {
         let blob = Box::new(*self.blobs.get(index)?);
         let commitment = *self.commitments.get(index)?;
-        let proofs = if self.version == 0 {
-            vec![*self.proofs.get(index)?]
-        } else {
-            self.proofs.chunks(CELLS_PER_EXT_BLOB).nth(index)?.to_vec()
-        };
+        let proofs = self.proofs.chunks(CELLS_PER_EXT_BLOB).nth(index)?.to_vec();
         Some((blob, commitment, proofs))
+    }
+
+    /// Validates the canonical v1 sidecar layout without performing KZG verification.
+    ///
+    /// Empty bundles are structurally valid here because L2 validium batches and
+    /// payload accumulators may legitimately contain no sidecar. Callers that
+    /// require at least one blob must enforce that separately.
+    pub fn validate_v1_structure(&self) -> Result<(), BlobsBundleError> {
+        if self.version != 1 {
+            return Err(BlobsBundleError::InvalidBlobVersionForFork);
+        }
+        if self.blobs.len() != self.commitments.len()
+            || self.blobs.len() * CELLS_PER_EXT_BLOB != self.proofs.len()
+        {
+            return Err(BlobsBundleError::BlobsBundleWrongLen);
+        }
+        Ok(())
+    }
+
+    /// Appends a canonical v1 sidecar to this bundle.
+    ///
+    /// A completely empty bundle is treated as an accumulator regardless of its
+    /// default version. Non-empty bundles must have the v1 cell-proof layout.
+    pub fn append_v1(&mut self, other: Self) -> Result<(), BlobsBundleError> {
+        if other.is_empty() {
+            return Ok(());
+        }
+        other.validate_v1_structure()?;
+
+        if self.is_empty() {
+            *self = other;
+            return Ok(());
+        }
+        self.validate_v1_structure()?;
+
+        self.blobs.extend(other.blobs);
+        self.commitments.extend(other.commitments);
+        self.proofs.extend(other.proofs);
+        self.version = 1;
+        Ok(())
     }
 
     /// Full blob bundle validation: structural checks + KZG cryptographic proof verification.
@@ -149,23 +201,15 @@ impl BlobsBundle {
         self.verify_kzg_proofs()
     }
 
-    /// Verifies KZG cryptographic proofs against the blobs and commitments.
-    /// Dispatches to cell-proof or standard verification based on bundle version.
+    /// Verifies EIP-7594 cell KZG proofs against the blobs and commitments.
     #[cfg(feature = "c-kzg")]
-    fn verify_kzg_proofs(&self) -> Result<(), BlobsBundleError> {
-        let valid = if self.version != 0 {
-            ethrex_crypto::kzg::verify_cell_kzg_proof_batch(
-                &self.blobs,
-                &self.commitments,
-                &self.proofs,
-            )?
-        } else {
-            ethrex_crypto::kzg::verify_kzg_proof_batch(
-                &self.blobs,
-                &self.commitments,
-                &self.proofs,
-            )?
-        };
+    pub fn verify_kzg_proofs(&self) -> Result<(), BlobsBundleError> {
+        self.validate_v1_structure()?;
+        let valid = ethrex_crypto::kzg::verify_cell_kzg_proof_batch(
+            &self.blobs,
+            &self.commitments,
+            &self.proofs,
+        )?;
         if !valid {
             return Err(BlobsBundleError::BlobToCommitmentAndProofError);
         }
@@ -182,8 +226,6 @@ impl BlobsBundle {
         tx: &super::EIP4844Transaction,
         fork: super::Fork,
     ) -> Result<(), BlobsBundleError> {
-        use super::CELLS_PER_EXT_BLOB;
-
         let max_blobs = max_blobs_per_block(fork);
         let blob_count = self.blobs.len();
 
@@ -201,30 +243,11 @@ impl BlobsBundle {
             return Err(BlobsBundleError::BlobBundleEmptyError);
         }
 
-        // Blob sidecar wrapper version: 0 = EIP-4844 blob proofs, 1 = EIP-7594 cell proofs.
-        // The sidecar is a mempool/propagation-only artifact (never included in a block) and
-        // both formats are cryptographically verifiable at any fork.
-        //
-        // Acceptance criteria:
-        //   - pre-Osaka: accept BOTH v0 and v1. Peers are migrating to cell proofs at
-        //     different times (e.g. post go-ethereum#35191 geth sends v1 even pre-Osaka,
-        //     while older peers still send v0), so rejecting either would needlessly
-        //     disconnect otherwise-valid peers.
-        //   - Osaka+: only v1 (cell proofs) is valid.
-        let version_ok = if fork >= Fork::Osaka {
-            self.version == 1
-        } else {
-            self.version <= 1
-        };
-        if !version_ok {
-            return Err(BlobsBundleError::InvalidBlobVersionForFork);
-        }
+        // Only v1 (EIP-7594 cell-proof) sidecars are accepted. v0 (EIP-4844 blob-proof)
+        // sidecars are no longer valid at any fork, following go-ethereum#35191.
+        self.validate_v1_structure()?;
 
-        if blob_count != self.commitments.len()
-            || (self.version == 0 && blob_count != self.proofs.len())
-            || (self.version != 0 && blob_count * CELLS_PER_EXT_BLOB != self.proofs.len())
-            || blob_count != tx.blob_versioned_hashes.len()
-        {
+        if blob_count != tx.blob_versioned_hashes.len() {
             return Err(BlobsBundleError::BlobsBundleWrongLen);
         };
 
@@ -275,18 +298,10 @@ impl RLPDecode for BlobsBundle {
                 blobs,
                 commitments,
                 proofs,
-                version: version.unwrap_or_default(),
+                version: version.unwrap_or_else(default_blob_sidecar_version),
             },
             decoder.finish()?,
         ))
-    }
-}
-
-impl AddAssign for BlobsBundle {
-    fn add_assign(&mut self, rhs: Self) {
-        self.blobs.extend_from_slice(&rhs.blobs);
-        self.commitments.extend_from_slice(&rhs.commitments);
-        self.proofs.extend_from_slice(&rhs.proofs);
     }
 }
 
@@ -328,6 +343,15 @@ pub enum BlobsBundleError {
 #[cfg(test)]
 mod tests {
     mod shared {
+        pub fn dummy_v1_bundle(blob_count: usize) -> crate::types::BlobsBundle {
+            crate::types::BlobsBundle {
+                blobs: vec![[0; crate::types::BYTES_PER_BLOB]; blob_count],
+                commitments: vec![[0; 48]; blob_count],
+                proofs: vec![[0; 48]; blob_count * crate::types::CELLS_PER_EXT_BLOB],
+                version: 1,
+            }
+        }
+
         #[cfg(feature = "c-kzg")]
         pub fn convert_str_to_bytes48(s: &str) -> [u8; 48] {
             let bytes = hex::decode(s).expect("Invalid hex string");
@@ -335,6 +359,85 @@ mod tests {
             array.copy_from_slice(&bytes[..48]);
             array
         }
+    }
+
+    #[test]
+    fn append_v1_sets_the_accumulator_version() {
+        let mut aggregate = crate::types::BlobsBundle::empty();
+        let first = shared::dummy_v1_bundle(1);
+        let second = shared::dummy_v1_bundle(1);
+
+        aggregate.append_v1(first).expect("valid first bundle");
+        aggregate.append_v1(second).expect("valid second bundle");
+
+        assert_eq!(aggregate.version, 1);
+        assert_eq!(aggregate.blobs.len(), 2);
+        assert_eq!(aggregate.commitments.len(), 2);
+        assert_eq!(aggregate.proofs.len(), 2 * crate::types::CELLS_PER_EXT_BLOB);
+    }
+
+    #[test]
+    fn append_v1_rejects_legacy_or_malformed_bundles() {
+        let mut aggregate = shared::dummy_v1_bundle(1);
+        let original = aggregate.clone();
+        let mut legacy = shared::dummy_v1_bundle(1);
+        legacy.version = 0;
+
+        assert!(matches!(
+            aggregate.append_v1(legacy),
+            Err(crate::types::BlobsBundleError::InvalidBlobVersionForFork)
+        ));
+        assert_eq!(aggregate, original);
+
+        let mut malformed = shared::dummy_v1_bundle(1);
+        malformed.proofs.pop();
+        assert!(matches!(
+            aggregate.append_v1(malformed),
+            Err(crate::types::BlobsBundleError::BlobsBundleWrongLen)
+        ));
+        assert_eq!(aggregate, original);
+    }
+
+    #[test]
+    fn empty_v1_bundle_is_structurally_valid_for_validium() {
+        let bundle = crate::types::BlobsBundle::default();
+        assert_eq!(bundle.version, 1);
+        assert!(bundle.validate_v1_structure().is_ok());
+    }
+
+    #[test]
+    #[cfg(feature = "c-kzg")]
+    fn invalid_v1_cell_proofs_are_rejected() {
+        let bundle = shared::dummy_v1_bundle(1);
+        assert!(bundle.verify_kzg_proofs().is_err());
+    }
+
+    #[test]
+    #[cfg(feature = "c-kzg")]
+    fn blob_to_kzg_proof_verifies_for_prover_path() {
+        let blob = crate::types::blobs_bundle::blob_from_bytes("prover blob".as_bytes().into())
+            .expect("blob");
+        let commitment = ethrex_crypto::kzg::blob_to_kzg_commitment_and_proof(&blob)
+            .expect("commitment")
+            .0;
+        let proof = crate::types::blobs_bundle::blob_to_kzg_proof(&blob).expect("single proof");
+        assert!(
+            ethrex_crypto::kzg::verify_blob_kzg_proof(blob, commitment, proof).expect("verify"),
+            "committer prover path must produce a valid EIP-4844 proof"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "c-kzg")]
+    fn create_from_blobs_regenerates_v1_cell_proof_layout() {
+        let blob = crate::types::blobs_bundle::blob_from_bytes("stored blob".as_bytes().into())
+            .expect("blob");
+        let bundle = crate::types::BlobsBundle::create_from_blobs(&vec![blob])
+            .expect("regenerate like Store::get_batch");
+        assert_eq!(bundle.version, 1);
+        assert_eq!(bundle.proofs.len(), crate::types::CELLS_PER_EXT_BLOB);
+        assert!(bundle.validate_v1_structure().is_ok());
+        assert!(bundle.verify_kzg_proofs().is_ok());
     }
 
     #[test]
@@ -348,7 +451,7 @@ mod tests {
             })
             .collect();
 
-        let blobs_bundle = crate::types::BlobsBundle::create_from_blobs(&blobs, None)
+        let blobs_bundle = crate::types::BlobsBundle::create_from_blobs(&blobs)
             .expect("Failed to create blobs bundle");
 
         let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
@@ -384,7 +487,7 @@ mod tests {
             })
             .collect();
 
-        let blobs_bundle = crate::types::BlobsBundle::create_from_blobs(&blobs, Some(1))
+        let blobs_bundle = crate::types::BlobsBundle::create_from_blobs(&blobs)
             .expect("Failed to create blobs bundle");
 
         let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
@@ -409,12 +512,11 @@ mod tests {
         ));
     }
 
-    // v1 (cell-proof) sidecars are accepted pre-Osaka (network is mid-migration to cell
-    // proofs; some peers send v1 even before Osaka), but v0 (blob-proof) sidecars are
-    // rejected on Osaka+.
+    // v1 (EIP-7594 cell-proof) is now the only accepted sidecar version at all forks,
+    // following go-ethereum#35191.
     #[test]
     #[cfg(feature = "c-kzg")]
-    fn v1_sidecar_is_accepted_pre_osaka() {
+    fn v1_sidecar_is_accepted_at_all_forks() {
         let blobs = vec!["Hello, world!".as_bytes(), "Goodbye, world!".as_bytes()]
             .into_iter()
             .map(|data| {
@@ -423,7 +525,7 @@ mod tests {
             })
             .collect();
 
-        let blobs_bundle = crate::types::BlobsBundle::create_from_blobs(&blobs, Some(1))
+        let blobs_bundle = crate::types::BlobsBundle::create_from_blobs(&blobs)
             .expect("Failed to create blobs bundle");
 
         let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
@@ -450,37 +552,41 @@ mod tests {
 
     #[test]
     #[cfg(feature = "c-kzg")]
-    fn v0_sidecar_is_rejected_on_osaka() {
+    fn v0_sidecar_is_rejected_at_all_forks() {
+        // v0 (EIP-4844 KZG-proof) sidecars are no longer valid at any fork,
+        // following go-ethereum#35191. Only v1 (EIP-7594 cell-proof) is accepted.
         let blobs = vec!["Hello, world!".as_bytes(), "Goodbye, world!".as_bytes()]
             .into_iter()
             .map(|data| {
                 crate::types::blobs_bundle::blob_from_bytes(data.into())
                     .expect("Failed to create blob")
             })
-            .collect();
+            .collect::<Vec<_>>();
 
-        let blobs_bundle = crate::types::BlobsBundle::create_from_blobs(&blobs, Some(0))
+        // Build a v1 bundle to get valid commitments/hashes, then manually construct
+        // a v0-shaped bundle (one proof per blob, version 0).
+        let v1 = crate::types::BlobsBundle::create_from_blobs(&blobs)
             .expect("Failed to create blobs bundle");
-
-        let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
+        let blob_versioned_hashes = v1.generate_versioned_hashes();
+        let v0_bundle = crate::types::BlobsBundle {
+            blobs: v1.blobs,
+            commitments: v1.commitments,
+            proofs: vec![[0u8; 48]; blobs.len()], // one dummy proof per blob (v0 shape)
+            version: 0,
+        };
 
         let tx = crate::types::transaction::EIP4844Transaction {
-            nonce: 3,
-            max_priority_fee_per_gas: 0,
-            max_fee_per_gas: 0,
-            max_fee_per_blob_gas: 0.into(),
-            gas: 15_000_000,
-            to: crate::Address::from_low_u64_be(1), // Normal tx
-            value: crate::U256::zero(),             // Value zero
-            data: crate::Bytes::default(),          // No data
-            access_list: Default::default(),        // No access list
             blob_versioned_hashes,
             ..Default::default()
         };
 
-        assert!(!matches!(
-            blobs_bundle.validate(&tx, crate::types::Fork::Osaka),
-            Ok(())
+        assert!(matches!(
+            v0_bundle.validate_cheap(&tx, crate::types::Fork::Prague),
+            Err(crate::types::BlobsBundleError::InvalidBlobVersionForFork)
+        ));
+        assert!(matches!(
+            v0_bundle.validate_cheap(&tx, crate::types::Fork::Osaka),
+            Err(crate::types::BlobsBundleError::InvalidBlobVersionForFork)
         ));
     }
 
@@ -504,6 +610,7 @@ mod tests {
                                 shared::convert_str_to_bytes48(s)
                             })
                             .collect(),
+                            // v0 is now rejected at the version check before KZG verification.
                             version: 0,
         };
 
@@ -532,7 +639,7 @@ mod tests {
 
         assert!(matches!(
             blobs_bundle.validate(&tx, crate::types::Fork::Prague),
-            Err(crate::types::BlobsBundleError::BlobToCommitmentAndProofError)
+            Err(crate::types::BlobsBundleError::InvalidBlobVersionForFork)
         ));
     }
 
@@ -556,6 +663,7 @@ mod tests {
                                 shared::convert_str_to_bytes48(s)
                               })
                               .collect(),
+                              // v0 is now rejected at the version check before commitment hash verification.
                               version: 0,
         };
 
@@ -584,7 +692,7 @@ mod tests {
 
         assert!(matches!(
             blobs_bundle.validate(&tx, crate::types::Fork::Prague),
-            Err(crate::types::BlobsBundleError::BlobVersionedHashesError)
+            Err(crate::types::BlobsBundleError::InvalidBlobVersionForFork)
         ));
     }
 
@@ -596,7 +704,7 @@ mod tests {
         let blobs =
             std::iter::repeat_n(blob, super::MAX_BLOB_COUNT_ELECTRA + 1).collect::<Vec<_>>();
 
-        let blobs_bundle = crate::types::BlobsBundle::create_from_blobs(&blobs, None)
+        let blobs_bundle = crate::types::BlobsBundle::create_from_blobs(&blobs)
             .expect("Failed to create blobs bundle");
 
         let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
@@ -623,39 +731,47 @@ mod tests {
 
     #[test]
     #[cfg(feature = "c-kzg")]
-    fn transaction_with_version_0_blobs_should_fail_on_amsterdam() {
-        // Version 0 blobs should be invalid on Amsterdam fork (which comes after Osaka)
-        // The validation requires version 0 only on Osaka; Amsterdam >= Osaka so version 0 is rejected
+    fn transaction_with_version_0_blobs_should_fail_on_all_forks() {
+        // v0 blobs are rejected at every fork now that only v1 (cell-proof) sidecars
+        // are accepted, following go-ethereum#35191.
         let blobs = vec!["Hello, world!".as_bytes(), "Goodbye, world!".as_bytes()]
             .into_iter()
             .map(|data| {
                 crate::types::blobs_bundle::blob_from_bytes(data.into())
                     .expect("Failed to create blob")
             })
-            .collect();
+            .collect::<Vec<_>>();
 
-        let blobs_bundle = crate::types::BlobsBundle::create_from_blobs(&blobs, None)
+        // Build a v1 bundle to obtain valid commitments and versioned hashes, then
+        // manually downgrade to version 0 to simulate a legacy v0 sidecar.
+        let v1 = crate::types::BlobsBundle::create_from_blobs(&blobs)
             .expect("Failed to create blobs bundle");
-
-        let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
+        let blob_versioned_hashes = v1.generate_versioned_hashes();
+        let v0_bundle = crate::types::BlobsBundle {
+            blobs: v1.blobs,
+            commitments: v1.commitments,
+            proofs: vec![[0u8; 48]; blobs.len()],
+            version: 0,
+        };
 
         let tx = crate::types::transaction::EIP4844Transaction {
-            nonce: 3,
-            max_priority_fee_per_gas: 0,
-            max_fee_per_gas: 0,
-            max_fee_per_blob_gas: 0.into(),
-            gas: 15_000_000,
-            to: crate::Address::from_low_u64_be(1), // Normal tx
-            value: crate::U256::zero(),             // Value zero
-            data: crate::Bytes::default(),          // No data
-            access_list: Default::default(),        // No access list
             blob_versioned_hashes,
             ..Default::default()
         };
 
-        assert!(matches!(
-            blobs_bundle.validate(&tx, crate::types::Fork::Amsterdam),
-            Err(crate::types::BlobsBundleError::InvalidBlobVersionForFork)
-        ));
+        for fork in [
+            crate::types::Fork::Prague,
+            crate::types::Fork::Osaka,
+            crate::types::Fork::Amsterdam,
+        ] {
+            assert!(
+                matches!(
+                    v0_bundle.validate_cheap(&tx, fork),
+                    Err(crate::types::BlobsBundleError::InvalidBlobVersionForFork)
+                ),
+                "v0 bundle should be rejected on fork {:?}",
+                fork
+            );
+        }
     }
 }

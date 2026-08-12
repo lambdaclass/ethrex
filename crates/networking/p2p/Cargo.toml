@@ -70,7 +70,8 @@ path = "./p2p.rs"
 default = ["c-kzg"]
 c-kzg = ["ethrex-blockchain/c-kzg", "ethrex-common/c-kzg"]
 sync-test = []
-l2 = ["dep:ethrex-storage-rollup", "dep:ethrex-l2-common"]
+# L2 BatchSealed ingress verifies cell proofs; require c-kzg whenever l2 is enabled.
+l2 = ["dep:ethrex-storage-rollup", "dep:ethrex-l2-common", "c-kzg"]
 test-utils = []
 metrics = ["dep:ethrex-metrics"]
 

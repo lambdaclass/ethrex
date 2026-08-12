@@ -106,6 +106,7 @@ jemalloc_profiling = [
 sync-test = ["ethrex-p2p/sync-test"]
 
 l2 = [
+  "c-kzg",
   "ethrex-l2",
   "ethrex-l2-common",
   "ethrex-l2-rpc",
