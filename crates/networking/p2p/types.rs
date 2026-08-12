@@ -450,15 +450,25 @@ impl NodeRecord {
     }
 
     pub fn set_fork_id(&mut self, fork_id: ForkId, signer: &SecretKey) -> Result<(), NodeError> {
-        self.pairs.eth = Some(fork_id);
-        self.update(signer)
+        self.edit(signer, |pairs| pairs.eth = Some(fork_id))
     }
 
     pub fn get_fork_id(&self) -> Option<&ForkId> {
         self.pairs.eth.as_ref()
     }
 
-    fn update(&mut self, signer: &SecretKey) -> Result<(), NodeError> {
+    /// The single path for changing a local record: apply `apply_edit` to the
+    /// entry set, bump `seq` once, and re-sign.
+    ///
+    /// Prefer this over rebuilding a record from a [`Node`]. A rebuild only
+    /// carries the entries [`Self::from_node`] knows how to derive, so anything
+    /// the caller added separately is silently lost, and stitching the lost
+    /// entries back on afterwards bumps `seq` a second time.
+    pub fn edit<F>(&mut self, signer: &SecretKey, apply_edit: F) -> Result<(), NodeError>
+    where
+        F: FnOnce(&mut NodeRecordPairs),
+    {
+        apply_edit(&mut self.pairs);
         self.seq += 1;
         self.signature = self.sign_record(signer)?;
         Ok(())
