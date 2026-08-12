@@ -2826,6 +2826,58 @@ mod frame_validation_prefix_tests {
             "the reservation must price the blob at max_fee_per_blob_gas"
         );
     }
+
+    /// A sponsored OnlyVerifyPay prefix whose pay frame targets a non-sender
+    /// sponsor. EIP-8141 structural rule 3 restricts only self_verify /
+    /// only_verify targets to `tx.sender`; rule 4 places no target requirement
+    /// on `pay`, so the sponsor may approve payment for the sender. The prefix
+    /// must pass structural validation and the simulation must establish the
+    /// sponsor as the paymaster.
+    #[test]
+    fn sponsored_pay_frame_may_target_non_sender() {
+        let sender = addr(0x5E_11_02);
+        let sponsor = addr(0x42_D9_3E);
+        let frames = vec![
+            frame(1, 0x02, sender, 40_000),  // only_verify -> sender
+            frame(1, 0x01, sponsor, 40_000), // pay -> sponsor
+        ];
+        let tx = frame_tx_prefix(sender, frames);
+        let Transaction::FrameTransaction(frame_tx) = &tx else {
+            unreachable!("frame_tx_prefix builds a frame transaction")
+        };
+        let prefix = frame_tx
+            .validation_prefix()
+            .expect("OnlyVerifyPay shape recognized");
+        assert_eq!(prefix.shape, PrefixShape::OnlyVerifyPay);
+        frame_tx
+            .validate_prefix_structure(&prefix)
+            .expect("a pay frame may target a non-sender sponsor (EIP-8141 structural rule 4)");
+
+        let mut db = db_with(vec![
+            (sender, account(0, approve_code(0x02))),
+            (sponsor, account(0, approve_code(0x01))),
+        ]);
+        let outcome = LEVM::simulate_frame_validation_prefix(
+            &tx,
+            &header(),
+            &mut db,
+            VMType::L1,
+            &NativeCrypto,
+            &prefix,
+            None,
+        )
+        .expect("simulation runs");
+        assert!(
+            outcome.passed,
+            "a sponsored prefix must pass validation, got {:?}",
+            outcome.violation
+        );
+        assert_eq!(
+            outcome.accessed_paymaster,
+            Some((sponsor, false)),
+            "the sponsor must be identified as the paymaster"
+        );
+    }
 }
 
 // ==================== Relocated from crates/vm/levm/src/vm.rs ====================
