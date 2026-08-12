@@ -90,14 +90,18 @@ additional_services:
 dora_params:
   image: bbusa/dora:focil
 
-# `:6.0.5` (default) and the experimental `:bbusa-fix-gloas-genesis`
-# tag both produce SSZ genesis states whose latest_block_header
-# disagrees with the EL genesis block root when gloas is active at
-# epoch 0 with mainnet preset; lodestar:focil aborts at startup with
-# "Genesis block root ... does not match genesis state latest block
-# root". `:6.0.6` is the next published tag — try it first.
+# `:6.0.5` (default) and the experimental `:bbusa-fix-gloas-genesis` tag both
+# produce SSZ genesis states whose latest_block_header disagrees with the EL
+# genesis block root when gloas is active at epoch 0 with mainnet preset;
+# lodestar:focil aborts at startup with "Genesis block root ... does not match
+# genesis state latest block root". `:6.0.6` fixed that, but predates the
+# `PayloadDueBps` template variable the package now passes, so its config.yaml
+# carries no `PAYLOAD_DUE_BPS` and teku:focil rejects it outright:
+# "The specified network configuration had missing or invalid values for
+# constants PAYLOAD_DUE_BPS" (GloasBuilder.validate). `:6.2.0` is the first tag
+# that emits it.
 ethereum_genesis_generator_params:
-  image: ethpandaops/ethereum-genesis-generator:6.0.6
+  image: ethpandaops/ethereum-genesis-generator:6.2.0
 
 spamoor_params:
   spammers:
