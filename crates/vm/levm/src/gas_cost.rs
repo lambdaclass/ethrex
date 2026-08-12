@@ -210,16 +210,28 @@ pub const BLOB_GAS_PER_BLOB: u64 = 131072;
 pub const ACCESS_LIST_STORAGE_KEY_COST: u64 = 1900;
 pub const ACCESS_LIST_ADDRESS_COST: u64 = 2400;
 
-// ===== EIP-8038 Amsterdam values (merged EIPs#11802) =====
+// ===== EIP-8038 Amsterdam values =====
+// Mirrors `GasCosts` in execution-specs `src/ethereum/forks/amsterdam/vm/gas.py`.
+// Only the two roots below (`COLD_ACCOUNT_ACCESS`, `COLD_STORAGE_ACCESS`) plus
+// `STORAGE_WRITE` / `ACCOUNT_WRITE` are independent; everything else is derived
+// exactly as the spec derives it, so a future repricing moves one number.
 pub const COLD_ACCOUNT_ACCESS_AMSTERDAM: u64 = 3000;
-pub const COLD_STORAGE_ACCESS_AMSTERDAM: u64 = 3000;
-pub const ACCESS_LIST_ADDRESS_COST_AMSTERDAM: u64 = 3000;
-pub const ACCESS_LIST_STORAGE_KEY_COST_AMSTERDAM: u64 = 3000;
+pub const COLD_STORAGE_ACCESS_AMSTERDAM: u64 = 2100;
+/// Spec: `TX_ACCESS_LIST_ADDRESS = COLD_ACCOUNT_ACCESS - WARM_ACCESS`.
+pub const ACCESS_LIST_ADDRESS_COST_AMSTERDAM: u64 =
+    COLD_ACCOUNT_ACCESS_AMSTERDAM - WARM_ADDRESS_ACCESS_COST;
+/// Spec: `TX_ACCESS_LIST_STORAGE_KEY = COLD_STORAGE_ACCESS - WARM_ACCESS`.
+pub const ACCESS_LIST_STORAGE_KEY_COST_AMSTERDAM: u64 =
+    COLD_STORAGE_ACCESS_AMSTERDAM - WARM_ADDRESS_ACCESS_COST;
 pub const STORAGE_WRITE_AMSTERDAM: u64 = 10000;
-pub const ACCOUNT_WRITE_AMSTERDAM: u64 = 8000;
-pub const CALL_VALUE_AMSTERDAM: u64 = 10300;
-pub const STORAGE_CLEAR_REFUND_AMSTERDAM: i64 = 12480;
-pub const CREATE_ACCESS_AMSTERDAM: u64 = 11000;
+pub const ACCOUNT_WRITE_AMSTERDAM: u64 = 9000;
+/// Spec: `CALL_VALUE = ACCOUNT_WRITE + CALL_STIPEND`.
+pub const CALL_VALUE_AMSTERDAM: u64 = ACCOUNT_WRITE_AMSTERDAM + CALL_POSITIVE_VALUE_STIPEND;
+/// Spec: `REFUND_STORAGE_CLEAR = (STORAGE_WRITE + COLD_STORAGE_ACCESS) * 4800 // 5000`.
+pub const STORAGE_CLEAR_REFUND_AMSTERDAM: i64 =
+    ((STORAGE_WRITE_AMSTERDAM + COLD_STORAGE_ACCESS_AMSTERDAM) as i64 * 4800) / 5000;
+/// Spec: `CREATE_ACCESS = ACCOUNT_WRITE + COLD_ACCOUNT_ACCESS`.
+pub const CREATE_ACCESS_AMSTERDAM: u64 = ACCOUNT_WRITE_AMSTERDAM + COLD_ACCOUNT_ACCESS_AMSTERDAM;
 
 // ===== EIP-2780 Amsterdam values (merged EIPs#11645) =====
 // Resource-based intrinsic transaction gas. The flat 21000 base is decomposed
@@ -260,7 +272,8 @@ pub fn cold_account_access_cost(fork: Fork) -> u64 {
     }
 }
 
-/// Cold storage slot access cost. EIP-8038 raises this from 2100 to 3000 at Amsterdam.
+/// Cold storage slot access cost. Unchanged at 2100 by EIP-8038 at Amsterdam;
+/// kept as an explicit Amsterdam constant because other Amsterdam costs derive from it.
 pub fn cold_storage_access_cost(fork: Fork) -> u64 {
     if fork >= Fork::Amsterdam {
         COLD_STORAGE_ACCESS_AMSTERDAM
@@ -269,7 +282,8 @@ pub fn cold_storage_access_cost(fork: Fork) -> u64 {
     }
 }
 
-/// Per-address access-list cost. EIP-8038 raises this from 2400 to 3000 at Amsterdam.
+/// Per-address access-list cost. EIP-8038 raises this from 2400 to 2900 at Amsterdam
+/// (`COLD_ACCOUNT_ACCESS - WARM_ACCESS`).
 pub fn access_list_address_cost(fork: Fork) -> u64 {
     if fork >= Fork::Amsterdam {
         ACCESS_LIST_ADDRESS_COST_AMSTERDAM
@@ -278,7 +292,8 @@ pub fn access_list_address_cost(fork: Fork) -> u64 {
     }
 }
 
-/// Per-storage-key access-list cost. EIP-8038 raises this from 1900 to 3000 at Amsterdam.
+/// Per-storage-key access-list cost. EIP-8038 raises this from 1900 to 2000 at Amsterdam
+/// (`COLD_STORAGE_ACCESS - WARM_ACCESS`).
 pub fn access_list_storage_key_cost(fork: Fork) -> u64 {
     if fork >= Fork::Amsterdam {
         ACCESS_LIST_STORAGE_KEY_COST_AMSTERDAM
@@ -288,7 +303,7 @@ pub fn access_list_storage_key_cost(fork: Fork) -> u64 {
 }
 
 /// Upfront positive-value cost for CALL / CALLCODE. EIP-8038 raises this from
-/// 9000 to 10300 (`CALL_VALUE_AMSTERDAM`) at Amsterdam. This is the charge
+/// 9000 to 11300 (`CALL_VALUE_AMSTERDAM`) at Amsterdam. This is the charge
 /// applied to the *caller* before the call; it is NOT the 2300 stipend
 /// (`CALL_POSITIVE_VALUE_STIPEND`) forwarded to the callee, which is unchanged.
 pub fn call_positive_value_cost(fork: Fork) -> u64 {

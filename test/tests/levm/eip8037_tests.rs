@@ -2072,7 +2072,9 @@ fn test_set_delegation_repeated_authority_pays_once_amsterdam() {
 // (the sender's leaf was already written at inclusion).
 #[test]
 fn test_set_delegation_self_sponsored_no_account_write_amsterdam() {
-    const ACCOUNT_WRITE: u64 = 8000;
+    // EIP-8038 `GasCosts.ACCOUNT_WRITE`, charged by execution-specs
+    // `amsterdam/vm/eoa_delegation.py:299`.
+    const ACCOUNT_WRITE: u64 = 9000;
     let target = Address::from_low_u64_be(0x7777);
     let recipient = Address::from_low_u64_be(0x9999);
 
@@ -2142,6 +2144,6 @@ fn test_set_delegation_self_sponsored_no_account_write_amsterdam() {
     assert_eq!(
         other_report.gas_used - self_report.gas_used,
         ACCOUNT_WRITE,
-        "non-self authority pays +8000 ACCOUNT_WRITE that a self-sponsored one does not"
+        "non-self authority pays +9000 ACCOUNT_WRITE that a self-sponsored one does not"
     );
 }

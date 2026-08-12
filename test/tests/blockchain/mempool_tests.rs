@@ -111,7 +111,7 @@ fn create_transaction_intrinsic_gas() {
 /// EIP-2780 (PRELIMINARY EIPs#11645): Amsterdam CREATE tx intrinsic must match
 /// the VM charge, not the legacy `TX_CREATE_GAS_COST = 53000`. The regular
 /// portion is the resource-based decomposition
-/// `TX_BASE_COST_AMSTERDAM (12000) + CREATE_ACCESS_AMSTERDAM (11000) = 23000`
+/// `TX_BASE_COST_AMSTERDAM (12000) + CREATE_ACCESS_AMSTERDAM (12000) = 24000`
 /// (no value transfer here). The state portion is 0: the `NEW_ACCOUNT` charge
 /// is no longer part of the intrinsic (v7 Task 4.1) — it is charged IN-REGION
 /// by `prepare_execution` (EELS `prepare_dispatch` create branch), conditioned
