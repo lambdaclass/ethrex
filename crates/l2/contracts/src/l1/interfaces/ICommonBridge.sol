@@ -230,6 +230,30 @@ interface ICommonBridge {
         bytes32[] calldata withdrawalProof
     ) external;
 
+    /// @notice Hash an intent the way sendIntentToL1 does on L2.
+    /// @param senderOnL2 the address that sent the intent on L2.
+    /// @param consumerOnL1 the address the sender named as the consumer.
+    /// @param payloadHash the payload the sender committed to.
+    /// @return The hash the L2 bridge sent to L1.
+    function intentHash(
+        address senderOnL2,
+        address consumerOnL1,
+        bytes32 payloadHash
+    ) external view returns (bytes32);
+
+    /// @notice Whether an intent has already been consumed.
+    /// @param senderOnL2 the address that sent the intent on L2.
+    /// @param consumerOnL1 the address the sender named as the consumer.
+    /// @param payloadHash the payload the sender committed to.
+    /// @param messageId the message Id of the intent.
+    /// @return True if the intent was already consumed.
+    function isIntentConsumed(
+        address senderOnL2,
+        address consumerOnL1,
+        bytes32 payloadHash,
+        uint256 messageId
+    ) external view returns (bool);
+
     /// @notice Verifies a data-only message from L2 and marks it as consumed.
     /// @dev The message must belong to a batch that was committed and verified.
     /// @dev The caller must be the consumer the sender named on L2, and can only
