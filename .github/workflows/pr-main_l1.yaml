@@ -87,6 +87,14 @@ jobs:
         run: |
           cargo fmt --all -- --check
 
+      # `rocksdb` is off by default, and nothing else in CI turns it on, so the
+      # RocksDB-backed storage code is neither linted nor tested here otherwise.
+      # That is not hypothetical: the column-family assignment guard lives behind
+      # this feature, and the two tables it now pins were found mistuned on a
+      # devnet rather than in CI.
+      - name: Run storage cargo clippy (rocksdb)
+        run: cargo clippy -p ethrex-storage --features rocksdb --all-targets -- -D warnings
+
       - name: Run tooling cargo check
         run: cargo check --workspace --all-targets
         working-directory: tooling
@@ -120,6 +128,12 @@ jobs:
       - name: Run unit tests
         run: |
           cargo test --workspace --exclude 'ethrex-l2*' --exclude ethrex-prover --exclude ethrex-guest-program
+
+      # The run above uses default features, which leaves the RocksDB backend
+      # untested: ten storage tests exist only under `rocksdb`, among them the
+      # guard asserting every table has a deliberate column-family home.
+      - name: Run storage unit tests (rocksdb)
+        run: cargo test -p ethrex-storage --features rocksdb
 
       - name: Run Blockchain EF tests
         if: ${{ github.event_name != 'merge_group' }}
