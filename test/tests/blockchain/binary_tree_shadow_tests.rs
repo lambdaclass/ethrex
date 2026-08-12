@@ -62,7 +62,7 @@ use ethrex_common::{
     types::{
         AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHeader, Code,
         DEFAULT_BUILDER_GAS_CEIL, EIP1559Transaction, ELASTICITY_MULTIPLIER, Genesis,
-        GenesisAccount, Transaction, TxKind,
+        GenesisAccount, Transaction, TxKind, Withdrawal,
     },
     utils::keccak,
 };
@@ -181,12 +181,27 @@ async fn build_block_at(
     parent_header: &BlockHeader,
     timestamp: u64,
 ) -> Block {
+    build_block_at_paying(store, blockchain, parent_header, timestamp, Vec::new()).await
+}
+
+/// [`build_block_at`] carrying an explicit withdrawal list.
+///
+/// Every other builder here passes an empty list, which is why the withdrawal
+/// handling downstream — consensus-layer credits applied outside the EVM — went
+/// unexercised for so long.
+async fn build_block_at_paying(
+    store: &Store,
+    blockchain: &Blockchain,
+    parent_header: &BlockHeader,
+    timestamp: u64,
+    withdrawals: Vec<Withdrawal>,
+) -> Block {
     let args = BuildPayloadArgs {
         parent: parent_header.hash(),
         timestamp,
         fee_recipient: test_coinbase(),
         random: H256::zero(),
-        withdrawals: Some(Vec::new()),
+        withdrawals: Some(withdrawals),
         beacon_root: Some(H256::zero()),
         slot_number: None,
         version: 1,
@@ -224,6 +239,57 @@ pub(super) async fn build_chain(
     chain_id: u64,
     count: u64,
 ) -> Vec<Block> {
+    build_chain_inner(store, blockchain, chain_id, count, false).await
+}
+
+/// The addresses every block of a withdrawal-paying chain credits.
+///
+/// They are deliberately *not* in the genesis alloc and are touched by no
+/// transaction, so each one is an account the block creates purely through the
+/// consensus-layer credit. That is what makes them invisible to the execution
+/// database logger — and therefore what makes the witness generators' explicit
+/// withdrawal-address replay load-bearing rather than redundant.
+pub(super) fn withdrawal_recipients() -> [Address; 2] {
+    [
+        Address::from_low_u64_be(0xDEAD01),
+        Address::from_low_u64_be(0xDEAD02),
+    ]
+}
+
+/// The withdrawals block `number` pays. Non-empty for every block, with
+/// `amount > 0` — `LEVM::process_withdrawals` filters zero-amount withdrawals
+/// out, so a zero here would build blocks that carry withdrawals and credit
+/// nothing, which is a vacuous fixture.
+fn withdrawals_for_block(number: u64) -> Vec<Withdrawal> {
+    withdrawal_recipients()
+        .into_iter()
+        .enumerate()
+        .map(|(slot, address)| Withdrawal {
+            index: number * 2 + slot as u64,
+            validator_index: slot as u64,
+            address,
+            amount: 1_000 + number,
+        })
+        .collect()
+}
+
+/// [`build_chain`], but every block carries a non-empty withdrawal list.
+pub(super) async fn build_chain_paying_withdrawals(
+    store: &Store,
+    blockchain: &Blockchain,
+    chain_id: u64,
+    count: u64,
+) -> Vec<Block> {
+    build_chain_inner(store, blockchain, chain_id, count, true).await
+}
+
+async fn build_chain_inner(
+    store: &Store,
+    blockchain: &Blockchain,
+    chain_id: u64,
+    count: u64,
+    pay_withdrawals: bool,
+) -> Vec<Block> {
     let sk = test_secret_key();
     let signer: Signer = LocalSigner::new(sk).into();
 
@@ -236,7 +302,19 @@ pub(super) async fn build_chain(
             .await
             .expect("tx should enter pool");
 
-        let block = build_block(store, blockchain, &parent_header).await;
+        let number = parent_header.number + 1;
+        let block = build_block_at_paying(
+            store,
+            blockchain,
+            &parent_header,
+            parent_header.timestamp + BLOCK_TIME,
+            if pay_withdrawals {
+                withdrawals_for_block(number)
+            } else {
+                Vec::new()
+            },
+        )
+        .await;
         blockchain
             .add_block(block.clone())
             .expect("block should import");
@@ -726,6 +804,41 @@ pub(super) async fn build_boundary_chains(count: u64) -> BoundaryChains {
     let twin_store = store_from_genesis(unscheduled).await;
     let twin_chain = Blockchain::default_with_store(twin_store.clone());
     let twin_blocks = build_chain(&twin_store, &twin_chain, chain_id, count).await;
+
+    BoundaryChains {
+        scheduled_genesis,
+        scheduled_store,
+        scheduled_blocks,
+        twin_store,
+        twin_blocks,
+        activation,
+    }
+}
+
+/// [`build_boundary_chains`], but every block of both chains pays withdrawals
+/// to [`withdrawal_recipients`].
+///
+/// Withdrawal credits are applied outside the EVM, so the accounts they create
+/// are not among the ones a block's execution reports as accessed. A witness
+/// generator therefore has to touch them by hand; on a chain whose blocks all
+/// carry empty withdrawal lists that hand-touching is unreachable code.
+pub(super) async fn build_boundary_chains_paying_withdrawals(count: u64) -> BoundaryChains {
+    let sender = sender_from_key(&test_secret_key());
+    let unscheduled = load_funded_genesis(sender, None);
+    let activation = unscheduled.timestamp + FLIP_BLOCK * BLOCK_TIME;
+
+    let scheduled_genesis = load_funded_genesis(sender, Some(activation));
+    let chain_id = scheduled_genesis.config.chain_id;
+
+    let scheduled_store = store_from_genesis(scheduled_genesis.clone()).await;
+    let scheduled_chain = Blockchain::default_with_store(scheduled_store.clone());
+    let scheduled_blocks =
+        build_chain_paying_withdrawals(&scheduled_store, &scheduled_chain, chain_id, count).await;
+
+    let twin_store = store_from_genesis(unscheduled).await;
+    let twin_chain = Blockchain::default_with_store(twin_store.clone());
+    let twin_blocks =
+        build_chain_paying_withdrawals(&twin_store, &twin_chain, chain_id, count).await;
 
     BoundaryChains {
         scheduled_genesis,
@@ -5796,6 +5909,85 @@ fn account_proof_nodes(response: &serde_json::Value) -> Vec<Vec<u8>> {
         .collect()
 }
 
+/// What a verified MPT storage proof says about a slot. The distinction between
+/// [`Absent`](ProvenSlot::Absent) and "the proof did not verify" is the whole
+/// point of the type: an exclusion proof and a withheld proof look alike to a
+/// caller that only asks "did I get a value back", and conflating them is how a
+/// wrong exclusion proof gets accepted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ProvenSlot {
+    Present(U256),
+    /// The walk resolved every node it needed and ended somewhere that is not
+    /// this slot's leaf — a verified exclusion.
+    Absent,
+}
+
+/// Verifies one `storageProof` entry against the `storageHash` the account
+/// proof pinned, and returns what it proves — or `None` if it proves nothing.
+///
+/// The same reconstruction `account_proven_by` does, one trie down: nodes are
+/// keyed by their own keccak hashes and `Trie::from_nodes` resolves every
+/// interior child reference by hash against that map over an empty database, so
+/// a node that does not hash to what its parent points at is unreachable.
+///
+/// The three-way return is what makes an exclusion claim mean something.
+/// `BranchNode::get` and `ExtensionNode::get` raise `InconsistentTree` when a
+/// child reference cannot be resolved rather than reporting a missing value, so
+/// an incomplete proof surfaces as `Err` here and becomes `None` — it does *not*
+/// masquerade as `Absent`. The corruption cases below exist to hold that apart:
+/// they assert `None` specifically, not merely "not Present".
+fn slot_proven_by(storage_hash: H256, slot: U256, proof_nodes: &[Vec<u8>]) -> Option<ProvenSlot> {
+    let mut nodes = BTreeMap::new();
+    for encoded in proof_nodes {
+        let node = Node::decode(encoded).ok()?;
+        nodes.insert(keccak(encoded), node);
+    }
+    let trie = Trie::from_nodes(storage_hash, &nodes).ok()?;
+    // The storage trie is keyed by the keccak of the 32-byte slot index, and
+    // holds the RLP of the value. Both are re-derived here from the slot the
+    // caller asked about; nothing reads the `key` the server echoed back.
+    let key = keccak(H256(slot.to_big_endian()).as_bytes());
+    match trie.get(key.as_bytes()) {
+        Ok(Some(encoded_value)) => Some(ProvenSlot::Present(U256::decode(&encoded_value).ok()?)),
+        Ok(None) => Some(ProvenSlot::Absent),
+        Err(_) => None,
+    }
+}
+
+/// Pulls one `storageProof` entry's node list out of an `eth_getProof`
+/// response, looked up by the slot it answers rather than by position.
+fn storage_proof_nodes(response: &serde_json::Value, slot: U256) -> Vec<Vec<u8>> {
+    let wanted = serde_json::json!(format!("{slot:#x}"));
+    let entry = response["storageProof"]
+        .as_array()
+        .expect("storageProof must be an array")
+        .iter()
+        .find(|entry| entry["key"] == wanted)
+        .unwrap_or_else(|| {
+            panic!(
+                "storageProof must carry an entry for slot {slot:#x}, got {}",
+                response["storageProof"]
+            )
+        });
+    entry["proof"]
+        .as_array()
+        .expect("a storageProof entry's proof must be an array")
+        .iter()
+        .map(|node| {
+            let hex = node.as_str().expect("proof node must be a hex string");
+            hex::decode(hex.trim_start_matches("0x")).expect("proof node must be hex")
+        })
+        .collect()
+}
+
+/// The `storageHash` an `eth_getProof` response reports, as an `H256`.
+fn reported_storage_hash(response: &serde_json::Value) -> H256 {
+    let hex = response["storageHash"]
+        .as_str()
+        .expect("storageHash must be a hex string");
+    H256::from_slice(&hex::decode(hex.trim_start_matches("0x")).expect("storageHash must be hex"))
+}
+
 // ---------------------------------------------------------------------------
 // D4.1 Pre-activation blocks keep their MPT proof; every block from the flip
 //      onward is refused.
@@ -5874,6 +6066,35 @@ async fn get_proof_serves_pre_flip_blocks_and_refuses_from_the_flip_onward() {
             format!("{:#x}", proven.storage_root),
             response["storageHash"].as_str().unwrap()
         );
+
+        // The storage half, against the `storageHash` the account proof just
+        // pinned rather than the one the server reported on its own authority.
+        //
+        // The sender is an EOA with no storage, so this is the empty-trie case
+        // and the exclusion is structural — `Trie::from_nodes` short-circuits
+        // `EMPTY_TRIE_HASH` to an empty trie, so no node could change the
+        // answer. What it pins is that the server does not invent storage for
+        // an account that has none. The load-bearing storage verification, over
+        // an account that really has slots, is
+        // `get_proof_storage_proofs_verify_against_the_proven_storage_hash`.
+        assert_eq!(
+            proven.storage_root, *EMPTY_TRIE_HASH,
+            "block {block_number}: the sender is an EOA and must have no storage"
+        );
+        assert_eq!(
+            slot_proven_by(
+                proven.storage_root,
+                U256::one(),
+                &storage_proof_nodes(&response, U256::one()),
+            ),
+            Some(ProvenSlot::Absent),
+            "block {block_number}: an account with no storage proves every slot absent"
+        );
+        assert_eq!(
+            response["storageProof"][0]["value"],
+            serde_json::json!("0x0"),
+            "block {block_number}: an unset slot reports zero"
+        );
     }
 
     // And from the flip onward it refuses, naming itself and the reason.
@@ -5904,6 +6125,196 @@ async fn get_proof_serves_pre_flip_blocks_and_refuses_from_the_flip_onward() {
             ),
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// D4.1b The storage half of the same proof.
+//
+// D4.1 verifies the `accountProof` cryptographically but reads the `storageHash`
+// out of the response and stops there, and its subject is an EOA with no
+// storage, so the storage path runs and proves nothing. This test drives the
+// same handler against an account that really has slots and verifies each
+// `storageProof` entry against the `storageHash` the account proof pinned —
+// so the storage nodes have to chain up to a root that itself chains up to the
+// block's `state_root`.
+//
+// It covers both directions, because they fail differently: an inclusion proof
+// that is wrong fails to produce the value, while an *exclusion* proof that is
+// wrong produces the right answer for the wrong reason — "no value" is what a
+// withheld proof and a genuine absence both look like. The rejection cases
+// below therefore assert `None` and not merely "not Present".
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn get_proof_storage_proofs_verify_against_the_proven_storage_hash() {
+    // The probe account this chain allocates carries storage; the funded sender
+    // D4.1 uses does not, which is why that test cannot exercise this.
+    let (store, blocks, activation) = build_v2_boundary_chain(FLIP_BLOCK).await;
+    let last_pre_flip = &blocks[(FLIP_BLOCK - 1) as usize - 1];
+    let flip = &blocks[(FLIP_BLOCK - 1) as usize];
+
+    // Non-vacuity: this really is a chain that flips, and the block being
+    // proven really is on the Merkle-Patricia side of it — otherwise
+    // `eth_getProof` would be refused and nothing below would run.
+    assert!(last_pre_flip.header.timestamp < activation);
+    assert!(flip.header.timestamp >= activation);
+    assert_eq!(
+        flip.header.state_root,
+        binary_root(&store, flip),
+        "the flip block must commit the binary root for this chain to be the interesting one"
+    );
+
+    forkchoice_to(&store, flip)
+        .await
+        .expect("the built chain must be acceptable as head");
+    let context = ethrex_rpc::test_utils::default_context_with_storage(store.clone()).await;
+
+    let address = v2_probe_address();
+    let present_slot = U256::from(V2_HEADER_SLOT);
+    let other_slot = U256::from(V2_OVERFLOW_SLOT);
+    let absent_slot = U256::from(V2_ABSENT_SLOT);
+    let number = last_pre_flip.header.number;
+
+    let response = ethrex_rpc::map_http_requests(
+        &get_proof_request(
+            address,
+            &[
+                H256(present_slot.to_big_endian()),
+                H256(other_slot.to_big_endian()),
+                H256(absent_slot.to_big_endian()),
+            ],
+            number,
+        ),
+        context.clone(),
+    )
+    .await
+    .expect("a pre-flip block must still have an MPT proof");
+
+    // The account first: the `storageHash` everything below is checked against
+    // is the one the *account proof* pins, not the one the response reports.
+    let header = store
+        .get_block_header(number)
+        .unwrap()
+        .expect("canonical header");
+    let proven_account =
+        account_proven_by(header.state_root, address, &account_proof_nodes(&response))
+            .expect("the account proof must verify against the block's state root");
+    let storage_hash = proven_account.storage_root;
+    assert_eq!(
+        storage_hash,
+        reported_storage_hash(&response),
+        "the reported storageHash must be the one the account proof pins"
+    );
+    // Non-vacuity: this account has a storage trie, so an exclusion below is a
+    // statement about a populated trie rather than about the empty one — where
+    // `Trie::from_nodes` short-circuits and no proof node matters.
+    assert_ne!(
+        storage_hash, *EMPTY_TRIE_HASH,
+        "the probe account must have storage for this test to mean anything"
+    );
+
+    let present_proof = storage_proof_nodes(&response, present_slot);
+    let other_proof = storage_proof_nodes(&response, other_slot);
+    let absent_proof = storage_proof_nodes(&response, absent_slot);
+    assert!(
+        !present_proof.is_empty() && !other_proof.is_empty() && !absent_proof.is_empty(),
+        "a proof against a non-empty storage root cannot be empty; an empty one would \
+         verify by short-circuit and prove nothing"
+    );
+
+    // Inclusion, at both allocated slots.
+    assert_eq!(
+        slot_proven_by(storage_hash, present_slot, &present_proof),
+        Some(ProvenSlot::Present(U256::from(V2_HEADER_SLOT_VALUE))),
+        "slot {present_slot:#x} must be proven at its allocated value"
+    );
+    assert_eq!(
+        slot_proven_by(storage_hash, other_slot, &other_proof),
+        Some(ProvenSlot::Present(U256::from(V2_OVERFLOW_SLOT_VALUE))),
+        "slot {other_slot:#x} must be proven at its allocated value"
+    );
+    // Exclusion, at a slot that was never written.
+    assert_eq!(
+        slot_proven_by(storage_hash, absent_slot, &absent_proof),
+        Some(ProvenSlot::Absent),
+        "slot {absent_slot:#x} was never written and must be proven absent"
+    );
+
+    // The values beside the proofs have to agree with what the proofs prove, or
+    // the response is self-contradictory whatever it verifies against.
+    for (slot, expected) in [
+        (present_slot, V2_HEADER_SLOT_VALUE),
+        (other_slot, V2_OVERFLOW_SLOT_VALUE),
+        (absent_slot, 0),
+    ] {
+        let entry = response["storageProof"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["key"] == serde_json::json!(format!("{slot:#x}")))
+            .unwrap();
+        assert_eq!(
+            entry["value"],
+            serde_json::json!(format!("{:#x}", U256::from(expected))),
+            "slot {slot:#x} reports a value its proof does not support"
+        );
+    }
+
+    // --- and now break them ------------------------------------------------
+    //
+    // Corrupting any node breaks the hash its parent named, so the walk can no
+    // longer resolve it. That must read as "this proves nothing", never as
+    // "absent" — the whole point of the three-way answer.
+    for (name, slot, proof) in [
+        ("inclusion", present_slot, &present_proof),
+        ("exclusion", absent_slot, &absent_proof),
+    ] {
+        for index in 0..proof.len() {
+            let mut tampered = proof.clone();
+            tampered[index][0] ^= 0xff;
+            assert_eq!(
+                slot_proven_by(storage_hash, slot, &tampered),
+                None,
+                "{name} proof with node {index} corrupted must prove nothing; \
+                 reading it as an absence would accept a withheld proof"
+            );
+        }
+        assert_eq!(
+            slot_proven_by(storage_hash, slot, &proof[..proof.len() - 1]),
+            None,
+            "a truncated {name} proof must prove nothing"
+        );
+    }
+
+    // A proof served for a different slot. Both directions, because each walks
+    // into a child the other's proof never carried: the answer must be that
+    // nothing was proven, not that the slot is absent.
+    assert_eq!(
+        slot_proven_by(storage_hash, present_slot, &other_proof),
+        None,
+        "slot {other_slot:#x}'s proof must prove nothing about slot {present_slot:#x}"
+    );
+    assert_eq!(
+        slot_proven_by(storage_hash, other_slot, &present_proof),
+        None,
+        "slot {present_slot:#x}'s proof must prove nothing about slot {other_slot:#x}"
+    );
+    // The exclusion proof is the dangerous substitution: it is the one whose
+    // honest answer is already "absent", so reusing it for a slot that *does*
+    // have a value must not quietly report that value missing.
+    assert_ne!(
+        slot_proven_by(storage_hash, present_slot, &absent_proof),
+        Some(ProvenSlot::Absent),
+        "slot {absent_slot:#x}'s exclusion proof must not prove slot {present_slot:#x} absent"
+    );
+
+    // And a proof verified against the wrong root proves nothing, which is what
+    // makes chaining to `storageHash` load-bearing rather than decorative.
+    assert_eq!(
+        slot_proven_by(header.state_root, present_slot, &present_proof),
+        None,
+        "a storage proof must not verify against the state root"
+    );
 }
 
 // ---------------------------------------------------------------------------
