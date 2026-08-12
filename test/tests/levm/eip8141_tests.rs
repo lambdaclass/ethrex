@@ -110,7 +110,7 @@ fn seeded_db(accounts: &[SeededAccount]) -> GeneralizedDatabase {
 fn frame_tx_env(tx: &FrameTransaction) -> Environment {
     Environment {
         origin: tx.sender,
-        gas_limit: tx.total_gas_limit(),
+        gas_limit: tx.max_gas(),
         block_gas_limit: (i64::MAX - 1) as u64,
         config: EVMConfig::new(Fork::Hegota, EVMConfig::canonical_values(Fork::Hegota)),
         chain_id: U256::from(HARNESS_CHAIN_ID),
@@ -1334,7 +1334,8 @@ mod frame_tx_opcode_handler_tests {
             sig_hash: ethrex_common::H256::zero(),
             tx,
             approve_called_in_current_frame: false,
-            total_gas_limit: 0,
+            max_gas: 0,
+            blob_base_fee: U256::zero(),
         }
     }
 
@@ -1420,7 +1421,8 @@ mod frame_tx_opcode_handler_tests {
             sig_hash: ethrex_common::H256::zero(),
             tx: FrameTransaction::default(),
             approve_called_in_current_frame: false,
-            total_gas_limit: 0,
+            max_gas: 0,
+            blob_base_fee: U256::zero(),
         };
         let result = load_tx_param(&ctx, 0x0B).unwrap();
         assert_eq!(result, U256::zero());
@@ -2616,6 +2618,62 @@ mod frame_validation_prefix_tests {
         );
         assert_eq!(outcome.accessed_paymaster, Some((sender, false)));
     }
+
+    /// The paymaster reservation bounds the blob fee at the transaction's declared
+    /// `max_fee_per_blob_gas`, not at the head block's `blob_base_fee`. Admission
+    /// simulates against the current head while execution charges the base fee of
+    /// whichever later block includes the transaction, and the blob base fee moves
+    /// per block. EIP-8141 §Blob handling makes `max_fee_per_blob_gas >=
+    /// blob_base_fee` an inclusion condition, so the declared rate bounds every
+    /// block that can include the transaction; the head's rate does not.
+    #[test]
+    fn reservation_ceiling_prices_blobs_at_the_declared_max_rate() {
+        const GAS_PER_BLOB: u64 = 1 << 17;
+        const MAX_FEE_PER_BLOB_GAS: u64 = 1_000;
+
+        let sender = addr(0x5E_11_02);
+        let mut tx = frame_tx_prefix(sender, vec![frame(1, 0x03, sender, 50_000)]);
+        let Transaction::FrameTransaction(frame_tx) = &mut tx else {
+            unreachable!("frame_tx_prefix builds a frame transaction")
+        };
+        frame_tx.max_fee_per_blob_gas = U256::from(MAX_FEE_PER_BLOB_GAS);
+        frame_tx.blob_versioned_hashes = vec![H256([
+            0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0,
+        ])];
+
+        // Enough balance to cover the consensus max cost APPROVE collects, which
+        // prices the blob at the head's base fee — the quantity this reservation
+        // deliberately does not use.
+        let mut db = db_with(vec![(sender, account(1_000_000, approve_code(0x03)))]);
+        let prefix = ValidationPrefix {
+            shape: PrefixShape::SelfVerify,
+            frame_indices: vec![0],
+            deploy_index: None,
+            pay_index: Some(0),
+        };
+        let outcome = LEVM::simulate_frame_validation_prefix(
+            &tx,
+            &header(),
+            &mut db,
+            VMType::L1,
+            &NativeCrypto,
+            &prefix,
+            None,
+        )
+        .expect("simulation runs");
+        assert!(
+            outcome.passed,
+            "the blob-carrying self_verify prefix must pass, got {:?}",
+            outcome.violation
+        );
+        // max_fee_per_gas is zero here, so the ceiling is the blob term alone.
+        assert_eq!(
+            outcome.reservation_ceiling,
+            U256::from(GAS_PER_BLOB * MAX_FEE_PER_BLOB_GAS),
+            "the reservation must price the blob at max_fee_per_blob_gas"
+        );
+    }
 }
 
 // ==================== Relocated from crates/vm/levm/src/vm.rs ====================
@@ -2667,7 +2725,7 @@ mod atomic_batch_end_tests {
 }
 
 mod atomic_batch_approval_rollback_tests {
-    use ethrex_common::Address;
+    use ethrex_common::{Address, U256};
     use ethrex_levm::vm::FrameTxContext;
 
     fn minimal_ctx() -> FrameTxContext {
@@ -2679,7 +2737,8 @@ mod atomic_batch_approval_rollback_tests {
             sig_hash: ethrex_common::H256::zero(),
             tx: ethrex_common::types::FrameTransaction::default(),
             approve_called_in_current_frame: false,
-            total_gas_limit: 0,
+            max_gas: 0,
+            blob_base_fee: U256::zero(),
         }
     }
 
@@ -3629,5 +3688,82 @@ fn storage_refund_from_a_later_frame_reduces_reported_gas() {
     assert!(
         applied <= pre_refund / 5,
         "the applied refund {applied} must respect the EIP-3529 one-fifth cap"
+    );
+}
+
+/// EIP-8141 `max_gas = max(standard_gas_limit, calldata_floor_gas)`. A frame
+/// transaction whose data floor exceeds what it declared for execution reserves
+/// the floor; it is not rejected. Both quantities carry the mandatory costs, so
+/// the floor wins exactly when the EIP-7623 token charge exceeds the declared
+/// data cost plus frame gas.
+#[test]
+fn max_gas_reserves_the_calldata_floor_instead_of_rejecting() {
+    use ethrex_common::types::Frame;
+
+    // A frame carrying a large payload but almost no execution gas: the floor
+    // (64 per byte) dominates the data cost (16 at most) plus the frame gas.
+    let mut tx = frame_tx_with_frames(vec![Frame {
+        mode: u8::from(FrameMode::Verify),
+        flags: 0x03,
+        target: Some(FUNDED_SENDER),
+        gas_limit: 1_000,
+        value: U256::zero(),
+        data: Bytes::from(vec![0x11u8; 4_096]),
+    }]);
+    tx.sender = FUNDED_SENDER;
+
+    assert!(
+        tx.calldata_floor_total() > tx.standard_gas_limit(),
+        "the floor must bind for this to test the reservation"
+    );
+    assert_eq!(
+        tx.max_gas(),
+        tx.calldata_floor_total(),
+        "max_gas must be the floor when the floor binds"
+    );
+    assert!(
+        tx.validate_static_constraints().is_ok(),
+        "a floor-bound transaction is valid; it reserves the floor rather than being rejected"
+    );
+}
+
+/// A floor-bound frame transaction settles at the floor: the reservation raised
+/// to `calldata_floor_gas` is what the payer is charged for, and no frame gas is
+/// reported as refunded because the floor already absorbs it.
+#[test]
+fn a_floor_bound_frame_transaction_is_charged_the_floor() {
+    use ethrex_common::types::Frame;
+
+    let tx = frame_tx_with_frames(vec![Frame {
+        mode: u8::from(FrameMode::Verify),
+        flags: 0x03,
+        target: Some(FUNDED_SENDER),
+        gas_limit: 100_000,
+        value: U256::zero(),
+        data: Bytes::from(vec![0x11u8; 4_096]),
+    }]);
+    let floor_total = tx.calldata_floor_total();
+    assert!(
+        floor_total > tx.standard_gas_limit(),
+        "the floor must bind for this to test the settlement"
+    );
+
+    let (result, _db) = run_frame_tx(
+        &[(
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        )],
+        tx,
+    );
+    let report = result.expect("valid: the self-verify frame approves execution and payment");
+    assert_eq!(
+        report.gas_used, floor_total,
+        "a floor-bound transaction is charged max_gas, which is the floor"
+    );
+    assert_eq!(
+        report.gas_refunded, 0,
+        "the floor leaves no frame gas to report as refunded"
     );
 }

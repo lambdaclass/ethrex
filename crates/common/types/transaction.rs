@@ -1409,7 +1409,7 @@ impl Transaction {
             Transaction::EIP4844Transaction(tx) => tx.gas,
             Transaction::PrivilegedL2Transaction(tx) => tx.gas_limit,
             Transaction::FeeTokenTransaction(tx) => tx.gas_limit,
-            Transaction::FrameTransaction(tx) => tx.total_gas_limit(),
+            Transaction::FrameTransaction(tx) => tx.max_gas(),
         }
     }
 
@@ -2152,9 +2152,9 @@ impl FrameTransaction {
             .saturating_add(self.signature_verification_cost())
     }
 
-    /// Compute total gas limit: mandatory costs + data cost + sum of frame gas
-    /// limits.
-    pub fn total_gas_limit(&self) -> u64 {
+    /// EIP-8141 `standard_gas_limit`: mandatory costs + data cost + sum of frame
+    /// gas limits.
+    pub fn standard_gas_limit(&self) -> u64 {
         self.mandatory_gas()
             .saturating_add(self.data_cost())
             .saturating_add(
@@ -2163,6 +2163,22 @@ impl FrameTransaction {
                     .map(|f| f.gas_limit)
                     .fold(0u64, |acc, g| acc.saturating_add(g)),
             )
+    }
+
+    /// EIP-8141 `calldata_floor_gas`: the mandatory costs plus the EIP-7623
+    /// floor over every byte this transaction carries. The mandatory costs are
+    /// always charged, so they sit on both sides of the `max_gas` comparison.
+    pub fn calldata_floor_total(&self) -> u64 {
+        self.mandatory_gas()
+            .saturating_add(self.calldata_floor_gas())
+    }
+
+    /// EIP-8141 `max_gas = max(standard_gas_limit, calldata_floor_gas)`: the gas
+    /// reserved from the block pool before execution and the quantity `max_cost`
+    /// is charged over. A transaction whose data floor exceeds what it declared
+    /// for execution reserves the floor rather than being rejected.
+    pub fn max_gas(&self) -> u64 {
+        self.standard_gas_limit().max(self.calldata_floor_total())
     }
 
     /// The expiry deadline (8-byte big-endian) of this transaction's expiry
@@ -2330,15 +2346,6 @@ impl FrameTransaction {
                     Some(_) => {}
                 }
             }
-        }
-        // Per EIP-8141, the EIP-7623 calldata floor must be reserved independently
-        // of execution: the derived `tx_gas_limit` has to cover the mandatory costs
-        // plus the floor, or the transaction cannot pay for the data it carries.
-        let floor_gas = self.calldata_floor_gas();
-        if self.total_gas_limit() < self.mandatory_gas().saturating_add(floor_gas) {
-            return Err(format!(
-                "Total gas limit does not reserve the calldata floor of {floor_gas}"
-            ));
         }
         Ok(())
     }
@@ -4218,7 +4225,7 @@ mod serde_impl {
                 nonce: Some(value.nonce),
                 to: TxKind::Call(value.sender),
                 from: value.sender,
-                gas: Some(value.total_gas_limit()),
+                gas: Some(value.max_gas()),
                 value: U256::zero(),
                 gas_price: value.max_fee_per_gas.into(),
                 max_priority_fee_per_gas: Some(value.max_priority_fee_per_gas),
@@ -5739,9 +5746,9 @@ mod tests {
     }
 
     #[test]
-    fn total_gas_limit_includes_signature_costs() {
+    fn max_gas_includes_signature_costs() {
         let mut tx = make_test_frame_tx();
-        let base = tx.total_gas_limit();
+        let base = tx.max_gas();
         // Add a P256 signature; cost must rise by at least 6700 + its calldata.
         tx.signatures.push(FrameSignature {
             scheme: FRAME_SIG_SCHEME_P256,
@@ -5749,7 +5756,7 @@ mod tests {
             msg: Bytes::new(),
             signature: Bytes::from(vec![0u8; 128]),
         });
-        assert!(tx.total_gas_limit() >= base + 6700);
+        assert!(tx.max_gas() >= base + 6700);
         assert_eq!(tx.signature_verification_cost(), 2800 + 6700);
     }
 
