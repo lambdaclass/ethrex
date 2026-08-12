@@ -5993,11 +5993,9 @@ fn storage_proof_nodes(response: &serde_json::Value, slot: U256) -> Vec<Vec<u8>>
 /// leaf sitting there before it can conclude anything. Chosen by hashing, not by
 /// asking the server, so the choice does not depend on what is under test.
 fn deep_absent_slot() -> U256 {
-    let first_nibble = |slot: u64| keccak(H256(U256::from(slot).to_big_endian()).as_bytes()).0[0] >> 4;
-    let occupied = [
-        first_nibble(V2_HEADER_SLOT),
-        first_nibble(V2_OVERFLOW_SLOT),
-    ];
+    let first_nibble =
+        |slot: u64| keccak(H256(U256::from(slot).to_big_endian()).as_bytes()).0[0] >> 4;
+    let occupied = [first_nibble(V2_HEADER_SLOT), first_nibble(V2_OVERFLOW_SLOT)];
     (2u64..10_000)
         .find(|slot| {
             *slot != V2_HEADER_SLOT
