@@ -194,6 +194,39 @@ wrong root, but a failure that only appears on chains that pay withdrawals.
 non-empty withdrawal lists, then re-run the mutation: deleting the branch must
 fail `a_v2_witness_re_executes_to_the_committed_binary_root`.
 
+### An L2 genesis may set `binaryTreeTime`, and nothing rejects it
+
+**Where:** `cmd/ethrex/l2/initializers.rs:220-228` (`init_l2` calls the same
+`Network::get_genesis()` as L1), against `crates/common/config/networks.rs:104-121`.
+
+**What:** `ChainConfig::binary_tree_time` (`crates/common/types/genesis.rs:299`)
+is an ordinary genesis field, and the L2 node loads its genesis through exactly
+the same `--network <path>` mechanism as L1. So
+`ChainConfig::is_binary_tree_active(ts)` returning true on an L2 chain is
+reachable purely by operator configuration, and no L2 startup path rejects,
+strips, or warns about it. L1 startup runs `resolve_binary_tree_time`,
+`validate_sync_mode`, and `validate_genesis_binary_tree_embeddable`
+(`cmd/ethrex/initializers.rs:869-896`); `init_l2` runs none of them, and
+`ethrex l2 --experimental.binary-tree-delay=N` parses and is then ignored.
+
+Meanwhile `grep -rn 'binary_tree\|binaryTree' crates/l2/` returns nothing: the
+entire L2 stack — sequencer, committer, prover guest — is written under the
+assumption that the commitment is never active. The assumption is asserted in
+prose only (`crates/blockchain/blockchain.rs:2598-2600`, `:2362-2366`).
+
+**Why it is not currently a wrong-answer bug:** no shipped config sets it —
+`grep -rl binaryTreeTime --include='*.json'` over the repo returns zero files,
+including `fixtures/genesis/l2.json` — and the two L2 witness call sites
+(`crates/l2/sequencer/l1_committer.rs:1171`,
+`crates/l2/networking/rpc/l2/execution_witness.rs:74`) now reach the generator
+guard added in `Blockchain::ensure_mpt_witnessable`, so they refuse rather than
+return an MPT witness for a binary root. On a chain that does not schedule the
+commitment the guard is inert, which is why L2 behaviour is unchanged.
+
+**Removal:** either reject `binaryTreeTime` in `init_l2` with a clear error, or
+give the L2 stack real EIP-8297 support. Refusing at startup is the smaller of
+the two and matches what L1 already does for other unsupported combinations.
+
 ### Amsterdam gas schedule is behind EIP-8038, and has no fixture coverage
 
 **Where:** `crates/vm/levm/src/gas_cost.rs:213-222` (the "EIP-8038 Amsterdam

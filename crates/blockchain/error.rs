@@ -32,6 +32,20 @@ pub enum ChainError {
     InvalidTransaction(String),
     #[error("Failed to generate witness: {0}")]
     WitnessGeneration(String),
+    /// An MPT execution witness was asked for a block whose `state_root`
+    /// addresses the EIP-8297 binary trie.
+    ///
+    /// Its own variant rather than a [`Self::WitnessGeneration`] string because
+    /// callers have to *branch* on it: the opportunistic witness cache on the
+    /// block-import path skips such a block, while a caller that explicitly
+    /// asked for a witness must surface the refusal. Matching a message
+    /// substring to decide that would be a guard held together by prose.
+    #[error(
+        "block {0} is past the binary-tree commitment (EIP-8297): its state root cannot be \
+         witnessed in the Merkle-Patricia format this witness uses. Generate an EIP-8297 witness \
+         instead (Blockchain::generate_binary_witness_for_blocks)"
+    )]
+    BinaryCommittedHeader(u64),
     #[error("{0}")]
     Custom(String),
     #[error("Unknown Payload")]
@@ -65,6 +79,7 @@ impl ChainError {
             ChainError::EvmError(_) => "evm_error",
             ChainError::InvalidTransaction(_) => "invalid_transaction",
             ChainError::WitnessGeneration(_) => "witness_generation",
+            ChainError::BinaryCommittedHeader(_) => "binary_committed_header",
             ChainError::Custom(_) => "custom_error",
             ChainError::UnknownPayload => "unknown_payload",
         }

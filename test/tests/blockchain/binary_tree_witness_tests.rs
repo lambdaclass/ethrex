@@ -1,29 +1,36 @@
 //! `debug_executionWitness` / `debug_executionWitnessV2` across the EIP-8297
 //! activation boundary.
 //!
-//! # Section 1 — what the unguarded V1 path does past the flip
+//! # Section 1 — the generator's own guard, and the two wrong answers it replaces
 //!
-//! `Blockchain::generate_witness_for_blocks` opens the first block's parent
-//! through the **unchecked** `Store::state_trie`, which resolves
+//! `Blockchain::generate_witness_for_blocks` *used to* open the first block's
+//! parent through the **unchecked** `Store::state_trie`, which resolves
 //! `header.state_root` against the MPT no matter which trie that root belongs
-//! to. Past the flip that gives two different wrong answers, decided by which
-//! side of the boundary the *parent* sits on, and the dangerous one is the
+//! to. Past the flip that gave two different wrong answers, decided by which
+//! side of the boundary the *parent* sat on, and the dangerous one was the
 //! success:
 //!
 //! 1. the **first** binary-committed block has a pre-flip parent, so the MPT
-//!    open succeeds and the generator returns a complete, well-formed MPT
+//!    open succeeded and the generator returned a complete, well-formed MPT
 //!    witness over the parent's MPT state — a witness that answers a question
 //!    nobody asked, since the header commits a binary root that no MPT witness
 //!    can reproduce. `state_trie_checked` would *not* have caught this: the
-//!    parent's MPT state really is held;
+//!    parent's MPT state really is held, and the test below still proves that;
 //! 2. any **later** block has a binary-committed parent, whose `state_root`
-//!    names no MPT node at all, so the open fails with a confusing internal
+//!    names no MPT node at all, so the open failed with a confusing internal
 //!    `Root node with hash ... not found` — reported as missing state for state
 //!    the node holds, just in the other trie.
 //!
-//! These tests call the generator directly, because the RPC handlers now refuse
-//! before reaching it; they are what the guard in section 2 is guarding against,
-//! and they must keep failing this way for the guard to be load-bearing.
+//! Both are now refused up front by `ChainError::BinaryCommittedHeader`. The two
+//! tests below are the record of what went wrong, so they still set up each
+//! hazard exactly and still assert the property that made it a hazard — that in
+//! case 1 the MPT open would have *succeeded*, and in case 2 the parent commits
+//! a binary root — and then assert the refusal instead of the wrong answer.
+//!
+//! These call the generator directly. That is the point: the RPC guard in
+//! section 2 fires before the generator is ever reached, so the RPC tests prove
+//! nothing about the generator, and every non-RPC caller (the L2 committer, the
+//! engine API, the EF test runner) goes straight here.
 //!
 //! # Section 2 — the guarded pair
 //!
@@ -39,12 +46,15 @@
 //! corrupted node, a witness from a different block, a node that does not
 //! belong — and show each breakage is caught.
 
-use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::binary_witness::recompute_post_state_root;
+use ethrex_blockchain::error::ChainError;
+use ethrex_blockchain::{Blockchain, BlockchainOptions};
 use ethrex_common::types::Block;
 use ethrex_common::types::binary_execution_witness::{
     BINARY_WITNESS_FORMAT, RpcBinaryExecutionWitness,
 };
+use ethrex_common::types::block_execution_witness::ExecutionWitness;
+use ethrex_common::types::l2::fee_config::FeeConfig;
 use ethrex_common::utils::keccak;
 use ethrex_common::{H256, types::block_execution_witness::RpcExecutionWitness};
 use ethrex_rlp::decode::RLPDecode;
@@ -58,8 +68,10 @@ use ethrex_rpc::test_utils::default_context_with_storage;
 use ethrex_rpc::types::block_identifier::BlockIdentifier;
 use ethrex_rpc::utils::RpcErr;
 
+use ethrex_storage::Store;
+
 use super::binary_tree_shadow_tests::{
-    BoundaryChains, FLIP_BLOCK, binary_root, build_boundary_chains,
+    BoundaryChains, FLIP_BLOCK, binary_root, build_boundary_chains, store_from_genesis,
 };
 
 /// Assert the chain really flipped where these tests assume it did.
@@ -104,12 +116,47 @@ async fn make_canonical(chains: &BoundaryChains) {
 }
 
 // ---------------------------------------------------------------------------
-// Section 1 — the unguarded generator, past the flip.
+// Section 1 — the generator, past the flip.
 // ---------------------------------------------------------------------------
 
-/// The dangerous one: a plausible, well-formed witness for the wrong trie.
+/// The error from a generator call that must not have succeeded.
+///
+/// Hand-rolled rather than `expect_err` because [`ExecutionWitness`] has no
+/// `Debug`.
+fn refusal(result: Result<ExecutionWitness, ChainError>, context: &str) -> ChainError {
+    match result {
+        Ok(_) => panic!("{context}"),
+        Err(error) => error,
+    }
+}
+
+/// The refusal must name the block and be the dedicated variant, not a generic
+/// witness failure — the block-import path branches on that variant.
+fn assert_refused_as_binary_committed(error: &ChainError, number: u64) {
+    assert!(
+        matches!(error, ChainError::BinaryCommittedHeader(n) if *n == number),
+        "the generator must refuse with BinaryCommittedHeader({number}), got {error:?}"
+    );
+    let message = format!("{error}");
+    assert!(
+        message.contains(&format!("block {number}")),
+        "the refusal must name the offending block: {message}"
+    );
+    assert!(
+        message.contains("EIP-8297"),
+        "the refusal must say why, not just that: {message}"
+    );
+}
+
+/// Case 1, the dangerous one: the generator used to return a plausible,
+/// well-formed MPT witness for the *parent's* trie.
+///
+/// The setup is preserved exactly, including the assertion that makes it
+/// dangerous: the parent's MPT state genuinely is held, so the unchecked open
+/// succeeded and `state_trie_checked` would have succeeded too. Only a
+/// per-header binary check catches this, and that is what is asserted now.
 #[tokio::test]
-async fn the_mpt_generator_at_the_first_binary_block_answers_for_the_parents_mpt() {
+async fn the_mpt_generator_refuses_the_first_binary_block_whose_mpt_parent_is_held() {
     let chains = build_boundary_chains(FLIP_BLOCK).await;
     assert_flip_shape(&chains);
     let head = chains.scheduled_blocks.last().unwrap().clone();
@@ -124,27 +171,42 @@ async fn the_mpt_generator_at_the_first_binary_block_answers_for_the_parents_mpt
          could tell them apart"
     );
 
-    let blockchain = Blockchain::default_with_store(chains.scheduled_store.clone());
-    let witness = blockchain
-        .generate_witness_for_blocks(std::slice::from_ref(&head))
-        .await
-        .expect("the MPT generator succeeds here today — that is the finding");
-    let witness = RpcExecutionWitness::try_from(witness).expect("witness converts to RPC form");
+    // The hazard, still demonstrated: the parent's MPT trie opens and resolves.
+    // So nothing about *missing state* stops the old code path here, and a
+    // `state_trie_checked` fix would have passed straight through.
+    let parent_trie = chains
+        .scheduled_store
+        .state_trie(parent.hash())
+        .expect("opening the parent's MPT trie must not error")
+        .expect("the parent block is known");
+    assert!(
+        parent_trie
+            .root_node()
+            .expect("the parent's MPT root node must resolve")
+            .is_some(),
+        "the parent's MPT state really is held — that is why only a per-header \
+         binary check catches this case"
+    );
 
-    let hashes = witness_node_hashes(&witness);
-    assert!(
-        hashes.contains(&parent.header.state_root),
-        "the witness is rooted at the parent's MPT root: it is an MPT witness"
+    let blockchain = Blockchain::default_with_store(chains.scheduled_store.clone());
+    let error = refusal(
+        blockchain
+            .generate_witness_for_blocks(std::slice::from_ref(&head))
+            .await,
+        "the generator must refuse a binary-committed header",
     );
-    assert!(
-        !hashes.contains(&head.header.state_root),
-        "and it cannot contain the binary root the header actually commits to"
-    );
+    assert_refused_as_binary_committed(&error, head.header.number);
 }
 
-/// The confusing one: a missing-state error for state the node holds.
+/// Case 2, the confusing one: the generator used to fail with an MPT-internal
+/// `Root node ... not found` naming the parent's *binary* root — a missing-state
+/// error for state the node holds, in the other trie.
+///
+/// The precondition that produced that message is still asserted; what changed
+/// is that the refusal now arrives before the MPT is ever consulted, so the
+/// message is about the commitment rather than about a missing node.
 #[tokio::test]
-async fn the_mpt_generator_past_the_first_binary_block_fails_as_a_missing_mpt_root() {
+async fn the_mpt_generator_refuses_past_the_first_binary_block_before_touching_the_mpt() {
     let chains = build_boundary_chains(FLIP_BLOCK + 1).await;
     assert_flip_shape(&chains);
     let head = chains.scheduled_blocks.last().unwrap().clone();
@@ -153,26 +215,340 @@ async fn the_mpt_generator_past_the_first_binary_block_fails_as_a_missing_mpt_ro
         parent.header.timestamp >= chains.activation,
         "this test needs a binary-committed *parent*"
     );
+    assert_eq!(
+        parent.header.state_root,
+        binary_root(&chains.scheduled_store, &parent),
+        "the parent must really commit a binary root, or this is case 1 again"
+    );
 
     let blockchain = Blockchain::default_with_store(chains.scheduled_store.clone());
-    let Err(error) = blockchain
-        .generate_witness_for_blocks(std::slice::from_ref(&head))
-        .await
-    else {
-        panic!("a binary-committed parent names no MPT root, so this must fail");
-    };
+    let error = refusal(
+        blockchain
+            .generate_witness_for_blocks(std::slice::from_ref(&head))
+            .await,
+        "a binary-committed header must be refused",
+    );
+    assert_refused_as_binary_committed(&error, head.header.number);
 
+    // The old failure mode is gone: no MPT-internal message, and in particular
+    // the parent's binary root is no longer reported as a missing MPT node.
     let message = format!("{error}");
     assert!(
-        message.contains("Root node") && message.contains("not found"),
-        "the error is an MPT-internal one, not a statement about the binary \
-         commitment: {message}"
+        !message.contains("Root node"),
+        "the refusal must not be an MPT-internal missing-node error: {message}"
     );
-    // And it names the *binary* root as the missing MPT node, which is the
-    // whole confusion: the node holds that state, in the other trie.
     assert!(
-        message.contains(&format!("{:#x}", parent.header.state_root)),
-        "the missing 'MPT root' is the parent's binary root: {message}"
+        !message.contains(&format!("{:#x}", parent.header.state_root)),
+        "the refusal must not name the parent's binary root as missing state: {message}"
+    );
+}
+
+/// The per-header rule at the generator, and the falsification target for a
+/// per-chain guard: on a chain that *has* flipped, every pre-activation block
+/// must still get a real MPT witness out of the generator.
+///
+/// A `binary_tree_scheduled()` check in place of `is_binary_tree_active(ts)`
+/// would refuse all of these, which is the mistake that wedged a devnet.
+#[tokio::test]
+async fn the_mpt_generator_still_serves_pre_activation_blocks_on_a_flipped_chain() {
+    let chains = build_boundary_chains(FLIP_BLOCK).await;
+    assert_flip_shape(&chains);
+    let blockchain = Blockchain::default_with_store(chains.scheduled_store.clone());
+
+    let mut served = 0;
+    for (index, block) in chains.scheduled_blocks.iter().enumerate() {
+        if block.header.timestamp >= chains.activation {
+            continue;
+        }
+        // The parent's committed state root: the genesis root for the first
+        // block, the previous block's for the rest. Read from the store by hash
+        // rather than recomputed, so this is not the generator checked against
+        // itself.
+        let parent_state_root = chains
+            .scheduled_store
+            .get_block_header_by_hash(block.header.parent_hash)
+            .expect("reading the parent header must not error")
+            .unwrap_or_else(|| panic!("block {index} must have a stored parent"))
+            .state_root;
+
+        let witness = blockchain
+            .generate_witness_for_blocks(std::slice::from_ref(block))
+            .await
+            .unwrap_or_else(|error| {
+                panic!(
+                    "pre-activation block {} must keep its MPT witness after the flip, got {error}",
+                    block.header.number
+                )
+            });
+        let witness = RpcExecutionWitness::try_from(witness).expect("witness converts to RPC form");
+        assert!(
+            !witness.state.is_empty(),
+            "block {} must get a non-empty MPT witness",
+            block.header.number
+        );
+        // Non-vacuity: it is a witness for *this* block, rooted at its parent's
+        // MPT state root, not merely a non-empty list of bytes.
+        assert!(
+            witness_node_hashes(&witness).contains(&parent_state_root),
+            "block {}'s witness must be rooted at its parent's MPT root",
+            block.header.number
+        );
+        served += 1;
+    }
+    assert_eq!(
+        served,
+        FLIP_BLOCK as usize - 1,
+        "the chain must really contain pre-activation blocks to serve"
+    );
+}
+
+/// A chain with no `binaryTreeTime` at all: the generator answers for every
+/// block, so the guard costs nothing on an unscheduled chain.
+#[tokio::test]
+async fn the_mpt_generator_serves_every_block_of_an_unscheduled_chain() {
+    let chains = build_boundary_chains(FLIP_BLOCK).await;
+    let blockchain = Blockchain::default_with_store(chains.twin_store.clone());
+    assert!(!chains.twin_blocks.is_empty());
+    for block in &chains.twin_blocks {
+        blockchain
+            .generate_witness_for_blocks(std::slice::from_ref(block))
+            .await
+            .unwrap_or_else(|error| {
+                panic!(
+                    "block {} of an unscheduled chain must be witnessable: {error}",
+                    block.header.number
+                )
+            });
+    }
+}
+
+/// Every entry point into the generator, not just the one the RPC layer uses.
+///
+/// `generate_witness_for_blocks_with_fee_configs` is the L2 committer's and the
+/// L2 RPC handler's entry point; `generate_witness_for_blocks` is the engine
+/// API's and the EF runner's. Both must refuse, or a caller that is not the
+/// guarded L1 RPC layer still gets the wrong answer.
+#[tokio::test]
+async fn every_generator_entry_point_refuses_a_binary_committed_header() {
+    let chains = build_boundary_chains(FLIP_BLOCK).await;
+    assert_flip_shape(&chains);
+    let head = chains.scheduled_blocks.last().unwrap().clone();
+    let blockchain = Blockchain::default_with_store(chains.scheduled_store.clone());
+
+    let error = refusal(
+        blockchain
+            .generate_witness_for_blocks(std::slice::from_ref(&head))
+            .await,
+        "generate_witness_for_blocks must refuse",
+    );
+    assert_refused_as_binary_committed(&error, head.header.number);
+
+    // The fee-config entry point, with a fee config supplied, which is exactly
+    // how the L2 committer and the L2 `debug_executionWitness` handler call it.
+    let error = refusal(
+        blockchain
+            .generate_witness_for_blocks_with_fee_configs(
+                std::slice::from_ref(&head),
+                Some(&[FeeConfig::default()]),
+            )
+            .await,
+        "generate_witness_for_blocks_with_fee_configs must refuse",
+    );
+    assert_refused_as_binary_committed(&error, head.header.number);
+}
+
+/// A batch that starts before the activation and runs past it.
+///
+/// Checking only the first block's header would let this through: the first
+/// block is pre-flip, so its parent's MPT trie opens cleanly and the whole batch
+/// merkleizes into a root no header commits to. The refusal must name the first
+/// *binary-committed* block in the batch, not the batch's first block.
+#[tokio::test]
+async fn the_mpt_generator_refuses_a_batch_that_crosses_the_boundary() {
+    let chains = build_boundary_chains(FLIP_BLOCK).await;
+    assert_flip_shape(&chains);
+    let blocks = chains.scheduled_blocks.clone();
+    let first = blocks.first().expect("chain is non-empty");
+    let head = blocks.last().expect("chain is non-empty");
+    assert!(
+        first.header.timestamp < chains.activation,
+        "the batch must start before the activation, or it is not a crossing batch"
+    );
+    assert!(
+        head.header.timestamp >= chains.activation,
+        "the batch must end past the activation"
+    );
+
+    let blockchain = Blockchain::default_with_store(chains.scheduled_store.clone());
+    let error = refusal(
+        blockchain.generate_witness_for_blocks(&blocks).await,
+        "a batch reaching past the activation must be refused",
+    );
+    // `FLIP_BLOCK` is the first binary-committed block, and it is not the first
+    // block of the batch — so this distinguishes a per-batch check that looks at
+    // every header from one that only looks at `blocks[0]`.
+    assert_refused_as_binary_committed(&error, FLIP_BLOCK);
+    assert_ne!(
+        first.header.number, FLIP_BLOCK,
+        "the named block must not be the batch's first, or this proves nothing"
+    );
+}
+
+// --- the other generator: the block-import path ------------------------------
+
+/// Replay `blocks` onto a fresh store built from the scheduled genesis, stopping
+/// before `up_to` (exclusive, by block number).
+///
+/// A second store rather than `chains.scheduled_store`, because these tests need
+/// to import the flip block themselves and it is already imported there.
+///
+/// `precompute_witnesses` turns on the *opportunistic* witness cache, which is
+/// the whole subject of `the_opportunistic_witness_cache_*` test below — with it
+/// off, `add_block_pipeline` never calls the witness generator at all and that
+/// test would pass no matter what the guard did. It is paired with `set_synced`
+/// because the pipeline gates on `precompute_witnesses && is_synced()`.
+async fn replay_up_to(
+    chains: &BoundaryChains,
+    up_to: u64,
+    precompute_witnesses: bool,
+) -> (Store, Blockchain) {
+    let store = store_from_genesis(chains.scheduled_genesis.clone()).await;
+    let blockchain = Blockchain::new(
+        store.clone(),
+        BlockchainOptions {
+            precompute_witnesses,
+            ..Default::default()
+        },
+    );
+    if precompute_witnesses {
+        blockchain.set_synced();
+    }
+    for block in &chains.scheduled_blocks {
+        if block.header.number >= up_to {
+            break;
+        }
+        blockchain
+            .add_block_pipeline(block.clone(), None)
+            .unwrap_or_else(|error| panic!("replaying block {}: {error}", block.header.number));
+    }
+    (store, blockchain)
+}
+
+/// Guards the guard: with the opportunistic cache on, an ordinary
+/// `add_block_pipeline` import really does populate the witness cache.
+///
+/// Without this, `the_opportunistic_witness_cache_*` test's "nothing was cached"
+/// assertion would hold vacuously — which is exactly what it did before this
+/// check existed, and a mutation that deleted the import-path guard survived it.
+#[tokio::test]
+async fn the_opportunistic_witness_cache_really_caches_when_it_can() {
+    let chains = build_boundary_chains(FLIP_BLOCK).await;
+    assert_flip_shape(&chains);
+    let pre_flip = chains.scheduled_blocks[FLIP_BLOCK as usize - 2].clone();
+    assert!(
+        pre_flip.header.timestamp < chains.activation,
+        "this must be a block the MPT generator can answer for"
+    );
+
+    let (store, blockchain) = replay_up_to(&chains, pre_flip.header.number, true).await;
+    blockchain
+        .add_block_pipeline(pre_flip.clone(), None)
+        .expect("a pre-activation block must import");
+    assert!(
+        store
+            .get_witness_json_bytes(pre_flip.header.number, pre_flip.hash())
+            .expect("witness cache read")
+            .is_some(),
+        "the opportunistic cache must populate for a block the MPT generator can answer for, \
+         or the binary-committed case below proves nothing"
+    );
+}
+
+/// `generate_witness_from_account_updates` is the *other* MPT generator: it runs
+/// during block import and its output is written to the witness cache. The
+/// engine API's by-hash reader consults that cache before the generator, so an
+/// unguarded import path poisons a reader that never reaches the guard.
+///
+/// `add_block_pipeline_with_witness` is `engine_newPayloadWithWitness`'s entry
+/// point — a caller who explicitly asked for a witness, and so must get the
+/// refusal rather than a witness for the wrong trie.
+#[tokio::test]
+async fn the_import_path_generator_refuses_a_binary_committed_block() {
+    let chains = build_boundary_chains(FLIP_BLOCK).await;
+    assert_flip_shape(&chains);
+    let flip = chains
+        .scheduled_blocks
+        .last()
+        .expect("chain is non-empty")
+        .clone();
+    assert_eq!(flip.header.number, FLIP_BLOCK);
+
+    let (_store, blockchain) = replay_up_to(&chains, FLIP_BLOCK, false).await;
+
+    // Non-vacuity: the block *before* the flip goes through this exact path and
+    // yields a witness, so the refusal below is caused by the commitment and not
+    // by the harness failing to produce a witness at all.
+    let pre_flip = chains.scheduled_blocks[FLIP_BLOCK as usize - 2].clone();
+    assert!(pre_flip.header.timestamp < chains.activation);
+    let (_store, pre_flip_chain) = replay_up_to(&chains, pre_flip.header.number, false).await;
+    let witness = pre_flip_chain
+        .add_block_pipeline_with_witness(pre_flip.clone(), None)
+        .unwrap_or_else(|error| {
+            panic!("a pre-activation block must still be witnessable on import: {error}")
+        });
+    let witness = RpcExecutionWitness::try_from(witness).expect("witness converts to RPC form");
+    assert!(
+        !witness.state.is_empty(),
+        "the pre-activation import witness must be non-empty"
+    );
+
+    let error = match blockchain.add_block_pipeline_with_witness(flip.clone(), None) {
+        Ok(_) => panic!("the import path must refuse a witness for a binary-committed block"),
+        Err(error) => error,
+    };
+    assert_refused_as_binary_committed(&error, FLIP_BLOCK);
+}
+
+/// The other half of the same rule: the *opportunistic* cache must not fail the
+/// import.
+///
+/// A binary-committed block has no MPT witness, and that is a fact about the
+/// block rather than a defect in it. If the refusal propagated here, a scheduled
+/// chain running with `--precompute-witnesses` would halt permanently at its
+/// activation block — the failure mode this project has already paid for once.
+#[tokio::test]
+async fn the_opportunistic_witness_cache_does_not_fail_a_binary_committed_import() {
+    let chains = build_boundary_chains(FLIP_BLOCK).await;
+    assert_flip_shape(&chains);
+    let flip = chains
+        .scheduled_blocks
+        .last()
+        .expect("chain is non-empty")
+        .clone();
+
+    let (store, blockchain) = replay_up_to(&chains, FLIP_BLOCK, true).await;
+    blockchain
+        .add_block_pipeline(flip.clone(), None)
+        .expect("a binary-committed block must still import when no witness can be built");
+
+    // It really is imported, and with the binary root — so the import was not
+    // quietly skipped along with the witness.
+    assert_eq!(
+        store
+            .get_block_header_by_hash(flip.hash())
+            .expect("header read")
+            .expect("the flip block must be stored")
+            .state_root,
+        flip.header.state_root
+    );
+    // And nothing was cached for it: a cached MPT witness here would be the
+    // wrong-trie witness the guard exists to prevent.
+    assert!(
+        store
+            .get_witness_json_bytes(flip.header.number, flip.hash())
+            .expect("witness cache read")
+            .is_none(),
+        "no MPT witness may be cached for a binary-committed block"
     );
 }
 
