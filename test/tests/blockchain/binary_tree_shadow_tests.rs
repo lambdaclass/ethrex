@@ -2010,7 +2010,7 @@ async fn an_eip161_clear_of_a_storage_only_beneficiary_drops_its_leaves_on_the_b
         "the block must commit a binary root, or the gate under test never fired"
     );
 
-    let db = StoreVmDatabase::new(store, block.header.clone())
+    let db = StoreVmDatabase::new(store, block.header)
         .expect("the block's own trie must hold its state");
 
     assert!(
@@ -2049,7 +2049,7 @@ async fn the_same_eip161_clear_leaves_the_mpt_exactly_as_it_was() {
         "an unscheduled chain commits an MPT root"
     );
 
-    let db = StoreVmDatabase::new(store, block.header.clone())
+    let db = StoreVmDatabase::new(store, block.header)
         .expect("the block's own trie must hold its state");
 
     let account = db
