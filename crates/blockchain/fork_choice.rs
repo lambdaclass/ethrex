@@ -792,6 +792,11 @@ fn map_chain_error_for_fcu(err: ChainError, last_valid_hash: H256) -> InvalidFor
         | ChainError::RLPDecodeError(_)
         | ChainError::EvmError(_)
         | ChainError::WitnessGeneration(_)
+        // Emphatically not a statement about the block: it says the caller asked
+        // for the wrong *witness format* for a perfectly valid binary-committed
+        // block. Classifying it as `InvalidAncestor` would let a witness-format
+        // mismatch reject a live branch.
+        | ChainError::BinaryCommittedHeader(_)
         | ChainError::Custom(_)
         | ChainError::UnknownPayload => InvalidForkChoice::StateNotReachable,
     }

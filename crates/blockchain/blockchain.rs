@@ -1759,6 +1759,62 @@ impl Blockchain {
         collapse_root_node(&self.storage, parent_header.state_root, prefix, root)
     }
 
+    /// Refuse to build an MPT witness for a binary-committed header.
+    ///
+    /// **The guard belongs here, at the generator, not at the call sites.** An
+    /// [`ExecutionWitness`] is a flat list of RLP-encoded Merkle-Patricia nodes
+    /// that a verifier rebuilds a trie from and hashes against
+    /// `header.state_root`. Past the EIP-8297 activation that root is a *binary*
+    /// root, and no MPT witness can reproduce it — so there is no correct answer
+    /// to return, and every caller that reaches this code wants one. Guarding at
+    /// each call site instead only guards the call sites that exist today.
+    ///
+    /// **Per header, never per chain.** A block from before the activation on a
+    /// chain that has since flipped genuinely commits an MPT root, has a real
+    /// MPT witness, and must keep getting it — after the flip, across restarts,
+    /// and on either side of a reorg. Asking the chain-level question
+    /// (`binary_tree_scheduled()`) instead would make the whole pre-flip history
+    /// unwitnessable; that mistake wedged a devnet earlier on this branch. This
+    /// asks [`ChainConfig::is_binary_tree_active`] about *this header's*
+    /// timestamp, the same question `StoreVmDatabase::open`,
+    /// `Store::header_addresses_binary_trie` and the RPC guard
+    /// (`crates/networking/rpc/debug/witness_guard.rs`) ask.
+    ///
+    /// # Why refuse rather than dispatch to the binary generator
+    ///
+    /// [`Self::generate_binary_witness_for_blocks`] exists and could be called
+    /// from here, but it returns a `BinaryExecutionWitness` — a different type,
+    /// a different wire format, and a different verification procedure. The
+    /// callers of *this* function do not want "a witness", they want an MPT
+    /// witness:
+    ///
+    /// - the L2 committer feeds it to the prover's `ProgramInput`, whose guest
+    ///   program has no binary-trie support at all;
+    /// - the engine API encodes it in geth's `ExtWitness` RLP shape;
+    /// - the EF test runner hands it to a stateless backend;
+    /// - the JSON-RPC handlers already dispatch, at the method level
+    ///   (`debug_executionWitness` vs `debug_executionWitnessV2`), which is
+    ///   where the difference has to be visible anyway since the two responses
+    ///   have different schemas.
+    ///
+    /// Dispatching would therefore mean widening the return type to an enum and
+    /// making all of those callers reject the variant they cannot consume —
+    /// relocating this refusal to four places and creating four new ways to
+    /// forget it. Refusing here, once, is not the safe minimum; it is the
+    /// correct shape for a function that returns one format.
+    ///
+    /// [`ChainConfig::is_binary_tree_active`]: ethrex_common::types::ChainConfig::is_binary_tree_active
+    fn ensure_mpt_witnessable(&self, header: &BlockHeader) -> Result<(), ChainError> {
+        if self
+            .storage
+            .get_chain_config()
+            .is_binary_tree_active(header.timestamp)
+        {
+            return Err(ChainError::BinaryCommittedHeader(header.number));
+        }
+        Ok(())
+    }
+
     pub async fn generate_witness_for_blocks(
         &self,
         blocks: &[Block],
@@ -1778,6 +1834,15 @@ impl Blockchain {
                 "Empty block batch".to_string(),
             ))?
             .header;
+
+        // Every block, not just the first: a batch that starts before the
+        // activation and runs past it would open a perfectly good MPT parent
+        // trie and then merkleize into a root no header commits to. Checked
+        // before the trie is opened, so the refusal never depends on which side
+        // of the boundary the *parent* happens to sit on.
+        for block in blocks {
+            self.ensure_mpt_witnessable(&block.header)?;
+        }
 
         // Get state at previous block
         let trie = self
@@ -2095,6 +2160,18 @@ impl Blockchain {
         })
     }
 
+    /// The other MPT witness generator: builds the witness from updates the
+    /// block pipeline already has, so an imported block can be witnessed without
+    /// re-execution.
+    ///
+    /// Guarded by the same per-header rule as
+    /// [`Self::generate_witness_for_blocks_with_fee_configs`], and for a sharper
+    /// reason: this one runs on the *import* path under `--precompute-witnesses`
+    /// and its output is written to the witness cache. Unguarded, the first
+    /// binary-committed block would seed that cache with a well-formed MPT
+    /// witness for the parent's state — and a poisoned cache is worse than a bad
+    /// generator, because a reader that never reaches the generator still gets
+    /// the wrong answer.
     pub fn generate_witness_from_account_updates(
         &self,
         account_updates: Vec<AccountUpdate>,
@@ -2102,6 +2179,8 @@ impl Blockchain {
         parent_header: BlockHeader,
         logger: &DatabaseLogger,
     ) -> Result<ExecutionWitness, ChainError> {
+        self.ensure_mpt_witnessable(&block.header)?;
+
         // Get state at previous block
         let trie = self
             .storage
@@ -2843,26 +2922,51 @@ impl Blockchain {
             }
         {
             let block_hash = block.hash();
-            let generated_witness = self.generate_witness_from_account_updates(
+            let generated = self.generate_witness_from_account_updates(
                 account_updates,
                 &block,
                 parent_header,
                 &logger,
-            )?;
-            match (should_store_witness, force_witness) {
-                (true, true) => {
-                    witness = Some(generated_witness.clone());
-                    self.storage
-                        .store_witness(block_hash, block_number, generated_witness)?;
+            );
+            // A binary-committed block has no MPT witness, and that is a fact
+            // about the block, not a defect in it. `should_store_witness` is the
+            // opportunistic cache behind `--precompute-witnesses`: failing the
+            // *import* because a debug convenience cannot be satisfied would
+            // halt a scheduled chain at its activation block, which is the
+            // failure mode this project has already paid for once. So the
+            // refusal is swallowed there and only there.
+            //
+            // `force_witness` is the caller who explicitly asked
+            // (`engine_newPayloadWithWitness` via `add_block_pipeline_with_witness`).
+            // That caller gets the error, because the alternative is handing it
+            // a witness for the wrong trie.
+            let generated_witness = match generated {
+                Ok(witness) => Some(witness),
+                Err(ChainError::BinaryCommittedHeader(number)) if !force_witness => {
+                    debug!(
+                        "not caching an MPT execution witness for block {number}: it is past the \
+                         binary-tree commitment (EIP-8297)"
+                    );
+                    None
                 }
-                (true, false) => {
-                    self.storage
-                        .store_witness(block_hash, block_number, generated_witness)?;
+                Err(error) => return Err(error),
+            };
+            if let Some(generated_witness) = generated_witness {
+                match (should_store_witness, force_witness) {
+                    (true, true) => {
+                        witness = Some(generated_witness.clone());
+                        self.storage
+                            .store_witness(block_hash, block_number, generated_witness)?;
+                    }
+                    (true, false) => {
+                        self.storage
+                            .store_witness(block_hash, block_number, generated_witness)?;
+                    }
+                    (false, true) => {
+                        witness = Some(generated_witness);
+                    }
+                    (false, false) => {}
                 }
-                (false, true) => {
-                    witness = Some(generated_witness);
-                }
-                (false, false) => {}
             }
         };
 
