@@ -1864,6 +1864,21 @@ impl<'a> VM<'a> {
             // pays for reaching the target; without this a frame reads its target for
             // free and every later frame re-pays the cold price for an account an
             // earlier frame already touched.
+            // EIP-8037, via EELS `charge_value_transfer_to_non_alive_account`: a frame
+            // whose value transfer revives a dead target also pays the NEW_ACCOUNT
+            // state cost at entry. The frame's state-gas reservoir starts empty, so
+            // there is nothing to draw it from and it spills into the frame's
+            // execution gas in full.
+            let entry_state_gas = if !runs_default_verify_code
+                && self.env.config.fork >= Fork::Amsterdam
+                && !frame.value.is_zero()
+                && self.db.get_account(target)?.is_empty()
+            {
+                self.state_gas_new_account
+            } else {
+                0
+            };
+
             let frame_entry_gas = if runs_default_verify_code {
                 0
             } else {
@@ -1872,7 +1887,9 @@ impl<'a> VM<'a> {
                 } else {
                     crate::gas_cost::WARM_ADDRESS_ACCESS_COST
                 };
-                target_access.saturating_add(delegation_access_cost)
+                target_access
+                    .saturating_add(delegation_access_cost)
+                    .saturating_add(entry_state_gas)
             };
 
             // The entry charges come out of the frame's own budget, so a frame that
@@ -1923,6 +1940,19 @@ impl<'a> VM<'a> {
             let state_gas_used_at_frame_entry = self.state_gas_used;
             let state_gas_reservoir_at_frame_entry = self.state_gas_reservoir;
             let state_gas_spill_at_frame_entry = self.state_gas_spill;
+
+            // The entry NEW_ACCOUNT charge belongs to the state dimension as well as to
+            // the frame's gas, so record it after the baseline above: a frame that fails
+            // rolls `state_gas_used` back to that baseline and creates no account, so it
+            // contributes none of it.
+            if entry_state_gas != 0 && !value_transfer_reverted && !frame_entry_unaffordable {
+                self.state_gas_used = self
+                    .state_gas_used
+                    .checked_add(
+                        i64::try_from(entry_state_gas).map_err(|_| InternalError::Overflow)?,
+                    )
+                    .ok_or(InternalError::Overflow)?;
+            }
 
             // EIP-7928: capture the access-list recorder before the frame runs. A
             // reverted frame's state changes are rolled back, so its recorded
