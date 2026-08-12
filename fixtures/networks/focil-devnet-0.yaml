@@ -1,51 +1,53 @@
-# focil-devnet-0 — EL × CL matrix over the FOCIL (EIP-7805) clients that are
-# up to date with the spec.
+# focil-devnet-0 — the FOCIL (EIP-7805) clients that are up to date with the spec.
 #
-# Client census taken 2026-08-12 from the ethpandaops registry, with the
-# staleness verdict from actually booting each one on this devnet:
+# Client census taken 2026-08-12 from the ethpandaops registry, with the verdict
+# from actually booting each one on this devnet:
 #
-#   ELs   ethrex          ✅ built from this branch
-#         besu:focil       2026-07-02  ✅ starts clean against the current genesis
+#   ELs   ethrex           ✅ built from this branch
+#         besu:focil       2026-07-02  ❌ stale on EIP-8282 (see below)
 #         geth:focil       2025-07-31  ❌ over a year old
 #         reth                         ❌ only pellekrab-focil_impl, a contributor branch
 #   CLs   teku:focil       2026-08-11  ✅ current
-#         lodestar:focil   2026-06-22  ❌ stale
-#         lighthouse:focil 2026-06-16  ❌ stale
+#         lodestar:focil   2026-06-22  ❌ stale on the Gloas BeaconState
+#         lighthouse:focil 2026-06-16  ❌ stale on the Gloas BeaconState
 #
-# lodestar and lighthouse are excluded because their focil images predate the
-# summer's Gloas `BeaconState` changes and cannot read a current genesis:
+# besu boots and follows the chain until gloas, then rejects every block with
+#   SystemCallNoCodeAtAddressException: Invalid system call address:
+#   0x0000884d2aa32eaa155f59a2f24efa73d9008282
+# It is calling an EIP-8282 builder predeploy that no longer exists. EIPs commit
+# 554d3325e (2026-07-08) "set predeploy addresses from current reference
+# bytecode" moved them to 0x0000bFF4...300D8282 and 0x000064D6...800E8282, which
+# is what the genesis predeploys and what ethrex calls. The besu:focil image is
+# six days older than that change. Its validators also drag participation below
+# the finality threshold, so it is excluded rather than left stuck.
 #
-#   * against generator 6.1.7+ (the versions that emit `PAYLOAD_DUE_BPS`, which
-#     teku requires) lodestar dies in @chainsafe/ssz readVariableOffsets with
-#     "First offset must equal to fixedEnd 3134845 != 3134333", and lighthouse
-#     with "Built-in genesis state SSZ bytes are invalid: OffsetsAreDecreasing(0)";
-#   * against the older generator 6.0.6 lodestar starts, but lighthouse still
-#     fails with "Failed to build beacon chain: Head block not found in store",
-#     and teku refuses the config for the missing PAYLOAD_DUE_BPS.
+# lodestar and lighthouse predate the summer's Gloas `BeaconState` change and
+# cannot read a current genesis at all: against a generator new enough to emit
+# `PAYLOAD_DUE_BPS` (which teku requires) lodestar dies in @chainsafe/ssz
+# readVariableOffsets with "First offset must equal to fixedEnd 3134845 !=
+# 3134333" and lighthouse with "Built-in genesis state SSZ bytes are invalid:
+# OffsetsAreDecreasing(0)"; against the older 6.0.6 genesis lighthouse still
+# fails with "Failed to build beacon chain: Head block not found in store".
 #
-# So teku is the only consensus client currently able to run FOCIL against a
-# spec-current genesis. Add lodestar and lighthouse back when their focil images
-# are rebuilt.
+# So the matrix is degenerate today - ethrex x teku is the only pairing where
+# both sides are current. Re-add the others as their focil images are rebuilt;
+# the participant blocks are kept in git history for exactly that.
 #
-# Matrix, plus one extra ethrex running --mempool.private so private vs
-# gossiping mempool behaviour is observable on the same chain:
-#
-#   ethrex × teku    besu × teku    ethrex × teku (--mempool.private)
+# Three ethrex nodes so the chain has real peers, one of them on
+# --mempool.private so private vs gossiping mempool behaviour is observable on
+# the same chain.
 #
 # All CLs: supernode=true (PeerDAS satisfaction at fulu/gloas).
 #
 # Fork schedule (mainnet preset, 12s slots, so one epoch is 6m24s):
 #   * gloas at epoch 1  (~6m24s in)
-#   * heze (= our Hegotá / EIP-7805 FOCIL) at epoch 2  (~12m48s in)
+#   * heze (= our Hegota / EIP-7805 FOCIL) at epoch 2  (~12m48s in)
 #
 # gloas deliberately does NOT start at genesis. With `gloas_fork_epoch: 0` every
 # generator tag tried produces a genesis whose state disagrees with the genesis
-# block, and the CL refuses to start:
-#   teku     "Genesis block root 0x9267… does not match genesis state latest
-#             block root 0x97bb…"
-#   lodestar the same message, on 6.0.5 and :bbusa-fix-gloas-genesis
-# Starting pre-gloas and transitioning avoids that path entirely, and still
-# reaches heze well inside a devnet run.
+# block, and the CL refuses to start ("Genesis block root ... does not match
+# genesis state latest block root"). Starting pre-gloas and transitioning avoids
+# that path entirely.
 #
 # The ethrex image is built from this branch rather than pulled: the published
 # ethpandaops/ethrex:focil tag tracks the `focil` branch, which predates both
@@ -60,13 +62,7 @@ participants:
     cl_type: teku
     cl_image: ethpandaops/teku:focil
     supernode: true
-    count: 1
-  - el_type: besu
-    el_image: ethpandaops/besu:focil
-    cl_type: teku
-    cl_image: ethpandaops/teku:focil
-    supernode: true
-    count: 1
+    count: 2
   - el_type: ethrex
     el_image: ethrex:focil-devnet-0
     el_extra_params:
