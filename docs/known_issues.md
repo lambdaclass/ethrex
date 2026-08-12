@@ -251,34 +251,59 @@ commitment the guard is inert, which is why L2 behaviour is unchanged.
 give the L2 stack real EIP-8297 support. Refusing at startup is the smaller of
 the two and matches what L1 already does for other unsupported combinations.
 
-### Account destruction under EIP-8297 leaves storage leaves behind
+### The last two PR-#3207 failures: causes found, both blocked behind the gas drift
 
-**Where:** the destruction path in `crates/common/types/pbt_state.rs`
-(`apply_account_update`'s `removed` branch), against `VmDatabase::has_storage`
-at `crates/blockchain/vm.rs:279`.
+**Status.** Both causes are isolated. One is fixed; the other is a *second*
+Amsterdam gas drift and is filed with the EIP-8038 entry below rather than fixed
+here. Neither fixture passes yet, because **both of them also depend on the
+EIP-8038 drift**: the earlier reading that these two were separable from the
+other 46 was wrong. With the EIP-8038 constants corrected on top of the fix that
+did land, plus the one-line change described below, `for_binarytree` is
+**56 passed, 0 failed** (measured 2026-08-12). Without those, the suite stays at
+its previous 8 passed / 48 failed.
 
-**What:** two tests from execution-specs PR #3207 (the binary-trie tracking
-branch) fail, and both are account destruction under PBT:
+**What the earlier note here guessed, and what was actually wrong.** The
+suspicion recorded here — that `apply_account_update`'s `removed` branch in
+`crates/common/types/pbt_state.rs` fails to remove the storage leaves — was
+**wrong**. That branch is correct: it removes the whole header stem (basic data,
+code hash or delegation indicator, slots 0-63) and the overflow-storage zone,
+which is exactly what EELS `destroy_account` does. It was simply never reached.
+And the second fixture had nothing to do with storage, or with EIP-6780.
 
-- `state_divergence/create2_after_eip161_clear_of_storage_holding_account` —
-  `StateRootMismatch`. A *deliberate* MPT-vs-PBT divergence test: under EIP-8297
-  an address has non-empty storage exactly when a slot leaf exists, so deleting
-  the account removes its storage leaves, no collision remains, and the CREATE2
-  proceeds. Under MPT the orphaned storage trie keeps `account_has_storage`
-  true and the CREATE2 is rejected.
-- `account_lifecycle/selfdestruct_same_transaction_leaves_no_account` —
-  `ReceiptsRootMismatch`, so a gas difference rather than a state one. EIP-6780
-  requires create-and-destroy in one transaction to leave no trace, "including
-  any storage it wrote".
+- `state_divergence/create2_after_eip161_clear_of_storage_holding_account`
+  (`StateRootMismatch`) — **fixed.** The block-1 SELFDESTRUCT's beneficiary was
+  never written. EELS `move_ether` writes both parties through `modify_state`
+  whatever the amount, and `modify_state` destroys an account the write leaves
+  existing and empty; ethrex's `vm.transfer` returns early on a zero value, and
+  `get_state_transitions`' `removed` fires only for an account that *stopped*
+  being non-empty. Fixed in `SELFDESTRUCT` (`clear_storage_of_emptied_account`)
+  plus the `removed` computation, gated on the header having reached
+  `binaryTreeTime` so the MPT keeps the orphaned storage trie that makes it
+  answer the other way. Pinned by
+  `an_eip161_clear_of_a_storage_only_beneficiary_drops_its_leaves_on_the_binary_trie`
+  and `the_same_eip161_clear_leaves_the_mpt_exactly_as_it_was`.
 
-ethrex has the right architecture: `has_storage` reads slot leaves rather than a
-`storage_root`, and that is pinned by a test. The likely gap is that destruction
-does not remove the storage leaves, so `has_storage` stays true into the next
-block. **Not confirmed** — the failure mode is consistent with that reading but
-the cause was not isolated.
+  Block 1 of the fixture now produces the expected state root; block 2 still
+  fails, on the EIP-8038 drift alone (it does two cold SSTOREs, so the gas — and
+  through it the sender and coinbase balances — moves).
 
-**Removal:** fix the destruction path, then re-run the fixtures per the recipe
-in the entry below.
+- `account_lifecycle/selfdestruct_same_transaction_leaves_no_account`
+  (`ReceiptsRootMismatch`) — **not fixed; see the drift entry below.** It is not
+  a state problem and not an EIP-6780 problem. `validate_gas_used` passes, and
+  the receipt's logs (two EIP-7708 transfer logs) and status match the fixture
+  byte for byte; only `cumulativeGasUsed` moves. See "a value-bearing CREATE
+  overpays its intrinsic gas by 1756" below.
+
+**Still open — the same-block window.** The clear runs inside LEVM, but the
+removal reaches the trie only through the block's account updates, so a CREATE2
+in a *later transaction of the same block* still sees the account's pre-block
+`has_storage`. EELS destroys within the transaction and would let that CREATE2
+proceed. No fixture covers it: both PR-#3207 tests put the CREATE2 in a later
+block.
+
+**Removal:** correct the EIP-8038 constants and the CREATE intrinsic per the
+entry below, then re-run the fixtures with the recipe there; the two named tests
+should join the other 54.
 
 ### Amsterdam gas schedule is behind EIP-8038 — now measured against fixtures
 
@@ -350,6 +375,47 @@ from the same spec revision fail too, so this is not a binary-trie problem.
 `transactions.py` is byte-identical between `forks/amsterdam` and
 `forks/binary_tree`, so the binary-trie fork changes no gas rule at all. The
 two survivors at 54/56 are the account-destruction cases in the entry above.
+
+Re-measured again after the EIP-161 clear landed, with the seven constants
+aligned **and** the CREATE intrinsic corrected (below): **56 passed, 0 failed**.
+
+#### A value-bearing CREATE overpays its intrinsic gas by 1756
+
+A second, independent drift in the same file, found the same way and **not
+fixed** — it is a gas-schedule change with a deliberate test pinning the current
+behaviour, so it belongs to whoever settles the table above.
+
+**Where:** `recipient_regular_gas` in `crates/vm/levm/src/gas_cost.rs`; the
+behaviour is pinned by `test_intrinsic_create_nonzero_value_amsterdam` in
+`test/tests/levm/eip2780_tests.rs`.
+
+**What:** EELS `calculate_intrinsic_cost` reaches its value charge only through
+`elif not is_self_transfer`, a branch a creation transaction never enters — a
+create's recipient charge is `CREATE_ACCESS` and nothing else, however much
+ether it carries. ethrex adds `TRANSFER_LOG_COST_AMSTERDAM` (1756, EIP-2780's
+split of the spec's flat `TX_VALUE_COST` of 6000) to creates as well. The fix is
+to make the value charge conditional on `!is_create`; the existing test then has
+to be updated with it.
+
+**How it was measured.** Calling the spec's own `calculate_intrinsic_cost` on
+the fixture's transaction returns `execution=24422` = `TX_BASE` 12000 +
+`CREATE_ACCESS` 12000 + calldata 420 + initcode 2, with no value component. Then
+end to end: the spec's `t8n`, driven with the fixture's own pre-alloc, env and
+transaction, reproduces the fixture's `receiptsRoot`
+(`0x9cd7944b…`) and `stateRoot` exactly and settles at
+`cumulativeGasUsed = 518651`. ethrex, with the seven constants above aligned so
+they cannot confound it, gives **520407** — a difference of exactly **1756**.
+With ethrex's own constants the two drifts partly cancel and the gap is 656
+(`1756 − 1100`), which is what makes this one easy to miss.
+
+**Why the block-level check does not catch it.** EIP-7778 makes
+`header.gas_used` `max(regular_gas, state_gas)`, and on a deployment the state
+dimension usually dominates — 465120 versus 53019 here — so `validate_gas_used`
+passes and the error only reaches the receipt's `cumulativeGasUsed`, and through
+it the receipts root. That is why
+`account_lifecycle/selfdestruct_same_transaction_leaves_no_account` fails as
+`ReceiptsRootMismatch` rather than `GasUsedMismatch`, and why the failure looked
+like an EIP-6780 state problem when it is neither.
 
 **Why CI never caught it:** the pinned bundle is `tests-glamsterdam-devnet@v7.2.0`,
 whose `for_amsterdam/` tree holds only `eip7928_block_level_access_lists` and
