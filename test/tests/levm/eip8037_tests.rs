@@ -2163,6 +2163,7 @@ fn validate_tx(fork: Fork, tx: &Transaction) -> Result<(), String> {
         LevmCallTracer::disabled(),
         VMType::L1,
         &NativeCrypto,
+        None,
     )
     .expect("VM::new");
     vm.execute().map(|_| ()).map_err(|e| e.to_string())

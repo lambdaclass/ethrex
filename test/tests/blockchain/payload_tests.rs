@@ -226,6 +226,7 @@ async fn builder_caps_elided_blob_bundles_to_fork_max() {
         version: 3,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+        inclusion_list_transactions: None,
     };
     let payload_block = create_payload(&args, &store, Bytes::new()).expect("create_payload");
     let result = blockchain

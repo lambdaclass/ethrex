@@ -250,6 +250,7 @@ impl LEVM {
             log_index_base,
             vm_type,
             crypto,
+            stateless_validator,
         )
     }
 
@@ -275,6 +276,7 @@ impl LEVM {
             log_index_base,
             vm_type,
             crypto,
+            None,
         )
     }
 
@@ -290,6 +292,7 @@ impl LEVM {
         log_index_base: u64,
         vm_type: VMType,
         crypto: &dyn Crypto,
+        stateless_validator: Option<&dyn StatelessValidator>,
     ) -> Result<CallTrace, EvmError> {
         let mut vm = VM::new(
             env,
@@ -332,7 +335,7 @@ impl LEVM {
         vm_type: VMType,
         crypto: &dyn Crypto,
     ) -> Result<Vec<(H256, CallTrace)>, EvmError> {
-        Self::rerun_block(db, block, Some(0), vm_type, crypto)?;
+        Self::rerun_block(db, block, Some(0), vm_type, crypto, None)?;
         let (config, chain_id, base_blob_fee) = block_trace_env_config(db, &block.header)?;
         let mut traces = Vec::with_capacity(block.body.transactions.len());
         // Running block-absolute log index: the whole block is traced from tx 0, so each
@@ -361,6 +364,7 @@ impl LEVM {
                 log_index_base,
                 vm_type,
                 crypto,
+                None,
             )?;
             log_index_base = log_index_base.saturating_add(trace.iter().map(count_call_logs).sum());
             traces.push((tx.hash(crypto), trace));
@@ -378,7 +382,7 @@ impl LEVM {
         vm_type: VMType,
         crypto: &dyn Crypto,
     ) -> Result<Vec<(H256, PrestateResult)>, EvmError> {
-        Self::rerun_block(db, block, Some(0), vm_type, crypto)?;
+        Self::rerun_block(db, block, Some(0), vm_type, crypto, None)?;
         let (config, chain_id, base_blob_fee) = block_trace_env_config(db, &block.header)?;
         let mut traces = Vec::with_capacity(block.body.transactions.len());
         for (tx, sender) in block
@@ -411,7 +415,7 @@ impl LEVM {
         vm_type: VMType,
         crypto: &dyn Crypto,
     ) -> Result<Vec<(H256, OpcodeTraceResult)>, EvmError> {
-        Self::rerun_block(db, block, Some(0), vm_type, crypto)?;
+        Self::rerun_block(db, block, Some(0), vm_type, crypto, None)?;
         let (config, chain_id, base_blob_fee) = block_trace_env_config(db, &block.header)?;
         let mut traces = Vec::with_capacity(block.body.transactions.len());
         for (tx, sender) in block

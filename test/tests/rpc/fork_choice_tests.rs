@@ -593,6 +593,8 @@ async fn apply_custody_update_contraction_sets_and_retains_cells() {
         ctx.blockchain.mempool.get_cells_mask(tx_hash).unwrap(),
         before
     );
+}
+
 #[test]
 fn payload_attributes_v5_round_trips_with_inclusion_list() {
     let json = r#"{
