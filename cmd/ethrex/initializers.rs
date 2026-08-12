@@ -406,22 +406,25 @@ pub async fn init_dev_network(
 
     let chain_config = store.get_chain_config();
 
-    let (head_block_hash, target_gas_limit) = {
+    let head_block_hash = {
         let current_block_number = store.get_latest_block_number().await.unwrap();
-        let head_block_hash = store
+        store
             .get_canonical_block_hash(current_block_number)
             .await
             .unwrap()
-            .unwrap();
-        // Use the head block's gas limit as the V4 target so the dev chain holds
-        // its configured gas limit (execution-apis#796 requires target_gas_limit).
-        let target_gas_limit = store
-            .get_block_header(current_block_number)
             .unwrap()
-            .unwrap()
-            .gas_limit;
-        (head_block_hash, target_gas_limit)
     };
+
+    // The producer stands in for the CL, so it supplies what a CL would: the
+    // EIP-7843 slot to continue from and the execution-apis#796 target gas limit,
+    // which it holds at the head's gas limit so the dev chain keeps its
+    // configured limit.
+    let head_header = store
+        .get_block_header_by_hash(head_block_hash)
+        .unwrap()
+        .unwrap();
+    let head_slot_number = head_header.slot_number.unwrap_or(0);
+    let target_gas_limit = head_header.gas_limit;
 
     let max_tries = 3;
 
@@ -431,14 +434,17 @@ pub async fn init_dev_network(
     );
 
     let block_producer_engine = ethrex_dev::block_producer::start_block_producer(
-        url,
-        read_jwtsecret_file(&opts.authrpc_jwtsecret),
-        head_block_hash,
-        max_tries,
-        1000,
-        ethrex_common::Address::default(),
-        chain_config.amsterdam_time,
-        target_gas_limit,
+        ethrex_dev::block_producer::BlockProducerConfig {
+            execution_client_auth_url: url,
+            jwt_secret: read_jwtsecret_file(&opts.authrpc_jwtsecret),
+            head_block_hash,
+            max_tries,
+            block_production_interval_ms: 1000,
+            coinbase_address: ethrex_common::Address::default(),
+            chain_config,
+            head_slot_number,
+            target_gas_limit,
+        },
     );
     // The dev block producer is fatal: if it exhausts its retries, abort the dev node.
     spawn_fatal(

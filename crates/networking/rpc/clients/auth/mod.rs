@@ -100,6 +100,9 @@ impl EngineClient {
         }
     }
 
+    /// EIP-7843 / execution-apis#796: from Amsterdam onwards the payload
+    /// attributes carry `slotNumber` and `targetGasLimit`, and V3 attributes are
+    /// rejected for an Amsterdam timestamp.
     pub async fn engine_forkchoice_updated_v4(
         &self,
         state: ForkChoiceState,
@@ -146,6 +149,8 @@ impl EngineClient {
         }
     }
 
+    /// V5 serves Osaka only; from Amsterdam onwards the payload must be fetched
+    /// with V6, which is the version that accepts an Amsterdam timestamp.
     pub async fn engine_get_payload_v6(
         &self,
         payload_id: u64,
