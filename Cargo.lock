@@ -3878,6 +3878,7 @@ version = "22.0.0"
 dependencies = [
  "bytes",
  "crossbeam",
+ "ethrex-binary-trie",
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-levm",

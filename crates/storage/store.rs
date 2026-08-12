@@ -32,7 +32,8 @@ use crate::{
 use ethrex_binary_trie::trie::{
     BinaryTrie, BinaryTrieDB, BitPath, DEFAULT_GROUP_DEPTH,
     EMPTY_TRIE_ROOT as BINARY_EMPTY_TRIE_ROOT, GroupDepth, LeafChangelog,
-    MAX_KEY_LENGTH as MAX_BINARY_KEY_LENGTH, RangeSlice, hash_stored_root, prove_range,
+    MAX_KEY_LENGTH as MAX_BINARY_KEY_LENGTH, RangeSlice, RecordingBinaryTrieDB, WitnessNodes,
+    hash_stored_root, prove_range,
 };
 use ethrex_common::{
     Address, H256, U256,
@@ -3107,6 +3108,53 @@ impl Store {
         );
         apply_account_updates(&mut trie, account_updates)?;
         Ok(trie.root())
+    }
+
+    /// The binary root a block built on `parent` starts from.
+    ///
+    /// **Not simply `parent.state_root`.** That is only the binary root once the
+    /// activation has been reached; the *first* binary-committed block has a
+    /// pre-flip parent whose header commits an MPT root, and its binary
+    /// pre-state is what shadow tracking recorded under
+    /// [`BINARY_TRIE_ROOTS`](crate::api::tables::BINARY_TRIE_ROOTS). Reading the
+    /// header field unconditionally would hand an MPT root to the binary trie,
+    /// which is the same class of mistake as opening an MPT at a binary root.
+    ///
+    /// Per header, never per chain: the question is asked of `parent`'s own
+    /// timestamp, the same way `StoreVmDatabase::open` asks it.
+    ///
+    /// `Ok(None)` means this node has no binary pre-state for that parent,
+    /// which for a pre-flip parent means shadow tracking never recorded one.
+    pub fn binary_pre_state_root(&self, parent: &BlockHeader) -> Result<Option<H256>, StoreError> {
+        if self.chain_config.is_binary_tree_active(parent.timestamp) {
+            return Ok(Some(parent.state_root));
+        }
+        self.get_binary_trie_root(parent.hash())
+    }
+
+    /// A binary trie at `binary_root`, recording every node encoding it serves.
+    ///
+    /// The witness-generation counterpart of [`Self::compute_binary_trie_root`]:
+    /// same layered read view, same gate, but wrapped so that what the
+    /// traversal touches can be collected. Reads one node per backend row
+    /// rather than one row per read — see [`RecordingBinaryTrieDB`] for why
+    /// that is the point and not a regression.
+    ///
+    /// The returned handle shares the recorder with the trie; read it after the
+    /// traversal, not before.
+    pub fn binary_trie_recording_view(
+        &self,
+        parent_hash: BlockHash,
+        binary_root: H256,
+    ) -> Result<(BinaryTrie, Arc<Mutex<WitnessNodes>>), StoreError> {
+        let inner = self.layered_binary_trie_db(
+            binary_root,
+            self.binary_layer_gate(parent_hash, binary_root)?,
+            LayeredBinaryTrieDB::staging_buffer(),
+        )?;
+        let recorder = RecordingBinaryTrieDB::new(Box::new(inner));
+        let recorded = recorder.recorded();
+        Ok((BinaryTrie::open(Box::new(recorder), binary_root), recorded))
     }
 
     /// A [`LayeredBinaryTrieDB`] reading at `binary_root` through the layer

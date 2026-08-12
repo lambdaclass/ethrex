@@ -12,6 +12,7 @@ repository.workspace = true
 
 [dependencies]
 ethrex-rlp.workspace = true
+ethrex-binary-trie.workspace = true
 ethrex-common = { workspace = true, default-features = false }
 ethrex-crypto.workspace = true
 ethrex-storage.workspace = true

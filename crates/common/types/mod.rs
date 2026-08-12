@@ -1,5 +1,6 @@
 mod account;
 mod account_update;
+pub mod binary_execution_witness;
 pub mod blobs_bundle;
 mod block;
 pub mod block_access_list;
