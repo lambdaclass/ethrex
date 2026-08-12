@@ -3860,7 +3860,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-binary-trie"
-version = "22.0.0"
+version = "23.0.0"
 dependencies = [
  "blake3",
  "ethereum-types 0.15.1",
