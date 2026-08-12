@@ -1077,6 +1077,304 @@ fn blobs_bundle_insert_and_remove() {
     );
 }
 
+// --- min-tip floor admission tests ----------------------------------------
+
+/// Builds a blockchain configured with `min_tip_wei` as the admission floor
+/// (everything else permissive for tests).
+fn blockchain_with_min_tip(store: Store, min_tip_wei: u64) -> Blockchain {
+    let mut bc = Blockchain::default_with_store(store);
+    let mut opts = bc.options.clone();
+    opts.min_tip_wei = min_tip_wei;
+    bc.options = opts;
+    bc
+}
+
+#[tokio::test]
+async fn zero_tip_eip1559_rejected_under_default_floor() {
+    let (config, header) = build_basic_config_and_header(false, false);
+    let store = setup_storage(config, header).await.expect("Storage setup");
+    let blockchain = blockchain_with_min_tip(store, 1_000_000);
+
+    let tx = EIP1559Transaction {
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 1_000_000,
+        gas_limit: 50_000_000,
+        to: TxKind::Call(Address::from_low_u64_be(1)),
+        ..Default::default()
+    };
+    let tx = Transaction::EIP1559Transaction(tx);
+
+    let res = blockchain
+        .validate_transaction(&tx, Address::random())
+        .await;
+    assert!(matches!(
+        res,
+        Err(MempoolError::TipBelowMinimum {
+            actual: 0,
+            limit: 1_000_000,
+        }),
+    ));
+}
+
+#[tokio::test]
+async fn at_floor_eip1559_passes_tip_check() {
+    // Tip at the floor passes the min-tip check. The random sender has no
+    // funds, so the tx fails later with `NotEnoughBalance`; that's the only
+    // accepted post-tip-check outcome. Asserting the specific downstream
+    // error guards against a future refactor that accidentally skips the
+    // tip check (where a different error would still satisfy a `!matches!`
+    // negative assertion).
+    let (config, header) = build_basic_config_and_header(false, false);
+    let store = setup_storage(config, header).await.expect("Storage setup");
+    let blockchain = blockchain_with_min_tip(store, 1_000_000);
+
+    let tx = EIP1559Transaction {
+        max_priority_fee_per_gas: 1_000_000,
+        max_fee_per_gas: 1_000_000,
+        gas_limit: 50_000_000,
+        to: TxKind::Call(Address::from_low_u64_be(1)),
+        ..Default::default()
+    };
+    let tx = Transaction::EIP1559Transaction(tx);
+
+    let res = blockchain
+        .validate_transaction(&tx, Address::random())
+        .await;
+    // The tip check itself must not fire; the downstream account-lookup
+    // (state root or balance) is what should fail in this minimal setup.
+    // Asserting on the concrete next-stage error keeps the test honest if
+    // a future refactor accidentally skips the tip check.
+    assert!(
+        matches!(
+            res,
+            Err(MempoolError::NotEnoughBalance) | Err(MempoolError::StoreError(_))
+        ),
+        "expected the tip check to pass and an account-lookup error to fire next, got {res:?}",
+    );
+}
+
+#[tokio::test]
+async fn floor_uses_raw_tip_cap_not_base_fee_adjusted_effective_tip() {
+    // Pins the deliberate semantic: the floor is compared against the RAW tip
+    // cap, not the base-fee-dependent effective tip
+    // `min(max_priority_fee_per_gas, max_fee_per_gas - base_fee_per_gas)`.
+    //
+    // Here `max_fee_per_gas == base_fee_per_gas`, so the actually-payable tip
+    // is 0 — under an "effective tip" reading this tx would be rejected. It
+    // must NOT be: geth's `PriceLimit` compares `tx.GasTipCap()` (raw), and
+    // keying on the effective tip would make admission depend on the current
+    // base fee, so the same tx could be admitted at block N and rejected at
+    // N+1 as the base fee drifts. Admission decisions must be stable.
+    let (config, mut header) = build_basic_config_and_header(false, false);
+    header.base_fee_per_gas = Some(1_000_000);
+    let store = setup_storage(config, header).await.expect("Storage setup");
+    let blockchain = blockchain_with_min_tip(store, 1_000_000);
+
+    let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+        // Raw tip cap is exactly at the floor …
+        max_priority_fee_per_gas: 1_000_000,
+        // … but the fee cap leaves no room above base fee, so the effective
+        // tip is 0.
+        max_fee_per_gas: 1_000_000,
+        gas_limit: 50_000_000,
+        to: TxKind::Call(Address::from_low_u64_be(1)),
+        ..Default::default()
+    });
+
+    let res = blockchain
+        .validate_transaction(&tx, Address::random())
+        .await;
+    assert!(
+        !matches!(res, Err(MempoolError::TipBelowMinimum { .. })),
+        "min-tip floor must compare the raw tip cap, not the base-fee-adjusted \
+         effective tip; got {res:?}",
+    );
+    // As with the other floor tests, the unfunded random sender means the
+    // account-lookup stage is the expected next failure.
+    assert!(
+        matches!(
+            res,
+            Err(MempoolError::NotEnoughBalance) | Err(MempoolError::StoreError(_))
+        ),
+        "expected an account-lookup error after the tip check passed, got {res:?}",
+    );
+}
+
+#[tokio::test]
+async fn floor_of_zero_admits_zero_tip() {
+    // Operators can disable the floor with --mempool.min-tip 0. Same
+    // structure as `at_floor_eip1559_passes_tip_check`: we want a specific
+    // downstream error (the balance check) to fire, NOT just "any error
+    // other than TipBelowMinimum".
+    let (config, header) = build_basic_config_and_header(false, false);
+    let store = setup_storage(config, header).await.expect("Storage setup");
+    let blockchain = blockchain_with_min_tip(store, 0);
+
+    let tx = EIP1559Transaction {
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 0,
+        gas_limit: 50_000_000,
+        to: TxKind::Call(Address::from_low_u64_be(1)),
+        ..Default::default()
+    };
+    let tx = Transaction::EIP1559Transaction(tx);
+
+    let res = blockchain
+        .validate_transaction(&tx, Address::random())
+        .await;
+    assert!(
+        matches!(
+            res,
+            Err(MempoolError::NotEnoughBalance) | Err(MempoolError::StoreError(_))
+        ),
+        "expected the tip check to skip (floor=0) and an account-lookup error to fire next, got {res:?}",
+    );
+}
+
+#[tokio::test]
+async fn legacy_gas_price_below_floor_rejected() {
+    // Legacy tx: `gas_tip_cap()` returns `gas_price` so the floor applies to
+    // the raw gas price for legacy txs (geth applies `PriceLimit` to
+    // `tx.GasTipCap()` which is `gas_price` for legacy).
+    let (config, header) = build_basic_config_and_header(false, false);
+    let store = setup_storage(config, header).await.expect("Storage setup");
+    let blockchain = blockchain_with_min_tip(store, 1_000_000);
+
+    let tx = ethrex_common::types::LegacyTransaction {
+        gas_price: U256::from(999_999u64), // 1 wei below floor
+        gas: 50_000_000,
+        to: TxKind::Call(Address::from_low_u64_be(1)),
+        ..Default::default()
+    };
+    let tx = Transaction::LegacyTransaction(tx);
+
+    let res = blockchain
+        .validate_transaction(&tx, Address::random())
+        .await;
+    assert!(matches!(
+        res,
+        Err(MempoolError::TipBelowMinimum {
+            actual: 999_999,
+            limit: 1_000_000,
+        }),
+    ));
+}
+
+#[tokio::test]
+async fn options_field_is_used_in_validate_transaction() {
+    // Smoke test that BlockchainOptions::min_tip_wei is consulted (not
+    // accidentally ignored if the option-plumbing breaks).
+    let (config, header) = build_basic_config_and_header(false, false);
+    let store = setup_storage(config, header).await.expect("Storage setup");
+
+    let mut bc = Blockchain::default_with_store(store);
+    bc.options = BlockchainOptions {
+        min_tip_wei: 5_000_000_000, // 5 gwei
+        ..BlockchainOptions::default()
+    };
+
+    let tx = EIP1559Transaction {
+        max_priority_fee_per_gas: 1_000_000_000, // 1 gwei (below 5 gwei)
+        max_fee_per_gas: 5_000_000_000,
+        gas_limit: 50_000_000,
+        to: TxKind::Call(Address::from_low_u64_be(1)),
+        ..Default::default()
+    };
+    let tx = Transaction::EIP1559Transaction(tx);
+
+    let res = bc.validate_transaction(&tx, Address::random()).await;
+    assert!(matches!(
+        res,
+        Err(MempoolError::TipBelowMinimum {
+            actual: 1_000_000_000,
+            limit: 5_000_000_000,
+        }),
+    ));
+}
+
+#[tokio::test]
+async fn shipped_default_floor_rejects_zero_tip_admits_one() {
+    // Pin the actual shipped default (`DEFAULT_MIN_TIP_WEI = 1`, matching
+    // geth's `PriceLimit = 1 wei`). Without this test the default could
+    // silently regress to 0 (admit-everything) or to the old 1 Mwei value.
+    let (config, header) = build_basic_config_and_header(false, false);
+    let store = setup_storage(config, header).await.expect("Storage setup");
+    let blockchain = blockchain_with_min_tip(store, ethrex_blockchain::DEFAULT_MIN_TIP_WEI);
+
+    // tip = 0 → rejected
+    let zero = Transaction::EIP1559Transaction(EIP1559Transaction {
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 1,
+        gas_limit: 50_000_000,
+        to: TxKind::Call(Address::from_low_u64_be(1)),
+        ..Default::default()
+    });
+    assert!(matches!(
+        blockchain
+            .validate_transaction(&zero, Address::random())
+            .await,
+        Err(MempoolError::TipBelowMinimum {
+            actual: 0,
+            limit: 1
+        }),
+    ));
+
+    // tip = 1 → passes the tip check; sender has no funds so the next
+    // failure is `NotEnoughBalance`. Assert that specifically rather than
+    // "not TipBelowMinimum" so the test catches accidental skip of the
+    // tip check in future refactors.
+    let one = Transaction::EIP1559Transaction(EIP1559Transaction {
+        max_priority_fee_per_gas: 1,
+        max_fee_per_gas: 1,
+        gas_limit: 50_000_000,
+        to: TxKind::Call(Address::from_low_u64_be(1)),
+        ..Default::default()
+    });
+    let res = blockchain
+        .validate_transaction(&one, Address::random())
+        .await;
+    // The tip check itself must not fire; the downstream account-lookup
+    // (state root or balance) is what should fail in this minimal setup.
+    // Asserting on the concrete next-stage error keeps the test honest if
+    // a future refactor accidentally skips the tip check.
+    assert!(
+        matches!(
+            res,
+            Err(MempoolError::NotEnoughBalance) | Err(MempoolError::StoreError(_))
+        ),
+        "expected the tip check to pass and an account-lookup error to fire next, got {res:?}",
+    );
+}
+
+#[tokio::test]
+async fn blob_tx_under_floor_rejected() {
+    // EIP-4844 path uses the same `gas_tip_cap()` accessor. Confirm an
+    // under-floor blob tx is also rejected so a regression in the per-type
+    // dispatch wouldn't slip through.
+    let (config, header) = build_basic_config_and_header(false, false);
+    let store = setup_storage(config, header).await.expect("Storage setup");
+    let blockchain = blockchain_with_min_tip(store, 1_000_000);
+
+    let tx = Transaction::EIP4844Transaction(EIP4844Transaction {
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 1_000_000,
+        max_fee_per_blob_gas: 1.into(),
+        gas: 50_000_000,
+        to: Address::from_low_u64_be(1),
+        ..Default::default()
+    });
+
+    assert!(matches!(
+        blockchain
+            .validate_transaction(&tx, Address::random())
+            .await,
+        Err(MempoolError::TipBelowMinimum {
+            actual: 0,
+            limit: 1_000_000,
+        }),
+    ));
+}
+
 #[test]
 fn blob_txs_are_not_evicted_by_regular_tx_flood() {
     // Regression: blob txs live in a dedicated sub-pool, so a flood of regular
@@ -2957,4 +3255,122 @@ mod cumulative_balance_tests {
         let total = mempool.sum_cost_for_sender(sender, 2, None).expect("sum");
         assert_eq!(total, expected);
     }
+}
+
+/// `add_transaction` queues the tx for P2P broadcast (the default path).
+/// `add_transaction_no_broadcast` does not, modeling the private-mempool
+/// flag's effect on RPC-submitted transactions: they're available locally
+/// but never appear in `get_txs_for_broadcast`.
+#[test]
+fn add_transaction_no_broadcast_keeps_tx_out_of_broadcast_pool() {
+    let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
+
+    // Public tx — goes through the standard path, ends up in broadcast pool.
+    let public_decoded = Transaction::decode_canonical(&hex::decode(
+        "f86d80843baa0c4082f618946177843db3138ae69679a54b95cf345ed759450d870aa87bee538000808360306ba0151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65da064c5dd5aae2fbb535830ebbdad0234975cd7ece3562013b63ea18cc0df6c97d4",
+    ).unwrap()).unwrap();
+    let public_sender = public_decoded.sender(&NativeCrypto).unwrap();
+    let public_tx = MempoolTransaction::new(public_decoded, public_sender);
+    let public_hash = public_tx.hash(&NativeCrypto);
+
+    // Private tx — goes through `add_transaction_no_broadcast`, only
+    // distinguishable from `public_tx` by sender (so the per-sender-nonce
+    // index doesn't collide).
+    let private_decoded = Transaction::EIP1559Transaction(EIP1559Transaction {
+        chain_id: 1,
+        nonce: 0,
+        max_priority_fee_per_gas: 1,
+        max_fee_per_gas: 1_000_000_000,
+        gas_limit: 21_000,
+        to: TxKind::Call(H160::from_low_u64_be(0xBEEF)),
+        value: U256::zero(),
+        ..Default::default()
+    });
+    // Using a synthetic sender so we don't need a signed tx for this test.
+    let private_sender = Address::from_low_u64_be(0xCAFE);
+    let private_hash = private_decoded.hash(&NativeCrypto);
+    let private_tx = MempoolTransaction::new(private_decoded, private_sender);
+
+    mempool
+        .add_transaction(public_hash, public_sender, public_tx, None, None)
+        .expect("public tx should land in broadcast pool");
+    mempool
+        .add_transaction_no_broadcast(private_hash, private_sender, private_tx, None, None)
+        .expect("private tx should land in mempool but not broadcast pool");
+
+    // Both txs are queryable from the mempool itself.
+    assert!(mempool.contains_tx(public_hash).unwrap());
+    assert!(mempool.contains_tx(private_hash).unwrap());
+
+    // Only the public one is returned for broadcast.
+    let broadcast: Vec<H256> = mempool
+        .get_txs_for_broadcast()
+        .unwrap()
+        .iter()
+        .map(|tx| tx.hash(&NativeCrypto))
+        .collect();
+    assert!(broadcast.contains(&public_hash));
+    assert!(
+        !broadcast.contains(&private_hash),
+        "private tx must not appear in get_txs_for_broadcast"
+    );
+
+    // After remove_broadcasted_txs clears the public hash, the private tx
+    // remains absent (proving the broadcast pool never contained it).
+    mempool.remove_broadcasted_txs(&[public_hash]).unwrap();
+    let broadcast_after: Vec<H256> = mempool
+        .get_txs_for_broadcast()
+        .unwrap()
+        .iter()
+        .map(|tx| tx.hash(&NativeCrypto))
+        .collect();
+    assert!(broadcast_after.is_empty());
+}
+
+/// Private-mempool leak guard: a tx admitted via
+/// `add_transaction_no_broadcast` MUST be flagged via `is_private()` so the
+/// P2P paths (new-peer pooled-hashes dump in `send_all_pooled_tx_hashes`,
+/// and `GetPooledTransactions` responses via
+/// `Blockchain::get_p2p_transaction_by_hash`) can refuse to disclose it.
+#[test]
+fn add_transaction_no_broadcast_marks_tx_as_private_for_p2p_filters() {
+    let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
+    let public_decoded = Transaction::decode_canonical(&hex::decode(
+        "f86d80843baa0c4082f618946177843db3138ae69679a54b95cf345ed759450d870aa87bee538000808360306ba0151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65da064c5dd5aae2fbb535830ebbdad0234975cd7ece3562013b63ea18cc0df6c97d4",
+    ).unwrap()).unwrap();
+    let public_sender = public_decoded.sender(&NativeCrypto).unwrap();
+    let public_tx = MempoolTransaction::new(public_decoded, public_sender);
+    let public_hash = public_tx.hash(&NativeCrypto);
+
+    let private_decoded = Transaction::EIP1559Transaction(EIP1559Transaction {
+        chain_id: 1,
+        nonce: 0,
+        max_priority_fee_per_gas: 1,
+        max_fee_per_gas: 1_000_000_000,
+        gas_limit: 21_000,
+        to: TxKind::Call(H160::from_low_u64_be(0xBEEF)),
+        value: U256::zero(),
+        ..Default::default()
+    });
+    let private_sender = Address::from_low_u64_be(0xCAFE);
+    let private_hash = private_decoded.hash(&NativeCrypto);
+    let private_tx = MempoolTransaction::new(private_decoded, private_sender);
+
+    mempool
+        .add_transaction(public_hash, public_sender, public_tx, None, None)
+        .unwrap();
+    mempool
+        .add_transaction_no_broadcast(private_hash, private_sender, private_tx, None, None)
+        .unwrap();
+
+    // Public tx is not private; private tx is.
+    assert!(!mempool.is_private(public_hash).unwrap());
+    assert!(mempool.is_private(private_hash).unwrap());
+
+    // Removal clears the private flag (so a re-added hash isn't misclassified).
+    mempool.remove_transaction(&private_hash).unwrap();
+    assert!(!mempool.is_private(private_hash).unwrap());
+
+    // Hashes that were never in the pool are also not private.
+    assert!(!mempool.is_private(H256::random()).unwrap());
 }

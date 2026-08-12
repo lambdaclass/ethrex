@@ -10,8 +10,9 @@ use std::{
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_blockchain::{
-    BlockchainOptions, BlockchainType, DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD,
-    DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT, L2Config,
+    BlockchainOptions, BlockchainType, DEFAULT_BLOB_PRICE_BUMP_PERCENT,
+    DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD, DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT, DEFAULT_MIN_TIP_WEI,
+    DEFAULT_PRICE_BUMP_PERCENT, L2Config,
     error::{ChainError, InvalidBlockError},
 };
 use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis, validate_block_body};
@@ -238,6 +239,42 @@ pub struct Options {
         env = "ETHREX_MEMPOOL_MAX_SIZE"
     )]
     pub mempool_max_size: usize,
+    #[arg(
+        help = "Minimum priority-fee cap (in wei) required for a transaction to be admitted into the mempool. Compared against the raw tip cap: `max_priority_fee_per_gas` for typed transactions, `gas_price` for legacy transactions (independent of current base fee, so admission stays stable as base fee oscillates). Set to 0 to disable the floor.",
+        long = "mempool.min-tip",
+        default_value_t = DEFAULT_MIN_TIP_WEI,
+        value_name = "MIN_TIP_WEI",
+        help_heading = "Node options",
+        env = "ETHREX_MEMPOOL_MIN_TIP"
+    )]
+    pub mempool_min_tip: u64,
+    #[arg(
+        long = "mempool.private",
+        default_value_t = false,
+        action = ArgAction::SetTrue,
+        help = "Node-level config (not a protocol/EIP behavior): keep RPC-submitted transactions private. They enter the mempool and may be included in blocks built locally, but are not propagated to peers. P2P-received transactions are unaffected.",
+        help_heading = "Node options",
+        env = "ETHREX_MEMPOOL_PRIVATE"
+    )]
+    pub mempool_private: bool,
+    #[arg(
+        help = "Minimum fee bump (in percent) required to replace a non-blob pooled transaction at the same (sender, nonce).",
+        long = "mempool.price-bump",
+        default_value_t = DEFAULT_PRICE_BUMP_PERCENT,
+        value_name = "PERCENT",
+        help_heading = "Node options",
+        env = "ETHREX_MEMPOOL_PRICE_BUMP"
+    )]
+    pub mempool_price_bump: u64,
+    #[arg(
+        help = "Minimum fee bump (in percent) required to replace an EIP-4844 blob pooled transaction.",
+        long = "mempool.blob-price-bump",
+        default_value_t = DEFAULT_BLOB_PRICE_BUMP_PERCENT,
+        value_name = "PERCENT",
+        help_heading = "Node options",
+        env = "ETHREX_MEMPOOL_BLOB_PRICE_BUMP"
+    )]
+    pub mempool_blob_price_bump: u64,
     #[arg(
         help = "Mempool occupancy percentage (0-100) at or above which incoming transactions with a nonce gap relative to the sender's on-chain nonce are rejected. Setting to 100 disables the check.",
         long = "mempool.gap-admit-occupancy-threshold",
@@ -547,6 +584,10 @@ impl Default for Options {
             dev: Default::default(),
             force: false,
             mempool_max_size: Default::default(),
+            mempool_min_tip: DEFAULT_MIN_TIP_WEI,
+            mempool_private: false,
+            mempool_price_bump: DEFAULT_PRICE_BUMP_PERCENT,
+            mempool_blob_price_bump: DEFAULT_BLOB_PRICE_BUMP_PERCENT,
             mempool_gap_admit_occupancy_threshold: DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD,
             mempool_max_queued_txs_per_account: DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT,
             tx_broadcasting_time_interval: Default::default(),

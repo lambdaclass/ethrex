@@ -111,6 +111,27 @@ Node options:
           [env: ETHREX_MEMPOOL_MAX_SIZE=]
           [default: 10000]
 
+      --mempool.min-tip <MIN_TIP_WEI>
+          Minimum priority-fee cap (in wei) required for a transaction to be admitted into the mempool. Compared against the raw tip cap: `max_priority_fee_per_gas` for typed transactions, `gas_price` for legacy transactions (independent of current base fee, so admission stays stable as base fee oscillates). Set to 0 to disable the floor.
+
+          [env: ETHREX_MEMPOOL_MIN_TIP=]
+          [default: 1]
+      --mempool.private
+          Node-level config (not a protocol/EIP behavior): keep RPC-submitted transactions private. They enter the mempool and may be included in blocks built locally, but are not propagated to peers. P2P-received transactions are unaffected.
+
+          [env: ETHREX_MEMPOOL_PRIVATE=]
+      --mempool.price-bump <PERCENT>
+          Minimum fee bump (in percent) required to replace a non-blob pooled transaction at the same (sender, nonce).
+
+          [env: ETHREX_MEMPOOL_PRICE_BUMP=]
+          [default: 10]
+
+      --mempool.blob-price-bump <PERCENT>
+          Minimum fee bump (in percent) required to replace an EIP-4844 blob pooled transaction.
+
+          [env: ETHREX_MEMPOOL_BLOB_PRICE_BUMP=]
+          [default: 100]
+
       --mempool.gap-admit-occupancy-threshold <PERCENTAGE>
           Mempool occupancy percentage (0-100) at or above which incoming transactions with a nonce gap relative to the sender's on-chain nonce are rejected. Setting to 100 disables the check.
 
