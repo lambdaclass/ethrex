@@ -464,7 +464,7 @@ async fn forkchoice_updated_v3_rejects_amsterdam_payload_attributes() {
 //
 // Moved from crates/networking/rpc/engine/fork_choice.rs. These exercise the
 // crate-private parse/apply internals through `test_utils` feature-gated shims.
-use ethrex_rpc::test_utils::{apply_custody_update, parse_custody_columns, parse_v4};
+use ethrex_rpc::test_utils::{apply_custody_update, parse_custody_columns, parse_v4, parse_v5};
 use serde_json::json;
 
 fn minimal_fcs_json() -> serde_json::Value {
@@ -513,6 +513,57 @@ fn parse_v4_custody_wrong_length_rejected() {
     ]);
     let err = parse_v4(&params).unwrap_err();
     assert_eq!(RpcErrorMetadata::from(err).code, -32602);
+}
+
+// ── `engine_forkchoiceUpdatedV5` keeps V4's `custodyColumns` third parameter
+// (execution-apis bogota.md). Same shape and same rejection as V4. ───────────
+
+#[test]
+fn parse_v5_custody_absent() {
+    let params = Some(vec![minimal_fcs_json()]);
+    let (_, _, cc) = parse_v5(&params).unwrap();
+    assert_eq!(cc, None);
+}
+
+#[test]
+fn parse_v5_custody_null() {
+    let params = Some(vec![minimal_fcs_json(), json!(null), json!(null)]);
+    let (_, _, cc) = parse_v5(&params).unwrap();
+    assert_eq!(cc, None);
+}
+
+#[test]
+fn parse_v5_custody_valid_16_bytes() {
+    // Little-endian: column 0 (bit 0) => byte[0] = 0x01 => u128 = 1.
+    let params = Some(vec![
+        minimal_fcs_json(),
+        json!(null),
+        json!("0x01000000000000000000000000000000"),
+    ]);
+    let (_, _, cc) = parse_v5(&params).unwrap();
+    assert_eq!(cc, Some(1u128));
+}
+
+#[test]
+fn parse_v5_custody_wrong_length_rejected() {
+    let params = Some(vec![
+        minimal_fcs_json(),
+        json!(null),
+        json!("0x0000000000000001"),
+    ]);
+    let err = parse_v5(&params).unwrap_err();
+    assert_eq!(RpcErrorMetadata::from(err).code, -32602);
+}
+
+#[test]
+fn parse_v5_rejects_more_than_three_params() {
+    let params = Some(vec![
+        minimal_fcs_json(),
+        json!(null),
+        json!(null),
+        json!(null),
+    ]);
+    assert!(parse_v5(&params).is_err());
 }
 
 #[test]

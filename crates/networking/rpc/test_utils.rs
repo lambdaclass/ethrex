@@ -478,6 +478,20 @@ pub fn parse_v4(
     crate::engine::fork_choice::parse_v4(params)
 }
 
+/// Shim over the crate-private `engine::fork_choice::parse_v5`.
+pub fn parse_v5(
+    params: &Option<Vec<Value>>,
+) -> Result<
+    (
+        ForkChoiceState,
+        Option<crate::types::fork_choice::PayloadAttributesV5>,
+        Option<u128>,
+    ),
+    RpcErr,
+> {
+    crate::engine::fork_choice::parse_v5(params)
+}
+
 /// Shim over the crate-private `engine::fork_choice::parse_custody_columns`.
 pub fn parse_custody_columns(value: &Value) -> Result<Option<u128>, RpcErr> {
     crate::engine::fork_choice::parse_custody_columns(value)

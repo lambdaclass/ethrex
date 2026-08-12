@@ -282,15 +282,26 @@ impl RpcHandler for ForkChoiceUpdatedV4 {
 pub struct ForkChoiceUpdatedV5 {
     pub fork_choice_state: ForkChoiceState,
     pub payload_attributes: Option<PayloadAttributesV5>,
+    /// Optional custody column bitmask from the 3rd Engine API parameter,
+    /// carried over from V4 (execution-apis bogota.md,
+    /// `engine_forkchoiceUpdatedV5` params). `None` means the param was absent
+    /// or null; `Some(mask)` triggers a custody column update in the mempool.
+    pub custody_columns: Option<u128>,
 }
 
 impl From<ForkChoiceUpdatedV5> for RpcRequest {
     fn from(val: ForkChoiceUpdatedV5) -> Self {
+        let custody_hex = val
+            .custody_columns
+            .map(|m| format!("0x{}", hex::encode(m.to_le_bytes())))
+            .map(Value::String)
+            .unwrap_or(Value::Null);
         RpcRequest {
             method: "engine_forkchoiceUpdatedV5".to_string(),
             params: Some(vec![
                 serde_json::json!(val.fork_choice_state),
                 serde_json::json!(val.payload_attributes),
+                custody_hex,
             ]),
             ..Default::default()
         }
@@ -299,14 +310,18 @@ impl From<ForkChoiceUpdatedV5> for RpcRequest {
 
 impl RpcHandler for ForkChoiceUpdatedV5 {
     fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
-        let (fork_choice_state, payload_attributes) = parse_v5(params)?;
+        let (fork_choice_state, payload_attributes, custody_columns) = parse_v5(params)?;
         Ok(ForkChoiceUpdatedV5 {
             fork_choice_state,
             payload_attributes,
+            custody_columns,
         })
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        // As in V4, the custody set update runs independently of the fork choice
+        // update, so it is applied before any early return from the forkchoice flow.
+        apply_custody_update(&context, self.custody_columns);
         let (head_block_opt, mut response) =
             handle_forkchoice(&self.fork_choice_state, context.clone(), 5).await?;
 
@@ -826,32 +841,41 @@ async fn build_payload_v4(
     Ok(payload_id)
 }
 
-fn parse_v5(
+pub(crate) fn parse_v5(
     params: &Option<Vec<Value>>,
-) -> Result<(ForkChoiceState, Option<PayloadAttributesV5>), RpcErr> {
+) -> Result<(ForkChoiceState, Option<PayloadAttributesV5>, Option<u128>), RpcErr> {
     let params = params
         .as_ref()
         .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
 
-    if params.len() != 2 && params.len() != 1 {
-        return Err(RpcErr::BadParams("Expected 2 or 1 params".to_owned()));
+    if params.len() > 3 || params.is_empty() {
+        return Err(RpcErr::BadParams("Expected 1, 2, or 3 params".to_owned()));
     }
 
     let forkchoice_state: ForkChoiceState = serde_json::from_value(params[0].clone())?;
-    let mut payload_attributes: Option<PayloadAttributesV5> = None;
-    if params.len() == 2 {
-        // execution-apis#796: V5 attributes are validated strictly, mirroring
-        // parse_v4. A present but malformed object (e.g. missing the required
-        // targetGasLimit) is rejected rather than silently ignored; an
-        // absent/null object yields no attributes.
-        payload_attributes = serde_json::from_value::<Option<PayloadAttributesV5>>(
-            params[1].clone(),
-        )
-        .map_err(|error| {
-            RpcErr::InvalidPayloadAttributes(format!("invalid V5 payload attributes: {error}"))
-        })?;
-    }
-    Ok((forkchoice_state, payload_attributes))
+
+    // execution-apis#796: V5 attributes are validated strictly, mirroring
+    // parse_v4. A present but malformed object (e.g. missing the required
+    // targetGasLimit) is rejected rather than silently ignored; an
+    // absent/null object yields no attributes.
+    let payload_attributes = if params.len() >= 2 {
+        serde_json::from_value::<Option<PayloadAttributesV5>>(params[1].clone()).map_err(
+            |error| {
+                RpcErr::InvalidPayloadAttributes(format!("invalid V5 payload attributes: {error}"))
+            },
+        )?
+    } else {
+        None
+    };
+
+    // V5 keeps V4's `custodyColumns` third parameter (execution-apis bogota.md).
+    let custody_columns = if params.len() == 3 {
+        parse_custody_columns(&params[2])?
+    } else {
+        None
+    };
+
+    Ok((forkchoice_state, payload_attributes, custody_columns))
 }
 
 fn validate_attributes_v5(
