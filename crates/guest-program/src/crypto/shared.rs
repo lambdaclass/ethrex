@@ -3,13 +3,20 @@
 /// These functions are implemented in pure Rust using crates that are
 /// patched by each zkVM toolchain (k256, substrate-bn) to use their
 /// respective circuit accelerators transparently via Cargo patches.
+#[cfg(any(feature = "sp1", feature = "risc0", feature = "openvm"))]
 use ethereum_types::Address;
-use ethrex_crypto::{CryptoError, keccak::keccak_hash};
+use ethrex_crypto::CryptoError;
+#[cfg(any(feature = "sp1", feature = "risc0", feature = "openvm"))]
+use ethrex_crypto::keccak::keccak_hash;
 
 // ── k256 ECDSA ───────────────────────────────────────────────────────────────
+//
+// Used by the SP1/RISC0/OpenVM providers. The LambdaVM provider does not use
+// these: it routes ECDSA recovery through the ECSM precompile instead.
 
 /// ECDSA public key recovery using k256 (pure Rust, RISC-V compatible).
 /// Used by the ECRECOVER precompile (0x01).
+#[cfg(any(feature = "sp1", feature = "risc0", feature = "openvm"))]
 pub(crate) fn k256_ecrecover(
     sig: &[u8; 64],
     recid: u8,
@@ -41,6 +48,7 @@ pub(crate) fn k256_ecrecover(
 
 /// Transaction sender recovery using k256 (pure Rust, RISC-V compatible).
 /// Used by tx.sender() and EIP-7702 authority recovery.
+#[cfg(any(feature = "sp1", feature = "risc0", feature = "openvm"))]
 pub(crate) fn k256_recover_signer(sig: &[u8; 65], msg: &[u8; 32]) -> Result<Address, CryptoError> {
     use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
 
