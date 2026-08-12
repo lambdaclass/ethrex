@@ -188,6 +188,14 @@ impl Blockchain {
             // Withdrawal recipients are credited outside the EVM, so the logger
             // never sees them; the MPT generator touches them by hand for the
             // same reason.
+            //
+            // **Untested.** Deleting this branch does not fail any test in
+            // `binary_tree_witness_tests`: every block those chains build
+            // carries an empty withdrawal list, so the loop never runs. It is
+            // kept because the MPT generator needs it on a real chain and the
+            // omission would show up as a witness that verifies everywhere
+            // except where withdrawals land. A chain builder that produces real
+            // withdrawals would close the gap.
             if let Some(withdrawals) = block.body.withdrawals.as_ref() {
                 for withdrawal in withdrawals {
                     pbt_state::get_account(&mut trie, withdrawal.address)
@@ -221,7 +229,7 @@ impl Blockchain {
             .collect();
 
         let block_headers_bytes =
-            self.witness_headers(first, last, &blockhash_references, &parent_header)?;
+            self.witness_headers(last, &blockhash_references, &parent_header)?;
 
         Ok(BinaryExecutionWitness {
             nodes,
@@ -241,7 +249,6 @@ impl Blockchain {
     /// batch on a non-canonical branch collects that branch's ancestors.
     fn witness_headers(
         &self,
-        first: &BlockHeader,
         last: &BlockHeader,
         blockhash_references: &HashMap<u64, H256>,
         parent: &BlockHeader,
@@ -269,7 +276,6 @@ impl Blockchain {
                 })?;
             headers.push(current.encode_to_vec());
         }
-        debug_assert!(first.number > oldest_needed || first.number == oldest_needed);
         Ok(headers)
     }
 }

@@ -85,7 +85,7 @@ fn assert_flip_shape(chains: &BoundaryChains) {
 /// An MPT witness is a flat list of node *encodings*, addressed by
 /// `keccak(encoding)` — so this is the set of roots the witness can serve.
 fn witness_node_hashes(witness: &RpcExecutionWitness) -> Vec<H256> {
-    witness.state.iter().map(|node| keccak(node)).collect()
+    witness.state.iter().map(keccak).collect()
 }
 
 /// Make the built chain canonical, which the by-number handler needs to resolve
@@ -503,7 +503,7 @@ async fn a_v2_witness_with_a_node_that_does_not_belong_is_rejected() {
         head.header.state_root
     );
 
-    let mut padded = witness.clone();
+    let mut padded = witness;
     padded.state.push(stranger.into());
     let error = replay(&padded, &head, &chains)
         .expect_err("a node nothing in the witness names must be rejected");

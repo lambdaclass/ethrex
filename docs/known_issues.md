@@ -171,6 +171,29 @@ what keeps the floor honest — left in place, the stale entries would advertise
 reach the node cannot deliver and the reorg would fail mid-flight with
 `StateNotReachable` instead of being declined up front.
 
+### `debug_executionWitnessV2` withdrawal reads are untested
+
+**Where:** `crates/blockchain/binary_witness.rs` —
+`Blockchain::generate_binary_witness_for_blocks`, the `block.body.withdrawals`
+branch of the read replay.
+
+**Why:** Withdrawal recipients are credited outside the EVM, so the
+`DatabaseLogger` never records them as accessed accounts; the generator has to
+touch them by hand, exactly as the MPT generator does. Deleting that branch
+fails no test: every block the `binary_tree_witness_tests` chains build carries
+an empty withdrawal list, so the loop never runs. The branch is therefore
+present and unverified.
+
+If it were wrong or missing, a witness for a block with withdrawals would omit
+the nodes on those accounts' paths, and verification would fail at the
+`apply_account_updates` step on the consumer side — a loud failure rather than a
+wrong root, but a failure that only appears on chains that pay withdrawals.
+
+**Removal:** Give the boundary-chain builder in
+`test/tests/blockchain/binary_tree_shadow_tests.rs` a way to produce blocks with
+non-empty withdrawal lists, then re-run the mutation: deleting the branch must
+fail `a_v2_witness_re_executes_to_the_committed_binary_root`.
+
 ### Amsterdam gas schedule is behind EIP-8038, and has no fixture coverage
 
 **Where:** `crates/vm/levm/src/gas_cost.rs:213-222` (the "EIP-8038 Amsterdam

@@ -466,7 +466,7 @@ mod tests {
             .find(|node| !nodes.contains(node))
             .expect("the two tries share nothing")
             .clone();
-        let mut padded = nodes.clone();
+        let mut padded = nodes;
         padded.push(stranger.clone());
         assert_eq!(
             WitnessBinaryTrieDB::new(root, &padded),
@@ -505,7 +505,7 @@ mod tests {
             .expect("the narrow walk names siblings it did not enter")
             .clone();
 
-        let mut padded = narrow.clone();
+        let mut padded = narrow;
         padded.push(spare);
         let witness = WitnessBinaryTrieDB::new(root, &padded)
             .expect("a node the witness's own branches name is not extraneous");
