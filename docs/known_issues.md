@@ -231,3 +231,36 @@ the spec exactly.
 exercises Amsterdam at all — if `.fixtures_url_amsterdam` points at a bundle
 with no `eip8037`/`eip8038` coverage, re-pin it so the next drift is caught by
 CI rather than by accident.
+
+### `eth_getProofV2`'s response format is an ethrex dialect, not a standard
+
+**Where:** `crates/networking/rpc/types/binary_account_proof.rs`, served by
+`GetProofV2Request` in `crates/networking/rpc/eth/account.rs`.
+
+**What:** Past the EIP-8297 activation `eth_getProof` refuses — the binary trie
+has no account trie, no per-account storage trie, and therefore nothing its
+MPT-shaped response can describe. `eth_getProofV2` serves the binary shape
+instead, under its own name and carrying a `proofFormat` discriminator
+(`ethrex-eip8297-walk-v1`). Each of the account's header-stem keys and each
+requested storage slot gets its own walk proof, verifiable against the header's
+`state_root` through `ethrex_binary_trie::trie::verify_walk`.
+
+**Why it is a known issue:** there is no standard to conform to. EIP-8297 says
+nothing about `eth_getProof`; EIP-8347, the companion migration EIP, names the
+method only to defer it to a separate, unwritten spec; go-ethereum's
+`trie/bintrie` `Prove` is `panic("not implemented")` on master; Erigon's
+binary-trie branch refuses. So this format is one client's shape, and
+a consumer that assumes it is portable is assuming something that is not true
+today.
+
+**What it deliberately does not do:** it does not deduplicate the shared stem
+between the three account walks and the slots below 64, and it carries no
+`storageHash`. Both are reversible choices — the redundancy is what makes every
+entry independently checkable by the existing per-key verifier rather than by
+new multiproof machinery, and there is no per-account storage root in the design
+for a `storageHash` to name.
+
+**Removal:** when execution-apis settles a shape, add it under a new
+`proofFormat` string (and, if it lands in `eth_getProof` itself, replace that
+method's refusal). Nothing about this method constrains that: it is separately
+named precisely so the standard method's schema stayed free.
