@@ -1,5 +1,32 @@
 use crate::types::{BlockChainExpectedException, BlockExpectedException};
+use ethrex_common::Address;
 use serde::{Deserialize, Deserializer};
+
+/// An EIP-8141 address field that may be deliberately empty: a frame targeting
+/// `tx.sender` implicitly, or the signer of an `ARBITRARY` signature entry,
+/// which the protocol assigns no signer. Fixtures write those as `"0x"` rather
+/// than omitting the key, which a plain `Option<Address>` rejects.
+pub fn deserialize_empty_as_none_address<'de, D>(
+    deserializer: D,
+) -> Result<Option<Address>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw: Option<String> = Option::deserialize(deserializer)?;
+    let Some(raw) = raw else { return Ok(None) };
+    let digits = raw.strip_prefix("0x").unwrap_or(&raw);
+    if digits.is_empty() {
+        return Ok(None);
+    }
+    let bytes = hex::decode(digits).map_err(serde::de::Error::custom)?;
+    if bytes.len() != Address::len_bytes() {
+        return Err(serde::de::Error::custom(format!(
+            "expected a 20-byte address, got {} bytes",
+            bytes.len()
+        )));
+    }
+    Ok(Some(Address::from_slice(&bytes)))
+}
 
 pub const SENDER_NOT_EOA_REGEX: &str = "Sender account .* shouldn't be a contract";
 pub const PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS_REGEX: &str =
@@ -89,8 +116,12 @@ where
                         "Transaction gas limit exceeds maximum.".to_string(),
                     )
                 }
-                "TransactionException.INVALID_SIGNATURE_VRS" => {
+                "TransactionException.INVALID_SIGNATURE_VRS"
+                | "TransactionException.TYPE_6_INVALID_SIGNATURE" => {
                     BlockChainExpectedException::InvalidSignature
+                }
+                "TransactionException.TYPE_6_INVALID_FRAME_FORMAT" => {
+                    BlockChainExpectedException::InvalidFrameFormat
                 }
                 "BlockException.RLP_STRUCTURES_ENCODING" => {
                     BlockChainExpectedException::RLPException
