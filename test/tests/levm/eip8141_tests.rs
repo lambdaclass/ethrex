@@ -2098,6 +2098,7 @@ mod validation_observer_tests {
         assert_eq!(u8::from(Opcode::BASEFEE), 0x48);
         assert_eq!(u8::from(Opcode::BLOBHASH), 0x49);
         assert_eq!(u8::from(Opcode::BLOBBASEFEE), 0x4A);
+        assert_eq!(u8::from(Opcode::SLOTNUM), 0x4B);
         assert_eq!(u8::from(Opcode::INVALID), 0xFE);
         assert_eq!(u8::from(Opcode::SELFDESTRUCT), 0xFF);
         assert_eq!(u8::from(Opcode::BALANCE), 0x31);
@@ -2329,6 +2330,28 @@ mod validation_observer_tests {
             vm.validation_observer.violation.is_none(),
             "TIMESTAMP inside the expiry verifier must be allowed, got {:?}",
             vm.validation_observer.violation
+        );
+    }
+
+    #[test]
+    fn slotnum_is_banned() {
+        let sender = addr(0x4B00);
+        // SLOTNUM (0x4B) then STOP. EIP-7843's slot number changes between
+        // admission and inclusion exactly like NUMBER/TIMESTAMP, so a prefix
+        // branching on it could pass simulation and revert on inclusion. It is
+        // not covered transitively: the handler reads `env.slot_number` from the
+        // header rather than deriving it from TIMESTAMP.
+        let code = Bytes::from(vec![0x4B, 0x00]);
+        let tx = frame_tx_for_obs(
+            sender,
+            vec![verify_frame_obs(sender, 50_000, 0x03, Bytes::new())],
+        );
+        let mut db = build_db(vec![(sender, account_with_code(0, code))]);
+        let (_result, violation) = run(&tx, &mut db, sender, &[0], None);
+        assert_eq!(
+            violation,
+            Some(FrameSimViolation::BannedOpcode(0x4B)),
+            "SLOTNUM must be a banned opcode during prefix simulation"
         );
     }
 
