@@ -93,6 +93,10 @@ c-kzg = [
   "ethrex-blockchain/c-kzg",
   "ethrex-p2p/c-kzg",
   "ethrex-crypto/c-kzg",
+  # Required: `eth_sendRawTransaction`'s EIP-4844 branch is `cfg`-gated on this
+  # feature in `ethrex-rpc`. Without it the node builds fine but rejects every
+  # blob transaction at RPC ingress.
+  "ethrex-rpc/c-kzg",
 ]
 metrics = ["ethrex-blockchain/metrics", "ethrex-l2?/metrics", "ethrex-p2p/metrics"]
 rocksdb = ["ethrex-storage/rocksdb", "ethrex-p2p/rocksdb", "ethrex-l2?/rocksdb"]

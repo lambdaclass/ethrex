@@ -8,7 +8,7 @@ use ethrex_blockchain::constants::{
 };
 use ethrex_blockchain::error::MempoolError;
 use ethrex_blockchain::mempool::{
-    FramePaymasterReservation, Mempool, is_canonical_paymaster, transaction_intrinsic_gas,
+    FramePaymasterReservation, Mempool, TxOrigin, is_canonical_paymaster, transaction_intrinsic_gas,
 };
 use ethrex_blockchain::{Blockchain, BlockchainOptions};
 use ethrex_crypto::NativeCrypto;
@@ -291,7 +291,7 @@ async fn transaction_with_big_init_code_in_shanghai_fails() {
     };
 
     let tx = Transaction::EIP1559Transaction(tx);
-    let validation = blockchain.validate_transaction(&tx, Address::random());
+    let validation = blockchain.validate_transaction(&tx, Address::random(), TxOrigin::External);
     assert!(matches!(
         validation.await,
         Err(MempoolError::TxMaxInitCodeSizeError)
@@ -318,7 +318,7 @@ async fn transaction_with_gas_limit_higher_than_of_the_block_should_fail() {
     };
 
     let tx = Transaction::EIP1559Transaction(tx);
-    let validation = blockchain.validate_transaction(&tx, Address::random());
+    let validation = blockchain.validate_transaction(&tx, Address::random(), TxOrigin::External);
     assert!(matches!(
         validation.await,
         Err(MempoolError::TxGasLimitExceededError)
@@ -345,7 +345,7 @@ async fn transaction_with_priority_fee_higher_than_gas_fee_should_fail() {
     };
 
     let tx = Transaction::EIP1559Transaction(tx);
-    let validation = blockchain.validate_transaction(&tx, Address::random());
+    let validation = blockchain.validate_transaction(&tx, Address::random(), TxOrigin::External);
     assert!(matches!(
         validation.await,
         Err(MempoolError::TxTipAboveFeeCapError)
@@ -372,7 +372,7 @@ async fn transaction_with_gas_limit_lower_than_intrinsic_gas_should_fail() {
     };
 
     let tx = Transaction::EIP1559Transaction(tx);
-    let validation = blockchain.validate_transaction(&tx, Address::random());
+    let validation = blockchain.validate_transaction(&tx, Address::random(), TxOrigin::External);
     assert!(matches!(
         validation.await,
         Err(MempoolError::TxIntrinsicGasCostAboveLimitError)
@@ -399,7 +399,7 @@ async fn transaction_with_blob_base_fee_below_min_should_fail() {
     };
 
     let tx = Transaction::EIP4844Transaction(tx);
-    let validation = blockchain.validate_transaction(&tx, Address::random());
+    let validation = blockchain.validate_transaction(&tx, Address::random(), TxOrigin::External);
     assert!(matches!(
         validation.await,
         Err(MempoolError::TxBlobBaseFeeTooLowError)
@@ -425,7 +425,7 @@ async fn validate_transaction_rejects_oversize_non_blob() {
     });
 
     let res = blockchain
-        .validate_transaction(&tx, Address::random())
+        .validate_transaction(&tx, Address::random(), TxOrigin::External)
         .await;
     match res {
         Err(MempoolError::TxSizeExceeded { actual, limit }) => {
@@ -591,7 +591,8 @@ async fn mempool_rejects_frame_tx_with_invalid_signature() {
     reserve_calldata_floor(&mut frame_tx);
 
     let tx = Transaction::FrameTransaction(frame_tx);
-    let validation = blockchain.validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap());
+    let validation =
+        blockchain.validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap(), TxOrigin::External);
     assert!(matches!(
         validation.await,
         Err(MempoolError::InvalidFrameSignature)
@@ -608,7 +609,8 @@ async fn mempool_rejects_frame_tx_violating_static_constraints() {
     frame_tx.frames[0].mode = 5;
 
     let tx = Transaction::FrameTransaction(frame_tx);
-    let validation = blockchain.validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap());
+    let validation =
+        blockchain.validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap(), TxOrigin::External);
     assert!(matches!(
         validation.await,
         Err(MempoolError::InvalidFrameTransaction(_))
@@ -624,7 +626,8 @@ async fn mempool_accepts_small_frame_tx() {
     // the tx otherwise satisfies static constraints + nonce/fee checks.
     let frame_tx = minimal_valid_frame_tx();
     let tx = Transaction::FrameTransaction(frame_tx);
-    let validation = blockchain.validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap());
+    let validation =
+        blockchain.validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap(), TxOrigin::External);
     assert!(
         validation.await.is_ok(),
         "minimal valid frame tx should be admitted"
@@ -733,7 +736,8 @@ async fn mempool_rejects_oversized_frame_data() {
     frame_tx.frames[1].gas_limit = floor;
 
     let tx = Transaction::FrameTransaction(frame_tx);
-    let validation = blockchain.validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap());
+    let validation =
+        blockchain.validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap(), TxOrigin::External);
     let result = validation.await;
     assert!(
         matches!(result, Err(MempoolError::TxSizeExceeded { .. })),
@@ -756,7 +760,8 @@ async fn mempool_rejects_frame_tx_with_blobs() {
     reserve_calldata_floor(&mut frame_tx);
 
     let tx = Transaction::FrameTransaction(frame_tx);
-    let validation = blockchain.validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap());
+    let validation =
+        blockchain.validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap(), TxOrigin::External);
     assert!(matches!(
         validation.await,
         Err(MempoolError::FrameTxBlobsUnsupported)
@@ -789,7 +794,8 @@ async fn mempool_rejects_frame_tx_exceeding_max_verify_gas() {
     reserve_calldata_floor(&mut frame_tx);
 
     let tx = Transaction::FrameTransaction(frame_tx);
-    let validation = blockchain.validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap());
+    let validation =
+        blockchain.validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap(), TxOrigin::External);
     assert!(matches!(
         validation.await,
         Err(MempoolError::FrameTxVerifyGasExceeded)
@@ -809,7 +815,8 @@ async fn mempool_rejects_frame_tx_from_unknown_sender_with_sentinel_nonce() {
     frame_tx.nonce = u64::MAX;
 
     let tx = Transaction::FrameTransaction(frame_tx);
-    let validation = blockchain.validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap());
+    let validation =
+        blockchain.validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap(), TxOrigin::External);
     assert!(matches!(validation.await, Err(MempoolError::NonceTooLow)));
 }
 
@@ -823,7 +830,8 @@ async fn mempool_accepts_frame_tx_from_unknown_sender_with_zero_nonce() {
     // the new guard only rejects sub-current / sentinel nonces.
     let frame_tx = minimal_valid_frame_tx(); // sender 0xABCD (absent), nonce 0
     let tx = Transaction::FrameTransaction(frame_tx);
-    let validation = blockchain.validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap());
+    let validation =
+        blockchain.validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap(), TxOrigin::External);
     assert!(
         validation.await.is_ok(),
         "fresh sponsored sender with nonce 0 should still be admitted"
@@ -959,7 +967,7 @@ async fn mempool_rejects_frame_tx_before_hegota() {
     let frame_tx = minimal_valid_frame_tx();
     let tx = Transaction::FrameTransaction(frame_tx);
     let result = blockchain
-        .validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap())
+        .validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap(), TxOrigin::External)
         .await;
     assert!(
         matches!(result, Err(MempoolError::FrameTxPreFork)),
@@ -977,7 +985,7 @@ async fn mempool_rejects_expired_frame_tx() {
     let frame_tx = frame_tx_with_expiry(999);
     let tx = Transaction::FrameTransaction(frame_tx);
     let result = blockchain
-        .validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap())
+        .validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap(), TxOrigin::External)
         .await;
     assert!(
         matches!(result, Err(MempoolError::FrameTxExpired)),
@@ -996,7 +1004,7 @@ async fn mempool_accepts_frame_tx_with_deadline_at_head_timestamp() {
     let frame_tx = frame_tx_with_expiry(1000);
     let tx = Transaction::FrameTransaction(frame_tx);
     let result = blockchain
-        .validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap())
+        .validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap(), TxOrigin::External)
         .await;
     assert!(
         result.is_ok(),
@@ -1105,7 +1113,7 @@ async fn zero_tip_eip1559_rejected_under_default_floor() {
     let tx = Transaction::EIP1559Transaction(tx);
 
     let res = blockchain
-        .validate_transaction(&tx, Address::random())
+        .validate_transaction(&tx, Address::random(), TxOrigin::External)
         .await;
     assert!(matches!(
         res,
@@ -1138,7 +1146,7 @@ async fn at_floor_eip1559_passes_tip_check() {
     let tx = Transaction::EIP1559Transaction(tx);
 
     let res = blockchain
-        .validate_transaction(&tx, Address::random())
+        .validate_transaction(&tx, Address::random(), TxOrigin::External)
         .await;
     // The tip check itself must not fire; the downstream account-lookup
     // (state root or balance) is what should fail in this minimal setup.
@@ -1182,7 +1190,7 @@ async fn floor_uses_raw_tip_cap_not_base_fee_adjusted_effective_tip() {
     });
 
     let res = blockchain
-        .validate_transaction(&tx, Address::random())
+        .validate_transaction(&tx, Address::random(), TxOrigin::External)
         .await;
     assert!(
         !matches!(res, Err(MempoolError::TipBelowMinimum { .. })),
@@ -1220,7 +1228,7 @@ async fn floor_of_zero_admits_zero_tip() {
     let tx = Transaction::EIP1559Transaction(tx);
 
     let res = blockchain
-        .validate_transaction(&tx, Address::random())
+        .validate_transaction(&tx, Address::random(), TxOrigin::External)
         .await;
     assert!(
         matches!(
@@ -1249,7 +1257,7 @@ async fn legacy_gas_price_below_floor_rejected() {
     let tx = Transaction::LegacyTransaction(tx);
 
     let res = blockchain
-        .validate_transaction(&tx, Address::random())
+        .validate_transaction(&tx, Address::random(), TxOrigin::External)
         .await;
     assert!(matches!(
         res,
@@ -1282,7 +1290,9 @@ async fn options_field_is_used_in_validate_transaction() {
     };
     let tx = Transaction::EIP1559Transaction(tx);
 
-    let res = bc.validate_transaction(&tx, Address::random()).await;
+    let res = bc
+        .validate_transaction(&tx, Address::random(), TxOrigin::External)
+        .await;
     assert!(matches!(
         res,
         Err(MempoolError::TipBelowMinimum {
@@ -1311,7 +1321,7 @@ async fn shipped_default_floor_rejects_zero_tip_admits_one() {
     });
     assert!(matches!(
         blockchain
-            .validate_transaction(&zero, Address::random())
+            .validate_transaction(&zero, Address::random(), TxOrigin::External)
             .await,
         Err(MempoolError::TipBelowMinimum {
             actual: 0,
@@ -1331,7 +1341,7 @@ async fn shipped_default_floor_rejects_zero_tip_admits_one() {
         ..Default::default()
     });
     let res = blockchain
-        .validate_transaction(&one, Address::random())
+        .validate_transaction(&one, Address::random(), TxOrigin::External)
         .await;
     // The tip check itself must not fire; the downstream account-lookup
     // (state root or balance) is what should fail in this minimal setup.
@@ -1366,7 +1376,7 @@ async fn blob_tx_under_floor_rejected() {
 
     assert!(matches!(
         blockchain
-            .validate_transaction(&tx, Address::random())
+            .validate_transaction(&tx, Address::random(), TxOrigin::External)
             .await,
         Err(MempoolError::TipBelowMinimum {
             actual: 0,
@@ -2724,7 +2734,9 @@ async fn validate_transaction_rejects_empty_auth_list() {
         ..Default::default()
     });
 
-    let res = blockchain.validate_transaction(&tx, sender).await;
+    let res = blockchain
+        .validate_transaction(&tx, sender, TxOrigin::External)
+        .await;
     assert!(
         matches!(res, Err(MempoolError::EmptyAuthorizationList)),
         "type-4 tx with an empty authorization_list must be rejected at admission \
@@ -2757,7 +2769,7 @@ async fn validate_transaction_empty_auth_reported_before_intrinsic() {
     });
 
     let res = blockchain
-        .validate_transaction(&tx, Address::random())
+        .validate_transaction(&tx, Address::random(), TxOrigin::External)
         .await;
     assert!(
         matches!(res, Err(MempoolError::EmptyAuthorizationList)),
@@ -2802,7 +2814,7 @@ async fn validate_transaction_rejects_pre_prague_eip7702() {
     });
 
     let res = blockchain
-        .validate_transaction(&tx, Address::random())
+        .validate_transaction(&tx, Address::random(), TxOrigin::External)
         .await;
     assert!(
         matches!(res, Err(MempoolError::Eip7702TxPreFork)),
@@ -2914,7 +2926,9 @@ async fn gap_admission_rejected_when_pool_above_threshold() {
 
     // On-chain nonce is 0; submitting nonce=5 introduces a gap.
     let gapped_tx = build_tx(chain_id, 5);
-    let result = blockchain.validate_transaction(&gapped_tx, sender).await;
+    let result = blockchain
+        .validate_transaction(&gapped_tx, sender, TxOrigin::External)
+        .await;
     assert!(
         matches!(
             result,
@@ -2934,7 +2948,9 @@ async fn gap_admission_accepted_when_pool_below_threshold() {
     fill_mempool(&blockchain.mempool, GAP_TEST_MEMPOOL_MAX / 2);
 
     let gapped_tx = build_tx(chain_id, 5);
-    let result = blockchain.validate_transaction(&gapped_tx, sender).await;
+    let result = blockchain
+        .validate_transaction(&gapped_tx, sender, TxOrigin::External)
+        .await;
     assert!(
         result.is_ok(),
         "expected gapped tx to be accepted under low pressure, got {result:?}"
@@ -2952,7 +2968,9 @@ async fn gap_admission_disabled_at_threshold_100() {
     fill_mempool(&blockchain.mempool, GAP_TEST_MEMPOOL_MAX);
 
     let gapped_tx = build_tx(chain_id, 5);
-    let result = blockchain.validate_transaction(&gapped_tx, sender).await;
+    let result = blockchain
+        .validate_transaction(&gapped_tx, sender, TxOrigin::External)
+        .await;
     assert!(
         result.is_ok(),
         "expected gapped tx to be accepted when threshold is 100, got {result:?}"
@@ -2970,7 +2988,7 @@ async fn contiguous_nonce_tx_accepted_under_high_occupancy() {
     // On-chain nonce is 0; submitting nonce=0 is contiguous.
     let contiguous_tx = build_tx(chain_id, 0);
     let result = blockchain
-        .validate_transaction(&contiguous_tx, sender)
+        .validate_transaction(&contiguous_tx, sender, TxOrigin::External)
         .await;
     assert!(
         result.is_ok(),
@@ -2992,7 +3010,7 @@ async fn l1_validate_transaction_rejects_fee_token() {
 
     let tx = Transaction::FeeTokenTransaction(FeeTokenTransaction::default());
     let res = blockchain
-        .validate_transaction(&tx, Address::random())
+        .validate_transaction(&tx, Address::random(), TxOrigin::External)
         .await;
     assert!(
         matches!(res, Err(MempoolError::L2OnlyTransactionType)),
@@ -3039,7 +3057,7 @@ async fn replacement_at_existing_nonce_bypasses_gap_admission() {
     });
 
     let result = blockchain
-        .validate_transaction(&replacement_tx, sender)
+        .validate_transaction(&replacement_tx, sender, TxOrigin::External)
         .await;
     // A fresh gapped tx here would hit `GapAdmissionDeniedUnderPressure`; the
     // replacement is exempt, so validation passes.
@@ -3057,7 +3075,7 @@ async fn l1_validate_transaction_rejects_privileged_l2() {
 
     let tx = Transaction::PrivilegedL2Transaction(PrivilegedL2Transaction::default());
     let res = blockchain
-        .validate_transaction(&tx, Address::random())
+        .validate_transaction(&tx, Address::random(), TxOrigin::External)
         .await;
     assert!(
         matches!(res, Err(MempoolError::L2OnlyTransactionType)),
@@ -3255,6 +3273,79 @@ mod cumulative_balance_tests {
         let total = mempool.sum_cost_for_sender(sender, 2, None).expect("sum");
         assert_eq!(total, expected);
     }
+}
+
+#[tokio::test]
+async fn validate_transaction_accepts_both_origins() {
+    // Threading check: `validate_transaction` must accept both origins. With no
+    // origin-gated rules yet wired on `main`, Local and External should still
+    // produce the same downstream error for an identical fixture (proving that
+    // adding the parameter did not accidentally diverge the validation paths).
+    let (config, header) = build_basic_config_and_header(false, false);
+    let store = setup_storage(config, header).await.expect("Storage setup");
+    let blockchain = Blockchain::default_with_store(store);
+
+    let tx = EIP1559Transaction {
+        nonce: 3,
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 0,
+        gas_limit: 100_000_001, // forces TxGasLimitExceededError before any origin-gated rule could fire
+        to: TxKind::Call(Address::from_low_u64_be(1)),
+        value: U256::zero(),
+        data: Bytes::default(),
+        access_list: Default::default(),
+        ..Default::default()
+    };
+    let tx = Transaction::EIP1559Transaction(tx);
+    let sender = Address::random();
+
+    let local = blockchain
+        .validate_transaction(&tx, sender, TxOrigin::Local)
+        .await;
+    let external = blockchain
+        .validate_transaction(&tx, sender, TxOrigin::External)
+        .await;
+
+    assert!(matches!(local, Err(MempoolError::TxGasLimitExceededError)));
+    assert!(matches!(
+        external,
+        Err(MempoolError::TxGasLimitExceededError)
+    ));
+}
+
+#[tokio::test]
+async fn add_local_transaction_to_pool_routes_through_validation() {
+    // Threading check: the RPC entry point must route through
+    // `validate_transaction`, not silently bypass it. Use a tx whose
+    // sender is recoverable but whose account doesn't exist in storage;
+    // `validate_transaction` rejects this specifically with
+    // `NotEnoughBalance`. Asserting that exact variant proves we hit
+    // the validation path rather than some earlier check.
+    //
+    // Build a store with real genesis state (funding an unrelated address) so
+    // the account lookup actually resolves. With the bare header-only store the
+    // missing state root surfaced as `StoreError`, which forced a two-variant
+    // assertion that would also have passed had the tx short-circuited
+    // somewhere upstream of the balance check.
+    let (store, _chain_id) = setup_funded_store(Address::from_low_u64_be(0xF00D)).await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    // Canonical legacy tx (sender derivable from signature). Gas limit
+    // 63_000 is well below the test header's 100_000_000 cap, so the
+    // gas-limit check passes; the sender isn't seeded into the store, so
+    // `validate_transaction` reaches the balance check and returns
+    // `NotEnoughBalance` — the proof point that we routed through
+    // validation rather than silently inserting.
+    let tx = Transaction::decode_canonical(&hex::decode("f86d80843baa0c4082f618946177843db3138ae69679a54b95cf345ed759450d870aa87bee538000808360306ba0151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65da064c5dd5aae2fbb535830ebbdad0234975cd7ece3562013b63ea18cc0df6c97d4").unwrap()).unwrap();
+
+    let result = blockchain.add_local_transaction_to_pool(tx).await;
+    // With real state behind the store, the sender is genuinely absent rather
+    // than unresolvable, so the balance check is reached and the outcome is a
+    // single deterministic variant.
+    assert!(
+        matches!(result, Err(MempoolError::NotEnoughBalance)),
+        "expected NotEnoughBalance from validate_transaction, got {result:?}",
+    );
 }
 
 /// `add_transaction` queues the tx for P2P broadcast (the default path).

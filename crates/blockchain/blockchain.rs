@@ -106,7 +106,7 @@ use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError, VmDatabase};
 use mempool::{
     BalanceCheck, FRAME_CANONICAL_PAYMASTER_CODE_HASH, FramePaymasterReservation, Mempool,
-    SenderAdmission, is_canonical_paymaster,
+    SenderAdmission, TxOrigin, is_canonical_paymaster,
 };
 use payload::PayloadOrTask;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -3008,11 +3008,11 @@ impl Blockchain {
         Ok(())
     }
 
-    /// Add a blob transaction and its blobs bundle to the mempool checking that the transaction is valid.
+    /// Add a P2P-received blob transaction and its blobs bundle to the mempool.
     ///
-    /// This is the P2P entry point: the transaction's hash is queued for
-    /// broadcast to peers regardless of `BlockchainOptions::private_mempool`.
-    /// For the local-RPC path that honors `private_mempool`, use
+    /// Validated as `TxOrigin::External`, so it is subject to all admission
+    /// policies, and always queued for broadcast — `private_mempool` only
+    /// applies to locally-submitted transactions. For the local-RPC path use
     /// [`Self::add_local_blob_transaction_to_pool`].
     #[cfg(feature = "c-kzg")]
     pub async fn add_blob_transaction_to_pool(
@@ -3020,32 +3020,37 @@ impl Blockchain {
         transaction: EIP4844Transaction,
         blobs_bundle: BlobsBundle,
     ) -> Result<H256, MempoolError> {
-        self.add_blob_transaction_to_pool_inner(transaction, blobs_bundle, true)
+        self.add_blob_transaction_to_pool_with_origin(transaction, blobs_bundle, TxOrigin::External)
             .await
     }
 
-    /// Local-RPC counterpart of [`Self::add_blob_transaction_to_pool`].
-    /// When `BlockchainOptions::private_mempool` is `true`, the transaction
-    /// is added to the mempool but is NOT queued for P2P broadcast — it
-    /// stays available only for blocks built locally.
+    /// Add a locally-submitted blob transaction (e.g. via `eth_sendRawTransaction`)
+    /// to the mempool. Validated as `TxOrigin::Local`, so it may bypass
+    /// operator-friendly admission gates, and when
+    /// `BlockchainOptions::private_mempool` is set it is NOT queued for P2P
+    /// broadcast — it stays available only for locally-built blocks.
     #[cfg(feature = "c-kzg")]
     pub async fn add_local_blob_transaction_to_pool(
         &self,
         transaction: EIP4844Transaction,
         blobs_bundle: BlobsBundle,
     ) -> Result<H256, MempoolError> {
-        let broadcast = !self.options.private_mempool;
-        self.add_blob_transaction_to_pool_inner(transaction, blobs_bundle, broadcast)
+        self.add_blob_transaction_to_pool_with_origin(transaction, blobs_bundle, TxOrigin::Local)
             .await
     }
 
     #[cfg(feature = "c-kzg")]
-    async fn add_blob_transaction_to_pool_inner(
+    async fn add_blob_transaction_to_pool_with_origin(
         &self,
         transaction: EIP4844Transaction,
         blobs_bundle: BlobsBundle,
-        broadcast: bool,
+        origin: TxOrigin,
     ) -> Result<H256, MempoolError> {
+        // `--mempool.private` is scoped to locally-submitted transactions: a
+        // P2P-received tx is always re-broadcast. Deriving this from `origin`
+        // rather than passing a separate flag keeps the two from ever
+        // disagreeing (there is no "external but don't broadcast" state).
+        let broadcast = !(matches!(origin, TxOrigin::Local) && self.options.private_mempool);
         let fork = self.current_fork().await?;
 
         let transaction = Transaction::EIP4844Transaction(transaction);
@@ -3082,8 +3087,9 @@ impl Blockchain {
         // per-sender gate inputs, re-checked atomically inside `add_transaction`,
         // which also removes any same-nonce tx being replaced under the same lock
         // (#6938) — so no separate pre-removal here.
-        let (frame_reservation, sender_admission) =
-            self.validate_transaction(&transaction, sender).await?;
+        let (frame_reservation, sender_admission) = self
+            .validate_transaction(&transaction, sender, origin)
+            .await?;
 
         // Add blobs bundle before the transaction so that when add_transaction
         // notifies payload builders the blob data is already available.
@@ -3117,37 +3123,43 @@ impl Blockchain {
         Ok(hash)
     }
 
-    /// Add a transaction to the mempool checking that the transaction is valid.
+    /// Add a P2P-received transaction to the mempool.
     ///
-    /// This is the P2P entry point: the transaction's hash is queued for
-    /// broadcast to peers regardless of `BlockchainOptions::private_mempool`.
-    /// For the local-RPC path that honors `private_mempool`, use
+    /// Validated as `TxOrigin::External`, so it is subject to all admission
+    /// policies, and always queued for broadcast — `private_mempool` only
+    /// applies to locally-submitted transactions. For the local-RPC path use
     /// [`Self::add_local_transaction_to_pool`].
     pub async fn add_transaction_to_pool(
         &self,
         transaction: Transaction,
     ) -> Result<H256, MempoolError> {
-        self.add_transaction_to_pool_inner(transaction, true).await
+        self.add_transaction_to_pool_with_origin(transaction, TxOrigin::External)
+            .await
     }
 
-    /// Equivalent of `add_transaction_to_pool` for transactions submitted via
-    /// this node's local RPC. When `BlockchainOptions::private_mempool` is
-    /// `true`, the transaction is added to the mempool but is NOT queued for
-    /// P2P broadcast — it stays available only for blocks built locally.
+    /// Add a locally-submitted transaction (e.g. via `eth_sendRawTransaction`) to
+    /// the mempool. Validated as `TxOrigin::Local`, so it may bypass
+    /// operator-friendly admission gates, and when
+    /// `BlockchainOptions::private_mempool` is set it is NOT queued for P2P
+    /// broadcast — it stays available only for locally-built blocks.
     pub async fn add_local_transaction_to_pool(
         &self,
         transaction: Transaction,
     ) -> Result<H256, MempoolError> {
-        let broadcast = !self.options.private_mempool;
-        self.add_transaction_to_pool_inner(transaction, broadcast)
+        self.add_transaction_to_pool_with_origin(transaction, TxOrigin::Local)
             .await
     }
 
-    async fn add_transaction_to_pool_inner(
+    async fn add_transaction_to_pool_with_origin(
         &self,
         transaction: Transaction,
-        broadcast: bool,
+        origin: TxOrigin,
     ) -> Result<H256, MempoolError> {
+        // `--mempool.private` is scoped to locally-submitted transactions: a
+        // P2P-received tx is always re-broadcast. Deriving this from `origin`
+        // rather than passing a separate flag keeps the two from ever
+        // disagreeing (there is no "external but don't broadcast" state).
+        let broadcast = !(matches!(origin, TxOrigin::Local) && self.options.private_mempool);
         // Blob transactions should be submitted via add_blob_transaction along with the corresponding blobs bundle
         if matches!(transaction, Transaction::EIP4844Transaction(_)) {
             return Err(MempoolError::BlobTxNoBlobsBundle);
@@ -3179,8 +3191,9 @@ impl Blockchain {
         // removal, and the insert are one atomic scope (#6938). For a frame tx
         // the removal happens only after the locked paymaster re-check, so a
         // rejected fee-bump leaves the original pending tx intact.
-        let (frame_reservation, sender_admission) =
-            self.validate_transaction(&transaction, sender).await?;
+        let (frame_reservation, sender_admission) = self
+            .validate_transaction(&transaction, sender, origin)
+            .await?;
 
         // Add transaction to storage
         let mempool_tx = MempoolTransaction::new(transaction, sender);
@@ -3437,11 +3450,26 @@ impl Blockchain {
     /// fails any later admission check never leaks a reservation. Any same-nonce
     /// tx being replaced is detected and removed live under that write lock, so
     /// its hash is not returned here.
+    ///
+    /// `origin` records whether the transaction came in via RPC (`TxOrigin::Local`)
+    /// or P2P (`TxOrigin::External`). The plumbing exists so future admission
+    /// gates can apply origin-aware exemptions (e.g. PR #6604's min-tip floor
+    /// will skip local txs by default).
     pub async fn validate_transaction(
         &self,
         tx: &Transaction,
         sender: Address,
+        _origin: TxOrigin,
     ) -> Result<(Option<FramePaymasterReservation>, Option<SenderAdmission>), MempoolError> {
+        // TODO(#6604): when the min-tip floor lands (PR #6604 adds
+        // `BlockchainOptions::min_tip_wei` and a `gas_tip_cap < min_tip_wei`
+        // rejection), drop the underscore from `_origin` and wrap the floor
+        // check with `if origin != TxOrigin::Local { ... }` so
+        // `TxOrigin::Local` transactions bypass the floor. The opt-out
+        // operator flag (e.g. `--mempool.nolocals`) should land in the same
+        // PR that wires the exemption — adding it now would expose a no-op
+        // operator knob.
+
         let nonce = tx.nonce();
 
         // On an L1 node, reject L2-only transaction types (FeeToken 0x7d,
