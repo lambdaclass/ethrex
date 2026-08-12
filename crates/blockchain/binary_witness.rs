@@ -185,17 +185,24 @@ impl Blockchain {
                         .map_err(witness_read_error)?;
                 }
             }
-            // Withdrawal recipients are credited outside the EVM, so the logger
-            // never sees them; the MPT generator touches them by hand for the
-            // same reason.
+            // Withdrawal recipients are credited outside the EVM; the MPT
+            // generator touches them by hand for the same reason.
             //
-            // **Untested.** Deleting this branch does not fail any test in
-            // `binary_tree_witness_tests`: every block those chains build
-            // carries an empty withdrawal list, so the loop never runs. It is
-            // kept because the MPT generator needs it on a real chain and the
-            // omission would show up as a witness that verifies everywhere
-            // except where withdrawals land. A chain builder that produces real
-            // withdrawals would close the gap.
+            // **Redundant, and kept deliberately.** This was recorded as
+            // untested on the premise that the logger never sees these
+            // addresses. It does: `LEVM::process_withdrawals` credits through
+            // `get_account_mut` -> `load_account`, which faults the account
+            // from the store — the `DatabaseLogger` during witness generation —
+            // and that records it in `state_accessed`, which the replay above
+            // already covers. `apply_account_updates` below then walks the same
+            // paths again to write the credited balances.
+            //
+            // Verified by mutation against chains that really pay withdrawals
+            // (`build_boundary_chains_paying_withdrawals`): deleting this
+            // branch fails no test, because nothing depends on it rather than
+            // because nothing exercises it. Kept as insurance against that
+            // faulting behaviour being loosened later, at one trie read per
+            // withdrawal. See docs/known_issues.md.
             if let Some(withdrawals) = block.body.withdrawals.as_ref() {
                 for withdrawal in withdrawals {
                     pbt_state::get_account(&mut trie, withdrawal.address)

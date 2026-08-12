@@ -171,28 +171,52 @@ what keeps the floor honest — left in place, the stale entries would advertise
 reach the node cannot deliver and the reorg would fail mid-flight with
 `StateNotReachable` instead of being declined up front.
 
-### `debug_executionWitnessV2` withdrawal reads are untested
+### The witness generators' withdrawal replay is redundant, not untested
 
 **Where:** `crates/blockchain/binary_witness.rs` —
-`Blockchain::generate_binary_witness_for_blocks`, the `block.body.withdrawals`
-branch of the read replay.
+`Blockchain::generate_binary_witness_for_blocks`, and
+`crates/blockchain/blockchain.rs` — both `block.body.withdrawals` branches of the
+MPT generator's read replay.
 
-**Why:** Withdrawal recipients are credited outside the EVM, so the
-`DatabaseLogger` never records them as accessed accounts; the generator has to
-touch them by hand, exactly as the MPT generator does. Deleting that branch
-fails no test: every block the `binary_tree_witness_tests` chains build carries
-an empty withdrawal list, so the loop never runs. The branch is therefore
-present and unverified.
+**History.** This entry previously read "`debug_executionWitnessV2` withdrawal
+reads are untested", on the premise that withdrawal recipients are credited
+outside the EVM and so the `DatabaseLogger` never records them as accessed
+accounts — which would make the hand-touching the only thing putting their nodes
+in a witness. The chains those suites built all carried empty withdrawal lists,
+so nothing tested it either way.
 
-If it were wrong or missing, a witness for a block with withdrawals would omit
-the nodes on those accounts' paths, and verification would fail at the
-`apply_account_updates` step on the consumer side — a loud failure rather than a
-wrong root, but a failure that only appears on chains that pay withdrawals.
+**What was actually found.** Chains that pay withdrawals now exist
+(`build_boundary_chains_paying_withdrawals`), and with them the mutation was
+re-run: deleting the branch in the binary generator, and deleting *both*
+branches in the MPT generator, still fails no test — including tests written
+specifically to catch it, which check that a withdrawal-paying block's V2
+witness re-executes to the committed binary root and that an MPT witness
+carries each recipient's account leaf.
 
-**Removal:** Give the boundary-chain builder in
-`test/tests/blockchain/binary_tree_shadow_tests.rs` a way to produce blocks with
-non-empty withdrawal lists, then re-run the mutation: deleting the branch must
-fail `a_v2_witness_re_executes_to_the_committed_binary_root`.
+The premise is false. `LEVM::process_withdrawals` credits through
+`GeneralizedDatabase::get_account_mut`, which calls `load_account`, which on a
+cache miss falls through to `self.store.get_account_state(address)` — and during
+witness generation that store *is* the `DatabaseLogger`, whose
+`get_account_state` records the address in `state_accessed`
+(`crates/vm/levm/src/db/gen_db.rs:345`, `crates/vm/backends/levm/db.rs:34`). A
+recipient already in the cache was faulted in, and recorded, earlier. So the
+recipients are in `state_accessed` by the time either generator replays it, and
+the explicit branch re-reads accounts the replay above it already covered. In
+the binary generator it is doubly redundant: the `pbt_state::apply_account_updates`
+call immediately below walks the same paths to write the credited balances.
+
+**Status:** the branches are kept as defensive redundancy — the same reasoning
+`DatabaseLogger::has_storage` carries in its own comment, that the pairing they
+rely on could be loosened later. They cost one trie read per withdrawal.
+
+**Removal:** this is no longer a coverage gap, so there is nothing to close by
+writing a test — a test that fails when the branch is deleted cannot be written
+while the logger records the recipients anyway. Delete the entry if the branches
+are ever removed, or if the recipients stop being faulted through the logger, in
+which case they become load-bearing and
+`a_v2_witness_over_a_block_paying_withdrawals_re_executes` and
+`an_mpt_witness_over_a_block_paying_withdrawals_carries_the_recipients_paths`
+become the tests that catch it.
 
 ### An L2 genesis may set `binaryTreeTime`, and nothing rejects it
 

@@ -1185,13 +1185,25 @@ async fn an_mpt_witness_over_a_block_paying_withdrawals_carries_the_recipients_p
         for withdrawal in withdrawals {
             let address: Address = withdrawal.address;
             let path = keccak(address.to_fixed_bytes());
-            trie.get(path.as_bytes()).unwrap_or_else(|error| {
+            let found = trie.get(path.as_bytes()).unwrap_or_else(|error| {
                 panic!(
                     "block {number}: the witness does not reach withdrawal recipient \
                      {address:#x} in the pre-state trie: {error}. Without those nodes a \
                      consumer cannot apply the credit."
                 )
             });
+            // From block 2 on, the recipient was already credited by an earlier
+            // block, so the pre-state holds its leaf and the witness has to
+            // carry that leaf itself — not merely enough of the trie to prove
+            // the account absent. Block 1's parent is genesis, where the
+            // recipient does not exist yet.
+            if number >= 2 {
+                assert!(
+                    found.is_some(),
+                    "block {number}: the witness reaches {address:#x}'s position but does \
+                     not carry its account leaf, so a consumer cannot credit it"
+                );
+            }
         }
         checked += 1;
     }
