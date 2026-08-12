@@ -46,9 +46,9 @@
 //! corrupted node, a witness from a different block, a node that does not
 //! belong — and show each breakage is caught.
 
-use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::binary_witness::recompute_post_state_root;
 use ethrex_blockchain::error::ChainError;
+use ethrex_blockchain::{Blockchain, BlockchainOptions};
 use ethrex_common::types::Block;
 use ethrex_common::types::binary_execution_witness::{
     BINARY_WITNESS_FORMAT, RpcBinaryExecutionWitness,
@@ -401,9 +401,28 @@ async fn the_mpt_generator_refuses_a_batch_that_crosses_the_boundary() {
 ///
 /// A second store rather than `chains.scheduled_store`, because these tests need
 /// to import the flip block themselves and it is already imported there.
-async fn replay_up_to(chains: &BoundaryChains, up_to: u64) -> (Store, Blockchain) {
+///
+/// `precompute_witnesses` turns on the *opportunistic* witness cache, which is
+/// the whole subject of `the_opportunistic_witness_cache_*` test below — with it
+/// off, `add_block_pipeline` never calls the witness generator at all and that
+/// test would pass no matter what the guard did. It is paired with `set_synced`
+/// because the pipeline gates on `precompute_witnesses && is_synced()`.
+async fn replay_up_to(
+    chains: &BoundaryChains,
+    up_to: u64,
+    precompute_witnesses: bool,
+) -> (Store, Blockchain) {
     let store = store_from_genesis(chains.scheduled_genesis.clone()).await;
-    let blockchain = Blockchain::default_with_store(store.clone());
+    let blockchain = Blockchain::new(
+        store.clone(),
+        BlockchainOptions {
+            precompute_witnesses,
+            ..Default::default()
+        },
+    );
+    if precompute_witnesses {
+        blockchain.set_synced();
+    }
     for block in &chains.scheduled_blocks {
         if block.header.number >= up_to {
             break;
@@ -413,6 +432,36 @@ async fn replay_up_to(chains: &BoundaryChains, up_to: u64) -> (Store, Blockchain
             .unwrap_or_else(|error| panic!("replaying block {}: {error}", block.header.number));
     }
     (store, blockchain)
+}
+
+/// Guards the guard: with the opportunistic cache on, an ordinary
+/// `add_block_pipeline` import really does populate the witness cache.
+///
+/// Without this, `the_opportunistic_witness_cache_*` test's "nothing was cached"
+/// assertion would hold vacuously — which is exactly what it did before this
+/// check existed, and a mutation that deleted the import-path guard survived it.
+#[tokio::test]
+async fn the_opportunistic_witness_cache_really_caches_when_it_can() {
+    let chains = build_boundary_chains(FLIP_BLOCK).await;
+    assert_flip_shape(&chains);
+    let pre_flip = chains.scheduled_blocks[FLIP_BLOCK as usize - 2].clone();
+    assert!(
+        pre_flip.header.timestamp < chains.activation,
+        "this must be a block the MPT generator can answer for"
+    );
+
+    let (store, blockchain) = replay_up_to(&chains, pre_flip.header.number, true).await;
+    blockchain
+        .add_block_pipeline(pre_flip.clone(), None)
+        .expect("a pre-activation block must import");
+    assert!(
+        store
+            .get_witness_json_bytes(pre_flip.header.number, pre_flip.hash())
+            .expect("witness cache read")
+            .is_some(),
+        "the opportunistic cache must populate for a block the MPT generator can answer for, \
+         or the binary-committed case below proves nothing"
+    );
 }
 
 /// `generate_witness_from_account_updates` is the *other* MPT generator: it runs
@@ -434,14 +483,14 @@ async fn the_import_path_generator_refuses_a_binary_committed_block() {
         .clone();
     assert_eq!(flip.header.number, FLIP_BLOCK);
 
-    let (_store, blockchain) = replay_up_to(&chains, FLIP_BLOCK).await;
+    let (_store, blockchain) = replay_up_to(&chains, FLIP_BLOCK, false).await;
 
     // Non-vacuity: the block *before* the flip goes through this exact path and
     // yields a witness, so the refusal below is caused by the commitment and not
     // by the harness failing to produce a witness at all.
     let pre_flip = chains.scheduled_blocks[FLIP_BLOCK as usize - 2].clone();
     assert!(pre_flip.header.timestamp < chains.activation);
-    let (_store, pre_flip_chain) = replay_up_to(&chains, pre_flip.header.number).await;
+    let (_store, pre_flip_chain) = replay_up_to(&chains, pre_flip.header.number, false).await;
     let witness = pre_flip_chain
         .add_block_pipeline_with_witness(pre_flip.clone(), None)
         .unwrap_or_else(|error| {
@@ -477,7 +526,7 @@ async fn the_opportunistic_witness_cache_does_not_fail_a_binary_committed_import
         .expect("chain is non-empty")
         .clone();
 
-    let (store, blockchain) = replay_up_to(&chains, FLIP_BLOCK).await;
+    let (store, blockchain) = replay_up_to(&chains, FLIP_BLOCK, true).await;
     blockchain
         .add_block_pipeline(flip.clone(), None)
         .expect("a binary-committed block must still import when no witness can be built");
