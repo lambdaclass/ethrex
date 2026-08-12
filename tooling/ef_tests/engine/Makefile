@@ -21,33 +21,38 @@ AMSTERDAM_STAMP := $(SPECTEST_VECTORS_DIR)/.amsterdam_overlay
 # fixtures/blockchain_tests_engine/for_bogota/. The datatest harness walks
 # vectors/eest/ recursively, so they're discovered wherever they land in the tree.
 #
-# KNOWN RED as of 2026-08-12, and not because of the FOCIL code. The pinned
-# release, tests-focil@v0.1.0, was filled on 2026-06-22 from execution-specs
-# `devnets/focil/0`, whose Amsterdam base is two months behind the one this
-# branch implements (glamsterdam-devnet-8). All 24 fixtures fail on the fork
-# scope around FOCIL rather than on any inclusion-list assertion:
+# KNOWN RED as of 2026-08-12, and not because of the FOCIL code. Two separate
+# upstream gaps, both established by experiment rather than inference:
 #
-#   * their genesis predeploys no EIP-8282 builder deposit/exit contracts, so
-#     every block dies at "System contract: 0x0000...8282 has no code after
-#     deployment" before the IL check is even reached;
-#   * with that rule bypassed 7 of 24 pass and the other 17 fail on a BAL
-#     coinbase balance mismatch (BAL=63000 vs exec=45000 on a plain transfer) --
-#     the fixtures carry the pre-EIP-8038 gas schedule.
+# 1. The pinned release, tests-focil@v0.1.0, was filled on 2026-06-22 from
+#    execution-specs `devnets/focil/0`, whose Amsterdam base is two months
+#    behind the one this branch implements. Its genesis predeploys no EIP-8282
+#    builder deposit/exit contracts -- and EIP-8282 says "if there is no code at
+#    either address once the EIP is active, every block from activation onward
+#    MUST be invalid". So ethrex rejecting all 24 is SPEC-CORRECT; the fixtures
+#    simply cannot be run against a devnet-8 client. (Bypassing that rule
+#    locally leaves 17 failing on a pre-EIP-8038 coinbase balance in the BAL.)
 #
-# There is no compatible release to move to yet. The successor branch,
-# execution-specs `eips/bogota/eip-7805` @ e5dc8456f, does not fill at all
-# against its own Amsterdam base: `check_inclusion_list_transactions` is handed
-# decoded transactions where it expects `LegacyTransaction | Bytes` (t8n calls
-# `convert_transaction` without `encode_transaction`, tripping the assert in
-# `get_transaction_hash`), and once that is patched locally the tests hit
-# "Block access list exceeds gas limit, 30 items exceeds limit of 22" because
-# helpers.py pins the block gas limit to exactly the gas the included txs use,
-# leaving no room for the EIP-7928 BAL. Both are upstream fixes.
+# 2. The successor branch, `eips/bogota/eip-7805` @ e5dc8456f, does not fill as
+#    published: t8n hands `check_inclusion_list_transactions` decoded
+#    transactions where it expects `LegacyTransaction | Bytes`, and its blocks
+#    size the gas limit to the transactions alone, leaving no budget for the
+#    EIP-7928 access list. With both repaired locally (patch kept alongside this
+#    branch's notes) all 24 fill, and **ethrex passes 23 of them**.
 #
-# Re-pin FOCIL_URL as soon as a tests-focil release built on the current
-# Amsterdam exists; the assertions themselves are covered meanwhile by the
-# in-repo suite (test/tests/blockchain/focil_tests.rs and the inclusion_list_*
-# tests, ported from the same execution-specs intent).
+#    The 24th, `unsatisfied_with_contract_creating_pending_il_tx`, fails on a
+#    gas-schedule difference, not on FOCIL: that branch's Amsterdam is NEWER
+#    than glamsterdam-devnet-8 (COLD_STORAGE_ACCESS 3000 vs 2100, ACCOUNT_WRITE
+#    8000 vs 9000, CREATE_ACCESS built from COLD_STORAGE_ACCESS rather than
+#    COLD_ACCOUNT_ACCESS, TX_VALUE_COST split into 4244+1756 rather than 6000),
+#    so its contract-creation intrinsic is 23000 where devnet-8 -- and ethrex --
+#    charge 24000. The IL transaction is therefore appendable there and not
+#    here.
+#
+# Upstream has said EELS/EEST will be rebased onto devnet-8; re-pin FOCIL_URL to
+# that release when it lands and this should go green without client changes.
+# Coverage meanwhile comes from the in-repo suite
+# (test/tests/blockchain/focil_tests.rs and the inclusion_list_* tests).
 FOCIL_FIXTURES_FILE := .fixtures_url_focil
 FOCIL_ARTIFACT := focil-tests.tar.gz
 FOCIL_URL := $(shell cat $(FOCIL_FIXTURES_FILE))

@@ -82,9 +82,11 @@ pub struct FixturePayload {
     #[serde(default, rename = "executionWitness")]
     pub execution_witness: Option<Value>,
     /// EIP-7805 (FOCIL): the inclusion-list transactions for this payload,
-    /// carried by the fixture as a field SEPARATE from `params`. Present (and
-    /// possibly empty) only on FOCIL engine fixtures. When present it is
-    /// appended as the final `engine_newPayload` argument.
+    /// carried by the fixture as a field SEPARATE from `params`. This is the
+    /// `tests-focil@v0.1.0` shape; fixtures filled against the current
+    /// Amsterdam instead pass the list as the fifth positional `params` entry,
+    /// matching the merged execution-apis `bogota.md`. Both are accepted — see
+    /// [`Self::engine_call`].
     #[serde(default, rename = "inclusionListTransactions")]
     pub inclusion_list_transactions: Option<Vec<Value>>,
     /// Explicit expected payload status (e.g. `"INCLUSION_LIST_UNSATISFIED"`).
@@ -138,13 +140,31 @@ impl FixturePayload {
     /// guard in case an IL-bearing fixture is ever tagged with a lower version.
     pub fn engine_call(&self) -> (u8, Vec<Value>) {
         match &self.inclusion_list_transactions {
+            // Legacy shape: the list lives outside `params`, so append it.
             Some(il) => {
                 let mut params = self.params.clone();
                 params.push(Value::Array(il.clone()));
                 (6, params)
             }
+            // Current shape: `params` is already the full V6 argument list.
             None => (self.new_payload_version, self.params.clone()),
         }
+    }
+
+    /// The inclusion list this payload carries, under either fixture shape.
+    ///
+    /// Old fixtures put it in a sibling field; current ones pass it as the
+    /// fifth `engine_newPayloadV6` parameter, per `bogota.md`.
+    pub fn inclusion_list(&self) -> Option<&Vec<Value>> {
+        if let Some(il) = &self.inclusion_list_transactions {
+            return Some(il);
+        }
+        if self.new_payload_version >= 6
+            && let Some(Value::Array(il)) = self.params.get(4)
+        {
+            return Some(il);
+        }
+        None
     }
 
     /// Extract `blockHash` from `params[0]` (the ExecutionPayload object).
@@ -192,7 +212,7 @@ impl EngineFixture {
     pub fn is_focil(&self) -> bool {
         self.engine_new_payloads
             .iter()
-            .any(|p| p.inclusion_list_transactions.is_some())
+            .any(|p| p.inclusion_list().is_some())
     }
 
     pub fn build_genesis(&self) -> anyhow::Result<Genesis> {
