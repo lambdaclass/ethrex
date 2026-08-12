@@ -42,6 +42,7 @@
 //! blockchain.add_transaction_to_mempool(tx).await?;
 //! ```
 
+pub mod binary_witness;
 pub mod constants;
 pub mod error;
 pub mod fork_choice;

@@ -88,11 +88,11 @@ const FAR_FUTURE_BINARY_TREE_TIME: u64 = 4_000_000_000;
 /// The cadence `build_block` uses, so a test can predict block N's timestamp
 /// as `genesis.timestamp + N * BLOCK_TIME` and place an activation between two
 /// of them.
-const BLOCK_TIME: u64 = 12;
+pub(super) const BLOCK_TIME: u64 = 12;
 
 /// Block index (1-based) whose timestamp the Phase D tests schedule activation
 /// at exactly, so the block before it is the last MPT-committed one.
-const FLIP_BLOCK: u64 = 3;
+pub(super) const FLIP_BLOCK: u64 = 3;
 
 /// Recipient of the value transfers the helpers below build.
 fn test_recipient() -> Address {
@@ -105,11 +105,11 @@ fn test_coinbase() -> Address {
     H160::zero()
 }
 
-fn test_secret_key() -> SecretKey {
+pub(super) fn test_secret_key() -> SecretKey {
     SecretKey::from_slice(&hex::decode(TEST_PRIVATE_KEY).unwrap()).unwrap()
 }
 
-fn sender_from_key(sk: &SecretKey) -> Address {
+pub(super) fn sender_from_key(sk: &SecretKey) -> Address {
     LocalSigner::new(*sk).address
 }
 
@@ -119,7 +119,7 @@ fn workspace_root() -> PathBuf {
 
 /// Load the execution-api genesis, fund `sender`, and optionally schedule the
 /// binary-tree commitment at `binary_tree_time`.
-fn load_funded_genesis(sender: Address, binary_tree_time: Option<u64>) -> Genesis {
+pub(super) fn load_funded_genesis(sender: Address, binary_tree_time: Option<u64>) -> Genesis {
     load_funded_genesis_with(sender, binary_tree_time, &[])
 }
 
@@ -152,7 +152,7 @@ fn load_funded_genesis_with(
     genesis
 }
 
-async fn store_from_genesis(genesis: Genesis) -> Store {
+pub(super) async fn store_from_genesis(genesis: Genesis) -> Store {
     let mut store =
         Store::new("store.db", EngineType::InMemory).expect("Failed to build DB for testing");
     store
@@ -218,7 +218,7 @@ async fn transfer_tx(chain_id: u64, nonce: u64, signer: &Signer) -> Transaction 
 /// `add_block` so the next one can be built on the resulting state.
 ///
 /// Returns the built blocks in order.
-async fn build_chain(
+pub(super) async fn build_chain(
     store: &Store,
     blockchain: &Blockchain,
     chain_id: u64,
@@ -699,19 +699,19 @@ async fn a_missing_parent_binary_root_is_a_hard_error() {
 /// deliberately unscheduled rather than scheduled-far-out, so that a
 /// chain-level activation check would visibly diverge the two chains from
 /// block 1 instead of from the flip block.
-struct BoundaryChains {
-    scheduled_genesis: Genesis,
-    scheduled_store: Store,
-    scheduled_blocks: Vec<Block>,
-    twin_store: Store,
-    twin_blocks: Vec<Block>,
+pub(super) struct BoundaryChains {
+    pub(super) scheduled_genesis: Genesis,
+    pub(super) scheduled_store: Store,
+    pub(super) scheduled_blocks: Vec<Block>,
+    pub(super) twin_store: Store,
+    pub(super) twin_blocks: Vec<Block>,
     /// `genesis.timestamp + FLIP_BLOCK * BLOCK_TIME`: block `FLIP_BLOCK`'s own
     /// timestamp, so it is the first active block and block `FLIP_BLOCK - 1`
     /// is the last MPT-committed one.
-    activation: u64,
+    pub(super) activation: u64,
 }
 
-async fn build_boundary_chains(count: u64) -> BoundaryChains {
+pub(super) async fn build_boundary_chains(count: u64) -> BoundaryChains {
     let sender = sender_from_key(&test_secret_key());
     let unscheduled = load_funded_genesis(sender, None);
     let activation = unscheduled.timestamp + FLIP_BLOCK * BLOCK_TIME;
@@ -738,7 +738,7 @@ async fn build_boundary_chains(count: u64) -> BoundaryChains {
 }
 
 /// The recorded binary root for `block`, which must exist on a scheduled chain.
-fn binary_root(store: &Store, block: &Block) -> H256 {
+pub(super) fn binary_root(store: &Store, block: &Block) -> H256 {
     store
         .get_binary_trie_root(block.hash())
         .expect("binary root read")

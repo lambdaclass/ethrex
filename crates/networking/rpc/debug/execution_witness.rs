@@ -2,7 +2,10 @@ use ethrex_common::types::block_execution_witness::RpcExecutionWitness;
 use serde_json::Value;
 use tracing::debug;
 
-use crate::{RpcApiContext, RpcErr, RpcHandler, types::block_identifier::BlockIdentifier};
+use crate::{
+    RpcApiContext, RpcErr, RpcHandler, debug::witness_guard::refuse_binary_committed,
+    types::block_identifier::BlockIdentifier,
+};
 
 pub struct ExecutionWitnessRequest {
     pub from: BlockIdentifier,
@@ -69,6 +72,9 @@ impl RpcHandler for ExecutionWitnessRequest {
                 .storage
                 .get_block_header(block_number)?
                 .ok_or(RpcErr::Internal("Could not get block header".to_string()))?;
+            // Per header, never per chain: a pre-activation block in this range
+            // still has a real MPT witness and still serves it.
+            refuse_binary_committed(&context.storage, &header)?;
             let block = context
                 .storage
                 .get_block_by_hash(header.hash())

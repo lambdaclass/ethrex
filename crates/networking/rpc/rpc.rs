@@ -3,6 +3,9 @@ use crate::debug::bad_blocks::GetBadBlocksRequest;
 use crate::debug::chain_config::ChainConfigRequest;
 use crate::debug::execution_witness::ExecutionWitnessRequest;
 use crate::debug::execution_witness_by_hash::ExecutionWitnessByBlockHashRequest;
+use crate::debug::execution_witness_v2::{
+    ExecutionWitnessV2ByBlockHashRequest, ExecutionWitnessV2Request,
+};
 use crate::debug::set_head::SetHeadRequest;
 use crate::engine::blobs::{BlobsV2Request, BlobsV3Request};
 use crate::engine::client_version::GetClientVersionV1Request;
@@ -1434,6 +1437,12 @@ pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Res
         "debug_executionWitness" => ExecutionWitnessRequest::call(req, context).await,
         "debug_executionWitnessByBlockHash" => {
             ExecutionWitnessByBlockHashRequest::call(req, context).await
+        }
+        // The EIP-8297 pair. V1 answers for MPT-committed headers and V2 for
+        // binary-committed ones; each refuses the other's and says so.
+        "debug_executionWitnessV2" => ExecutionWitnessV2Request::call(req, context).await,
+        "debug_executionWitnessV2ByBlockHash" => {
+            ExecutionWitnessV2ByBlockHashRequest::call(req, context).await
         }
         "debug_chainConfig" => ChainConfigRequest::call(req, context).await,
         "debug_getBadBlocks" => GetBadBlocksRequest::call(req, context).await,
