@@ -13,6 +13,7 @@ pub mod path;
 pub mod prefix;
 pub mod proof;
 pub mod range;
+pub mod witness;
 
 pub use binary_trie::{BinaryTrie, Committed, LeafBatch, LeafChangelog};
 pub use db::{BinaryTrieDB, InMemoryBinaryTrieDB};
@@ -25,6 +26,7 @@ pub use path::BitPath;
 pub use prefix::KeyPrefix;
 pub use proof::{ProofError, WalkEnd, WalkStep, verify_walk};
 pub use range::{RangeProofError, RangeSlice, VerifiedRange, prove_range, verify_range};
+pub use witness::{RecordingBinaryTrieDB, WitnessBinaryTrieDB, WitnessError, WitnessNodes};
 
 /// The hash a stored node commits to.
 ///
