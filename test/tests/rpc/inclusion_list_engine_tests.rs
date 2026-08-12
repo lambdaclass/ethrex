@@ -47,15 +47,37 @@ fn payload_status_omits_inclusion_list_satisfied_when_unreported() {
 
 #[test]
 fn get_inclusion_list_accepts_empty_params() {
-    assert!(GetInclusionListV1Request::parse(&Some(vec![])).is_ok());
-    assert!(GetInclusionListV1Request::parse(&None).is_ok());
+    // The merged execution-apis spec gives the method no parameters.
+    assert_eq!(
+        GetInclusionListV1Request::parse(&Some(vec![]))
+            .unwrap()
+            .parent_hash,
+        None
+    );
+    assert_eq!(
+        GetInclusionListV1Request::parse(&None).unwrap().parent_hash,
+        None
+    );
 }
 
 #[test]
-fn get_inclusion_list_rejects_any_param() {
-    let one_param =
-        GetInclusionListV1Request::parse(&Some(vec![json!(format!("0x{:064x}", 0x42u64))]));
-    assert!(matches!(one_param, Err(RpcErr::BadParams(_))));
+fn get_inclusion_list_accepts_a_parent_hash() {
+    // Consensus clients built against the earlier revision of
+    // execution-apis#609 still pass the parent hash — teku does. Rejecting it
+    // takes FOCIL out of service for that validator, so it is accepted and used
+    // as the parent the list is built against.
+    let hash = format!("0x{:064x}", 0x42u64);
+    let parsed = GetInclusionListV1Request::parse(&Some(vec![json!(hash)])).unwrap();
+    assert_eq!(parsed.parent_hash, Some(H256::from_low_u64_be(0x42)));
+}
+
+#[test]
+fn get_inclusion_list_rejects_malformed_or_extra_params() {
+    let not_a_hash = GetInclusionListV1Request::parse(&Some(vec![json!("0xnothex")]));
+    assert!(matches!(not_a_hash, Err(RpcErr::WrongParam(_))));
+
+    let wrong_length = GetInclusionListV1Request::parse(&Some(vec![json!("0xdeadbeef")]));
+    assert!(matches!(wrong_length, Err(RpcErr::WrongParam(_))));
 
     let two_params = GetInclusionListV1Request::parse(&Some(vec![json!("0x00"), json!("0x01")]));
     assert!(matches!(two_params, Err(RpcErr::BadParams(_))));

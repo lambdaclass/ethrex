@@ -148,16 +148,39 @@ pub async fn block_satisfies_inclusion_list(
 }
 
 #[derive(Debug)]
-pub struct GetInclusionListV1Request;
+pub struct GetInclusionListV1Request {
+    /// Parent block the list is built against, when the caller names one.
+    ///
+    /// The merged execution-apis spec (bogota.md) gives this method no
+    /// parameters, and `None` reproduces that: the list is built against this
+    /// node's canonical head, which is the parent of the block the list
+    /// constrains.
+    ///
+    /// An earlier revision of execution-apis#609 passed the parent hash, and
+    /// consensus clients built against it still send one — teku sends
+    /// `params: ["0x…"]` and treats a rejection as "failed to produce
+    /// inclusion_list", which takes FOCIL out of service for that validator.
+    /// Accepting the argument costs nothing and is strictly better information
+    /// than assuming the head: it is the parent the caller will actually build
+    /// on, which differs from our head whenever the CL is a block ahead.
+    pub parent_hash: Option<H256>,
+}
 
 impl RpcHandler for GetInclusionListV1Request {
     fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
-        // `engine_getInclusionListV1` takes no parameters. Both an absent and
-        // an empty array are accepted; anything else is a caller error.
-        match params {
-            None => Ok(Self),
-            Some(params) if params.is_empty() => Ok(Self),
-            Some(_) => Err(RpcErr::BadParams("Expected no params".to_owned())),
+        match params.as_deref() {
+            None | Some([]) => Ok(Self { parent_hash: None }),
+            Some([parent]) => {
+                let parent_hash = serde_json::from_value(parent.clone()).map_err(|_| {
+                    RpcErr::WrongParam("parentHash: expected a 32-byte hash".to_owned())
+                })?;
+                Ok(Self {
+                    parent_hash: Some(parent_hash),
+                })
+            }
+            Some(_) => Err(RpcErr::BadParams(
+                "Expected no params, or a single parent hash".to_owned(),
+            )),
         }
     }
 
@@ -168,25 +191,49 @@ impl RpcHandler for GetInclusionListV1Request {
         // wrapping it in spawn_blocking would be heavier than necessary; the
         // 1-second deadline is generous for the in-memory work the builder
         // performs.
+        let parent_hash = self.parent_hash;
         let result = tokio::time::timeout(GET_INCLUSION_LIST_V1_TIMEOUT, async move {
-            // The list constrains the next block, so it is built against the
-            // node's canonical head — the parent of that block.
-            let head_number = context
-                .storage
-                .get_latest_block_number()
-                .await
-                .map_err(|e| RpcErr::Internal(e.to_string()))?;
-            let head_header = context
-                .storage
-                .get_block_header(head_number)
-                .map_err(|e| RpcErr::Internal(e.to_string()))?
-                .ok_or_else(|| RpcErr::Internal("canonical head header missing".to_string()))?;
+            // The list constrains the next block, so it is built against that
+            // block's parent: the hash the caller named, or this node's
+            // canonical head when the caller named none. An unknown parent
+            // falls back to the head rather than failing — a list built against
+            // a slightly stale parent is still useful, and refusing would take
+            // the caller's validator out of FOCIL service entirely.
+            let named_header = match parent_hash {
+                Some(hash) => context
+                    .storage
+                    .get_block_header_by_hash(hash)
+                    .map_err(|e| RpcErr::Internal(e.to_string()))?,
+                None => None,
+            };
+            let parent_header = match named_header {
+                Some(header) => header,
+                None => {
+                    if let Some(hash) = parent_hash {
+                        debug!(
+                            "engine_getInclusionListV1: unknown parent {hash:#x}, building against canonical head"
+                        );
+                    }
+                    let head_number = context
+                        .storage
+                        .get_latest_block_number()
+                        .await
+                        .map_err(|e| RpcErr::Internal(e.to_string()))?;
+                    context
+                        .storage
+                        .get_block_header(head_number)
+                        .map_err(|e| RpcErr::Internal(e.to_string()))?
+                        .ok_or_else(|| {
+                            RpcErr::Internal("canonical head header missing".to_string())
+                        })?
+                }
+            };
 
             let state = StoreIlStateProvider {
                 store: &context.storage,
-                state_root: head_header.state_root,
+                state_root: parent_header.state_root,
             };
-            let base_fee = head_header.base_fee_per_gas.unwrap_or(0);
+            let base_fee = parent_header.base_fee_per_gas.unwrap_or(0);
 
             // Read CLI-driven config from context. Hard-cap at 8192 in
             // non-test builds per spec — operators cannot raise this above
