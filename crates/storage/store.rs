@@ -3607,6 +3607,59 @@ impl Store {
         Ok(None)
     }
 
+    /// One boundary walk per key in `keys`, all taken from a single open trie
+    /// at `root`.
+    ///
+    /// The per-key serving primitive behind `eth_getProofV2`. Each element is
+    /// what `ethrex_binary_trie::trie::verify_walk` takes: the stored-node
+    /// encodings from the root to
+    /// the key's terminal, root first, and nothing else. A walk is returned for
+    /// an absent key too — that is the exclusion proof, and it is the reason
+    /// the return type is not an `Option`.
+    ///
+    /// **Batched rather than per-key, because attributability is the point.**
+    /// The trie is path-keyed and single-version, so a commit landing between
+    /// two separate calls would silently split one response across two trees:
+    /// every walk would verify on its own, against roots the caller was told
+    /// were one root. Opening once and bracketing the whole batch with the same
+    /// root check [`Self::binary_leaf_range_proof`] uses turns that into a
+    /// refusal instead. Callers that want several keys proven *together* must
+    /// therefore ask for them together.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Custom`] if this node does not hold `root`, if it stopped
+    /// holding it while the walks were being taken, or if a node a walk reached
+    /// could not be loaded.
+    pub fn binary_walk_proofs(
+        &self,
+        root: H256,
+        keys: &[Vec<u8>],
+    ) -> Result<Vec<Vec<Vec<u8>>>, StoreError> {
+        if !self.binary_trie_holds_root(root)? {
+            return Err(StoreError::Custom(format!(
+                "cannot serve binary walk proofs at {root:#x}: the binary trie does not resolve \
+                 to that root"
+            )));
+        }
+        let mut trie = self.open_binary_trie(root)?;
+        let mut proofs = Vec::with_capacity(keys.len());
+        for key in keys {
+            proofs.push(trie.prove_walk(key).map_err(|e| {
+                StoreError::Custom(format!(
+                    "binary walk at {root:#x} could not be proved for key {key:?}: {e}"
+                ))
+            })?);
+        }
+        if !self.binary_trie_holds_root(root)? {
+            return Err(StoreError::Custom(format!(
+                "binary trie moved off {root:#x} while walk proofs were being taken; they may \
+                 come from different trees"
+            )));
+        }
+        Ok(proofs)
+    }
+
     /// Up to `max_leaves` leaves at `root` from `origin` through `limit`, with
     /// the two boundary walks that pin them to `root`.
     ///

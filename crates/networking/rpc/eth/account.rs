@@ -3,8 +3,18 @@ use tracing::debug;
 
 use crate::rpc::{RpcApiContext, RpcHandler};
 use crate::types::account_proof::{AccountProof, StorageProof};
+use crate::types::binary_account_proof::{
+    AccountField, AccountFieldProof, BINARY_PROOF_FORMAT, BinaryAccountProof, BinaryStorageProof,
+    StorageZone,
+};
 use crate::types::block_identifier::{BlockIdentifierOrHash, BlockTag};
 use crate::utils::RpcErr;
+use ethrex_binary_trie::embedding::{
+    HEADER_STORAGE_SLOTS, address20_to_address32, get_tree_key_for_basic_data,
+    get_tree_key_for_code_hash, get_tree_key_for_delegation, get_tree_key_for_storage_slot,
+};
+use ethrex_binary_trie::trie::{WalkEnd, verify_walk};
+use ethrex_common::types::pbt_state::account_info_from_header_leaves;
 use ethrex_common::{Address, BigEndianHash, H256, U256, serde_utils};
 
 pub struct GetBalanceRequest {
@@ -29,6 +39,27 @@ pub struct GetTransactionCountRequest {
 }
 
 pub struct GetProofRequest {
+    pub address: Address,
+    pub storage_keys: Vec<H256>,
+    pub block: BlockIdentifierOrHash,
+}
+
+/// `eth_getProofV2` — the EIP-8297 binary-trie counterpart of
+/// [`GetProofRequest`].
+///
+/// Same parameters as `eth_getProof`, a different response type, and the exact
+/// mirror of its guard: this one serves binary-committed headers and refuses
+/// pre-flip ones, pointing at `eth_getProof`. Between the two, every header on
+/// every chain has exactly one method that will prove it, and neither method
+/// ever answers for a root of the shape it cannot express.
+///
+/// Why a separate method rather than a shape inside `eth_getProof`: see
+/// `crate::types::binary_account_proof`. In short, EIP-8297 says nothing about
+/// `eth_getProof`, no other client has shipped a format, and the response shape
+/// is user-visible API — so this carries its own name and its own
+/// `proofFormat`, and can be superseded without touching the standard method's
+/// schema.
+pub struct GetProofV2Request {
     pub address: Address,
     pub storage_keys: Vec<H256>,
     pub block: BlockIdentifierOrHash,
@@ -284,6 +315,192 @@ impl RpcHandler for GetProofRequest {
             storage_proof,
         };
         serde_json::to_value(account_proof).map_err(|error| RpcErr::Internal(error.to_string()))
+    }
+}
+
+/// What a verified walk says about `key`: `Some(value)` if the walk ends at
+/// `key`'s own leaf, `None` if it ends anywhere else.
+///
+/// This is the exclusion judgement `verify_walk` deliberately leaves to its
+/// caller, and it is the *same* judgement the format's documentation tells a
+/// client to make — see `crate::types::binary_account_proof`. Running it here
+/// costs one verification per key and buys the property that the response can
+/// never contradict its own proofs: the value beside a walk is read out of that
+/// walk and nowhere else.
+///
+/// It is a self-consistency check on the server, not evidence for anyone: a
+/// client that skipped verifying because we verified has verified nothing.
+fn leaf_proven_by(
+    state_root: H256,
+    key: &[u8],
+    proof: &[Vec<u8>],
+) -> Result<Option<[u8; 32]>, RpcErr> {
+    let (_steps, end) = verify_walk(state_root, key, proof).map_err(|error| {
+        RpcErr::Internal(format!(
+            "this node produced a binary walk proof that does not verify against its own state \
+             root {state_root:#x}: {error}"
+        ))
+    })?;
+    Ok(match end {
+        WalkEnd::AtLeaf { key: found, value } if found == key => Some(value),
+        // Somebody else's leaf, a subtree the key diverges from, or an empty
+        // tree: all three are proofs that this key is absent.
+        WalkEnd::AtLeaf { .. } | WalkEnd::Diverged { .. } | WalkEnd::Empty => None,
+    })
+}
+
+impl RpcHandler for GetProofV2Request {
+    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let params = params
+            .as_ref()
+            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+        if params.len() != 3 {
+            return Err(RpcErr::BadParams("Expected 3 params".to_owned()));
+        };
+        let storage_keys: Vec<U256> = serde_json::from_value(params[1].clone())?;
+        let storage_keys = storage_keys.iter().map(H256::from_uint).collect();
+        Ok(GetProofV2Request {
+            address: serde_json::from_value(params[0].clone())?,
+            storage_keys,
+            block: BlockIdentifierOrHash::parse(params[2].clone(), 2)?,
+        })
+    }
+
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        let storage = &context.storage;
+        debug!(
+            "Requested binary-trie proof for account {} at block {} with storage keys: {:?}",
+            self.address, self.block, self.storage_keys
+        );
+        let Some(block_number) = self.block.resolve_block_number(storage).await? else {
+            return Ok(Value::Null);
+        };
+        let Some(header) = storage.get_block_header(block_number)? else {
+            return Ok(Value::Null);
+        };
+        // The exact mirror of `eth_getProof`'s guard, and per header for the
+        // same reason: on a chain that flips mid-history the two methods each
+        // own a contiguous stretch of the same chain's history, and a
+        // chain-level test would hand every pre-flip block to the wrong one.
+        if !storage
+            .get_chain_config()
+            .is_binary_tree_active(header.timestamp)
+        {
+            return Err(RpcErr::UnsupportedFork(format!(
+                "eth_getProofV2 is not available at block {block_number}: that block predates the \
+                 binary-tree commitment (EIP-8297), so its state root is a Merkle-Patricia root \
+                 and has no binary-trie proof — use eth_getProof"
+            )));
+        }
+
+        let address32 = address20_to_address32(self.address);
+        // The response's order, and it is fixed: basic data, code hash,
+        // delegation. All three are proven whether or not the account holds
+        // them, because the code hash and the delegation indicator are mutually
+        // exclusive and "the other one is absent" has to be a witness rather
+        // than a silence.
+        let account_fields = [
+            (
+                AccountField::BasicData,
+                get_tree_key_for_basic_data(&address32),
+            ),
+            (
+                AccountField::CodeHash,
+                get_tree_key_for_code_hash(&address32),
+            ),
+            (
+                AccountField::Delegation,
+                get_tree_key_for_delegation(&address32),
+            ),
+        ];
+        let slots: Vec<(U256, Vec<u8>)> = self
+            .storage_keys
+            .iter()
+            .map(|slot| {
+                let index = slot.into_uint();
+                (index, get_tree_key_for_storage_slot(&address32, index))
+            })
+            .collect();
+
+        // One batch rather than a call per key: `Store::binary_walk_proofs`
+        // opens once and brackets the whole set with the same root check, so
+        // every walk below is a walk through one tree. Split into separate
+        // calls, a commit landing between them would split the response across
+        // two trees, each half verifying against a root the caller was told was
+        // one root.
+        let keys: Vec<Vec<u8>> = account_fields
+            .iter()
+            .map(|(_, key)| key.clone())
+            .chain(slots.iter().map(|(_, key)| key.clone()))
+            .collect();
+        let expected = keys.len();
+        let walks = storage.binary_walk_proofs(header.state_root, &keys)?;
+        if walks.len() != expected {
+            return Err(RpcErr::Internal(format!(
+                "expected {expected} binary walk proofs, got {}",
+                walks.len()
+            )));
+        }
+        let mut walks = walks.into_iter();
+
+        let mut header_leaves: Vec<Option<[u8; 32]>> = Vec::with_capacity(account_fields.len());
+        let mut account_proof = Vec::with_capacity(account_fields.len());
+        for (field, tree_key) in account_fields {
+            let proof = walks
+                .next()
+                .ok_or_else(|| RpcErr::Internal("missing account walk proof".to_owned()))?;
+            let value = leaf_proven_by(header.state_root, &tree_key, &proof)?;
+            header_leaves.push(value);
+            account_proof.push(AccountFieldProof {
+                field,
+                tree_key,
+                value,
+                proof,
+            });
+        }
+        // Decoded by the same function the trie read uses, over the leaves
+        // these very walks pin, so the fields below cannot drift from them.
+        let account = account_info_from_header_leaves(
+            header_leaves.first().copied().flatten(),
+            header_leaves.get(1).copied().flatten(),
+            header_leaves.get(2).copied().flatten(),
+        )
+        .unwrap_or_default();
+
+        let mut storage_proof = Vec::with_capacity(slots.len());
+        for (slot, tree_key) in slots {
+            let proof = walks
+                .next()
+                .ok_or_else(|| RpcErr::Internal("missing storage walk proof".to_owned()))?;
+            let value = leaf_proven_by(header.state_root, &tree_key, &proof)?;
+            storage_proof.push(BinaryStorageProof {
+                key: slot,
+                zone: if slot < U256::from(HEADER_STORAGE_SLOTS) {
+                    StorageZone::AccountHeader
+                } else {
+                    StorageZone::Storage
+                },
+                tree_key,
+                // Absent reads as zero, the same convention `eth_getProof` and
+                // the EVM use: a slot written to zero is stored as absent.
+                value: value.map_or(U256::zero(), |bytes| U256::from_big_endian(&bytes)),
+                proof,
+            });
+        }
+
+        serde_json::to_value(BinaryAccountProof {
+            proof_format: BINARY_PROOF_FORMAT,
+            address: self.address,
+            block_number,
+            block_hash: header.hash(),
+            state_root: header.state_root,
+            balance: account.balance,
+            nonce: account.nonce,
+            code_hash: account.code_hash,
+            account_proof,
+            storage_proof,
+        })
+        .map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
 
@@ -950,5 +1167,144 @@ mod tests {
             proof["storageProof"][0]["value"],
             json!(format!("{:#x}", PROBE_SLOT_VALUE))
         );
+
+        // And its mirror refuses here, because there is no binary trie at all.
+        assert!(matches!(
+            GetProofV2Request {
+                address,
+                storage_keys: vec![],
+                block: block_id(0),
+            }
+            .handle(context.clone())
+            .await,
+            Err(RpcErr::UnsupportedFork(_))
+        ));
+    }
+
+    /// 6. `eth_getProofV2` answers on an active header, and every walk it
+    ///    serves verifies against that header's own state root.
+    ///
+    /// The cross-boundary version — on a chain that really flips, with the six
+    /// tampering cases — lives in `test/tests/blockchain/binary_tree_shadow_tests.rs`.
+    /// What this adds is coverage beside the handler itself.
+    #[tokio::test]
+    async fn get_proof_v2_answers_on_an_active_header() {
+        let context = active_at_genesis_context().await;
+        let address = probe_address();
+        let header = context
+            .storage
+            .get_block_header(0)
+            .unwrap()
+            .expect("genesis header");
+
+        let response = GetProofV2Request {
+            address,
+            storage_keys: vec![H256::from_low_u64_be(PROBE_SLOT)],
+            block: block_id(0),
+        }
+        .handle(context.clone())
+        .await
+        .expect("an active header must be provable");
+
+        assert_eq!(response["proofFormat"], json!(BINARY_PROOF_FORMAT));
+        assert_eq!(
+            response["stateRoot"],
+            json!(format!("{:#x}", header.state_root))
+        );
+        // `storageHash` has no referent in this trie, so the field must not
+        // exist rather than carry a value that means nothing.
+        assert!(response.get("storageHash").is_none());
+        assert_eq!(response["nonce"], json!(format!("0x{PROBE_NONCE:x}")));
+        assert_eq!(response["balance"], json!(format!("{PROBE_BALANCE:#x}")));
+
+        // All three header fields are present as entries whether or not the
+        // account holds the leaf, and every walk verifies against the root the
+        // header commits — re-deriving each key rather than reading the one the
+        // response carries.
+        let entries = response["accountProof"]
+            .as_array()
+            .expect("accountProof array");
+        let fields: Vec<&str> = entries
+            .iter()
+            .map(|entry| entry["field"].as_str().unwrap())
+            .collect();
+        assert_eq!(fields, vec!["basicData", "codeHash", "delegation"]);
+
+        let address32 = address20_to_address32(address);
+        let keys = [
+            get_tree_key_for_basic_data(&address32),
+            get_tree_key_for_code_hash(&address32),
+            get_tree_key_for_delegation(&address32),
+        ];
+        for (entry, key) in entries.iter().zip(keys.iter()) {
+            let proof: Vec<Vec<u8>> = entry["proof"]
+                .as_array()
+                .expect("proof array")
+                .iter()
+                .map(|node| hex::decode(node.as_str().unwrap().trim_start_matches("0x")).unwrap())
+                .collect();
+            let (_steps, end) = verify_walk(header.state_root, key, &proof)
+                .unwrap_or_else(|error| panic!("{:?} must verify: {error}", entry["field"]));
+            let present = matches!(&end, WalkEnd::AtLeaf { key: found, .. } if found == key);
+            assert_eq!(
+                present,
+                !entry["value"].is_null(),
+                "{:?}: the reported value and the proof must agree on presence",
+                entry["field"]
+            );
+        }
+        // The probe has code, so it is the delegation leaf that is absent —
+        // and it is absent *with* an exclusion proof, not by omission.
+        assert_eq!(entries[2]["value"], Value::Null);
+        assert!(!entries[2]["proof"].as_array().unwrap().is_empty());
+
+        assert_eq!(
+            response["storageProof"][0]["value"],
+            json!(format!("{PROBE_SLOT_VALUE:#x}"))
+        );
+        assert_eq!(response["storageProof"][0]["zone"], json!("accountHeader"));
+    }
+
+    /// 7. `eth_getProofV2` refuses a header before the flip, and says where to
+    ///    go instead. The mirror of test 4, and per header for the same reason:
+    ///    a scheduled chain's pre-activation blocks belong to `eth_getProof`
+    ///    forever.
+    #[tokio::test]
+    async fn get_proof_v2_refuses_a_pre_activation_header() {
+        let far_future = genesis_timestamp() + 1_000_000;
+        let context = binary_tree_context(Some(far_future)).await;
+        assert!(context.storage.get_chain_config().binary_tree_scheduled());
+        assert!(
+            !context
+                .storage
+                .get_chain_config()
+                .is_binary_tree_active(genesis_timestamp()),
+            "the header under test must be pre-activation for this to mean anything"
+        );
+
+        match (GetProofV2Request {
+            address: probe_address(),
+            storage_keys: vec![H256::from_low_u64_be(PROBE_SLOT)],
+            block: block_id(0),
+        })
+        .handle(context.clone())
+        .await
+        {
+            Err(RpcErr::UnsupportedFork(message)) => {
+                assert!(
+                    message.contains("eth_getProofV2"),
+                    "the refusal must name the method, got {message:?}"
+                );
+                assert!(
+                    message.contains("use eth_getProof"),
+                    "the refusal must point at the method that does serve it, got {message:?}"
+                );
+            }
+            Err(other) => panic!("expected an unsupported-fork refusal, got {other:?}"),
+            Ok(value) => panic!(
+                "eth_getProofV2 answered {value} at a Merkle-Patricia block. There is no binary \
+                 trie behind that root for the walks to come from."
+            ),
+        }
     }
 }

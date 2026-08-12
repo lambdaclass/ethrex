@@ -43,7 +43,11 @@ use std::sync::Arc;
 use std::{fs::File, io::BufReader, path::PathBuf};
 
 use bytes::Bytes;
-use ethrex_binary_trie::trie::GroupRow;
+use ethrex_binary_trie::embedding::{
+    ACCOUNT_KEY_LENGTH, STORAGE_KEY_LENGTH, address20_to_address32, get_tree_key_for_basic_data,
+    get_tree_key_for_code_hash, get_tree_key_for_delegation, get_tree_key_for_storage_slot,
+};
+use ethrex_binary_trie::trie::{GroupRow, ProofError, WalkEnd, verify_walk};
 use ethrex_blockchain::{
     Blockchain,
     error::{ChainError, InvalidBlockError, InvalidForkChoice},
@@ -5987,6 +5991,693 @@ async fn the_frozen_mpt_is_still_serveable_but_proves_nothing_about_the_binary_r
              With an empty proof this reads as an exclusion proof for an account that exists.",
             proof.account,
             proof.proof.len()
+        ),
+    }
+}
+
+// ===========================================================================
+// Phase D5 — `eth_getProofV2` across the boundary.
+//
+// The mirror of D4. Where `eth_getProof` refuses every binary-committed header,
+// this method serves exactly those and refuses the rest, so between the two
+// every header on the chain has one method that will prove it.
+//
+// What these tests are for is **verification**, not shape. A proof nobody
+// verifies is decoration, so everything below runs the standalone verifier
+// `ethrex_binary_trie::trie::verify_walk` against the block header's own
+// `state_root`, re-deriving every tree key from the address rather than reading
+// the one the server sent, and then breaks the proofs six ways and insists the
+// breakage is caught.
+//
+// Non-vacuity matters more here than anywhere: a chain that never flipped would
+// let the whole section pass against MPT headers with no binary root at all, so
+// every test asserts that the block it proves against really commits the binary
+// root this node recorded.
+// ===========================================================================
+
+/// A storage-carrying probe account, which `build_boundary_chains`' funded
+/// sender is not: the sender is an EOA with no code and no storage, so it can
+/// exercise absence but not presence in either storage zone.
+fn v2_probe_address() -> Address {
+    Address::from_low_u64_be(0xC0DE)
+}
+
+/// Below `HEADER_STORAGE_SLOTS`, so it lives at sub-index `64 + 3` of the
+/// account's *header* stem.
+const V2_HEADER_SLOT: u64 = 3;
+const V2_HEADER_SLOT_VALUE: u64 = 0x1111;
+/// At or above `HEADER_STORAGE_SLOTS`, so it lives under a different stem
+/// entirely, in the storage zone. The pair is the point: the two are proven at
+/// different places in the tree.
+const V2_OVERFLOW_SLOT: u64 = 1_000;
+const V2_OVERFLOW_SLOT_VALUE: u64 = 0x2222;
+/// Never written, and below 64, so its absence has to be proven inside the
+/// header stem rather than by the stem simply not being there.
+const V2_ABSENT_SLOT: u64 = 7;
+
+fn v2_probe_code() -> Bytes {
+    Bytes::from_static(&[0x60, 0x00, 0x60, 0x00, 0xf3])
+}
+
+fn v2_probe_account() -> GenesisAccount {
+    GenesisAccount {
+        code: v2_probe_code(),
+        storage: [
+            (U256::from(V2_HEADER_SLOT), U256::from(V2_HEADER_SLOT_VALUE)),
+            (
+                U256::from(V2_OVERFLOW_SLOT),
+                U256::from(V2_OVERFLOW_SLOT_VALUE),
+            ),
+        ]
+        .into_iter()
+        .collect(),
+        balance: U256::from(0x999u64),
+        nonce: 0,
+    }
+}
+
+/// A scheduled chain flipping at [`FLIP_BLOCK`], like `build_boundary_chains`
+/// but with [`v2_probe_account`] in the alloc. Returns the store, the blocks,
+/// and the activation timestamp.
+async fn build_v2_boundary_chain(count: u64) -> (Store, Vec<Block>, u64) {
+    let sender = sender_from_key(&test_secret_key());
+    let activation = load_funded_genesis(sender, None).timestamp + FLIP_BLOCK * BLOCK_TIME;
+    let genesis = load_funded_genesis_with(
+        sender,
+        Some(activation),
+        &[(v2_probe_address(), v2_probe_account())],
+    );
+    let chain_id = genesis.config.chain_id;
+    let store = store_from_genesis(genesis).await;
+    let blockchain = Blockchain::default_with_store(store.clone());
+    let blocks = build_chain(&store, &blockchain, chain_id, count).await;
+    (store, blocks, activation)
+}
+
+/// An `eth_getProofV2` request encoded the way a caller sends it over the wire.
+fn get_proof_v2_request(
+    address: Address,
+    storage_keys: &[U256],
+    block: u64,
+) -> ethrex_rpc::utils::RpcRequest {
+    ethrex_rpc::utils::RpcRequest {
+        method: "eth_getProofV2".to_string(),
+        params: Some(vec![
+            serde_json::json!(format!("{address:#x}")),
+            serde_json::json!(
+                storage_keys
+                    .iter()
+                    .map(|key| format!("{key:#x}"))
+                    .collect::<Vec<_>>()
+            ),
+            serde_json::json!(format!("{block:#x}")),
+        ]),
+        ..Default::default()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The client half: everything below this line is what a consumer of the
+// response runs, and it consults neither the store nor the handler.
+// ---------------------------------------------------------------------------
+
+/// What a verified walk says about a key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Proven {
+    Present([u8; 32]),
+    /// The walk verified and ended somewhere that is not this key's leaf, which
+    /// is what an exclusion proof looks like.
+    Absent,
+}
+
+/// The whole client-side verification, written out because it *is* the thing
+/// under test: verify the walk against the root the block header commits, then
+/// make the inclusion/exclusion judgement `verify_walk` deliberately leaves to
+/// its caller.
+///
+/// `key` is the caller's own derivation. Nothing here reads the `treeKey` the
+/// server sent.
+fn judge(state_root: H256, key: &[u8], proof: &[Vec<u8>]) -> Result<Proven, ProofError> {
+    let (_steps, end) = verify_walk(state_root, key, proof)?;
+    Ok(match end {
+        WalkEnd::AtLeaf { key: found, value } if found == key => Proven::Present(value),
+        WalkEnd::AtLeaf { .. } | WalkEnd::Diverged { .. } | WalkEnd::Empty => Proven::Absent,
+    })
+}
+
+fn hex_bytes(value: &serde_json::Value) -> Vec<u8> {
+    hex::decode(
+        value
+            .as_str()
+            .unwrap_or_else(|| panic!("expected a hex string, got {value}"))
+            .trim_start_matches("0x"),
+    )
+    .expect("expected hex")
+}
+
+/// The walk carried by one `accountProof` or `storageProof` entry.
+fn walk_of(entry: &serde_json::Value) -> Vec<Vec<u8>> {
+    entry["proof"]
+        .as_array()
+        .expect("proof must be an array")
+        .iter()
+        .map(hex_bytes)
+        .collect()
+}
+
+/// The `accountProof` entry for one header field.
+fn account_entry<'a>(response: &'a serde_json::Value, field: &str) -> &'a serde_json::Value {
+    response["accountProof"]
+        .as_array()
+        .expect("accountProof must be an array")
+        .iter()
+        .find(|entry| entry["field"] == field)
+        .unwrap_or_else(|| panic!("accountProof must carry a {field} entry"))
+}
+
+fn storage_entry(response: &serde_json::Value, slot: u64) -> &serde_json::Value {
+    let wanted = format!("{:#x}", U256::from(slot));
+    response["storageProof"]
+        .as_array()
+        .expect("storageProof must be an array")
+        .iter()
+        .find(|entry| entry["key"] == serde_json::json!(wanted))
+        .unwrap_or_else(|| panic!("storageProof must carry an entry for slot {slot}"))
+}
+
+/// Every walk in the response, paired with a name for failure messages. The
+/// substitution attacks below try each of these in place of every other.
+fn all_walks(response: &serde_json::Value) -> Vec<(String, Vec<Vec<u8>>)> {
+    let mut walks = Vec::new();
+    for entry in response["accountProof"].as_array().unwrap() {
+        walks.push((
+            format!("account:{}", entry["field"].as_str().unwrap()),
+            walk_of(entry),
+        ));
+    }
+    for entry in response["storageProof"].as_array().unwrap() {
+        walks.push((
+            format!("storage:{}", entry["key"].as_str().unwrap()),
+            walk_of(entry),
+        ));
+    }
+    walks
+}
+
+/// The nonce and balance packed into a basic-data leaf, decoded from the layout
+/// rather than through the client's own decoder — an independent reading of the
+/// bytes the proof pins.
+fn decode_basic_data_independently(leaf: [u8; 32]) -> (u64, U256) {
+    let mut nonce = [0u8; 8];
+    nonce.copy_from_slice(&leaf[8..16]);
+    (
+        u64::from_be_bytes(nonce),
+        U256::from_big_endian(&leaf[16..32]),
+    )
+}
+
+// ---------------------------------------------------------------------------
+// D5.1 The guard is the exact mirror of `eth_getProof`'s.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn get_proof_v2_refuses_pre_flip_blocks_and_serves_from_the_flip_onward() {
+    let (store, blocks, activation) = build_v2_boundary_chain(FLIP_BLOCK + 1).await;
+    let flip_index = (FLIP_BLOCK - 1) as usize;
+    let last_pre_flip = &blocks[flip_index - 1];
+    let flip = &blocks[flip_index];
+    let after_flip = &blocks[flip_index + 1];
+
+    // Non-vacuity: the boundary is where this test assumes it is, and the
+    // post-flip headers really do commit binary roots.
+    assert!(last_pre_flip.header.timestamp < activation);
+    assert!(flip.header.timestamp >= activation);
+    for block in [flip, after_flip] {
+        assert_eq!(
+            block.header.state_root,
+            binary_root(&store, block),
+            "block {} must commit the binary root for this test to mean anything",
+            block.header.number
+        );
+    }
+
+    forkchoice_to(&store, after_flip)
+        .await
+        .expect("the built chain must be acceptable as head");
+    let context = ethrex_rpc::test_utils::default_context_with_storage(store.clone()).await;
+    let address = v2_probe_address();
+
+    // Every pre-activation block, genesis included, is refused — and the
+    // refusal names both methods, so a caller learns where to go.
+    for number in 0..=last_pre_flip.header.number {
+        let result = ethrex_rpc::map_http_requests(
+            &get_proof_v2_request(address, &[U256::from(V2_HEADER_SLOT)], number),
+            context.clone(),
+        )
+        .await;
+        match result {
+            Err(ethrex_rpc::RpcErr::UnsupportedFork(message)) => {
+                assert!(
+                    message.contains("eth_getProofV2"),
+                    "block {number}: the refusal must name the method, got {message:?}"
+                );
+                assert!(
+                    message.contains("use eth_getProof"),
+                    "block {number}: the refusal must point at eth_getProof, got {message:?}"
+                );
+            }
+            Err(other) => {
+                panic!("block {number}: expected an unsupported-fork refusal, got {other:?}")
+            }
+            Ok(value) => panic!(
+                "block {number} commits a Merkle-Patricia root, yet eth_getProofV2 answered \
+                 {value}. There is no binary trie behind that root to prove against."
+            ),
+        }
+    }
+
+    // And from the flip onward it answers, with its format declared.
+    for block in [flip, after_flip] {
+        let number = block.header.number;
+        let response = ethrex_rpc::map_http_requests(
+            &get_proof_v2_request(address, &[U256::from(V2_HEADER_SLOT)], number),
+            context.clone(),
+        )
+        .await
+        .unwrap_or_else(|error| panic!("block {number} is binary-committed: {error:?}"));
+        assert_eq!(
+            response["proofFormat"],
+            serde_json::json!("ethrex-eip8297-walk-v1"),
+            "block {number}: the format discriminator is mandatory"
+        );
+        assert_eq!(
+            response["stateRoot"],
+            serde_json::json!(format!("{:#x}", block.header.state_root))
+        );
+        assert_eq!(
+            response["blockHash"],
+            serde_json::json!(format!("{:#x}", block.hash()))
+        );
+        // The MPT-shaped field must not be there under any spelling: it has no
+        // referent, and a zero would be a value that means nothing.
+        assert!(response.get("storageHash").is_none());
+        assert!(response.get("storageRoot").is_none());
+    }
+
+    // The two methods partition the chain: no block is servable by both, and
+    // none by neither.
+    for block in [last_pre_flip, flip] {
+        let number = block.header.number;
+        let v1 = ethrex_rpc::map_http_requests(
+            &get_proof_request(address, &[H256::from_low_u64_be(V2_HEADER_SLOT)], number),
+            context.clone(),
+        )
+        .await;
+        let v2 = ethrex_rpc::map_http_requests(
+            &get_proof_v2_request(address, &[U256::from(V2_HEADER_SLOT)], number),
+            context.clone(),
+        )
+        .await;
+        assert_ne!(
+            v1.is_ok(),
+            v2.is_ok(),
+            "block {number}: exactly one of the two methods must serve it"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// D5.2 A served proof verifies against the block header's own state root.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_served_binary_proof_verifies_against_the_block_header_state_root() {
+    let (store, blocks, _) = build_v2_boundary_chain(FLIP_BLOCK).await;
+    let flip = blocks.last().expect("blocks were built");
+    let state_root = flip.header.state_root;
+
+    // Non-vacuity, first and loudest: without this the whole test would pass
+    // against a chain that never flipped, verifying nothing against an MPT root
+    // that has no binary trie behind it at all.
+    assert_eq!(
+        state_root,
+        binary_root(&store, flip),
+        "the block being proven must commit a binary root"
+    );
+
+    forkchoice_to(&store, flip).await.expect("head");
+    let context = ethrex_rpc::test_utils::default_context_with_storage(store.clone()).await;
+    let address = v2_probe_address();
+    let slots = [
+        U256::from(V2_HEADER_SLOT),
+        U256::from(V2_OVERFLOW_SLOT),
+        U256::from(V2_ABSENT_SLOT),
+    ];
+    let response = ethrex_rpc::map_http_requests(
+        &get_proof_v2_request(address, &slots, flip.header.number),
+        context.clone(),
+    )
+    .await
+    .expect("a binary-committed block must be provable");
+
+    // Every key is re-derived here. A server that derived a key wrongly would
+    // serve a walk that verifies — for the wrong key — and this is what catches
+    // it, because the `treeKey` it sent is never read as anything but a claim.
+    let address32 = address20_to_address32(address);
+    let basic_data_key = get_tree_key_for_basic_data(&address32);
+    let code_hash_key = get_tree_key_for_code_hash(&address32);
+    let delegation_key = get_tree_key_for_delegation(&address32);
+    assert_eq!(basic_data_key.len(), ACCOUNT_KEY_LENGTH);
+
+    for (field, key) in [
+        ("basicData", &basic_data_key),
+        ("codeHash", &code_hash_key),
+        ("delegation", &delegation_key),
+    ] {
+        assert_eq!(
+            hex_bytes(&account_entry(&response, field)["treeKey"]),
+            *key,
+            "{field}: the served tree key must be the one the embedding derives"
+        );
+    }
+
+    // Basic data: present, and its bytes decode to an account this test can
+    // predict without asking the node anything.
+    let Proven::Present(basic_data) = judge(
+        state_root,
+        &basic_data_key,
+        &walk_of(account_entry(&response, "basicData")),
+    )
+    .expect("the basic-data walk must verify against the header's state root") else {
+        panic!("the probe account's basic data must be present");
+    };
+    let (nonce, balance) = decode_basic_data_independently(basic_data);
+    assert_eq!(nonce, 0, "the probe never sent a transaction");
+    assert_eq!(
+        balance,
+        U256::from(0x999u64),
+        "the probe's balance is what the alloc gave it"
+    );
+
+    // Code hash: present, and it is Keccak of the code the alloc planted —
+    // computed here, not read off the response.
+    assert_eq!(
+        judge(
+            state_root,
+            &code_hash_key,
+            &walk_of(account_entry(&response, "codeHash"))
+        )
+        .expect("the code-hash walk must verify"),
+        Proven::Present(keccak(v2_probe_code()).0),
+    );
+
+    // Delegation: absent, and *provably* so. This is the entry that would be a
+    // silence in a format that only reported what it held.
+    assert_eq!(
+        judge(
+            state_root,
+            &delegation_key,
+            &walk_of(account_entry(&response, "delegation"))
+        )
+        .expect("the delegation walk must verify"),
+        Proven::Absent,
+        "an undelegated account must carry an exclusion proof for its delegation leaf"
+    );
+    assert_eq!(
+        account_entry(&response, "delegation")["value"],
+        serde_json::Value::Null
+    );
+
+    // The account fields beside the proofs must agree with the leaves the
+    // proofs pin, or the response contradicts itself whatever it verifies.
+    assert_eq!(response["nonce"], serde_json::json!(format!("0x{nonce:x}")));
+    assert_eq!(
+        response["balance"],
+        serde_json::json!(format!("{balance:#x}"))
+    );
+    assert_eq!(
+        response["codeHash"],
+        serde_json::json!(format!("{:#x}", keccak(v2_probe_code())))
+    );
+
+    // Storage, in both zones. The slot below 64 lives in the header stem and
+    // the one above it does not, so these two are proven at different places —
+    // which is why the entries have to say where.
+    let header_slot = storage_entry(&response, V2_HEADER_SLOT);
+    let header_slot_key = get_tree_key_for_storage_slot(&address32, U256::from(V2_HEADER_SLOT));
+    assert_eq!(header_slot["zone"], serde_json::json!("accountHeader"));
+    assert_eq!(header_slot_key.len(), ACCOUNT_KEY_LENGTH);
+    assert_eq!(hex_bytes(&header_slot["treeKey"]), header_slot_key);
+    assert_eq!(
+        judge(state_root, &header_slot_key, &walk_of(header_slot)).expect("must verify"),
+        Proven::Present(U256::from(V2_HEADER_SLOT_VALUE).to_big_endian()),
+    );
+
+    let overflow_slot = storage_entry(&response, V2_OVERFLOW_SLOT);
+    let overflow_slot_key = get_tree_key_for_storage_slot(&address32, U256::from(V2_OVERFLOW_SLOT));
+    assert_eq!(overflow_slot["zone"], serde_json::json!("storage"));
+    assert_eq!(overflow_slot_key.len(), STORAGE_KEY_LENGTH);
+    assert_eq!(hex_bytes(&overflow_slot["treeKey"]), overflow_slot_key);
+    assert_eq!(
+        judge(state_root, &overflow_slot_key, &walk_of(overflow_slot)).expect("must verify"),
+        Proven::Present(U256::from(V2_OVERFLOW_SLOT_VALUE).to_big_endian()),
+    );
+    // The two really are under different stems, or "both zones" is one zone.
+    assert_ne!(header_slot_key[0], overflow_slot_key[0]);
+
+    // An unwritten slot: absence proven, and reported as zero.
+    let absent_slot = storage_entry(&response, V2_ABSENT_SLOT);
+    let absent_slot_key = get_tree_key_for_storage_slot(&address32, U256::from(V2_ABSENT_SLOT));
+    assert_eq!(
+        judge(state_root, &absent_slot_key, &walk_of(absent_slot)).expect("must verify"),
+        Proven::Absent,
+    );
+    assert_eq!(absent_slot["value"], serde_json::json!("0x0"));
+
+    // The funded sender is a different shape — an EOA with no code and no
+    // storage — and the chain moved its nonce, so its basic-data leaf is
+    // checkable against something this test built rather than allocated.
+    let sender = sender_from_key(&test_secret_key());
+    let sender_response = ethrex_rpc::map_http_requests(
+        &get_proof_v2_request(sender, &[], flip.header.number),
+        context.clone(),
+    )
+    .await
+    .expect("the sender must be provable too");
+    let sender32 = address20_to_address32(sender);
+    let Proven::Present(sender_basic_data) = judge(
+        state_root,
+        &get_tree_key_for_basic_data(&sender32),
+        &walk_of(account_entry(&sender_response, "basicData")),
+    )
+    .expect("must verify") else {
+        panic!("the sender exists");
+    };
+    let (sender_nonce, sender_balance) = decode_basic_data_independently(sender_basic_data);
+    assert_eq!(
+        sender_nonce, flip.header.number,
+        "build_chain sends one transaction per block from the sender"
+    );
+    assert!(
+        sender_balance > U256::zero() && sender_balance < U256::from(10).pow(U256::from(20)),
+        "the sender started with 100 ETH and has paid for {} transfers, got {sender_balance}",
+        flip.header.number
+    );
+    assert_eq!(
+        judge(
+            state_root,
+            &get_tree_key_for_code_hash(&sender32),
+            &walk_of(account_entry(&sender_response, "codeHash"))
+        )
+        .expect("must verify"),
+        Proven::Present(keccak([]).0),
+        "an EOA carries the empty-code hash, not an absent leaf"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// D5.3 Break it six ways, and prove the breakage is caught.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_broken_binary_proof_is_always_caught() {
+    let (store, blocks, _) = build_v2_boundary_chain(FLIP_BLOCK + 1).await;
+    let flip_index = (FLIP_BLOCK - 1) as usize;
+    let flip = &blocks[flip_index];
+    let after_flip = &blocks[flip_index + 1];
+    let state_root = flip.header.state_root;
+    let other_root = after_flip.header.state_root;
+
+    // Non-vacuity, twice over: both blocks must really commit binary roots, and
+    // the two roots must differ or the "different block" case is a no-op.
+    for block in [flip, after_flip] {
+        assert_eq!(block.header.state_root, binary_root(&store, block));
+    }
+    assert_ne!(state_root, other_root);
+
+    forkchoice_to(&store, after_flip).await.expect("head");
+    let context = ethrex_rpc::test_utils::default_context_with_storage(store.clone()).await;
+    let address = v2_probe_address();
+    let address32 = address20_to_address32(address);
+    let slots = [
+        U256::from(V2_HEADER_SLOT),
+        U256::from(V2_OVERFLOW_SLOT),
+        U256::from(V2_ABSENT_SLOT),
+    ];
+    let response = ethrex_rpc::map_http_requests(
+        &get_proof_v2_request(address, &slots, flip.header.number),
+        context.clone(),
+    )
+    .await
+    .expect("provable");
+
+    let basic_data_key = get_tree_key_for_basic_data(&address32);
+    let delegation_key = get_tree_key_for_delegation(&address32);
+    let basic_data_walk = walk_of(account_entry(&response, "basicData"));
+    let true_basic_data = judge(state_root, &basic_data_key, &basic_data_walk).expect("verifies");
+
+    // The control. Everything below is a mutation of a proof that does verify,
+    // so if this were not `Present` the mutations would be killing nothing.
+    assert!(
+        matches!(true_basic_data, Proven::Present(_)),
+        "the unmutated proof must verify and prove presence"
+    );
+    assert!(
+        basic_data_walk.len() > 1,
+        "a one-node walk would make the truncation case vacuous, got {} nodes",
+        basic_data_walk.len()
+    );
+
+    // (1) A corrupted node. Every byte of every node, because the hash chain is
+    //     supposed to cover all of them.
+    for node in 0..basic_data_walk.len() {
+        for byte in 0..basic_data_walk[node].len() {
+            let mut tampered = basic_data_walk.clone();
+            tampered[node][byte] ^= 1;
+            assert!(
+                judge(state_root, &basic_data_key, &tampered).is_err(),
+                "flipping byte {byte} of node {node} was accepted"
+            );
+        }
+    }
+
+    // (2) A truncated walk, at every length short of the whole.
+    for length in 0..basic_data_walk.len() {
+        assert_eq!(
+            judge(state_root, &basic_data_key, &basic_data_walk[..length]),
+            Err(ProofError::Truncated),
+            "a walk cut to {length} nodes was accepted"
+        );
+    }
+
+    // (3) A proof served for a different key. Substituting any other walk in
+    //     the response must never make this key look present with somebody
+    //     else's value.
+    for (name, walk) in all_walks(&response) {
+        if walk == basic_data_walk {
+            continue;
+        }
+        match judge(state_root, &basic_data_key, &walk) {
+            Err(_) => {}
+            Ok(other) => assert_eq!(
+                other, true_basic_data,
+                "the walk for {name} was accepted as a proof about the basic-data key, \
+                 and said something different from the truth"
+            ),
+        }
+    }
+
+    // (4) A proof from a different block. The nodes are real, the root is real,
+    //     and they belong to different blocks.
+    assert_eq!(
+        judge(other_root, &basic_data_key, &basic_data_walk),
+        Err(ProofError::HashMismatch),
+        "a proof taken at one block must not verify against another block's root"
+    );
+    // Symmetrically, the other block's own proof must not verify here.
+    let other_response = ethrex_rpc::map_http_requests(
+        &get_proof_v2_request(address, &[], after_flip.header.number),
+        context.clone(),
+    )
+    .await
+    .expect("provable");
+    let other_walk = walk_of(account_entry(&other_response, "basicData"));
+    assert_ne!(
+        other_walk, basic_data_walk,
+        "the two blocks must give different walks, or this case proves nothing"
+    );
+    assert!(judge(state_root, &basic_data_key, &other_walk).is_err());
+
+    // (5) A forged *absence* for a key that exists. There is no walk a server
+    //     can hand over that verifies for this key and ends anywhere but its
+    //     leaf, so no substitution, truncation or corruption can turn a present
+    //     key into an absent one.
+    let mut candidates: Vec<Vec<Vec<u8>>> = all_walks(&response)
+        .into_iter()
+        .map(|(_, walk)| walk)
+        .collect();
+    // Plus a hand-built one: the true walk with its terminal replaced by a leaf
+    // from elsewhere in the tree, which is the shape a forger would reach for.
+    let mut swapped_terminal = basic_data_walk.clone();
+    let overflow_walk = walk_of(storage_entry(&response, V2_OVERFLOW_SLOT));
+    if let (Some(last), Some(foreign)) = (swapped_terminal.last_mut(), overflow_walk.last()) {
+        *last = foreign.clone();
+    }
+    candidates.push(swapped_terminal);
+    candidates.extend((0..basic_data_walk.len()).map(|n| basic_data_walk[..n].to_vec()));
+    for (index, candidate) in candidates.iter().enumerate() {
+        assert_ne!(
+            judge(state_root, &basic_data_key, candidate),
+            Ok(Proven::Absent),
+            "candidate {index} forged an absence for a key that exists"
+        );
+    }
+
+    // (6) A forged *presence* for a key that does not exist. The delegation
+    //     leaf is absent on this account; nothing may make it look present.
+    let true_delegation = judge(
+        state_root,
+        &delegation_key,
+        &walk_of(account_entry(&response, "delegation")),
+    )
+    .expect("verifies");
+    assert_eq!(
+        true_delegation,
+        Proven::Absent,
+        "the control: this key really is absent"
+    );
+    let mut forgeries: Vec<Vec<Vec<u8>>> = all_walks(&response)
+        .into_iter()
+        .map(|(_, walk)| walk)
+        .collect();
+    forgeries.push(other_walk.clone());
+    for (index, forgery) in forgeries.iter().enumerate() {
+        assert!(
+            !matches!(
+                judge(state_root, &delegation_key, forgery),
+                Ok(Proven::Present(_))
+            ),
+            "candidate {index} forged a presence for a key that does not exist"
+        );
+    }
+
+    // And the cross-account case: one account's proof is never another's. The
+    // sender's basic-data walk under the probe's basic-data key must not prove
+    // the probe.
+    let sender = sender_from_key(&test_secret_key());
+    let sender_response = ethrex_rpc::map_http_requests(
+        &get_proof_v2_request(sender, &[], flip.header.number),
+        context.clone(),
+    )
+    .await
+    .expect("provable");
+    let sender_walk = walk_of(account_entry(&sender_response, "basicData"));
+    assert_ne!(sender_walk, basic_data_walk);
+    match judge(state_root, &basic_data_key, &sender_walk) {
+        Err(_) => {}
+        Ok(other) => assert_eq!(
+            other, true_basic_data,
+            "the sender's walk was accepted as a proof about the probe's key"
         ),
     }
 }
