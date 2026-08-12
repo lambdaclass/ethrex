@@ -34,9 +34,18 @@
 #
 # All CLs: supernode=true (PeerDAS satisfaction at fulu/gloas).
 #
-# Fork schedule (mainnet preset, 12s slots):
-#   * gloas at epoch 0 (active from genesis)
-#   * heze (= our Hegotá / EIP-7805 FOCIL) at epoch 1
+# Fork schedule (mainnet preset, 12s slots, so one epoch is 6m24s):
+#   * gloas at epoch 1  (~6m24s in)
+#   * heze (= our Hegotá / EIP-7805 FOCIL) at epoch 2  (~12m48s in)
+#
+# gloas deliberately does NOT start at genesis. With `gloas_fork_epoch: 0` every
+# generator tag tried produces a genesis whose state disagrees with the genesis
+# block, and the CL refuses to start:
+#   teku     "Genesis block root 0x9267… does not match genesis state latest
+#             block root 0x97bb…"
+#   lodestar the same message, on 6.0.5 and :bbusa-fix-gloas-genesis
+# Starting pre-gloas and transitioning avoids that path entirely, and still
+# reaches heze well inside a devnet run.
 #
 # The ethrex image is built from this branch rather than pulled: the published
 # ethpandaops/ethrex:focil tag tracks the `focil` branch, which predates both
@@ -69,8 +78,8 @@ participants:
 
 network_params:
   preset: mainnet
-  gloas_fork_epoch: 0
-  heze_fork_epoch: 1
+  gloas_fork_epoch: 1
+  heze_fork_epoch: 2
 
 additional_services:
   - dora
