@@ -1627,7 +1627,7 @@ pub async fn regenerate_state(
     let target_block_number = match target_block_number {
         Some(0) => return Ok(()),
         Some(n) => n - 1,
-        None => store.get_latest_block_number().await?,
+        None => store.get_latest_block_number()?,
     };
     if target_block_number == 0 {
         return Ok(());
