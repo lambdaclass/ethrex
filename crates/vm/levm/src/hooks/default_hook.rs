@@ -823,7 +823,7 @@ pub fn validate_gas_allowance(vm: &mut VM<'_>) -> Result<(), TxValidationError> 
     // System contract calls (EIP-2935, EIP-4788, EIP-7002, EIP-7251) bypass the
     // block-level gas-allowance check — their 30M gas budget is a protocol rule
     // independent of `block_gas_limit`.
-    if vm.env.is_system_call {
+    if vm.env.is_system_call || vm.env.disable_gas_allowance_check {
         return Ok(());
     }
     if vm.env.gas_limit > vm.env.block_gas_limit {
