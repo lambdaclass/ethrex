@@ -1,0 +1,141 @@
+# snap/2 devnet — exercising EIP-8189 state sync against a real peer.
+#
+# Nothing else we run reaches this code. `daily_snapsync.yaml` syncs against
+# hoodi/sepolia, which are pre-Amsterdam, so `block_access_list_hash` is absent
+# and ethrex takes the snap/1 path. Hive's `ethereum/sync` snapsync suite is
+# client-against-client but its chain generator stops at Osaka, so it has no
+# block access lists either.
+#
+# The nodes here seed and serve the chain. They do NOT snap sync: every kurtosis
+# participant starts at genesis and has nothing to sync. The node under test
+# joins afterwards, via `scripts/snap2-devnet/join.sh`.
+#
+# Launch:
+#   make build-image-sync-test
+#   kurtosis run --enclave snap2 ethereum-package --args-file fixtures/networks/snap2-devnet.yaml
+#   ./scripts/snap2-devnet/join.py          # once the chain is past MIN_FULL_BLOCKS
+#
+# KEEP THE ENCLAVE RUNNING between attempts. Reaching the depth snap sync needs
+# takes roughly fifteen minutes, and that is the whole cost of a test cycle;
+# the node under test takes seconds to rebuild and rejoin. Iterating on ethrex
+# is `make build-image-sync-test` then `join.py` again, with the enclave
+# untouched — join.py only ever removes its own joiner container.
+#
+# Only a change to genesis or network_params below needs a teardown, since
+# those are baked in at enclave creation. Everything else does not.
+#
+# Leaving it up also improves the test: the chain keeps growing, so the depth
+# gate is satisfied permanently and later joins start immediately, against a
+# larger state whose download is more likely to span a pivot window and
+# exercise the access-list catch-up. It costs about a gigabyte.
+#
+# geth serves as well as ethrex so the joiner can be pointed at either. geth's
+# snap/2 is behind `--snap.v2` ("not safe on public networks yet"); without that
+# flag it advertises snap/1 only and the node under test silently falls back to
+# healing, which looks exactly like a pass. The whole point of this devnet is
+# that path, so the flag is not optional.
+#
+# glamsterdam-devnet-7 matches ethrex main. geth's snap/2 wire and serving code
+# (protocol.go, handlers.go, handler.go, bal_apply.go) is byte-identical between
+# devnet-7 and devnet-8; only geth's own client differs, which does not matter
+# when geth is the server. So there is no reason to pull the glam-8 fork rules
+# into the first test of an unproven sync path.
+participants:
+  # Seeder and snap/2 server.
+  - el_type: ethrex
+    el_image: ethrex:local
+    el_extra_params: ["--syncmode", "full", "--http.api", "eth,net,web3,debug,admin,txpool"]
+    cl_type: lighthouse
+    cl_image: ethpandaops/lighthouse:glamsterdam-devnet-7
+    validator_count: 32
+    supernode: true
+  # Second ethrex, so the joiner has more than one peer to range-request from
+  # and a peer failure does not stall the download.
+  - el_type: ethrex
+    el_image: ethrex:local
+    el_extra_params: ["--syncmode", "full", "--http.api", "eth,net,web3,debug,admin,txpool"]
+    cl_type: lighthouse
+    cl_image: ethpandaops/lighthouse:glamsterdam-devnet-7
+    validator_count: 32
+  # Cross-client server.
+  #
+  # It proposes nothing, only follows and serves. That is not a workaround for
+  # a disagreement any more, just the smallest thing this devnet needs from it.
+  #
+  # The disagreement it used to hit was the EIP-7997 factory missing from
+  # genesis, see the preloaded contracts below. With the factory present geth
+  # injects nothing at the fork and the two clients agree, so the joiner can be
+  # pointed at either with `--source-el`.
+  - el_type: geth
+    el_image: ethpandaops/geth:glamsterdam-devnet-7
+    el_extra_params: ["--snap.v2", "--syncmode=full", "--gcmode=archive"]
+    cl_type: lighthouse
+    cl_image: ethpandaops/lighthouse:glamsterdam-devnet-7
+    validator_count: 0
+
+network_params:
+  seconds_per_slot: 6
+  # Osaka/Fulu from genesis.
+  fulu_fork_epoch: 0
+  # Amsterdam/Gloas at epoch 1, matching the sibling devnet configs. Not 0: a
+  # Gloas genesis state is one lighthouse refuses to decode.
+  #
+  # The `minimal` preset is deliberately not used. It shortens the epoch to 8
+  # slots, which reaches Amsterdam sooner, but block production then stops dead
+  # at the Gloas transition: the validator client asks for
+  # `payload_attestation_data` and gets 404, builder registration returns 500,
+  # and every slot after the fork is empty. The mainnet preset is the
+  # combination the working devnets use.
+  gloas_fork_epoch: 1
+
+  additional_preloaded_contracts:
+    # EIP-7997 deterministic CREATE2 factory. The chain's state MUST include it
+    # with a nonzero nonce, satisfied here by genesis since this devnet's gas
+    # parameters cannot carry its keyless deployment transaction.
+    #
+    # Without it the two clients disagree on the Amsterdam transition block and
+    # neither can follow the other. geth still injects the factory at the fork
+    # when it is absent, which an earlier draft of the EIP specified; the
+    # current text replaced that with genesis-or-transaction delivery and says
+    # client software "MUST NOT check for the existence of the contract at the
+    # fork boundary". ethrex implements the current text, i.e. nothing, so
+    # geth's injection shows up as a block-access index 0 nonce change for an
+    # account ethrex never touched.
+    "0x4e59b44847b379578588920cA78FbF26c0B4956C":
+      balance: "0"
+      nonce: "1"
+      code: "0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3"
+    "0x0000BFF46984E3725691FA540A8C7589300D8282":
+      balance: "0"
+      nonce: "1"
+      code: "0x3373fffffffffffffffffffffffffffffffffffffffe1461011c575f54807fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff146102705760015460088111605257506058565b60089003015b601190600182026001905f5b5f821115607f57810190830284830290049160010191906064565b90939004925050503660b814609f57366102705734610270575f5260205ff35b8034106102705760383567ffffffffffffffff1680633b9aca001161027057633b9aca00029034031061027057600154600101600155600354806006026004015f358155600101602035815560010160403581556001016060358155600101608035815560010160a035905560b85f5f3760b85fa0600101600355005b60035460025480820380604011610131575060405b5f5b8181146101d7578281016006026004018160b8028154815260200181600101548152602001816002015480825260401c67ffffffffffffffff16816010018160381c81600701538160301c81600601538160281c81600501538160201c81600401538160181c81600301538160101c81600201538160081c816001015353602001816003015481526020018160040154815260200190600501549052600101610133565b91018092146101e957906002556101f4565b90505f6002555f6003555b36610242575f54600154817fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1461023057600882820111610238575b50505f610264565b0160089003610264565b7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff5b5f555f60015560b8025ff35b5f5ffd"
+      storage:
+        "0x0000000000000000000000000000000000000000000000000000000000000000": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    "0x000064D678505AD48F8CCB093BC65613800E8282":
+      balance: "0"
+      nonce: "1"
+      code: "0x3373fffffffffffffffffffffffffffffffffffffffe1460e1575f54807fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff146101c65760015460028111605157506057565b60029003015b601190600182026001905f5b5f821115607e57810190830284830290049160010191906063565b909390049250505036603014609e57366101c657346101c6575f5260205ff35b34106101c657600154600101600155600354806003026004013381556001015f35815560010160203590553360601b5f5260305f60143760445fa0600101600355005b6003546002548082038060101160f5575060105b5f5b81811461012d5782810160030260040181604402815460601b8152601401816001015481526020019060020154905260010160f7565b910180921461013f579060025561014a565b90505f6002555f6003555b36610198575f54600154817fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff146101865760028282011161018e575b50505f6101ba565b01600290036101ba565b7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff5b5f555f6001556044025ff35b5f5ffd"
+      storage:
+        "0x0000000000000000000000000000000000000000000000000000000000000000": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+
+# State has to be big enough that the download outlasts a pivot window,
+# otherwise the pivot never moves and the access-list catch-up — the part with
+# no other coverage — never runs. storagespam and evm-fuzz grow the account and
+# storage tries; eoatx keeps blocks non-empty so every block has a BAL.
+#
+# storagespam rather than deploytx: deploytx refuses to start without an
+# explicit `bytecodes` list ("no bytecodes provided"), and a spammer that dies
+# at startup is invisible from the chain, which reads as a devnet that simply
+# grows slowly.
+additional_services: [spamoor]
+spamoor_params:
+  image: ethpandaops/spamoor:latest
+  spammers:
+    - scenario: eoatx
+      config: {throughput: 20}
+    - scenario: storagespam
+      config: {throughput: 30}
+    - scenario: evm-fuzz
+      config: {throughput: 10}
+
+global_log_level: info

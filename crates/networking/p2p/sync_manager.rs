@@ -27,6 +27,7 @@ pub struct SyncManager {
     /// This is also held by the Syncer and allows tracking it's latest syncmode
     /// It is a READ_ONLY value, as modifications will disrupt the current active sync progress
     snap_enabled: Arc<AtomicBool>,
+    blockchain: Arc<Blockchain>,
     syncer: Arc<Mutex<Syncer>>,
     last_fcu_head: Arc<Mutex<H256>>,
     store: Store,
@@ -43,6 +44,17 @@ impl SyncManager {
         datadir: PathBuf,
     ) -> Self {
         let snap_enabled = Arc::new(AtomicBool::new(matches!(sync_mode, SyncMode::Snap)));
+        // Only a snap/1 state sync depends on `GetTrieNodes`, and that is the
+        // sync this node runs exactly when its chain has no Amsterdam, since
+        // snap/2 reconciles with access lists that do not exist before it.
+        //
+        // Keying this on "a snap sync is running" instead would be circular and
+        // would strand the snap/2 path permanently: withholding snap/2 means
+        // never negotiating it, which means never finding a snap/2 peer, which
+        // means always falling back to snap/1 and never clearing the flag.
+        let needs_trie_nodes = snap_enabled.load(Ordering::Relaxed)
+            && store.get_chain_config().amsterdam_time.is_none();
+        blockchain.set_state_sync_needs_trie_nodes(needs_trie_nodes);
 
         // Fetch checkpoint once to avoid duplicate DB reads
         let has_checkpoint = store
@@ -71,6 +83,7 @@ impl SyncManager {
             if is_synced {
                 info!("Node has synced state (block {latest_block}), switching to full sync");
                 snap_enabled.store(false, Ordering::Relaxed);
+                blockchain.set_state_sync_needs_trie_nodes(false);
                 if has_checkpoint && let Err(e) = store.clear_snap_state().await {
                     warn!("Failed to clear stale snap state: {e}");
                 }
@@ -78,6 +91,7 @@ impl SyncManager {
         }
 
         let diagnostics = Arc::new(tokio::sync::RwLock::new(SyncDiagnostics::default()));
+        let blockchain_for_manager = blockchain.clone();
         let syncer = Arc::new(Mutex::new(Syncer::new(
             peer_handler,
             snap_enabled.clone(),
@@ -88,6 +102,7 @@ impl SyncManager {
         )));
         let sync_manager = Self {
             snap_enabled,
+            blockchain: blockchain_for_manager,
             syncer,
             last_fcu_head: Arc::new(Mutex::new(H256::zero())),
             store: store.clone(),
@@ -122,6 +137,7 @@ impl SyncManager {
     /// Disables snapsync mode
     pub fn disable_snap(&self) {
         self.snap_enabled.store(false, Ordering::Relaxed);
+        self.blockchain.set_state_sync_needs_trie_nodes(false);
     }
 
     /// Returns a snapshot of the current sync diagnostics with live values.

@@ -26,7 +26,7 @@ use crate::{
     metrics::{CurrentStepValue, METRICS},
     peer_handler::{PeerHandler, RequestMetadata},
     peer_table::PeerTableServerProtocol as _,
-    rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES,
+    rlpx::p2p::SNAP1_ONLY_CAPABILITIES,
     snap::{
         SnapError,
         constants::{HEALING_QUEUE_SOFT_LIMIT, NODE_BATCH_SIZE, SHOW_PROGRESS_INTERVAL_DURATION},
@@ -161,7 +161,7 @@ async fn heal_state_trie(
         if last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
             let num_peers = peers
                 .peer_table
-                .peer_count_by_capabilities(SUPPORTED_SNAP_CAPABILITIES.to_vec())
+                .peer_count_by_capabilities(SNAP1_ONLY_CAPABILITIES.to_vec())
                 .await
                 .unwrap_or(0);
             last_update = Instant::now();
@@ -278,7 +278,7 @@ async fn heal_state_trie(
                     );
                     let Some((peer_id, connection, permit)) = peers
                         .peer_table
-                        .get_best_peer(SUPPORTED_SNAP_CAPABILITIES.to_vec())
+                        .get_best_peer(SNAP1_ONLY_CAPABILITIES.to_vec())
                         .await
                         .inspect_err(|err| {
                             debug!(err=?err, "Error requesting a peer to perform state healing")

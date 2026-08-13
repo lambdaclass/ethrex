@@ -3,7 +3,7 @@
 //! This module contains the logic for snap synchronization mode where state is
 //! fetched via snap p2p requests while blocks and receipts are fetched in parallel.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
 #[cfg(feature = "rocksdb")]
 use std::path::PathBuf;
@@ -17,7 +17,7 @@ use ethrex_common::{
     H256,
     constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH},
 };
-use ethrex_rlp::decode::RLPDecode;
+use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::Store;
 #[cfg(feature = "rocksdb")]
 use ethrex_trie::Trie;
@@ -27,17 +27,19 @@ use tracing::{debug, error, info, warn};
 use crate::metrics::{CurrentStepValue, METRICS};
 use crate::peer_handler::PeerHandler;
 use crate::peer_table::PeerTableServerProtocol as _;
-use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
+use crate::rlpx::p2p::{Capability, SUPPORTED_ETH_CAPABILITIES};
 use crate::snap::{
     async_fs,
     constants::{
-        BYTECODE_CHUNK_SIZE, MAX_HEADER_FETCH_ATTEMPTS, MIN_FULL_BLOCKS, MISSING_SLOTS_PERCENTAGE,
-        SECONDS_PER_BLOCK, SNAP_LIMIT,
+        ACCOUNT_RANGE_CHUNK_COUNT, BYTECODE_CHUNK_SIZE, MAX_HEADER_FETCH_ATTEMPTS, MIN_FULL_BLOCKS,
+        MISSING_SLOTS_PERCENTAGE, SECONDS_PER_BLOCK, SNAP_LIMIT,
     },
     request_account_range, request_bytecodes, request_storage_ranges,
 };
+use crate::sync::bal_healing::advance_state_via_bals;
 use crate::sync::code_collector::CodeHashCollector;
 use crate::sync::healing::{heal_state_trie_wrap, heal_storage_trie};
+use crate::sync::snap2::{DownloadCursor, FlatState, download_state, reconstruct_and_verify};
 use crate::utils::{
     current_unix_time, get_account_state_snapshots_dir, get_account_storages_snapshots_dir,
     get_code_hashes_snapshots_dir,
@@ -47,8 +49,6 @@ use super::{AccountStorageRoots, SyncError};
 
 #[cfg(not(feature = "rocksdb"))]
 use ethrex_common::U256;
-#[cfg(not(feature = "rocksdb"))]
-use ethrex_rlp::encode::RLPEncode;
 
 /// Persisted State during the Block Sync phase for SnapSync
 #[derive(Clone)]
@@ -237,7 +237,7 @@ pub async fn sync_cycle_snap(
         // Or the head is very close to 0. A pre-check in `sync.rs::sync_cycle`
         // also gates on `< MIN_FULL_BLOCKS`; keep both — this one stays as a
         // safety net for callers that enter `sync_cycle_snap` directly.
-        let head_close_to_0 = last_block_number < MIN_FULL_BLOCKS;
+        let head_close_to_0 = last_block_number < *MIN_FULL_BLOCKS;
 
         if head_found || head_close_to_0 {
             // Too few blocks for a snap sync, switching to full sync
@@ -277,7 +277,15 @@ pub async fn sync_cycle_snap(
         };
     }
 
-    snap_sync(peers, &store, &mut block_sync_state, datadir, diagnostics).await?;
+    snap_sync(
+        peers,
+        &store,
+        &mut block_sync_state,
+        blockchain.clone(),
+        datadir,
+        diagnostics,
+    )
+    .await?;
 
     store.clear_snap_state().await?;
     snap_enabled.store(false, Ordering::Relaxed);
@@ -290,6 +298,7 @@ pub async fn snap_sync(
     peers: &mut PeerHandler,
     store: &Store,
     block_sync_state: &mut SnapBlockSyncState,
+    blockchain: Arc<Blockchain>,
     datadir: &Path,
     diagnostics: &Arc<tokio::sync::RwLock<super::SyncDiagnostics>>,
 ) -> Result<(), SyncError> {
@@ -325,7 +334,7 @@ pub async fn snap_sync(
         diag.pivot_timestamp = Some(pivot_header.timestamp);
         let pivot_age = current_unix_time().saturating_sub(pivot_header.timestamp);
         diag.pivot_age_seconds = Some(pivot_age);
-        diag.staleness_threshold_seconds = (SNAP_LIMIT as u64) * SECONDS_PER_BLOCK;
+        diag.staleness_threshold_seconds = staleness_window();
         diag.sync_mode = "snap".to_string();
         METRICS
             .pivot_timestamp
@@ -342,6 +351,24 @@ pub async fn snap_sync(
     // Create collector to store code hashes in files
     let mut code_hash_collector: CodeHashCollector =
         CodeHashCollector::new(code_hashes_snapshot_dir.clone());
+
+    // EIP-8189: "if both snap/1 and snap/2 are supported, it should use either
+    // snap/1 or snap/2 for state sync; running both simultaneously is not
+    // recommended". snap/2 needs access lists, so it needs a post-Amsterdam
+    // pivot and a peer that speaks it.
+    if pivot_header.block_access_list_hash.is_some() && wait_for_snap2_peer(peers).await {
+        return snap2_sync(
+            peers,
+            store,
+            block_sync_state,
+            blockchain,
+            pivot_header,
+            code_hash_collector,
+            datadir,
+            diagnostics,
+        )
+        .await;
+    }
 
     let mut storage_accounts = AccountStorageRoots::default();
     if !std::env::var("SKIP_START_SNAP_SYNC").is_ok_and(|var| !var.is_empty()) {
@@ -376,13 +403,11 @@ pub async fn snap_sync(
         METRICS
             .current_step
             .set(CurrentStepValue::InsertingAccountRanges);
-        // We read the account leafs from the files in account_state_snapshots_dir, write it into
-        // the trie to compute the nodes and stores the accounts with storages for later use
-
-        // Variable `accounts_with_storage` unused if not in rocksdb
-        #[allow(unused_variables)]
-        let (computed_state_root, accounts_with_storage) = insert_accounts(
-            store.clone(),
+        // Read the account leafs from the files in account_state_snapshots_dir to
+        // learn which accounts hold storage and which code hashes to fetch. The
+        // account trie is built after the storage tries, so its leaves can carry
+        // reconstructed storage roots.
+        let accounts_with_storage = scan_accounts(
             &mut storage_accounts,
             &account_state_snapshots_dir,
             datadir,
@@ -390,9 +415,21 @@ pub async fn snap_sync(
         )
         .await?;
         debug!(
-            "Finished inserting account ranges, total storage accounts: {}",
+            "Finished scanning account ranges, total storage accounts: {}",
             storage_accounts.accounts_with_storage_root.len()
         );
+        // snap/1 builds the account trie from the served storage roots and relies
+        // on `heal_state_trie_wrap` below to refresh the stale ones before the
+        // storage download can verify against them. Reconstructed roots are a
+        // snap/2 concern: there, healing is gone and the roots come from the
+        // storage tries themselves.
+        let computed_state_root = insert_accounts(
+            store.clone(),
+            &BTreeMap::new(),
+            &account_state_snapshots_dir,
+            datadir,
+        )
+        .await?;
         *METRICS.account_tries_insert_end_time.lock().await = Some(SystemTime::now());
 
         debug!("Original state root: {state_root:?}");
@@ -513,6 +550,9 @@ pub async fn snap_sync(
     let mut global_state_leafs_healed: u64 = 0;
     let mut global_storage_leafs_healed: u64 = 0;
     let mut healing_done = false;
+    // The pivot the local state is known to match in full. `None` until a healing pass
+    // completes, since BAL replay can only build on a state whose root was verified.
+    let mut completed_pivot: Option<BlockHeader> = None;
     while !healing_done {
         // This if is an edge case for the skip snap sync scenario
         if block_is_stale(&pivot_header) {
@@ -525,6 +565,55 @@ pub async fn snap_sync(
             )
             .await?;
         }
+
+        // EIP-8189 steps 5 and 7: once the state at a pivot is complete, a later pivot
+        // is reached by replaying that span's block access lists rather than by healing
+        // the trie again. `completed_pivot` is the pivot the local state actually
+        // corresponds to, and is the only valid starting point: the diffs are applied on
+        // top of it, not on top of whatever pivot happens to be current now.
+        let catchup_base = completed_pivot
+            .as_ref()
+            .filter(|base| base.number < pivot_header.number)
+            .filter(|base| base.block_access_list_hash.is_some())
+            .cloned();
+        let catchup_base = match catchup_base {
+            Some(base) if snap2_peer_available(peers).await => Some(base),
+            _ => None,
+        };
+
+        if let Some(base) = catchup_base {
+            match advance_state_via_bals(store, peers, base, pivot_header.hash(), diagnostics).await
+            {
+                // Step 7: the replayed span must reproduce the pivot's state root.
+                Ok(new_root) if new_root == pivot_header.state_root => {
+                    completed_pivot = Some(pivot_header.clone());
+                    healing_done = true;
+                    continue;
+                }
+                Ok(new_root) => {
+                    warn!(
+                        "snap/2 BAL replay reached {new_root:?}, want {:?}; healing the remainder",
+                        pivot_header.state_root
+                    );
+                }
+                Err(SyncError::ChainReorgDetected {
+                    expected_parent,
+                    actual_parent,
+                }) => {
+                    // A reorg past the pivot invalidates the anchor: the state it names
+                    // belongs to an abandoned fork, so replaying onto it would compound
+                    // the error. Drop it and let this pass heal against the new pivot.
+                    warn!(
+                        "snap/2 BAL replay hit a reorg (expected parent {expected_parent:?}, got {actual_parent:?}); healing against the new pivot"
+                    );
+                    completed_pivot = None;
+                }
+                Err(e) => {
+                    warn!("snap/2 BAL replay failed ({e}); healing the remainder");
+                }
+            }
+        }
+
         healing_done = heal_state_trie_wrap(
             pivot_header.state_root,
             store.clone(),
@@ -548,6 +637,10 @@ pub async fn snap_sync(
             &mut global_storage_leafs_healed,
         )
         .await?;
+        if healing_done {
+            // The state now matches this pivot in full, so it can anchor the next replay.
+            completed_pivot = Some(pivot_header.clone());
+        }
     }
     *METRICS.heal_end_time.lock().await = Some(SystemTime::now());
 
@@ -558,6 +651,130 @@ pub async fn snap_sync(
 
     debug!("Finished healing");
 
+    finish_snap_sync(
+        peers,
+        store,
+        block_sync_state,
+        &pivot_header,
+        code_hash_collector,
+        datadir,
+        diagnostics,
+    )
+    .await
+}
+
+/// Synchronize state with snap/2 (EIP-8189).
+///
+/// The shape is devp2p `caps/snap.md`, "Synchronization algorithm": download
+/// the flat state while patching it with each block's access list as the pivot
+/// advances, then reconstruct the tries and verify the root once. There is no
+/// healing phase — snap/2 removes `GetTrieNodes`, so the root check at the end
+/// is the only thing standing between a bad download and a bad chain.
+#[allow(clippy::too_many_arguments)]
+async fn snap2_sync(
+    peers: &mut PeerHandler,
+    store: &Store,
+    block_sync_state: &mut SnapBlockSyncState,
+    blockchain: Arc<Blockchain>,
+    pivot_header: BlockHeader,
+    mut code_hash_collector: CodeHashCollector,
+    datadir: &Path,
+    diagnostics: &Arc<tokio::sync::RwLock<super::SyncDiagnostics>>,
+) -> Result<(), SyncError> {
+    info!(
+        pivot = pivot_header.number,
+        "Starting snap/2 state sync (BAL-based, no trie healing)"
+    );
+    diagnostics.write().await.current_phase = "snap2_download".to_string();
+    // From here the sync never asks for trie nodes, so snap/2 can be offered to
+    // peers again. Until this point a snap sync might still have fallen back to
+    // snap/1, which cannot reconcile without them.
+    blockchain.set_state_sync_needs_trie_nodes(false);
+
+    let flat = FlatState::open(datadir)?;
+    let mut cursor = DownloadCursor::new(ACCOUNT_RANGE_CHUNK_COUNT);
+
+    let pivot_header = match download_state(
+        peers,
+        store,
+        &flat,
+        &mut cursor,
+        pivot_header,
+        block_sync_state,
+        &mut code_hash_collector,
+        datadir,
+        diagnostics,
+    )
+    .await
+    {
+        Ok(pivot_header) => pivot_header,
+        Err(err) => return Err(discard_partial_state(flat, datadir, err).await),
+    };
+
+    diagnostics.write().await.current_phase = "snap2_reconstruction".to_string();
+    *METRICS.heal_start_time.lock().await = Some(SystemTime::now());
+    if let Err(err) = reconstruct_and_verify(store, &flat, &pivot_header).await {
+        return Err(discard_partial_state(flat, datadir, err).await);
+    }
+    *METRICS.heal_end_time.lock().await = Some(SystemTime::now());
+    diagnostics.write().await.snap2_reconstructed_block = Some(pivot_header.number);
+
+    flat.destroy().await?;
+    store.generate_flatkeyvalue()?;
+
+    finish_snap_sync(
+        peers,
+        store,
+        block_sync_state,
+        &pivot_header,
+        code_hash_collector,
+        datadir,
+        diagnostics,
+    )
+    .await
+}
+
+/// Throw away everything a failed snap/2 attempt downloaded, and return the
+/// error that caused it.
+///
+/// caps/snap.md leaves one remedy for a sync that cannot be made consistent —
+/// "discard partial state and restart synchronization" — and the discard has to
+/// be real. Leaving the flat state behind would let the next attempt reuse
+/// leaves for accounts that no longer exist, which no later check would catch:
+/// the frontier would have moved past them, so the access lists that deleted
+/// them are never applied again.
+async fn discard_partial_state(flat: FlatState, datadir: &Path, err: SyncError) -> SyncError {
+    warn!("snap/2 sync failed ({err}); discarding partial state and restarting");
+    if let Err(cleanup) = flat.destroy().await {
+        error!("failed to discard the snap/2 flat state: {cleanup}");
+    }
+    for dir in [
+        get_account_state_snapshots_dir(datadir),
+        get_account_storages_snapshots_dir(datadir),
+    ] {
+        if dir.exists()
+            && let Err(cleanup) = async_fs::remove_dir_all(&dir).await
+        {
+            error!("failed to discard {dir:?}: {cleanup}");
+        }
+    }
+    err
+}
+
+/// Download the bytecodes the state references, store the pivot block, and make
+/// it the canonical head.
+///
+/// Shared by snap/1 and snap/2: both arrive here with the state at `pivot_header`
+/// on disk, however they reconciled it.
+async fn finish_snap_sync(
+    peers: &mut PeerHandler,
+    store: &Store,
+    block_sync_state: &SnapBlockSyncState,
+    pivot_header: &BlockHeader,
+    code_hash_collector: CodeHashCollector,
+    datadir: &Path,
+    diagnostics: &Arc<tokio::sync::RwLock<super::SyncDiagnostics>>,
+) -> Result<(), SyncError> {
     // Finish code hash collection
     code_hash_collector.finish().await?;
 
@@ -703,7 +920,7 @@ pub async fn update_pivot(
 
     // We multiply the estimation by 0.9 in order to account for missing slots (~9% in tesnets)
     let new_pivot_block_number = block_number
-        + ((current_unix_time().saturating_sub(block_timestamp) / SECONDS_PER_BLOCK) as f64
+        + ((current_unix_time().saturating_sub(block_timestamp) / *SECONDS_PER_BLOCK) as f64
             * MISSING_SLOTS_PERCENTAGE) as u64;
     debug!(
         "Current pivot is stale (number: {}, timestamp: {}). New pivot number: {}",
@@ -869,7 +1086,7 @@ pub fn block_is_stale(block_header: &BlockHeader) -> bool {
     let is_stale = threshold < now;
     if is_stale {
         let pivot_age = now.saturating_sub(block_header.timestamp);
-        let staleness_limit = (SNAP_LIMIT as u64) * SECONDS_PER_BLOCK;
+        let staleness_limit = staleness_window();
         debug!(
             pivot_number = block_header.number,
             pivot_timestamp = block_header.timestamp,
@@ -882,7 +1099,58 @@ pub fn block_is_stale(block_header: &BlockHeader) -> bool {
 }
 
 pub fn calculate_staleness_timestamp(timestamp: u64) -> u64 {
-    timestamp + (SNAP_LIMIT as u64 * 12)
+    timestamp + staleness_window()
+}
+
+/// How long a pivot stays servable: peers hold state for roughly `SNAP_LIMIT`
+/// blocks, which is that many block times.
+///
+/// The staleness check and the figure reported in diagnostics have to come from
+/// here and not be spelled out twice, or they drift apart the moment the block
+/// time is not the mainnet 12s.
+fn staleness_window() -> u64 {
+    (*SNAP_LIMIT as u64) * *SECONDS_PER_BLOCK
+}
+
+/// Wait briefly for a peer that speaks snap/2, and report whether one arrived.
+///
+/// The sync starts within a couple of seconds of the node coming up, while
+/// discovery has typically not produced a single completed handshake yet.
+/// Sampling peer capabilities once at that moment answers "no peer speaks
+/// snap/2" for a node whose peers all do, and the whole sync then runs on
+/// snap/1 — which looks like a working sync, just not the one that was asked
+/// for. Wait for the answer to mean something.
+///
+/// A post-Amsterdam network is expected to have snap/2 peers, so reaching the
+/// deadline is the unusual case and snap/1 is the fallback.
+async fn wait_for_snap2_peer(peers: &PeerHandler) -> bool {
+    const DEADLINE: Duration = Duration::from_secs(30);
+    const POLL: Duration = Duration::from_millis(500);
+
+    let start = SystemTime::now();
+    loop {
+        if snap2_peer_available(peers).await {
+            return true;
+        }
+        if start.elapsed().is_ok_and(|elapsed| elapsed >= DEADLINE) {
+            warn!(
+                "No snap/2 peer after {}s; falling back to snap/1 trie healing",
+                DEADLINE.as_secs()
+            );
+            return false;
+        }
+        tokio::time::sleep(POLL).await;
+    }
+}
+
+/// Whether any connected peer negotiated snap/2 and can serve block access lists.
+async fn snap2_peer_available(peers: &PeerHandler) -> bool {
+    peers
+        .peer_table
+        .peer_count_by_capabilities(vec![Capability::snap(2)])
+        .await
+        .map(|n| n > 0)
+        .unwrap_or(false)
 }
 
 pub async fn validate_state_root(store: Store, state_root: H256) -> bool {
@@ -963,7 +1231,7 @@ pub fn validate_bytecodes(store: Store, state_root: H256) -> bool {
 // ============================================================================
 
 #[cfg(not(feature = "rocksdb"))]
-type StorageRoots = (H256, Vec<(ethrex_trie::Nibbles, Vec<u8>)>);
+type StorageRoots = (H256, H256, Vec<(ethrex_trie::Nibbles, Vec<u8>)>);
 
 #[cfg(not(feature = "rocksdb"))]
 fn compute_storage_roots(
@@ -991,20 +1259,23 @@ fn compute_storage_roots(
         METRICS.storage_leaves_inserted.inc();
     }
 
-    let (_, changes) = storage_trie.collect_changes_since_last_hash(&ethrex_crypto::NativeCrypto);
+    let (storage_root, changes) =
+        storage_trie.collect_changes_since_last_hash(&ethrex_crypto::NativeCrypto);
 
-    Ok((account_hash, changes))
+    Ok((account_hash, storage_root, changes))
 }
 
+/// Read the downloaded account leaves and collect what the storage and bytecode
+/// downloads need from them: every code hash, and the served storage root of
+/// every contract account. See the rocksdb [`scan_accounts`] for why the
+/// account trie is not built here.
 #[cfg(not(feature = "rocksdb"))]
-async fn insert_accounts(
-    store: Store,
+async fn scan_accounts(
     storage_accounts: &mut AccountStorageRoots,
     account_state_snapshots_dir: &Path,
     _: &Path,
     code_hash_collector: &mut CodeHashCollector,
-) -> Result<(H256, BTreeSet<H256>), SyncError> {
-    let mut computed_state_root = *EMPTY_TRIE_HASH;
+) -> Result<BTreeSet<H256>, SyncError> {
     let snapshot_files = async_fs::read_dir_paths(account_state_snapshots_dir).await?;
     for snapshot_path in snapshot_files {
         debug!("Reading account file from {snapshot_path:?}");
@@ -1020,7 +1291,6 @@ async fn insert_accounts(
             }),
         );
 
-        // Collect valid code hashes from current account snapshot
         let code_hashes_from_snapshot: Vec<H256> = account_states_snapshot
             .iter()
             .filter_map(|(_, state)| {
@@ -1030,15 +1300,42 @@ async fn insert_accounts(
 
         code_hash_collector.extend(code_hashes_from_snapshot);
         code_hash_collector.flush_if_needed().await?;
+    }
+    Ok(BTreeSet::from_iter(
+        storage_accounts.accounts_with_storage_root.keys().copied(),
+    ))
+}
+
+/// Build the account trie from the downloaded leaves, writing each contract
+/// account's reconstructed storage root in place of the served one. See the
+/// rocksdb [`insert_accounts`] for why the served roots cannot be used.
+#[cfg(not(feature = "rocksdb"))]
+async fn insert_accounts(
+    store: Store,
+    storage_roots: &BTreeMap<H256, H256>,
+    account_state_snapshots_dir: &Path,
+    _: &Path,
+) -> Result<H256, SyncError> {
+    let mut computed_state_root = *EMPTY_TRIE_HASH;
+    let snapshot_files = async_fs::read_dir_paths(account_state_snapshots_dir).await?;
+    for snapshot_path in snapshot_files {
+        let snapshot_contents = async_fs::read_file(&snapshot_path).await?;
+        let account_states_snapshot: Vec<(H256, AccountState)> =
+            RLPDecode::decode(&snapshot_contents)
+                .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
 
         info!("Inserting accounts into the state trie");
 
         let store_clone = store.clone();
+        let storage_roots = storage_roots.clone();
         let current_state_root: Result<H256, SyncError> =
             tokio::task::spawn_blocking(move || -> Result<H256, SyncError> {
                 let mut trie = store_clone.open_direct_state_trie(computed_state_root)?;
 
-                for (account_hash, account) in account_states_snapshot {
+                for (account_hash, mut account) in account_states_snapshot {
+                    if let Some(root) = storage_roots.get(&account_hash) {
+                        account.storage_root = *root;
+                    }
                     trie.insert(account_hash.0.to_vec(), account.encode_to_vec())?;
                 }
                 info!("Comitting to disk");
@@ -1051,19 +1348,23 @@ async fn insert_accounts(
     }
     async_fs::remove_dir_all(account_state_snapshots_dir).await?;
     info!("computed_state_root {computed_state_root}");
-    Ok((computed_state_root, BTreeSet::new()))
+    Ok(computed_state_root)
 }
 
+/// Build every account's storage trie from the downloaded slots and return the
+/// root each one hashes to. See the rocksdb [`insert_storages`] for why the
+/// roots are returned rather than discarded.
 #[cfg(not(feature = "rocksdb"))]
 async fn insert_storages(
     store: Store,
     _: BTreeSet<H256>,
     account_storages_snapshots_dir: &Path,
     _: &Path,
-) -> Result<(), SyncError> {
+) -> Result<BTreeMap<H256, H256>, SyncError> {
     use crate::utils::AccountsWithStorage;
     use rayon::iter::IntoParallelIterator;
 
+    let mut storage_roots: BTreeMap<H256, H256> = BTreeMap::new();
     let snapshot_files = async_fs::read_dir_paths(account_storages_snapshots_dir).await?;
     for snapshot_path in snapshot_files {
         info!("Reading account storage file from {snapshot_path:?}");
@@ -1102,32 +1403,43 @@ async fn insert_storages(
         .await??;
         info!("Writing to db");
 
-        store
-            .write_storage_trie_nodes_batch(storage_trie_node_changes)
-            .await?;
+        // Accounts can be split across snapshot files and `compute_storage_roots`
+        // resumes from what is already on disk, so the last root computed for an
+        // account is the one covering all of its slots.
+        let mut node_changes = Vec::with_capacity(storage_trie_node_changes.len());
+        for (account_hash, storage_root, changes) in storage_trie_node_changes {
+            storage_roots.insert(account_hash, storage_root);
+            node_changes.push((account_hash, changes));
+        }
+
+        store.write_storage_trie_nodes_batch(node_changes).await?;
     }
 
     async_fs::remove_dir_all(account_storages_snapshots_dir).await?;
 
-    Ok(())
+    Ok(storage_roots)
 }
 
 // ============================================================================
 // Account and Storage Insertion (rocksdb)
 // ============================================================================
 
+/// Ingest the downloaded account leaves into the temp DB and collect what the
+/// storage and bytecode downloads need from them: every code hash, and the
+/// served storage root of every contract account.
+///
+/// The account trie is not built here. It is built by [`insert_accounts`] once
+/// the storage tries exist, so each leaf can carry the root its storage
+/// actually hashes to rather than the one served with it.
 #[cfg(feature = "rocksdb")]
-async fn insert_accounts(
-    store: Store,
+async fn scan_accounts(
     storage_accounts: &mut AccountStorageRoots,
     account_state_snapshots_dir: &Path,
     datadir: &Path,
     code_hash_collector: &mut CodeHashCollector,
-) -> Result<(H256, BTreeSet<H256>), SyncError> {
+) -> Result<BTreeSet<H256>, SyncError> {
     use crate::utils::get_rocksdb_temp_accounts_dir;
-    use ethrex_trie::trie_sorted::trie_from_sorted_accounts_wrap;
 
-    let trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
     let mut db_options = rocksdb::Options::default();
     db_options.create_if_missing(true);
     let db = rocksdb::DB::open(&db_options, get_rocksdb_temp_accounts_dir(datadir))
@@ -1140,59 +1452,106 @@ async fn insert_accounts(
     ingest_opts.set_move_files(true);
     db.ingest_external_file_opts(&ingest_opts, file_paths)
         .map_err(|err| SyncError::RocksDBError(err.into_string()))?;
-    let iter = db.full_iterator(rocksdb::IteratorMode::Start);
-    for account in iter {
-        let account = account.map_err(|err| SyncError::RocksDBError(err.into_string()))?;
-        let account_state = AccountState::decode(&account.1).map_err(SyncError::Rlp)?;
+
+    for account in db.full_iterator(rocksdb::IteratorMode::Start) {
+        let (account_hash, encoded) =
+            account.map_err(|err| SyncError::RocksDBError(err.into_string()))?;
+        let account_state = AccountState::decode(&encoded).map_err(SyncError::Rlp)?;
         if account_state.code_hash != *EMPTY_KECCAK_HASH {
             code_hash_collector.add(account_state.code_hash);
             code_hash_collector.flush_if_needed().await?;
         }
+        if account_state.storage_root != *EMPTY_TRIE_HASH {
+            storage_accounts.accounts_with_storage_root.insert(
+                H256::from_slice(&account_hash),
+                (Some(account_state.storage_root), Vec::new()),
+            );
+        }
     }
 
+    drop(db); // close db before it is reopened for the trie build
+
+    async_fs::remove_dir_all(account_state_snapshots_dir).await?;
+
+    Ok(BTreeSet::from_iter(
+        storage_accounts.accounts_with_storage_root.keys().copied(),
+    ))
+}
+
+/// Build the account trie from the ingested leaves, writing each contract
+/// account's reconstructed storage root in place of the served one.
+///
+/// The served roots come from whichever pivot was current when that account's
+/// range was answered, so they disagree with the slots on disk as soon as the
+/// pivot moves. `storage_roots` holds what each storage trie actually hashes
+/// to; accounts absent from it hold no storage and are written through
+/// unchanged.
+#[cfg(feature = "rocksdb")]
+async fn insert_accounts(
+    store: Store,
+    storage_roots: &BTreeMap<H256, H256>,
+    _: &Path,
+    datadir: &Path,
+) -> Result<H256, SyncError> {
+    use crate::utils::get_rocksdb_temp_accounts_dir;
+    use ethrex_trie::trie_sorted::trie_from_sorted_accounts_wrap;
+
+    let trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
+    let mut db_options = rocksdb::Options::default();
+    db_options.create_if_missing(true);
+    let db = rocksdb::DB::open(&db_options, get_rocksdb_temp_accounts_dir(datadir))
+        .map_err(|e| SyncError::AccountTempDBDirNotFound(e.to_string()))?;
+
     let iter = db.full_iterator(rocksdb::IteratorMode::Start);
-    let compute_state_root = trie_from_sorted_accounts_wrap(
+    let computed_state_root = trie_from_sorted_accounts_wrap(
         trie.db(),
         &mut iter
             .map(|k| k.expect("We shouldn't have a rocksdb error here")) // TODO: remove unwrap
-            .inspect(|(k, v)| {
+            .map(|(k, v)| {
                 METRICS
                     .account_tries_inserted
                     .fetch_add(1, Ordering::Relaxed);
-                let account_state = AccountState::decode(v).expect("We should have accounts here");
-                if account_state.storage_root != *EMPTY_TRIE_HASH {
-                    storage_accounts.accounts_with_storage_root.insert(
-                        H256::from_slice(k),
-                        (Some(account_state.storage_root), Vec::new()),
-                    );
+                let account_hash = H256::from_slice(&k);
+                match storage_roots.get(&account_hash) {
+                    Some(root) => {
+                        let mut account_state =
+                            AccountState::decode(&v).expect("We should have accounts here");
+                        account_state.storage_root = *root;
+                        (account_hash, account_state.encode_to_vec())
+                    }
+                    None => (account_hash, v.to_vec()),
                 }
-            })
-            .map(|(k, v)| (H256::from_slice(&k), v.to_vec())),
+            }),
     )
     .map_err(SyncError::TrieGenerationError)?;
 
     drop(db); // close db before removing directory
 
-    async_fs::remove_dir_all(account_state_snapshots_dir).await?;
     async_fs::remove_dir_all(&get_rocksdb_temp_accounts_dir(datadir)).await?;
 
-    let accounts_with_storage =
-        BTreeSet::from_iter(storage_accounts.accounts_with_storage_root.keys().copied());
-    Ok((compute_state_root, accounts_with_storage))
+    Ok(computed_state_root)
 }
 
+/// Build every account's storage trie from the downloaded slots and return the
+/// root each one hashes to.
+///
+/// The roots are what the account leaves are written with
+/// (see [`insert_accounts`]): the served roots come from a spread of pivots and
+/// only the reconstructed ones are consistent with the slots actually held.
 #[cfg(feature = "rocksdb")]
 async fn insert_storages(
     store: Store,
     accounts_with_storage: BTreeSet<H256>,
     account_storages_snapshots_dir: &Path,
     datadir: &Path,
-) -> Result<(), SyncError> {
+) -> Result<BTreeMap<H256, H256>, SyncError> {
     use crate::utils::get_rocksdb_temp_storage_dir;
     use crossbeam::channel::{bounded, unbounded};
     use ethrex_trie::{
         Nibbles, Node, ThreadPool,
-        trie_sorted::{BUFFER_COUNT, SIZE_TO_WRITE_DB, trie_from_sorted_accounts},
+        trie_sorted::{
+            BUFFER_COUNT, SIZE_TO_WRITE_DB, TrieGenerationError, trie_from_sorted_accounts,
+        },
     };
     use std::thread::scope;
 
@@ -1256,7 +1615,9 @@ async fn insert_storages(
         })
         .collect::<Vec<(H256, Trie)>>();
 
-    let (sender, receiver) = unbounded::<()>();
+    let (sender, receiver) = unbounded::<(H256, Result<H256, TrieGenerationError>)>();
+    let mut storage_roots: BTreeMap<H256, H256> = BTreeMap::new();
+    let mut failed: Vec<(H256, TrieGenerationError)> = Vec::new();
     let mut counter = 0;
     let thread_count = std::thread::available_parallelism()
         .map(|num| num.into())
@@ -1274,7 +1635,14 @@ async fn insert_storages(
             let buffer_sender = buffer_sender.clone();
             let buffer_receiver = buffer_receiver.clone();
             if counter >= thread_count - 1 {
-                let _ = receiver.recv();
+                if let Ok((account_hash, result)) = receiver.recv() {
+                    match result {
+                        Ok(root) => {
+                            storage_roots.insert(account_hash, root);
+                        }
+                        Err(err) => failed.push((account_hash, err)),
+                    }
+                }
                 counter -= 1;
             }
             counter += 1;
@@ -1289,24 +1657,41 @@ async fn insert_storages(
                     limit: *account_hash,
                 };
 
-                let _ = trie_from_sorted_accounts(
+                let result = trie_from_sorted_accounts(
                     trie.db(),
                     &mut iter.inspect(|_| METRICS.storage_leaves_inserted.inc()),
                     pool_clone,
                     buffer_sender,
                     buffer_receiver,
                 )
-                .inspect_err(|err: &ethrex_trie::trie_sorted::TrieGenerationError| {
+                .inspect_err(|err: &TrieGenerationError| {
                     error!(
                         "we found an error while inserting the storage trie for the account {account_hash:x}, err {err}"
                     );
-                })
-                .map_err(SyncError::TrieGenerationError);
-                let _ = sender.send(());
+                });
+                let _ = sender.send((*account_hash, result));
             });
             pool.execute(task);
         }
     });
+
+    // Drain the roots produced after the last backpressure wait. Every task has
+    // finished by now, so nothing is still in flight.
+    for (account_hash, result) in receiver.try_iter() {
+        match result {
+            Ok(root) => {
+                storage_roots.insert(account_hash, root);
+            }
+            Err(err) => failed.push((account_hash, err)),
+        }
+    }
+    if let Some((account_hash, err)) = failed.pop() {
+        error!(
+            "storage trie generation failed for {} accounts, first: {account_hash:x}",
+            failed.len() + 1
+        );
+        return Err(SyncError::TrieGenerationError(err));
+    }
 
     // close db before removing directory
     drop(snapshot);
@@ -1315,7 +1700,7 @@ async fn insert_storages(
     async_fs::remove_dir_all(account_storages_snapshots_dir).await?;
     async_fs::remove_dir_all(&get_rocksdb_temp_storage_dir(datadir)).await?;
 
-    Ok(())
+    Ok(storage_roots)
 }
 
 #[cfg(test)]

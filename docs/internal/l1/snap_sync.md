@@ -1,1 +1,0 @@
-# Snap sync internals

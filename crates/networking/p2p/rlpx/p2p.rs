@@ -20,7 +20,51 @@ pub const SUPPORTED_ETH_CAPABILITIES: [Capability; 4] = [
     Capability::eth(70),
     Capability::eth(71),
 ];
-pub const SUPPORTED_SNAP_CAPABILITIES: [Capability; 1] = [Capability::snap(1)];
+pub const SUPPORTED_SNAP_CAPABILITIES: [Capability; 2] = [Capability::snap(1), Capability::snap(2)];
+
+/// Peers usable for `GetTrieNodes`-based healing. snap/2 (EIP-8189) removes
+/// `GetTrieNodes` / `TrieNodes`, so trie-node healing must restrict peer
+/// selection to snap/1 capability.
+pub const SNAP1_ONLY_CAPABILITIES: [Capability; 1] = [Capability::snap(1)];
+
+/// The snap versions to advertise on a new connection.
+///
+/// EIP-8189 ("Backwards Compatibility") tells a node that is synchronizing data to use a
+/// single snap version for state sync, and to serve both only once synchronization is
+/// complete. snap/2 removes `GetTrieNodes`, so negotiating it costs a node running a
+/// snap/1 state sync the only trie reconciliation it has.
+///
+/// The gate is that dependency, not whether the chain is at the head: a node that is not
+/// state-syncing never asks for trie nodes, and neither does one on the snap/2 path,
+/// which reconciles by applying access lists instead. Gating on "caught up" would leave
+/// a node that imported its chain by other means, which is how the hive devp2p suite
+/// runs one, permanently unable to negotiate snap/2.
+pub const fn advertised_snap_capabilities(needs_trie_nodes: bool) -> &'static [Capability] {
+    if needs_trie_nodes {
+        &SNAP1_ONLY_CAPABILITIES
+    } else {
+        &SUPPORTED_SNAP_CAPABILITIES
+    }
+}
+
+#[cfg(test)]
+mod capability_tests {
+    use super::*;
+
+    #[test]
+    fn a_node_that_still_needs_trie_nodes_withholds_snap2() {
+        let advertised = advertised_snap_capabilities(true);
+        assert!(advertised.contains(&Capability::snap(1)));
+        assert!(!advertised.contains(&Capability::snap(2)));
+    }
+
+    #[test]
+    fn a_node_with_no_trie_node_dependency_offers_both_versions() {
+        let advertised = advertised_snap_capabilities(false);
+        assert!(advertised.contains(&Capability::snap(1)));
+        assert!(advertised.contains(&Capability::snap(2)));
+    }
+}
 
 /// The version of the base P2P protocol we support.
 /// This is sent at the start of the Hello message instead of the capabilities list.

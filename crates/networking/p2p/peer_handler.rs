@@ -16,6 +16,7 @@ use crate::{
         },
         message::Message as RLPxMessage,
         p2p::{Capability, SUPPORTED_ETH_CAPABILITIES},
+        snap::{Snap2BlockAccessLists, Snap2GetBlockAccessLists},
     },
 };
 use ethrex_common::{
@@ -33,9 +34,9 @@ use tracing::{debug, error, trace, warn};
 
 // Re-export constants from snap::constants for backward compatibility
 pub use crate::snap::constants::{
-    HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, MAX_HEADER_CHUNK, MAX_RESPONSE_BYTES,
-    PEER_REPLY_TIMEOUT, PEER_SELECT_RETRY_ATTEMPTS, RANGE_FILE_CHUNK_SIZE, REQUEST_RETRY_ATTEMPTS,
-    SNAP_LIMIT,
+    BAL_RESPONSE_SOFT_CAP_BYTES, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, MAX_HEADER_CHUNK,
+    MAX_RESPONSE_BYTES, PEER_REPLY_TIMEOUT, PEER_SELECT_RETRY_ATTEMPTS, RANGE_FILE_CHUNK_SIZE,
+    REQUEST_RETRY_ATTEMPTS, SNAP_LIMIT,
 };
 
 // Re-export snap client types for backward compatibility
@@ -663,6 +664,64 @@ impl PeerHandler {
                 }
             }
         }
+    }
+
+    /// Request block access lists via snap/2 (`GetBlockAccessLists`/`BlockAccessLists`).
+    ///
+    /// Tries up to `REQUEST_RETRY_ATTEMPTS` distinct snap/2 peers, skipping any that
+    /// already failed this call. EIP-8189 ("Security Considerations") asks implementations
+    /// to deprioritize unreliable peers rather than let one determine the outcome, so a
+    /// timeout or a malformed reply moves on to another peer instead of ending the replay.
+    ///
+    /// Returns `None` only once no untried snap/2 peer remains. On success returns
+    /// `(bals, peer_id)` identifying the responding peer, so the caller can attribute a
+    /// later validation failure to whoever served the data.
+    pub async fn request_snap2_bals(
+        &mut self,
+        block_hashes: &[H256],
+    ) -> Result<Option<(Vec<Option<BlockAccessList>>, H256)>, PeerHandlerError> {
+        let mut failed_peers: Vec<H256> = Vec::new();
+
+        for _ in 0..REQUEST_RETRY_ATTEMPTS {
+            let Some((peer_id, mut connection, permit)) = self
+                .peer_table
+                .get_best_peer_excluding(vec![Capability::snap(2)], failed_peers.clone())
+                .await?
+            else {
+                break;
+            };
+
+            // A fresh id per attempt: reusing one would let a late reply from an
+            // abandoned peer satisfy the request meant for its replacement.
+            let request_id: u64 = rand::random();
+            let request = RLPxMessage::Snap2GetBlockAccessLists(Snap2GetBlockAccessLists {
+                id: request_id,
+                block_hashes: block_hashes.to_vec(),
+                response_bytes: BAL_RESPONSE_SOFT_CAP_BYTES,
+            });
+
+            let response = connection
+                .outgoing_request(request, PEER_REPLY_TIMEOUT)
+                .await;
+            drop(permit);
+
+            match response {
+                Ok(RLPxMessage::Snap2BlockAccessLists(Snap2BlockAccessLists { id, bals }))
+                    if id == request_id =>
+                {
+                    self.peer_table.record_success(peer_id)?;
+                    return Ok(Some((bals, peer_id)));
+                }
+                _ => {
+                    debug!("didn't receive snap/2 BALs from peer {peer_id}, trying another");
+                    self.peer_table.record_failure(peer_id)?;
+                    failed_peers.push(peer_id);
+                }
+            }
+        }
+
+        warn!("[SYNCING] no snap/2 peer served block access lists");
+        Ok(None)
     }
 
     /// Returns diagnostic snapshots for all connected peers (scores, requests, eligibility).

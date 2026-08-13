@@ -4,9 +4,11 @@
 //! between full sync mode (all blocks executed) and snap sync mode (state fetched
 //! via snap protocol).
 
+pub mod bal_healing;
 mod code_collector;
 mod full;
 mod healing;
+pub mod snap2;
 mod snap_sync;
 
 /// Test-only re-export of the full-sync resume-point predicate so integration tests can
@@ -76,6 +78,34 @@ pub struct SyncDiagnostics {
     pub phase_progress: std::collections::HashMap<String, u64>,
     pub recent_pivot_changes: std::collections::VecDeque<PivotChangeEvent>,
     pub recent_errors: std::collections::VecDeque<SyncErrorEvent>,
+    /// Number of snap/2 `GetBlockAccessLists` requests sent.
+    pub snap2_bal_requests_sent: u64,
+    /// Number of blocks whose BAL was successfully applied.
+    pub snap2_blocks_replayed: u64,
+    /// Number of BAL validation failures (hash mismatch or state-root mismatch).
+    pub snap2_validation_failures: u64,
+    /// Number of requested BALs a peer reported as unavailable (`0x80` sentinel).
+    pub snap2_bals_unavailable: u64,
+    /// Number of snap/2 peer-level failures.
+    pub snap2_peer_failures: u64,
+    /// Range responses that verified and contributed leaves.
+    pub snap2_ranges_served: u64,
+    /// Range responses that could not be verified, so the range is re-requested.
+    pub snap2_ranges_unverified: u64,
+    /// Contracts a storage response did not reach, re-queued for another round.
+    /// A rate close to the request size means responses are being truncated and
+    /// the batch is mostly being re-requested rather than drained.
+    pub snap2_storage_requeued: u64,
+    /// Contracts served only in part, still owed slots from a later request.
+    pub snap2_storage_partial: u64,
+    /// Pivot whose state root the snap/2 reconstruction reproduced, once it has.
+    ///
+    /// The phase fields describe the sync only while it is running, and a state
+    /// small enough to download between two polls leaves no trace in them at
+    /// all. This is the terminal fact — the sync took the snap/2 path and the
+    /// state it built hashes to the pivot's root — so it is latched rather than
+    /// sampled.
+    pub snap2_reconstructed_block: Option<u64>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -224,13 +254,14 @@ impl Syncer {
             // response is intentionally discarded; on the snap path the loop
             // re-fetches headers, which keeps `sync_cycle_snap`'s entry simple.
             if let Some(sync_head_number) = probe_sync_head_number(&mut self.peers, sync_head).await
-                && sync_head_number < MIN_FULL_BLOCKS
+                && sync_head_number < *MIN_FULL_BLOCKS
             {
                 info!(
                     sync_head_number,
-                    "Sync head below MIN_FULL_BLOCKS ({MIN_FULL_BLOCKS}), using full sync"
+                    "Sync head below MIN_FULL_BLOCKS ({}), using full sync", *MIN_FULL_BLOCKS
                 );
                 self.snap_enabled.store(false, Ordering::Relaxed);
+                self.blockchain.set_state_sync_needs_trie_nodes(false);
                 // Clear any stale snap checkpoint so the manager loop in
                 // `sync_manager.rs` doesn't keep re-entering this branch
                 // after the full sync completes. Mirrors the cleanup done
@@ -393,6 +424,10 @@ pub enum SyncError {
     StorageTempDBDirNotFound(String),
     #[error("RocksDB Error: {0}")]
     RocksDBError(String),
+    #[error("Flat state lock poisoned")]
+    FlatStatePoisoned,
+    #[error("snap/2 catch-up stalled at block {0}: {1}")]
+    Snap2CatchUpStalled(u64, String),
     #[error("Bytecode file error")]
     BytecodeFileError,
     #[error("Error in Peer Table: {0}")]
@@ -401,6 +436,30 @@ pub enum SyncError {
     MissingFullsyncBatch,
     #[error("Snap error: {0}")]
     Snap(#[from] crate::snap::SnapError),
+    /// The state root produced by BAL replay differs from the block header's state root.
+    /// A peer switch may recover this (the peer sent a bad BAL).
+    #[error("State root mismatch: expected {0:?}, got {1:?}")]
+    StateRootMismatch(H256, H256),
+    /// A block header required for BAL replay could not be found in local storage.
+    /// This indicates a deeper invariant violation (DB inconsistency).
+    #[error("Missing header for BAL replay: {0:?}")]
+    MissingHeaderForBal(H256),
+    /// The canonical chain has no block hash recorded at a number we just walked
+    /// through, while loading the BAL-replay header range. A real DB inconsistency;
+    /// reporting the number (not a zero hash) is what makes it debuggable.
+    #[error("Missing canonical block at number {0} during BAL replay")]
+    MissingCanonicalBlock(u64),
+    /// During BAL replay, a block's `parent_hash` did not match the expected
+    /// hash of the previously-applied block. The local chain view differs from
+    /// the peer's. Not recoverable by retrying with the same peer — caller must
+    /// fall back to snap/1 healing (which is what `snap_sync.rs` does).
+    #[error(
+        "Chain reorg detected during BAL replay: actual parent {actual_parent:?} != expected {expected_parent:?}"
+    )]
+    ChainReorgDetected {
+        expected_parent: H256,
+        actual_parent: H256,
+    },
 }
 
 impl SyncError {
@@ -426,11 +485,28 @@ impl SyncError {
             | SyncError::AccountTempDBDirNotFound(_)
             | SyncError::StorageTempDBDirNotFound(_)
             | SyncError::RocksDBError(_)
+            | SyncError::FlatStatePoisoned
             | SyncError::BytecodeFileError
             | SyncError::NoLatestCanonical
             | SyncError::MissingFullsyncBatch
             | SyncError::Snap(_)
             | SyncError::FileSystem(_) => false,
+            // A peer switch may resolve this (the BAL was wrong).
+            SyncError::StateRootMismatch(_, _) => true,
+            // A header the catch-up span needs is not stored, which means the
+            // header download that came with the new pivot was short. Retrying
+            // the cycle re-downloads it; the snap/2 path discards its partial
+            // state first, so the retry starts clean.
+            SyncError::MissingHeaderForBal(_) => true,
+            // DB inconsistency — not recoverable by switching peers.
+            SyncError::MissingCanonicalBlock(_) => false,
+            // caps/snap.md gives one remedy for a catch-up that cannot finish,
+            // whether the access lists ran out or the chain moved under it:
+            // "the syncing node **must** discard partial state and restart
+            // synchronization". The snap/2 path discards before returning
+            // these, so retrying the cycle is the restart.
+            SyncError::Snap2CatchUpStalled(_, _) => true,
+            SyncError::ChainReorgDetected { .. } => true,
             // A timed-out actor request is transient (mailbox pressure or a
             // slow handler — requests use spawned-concurrency's 5s default
             // timeout); a stopped actor means p2p is shutting down and must

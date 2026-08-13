@@ -32,6 +32,7 @@
   - [Networking](./l1/fundamentals/networking.md)
   - [Sync modes](./l1/fundamentals/sync_modes.md)
   - [Snap sync internals](./l1/fundamentals/snap_sync.md)
+    - [snap/2 (EIP-8189) internals](./internal/l1/snap_v2.md)
     - [Can an account disappear from Ethereum's state trie?](./internal/l1/delete_accounts.md)
     - [Future Rewrite Concerns](./l1/fundamentals/snap_sync_concerns.md)
     - [Sorted Trie Insertion](./internal/l1/sorted_trie_insert.md)
