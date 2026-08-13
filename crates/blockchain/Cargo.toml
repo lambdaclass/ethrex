@@ -19,15 +19,9 @@ ethrex-trie.workspace = true
 ethrex-vm.workspace = true
 ethrex-metrics = { path = "./metrics", version = "24.0.0", default-features = false }
 
-serde = { workspace = true, optional = true }
-serde_json = { workspace = true, optional = true }
-url = { workspace = true, optional = true }
-reqwest = { workspace = true, optional = true }
-spawned-concurrency = { workspace = true, optional = true }
 ethrex-guest-program = { workspace = true, default-features = false }
 libssz = { workspace = true }
 libssz-merkle = { workspace = true }
-ethrex-prover = { workspace = true, optional = true }
 thiserror.workspace = true
 tracing.workspace = true
 bytes.workspace = true

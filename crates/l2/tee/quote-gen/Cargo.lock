@@ -1126,7 +1126,6 @@ dependencies = [
  "k256",
  "lambdaworks-crypto",
  "rkyv",
- "secp256k1",
  "serde 1.0.228",
  "serde_with",
  "thiserror 2.0.18",
