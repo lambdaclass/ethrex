@@ -4,6 +4,10 @@ FIXTURES_FILE := ../.fixtures_url
 STATETEST_ARTIFACT := test.tar.gz
 VECTORS_DIR := vectors
 
+# Retrying downloader: release downloads fail transiently often enough to be the
+# top cause of red CI. See the script header for what each guard catches.
+DOWNLOAD := ../../../.github/scripts/download.sh
+
 TMP_DIR := tmp
 TESTS_REPO := $(TMP_DIR)/ethereum-tests
 
@@ -19,7 +23,7 @@ AMSTERDAM_URL := $(shell cat $(AMSTERDAM_FIXTURES_FILE))
 
 $(STATETEST_ARTIFACT): $(FIXTURES_FILE)
 	$(MAKE) clean-evm-ef-tests
-	curl -L -o $(STATETEST_ARTIFACT) $(STATETEST_URL)
+	$(DOWNLOAD) $(STATETEST_URL) $(STATETEST_ARTIFACT)
 
 $(VECTORS_DIR): $(STATETEST_ARTIFACT)
 	$(MAKE) setup-test-dirs
@@ -36,14 +40,13 @@ AMSTERDAM_STAMP := $(VECTORS_DIR)/state_tests/.amsterdam_overlay
 # that merely looks newer than the URL file would be re-extracted as if it were the
 # requested release. Clearing the subtree before extracting also drops fixtures that
 # upstream renamed or removed, which would otherwise survive and run against the
-# current client. The fetch lands in a temporary file so a failed download leaves
-# the previous bundle and stamp untouched instead of truncating them.
+# current client. $(DOWNLOAD) fetches through a temporary file, so a failed download
+# leaves the previous bundle and stamp untouched instead of truncating them.
 amsterdam-vectors: | $(VECTORS_DIR) ## 📥 Overlay Amsterdam fixtures, re-fetching when the pinned release changed
 	@if [ "$$(cat $(AMSTERDAM_STAMP) 2>/dev/null)" = "$(AMSTERDAM_URL)" ] && [ -d $(AMSTERDAM_SUBTREE) ]; then \
 		echo "Amsterdam fixtures already overlaid from $(AMSTERDAM_URL)"; \
 	else \
-		curl -fL -o $(AMSTERDAM_ARTIFACT).part $(AMSTERDAM_URL) && \
-		mv $(AMSTERDAM_ARTIFACT).part $(AMSTERDAM_ARTIFACT) && \
+		$(DOWNLOAD) $(AMSTERDAM_URL) $(AMSTERDAM_ARTIFACT) && \
 		rm -rf $(AMSTERDAM_SUBTREE) && \
 		tar -xzf $(AMSTERDAM_ARTIFACT) --strip-components=2 -C $(VECTORS_DIR)/state_tests \
 			fixtures/state_tests/for_amsterdam && \

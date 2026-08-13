@@ -289,7 +289,7 @@ Block building options:
           Block extra data message.
           
           [env: ETHREX_BUILDER_EXTRA_DATA=]
-          [default: "ethrex 23.0.0"]
+          [default: "ethrex 24.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.
@@ -503,7 +503,7 @@ Block building options:
           Block extra data message.
 
           [env: ETHREX_BUILDER_EXTRA_DATA=]
-          [default: "ethrex 23.0.0"]
+          [default: "ethrex 24.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.

@@ -2,6 +2,11 @@
 
 VECTORS_ROOT := vectors
 FIXTURES_FILE := ../.fixtures_url
+
+# Retrying downloader: release downloads fail transiently often enough to be the
+# top cause of red CI. See the script header for what each guard catches.
+DOWNLOAD := ../../../.github/scripts/download.sh
+
 SPECTEST_ARTIFACT := tests.tar.gz
 SPECTEST_VECTORS_DIR := $(VECTORS_ROOT)/eest
 SPECTEST_URL := $(shell cat $(FIXTURES_FILE))
@@ -39,7 +44,7 @@ VECTORS_TARGETS := $(SPECTEST_VECTORS_DIR) $(LEGACYTEST_VECTORS_DIR)
 
 $(SPECTEST_ARTIFACT): $(FIXTURES_FILE)
 	$(MAKE) clean-vectors
-	curl -L -o $(SPECTEST_ARTIFACT) $(SPECTEST_URL)
+	$(DOWNLOAD) $(SPECTEST_URL) $(SPECTEST_ARTIFACT)
 
 $(SPECTEST_VECTORS_DIR): $(SPECTEST_ARTIFACT)
 	rm -rf $(SPECTEST_VECTORS_DIR)
@@ -47,7 +52,7 @@ $(SPECTEST_VECTORS_DIR): $(SPECTEST_ARTIFACT)
 	tar -xzf $(SPECTEST_ARTIFACT) --strip-components=2 -C $(SPECTEST_VECTORS_DIR) fixtures/blockchain_tests
 
 $(LEGACYTEST_ARTIFACT):
-	curl -L -o $(LEGACYTEST_ARTIFACT) $(LEGACYTEST_URL)
+	$(DOWNLOAD) $(LEGACYTEST_URL) $(LEGACYTEST_ARTIFACT)
 
 $(LEGACYTEST_VECTORS_DIR): $(LEGACYTEST_ARTIFACT)
 	rm -rf $(LEGACYTEST_VECTORS_DIR)
@@ -62,8 +67,8 @@ $(LEGACYTEST_VECTORS_DIR): $(LEGACYTEST_ARTIFACT)
 # that merely looks newer than the URL file would be re-extracted as if it were the
 # requested release. Clearing the subtrees before extracting also drops fixtures that
 # upstream renamed or removed, which would otherwise survive and run against the
-# current client. The fetch lands in a temporary file so a failed download leaves
-# the previous bundle and stamp untouched instead of truncating them.
+# current client. $(DOWNLOAD) fetches through a temporary file, so a failed download
+# leaves the previous bundle and stamp untouched instead of truncating them.
 amsterdam-vectors: | $(SPECTEST_VECTORS_DIR) ## 📥 Overlay Amsterdam fixtures, re-fetching when the pinned release changed
 	@have=$$(cat $(AMSTERDAM_STAMP) 2>/dev/null); \
 	for subtree in $(AMSTERDAM_SUBTREES); do \
@@ -72,8 +77,7 @@ amsterdam-vectors: | $(SPECTEST_VECTORS_DIR) ## 📥 Overlay Amsterdam fixtures,
 	if [ "$$have" = "$(AMSTERDAM_URL)" ]; then \
 		echo "Amsterdam fixtures already overlaid from $(AMSTERDAM_URL)"; \
 	else \
-		curl -fL -o $(AMSTERDAM_ARTIFACT).part $(AMSTERDAM_URL) && \
-		mv $(AMSTERDAM_ARTIFACT).part $(AMSTERDAM_ARTIFACT) && \
+		$(DOWNLOAD) $(AMSTERDAM_URL) $(AMSTERDAM_ARTIFACT) && \
 		rm -rf $(addprefix $(SPECTEST_VECTORS_DIR)/,$(AMSTERDAM_SUBTREES)) && \
 		tar -xzf $(AMSTERDAM_ARTIFACT) --strip-components=2 -C $(SPECTEST_VECTORS_DIR) \
 			$(addprefix fixtures/blockchain_tests/,$(AMSTERDAM_SUBTREES)) && \
@@ -81,7 +85,7 @@ amsterdam-vectors: | $(SPECTEST_VECTORS_DIR) ## 📥 Overlay Amsterdam fixtures,
 	fi
 
 $(ZKEVM_ARTIFACT): $(ZKEVM_FIXTURES_FILE)
-	curl -L -o $(ZKEVM_ARTIFACT) $(ZKEVM_URL)
+	$(DOWNLOAD) $(ZKEVM_URL) $(ZKEVM_ARTIFACT)
 
 $(ZKEVM_VECTORS_DIR): $(ZKEVM_ARTIFACT)
 	rm -rf $(ZKEVM_VECTORS_DIR)
