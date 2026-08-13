@@ -88,6 +88,61 @@ impl Blockchain {
         Ok(call_traces)
     }
 
+    /// Re-executes the given transaction with tracing disabled (noopTracer).
+    /// Returns once the tx finishes; nothing is recorded. May need to re-execute ancestor
+    /// blocks to rebuild the parent state, up to the amount given by `reexec`.
+    pub async fn trace_transaction_noop(
+        &self,
+        tx_hash: H256,
+        reexec: u32,
+        timeout: Duration,
+    ) -> Result<(), ChainError> {
+        let Some((_, block_hash, tx_index)) =
+            self.storage.get_transaction_location(tx_hash).await?
+        else {
+            return Err(ChainError::Custom("Transaction not Found".to_string()));
+        };
+        let tx_index = tx_index as usize;
+        let Some(block) = self.storage.get_block_by_hash(block_hash).await? else {
+            return Err(ChainError::Custom("Block not Found".to_string()));
+        };
+        let mut vm = self
+            .rebuild_parent_state(block.header.parent_hash, reexec)
+            .await?;
+        vm.rerun_block(&block, Some(tx_index))?;
+        timeout_trace_operation(timeout, move || vm.trace_tx_noop(&block, tx_index)).await
+    }
+
+    /// Re-executes every transaction in `block` with tracing disabled (noopTracer)
+    /// and returns the transaction hashes in order, so callers can emit a uniform
+    /// empty result per tx. Runs the whole block in a single pass (no per-tx VM
+    /// reconstruction), which is both simpler and a cleaner benchmark for the
+    /// noop path than tracing each tx individually.
+    /// May need to re-execute ancestor blocks to rebuild the parent state, up to the amount given by `reexec`.
+    pub async fn trace_block_noop(
+        &self,
+        block: Block,
+        reexec: u32,
+        timeout: Duration,
+    ) -> Result<Vec<H256>, ChainError> {
+        let mut vm = self
+            .rebuild_parent_state(block.header.parent_hash, reexec)
+            .await?;
+        let block = Arc::new(block);
+        let block_for_exec = block.clone();
+        // `None` runs every tx (and withdrawals) in one pass, no tracer attached.
+        timeout_trace_operation(timeout, move || {
+            vm.rerun_block(block_for_exec.as_ref(), None)
+        })
+        .await?;
+        Ok(block
+            .body
+            .transactions
+            .iter()
+            .map(|tx| tx.hash(&NativeCrypto))
+            .collect())
+    }
+
     /// Outputs the prestate trace for the given transaction.
     /// If `diff_mode` is true, returns both pre and post state; otherwise returns only pre state.
     /// `include_empty` keeps default-state entries in pre (only valid when `diff_mode` is false).
