@@ -8,11 +8,10 @@ use crate::{
         server::{Discv5Message, Discv5State, update_local_ip},
     },
     peer_table::{DiscoveryProtocol, PeerTable, PeerTableServerProtocol as _},
-    types::{INITIAL_ENR_SEQ, Node, NodeRecord},
+    types::{Node, NodeRecord},
 };
 use bytes::BytesMut;
 use ethrex_common::utils::keccak;
-use ethrex_storage::Store;
 use futures::StreamExt;
 use secp256k1::SecretKey;
 use spawned_concurrency::{
@@ -105,9 +104,21 @@ impl std::fmt::Debug for DiscoveryServer {
 
 #[actor(protocol = DiscoveryServerProtocol)]
 impl DiscoveryServer {
+    /// Starts the discovery actor, advertising `local_node_record` as this
+    /// node's ENR.
+    ///
+    /// The record is supplied rather than derived from `local_node`, because
+    /// what a node publishes is the caller's to decide: which entries it
+    /// carries beyond the addresses, and what `seq` it resumes from. Deriving
+    /// it here also forced a panic on a failure the caller is better placed to
+    /// report.
+    ///
+    /// This was the last reader of the `Store` `spawn` used to take: with the
+    /// fork-id screening moved behind `PeerFilter`, discovery no longer touches
+    /// our chain at all.
     pub async fn spawn(
-        storage: Store,
         local_node: Node,
+        local_node_record: NodeRecord,
         signer: SecretKey,
         udp_socket: Arc<UdpSocket>,
         peer_table: PeerTable,
@@ -115,14 +126,6 @@ impl DiscoveryServer {
         config: DiscoveryConfig,
     ) -> Result<(), DiscoveryServerError> {
         debug!("Starting discovery server");
-
-        let mut local_node_record = NodeRecord::from_node(&local_node, INITIAL_ENR_SEQ, &signer)
-            .expect("Failed to create local node record");
-        if let Ok(fork_id) = storage.get_fork_id().await {
-            local_node_record
-                .set_fork_id(fork_id, &signer)
-                .expect("Failed to set fork_id on local node record");
-        }
 
         let discv4 = if config.discv4_enabled {
             info!(
