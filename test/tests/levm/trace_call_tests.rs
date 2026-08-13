@@ -482,3 +482,42 @@ fn trace_call_calls_omits_empty_fields() {
         assert!(obj.contains_key(present), "{present} must be present");
     }
 }
+
+/// Regression: geth's callTracer drops the logs of any frame that reverted, including
+/// the top-level one. The sweep used to seed `parent_failed` as `false`, and the top
+/// frame's own `error` is not yet set when it runs, so a transaction reverting at the
+/// top level kept its logs.
+#[test]
+fn trace_call_calls_drops_logs_when_the_top_frame_reverts() {
+    // PUSH1 0 PUSH1 0 LOG0; PUSH1 0 PUSH1 0 REVERT
+    let bytecode = vec![
+        0x60, 0x00, 0x60, 0x00, 0xa0, // LOG0
+        0x60, 0x00, 0x60, 0x00, 0xfd, // REVERT
+    ];
+    let mut db = db_with_contract(bytecode);
+    let header = default_header();
+    let tx = call_tx();
+
+    let trace = LEVM::trace_call_calls(
+        &mut db,
+        &header,
+        &tx,
+        false,
+        /* with_log */ true,
+        0,
+        VMType::L1,
+        &NativeCrypto,
+    )
+    .expect("trace_call_calls should succeed");
+
+    let frame = &trace[0];
+    assert!(
+        frame.error.is_some(),
+        "top frame must be marked as reverted"
+    );
+    assert!(
+        frame.logs.is_empty(),
+        "a reverted top frame must carry no logs, got {:?}",
+        frame.logs
+    );
+}

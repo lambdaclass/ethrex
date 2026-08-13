@@ -127,7 +127,16 @@ impl LevmCallTracer {
         if is_top_call {
             // After finishing transaction execution clear all logs of callframes that reverted,
             // then assign block-absolute indices to the survivors in emission order.
-            clear_reverted_logs(self.current_callframe_mut()?, false);
+            //
+            // The top frame's own `error` is still unset here — it is applied by the `exit`
+            // call at the end of this function, and moving the sweep after that is not an
+            // option because `exit` pops the frame. So its failure is read from
+            // `ctx_result` and seeded as the sweep's `parent_failed`; without that, a
+            // transaction whose top-level frame reverts would keep its logs, while geth
+            // drops them. Sub-frames are unaffected either way: they exited earlier, so
+            // their own `error` is already set.
+            let top_failed = matches!(ctx_result.result, TxResult::Revert(_));
+            clear_reverted_logs(self.current_callframe_mut()?, top_failed);
             let mut next_index = self.next_log_index;
             assign_log_indices(self.current_callframe_mut()?, &mut next_index);
             self.next_log_index = next_index;
