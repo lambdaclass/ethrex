@@ -73,6 +73,7 @@ impl RLPDecode for Block {
             transactions,
             ommers,
             withdrawals,
+            ..Default::default()
         };
         let block = Block::new(header, body);
         Ok((block, remaining))
@@ -312,16 +313,30 @@ impl RLPDecode for BlockHeader {
     }
 }
 
-// The body of a block on the chain
-#[derive(
-    Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default, RSerialize, RDeserialize, Archive,
-)]
+// The body of a block on the chain.
+// Needs an explicit PartialEq so the root caches are ignored.
+#[derive(Clone, Debug, Eq, Serialize, Deserialize, Default, RSerialize, RDeserialize, Archive)]
 pub struct BlockBody {
     pub transactions: Vec<Transaction>,
     // TODO: ommers list is always empty, so we can remove it
     #[serde(rename = "uncles")]
     pub ommers: Vec<BlockHeader>,
     pub withdrawals: Option<Vec<Withdrawal>>,
+    // Memoized by validate_block_body; not encoded. Do not mutate the body after fill.
+    #[serde(skip)]
+    #[rkyv(with = rkyv::with::Skip)]
+    pub cached_transactions_root: OnceCell<H256>,
+    #[serde(skip)]
+    #[rkyv(with = rkyv::with::Skip)]
+    pub cached_withdrawals_root: OnceCell<H256>,
+}
+
+impl PartialEq for BlockBody {
+    fn eq(&self, other: &Self) -> bool {
+        self.transactions == other.transactions
+            && self.ommers == other.ommers
+            && self.withdrawals == other.withdrawals
+    }
 }
 
 impl BlockBody {
@@ -330,6 +345,8 @@ impl BlockBody {
             transactions: Vec::new(),
             ommers: Vec::new(),
             withdrawals: Some(Vec::new()),
+            cached_transactions_root: OnceCell::new(),
+            cached_withdrawals_root: OnceCell::new(),
         }
     }
 
@@ -424,6 +441,7 @@ impl RLPDecode for BlockBody {
                 transactions,
                 ommers,
                 withdrawals,
+                ..Default::default()
             },
             decoder.finish()?,
         ))
@@ -769,7 +787,10 @@ pub fn validate_block_body(
     // Validates that:
     //  - Transactions root and withdrawals root matches with the header
     //  - Ommers is empty -> https://eips.ethereum.org/EIPS/eip-3675
-    let computed_tx_root = compute_transactions_root(&block_body.transactions, crypto);
+    // Roots are memoized on the body for a later validate of the same immutable body.
+    let computed_tx_root = *block_body
+        .cached_transactions_root
+        .get_or_init(|| compute_transactions_root(&block_body.transactions, crypto));
 
     if block_header.transactions_root != computed_tx_root {
         return Err(InvalidBlockBodyError::TransactionsRootNotMatch);
@@ -781,7 +802,9 @@ pub fn validate_block_body(
 
     match (block_header.withdrawals_root, &block_body.withdrawals) {
         (Some(withdrawals_root), Some(withdrawals)) => {
-            let computed_withdrawals_root = compute_withdrawals_root(withdrawals, crypto);
+            let computed_withdrawals_root = *block_body
+                .cached_withdrawals_root
+                .get_or_init(|| compute_withdrawals_root(withdrawals, crypto));
             if withdrawals_root != computed_withdrawals_root {
                 return Err(InvalidBlockBodyError::WithdrawalsRootNotMatch);
             }
@@ -1352,5 +1375,75 @@ mod test {
             ..BlockBody::empty()
         };
         assert!(validate_block_body(&pre_shanghai_header, &body_no_withdrawals, &crypto).is_ok());
+    }
+
+    #[test]
+    fn validate_block_body_memoizes_roots_for_reuse() {
+        use crate::constants::EMPTY_WITHDRAWALS_HASH;
+
+        let crypto = NativeCrypto;
+        let body = BlockBody::empty();
+        assert!(body.cached_transactions_root.get().is_none());
+        assert!(body.cached_withdrawals_root.get().is_none());
+
+        let header = BlockHeader {
+            transactions_root: compute_transactions_root(&[], &crypto),
+            withdrawals_root: Some(*EMPTY_WITHDRAWALS_HASH),
+            ..Default::default()
+        };
+
+        validate_block_body(&header, &body, &crypto).expect("first validate");
+        let tx_root = *body
+            .cached_transactions_root
+            .get()
+            .expect("tx root cached after validate");
+        let withdrawals_root = *body
+            .cached_withdrawals_root
+            .get()
+            .expect("withdrawals root cached after validate");
+        assert_eq!(tx_root, header.transactions_root);
+        assert_eq!(Some(withdrawals_root), header.withdrawals_root);
+
+        // Second validate must succeed using the cached values.
+        validate_block_body(&header, &body, &crypto).expect("second validate");
+        assert_eq!(body.cached_transactions_root.get(), Some(&tx_root));
+        assert_eq!(body.cached_withdrawals_root.get(), Some(&withdrawals_root));
+    }
+
+    #[test]
+    fn block_body_rlp_round_trip_clears_root_caches() {
+        use crate::constants::EMPTY_WITHDRAWALS_HASH;
+
+        let crypto = NativeCrypto;
+        let body = BlockBody::empty();
+        let header = BlockHeader {
+            transactions_root: compute_transactions_root(&[], &crypto),
+            withdrawals_root: Some(*EMPTY_WITHDRAWALS_HASH),
+            ..Default::default()
+        };
+        validate_block_body(&header, &body, &crypto).unwrap();
+        assert!(body.cached_transactions_root.get().is_some());
+
+        let encoded = body.encode_to_vec();
+        let decoded = BlockBody::decode(&encoded).unwrap();
+        assert!(decoded.cached_transactions_root.get().is_none());
+        assert!(decoded.cached_withdrawals_root.get().is_none());
+        assert_eq!(decoded, body);
+    }
+
+    #[test]
+    fn block_body_partial_eq_ignores_root_caches() {
+        let a = BlockBody::empty();
+        let b = BlockBody::empty();
+        let crypto = NativeCrypto;
+        let header = BlockHeader {
+            transactions_root: compute_transactions_root(&[], &crypto),
+            withdrawals_root: Some(*crate::constants::EMPTY_WITHDRAWALS_HASH),
+            ..Default::default()
+        };
+        validate_block_body(&header, &a, &crypto).unwrap();
+        assert!(a.cached_transactions_root.get().is_some());
+        assert!(b.cached_transactions_root.get().is_none());
+        assert_eq!(a, b);
     }
 }

@@ -57,6 +57,7 @@ pub fn migrate_block_body(body: LibmdbxBlockBody) -> BlockBody {
                 })
                 .collect()
         }),
+        ..Default::default()
     }
 }
 
