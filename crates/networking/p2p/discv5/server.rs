@@ -210,28 +210,38 @@ impl Discv5State {
     }
 }
 
-/// Updates local node IP and re-signs the ENR with incremented seq.
+/// Points `local_node` and its ENR at `new_ip`, bumping `seq` once and re-signing.
+///
+/// Sets whichever of the record's `ip`/`ip6` entries matches `new_ip` and clears
+/// the other. ENRs may carry both, but a [`Node`] holds a single [`IpAddr`], so
+/// the record ethrex owns describes one address and a leftover entry from the
+/// family we just moved away from would send peers to an address we dropped.
+/// Every other entry is left as it is.
+///
+/// [`NodeRecord::edit`] commits only once the new signature is in hand, so a
+/// failed re-sign leaves both the node and the record untouched.
 pub(crate) fn update_local_ip(
     local_node: &mut Node,
     local_node_record: &mut NodeRecord,
     signer: &secp256k1::SecretKey,
     new_ip: IpAddr,
 ) {
-    let mut updated_node = local_node.clone();
-    updated_node.ip = new_ip;
-    let new_seq = local_node_record.seq + 1;
-    let Ok(mut new_record) = NodeRecord::from_node(&updated_node, new_seq, signer) else {
-        tracing::error!(%new_ip, "Failed to create new ENR for IP update");
-        return;
-    };
-    if let Some(fork_id) = local_node_record.get_fork_id().cloned()
-        && new_record.set_fork_id(fork_id, signer).is_err()
-    {
-        tracing::error!(%new_ip, "Failed to set fork_id in new ENR, aborting IP update");
+    let edited = local_node_record.edit(signer, |pairs| match new_ip.to_canonical() {
+        IpAddr::V4(ip) => {
+            pairs.ip = Some(ip);
+            pairs.ip6 = None;
+        }
+        IpAddr::V6(ip) => {
+            pairs.ip6 = Some(ip);
+            pairs.ip = None;
+        }
+    });
+    if let Err(err) = edited {
+        tracing::error!(%new_ip, %err, "Failed to re-sign ENR for IP update");
         return;
     }
+
     local_node.ip = new_ip;
-    *local_node_record = new_record;
 }
 
 #[derive(Debug, Clone)]
@@ -249,10 +259,103 @@ impl Discv5Message {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utils::public_key_from_signing_key;
+    use ethrex_common::types::ForkId;
     use rand::{SeedableRng, rngs::StdRng};
+    use std::net::{Ipv4Addr, Ipv6Addr};
 
     fn make_test_state() -> Discv5State {
         Discv5State::default()
+    }
+
+    const NEW_IP: IpAddr = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 7));
+    const QUIC_PORT: u16 = 9001;
+
+    /// A local identity whose record advertises `quic`, an entry
+    /// [`NodeRecord::from_node`] cannot derive and an IP update must not destroy.
+    fn local_identity(eth: Option<ForkId>) -> (Node, NodeRecord, secp256k1::SecretKey) {
+        let signer = secp256k1::SecretKey::from_slice(&[
+            16, 125, 177, 238, 167, 212, 168, 215, 239, 165, 77, 224, 199, 143, 55, 205, 9, 194,
+            87, 139, 92, 46, 30, 191, 74, 37, 68, 242, 38, 225, 104, 246,
+        ])
+        .unwrap();
+        let node = Node::new(
+            IpAddr::from(Ipv4Addr::LOCALHOST),
+            30303,
+            30303,
+            public_key_from_signing_key(&signer),
+        );
+        let mut record = NodeRecord::from_node(&node, 1, &signer).unwrap();
+        record
+            .edit(&signer, |pairs| {
+                pairs.eth = eth;
+                pairs.set_extra_int(b"quic", QUIC_PORT.into());
+            })
+            .unwrap();
+        (node, record, signer)
+    }
+
+    #[test]
+    fn update_local_ip_preserves_entries_it_does_not_touch() {
+        // Rebuilding the record from the `Node` carries only what `from_node`
+        // knows how to derive, so a `quic` entry the caller added separately was
+        // silently dropped the first time discv5's IP voting fired.
+        let (mut node, mut record, signer) = local_identity(None);
+
+        update_local_ip(&mut node, &mut record, &signer, NEW_IP);
+
+        assert_eq!(node.ip, NEW_IP);
+        assert_eq!(record.pairs().ip, Some(Ipv4Addr::new(203, 0, 113, 7)));
+        assert_eq!(
+            record.pairs().extra_int::<u16>(b"quic"),
+            Some(QUIC_PORT),
+            "an entry the update never mentions must survive it"
+        );
+        assert!(
+            record.verify_signature(),
+            "must be re-signed after the edit"
+        );
+    }
+
+    #[test]
+    fn update_local_ip_bumps_seq_exactly_once() {
+        // With a fork id present the rebuild path bumped twice: once for the
+        // record built at `seq + 1`, then again inside `set_fork_id`. Every extra
+        // bump is a wasted signature and a spurious re-gossip.
+        let fork_id = ForkId {
+            fork_hash: ethrex_common::H32::from_low_u64_be(0xdead_beef),
+            fork_next: 42,
+        };
+        let (mut node, mut record, signer) = local_identity(Some(fork_id.clone()));
+        let seq_before = record.seq;
+
+        update_local_ip(&mut node, &mut record, &signer, NEW_IP);
+
+        assert_eq!(record.seq, seq_before + 1);
+        assert_eq!(record.get_fork_id(), Some(&fork_id));
+    }
+
+    #[test]
+    fn update_local_ip_clears_the_address_family_it_moves_away_from() {
+        // The only case where clearing the other entry is load-bearing: both
+        // tests above start from an `ip`-only record, so `pairs.ip6 = None` runs
+        // but can never be seen to change anything. Left behind, the stale `ip6`
+        // would keep pointing peers at an address we no longer answer on.
+        let (mut node, mut record, signer) = local_identity(None);
+        let old_ipv6 = Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1);
+        record
+            .edit(&signer, |pairs| {
+                pairs.ip = None;
+                pairs.ip6 = Some(old_ipv6);
+            })
+            .unwrap();
+        assert_eq!(record.pairs().ip6, Some(old_ipv6));
+
+        update_local_ip(&mut node, &mut record, &signer, NEW_IP);
+
+        assert_eq!(record.pairs().ip, Some(Ipv4Addr::new(203, 0, 113, 7)));
+        assert_eq!(record.pairs().ip6, None, "the stale entry must be cleared");
+        assert!(record.verify_signature());
     }
 
     #[tokio::test]
