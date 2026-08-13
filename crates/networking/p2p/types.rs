@@ -411,17 +411,14 @@ impl NodeRecordPairs {
         if let Some(udp) = self.udp_port {
             pairs.push(("udp".into(), udp.encode_to_vec().into()));
         }
-        // Skipped rather than trusted: a dictionary key here would be the second
-        // entry for a key a typed field already emitted. The setters refuse
-        // those, so this catches the two ways past them, an entry pushed onto
-        // the field directly and a record deserialized from an older or hostile
-        // representation of this struct.
-        pairs.extend(
-            self.extra_fields
-                .iter()
-                .filter(|(key, _)| !Self::is_dictionary_key(key))
-                .cloned(),
-        );
+        // Filter out any duplicate fields, keeping the first occurrence.
+        let extra_fields = self
+            .extra_fields
+            .iter()
+            .filter(|(key, _)| !Self::is_dictionary_key(key))
+            .cloned();
+        pairs.extend(extra_fields);
+        // Sort pairs by key to ensure they are in the correct order for RLP encoding.
         pairs.sort_by(|(left_key, _), (right_key, _)| left_key.cmp(right_key));
         pairs
     }
