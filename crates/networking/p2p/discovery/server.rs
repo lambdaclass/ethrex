@@ -106,16 +106,6 @@ impl std::fmt::Debug for DiscoveryServer {
 impl DiscoveryServer {
     /// Starts the discovery actor, advertising `local_node_record` as this
     /// node's ENR.
-    ///
-    /// The record is supplied rather than derived from `local_node`, because
-    /// what a node publishes is the caller's to decide: which entries it
-    /// carries beyond the addresses, and what `seq` it resumes from. Deriving
-    /// it here also forced a panic on a failure the caller is better placed to
-    /// report.
-    ///
-    /// This was the last reader of the `Store` `spawn` used to take: with the
-    /// fork-id screening moved behind `PeerFilter`, discovery no longer touches
-    /// our chain at all.
     pub async fn spawn(
         local_node: Node,
         local_node_record: NodeRecord,
