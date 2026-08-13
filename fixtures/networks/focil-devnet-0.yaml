@@ -30,31 +30,30 @@
 # every branch — so besu needs a rebuild past that commit. A stuck besu is also
 # not harmless: its validators drag participation below the finality threshold.
 #
-# KNOWN CAVEAT — the consensus clients do not peer across build generations.
-# teku:focil (2026-08-11) and the June-era lodestar:focil / lighthouse:focil do
-# not discover each other. Observed directly: the two teku nodes peer with each
-# other and finalise (Justified 144 / Finalized 142), while lighthouse sits at
-# `peer_count: 0` with `finalized_epoch: 0`, logging
-# `Could not publish message error: NoPeersSubscribedToTopic` on every topic and
-# building an isolated chain. In an earlier three-CL run lodestar and lighthouse
-# shared a head root with each other while teku had its own, which is the same
-# split seen from the other side.
+# CONSENSUS CLIENTS DO NOT PEER ACROSS BUILD GENERATIONS. teku:focil
+# (2026-08-11) and the June-era lodestar:focil / lighthouse:focil do not discover
+# each other, so a devnet can use teku OR the June pair, not both:
 #
-# This is NOT fork choice and NOT an EL problem: lighthouse logs zero
-# inclusion-list rejections, every execution layer here is ethrex, they are fully
-# meshed with each other and log zero errors. An isolated CL simply produces an
-# isolated EL head, which looks exactly like a consensus fork — check
-# `/eth/v1/node/peer_count` before concluding otherwise. Both sides report the
-# same fork versions (0x90000038 / 0x80000038), so the skew is in discovery, not
-# the fork schedule.
+#   * with teku + lighthouse, the teku nodes peer with each other and finalise
+#     while lighthouse sits at `peer_count: 0`, `finalized_epoch: 0`, logging
+#     `NoPeersSubscribedToTopic` on every gossip topic and building an isolated
+#     chain;
+#   * with lighthouse + lodestar (this config) all nodes reach 2 peers, share one
+#     head root and justify normally.
 #
-# Consequence for reading results: teku is the pair that finalises and publishes
-# inclusion lists; lighthouse independently exercises the other half of the EL
-# surface (it fetches inclusion lists from ethrex and verifies/republishes them,
-# 10k+ verifications, zero failures) but does not join teku's chain. lodestar is
-# omitted because its focil build performs no inclusion-list duty at all — its
-# only IL log line is a pre-heze committee-duty warning, and ethrex never sees a
-# `engine_getInclusionListV1` call from it — so it adds no FOCIL coverage.
+# This is NOT fork choice and NOT an EL problem: zero inclusion-list rejections,
+# every EL here is ethrex, fully meshed with zero errors, and both sides report
+# the same fork versions (0x90000038 / 0x80000038). An isolated CL simply
+# produces an isolated EL head, which looks exactly like a consensus fork —
+# check `/eth/v1/node/peer_count` before concluding otherwise.
+#
+# lighthouse is the one that exercises FOCIL here: it fetches inclusion lists
+# from ethrex and verifies/republishes them (hundreds of verifications, zero
+# failures). lodestar performs no inclusion-list duty at all — its only IL log
+# line is a pre-heze committee-duty warning and ethrex never sees an
+# `engine_getInclusionListV1` call from it — but it peers, attests and keeps the
+# chain justifying, which is what a second consensus client is here to prove.
+# Swap in teku (and drop the other two) to exercise the IL *production* side.
 #
 # All CLs: supernode=true (PeerDAS satisfaction at fulu/gloas).
 #
@@ -78,22 +77,22 @@
 participants:
   - el_type: ethrex
     el_image: ethrex:focil-devnet-0
-    cl_type: teku
-    cl_image: ethpandaops/teku:focil
-    supernode: true
-    count: 1
-  - el_type: ethrex
-    el_image: ethrex:focil-devnet-0
     cl_type: lighthouse
     cl_image: ethpandaops/lighthouse:focil
     supernode: true
     count: 1
   - el_type: ethrex
     el_image: ethrex:focil-devnet-0
+    cl_type: lodestar
+    cl_image: ethpandaops/lodestar:focil
+    supernode: true
+    count: 1
+  - el_type: ethrex
+    el_image: ethrex:focil-devnet-0
     el_extra_params:
       - "--mempool.private"
-    cl_type: teku
-    cl_image: ethpandaops/teku:focil
+    cl_type: lighthouse
+    cl_image: ethpandaops/lighthouse:focil
     supernode: true
     count: 1
 
