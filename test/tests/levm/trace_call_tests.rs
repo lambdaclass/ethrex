@@ -784,3 +784,42 @@ fn trace_call_calls_amsterdam_subframe_omits_eip8037_fields() {
         );
     }
 }
+
+/// `GASLIMIT; PUSH1 0x00; MSTORE; PUSH1 0x20; PUSH1 0x00; RETURN` — returns the
+/// block gas limit as a 32-byte word. Byte-for-byte the probe used to report the
+/// divergence against the other five clients (`0x4560005260206000f3`).
+fn gas_limit_reader_bytecode() -> Vec<u8> {
+    vec![0x45, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xF3]
+}
+
+/// Regression: `debug_traceCall` must report the traced block's own gas limit
+/// through opcode 0x45. The call env used to raise `block_gas_limit` to
+/// `i64::MAX` to skip the block gas-allowance check, so a trace reported
+/// 2^63-1 — the same divergence seen in `eth_call`, since both paths share
+/// `env_from_generic`. The bypass now has a dedicated flag.
+#[test]
+fn trace_call_reports_the_header_gas_limit_to_gaslimit() {
+    let mut db = db_with_contract(gas_limit_reader_bytecode());
+    let header = default_header();
+    let tx = call_tx();
+
+    let trace = LEVM::trace_call_calls(
+        &mut db,
+        &header,
+        &tx,
+        false,
+        false,
+        0,
+        VMType::L1,
+        &NativeCrypto,
+    )
+    .expect("trace_call_calls should succeed");
+
+    let output = &trace[0].output;
+    assert_eq!(output.len(), 32, "probe returns one word");
+    assert_eq!(
+        U256::from_big_endian(output),
+        U256::from(header.gas_limit),
+        "GASLIMIT under debug_traceCall must equal the header's gas limit"
+    );
+}

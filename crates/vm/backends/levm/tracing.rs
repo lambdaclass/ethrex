@@ -431,8 +431,8 @@ fn block_trace_env_config(
 /// Builds the call-style [`Environment`] and concrete [`Transaction`] for tracing a
 /// synthetic `eth_call`-shaped request (`debug_traceCall`). Mirrors
 /// `simulate_tx_from_generic`: the sender is taken from `tx.from` (no signature
-/// recovery), the block gas limit is disabled, and the base fee is relaxed when no gas
-/// price is provided.
+/// recovery), the block gas-allowance check is skipped, and the base fee is relaxed when
+/// no gas price is provided.
 fn prepare_call_env(
     tx: &GenericTransaction,
     block_header: &BlockHeader,
@@ -440,7 +440,10 @@ fn prepare_call_env(
     vm_type: VMType,
 ) -> Result<(Environment, Transaction), EvmError> {
     let mut env = env_from_generic(tx, block_header, db, vm_type)?;
-    env.block_gas_limit = i64::MAX as u64; // disable block gas limit
+    // Skip the allowance check without touching `block_gas_limit`; see
+    // `simulate_tx_from_generic`. A trace must report the same GASLIMIT the traced block
+    // executed with.
+    env.disable_gas_allowance_check = true;
     adjust_disabled_base_fee(&mut env);
     let converted_tx = generic_tx_to_transaction(tx)?;
     Ok((env, converted_tx))
