@@ -103,9 +103,6 @@ store-test-db-*/
 # Patch files
 *.patch
 *.diff
-# ...except devnet fixtures, where a patch against a pinned third-party
-# checkout is the setup, not a stray working file.
-!fixtures/networks/*.patch
 
 # Editor/merge temporary files
 *.swp

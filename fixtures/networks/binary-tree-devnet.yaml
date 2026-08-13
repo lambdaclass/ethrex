@@ -22,11 +22,9 @@
 # The pbtsnap late-join scenario
 # ---------------------------------------------------------------------------
 #
-# This config is the one to use for it, over `pbt-genesis-devnet.yaml`: a late
-# joiner has to download headers *across* the flip and then pivot on a
-# binary-committed one, and only an MPT-committed genesis makes that the real
-# shape. It also needs no patched ethereum-package. What it does NOT exercise
-# is a chain with no MPT prefix at all — that is the other config's job.
+# A late joiner has to download headers *across* the flip and then pivot on a
+# binary-committed one, which is the real shape precisely because genesis is
+# MPT-committed.
 #
 # The participants above deliberately stay on `--syncmode=full`: they are the
 # chain the joiner syncs *from*, and they must have replayed every block.
