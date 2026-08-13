@@ -2068,6 +2068,264 @@ async fn the_same_eip161_clear_leaves_the_mpt_exactly_as_it_was() {
 }
 
 // ---------------------------------------------------------------------------
+// The same clear, asked about from a *later transaction of the same block*.
+//
+// The two tests above put the question to the finished block's trie. This pair
+// puts it *inside* one block: transaction 1 sweeps into the storage-only
+// account and clears it, transaction 2 CREATE2s at that same address. The
+// answer is not the same as the finished-trie one, and it is not the same on
+// the two paths.
+//
+// # What EELS answers, on both paths
+//
+// **A collision, so the CREATE2 fails.** `account_deployable` asks
+// `account_has_storage`, which reads three places in order
+// (`forks/binary_tree/state_tracker.py:362`, and byte-for-byte the same in
+// `forks/amsterdam`):
+//
+//   1. this transaction's `storage_writes`,
+//   2. the *block's* accumulated `storage_writes`,
+//   3. `tx_state.parent.pre_state.account_has_storage(address)`.
+//
+// The clear is `destroy_storage` (`:531`), whose whole body is
+// `del tx_state.storage_writes[address]` — it erases the transaction's own
+// writes and records nothing anywhere else. Its docstring says so outright:
+// "Only supports same transaction destruction." Nothing reaches (2), because
+// `incorporate_tx_into_block` (`:802`) only *merges* what is left. And (3) is
+// the block's pre-state, which `apply_changes_to_state` (`state_pbt.py:310`)
+// does not touch until the block is over. A storage-only account whose slots
+// come from the genesis alloc is therefore still "has storage" for every later
+// transaction of the same block, on the binary tree and on the MPT alike.
+//
+// Post-Cancun EELS has no channel that could say otherwise: `storage_clears`
+// exists in the pre-Cancun trackers and was dropped from Cancun onward, on the
+// EIP-6780 premise that destruction is confined to the creating transaction —
+// a premise the EIP-161 clear this section is about breaks.
+//
+// # What ethrex answers
+//
+// The MPT matches: the clear is gated on the header having reached
+// `binaryTreeTime`, so nothing runs and the account keeps its storage.
+//
+// The binary path **does not**: the clear sets `has_storage = false` on the
+// LEVM account (`GeneralizedDatabase::clear_storage_of_emptied_account`), and
+// `current_accounts_state` outlives the transaction, so transaction 2 reads the
+// cleared flag and its CREATE2 is allowed. `StoreVmDatabase` is not what makes
+// the difference — its `account_state_cache` still holds the pre-block answer,
+// which is exactly what EELS's `pre_state` holds, and it is never consulted
+// again because LEVM's own layer answers first.
+//
+// So this is a divergence, and it is the reverse of the one
+// `docs/known_issues.md` described: ethrex is *more* permissive here than the
+// spec, not less. It is confined to the binary path and to a same-block
+// ordering, and no fixture covers it — see the known-issues entry. The tests
+// below pin what ethrex does today so that a change to either side is visible.
+// ---------------------------------------------------------------------------
+
+/// A contract whose only act is `CREATE2(value = 0, <init code>, salt = 0)`,
+/// storing the result in slot 0. `CREATE2` pushes zero on an EIP-7610
+/// collision and the new address otherwise, so slot 0 reads back which of the
+/// two happened.
+fn create2_deployer_account() -> Address {
+    Address::from_low_u64_be(0x5713)
+}
+
+/// `PUSH1 0x00; PUSH1 0x00; RETURN` — deploys empty code. Only the address the
+/// create lands on matters here.
+const CREATE2_INIT_CODE: [u8; 5] = [0x60, 0x00, 0x60, 0x00, 0xf3];
+
+fn create2_deployer_bytecode() -> Bytes {
+    Bytes::from(vec![
+        // PUSH5 <init code>; PUSH1 0; MSTORE  -> init code at memory[27..32]
+        0x64, 0x60, 0x00, 0x60, 0x00, 0xf3, //
+        0x60, 0x00, //
+        0x52, //
+        // CREATE2 pops value, offset, size, salt (value on top).
+        0x60, 0x00, // salt   0
+        0x60, 0x05, // size   5
+        0x60, 0x1b, // offset 27
+        0x60, 0x00, // value  0
+        0xf5, // CREATE2
+        0x60, 0x00, // slot 0
+        0x55, // SSTORE
+        0x00, // STOP
+    ])
+}
+
+/// `keccak256(0xff ++ deployer ++ salt ++ keccak256(init_code))[12..]`, the
+/// address [`create2_deployer_bytecode`] deploys to. The genesis puts the
+/// storage-only account *there*, so the create and the clear are about one
+/// address.
+fn create2_target() -> Address {
+    let mut preimage = Vec::with_capacity(85);
+    preimage.push(0xffu8);
+    preimage.extend_from_slice(create2_deployer_account().as_bytes());
+    preimage.extend_from_slice(&[0u8; 32]);
+    preimage.extend_from_slice(keccak(CREATE2_INIT_CODE).as_bytes());
+    Address::from_slice(&keccak(preimage).as_bytes()[12..])
+}
+
+/// One block, two transactions: the first sweeps a zero balance into the
+/// storage-only account at [`create2_target`] (EIP-161-clearing it under
+/// EIP-8297), the second CREATE2s at that same address.
+async fn run_same_block_clear_then_create2(binary_tree_time: Option<u64>) -> (Store, Block) {
+    let sender = sender_from_key(&test_secret_key());
+    let target = create2_target();
+    let extra = [
+        (
+            target,
+            storage_only_alloc(STORAGE_ONLY_SLOT, STORAGE_ONLY_VALUE),
+        ),
+        (
+            selfdestructor_account(),
+            GenesisAccount {
+                balance: U256::zero(),
+                code: selfdestruct_bytecode(target),
+                nonce: 1,
+                storage: Default::default(),
+            },
+        ),
+        (
+            create2_deployer_account(),
+            GenesisAccount {
+                balance: U256::zero(),
+                code: create2_deployer_bytecode(),
+                nonce: 1,
+                storage: Default::default(),
+            },
+        ),
+    ];
+
+    let genesis = load_funded_genesis_with(sender, binary_tree_time, &extra);
+    let chain_id = genesis.config.chain_id;
+    let store = store_from_genesis(genesis).await;
+    let blockchain = Blockchain::default_with_store(store.clone());
+
+    let signer: Signer = LocalSigner::new(test_secret_key()).into();
+    for (nonce, to) in [
+        (0u64, selfdestructor_account()),
+        (1u64, create2_deployer_account()),
+    ] {
+        let mut tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+            chain_id,
+            nonce,
+            max_priority_fee_per_gas: 1,
+            max_fee_per_gas: TEST_MAX_FEE_PER_GAS,
+            gas_limit: 400_000,
+            to: TxKind::Call(to),
+            value: U256::zero(),
+            data: Bytes::new(),
+            ..Default::default()
+        });
+        tx.sign_inplace(&signer).await.unwrap();
+        blockchain
+            .add_transaction_to_pool(tx)
+            .await
+            .expect("tx should enter pool");
+    }
+
+    let parent_header = store.get_block_header(0).unwrap().unwrap();
+    let block = build_block(&store, &blockchain, &parent_header).await;
+    assert_eq!(
+        block.body.transactions.len(),
+        2,
+        "both transactions must land in the one block"
+    );
+    blockchain
+        .add_block(block.clone())
+        .expect("block should import");
+    (store, block)
+}
+
+/// What [`create2_deployer_bytecode`] left in slot 0: the created address, or
+/// zero when the create collided. An unwritten slot reads as absent, which is
+/// the same answer.
+fn create2_result(store: &Store, block: &Block) -> U256 {
+    let db = StoreVmDatabase::new(store.clone(), block.header.clone())
+        .expect("the block's own trie must hold its state");
+    db.get_storage_slot(create2_deployer_account(), H256::zero())
+        .expect("reading the deployer's slot 0 must succeed")
+        .unwrap_or_default()
+}
+
+#[tokio::test]
+async fn a_same_block_create2_onto_the_cleared_account_is_allowed_on_the_binary_trie() {
+    // The activation lands on the first built block, as in the section above.
+    let probe = load_funded_genesis(sender_from_key(&test_secret_key()), None);
+    let activation = probe.timestamp + BLOCK_TIME;
+
+    let target = create2_target();
+    let (store, block) = run_same_block_clear_then_create2(Some(activation)).await;
+    assert_eq!(
+        block.header.state_root,
+        binary_root(&store, &block),
+        "the block must commit a binary root, or the gate under test never fired"
+    );
+
+    // The base `StoreVmDatabase` still answers with the pre-block state — the
+    // genesis alloc gave `target` storage and nothing in the block reaches back
+    // to change that. This is the same thing EELS's `pre_state` holds, and the
+    // reason the divergence below cannot be blamed on the account cache: the
+    // snapshot is right, LEVM simply answers before it.
+    let pre_block = StoreVmDatabase::new(store.clone(), store.get_block_header(0).unwrap().unwrap())
+        .expect("genesis state must be held");
+    assert!(
+        pre_block.has_storage(target).unwrap(),
+        "the pre-block snapshot must still report the storage-only account's storage"
+    );
+
+    assert_eq!(
+        create2_result(&store, &block),
+        U256::from_big_endian(target.as_bytes()),
+        "transaction 1 cleared the account's storage inside LEVM and transaction 2 \
+         read that cleared flag, so the CREATE2 was allowed and returned the new \
+         address. EELS would have collided here: its `account_has_storage` falls \
+         back to the block's immutable pre-state, which still holds the slot"
+    );
+
+    let created = StoreVmDatabase::new(store, block.header)
+        .unwrap()
+        .get_account_state(target)
+        .unwrap()
+        .expect("the CREATE2 left an account behind");
+    assert_eq!(
+        created.nonce, 1,
+        "and that account is the freshly created contract, not the genesis one"
+    );
+}
+
+#[tokio::test]
+async fn the_same_same_block_create2_still_collides_on_the_mpt() {
+    let target = create2_target();
+    let (store, block) = run_same_block_clear_then_create2(None).await;
+    assert!(
+        store.has_state_root(block.header.state_root).unwrap(),
+        "an unscheduled chain commits an MPT root"
+    );
+
+    assert_eq!(
+        create2_result(&store, &block),
+        U256::zero(),
+        "no clear runs on an MPT-committing header, so EIP-7610 saw the storage \
+         and CREATE2 pushed zero — which is what EELS answers here too"
+    );
+
+    let db = StoreVmDatabase::new(store, block.header).unwrap();
+    let account = db
+        .get_account_state(target)
+        .unwrap()
+        .expect("the storage-only account is still there");
+    assert_eq!(
+        account.nonce, 0,
+        "nothing was created at the address, so its nonce is the genesis one"
+    );
+    assert_ne!(
+        account.storage_root, *EMPTY_TRIE_HASH,
+        "and it still holds the storage that made the create collide"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Phase D10 — what became of the MPT: it is **frozen** at the flip.
 //
 // This replaces `the_mpt_keeps_advancing_after_the_flip_but_is_no_longer_addressable_by_header_root`,
