@@ -42,6 +42,29 @@ pub struct StoreVmDatabase {
     /// Memoized account states and hashed addresses for storage reads.
     /// This avoids repeated state-trie account decodes when reading many slots
     /// from the same account during execution.
+    ///
+    /// # Filled, never invalidated — and that is the whole contract
+    ///
+    /// Every entry is a pure function of ([`Self::state_root`], address), and
+    /// `state_root` is written once in [`Self::open`] and never again. So
+    /// nothing an execution does can make an entry wrong: this database is a
+    /// *snapshot*, not a view of live state, and the state behind that root
+    /// does not move while it is open. Invalidating an entry could only cause
+    /// the same value to be re-read.
+    ///
+    /// This is the same shape the spec has. EELS reads through
+    /// `TransactionState` -> `BlockState` -> `PreState`, and the `PreState` is
+    /// explicitly not modified until `apply_changes_to_state` runs at block
+    /// end. What this cache holds is that `PreState`. Mid-block mutations live
+    /// one layer up, in `GeneralizedDatabase::current_accounts_state`, which
+    /// answers before any read reaches here — the exact counterpart of the
+    /// spec's two write layers.
+    ///
+    /// It is therefore semantically inert: bypassing it entirely (making every
+    /// lookup a store read) leaves the whole test suite green. Treat a
+    /// suspected staleness bug as a question about the layer above, not this
+    /// one. `docs/known_issues.md` has a worked example — a same-block CREATE2
+    /// whose answer LEVM's layer changes and this one does not.
     account_state_cache: Arc<RwLock<AccountStateCache>>,
     pub state_root: H256,
     /// Which trie [`Self::state_root`] addresses: the EIP-8297 binary trie when

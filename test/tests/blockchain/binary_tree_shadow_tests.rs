@@ -2267,8 +2267,9 @@ async fn a_same_block_create2_onto_the_cleared_account_is_allowed_on_the_binary_
     // to change that. This is the same thing EELS's `pre_state` holds, and the
     // reason the divergence below cannot be blamed on the account cache: the
     // snapshot is right, LEVM simply answers before it.
-    let pre_block = StoreVmDatabase::new(store.clone(), store.get_block_header(0).unwrap().unwrap())
-        .expect("genesis state must be held");
+    let pre_block =
+        StoreVmDatabase::new(store.clone(), store.get_block_header(0).unwrap().unwrap())
+            .expect("genesis state must be held");
     assert!(
         pre_block.has_storage(target).unwrap(),
         "the pre-block snapshot must still report the storage-only account's storage"
