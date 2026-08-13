@@ -30,18 +30,31 @@
 # every branch — so besu needs a rebuild past that commit. A stuck besu is also
 # not harmless: its validators drag participation below the finality threshold.
 #
-# lodestar is left out of the running set. Its focil build never requests an
-# inclusion list from the EL (`getInclusionListCommitteeDuties` only ever logged
-# a pre-heze warning), and with it in the mix the network split 2-2 on the
-# CONSENSUS layer -- teku on one branch, lodestar and lighthouse on another,
-# identical block numbers with different hashes -- so nothing finalised. All
-# four execution layers were ethrex and simply followed their own CL, so this is
-# a CL-side fork-choice disagreement, not an EL one. Worth reporting upstream;
-# re-add lodestar once it performs the IL duty.
+# KNOWN CAVEAT — the consensus clients do not peer across build generations.
+# teku:focil (2026-08-11) and the June-era lodestar:focil / lighthouse:focil do
+# not discover each other. Observed directly: the two teku nodes peer with each
+# other and finalise (Justified 144 / Finalized 142), while lighthouse sits at
+# `peer_count: 0` with `finalized_epoch: 0`, logging
+# `Could not publish message error: NoPeersSubscribedToTopic` on every topic and
+# building an isolated chain. In an earlier three-CL run lodestar and lighthouse
+# shared a head root with each other while teku had its own, which is the same
+# split seen from the other side.
 #
-# So the matrix is one EL against the two CLs that actually exercise FOCIL, plus
-# a second ethrex on --mempool.private so private vs gossiping mempool behaviour
-# is observable on the same chain.
+# This is NOT fork choice and NOT an EL problem: lighthouse logs zero
+# inclusion-list rejections, every execution layer here is ethrex, they are fully
+# meshed with each other and log zero errors. An isolated CL simply produces an
+# isolated EL head, which looks exactly like a consensus fork — check
+# `/eth/v1/node/peer_count` before concluding otherwise. Both sides report the
+# same fork versions (0x90000038 / 0x80000038), so the skew is in discovery, not
+# the fork schedule.
+#
+# Consequence for reading results: teku is the pair that finalises and publishes
+# inclusion lists; lighthouse independently exercises the other half of the EL
+# surface (it fetches inclusion lists from ethrex and verifies/republishes them,
+# 10k+ verifications, zero failures) but does not join teku's chain. lodestar is
+# omitted because its focil build performs no inclusion-list duty at all — its
+# only IL log line is a pre-heze committee-duty warning, and ethrex never sees a
+# `engine_getInclusionListV1` call from it — so it adds no FOCIL coverage.
 #
 # All CLs: supernode=true (PeerDAS satisfaction at fulu/gloas).
 #
