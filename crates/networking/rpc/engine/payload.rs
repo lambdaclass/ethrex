@@ -755,7 +755,7 @@ impl RpcHandler for GetPayloadBodiesByRangeV1Request {
         if self.count > GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE {
             return Err(RpcErr::TooLargeRequest);
         }
-        let latest_block_number = context.storage.get_latest_block_number().await?;
+        let latest_block_number = context.storage.get_latest_block_number()?;
         // NOTE: we truncate the range because the spec says we "MUST NOT return trailing
         // null values if the request extends past the current latest known block"
         let last = latest_block_number.min(self.start + self.count - 1);
@@ -889,7 +889,7 @@ impl RpcHandler for GetPayloadBodiesByRangeV2Request {
         if self.count > GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE {
             return Err(RpcErr::TooLargeRequest);
         }
-        let latest_block_number = context.storage.get_latest_block_number().await?;
+        let latest_block_number = context.storage.get_latest_block_number()?;
         // NOTE: we truncate the range because the spec says we "MUST NOT return trailing
         // null values if the request extends past the current latest known block"
         let last = latest_block_number.min(self.start + self.count - 1);

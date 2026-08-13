@@ -110,7 +110,7 @@ pub async fn apply_fork_choice(
         return Err(InvalidForkChoice::Syncing);
     };
 
-    let latest = store.get_latest_block_number().await?;
+    let latest = store.get_latest_block_number()?;
     let head_is_canonical = is_canonical(store, head.number, head_hash).await?;
 
     // execution-apis PR 786: the no-reorg skip is only allowed when there is a known
@@ -519,7 +519,7 @@ async fn reorg_apply_deep(
         // Reverted depth (old-chain blocks unwound), matching the TooDeepReorg
         // gate's definition. `head - pivot` would report ~0/1 for the
         // canonical-head case no matter how deep the unwind.
-        let latest = store.get_latest_block_number().await.unwrap_or(head.number);
+        let latest = store.get_latest_block_number().unwrap_or(head.number);
         let reorg_depth = latest.saturating_sub(pivot_number);
         METRICS_REORG.reorg_depth_hist.observe(reorg_depth as f64);
     );

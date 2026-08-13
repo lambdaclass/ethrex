@@ -408,7 +408,7 @@ pub async fn init_dev_network(
     let chain_config = store.get_chain_config();
 
     let (head_block_hash, target_gas_limit) = {
-        let current_block_number = store.get_latest_block_number().await.unwrap();
+        let current_block_number = store.get_latest_block_number().unwrap();
         let head_block_hash = store
             .get_canonical_block_hash(current_block_number)
             .await
@@ -1186,7 +1186,7 @@ pub fn migrate_datadir_if_needed(
 /// Thin wrapper over [`Store::last_block_with_state`] that resolves the head
 /// itself and turns "no state anywhere" into the operator-facing error.
 pub async fn last_block_with_state(store: &Store) -> eyre::Result<BlockNumber> {
-    let head_block_number = store.get_latest_block_number().await?;
+    let head_block_number = store.get_latest_block_number()?;
 
     store
         .last_block_with_state(head_block_number)?
@@ -1205,7 +1205,7 @@ pub async fn regenerate_head_state(
     // which clamp `LatestBlockNumber` to `flushed_upto`. All blocks up to
     // `head_block_number` are therefore on disk; callers that skip that clamp
     // would break this assumption.
-    let head_block_number = store.get_latest_block_number().await?;
+    let head_block_number = store.get_latest_block_number()?;
     debug!("regenerate_head_state head clamped to durable block {head_block_number}");
 
     let last_state_number = last_block_with_state(store).await?;
@@ -1221,10 +1221,14 @@ pub async fn regenerate_head_state(
     for i in (last_state_number + 1)..=head_block_number {
         debug!("Re-applying block {i} to regenerate state");
 
-        let block = store
+        let mut block = store
             .get_block_by_number(i)
             .await?
             .ok_or_else(|| eyre::eyre!("Block {i} not found"))?;
+
+        // Stored blocks produced by older ethrex versions may carry the legacy
+        // omitted-withdrawals body shape, which block validation now rejects.
+        ethrex_common::types::normalize_legacy_withdrawals(&block.header, &mut block.body);
 
         // Single canonical chain: commit by depth so the in-memory trie-layer
         // backlog stays bounded (~DB_COMMIT_THRESHOLD) instead of growing with the

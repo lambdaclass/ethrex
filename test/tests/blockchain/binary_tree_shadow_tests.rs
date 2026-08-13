@@ -4459,7 +4459,6 @@ async fn forkchoice_accepts_every_block_across_the_flip() {
             chains
                 .scheduled_store
                 .get_latest_block_number()
-                .await
                 .expect("latest block number"),
             number,
             "the head must advance to block {number}; a chain that executes the \
@@ -5092,7 +5091,7 @@ async fn eth_syncing_reports_the_recorded_target_when_the_head_is_unknown() {
     let store = &chains.scheduled_store;
     make_canonical(store, &chains.scheduled_blocks).await;
 
-    let canonical_head = store.get_latest_block_number().await.unwrap();
+    let canonical_head = store.get_latest_block_number().unwrap();
     let target = canonical_head + 128;
 
     let highest = ethrex_rpc::resolve_highest_block(
@@ -5122,7 +5121,7 @@ async fn eth_syncing_prefers_a_resolvable_forkchoice_head() {
     make_canonical(store, &chains.scheduled_blocks).await;
 
     let head = chains.scheduled_blocks.last().expect("a non-empty chain");
-    let canonical_head = store.get_latest_block_number().await.unwrap();
+    let canonical_head = store.get_latest_block_number().unwrap();
 
     let highest = ethrex_rpc::resolve_highest_block(
         store,
@@ -5147,7 +5146,7 @@ async fn eth_syncing_falls_back_to_the_canonical_head_with_no_target() {
     let store = &chains.scheduled_store;
     make_canonical(store, &chains.scheduled_blocks).await;
 
-    let canonical_head = store.get_latest_block_number().await.unwrap();
+    let canonical_head = store.get_latest_block_number().unwrap();
     let highest =
         ethrex_rpc::resolve_highest_block(store, H256::repeat_byte(0xAB), None, canonical_head)
             .await
@@ -5165,7 +5164,7 @@ async fn eth_syncing_never_reports_a_target_below_the_local_head() {
     let store = &chains.scheduled_store;
     make_canonical(store, &chains.scheduled_blocks).await;
 
-    let canonical_head = store.get_latest_block_number().await.unwrap();
+    let canonical_head = store.get_latest_block_number().unwrap();
     let highest = ethrex_rpc::resolve_highest_block(
         store,
         H256::repeat_byte(0xAB),
@@ -5196,7 +5195,7 @@ async fn a_node_with_no_known_target_is_never_reported_synced() {
     let chains = build_boundary_chains(FLIP_BLOCK + 2).await;
     let store = &chains.scheduled_store;
     make_canonical(store, &chains.scheduled_blocks).await;
-    let canonical_head = store.get_latest_block_number().await.unwrap();
+    let canonical_head = store.get_latest_block_number().unwrap();
 
     let target = ethrex_rpc::resolve_highest_block(store, H256::zero(), None, canonical_head)
         .await
@@ -5226,7 +5225,7 @@ async fn a_node_at_a_known_target_is_reported_synced() {
     make_canonical(store, &chains.scheduled_blocks).await;
 
     let head = chains.scheduled_blocks.last().expect("a non-empty chain");
-    let canonical_head = store.get_latest_block_number().await.unwrap();
+    let canonical_head = store.get_latest_block_number().unwrap();
 
     let target = ethrex_rpc::resolve_highest_block(store, head.hash(), None, canonical_head)
         .await

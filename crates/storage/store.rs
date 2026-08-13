@@ -1493,7 +1493,7 @@ impl Store {
     }
 
     /// Obtain latest block number
-    pub async fn get_latest_block_number(&self) -> Result<BlockNumber, StoreError> {
+    pub fn get_latest_block_number(&self) -> Result<BlockNumber, StoreError> {
         Ok(self.latest_block_header.get().number)
     }
 

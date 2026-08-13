@@ -175,7 +175,12 @@ impl RpcHandler for Syncing {
         // near-synced while it has no state up to the tip. Use the canonical head
         // only when its post-state is on disk; otherwise report the executed head
         // recorded by the sync cycle.
-        let canonical_head = context.storage.get_latest_block_number().await?;
+        let canonical_head = context.storage.get_latest_block_number()?;
+        // Deliberately `canonical_head_is_stateful`, not an inlined
+        // `has_state_root`: that predicate is MPT-only, and asking it about a
+        // binary-committed header is what halted a devnet permanently at the
+        // activation block. The helper routes through `has_state_for_header`,
+        // which answers for whichever commitment the header actually carries.
         let current_block = if canonical_head_is_stateful(&context.storage, canonical_head).await? {
             canonical_head
         } else {
@@ -249,7 +254,7 @@ impl RpcHandler for Config {
         let chain_config = context.storage.get_chain_config();
         let Some(latest_block) = context
             .storage
-            .get_block_by_number(context.storage.get_latest_block_number().await?)
+            .get_block_by_number(context.storage.get_latest_block_number()?)
             .await?
         else {
             return Err(RpcErr::Internal("Failed to fetch latest block".to_string()));
@@ -298,7 +303,7 @@ async fn get_config_for_fork(
         .await?
         .expect("Failed to get genesis block. This should not happen.")
         .header;
-    let block_number = context.storage.get_latest_block_number().await?;
+    let block_number = context.storage.get_latest_block_number()?;
     let fork_id = if let Some(timestamp) = activation_time {
         ForkId::new(chain_config, genesis_header, timestamp, block_number).fork_hash
     } else {

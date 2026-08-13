@@ -113,6 +113,10 @@ pub fn is_resume_point(store: &Store, header: &BlockHeader) -> Result<bool, Sync
 /// executing a downloaded batch. All three spelled it out inline, which is why
 /// all three had to be found and fixed by hand when a root-only check turned
 /// out to be wrong past `binaryTreeTime`, and why none of them had a test.
+/// Deliberately `has_state_for_header`, never an inlined
+/// `has_state_root(header.state_root)`: that predicate is MPT-only, and asking
+/// it about a binary-committed header is what halted a devnet permanently at
+/// the activation block. Upstream merges have twice tried to inline it here.
 pub fn state_available_at(store: &Store, hash: H256) -> Result<bool, SyncError> {
     let Some(header) = store.get_block_header_by_hash(hash)? else {
         return Ok(false);
@@ -181,7 +185,7 @@ pub async fn sync_cycle_full(
     store: Store,
     diagnostics: &Arc<RwLock<SyncDiagnostics>>,
 ) -> Result<(), SyncError> {
-    let local_head = store.get_latest_block_number().await?;
+    let local_head = store.get_latest_block_number()?;
     let eth_capable_peers = peers.eth_capable_peer_count().await;
     info!(
         local_head,
@@ -314,7 +318,7 @@ pub async fn sync_cycle_full(
             // cannot resolve the head hash itself, and that is independent of
             // whether the distance was worth logging.
             diagnostics.write().await.sync_target = Some(target);
-            let local_head = store.get_latest_block_number().await?;
+            let local_head = store.get_latest_block_number()?;
             let behind = target.saturating_sub(local_head);
             if behind > FOLLOW_DISTANCE {
                 started_behind = true;
@@ -389,7 +393,7 @@ pub async fn sync_cycle_full(
             // past it to genesis, so this guard is required to avoid a doomed re-exec from block 0.)
             let resume_parent_number = start_block_number.saturating_sub(1);
             if !state_available_at_number(&store, resume_parent_number)? {
-                let local_head = store.get_latest_block_number().await?;
+                let local_head = store.get_latest_block_number()?;
                 warn!(
                     resume_parent_number,
                     local_head,
@@ -406,7 +410,7 @@ pub async fn sync_cycle_full(
             // past the executed-state head: an FCU canonicalized blocks before their state
             // was computed. Surface it explicitly; these canonical-but-stateless blocks are
             // re-executed below, and the warning flags the underlying gap for investigation.
-            let canonical_head = store.get_latest_block_number().await?;
+            let canonical_head = store.get_latest_block_number()?;
             // `start_block_number - 1` is the highest block whose post-state is on
             // disk (the executed/state head). Record it so `eth_syncing` reports real
             // progress instead of the canonical pointer, which an FCU may have advanced
@@ -589,7 +593,7 @@ pub async fn sync_cycle_full(
     // (nothing is sent, so `reached_target` stays false) yet the parent state is already on disk.
     if let Some(oldest_pending) = pending_blocks.first() {
         if !state_available_at(&store, oldest_pending.header.parent_hash)? {
-            let local_head = store.get_latest_block_number().await?;
+            let local_head = store.get_latest_block_number()?;
             warn!(
                 local_head,
                 "Skipping {} pending block(s): the downloaded chain they build on was not fully executed (parent state absent); will retry on the next forkchoice update",
@@ -619,7 +623,7 @@ pub async fn sync_cycle_full(
     // from a hang. Only claim we caught up if we actually executed through to the target;
     // if body downloads gave up early we say so instead of falsely reporting success.
     if started_behind {
-        let local_head = store.get_latest_block_number().await?;
+        let local_head = store.get_latest_block_number()?;
         if reached_target {
             info!(
                 "Reached consensus-provided head at block {local_head}. Waiting for the next forkchoice update from the consensus client."

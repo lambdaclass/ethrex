@@ -543,7 +543,7 @@ pub async fn monitor_chain_progress(blockchain: Arc<Blockchain>, cancel: Cancell
             _ = cancel.cancelled() => return,
             _ = ticker.tick() => {}
         }
-        let head = match blockchain.store().get_latest_block_number().await {
+        let head = match blockchain.store().get_latest_block_number() {
             Ok(head) => head,
             Err(err) => {
                 // Not fatal, and not silent either: failing to read the head is

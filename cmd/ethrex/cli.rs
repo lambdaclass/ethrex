@@ -1307,7 +1307,7 @@ pub async fn export_blocks(
     let start = first_number.unwrap_or_default();
 
     // If we have no latest block then we don't have any blocks to export
-    let latest_number = match store.get_latest_block_number().await {
+    let latest_number = match store.get_latest_block_number() {
         Ok(number) => number,
         Err(StoreError::MissingLatestBlockNumber) => {
             warn!("No blocks in the current chain, nothing to export!");

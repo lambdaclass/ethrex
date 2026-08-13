@@ -3600,7 +3600,7 @@ impl Blockchain {
         blobs_bundle: BlobsBundle,
         broadcast: bool,
     ) -> Result<H256, MempoolError> {
-        let fork = self.current_fork().await?;
+        let fork = self.current_fork()?;
 
         let transaction = Transaction::EIP4844Transaction(transaction);
         let hash = transaction.hash(&NativeCrypto);
@@ -4014,7 +4014,7 @@ impl Blockchain {
         // Frame transactions: skip balance/EOA checks (payer unknown until execution)
         let is_frame_tx = matches!(tx, Transaction::FrameTransaction(_));
 
-        let header_no = self.storage.get_latest_block_number().await?;
+        let header_no = self.storage.get_latest_block_number()?;
         let header = self
             .storage
             .get_block_header(header_no)?
@@ -4588,9 +4588,9 @@ impl Blockchain {
     }
 
     /// Get the current fork of the chain, based on the latest block's timestamp
-    pub async fn current_fork(&self) -> Result<Fork, StoreError> {
+    pub fn current_fork(&self) -> Result<Fork, StoreError> {
         let chain_config = self.storage.get_chain_config();
-        let latest_block_number = self.storage.get_latest_block_number().await?;
+        let latest_block_number = self.storage.get_latest_block_number()?;
         let latest_block = self
             .storage
             .get_block_header(latest_block_number)?
@@ -5118,8 +5118,8 @@ pub fn validate_state_root(
 }
 
 // Returns the hash of the head of the canonical chain (the latest valid hash).
-pub async fn latest_canonical_block_hash(storage: &Store) -> Result<H256, ChainError> {
-    let latest_block_number = storage.get_latest_block_number().await?;
+pub fn latest_canonical_block_hash(storage: &Store) -> Result<H256, ChainError> {
+    let latest_block_number = storage.get_latest_block_number()?;
     if let Some(latest_valid_header) = storage.get_block_header(latest_block_number)? {
         let latest_valid_hash = latest_valid_header.hash();
         return Ok(latest_valid_hash);
