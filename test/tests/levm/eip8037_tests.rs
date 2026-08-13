@@ -21,7 +21,7 @@ use ethrex_common::{
 };
 use ethrex_crypto::NativeCrypto;
 use ethrex_levm::{
-    constants::SET_CODE_DELEGATION_BYTES,
+    constants::{SET_CODE_DELEGATION_BYTES, TX_MAX_GAS_LIMIT_AMSTERDAM},
     db::{Database, gen_db::GeneralizedDatabase},
     environment::{EVMConfig, Environment},
     errors::DatabaseError,
@@ -30,7 +30,7 @@ use ethrex_levm::{
         cost_per_state_byte,
     },
     tracing::LevmCallTracer,
-    utils::intrinsic_gas_dimensions,
+    utils::{intrinsic_gas_dimensions, intrinsic_gas_floor},
     vm::{VM, VMType},
 };
 use ethrex_rlp::encode::RLPEncode;
@@ -240,7 +240,7 @@ fn test_intrinsic_parity_eip7702_auth_list() {
 
     // EIP-8038 (Amsterdam): the per-auth intrinsic regular charge is exactly
     // REGULAR_PER_AUTH_BASE_COST (7816) per tuple, and intrinsic auth state is 0. The
-    // ACCOUNT_WRITE (8000) / NEW_ACCOUNT / AUTH_BASE charges move to the in-region
+    // ACCOUNT_WRITE (9000) / NEW_ACCOUNT / AUTH_BASE charges move to the in-region
     // `set_delegation`. Full regular = TX_BASE (12000) + cold recipient access (3000)
     // + 7816 * 2. `to` (0xBEEF) is not the sender (0x1000) and value is 0, so the
     // recipient charge is a bare cold account access.
@@ -1731,14 +1731,14 @@ fn set_code_tx(
 #[test]
 fn test_auth_new_account_over_budget_full_gas_revert_amsterdam() {
     // Two authorities. A pre-exists (nonce 0, empty code): its delegation is APPLIED
-    // (ACCOUNT_WRITE 8000 + AUTH_BASE 35190, no NEW_ACCOUNT). B is absent, so its
+    // (ACCOUNT_WRITE 9000 + AUTH_BASE 35190, no NEW_ACCOUNT). B is absent, so its
     // NEW_ACCOUNT (183_600) — charged FIRST for that tuple, per EELS `set_delegation`
     // — exceeds the remaining gas. `fail_prepare_region` rolls the region back,
     // reverting A's already-applied delegation, and burns all gas.
     //
     // Budget: intrinsic (2 auths, cold recipient) = 12000 + 3000 + 7816*2 = 30632.
-    // gas_limit 100_000 -> 69_368 left; A ACCOUNT_WRITE (8000) + AUTH_BASE (35_190)
-    // succeed (26_178 left); B NEW_ACCOUNT (183_600) OOGs.
+    // gas_limit 100_000 -> 69_368 left; A ACCOUNT_WRITE (9000) + AUTH_BASE (35_190)
+    // succeed (25_178 left); B NEW_ACCOUNT (183_600) OOGs.
     let ka = SecretKey::from_slice(&[0x11u8; 32]).unwrap();
     let kb = SecretKey::from_slice(&[0x22u8; 32]).unwrap();
     let authority_a = secret_to_address(&ka);
@@ -1913,8 +1913,8 @@ fn test_unified_region_rollback_delegation_resolve_over_budget_amsterdam() {
     // One `fail_prepare_region` reverts BOTH A's delegation and the resolve.
     //
     // Budget: intrinsic (1 auth, cold recipient) = 12000 + 3000 + 7816 = 22816.
-    // gas_limit 67_000 -> 44_184 left; A ACCOUNT_WRITE (8000) + AUTH_BASE (35_190)
-    // succeed (994 left); delegation-resolve COLD (3000) OOGs.
+    // gas_limit 67_000 -> 44_184 left; A ACCOUNT_WRITE (9000) + AUTH_BASE (35_190)
+    // leave under the 3000 a delegation-resolve COLD access needs, so it OOGs.
     let ka = SecretKey::from_slice(&[0x33u8; 32]).unwrap();
     let authority_a = secret_to_address(&ka);
     let a_target = Address::from_low_u64_be(0x7777);
@@ -2068,11 +2068,11 @@ fn test_set_delegation_repeated_authority_pays_once_amsterdam() {
     );
 }
 
-// Task 5.6: a self-sponsored authority (authority == sender) pays NO ACCOUNT_WRITE
+// A self-sponsored authority (authority == sender) pays NO ACCOUNT_WRITE
 // (the sender's leaf was already written at inclusion).
 #[test]
 fn test_set_delegation_self_sponsored_no_account_write_amsterdam() {
-    const ACCOUNT_WRITE: u64 = 8000;
+    const ACCOUNT_WRITE: u64 = 9000;
     let target = Address::from_low_u64_be(0x7777);
     let recipient = Address::from_low_u64_be(0x9999);
 
@@ -2142,6 +2142,88 @@ fn test_set_delegation_self_sponsored_no_account_write_amsterdam() {
     assert_eq!(
         other_report.gas_used - self_report.gas_used,
         ACCOUNT_WRITE,
-        "non-self authority pays +8000 ACCOUNT_WRITE that a self-sponsored one does not"
+        "non-self authority pays +9000 ACCOUNT_WRITE that a self-sponsored one does not"
     );
+}
+
+// ===== EIP-8037 per-tx execution-gas cap =====
+
+/// Runs a tx through validation only, returning the error if it is rejected.
+///
+/// The tx is sent to a bare `EXEC_CONTRACT` (empty code), so anything that comes
+/// back is a validation verdict rather than an execution outcome.
+fn validate_tx(fork: Fork, tx: &Transaction) -> Result<(), String> {
+    let mut env = exec_env(fork);
+    env.gas_limit = tx.gas_limit();
+    let mut db = exec_db(vec![], false, &[]);
+    let mut vm = VM::new(
+        env,
+        &mut db,
+        tx,
+        LevmCallTracer::disabled(),
+        VMType::L1,
+        &NativeCrypto,
+        None,
+    )
+    .expect("VM::new");
+    vm.execute().map(|_| ()).map_err(|e| e.to_string())
+}
+
+/// Builds a CALL tx whose calldata is `len` non-zero bytes.
+fn calldata_tx(len: usize, gas_limit: u64) -> Transaction {
+    Transaction::EIP1559Transaction(EIP1559Transaction {
+        chain_id: 1,
+        nonce: 0,
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 0,
+        gas_limit,
+        to: TxKind::Call(EXEC_CONTRACT),
+        value: U256::zero(),
+        data: Bytes::from(vec![0xFFu8; len]),
+        access_list: Default::default(),
+        ..Default::default()
+    })
+}
+
+#[test]
+fn test_calldata_floor_above_tx_max_gas_limit_is_rejected() {
+    // A non-zero calldata byte is 4 tokens and the Amsterdam floor is 16 per token,
+    // so the floor grows at 64 gas per byte. Past TX_MAX_GAS_LIMIT / 64 bytes the
+    // floor alone exceeds the per-tx execution-gas cap, and no gas_limit can rescue
+    // the tx: excess gas_limit becomes state-gas reservoir, not execution gas.
+    let bytes_at_cap = (TX_MAX_GAS_LIMIT_AMSTERDAM / 64) as usize;
+    let tx = calldata_tx(bytes_at_cap + 1_000, BLOCK_GAS_LIMIT);
+
+    // The generous gas_limit clears the floor check, so a rejection can only come
+    // from the cap.
+    let floor = intrinsic_gas_floor(&tx, EXEC_SENDER, Fork::Amsterdam).expect("floor");
+    assert!(
+        floor > TX_MAX_GAS_LIMIT_AMSTERDAM,
+        "fixture must put the floor above the cap, got {floor}"
+    );
+    assert!(
+        tx.gas_limit() > floor,
+        "fixture must fund the floor so the floor check cannot fire"
+    );
+
+    let err = validate_tx(Fork::Amsterdam, &tx)
+        .expect_err("a calldata floor above TX_MAX_GAS_LIMIT must be rejected");
+    assert!(
+        err.contains("gas limit lower than the minimum gas cost"),
+        "expected the IntrinsicGasTooLow arm, got: {err}"
+    );
+}
+
+#[test]
+fn test_calldata_floor_just_below_tx_max_gas_limit_is_accepted() {
+    // The control: the same shape with a floor under the cap validates, so the
+    // rejection above is the cap and not the calldata volume.
+    let bytes_at_cap = (TX_MAX_GAS_LIMIT_AMSTERDAM / 64) as usize;
+    let tx = calldata_tx(bytes_at_cap - 10_000, BLOCK_GAS_LIMIT);
+    let floor = intrinsic_gas_floor(&tx, EXEC_SENDER, Fork::Amsterdam).expect("floor");
+    assert!(
+        floor < TX_MAX_GAS_LIMIT_AMSTERDAM,
+        "fixture must keep the floor under the cap, got {floor}"
+    );
+    validate_tx(Fork::Amsterdam, &tx).expect("a floor under the cap must be accepted");
 }

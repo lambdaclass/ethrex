@@ -1,6 +1,6 @@
 [package]
 name = "ethrex-guest-risc0"
-version = "23.0.0"
+version = "24.0.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 
@@ -28,9 +28,7 @@ ethrex-common = { path = "../../../common", default-features = false, features =
 ethrex-vm = { path = "../../../vm", default-features = false, features = [
     "risc0",
 ] }
-ethrex-l2-common = { path = "../../../l2/common", default-features = false, features = [
-    "risc0",
-] }
+ethrex-l2-common = { path = "../../../l2/common", default-features = false }
 
 [patch.crates-io]
 sha2 = { git = "https://github.com/risc0/RustCrypto-hashes", tag = "sha2-v0.10.9-risczero.0" }
