@@ -1,20 +1,14 @@
 use crate::parser::get_test_relative_path;
-use crate::runner::revm_db::RevmError;
 use crate::runner::{EFTestRunnerError, InternalError};
 use crate::types::EFTestInfo;
 use colored::Colorize;
-use ethrex_common::{
-    Address, H256,
-    types::{Account, AccountUpdate, Fork},
-};
+use ethrex_common::{Address, H256, types::Fork};
 use ethrex_levm::account::LevmAccount;
-use ethrex_levm::errors::{ExecutionReport, TxResult, VMError};
+use ethrex_levm::errors::{ExecutionReport, VMError};
 use itertools::Itertools;
-use revm::context::result::{EVMError as REVMError, ExecutionResult as RevmExecutionResult};
 use serde::{Deserialize, Serialize};
-use spinoff::{Color, Spinner, spinners::Dots};
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashMap},
     fmt::{self, Display},
     path::PathBuf,
     time::Duration,
@@ -22,7 +16,6 @@ use std::{
 
 pub const LEVM_EF_TESTS_SUMMARY_SLACK_FILE_PATH: &str = "./levm_ef_tests_summary_slack.txt";
 pub const LEVM_EF_TESTS_SUMMARY_GITHUB_FILE_PATH: &str = "./levm_ef_tests_summary_github.txt";
-pub const EF_TESTS_CACHE_FILE_PATH: &str = "./levm_ef_tests_cache.json";
 
 pub type TestVector = (usize, usize, usize);
 
@@ -73,40 +66,6 @@ pub fn write(reports: &[EFTestReport]) -> Result<PathBuf, EFTestRunnerError> {
         )))
     })?;
     Ok(report_file_path)
-}
-
-pub fn cache(reports: &[EFTestReport]) -> Result<PathBuf, EFTestRunnerError> {
-    let cache_file_path = PathBuf::from(EF_TESTS_CACHE_FILE_PATH);
-    let cache = serde_json::to_string_pretty(&reports).map_err(|err| {
-        EFTestRunnerError::Internal(InternalError::MainRunnerInternal(format!(
-            "Failed to serialize cache: {err}"
-        )))
-    })?;
-    std::fs::write(&cache_file_path, cache).map_err(|err| {
-        EFTestRunnerError::Internal(InternalError::MainRunnerInternal(format!(
-            "Failed to write cache to file: {err}"
-        )))
-    })?;
-    Ok(cache_file_path)
-}
-
-pub fn load() -> Result<Vec<EFTestReport>, EFTestRunnerError> {
-    let mut reports_loading_spinner =
-        Spinner::new(Dots, "Loading reports...".to_owned(), Color::Cyan);
-    match std::fs::read_to_string(EF_TESTS_CACHE_FILE_PATH).ok() {
-        Some(cache) => {
-            reports_loading_spinner.success("Reports loaded");
-            serde_json::from_str(&cache).map_err(|err| {
-                EFTestRunnerError::Internal(InternalError::MainRunnerInternal(format!(
-                    "Cache exists but there was an error loading it: {err}"
-                )))
-            })
-        }
-        None => {
-            reports_loading_spinner.success("No cache found");
-            Ok(Vec::default())
-        }
-    }
 }
 
 pub fn summary_for_slack(reports: &[EFTestReport]) -> String {
@@ -354,79 +313,6 @@ impl Display for EFTestsReport {
                         failed_vector.0, failed_vector.1, failed_vector.2
                     )?;
                     writeln!(f, "\t\t\tError: {error}")?;
-                    if let Some(re_run_report) = &report.re_run_report {
-                        if let Some(execution_report) =
-                            re_run_report.execution_report.get(&(*failed_vector, *fork))
-                        {
-                            if let Some((levm_result, revm_result)) =
-                                &execution_report.execution_result_mismatch
-                            {
-                                writeln!(
-                                    f,
-                                    "\t\t\tExecution result mismatch: LEVM: {levm_result:?}, REVM: {revm_result:?}",
-                                )?;
-                            }
-                            if let Some((levm_gas_used, revm_gas_used)) =
-                                &execution_report.gas_used_mismatch
-                            {
-                                writeln!(
-                                    f,
-                                    "\t\t\tGas used mismatch: LEVM: {levm_gas_used}, REVM: {revm_gas_used} (diff: {})",
-                                    levm_gas_used.abs_diff(*revm_gas_used)
-                                )?;
-                            }
-                            if let Some((levm_gas_refunded, revm_gas_refunded)) =
-                                &execution_report.gas_refunded_mismatch
-                            {
-                                writeln!(
-                                    f,
-                                    "\t\t\tGas refunded mismatch: LEVM: {levm_gas_refunded}, REVM: {revm_gas_refunded} (diff: {})",
-                                    levm_gas_refunded.abs_diff(*revm_gas_refunded)
-                                )?;
-                            }
-                            if let Some((levm_logs, revm_logs)) = &execution_report.logs_mismatch {
-                                writeln!(f, "\t\t\tLogs mismatch:")?;
-                                writeln!(f, "\t\t\t\tLevm Logs: ")?;
-                                let levm_log_report = levm_logs.iter().map(|log| format!(
-                                            "\t\t\t\t Log {{ address: {:#x}, topic: {:?}, data: {:#x} }} \n",
-                                            log.address, log.topics, log.data
-                                        ))
-                                        .fold(String::new(), |acc, arg| acc + arg.as_str());
-                                writeln!(f, "{levm_log_report}")?;
-                                writeln!(f, "\t\t\t\tRevm Logs: ")?;
-                                let revm_log_report = revm_logs
-                                    .iter()
-                                    .map(|log| format!("\t\t\t\t {log:?} \n"))
-                                    .fold(String::new(), |acc, arg| acc + arg.as_str());
-                                writeln!(f, "{revm_log_report}")?;
-                            }
-                            if let Some((levm_result, revm_error)) =
-                                &execution_report.re_runner_error
-                            {
-                                writeln!(
-                                    f,
-                                    "\t\t\tRe-run error: LEVM: {levm_result:?}, REVM: {revm_error}",
-                                )?;
-                            }
-                        }
-
-                        if let Some(account_update) = re_run_report
-                            .account_updates_report
-                            .get(&(*failed_vector, *fork))
-                        {
-                            writeln!(f, "\t\t\t{}", &account_update.to_string())?;
-                        } else {
-                            writeln!(
-                                f,
-                                "\t\t\tNo account updates report found. Account update reports are only generated for tests that failed at the post-state validation stage."
-                            )?;
-                        }
-                    } else {
-                        writeln!(
-                            f,
-                            "\t\t\tNo re-run report found. Re-run reports are only generated for tests that failed at the post-state validation stage."
-                        )?;
-                    }
                     writeln!(f)?;
                 }
             }
@@ -443,7 +329,6 @@ pub struct EFTestReport {
     pub url: String,
     pub reference_spec: String,
     pub test_hash: H256,
-    pub re_run_report: Option<TestReRunReport>,
     pub fork_results: HashMap<Fork, EFTestReportForkResult>,
 }
 
@@ -468,13 +353,8 @@ impl EFTestReport {
                 .reference_spec
                 .unwrap_or("No reference spec provided by this tests".to_string()),
             test_hash,
-            re_run_report: None,
             fork_results: HashMap::new(),
         }
-    }
-
-    pub fn register_re_run_report(&mut self, re_run_report: TestReRunReport) {
-        self.re_run_report = Some(re_run_report);
     }
 
     pub fn register_fork_result(
@@ -605,354 +485,5 @@ impl EFTestReportForkResult {
 
     pub fn register_failed_vector(&mut self, vector: TestVector, error: EFTestRunnerError) {
         self.failed_vectors.insert(vector, error);
-    }
-}
-
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
-pub struct ComparisonReport {
-    pub expected_post_state_root: H256,
-    pub levm_post_state_root: H256,
-    pub revm_post_state_root: H256,
-    pub initial_accounts: HashMap<Address, Account>,
-    pub levm_account_updates: Vec<AccountUpdate>,
-    pub revm_account_updates: Vec<AccountUpdate>,
-    pub levm_updated_accounts_only: HashSet<Address>,
-    pub revm_updated_accounts_only: HashSet<Address>,
-    pub shared_updated_accounts: HashSet<Address>,
-}
-
-impl fmt::Display for ComparisonReport {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.revm_post_state_root != self.expected_post_state_root {
-            writeln!(f, "\n\t\t\tWARNING: REVM fails this test")?;
-            if self.levm_post_state_root != self.revm_post_state_root {
-                writeln!(f, "\t\t\tPost-state root mismatch between LEVM and REVM\n")?;
-            } else {
-                writeln!(f, "\t\t\tSame Post-state root in LEVM and REVM\n")?;
-            }
-        } else {
-            writeln!(f, "\n\t\t\tREVM passes this test")?;
-        }
-
-        let all_updated_accounts = &(&self.levm_updated_accounts_only
-            | &self.revm_updated_accounts_only)
-            | &self.shared_updated_accounts;
-
-        for address in all_updated_accounts {
-            writeln!(f, "\n\t\t\t{address:#x}:")?;
-
-            let account_updates_for_address: Vec<(String, AccountUpdate)> =
-                if self.levm_updated_accounts_only.contains(&address) {
-                    writeln!(f, "\t\t\t\tWas updated in LEVM but not in REVM")?;
-                    self.levm_account_updates
-                        .clone()
-                        .iter()
-                        .filter(|account_update| account_update.address == address)
-                        .map(|account_update| ("LEVM".to_string(), account_update.clone()))
-                        .collect()
-                } else if self.revm_updated_accounts_only.contains(&address) {
-                    writeln!(f, "\t\t\t\tWas updated in REVM but not in LEVM")?;
-                    self.revm_account_updates
-                        .clone()
-                        .iter()
-                        .filter(|account_update| account_update.address == address)
-                        .map(|account_update| ("REVM".to_string(), account_update.clone()))
-                        .collect()
-                } else {
-                    writeln!(f, "\t\t\t\tWas updated in both LEVM and REVM")?;
-                    [
-                        self.revm_account_updates
-                            .clone()
-                            .iter()
-                            .filter(|account_update| account_update.address == address)
-                            .map(|account_update| ("REVM".to_string(), account_update.clone()))
-                            .collect::<Vec<_>>(),
-                        self.levm_account_updates
-                            .clone()
-                            .iter()
-                            .filter(|account_update| account_update.address == address)
-                            .map(|account_update| ("LEVM".to_string(), account_update.clone()))
-                            .collect::<Vec<_>>(),
-                    ]
-                    .concat()
-                };
-
-            // Account before Tx execution
-            let base_account = self
-                .initial_accounts
-                .get(&address)
-                .cloned()
-                .unwrap_or_default();
-
-            for (vm, account_update) in &account_updates_for_address {
-                writeln!(f, "\t\t\t\t{vm} Account Update:")?;
-
-                if account_update.removed {
-                    writeln!(f, "\t\t\t\t\tAccount was removed")?;
-                    continue;
-                }
-
-                // Display changes in Account Info
-                if let Some(new_info) = &account_update.info {
-                    writeln!(
-                        f,
-                        "\t\t\t\t\tNonce: {} -> {}",
-                        base_account.info.nonce, new_info.nonce
-                    )?;
-                    writeln!(
-                        f,
-                        "\t\t\t\t\tBalance: {} -> {}",
-                        base_account.info.balance, new_info.balance
-                    )?;
-
-                    if base_account.info.code_hash != new_info.code_hash {
-                        writeln!(
-                            f,
-                            "\t\t\t\t\tCode: {} -> {}",
-                            if base_account.code.is_empty() {
-                                "empty".to_string()
-                            } else {
-                                hex::encode(base_account.code.code())
-                            },
-                            account_update
-                                .code
-                                .as_ref()
-                                .map(|code| if code.is_empty() {
-                                    "empty".to_string()
-                                } else {
-                                    hex::encode(code.code())
-                                })
-                                .expect("If code hash changed then 'code' shouldn't be None.")
-                        )?;
-                    }
-                }
-
-                for (key, value) in &account_update.added_storage {
-                    let initial_value = base_account.storage.get(key).cloned().unwrap_or_default();
-                    writeln!(
-                        f,
-                        "\t\t\t\t\tStorage slot: {key:#x}: {initial_value} -> {value}",
-                    )?;
-                }
-            }
-
-            if self.shared_updated_accounts.contains(&address) {
-                let levm_account_update = account_updates_for_address
-                    .iter()
-                    .find(|(vm, _)| vm == "LEVM")
-                    .map(|(_, update)| update)
-                    .expect("LEVM account update not found");
-                let revm_account_update = account_updates_for_address
-                    .iter()
-                    .find(|(vm, _)| vm == "REVM")
-                    .map(|(_, update)| update)
-                    .expect("REVM account update not found");
-
-                if levm_account_update == revm_account_update {
-                    writeln!(f, "\t\t\t\tNo differences between updates")?;
-                    continue;
-                }
-
-                if levm_account_update.removed != revm_account_update.removed {
-                    writeln!(
-                        f,
-                        "\t\t\t\tAccount removal mismatch: LEVM: {}, REVM: {}",
-                        levm_account_update.removed, revm_account_update.removed
-                    )?;
-                }
-
-                if levm_account_update.info != revm_account_update.info {
-                    match (&levm_account_update.info, &revm_account_update.info) {
-                        (Some(levm_info), Some(revm_info)) => {
-                            if levm_info.nonce != revm_info.nonce {
-                                writeln!(
-                                    f,
-                                    "\t\t\t\tNonce mismatch: LEVM: {}, REVM: {}",
-                                    levm_info.nonce, revm_info.nonce
-                                )?;
-                            }
-                            if levm_info.balance != revm_info.balance {
-                                writeln!(
-                                    f,
-                                    "\t\t\t\tBalance mismatch: LEVM: {}, REVM: {}",
-                                    levm_info.balance, revm_info.balance
-                                )?;
-                            }
-                        }
-                        (Some(levm_info), None) => {
-                            writeln!(
-                                f,
-                                "\t\t\t\tLEVM has account info but REVM does not: Nonce: {}, Balance: {}",
-                                levm_info.nonce, levm_info.balance
-                            )?;
-                        }
-                        (None, Some(revm_info)) => {
-                            writeln!(
-                                f,
-                                "\t\t\t\tREVM has account info but LEVM does not: Nonce: {}, Balance: {}",
-                                revm_info.nonce, revm_info.balance
-                            )?;
-                        }
-                        (None, None) => {
-                            // No account info in either LEVM or REVM, nothing to report.
-                        }
-                    }
-                }
-
-                // Compare all storage changes between LEVM and REVM.
-                let all_keys: HashSet<_> = levm_account_update
-                    .added_storage
-                    .keys()
-                    .chain(revm_account_update.added_storage.keys())
-                    .collect();
-
-                for key in all_keys {
-                    let levm_value = levm_account_update
-                        .added_storage
-                        .get(key)
-                        .cloned()
-                        .unwrap_or_default();
-                    let revm_value = revm_account_update
-                        .added_storage
-                        .get(key)
-                        .cloned()
-                        .unwrap_or_default();
-
-                    if levm_value != revm_value {
-                        writeln!(
-                            f,
-                            "\t\t\t\tStorage slot mismatch at key {key:#x}: LEVM: {levm_value}, REVM: {revm_value}",
-                        )?;
-                    }
-                }
-            }
-        }
-
-        Ok(())
-    }
-}
-
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
-pub struct TestReRunExecutionReport {
-    pub execution_result_mismatch: Option<(TxResult, RevmExecutionResult)>,
-    pub gas_used_mismatch: Option<(u64, u64)>,
-    pub gas_refunded_mismatch: Option<(u64, u64)>,
-    pub logs_mismatch: Option<(Vec<ethrex_common::types::Log>, Vec<revm::primitives::Log>)>,
-    pub re_runner_error: Option<(TxResult, String)>,
-}
-
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
-pub struct TestReRunReport {
-    pub execution_report: HashMap<(TestVector, Fork), TestReRunExecutionReport>,
-    pub account_updates_report: HashMap<(TestVector, Fork), ComparisonReport>,
-}
-
-impl TestReRunReport {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn register_execution_result_mismatch(
-        &mut self,
-        vector: TestVector,
-        levm_result: TxResult,
-        revm_result: RevmExecutionResult,
-        fork: Fork,
-    ) {
-        let value = Some((levm_result, revm_result));
-        self.execution_report
-            .entry((vector, fork))
-            .and_modify(|report| {
-                report.execution_result_mismatch = value.clone();
-            })
-            .or_insert(TestReRunExecutionReport {
-                execution_result_mismatch: value,
-                ..Default::default()
-            });
-    }
-
-    pub fn register_gas_used_mismatch(
-        &mut self,
-        vector: TestVector,
-        levm_gas_used: u64,
-        revm_gas_used: u64,
-        fork: Fork,
-    ) {
-        let value = Some((levm_gas_used, revm_gas_used));
-        self.execution_report
-            .entry((vector, fork))
-            .and_modify(|report| {
-                report.gas_used_mismatch = value;
-            })
-            .or_insert(TestReRunExecutionReport {
-                gas_used_mismatch: value,
-                ..Default::default()
-            });
-    }
-
-    pub fn register_gas_refunded_mismatch(
-        &mut self,
-        vector: TestVector,
-        levm_gas_refunded: u64,
-        revm_gas_refunded: u64,
-        fork: Fork,
-    ) {
-        let value = Some((levm_gas_refunded, revm_gas_refunded));
-        self.execution_report
-            .entry((vector, fork))
-            .and_modify(|report| {
-                report.gas_refunded_mismatch = value;
-            })
-            .or_insert(TestReRunExecutionReport {
-                gas_refunded_mismatch: value,
-                ..Default::default()
-            });
-    }
-
-    pub fn register_logs_mismatch(
-        &mut self,
-        vector: TestVector,
-        levm_logs: Vec<ethrex_common::types::Log>,
-        revm_logs: Vec<revm::primitives::Log>,
-        fork: Fork,
-    ) {
-        let value = Some((levm_logs, revm_logs));
-        self.execution_report
-            .entry((vector, fork))
-            .and_modify(|report| {
-                report.logs_mismatch = value.clone();
-            })
-            .or_insert(TestReRunExecutionReport {
-                logs_mismatch: value,
-                ..Default::default()
-            });
-    }
-
-    pub fn register_account_updates_report(
-        &mut self,
-        vector: TestVector,
-        report: ComparisonReport,
-        fork: Fork,
-    ) {
-        self.account_updates_report.insert((vector, fork), report);
-    }
-
-    pub fn register_re_run_failure(
-        &mut self,
-        vector: TestVector,
-        levm_result: TxResult,
-        revm_error: REVMError<RevmError>,
-        fork: Fork,
-    ) {
-        let value = Some((levm_result, revm_error.to_string()));
-        self.execution_report
-            .entry((vector, fork))
-            .and_modify(|report| {
-                report.re_runner_error = value.clone();
-            })
-            .or_insert(TestReRunExecutionReport {
-                re_runner_error: value,
-                ..Default::default()
-            });
     }
 }

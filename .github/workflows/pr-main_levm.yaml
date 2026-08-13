@@ -236,27 +236,3 @@ jobs:
         run: |
           cd crates/vm/levm
           make test
-  bench:
-    name: Benchmarks (LEVM vs REVM)
-    runs-on: ubuntu-22.04
-
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@v6
-      - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
-        with:
-          cache-pool: l1
-
-      - name: Install hyperfine
-        uses: taiki-e/install-action@v2
-        with:
-          tool: hyperfine@1.16
-
-      - name: Install solc
-        uses: ./.github/actions/install-solc
-
-      - name: Run benchmarks
-        run: |
-          cd crates/vm/levm
-          make revm-comparison
