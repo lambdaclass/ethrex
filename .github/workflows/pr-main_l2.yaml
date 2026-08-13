@@ -87,6 +87,7 @@ jobs:
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
         with:
+          cache-pool: l2
           components: rustfmt, clippy
 
       - name: Install RISC0
@@ -102,10 +103,21 @@ jobs:
       - name: Run cargo check
         run: cargo check --workspace --features l2,l2-sql
 
+      - name: Run cargo check (eip-8025 SSZ guest path)
+        run: cargo check --workspace --features eip-8025
+
       - name: Run cargo clippy
         run: |
           cargo clippy --workspace --features l2,l2-sql -- -D warnings
           make lint
+
+      - name: Run native rollup unit tests
+        run: cargo test -p ethrex-l2 --lib native_rollup
+
+      - name: Run native rollup integration tests (merkle + ssz)
+        run: |
+          cargo test -p ethrex-test --features l2 --test ethrex_tests l2::native_rollup_l1_messages_root
+          cargo test -p ethrex-test --features l2 --test ethrex_tests l2::ssz_round_trip
 
       - name: Run cargo fmt
         run: |
@@ -127,6 +139,8 @@ jobs:
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+        with:
+          cache-pool: l2
 
       - name: Validate blobs match genesis
         run: |
@@ -212,6 +226,8 @@ jobs:
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+        with:
+          cache-pool: l2
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -225,10 +241,7 @@ jobs:
         uses: ./.github/actions/install-solc
 
       - name: Install rex
-        run: |
-          curl -L https://github.com/lambdaclass/rex/releases/download/v8.0.0/rex-linux-x86_64 -o /tmp/rex
-          chmod +x /tmp/rex
-          sudo mv /tmp/rex /usr/local/bin/rex
+        uses: ./.github/actions/install-rex
 
       - name: Build ethrex with L2 features and contracts
         env:
@@ -340,6 +353,9 @@ jobs:
         uses: actions/checkout@v6
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+        with:
+          cache-pool: l2
+          save-cache: 'true'
 
       - name: Install solc
         uses: ./.github/actions/install-solc
@@ -352,7 +368,7 @@ jobs:
 
       - name: Build test
         run: |
-          cargo test -p ethrex-test l2:: --no-run --release
+          cargo test -p ethrex-test l2:: --no-run --release --features l2
 
       - name: Start Web3Signer
         if: matrix.web3signer
@@ -386,10 +402,7 @@ jobs:
           ETHREX_LOG_LEVEL=debug docker compose up --detach ethrex_l1
 
       - name: Install rex
-        run: |
-          curl -L https://github.com/lambdaclass/rex/releases/download/v8.0.0/rex-linux-x86_64 -o /tmp/rex
-          chmod +x /tmp/rex
-          sudo mv /tmp/rex /usr/local/bin/rex
+        uses: ./.github/actions/install-rex
 
       - name: Deploy contracts
         run: |
@@ -504,6 +517,8 @@ jobs:
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+        with:
+          cache-pool: l2
 
       - name: Install solc
         uses: ./.github/actions/install-solc
@@ -647,6 +662,8 @@ jobs:
         uses: actions/checkout@v6
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+        with:
+          cache-pool: l2
 
       - name: Download ethrex image artifact
         uses: actions/download-artifact@v6
@@ -714,15 +731,14 @@ jobs:
         uses: actions/checkout@v6
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+        with:
+          cache-pool: l2
 
       - name: Install solc
         uses: ./.github/actions/install-solc
 
       - name: Install rex
-        run: |
-          curl -L https://github.com/lambdaclass/rex/releases/download/v8.0.0/rex-linux-x86_64 -o /tmp/rex
-          chmod +x /tmp/rex
-          sudo mv /tmp/rex /usr/local/bin/rex
+        uses: ./.github/actions/install-rex
 
       - name: Build prover
         run: |
@@ -732,7 +748,7 @@ jobs:
 
       - name: Build test
         run: |
-          cargo test -p ethrex-test l2:: --no-run --release
+          cargo test -p ethrex-test l2:: --no-run --release --features l2
 
       - name: Download ethrex image artifact
         uses: actions/download-artifact@v6

@@ -68,7 +68,8 @@ jobs:
               name: "Consume Engine tests (Amsterdam)",
               file_name: consume-engine-amsterdam,
               simulation: ethereum/eels/consume-engine,
-              limit: ".*fork_Amsterdam.*",
+              limit: ".*fork_.*Amsterdam.*",
+              amsterdam: true,
             }
           - {
               name: "Consume RLP tests (Rest)",
@@ -88,7 +89,8 @@ jobs:
               name: "Consume RLP tests (Amsterdam)",
               file_name: consume-rlp-amsterdam,
               simulation: ethereum/eels/consume-rlp,
-              limit: ".*fork_Amsterdam.*",
+              limit: ".*fork_.*Amsterdam.*",
+              amsterdam: true,
               parallelism: 2,
             }
           - {
@@ -130,6 +132,7 @@ jobs:
         env:
           SIMULATION: ${{ matrix.test.simulation }}
           SIM_LIMIT: ${{ matrix.test.limit || '' }}
+          AMSTERDAM: ${{ matrix.test.amsterdam || 'false' }}
           AMSTERDAM_FIXTURES: ${{ steps.amsterdam-config.outputs.fixtures }}
           AMSTERDAM_EELS_COMMIT: ${{ steps.amsterdam-config.outputs.eels_commit }}
           MAINNET_FIXTURES: ${{ steps.mainnet-config.outputs.fixtures }}
@@ -137,8 +140,11 @@ jobs:
         run: |
           FLAGS="--sim.parallelism ${{ matrix.test.parallelism || 4 }} --sim.loglevel 1"
           if [[ "$SIMULATION" == "ethereum/eels/consume-engine" || "$SIMULATION" == "ethereum/eels/consume-rlp" ]]; then
-            # Use fork-specific fixtures to ensure comprehensive test coverage
-            if [[ "$SIM_LIMIT" == *"fork_Amsterdam"* ]]; then
+            # Use fork-specific fixtures to ensure comprehensive test coverage. Keyed off an
+            # explicit flag rather than a substring of the limit, which no longer contains a
+            # literal fork name; matching on the limit would fall through to the mainnet
+            # bundle, which carries no Amsterdam fixtures at all.
+            if [[ "$AMSTERDAM" == "true" ]]; then
               # Amsterdam config loaded from .github/config/hive/amsterdam.yaml
               FLAGS+=" --sim.buildarg fixtures=$AMSTERDAM_FIXTURES"
               FLAGS+=" --sim.buildarg branch=$AMSTERDAM_EELS_COMMIT"
@@ -204,6 +210,8 @@ jobs:
         uses: actions/checkout@v6
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+        with:
+          cache-pool: l1
 
       - name: Download all results
         continue-on-error: true

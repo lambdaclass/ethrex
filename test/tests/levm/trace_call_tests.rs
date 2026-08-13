@@ -323,8 +323,9 @@ fn trace_call_calls_top_frame_gas_is_post_refund() {
 
     // Plain execution surfaces the pre-refund / block-accounting `gas_used`.
     let mut db = amsterdam_db_with_stored_slot(bytecode);
-    let exec = LEVM::simulate_tx_from_generic(&tx, &header, &mut db, VMType::L1, &NativeCrypto)
-        .expect("simulate_tx_from_generic should succeed");
+    let exec =
+        LEVM::simulate_tx_from_generic(&tx, &header, &mut db, VMType::L1, &NativeCrypto, None)
+            .expect("simulate_tx_from_generic should succeed");
 
     assert_eq!(
         call_gas_used, opcode_result.gas_used,

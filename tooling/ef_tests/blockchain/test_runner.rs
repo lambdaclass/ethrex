@@ -56,15 +56,16 @@ pub fn parse_and_execute(
     let mut failures = Vec::new();
 
     for (test_key, test) in tests {
-        // TEMPORARY: the stateless run uses the tests-zkevm@v0.5.0 bundle (filled
-        // against glamsterdam-devnet v6.1.0), which predeploys the EIP-8282 builder
-        // deposit/exit contracts at the OLD addresses. This client uses the devnet-7
-        // addresses, so every Amsterdam+ block's end-of-block builder system call
-        // finds no code at the new addresses and fails. Skip Amsterdam+ fixtures in
-        // the stateless run — by fork, not by name, since cross-fork dirs like
-        // `for_amsterdam/prague/...` still run at the Amsterdam fork — until a zkevm
-        // bundle filled with the new predeploy addresses is released and
-        // `.fixtures_url_zkevm` is bumped. See docs/known_issues.md.
+        // TEMPORARY: the stateless run uses the tests-zkevm@v0.6.2 bundle, filled
+        // against glamsterdam-devnet v7.2.0, while this client targets devnet-8. The
+        // devnet-8 gas schedule differs (EIP-2780 folds the transfer log cost into
+        // TX_VALUE_COST, EIP-8038 reprices access-list entries to cold minus
+        // WARM_ACCESS), so every Amsterdam+ fixture in the bundle expects gas this
+        // client no longer charges. Skip Amsterdam+ fixtures in the stateless run —
+        // by fork, not by name, since cross-fork dirs like `for_amsterdam/prague/...`
+        // still run at the Amsterdam fork — until a zkevm bundle filled against
+        // devnet-8 is released and `.fixtures_url_zkevm` is bumped.
+        // See docs/known_issues.md.
         let skip_stateless_amsterdam =
             stateless_backend.is_some() && test.network >= Fork::Amsterdam;
         let should_skip_test = test.network < Fork::Merge
@@ -488,7 +489,7 @@ fn check_prestate_against_db(test_key: &str, test: &TestUnit, db: &Store) {
 /// Panics if any comparison fails
 /// Tests that previously failed the validation stage shouldn't be executed with this function.
 async fn check_poststate_against_db(test_key: &str, test: &TestUnit, db: &Store) {
-    let latest_block_number = db.get_latest_block_number().await.unwrap();
+    let latest_block_number = db.get_latest_block_number().unwrap();
     if let Some(post_state) = &test.post_state {
         for (addr, account) in post_state {
             let expected_account: CoreAccount = account.clone().into();
@@ -537,7 +538,7 @@ async fn check_poststate_against_db(test_key: &str, test: &TestUnit, db: &Store)
         }
     }
     // Check lastblockhash is in store
-    let last_block_number = db.get_latest_block_number().await.unwrap();
+    let last_block_number = db.get_latest_block_number().unwrap();
     let last_block_header = db.get_block_header(last_block_number).unwrap().unwrap();
     let last_block_hash = last_block_header.hash();
     assert_eq!(
