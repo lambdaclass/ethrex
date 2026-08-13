@@ -36,8 +36,8 @@ url=$1
 dest=$2
 tmp="$dest.part"
 
-attempts=${DOWNLOAD_ATTEMPTS:-3}
-retry_delay=${DOWNLOAD_RETRY_DELAY:-30}
+ATTEMPTS=5
+RETRY_DELAY=30
 
 trap 'rm -f "$tmp"' EXIT
 
@@ -68,18 +68,18 @@ fetch() {
 
 mkdir -p "$(dirname "$dest")"
 
-for attempt in $(seq 1 "$attempts"); do
-  echo "Downloading $url -> $dest (attempt $attempt/$attempts)"
+for attempt in $(seq 1 "$ATTEMPTS"); do
+  echo "Downloading $url -> $dest (attempt $attempt/$ATTEMPTS)"
   if fetch; then
     mv "$tmp" "$dest"
     exit 0
   fi
   rm -f "$tmp"
-  if [ "$attempt" -lt "$attempts" ]; then
-    echo "Retrying in ${retry_delay}s..."
-    sleep "$retry_delay"
+  if [ "$attempt" -lt "$ATTEMPTS" ]; then
+    echo "Retrying in ${RETRY_DELAY}s..."
+    sleep "$RETRY_DELAY"
   fi
 done
 
-echo "Failed to download $url after $attempts attempts" >&2
+echo "Failed to download $url after $ATTEMPTS attempts" >&2
 exit 1
