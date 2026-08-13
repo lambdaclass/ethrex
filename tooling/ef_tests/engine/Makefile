@@ -2,6 +2,11 @@
 
 VECTORS_ROOT := vectors
 FIXTURES_FILE := ../.fixtures_url
+
+# Retrying downloader: release downloads fail transiently often enough to be the
+# top cause of red CI. See the script header for what each guard catches.
+DOWNLOAD := ../../../.github/scripts/download.sh
+
 SPECTEST_ARTIFACT := tests.tar.gz
 SPECTEST_VECTORS_DIR := $(VECTORS_ROOT)/eest
 SPECTEST_URL := $(shell cat $(FIXTURES_FILE))
@@ -14,7 +19,7 @@ VECTORS_TARGETS := $(SPECTEST_VECTORS_DIR)
 
 $(SPECTEST_ARTIFACT): $(FIXTURES_FILE)
 	$(MAKE) clean-vectors
-	curl -L -o $(SPECTEST_ARTIFACT) $(SPECTEST_URL)
+	$(DOWNLOAD) $(SPECTEST_URL) $(SPECTEST_ARTIFACT)
 
 $(SPECTEST_VECTORS_DIR): $(SPECTEST_ARTIFACT)
 	rm -rf $(SPECTEST_VECTORS_DIR)
@@ -22,7 +27,7 @@ $(SPECTEST_VECTORS_DIR): $(SPECTEST_ARTIFACT)
 	tar -xzf $(SPECTEST_ARTIFACT) --strip-components=2 -C $(SPECTEST_VECTORS_DIR) fixtures/blockchain_tests_engine
 
 $(AMSTERDAM_ARTIFACT): $(AMSTERDAM_FIXTURES_FILE)
-	curl -L -o $(AMSTERDAM_ARTIFACT) $(AMSTERDAM_URL)
+	$(DOWNLOAD) $(AMSTERDAM_URL) $(AMSTERDAM_ARTIFACT)
 
 $(SPECTEST_VECTORS_DIR)/for_amsterdam: $(AMSTERDAM_ARTIFACT) $(SPECTEST_VECTORS_DIR)
 	tar -xzf $(AMSTERDAM_ARTIFACT) --strip-components=2 -C $(SPECTEST_VECTORS_DIR) fixtures/blockchain_tests_engine/for_amsterdam

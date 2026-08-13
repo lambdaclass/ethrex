@@ -4,7 +4,10 @@ use super::{
 };
 use crate::{
     Address, H256, U256,
-    constants::{BLOB_BASE_COST, DEFAULT_OMMERS_HASH, GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS},
+    constants::{
+        BLOB_BASE_COST, DEFAULT_OMMERS_HASH, EMPTY_WITHDRAWALS_HASH, GAS_PER_BLOB,
+        MIN_BASE_FEE_PER_BLOB_GAS,
+    },
     types::{Receipt, Transaction},
 };
 use bytes::Bytes;
@@ -797,6 +800,27 @@ pub fn validate_block_body(
     Ok(())
 }
 
+/// Normalizes a legacy post-Shanghai body shape produced by older ethrex versions,
+/// which omitted the `withdrawals` field while the header committed to the
+/// empty-withdrawals root. `validate_block_body` rejects that shape (reference
+/// clients treat it as malformed on the wire), but blocks already sitting in a
+/// node's store or in batch blobs published to L1 are immutable history. When the
+/// header's withdrawals_root is exactly the empty-list root, `Some(vec![])` is the
+/// provably-equivalent canonical body; any other root leaves the body untouched, and
+/// validation rejects it exactly as before.
+///
+/// Only call this on bodies read from trusted local history (store re-execution,
+/// blob reconstruction) — never on bodies received from the network.
+pub fn normalize_legacy_withdrawals(header: &BlockHeader, body: &mut BlockBody) {
+    if body.withdrawals.is_none() && header.withdrawals_root == Some(*EMPTY_WITHDRAWALS_HASH) {
+        tracing::debug!(
+            block = header.number,
+            "Normalizing legacy omitted-withdrawals block body from trusted history"
+        );
+        body.withdrawals = Some(Vec::new());
+    }
+}
+
 /// Validates that only the required field are present for a Prague block
 /// Also validates excess_blob_gas value against parent's header
 pub fn validate_prague_header_fields(
@@ -1352,5 +1376,61 @@ mod test {
             ..BlockBody::empty()
         };
         assert!(validate_block_body(&pre_shanghai_header, &body_no_withdrawals, &crypto).is_ok());
+    }
+
+    #[test]
+    fn test_normalize_legacy_withdrawals() {
+        use crate::constants::EMPTY_WITHDRAWALS_HASH;
+
+        let crypto = NativeCrypto;
+
+        // Legacy shape from trusted history: omitted field + empty-withdrawals
+        // header root normalizes to the canonical Some(vec![]), and the
+        // normalized body passes validation.
+        let header = BlockHeader {
+            transactions_root: compute_transactions_root(&[], &crypto),
+            withdrawals_root: Some(*EMPTY_WITHDRAWALS_HASH),
+            ..Default::default()
+        };
+        let mut body = BlockBody {
+            withdrawals: None,
+            ..BlockBody::empty()
+        };
+        normalize_legacy_withdrawals(&header, &mut body);
+        assert_eq!(body.withdrawals, Some(Vec::new()));
+        assert!(validate_block_body(&header, &body, &crypto).is_ok());
+
+        // An omitted field under a NON-empty withdrawals root is not the legacy
+        // shape: the body stays untouched and validation still rejects it.
+        let bad_header = BlockHeader {
+            transactions_root: compute_transactions_root(&[], &crypto),
+            withdrawals_root: Some(H256::repeat_byte(0xAB)),
+            ..Default::default()
+        };
+        let mut bad_body = BlockBody {
+            withdrawals: None,
+            ..BlockBody::empty()
+        };
+        normalize_legacy_withdrawals(&bad_header, &mut bad_body);
+        assert_eq!(bad_body.withdrawals, None);
+        assert!(validate_block_body(&bad_header, &bad_body, &crypto).is_err());
+
+        // Pre-Shanghai shape (no header root, no field) stays untouched.
+        let pre_shanghai_header = BlockHeader {
+            transactions_root: compute_transactions_root(&[], &crypto),
+            ..Default::default()
+        };
+        let mut pre_shanghai_body = BlockBody {
+            withdrawals: None,
+            ..BlockBody::empty()
+        };
+        normalize_legacy_withdrawals(&pre_shanghai_header, &mut pre_shanghai_body);
+        assert_eq!(pre_shanghai_body.withdrawals, None);
+
+        // An already-canonical body is left as-is.
+        let mut canonical = BlockBody::empty();
+        let before = canonical.withdrawals.clone();
+        normalize_legacy_withdrawals(&header, &mut canonical);
+        assert_eq!(canonical.withdrawals, before);
     }
 }

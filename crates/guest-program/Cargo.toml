@@ -54,13 +54,13 @@ default = ["secp256k1"]
 
 # Base features: enable the zkVM crypto modules and feature propagation.
 # Guest binaries use these to get their Crypto implementation.
-sp1 = ["dep:k256", "dep:substrate-bn", "dep:bls12_381", "dep:ff", "ethrex-l2-common/secp256k1", "ethrex-crypto/kzg-rs"]
-risc0 = ["dep:k256", "dep:substrate-bn", "dep:bls12_381", "dep:ff", "ethrex-l2-common/secp256k1"]
+sp1 = ["dep:k256", "dep:substrate-bn", "dep:bls12_381", "dep:ff", "ethrex-crypto/kzg-rs"]
+risc0 = ["dep:k256", "dep:substrate-bn", "dep:bls12_381", "dep:ff"]
 zisk = [
     "dep:k256", "dep:substrate-bn", "dep:ziskos",
-    "ethrex-common/zisk", "ethrex-vm/zisk", "ethrex-l2-common/zisk",
+    "ethrex-common/zisk", "ethrex-vm/zisk",
 ]
-openvm = ["dep:k256", "dep:bls12_381", "dep:ff", "dep:openvm-kzg", "ethrex-l2-common/secp256k1"]
+openvm = ["dep:k256", "dep:bls12_381", "dep:ff", "dep:openvm-kzg"]
 
 # Build-ELF features: base + build tooling for compiling guest ELFs.
 # Used by the prover host. Enabling these triggers the build script which
@@ -80,11 +80,7 @@ eip-8025 = [
     "dep:libssz-derive",
 ]
 c-kzg = ["ethrex-vm/c-kzg", "ethrex-common/c-kzg"]
-secp256k1 = [
-    "ethrex-common/secp256k1",
-    "ethrex-vm/secp256k1",
-    "ethrex-l2-common/secp256k1",
-]
+secp256k1 = ["ethrex-common/secp256k1", "ethrex-vm/secp256k1"]
 # temporary feature until we fix cargo-zisk setup-rom from failing in the CI
 ci = []
 

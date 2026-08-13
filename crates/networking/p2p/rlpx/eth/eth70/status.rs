@@ -76,14 +76,14 @@ impl RLPxMessage for StatusMessage70 {
 }
 
 impl StatusMessage70 {
-    pub async fn new(storage: &Store) -> Result<Self, PeerConnectionError> {
+    pub fn new(storage: &Store) -> Result<Self, PeerConnectionError> {
         let chain_config = storage.get_chain_config();
         let network_id = chain_config.chain_id;
 
         let genesis_header = storage
             .get_block_header(0)?
             .ok_or(PeerConnectionError::NotFound("Genesis Block".to_string()))?;
-        let latest_block = storage.get_latest_block_number().await?;
+        let latest_block = storage.get_latest_block_number()?;
         let block_header =
             storage
                 .get_block_header(latest_block)?
