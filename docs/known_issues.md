@@ -251,25 +251,61 @@ commitment the guard is inert, which is why L2 behaviour is unchanged.
 give the L2 stack real EIP-8297 support. Refusing at startup is the smaller of
 the two and matches what L1 already does for other unsupported combinations.
 
-### A same-block CREATE2 still sees a destroyed account's pre-block storage
+### A same-block CREATE2 after an EIP-161 clear is allowed where EELS collides
 
-**Where:** `GeneralizedDatabase::get_state_transitions` and its `removed`
-computation (`crates/vm/levm/src/db/gen_db.rs:585`), and the
-`clear_storage_of_emptied_account` call in `SELFDESTRUCT`
+**This entry previously claimed the divergence ran the other way** — that
+ethrex still saw the pre-block `has_storage` and rejected a CREATE2 that EELS
+allowed. Both halves of that were wrong; measured behaviour is below, pinned by
+`a_same_block_create2_onto_the_cleared_account_is_allowed_on_the_binary_trie`
+and `the_same_same_block_create2_still_collides_on_the_mpt` in
+`test/tests/blockchain/binary_tree_shadow_tests.rs`.
+
+**Where:** `GeneralizedDatabase::clear_storage_of_emptied_account`
+(`crates/vm/levm/src/db/gen_db.rs:996`), called from `SELFDESTRUCT`
 (`crates/vm/levm/src/opcode_handlers/system.rs:821`).
 
-**What:** an EIP-161 clear runs inside LEVM, but the removal reaches the trie
-only through the block's account updates, so a CREATE2 in a *later transaction
-of the same block* still sees the account's pre-block `has_storage`. EELS
-destroys within the transaction and would let that CREATE2 proceed.
+**What ethrex does:** the clear sets `has_storage = false` on the *LEVM*
+account, and `GeneralizedDatabase::current_accounts_state` outlives the
+transaction, so a CREATE2 in a later transaction of the same block reads the
+cleared flag and is allowed. Measured: the deployer's slot holds the created
+address.
 
-**Why it is not currently a wrong-answer bug in practice:** no fixture covers
-it. Both PR-#3207 destruction tests put the CREATE2 in a later block, and both
-now pass (see the EIP-8038 entry below for the suite numbers).
+**What EELS does:** it collides, so the CREATE2 fails.
+`account_deployable` asks `account_has_storage`, which reads this transaction's
+`storage_writes`, then the block's, then
+`tx_state.parent.pre_state.account_has_storage(address)`
+(`src/ethereum/forks/binary_tree/state_tracker.py:362`, byte-identical in
+`forks/amsterdam`). The clear is `destroy_storage` (`:531`), whose entire body
+deletes the transaction's own `storage_writes` entry and records nothing
+elsewhere — "Only supports same transaction destruction", as its docstring
+says. `incorporate_tx_into_block` (`:802`) only merges what survives, and the
+pre-state is untouched until `apply_changes_to_state` (`state_pbt.py:310`) runs
+at block end. A storage-only account allocated at genesis therefore still reads
+as holding storage for every later transaction of the block. Post-Cancun
+trackers have no channel that could say otherwise: `storage_clears` exists in
+every tracker up to Shanghai and in none from Cancun on, dropped on the
+EIP-6780 premise that destruction is confined to the creating transaction —
+which is exactly the premise this EIP-161 clear breaks. (Read from the spec
+source; not executed.)
 
-**Removal:** thread the destruction through the in-flight transaction state
-rather than only through the end-of-block account updates, and fill a fixture
-that puts the CREATE2 in the same block.
+So ethrex is **more** permissive than the spec here, not less.
+
+**Why it is not currently a wrong-answer bug in practice:** binary path only.
+The clear is gated per-header on `is_binary_tree_active`, so an MPT-committing
+header never runs it and collides exactly as EELS does — asserted by the second
+test above, which fails if the gate is removed. No fixture covers the
+same-block ordering; both PR-#3207 destruction tests put the CREATE2 in a later
+block, where ethrex and EELS agree.
+
+**Not the account cache.** `StoreVmDatabase::account_state_cache` still holds
+the pre-block answer throughout, which is the same thing EELS's `pre_state`
+holds; it is simply never consulted again, because LEVM's own account layer
+answers first. Bypassing that cache entirely leaves the whole suite green.
+
+**Removal:** decide which side is right first. Making ethrex match today's EELS
+means *not* letting the clear affect `has_storage` for later transactions of
+the same block, which is the opposite of what the old entry proposed. Either
+way, fill a fixture that puts the CREATE2 in the same block.
 
 ### Amsterdam EIP-2780/EIP-8038 has no CI coverage at all
 
