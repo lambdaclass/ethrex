@@ -14,7 +14,7 @@ use bytes::Bytes;
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::types::{
     Account, BlockHeader, Code, FRAME_RECEIPT_STATUS_SUCCESS, Fork, Frame, FrameMode,
-    FrameTransaction, Transaction,
+    FrameTransaction, MAX_BLOBS_PER_TX, Transaction,
 };
 use ethrex_common::{Address, H256, U256, constants::EMPTY_TRIE_HASH};
 use ethrex_crypto::NativeCrypto;
@@ -3611,4 +3611,55 @@ fn storage_refund_from_a_later_frame_reduces_reported_gas() {
         applied <= pre_refund / 5,
         "the applied refund {applied} must respect the EIP-3529 one-fifth cap"
     );
+}
+
+// ==================== EIP-7594 per-tx blob limit ====================
+
+/// The EIP-7594 per-transaction blob limit applies to frame transactions
+/// unchanged (EIP-8141 §Blob-carrying frame transactions), and must bind at
+/// execution: block import has no sidecar to validate, so without this a block
+/// carrying an over-limit frame transaction would be accepted here and rejected
+/// by every conformant client.
+#[test]
+fn frame_tx_over_the_per_tx_blob_limit_is_rejected() {
+    let mut hash = [0x11u8; 32];
+    hash[0] = 0x01; // EIP-4844 KZG version byte
+    let frame = Frame {
+        mode: u8::from(FrameMode::Verify),
+        flags: 0x03, // APPROVE_EXECUTION_AND_PAYMENT
+        target: Some(FUNDED_SENDER),
+        gas_limit: 100_000,
+        value: U256::zero(),
+        data: Bytes::new(),
+    };
+    let accounts = [(
+        FUNDED_SENDER,
+        AUTO_SEED_SENDER_BALANCE,
+        0,
+        Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+    )];
+
+    let mut tx = frame_tx_with_frames(vec![frame.clone()]);
+    tx.max_fee_per_blob_gas = U256::from(1u64);
+    tx.blob_versioned_hashes = vec![H256(hash); MAX_BLOBS_PER_TX];
+    let (result, _) = run_frame_tx(&accounts, tx);
+    assert!(
+        result.is_ok(),
+        "{MAX_BLOBS_PER_TX} blobs are within the per-transaction limit; got {result:?}"
+    );
+
+    let mut tx = frame_tx_with_frames(vec![frame]);
+    tx.max_fee_per_blob_gas = U256::from(1u64);
+    tx.blob_versioned_hashes = vec![H256(hash); MAX_BLOBS_PER_TX + 1];
+    let (result, db) = run_frame_tx(&accounts, tx);
+    assert!(
+        matches!(
+            result,
+            Err(VMError::TxValidation(
+                ethrex_levm::errors::TxValidationError::InvalidFrameTransaction
+            ))
+        ),
+        "a frame tx carrying more than {MAX_BLOBS_PER_TX} blobs must be rejected; got {result:?}"
+    );
+    assert_db_cache_unchanged(&db, &accounts);
 }

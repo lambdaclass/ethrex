@@ -149,8 +149,6 @@ pub enum MempoolError {
     InvalidFrameTransaction(String),
     #[error("Invalid frame transaction signature")]
     InvalidFrameSignature,
-    #[error("Frame transaction blobs are not yet supported")]
-    FrameTxBlobsUnsupported,
     #[error("Frame transaction signature verification cost exceeds MAX_VERIFY_GAS")]
     FrameTxVerifyGasExceeded,
     #[error("Frame transaction validation prefix does not match any recognized shape")]

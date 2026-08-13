@@ -942,9 +942,14 @@ impl Blockchain {
         head: &HeadTransaction,
         context: &mut PayloadBuildContext,
     ) -> Result<Receipt, ChainError> {
-        match **head {
-            Transaction::EIP4844Transaction(_) => self.apply_blob_transaction(head, context),
-            _ => apply_plain_transaction(head, context),
+        // A frame transaction (EIP-8141) carrying blobs needs the same blob-gas
+        // accounting and sidecar handling as an EIP-4844 one; the blob path reads
+        // only the hash, the versioned hashes and the bundle, so it is already
+        // type-agnostic.
+        if (**head).is_blob_carrying() {
+            self.apply_blob_transaction(head, context)
+        } else {
+            apply_plain_transaction(head, context)
         }
     }
 
@@ -963,7 +968,7 @@ impl Blockchain {
         // blobs bundle empty (the EVM only needs the hashes, which are in the tx).
         let (blob_count, bundle) = match self.mempool.get_blobs_bundle(tx_hash)? {
             Some(blobs_bundle) => (blobs_bundle.blobs.len(), Some(blobs_bundle)),
-            None if context.explicit_build => ((**head).blob_versioned_hashes().len(), None),
+            None if context.explicit_build => ((**head).blob_versioned_hashes_ref().len(), None),
             None => {
                 // No blob tx should enter the mempool without its blobs bundle so this is an internal error
                 return Err(StoreError::Custom(format!(

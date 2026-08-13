@@ -18,7 +18,11 @@ fn valid_bundle_and_tx() -> (BlobsBundle, ethrex_common::types::EIP4844Transacti
 #[test]
 fn validate_cheap_accepts_valid_blobs() {
     let (bundle, tx) = valid_bundle_and_tx();
-    assert!(bundle.validate_cheap(&tx, Fork::Prague).is_ok());
+    assert!(
+        bundle
+            .validate_cheap(&tx.blob_versioned_hashes, Fork::Prague)
+            .is_ok()
+    );
 }
 
 #[test]
@@ -27,7 +31,7 @@ fn validate_cheap_rejects_empty_bundle() {
     let tx = ethrex_common::types::EIP4844Transaction::default();
 
     assert!(matches!(
-        bundle.validate_cheap(&tx, Fork::Prague),
+        bundle.validate_cheap(&tx.blob_versioned_hashes, Fork::Prague),
         Err(BlobsBundleError::BlobBundleEmptyError)
     ));
 }
@@ -48,7 +52,7 @@ fn validate_cheap_rejects_wrong_lengths() {
     bundle.commitments.push([0u8; 48]);
 
     assert!(matches!(
-        bundle.validate_cheap(&tx, Fork::Prague),
+        bundle.validate_cheap(&tx.blob_versioned_hashes, Fork::Prague),
         Err(BlobsBundleError::BlobsBundleWrongLen)
     ));
 }
@@ -58,7 +62,7 @@ fn validate_cheap_rejects_version_fork_mismatch() {
     // version-0 bundle on Osaka fork should fail
     let (bundle, tx) = valid_bundle_and_tx();
     assert!(matches!(
-        bundle.validate_cheap(&tx, Fork::Osaka),
+        bundle.validate_cheap(&tx.blob_versioned_hashes, Fork::Osaka),
         Err(BlobsBundleError::InvalidBlobVersionForFork)
     ));
 }
@@ -70,7 +74,7 @@ fn validate_cheap_rejects_wrong_versioned_hashes() {
     tx.blob_versioned_hashes = vec![ethrex_common::H256::zero()];
 
     assert!(matches!(
-        bundle.validate_cheap(&tx, Fork::Prague),
+        bundle.validate_cheap(&tx.blob_versioned_hashes, Fork::Prague),
         Err(BlobsBundleError::BlobVersionedHashesError)
     ));
 }
@@ -98,12 +102,14 @@ fn validate_cheap_passes_with_invalid_kzg_proofs() {
 
     // Cheap validation passes (no KZG check)
     assert!(
-        bundle.validate_cheap(&tx, Fork::Prague).is_ok(),
+        bundle
+            .validate_cheap(&tx.blob_versioned_hashes, Fork::Prague)
+            .is_ok(),
         "validate_cheap should pass with structurally valid but KZG-invalid bundle"
     );
 
     // Full validation fails on KZG proof
-    let result = bundle.validate(&tx, Fork::Prague);
+    let result = bundle.validate(&tx.blob_versioned_hashes, Fork::Prague);
     assert!(
         result.is_err(),
         "validate should fail for invalid KZG proofs, but got Ok"
@@ -139,7 +145,9 @@ fn validate_cheap_rejects_more_than_six_blobs_per_tx_on_osaka() {
     };
 
     assert!(
-        bundle.validate_cheap(&tx, Fork::Osaka).is_err(),
+        bundle
+            .validate_cheap(&tx.blob_versioned_hashes, Fork::Osaka)
+            .is_err(),
         "a transaction with more than 6 blobs must be rejected on Osaka (EIP-7594)"
     );
 }
@@ -156,7 +164,7 @@ fn validate_cheap_rejects_noncanonical_wrapper_version_on_osaka() {
 
     assert!(
         matches!(
-            bundle.validate_cheap(&tx, Fork::Osaka),
+            bundle.validate_cheap(&tx.blob_versioned_hashes, Fork::Osaka),
             Err(BlobsBundleError::InvalidBlobVersionForFork)
         ),
         "wrapper version 2 must be rejected on Osaka (only version 1 is valid)"
