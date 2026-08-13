@@ -4,6 +4,10 @@ FIXTURES_FILE := ../.fixtures_url
 STATETEST_ARTIFACT := test.tar.gz
 VECTORS_DIR := vectors
 
+# Retrying downloader: release downloads fail transiently often enough to be the
+# top cause of red CI. See the script header for what each guard catches.
+DOWNLOAD := ../../../.github/scripts/download.sh
+
 TMP_DIR := tmp
 TESTS_REPO := $(TMP_DIR)/ethereum-tests
 
@@ -19,7 +23,7 @@ AMSTERDAM_URL := $(shell cat $(AMSTERDAM_FIXTURES_FILE))
 
 $(STATETEST_ARTIFACT): $(FIXTURES_FILE)
 	$(MAKE) clean-evm-ef-tests
-	curl -L -o $(STATETEST_ARTIFACT) $(STATETEST_URL)
+	$(DOWNLOAD) $(STATETEST_URL) $(STATETEST_ARTIFACT)
 
 $(VECTORS_DIR): $(STATETEST_ARTIFACT)
 	$(MAKE) setup-test-dirs
@@ -29,7 +33,7 @@ $(VECTORS_DIR): $(STATETEST_ARTIFACT)
 	rm -rf $(TMP_DIR)
 
 $(AMSTERDAM_ARTIFACT): $(AMSTERDAM_FIXTURES_FILE)
-	curl -L -o $(AMSTERDAM_ARTIFACT) $(AMSTERDAM_URL)
+	$(DOWNLOAD) $(AMSTERDAM_URL) $(AMSTERDAM_ARTIFACT)
 
 $(VECTORS_DIR)/state_tests/for_amsterdam: $(AMSTERDAM_ARTIFACT) $(VECTORS_DIR)
 	tar -xzf $(AMSTERDAM_ARTIFACT) --strip-components=2 -C $(VECTORS_DIR)/state_tests fixtures/state_tests/for_amsterdam

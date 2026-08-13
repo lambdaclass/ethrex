@@ -56,15 +56,27 @@ deploy-dcap: deploydeps deploy-pccs
 	cp deploydeps/automata-on-chain-pccs/deployment/* $(DEPLOYMENT_PATH)
 	cd deploydeps/automata-dcap-attestation/evm; make deploy
 
+# -f is what keeps an HTTP error page from being hex-encoded and then pushed
+# on-chain as a root certificate; --retry rides out transient Intel PKI hiccups.
+# --retry-all-errors is required because plain --retry ignores connection errors.
+CURL_CERT = curl -fsSL --retry 5 --retry-all-errors --retry-connrefused --connect-timeout 30
+
+# Downloaded to a file rather than piped into xxd: in a pipeline the recipe takes
+# xxd's exit status, so a failed curl would still leave a bogus .hex that make
+# then considers up to date.
 ROOT_CRL_URI = https://certificates.trustedservices.intel.com/IntelSGXRootCA.der
 # SGX and TDX roots are the same
 deploydeps/root_crl.hex: | deploydeps
-	curl $(ROOT_CRL_URI) | xxd -ps -c0 > deploydeps/root_crl.hex
+	$(CURL_CERT) -o deploydeps/root_crl.der $(ROOT_CRL_URI)
+	xxd -ps -c0 deploydeps/root_crl.der > $@
+	rm -f deploydeps/root_crl.der
 
 ROOT_CA_URI = https://certificates.trustedservices.intel.com/Intel_SGX_Provisioning_Certification_RootCA.cer
 # SGX and TDX roots are the same
 deploydeps/root_ca.hex: | deploydeps
-	curl $(ROOT_CA_URI) | xxd -ps -c0 > deploydeps/root_ca.hex
+	$(CURL_CERT) -o deploydeps/root_ca.cer $(ROOT_CA_URI)
+	xxd -ps -c0 deploydeps/root_ca.cer > $@
+	rm -f deploydeps/root_ca.cer
 
 setup-pccs-ca: deploy-pccs deploydeps/root_ca.hex deploydeps/root_crl.hex
 	$(eval PCSDAO_ADDRESS := $(shell cat ${DEPLOYMENT_PATH}/AutomataPcsDao))
