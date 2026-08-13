@@ -10,6 +10,15 @@ services:
       - /bin/bash
       - -c
       - touch /env/.env; ./ethrex l2 deploy "$0" "$@"
+    # The Timelock is initialized with the committer and proof-sender addresses
+    # as its authorized sequencers, and both deployer options default to the
+    # accounts ethrex_l2 uses. L2B runs from its own accounts (see ethrex_l2_b
+    # below), so its deployment has to authorize those instead, or every
+    # commitBatch from L2B reverts at gas estimation as an unauthorized caller.
+    # These two addresses must stay in sync with ethrex_l2_b's private keys.
+    environment:
+      - ETHREX_DEPLOYER_COMMITTER_L1_ADDRESS=0x000990B05481b1661bc6211298f6429451B09425
+      - ETHREX_DEPLOYER_PROOF_SENDER_L1_ADDRESS=0x000cDF8Dba2393a40857cbCB0FCD9b998a941078
     command: >
       --use-compiled-genesis false
       --genesis-l2-path ${DOCKER_ETHREX_WORKDIR}/fixtures/genesis/l2.json
