@@ -6,7 +6,10 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{EngineType, Store};
 use secp256k1::SecretKey;
-use std::{net::SocketAddr, str::FromStr};
+use std::{
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    str::FromStr,
+};
 
 const TEST_GENESIS: &str = include_str!("../../../fixtures/genesis/l1.json");
 
@@ -182,4 +185,38 @@ fn verify_enr_signature_fails_when_decode_drops_unknown_pairs() {
     assert_eq!(decoded.pairs().tcp_port, Some(13000));
     assert_eq!(decoded.encode_to_vec(), raw_record);
     assert!(decoded.verify_signature());
+}
+
+#[test]
+fn edit_bumps_seq_once_and_preserves_untouched_entries() {
+    // What `edit` buys over rebuilding a record from its `Node`: entries the
+    // closure never mentions survive, and the record is re-signed exactly once.
+    let signer = SecretKey::from_slice(&[
+        16, 125, 177, 238, 167, 212, 168, 215, 239, 165, 77, 224, 199, 143, 55, 205, 9, 194, 87,
+        139, 92, 46, 30, 191, 74, 37, 68, 242, 38, 225, 104, 246,
+    ])
+    .unwrap();
+    let node = Node::new(
+        IpAddr::V4(Ipv4Addr::LOCALHOST),
+        30303,
+        30304,
+        public_key_from_signing_key(&signer),
+    );
+    let mut record = NodeRecord::from_node(&node, 1, &signer).unwrap();
+
+    let new_ip = Ipv4Addr::new(203, 0, 113, 7);
+    record
+        .edit(&signer, |pairs| pairs.ip = Some(new_ip))
+        .unwrap();
+
+    assert_eq!(record.seq, 2, "exactly one seq bump");
+    assert!(
+        record.verify_signature(),
+        "must be re-signed after the edit"
+    );
+
+    let pairs = record.pairs();
+    assert_eq!(pairs.ip, Some(new_ip));
+    assert_eq!(pairs.udp_port, Some(30303));
+    assert_eq!(pairs.tcp_port, Some(30304));
 }

@@ -95,7 +95,7 @@ impl NewFilterRequest {
             return Err(RpcErr::BadParams("Invalid block range".to_string()));
         }
 
-        let last_block_number = storage.get_latest_block_number().await?;
+        let last_block_number = storage.get_latest_block_number()?;
         let id: u64 = rand::random();
         let timestamp = Instant::now();
         let mut active_filters_guard = filters.lock().unwrap_or_else(|mut poisoned_guard| {
@@ -195,7 +195,7 @@ impl FilterChangesRequest {
         storage: ethrex_storage::Store,
         filters: ActiveFilters,
     ) -> Result<serde_json::Value, crate::utils::RpcErr> {
-        let latest_block_num = storage.get_latest_block_number().await?;
+        let latest_block_num = storage.get_latest_block_number()?;
         // Box needed to keep the future Sync
         // https://github.com/rust-lang/rust/issues/128095
         let mut active_filters_guard =
