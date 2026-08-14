@@ -4,7 +4,6 @@ use ethrex_common::types::ELASTICITY_MULTIPLIER;
 use ethrex_common::types::stateless_ssz::{
     STATELESS_INPUT_SCHEMA_ID, SszPublicKeys, SszStatelessInput, SszStatelessValidationResult,
 };
-use ethrex_common::validate_block_access_list_hash;
 use ethrex_crypto::Crypto;
 use ethrex_vm::Evm;
 use libssz_merkle::{HashTreeRoot, Sha256Hasher};
@@ -240,17 +239,14 @@ pub fn validate_public_keys(
 ///
 /// Implements `verify_stateless_new_payload` from execution-specs: reconstruct
 /// block → check the supplied public keys → validate versioned hashes → execute
-/// statelessly → inject recomputed `burned_fees` → validate the recomputed block
-/// access list hash (Amsterdam+) → verify `block_hash`.
+/// statelessly (which validates the recomputed block access list hash on
+/// Amsterdam+) → inject recomputed `burned_fees` → verify `block_hash`.
 pub fn verify_stateless_block(
     new_payload_request: &ethrex_common::types::stateless_ssz::NewPayloadRequest,
     public_keys: &SszPublicKeys,
     execution_witness: ethrex_common::types::block_execution_witness::ExecutionWitness,
     crypto: Arc<dyn Crypto>,
 ) -> Result<(), ExecutionError> {
-    // ChainConfig is Copy — capture it before execute_blocks consumes execution_witness.
-    let chain_config = execution_witness.chain_config;
-
     // Transform SSZ NewPayloadRequest → Block.
     // Do NOT call block.hash() here — burned_fees is not yet known so any
     // cached value would be stale.
@@ -289,24 +285,16 @@ pub fn verify_stateless_block(
     // original header, so the hash is unchanged — no regression on the
     // current path.
     let recomputed_burned_fees = result.burned_fees.first().copied().flatten();
-    let recomputed_bal = result.bals.into_iter().next().flatten();
     let [block] = blocks;
-    let tx_count = block.body.transactions.len();
     let verified_header = block.header.into_with_burned_fees(recomputed_burned_fees);
 
-    // EIP-7928 (Amsterdam+): validate the recomputed BAL — structural checks
-    // (index bounds, size cap) and hash match against header.block_access_list_hash.
-    // Pre-Amsterdam blocks produce recomputed_bal = None, so this is a no-op there.
-    if let Some(ref bal) = recomputed_bal {
-        validate_block_access_list_hash(
-            &verified_header,
-            &chain_config,
-            bal,
-            tx_count,
-            crypto.as_ref(),
-        )
-        .map_err(ExecutionError::BlockValidation)?;
-    }
+    // No BAL validation here: `execute_blocks` already ran
+    // `validate_block_access_list_hash` on this block, and re-running it would
+    // be a second full traversal plus another RLP-encode-and-keccak of the
+    // whole access list inside the zkVM. The check reads only `timestamp`,
+    // `gas_limit` and `block_access_list_hash`, none of which
+    // `into_with_burned_fees` touches, so a second call cannot reach a
+    // different verdict.
 
     let computed_hash = verified_header.hash();
     let expected_hash =

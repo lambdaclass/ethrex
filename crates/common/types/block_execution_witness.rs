@@ -299,7 +299,11 @@ impl ExecutionWitness {
         // Without this a witness whose headers do not form a chain is accepted,
         // and a guest that accepts a payload the spec rejects can prove an
         // invalid state transition (`test_validation_headers_non_contiguous_chain`).
-        let headers = decode_witness_headers(&input.witness.headers_as_vecs())?;
+        // Extracted once and reused: `headers_as_vecs` copies every header out of
+        // the SSZ list (up to `MAX_WITNESS_HEADERS`), and the same bytes are also
+        // what `block_headers_bytes` below is built from.
+        let block_headers_bytes = input.witness.headers_as_vecs();
+        let headers = decode_witness_headers(&block_headers_bytes)?;
         validate_witness_headers_chain(&headers, crypto)?;
 
         let initial_state_root = find_parent_state_root(&headers, first_block_number)?;
@@ -312,7 +316,7 @@ impl ExecutionWitness {
 
         Ok(Self {
             codes: input.witness.codes_as_vecs(),
-            block_headers_bytes: input.witness.headers_as_vecs(),
+            block_headers_bytes,
             first_block_number,
             chain_config: amsterdam_chain_config(input.chain_id),
             state_trie_root,

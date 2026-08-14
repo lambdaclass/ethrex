@@ -213,29 +213,53 @@ fn progressive_container_root<const N: usize>(
 
 impl HashTreeRoot for ExecutionPayload {
     fn hash_tree_root(&self, hasher: &impl Sha256Hasher) -> Node {
+        // Destructured without `..` on purpose: this list is hand-maintained, so
+        // a field added to the struct must fail to compile here rather than be
+        // silently left out of the root and out of `active_fields`.
         // Declaration order is the SSZ field order; do not reorder.
+        let Self {
+            parent_hash,
+            fee_recipient,
+            state_root,
+            receipts_root,
+            logs_bloom,
+            prev_randao,
+            block_number,
+            gas_limit,
+            gas_used,
+            timestamp,
+            extra_data,
+            base_fee_per_gas,
+            block_hash,
+            transactions,
+            withdrawals,
+            blob_gas_used,
+            excess_blob_gas,
+            block_access_list,
+            slot_number,
+        } = self;
         progressive_container_root(
             hasher,
             [
-                self.parent_hash.hash_tree_root(hasher),
-                self.fee_recipient.hash_tree_root(hasher),
-                self.state_root.hash_tree_root(hasher),
-                self.receipts_root.hash_tree_root(hasher),
-                self.logs_bloom.hash_tree_root(hasher),
-                self.prev_randao.hash_tree_root(hasher),
-                self.block_number.hash_tree_root(hasher),
-                self.gas_limit.hash_tree_root(hasher),
-                self.gas_used.hash_tree_root(hasher),
-                self.timestamp.hash_tree_root(hasher),
-                self.extra_data.hash_tree_root(hasher),
-                self.base_fee_per_gas.hash_tree_root(hasher),
-                self.block_hash.hash_tree_root(hasher),
-                self.transactions.hash_tree_root(hasher),
-                self.withdrawals.hash_tree_root(hasher),
-                self.blob_gas_used.hash_tree_root(hasher),
-                self.excess_blob_gas.hash_tree_root(hasher),
-                self.block_access_list.hash_tree_root(hasher),
-                self.slot_number.hash_tree_root(hasher),
+                parent_hash.hash_tree_root(hasher),
+                fee_recipient.hash_tree_root(hasher),
+                state_root.hash_tree_root(hasher),
+                receipts_root.hash_tree_root(hasher),
+                logs_bloom.hash_tree_root(hasher),
+                prev_randao.hash_tree_root(hasher),
+                block_number.hash_tree_root(hasher),
+                gas_limit.hash_tree_root(hasher),
+                gas_used.hash_tree_root(hasher),
+                timestamp.hash_tree_root(hasher),
+                extra_data.hash_tree_root(hasher),
+                base_fee_per_gas.hash_tree_root(hasher),
+                block_hash.hash_tree_root(hasher),
+                transactions.hash_tree_root(hasher),
+                withdrawals.hash_tree_root(hasher),
+                blob_gas_used.hash_tree_root(hasher),
+                excess_blob_gas.hash_tree_root(hasher),
+                block_access_list.hash_tree_root(hasher),
+                slot_number.hash_tree_root(hasher),
             ],
         )
     }
@@ -298,14 +322,22 @@ impl ExecutionRequests {
 
 impl HashTreeRoot for ExecutionRequests {
     fn hash_tree_root(&self, hasher: &impl Sha256Hasher) -> Node {
+        // Destructured without `..` — see [`ExecutionPayload`].
+        let Self {
+            deposits,
+            withdrawals,
+            consolidations,
+            builder_deposits,
+            builder_exits,
+        } = self;
         progressive_container_root(
             hasher,
             [
-                self.deposits.hash_tree_root(hasher),
-                self.withdrawals.hash_tree_root(hasher),
-                self.consolidations.hash_tree_root(hasher),
-                self.builder_deposits.hash_tree_root(hasher),
-                self.builder_exits.hash_tree_root(hasher),
+                deposits.hash_tree_root(hasher),
+                withdrawals.hash_tree_root(hasher),
+                consolidations.hash_tree_root(hasher),
+                builder_deposits.hash_tree_root(hasher),
+                builder_exits.hash_tree_root(hasher),
             ],
         )
     }

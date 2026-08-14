@@ -44,6 +44,17 @@ impl<T> OnceCell<T> {
         }
     }
 
+    /// Takes the value out, leaving the cell uninitialized.
+    ///
+    /// Mirrors `once_cell::sync::OnceCell::take`, which `BlockHeader::hash` is
+    /// cleared through in `into_with_burned_fees`. This cell and that one are
+    /// selected by a `cfg` no host build resolves to this side, so a method
+    /// missing here surfaces only in a ZisK guest build.
+    #[inline]
+    pub fn take(&mut self) -> Option<T> {
+        self.0.get_mut().take()
+    }
+
     #[inline]
     pub fn try_insert(&self, value: T) -> Result<&T, (&T, T)> {
         if let Some(old) = self.get() {
