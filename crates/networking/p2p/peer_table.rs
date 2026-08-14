@@ -1480,7 +1480,7 @@ impl PeerTableServer {
                         })
                         .unwrap_or(false);
                     let is_fork_id_valid = if should_update {
-                        Self::evaluate_fork_id(&node_record, &self.store).await
+                        Self::evaluate_fork_id(&node_record, &self.store)
                     } else {
                         None
                     };
@@ -1498,7 +1498,7 @@ impl PeerTableServer {
                         }
                     }
                 } else {
-                    let is_fork_id_valid = Self::evaluate_fork_id(&node_record, &self.store).await;
+                    let is_fork_id_valid = Self::evaluate_fork_id(&node_record, &self.store);
                     let mut contact = Contact::new(node, DiscoveryProtocol::Discv5);
                     contact.is_fork_id_valid = is_fork_id_valid;
                     contact.record = Some(node_record);
@@ -1509,10 +1509,9 @@ impl PeerTableServer {
         }
     }
 
-    async fn evaluate_fork_id(record: &NodeRecord, store: &Store) -> Option<bool> {
+    fn evaluate_fork_id(record: &NodeRecord, store: &Store) -> Option<bool> {
         if let Some(remote_fork_id) = record.get_fork_id() {
             backend::is_fork_id_valid(store, remote_fork_id)
-                .await
                 .ok()
                 .or(Some(false))
         } else {

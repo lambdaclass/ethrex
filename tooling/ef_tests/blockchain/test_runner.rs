@@ -496,7 +496,7 @@ fn check_prestate_against_db(test_key: &str, test: &TestUnit, db: &Store) {
 /// Panics if any comparison fails
 /// Tests that previously failed the validation stage shouldn't be executed with this function.
 async fn check_poststate_against_db(test_key: &str, test: &TestUnit, db: &Store) {
-    let latest_block_number = db.get_latest_block_number().await.unwrap();
+    let latest_block_number = db.get_latest_block_number().unwrap();
     if let Some(post_state) = &test.post_state {
         for (addr, account) in post_state {
             let expected_account: CoreAccount = account.clone().into();
@@ -545,7 +545,7 @@ async fn check_poststate_against_db(test_key: &str, test: &TestUnit, db: &Store)
         }
     }
     // Check lastblockhash is in store
-    let last_block_number = db.get_latest_block_number().await.unwrap();
+    let last_block_number = db.get_latest_block_number().unwrap();
     let last_block_header = db.get_block_header(last_block_number).unwrap().unwrap();
     let last_block_hash = last_block_header.hash();
     assert_eq!(
