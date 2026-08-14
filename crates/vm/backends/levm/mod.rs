@@ -3896,10 +3896,10 @@ fn env_from_generic(
         fee_token: tx.fee_token,
         disable_balance_check: false,
         // Every `env_from_generic` caller is a simulation RPC (eth_call,
-        // eth_estimateGas, eth_createAccessList). Those run relaxed messages
-        // with no nonce enforcement: a call object without `nonce` defaults
-        // `tx_nonce` to 0 above, which the hook would otherwise reject for
-        // any sender whose nonce is nonzero.
+        // eth_estimateGas, eth_createAccessList, debug_traceCall). Those run
+        // relaxed messages with no nonce enforcement: a call object without
+        // `nonce` defaults `tx_nonce` to 0 above, which the hook would otherwise
+        // reject for any sender whose nonce is nonzero.
         disable_nonce_check: true,
         // Opt-in per caller: `simulate_tx_from_generic` and `debug_traceCall` relax it so
         // an over-limit `gas` still runs, while `create_access_list` keeps enforcing it.
