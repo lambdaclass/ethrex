@@ -33,40 +33,6 @@ marks these cases `speconly` so they are type-checked instead of compared byte-f
 
 ---
 
-### Stateless EF tests: no skips
-
-**Where:** `tooling/ef_tests/blockchain` — `make test-stateless`, which runs the
-downloaded `tests-zkevm@v0.8.0` bundle from `vectors_zkevm/`. `make test-levm` is
-unaffected.
-
-`EXTRA_SKIPS` in `tests/all.rs` is empty and the run is green over all 3218
-`for_amsterdam` fixture files. Anything failing there is a real bug — do not add
-a skip without replacing this section with the reason.
-
-#### Previously: 45 fixtures skipped for a devnet-7/devnet-8 gas split
-
-Until `tests-zkevm@v0.8.0` there was no published bundle carrying both the
-EIP-8025 stateless schema and the glamsterdam-devnet-8 gas schedule, so the
-vectors were generated locally from execution-specs `3c3b6f4af` — which is
-devnet-7. 45 fixtures failed in `add_block_pipeline` with `GasUsedMismatch` or
-`ReceiptsRootMismatch` on the gas difference alone (`COLD_STORAGE_ACCESS`
-3000 vs 2100, `ACCOUNT_WRITE` 8000 vs 9000, `CALL_VALUE` 10300 vs 11300,
-access-list entries at full cold cost vs cold − `WARM_ACCESS`) and were skipped
-by name. v0.8.0 is filled against `tests-glamsterdam-devnet@v8.1.0`, the same
-base this client targets, so the split is gone and the generator, its `uv` and
-Python 3.12 prerequisites, and the whole skip list were removed with it.
-
-#### Why this file previously claimed an Amsterdam-wide skip
-
-`parse_and_execute` used to drop every `network >= Fork::Amsterdam` fixture from
-the stateless run. Every test in the `tests-zkevm` bundle it read is
-`network: Amsterdam` (23,946 of 23,946), so the stateless suite executed nothing
-at all while reporting success. `parse_and_execute` now fails any stateless
-fixture file that runs zero tests without a named skip, so a structural skip
-cannot silently empty the suite again.
-
----
-
 ### The stateless schema id does not identify the encoding
 
 **Where:** `STATELESS_INPUT_SCHEMA_ID` in `crates/common/types/stateless_ssz.rs`.
