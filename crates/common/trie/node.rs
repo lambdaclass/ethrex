@@ -328,7 +328,7 @@ impl NodeRef {
             && hash.get().is_none()
         {
             node.memoize_hashes(buf, crypto);
-            let _ = hash.set(node.compute_hash_no_alloc(buf, crypto));
+            let _ = hash.set(node.hash_memoized(buf, crypto));
         }
     }
 
@@ -524,6 +524,16 @@ impl Node {
     /// Computes the node's hash
     pub fn compute_hash_no_alloc(&self, buf: &mut Vec<u8>, crypto: &dyn Crypto) -> NodeHash {
         self.memoize_hashes(buf, crypto);
+        self.hash_memoized(buf, crypto)
+    }
+
+    /// Computes the node's hash, assuming its children are already memoized.
+    ///
+    /// Split out from [`Self::compute_hash_no_alloc`] because `NodeRef::memoize_hashes`
+    /// memoizes the subtrie itself and then hashes the node — going back through
+    /// the full entry point made it walk all 16 children a second time, once per
+    /// branch, purely to find every hash already set.
+    pub(crate) fn hash_memoized(&self, buf: &mut Vec<u8>, crypto: &dyn Crypto) -> NodeHash {
         match self {
             Node::Branch(n) => n.compute_hash_no_alloc(buf, crypto),
             Node::Extension(n) => n.compute_hash_no_alloc(buf, crypto),
