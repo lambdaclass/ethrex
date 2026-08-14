@@ -508,7 +508,7 @@ pub struct FrameTxContext {
     pub payer_address: Option<Address>,
     /// Per-frame execution results (status, gas_used, logs).
     /// `status` is a `FRAME_RECEIPT_STATUS_*` code (0 = failure, 1 = success,
-    /// 3 = skipped due to failed atomic batch).
+    /// 2 = skipped due to failed atomic batch).
     pub frame_results: Vec<(u8, u64, Vec<Log>)>,
     /// Index of the currently executing frame
     pub current_frame_index: usize,
@@ -2052,24 +2052,16 @@ impl<'a> VM<'a> {
                 // state — drop the state gas accumulated since batch entry.
                 self.state_gas_used = state_gas_used_at_batch_entry;
 
-                // Rewrite results for all frames in this batch (inclusive) as failed,
-                // charging each frame its full gas_limit per EIP-8141.
+                // EIP-8141: the frames that ran before the failure keep the status and gas
+                // they earned — only their logs go away with the state they wrote. Rewriting
+                // them as failed, or charging any frame in the batch its full gas limit,
+                // both invents gas the transaction never spent.
                 let ctx = self.frame_tx_context.as_mut().ok_or(VMError::Internal(
                     InternalError::Custom("missing frame tx context".to_string()),
                 ))?;
                 for i in batch_start_idx..=frame_idx {
-                    if let (Some(result), Some(batch_frame)) =
-                        (ctx.frame_results.get_mut(i), frame_tx.frames.get(i))
-                    {
-                        let charged_gas = batch_frame.gas_limit;
-                        total_gas_used = total_gas_used
-                            .saturating_sub(result.1)
-                            .saturating_add(charged_gas);
-                        *result = (
-                            ethrex_common::types::FRAME_RECEIPT_STATUS_FAILURE,
-                            charged_gas,
-                            Vec::new(),
-                        );
+                    if let Some(result) = ctx.frame_results.get_mut(i) {
+                        result.2 = Vec::new();
                     }
                 }
                 // Roll back approvals granted inside the reverted batch.
