@@ -33,48 +33,62 @@ marks these cases `speconly` so they are type-checked instead of compared byte-f
 
 ---
 
-### Stateless EF tests: 5 fixtures skipped
+### Stateless EF tests: 45 of 105 fixtures skipped
 
 **Where:** `tooling/ef_tests/blockchain` — `make test-stateless`, which runs the
 generated `vectors_stateless_3278/` conformance set (execution-specs
 `3c3b6f4af`, i.e. #3248 progressive SSZ + #3278 `ChainConfig` removal).
 `make test-levm` is unaffected.
 
-#### Skipped: 5 fixtures that fail in ordinary execution
+#### Skipped: 45 fixtures that fail in ordinary execution
 
-Listed in `EXTRA_SKIPS` in `tests/all.rs`:
+Listed in `EXTRA_SKIPS` in `tests/all.rs`. All fail in `add_block_pipeline` with
+`GasUsedMismatch` or `ReceiptsRootMismatch`, before any stateless validation
+runs, so they are ordinary block-execution divergences rather than stateless
+conformance gaps. 60 fixtures still execute, which is what keeps the witness and
+SSZ paths covered and keeps the empty-suite guard in `parse_and_execute`
+meaningful.
 
-- `test_witness_codes_auth_nonce_mismatch`
-- `test_witness_codes_redelegation_old_marker_included_new_marker_excluded`
-- `test_witness_codes_reset_delegation`
-- `test_witness_codes_failed_create_after_initcode_read`
-- `test_validation_codes_missing_redelegation_old_marker`
+**Why: the vectors and the client are one devnet apart on gas.** `3c3b6f4af`
+carries the glamsterdam-devnet-7 schedule; this client implements devnet-8.
 
-These fail in `add_block_pipeline` with `GasUsedMismatch` or
-`ReceiptsRootMismatch`, before any stateless validation runs. Running the same
-vector set without the `stateless` feature reproduces all five identically, so
-they are ordinary block-execution divergences, not stateless conformance gaps.
+| | `3c3b6f4af` (devnet-7) | this client (devnet-8) |
+| --- | --- | --- |
+| `COLD_STORAGE_ACCESS` | 3000 | 2100 |
+| `ACCOUNT_WRITE` | 8000 | 9000 |
+| `CALL_VALUE` | 10300 | 11300 |
+| access-list storage key | full cold cost | cold − `WARM_ACCESS` |
 
-They are spec-base skew, not client bugs. Measured:
+Five of the 45 failed even while the client was still on devnet-7, so those are
+skew against `3c3b6f4af` itself; the other 40 appeared with the devnet-8 move.
+The two groups are commented separately in `EXTRA_SKIPS` because they lift at
+different times.
 
-- ethrex passes all five against the `tests-zkevm@v0.6.2` versions of the same
-  tests.
-- The eth-act witness dashboard agrees: ethrex is 22829/22829 on
-  `eels/consume-engine-witness` and 19413/19413 on `stateless-validator sp1`
-  for that bundle.
-- Diffing one test (`witness_codes_reset_delegation`) across the two fixture
-  sets: `pre` and `genesisBlockHeader` are byte-identical and it is the same
-  transaction hash, yet `postState`, `receipts`, `stateRoot`, `receiptTrie` and
-  `blockAccessListHash` all differ — the receipt's `cumulativeGasUsed` goes
-  30816 → 24653. Same input, different output.
+Corroborating that these are spec-base skew and not client bugs: ethrex passes
+the five original cases against the `tests-zkevm@v0.6.2` versions of the same
+tests, and the eth-act witness dashboard has ethrex at 22829/22829 on
+`eels/consume-engine-witness` and 19413/19413 on `stateless-validator sp1` for
+that bundle. Diffing `witness_codes_reset_delegation` across the two fixture
+sets: `pre` and `genesisBlockHeader` are byte-identical and it is the same
+transaction hash, yet `postState`, `receipts`, `stateRoot`, `receiptTrie` and
+`blockAccessListHash` all differ — the receipt's `cumulativeGasUsed` goes
+30816 → 24653. Same input, different output.
 
-So execution semantics changed between v0.6.2's fill base and execution-specs
-master at `3c3b6f4af`, and ethrex implements the former, which is the
-`glamsterdam-devnet@v7.2.0` base it targets. The regular `vectors/` bundle has no
-`eip8025_optional_proofs` tests, so `make test-levm` never sees them.
+The regular `vectors/` bundle has no `eip8025_optional_proofs` tests, so
+`make test-levm` never sees any of this.
 
-**Removal:** re-check once ethrex moves to a spec base at or past `3c3b6f4af`.
-If they still fail then, they are real execution bugs and the skips must go.
+**The pin cannot move today.** `eip8025_optional_proofs` does not exist on the
+current `forks/amsterdam` default branch, and `3c3b6f4af` has diverged from it
+(124 ahead, 315 behind), so it was never merged there. `devnets/glamsterdam/8`
+is 315 commits behind `3c3b6f4af`: it has the devnet-8 gas schedule but not the
+#3278 schema, so vectors filled from it would carry the pre-#3278 69-byte
+`statelessOutputBytes` this client cannot parse. No upstream revision has both.
+
+**Removal:** bump `SPEC_SHA` in `scripts/gen_stateless_vectors.sh` once an
+upstream revision carries both `eip8025_optional_proofs` and the devnet-8 gas
+schedule, then delete the 40-entry group. Re-check the original five at the same
+time; if they still fail against a matching base they are real execution bugs
+and must not stay skipped.
 
 #### Why this file previously claimed an Amsterdam-wide skip
 
