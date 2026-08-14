@@ -12,22 +12,22 @@
 //! speculative execution results are discarded and never reach shared
 //! state, so a wrong prediction costs wasted I/O, never incorrect state.
 
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 use crate::PrewarmedEntry;
 use crate::{Blockchain, BlockchainType};
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 use ethrex_common::H256;
 use ethrex_common::types::{BlockHeader, MempoolTransaction, Transaction};
 use ethrex_common::{Address, U256};
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 use ethrex_crypto::NativeCrypto;
 use rustc_hash::FxHashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 use std::time::{Duration, Instant};
 use std::time::{SystemTime, UNIX_EPOCH};
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 use tracing::info;
 use tracing::warn;
 
@@ -37,7 +37,7 @@ const SLOT_DURATION_SECS: u64 = 12;
 
 /// Warm up to this multiple of the parent block's gas limit worth of
 /// mempool txs per warming snapshot (the initial pass and each delta).
-#[cfg_attr(any(not(feature = "rayon"), feature = "eip-8025"), allow(dead_code))]
+#[cfg_attr(not(feature = "rayon"), allow(dead_code))]
 const GAS_BUDGET_MULTIPLIER: u64 = 6;
 
 /// Keep warming this long past the slot boundary. The next block cannot arrive
@@ -64,9 +64,9 @@ fn next_slot_deadline_unix(parent_timestamp: u64) -> u64 {
 /// and the group it belongs to is truncated there. Ordering fidelity does
 /// not matter for warming, only membership; senders are never interleaved.
 // This and the helpers below are only called from `run_pass`, which is
-// compiled out when the rayon feature is disabled (or eip-8025 is active);
+// compiled out when the rayon feature is disabled;
 // keep them compiled for the unit tests instead of cfg-ing them out.
-#[cfg_attr(any(not(feature = "rayon"), feature = "eip-8025"), allow(dead_code))]
+#[cfg_attr(not(feature = "rayon"), allow(dead_code))]
 fn select_warm_set(
     txs_by_sender: FxHashMap<Address, Vec<MempoolTransaction>>,
     base_fee: Option<u64>,
@@ -100,7 +100,7 @@ fn select_warm_set(
 /// their own predecessors), so warming them only inflates the warm volume.
 /// This is a per-pass (per-snapshot) cap with no cross-pass accounting — see
 /// [`cap_sender_depth`] — not a slot-level ceiling.
-#[cfg_attr(any(not(feature = "rayon"), feature = "eip-8025"), allow(dead_code))]
+#[cfg_attr(not(feature = "rayon"), allow(dead_code))]
 const MAX_WARMED_TXS_PER_SENDER_PER_PASS: usize = 16;
 
 /// Keeps only a sender's ready contiguous nonce prefix starting at
@@ -110,7 +110,7 @@ const MAX_WARMED_TXS_PER_SENDER_PER_PASS: usize = 16;
 /// ascending (as `filter_transactions` returns them). Without this, the warm
 /// set is padded with non-ready txs that all fail the nonce check — wasted
 /// warming that never touches state.
-#[cfg_attr(any(not(feature = "rayon"), feature = "eip-8025"), allow(dead_code))]
+#[cfg_attr(not(feature = "rayon"), allow(dead_code))]
 fn trim_to_ready(txs: Vec<MempoolTransaction>, account_nonce: u64) -> Vec<MempoolTransaction> {
     let mut expected = account_nonce;
     let mut ready = Vec::new();
@@ -133,7 +133,7 @@ fn trim_to_ready(txs: Vec<MempoolTransaction>, account_nonce: u64) -> Vec<Mempoo
 /// [`trim_to_ready`]) using the account nonce from parent state. The nonce
 /// read goes through the warming cache, so it also warms the sender account;
 /// on a read error the sender is left unfiltered. Empty senders are removed.
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 fn filter_ready(
     mut txs_by_sender: FxHashMap<Address, Vec<MempoolTransaction>>,
     db: &dyn ethrex_vm::backends::LevmDatabase,
@@ -153,7 +153,7 @@ fn filter_ready(
 /// nonce order. Every pass warms a sender's pending prefix from nonce 0, so
 /// capping the per-snapshot group bounds the slot's per-sender depth with no
 /// cross-pass accounting; senders left empty are removed.
-#[cfg_attr(any(not(feature = "rayon"), feature = "eip-8025"), allow(dead_code))]
+#[cfg_attr(not(feature = "rayon"), allow(dead_code))]
 fn cap_sender_depth(
     mut txs_by_sender: FxHashMap<Address, Vec<MempoolTransaction>>,
     cap: usize,
@@ -166,9 +166,9 @@ fn cap_sender_depth(
 }
 
 // Fields are only read by `run_pass`, which is compiled out when the rayon
-// feature is disabled (or eip-8025 is active); avoid a dead-code warning in
+// feature is disabled; avoid a dead-code warning in
 // that configuration, where the fields are still written by `trigger`.
-#[cfg_attr(any(not(feature = "rayon"), feature = "eip-8025"), allow(dead_code))]
+#[cfg_attr(not(feature = "rayon"), allow(dead_code))]
 struct PrewarmRequest {
     parent_header: BlockHeader,
     cancel: Arc<AtomicBool>,
@@ -183,7 +183,7 @@ pub struct PrewarmHandle {
     current_cancel: Mutex<Arc<AtomicBool>>,
 }
 
-#[cfg_attr(any(not(feature = "rayon"), feature = "eip-8025"), allow(dead_code))]
+#[cfg_attr(not(feature = "rayon"), allow(dead_code))]
 fn unix_now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -221,20 +221,18 @@ pub struct MempoolPrewarmer;
 
 impl MempoolPrewarmer {
     /// Spawns the prewarmer worker. Prewarming is L1-only: returns `None`
-    /// silently on L2. Returns `None` with a warn when the build lacks rayon
-    /// (or has eip-8025 active), or the pool/worker-thread creation fails.
+    /// silently on L2. Returns `None` with a warn when the build lacks rayon or
+    /// the pool/worker-thread creation fails.
     pub fn spawn(blockchain: Arc<Blockchain>) -> Option<PrewarmHandle> {
         if !matches!(blockchain.options.r#type, BlockchainType::L1) {
             return None;
         }
-        #[cfg(any(not(feature = "rayon"), feature = "eip-8025"))]
+        #[cfg(not(feature = "rayon"))]
         {
-            warn!(
-                "Mempool prewarm requires the rayon feature and is unavailable on eip-8025 builds; disabled"
-            );
+            warn!("Mempool prewarm requires the rayon feature; disabled");
             None
         }
-        #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+        #[cfg(feature = "rayon")]
         {
             // Half the available cores: plenty for warming while leaving
             // headroom for the rest of the node during the idle window.
@@ -278,7 +276,7 @@ impl MempoolPrewarmer {
     }
 }
 
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 fn run_pass(blockchain: &Blockchain, pool: &rayon::ThreadPool, req: PrewarmRequest) {
     use crate::mempool::PendingTxFilter;
     use crate::vm::StoreVmDatabase;
@@ -489,7 +487,7 @@ fn run_pass(blockchain: &Blockchain, pool: &rayon::ThreadPool, req: PrewarmReque
 /// proof walks pull them into the RocksDB block cache during the idle window.
 /// Proof outputs are discarded — the reads are the product. Returns the
 /// number of newly walked paths.
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 fn warm_merkle_paths(
     blockchain: &Blockchain,
     parent: &BlockHeader,
@@ -685,13 +683,13 @@ mod tests {
     // A `Database` whose `get_account_state` succeeds for one sender (returning
     // a fixed nonce) and fails for everyone else, to exercise `filter_ready`'s
     // read-error branch. Every other method is unreachable from `filter_ready`.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     struct OneReadableSenderDb {
         ok_sender: Address,
         nonce: u64,
     }
 
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     impl ethrex_levm::db::Database for OneReadableSenderDb {
         fn get_account_state(
             &self,
@@ -741,7 +739,7 @@ mod tests {
         }
     }
 
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     #[test]
     fn filter_ready_trims_readable_and_keeps_unreadable_sender() {
         // Readable sender at account nonce 5: stale (4) dropped, ready (5,6) kept.

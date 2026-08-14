@@ -31,23 +31,112 @@ from the receipt level.
 **Removal:** delete the entries if ethrex ever gains pre-merge chain import, or if upstream
 marks these cases `speconly` so they are type-checked instead of compared byte-for-byte.
 
-### Stateless (zkEVM) Amsterdam+ EF tests skipped
+---
 
-**Where:** `tooling/ef_tests/blockchain/test_runner.rs` — `parse_and_execute` skips
-fixtures with `network >= Fork::Amsterdam` when running with a stateless backend.
-Affects `make test-stateless` (the `vectors_zkevm/` run); `make test-levm` is
-unaffected.
+### Stateless EF tests: 45 of 105 fixtures skipped
 
-**Why:** the stateless run uses the `tests-zkevm@v0.6.2` bundle, the newest zkEVM
-release, filled against `tests-glamsterdam-devnet@v7.2.0`. This client targets
-`glamsterdam-devnet-8`, whose gas schedule diverges from devnet-7: EIP-2780 folds the
-EIP-7708 transfer log cost into `TX_VALUE_COST`, and EIP-8038 reprices access-list
-entries to the cold cost minus `WARM_ACCESS` (3000 → 2900 per address and per storage
-key). Every Amsterdam+ fixture in the bundle therefore carries devnet-7 gas
-expectations that no longer match execution. The skip is by fork rather than by test
-name, since cross-fork directories such as `for_amsterdam/prague/...` still execute at
-the Amsterdam fork.
+**Where:** `tooling/ef_tests/blockchain` — `make test-stateless`, which runs the
+generated `vectors_stateless_3278/` conformance set (execution-specs
+`3c3b6f4af`, i.e. #3248 progressive SSZ + #3278 `ChainConfig` removal).
+`make test-levm` is unaffected.
 
-**Removal:** delete the `skip_stateless_amsterdam` branch in `parse_and_execute` once a
-`tests-zkevm` bundle filled against `glamsterdam-devnet-8` is released and
-`.fixtures_url_zkevm` is bumped to it.
+#### Skipped: 45 fixtures that fail in ordinary execution
+
+Listed in `EXTRA_SKIPS` in `tests/all.rs`. All fail in `add_block_pipeline` with
+`GasUsedMismatch` or `ReceiptsRootMismatch`, before any stateless validation
+runs, so they are ordinary block-execution divergences rather than stateless
+conformance gaps. 60 fixtures still execute, which is what keeps the witness and
+SSZ paths covered and keeps the empty-suite guard in `parse_and_execute`
+meaningful.
+
+**Why: the vectors and the client are one devnet apart on gas.** `3c3b6f4af`
+carries the glamsterdam-devnet-7 schedule; this client implements devnet-8.
+
+| | `3c3b6f4af` (devnet-7) | this client (devnet-8) |
+| --- | --- | --- |
+| `COLD_STORAGE_ACCESS` | 3000 | 2100 |
+| `ACCOUNT_WRITE` | 8000 | 9000 |
+| `CALL_VALUE` | 10300 | 11300 |
+| access-list storage key | full cold cost | cold − `WARM_ACCESS` |
+
+Five of the 45 failed even while the client was still on devnet-7, so those are
+skew against `3c3b6f4af` itself; the other 40 appeared with the devnet-8 move.
+The two groups are commented separately in `EXTRA_SKIPS` because they lift at
+different times.
+
+Corroborating that these are spec-base skew and not client bugs: ethrex passes
+the five original cases against the `tests-zkevm@v0.6.2` versions of the same
+tests, and the eth-act witness dashboard has ethrex at 22829/22829 on
+`eels/consume-engine-witness` and 19413/19413 on `stateless-validator sp1` for
+that bundle. Diffing `witness_codes_reset_delegation` across the two fixture
+sets: `pre` and `genesisBlockHeader` are byte-identical and it is the same
+transaction hash, yet `postState`, `receipts`, `stateRoot`, `receiptTrie` and
+`blockAccessListHash` all differ — the receipt's `cumulativeGasUsed` goes
+30816 → 24653. Same input, different output.
+
+The regular `vectors/` bundle has no `eip8025_optional_proofs` tests, so
+`make test-levm` never sees any of this.
+
+**The pin cannot move today.** `eip8025_optional_proofs` does not exist on the
+current `forks/amsterdam` default branch, and `3c3b6f4af` has diverged from it
+(124 ahead, 315 behind), so it was never merged there. `devnets/glamsterdam/8`
+is 315 commits behind `3c3b6f4af`: it has the devnet-8 gas schedule but not the
+#3278 schema, so vectors filled from it would carry the pre-#3278 69-byte
+`statelessOutputBytes` this client cannot parse. No upstream revision has both.
+
+**Removal:** bump `SPEC_SHA` in `scripts/gen_stateless_vectors.sh` once an
+upstream revision carries both `eip8025_optional_proofs` and the devnet-8 gas
+schedule, then delete the 40-entry group. Re-check the original five at the same
+time; if they still fail against a matching base they are real execution bugs
+and must not stay skipped.
+
+#### Why this file previously claimed an Amsterdam-wide skip
+
+`parse_and_execute` used to drop every `network >= Fork::Amsterdam` fixture from
+the stateless run. Every test in the `tests-zkevm` bundle it read is
+`network: Amsterdam` (23,946 of 23,946), so the stateless suite executed nothing
+at all while reporting success. `parse_and_execute` now fails any stateless
+fixture file that runs zero tests without a named skip, so a structural skip
+cannot silently empty the suite again.
+
+---
+
+### ZisK guest program hash changes with the `unsync_cell` gate
+
+**Where:** `crates/common/types/block.rs`, `transaction.rs`.
+
+The gate on the single-threaded `unsync_cell::OnceCell` moved from
+`all(feature = "eip-8025", target_arch = "riscv64")` to
+`all(feature = "zisk", target_arch = "riscv64")` when the `eip-8025` feature was removed.
+
+The guest ELFs were previously built `--features "<zkvm>-build-elf,ci"`, which never enabled
+`eip-8025`, so they compiled the atomic `once_cell` variant. `bin/zisk/Cargo.toml` does enable
+`ethrex-common/zisk`, so **the ZisK guest now compiles the `unsafe impl Sync` cell instead**.
+That changes the ELF bytes and therefore the program hash and verification key.
+
+This is intended (the guest is single-threaded, so the unsync cell is sound and cheaper), but it
+is a VK change rather than a no-op refactor, and the diffstat presents it as a file rename
+(`eip8025_cell.rs` → `unsync_cell.rs`). Anyone pinning a ZisK VK across this change must
+re-register it. The `stateless-validator` crate now forwards `ethrex-common/zisk` from its own
+`zisk` feature so the two ZisK guests do not disagree on the cell type.
+
+---
+
+### Release signing key is an unprotected repository secret
+
+**Where:** `.github/workflows/tag_release.yaml`.
+
+`MINISIGN_SECRET_KEY` is a plain repository secret. There is no `environment:` on
+`finalize-release` or `dry-run-release-assets`, and `gh api repos/lambdaclass/ethrex/rulesets`
+shows only branch-targeted rulesets, so the `github.ref_type == 'tag'` condition is a workflow
+check rather than an enforced boundary: anyone who can push a tag can reach the signing key.
+
+This is a repository-settings change, not a code change, so it is recorded here rather than
+fixed in the tree. Recommended:
+
+1. Move `MINISIGN_SECRET_KEY` / `MINISIGN_PASSWORD` into a GitHub **Environment** with required
+   reviewers, and add `environment:` to the two jobs that sign.
+2. Add a ruleset targeting `refs/tags/v*` restricting who may create release tags.
+
+Until then, the compromise of that key is silent and durable: signatures would still verify
+against the committed `.github/minisign.pub`.

@@ -8,6 +8,7 @@ mod eip7702_authorization_tests;
 mod frame_tx_validation_tests;
 mod legacy_signature_tests;
 mod logs_bloom_validation_tests;
+mod progressive_ssz_tests;
 mod requests_eip8282_tests;
 mod rkyv_utils_tests;
 mod serde_utils_tests;

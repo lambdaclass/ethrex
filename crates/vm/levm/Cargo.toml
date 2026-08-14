@@ -28,7 +28,6 @@ libssz = { workspace = true }
 [features]
 default = []
 c-kzg = ["ethrex-common/c-kzg", "ethrex-crypto/c-kzg"]
-eip-8025 = ["ethrex-common/eip-8025"]
 ethereum_foundation_tests = []
 debug = []
 openvm = ["ethrex-common/openvm"]
@@ -38,7 +37,7 @@ sp1 = []
 risc0 = ["c-kzg"]
 zisk = []
 rayon = ["dep:rayon"]
-secp256k1 = ["rayon"]
+secp256k1 = []
 
 [lints.rust]
 unsafe_code = "warn"

@@ -5,13 +5,12 @@ use bytes::Bytes;
 use crate::rkyv_utils::H256Wrapper;
 use crate::serde_utils;
 use crate::types::{Block, Code, CodeMetadata};
-use crate::utils::keccak;
 use crate::{
     constants::EMPTY_KECCAK_HASH,
     types::{AccountState, AccountUpdate, BlockHeader, ChainConfig},
 };
 use ethereum_types::{Address, H256, U256};
-use ethrex_crypto::{Crypto, NativeCrypto};
+use ethrex_crypto::Crypto;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_rlp::structs::{Decoder, Encoder};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
@@ -287,38 +286,39 @@ impl ExecutionWitness {
     /// (`number == first_block_number - 1`) among the witness headers — same
     /// convention as `RpcExecutionWitness::into_execution_witness`.
     ///
-    /// The `ChainConfig` is derived from the SSZ `active_fork` via
-    /// `ssz_chain_config_to_internal` — every fork up to the active one is
-    /// activated at timestamp 0 (native-L2 genesis activation).
+    /// The `ChainConfig` is derived from the input's `chain_id` alone via
+    /// [`amsterdam_chain_config`]; #3278 removed chain configuration from the
+    /// wire, so the fork comes from the schema-id prefix instead.
     pub fn from_ssz(
         input: &crate::types::stateless_ssz::SszStatelessInput,
+        crypto: &dyn Crypto,
     ) -> Result<Self, GuestProgramStateError> {
         let first_block_number = input.new_payload_request.execution_payload.block_number;
 
-        let mut initial_state_root = None;
-        for h in input.witness.headers.iter() {
-            let header_bytes: Vec<u8> = h.iter().copied().collect();
-            let header = BlockHeader::decode(&header_bytes)?;
-            if header.number == first_block_number.saturating_sub(1) {
-                initial_state_root = Some(header.state_root);
-                break;
-            }
-        }
-        let initial_state_root = initial_state_root.ok_or_else(|| {
-            GuestProgramStateError::Custom(format!(
-                "header for block {} not found",
-                first_block_number.saturating_sub(1)
-            ))
-        })?;
+        // In wire order, before any sort or dedup: reordering hides violations.
+        // Without this a witness whose headers do not form a chain is accepted,
+        // and a guest that accepts a payload the spec rejects can prove an
+        // invalid state transition (`test_validation_headers_non_contiguous_chain`).
+        // Extracted once and reused: `headers_as_vecs` copies every header out of
+        // the SSZ list (up to `MAX_WITNESS_HEADERS`), and the same bytes are also
+        // what `block_headers_bytes` below is built from.
+        let block_headers_bytes = input.witness.headers_as_vecs();
+        let headers = decode_witness_headers(&block_headers_bytes)?;
+        validate_witness_headers_chain(&headers, crypto)?;
 
-        let (state_trie_root, storage_trie_roots) =
-            rebuild_state_and_storage_tries(input.witness.state_as_vecs(), initial_state_root)?;
+        let initial_state_root = find_parent_state_root(&headers, first_block_number)?;
+
+        let (state_trie_root, storage_trie_roots) = rebuild_state_and_storage_tries(
+            input.witness.state_as_vecs(),
+            initial_state_root,
+            crypto,
+        )?;
 
         Ok(Self {
             codes: input.witness.codes_as_vecs(),
-            block_headers_bytes: input.witness.headers_as_vecs(),
+            block_headers_bytes,
             first_block_number,
-            chain_config: ssz_chain_config_to_internal(&input.chain_config)?,
+            chain_config: amsterdam_chain_config(input.chain_id),
             state_trie_root,
             storage_trie_roots,
         })
@@ -331,28 +331,39 @@ impl ExecutionWitness {
 fn rebuild_state_and_storage_tries<I, B>(
     state_bytes: I,
     initial_state_root: H256,
+    crypto: &dyn Crypto,
 ) -> Result<(Option<Node>, BTreeMap<H256, Node>), GuestProgramStateError>
 where
     I: IntoIterator<Item = B>,
     B: AsRef<[u8]>,
 {
-    let nodes: BTreeMap<H256, Node> = state_bytes
+    // `crypto`, not the free `keccak`: on RISC-V the latter falls through to the
+    // software `tiny_keccak` (see `ethrex_crypto::keccak`), so hashing every witness
+    // node here would bypass the zkVM's accelerated keccak in the guest.
+    let nodes: FxHashMap<H256, Node> = state_bytes
         .into_iter()
         .filter_map(|b| {
             let bytes = b.as_ref();
-            // Some implementations of debug_executionWitness emit a `Null`
-            // node (single byte 0x80) which would fail RLP decode here.
-            if bytes == [0x80] {
-                return None;
-            }
-            let hash = keccak(bytes);
-            Some(Node::decode(bytes).map(|node| (hash, node)))
+            // An entry that does not decode as a trie node is skipped rather
+            // than rejected. Witnesses legitimately carry such entries: the
+            // `Null` node (single byte 0x80) some `debug_executionWitness`
+            // implementations emit, and unused nodes the spec explicitly
+            // tolerates (`test_validation_state_extra_unused_trie_node`).
+            //
+            // Skipping is safe because it only makes a node unavailable. If the
+            // trie walk actually needs it, `get_embedded_root` fails there — the
+            // correct place to reject — and the post-execution state-root check
+            // still binds the result either way. Hard-failing here rejected
+            // witnesses the spec accepts.
+            Some((H256(crypto.keccak256(bytes)), Node::decode(bytes).ok()?))
         })
-        .collect::<Result<_, RLPDecodeError>>()?;
+        .collect();
 
-    // Get state trie root with the rest of the trie embedded into it.
+    // `_committed` pre-seeds each node's hash slot, so later hashing of the subtree
+    // reuses the known value instead of re-encoding and re-hashing the whole trie.
+    // Sound here because `nodes` is keyed by the hash of the very bytes it decodes.
     let state_trie_root = if let NodeRef::Node(state_trie_root, _) =
-        Trie::get_embedded_root(&nodes, initial_state_root)?
+        Trie::get_embedded_root_committed(&nodes, initial_state_root, crypto)?
     {
         Some((*state_trie_root).clone())
     } else {
@@ -364,12 +375,12 @@ where
     // RPC spec.
     let mut storage_trie_roots = BTreeMap::new();
     if let Some(root) = &state_trie_root {
-        let accounts = collect_accounts_from_embedded_trie(root, &nodes, &NativeCrypto);
+        let accounts = collect_accounts_from_embedded_trie(root, &nodes, crypto);
         for (hashed_address, storage_root_hash) in accounts {
             if storage_root_hash == EMPTY_TRIE_HASH || !nodes.contains_key(&storage_root_hash) {
                 continue;
             }
-            let node = Trie::get_embedded_root(&nodes, storage_root_hash)?;
+            let node = Trie::get_embedded_root_committed(&nodes, storage_root_hash, crypto)?;
             let NodeRef::Node(node, _) = node else {
                 return Err(GuestProgramStateError::Custom(
                     "execution witness does not contain non-empty storage trie".to_string(),
@@ -916,7 +927,7 @@ impl GuestProgramState {
 /// used by `into_execution_witness`; this one backs the SSZ `from_ssz` path.
 pub fn collect_accounts_from_embedded_trie(
     root: &Node,
-    nodes: &BTreeMap<H256, Node>,
+    nodes: &FxHashMap<H256, Node>,
     crypto: &dyn Crypto,
 ) -> Vec<(H256, H256)> {
     let mut accounts = Vec::new();
@@ -928,7 +939,7 @@ fn collect_accounts_from_node(
     node: &Node,
     path: ethrex_trie::Nibbles,
     accounts: &mut Vec<(H256, H256)>,
-    nodes: &BTreeMap<H256, Node>,
+    nodes: &FxHashMap<H256, Node>,
     crypto: &dyn Crypto,
 ) {
     use ethrex_trie::NodeRef;
@@ -1018,87 +1029,27 @@ fn set_hash_or_validate(header: &BlockHeader, hash: H256) -> Result<(), GuestPro
     Ok(())
 }
 
-/// Map an ethrex `Fork` to its spec `PROTOCOL_FORKS` index (execution-specs 85fc20ca).
-fn fork_to_spec_index(fork: crate::types::genesis::Fork) -> Result<u64, GuestProgramStateError> {
-    use crate::types::genesis::Fork;
-    Ok(match fork {
-        Fork::Cancun => 16,
-        Fork::Prague => 17,
-        Fork::Osaka => 18,
-        Fork::Amsterdam => 24,
-        other => {
-            return Err(GuestProgramStateError::Custom(format!(
-                "fork {other:?} has no stateless spec fork index (native rollups run Cancun+)"
-            )));
-        }
-    })
-}
-
-/// Encode an ethrex `ChainConfig` into the SSZ `SszChainConfig` (with `active_fork`).
-/// The active fork is resolved at `block_timestamp`; the native L2 activates its
-/// forks at genesis, so `activation.timestamp = [0]`.
-pub fn chain_config_to_ssz(
-    cfg: &ChainConfig,
-    block_timestamp: u64,
-) -> Result<crate::types::stateless_ssz::SszChainConfig, GuestProgramStateError> {
-    use crate::types::stateless_ssz::{
-        SszBlobSchedule, SszChainConfig, SszForkActivation, SszForkConfig, SszOptionalBlobSchedule,
-        SszOptionalForkActivationValue,
-    };
-
-    let fork = cfg.get_fork(block_timestamp);
-    let fork_index = fork_to_spec_index(fork)?;
-
-    let mut timestamp: SszOptionalForkActivationValue = SszOptionalForkActivationValue::new();
-    timestamp
-        .push(0u64)
-        .map_err(|e| GuestProgramStateError::Custom(format!("activation ts push: {e:?}")))?;
-
-    let mut blob_schedule: SszOptionalBlobSchedule = SszOptionalBlobSchedule::new();
-    if let Some(bs) = cfg.get_fork_blob_schedule(block_timestamp) {
-        blob_schedule
-            .push(SszBlobSchedule {
-                target: bs.target as u64,
-                max: bs.max as u64,
-                base_fee_update_fraction: bs.base_fee_update_fraction,
-            })
-            .map_err(|e| GuestProgramStateError::Custom(format!("blob_schedule push: {e:?}")))?;
-    }
-
-    Ok(SszChainConfig {
-        chain_id: cfg.chain_id,
-        active_fork: SszForkConfig {
-            fork: fork_index,
-            activation: SszForkActivation {
-                block_number: SszOptionalForkActivationValue::new(),
-                timestamp,
-            },
-            blob_schedule,
-        },
-    })
-}
-
-/// Decode an `SszChainConfig` into an ethrex `ChainConfig`. Activates every fork
-/// up to and including the SSZ `active_fork` at timestamp 0 (native-L2 genesis
-/// activation). `blob_schedule` is left `Default` — L2 blocks carry no blobs, so
-/// it does not affect execution.
-pub fn ssz_chain_config_to_internal(
-    scc: &crate::types::stateless_ssz::SszChainConfig,
-) -> Result<ChainConfig, GuestProgramStateError> {
-    use crate::types::genesis::Fork;
-    let fork = match scc.active_fork.fork {
-        16 => Fork::Cancun,
-        17 => Fork::Prague,
-        18 => Fork::Osaka,
-        24 => Fork::Amsterdam,
-        other => {
-            return Err(GuestProgramStateError::Custom(format!(
-                "unknown/unsupported spec fork index {other}"
-            )));
-        }
-    };
-    Ok(ChainConfig {
-        chain_id: scc.chain_id,
+/// Build the `ChainConfig` for a stateless input, from its `chain_id` alone.
+///
+/// execution-specs #3278 removed `ChainConfig` from the wire: activation info and
+/// blob schedules are guest-internal knowledge, keyed by `(chain_id, fork)`, with
+/// the fork fixed by the schema-id prefix — always Amsterdam (`0x1501`) at that
+/// pin, since `deserialize_stateless_input` rejects every other id.
+///
+/// Every fork up to and including Amsterdam is activated at 0 and no
+/// payload-timestamp-versus-activation check is performed. That mirrors EEST,
+/// which ships one implementation per fork and therefore skips the check — and
+/// matching it is what keeps ethrex byte-identical to the conformance vectors
+/// generated from the reference.
+///
+/// TODO(upstream): `verify_stateless_new_payload` in `stateless.py` comments that
+/// "a real implementation MUST do these checks", but #3278 leaves no activation
+/// data on the wire to check against. Revisit if upstream reintroduces one, or
+/// specifies where a real client should source it. See
+/// https://github.com/ethereum/execution-specs/pull/3278
+pub fn amsterdam_chain_config(chain_id: u64) -> ChainConfig {
+    ChainConfig {
+        chain_id,
         homestead_block: Some(0),
         eip150_block: Some(0),
         eip155_block: Some(0),
@@ -1111,76 +1062,78 @@ pub fn ssz_chain_config_to_internal(
         london_block: Some(0),
         terminal_total_difficulty: Some(0),
         terminal_total_difficulty_passed: true,
-        shanghai_time: (fork >= Fork::Shanghai).then_some(0),
-        cancun_time: (fork >= Fork::Cancun).then_some(0),
-        prague_time: (fork >= Fork::Prague).then_some(0),
-        osaka_time: (fork >= Fork::Osaka).then_some(0),
-        amsterdam_time: (fork >= Fork::Amsterdam).then_some(0),
+        shanghai_time: Some(0),
+        cancun_time: Some(0),
+        prague_time: Some(0),
+        osaka_time: Some(0),
+        amsterdam_time: Some(0),
+        // NOT `Default` (which is `Address::zero()`). `Requests::from_deposit_receipts`
+        // selects deposit logs by `log.address == deposit_contract_address`, so a zero
+        // address matches nothing: every deposit in the block is dropped, the recomputed
+        // `requests_hash` disagrees with the header's, and a valid block is committed as
+        // `successful_validation = false`. The conformance set is
+        // `eip8025_optional_proofs`, which carries no deposit case, so no fixture covers
+        // this — see `amsterdam_chain_config_sets_deposit_contract` below.
+        //
+        // #3278 leaves only `chain_id` on the wire, so this cannot be chain-specific.
+        // Mainnet's address is used, which is also what EEST fills against
+        // (`tooling/ef_tests/blockchain/fork.rs`).
+        deposit_contract_address: crate::constants::MAINNET_DEPOSIT_CONTRACT_ADDRESS,
         ..Default::default()
-    })
+    }
 }
 
 #[cfg(test)]
-mod active_fork_tests {
+mod amsterdam_chain_config_tests {
     use super::*;
-    use crate::types::genesis::{ChainConfig, Fork};
 
-    fn prague_l2_config() -> ChainConfig {
-        ChainConfig {
-            chain_id: 1,
-            homestead_block: Some(0),
-            eip150_block: Some(0),
-            eip155_block: Some(0),
-            eip158_block: Some(0),
-            byzantium_block: Some(0),
-            constantinople_block: Some(0),
-            petersburg_block: Some(0),
-            istanbul_block: Some(0),
-            berlin_block: Some(0),
-            london_block: Some(0),
-            terminal_total_difficulty: Some(0),
-            terminal_total_difficulty_passed: true,
-            shanghai_time: Some(0),
-            cancun_time: Some(0),
-            prague_time: Some(0),
-            ..Default::default()
+    #[test]
+    fn activates_every_fork_through_amsterdam_at_zero() {
+        let cfg = amsterdam_chain_config(1);
+        assert_eq!(cfg.chain_id, 1);
+        for (name, v) in [
+            ("shanghai", cfg.shanghai_time),
+            ("cancun", cfg.cancun_time),
+            ("prague", cfg.prague_time),
+            ("osaka", cfg.osaka_time),
+            ("amsterdam", cfg.amsterdam_time),
+        ] {
+            assert_eq!(v, Some(0), "{name} must be active from 0");
         }
+        assert!(cfg.terminal_total_difficulty_passed);
+    }
+
+    /// Forks past Amsterdam must stay unscheduled: the schema id pins Amsterdam,
+    /// so activating a later fork would apply rules the input never asked for.
+    #[test]
+    fn leaves_post_amsterdam_forks_unscheduled() {
+        let cfg = amsterdam_chain_config(1);
+        assert_eq!(cfg.hegota_time, None);
+        assert_eq!(cfg.lstar_time, None);
     }
 
     #[test]
-    fn active_fork_round_trips_prague() {
-        let cfg = prague_l2_config();
-        let ssz = chain_config_to_ssz(&cfg, 0).expect("encode");
-        // Encodes the spec Prague index (17) at genesis activation.
-        assert_eq!(ssz.active_fork.fork, 17);
-        assert_eq!(ssz.chain_id, 1);
-        let back = ssz_chain_config_to_internal(&ssz).expect("decode");
-        // Fork rules reproduce: Prague active, Osaka/Amsterdam inactive.
-        assert_eq!(back.get_fork(0), Fork::Prague);
-        assert_eq!(back.chain_id, 1);
-        assert!(back.osaka_time.is_none());
-        assert!(back.amsterdam_time.is_none());
+    fn carries_the_chain_id_through() {
+        assert_eq!(amsterdam_chain_config(u64::MAX).chain_id, u64::MAX);
     }
 
+    /// A zero `deposit_contract_address` silently drops every deposit in a block:
+    /// `Requests::from_deposit_receipts` filters logs by that address, so the
+    /// recomputed `requests_hash` disagrees with the header's and the guest commits
+    /// `successful_validation = false` for a valid block. The
+    /// `eip8025_optional_proofs` conformance set has no deposit case, so this test
+    /// is the only thing standing between that and a silent regression.
     #[test]
-    fn active_fork_round_trips_cancun() {
-        let mut cfg = prague_l2_config();
-        cfg.prague_time = None; // Cancun-only L2
-        let ssz = chain_config_to_ssz(&cfg, 0).expect("encode");
-        assert_eq!(ssz.active_fork.fork, 16);
-        let back = ssz_chain_config_to_internal(&ssz).expect("decode");
-        assert_eq!(back.get_fork(0), Fork::Cancun);
-        assert!(back.prague_time.is_none());
-    }
-
-    #[test]
-    fn active_fork_round_trips_amsterdam() {
-        let mut cfg = prague_l2_config();
-        cfg.osaka_time = Some(0);
-        cfg.amsterdam_time = Some(0);
-        let ssz = chain_config_to_ssz(&cfg, 0).expect("encode");
-        assert_eq!(ssz.active_fork.fork, 24); // spec Amsterdam index
-        let back = ssz_chain_config_to_internal(&ssz).expect("decode");
-        assert_eq!(back.get_fork(0), Fork::Amsterdam);
+    fn amsterdam_chain_config_sets_deposit_contract() {
+        let config = amsterdam_chain_config(1);
+        assert_ne!(
+            config.deposit_contract_address,
+            crate::Address::zero(),
+            "a zero deposit contract address makes every deposit-bearing block invalid"
+        );
+        assert_eq!(
+            config.deposit_contract_address,
+            crate::constants::MAINNET_DEPOSIT_CONTRACT_ADDRESS
+        );
     }
 }

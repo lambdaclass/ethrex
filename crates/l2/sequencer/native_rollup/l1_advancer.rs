@@ -251,21 +251,16 @@ impl NativeL1Advancer {
 /// preimage of `block_access_list_hash` (see `BlockAccessList::compute_hash`),
 /// so the guest-program reconstruction can decode it and recompute the same
 /// hash. `None` (pre-Amsterdam) → empty list.
+///
+/// Infallible since execution-specs #3248 made the field a `ProgressiveList<u8>`,
+/// which carries no length bound.
 pub fn bal_to_ssz_block_access_list(
     bal: Option<&ethrex_common::types::block_access_list::BlockAccessList>,
-) -> Result<
-    libssz_types::SszList<
-        u8,
-        // Mirrors ExecutionPayload.block_access_list field in stateless_ssz.rs (2^24).
-        16_777_216,
-    >,
-    String,
-> {
+) -> libssz_types::ProgressiveList<u8> {
     use ethrex_rlp::encode::RLPEncode;
     match bal {
-        Some(bal) => libssz_types::SszList::try_from(bal.encode_to_vec())
-            .map_err(|e| format!("block_access_list exceeds MAX_BLOCK_ACCESS_LIST_BYTES: {e:?}")),
-        None => Ok(libssz_types::SszList::new()),
+        Some(bal) => bal.encode_to_vec().into(),
+        None => libssz_types::ProgressiveList::new(),
     }
 }
 
@@ -281,22 +276,42 @@ pub fn build_ssz_stateless_input(
 ) -> Result<Vec<u8>, String> {
     use ethrex_common::types::stateless_ssz::*;
     use libssz::SszEncode;
-    use libssz_types::SszList;
+    use libssz_types::{ProgressiveList, SszList, SszVector};
 
     // 1. Convert Block → SSZ ExecutionPayload
-    let transactions: Vec<SszList<u8, 1_073_741_824>> = body
+    // Both levels are progressive lists since #3248, so neither can overflow a
+    // bound and the conversions are infallible.
+    let transactions: Vec<ProgressiveList<u8>> = body
+        .transactions
+        .iter()
+        .map(|tx| tx.encode_canonical_to_vec().into())
+        .collect();
+    let ssz_transactions: ProgressiveList<ProgressiveList<u8>> = transactions.into();
+
+    // One uncompressed secp256k1 key per transaction, in transaction order, so the
+    // consumer can check senders without running `ecrecover` (#6716). Every
+    // transaction here is signature-bearing — the EXECUTE precompile rejects the
+    // signature-less variants — so a `None` is a real inconsistency, not a case to
+    // skip; skipping would shorten the list and fail the length check anyway.
+    let public_keys = body
         .transactions
         .iter()
         .enumerate()
         .map(|(i, tx)| {
-            SszList::try_from(tx.encode_canonical_to_vec())
-                .map_err(|e| format!("transaction[{i}] exceeds MAX_BYTES_PER_TRANSACTION: {e:?}"))
+            let key = tx
+                .public_key(&NativeCrypto)
+                .map_err(|e| format!("failed to recover public key for transaction {i}: {e}"))?
+                .ok_or_else(|| {
+                    format!("transaction {i} carries no signature to recover a public key from")
+                })?;
+            SszVector::try_from(key.to_vec())
+                .map_err(|e| format!("public key for transaction {i} is not 65 bytes: {e:?}"))
         })
-        .collect::<Result<_, _>>()?;
-    let ssz_transactions = SszList::try_from(transactions)
-        .map_err(|e| format!("transactions exceed MAX_TRANSACTIONS_PER_PAYLOAD: {e:?}"))?;
+        .collect::<Result<Vec<_>, String>>()?;
+    let ssz_public_keys: SszPublicKeys = SszList::try_from(public_keys)
+        .map_err(|e| format!("public_keys exceeds MAX_PUBLIC_KEYS: {e:?}"))?;
 
-    let ssz_withdrawals = SszList::new(); // Empty for L2
+    let ssz_withdrawals = ProgressiveList::new(); // Empty for L2
 
     // base_fee_per_gas as LE uint256
     let mut base_fee_bytes = [0u8; 32];
@@ -335,7 +350,7 @@ pub fn build_ssz_stateless_input(
         withdrawals: ssz_withdrawals,
         blob_gas_used: header.blob_gas_used.unwrap_or(0),
         excess_blob_gas: header.excess_blob_gas.unwrap_or(0),
-        block_access_list: bal_to_ssz_block_access_list(bal)?,
+        block_access_list: bal_to_ssz_block_access_list(bal),
         // EIP-7843: carry the header's slot number into the SSZ payload so L1 can
         // read it and the reconstructed block hash matches.
         slot_number: header.slot_number.unwrap_or(0),
@@ -349,14 +364,16 @@ pub fn build_ssz_stateless_input(
 
     // L2 blocks never carry EIP-7685 requests.
     let execution_requests = ExecutionRequests {
-        deposits: SszList::new(),
-        withdrawals: SszList::new(),
-        consolidations: SszList::new(),
+        deposits: ProgressiveList::new(),
+        withdrawals: ProgressiveList::new(),
+        consolidations: ProgressiveList::new(),
+        builder_deposits: ProgressiveList::new(),
+        builder_exits: ProgressiveList::new(),
     };
 
     let new_payload_request = NewPayloadRequest {
         execution_payload,
-        versioned_hashes: SszList::new(), // Empty for L2
+        versioned_hashes: ProgressiveList::new(), // Empty for L2
         parent_beacon_block_root,
         execution_requests,
     };
@@ -368,16 +385,18 @@ pub fn build_ssz_stateless_input(
     let stateless_input = SszStatelessInput {
         new_payload_request,
         witness: ssz_witness,
-        chain_config: ethrex_common::types::block_execution_witness::chain_config_to_ssz(
-            &witness.chain_config,
-            header.timestamp,
-        )
-        .map_err(|e| format!("active_fork encode: {e:?}"))?,
-        public_keys: SszList::new(), // Empty for now
+        // #3278: only the chain id crosses the wire. The consumer derives the rest
+        // from (chain_id, fork), with the fork coming from the schema-id prefix.
+        chain_id: witness.chain_config.chain_id,
+        public_keys: ssz_public_keys,
     };
 
-    // 5. Serialize to SSZ bytes
-    let mut buf = Vec::new();
+    // 5. Serialize to schema-prefixed SSZ bytes. The 2-byte big-endian schema id
+    // goes first, making this byte-identical to the spec's `statelessInputBytes`;
+    // since #3278 it is the only carrier of the fork, not optional framing.
+    let mut buf = ethrex_common::types::stateless_ssz::STATELESS_INPUT_SCHEMA_ID
+        .to_be_bytes()
+        .to_vec();
     stateless_input.ssz_append(&mut buf);
     Ok(buf)
 }
@@ -531,7 +550,7 @@ mod devnet_tests {
         use ethrex_rlp::encode::RLPEncode;
 
         // None → empty SSZ list (pre-Amsterdam).
-        let empty = bal_to_ssz_block_access_list(None).expect("none encodes");
+        let empty = bal_to_ssz_block_access_list(None);
         assert_eq!(empty.len(), 0);
 
         // Some(bal) → the SSZ bytes equal the BAL's RLP encoding, so that
@@ -539,7 +558,7 @@ mod devnet_tests {
         let bal =
             BlockAccessList::from_accounts(vec![AccountChanges::new(Address::from([0x11u8; 20]))]);
         let expected = bal.encode_to_vec();
-        let got = bal_to_ssz_block_access_list(Some(&bal)).expect("some encodes");
+        let got = bal_to_ssz_block_access_list(Some(&bal));
         let got_bytes: Vec<u8> = got.iter().copied().collect();
         assert_eq!(got_bytes, expected);
         assert!(!got_bytes.is_empty());
@@ -628,9 +647,7 @@ mod tests {
             .expect("SSZ encoding should succeed");
 
         // SSZ → deserialize → reconstruct Block
-        use ethrex_common::types::stateless_ssz::SszStatelessInput;
-        use libssz::SszDecode;
-        let input = SszStatelessInput::from_ssz_bytes(&ssz_bytes)
+        let input = ethrex_guest_program::l1::decode_stateless_input(&ssz_bytes)
             .expect("SSZ deserialization should succeed");
 
         let reconstructed_block = ethrex_guest_program::l1::new_payload_request_to_block(
@@ -812,9 +829,7 @@ mod tests {
             .expect("SSZ encoding should succeed for Amsterdam block with BAL");
 
         // SSZ → deserialize → reconstruct Block
-        use ethrex_common::types::stateless_ssz::SszStatelessInput;
-        use libssz::SszDecode;
-        let input = SszStatelessInput::from_ssz_bytes(&ssz_bytes)
+        let input = ethrex_guest_program::l1::decode_stateless_input(&ssz_bytes)
             .expect("SSZ deserialization should succeed");
 
         let reconstructed_block = ethrex_guest_program::l1::new_payload_request_to_block(

@@ -1,4 +1,4 @@
-.PHONY: download-test-vectors clean-vectors test test-levm test-sp1 test-stateless amsterdam-vectors zkevm-vectors test-stateless-zkevm
+.PHONY: download-test-vectors clean-vectors test test-levm test-stateless amsterdam-vectors zkevm-vectors stateless-vector
 
 VECTORS_ROOT := vectors
 FIXTURES_FILE := ../.fixtures_url
@@ -92,28 +92,41 @@ $(ZKEVM_VECTORS_DIR): $(ZKEVM_ARTIFACT)
 	mkdir -p $(ZKEVM_VECTORS_DIR)
 	tar -xzf $(ZKEVM_ARTIFACT) --strip-components=2 -C $(ZKEVM_VECTORS_DIR) fixtures/blockchain_tests/for_amsterdam
 
+# Conformance vectors for execution-specs 3c3b6f4af (#3248 progressive SSZ +
+# #3278 ChainConfig removal). No tests-zkevm release carries that schema, and
+# v0.6.2 reuses schema id 0x1501 for the OLD body, so its vectors misparse.
+# Generated (needs `uv`), never committed. See scripts/gen_stateless_vectors.sh.
+STATELESS_VECTORS_ROOT := vectors_stateless_3278
+
+$(STATELESS_VECTORS_ROOT):
+	scripts/gen_stateless_vectors.sh
+
+stateless-vector: $(STATELESS_VECTORS_ROOT)
+
+# Kept reachable by name but deliberately not a prerequisite of
+# `download-test-vectors`: no target reads `$(ZKEVM_VECTORS_DIR)` since the
+# stateless run moved to the generated set, so fetching it on every
+# `download-test-vectors` would pull a bundle nothing opens. Wire it back in
+# when a tests-zkevm release carries the #3278 schema.
 zkevm-vectors: $(ZKEVM_VECTORS_DIR)
 
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
-download-test-vectors: $(VECTORS_TARGETS) amsterdam-vectors zkevm-vectors ## 📥 Download test vectors
+download-test-vectors: $(VECTORS_TARGETS) amsterdam-vectors ## 📥 Download test vectors
 
 clean-vectors: ## 🗑️  Clean test vectors
-	rm -rf $(VECTORS_ROOT) $(ZKEVM_VECTORS_ROOT)
+	rm -rf $(VECTORS_ROOT) $(ZKEVM_VECTORS_ROOT) $(STATELESS_VECTORS_ROOT) .stateless-vector-work
 	rm -f $(SPECTEST_ARTIFACT) $(LEGACYTEST_ARTIFACT) $(AMSTERDAM_ARTIFACT) $(AMSTERDAM_ARTIFACT).part $(ZKEVM_ARTIFACT)
 
 test-levm: $(VECTORS_TARGETS) amsterdam-vectors ## 🧪 Run blockchain tests with LEVM
 	cargo test --profile release-fast
 
-test-sp1: $(VECTORS_TARGETS) amsterdam-vectors
-	cargo test --profile release-fast --features sp1
-
-test-stateless: zkevm-vectors
+# Reads the generated vectors, NOT zkevm-vectors: tests-zkevm@v0.6.2 predates
+# #3278 while reusing schema id 0x1501, so its 69-byte statelessOutputBytes
+# cannot match the 43 bytes this client produces.
+test-stateless: stateless-vector
 	cargo test --profile release-fast --features stateless
-
-test-stateless-zkevm: zkevm-vectors
-	cargo test --profile release-fast --features stateless -- eip8025_optional_proofs
 
 test: ## 🧪 Run blockchain tests with LEVM both with state and stateless
 	$(MAKE) test-levm

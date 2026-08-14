@@ -20,7 +20,7 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 use ethrex_trie::Trie;
-#[cfg(all(not(feature = "eip-8025"), feature = "rayon"))]
+#[cfg(feature = "rayon")]
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
@@ -30,9 +30,9 @@ use std::cmp::{Ordering, max};
 pub type BlockNumber = u64;
 pub type BlockHash = H256;
 
-#[cfg(all(feature = "eip-8025", target_arch = "riscv64"))]
-use super::eip8025_cell::OnceCell;
-#[cfg(not(all(feature = "eip-8025", target_arch = "riscv64")))]
+#[cfg(all(feature = "zisk", target_arch = "riscv64"))]
+use super::unsync_cell::OnceCell;
+#[cfg(not(all(feature = "zisk", target_arch = "riscv64")))]
 use once_cell::sync::OnceCell;
 
 #[derive(
@@ -342,15 +342,15 @@ impl BlockBody {
     ) -> Result<Vec<(&Transaction, Address)>, CryptoError> {
         // Recovering addresses is computationally expensive.
         // Computing them in parallel greatly reduces execution time.
-        // In eip-8025 builds, use sequential iteration
-        #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+        // Without rayon, use sequential iteration
+        #[cfg(feature = "rayon")]
         return self
             .transactions
             .par_iter()
             .map(|tx| Ok((tx, tx.sender(crypto)?)))
             .collect::<Result<Vec<(&Transaction, Address)>, CryptoError>>();
 
-        #[cfg(any(feature = "eip-8025", not(feature = "rayon")))]
+        #[cfg(not(feature = "rayon"))]
         self.transactions
             .iter()
             .map(|tx| Ok((tx, tx.sender(crypto)?)))
