@@ -754,7 +754,7 @@ impl RpcHandler for GetPayloadBodiesByRangeV1Request {
         if self.count > GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE {
             return Err(RpcErr::TooLargeRequest);
         }
-        let latest_block_number = context.storage.get_latest_block_number().await?;
+        let latest_block_number = context.storage.get_latest_block_number()?;
         // NOTE: we truncate the range because the spec says we "MUST NOT return trailing
         // null values if the request extends past the current latest known block"
         let last = latest_block_number.min(self.start + self.count - 1);
@@ -888,7 +888,7 @@ impl RpcHandler for GetPayloadBodiesByRangeV2Request {
         if self.count > GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE {
             return Err(RpcErr::TooLargeRequest);
         }
-        let latest_block_number = context.storage.get_latest_block_number().await?;
+        let latest_block_number = context.storage.get_latest_block_number()?;
         // NOTE: we truncate the range because the spec says we "MUST NOT return trailing
         // null values if the request extends past the current latest known block"
         let last = latest_block_number.min(self.start + self.count - 1);
@@ -935,6 +935,19 @@ fn parse_execution_payload(params: &Option<Vec<Value>>) -> Result<ExecutionPaylo
     serde_json::from_value(params[0].clone()).map_err(|_| RpcErr::WrongParam("payload".to_string()))
 }
 
+/// The Amsterdam payload fields (EIP-7928 block access list, EIP-7843 slot number) must be
+/// absent from every pre-Amsterdam payload version.
+fn reject_amsterdam_payload_fields(payload: &ExecutionPayload) -> Result<(), RpcErr> {
+    if payload.block_access_list.is_some() {
+        return Err(RpcErr::WrongParam("block_access_list".to_string()));
+    }
+    if payload.slot_number.is_some() {
+        return Err(RpcErr::WrongParam("slot_number".to_string()));
+    }
+
+    Ok(())
+}
+
 fn validate_execution_payload_v1(payload: &ExecutionPayload) -> Result<(), RpcErr> {
     // Validate that only the required arguments are present
     if payload.withdrawals.is_some() {
@@ -947,7 +960,7 @@ fn validate_execution_payload_v1(payload: &ExecutionPayload) -> Result<(), RpcEr
         return Err(RpcErr::WrongParam("excess_blob_gas".to_string()));
     }
 
-    Ok(())
+    reject_amsterdam_payload_fields(payload)
 }
 
 fn validate_execution_payload_v2(payload: &ExecutionPayload) -> Result<(), RpcErr> {
@@ -962,11 +975,11 @@ fn validate_execution_payload_v2(payload: &ExecutionPayload) -> Result<(), RpcEr
         return Err(RpcErr::WrongParam("excess_blob_gas".to_string()));
     }
 
-    Ok(())
+    reject_amsterdam_payload_fields(payload)
 }
 
-fn validate_execution_payload_v3(payload: &ExecutionPayload) -> Result<(), RpcErr> {
-    // Validate that only the required arguments are present
+/// Fields shared by every payload version from Cancun onwards.
+fn validate_execution_payload_cancun_fields(payload: &ExecutionPayload) -> Result<(), RpcErr> {
     if payload.withdrawals.is_none() {
         return Err(RpcErr::WrongParam("withdrawals".to_string()));
     }
@@ -980,16 +993,25 @@ fn validate_execution_payload_v3(payload: &ExecutionPayload) -> Result<(), RpcEr
     Ok(())
 }
 
+/// Shared by `engine_newPayloadV3` and `engine_newPayloadV4`, both of which predate Amsterdam.
+fn validate_execution_payload_v3(payload: &ExecutionPayload) -> Result<(), RpcErr> {
+    // Validate that only the required arguments are present
+    validate_execution_payload_cancun_fields(payload)?;
+
+    reject_amsterdam_payload_fields(payload)
+}
+
 #[inline]
 fn validate_execution_payload_v4(payload: &ExecutionPayload) -> Result<(), RpcErr> {
-    // This method follows the same specification as `engine_newPayloadV4` additionally
-    // rejects payload without block access list
+    // The Amsterdam payload shape: the Cancun fields plus a block access list. Reached only
+    // through `validate_execution_payload_v5`, so the Amsterdam fields are required here
+    // rather than rejected.
 
     if payload.block_access_list.is_none() {
         return Err(RpcErr::WrongParam("block_access_list".to_string()));
     }
 
-    validate_execution_payload_v3(payload)?;
+    validate_execution_payload_cancun_fields(payload)?;
 
     Ok(())
 }

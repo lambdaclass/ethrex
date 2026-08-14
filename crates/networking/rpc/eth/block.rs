@@ -293,11 +293,8 @@ impl RpcHandler for BlockNumberRequest {
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         debug!("Requested latest block number");
-        serde_json::to_value(format!(
-            "{:#x}",
-            context.storage.get_latest_block_number().await?
-        ))
-        .map_err(|error| RpcErr::Internal(error.to_string()))
+        serde_json::to_value(format!("{:#x}", context.storage.get_latest_block_number()?))
+            .map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
 
@@ -308,7 +305,7 @@ impl RpcHandler for GetBlobBaseFee {
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         debug!("Requested blob gas price");
-        let block_number = context.storage.get_latest_block_number().await?;
+        let block_number = context.storage.get_latest_block_number()?;
         let header = match context.storage.get_block_header(block_number)? {
             Some(header) => header,
             _ => return Err(RpcErr::Internal("Could not get block header".to_owned())),
@@ -359,6 +356,7 @@ pub async fn get_all_block_rpc_receipts(
         .map_err(|_| RpcErr::Internal("blob_base_fee does not fit in u64".to_owned()))?;
     // Fetch receipt info from block
     let block_hash = header.hash();
+    let block_timestamp = header.timestamp;
     let block_info = RpcReceiptBlockInfo::from_block_header(header);
     // Fetch receipts: only up to target_index+1 when set, otherwise all
     let fetch_count = target_index
@@ -398,6 +396,7 @@ pub async fn get_all_block_rpc_receipts(
             tx_info,
             block_info.clone(),
             current_log_index,
+            block_timestamp,
         );
         last_cumulative_gas_used += gas_used;
         current_log_index += receipt.logs.len() as u64;

@@ -18,7 +18,7 @@ use ethrex_common::{
     types::{
         BLOB_BASE_FEE_UPDATE_FRACTION, BlobsBundle, Block, BlockNumber, Fork, Genesis,
         MIN_BASE_FEE_PER_BLOB_GAS, TxType, batch::Batch, blobs_bundle, fake_exponential,
-        fee_config::FeeConfig,
+        fee_config::FeeConfig, normalize_legacy_withdrawals,
     },
 };
 use ethrex_l2_common::sequencer_state::{SequencerState, SequencerStatus};
@@ -646,12 +646,18 @@ impl L1Committer {
         info!("Generating missing checkpoint for batch {}", batch.number);
 
         // Fetch the blocks in the batch along with their respective fee configs
-        let (blocks, fee_configs) = fetch_blocks_with_respective_fee_configs::<CommitterError>(
+        let (mut blocks, fee_configs) = fetch_blocks_with_respective_fee_configs::<CommitterError>(
             batch,
             &self.store,
             &self.rollup_store,
         )
         .await?;
+
+        // Stored blocks produced by older ethrex versions may carry the legacy
+        // omitted-withdrawals body shape, which block validation now rejects.
+        for block in blocks.iter_mut() {
+            normalize_legacy_withdrawals(&block.header, &mut block.body);
+        }
 
         // Re-execute the blocks in the batch to recreate the checkpoint
         for (i, block) in blocks.iter().enumerate() {
@@ -865,7 +871,12 @@ impl L1Committer {
                         "Failed to get_block_header() after get_block_body()".to_owned(),
                     ))?;
 
-                Block::new(block_to_commit_header, block_to_commit_body)
+                let mut block = Block::new(block_to_commit_header, block_to_commit_body);
+                // Stored blocks produced by older ethrex versions may carry the
+                // legacy omitted-withdrawals body shape, which block validation
+                // (and thus the fallback re-execution below) now rejects.
+                normalize_legacy_withdrawals(&block.header, &mut block.body);
+                block
             };
 
             let current_block_gas_used = potential_batch_block.header.gas_used;
@@ -1627,7 +1638,7 @@ pub async fn regenerate_state(
     let target_block_number = match target_block_number {
         Some(0) => return Ok(()),
         Some(n) => n - 1,
-        None => store.get_latest_block_number().await?,
+        None => store.get_latest_block_number()?,
     };
     if target_block_number == 0 {
         return Ok(());
@@ -1642,11 +1653,14 @@ pub async fn regenerate_state(
     for block_number in last_state_number + 1..=target_block_number {
         debug!("Re-applying block {block_number} to regenerate state");
 
-        let Some(block) = store.get_block_by_number(block_number).await? else {
+        let Some(mut block) = store.get_block_by_number(block_number).await? else {
             return Err(CommitterError::FailedToCreateCheckpoint(format!(
                 "Block {block_number} not found"
             )));
         };
+        // Stored blocks produced by older ethrex versions may carry the legacy
+        // omitted-withdrawals body shape, which block validation now rejects.
+        normalize_legacy_withdrawals(&block.header, &mut block.body);
 
         let Some(fee_config) = rollup_store.get_fee_config_by_block(block_number).await? else {
             return Err(CommitterError::FailedToCreateCheckpoint(format!(

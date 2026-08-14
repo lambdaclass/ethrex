@@ -57,7 +57,7 @@ impl GasTipEstimator {
         storage: &Store,
         min_tip_wei: u64,
     ) -> Result<u64, RpcErr> {
-        let latest_block_number = storage.get_latest_block_number().await?;
+        let latest_block_number = storage.get_latest_block_number()?;
         let latest_block_hash = storage
             .get_canonical_block_hash(latest_block_number)
             .await?

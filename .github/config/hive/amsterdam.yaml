@@ -1,4 +1,7 @@
 # Amsterdam (BAL) hive test configuration
-# Pinned to tests-glamsterdam-devnet@v7.2.0 (execution-specs `devnets/glamsterdam/7`)
-fixtures: https://github.com/ethereum/execution-specs/releases/download/tests-glamsterdam-devnet%40v7.2.0/fixtures_glamsterdam-devnet.tar.gz
-eels_commit: 50a25a54997581820640a1820e9ebb4bae93486b
+# Pinned to tests-glamsterdam-devnet@v8.1.0 (execution-specs `devnets/glamsterdam/8`).
+# Keep this in lock-step with `tooling/ef_tests/.fixtures_url_amsterdam`: v8.1.0 carries
+# the revised EIP-8038 gas values, so grading a v8.1.0 client against the v8.0.0 bundle
+# fails every gas-sensitive fixture.
+fixtures: https://github.com/ethereum/execution-specs/releases/download/tests-glamsterdam-devnet%40v8.1.0/fixtures_glamsterdam-devnet.tar.gz
+eels_commit: 864fa03a155f2403653f828236b97d9131ca0228
