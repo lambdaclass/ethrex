@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-725e0436.js";
+            window.path_to_searchindex_js = "searchindex-7a74d68c.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ec0f4f2d.js"></script>
@@ -11181,7 +11181,7 @@ You can find the solidity code in the <a href="https://github.com/lambdaclass/et
   5. Execute block via LEVM
   6. Return StatelessValidationResult (SSZ)
         |
-  Returns SSZ-encoded (new_payload_request_root, successful_validation, chain_config) or reverts
+  Returns SSZ-encoded (new_payload_request_root, successful_validation, chain_id, schema_id) or reverts
 </code></pre>
 <h2 id="execute-precompile"><a class="header" href="#execute-precompile">EXECUTE Precompile</a></h2>
 <p>The core logic lives in <code>execute_precompile.rs</code>. It parses SSZ-encoded <code>StatelessInput</code> once, validates L2-specific constraints, charges gas (<code>gas_limit + calldata_len · EXECUTE_GAS_PER_WITNESS_BYTE</code>), and delegates the already-decoded input to <code>verify_stateless_new_payload</code> via the <code>StatelessValidator</code> trait. Gas is charged on <code>gas_limit</code> (the true upper bound on re-execution), never on the attacker-controlled <code>gas_used</code>.</p>
@@ -11192,8 +11192,8 @@ You can find the solidity code in the <a href="https://github.com/lambdaclass/et
 </span>pub struct SszStatelessInput {
     pub new_payload_request: NewPayloadRequest,  // Full block as SSZ
     pub witness: SszExecutionWitness,            // State trie, storage tries, codes
-    pub chain_config: SszChainConfig,            // chain_id
-    pub public_keys: SszList&lt;...&gt;,               // Pre-recovered tx public keys (stub)
+    pub chain_id: u64,                           // #3278: the only config on the wire
+    pub public_keys: SszList&lt;...&gt;,               // One recovered tx public key per tx
 }
 <span class="boring">}</span></code></pre>
 <p>The <code>NewPayloadRequest</code> contains:</p>
@@ -11207,10 +11207,11 @@ You can find the solidity code in the <a href="https://github.com/lambdaclass/et
 <p>SSZ-encoded <code>StatelessValidationResult</code>:</p>
 <pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
-</span>pub struct StatelessValidationResult {
+</span>pub struct SszStatelessValidationResult {
     pub new_payload_request_root: [u8; 32],  // hash_tree_root of NewPayloadRequest
     pub successful_validation: bool,          // Whether execution was valid
-    pub chain_config: SszChainConfig,         // chain_id (echo back)
+    pub chain_id: u64,                        // echoed from the input
+    pub schema_id: u16,                       // fork/encoding the guest decoded
 }
 <span class="boring">}</span></code></pre>
 <p>The contract checks <code>successful_validation == true</code> at byte 32 of the result.</p>
@@ -11220,9 +11221,18 @@ You can find the solidity code in the <a href="https://github.com/lambdaclass/et
 <li><code>blob_gas_used == 0</code> — no blob data on L2</li>
 <li><code>excess_blob_gas == 0</code> — no blob fee market on L2</li>
 <li><code>withdrawals</code> is empty — L2 doesn’t have consensus-layer withdrawals</li>
-<li><code>execution_requests</code> is empty — no deposit/withdrawal/consolidation requests</li>
-<li>No type-3 (blob) transactions in the transaction list</li>
+<li><code>execution_requests</code> is empty — no deposit, withdrawal, consolidation, builder-deposit or builder-exit requests</li>
+<li>No type-<code>0x03</code> (blob), <code>0x06</code> (frame) or <code>0x7e</code> (privileged) transactions in the transaction list</li>
 </ul>
+<p>The two signature-less types are rejected for a structural reason, not a policy
+one: they carry an explicit sender and no signature, so no public key can be
+recovered for them, while <code>StatelessInput</code> commits exactly one key per
+transaction. Native rollups do not need them — L1→L2 messages are relayed as
+signed EIP-1559 transactions — so rejecting them makes “every transaction in the
+payload is signature-bearing” an invariant the producer can rely on.</p>
+<p>The 2-byte schema-id prefix is also required, and only <code>0x1501</code> is accepted:
+since execution-specs #3278 no chain configuration crosses the wire, so the
+prefix is the sole carrier of the fork.</p>
 <h3 id="gas-charging"><a class="header" href="#gas-charging">Gas Charging</a></h3>
 <p>Gas is charged as:</p>
 <pre><code>charge = gas_limit + calldata_len · EXECUTE_GAS_PER_WITNESS_BYTE
@@ -11278,9 +11288,13 @@ L1: User calls NativeRollup.claimWithdrawal(from, receiver, amount, messageId, b
 <li>Validates block headers from the witness</li>
 <li>Builds <code>GuestProgramState</code> from the witness</li>
 <li>Converts the SSZ <code>NewPayloadRequest</code> → ethrex <code>Block</code></li>
+<li>Checks each supplied public key derives to that transaction’s recovered sender</li>
 <li>Executes the block via LEVM</li>
-<li>Returns <code>StatelessValidationResult</code> with the hash tree root and a <code>successful_validation</code> flag</li>
+<li>Returns <code>StatelessValidationResult</code> with the hash tree root, <code>chain_id</code>, <code>schema_id</code> and a <code>successful_validation</code> flag</li>
 </ol>
+<p>Steps 4–7 live in <code>verify_stateless_block</code> (<code>crates/guest-program/src/l1/program.rs</code>),
+which is the single point both this path and the zkVM guests pass through — so
+neither can enforce a different set of checks than the other.</p>
 <p>The state root check implicitly guarantees both correct L1 message processing and correct L2→L1 withdrawal recording.</p>
 <h2 id="contracts-1"><a class="header" href="#contracts-1">Contracts</a></h2>
 <h3 id="nativerollupsol"><a class="header" href="#nativerollupsol">NativeRollup.sol</a></h3>
@@ -11333,33 +11347,21 @@ L1: User calls NativeRollup.claimWithdrawal(from, receiver, amount, messageId, b
 <h2 id="compilation-and-feature-flags"><a class="header" href="#compilation-and-feature-flags">Compilation and Feature Flags</a></h2>
 <p>The native-rollup EXECUTE precompile, the stateless-validation pipeline, and all SSZ types are <strong>always-compiled</strong> — there is no cargo feature that gates them out. (The old unified devnet feature flag was removed.)</p>
 <p><strong>Runtime gate:</strong> the EXECUTE precompile body executes only when <code>fork &gt;= Fork::LStar &amp;&amp; vm_type == VMType::L1</code>. On any other fork or VM type the precompile is a no-op CALL.</p>
-<p>The only remaining cargo feature is <strong><code>eip-8025</code></strong>, which controls the guest-program input/output format. The SSZ dep chain is:</p>
-<pre><code class="language-toml"># crates/guest-program/Cargo.toml  (guest only — not the host)
-eip-8025 = [
-    "ethrex-common/eip-8025",
-    "ethrex-vm/eip-8025",
-    "dep:libssz",
-    "dep:libssz-merkle",
-    "dep:libssz-types",
-    "dep:libssz-derive",
-]
-
-# crates/blockchain/Cargo.toml
-eip-8025 = ["ethrex-common/eip-8025", "ethrex-vm/eip-8025"]
-
-# crates/common/Cargo.toml
-eip-8025 = ["ethrex-trie/eip-8025"]   # guest-only trie SSZ support; the always-compiled stateless SSZ types do not need it
-</code></pre>
-<p>When <code>eip-8025</code> is compiled into the guest program:</p>
+<p>There is no longer an <code>eip-8025</code> cargo feature. It was removed along with the legacy guest path, so
+<code>libssz</code> and the SSZ types are unconditional dependencies of <code>ethrex-common</code>, and the guest has a
+single wire format rather than one per feature setting. A <code>grep eip-8025 -- '*.toml'</code> returns no
+feature declarations.</p>
+<p>The guest input/output format is now fixed:</p>
 <ul>
-<li>Input format: <code>NewPayloadRequest</code> (SSZ) + <code>ExecutionWitness</code> (rkyv) — the EIP-8025 wire format</li>
-<li>Output format: <code>ProgramOutput { new_payload_request_root: [u8; 32], valid: bool }</code> — 33 bytes</li>
+<li><strong>Input:</strong> a 2-byte big-endian schema-id prefix (<code>STATELESS_INPUT_SCHEMA_ID</code>, currently <code>0x1501</code>)
+followed by the SSZ-encoded <code>SszStatelessInput</code>. A wrong or missing prefix is rejected before the
+body is parsed.</li>
+<li><strong>Output:</strong> 43 bytes, laid out as
+<code>new_payload_request_root (32) || successful_validation (1) || chain_id (8) || schema_id (2)</code>,
+with <code>schema_id</code> little-endian at offset 41.</li>
 </ul>
-<p>Without <code>eip-8025</code>:</p>
-<ul>
-<li>Input/output use the legacy rkyv <code>ProgramInput</code>/<code>ProgramOutput</code> format</li>
-<li>The host (node) always has the SSZ types compiled in for the EXECUTE precompile</li>
-</ul>
+<p>The 43-byte layout is pinned against <code>NativeRollup.sol</code> by
+<code>test/tests/l2/native_rollup_sol_offsets.rs</code>.</p>
 <h2 id="summary-table-vs-l2beat-native-rollups-spec-see-divergences-note-above"><a class="header" href="#summary-table-vs-l2beat-native-rollups-spec-see-divergences-note-above">Summary Table (vs l2beat native-rollups spec; see divergences note above)</a></h2>
 <div class="table-wrapper">
 <table>
@@ -11387,7 +11389,7 @@ eip-8025 = ["ethrex-trie/eip-8025"]   # guest-only trie SSZ support; the always-
 <tr><td>ZK variant</td><td>Specified (proof-carrying tx + PROOFROOT)</td><td>Not implemented (re-execution only)</td><td><strong>Gap (by design)</strong></td></tr>
 <tr><td>Forced transactions</td><td>WIP (FOCIL)</td><td>Not implemented</td><td><strong>Gap</strong></td></tr>
 <tr><td>DA cost pricing</td><td>WIP</td><td>Not implemented</td><td><strong>Both WIP</strong></td></tr>
-<tr><td><code>public_keys</code></td><td>Pre-recovered tx keys</td><td>Empty tuple (stub)</td><td><strong>Stub</strong></td></tr>
+<tr><td><code>public_keys</code></td><td>Pre-recovered tx keys</td><td>Populated by the advancer, checked against recovered senders</td><td><strong>Aligned</strong></td></tr>
 </tbody>
 </table>
 </div>
@@ -11412,7 +11414,6 @@ eip-8025 = ["ethrex-trie/eip-8025"]   # guest-only trie SSZ support; the always-
 <li><strong>No L1 message inclusion deadline</strong> — <code>pendingL1Messages</code> have no per-message deadline, so the advancer can defer processing them indefinitely without on-chain consequence. <code>OnChainProposer.sol</code> enforces this for privileged transactions via <code>PRIVILEGED_TX_MAX_WAIT_BEFORE_INCLUSION</code> + <code>hasExpiredPrivilegedTransactions()</code>; the analogous mechanism for <code>NativeRollup.sol</code> is a TODO.</li>
 <li><strong>L2 ETH supply drain</strong> — Base fees are burned but not credited back on L2. A production solution would use a <code>BaseFeeVault</code> pattern.</li>
 <li><strong>No blob data support</strong> — Only calldata-based input (spec proposes blob references via EIP-8142)</li>
-<li><strong><code>public_keys</code> empty</strong> — Pre-recovered transaction public keys are not populated yet</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <h1 id="ethrex-replay"><a class="header" href="#ethrex-replay">ethrex-replay</a></h1>
