@@ -46,6 +46,7 @@ COPY --link cmd ./cmd
 COPY --link test ./test
 COPY --link tooling/repl ./tooling/repl
 COPY --link tooling/monitor ./tooling/monitor
+COPY --link tooling/runner ./tooling/runner
 COPY --link Cargo.toml Cargo.lock ./
 COPY --link .cargo ./.cargo
 
@@ -94,6 +95,7 @@ COPY --link metrics ./metrics
 COPY --link test ./test
 COPY --link tooling/repl ./tooling/repl
 COPY --link tooling/monitor ./tooling/monitor
+COPY --link tooling/runner ./tooling/runner
 COPY --link Cargo.toml Cargo.lock ./
 COPY --link .cargo ./.cargo
 # Only these subdirs are referenced by include_str!/include_bytes! in workspace
