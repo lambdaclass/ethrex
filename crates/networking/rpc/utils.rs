@@ -255,6 +255,13 @@ pub enum RpcNamespace {
     /// Testing-only methods for fixture generation (exposed as `testing_*`).
     /// Disabled by default; must never be exposed on public-facing RPC APIs.
     Testing,
+    /// ethrex-specific extension methods (exposed as `ethrex_*`).
+    ///
+    /// These are non-standard methods that ethrex adds outside the standardized
+    /// `eth_`/`debug_` namespaces (e.g. EIP-8141 frame-transaction simulation).
+    /// Kept in a dedicated namespace so operators can expose them publicly
+    /// without also enabling the whole `debug_` surface.
+    Ethrex,
 }
 
 impl RpcNamespace {
@@ -269,6 +276,7 @@ impl RpcNamespace {
             "net" => Some(RpcNamespace::Net),
             "txpool" => Some(RpcNamespace::Mempool),
             "testing" => Some(RpcNamespace::Testing),
+            "ethrex" => Some(RpcNamespace::Ethrex),
             _ => None,
         }
     }
