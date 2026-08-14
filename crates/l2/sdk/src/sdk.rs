@@ -805,6 +805,24 @@ pub fn get_address_alias(address: Address) -> Address {
 
 const WAIT_TIME_FOR_RECEIPT_SECONDS: u64 = 2;
 
+/// Fee bump applied before resending a transaction that is already pooled at
+/// the same `(sender, nonce)`.
+///
+/// A resend only replaces the pooled transaction if it clears the mempool's
+/// replacement threshold; below it the send is rejected as an underpriced
+/// replacement and the attempt is spent for nothing. Peer clients and ethrex
+/// (`DEFAULT_PRICE_BUMP_PERCENT`) use 10%, so this leaves headroom.
+const FEE_BUMP_PERCENT: u64 = 30;
+
+/// Fee bump applied when the transaction carries blobs.
+///
+/// Blob sidecars are expensive to re-propagate, so the replacement threshold
+/// for a blob transaction is far higher than for a regular one: ethrex's
+/// `DEFAULT_BLOB_PRICE_BUMP_PERCENT` and its peers require the fee to *double*.
+/// Bumping by `FEE_BUMP_PERCENT` here would leave a batch commitment unable to
+/// replace itself for as long as the pooled copy lives.
+const BLOB_FEE_BUMP_PERCENT: u64 = 100;
+
 pub async fn send_generic_transaction(
     client: &EthClient,
     generic_tx: GenericTransaction,
@@ -864,6 +882,7 @@ pub async fn send_tx_bump_gas_exponential_backoff(
     signer: &Signer,
 ) -> Result<H256, EthClientError> {
     let mut number_of_retries = 0;
+    let mut previous_fee_bid: Option<FeeBid> = None;
 
     'outer: while number_of_retries < client.max_number_of_retries {
         if let Some(max_fee_per_gas) = client.maximum_allowed_max_fee_per_gas {
@@ -900,6 +919,22 @@ pub async fn send_tx_bump_gas_exponential_backoff(
                 "max_fee_per_blob_gas exceeds the allowed limit, adjusting it to {max_fee_per_blob_gas}"
             );
         }
+
+        // The clamps above can cancel out the bump applied at the end of the
+        // previous iteration. When that happens the bid is identical to one the
+        // mempool already rejected, so every remaining attempt would be spent
+        // re-sending the same transaction; stop with the reason instead.
+        let current_fee_bid = fee_bid(&tx);
+        if previous_fee_bid.as_ref() == Some(&current_fee_bid) {
+            return Err(EthClientError::Custom(format!(
+                "Cannot raise transaction fees any further after {number_of_retries} attempt(s): \
+                 the bump is capped by maximum_allowed_max_fee_per_gas / \
+                 maximum_allowed_max_fee_per_blob_gas, so a replacement would keep being \
+                 rejected as underpriced"
+            )));
+        }
+        previous_fee_bid = Some(current_fee_bid);
+
         let Ok(tx_hash) = send_generic_transaction(client, tx.clone(), signer)
             .await
             .inspect_err(|e| {
@@ -909,7 +944,24 @@ pub async fn send_tx_bump_gas_exponential_backoff(
                 );
             })
         else {
-            bump_gas_generic_tx(&mut tx, 30);
+            // Once the account has moved past this transaction's nonce, no fee
+            // is high enough to get it included: every remaining attempt fails
+            // the same way and the caller is told "max retries reached", which
+            // hides the real reason. Ask the chain rather than parse the
+            // rejection text, so this holds whatever wording the node uses.
+            if let Some(tx_nonce) = tx.nonce
+                && let Ok(account_nonce) = client
+                    .get_nonce(tx.from, BlockIdentifier::Tag(BlockTag::Latest))
+                    .await
+                && tx_nonce < account_nonce
+            {
+                warn!(
+                    "Transaction nonce {tx_nonce} is below the account nonce {account_nonce}; giving up instead of retrying"
+                );
+                return Err(EthClientError::UnreachableNonce);
+            }
+
+            bump_gas_generic_tx(&mut tx);
             number_of_retries += 1;
             continue;
         };
@@ -934,7 +986,7 @@ pub async fn send_tx_bump_gas_exponential_backoff(
             if attempt >= (attempts_to_wait_in_seconds / WAIT_TIME_FOR_RECEIPT_SECONDS) {
                 // We waited long enough for the receipt but did not find it, bump gas
                 // and go to the next one.
-                bump_gas_generic_tx(&mut tx, 30);
+                bump_gas_generic_tx(&mut tx);
 
                 number_of_retries += 1;
                 continue 'outer;
@@ -956,19 +1008,55 @@ pub async fn send_tx_bump_gas_exponential_backoff(
     Err(EthClientError::TimeoutError)
 }
 
-fn bump_gas_generic_tx(tx: &mut GenericTransaction, bump_percentage: u64) {
+/// Raises every fee dimension of `tx` so that a resend can replace whatever is
+/// already pooled at the same `(sender, nonce)`.
+///
+/// Blob-carrying transactions are bumped by `BLOB_FEE_BUMP_PERCENT` on all
+/// dimensions, not just on the blob fee: a mempool that requires a doubled blob
+/// fee requires the same of the fee cap and the tip, and a replacement has to
+/// clear every dimension at once.
+fn bump_gas_generic_tx(tx: &mut GenericTransaction) {
+    let bump_percentage = if tx.max_fee_per_blob_gas.is_some() {
+        BLOB_FEE_BUMP_PERCENT
+    } else {
+        FEE_BUMP_PERCENT
+    };
+
     if let (Some(max_fee_per_gas), Some(max_priority_fee_per_gas)) =
         (&mut tx.max_fee_per_gas, &mut tx.max_priority_fee_per_gas)
     {
-        *max_fee_per_gas = (*max_fee_per_gas * (100 + bump_percentage)) / 100;
-        *max_priority_fee_per_gas = (*max_priority_fee_per_gas * (100 + bump_percentage)) / 100;
+        *max_fee_per_gas = bump_u64(*max_fee_per_gas, bump_percentage);
+        *max_priority_fee_per_gas = bump_u64(*max_priority_fee_per_gas, bump_percentage);
     }
     if let Some(max_fee_per_blob_gas) = &mut tx.max_fee_per_blob_gas {
-        let factor = 1 + (bump_percentage / 100) * 10;
-        *max_fee_per_blob_gas = max_fee_per_blob_gas
-            .saturating_mul(U256::from(factor))
-            .div(10);
+        *max_fee_per_blob_gas = bump_u256(*max_fee_per_blob_gas, bump_percentage);
     }
+}
+
+/// `value` raised by `bump_percent`, saturating rather than overflowing on an
+/// absurd starting fee.
+fn bump_u64(value: u64, bump_percent: u64) -> u64 {
+    value.saturating_mul(100 + bump_percent) / 100
+}
+
+/// `value` raised by `bump_percent`, saturating rather than overflowing on an
+/// absurd starting fee.
+fn bump_u256(value: U256, bump_percent: u64) -> U256 {
+    value
+        .saturating_mul(U256::from(100 + bump_percent))
+        .div(U256::from(100))
+}
+
+/// The fee dimensions a mempool compares when deciding whether a resend
+/// replaces the transaction pooled at the same `(sender, nonce)`.
+type FeeBid = (Option<u64>, Option<u64>, Option<U256>);
+
+fn fee_bid(tx: &GenericTransaction) -> FeeBid {
+    (
+        tx.max_fee_per_gas,
+        tx.max_priority_fee_per_gas,
+        tx.max_fee_per_blob_gas,
+    )
 }
 
 /// Build a GenericTransaction with the given parameters.
@@ -1487,4 +1575,158 @@ pub async fn wait_for_l2_deposit_receipt(
         .ok_or_else(|| EthClientError::Custom("Empty transaction hash".to_owned()))?;
 
     wait_for_transaction_receipt(l2_deposit_tx_hash, l2_client, 10000).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Mempool replacement thresholds these bumps have to clear, mirroring
+    /// `ethrex_blockchain`'s `DEFAULT_PRICE_BUMP_PERCENT` /
+    /// `DEFAULT_BLOB_PRICE_BUMP_PERCENT`. Duplicated as literals on purpose:
+    /// the SDK does not depend on the blockchain crate, and the point of the
+    /// tests is to fail if either side drifts.
+    const MEMPOOL_PRICE_BUMP_PERCENT: u64 = 10;
+    const MEMPOOL_BLOB_PRICE_BUMP_PERCENT: u64 = 100;
+
+    /// The mempool admits a replacement when the new bid is at least the pooled
+    /// bid raised by `bump_percent`, rounded down. Mirrors `is_bumped_u256`.
+    fn clears_threshold(pooled: U256, new: U256, bump_percent: u64) -> bool {
+        new >= pooled * U256::from(100 + bump_percent) / U256::from(100)
+    }
+
+    fn regular_tx() -> GenericTransaction {
+        GenericTransaction {
+            max_fee_per_gas: Some(1_000_000_000),
+            max_priority_fee_per_gas: Some(1_000_000_000),
+            ..Default::default()
+        }
+    }
+
+    fn blob_tx() -> GenericTransaction {
+        GenericTransaction {
+            max_fee_per_gas: Some(1_000_000_000),
+            max_priority_fee_per_gas: Some(1_000_000_000),
+            max_fee_per_blob_gas: Some(U256::from(1_000_000_000u64)),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn bump_raises_a_regular_tx_above_the_replacement_threshold() {
+        let pooled = regular_tx();
+        let mut resend = pooled.clone();
+        bump_gas_generic_tx(&mut resend);
+
+        for (pooled_fee, new_fee) in [
+            (pooled.max_fee_per_gas, resend.max_fee_per_gas),
+            (
+                pooled.max_priority_fee_per_gas,
+                resend.max_priority_fee_per_gas,
+            ),
+        ] {
+            assert!(clears_threshold(
+                U256::from(pooled_fee.unwrap()),
+                U256::from(new_fee.unwrap()),
+                MEMPOOL_PRICE_BUMP_PERCENT,
+            ));
+        }
+    }
+
+    #[test]
+    fn bump_raises_every_blob_tx_dimension_above_the_blob_threshold() {
+        // Regression test. The blob fee used to be computed as
+        // `1 + (bump / 100) * 10` and then divided by 10, which for the only
+        // bump the callers passed (30) evaluated to `* 1 / 10`: every retry
+        // *lowered* the blob fee by 90%, so a batch commitment could never
+        // replace its own pooled copy.
+        let pooled = blob_tx();
+        let mut resend = pooled.clone();
+        bump_gas_generic_tx(&mut resend);
+
+        assert!(clears_threshold(
+            pooled.max_fee_per_blob_gas.unwrap(),
+            resend.max_fee_per_blob_gas.unwrap(),
+            MEMPOOL_BLOB_PRICE_BUMP_PERCENT,
+        ));
+        // A blob replacement must clear the same threshold on the fee cap and
+        // the tip, not only on the blob fee.
+        assert!(clears_threshold(
+            U256::from(pooled.max_fee_per_gas.unwrap()),
+            U256::from(resend.max_fee_per_gas.unwrap()),
+            MEMPOOL_BLOB_PRICE_BUMP_PERCENT,
+        ));
+        assert!(clears_threshold(
+            U256::from(pooled.max_priority_fee_per_gas.unwrap()),
+            U256::from(resend.max_priority_fee_per_gas.unwrap()),
+            MEMPOOL_BLOB_PRICE_BUMP_PERCENT,
+        ));
+    }
+
+    #[test]
+    fn blob_fee_never_decreases() {
+        let mut tx = blob_tx();
+        let mut previous = tx.max_fee_per_blob_gas.unwrap();
+        for _ in 0..10 {
+            bump_gas_generic_tx(&mut tx);
+            let current = tx.max_fee_per_blob_gas.unwrap();
+            assert!(
+                current > previous,
+                "blob fee went from {previous} to {current}"
+            );
+            previous = current;
+        }
+    }
+
+    #[test]
+    fn bump_saturates_instead_of_overflowing() {
+        let mut tx = GenericTransaction {
+            max_fee_per_gas: Some(u64::MAX),
+            max_priority_fee_per_gas: Some(u64::MAX),
+            max_fee_per_blob_gas: Some(U256::MAX),
+            ..Default::default()
+        };
+        bump_gas_generic_tx(&mut tx);
+        assert_eq!(tx.max_fee_per_gas, Some(u64::MAX / 100));
+        assert_eq!(tx.max_fee_per_blob_gas, Some(U256::MAX / U256::from(100)));
+    }
+
+    #[test]
+    fn fee_bid_detects_a_bid_the_mempool_already_saw() {
+        let tx = blob_tx();
+        let mut bumped = tx.clone();
+        bump_gas_generic_tx(&mut bumped);
+        assert_ne!(fee_bid(&tx), fee_bid(&bumped));
+        assert_eq!(fee_bid(&tx), fee_bid(&tx.clone()));
+    }
+
+    #[test]
+    fn the_previous_blob_formula_fails_the_same_checks() {
+        // Keeps the two tests above honest: they must reject the formula that
+        // shipped before this fix, not merely accept the new one. Evaluated for
+        // the bump both call sites passed (30), the old expression collapsed to
+        // `fee * 1 / 10`.
+        let pooled = U256::from(1_000_000_000u64);
+        let shipped_bump: u64 = 30;
+        let old_factor = 1 + (shipped_bump / 100) * 10;
+        let old_result = pooled
+            .saturating_mul(U256::from(old_factor))
+            .div(U256::from(10));
+
+        assert!(
+            old_result < pooled,
+            "the old formula lowered the blob fee: {pooled} -> {old_result}"
+        );
+        assert!(!clears_threshold(
+            pooled,
+            old_result,
+            MEMPOOL_BLOB_PRICE_BUMP_PERCENT,
+        ));
+        // It did not even clear the regular threshold it was presumably aiming at.
+        assert!(!clears_threshold(
+            pooled,
+            old_result,
+            MEMPOOL_PRICE_BUMP_PERCENT,
+        ));
+    }
 }
