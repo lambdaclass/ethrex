@@ -43,7 +43,7 @@ cd lighthouse && git checkout feat/eip8025
 ### Build
 
 ```bash
-# ethrex (EIP-8025 host code is always-compiled; eip-8025 enables SSZ guest twins)
+# ethrex (stateless validation is unconditional; there is no feature flag)
 cd ethrex
 cargo build --release --bin ethrex
 

@@ -407,7 +407,7 @@ pub async fn init_dev_network(
     let chain_config = store.get_chain_config();
 
     let (head_block_hash, target_gas_limit) = {
-        let current_block_number = store.get_latest_block_number().await.unwrap();
+        let current_block_number = store.get_latest_block_number().unwrap();
         let head_block_hash = store
             .get_canonical_block_hash(current_block_number)
             .await
@@ -791,7 +791,11 @@ pub async fn init_l1(
             r#type: BlockchainType::L1,
             max_blobs_per_block: opts.max_blobs_per_block,
             precompute_witnesses: opts.precompute_witnesses,
+            private_mempool: opts.mempool_private,
             precompile_cache_enabled: !opts.no_precompile_cache,
+            min_tip_wei: opts.mempool_min_tip,
+            price_bump_percent: opts.mempool_price_bump,
+            blob_price_bump_percent: opts.mempool_blob_price_bump,
             max_queued_txs_per_account: opts.mempool_max_queued_txs_per_account,
             bal_parallel_exec_enabled: !opts.no_bal_parallel_exec,
             bal_prefetch_enabled: !opts.no_bal_prefetch,
@@ -1020,7 +1024,7 @@ pub async fn regenerate_head_state(
     // which clamp `LatestBlockNumber` to `flushed_upto`. All blocks up to
     // `head_block_number` are therefore on disk; callers that skip that clamp
     // would break this assumption.
-    let head_block_number = store.get_latest_block_number().await?;
+    let head_block_number = store.get_latest_block_number()?;
     debug!("regenerate_head_state head clamped to durable block {head_block_number}");
 
     let Some(last_header) = store.get_block_header(head_block_number)? else {

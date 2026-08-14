@@ -151,7 +151,7 @@ pub async fn sync_cycle_full(
     store: Store,
     diagnostics: &Arc<RwLock<SyncDiagnostics>>,
 ) -> Result<(), SyncError> {
-    let local_head = store.get_latest_block_number().await?;
+    let local_head = store.get_latest_block_number()?;
     let eth_capable_peers = peers.eth_capable_peer_count().await;
     info!(
         local_head,
@@ -280,7 +280,7 @@ pub async fn sync_cycle_full(
             sync_target_logged = true;
             let (target, target_ts) =
                 fcu_head.unwrap_or((first_header.number, first_header.timestamp));
-            let local_head = store.get_latest_block_number().await?;
+            let local_head = store.get_latest_block_number()?;
             let behind = target.saturating_sub(local_head);
             if behind > FOLLOW_DISTANCE {
                 started_behind = true;
@@ -359,7 +359,7 @@ pub async fn sync_cycle_full(
                 None => false,
             };
             if !resume_parent_has_state {
-                let local_head = store.get_latest_block_number().await?;
+                let local_head = store.get_latest_block_number()?;
                 warn!(
                     resume_parent_number,
                     local_head,
@@ -376,7 +376,7 @@ pub async fn sync_cycle_full(
             // past the executed-state head: an FCU canonicalized blocks before their state
             // was computed. Surface it explicitly; these canonical-but-stateless blocks are
             // re-executed below, and the warning flags the underlying gap for investigation.
-            let canonical_head = store.get_latest_block_number().await?;
+            let canonical_head = store.get_latest_block_number()?;
             // `start_block_number - 1` is the highest block whose post-state is on
             // disk (the executed/state head). Record it so `eth_syncing` reports real
             // progress instead of the canonical pointer, which an FCU may have advanced
@@ -564,7 +564,7 @@ pub async fn sync_cycle_full(
                 None => false,
             };
         if !parent_has_state {
-            let local_head = store.get_latest_block_number().await?;
+            let local_head = store.get_latest_block_number()?;
             warn!(
                 local_head,
                 "Skipping {} pending block(s): the downloaded chain they build on was not fully executed (parent state absent); will retry on the next forkchoice update",
@@ -594,7 +594,7 @@ pub async fn sync_cycle_full(
     // from a hang. Only claim we caught up if we actually executed through to the target;
     // if body downloads gave up early we say so instead of falsely reporting success.
     if started_behind {
-        let local_head = store.get_latest_block_number().await?;
+        let local_head = store.get_latest_block_number()?;
         if reached_target {
             info!(
                 "Reached consensus-provided head at block {local_head}. Waiting for the next forkchoice update from the consensus client."

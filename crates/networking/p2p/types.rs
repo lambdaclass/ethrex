@@ -450,17 +450,36 @@ impl NodeRecord {
     }
 
     pub fn set_fork_id(&mut self, fork_id: ForkId, signer: &SecretKey) -> Result<(), NodeError> {
-        self.pairs.eth = Some(fork_id);
-        self.update(signer)
+        self.edit(signer, |pairs| pairs.eth = Some(fork_id))
     }
 
     pub fn get_fork_id(&self) -> Option<&ForkId> {
         self.pairs.eth.as_ref()
     }
 
-    fn update(&mut self, signer: &SecretKey) -> Result<(), NodeError> {
-        self.seq += 1;
-        self.signature = self.sign_record(signer)?;
+    /// The single path for changing a local record: apply `apply_edit` to the
+    /// entry set, bump `seq` once, and re-sign.
+    ///
+    /// All or nothing. The edit lands on a copy that is committed only once the
+    /// new signature is in hand, so a failure leaves the record exactly as it
+    /// was instead of at a bumped `seq` its signature no longer covers. A
+    /// half-updated record is worse than an unchanged one: it verifies nowhere,
+    /// and the next edit bumps past the `seq` peers have already seen.
+    ///
+    /// Prefer this over rebuilding a record from a [`Node`]. A rebuild only
+    /// carries the entries [`Self::from_node`] knows how to derive, so anything
+    /// the caller added separately is silently lost, and stitching the lost
+    /// entries back on afterwards bumps `seq` a second time.
+    pub fn edit<F>(&mut self, signer: &SecretKey, apply_edit: F) -> Result<(), NodeError>
+    where
+        F: FnOnce(&mut NodeRecordPairs),
+    {
+        let mut edited = self.clone();
+        apply_edit(&mut edited.pairs);
+        edited.seq += 1;
+        edited.signature = edited.sign_record(signer)?;
+
+        *self = edited;
         Ok(())
     }
 
