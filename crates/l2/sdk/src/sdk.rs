@@ -964,10 +964,10 @@ fn bump_gas_generic_tx(tx: &mut GenericTransaction, bump_percentage: u64) {
         *max_priority_fee_per_gas = (*max_priority_fee_per_gas * (100 + bump_percentage)) / 100;
     }
     if let Some(max_fee_per_blob_gas) = &mut tx.max_fee_per_blob_gas {
-        let factor = 1 + (bump_percentage / 100) * 10;
+        let factor = 100 + bump_percentage;
         *max_fee_per_blob_gas = max_fee_per_blob_gas
             .saturating_mul(U256::from(factor))
-            .div(10);
+            .div(100);
     }
 }
 
