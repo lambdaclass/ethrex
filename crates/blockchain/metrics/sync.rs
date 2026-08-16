@@ -1,6 +1,6 @@
 use prometheus::{
-    IntCounterVec, IntGauge, IntGaugeVec, register_int_counter_vec, register_int_gauge,
-    register_int_gauge_vec,
+    HistogramVec, IntCounterVec, IntGauge, IntGaugeVec, register_histogram_vec,
+    register_int_counter_vec, register_int_gauge, register_int_gauge_vec,
 };
 use std::sync::LazyLock;
 
@@ -38,6 +38,17 @@ pub struct MetricsSync {
     pub pivot_updates: IntCounterVec,
     pub storage_requests: IntCounterVec,
     pub header_resolution: IntCounterVec,
+
+    // --- Peer request efficiency metrics ---
+    /// Total peer data requests by kind (the request family, e.g. "headers", "bodies",
+    /// "trie_nodes", "account_range") and outcome ("served"|"empty"|"timeout"|"invalid").
+    pub peer_requests: IntCounterVec,
+    /// Histogram of peer request round-trip latency in milliseconds, by kind and outcome.
+    /// Observed for every outcome, not just served: "empty responses come back instantly"
+    /// and "empty responses come back slow" are different failure modes, and splitting by
+    /// outcome keeps timeouts (which all sit at `PEER_REPLY_TIMEOUT`) out of the
+    /// served-latency distribution. Only recorded by call sites that measure latency.
+    pub peer_request_latency_ms: HistogramVec,
 }
 
 impl Default for MetricsSync {
@@ -164,6 +175,19 @@ impl MetricsSync {
                 &["outcome"]
             )
             .expect("Failed to create ethrex_sync_header_resolution_total"),
+            peer_requests: register_int_counter_vec!(
+                "ethrex_sync_peer_requests_total",
+                "Total peer data requests by kind (headers|bodies|trie_nodes|...) and outcome (served|empty|timeout|invalid)",
+                &["kind", "outcome"]
+            )
+            .expect("Failed to create ethrex_sync_peer_requests_total"),
+            peer_request_latency_ms: register_histogram_vec!(
+                "ethrex_sync_peer_request_latency_ms",
+                "Round-trip latency in milliseconds for peer data requests, by kind and outcome",
+                &["kind", "outcome"],
+                vec![1.0, 5.0, 10.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 2500.0, 5000.0]
+            )
+            .expect("Failed to create ethrex_sync_peer_request_latency_ms"),
         }
     }
 
@@ -201,5 +225,15 @@ impl MetricsSync {
 
     pub fn inc_header_resolution(&self, outcome: &str) {
         self.header_resolution.with_label_values(&[outcome]).inc();
+    }
+
+    pub fn inc_peer_request(&self, kind: &str, outcome: &str) {
+        self.peer_requests.with_label_values(&[kind, outcome]).inc();
+    }
+
+    pub fn observe_peer_request_latency(&self, kind: &str, outcome: &str, ms: f64) {
+        self.peer_request_latency_ms
+            .with_label_values(&[kind, outcome])
+            .observe(ms);
     }
 }

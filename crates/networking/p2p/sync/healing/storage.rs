@@ -1,7 +1,7 @@
 use crate::{
     metrics::{CurrentStepValue, METRICS},
-    peer_handler::PeerHandler,
-    peer_table::PeerTableServerProtocol as _,
+    peer_handler::{PeerHandler, request_kind},
+    peer_table::{PeerTableServerProtocol as _, RequestOutcome},
     rlpx::{
         p2p::SUPPORTED_SNAP_CAPABILITIES,
         snap::{GetTrieNodes, TrieNodes},
@@ -374,7 +374,12 @@ pub async fn heal_storage_trie(
                         .into_iter()
                         .map(DepthOrderedRequest),
                 );
-                peers.peer_table.record_failure(peer_id)?;
+                peers.record_peer_request(
+                    peer_id,
+                    request_kind::TRIE_NODES,
+                    RequestOutcome::Timeout,
+                    None,
+                )?;
             }
         }
     }
@@ -503,7 +508,13 @@ async fn zip_requeue_node_responses_score_peer(
     let nodes_size = trie_nodes.nodes.len();
     if nodes_size == 0 {
         *failed_downloads += 1;
-        peer_handler.peer_table.record_failure(request.peer_id)?;
+        // Responded with nothing: spec-valid, so Empty rather than a timeout penalty.
+        peer_handler.record_peer_request(
+            request.peer_id,
+            request_kind::TRIE_NODES,
+            RequestOutcome::Empty,
+            None,
+        )?;
 
         download_queue.extend(request.requests.into_iter().map(DepthOrderedRequest));
         return Ok(None);
@@ -517,7 +528,13 @@ async fn zip_requeue_node_responses_score_peer(
             "Peer responded with more trie nodes than requested"
         );
         *failed_downloads += 1;
-        peer_handler.peer_table.record_failure(request.peer_id)?;
+        // More nodes than we asked for is a protocol violation, not a slow peer.
+        peer_handler.record_peer_request(
+            request.peer_id,
+            request_kind::TRIE_NODES,
+            RequestOutcome::Invalid,
+            None,
+        )?;
         download_queue.extend(request.requests.into_iter().map(DepthOrderedRequest));
         return Ok(None);
     }
@@ -564,11 +581,22 @@ async fn zip_requeue_node_responses_score_peer(
             );
         }
         *succesful_downloads += 1;
-        peer_handler.peer_table.record_success(request.peer_id)?;
+        peer_handler.record_peer_request(
+            request.peer_id,
+            request_kind::TRIE_NODES,
+            RequestOutcome::Served,
+            None,
+        )?;
         Ok(Some(nodes))
     } else {
         *failed_downloads += 1;
-        peer_handler.peer_table.record_failure(request.peer_id)?;
+        // Nodes that don't decode / don't match the requested paths are invalid data.
+        peer_handler.record_peer_request(
+            request.peer_id,
+            request_kind::TRIE_NODES,
+            RequestOutcome::Invalid,
+            None,
+        )?;
         download_queue.extend(request.requests.into_iter().map(DepthOrderedRequest));
         Ok(None)
     }
