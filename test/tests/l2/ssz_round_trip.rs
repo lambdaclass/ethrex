@@ -313,7 +313,7 @@ fn producer_emits_one_matching_public_key_per_transaction() {
     // And it must reject a tampered list, so the acceptance above is meaningful.
     let mut swapped: Vec<_> = input.public_keys.iter().cloned().collect();
     swapped.swap(0, 1);
-    let swapped = libssz_types::SszList::try_from(swapped).expect("public_keys fits");
+    let swapped = libssz_types::ProgressiveList::from(swapped);
     validate_public_keys(&swapped, &block, &NativeCrypto)
         .expect_err("swapped public keys must be rejected");
 }
