@@ -1066,6 +1066,22 @@ pub fn amsterdam_chain_config(chain_id: u64) -> ChainConfig {
         cancun_time: Some(0),
         prague_time: Some(0),
         osaka_time: Some(0),
+        // The BPO forks must be activated too, not just the named ones. EIP-7892
+        // gives named forks no blob params of their own: `get_fork_blob_schedule`
+        // walks the BPO chain and Amsterdam inherits the highest activated entry.
+        // Leaving these `None` made that walk fall through to Osaka's schedule
+        // (target 6 / max 9 / fraction 5007716) instead of BPO2's (14 / 21 /
+        // 11684671), so the guest recomputed a different `excess_blob_gas` than
+        // the header carried and rejected valid blob-bearing blocks with
+        // `ExcessBlobGasIncorrect`.
+        //
+        // Only BPO1 and BPO2, matching the `AMSTERDAM_CONFIG` these fixtures are
+        // filled against. BPO3-5 have no default `blob_schedule` entry, and a BPO
+        // time set without one is rejected as invalid genesis config
+        // (`genesis.rs`), so activating them would be both wrong and unresolvable.
+        // `hegota`/`lstar` stay unset: they are later than Amsterdam.
+        bpo1_time: Some(0),
+        bpo2_time: Some(0),
         amsterdam_time: Some(0),
         // NOT `Default` (which is `Address::zero()`). `Requests::from_deposit_receipts`
         // selects deposit logs by `log.address == deposit_contract_address`, so a zero
@@ -1110,6 +1126,30 @@ mod amsterdam_chain_config_tests {
         let cfg = amsterdam_chain_config(1);
         assert_eq!(cfg.hegota_time, None);
         assert_eq!(cfg.lstar_time, None);
+    }
+
+    /// Amsterdam must resolve to BPO2's blob schedule, not Osaka's.
+    ///
+    /// EIP-7892 gives named forks no blob params of their own, so
+    /// `get_fork_blob_schedule` walks the BPO chain and Amsterdam inherits the
+    /// highest activated entry. When `bpo1_time`/`bpo2_time` were left `None`
+    /// here that walk fell through to Osaka, and the guest recomputed
+    /// `excess_blob_gas` against target 6 instead of 14 — rejecting valid
+    /// blob-bearing blocks with `ExcessBlobGasIncorrect` while the stateful path,
+    /// which gets a config with the BPO times set, accepted them. It cost 18
+    /// fixture files in the stateless EF run.
+    #[test]
+    fn resolves_the_bpo2_blob_schedule_at_amsterdam() {
+        let cfg = amsterdam_chain_config(1);
+        let schedule = cfg
+            .get_fork_blob_schedule(0)
+            .expect("Amsterdam must resolve a blob schedule");
+        let bpo2 = crate::types::BlobSchedule::default().bpo2;
+        assert_eq!(
+            schedule, bpo2,
+            "Amsterdam must inherit BPO2's blob schedule; falling through to \
+             Osaka's changes target/max and the base-fee update fraction"
+        );
     }
 
     #[test]

@@ -308,8 +308,7 @@ pub fn build_ssz_stateless_input(
                 .map_err(|e| format!("public key for transaction {i} is not 65 bytes: {e:?}"))
         })
         .collect::<Result<Vec<_>, String>>()?;
-    let ssz_public_keys: SszPublicKeys = SszList::try_from(public_keys)
-        .map_err(|e| format!("public_keys exceeds MAX_PUBLIC_KEYS: {e:?}"))?;
+    let ssz_public_keys: SszPublicKeys = ProgressiveList::from(public_keys);
 
     let ssz_withdrawals = ProgressiveList::new(); // Empty for L2
 
@@ -430,8 +429,9 @@ fn internal_witness_to_ssz(
                 .map_err(|e| format!("witness state[{i}] exceeds MAX_WITNESS_NODE_SIZE: {e:?}"))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let state = SszList::try_from(state_nodes)
-        .map_err(|e| format!("witness state exceeds MAX_WITNESS_NODES: {e:?}"))?;
+    // `ProgressiveList` since execution-specs #3356: no element-count bound to
+    // exceed, so only the per-node byte cap above can fail.
+    let state = libssz_types::ProgressiveList::from(state_nodes);
 
     let codes = witness
         .codes
@@ -442,8 +442,7 @@ fn internal_witness_to_ssz(
                 .map_err(|e| format!("witness codes[{i}] exceeds MAX_WITNESS_CODE_SIZE: {e:?}"))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let codes = SszList::try_from(codes)
-        .map_err(|e| format!("witness codes exceed MAX_WITNESS_CODES: {e:?}"))?;
+    let codes = libssz_types::ProgressiveList::from(codes);
 
     let headers = witness
         .block_headers_bytes

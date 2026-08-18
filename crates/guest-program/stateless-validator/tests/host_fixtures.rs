@@ -7,9 +7,9 @@
 //!
 //! Fixtures come from `ETHREX_STATELESS_FIXTURES` (see `tests/common/mod.rs`);
 //! when it is unset the test skips, so plain `cargo test` stays green without a
-//! download. Point it at the `blockchain_tests/` subtree of a `make -C
-//! tooling/ef_tests/blockchain stateless-vector` run — not its parent, which also
-//! holds a `.meta/index.json` that is not a fixture.
+//! download. Point it at `vectors_zkevm/eest` after a `make -C
+//! tooling/ef_tests/blockchain zkevm-vectors` run — not its parent, which also
+//! holds the downloaded tarball that is not a fixture.
 //!
 //! The current baseline is recorded in `docs/eip-8025.md`. Divergences are left
 //! failing rather than pinned to an expected-failure count, so no regression can

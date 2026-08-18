@@ -245,10 +245,8 @@ jobs:
             exit 1
           fi
 
-      # execution-specs #3248+#3278 has no tests-zkevm release, so the oracle is
-      # generated from the pinned spec commit rather than downloaded.
-      - name: Generate conformance vectors
-        run: make -C tooling/ef_tests/blockchain stateless-vector
+      - name: Download conformance vectors
+        run: make -C tooling/ef_tests/blockchain zkevm-vectors
 
       - name: Extract a true-success fixture
         run: .github/scripts/extract-stateless-fixture.sh

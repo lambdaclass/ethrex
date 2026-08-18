@@ -33,71 +33,24 @@ marks these cases `speconly` so they are type-checked instead of compared byte-f
 
 ---
 
-### Stateless EF tests: 45 of 105 fixtures skipped
+### The stateless schema id does not identify the encoding
 
-**Where:** `tooling/ef_tests/blockchain` — `make test-stateless`, which runs the
-generated `vectors_stateless_3278/` conformance set (execution-specs
-`3c3b6f4af`, i.e. #3248 progressive SSZ + #3278 `ChainConfig` removal).
-`make test-levm` is unaffected.
+**Where:** `STATELESS_INPUT_SCHEMA_ID` in `crates/common/types/stateless_ssz.rs`.
 
-#### Skipped: 45 fixtures that fail in ordinary execution
+Upstream keeps the stateless input schema id at `0x1501`
+(`fork_index 0x15 << 8 | revision 0x01`) across incompatible body changes. Three
+encodings have now shipped under it: `tests-zkevm@v0.6.2`, then #3248 + #3278,
+then #3356, which moved `state`, `codes` and `public_keys` from `SszList` to
+`ProgressiveList`. ethrex speaks the last one.
 
-Listed in `EXTRA_SKIPS` in `tests/all.rs`. All fail in `add_block_pipeline` with
-`GasUsedMismatch` or `ReceiptsRootMismatch`, before any stateless validation
-runs, so they are ordinary block-execution divergences rather than stateless
-conformance gaps. 60 fixtures still execute, which is what keeps the witness and
-SSZ paths covered and keeps the empty-suite guard in `parse_and_execute`
-meaningful.
+The consequence is that the 2-byte prefix cannot be used to detect a stale or
+mismatched bundle. A wrong-dialect input is accepted by the id check and then
+fails later — in SSZ decode, or on a root that does not match — rather than being
+rejected up front for what it is. `only_amsterdam_schema_id_decodes` therefore
+proves less than its name suggests.
 
-**Why: the vectors and the client are one devnet apart on gas.** `3c3b6f4af`
-carries the glamsterdam-devnet-7 schedule; this client implements devnet-8.
-
-| | `3c3b6f4af` (devnet-7) | this client (devnet-8) |
-| --- | --- | --- |
-| `COLD_STORAGE_ACCESS` | 3000 | 2100 |
-| `ACCOUNT_WRITE` | 8000 | 9000 |
-| `CALL_VALUE` | 10300 | 11300 |
-| access-list storage key | full cold cost | cold − `WARM_ACCESS` |
-
-Five of the 45 failed even while the client was still on devnet-7, so those are
-skew against `3c3b6f4af` itself; the other 40 appeared with the devnet-8 move.
-The two groups are commented separately in `EXTRA_SKIPS` because they lift at
-different times.
-
-Corroborating that these are spec-base skew and not client bugs: ethrex passes
-the five original cases against the `tests-zkevm@v0.6.2` versions of the same
-tests, and the eth-act witness dashboard has ethrex at 22829/22829 on
-`eels/consume-engine-witness` and 19413/19413 on `stateless-validator sp1` for
-that bundle. Diffing `witness_codes_reset_delegation` across the two fixture
-sets: `pre` and `genesisBlockHeader` are byte-identical and it is the same
-transaction hash, yet `postState`, `receipts`, `stateRoot`, `receiptTrie` and
-`blockAccessListHash` all differ — the receipt's `cumulativeGasUsed` goes
-30816 → 24653. Same input, different output.
-
-The regular `vectors/` bundle has no `eip8025_optional_proofs` tests, so
-`make test-levm` never sees any of this.
-
-**The pin cannot move today.** `eip8025_optional_proofs` does not exist on the
-current `forks/amsterdam` default branch, and `3c3b6f4af` has diverged from it
-(124 ahead, 315 behind), so it was never merged there. `devnets/glamsterdam/8`
-is 315 commits behind `3c3b6f4af`: it has the devnet-8 gas schedule but not the
-#3278 schema, so vectors filled from it would carry the pre-#3278 69-byte
-`statelessOutputBytes` this client cannot parse. No upstream revision has both.
-
-**Removal:** bump `SPEC_SHA` in `scripts/gen_stateless_vectors.sh` once an
-upstream revision carries both `eip8025_optional_proofs` and the devnet-8 gas
-schedule, then delete the 40-entry group. Re-check the original five at the same
-time; if they still fail against a matching base they are real execution bugs
-and must not stay skipped.
-
-#### Why this file previously claimed an Amsterdam-wide skip
-
-`parse_and_execute` used to drop every `network >= Fork::Amsterdam` fixture from
-the stateless run. Every test in the `tests-zkevm` bundle it read is
-`network: Amsterdam` (23,946 of 23,946), so the stateless suite executed nothing
-at all while reporting success. `parse_and_execute` now fails any stateless
-fixture file that runs zero tests without a named skip, so a structural skip
-cannot silently empty the suite again.
+Worth raising upstream: a revision field that does not move across a body change
+provides no version negotiation at all.
 
 ---
 
