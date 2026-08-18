@@ -22,7 +22,7 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Extract Rust version from rust-toolchain.toml
+    - name: Extract Rust version and runner image family
       id: rustver
       shell: bash
       run: |
@@ -30,6 +30,12 @@ runs:
                  | sed -E 's/.*"([^"]+)".*/\1/')
         echo "rust_version=${rust_version}" >>"$GITHUB_OUTPUT"
         echo "Rust version: ${rust_version}"
+        # Folded into this step rather than its own: `pr_loc.yaml` checks out two
+        # revisions in one job and runs this action from each, and a differing
+        # step list between them trips the runner's post-step bookkeeping with
+        # "Index was out of range".
+        echo "image_family=${ImageOS:-unknown}" >>"$GITHUB_OUTPUT"
+        echo "Runner image family: ${ImageOS:-unknown}"
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@master
@@ -53,11 +59,6 @@ runs:
     # context is not reliably available to `with:` on a `uses:` step inside a
     # composite action. Self-hosted runners may not set it; they then share one
     # `unknown` bucket, which is still consistent within itself.
-    - name: Identify the runner image family
-      id: image
-      shell: bash
-      run: echo "family=${ImageOS:-unknown}" >>"$GITHUB_OUTPUT"
-
     # The Actions cache budget defaults to 10GB per repository and is evicted
     # LRU, while one target dir here runs 1.2-2.75GB, so the budget holds only a
     # handful of entries. Two rules keep them from evicting each other:
@@ -80,7 +81,7 @@ runs:
       uses: Swatinem/rust-cache@v2
       with:
         shared-key: ${{ inputs.cache-pool }}
-        key: ${{ steps.image.outputs.family }}
+        key: ${{ steps.rustver.outputs.image_family }}
         save-if: ${{ inputs.save-cache == 'true' && github.ref == 'refs/heads/main' }}
         workspaces: |
           .
