@@ -47,12 +47,12 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 
-#[cfg(all(feature = "eip-8025", target_arch = "riscv64"))]
-use super::eip8025_cell::OnceCell;
+#[cfg(all(feature = "zisk", target_arch = "riscv64"))]
+use super::unsync_cell::OnceCell;
 use crate::types::{
     AccessList, AuthorizationList, BlobsBundle, constants::VERSIONED_HASH_VERSION_KZG,
 };
-#[cfg(not(all(feature = "eip-8025", target_arch = "riscv64")))]
+#[cfg(not(all(feature = "zisk", target_arch = "riscv64")))]
 use once_cell::sync::OnceCell;
 
 // The `#[serde(untagged)]` attribute allows the `Transaction` enum to be serialized without
@@ -1208,6 +1208,10 @@ impl RLPDecode for FeeTokenTransaction {
     }
 }
 
+/// The bytes a transaction's signature covers, paired with the 65-byte
+/// `r || s || v` signature itself. See [`Transaction::signing_payload`].
+pub type SigningPayload = (Vec<u8>, [u8; 65]);
+
 impl Transaction {
     pub fn sender(&self, crypto: &dyn Crypto) -> Result<Address, CryptoError> {
         // Frame transactions have explicit sender, no ECDSA recovery
@@ -1247,7 +1251,15 @@ impl Transaction {
             .copied()
     }
 
-    fn compute_sender(&self, crypto: &dyn Crypto) -> Result<Address, CryptoError> {
+    /// The bytes that were signed, plus the 65-byte `r || s || v` signature.
+    ///
+    /// `Ok(None)` for transactions that carry an explicit sender and no signature
+    /// (privileged L2 and frame), for which there is nothing to recover.
+    ///
+    /// Exposed so callers needing the *public key* rather than the address can
+    /// reuse this logic: the per-variant EIP-155 and typed-transaction handling
+    /// below is subtle and must exist in exactly one place.
+    pub fn signing_payload(&self) -> Result<Option<SigningPayload>, CryptoError> {
         let (buf, sig) = match self {
             Transaction::LegacyTransaction(tx) => {
                 let v = u64::try_from(tx.v).map_err(|_| CryptoError::InvalidSignature)?;
@@ -1373,8 +1385,10 @@ impl Transaction {
                 sig[64] = tx.signature_y_parity as u8;
                 (buf, sig)
             }
-            Transaction::PrivilegedL2Transaction(tx) => return Ok(tx.from),
-            Transaction::FrameTransaction(tx) => return Ok(tx.sender),
+            // Explicit sender, no signature: nothing to recover from.
+            Transaction::PrivilegedL2Transaction(_) | Transaction::FrameTransaction(_) => {
+                return Ok(None);
+            }
             Transaction::FeeTokenTransaction(tx) => {
                 let mut buf = vec![self.tx_type() as u8];
                 Encoder::new(&mut buf)
@@ -1396,8 +1410,36 @@ impl Transaction {
                 (buf, sig)
             }
         };
+        Ok(Some((buf, sig)))
+    }
+
+    fn compute_sender(&self, crypto: &dyn Crypto) -> Result<Address, CryptoError> {
+        match self {
+            Transaction::PrivilegedL2Transaction(tx) => return Ok(tx.from),
+            Transaction::FrameTransaction(tx) => return Ok(tx.sender),
+            _ => {}
+        }
+        let Some((buf, sig)) = self.signing_payload()? else {
+            // Unreachable: the two signature-less variants are handled above.
+            return Err(CryptoError::InvalidSignature);
+        };
         let msg = crypto.keccak256(&buf);
         crypto.recover_signer(&sig, &msg)
+    }
+
+    /// The signer's uncompressed secp256k1 public key (`0x04 || X || Y`).
+    ///
+    /// `Ok(None)` for privileged L2 and frame transactions, which carry an explicit
+    /// sender and no signature. Used to populate
+    /// `SszStatelessInput::public_keys`, which the stateless guest checks against
+    /// each transaction's recovered sender.
+    #[cfg(feature = "secp256k1")]
+    pub fn public_key(&self, crypto: &dyn Crypto) -> Result<Option<[u8; 65]>, CryptoError> {
+        let Some((buf, sig)) = self.signing_payload()? else {
+            return Ok(None);
+        };
+        let msg = crypto.keccak256(&buf);
+        crypto.recover_public_key(&sig, &msg).map(Some)
     }
 
     pub fn gas_limit(&self) -> u64 {
@@ -1564,6 +1606,16 @@ impl Transaction {
                 }
             }
         }
+    }
+
+    /// Whether this transaction carries blob data, and therefore an expensive
+    /// EIP-4844 sidecar. True for EIP-4844 transactions and for EIP-8141 frame
+    /// transactions with a non-empty `blob_versioned_hashes` — matching for
+    /// which types [`Self::max_fee_per_blob_gas`] yields a fee. Prefer this
+    /// over matching on `EIP4844Transaction` alone when the question is "does
+    /// this tx have a sidecar to re-propagate".
+    pub fn is_blob_carrying(&self) -> bool {
+        self.max_fee_per_blob_gas().is_some()
     }
 
     pub fn is_contract_creation(&self) -> bool {
@@ -4348,6 +4400,33 @@ mod tests {
     use hex_literal::hex;
     use serde_impl::{AccessListEntry, GenericTransaction};
     use std::str::FromStr;
+
+    #[test]
+    fn is_blob_carrying_covers_frame_txs_with_blob_hashes() {
+        // An EIP-8141 frame tx carries `max_fee_per_blob_gas` +
+        // `blob_versioned_hashes` of its own, so blob-ness cannot be decided
+        // by matching on `EIP4844Transaction` alone: a blob-bearing frame tx
+        // would otherwise be treated as a plain tx by the mempool's
+        // replacement rules and skip the blob-fee comparison entirely.
+        let plain_frame = Transaction::FrameTransaction(FrameTransaction::default());
+        assert!(!plain_frame.is_blob_carrying());
+
+        let blob_frame = Transaction::FrameTransaction(FrameTransaction {
+            max_fee_per_blob_gas: U256::from(7u64),
+            blob_versioned_hashes: vec![H256::from_low_u64_be(1)],
+            ..Default::default()
+        });
+        assert!(blob_frame.is_blob_carrying());
+
+        let blob_tx = Transaction::EIP4844Transaction(EIP4844Transaction {
+            blob_versioned_hashes: vec![H256::from_low_u64_be(1)],
+            ..Default::default()
+        });
+        assert!(blob_tx.is_blob_carrying());
+
+        let plain = Transaction::EIP1559Transaction(EIP1559Transaction::default());
+        assert!(!plain.is_blob_carrying());
+    }
 
     #[test]
     fn nonce_over_u64_max_maps_to_nonce_is_max() {

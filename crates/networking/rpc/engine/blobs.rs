@@ -68,7 +68,7 @@ impl RpcHandler for BlobsV1Request {
         // block timestamp to compare against Osaka, so the node is treated as pre-Osaka.
         if let Some(current_block_header) = context
             .storage
-            .get_block_header(context.storage.get_latest_block_number().await?)?
+            .get_block_header(context.storage.get_latest_block_number()?)?
             && context
                 .storage
                 .get_chain_config()
@@ -127,7 +127,7 @@ impl RpcHandler for BlobsV2Request {
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         debug!("Received new engine request: Requested Blobs V2");
-        let res = get_blobs_and_proof(&self.blob_versioned_hashes, context).await?;
+        let res = get_blobs_and_proof(&self.blob_versioned_hashes, context)?;
         if res.iter().any(|blob| blob.is_none()) {
             return Ok(Value::Null);
         }
@@ -150,13 +150,13 @@ impl RpcHandler for BlobsV3Request {
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         debug!("Received new engine request: Requested Blobs V3");
-        let res = get_blobs_and_proof(&self.blob_versioned_hashes, context).await?;
+        let res = get_blobs_and_proof(&self.blob_versioned_hashes, context)?;
         serde_json::to_value(res).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
 
 /// Get blob data and proofs for a given list of blob versioned hashes.
-async fn get_blobs_and_proof(
+fn get_blobs_and_proof(
     blob_versioned_hashes: &[H256],
     context: RpcApiContext,
 ) -> Result<Vec<Option<BlobAndProofV2>>, RpcErr> {
@@ -173,7 +173,7 @@ async fn get_blobs_and_proof(
     // (the spec likewise prescribes `null` while syncing).
     let head_is_osaka = match context
         .storage
-        .get_block_header(context.storage.get_latest_block_number().await?)?
+        .get_block_header(context.storage.get_latest_block_number()?)?
     {
         Some(current_block_header) => context
             .storage
