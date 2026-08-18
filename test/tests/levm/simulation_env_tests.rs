@@ -171,8 +171,9 @@ fn simulated_block_gas_limit(gas: Option<u64>) -> U256 {
         gas,
         ..Default::default()
     };
-    let result = LEVM::simulate_tx_from_generic(&tx, &header, &mut db, VMType::L1, &NativeCrypto)
-        .expect("simulation must not error");
+    let result =
+        LEVM::simulate_tx_from_generic(&tx, &header, &mut db, VMType::L1, &NativeCrypto, None)
+            .expect("simulation must not error");
     match result {
         ExecutionResult::Success { output, .. } => U256::from_big_endian(&output),
         other => panic!("expected GASLIMIT call to succeed, got {other:?}"),
