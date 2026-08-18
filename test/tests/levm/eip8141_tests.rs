@@ -3714,16 +3714,31 @@ fn atomic_batch_revert_drops_the_batch_writes_from_the_bal() {
         .take()
         .expect("BAL recording was enabled")
         .build();
-    let writer_entry = bal.accounts().iter().find(|acc| acc.address == writer);
-    if let Some(entry) = writer_entry {
-        assert!(
-            entry
-                .storage_changes
-                .iter()
-                .all(|change| change.slot != slot),
-            "the BAL must not record a storage change for a slot whose write was unrolled"
-        );
-    }
+    // Both halves of EIP-7928 are asserted, because the fix depends on both and a
+    // vacuous first half would hide the second: the reverted *change* goes, the
+    // reverted *access* stays. Finding the entry with `if let` would let the test
+    // pass if the whole address vanished from the BAL -- which is the same class of
+    // stall from the other side, and exactly what swapping this call site's
+    // `BlockAccessListCheckpoint` for a `TxCheckpoint` (which does roll back
+    // `touched_addresses`) would produce.
+    let entry = bal
+        .accounts()
+        .iter()
+        .find(|acc| acc.address == writer)
+        .expect("a reverted batch's accesses still belong in the BAL (EIP-7928)");
+    assert!(
+        entry
+            .storage_changes
+            .iter()
+            .all(|change| change.slot != slot),
+        "the BAL must not record a storage change for a slot whose write was unrolled"
+    );
+    assert!(
+        entry.storage_reads.contains(&slot),
+        "the unrolled write must be re-filed as a read, not dropped: a slot in \
+         neither list is a slot the block accessed and the BAL omits, which \
+         re-execution rejects"
+    );
 }
 
 /// EIP-8141: when an atomic batch unrolls, "logs emitted by frames that executed
