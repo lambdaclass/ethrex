@@ -305,8 +305,8 @@ mod tests {
         let sender = Address::from(hex!("7435ed30a8b4aeb0877cef0c6e8cffe834eb865f"));
         let tx = Transaction::FrameTransaction(FrameTransaction {
             sender,
-            max_fee_per_gas: 1,
-            max_priority_fee_per_gas: 1,
+            max_fee_per_gas: ethrex_common::U256::one(),
+            max_priority_fee_per_gas: ethrex_common::U256::one(),
             ..Default::default()
         });
 

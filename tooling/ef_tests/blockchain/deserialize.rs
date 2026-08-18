@@ -120,6 +120,15 @@ where
                 | "TransactionException.TYPE_6_INVALID_SIGNATURE" => {
                     BlockChainExpectedException::InvalidSignature
                 }
+                // A fee field or a gas_limit x price product that does not fit
+                // ethrex's `u64` fee/gas fields. The EIP bounds these at 2**256, so
+                // such a transaction is structurally valid but can never be paid
+                // for; ethrex rejects it while decoding, which is a legitimate way
+                // to reject it and the same shape as `NONCE_IS_MAX` below.
+                "TransactionException.GASPRICE_OVERFLOW"
+                | "TransactionException.PRIORITY_OVERFLOW" => {
+                    BlockChainExpectedException::FeeOverflow
+                }
                 "TransactionException.TYPE_6_INVALID_FRAME_FORMAT" => {
                     BlockChainExpectedException::InvalidFrameFormat
                 }

@@ -29,19 +29,15 @@ AMSTERDAM_STAMP := $(SPECTEST_VECTORS_DIR)/.amsterdam_overlay
 # bundles extract a `for_amsterdam/` subtree, so we keep the zkevm bundle in a
 # separate root that only the stateless harness reads, to avoid overlaying the
 # regular Amsterdam fixtures.
-# EIP-8141 frame transactions have no released fixture bundle: the EELS
-# implementation is still an open PR, so the fixtures are filled locally from a
-# pinned revision of it. `--fork Bogota` is the pseudo-fork (Amsterdam + EIP-8141)
-# those tests are labelled with; it is outside execution-specs' default fill
-# range, which is why the fork bounds are given explicitly. Drop this target and
-# fold the subtree into the Amsterdam bundle once a release carries it.
-FRAMES_SPEC_REV_FILE := ../.frames_spec_rev
-FRAMES_SPEC_REV := $(shell cat $(FRAMES_SPEC_REV_FILE))
-FRAMES_SPEC_REPO ?= https://github.com/ethereum/execution-specs.git
-FRAMES_SPEC_DIR ?= $(CURDIR)/.execution-specs
-FRAMES_TESTS := tests/amsterdam/eip8141_frame_transactions
+# EIP-8141 frame transactions ship as their own release: the whole suite refilled
+# at the `Bogota` pseudo-fork (Amsterdam + EIP-8141), not just the 8141 tests, so
+# this subtree also re-covers every other Amsterdam EIP with frames active. Fold
+# it into the Amsterdam bundle once a devnet ships both from one release.
+FRAMES_FIXTURES_FILE := ../.fixtures_url_frames
+FRAMES_ARTIFACT := frames-tests.tar.gz
+FRAMES_URL := $(shell cat $(FRAMES_FIXTURES_FILE))
 FRAMES_SUBTREE := for_bogota
-FRAMES_STAMP := $(SPECTEST_VECTORS_DIR)/.frames_rev
+FRAMES_STAMP := $(SPECTEST_VECTORS_DIR)/.frames_url
 
 ZKEVM_VECTORS_ROOT := vectors_zkevm
 ZKEVM_VECTORS_DIR := $(ZKEVM_VECTORS_ROOT)/eest
@@ -104,26 +100,21 @@ $(ZKEVM_VECTORS_DIR): $(ZKEVM_ARTIFACT)
 
 zkevm-vectors: $(ZKEVM_VECTORS_DIR)
 
-# Keyed on the filled revision, like the Amsterdam overlay: a `for_bogota/` tree
-# left by another branch says nothing in its mtime about which spec revision
-# filled it. Requires `uv` (execution-specs' toolchain manager).
-frames-vectors: | $(SPECTEST_VECTORS_DIR) ## 📥 Fill EIP-8141 frame fixtures from the pinned execution-specs revision
+# Keyed on the release URL, like the Amsterdam overlay: a `for_bogota/` tree left
+# by another branch says nothing in its mtime about which release produced it, and
+# clearing the subtree first drops fixtures a later release renamed or removed.
+frames-vectors: | $(SPECTEST_VECTORS_DIR) ## 📥 Overlay the frames-devnet fixtures, re-fetching when the pinned release changed
 	@have=$$(cat $(FRAMES_STAMP) 2>/dev/null); \
 	[ -d $(SPECTEST_VECTORS_DIR)/$(FRAMES_SUBTREE) ] || have=; \
-	if [ "$$have" = "$(FRAMES_SPEC_REV)" ]; then \
-		echo "Frame fixtures already filled from $(FRAMES_SPEC_REV)"; \
+	if [ "$$have" = "$(FRAMES_URL)" ]; then \
+		echo "Frames fixtures already overlaid from $(FRAMES_URL)"; \
 	else \
-		command -v uv >/dev/null || { echo "frames-vectors needs uv: https://docs.astral.sh/uv/"; exit 1; }; \
-		[ -d $(FRAMES_SPEC_DIR) ] || git clone --filter=blob:none $(FRAMES_SPEC_REPO) $(FRAMES_SPEC_DIR); \
-		git -C $(FRAMES_SPEC_DIR) fetch --quiet origin $(FRAMES_SPEC_REV) && \
-		git -C $(FRAMES_SPEC_DIR) checkout --quiet $(FRAMES_SPEC_REV) && \
-		(cd $(FRAMES_SPEC_DIR) && uv sync --quiet && \
-			uv run fill $(FRAMES_TESTS) --from Bogota --until Bogota \
-				--output $(FRAMES_SPEC_DIR)/.frames-fixtures --clean) && \
+		curl -fL -o $(FRAMES_ARTIFACT).part $(FRAMES_URL) && \
+		mv $(FRAMES_ARTIFACT).part $(FRAMES_ARTIFACT) && \
 		rm -rf $(SPECTEST_VECTORS_DIR)/$(FRAMES_SUBTREE) && \
-		cp -R $(FRAMES_SPEC_DIR)/.frames-fixtures/blockchain_tests/$(FRAMES_SUBTREE) \
-			$(SPECTEST_VECTORS_DIR)/$(FRAMES_SUBTREE) && \
-		echo "$(FRAMES_SPEC_REV)" > $(FRAMES_STAMP); \
+		tar -xzf $(FRAMES_ARTIFACT) --strip-components=2 -C $(SPECTEST_VECTORS_DIR) \
+			fixtures/blockchain_tests/$(FRAMES_SUBTREE) && \
+		echo "$(FRAMES_URL)" > $(FRAMES_STAMP); \
 	fi
 
 help: ## 📚 Show help for each of the Makefile recipes
@@ -132,8 +123,8 @@ help: ## 📚 Show help for each of the Makefile recipes
 download-test-vectors: $(VECTORS_TARGETS) amsterdam-vectors frames-vectors zkevm-vectors ## 📥 Download test vectors
 
 clean-vectors: ## 🗑️  Clean test vectors
-	rm -rf $(VECTORS_ROOT) $(ZKEVM_VECTORS_ROOT) $(FRAMES_SPEC_DIR)
-	rm -f $(SPECTEST_ARTIFACT) $(LEGACYTEST_ARTIFACT) $(AMSTERDAM_ARTIFACT) $(AMSTERDAM_ARTIFACT).part $(ZKEVM_ARTIFACT)
+	rm -rf $(VECTORS_ROOT) $(ZKEVM_VECTORS_ROOT)
+	rm -f $(SPECTEST_ARTIFACT) $(LEGACYTEST_ARTIFACT) $(AMSTERDAM_ARTIFACT) $(AMSTERDAM_ARTIFACT).part $(FRAMES_ARTIFACT) $(FRAMES_ARTIFACT).part $(ZKEVM_ARTIFACT)
 
 test-levm: $(VECTORS_TARGETS) amsterdam-vectors frames-vectors ## 🧪 Run blockchain tests with LEVM
 	cargo test --profile release-fast

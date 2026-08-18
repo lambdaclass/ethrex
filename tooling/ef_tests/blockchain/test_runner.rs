@@ -424,6 +424,19 @@ fn exception_in_rlp_decoding(block_fixture: &BlockWithRLP) -> bool {
         .iter()
         .any(|case| matches!(case, BlockChainExpectedException::InvalidFrameFormat));
 
+    // A fee field or `gas_limit * price` beyond `u64` does not fit the transaction
+    // types, so these fixtures also fail at decoding rather than at validation.
+    let expects_fee_overflow = block_fixture
+        .expect_exception
+        .as_ref()
+        .unwrap_or(&Vec::new())
+        .iter()
+        .any(|case| {
+            matches!(case, BlockChainExpectedException::FeeOverflow)
+                || matches!(case, BlockChainExpectedException::TxtException(msg)
+                    if msg == "Gas limit price product overflow")
+        });
+
     match CoreBlock::decode(block_fixture.rlp.as_ref()) {
         Ok(_) => {
             assert!(!expects_rlp_exception);
@@ -435,6 +448,7 @@ fn exception_in_rlp_decoding(block_fixture: &BlockWithRLP) -> bool {
                     || expects_invalid_signature
                     || expects_nonce_too_high
                     || expects_invalid_frame_format
+                    || expects_fee_overflow
             );
             true
         }

@@ -119,7 +119,7 @@ fn frame_tx_env(tx: &FrameTransaction) -> Environment {
         // Fine for tests that don't assert on fee amounts. Tests that check
         // payer balances MUST use `run_frame_tx_with_fees`, which derives the
         // effective price min(base+priority, max_fee) like production.
-        gas_price: U256::from(tx.max_fee_per_gas),
+        gas_price: tx.max_fee_per_gas,
         tx_nonce: tx.nonce,
         ..Default::default()
     }
@@ -135,8 +135,8 @@ fn frame_tx_with_frames(frames: Vec<Frame>) -> FrameTransaction {
         sender: FUNDED_SENDER,
         frames,
         signatures: Vec::new(),
-        max_priority_fee_per_gas: 1,
-        max_fee_per_gas: HARNESS_BASE_FEE + 1_000,
+        max_priority_fee_per_gas: U256::from(1u64),
+        max_fee_per_gas: U256::from(HARNESS_BASE_FEE + 1_000),
         max_fee_per_blob_gas: U256::zero(),
         blob_versioned_hashes: Vec::new(),
         inner_hash: Default::default(),
@@ -200,10 +200,10 @@ fn run_frame_tx_with_fees(
     let mut env = frame_tx_env(&tx);
     env.base_fee_per_gas = U256::from(base_fee);
     // Effective gas price, matching production `calculate_gas_price_for_tx`.
-    let effective = base_fee
+    let effective = U256::from(base_fee)
         .saturating_add(tx.max_priority_fee_per_gas)
         .min(tx.max_fee_per_gas);
-    env.gas_price = U256::from(effective);
+    env.gas_price = effective;
     let transaction = Transaction::FrameTransaction(tx);
 
     let result = {
@@ -455,8 +455,8 @@ fn payer_pays_effective_price_no_burn() {
             data: Bytes::new(),
         },
     ]);
-    tx.max_fee_per_gas = 100_000_000_000; // 100 gwei
-    tx.max_priority_fee_per_gas = 2_000_000_000; // 2 gwei
+    tx.max_fee_per_gas = U256::from(100_000_000_000u64); // 100 gwei
+    tx.max_priority_fee_per_gas = U256::from(2_000_000_000u64); // 2 gwei
     let (result, db) = run_frame_tx_with_fees(
         &[
             (
@@ -2292,8 +2292,8 @@ mod validation_observer_tests {
             sender,
             frames,
             signatures: Vec::new(),
-            max_priority_fee_per_gas: 0,
-            max_fee_per_gas: 0,
+            max_priority_fee_per_gas: U256::from(0u64),
+            max_fee_per_gas: U256::from(0u64),
             max_fee_per_blob_gas: U256::zero(),
             blob_versioned_hashes: Vec::new(),
             ..Default::default()
@@ -2794,8 +2794,8 @@ mod frame_validation_prefix_tests {
             sender,
             frames,
             signatures: Vec::new(),
-            max_priority_fee_per_gas: 0,
-            max_fee_per_gas: 0,
+            max_priority_fee_per_gas: U256::from(0u64),
+            max_fee_per_gas: U256::from(0u64),
             max_fee_per_blob_gas: U256::zero(),
             blob_versioned_hashes: Vec::new(),
             ..Default::default()
