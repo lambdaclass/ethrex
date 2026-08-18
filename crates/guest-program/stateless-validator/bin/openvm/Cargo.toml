@@ -1,0 +1,48 @@
+[workspace]
+
+[package]
+version = "23.0.0"
+name = "stateless-validator-ethrex-openvm"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+# openvm
+openvm = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.0", features = [
+    "std",
+] }
+openvm-algebra-guest = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.0" }
+openvm-ecc-guest = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.0" }
+
+# ere
+ere-platform-openvm = { git = "https://github.com/eth-act/ere", rev = "a25f1aed9664c3b63e73ef05360090a4c41da31b", features = [
+    "std",
+] }
+
+ethrex-stateless-validator = { path = "../..", features = ["ere", "openvm"] }
+
+# Mirrors the ere-guests openvm bin: unifies the openvm source id across the
+# bin, the crypto provider, and ere-platform-openvm.
+[patch."https://github.com/openvm-org/openvm.git"]
+openvm = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
+openvm-algebra-complex-macros = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
+openvm-algebra-guest = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
+openvm-algebra-moduli-macros = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
+openvm-custom-insn = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
+openvm-ecc-guest = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
+openvm-ecc-sw-macros = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
+openvm-k256 = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0", package = "k256" }
+openvm-keccak256 = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
+openvm-keccak256-guest = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
+openvm-macros-common = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
+openvm-p256 = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0", package = "p256" }
+openvm-pairing = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
+openvm-pairing-guest = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
+openvm-platform = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
+openvm-rv32im-guest = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
+openvm-sha2 = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
+openvm-sha2-guest = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
+
+[profile.release]
+codegen-units = 1
+lto = "fat"

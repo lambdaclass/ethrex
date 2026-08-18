@@ -16,7 +16,7 @@ ethrex-config = { path = "../../crates/common/config" }
 ethrex-rlp = { path = "../../crates/common/rlp" }
 ethrex-prover = { path = "../../crates/prover", default-features = false, features = ["zisk"] }
 ethrex-guest-program = { path = "../../crates/guest-program", default-features = false, features = ["zisk"] }
-ef_tests-blockchain = { path = "../ef_tests/blockchain", features = ["zisk"] }
+ef_tests-blockchain = { path = "../ef_tests/blockchain" }
 
 clap = { version = "4.3", features = ["derive"] }
 serde = { version = "1.0.203", features = ["derive"] }

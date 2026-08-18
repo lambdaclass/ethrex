@@ -1,5 +1,6 @@
 mod test_db;
 
+mod bal_selfdestruct_reads_tests;
 mod bal_view_tests;
 mod bls12_tests;
 mod destroyed_refault_tests;
@@ -23,4 +24,6 @@ mod opcode_tracer_tests;
 mod precompile_tests;
 mod prestate_tracer_tests;
 mod requests_eip8282_extraction_tests;
+mod simulation_env_tests;
 mod stack_tests;
+mod trace_call_tests;
