@@ -125,6 +125,13 @@ jobs:
         run: |
           cargo test --workspace --exclude 'ethrex-l2*' --exclude ethrex-prover --exclude ethrex-guest-program
 
+      # `make test` includes `test-stateless`, which generates its conformance
+      # vectors from a pinned execution-specs commit rather than downloading them
+      # (no tests-zkevm release carries the #3278 schema). That fill needs `uv`.
+      - name: Install uv
+        if: ${{ github.event_name != 'merge_group' }}
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+
       - name: Run Blockchain EF tests
         if: ${{ github.event_name != 'merge_group' }}
         run: |
@@ -332,7 +339,7 @@ jobs:
           # Amsterdam config is loaded from .github/config/hive/amsterdam.yaml
           - name: "Consume Engine Amsterdam"
             simulation: ethereum/eels/consume-engine
-            limit: ".*(8024|7708|7778|7843|7928|7954|8037).*"
+            limit: ".*(2780|7708|7732|7778|7843|7928|7954|7975|7976|7981|7997|8024|8037|8038|8045|8061|8070|8159|8246|8282).*"
             amsterdam: true
             artifact_prefix: consume_engine_amsterdam
           # Investigate this test

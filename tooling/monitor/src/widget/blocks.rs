@@ -106,7 +106,6 @@ impl BlocksTable {
     ) -> Result<Vec<Block>, MonitorError> {
         let last_l2_block_number = store
             .get_latest_block_number()
-            .await
             .map_err(|_| MonitorError::GetLatestBlock)?;
 
         let mut new_blocks = Vec::new();

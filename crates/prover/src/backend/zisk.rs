@@ -135,8 +135,14 @@ impl ProverBackend for ZiskBackend {
     }
 
     fn serialize_input(&self, input: &ProgramInput) -> Result<Self::SerializedInput, BackendError> {
+        // On the L1 path `ProgramInput` IS the spec's `statelessInputBytes`, so it
+        // must reach the guest byte-for-byte — rkyv-wrapping it would make the
+        // guest's schema-prefix check fail. Only the L2 batch input is rkyv.
+        #[cfg(feature = "l2")]
         let input_bytes =
             rkyv::to_bytes::<rkyv::rancor::Error>(input).map_err(BackendError::serialization)?;
+        #[cfg(not(feature = "l2"))]
+        let input_bytes = input;
 
         // ZisK expects input in ZiskStdin format: an 8-byte little-endian length
         // prefix, the data, then zero-padding to 8-byte alignment. The guest reads
