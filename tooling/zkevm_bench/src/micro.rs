@@ -6,6 +6,7 @@ use ethrex_common::NativeCrypto;
 use ethrex_common::types::Block;
 use ethrex_common::types::block_execution_witness::{RpcExecutionWitness, decode_witness_headers};
 use ethrex_guest_program::input::ProgramInput;
+use ethrex_l2::sequencer::native_rollup::l1_advancer::build_ssz_stateless_input;
 use ethrex_rlp::decode::RLPDecode;
 use serde::Deserialize;
 
@@ -56,7 +57,15 @@ pub fn micro_to_program_input(source: &str, _gas: Option<u64>) -> eyre::Result<P
         let execution_witness = rpc_witness
             .into_execution_witness(chain_config, block_number, &decoded_headers, &NativeCrypto)
             .map_err(|e| eyre::eyre!("into_execution_witness: {e:?}"))?;
-        return Ok(ProgramInput::new(vec![core_block], execution_witness));
+        // The L1 `ProgramInput` is the spec's schema-prefixed
+        // `statelessInputBytes`; see `cache::cache_to_program_input`.
+        return build_ssz_stateless_input(
+            &core_block.header,
+            &core_block.body,
+            &execution_witness,
+            None,
+        )
+        .map_err(|e| eyre::eyre!("build stateless input: {e}"));
     }
     eyre::bail!("no executable block with executionWitness in {source}")
 }
@@ -84,6 +93,6 @@ mod tests {
         // vectors_zkevm whose first block has no expectException and has an
         // executionWitness; the schema is uniform across the set.
         let input = micro_to_program_input(FIXTURE, Some(100_000_000)).expect("convert");
-        assert!(!input.blocks.is_empty());
+        assert!(!input.is_empty(), "stateless input bytes must not be empty");
     }
 }

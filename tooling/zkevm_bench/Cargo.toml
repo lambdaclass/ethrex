@@ -17,6 +17,10 @@ ethrex-rlp = { path = "../../crates/common/rlp" }
 ethrex-prover = { path = "../../crates/prover", default-features = false, features = ["zisk"] }
 ethrex-guest-program = { path = "../../crates/guest-program", default-features = false, features = ["zisk"] }
 ef_tests-blockchain = { path = "../ef_tests/blockchain" }
+# For `build_ssz_stateless_input`, the only encoder in the tree that turns a
+# block plus its witness into the spec's schema-prefixed `statelessInputBytes`.
+# It lives under the L2 sequencer but touches nothing beyond `ethrex-common`.
+ethrex-l2 = { path = "../../crates/l2" }
 
 clap = { version = "4.3", features = ["derive"] }
 serde = { version = "1.0.203", features = ["derive"] }

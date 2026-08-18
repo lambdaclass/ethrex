@@ -211,7 +211,7 @@ mod tests {
         assert!(!cache.blocks.is_empty());
         let input =
             crate::cache::cache_to_program_input(cache).expect("should build program input");
-        assert!(!input.blocks.is_empty());
+        assert!(!input.is_empty(), "stateless input bytes must not be empty");
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

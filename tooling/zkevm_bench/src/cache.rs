@@ -5,6 +5,7 @@ use ethrex_common::types::block_execution_witness::{RpcExecutionWitness, decode_
 use ethrex_common::types::{Block, ChainConfig};
 use ethrex_config::networks::Network;
 use ethrex_guest_program::input::ProgramInput;
+use ethrex_l2::sequencer::native_rollup::l1_advancer::build_ssz_stateless_input;
 use serde::{Deserialize, Serialize};
 
 /// Local mirror of ethrex-replay's `Cache` JSON. We only read the fields we
@@ -63,7 +64,19 @@ pub fn cache_to_program_input(cache: Cache) -> eyre::Result<ProgramInput> {
             &NativeCrypto,
         )
         .map_err(|e| eyre::eyre!("into_execution_witness: {e:?}"))?;
-    Ok(ProgramInput::new(cache.blocks, execution_witness))
+    // Since execution-specs #3278 the L1 `ProgramInput` *is* the spec's
+    // schema-prefixed `statelessInputBytes`, and `SszStatelessInput` carries a
+    // single `new_payload_request`. ethrex-replay caches are one block each, so
+    // reject anything else rather than silently benchmarking only the first.
+    let [block] = <[Block; 1]>::try_from(cache.blocks).map_err(|blocks| {
+        eyre::eyre!(
+            "cache holds {} blocks; the stateless input wire format carries exactly one",
+            blocks.len()
+        )
+    })?;
+
+    build_ssz_stateless_input(&block.header, &block.body, &execution_witness, None)
+        .map_err(|e| eyre::eyre!("build stateless input: {e}"))
 }
 
 #[cfg(test)]
@@ -78,9 +91,13 @@ mod tests {
     fn loads_cache_and_builds_program_input() {
         let cache = load_cache(HOODI).expect("cache should parse");
         assert!(!cache.blocks.is_empty());
-        let first = cache.blocks[0].header.number;
         let input = cache_to_program_input(cache).expect("should build program input");
-        // The ProgramInput carries the same blocks.
-        assert_eq!(input.blocks[0].header.number, first);
+        // The input is the spec's schema-prefixed `statelessInputBytes`, so the
+        // only structural thing to assert here is the 2-byte schema id.
+        let schema_id = u16::from_be_bytes([input[0], input[1]]);
+        assert_eq!(
+            schema_id,
+            ethrex_common::types::stateless_ssz::STATELESS_INPUT_SCHEMA_ID
+        );
     }
 }
