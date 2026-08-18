@@ -114,6 +114,30 @@ impl SyncDiagnostics {
     }
 }
 
+/// Result of one [`Syncer::start_sync`] cycle for the manager retry policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyncCycleOutcome {
+    /// Cycle completed without error.
+    Success,
+    /// Recoverable PeerTable actor [`ActorError::RequestTimeout`].
+    RecoverableTimeout,
+    /// Other recoverable error (peer/network/storage blip, etc.).
+    RecoverableOther,
+}
+
+impl SyncCycleOutcome {
+    /// Maps a recoverable [`SyncError`] to the manager-facing cycle outcome.
+    ///
+    /// Only call this for errors where [`SyncError::is_recoverable`] is `true`.
+    fn from_recoverable_error(error: &SyncError) -> Self {
+        if error.is_peer_table_request_timeout() {
+            Self::RecoverableTimeout
+        } else {
+            Self::RecoverableOther
+        }
+    }
+}
+
 /// Manager in charge the sync process
 #[derive(Debug)]
 pub struct Syncer {
@@ -154,10 +178,12 @@ impl Syncer {
     /// In full mode, all blocks will be fetched via p2p eth requests and executed to rebuild the state
     /// In snap mode, blocks and receipts will be fetched and stored in parallel while the state is fetched via p2p snap requests
     /// After the sync cycle is complete, the sync mode will be set to full
-    /// If the sync fails, no error will be returned but a warning will be emitted
+    /// Returns a [`SyncCycleOutcome`] so the sync manager can apply backoff and
+    /// consecutive PeerTable-timeout caps on recoverable failures. Irrecoverable
+    /// errors still terminate the process with `exit(2)`.
     /// [WARNING] Sync is done optimistically, so headers and bodies may be stored even if their data has not been fully synced if the sync is aborted halfway
     /// [WARNING] Sync is currenlty simplified and will not download bodies + receipts previous to the pivot during snap sync
-    pub async fn start_sync(&mut self, sync_head: H256, store: Store) {
+    pub async fn start_sync(&mut self, sync_head: H256, store: Store) -> SyncCycleOutcome {
         let start_time = Instant::now();
         match self.sync_cycle(sync_head, store).await {
             Ok(()) => {
@@ -167,6 +193,7 @@ impl Syncer {
                     %sync_head,
                     "Sync cycle finished successfully",
                 );
+                SyncCycleOutcome::Success
             }
 
             // If the error is irrecoverable, we exit ethrex
@@ -199,12 +226,15 @@ impl Syncer {
                         std::process::exit(2);
                     }
                     true => {
-                        // We do nothing, as the error is recoverable
+                        let outcome = SyncCycleOutcome::from_recoverable_error(&error);
                         warn!(
                             time_elapsed_s = start_time.elapsed().as_secs(),
                             %sync_head,
-                            %error, "Sync cycle failed, retrying",
+                            %error,
+                            ?outcome,
+                            "Sync cycle failed with recoverable error",
                         );
+                        outcome
                     }
                 }
             }
@@ -452,10 +482,78 @@ impl SyncError {
             SyncError::PeerHandler(_) => unreachable!(),
         }
     }
+
+    /// True when this error is a PeerTable actor [`ActorError::RequestTimeout`],
+    /// including when wrapped as [`SyncError::PeerHandler`].
+    pub fn is_peer_table_request_timeout(&self) -> bool {
+        matches!(
+            self,
+            SyncError::PeerTableError(ActorError::RequestTimeout)
+                | SyncError::PeerHandler(PeerHandlerError::PeerTableError(
+                    ActorError::RequestTimeout
+                ))
+        )
+    }
 }
 
 impl<T> From<SendError<T>> for SyncError {
     fn from(value: SendError<T>) -> Self {
         Self::Send(value.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detects_peer_table_request_timeout_wrappers() {
+        assert!(
+            SyncError::PeerTableError(ActorError::RequestTimeout).is_peer_table_request_timeout()
+        );
+        assert!(
+            SyncError::PeerHandler(PeerHandlerError::PeerTableError(ActorError::RequestTimeout))
+                .is_peer_table_request_timeout()
+        );
+    }
+
+    #[test]
+    fn non_timeout_errors_are_not_peer_table_request_timeouts() {
+        assert!(
+            !SyncError::PeerTableError(ActorError::ActorStopped).is_peer_table_request_timeout()
+        );
+        assert!(!SyncError::NoBlockHeaders.is_peer_table_request_timeout());
+        assert!(
+            !SyncError::PeerHandler(PeerHandlerError::BlockHeaders).is_peer_table_request_timeout()
+        );
+    }
+
+    #[test]
+    fn recoverable_errors_map_to_cycle_outcomes() {
+        assert_eq!(
+            SyncCycleOutcome::from_recoverable_error(&SyncError::PeerTableError(
+                ActorError::RequestTimeout
+            )),
+            SyncCycleOutcome::RecoverableTimeout
+        );
+        assert_eq!(
+            SyncCycleOutcome::from_recoverable_error(&SyncError::PeerHandler(
+                PeerHandlerError::PeerTableError(ActorError::RequestTimeout)
+            )),
+            SyncCycleOutcome::RecoverableTimeout
+        );
+        assert_eq!(
+            SyncCycleOutcome::from_recoverable_error(&SyncError::NoBlockHeaders),
+            SyncCycleOutcome::RecoverableOther
+        );
+        assert_eq!(
+            SyncCycleOutcome::from_recoverable_error(&SyncError::PeerHandler(
+                PeerHandlerError::BlockHeaders
+            )),
+            SyncCycleOutcome::RecoverableOther
+        );
+        assert!(SyncError::NoBlockHeaders.is_recoverable());
+        assert!(SyncError::PeerHandler(PeerHandlerError::BlockHeaders).is_recoverable());
+        assert!(SyncError::PeerTableError(ActorError::RequestTimeout).is_recoverable());
     }
 }

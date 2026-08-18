@@ -18,8 +18,106 @@ use tracing::{debug, error, info, warn};
 
 use crate::{
     peer_handler::PeerHandler,
-    sync::{SyncDiagnostics, SyncMode, Syncer},
+    sync::{SyncCycleOutcome, SyncDiagnostics, SyncMode, Syncer},
 };
+
+/// Maximum consecutive PeerTable `RequestTimeout` cycles without an intervening
+/// successful cycle before the snap manager loop cancels the construction-time
+/// cancellation token (on L1: node shutdown/flush) instead of `process::exit`.
+/// The counter resets on each successful cycle. Value matches the pivot-update
+/// rotation budget in `snap_sync`.
+const MAX_CONSECUTIVE_REQUEST_TIMEOUTS: u64 = 5;
+
+/// Initial backoff after a recoverable sync-cycle failure in the manager loop.
+const INITIAL_RETRY_DELAY: Duration = Duration::from_secs(1);
+
+/// Upper bound for exponential backoff between recoverable sync-cycle retries.
+const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
+
+/// Action produced by [`SyncRetryState`] after observing a cycle outcome.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SyncRetryAction {
+    /// Continue the manager loop; optionally sleep before the next cycle.
+    Continue { sleep: Option<Duration> },
+    /// Too many consecutive PeerTable request timeouts; escalate to fatal.
+    Fatal,
+}
+
+/// Tracks consecutive PeerTable request timeouts and backoff for the snap
+/// manager retry loop.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SyncRetryState {
+    consecutive_timeouts: u64,
+    backoff: Duration,
+}
+
+impl SyncRetryState {
+    fn new() -> Self {
+        Self {
+            consecutive_timeouts: 0,
+            backoff: INITIAL_RETRY_DELAY,
+        }
+    }
+
+    fn on_outcome(&mut self, outcome: SyncCycleOutcome) -> SyncRetryAction {
+        match outcome {
+            SyncCycleOutcome::Success => {
+                self.consecutive_timeouts = 0;
+                self.backoff = INITIAL_RETRY_DELAY;
+                SyncRetryAction::Continue { sleep: None }
+            }
+            SyncCycleOutcome::RecoverableTimeout => {
+                self.consecutive_timeouts += 1;
+                if self.consecutive_timeouts >= MAX_CONSECUTIVE_REQUEST_TIMEOUTS {
+                    return SyncRetryAction::Fatal;
+                }
+                let sleep_for = self.backoff;
+                self.backoff = next_backoff(self.backoff);
+                SyncRetryAction::Continue {
+                    sleep: Some(sleep_for),
+                }
+            }
+            SyncCycleOutcome::RecoverableOther => {
+                // Back off on other recoverable errors, but only RequestTimeouts
+                // count toward the fatal cap. Only Success resets that counter.
+                let sleep_for = self.backoff;
+                self.backoff = next_backoff(self.backoff);
+                SyncRetryAction::Continue {
+                    sleep: Some(sleep_for),
+                }
+            }
+        }
+    }
+}
+
+fn next_backoff(current: Duration) -> Duration {
+    current.saturating_mul(2).min(MAX_RETRY_DELAY)
+}
+
+/// Decision for one iteration of the manager sync loop after a cycle outcome.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SyncLoopStep {
+    /// Escalate: too many consecutive PeerTable timeouts while snap will retry.
+    ExitFatal,
+    /// Sleep, then continue the loop.
+    SleepAndContinue(Duration),
+    /// Continue the loop immediately (successful cycle still mid-snap).
+    Continue,
+    /// Leave the loop (no snap checkpoint: full sync or snap complete).
+    Break,
+}
+
+/// Combines a retry-policy action with whether a snap checkpoint keeps the loop alive.
+fn next_sync_loop_step(action: SyncRetryAction, will_continue: bool) -> SyncLoopStep {
+    match action {
+        SyncRetryAction::Fatal if will_continue => SyncLoopStep::ExitFatal,
+        SyncRetryAction::Continue { sleep: Some(delay) } if will_continue => {
+            SyncLoopStep::SleepAndContinue(delay)
+        }
+        _ if will_continue => SyncLoopStep::Continue,
+        _ => SyncLoopStep::Break,
+    }
+}
 
 /// Abstraction to interact with the active sync process without disturbing it
 #[derive(Debug)]
@@ -31,6 +129,9 @@ pub struct SyncManager {
     last_fcu_head: Arc<Mutex<H256>>,
     store: Store,
     diagnostics: Arc<tokio::sync::RwLock<SyncDiagnostics>>,
+    /// Cancellation token from construction. On L1 this is the node token `main`
+    /// waits on; cancelling it runs shutdown/flush instead of `process::exit`.
+    cancel_token: CancellationToken,
 }
 
 impl SyncManager {
@@ -81,7 +182,7 @@ impl SyncManager {
         let syncer = Arc::new(Mutex::new(Syncer::new(
             peer_handler,
             snap_enabled.clone(),
-            cancel_token,
+            cancel_token.clone(),
             blockchain,
             datadir,
             diagnostics.clone(),
@@ -92,6 +193,7 @@ impl SyncManager {
             last_fcu_head: Arc::new(Mutex::new(H256::zero())),
             store: store.clone(),
             diagnostics,
+            cancel_token,
         };
         // If the node was in the middle of a sync and then re-started we must resume syncing
         // Otherwise we will incorreclty assume the node is already synced and work on invalid state
@@ -197,6 +299,7 @@ impl SyncManager {
         let syncer = self.syncer.clone();
         let store = self.store.clone();
         let sync_head = self.last_fcu_head.clone();
+        let cancel_token = self.cancel_token.clone();
 
         tokio::spawn(async move {
             // If we can't get hold of the syncer, then it means that there is an active sync in process
@@ -204,6 +307,7 @@ impl SyncManager {
                 return;
             };
             let mut waiting_for_fcu_logged = false;
+            let mut retry_state = SyncRetryState::new();
             loop {
                 let sync_head = {
                     // Read latest fcu head without holding the lock for longer than needed
@@ -229,16 +333,37 @@ impl SyncManager {
                     continue;
                 }
                 // Start the sync cycle
-                syncer.start_sync(sync_head, store.clone()).await;
-                // Continue to the next sync cycle if we have an ongoing snap sync (aka if we still have snap sync checkpoints stored)
-                if store
+                let outcome = syncer.start_sync(sync_head, store.clone()).await;
+                // Keep looping only while a snap header-download checkpoint remains.
+                // Without one (full sync / completed snap), leave the loop as before.
+                let will_continue = store
                     .get_header_download_checkpoint()
                     .await
                     .ok()
                     .flatten()
-                    .is_none()
-                {
-                    break;
+                    .is_some();
+                let action = retry_state.on_outcome(outcome);
+                match next_sync_loop_step(action, will_continue) {
+                    SyncLoopStep::ExitFatal => {
+                        error!(
+                            consecutive_timeouts = retry_state.consecutive_timeouts,
+                            max = MAX_CONSECUTIVE_REQUEST_TIMEOUTS,
+                            "Sync cycle failed with {MAX_CONSECUTIVE_REQUEST_TIMEOUTS} consecutive PeerTable request timeouts without a successful cycle; cancelling node"
+                        );
+                        cancel_token.cancel();
+                        break;
+                    }
+                    SyncLoopStep::SleepAndContinue(delay) => {
+                        warn!(
+                            ?outcome,
+                            consecutive_timeouts = retry_state.consecutive_timeouts,
+                            backoff_s = delay.as_secs(),
+                            "Backing off before retrying sync cycle"
+                        );
+                        sleep(delay).await;
+                    }
+                    SyncLoopStep::Continue => {}
+                    SyncLoopStep::Break => break,
                 }
             }
         });
@@ -246,5 +371,155 @@ impl SyncManager {
 
     pub fn get_last_fcu_head(&self) -> Result<H256, tokio::sync::TryLockError> {
         Ok(*self.last_fcu_head.try_lock()?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn success_resets_timeout_counter_and_skips_sleep() {
+        let mut state = SyncRetryState::new();
+        assert_eq!(
+            state.on_outcome(SyncCycleOutcome::RecoverableTimeout),
+            SyncRetryAction::Continue {
+                sleep: Some(Duration::from_secs(1))
+            }
+        );
+        assert_eq!(state.consecutive_timeouts, 1);
+
+        assert_eq!(
+            state.on_outcome(SyncCycleOutcome::Success),
+            SyncRetryAction::Continue { sleep: None }
+        );
+        assert_eq!(state.consecutive_timeouts, 0);
+        assert_eq!(state.backoff, INITIAL_RETRY_DELAY);
+    }
+
+    #[test]
+    fn fifth_consecutive_timeout_is_fatal() {
+        let mut state = SyncRetryState::new();
+        let expected_sleeps = [
+            Duration::from_secs(1),
+            Duration::from_secs(2),
+            Duration::from_secs(4),
+            Duration::from_secs(8),
+        ];
+        for (idx, expected_sleep) in expected_sleeps.iter().enumerate() {
+            let expected_timeouts = (idx as u64) + 1;
+            assert_eq!(
+                state.on_outcome(SyncCycleOutcome::RecoverableTimeout),
+                SyncRetryAction::Continue {
+                    sleep: Some(*expected_sleep)
+                },
+                "timeout #{expected_timeouts} should sleep {expected_sleep:?}"
+            );
+            assert_eq!(state.consecutive_timeouts, expected_timeouts);
+        }
+        assert_eq!(
+            state.on_outcome(SyncCycleOutcome::RecoverableTimeout),
+            SyncRetryAction::Fatal
+        );
+        assert_eq!(state.consecutive_timeouts, MAX_CONSECUTIVE_REQUEST_TIMEOUTS);
+    }
+
+    #[test]
+    fn recoverable_other_backs_off_without_tripping_timeout_cap() {
+        let mut state = SyncRetryState::new();
+        for _ in 0..MAX_CONSECUTIVE_REQUEST_TIMEOUTS {
+            let action = state.on_outcome(SyncCycleOutcome::RecoverableOther);
+            assert!(matches!(
+                action,
+                SyncRetryAction::Continue { sleep: Some(_) }
+            ));
+        }
+        assert_eq!(state.consecutive_timeouts, 0);
+        assert_eq!(state.backoff, MAX_RETRY_DELAY);
+    }
+
+    #[test]
+    fn other_recoverable_does_not_reset_timeout_counter() {
+        let mut state = SyncRetryState::new();
+        assert!(matches!(
+            state.on_outcome(SyncCycleOutcome::RecoverableTimeout),
+            SyncRetryAction::Continue { sleep: Some(_) }
+        ));
+        assert_eq!(state.consecutive_timeouts, 1);
+
+        assert!(matches!(
+            state.on_outcome(SyncCycleOutcome::RecoverableOther),
+            SyncRetryAction::Continue { sleep: Some(_) }
+        ));
+        assert_eq!(state.consecutive_timeouts, 1);
+
+        // 1 prior timeout + 3 more continues + 1 fatal = 5 total timeouts.
+        assert!(matches!(
+            state.on_outcome(SyncCycleOutcome::RecoverableTimeout),
+            SyncRetryAction::Continue { sleep: Some(_) }
+        ));
+        assert!(matches!(
+            state.on_outcome(SyncCycleOutcome::RecoverableTimeout),
+            SyncRetryAction::Continue { sleep: Some(_) }
+        ));
+        assert!(matches!(
+            state.on_outcome(SyncCycleOutcome::RecoverableTimeout),
+            SyncRetryAction::Continue { sleep: Some(_) }
+        ));
+        assert_eq!(
+            state.on_outcome(SyncCycleOutcome::RecoverableTimeout),
+            SyncRetryAction::Fatal
+        );
+    }
+
+    #[test]
+    fn backoff_doubles_until_cap() {
+        assert_eq!(next_backoff(Duration::from_secs(1)), Duration::from_secs(2));
+        assert_eq!(next_backoff(Duration::from_secs(2)), Duration::from_secs(4));
+        assert_eq!(
+            next_backoff(Duration::from_secs(16)),
+            Duration::from_secs(30)
+        );
+        assert_eq!(
+            next_backoff(Duration::from_secs(30)),
+            Duration::from_secs(30)
+        );
+    }
+
+    #[test]
+    fn loop_step_gates_fatal_and_sleep_on_will_continue() {
+        let delay = Duration::from_secs(4);
+        let fatal = SyncRetryAction::Fatal;
+        let no_sleep = SyncRetryAction::Continue { sleep: None };
+        let with_sleep = SyncRetryAction::Continue { sleep: Some(delay) };
+
+        // Snap will retry (checkpoint present).
+        assert_eq!(next_sync_loop_step(fatal, true), SyncLoopStep::ExitFatal);
+        assert_eq!(next_sync_loop_step(no_sleep, true), SyncLoopStep::Continue);
+        assert_eq!(
+            next_sync_loop_step(with_sleep, true),
+            SyncLoopStep::SleepAndContinue(delay)
+        );
+
+        // No checkpoint: do not escalate or sleep; break like full sync today.
+        assert_eq!(next_sync_loop_step(fatal, false), SyncLoopStep::Break);
+        assert_eq!(next_sync_loop_step(no_sleep, false), SyncLoopStep::Break);
+        assert_eq!(next_sync_loop_step(with_sleep, false), SyncLoopStep::Break);
+    }
+
+    #[test]
+    fn end_to_end_timeout_cap_with_checkpoint_decides_exit_fatal() {
+        let mut state = SyncRetryState::new();
+        for _ in 1..MAX_CONSECUTIVE_REQUEST_TIMEOUTS {
+            let action = state.on_outcome(SyncCycleOutcome::RecoverableTimeout);
+            assert!(matches!(
+                next_sync_loop_step(action, true),
+                SyncLoopStep::SleepAndContinue(_)
+            ));
+        }
+        let action = state.on_outcome(SyncCycleOutcome::RecoverableTimeout);
+        assert_eq!(next_sync_loop_step(action, true), SyncLoopStep::ExitFatal);
+        // Same Fatal action without a checkpoint must not escalate.
+        assert_eq!(next_sync_loop_step(action, false), SyncLoopStep::Break);
     }
 }
