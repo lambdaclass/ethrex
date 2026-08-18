@@ -36,13 +36,13 @@ any invocation directory (see [Running](#running) below).
 
 ## Setup
 
-1. **ZisK toolchain v1.0.0-alpha** (Linux only). From the repo root:
+1. **ZisK toolchain v1.1.0-alpha** (Linux only). From the repo root:
 
    ```bash
    make zkevm-bench-setup
    ```
 
-   This installs ZisK's apt build dependencies and runs `ziskup -v 1.0.0-alpha`
+   This installs ZisK's apt build dependencies and runs `ziskup -v 1.1.0-alpha`
    with `--nokey`, which skips downloading the (large) proving key —
    emulation via `ziskemu` doesn't need it. Afterwards, add `~/.zisk/bin` to
    `PATH` (it provides `ziskemu`):

@@ -73,6 +73,16 @@ The parser is unaffected: it matches on the first whitespace token of each
 line and is order-independent, so the added `VARIABLE` line and the
 separators are ignored, and every label it needs is still present.
 
+### What changed in v1.1.0-alpha
+
+A **`ROM USAGE`** line was added directly after `RAM USAGE`. Every label the
+parser matches (`STEPS`, `MAIN`, `OPCODES`, `PRECOMPILES`, `MEMORY`, `BASE`,
+`TOTAL`, `RAM`) is still emitted with the same shape, and `ROM` is not one of
+them, so the new line is skipped like any other unrecognised label. Verified by
+running `ziskemu -X` from the v1.1.0-alpha toolchain against a guest ELF built
+from this tree; the capture in `fixtures/ziskemu_sample.txt` is still a
+v1.0.0-alpha run and is left as-is, since it is a record of a real execution.
+
 Extraction rules:
 - `STEPS`: the integer on the `STEPS` line (REPORT block).
 - Cost components under `COST DISTRIBUTION`, one per line, format
