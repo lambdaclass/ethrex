@@ -202,6 +202,7 @@ pub(crate) async fn fetch_logs_with_filter(
                             transaction_index: tx_index as u64,
                             block_number: block_num,
                             block_hash,
+                            block_timestamp: block_header.timestamp,
                             removed: false,
                         });
                     }
