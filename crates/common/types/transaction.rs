@@ -2487,8 +2487,10 @@ impl FrameTransaction {
     /// - Deploy frame (if any) is at index 0 and uses DEFAULT execution mode.
     /// - At most one deploy frame exists in the prefix.
     /// - self_verify / only_verify / pay frames use VERIFY execution mode.
-    /// - Resolved target of each VERIFY frame matches `tx.sender` (target == None
-    ///   means sender; a non-None target must equal sender).
+    /// - Resolved target of each self_verify / only_verify frame matches
+    ///   `tx.sender` (target == None means sender). The pay frame of the
+    ///   OnlyVerifyPay / DeployOnlyVerifyPay shapes has no target restriction
+    ///   (EIP-8141 structural rule 4): it may target a non-sender sponsor.
     /// - Scope restriction matches the frame's role:
     ///   self_verify → `APPROVE_EXECUTION_AND_PAYMENT`, only_verify → `APPROVE_EXECUTION`,
     ///   pay → `APPROVE_PAYMENT`.
@@ -2535,10 +2537,24 @@ impl FrameTransaction {
                         });
                     }
 
-                    // Resolved target must be tx.sender (None means sender).
+                    // EIP-8141 structural rule 3 restricts the target to
+                    // tx.sender (None means sender) only for self_verify /
+                    // only_verify frames. Rule 4 places no target requirement
+                    // on the pay frame: it may target a non-sender sponsor,
+                    // which approves payment via APPROVE(APPROVE_PAYMENT)
+                    // when the frame executes.
+                    // The shape guard is load-bearing: every shape populates
+                    // `pay_index`, and for SelfVerify / DeploySelfVerify it points
+                    // at the self_verify frame, which carries
+                    // APPROVE_EXECUTION_AND_PAYMENT and does require the sender as
+                    // its target. Matching on `pay_index` alone would exempt it.
+                    let is_pay_frame = matches!(
+                        prefix.shape,
+                        PrefixShape::OnlyVerifyPay | PrefixShape::DeployOnlyVerifyPay
+                    ) && prefix.pay_index == Some(idx);
                     let target_ok = match frame.target {
                         None => true,
-                        Some(addr) => addr == self.sender,
+                        Some(addr) => addr == self.sender || is_pay_frame,
                     };
                     if !target_ok {
                         return Err(FrameValidationError::VerifyTargetNotSender {
