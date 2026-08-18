@@ -3692,6 +3692,7 @@ fn atomic_batch_revert_drops_the_batch_writes_from_the_bal() {
             LevmCallTracer::disabled(),
             VMType::L1,
             &NativeCrypto,
+            None,
         )
         .expect("VM::new should succeed for a frame tx");
         vm.execute()
