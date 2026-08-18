@@ -3856,11 +3856,11 @@ impl Blockchain {
 
             // Paymaster availability accounting (EIP-8141). The simulation
             // identified the payer (paymaster) and whether its code matched the
-            // canonical paymaster hash (always false today, OQ1). Reserve the
-            // tx's max cost against the paymaster's head balance, summed with all
-            // other pending reservations for that paymaster so concurrently
-            // pending sponsored txs cannot collectively overdraw it.
-            let max_cost = outcome.max_cost;
+            // canonical paymaster hash (always false today, OQ1). Reserve an upper
+            // bound on the tx's cost against the paymaster's head balance, summed
+            // with all other pending reservations for that paymaster so
+            // concurrently pending sponsored txs cannot collectively overdraw it.
+            let max_cost = outcome.reservation_ceiling;
             if let Some((paymaster, code_is_canonical)) = outcome.accessed_paymaster {
                 // OQ1: re-derive the canonical flag from the paymaster's head
                 // code so the (currently always-false) determination lives in
