@@ -2181,7 +2181,6 @@ mod validation_observer_tests {
     #[test]
     fn validation_observer_opcode_byte_pins() {
         use ethrex_levm::opcodes::Opcode;
-        assert_eq!(u8::from(Opcode::ORIGIN), 0x32);
         assert_eq!(u8::from(Opcode::GASPRICE), 0x3A);
         assert_eq!(u8::from(Opcode::BLOCKHASH), 0x40);
         assert_eq!(u8::from(Opcode::COINBASE), 0x41);
@@ -2190,15 +2189,12 @@ mod validation_observer_tests {
         assert_eq!(u8::from(Opcode::PREVRANDAO), 0x44);
         assert_eq!(u8::from(Opcode::GASLIMIT), 0x45);
         assert_eq!(u8::from(Opcode::BASEFEE), 0x48);
-        assert_eq!(u8::from(Opcode::BLOBHASH), 0x49);
         assert_eq!(u8::from(Opcode::BLOBBASEFEE), 0x4A);
         assert_eq!(u8::from(Opcode::SLOTNUM), 0x4B);
         assert_eq!(u8::from(Opcode::INVALID), 0xFE);
         assert_eq!(u8::from(Opcode::SELFDESTRUCT), 0xFF);
         assert_eq!(u8::from(Opcode::BALANCE), 0x31);
         assert_eq!(u8::from(Opcode::SELFBALANCE), 0x47);
-        assert_eq!(u8::from(Opcode::TLOAD), 0x5C);
-        assert_eq!(u8::from(Opcode::TSTORE), 0x5D);
         assert_eq!(u8::from(Opcode::GAS), 0x5A);
         assert_eq!(u8::from(Opcode::CALL), 0xF1);
         assert_eq!(u8::from(Opcode::CALLCODE), 0xF2);
@@ -2447,6 +2443,42 @@ mod validation_observer_tests {
             Some(FrameSimViolation::BannedOpcode(0x4B)),
             "SLOTNUM must be a banned opcode during prefix simulation"
         );
+    }
+
+    /// EIP-8141 relaxed the banned list: `ORIGIN` (0x32), `BLOBHASH` (0x49),
+    /// `TLOAD` (0x5C) and `TSTORE` (0x5D) were banned originally and are not any
+    /// more. None of them can make a prefix pass at admission and then fail in a
+    /// block, which is the whole point of the list: `ORIGIN` is fixed per frame by
+    /// the mode, `BLOBHASH` reads the transaction's own versioned hashes, and
+    /// transient storage cannot outlive the transaction that wrote it.
+    ///
+    /// Kept as a test rather than only a comment because the ban is one match arm
+    /// away: re-adding any of the four would silently start rejecting valid frame
+    /// transactions at admission, which no consensus fixture can catch.
+    #[test]
+    fn the_relaxed_opcodes_are_not_banned() {
+        for (opcode, name) in [
+            (0x32u8, "ORIGIN"),
+            (0x49u8, "BLOBHASH"),
+            (0x5Cu8, "TLOAD"),
+            (0x5Du8, "TSTORE"),
+        ] {
+            let sender = addr(0x3200);
+            // The opcode, then POP and STOP: TLOAD/BLOBHASH/ORIGIN each push one
+            // word, and TSTORE needs two operands, so push two zeros up front and
+            // let the extra word be popped.
+            let code = Bytes::from(vec![0x60, 0x00, 0x60, 0x00, opcode, 0x50, 0x00]);
+            let tx = frame_tx_for_obs(
+                sender,
+                vec![verify_frame_obs(sender, 50_000, 0x03, Bytes::new())],
+            );
+            let mut db = build_db(vec![(sender, account_with_code(0, code))]);
+            let (_result, violation) = run(&tx, &mut db, sender, &[0], None);
+            assert!(
+                !matches!(violation, Some(FrameSimViolation::BannedOpcode(op)) if op == opcode),
+                "{name} ({opcode:#04x}) must not be reported as a banned opcode"
+            );
+        }
     }
 
     #[test]
