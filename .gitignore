@@ -10,8 +10,6 @@
 
 tooling/ef_tests/blockchain/vectors
 tooling/ef_tests/blockchain/vectors_zkevm
-tooling/ef_tests/blockchain/vectors_stateless_3278
-tooling/ef_tests/blockchain/.stateless-vector-work
 
 tooling/ef_tests/state/vectors
 
