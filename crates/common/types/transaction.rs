@@ -467,7 +467,7 @@ impl Transaction {
     }
 
     fn calc_effective_gas_price(&self, base_fee_per_gas: Option<u64>) -> Option<U256> {
-        let base_fee = base_fee_per_gas?;
+        let base_fee = U256::from(base_fee_per_gas?);
         let max_fee = self.max_fee_per_gas()?;
         if max_fee < base_fee {
             // This is invalid, can't calculate
@@ -475,7 +475,7 @@ impl Transaction {
         }
 
         let priority_fee_per_gas = min(self.max_priority_fee()?, max_fee.saturating_sub(base_fee));
-        Some(U256::from(priority_fee_per_gas) + U256::from(base_fee))
+        Some(priority_fee_per_gas + base_fee)
     }
 
     pub fn effective_gas_price(&self, base_fee_per_gas: Option<u64>) -> Option<U256> {
@@ -495,11 +495,11 @@ impl Transaction {
         let price = match self.tx_type() {
             TxType::Legacy => self.gas_price(),
             TxType::EIP2930 => self.gas_price(),
-            TxType::EIP1559 => U256::from(self.max_fee_per_gas()?),
-            TxType::EIP4844 => U256::from(self.max_fee_per_gas()?),
-            TxType::EIP7702 => U256::from(self.max_fee_per_gas()?),
-            TxType::Frame => U256::from(self.max_fee_per_gas()?),
-            TxType::FeeToken => U256::from(self.max_fee_per_gas()?),
+            TxType::EIP1559 => self.max_fee_per_gas()?,
+            TxType::EIP4844 => self.max_fee_per_gas()?,
+            TxType::EIP7702 => self.max_fee_per_gas()?,
+            TxType::Frame => self.max_fee_per_gas()?,
+            TxType::FeeToken => self.max_fee_per_gas()?,
             TxType::Privileged => self.gas_price(),
         };
 
@@ -1465,7 +1465,7 @@ impl Transaction {
             Transaction::EIP4844Transaction(tx) => U256::from(tx.max_fee_per_gas),
             Transaction::PrivilegedL2Transaction(tx) => U256::from(tx.max_fee_per_gas),
             Transaction::FeeTokenTransaction(tx) => U256::from(tx.max_fee_per_gas),
-            Transaction::FrameTransaction(tx) => U256::from(tx.max_fee_per_gas),
+            Transaction::FrameTransaction(tx) => tx.max_fee_per_gas,
         }
     }
 
@@ -1495,15 +1495,18 @@ impl Transaction {
         }
     }
 
-    pub fn max_priority_fee(&self) -> Option<u64> {
+    /// Widened to `U256` for the same reason as [`Self::max_fee_per_gas`].
+    pub fn max_priority_fee(&self) -> Option<U256> {
         match self {
             Transaction::LegacyTransaction(_tx) => None,
             Transaction::EIP2930Transaction(_tx) => None,
-            Transaction::EIP1559Transaction(tx) => Some(tx.max_priority_fee_per_gas),
-            Transaction::EIP4844Transaction(tx) => Some(tx.max_priority_fee_per_gas),
-            Transaction::EIP7702Transaction(tx) => Some(tx.max_priority_fee_per_gas),
-            Transaction::PrivilegedL2Transaction(tx) => Some(tx.max_priority_fee_per_gas),
-            Transaction::FeeTokenTransaction(tx) => Some(tx.max_priority_fee_per_gas),
+            Transaction::EIP1559Transaction(tx) => Some(U256::from(tx.max_priority_fee_per_gas)),
+            Transaction::EIP4844Transaction(tx) => Some(U256::from(tx.max_priority_fee_per_gas)),
+            Transaction::EIP7702Transaction(tx) => Some(U256::from(tx.max_priority_fee_per_gas)),
+            Transaction::PrivilegedL2Transaction(tx) => {
+                Some(U256::from(tx.max_priority_fee_per_gas))
+            }
+            Transaction::FeeTokenTransaction(tx) => Some(U256::from(tx.max_priority_fee_per_gas)),
             Transaction::FrameTransaction(tx) => Some(tx.max_priority_fee_per_gas),
         }
     }
@@ -1635,15 +1638,18 @@ impl Transaction {
         matches!(self, Transaction::PrivilegedL2Transaction(_))
     }
 
-    pub fn max_fee_per_gas(&self) -> Option<u64> {
+    /// The transaction's `max_fee_per_gas`, widened to `U256` because EIP-8141
+    /// bounds a frame transaction's fee fields at 2**256 while every other type
+    /// keeps them within `u64`.
+    pub fn max_fee_per_gas(&self) -> Option<U256> {
         match self {
             Transaction::LegacyTransaction(_tx) => None,
             Transaction::EIP2930Transaction(_tx) => None,
-            Transaction::EIP1559Transaction(tx) => Some(tx.max_fee_per_gas),
-            Transaction::EIP4844Transaction(tx) => Some(tx.max_fee_per_gas),
-            Transaction::EIP7702Transaction(tx) => Some(tx.max_fee_per_gas),
-            Transaction::PrivilegedL2Transaction(tx) => Some(tx.max_fee_per_gas),
-            Transaction::FeeTokenTransaction(tx) => Some(tx.max_fee_per_gas),
+            Transaction::EIP1559Transaction(tx) => Some(U256::from(tx.max_fee_per_gas)),
+            Transaction::EIP4844Transaction(tx) => Some(U256::from(tx.max_fee_per_gas)),
+            Transaction::EIP7702Transaction(tx) => Some(U256::from(tx.max_fee_per_gas)),
+            Transaction::PrivilegedL2Transaction(tx) => Some(U256::from(tx.max_fee_per_gas)),
+            Transaction::FeeTokenTransaction(tx) => Some(U256::from(tx.max_fee_per_gas)),
             Transaction::FrameTransaction(tx) => Some(tx.max_fee_per_gas),
         }
     }
@@ -1671,15 +1677,11 @@ impl Transaction {
     }
 
     pub fn gas_tip_cap(&self) -> U256 {
-        self.max_priority_fee()
-            .map(U256::from)
-            .unwrap_or_else(|| self.gas_price())
+        self.max_priority_fee().unwrap_or_else(|| self.gas_price())
     }
 
     pub fn gas_fee_cap(&self) -> U256 {
-        self.max_fee_per_gas()
-            .map(U256::from)
-            .unwrap_or_else(|| self.gas_price())
+        self.max_fee_per_gas().unwrap_or_else(|| self.gas_price())
     }
 
     /// Returns the effective tip per gas for this transaction.
@@ -2028,8 +2030,13 @@ pub struct FrameTransaction {
     /// EIP-8141 outer signature list. Validated
     /// before any frame executes; referenced by VERIFY frames and SIGPARAM.
     pub signatures: Vec<FrameSignature>,
-    pub max_priority_fee_per_gas: u64,
-    pub max_fee_per_gas: u64,
+    /// EIP-8141 bounds the fee fields at 2**256, not 2**64: a frame transaction
+    /// may legitimately name a fee no balance could pay, and a node still has to
+    /// decode it to reject it for the balance rather than for the field width.
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
+    pub max_priority_fee_per_gas: U256,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
+    pub max_fee_per_gas: U256,
     #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub max_fee_per_blob_gas: U256,
     #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::H256Wrapper>)]
@@ -4269,9 +4276,15 @@ mod serde_impl {
                 from: value.sender,
                 gas: Some(value.max_gas()),
                 value: U256::zero(),
-                gas_price: value.max_fee_per_gas.into(),
-                max_priority_fee_per_gas: Some(value.max_priority_fee_per_gas),
-                max_fee_per_gas: Some(value.max_fee_per_gas),
+                gas_price: value.max_fee_per_gas,
+                // `GenericTransaction` keeps these as `u64`, and `U256::as_u64`
+                // panics rather than truncating, so saturate: this conversion feeds
+                // RPC and simulation shapes, and a fee this large is unaffordable at
+                // any balance, so the clamp cannot change an outcome.
+                max_priority_fee_per_gas: Some(
+                    u64::try_from(value.max_priority_fee_per_gas).unwrap_or(u64::MAX),
+                ),
+                max_fee_per_gas: Some(u64::try_from(value.max_fee_per_gas).unwrap_or(u64::MAX)),
                 max_fee_per_blob_gas: if value.blob_versioned_hashes.is_empty() {
                     None
                 } else {
@@ -5107,8 +5120,8 @@ mod tests {
                 msg: Bytes::new(),
                 signature: Bytes::from(vec![0u8; 65]),
             }],
-            max_priority_fee_per_gas: 1_000_000_000,
-            max_fee_per_gas: 30_000_000_000,
+            max_priority_fee_per_gas: U256::from(1_000_000_000u64),
+            max_fee_per_gas: U256::from(30_000_000_000u64),
             max_fee_per_blob_gas: U256::zero(),
             blob_versioned_hashes: vec![],
             inner_hash: OnceCell::new(),
@@ -5300,8 +5313,8 @@ mod tests {
         assert_eq!(tx.data(), &Bytes::new());
         assert!(tx.access_list().is_empty());
         assert!(tx.authorization_list().is_none());
-        assert_eq!(tx.max_priority_fee(), Some(1_000_000_000));
-        assert_eq!(tx.max_fee_per_gas(), Some(30_000_000_000));
+        assert_eq!(tx.max_priority_fee(), Some(U256::from(1_000_000_000u64)));
+        assert_eq!(tx.max_fee_per_gas(), Some(U256::from(30_000_000_000u64)));
         assert_eq!(tx.max_fee_per_blob_gas(), None); // no blobs
         assert!(!tx.is_contract_creation());
         // sender returns explicit sender, no ECDSA
@@ -5374,8 +5387,8 @@ mod tests {
             sender: Address::from_low_u64_be(0xABCD),
             frames,
             signatures: vec![],
-            max_priority_fee_per_gas: 1_000_000_000,
-            max_fee_per_gas: 30_000_000_000,
+            max_priority_fee_per_gas: U256::from(1_000_000_000u64),
+            max_fee_per_gas: U256::from(30_000_000_000u64),
             max_fee_per_blob_gas: U256::zero(),
             blob_versioned_hashes: vec![],
             inner_hash: OnceCell::new(),
@@ -5465,8 +5478,8 @@ mod tests {
                 data: Bytes::new(),
             }],
             signatures: vec![],
-            max_priority_fee_per_gas: 1_000_000_000,
-            max_fee_per_gas: 30_000_000_000,
+            max_priority_fee_per_gas: U256::from(1_000_000_000u64),
+            max_fee_per_gas: U256::from(30_000_000_000u64),
             max_fee_per_blob_gas: U256::zero(),
             blob_versioned_hashes: vec![],
             inner_hash: OnceCell::new(),
@@ -5836,8 +5849,8 @@ mod tests {
                 msg: Bytes::new(),
                 signature: Bytes::from(vec![0x01u8; 65]),
             }],
-            max_priority_fee_per_gas: 0x3b9aca00,
-            max_fee_per_gas: 0x6fc23ac00,
+            max_priority_fee_per_gas: U256::from(0x3b9aca00u64),
+            max_fee_per_gas: U256::from(0x6fc23ac00u64),
             max_fee_per_blob_gas: U256::zero(),
             blob_versioned_hashes: vec![],
             inner_hash: OnceCell::new(),

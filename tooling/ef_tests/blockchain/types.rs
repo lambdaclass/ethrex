@@ -608,9 +608,19 @@ impl From<Transaction> for FrameTransaction {
         // A frame transaction has no top-level recipient: `to` in the fixture is
         // the ENTRY_POINT the caller-side fields are shaped around, and the real
         // sender is the explicit `sender` field, not a recovered signature.
+        //
+        // The scalar fields saturate rather than panic. The EIP bounds the nonce at
+        // 2**64 and the fee fields at 2**256, so a fixture can legitimately carry a
+        // fee beyond what ethrex's `u64` fields hold -- and does, to assert the
+        // transaction is rejected for it. Saturating keeps this `From` total; it
+        // cannot mask an accepted transaction, since a fee that large is
+        // unaffordable at any balance.
         FrameTransaction {
-            chain_id: val.chain_id.map(|id| id.try_into().unwrap()).unwrap_or(1),
-            nonce: val.nonce.try_into().unwrap(),
+            chain_id: val
+                .chain_id
+                .map(|id| id.try_into().unwrap_or(u64::MAX))
+                .unwrap_or(1),
+            nonce: val.nonce.try_into().unwrap_or(u64::MAX),
             sender: val.sender.unwrap_or_default(),
             frames: val
                 .frames
@@ -620,7 +630,7 @@ impl From<Transaction> for FrameTransaction {
                     mode: f.mode.try_into().unwrap(),
                     flags: f.flags.try_into().unwrap(),
                     target: f.target,
-                    gas_limit: f.gas_limit.try_into().unwrap(),
+                    gas_limit: f.gas_limit.try_into().unwrap_or(u64::MAX),
                     value: f.value,
                     data: f.data,
                 })
@@ -636,16 +646,10 @@ impl From<Transaction> for FrameTransaction {
                     signature: s.signature,
                 })
                 .collect(),
-            max_priority_fee_per_gas: val
-                .max_priority_fee_per_gas
-                .unwrap_or_default()
-                .try_into()
-                .unwrap(),
+            max_priority_fee_per_gas: val.max_priority_fee_per_gas.unwrap_or_default(),
             max_fee_per_gas: val
                 .max_fee_per_gas
-                .unwrap_or(val.gas_price.unwrap_or_default())
-                .try_into()
-                .unwrap(),
+                .unwrap_or(val.gas_price.unwrap_or_default()),
             max_fee_per_blob_gas: val.max_fee_per_blob_gas.unwrap_or_default(),
             blob_versioned_hashes: val.blob_versioned_hashes.unwrap_or_default(),
             ..Default::default()
@@ -744,6 +748,10 @@ pub enum BlockChainExpectedException {
     /// at block RLP decoding (typed tx with a non-bool `y_parity` byte) or during
     /// execution (legacy tx sender recovery rejects the signature).
     InvalidSignature,
+    /// A fee field, or the `gas_limit * price` product, that exceeds what
+    /// ethrex's `u64` fee and gas fields can hold. Rejected while decoding
+    /// rather than at validation.
+    FeeOverflow,
     /// EIP-8141: a type-0x06 transaction whose frame list breaks a structural
     /// rule (frame count, reserved mode or flag bits, a target a frame's mode
     /// forbids). ethrex enforces several of these in the RLP decoder, so this
