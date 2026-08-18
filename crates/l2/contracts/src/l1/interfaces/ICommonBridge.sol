@@ -43,6 +43,17 @@ interface ICommonBridge {
     /// @param newL2GasLimit The new L2 gas limit.
     event L2GasLimitUpdated(uint256 newL2GasLimit);
 
+    /// @notice An intent from L2 has been consumed.
+    /// @dev Event emitted when an intent is verified and marked as consumed.
+    /// @param batchNumber the batch number where the intent was emitted.
+    /// @param messageId the message Id of the consumed intent.
+    /// @param intentHash the hash that was sent from L2.
+    event IntentConsumed(
+        uint256 indexed batchNumber,
+        uint256 indexed messageId,
+        bytes32 indexed intentHash
+    );
+
     struct SendValues {
         address to;
         uint256 gasLimit;
@@ -217,6 +228,47 @@ interface ICommonBridge {
         uint256 l2WithdrawalBatchNumber,
         uint256 withdrawalLogIndex,
         bytes32[] calldata withdrawalProof
+    ) external;
+
+    /// @notice Hash an intent the way sendIntentToL1 does on L2.
+    /// @param senderOnL2 the address that sent the intent on L2.
+    /// @param consumerOnL1 the address the sender named as the consumer.
+    /// @param payloadHash the payload the sender committed to.
+    /// @return The hash the L2 bridge sent to L1.
+    function intentHash(
+        address senderOnL2,
+        address consumerOnL1,
+        bytes32 payloadHash
+    ) external view returns (bytes32);
+
+    /// @notice Whether an intent has already been consumed.
+    /// @param senderOnL2 the address that sent the intent on L2.
+    /// @param consumerOnL1 the address the sender named as the consumer.
+    /// @param payloadHash the payload the sender committed to.
+    /// @param messageId the message Id of the intent.
+    /// @return True if the intent was already consumed.
+    function isIntentConsumed(
+        address senderOnL2,
+        address consumerOnL1,
+        bytes32 payloadHash,
+        uint256 messageId
+    ) external view returns (bool);
+
+    /// @notice Verifies an intent from L2 and marks it as consumed.
+    /// @dev The intent must belong to a batch that was committed and verified.
+    /// @dev The caller must be the consumer the sender named on L2, and can only
+    /// @dev consume the intent once.
+    /// @param senderOnL2 the address that sent the intent on L2.
+    /// @param payloadHash the payload the sender committed to.
+    /// @param batchNumber the batch number where the intent was emitted.
+    /// @param messageId the message Id of the intent.
+    /// @param proof the merkle path to the message log.
+    function verifyAndConsume(
+        address senderOnL2,
+        bytes32 payloadHash,
+        uint256 batchNumber,
+        uint256 messageId,
+        bytes32[] calldata proof
     ) external;
 
     /// @notice Checks if the sequencer has exceeded it's processing deadlines
