@@ -108,6 +108,13 @@ hex-literal = "0.4.1"
 crc32fast = "1.4.2"
 lazy_static = "1.5.0"
 lru = "0.16.2"
+# TXT lookups for EIP-1459 DNS node lists. `system-config` reads the platform
+# resolver settings; the TLS/DoH transports are left off since the node lists
+# are served over plain DNS and their contents are signature-verified anyway.
+hickory-resolver = { version = "0.26.1", default-features = false, features = [
+  "system-config",
+  "tokio",
+] }
 sha2 = "0.10.9"
 sha3 = "0.10.8"
 tokio-util = { version = "0.7.15", features = ["rt"] }

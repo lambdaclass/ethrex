@@ -58,6 +58,9 @@ lru.workspace = true
 rayon = "1.10.0"
 crossbeam.workspace = true
 
+# EIP-1459 DNS discovery
+hickory-resolver.workspace = true
+
 [dev-dependencies]
 hex-literal.workspace = true
 tempfile = "3"

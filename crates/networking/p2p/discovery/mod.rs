@@ -13,6 +13,7 @@
 pub mod codec;
 mod discv4_handlers;
 mod discv5_handlers;
+pub mod dns;
 pub mod lookup;
 pub mod server;
 
@@ -26,6 +27,8 @@ pub struct DiscoveryConfig {
     pub discv4_enabled: bool,
     pub discv5_enabled: bool,
     pub initial_lookup_interval: f64,
+    /// EIP-1459 trees to pull bootstrap nodes from. Empty disables DNS discovery.
+    pub dns_discovery_links: Vec<dns::EnrTreeLink>,
 }
 
 impl Default for DiscoveryConfig {
@@ -34,6 +37,7 @@ impl Default for DiscoveryConfig {
             discv4_enabled: true,
             discv5_enabled: true,
             initial_lookup_interval: INITIAL_LOOKUP_INTERVAL_MS,
+            dns_discovery_links: Vec::new(),
         }
     }
 }

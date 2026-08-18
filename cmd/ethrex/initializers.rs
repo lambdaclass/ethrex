@@ -17,6 +17,7 @@ use ethrex_metrics::rpc::initialize_rpc_metrics;
 use ethrex_p2p::rlpx::initiator::RLPxInitiator;
 use ethrex_p2p::{
     DiscoveryConfig,
+    discovery::dns::EnrTreeLink,
     network::P2PContext,
     peer_handler::PeerHandler,
     peer_table::{PeerTable, PeerTableServer},
@@ -382,6 +383,7 @@ pub async fn init_network(
     let discovery_config = DiscoveryConfig {
         discv4_enabled: opts.discv4_enabled,
         discv5_enabled: opts.discv5_enabled,
+        dns_discovery_links: get_dns_discovery_links(opts, network),
         ..Default::default()
     };
 
@@ -476,6 +478,30 @@ pub fn get_bootnodes(opts: &Options, network: &Network, datadir: &Path) -> Vec<N
     }
 
     bootnodes
+}
+
+/// Resolves the EIP-1459 trees to use: the CLI value if given (an empty string
+/// disables DNS discovery), otherwise the network's known list.
+pub fn get_dns_discovery_links(opts: &Options, network: &Network) -> Vec<EnrTreeLink> {
+    let urls = match opts.discovery_dns.as_deref() {
+        Some(urls) => urls
+            .split(',')
+            .map(str::trim)
+            .filter(|url| !url.is_empty())
+            .map(str::to_string)
+            .collect(),
+        None => network.get_dns_discovery_links(),
+    };
+
+    urls.iter()
+        .filter_map(|url| match url.parse() {
+            Ok(link) => Some(link),
+            Err(e) => {
+                warn!("Ignoring invalid DNS discovery URL {url}: {e}");
+                None
+            }
+        })
+        .collect()
 }
 
 pub fn get_signer(datadir: &Path) -> SecretKey {

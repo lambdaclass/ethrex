@@ -160,7 +160,27 @@ impl Network {
         };
         serde_json::from_str(bootnodes).expect("bootnodes file should be valid JSON")
     }
+
+    /// EIP-1459 node lists for this network.
+    ///
+    /// These are a second, independent way into the network: the hardcoded
+    /// bootnodes are a handful of hosts, and when they stop answering a node
+    /// with an empty peer table has no other way to bootstrap discovery.
+    pub fn get_dns_discovery_links(&self) -> Vec<String> {
+        let network = match self {
+            Network::PublicNetwork(PublicNetwork::Hoodi) => "hoodi",
+            Network::PublicNetwork(PublicNetwork::Mainnet) => "mainnet",
+            Network::PublicNetwork(PublicNetwork::Sepolia) => "sepolia",
+            _ => return vec![],
+        };
+        vec![format!("{ETHDISCO_TREE_KEY}@all.{network}.ethdisco.net")]
+    }
 }
+
+/// Public key of the EF DevOps trees published under `*.ethdisco.net`. Every
+/// network's list is signed by this key, so a hijacked resolver cannot inject
+/// nodes — the root signature check will reject them.
+const ETHDISCO_TREE_KEY: &str = "enrtree://AKA3AM6LPBYEUDMVNU3BSVQJ5AD45Y7YPOHJLEF6W26QOE4VTUDPE";
 
 fn get_genesis_contents(network: PublicNetwork) -> &'static str {
     match network {
