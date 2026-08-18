@@ -337,7 +337,7 @@ pub async fn deposit_erc20(
     from_signer: &Signer,
     eth_client: &EthClient,
 ) -> Result<H256, EthClientError> {
-    println!("Claiming {amount} from bridge to {from:#x}");
+    println!("Depositing {amount} from {from:#x} to bridge");
 
     const DEPOSIT_ERC20_SIGNATURE: &str = "depositERC20(address,address,address,uint256)";
 
@@ -1128,6 +1128,20 @@ pub async fn get_last_committed_batch(
     on_chain_proposer_address: Address,
 ) -> Result<u64, EthClientError> {
     _call_u64_variable(client, b"lastCommittedBatch()", on_chain_proposer_address).await
+}
+
+pub async fn get_native_rollup_block_number(
+    client: &EthClient,
+    contract_address: Address,
+) -> Result<u64, EthClientError> {
+    _call_u64_variable(client, b"blockNumber()", contract_address).await
+}
+
+pub async fn get_native_rollup_l1_message_index(
+    client: &EthClient,
+    contract_address: Address,
+) -> Result<u64, EthClientError> {
+    _call_u64_variable(client, b"l1MessageIndex()", contract_address).await
 }
 
 pub async fn get_last_verified_batch(
