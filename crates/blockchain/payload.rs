@@ -995,9 +995,16 @@ impl Blockchain {
             ))
             .into());
         }
-        if context.blobs_bundle.blobs.len() + blob_count > max_blob_number_per_block {
-            // This error will only be used for debug tracing
-            return Err(EvmError::Custom("max data blobs reached".to_string()).into());
+        // Count already-included blobs via the accumulated header blob gas:
+        // in mempool builds this equals the blobs-bundle length, but explicit
+        // builds (`testing_buildBlockV1`, t8n) carry no sidecars, where the
+        // bundle length would stay zero and never enforce the block cap.
+        let included_blobs =
+            context.payload.header.blob_gas_used.unwrap_or_default() / u64::from(GAS_PER_BLOB);
+        if included_blobs as usize + blob_count > max_blob_number_per_block {
+            return Err(ChainError::InvalidBlock(
+                InvalidBlockError::ExceededMaxBlobGasPerBlock,
+            ));
         };
         // Apply transaction
         let receipt = apply_plain_transaction(head, context)?;
