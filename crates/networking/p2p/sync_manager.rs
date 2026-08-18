@@ -66,7 +66,7 @@ impl SyncManager {
         // block > 0 means the node has previously synced. For pre-merge networks,
         // use merge_netsplit_block as threshold to avoid false positives in hive tests.
         if snap_enabled.load(Ordering::Relaxed) {
-            let latest_block = store.get_latest_block_number().await.unwrap_or(0);
+            let latest_block = store.get_latest_block_number().unwrap_or(0);
             let chain_config = store.get_chain_config();
             let is_synced = if chain_config.terminal_total_difficulty_passed {
                 latest_block > 0

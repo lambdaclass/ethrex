@@ -1,7 +1,7 @@
 pub mod db;
 mod tracing;
 
-use super::{BlockExecutionResult, FrameValidationOutcome, TxGasBreakdown};
+use super::{BlockExecutionResult, FrameValidationOutcome, TxGasBreakdown, compute_burned_fees};
 use crate::system_contracts::{
     AMSTERDAM_REQUEST_PREDEPLOYS, BEACON_ROOTS_ADDRESS, BUILDER_DEPOSIT_CONTRACT_ADDRESS,
     BUILDER_EXIT_CONTRACT_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
@@ -11,13 +11,13 @@ use crate::system_contracts::{
 use crate::{EvmError, ExecutionResult};
 use bytes::Bytes;
 use ethrex_common::H256;
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 use ethrex_common::constants::EMPTY_KECCAK_HASH;
 use ethrex_common::types::Code;
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 use ethrex_common::types::TxType;
 use ethrex_common::types::block_access_list::BlockAccessList;
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 use ethrex_common::types::block_access_list::{
     BalAddressIndex, find_exact_change_balance, find_exact_change_code, find_exact_change_nonce,
     find_exact_change_storage, has_exact_change_balance, has_exact_change_code,
@@ -25,7 +25,7 @@ use ethrex_common::types::block_access_list::{
 };
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{AuthorizationTuple, EIP7702Transaction};
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 use ethrex_common::utils::u256_from_big_endian_const;
 use ethrex_common::{
     Address, U256,
@@ -35,22 +35,23 @@ use ethrex_common::{
         Withdrawal, requests::Requests,
     },
 };
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 use ethrex_common::{BigEndianHash, validate_block_access_list_size, validate_header_bal_indices};
 use ethrex_crypto::Crypto;
 use ethrex_levm::EVMConfig;
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+use ethrex_levm::StatelessValidator;
+#[cfg(feature = "rayon")]
 use ethrex_levm::account::{AccountStatus, LevmAccount};
 use ethrex_levm::call_frame::Stack;
 use ethrex_levm::constants::{
     POST_OSAKA_GAS_LIMIT_CAP, STACK_LIMIT, SYS_CALL_GAS_LIMIT, TX_MAX_GAS_LIMIT_AMSTERDAM,
 };
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 use ethrex_levm::db::gen_db::{
     LazyBalCursor, code_from_bal, post_value_at_or_before, seed_one_address_info_from_bal,
 };
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 use ethrex_levm::db::{Database, gen_db::CacheDB};
 use ethrex_levm::errors::{InternalError, TxValidationError};
 use ethrex_levm::memory::Memory;
@@ -65,16 +66,42 @@ use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},
     vm::VM,
 };
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cmp::min;
 use std::sync::Arc;
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
+
+/// EIP-8079 `burned_fees` for an LStar block: `base_fee · post_refund_gas +
+/// blob_base_fee · blob_gas_used`. `post_refund_gas` is the block's post-refund
+/// Σ gas_spent (the running `cumulative_gas_used`, equivalently the last
+/// receipt's `cumulative_gas_used`). Callers gate this on `is_lstar` and wrap
+/// the result in `Some`. Extracted so the production and verification paths
+/// (`execute_block` and both `execute_block_pipeline` arms) derive the burn
+/// identically.
+fn lstar_burned_fees(
+    chain_config: &ethrex_common::types::ChainConfig,
+    header: &ethrex_common::types::BlockHeader,
+    post_refund_gas: u64,
+) -> u64 {
+    let evm_cfg = EVMConfig::new_from_chain_config(chain_config, header);
+    let blob_base_fee = get_base_fee_per_blob_gas(header.excess_blob_gas, &evm_cfg)
+        .map(|v| u64::try_from(v).unwrap_or(u64::MAX))
+        .unwrap_or(0);
+    let blob_gas_used = header.blob_gas_used.unwrap_or(0);
+    compute_burned_fees(
+        header.base_fee_per_gas.unwrap_or(0),
+        // EIP-8079: burn basis is post-refund Σ gas_spent.
+        post_refund_gas,
+        blob_base_fee,
+        blob_gas_used,
+    )
+}
 
 /// The struct implements the following functions:
 /// [LEVM::execute_block]
@@ -176,7 +203,7 @@ pub fn check_2d_gas_allowance(
 ///
 /// Public so [`LEVM::validate_tx_execution`] is directly callable (and its
 /// error variants inspectable) from unit tests outside this crate.
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 #[derive(Debug, thiserror::Error)]
 pub enum BalValidationError {
     #[error("{0}")]
@@ -195,9 +222,12 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
         crypto: &dyn Crypto,
+        stateless_validator: Option<&dyn StatelessValidator>,
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
         let chain_config = db.store.get_chain_config()?;
         let is_amsterdam = chain_config.is_amsterdam_activated(block.header.timestamp);
+        // EIP-8079 (LStar+): compute burned fees
+        let is_lstar = chain_config.is_lstar_activated(block.header.timestamp);
 
         // EIP-7928 BlockAccessIndex is uint32. Block validity forbids >= 2^32 txs
         // long before we'd reach this point, but guard the invariant explicitly
@@ -293,6 +323,7 @@ impl LEVM {
                 crypto,
                 evm_config,
                 chain_id,
+                stateless_validator,
             )?;
 
             tx_gas_breakdowns.push(TxGasBreakdown::from_report(
@@ -401,6 +432,9 @@ impl LEVM {
                 receipts,
                 requests,
                 block_gas_used,
+                // cumulative_gas_used is accumulated as += report.gas_spent (post-refund).
+                burned_fees: is_lstar
+                    .then(|| lstar_burned_fees(&chain_config, &block.header, cumulative_gas_used)),
                 tx_gas_breakdowns,
             },
             bal,
@@ -420,9 +454,11 @@ impl LEVM {
         crypto: &dyn Crypto,
         header_bal: Option<Arc<BlockAccessList>>,
         bal_parallel_exec_enabled: bool,
+        stateless_validator: Option<&dyn StatelessValidator>,
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
         let chain_config = db.store.get_chain_config()?;
         let is_amsterdam = chain_config.is_amsterdam_activated(block.header.timestamp);
+        let is_lstar = chain_config.is_lstar_activated(block.header.timestamp);
         // Block-invariant EVM config + chain id, computed once and reused by every tx
         // (avoids a per-tx chain-config dyn-dispatch copy + fork/blob-schedule recompute).
         let evm_config = EVMConfig::new_from_chain_config(&chain_config, &block.header);
@@ -442,11 +478,11 @@ impl LEVM {
                     EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
                 })?;
 
-        #[cfg(any(feature = "eip-8025", not(feature = "rayon")))]
-        // `eip-8025` does not call `execute_block_pipeline` it uses
-        // `execute_block` instead. Adding dummy let to avoid unused warnings.
+        #[cfg(not(feature = "rayon"))]
+        // Without rayon there is no parallel BAL path, so these are unused.
+        // Adding dummy let to avoid unused warnings.
         let _ = (header_bal, bal_parallel_exec_enabled);
-        #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+        #[cfg(feature = "rayon")]
         // When BAL is provided (Amsterdam+ validation path): use parallel execution.
         // The `is_amsterdam` gate is required: `execute_block_parallel` (and the
         // optimistic merkleization it feeds) is only correct on Amsterdam+; a
@@ -494,6 +530,7 @@ impl LEVM {
                 system_seed,
                 crypto,
                 Arc::clone(&validation_index),
+                stateless_validator,
             );
 
             // If parallel execution failed (e.g. BAL validation), still check system
@@ -616,11 +653,19 @@ impl LEVM {
             validate_block_access_list_size(&block.header, &chain_config, &bal)
                 .map_err(|e| EvmError::Custom(e.to_string()))?;
 
+            // EIP-8079: burn basis is post-refund Σ gas_spent.
+            // Each receipt's cumulative_gas_used += report.gas_spent (post-refund);
+            // the last receipt holds the block total. Compute before `receipts` is moved.
+            let post_refund_gas = receipts.last().map(|r| r.cumulative_gas_used).unwrap_or(0);
+            let burned_fees_par =
+                is_lstar.then(|| lstar_burned_fees(&chain_config, &block.header, post_refund_gas));
+
             return Ok((
                 BlockExecutionResult {
                     receipts,
                     requests,
                     block_gas_used,
+                    burned_fees: burned_fees_par,
                     tx_gas_breakdowns,
                 },
                 None,
@@ -714,6 +759,7 @@ impl LEVM {
                 crypto,
                 evm_config,
                 chain_id,
+                stateless_validator,
             )?;
 
             tx_gas_breakdowns.push(TxGasBreakdown::from_report(
@@ -837,6 +883,9 @@ impl LEVM {
                 receipts,
                 requests,
                 block_gas_used,
+                // cumulative_gas_used is accumulated as += report.gas_spent (post-refund).
+                burned_fees: is_lstar
+                    .then(|| lstar_burned_fees(&chain_config, &block.header, cumulative_gas_used)),
                 tx_gas_breakdowns,
             },
             bal,
@@ -847,7 +896,7 @@ impl LEVM {
     /// For each account in the BAL, extracts the **final** post-block state
     /// (highest `block_access_index` entry per field) and builds an AccountUpdate.
     /// State comes entirely from the BAL — no execution needed.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     fn bal_to_account_updates(
         bal: &BlockAccessList,
         store: &dyn Database,
@@ -868,9 +917,10 @@ impl LEVM {
             })
             .map(|ac| ac.address)
             .collect();
-        store
-            .prefetch_accounts(&write_addrs)
-            .map_err(|e| EvmError::Custom(format!("bal_to_account_updates prefetch: {e}")))?;
+        // Best-effort: the loop below reads every account it needs through
+        // `get_account_state`, so a failed warm costs cache hits and nothing else.
+        // Propagating it here would let a prefetch turn into a block-processing error.
+        let _ = store.prefetch_accounts(&write_addrs);
 
         for acct_changes in bal.accounts() {
             let addr = acct_changes.address;
@@ -990,7 +1040,7 @@ impl LEVM {
     /// `max_idx` is the BAL block_access_index of the last tx whose effects
     /// should be visible. BAL indexing: 0 = system calls, 1 = tx 0, 2 = tx 1, ...
     /// For tx at index `i`, pass `max_idx = i` (diffs with index <= i = system + txs 0..i-1).
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     fn seed_db_from_bal(
         db: &mut GeneralizedDatabase,
         bal: &BlockAccessList,
@@ -1039,7 +1089,7 @@ impl LEVM {
     /// Each tx runs independently on its own database pre-seeded with BAL
     /// intermediate state (geth-style). State for the merkleizer comes from
     /// `bal_to_account_updates`, not from tx execution.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     #[allow(clippy::too_many_arguments, clippy::type_complexity)]
     fn execute_block_parallel(
         block: &Block,
@@ -1052,6 +1102,7 @@ impl LEVM {
         system_seed: Arc<CacheDB>,
         crypto: &dyn Crypto,
         validation_index: Arc<BalAddressIndex>,
+        stateless_validator: Option<&dyn StatelessValidator>,
     ) -> Result<
         (
             Vec<Receipt>,
@@ -1214,6 +1265,7 @@ impl LEVM {
                     crypto,
                     evm_config,
                     chain_id,
+                    stateless_validator,
                 )?;
 
                 let current_state = std::mem::take(&mut tx_db.current_accounts_state);
@@ -1505,7 +1557,7 @@ impl LEVM {
 
     /// Gets the seeded balance for an account at `seed_idx` from BAL, falling
     /// back to system_seed/store if no BAL entry exists before that index.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     fn seeded_balance(
         seed_idx: u32,
         acct: &ethrex_common::types::block_access_list::AccountChanges,
@@ -1534,7 +1586,7 @@ impl LEVM {
 
     /// Gets the seeded code hash for an account at `seed_idx` from BAL, falling
     /// back to system_seed/store if no BAL entry exists before that index.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     fn seeded_code_hash(
         seed_idx: u32,
         acct: &ethrex_common::types::block_access_list::AccountChanges,
@@ -1568,7 +1620,7 @@ impl LEVM {
 
     /// Gets the seeded nonce for an account at `seed_idx` from BAL, falling
     /// back to system_seed/store if no BAL entry exists before that index.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     fn seeded_nonce(
         seed_idx: u32,
         acct: &ethrex_common::types::block_access_list::AccountChanges,
@@ -1602,7 +1654,7 @@ impl LEVM {
     /// `seeded_nonce` + `seeded_code_hash`, but reads the store at most once — the
     /// PART A no-op checks need all three for the same account, and an account
     /// with no BAL history before this tx would otherwise read it three times.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     fn seeded_account_triple(
         seed_idx: u32,
         acct: &ethrex_common::types::block_access_list::AccountChanges,
@@ -1661,7 +1713,7 @@ impl LEVM {
     /// the recorder's `tx_initial` fast-path (a slot the EVM genuinely wrote this
     /// tx), else the pre-tx state (system_seed, then store). Used by the
     /// execution->BAL check for a slot absent from `storage_changes`.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     fn seeded_storage_pre_value(
         addr: Address,
         key: H256,
@@ -1678,7 +1730,7 @@ impl LEVM {
 
     /// Pre-tx value for a slot from the in-memory snapshot, falling back to the
     /// store. Shared tail of the two `seeded_storage*` helpers.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     fn storage_from_seed_or_store(
         addr: Address,
         key: H256,
@@ -1707,7 +1759,7 @@ impl LEVM {
     /// Fast path: for a slot the EVM genuinely wrote this tx, `tx_initial` already
     /// holds the start-of-tx value it captured during execution — identical to what
     /// this function would otherwise recompute — so return it and skip the lookup.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     fn seeded_storage(
         seed_idx: u32,
         sc: &ethrex_common::types::block_access_list::SlotChange,
@@ -1757,7 +1809,7 @@ impl LEVM {
     /// Exposed as `pub` (rather than crate-private) solely so the direct
     /// `validate_tx_execution` unit tests in the `ethrex-test` crate
     /// (`test/tests/blockchain/bal_validate_tx_execution_tests.rs`) can call it.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     #[allow(clippy::too_many_arguments)]
     pub fn validate_tx_execution(
         bal_idx: u32,
@@ -2214,7 +2266,7 @@ impl LEVM {
     ///         malicious builder could omit a withdrawal recipient from the BAL,
     ///         causing the BAL-derived state root to exclude the withdrawal balance
     ///         change.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     fn validate_bal_withdrawal_index(
         db: &GeneralizedDatabase,
         bal: &BlockAccessList,
@@ -2520,7 +2572,7 @@ impl LEVM {
     /// state, or whose value equals the pre-block value (a no-op), is rejected.
     /// Omissions and genuine divergences change the state root and are already
     /// caught by `validate_state_root`; the no-op case is the one this closes.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     fn validate_bal_pre_exec_index(
         db: &GeneralizedDatabase,
         bal: &BlockAccessList,
@@ -2675,7 +2727,7 @@ impl LEVM {
     /// The `store` parameter should be a `CachingDatabase`-wrapped store so that
     /// parallel workers can benefit from shared caching. The same cache should
     /// be used by the sequential execution phase.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     pub fn warm_block(
         block: &Block,
         store: Arc<dyn Database>,
@@ -2729,7 +2781,7 @@ impl LEVM {
     /// transaction, so cancellation latency is bounded by one transaction's
     /// execution. Execution results are discarded — only cache population
     /// matters.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     pub fn warm_txs(
         txs_with_sender: &[(&Transaction, Address)],
         header: &BlockHeader,
@@ -2784,6 +2836,9 @@ impl LEVM {
                         crypto,
                         evm_config,
                         chain_id,
+                        // Warming discards results; the EXECUTE precompile is not run
+                        // here (the real execution path carries the validator).
+                        None,
                     );
                 }
             },
@@ -2793,7 +2848,7 @@ impl LEVM {
 
     /// Flattened (address, slot) storage worklist for a BAL, in natural account
     /// order (slots grouped per account for storage-trie locality).
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     pub fn bal_storage_slots(bal: &BlockAccessList) -> Vec<(Address, H256)> {
         bal.accounts()
             .iter()
@@ -2812,7 +2867,7 @@ impl LEVM {
     /// call site in `blockchain.rs`); warming them concurrently here let the
     /// executor race the warmer to the trie for SSTORE original values and cost
     /// ~22% of CPU. Keep storage warming synchronous and up front.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     pub fn warm_block_from_bal(
         bal: &BlockAccessList,
         store: Arc<dyn Database>,
@@ -2943,6 +2998,7 @@ impl LEVM {
             fee_token: tx.fee_token(),
             disable_balance_check: false,
             disable_nonce_check: false,
+            disable_gas_allowance_check: false,
             is_system_call: false,
         };
 
@@ -2959,9 +3015,18 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
         crypto: &dyn Crypto,
+        stateless_validator: Option<&dyn StatelessValidator>,
     ) -> Result<ExecutionReport, EvmError> {
         let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
-        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, crypto)?;
+        let mut vm = VM::new(
+            env,
+            db,
+            tx,
+            LevmCallTracer::disabled(),
+            vm_type,
+            crypto,
+            stateless_validator,
+        )?;
 
         vm.execute().map_err(VMError::into)
     }
@@ -2985,6 +3050,7 @@ impl LEVM {
         crypto: &dyn Crypto,
         config: EVMConfig,
         chain_id: u64,
+        stateless_validator: Option<&dyn StatelessValidator>,
     ) -> Result<ExecutionReport, EvmError> {
         let mut env = Self::setup_env_with_config(
             tx,
@@ -3006,6 +3072,7 @@ impl LEVM {
             LevmCallTracer::disabled(),
             vm_type,
             crypto,
+            stateless_validator,
             stack_pool,
             memory_pool,
         )?;
@@ -3028,15 +3095,19 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
         crypto: &dyn Crypto,
+        stateless_validator: Option<&dyn StatelessValidator>,
     ) -> Result<ExecutionResult, EvmError> {
         let mut env = env_from_generic(tx, block_header, db, vm_type)?;
 
-        env.block_gas_limit = i64::MAX as u64; // disable block gas limit
+        // Let the call run with a `gas` above the block's limit, but leave
+        // `block_gas_limit` at the block's real value: the GASLIMIT opcode reads it, so
+        // overwriting it makes 0x45 return a number that appears nowhere on chain.
+        env.disable_gas_allowance_check = true;
 
         adjust_disabled_base_fee(&mut env);
 
         let converted_tx = generic_tx_to_transaction(tx)?;
-        let mut vm = vm_from_generic(&converted_tx, env, db, vm_type, crypto)?;
+        let mut vm = vm_from_generic(&converted_tx, env, db, vm_type, crypto, stateless_validator)?;
 
         vm.execute()
             .map(|value| value.into())
@@ -3080,7 +3151,15 @@ impl LEVM {
         let sender = frame_tx.sender;
 
         let env = Self::setup_env(tx, sender, block_header, db, vm_type)?;
-        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, crypto)?;
+        let mut vm = VM::new(
+            env,
+            db,
+            tx,
+            LevmCallTracer::disabled(),
+            vm_type,
+            crypto,
+            None,
+        )?;
 
         // OQ1: no canonical paymaster is resolvable, so the canonical pay-frame
         // exemption never fires (always `None`).
@@ -3468,14 +3547,14 @@ impl LEVM {
         adjust_disabled_base_fee(&mut env);
 
         let converted_tx = generic_tx_to_transaction(&tx)?;
-        let mut vm = vm_from_generic(&converted_tx, env.clone(), db, vm_type, crypto)?;
+        let mut vm = vm_from_generic(&converted_tx, env.clone(), db, vm_type, crypto, None)?;
 
         vm.stateless_execute()?;
 
         // Execute the tx again, now with the created access list.
         tx.access_list = vm.substate.make_access_list();
         let converted_tx = generic_tx_to_transaction(&tx)?;
-        let mut vm = vm_from_generic(&converted_tx, env, db, vm_type, crypto)?;
+        let mut vm = vm_from_generic(&converted_tx, env, db, vm_type, crypto, None)?;
 
         let report = vm.stateless_execute()?;
 
@@ -3605,9 +3684,17 @@ pub fn generic_system_contract_levm(
         recorder.enter_system_call();
     }
 
-    let result = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, crypto)
-        .and_then(|mut vm| vm.execute())
-        .map_err(EvmError::from);
+    let result = VM::new(
+        env,
+        db,
+        tx,
+        LevmCallTracer::disabled(),
+        vm_type,
+        crypto,
+        None,
+    )
+    .and_then(|mut vm| vm.execute())
+    .map_err(EvmError::from);
 
     // EIP-7928: Exit system call mode before restoring accounts (must run even on error)
     if let Some(recorder) = db.bal_recorder.as_mut() {
@@ -3809,11 +3896,14 @@ fn env_from_generic(
         fee_token: tx.fee_token,
         disable_balance_check: false,
         // Every `env_from_generic` caller is a simulation RPC (eth_call,
-        // eth_estimateGas, eth_createAccessList). Those run relaxed messages
-        // with no nonce enforcement: a call object without `nonce` defaults
-        // `tx_nonce` to 0 above, which the hook would otherwise reject for
-        // any sender whose nonce is nonzero.
+        // eth_estimateGas, eth_createAccessList, debug_traceCall). Those run
+        // relaxed messages with no nonce enforcement: a call object without
+        // `nonce` defaults `tx_nonce` to 0 above, which the hook would otherwise
+        // reject for any sender whose nonce is nonzero.
         disable_nonce_check: true,
+        // Opt-in per caller: `simulate_tx_from_generic` and `debug_traceCall` relax it so
+        // an over-limit `gas` still runs, while `create_access_list` keeps enforcing it.
+        disable_gas_allowance_check: false,
         is_system_call: false,
     })
 }
@@ -3864,9 +3954,18 @@ fn vm_from_generic<'a>(
     db: &'a mut GeneralizedDatabase,
     vm_type: VMType,
     crypto: &'a dyn Crypto,
+    stateless_validator: Option<&'a dyn StatelessValidator>,
 ) -> Result<VM<'a>, VMError> {
     let vm_type = adjust_disabled_l2_fees(&env, vm_type);
-    VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, crypto)
+    VM::new(
+        env,
+        db,
+        tx,
+        LevmCallTracer::disabled(),
+        vm_type,
+        crypto,
+        stateless_validator,
+    )
 }
 
 pub fn get_max_allowed_gas_limit(block_gas_limit: u64, fork: Fork) -> u64 {
@@ -3934,7 +4033,9 @@ fn describe_balance_diff(expected: U256, actual: U256) -> String {
     format!("{sign}{mag_u128} wei")
 }
 
-#[cfg(test)]
+// Exercises the rayon-parallel-BAL execution path (and shares its
+// `rayon`-gated imports), so it only builds when that feature is on.
+#[cfg(all(test, feature = "rayon"))]
 mod bal_tests {
     use super::*;
     use ethrex_common::H256;
@@ -4289,5 +4390,559 @@ mod system_call_coinbase_tests {
     #[test]
     fn history_address_coinbase_preserves_history_storage_write() {
         assert_history_write_emitted(HISTORY_STORAGE_ADDRESS.address);
+    }
+}
+
+/// Tests for EIP-8079 burned_fees computation in execute_block (LStar-gated).
+///
+/// Shares the non-guest execution path's `rayon`-gated imports
+/// (`EMPTY_KECCAK_HASH`, `FxHashMap`, `Database`), so it only builds with rayon.
+#[cfg(all(test, feature = "rayon"))]
+mod burned_fees_tests {
+    use super::*;
+    use ethrex_common::{
+        constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH},
+        types::{AccountState, Block, BlockBody, BlockHeader, ChainConfig, Code, CodeMetadata},
+        utils::keccak,
+    };
+    use ethrex_crypto::NativeCrypto;
+    use ethrex_levm::errors::DatabaseError;
+    use ethrex_rlp::encode::PayloadRLPEncode;
+
+    // ── helpers ─────────────────────────────────────────────────────────────
+
+    fn lstar_chain_config() -> ChainConfig {
+        ChainConfig {
+            chain_id: 1,
+            homestead_block: Some(0),
+            eip150_block: Some(0),
+            eip155_block: Some(0),
+            eip158_block: Some(0),
+            byzantium_block: Some(0),
+            constantinople_block: Some(0),
+            petersburg_block: Some(0),
+            istanbul_block: Some(0),
+            berlin_block: Some(0),
+            london_block: Some(0),
+            terminal_total_difficulty: Some(0),
+            terminal_total_difficulty_passed: true,
+            shanghai_time: Some(0),
+            cancun_time: Some(0),
+            prague_time: Some(0),
+            amsterdam_time: Some(0),
+            lstar_time: Some(0),
+            ..Default::default()
+        }
+    }
+
+    fn amsterdam_chain_config() -> ChainConfig {
+        ChainConfig {
+            chain_id: 1,
+            homestead_block: Some(0),
+            eip150_block: Some(0),
+            eip155_block: Some(0),
+            eip158_block: Some(0),
+            byzantium_block: Some(0),
+            constantinople_block: Some(0),
+            petersburg_block: Some(0),
+            istanbul_block: Some(0),
+            berlin_block: Some(0),
+            london_block: Some(0),
+            terminal_total_difficulty: Some(0),
+            terminal_total_difficulty_passed: true,
+            shanghai_time: Some(0),
+            cancun_time: Some(0),
+            prague_time: Some(0),
+            amsterdam_time: Some(0),
+            lstar_time: None, // no LStar → burned_fees must be None
+            ..Default::default()
+        }
+    }
+
+    // ── mock database ────────────────────────────────────────────────────────
+
+    struct MockDB {
+        chain_config: ChainConfig,
+        accounts: FxHashMap<Address, (AccountState, Bytes)>,
+        /// Pre-set storage values (address, slot) → value.
+        storage: FxHashMap<(Address, H256), U256>,
+    }
+
+    impl MockDB {
+        fn new(chain_config: ChainConfig) -> Self {
+            Self {
+                chain_config,
+                accounts: FxHashMap::default(),
+                storage: FxHashMap::default(),
+            }
+        }
+
+        fn with_account(mut self, address: Address, balance: U256, code: Option<Bytes>) -> Self {
+            let code_bytes = code.unwrap_or_default();
+            let code_hash = if code_bytes.is_empty() {
+                *EMPTY_KECCAK_HASH
+            } else {
+                keccak(&code_bytes)
+            };
+            let state = AccountState {
+                nonce: 0,
+                balance,
+                storage_root: H256::zero(),
+                code_hash,
+            };
+            self.accounts.insert(address, (state, code_bytes));
+            self
+        }
+
+        fn with_storage(mut self, address: Address, slot: H256, value: U256) -> Self {
+            self.storage.insert((address, slot), value);
+            self
+        }
+    }
+
+    impl Database for MockDB {
+        fn get_account_state(&self, address: Address) -> Result<AccountState, DatabaseError> {
+            Ok(self
+                .accounts
+                .get(&address)
+                .map(|(s, _)| *s)
+                .unwrap_or_default())
+        }
+
+        fn get_storage_value(&self, address: Address, slot: H256) -> Result<U256, DatabaseError> {
+            Ok(self
+                .storage
+                .get(&(address, slot))
+                .copied()
+                .unwrap_or_default())
+        }
+
+        fn get_block_hash(&self, _: u64) -> Result<H256, DatabaseError> {
+            Ok(H256::zero())
+        }
+
+        fn get_chain_config(&self) -> Result<ChainConfig, DatabaseError> {
+            Ok(self.chain_config)
+        }
+
+        fn get_account_code(&self, code_hash: H256) -> Result<Code, DatabaseError> {
+            let crypto = NativeCrypto;
+            for (state, bytecode) in self.accounts.values() {
+                if state.code_hash == code_hash && !bytecode.is_empty() {
+                    return Ok(Code::from_bytecode(bytecode.clone(), &crypto));
+                }
+            }
+            Ok(Code::from_bytecode(Bytes::new(), &crypto))
+        }
+
+        fn get_code_metadata(&self, code_hash: H256) -> Result<CodeMetadata, DatabaseError> {
+            for (state, bytecode) in self.accounts.values() {
+                if state.code_hash == code_hash {
+                    return Ok(CodeMetadata {
+                        length: bytecode.len() as u64,
+                    });
+                }
+            }
+            Ok(CodeMetadata { length: 0 })
+        }
+    }
+
+    // ── signing ──────────────────────────────────────────────────────────────
+
+    const PRIVATE_KEY: [u8; 32] = [
+        0x4c, 0x08, 0x83, 0xa6, 0x91, 0x02, 0x93, 0x7d, 0x62, 0x31, 0x47, 0x1b, 0x5d, 0xbb, 0x62,
+        0x04, 0xfe, 0x51, 0x29, 0x61, 0x70, 0x82, 0x79, 0x2a, 0xe4, 0x68, 0xd0, 0x1a, 0x3f, 0x36,
+        0x23, 0x18,
+    ];
+
+    fn sender_address() -> Address {
+        use k256::ecdsa::SigningKey;
+        let signing_key = SigningKey::from_bytes(&PRIVATE_KEY.into()).expect("valid key");
+        let uncompressed_pub = signing_key.verifying_key().to_encoded_point(false);
+        let pub_hash = keccak(&uncompressed_pub.as_bytes()[1..]);
+        Address::from_slice(&pub_hash.0[12..])
+    }
+
+    /// Build a signed EIP-1559 ETH transfer.
+    /// base_fee = BASE_FEE, gas_limit = 21_000 → gas_spent = 21_000 (no refunds).
+    fn signed_eth_transfer(to: Address, nonce: u64, base_fee: u64) -> Transaction {
+        use k256::ecdsa::SigningKey;
+
+        let tx = EIP1559Transaction {
+            chain_id: 1,
+            nonce,
+            max_priority_fee_per_gas: 1,
+            max_fee_per_gas: base_fee + 10,
+            gas_limit: 21_000,
+            to: TxKind::Call(to),
+            value: U256::zero(),
+            ..Default::default()
+        };
+
+        // Signing hash: [0x02] || RLP(chain_id, nonce, max_priority, max_fee, gas, to, value, data, access_list)
+        let mut buf = vec![0x02u8];
+        tx.encode_payload(&mut buf);
+        let hash = keccak(&buf);
+
+        let signing_key = SigningKey::from_bytes(&PRIVATE_KEY.into()).expect("valid key");
+        let (sig, rid) = signing_key
+            .sign_prehash_recoverable(&hash.0)
+            .expect("sign ok");
+        let sig_bytes = sig.to_bytes();
+
+        Transaction::EIP1559Transaction(EIP1559Transaction {
+            signature_r: U256::from_big_endian(&sig_bytes[..32]),
+            signature_s: U256::from_big_endian(&sig_bytes[32..]),
+            signature_y_parity: rid.to_byte() != 0,
+            ..tx
+        })
+    }
+
+    // STOP opcode: system contracts need non-empty code (EIP-7002/7251 check).
+    const STOP_BYTECODE: &[u8] = &[0x00];
+
+    fn make_block_with_tx(tx: Transaction, base_fee: u64) -> Block {
+        let header = BlockHeader {
+            parent_hash: H256::zero(),
+            ommers_hash: *DEFAULT_OMMERS_HASH,
+            number: 1,
+            gas_limit: 1_000_000,
+            timestamp: 1,
+            base_fee_per_gas: Some(base_fee),
+            withdrawals_root: Some(H256::zero()),
+            requests_hash: Some(*DEFAULT_REQUESTS_HASH),
+            // No parent_beacon_block_root → skip beacon-root system call.
+            parent_beacon_block_root: None,
+            ..Default::default()
+        };
+        let body = BlockBody {
+            transactions: vec![tx],
+            ommers: vec![],
+            withdrawals: Some(vec![]),
+        };
+        Block::new(header, body)
+    }
+
+    fn make_gen_db(chain_config: ChainConfig) -> GeneralizedDatabase {
+        let sender = sender_address();
+        let stop = Bytes::from_static(STOP_BYTECODE);
+        let mock = MockDB::new(chain_config)
+            // Fund the sender with enough ETH to pay for gas + priority fee.
+            .with_account(sender, U256::from(1_000_000_000u64), None)
+            // Prague system contracts require non-empty code (EIP-7002/7251).
+            .with_account(
+                WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS.address,
+                U256::zero(),
+                Some(stop.clone()),
+            )
+            .with_account(
+                CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS.address,
+                U256::zero(),
+                Some(stop.clone()),
+            )
+            // EIP-8282 (Amsterdam) builder predeploys require non-empty code.
+            .with_account(
+                BUILDER_DEPOSIT_CONTRACT_ADDRESS.address,
+                U256::zero(),
+                Some(stop.clone()),
+            )
+            .with_account(
+                BUILDER_EXIT_CONTRACT_ADDRESS.address,
+                U256::zero(),
+                Some(stop),
+            );
+        GeneralizedDatabase::new(Arc::new(mock))
+    }
+
+    // Contract bytecode: PUSH1 0x00, PUSH1 0x00, SSTORE, STOP
+    // Clears storage slot 0.  When the slot's initial value is non-zero, the
+    // EIP-3529 "SSTORE_CLEARS_SCHEDULE" refund of 4800 gas is applied, making
+    // gas_used > gas_spent so block_gas_used ≠ cumulative_gas_used.
+    const SSTORE_CLEAR_BYTECODE: &[u8] = &[0x60, 0x00, 0x60, 0x00, 0x55, 0x00];
+
+    /// Build a signed EIP-1559 call to `to` with an explicit gas limit.
+    fn signed_call_tx(to: Address, nonce: u64, base_fee: u64, gas_limit: u64) -> Transaction {
+        use k256::ecdsa::SigningKey;
+
+        let tx = EIP1559Transaction {
+            chain_id: 1,
+            nonce,
+            max_priority_fee_per_gas: 1,
+            max_fee_per_gas: base_fee + 10,
+            gas_limit,
+            to: TxKind::Call(to),
+            value: U256::zero(),
+            ..Default::default()
+        };
+
+        let mut buf = vec![0x02u8];
+        tx.encode_payload(&mut buf);
+        let hash = keccak(&buf);
+
+        let signing_key = SigningKey::from_bytes(&PRIVATE_KEY.into()).expect("valid key");
+        let (sig, rid) = signing_key
+            .sign_prehash_recoverable(&hash.0)
+            .expect("sign ok");
+        let sig_bytes = sig.to_bytes();
+
+        Transaction::EIP1559Transaction(EIP1559Transaction {
+            signature_r: U256::from_big_endian(&sig_bytes[..32]),
+            signature_s: U256::from_big_endian(&sig_bytes[32..]),
+            signature_y_parity: rid.to_byte() != 0,
+            ..tx
+        })
+    }
+
+    /// DB with SSTORE_CLEAR_BYTECODE deployed at `contract_addr` and slot 0 = 1.
+    /// The sender has extra ETH to cover the higher gas_limit in the call tx.
+    fn make_gen_db_sstore_clear(
+        chain_config: ChainConfig,
+        contract_addr: Address,
+    ) -> GeneralizedDatabase {
+        let sender = sender_address();
+        let stop = Bytes::from_static(STOP_BYTECODE);
+        let mock = MockDB::new(chain_config)
+            .with_account(sender, U256::from(100_000_000_000u64), None)
+            .with_account(
+                WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS.address,
+                U256::zero(),
+                Some(stop.clone()),
+            )
+            .with_account(
+                CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS.address,
+                U256::zero(),
+                Some(stop.clone()),
+            )
+            // EIP-8282 (Amsterdam) builder predeploys require non-empty code.
+            .with_account(
+                BUILDER_DEPOSIT_CONTRACT_ADDRESS.address,
+                U256::zero(),
+                Some(stop.clone()),
+            )
+            .with_account(
+                BUILDER_EXIT_CONTRACT_ADDRESS.address,
+                U256::zero(),
+                Some(stop),
+            )
+            .with_account(
+                contract_addr,
+                U256::zero(),
+                Some(Bytes::from_static(SSTORE_CLEAR_BYTECODE)),
+            )
+            // Slot 0 = 1 so SSTORE(0, 0) transitions 1→0, triggering EIP-3529 refund.
+            .with_storage(contract_addr, H256::zero(), U256::one());
+        GeneralizedDatabase::new(Arc::new(mock))
+    }
+
+    // ── tests ────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_burned_fees_block_aggregate() {
+        use std::sync::atomic::AtomicUsize;
+        use std::sync::mpsc;
+
+        const BASE_FEE: u64 = 10;
+        // Simple ETH transfer, no blobs (blob_gas_used = 0, blob_base_fee = 0).
+        // The exact gas charged depends on the active fork's gas model, so this test
+        // verifies the burned_fees FORMULA against the block's actual post-refund gas
+        // (rather than a hardcoded amount) plus the execute_block ↔ execute_block_pipeline
+        // cross-path consistency and the LStar gate. The refund-sensitive case lives in
+        // test_burned_fees_post_refund_discriminating.
+
+        let recipient = Address::from_low_u64_be(0xBEEF);
+        let tx = signed_eth_transfer(recipient, 0, BASE_FEE);
+        let block = make_block_with_tx(tx, BASE_FEE);
+        let crypto = NativeCrypto;
+
+        // (a) execute_block path
+        let mut db1 = make_gen_db(lstar_chain_config());
+        let (result, _bal) = LEVM::execute_block(&block, &mut db1, VMType::L1, &crypto, None)
+            .expect("execute_block succeeded");
+        let cumulative = result
+            .receipts
+            .last()
+            .map(|r| r.cumulative_gas_used)
+            .unwrap_or(0);
+        let expected = compute_burned_fees(BASE_FEE, cumulative, 0, 0);
+        assert_eq!(
+            result.burned_fees,
+            Some(expected),
+            "execute_block: burned_fees must equal base_fee * post-refund gas ({cumulative})"
+        );
+
+        // (b) execute_block_pipeline path (sequential: no BAL provided)
+        let mut db2 = make_gen_db(lstar_chain_config());
+        let (tx_sender, _rx) = mpsc::channel();
+        let queue_len = AtomicUsize::new(0);
+        let tx2 = signed_eth_transfer(recipient, 0, BASE_FEE);
+        let block2 = make_block_with_tx(tx2, BASE_FEE);
+        let (result_pipeline, _bal) = LEVM::execute_block_pipeline(
+            &block2,
+            &mut db2,
+            VMType::L1,
+            Some(tx_sender),
+            &queue_len,
+            &crypto,
+            None, // no BAL → sequential path
+            false,
+            None,
+        )
+        .expect("execute_block_pipeline succeeded");
+        assert_eq!(
+            result_pipeline.burned_fees, result.burned_fees,
+            "execute_block_pipeline: burned_fees must match execute_block (production/verification consistency)"
+        );
+
+        // (c) pre-LStar → None
+        let tx3 = signed_eth_transfer(recipient, 0, BASE_FEE);
+        let block3 = make_block_with_tx(tx3, BASE_FEE);
+        let mut db3 = make_gen_db(amsterdam_chain_config());
+        let (result_pre_lstar, _) =
+            LEVM::execute_block(&block3, &mut db3, VMType::L1, &crypto, None)
+                .expect("pre-LStar execute_block succeeded");
+        assert_eq!(
+            result_pre_lstar.burned_fees, None,
+            "pre-LStar: burned_fees must be None"
+        );
+    }
+
+    /// Discriminating test: a transaction with an EIP-3529 SSTORE refund makes
+    /// `block_gas_used` (pre-refund) differ from `cumulative_gas_used` (post-refund).
+    /// The correct `burned_fees` uses post-refund gas; using `block_gas_used` would
+    /// over-count by `base_fee * refund_amount`.
+    ///
+    /// Gas analysis (Prague + Amsterdam era):
+    ///   intrinsic = 21 000
+    ///   PUSH1 + PUSH1 = 6
+    ///   SSTORE cold (original=1, new=0): cold-access 2100 + warm-reset 2900 = 5 000
+    ///     refund = SSTORE_CLEARS_SCHEDULE = 4 800 (≤ 26 006 / 5 = 5 201, so full refund)
+    ///   gas_used = 26 006, gas_spent = 21 206
+    ///
+    /// With the wrong code (block_gas_used = 26 006):
+    ///   burned_fees = 10 * 26 006 = 260 060  ← test FAILS
+    /// After the fix (cumulative_gas_used = 21 206):
+    ///   burned_fees = 10 * 21 206 = 212 060  ← test PASSES
+    #[test]
+    fn test_burned_fees_post_refund_discriminating() {
+        use std::sync::atomic::AtomicUsize;
+        use std::sync::mpsc;
+
+        const BASE_FEE: u64 = 10;
+        // Gas limit must exceed gas_used (26 006); 100 000 is ample.
+        const TX_GAS_LIMIT: u64 = 100_000;
+
+        let contract_addr = Address::from_low_u64_be(0xC0DEBEEF);
+        let crypto = NativeCrypto;
+
+        // ── (a) execute_block path (site 1) ───────────────────────────────────
+        let tx_a = signed_call_tx(contract_addr, 0, BASE_FEE, TX_GAS_LIMIT);
+        let block_a = make_block_with_tx(tx_a, BASE_FEE);
+        let mut db_a = make_gen_db_sstore_clear(lstar_chain_config(), contract_addr);
+        let (result_a, _) = LEVM::execute_block(&block_a, &mut db_a, VMType::L1, &crypto, None)
+            .expect("execute_block with SSTORE clear succeeded");
+
+        let cumulative_a = result_a.receipts[0].cumulative_gas_used;
+        // Discriminating guard: the refund must have happened.
+        assert!(
+            result_a.block_gas_used > cumulative_a,
+            "SSTORE refund must cause block_gas_used ({}) > cumulative_gas_used ({})",
+            result_a.block_gas_used,
+            cumulative_a,
+        );
+        // Correct burned_fees uses post-refund cumulative_gas_used, not block_gas_used.
+        assert_eq!(
+            result_a.burned_fees,
+            Some(BASE_FEE * cumulative_a),
+            "execute_block: burned_fees must use post-refund gas (cumulative={}, block_gas_used={})",
+            cumulative_a,
+            result_a.block_gas_used,
+        );
+
+        // ── (b) execute_block_pipeline sequential path (site 3, no BAL) ──────
+        let tx_b = signed_call_tx(contract_addr, 0, BASE_FEE, TX_GAS_LIMIT);
+        let block_b = make_block_with_tx(tx_b, BASE_FEE);
+        let mut db_b = make_gen_db_sstore_clear(lstar_chain_config(), contract_addr);
+        let (tx_sender_b, _rx_b) = mpsc::channel();
+        let queue_len_b = AtomicUsize::new(0);
+        let (result_b, _) = LEVM::execute_block_pipeline(
+            &block_b,
+            &mut db_b,
+            VMType::L1,
+            Some(tx_sender_b),
+            &queue_len_b,
+            &crypto,
+            None, // no BAL → sequential path (site 3)
+            false,
+            None,
+        )
+        .expect("execute_block_pipeline sequential with SSTORE clear succeeded");
+
+        let cumulative_b = result_b.receipts[0].cumulative_gas_used;
+        assert!(
+            result_b.block_gas_used > cumulative_b,
+            "sequential pipeline: SSTORE refund must be present",
+        );
+        assert_eq!(
+            result_b.burned_fees,
+            Some(BASE_FEE * cumulative_b),
+            "execute_block_pipeline (sequential): burned_fees must use post-refund gas",
+        );
+
+        // ── (c) execute_block_pipeline parallel path (site 2, with BAL) ──────
+        // Generate BAL via execute_block, then re-execute using that BAL.
+        let tx_c = signed_call_tx(contract_addr, 0, BASE_FEE, TX_GAS_LIMIT);
+        let block_c = make_block_with_tx(tx_c, BASE_FEE);
+        let mut db_c1 = make_gen_db_sstore_clear(lstar_chain_config(), contract_addr);
+        let (_, bal_c) = LEVM::execute_block(&block_c, &mut db_c1, VMType::L1, &crypto, None)
+            .expect("BAL generation succeeded");
+        let bal_c = bal_c.expect("LStar must produce a BAL");
+
+        let mut db_c2 = make_gen_db_sstore_clear(lstar_chain_config(), contract_addr);
+        let (tx_sender_c, _rx_c) = mpsc::channel();
+        let queue_len_c = AtomicUsize::new(0);
+        let (result_c, _) = LEVM::execute_block_pipeline(
+            &block_c,
+            &mut db_c2,
+            VMType::L1,
+            Some(tx_sender_c),
+            &queue_len_c,
+            &crypto,
+            Some(std::sync::Arc::new(bal_c)), // ← parallel path (site 2)
+            true,
+            None,
+        )
+        .expect("execute_block_pipeline parallel with SSTORE clear succeeded");
+
+        let cumulative_c = result_c.receipts[0].cumulative_gas_used;
+        assert!(
+            result_c.block_gas_used > cumulative_c,
+            "parallel pipeline: SSTORE refund must be present",
+        );
+        assert_eq!(
+            result_c.burned_fees,
+            Some(BASE_FEE * cumulative_c),
+            "execute_block_pipeline (parallel): burned_fees must use post-refund gas",
+        );
+
+        // ── cross-path consistency ─────────────────────────────────────────────
+        assert_eq!(
+            result_a.burned_fees, result_b.burned_fees,
+            "execute_block vs sequential pipeline: burned_fees must match",
+        );
+        assert_eq!(
+            result_a.burned_fees, result_c.burned_fees,
+            "execute_block vs parallel pipeline: burned_fees must match",
+        );
+
+        // ── (d) pre-LStar → None ──────────────────────────────────────────────
+        let tx_d = signed_call_tx(contract_addr, 0, BASE_FEE, TX_GAS_LIMIT);
+        let block_d = make_block_with_tx(tx_d, BASE_FEE);
+        let mut db_d = make_gen_db_sstore_clear(amsterdam_chain_config(), contract_addr);
+        let (result_d, _) = LEVM::execute_block(&block_d, &mut db_d, VMType::L1, &crypto, None)
+            .expect("pre-LStar with SSTORE clear succeeded");
+        assert_eq!(
+            result_d.burned_fees, None,
+            "pre-LStar: burned_fees must be None"
+        );
     }
 }

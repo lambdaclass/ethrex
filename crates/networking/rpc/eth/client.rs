@@ -70,7 +70,7 @@ impl RpcHandler for Syncing {
         // near-synced while it has no state up to the tip. Use the canonical head
         // only when its post-state is on disk; otherwise report the executed head
         // recorded by the sync cycle.
-        let canonical_head = context.storage.get_latest_block_number().await?;
+        let canonical_head = context.storage.get_latest_block_number()?;
         let current_block = match context.storage.get_block_header(canonical_head)? {
             Some(header) if context.storage.has_state_root(header.state_root)? => canonical_head,
             _ => syncer
@@ -154,7 +154,7 @@ impl RpcHandler for Config {
         let chain_config = context.storage.get_chain_config();
         let Some(latest_block) = context
             .storage
-            .get_block_by_number(context.storage.get_latest_block_number().await?)
+            .get_block_by_number(context.storage.get_latest_block_number()?)
             .await?
         else {
             return Err(RpcErr::Internal("Failed to fetch latest block".to_string()));
@@ -203,7 +203,7 @@ async fn get_config_for_fork(
         .await?
         .expect("Failed to get genesis block. This should not happen.")
         .header;
-    let block_number = context.storage.get_latest_block_number().await?;
+    let block_number = context.storage.get_latest_block_number()?;
     let fork_id = if let Some(timestamp) = activation_time {
         ForkId::new(chain_config, genesis_header, timestamp, block_number).fork_hash
     } else {
