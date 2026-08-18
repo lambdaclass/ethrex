@@ -2,6 +2,7 @@ use aligned_sdk::types::Network;
 use ethrex_common::types::Block;
 use ethrex_common::types::batch::Batch;
 use ethrex_common::types::fee_config::FeeConfig;
+use ethrex_common::types::normalize_legacy_withdrawals;
 use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H256, types::TxType};
 use ethrex_l2_common::prover::{ProverType, verifier_getter};
@@ -179,6 +180,14 @@ where
     Ok(is_up_to_date)
 }
 
+/// Reads a batch's blocks and their respective fee configs from the local stores.
+///
+/// Bodies come from immutable local history, so the legacy omitted-withdrawals
+/// shape older ethrex versions stored is normalized here rather than by each
+/// caller (see [`normalize_legacy_withdrawals`]). Everything derived from these
+/// blocks -- witness generation, based-mode commit calldata, checkpoint
+/// re-execution -- therefore agrees on the canonical body the header commits to.
+/// Never use this for blocks received from the network.
 pub async fn fetch_blocks_with_respective_fee_configs<E>(
     batch: &Batch,
     store: &Store,
@@ -204,7 +213,8 @@ where
                 "failed to retrieve block body from storage".to_string(),
             ))?;
 
-        let block = Block::new(block_header, block_body);
+        let mut block = Block::new(block_header, block_body);
+        normalize_legacy_withdrawals(&block.header, &mut block.body);
 
         blocks.push(block);
 
