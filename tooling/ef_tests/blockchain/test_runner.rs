@@ -423,14 +423,28 @@ fn exception_in_rlp_decoding(block_fixture: &BlockWithRLP) -> bool {
         .any(|case| matches!(case, BlockChainExpectedException::TxtException(msg) if msg == "Nonce is max"));
 
     // EIP-8141 structural frame rules (frame count, reserved modes, forbidden
-    // flag/target combinations) are enforced in ethrex's type-0x06 decoder, so a
-    // fixture expecting an invalid frame format legitimately fails to decode.
+    // flag/target combinations): ethrex enforces some in the type-0x06 decoder
+    // and the rest at frame execution, so failing to decode is one legitimate
+    // outcome for a fixture expecting an invalid frame format.
     let expects_invalid_frame_format = block_fixture
         .expect_exception
         .as_ref()
         .unwrap_or(&Vec::new())
         .iter()
         .any(|case| matches!(case, BlockChainExpectedException::InvalidFrameFormat));
+
+    // A fee field of 2^256 or more does not fit a transaction's `U256` fee
+    // fields, so the fixtures carrying 33-byte fees fail here. Fees below that
+    // bound always decode — legacy `gas_price` is `U256` as well — so the
+    // `gas_limit * price` product-overflow fixtures (a 31-byte legacy price, a
+    // 2^255 frame fee) decode fine and are rejected later at execution without
+    // consulting this arm — the same split as the nonce cases above.
+    let expects_fee_overflow = block_fixture
+        .expect_exception
+        .as_ref()
+        .unwrap_or(&Vec::new())
+        .iter()
+        .any(|case| matches!(case, BlockChainExpectedException::FeeOverflow));
 
     match CoreBlock::decode(block_fixture.rlp.as_ref()) {
         Ok(_) => {
@@ -443,6 +457,7 @@ fn exception_in_rlp_decoding(block_fixture: &BlockWithRLP) -> bool {
                     || expects_invalid_signature
                     || expects_nonce_too_high
                     || expects_invalid_frame_format
+                    || expects_fee_overflow
             );
             true
         }

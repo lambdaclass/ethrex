@@ -120,6 +120,16 @@ where
                 | "TransactionException.TYPE_6_INVALID_SIGNATURE" => {
                     BlockChainExpectedException::InvalidSignature
                 }
+                // A fee field of 2**256 or more on a type-0x06 transaction.
+                // EIP-8141 bounds a frame transaction's fees below 2**256, matching
+                // its `U256` fee fields, so the fixtures' 33-byte values do not fit
+                // the fields; ethrex rejects such a transaction while decoding, which
+                // is a legitimate way to reject it and the same shape as
+                // `NONCE_IS_MAX` above.
+                "TransactionException.GASPRICE_OVERFLOW"
+                | "TransactionException.PRIORITY_OVERFLOW" => {
+                    BlockChainExpectedException::FeeOverflow
+                }
                 "TransactionException.TYPE_6_INVALID_FRAME_FORMAT" => {
                     BlockChainExpectedException::InvalidFrameFormat
                 }

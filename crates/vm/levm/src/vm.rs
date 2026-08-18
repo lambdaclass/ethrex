@@ -1579,14 +1579,14 @@ impl<'a> VM<'a> {
         if frame_tx.max_priority_fee_per_gas > frame_tx.max_fee_per_gas {
             return Err(VMError::TxValidation(
                 crate::errors::TxValidationError::PriorityGreaterThanMaxFeePerGas {
-                    priority_fee: U256::from(frame_tx.max_priority_fee_per_gas),
-                    max_fee_per_gas: U256::from(frame_tx.max_fee_per_gas),
+                    priority_fee: frame_tx.max_priority_fee_per_gas,
+                    max_fee_per_gas: frame_tx.max_fee_per_gas,
                 },
             ));
         }
 
         // Check max_fee >= base_fee
-        if U256::from(frame_tx.max_fee_per_gas) < self.env.base_fee_per_gas {
+        if frame_tx.max_fee_per_gas < self.env.base_fee_per_gas {
             return Err(VMError::TxValidation(
                 crate::errors::TxValidationError::InsufficientMaxFeePerGas,
             ));
@@ -2541,13 +2541,13 @@ impl<'a> VM<'a> {
         if frame_tx.max_priority_fee_per_gas > frame_tx.max_fee_per_gas {
             return Err(VMError::TxValidation(
                 crate::errors::TxValidationError::PriorityGreaterThanMaxFeePerGas {
-                    priority_fee: U256::from(frame_tx.max_priority_fee_per_gas),
-                    max_fee_per_gas: U256::from(frame_tx.max_fee_per_gas),
+                    priority_fee: frame_tx.max_priority_fee_per_gas,
+                    max_fee_per_gas: frame_tx.max_fee_per_gas,
                 },
             ));
         }
 
-        if U256::from(frame_tx.max_fee_per_gas) < self.env.base_fee_per_gas {
+        if frame_tx.max_fee_per_gas < self.env.base_fee_per_gas {
             return Err(VMError::TxValidation(
                 crate::errors::TxValidationError::InsufficientMaxFeePerGas,
             ));

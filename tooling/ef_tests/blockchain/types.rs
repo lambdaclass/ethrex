@@ -608,9 +608,21 @@ impl From<Transaction> for FrameTransaction {
         // A frame transaction has no top-level recipient: `to` in the fixture is
         // the ENTRY_POINT the caller-side fields are shaped around, and the real
         // sender is the explicit `sender` field, not a recovered signature.
+        //
+        // The `u64` scalars saturate rather than panic: a fixture may carry a
+        // chain id, nonce or frame gas limit past `u64` deliberately, to assert
+        // the transaction is rejected for it, and this `From` has to stay total
+        // to get there. Saturating cannot hide such a fixture -- the block is
+        // rebuilt from these fields and validated against the header the fixture
+        // ships, so a field that changed under conversion fails the transactions
+        // root. The fee fields need no such handling: they are `U256` on both
+        // sides and pass through as they are.
         FrameTransaction {
-            chain_id: val.chain_id.map(|id| id.try_into().unwrap()).unwrap_or(1),
-            nonce: val.nonce.try_into().unwrap(),
+            chain_id: val
+                .chain_id
+                .map(|id| id.try_into().unwrap_or(u64::MAX))
+                .unwrap_or(1),
+            nonce: val.nonce.try_into().unwrap_or(u64::MAX),
             sender: val.sender.unwrap_or_default(),
             frames: val
                 .frames
@@ -620,7 +632,7 @@ impl From<Transaction> for FrameTransaction {
                     mode: f.mode.try_into().unwrap(),
                     flags: f.flags.try_into().unwrap(),
                     target: f.target,
-                    gas_limit: f.gas_limit.try_into().unwrap(),
+                    gas_limit: f.gas_limit.try_into().unwrap_or(u64::MAX),
                     value: f.value,
                     data: f.data,
                 })
@@ -636,16 +648,10 @@ impl From<Transaction> for FrameTransaction {
                     signature: s.signature,
                 })
                 .collect(),
-            max_priority_fee_per_gas: val
-                .max_priority_fee_per_gas
-                .unwrap_or_default()
-                .try_into()
-                .unwrap(),
+            max_priority_fee_per_gas: val.max_priority_fee_per_gas.unwrap_or_default(),
             max_fee_per_gas: val
                 .max_fee_per_gas
-                .unwrap_or(val.gas_price.unwrap_or_default())
-                .try_into()
-                .unwrap(),
+                .unwrap_or(val.gas_price.unwrap_or_default()),
             max_fee_per_blob_gas: val.max_fee_per_blob_gas.unwrap_or_default(),
             blob_versioned_hashes: val.blob_versioned_hashes.unwrap_or_default(),
             ..Default::default()
@@ -744,10 +750,15 @@ pub enum BlockChainExpectedException {
     /// at block RLP decoding (typed tx with a non-bool `y_parity` byte) or during
     /// execution (legacy tx sender recovery rejects the signature).
     InvalidSignature,
+    /// EIP-8141: a type-0x06 fee field of 2^256 or more, beyond the bound the
+    /// EIP puts on a frame transaction's fees, which does not fit the `U256`
+    /// fee fields. Rejected while decoding rather than at validation.
+    FeeOverflow,
     /// EIP-8141: a type-0x06 transaction whose frame list breaks a structural
     /// rule (frame count, reserved mode or flag bits, a target a frame's mode
-    /// forbids). ethrex enforces several of these in the RLP decoder, so this
-    /// surfaces at block decoding rather than at validation.
+    /// forbids). ethrex enforces some of these in the RLP decoder and the
+    /// rest when the frame executes, so this surfaces either at block
+    /// decoding or at block execution.
     InvalidFrameFormat,
     Other,
 }
