@@ -2353,6 +2353,26 @@ impl FrameTransaction {
                     Some(_) => {}
                 }
             }
+
+            // Per EIP-8141, approval scope is disallowed on every frame of an
+            // atomic batch, including its terminating frame -- a frame belongs to a
+            // batch when it or its predecessor carries the flag. This keeps the
+            // approval context constant across a batch, so unrolling one can never
+            // withdraw an execution approval later SENDER frames rely on, nor make
+            // whether the transaction sets a payer depend on a batch outcome.
+            // Approval can be placed in a frame preceding the batch instead.
+            let predecessor_batches = i
+                .checked_sub(1)
+                .and_then(|prev| self.frames.get(prev))
+                .is_some_and(|prev| prev.is_atomic_batch());
+            if (frame.is_atomic_batch() || predecessor_batches)
+                && frame.flags & APPROVE_EXECUTION_AND_PAYMENT != 0
+            {
+                return Err(format!(
+                    "Frame {i}: approval scope on an atomic-batch frame (flags={:#04x})",
+                    frame.flags
+                ));
+            }
         }
         Ok(())
     }

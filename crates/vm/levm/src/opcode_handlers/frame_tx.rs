@@ -105,6 +105,13 @@ pub fn apply_approve(
                 Err(e) => return Err(VMError::Internal(e)),
             }
 
+            // EIP-8141 pins the initial `accessed_addresses` set and adds the payer
+            // to it when an APPROVE with payment scope binds it and collects
+            // `max_cost`, as for any protocol-touched account. Warm it explicitly
+            // rather than relying on the frame-entry access charge to have done it:
+            // the protocol touch is the reason it is warm, and a payer bound from
+            // the protocol default code never went through a frame's EVM entry.
+            vm.substate.add_accessed_address(frame_target);
             let ctx = vm
                 .frame_tx_context
                 .as_mut()
@@ -152,6 +159,13 @@ pub fn apply_approve(
                 Err(e) => return Err(VMError::Internal(e)),
             }
 
+            // EIP-8141 pins the initial `accessed_addresses` set and adds the payer
+            // to it when an APPROVE with payment scope binds it and collects
+            // `max_cost`, as for any protocol-touched account. Warm it explicitly
+            // rather than relying on the frame-entry access charge to have done it:
+            // the protocol touch is the reason it is warm, and a payer bound from
+            // the protocol default code never went through a frame's EVM entry.
+            vm.substate.add_accessed_address(frame_target);
             let ctx = vm
                 .frame_tx_context
                 .as_mut()

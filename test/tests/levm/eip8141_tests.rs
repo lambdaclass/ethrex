@@ -4309,6 +4309,74 @@ fn reverted_frame_refiles_its_writes_as_reads_in_the_bal() {
     );
 }
 
+/// EIP-8141: "if a frame's execution reverts, its state changes **and approval
+/// context (`payer`, `sender_approved`)** are discarded."
+///
+/// `APPROVE` exits its own call context, so a frame cannot approve and then revert
+/// directly -- but a nested call back into the frame's target can. The inner call
+/// approves and returns; the outer frame then reverts. Everything `APPROVE` did to
+/// state (the sender nonce increment, the `max_cost` collection) rolls back with the
+/// frame, while `payer` and `sender_approved` live in the transaction context,
+/// outside the substate and the cache, and used to survive.
+///
+/// The consequence is not a lost approval but a free transaction: the payer stays
+/// bound, so the transaction is valid and settles fees against an account whose
+/// `max_cost` debit was rolled back.
+#[test]
+fn a_reverting_frame_discards_the_approval_it_granted() {
+    use ethrex_common::types::Frame;
+
+    // CALLDATASIZE != 0 (the outer frame, which carries `data`) takes the self-call
+    // branch; the inner call gets empty calldata and takes the APPROVE branch.
+    //
+    //   00 CALLDATASIZE ; 01 PUSH1 0x0B ; 03 JUMPI      -> outer branch at 0x0B
+    //   04 PUSH1 3 ; 06 PUSH1 0 ; 08 PUSH1 0 ; 0A APPROVE   (scope 3, exits context)
+    //   0B JUMPDEST ; five PUSH1 0 (ret/args/value) ; 16 ADDRESS ; 17 GAS ; 18 CALL
+    //   19 POP ; 1A PUSH1 0 ; 1C PUSH1 0 ; 1E REVERT
+    let approve_then_revert = Bytes::from(vec![
+        0x36, 0x60, 0x0B, 0x57, // CALLDATASIZE; PUSH1 0x0B; JUMPI
+        0x60, 0x03, 0x60, 0x00, 0x60, 0x00, 0xAA, // PUSH1 3; PUSH1 0; PUSH1 0; APPROVE
+        0x5B, // JUMPDEST
+        0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00, // ret/args/value = 0
+        0x30, 0x5A, 0xF1, 0x50, // ADDRESS; GAS; CALL; POP
+        0x60, 0x00, 0x60, 0x00, 0xFD, // PUSH1 0; PUSH1 0; REVERT
+    ]);
+
+    // A DEFAULT frame targeting `tx.sender`: the approval scopes require the target
+    // to be `tx.sender`, and DEFAULT is the only mode that both reaches the EVM and
+    // carries no precondition of its own -- a VERIFY frame invalidates the
+    // transaction merely by reverting, and a SENDER frame invalidates it by running
+    // before the sender approval exists. Either would mask the behaviour under test.
+    let tx = frame_tx_with_frames(vec![Frame {
+        mode: u8::from(FrameMode::Default),
+        flags: 0x03,
+        target: Some(FUNDED_SENDER),
+        gas_limit: 400_000,
+        value: U256::zero(),
+        data: Bytes::from_static(&[0x01]),
+    }]);
+
+    let (result, _db) = run_frame_tx(
+        &[(
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0,
+            approve_then_revert,
+        )],
+        tx,
+    );
+
+    let err = result.expect_err(
+        "the only frame reverted, so its approval is discarded and the transaction \
+         has no payer -- keeping the payer would settle fees against an account whose \
+         max_cost debit was rolled back",
+    );
+    assert!(
+        matches!(err, VMError::TxValidation(_)),
+        "expected a transaction-validation failure for the missing payer, got {err:?}"
+    );
+}
+
 /// EIP-8141: when an atomic batch unrolls, "logs emitted by frames that executed
 /// before the failure are discarded together with their state changes [...] Those
 /// frame receipts retain their execution status and gas used, with empty logs."

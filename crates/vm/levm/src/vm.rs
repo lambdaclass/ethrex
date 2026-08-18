@@ -1980,6 +1980,19 @@ impl<'a> VM<'a> {
             // every slot, a single such frame halts block production.
             let mut frame_bal_checkpoint = self.db.bal_recorder.as_ref().map(|r| r.checkpoint());
 
+            // EIP-8141: "if a frame's execution reverts, its state changes and
+            // approval context (`payer`, `sender_approved`) are discarded". The
+            // approval context lives in `frame_tx_context`, outside the substate and
+            // the cache, so the revert paths below do not roll it back on their own.
+            // APPROVE exits its own call context, but a nested call back into the
+            // frame's target can approve and return, leaving the outer frame free to
+            // revert afterwards -- which would keep `payer` set while the nonce
+            // increment and the `max_cost` collection it performed are rolled back.
+            let frame_approval_snapshot = self
+                .frame_tx_context
+                .as_ref()
+                .map(|c| c.approval_snapshot());
+
             let (frame_success, frame_gas_used, frame_logs) = if value_transfer_reverted {
                 // A frame whose sender cannot fund its `value` never starts, so it
                 // spends nothing — not even the entry charges, which are levied on
@@ -2146,6 +2159,14 @@ impl<'a> VM<'a> {
             // their accumulated state gas.
             if !frame_success {
                 self.state_gas_used = state_gas_used_at_frame_entry;
+                // Discard the approval context the frame granted (see the snapshot
+                // at frame entry). Restoring unconditionally is safe: a frame that
+                // granted nothing restores the values it started with.
+                if let Some(snapshot) = frame_approval_snapshot
+                    && let Some(ctx) = self.frame_tx_context.as_mut()
+                {
+                    ctx.restore_approvals(snapshot);
+                }
                 // EIP-7928: drop the reverted frame's recorded changes. `restore`
                 // re-files a freshly-written slot as a read and leaves
                 // `touched_addresses` alone, so every access the frame made is
@@ -3015,11 +3036,18 @@ impl<'a> VM<'a> {
     /// BEFORE the handler runs, gated by `self.validation_observer.active`. Byte
     /// values are pinned against `opcodes.rs`.
     ///
-    /// Static bans: `ORIGIN`, `GASPRICE`, `BLOCKHASH`, `COINBASE`, `TIMESTAMP`
+    /// Static bans: `GASPRICE`, `BLOCKHASH`, `COINBASE`, `TIMESTAMP`
     /// (except when the current frame's target is EXPIRY_VERIFIER), `NUMBER`,
-    /// `PREVRANDAO`, `GASLIMIT`, `BASEFEE`, `BLOBHASH`, `BLOBBASEFEE`, `SLOTNUM`,
-    /// `INVALID`, `SELFDESTRUCT`, `BALANCE`, `SELFBALANCE`, `TLOAD`, `TSTORE`, and
+    /// `PREVRANDAO`, `GASLIMIT`, `BASEFEE`, `BLOBBASEFEE`, `SLOTNUM`,
+    /// `INVALID`, `SELFDESTRUCT`, `BALANCE`, `SELFBALANCE`, and
     /// `CALLCODE` in non-deploy prefix frames (ERC-7562 bans CALLCODE in validation;
+    ///
+    /// `ORIGIN`, `BLOBHASH`, `TLOAD` and `TSTORE` are deliberately NOT banned. The
+    /// EIP banned them originally and then relaxed the list: `ORIGIN` is fixed per
+    /// frame by the mode (`ENTRY_POINT`, or `tx.sender` in a `SENDER` frame) rather
+    /// than by the block, `BLOBHASH` reads the transaction's own versioned hashes,
+    /// and transient storage cannot outlive the transaction that wrote it, so none
+    /// of the four can make a prefix pass at admission and fail in a block.
     /// DELEGATECALL is allowed subject to the CALL-family trace rules in the
     /// handlers). `SSTORE`/`CREATE`/`CREATE2` are allowed only inside the deploy
     /// frame and are enforced in their handlers (state-write rules), not here.
@@ -3041,7 +3069,6 @@ impl<'a> VM<'a> {
         // asserted equal to the `Opcode` enum discriminants by
         // `validation_observer_opcode_byte_pins` below (avoids a `const`-context
         // `as` cast, which the workspace clippy config denies).
-        const ORIGIN: u8 = 0x32;
         const GASPRICE: u8 = 0x3A;
         const BLOCKHASH: u8 = 0x40;
         const COINBASE: u8 = 0x41;
@@ -3050,15 +3077,12 @@ impl<'a> VM<'a> {
         const PREVRANDAO: u8 = 0x44;
         const GASLIMIT: u8 = 0x45;
         const BASEFEE: u8 = 0x48;
-        const BLOBHASH: u8 = 0x49;
         const BLOBBASEFEE: u8 = 0x4A;
         const SLOTNUM: u8 = 0x4B;
         const INVALID: u8 = 0xFE;
         const SELFDESTRUCT: u8 = 0xFF;
         const BALANCE: u8 = 0x31;
         const SELFBALANCE: u8 = 0x47;
-        const TLOAD: u8 = 0x5C;
-        const TSTORE: u8 = 0x5D;
         const GAS: u8 = 0x5A;
         const CALL: u8 = 0xF1;
         const CALLCODE: u8 = 0xF2;
@@ -3078,9 +3102,8 @@ impl<'a> VM<'a> {
         self.validation_observer.last_opcode = if opcode == GAS { GAS } else { 0 };
 
         let banned = match opcode {
-            ORIGIN | GASPRICE | BLOCKHASH | COINBASE | NUMBER | PREVRANDAO | GASLIMIT | BASEFEE
-            | BLOBHASH | BLOBBASEFEE | SLOTNUM | INVALID | SELFDESTRUCT | BALANCE | SELFBALANCE
-            | TLOAD | TSTORE => true,
+            GASPRICE | BLOCKHASH | COINBASE | NUMBER | PREVRANDAO | GASLIMIT | BASEFEE
+            | BLOBBASEFEE | SLOTNUM | INVALID | SELFDESTRUCT | BALANCE | SELFBALANCE => true,
             // TIMESTAMP is permitted only when the currently executing contract
             // IS the EXPIRY_VERIFIER predeploy (checked by code_address so the
             // rule tracks the executing contract at every call depth, not just the
