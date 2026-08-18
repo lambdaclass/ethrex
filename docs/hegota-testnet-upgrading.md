@@ -67,6 +67,102 @@ counts as a valid block at a timestamp already passed, the upgraded node disagre
 its own history. Consensus changes need a re-genesis, or an activation timestamp far
 enough in the future that every node adopts the binary before it arrives.
 
+## Changing a node's flags in place
+
+Adding, removing or retuning an ethrex flag on a live node — a mempool knob, a log
+level, an RPC namespace — is not a binary upgrade, but it needs the same care, because
+the flag lives in the container's command line and a command line cannot be edited.
+
+Three obvious routes do not work, all three verified against kurtosis 1.20.0 in a
+throwaway enclave rather than assumed:
+
+- **There is no runtime setter.** The `admin` namespace exposes `admin_setLogLevel` and
+  nothing else; no mempool or RPC option can be changed over JSON-RPC.
+- **Re-running the kurtosis config does nothing.** Kurtosis does not recreate a
+  container that already exists, which is the same reason `el_image` changes do not
+  upgrade a running node.
+- **`kurtosis service update --cmd` is worse than useless here.** It destroys the
+  container — new service UUID, old container removed, so the datadir in the writable
+  layer goes with it — *and* it passes the whole `--cmd` string as a single argv
+  element, so the replacement exits 127 immediately. Space-separated and
+  comma-separated forms both fail. A multi-argument command line cannot be expressed
+  through it.
+
+What works is recreating the container from a snapshot of itself. `docker commit`
+captures the writable layer, so the chain database and `chain-8141/node.key` come
+across, and with the node key the enode — which matters because all three enodes are
+published in `bootnodes.txt`.
+
+Per node, one node at a time, with the faucet's node last (it submits through the RPC
+on el-1, so that node's window is the only one users can see):
+
+```
+# 1. record what must not change
+curl -s -X POST -H 'content-type: application/json' \
+  --data '{"jsonrpc":"2.0","method":"admin_nodeInfo","params":[],"id":1}' \
+  http://127.0.0.1:<rpc-port> | jq -r .result.enode
+
+# 2. stop, snapshot, recreate with the same identity and the new flag appended
+scripts/hegota-testnet/set-el-flags.py <container> <rpc-port> -- --some.flag=value
+
+# 3. verify before touching the next node, then drop the stale container
+docker rm <container>.old
+```
+
+The script derives everything from `docker inspect`, so nothing is hand-transcribed:
+name, hostname, network, static IP, network aliases, every label (including the
+`traefik.*` routing labels), the published host ports, the `/network-configs` and
+`/jwt` volume binds, the restart policy and the entrypoint. `docker commit` carries the
+image config — env, entrypoint, exposed ports — so only the command line changes.
+
+Three things to know before running it:
+
+- **Remove the stale `.old` container once the new one is verified.** Until then two
+  containers carry the same `com.kurtosistech.guid` label and
+  `kurtosis enclave inspect` reports the service **STOPPED** while it is in fact
+  running. `publish-artifacts.sh` parses that table.
+- **`docker ps` will report the snapshot image**, `mvg500-snapshot:…` or whatever tag
+  the run used, not `ethrex:hegota-testnet`. The binary is unchanged; read the version
+  from `docker exec <el> ethrex --version`, which this document already insists on for
+  the same reason. The snapshot image cannot be deleted while the container it created
+  runs, and it doubles as the rollback path: recreate from it without the new flag.
+- **Confirm the stop was clean.** The script prints the exit code; `0` means ethrex
+  handled SIGTERM and closed its store. A `137` means it was killed at the end of the
+  grace period and the database may need recovery on start.
+
+Verify, per node, before moving on: the container is running, `eth_blockNumber`
+advances and agrees with the other two, `eth_syncing` is `false`, `net_peerCount` is
+back to its previous value, the enode is byte-identical to the one recorded in step 1,
+the flag is in `docker inspect -f '{{json .Config.Cmd}}'`, and
+`kurtosis enclave inspect` shows the service RUNNING once the `.old` container is gone.
+
+A flag on a command line is not proof that the node is using the value, and for
+`MAX_VERIFY_GAS` the node will report it. EIP-8141 mempool rule #6 rejects a frame
+transaction whose signature-verification cost alone exceeds the budget, before any
+crypto runs — so junk signatures reach the gate, and the rejection quotes the
+configured limit. P256 signatures cost 6700 each, so build two transactions with
+`scripts/hegota-testnet/frametx.py` (75 and 74 P256 signatures, junk bytes, signer set,
+empty msg) and simulate each:
+
+```
+curl -s -X POST -H 'content-type: application/json' \
+  --data '{"jsonrpc":"2.0","method":"ethrex_simulateFrameTransaction","params":["<raw>"],"id":1}' \
+  https://rpc1.privacy.ethrex.xyz | jq -r .result.violation
+```
+
+At 500 000 the 75-signature transaction answers `signature verification cost 502500
+exceeds MAX_VERIFY_GAS 500000` and the 74-signature one gets past the gate to `frame
+signature list does not authenticate the sender`. A node still at the default quotes
+`100000` and refuses both. `ethrex_simulateFrameTransaction` is read-only and the
+`ethrex` namespace is open through the public guard, so this works against each
+`rpc{1,2,3}.privacy.ethrex.xyz` endpoint without shell access to the host.
+
+This preserves the database, so there is no re-sync and the only cost is the seconds
+the node is down — but it is still a per-node action on a chain with outside
+participants. Update the deployment's args-file on the host **and** the committed
+`fixtures/networks/hegota-testnet.yaml` in the same session, or the next relaunch
+silently reverts the change.
+
 ## Upgrading kurtosis
 
 **The CLI and the engine must be the same version.** The engine exposes an API version
