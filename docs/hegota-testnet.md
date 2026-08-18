@@ -78,6 +78,31 @@ passed / 0 failed**, `cargo test -p ethrex-rpc --lib` is 122 passed, and
 
 ### Not complete
 
+- **`MAX_VERIFY_GAS` ran at the 100 000 default for the deployment's first two days,
+  and is now 500 000 on all three nodes.** Task 7.1 requires
+  `--mempool.max-verify-gas 500000` on every participant, and no revision of
+  `fixtures/networks/hegota-testnet.yaml` ever carried it — the flag is not something
+  the `el_extra_params` cleanup dropped, it was never written, and the running
+  enclave's three EL command lines confirmed the gap. At the 100 000 spec default an
+  EIP-8272 proof-carrying validation prefix does not fit the admission budget and the
+  transaction is refused, so the chain was accepting a narrower transaction set than
+  it advertises. The flag is now in the committed config, along with
+  `--http.api ethrex`, which the live host was passing but the committed config was
+  not.
+
+  Applied to the running chain in place, one node at a time, by the procedure in
+  `docs/hegota-testnet-upgrading.md` §"Changing a node's flags in place". Every node
+  kept its database and its `node.key`, so no enode moved and `bootnodes.txt` is still
+  valid; the three heads agreed throughout. Confirmed in effect rather than merely
+  present on the command line: all three public endpoints answer a 75-P256-signature
+  frame transaction with `signature verification cost 502500 exceeds MAX_VERIFY_GAS
+  500000`, and clear a 74-signature one at 495 800 — which at the old budget they would
+  have refused. The recipe is in the upgrading doc. **Every EL container now runs from a
+  `mvg500-snapshot:el-N-…` image tag rather than `ethrex:hegota-testnet`.** The binary
+  is byte-identical — all three still report
+  `v23.0.0-hegota-testnet-eef9f712afe3785bc113321915cb24098f0379b6` — which is the same
+  reason this doc already gives for reading the version from
+  `docker exec <el> ethrex --version` and never from `docker ps`.
 - **Phase 5 Task 5.7** — the checkpoint is clean, with the whole FOCIL fixture bundle
   skipped for a cause outside this tree.
   `make -C tooling/ef_tests/engine test` gives **74 458 passed / 0 failed / 24 skipped**;

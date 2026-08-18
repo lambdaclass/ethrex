@@ -28,21 +28,51 @@ participants:
   # it, a second copy is a duplicate flag whose value nothing checks against the
   # first, and one address written in one place is the only shape that cannot
   # drift. The same applies to `--syncmode`, which the launcher also sets.
+  #
+  # What every participant DOES need, because the launcher emits neither:
+  #
+  #   --mempool.max-verify-gas 500000
+  #     EIP-8141 `MAX_VERIFY_GAS`. The spec value is 100_000 and that is also
+  #     ethrex's default (`DEFAULT_MAX_VERIFY_GAS`, `crates/blockchain/blockchain.rs`),
+  #     but the constant is mempool policy rather than consensus, so raising it
+  #     forks nothing: a node left at the default still follows this chain, it
+  #     just refuses the transactions at admission. This chain raises it so
+  #     EIP-8272 proof-carrying validation prefixes fit the admission budget,
+  #     which at 100_000 they do not. Every node that serves public RPC needs the
+  #     raised value, not just one: a transaction one node admits is re-checked
+  #     against the receiving node's own budget when it propagates, so a node
+  #     left at the default drops it and builds blocks without it.
+  #
+  #   --http.api ethrex
+  #     Adds the `ethrex` namespace, which is where `ethrex_simulateFrameTransaction`
+  #     lives — the only way to dry-run a frame transaction's validation prefix.
+  #     Additive: the launcher's own `--http.api` still supplies eth/net/web3/txpool.
+  #
+  # Both must be repeated per participant. Kurtosis has no global `el_extra_params`.
   - el_type: ethrex
     el_image: ethrex:hegota-testnet
     cl_type: lighthouse
     cl_image: ethpandaops/lighthouse:focil
+    el_extra_params:
+      - --mempool.max-verify-gas=500000
+      - --http.api=ethrex
     validator_count: 32
     supernode: true
   - el_type: ethrex
     el_image: ethrex:hegota-testnet
     cl_type: lighthouse
     cl_image: ethpandaops/lighthouse:focil
+    el_extra_params:
+      - --mempool.max-verify-gas=500000
+      - --http.api=ethrex
     validator_count: 32
   - el_type: ethrex
     el_image: ethrex:hegota-testnet
     cl_type: lighthouse
     cl_image: ethpandaops/lighthouse:focil
+    el_extra_params:
+      - --mempool.max-verify-gas=500000
+      - --http.api=ethrex
     validator_count: 32
 
 # The consensus client must speak the FOCIL engine surface from the fork
