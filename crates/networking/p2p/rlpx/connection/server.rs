@@ -130,6 +130,14 @@ pub trait PeerConnectionServerProtocol: Send + Sync {
         announcement: NewPooledTransactionHashes,
         hashes: Vec<H256>,
     ) -> Result<(), ActorError>;
+    /// Inbound RLPx stream failed (codec/decode/IO). The connection must be dropped:
+    /// after a `Framed` decoder error the read half is finished and the peer can no
+    /// longer answer requests.
+    fn inbound_stream_failed(
+        &self,
+        reason: DisconnectReason,
+        detail: String,
+    ) -> Result<(), ActorError>;
 }
 
 #[cfg(feature = "l2")]
@@ -718,6 +726,25 @@ impl PeerConnectionServer {
         }
     }
 
+    #[send_handler]
+    async fn handle_inbound_stream_failed(
+        &mut self,
+        msg: peer_connection_server_protocol::InboundStreamFailed,
+        ctx: &Context<Self>,
+    ) {
+        if let ConnectionState::Established(ref mut established_state) = self.state {
+            apply_inbound_stream_failure(established_state, msg.reason, &msg.detail).await;
+        } else {
+            debug!(
+                reason=?msg.reason,
+                detail=%msg.detail,
+                "Inbound RLPx stream failed while connection was not Established",
+            );
+        }
+        // Always stop: inbound is unusable and `stopped()` runs remove_peer when Established.
+        ctx.stop();
+    }
+
     fn process_cast_error(
         state: &ConnectionState,
         result: Result<(), PeerConnectionError>,
@@ -875,13 +902,34 @@ where
         );
     }
 
+    // Decoder/`Framed` errors are terminal for the read half: the next poll is EOS, so
+    // "skipping" is impossible. Notify the actor so it stops promptly instead of leaving
+    // a zombie peer selectable until missed-pong timeout.
+    // See https://github.com/lambdaclass/ethrex/issues/7035
+    let inbound_ctx = ctx.clone();
     spawn_listener(
         ctx.clone(),
-        stream.filter_map(|result| match result {
+        stream.filter_map(move |result| match result {
             Ok(msg) => Some(peer_connection_server_protocol::IncomingMessage { message: msg }),
             Err(e) => {
-                debug!(error=?e, "Error receiving RLPx message");
-                // Skipping invalid data
+                let reason = disconnect_reason_for_inbound_error(&e);
+                debug!(
+                    error=?e,
+                    ?reason,
+                    "Error receiving RLPx message, notifying connection to drop peer",
+                );
+                if let Err(send_err) =
+                    inbound_ctx.send(peer_connection_server_protocol::InboundStreamFailed {
+                        reason,
+                        detail: e.to_string(),
+                    })
+                {
+                    debug!(
+                        error=?send_err,
+                        ?reason,
+                        "Failed to notify connection of inbound RLPx stream failure",
+                    );
+                }
                 None
             }
         }),
@@ -1029,6 +1077,31 @@ async fn send_disconnect_message(state: &mut Established, reason: Option<Disconn
         });
 }
 
+/// Record an inbound stream failure on an established connection and optionally notify the peer.
+/// The caller is responsible for `ctx.stop()` so `stopped()` can run `remove_peer`.
+///
+/// Extracted so unit tests can cover reason bookkeeping without a full RLPx handshake.
+async fn apply_inbound_stream_failure(
+    state: &mut Established,
+    incoming_reason: DisconnectReason,
+    detail: &str,
+) {
+    debug!(
+        peer=%state.node,
+        reason=?incoming_reason,
+        %detail,
+        "Inbound RLPx stream failed, dropping peer",
+    );
+    // Preserve an earlier reason (e.g. peer-sent Disconnect) if one is already set.
+    // Use the stored reason for both metrics and any wire Disconnect so they agree.
+    let reason = *state.disconnect_reason.get_or_insert(incoming_reason);
+    // Protocol breach: outbound may still be writable, so tell the peer why.
+    // Network/IO failures usually mean the socket is already gone.
+    if reason == DisconnectReason::ProtocolError {
+        send_disconnect_message(state, Some(reason)).await;
+    }
+}
+
 async fn connection_failed(state: &mut Established, error_text: &str, error: &PeerConnectionError) {
     debug!(
         peer=%state.node,
@@ -1075,6 +1148,58 @@ fn match_disconnect_reason(error: &PeerConnectionError) -> Option<DisconnectReas
         PeerConnectionError::TooManyPeers => Some(DisconnectReason::TooManyPeers),
         // TODO build a proper matching between error types and disconnection reasons
         _ => None,
+    }
+}
+
+/// Map an inbound `Framed`/codec error to the disconnect reason we attribute when
+/// dropping the peer. Used for the established-connection read-listener path;
+/// distinct from [`match_disconnect_reason`], which is for handshake/`connection_failed`.
+///
+/// Match is exhaustive so a new [`PeerConnectionError`] variant forces an explicit
+/// classification instead of silently becoming the benign [`DisconnectReason::NetworkError`].
+fn disconnect_reason_for_inbound_error(error: &PeerConnectionError) -> DisconnectReason {
+    match error {
+        // Wire/format failures from `RLPxCodec::decode` / message RLP decode.
+        PeerConnectionError::RLPDecodeError(_)
+        | PeerConnectionError::InvalidMessageFrame(_)
+        | PeerConnectionError::CryptographyError(_)
+        | PeerConnectionError::InvalidMessageLength => DisconnectReason::ProtocolError,
+
+        // Transport errors, local/internal failures, and variants not expected from the
+        // inbound Framed path. Listed explicitly (fail-closed) rather than `_`.
+        PeerConnectionError::IoError(_)
+        | PeerConnectionError::InternalError(_)
+        | PeerConnectionError::Disconnected
+        | PeerConnectionError::HandshakeError(_)
+        | PeerConnectionError::StateError(_)
+        | PeerConnectionError::NoMatchingCapabilities
+        | PeerConnectionError::TooManyPeers
+        | PeerConnectionError::OutboundSendTimeout
+        | PeerConnectionError::OutboundQueueFull
+        | PeerConnectionError::DisconnectReceived(_)
+        | PeerConnectionError::DisconnectSent(_)
+        | PeerConnectionError::NotFound(_)
+        | PeerConnectionError::InvalidPeerId
+        | PeerConnectionError::InvalidRecoveryId
+        | PeerConnectionError::ExpectedRequestId(_)
+        | PeerConnectionError::MessageNotHandled(_)
+        | PeerConnectionError::BadRequest(_)
+        | PeerConnectionError::RLPEncodeError(_)
+        | PeerConnectionError::StoreError(_)
+        | PeerConnectionError::BroadcastError(_)
+        | PeerConnectionError::RecvError(_)
+        | PeerConnectionError::SendMessage(_)
+        | PeerConnectionError::MempoolError(_)
+        | PeerConnectionError::BlockchainError(_)
+        | PeerConnectionError::IncompatibleProtocol
+        | PeerConnectionError::InvalidBlockRange
+        | PeerConnectionError::L2CapabilityNotNegotiated
+        | PeerConnectionError::InvalidBlockRangeUpdate
+        | PeerConnectionError::ActorError(_)
+        | PeerConnectionError::Timeout
+        | PeerConnectionError::UnexpectedResponse(_, _) => DisconnectReason::NetworkError,
+        #[cfg(feature = "l2")]
+        PeerConnectionError::RollupStoreError(_) => DisconnectReason::NetworkError,
     }
 }
 
@@ -1938,5 +2063,342 @@ async fn retry_on_alternates(
         if let Err(e) = conn.enqueue_tx_requests(announcement, hash_list) {
             debug!(error = %e, "Failed to enqueue tx requests on alternate peer");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        network::P2PContext, peer_table::PeerTableServer, rlpx::utils::decompress_pubkey,
+        tx_broadcaster::TxBroadcaster, types::NetworkConfig,
+    };
+    use ethrex_common::types::Genesis;
+    use ethrex_rlp::error::RLPDecodeError;
+    use ethrex_storage::EngineType;
+    use secp256k1::rand::rngs::OsRng;
+    use std::{
+        io,
+        net::{IpAddr, Ipv4Addr},
+        sync::atomic::AtomicBool,
+    };
+    use tokio::net::TcpListener;
+    use tokio_util::task::TaskTracker;
+
+    #[test]
+    fn inbound_rlp_decode_error_is_protocol_error() {
+        let err = PeerConnectionError::RLPDecodeError(RLPDecodeError::MalformedData);
+        assert_eq!(
+            disconnect_reason_for_inbound_error(&err),
+            DisconnectReason::ProtocolError
+        );
+    }
+
+    #[test]
+    fn inbound_invalid_frame_is_protocol_error() {
+        let err = PeerConnectionError::InvalidMessageFrame("bad mac".to_string());
+        assert_eq!(
+            disconnect_reason_for_inbound_error(&err),
+            DisconnectReason::ProtocolError
+        );
+    }
+
+    #[test]
+    fn inbound_cryptography_error_is_protocol_error() {
+        let err = PeerConnectionError::CryptographyError("bad keystream".to_string());
+        assert_eq!(
+            disconnect_reason_for_inbound_error(&err),
+            DisconnectReason::ProtocolError
+        );
+    }
+
+    #[test]
+    fn inbound_invalid_message_length_is_protocol_error() {
+        assert_eq!(
+            disconnect_reason_for_inbound_error(&PeerConnectionError::InvalidMessageLength),
+            DisconnectReason::ProtocolError
+        );
+    }
+
+    #[test]
+    fn inbound_io_error_is_network_error() {
+        let err = PeerConnectionError::IoError(io::Error::new(io::ErrorKind::BrokenPipe, "pipe"));
+        assert_eq!(
+            disconnect_reason_for_inbound_error(&err),
+            DisconnectReason::NetworkError
+        );
+    }
+
+    #[test]
+    fn inbound_internal_error_is_network_error() {
+        let err = PeerConnectionError::InternalError("poisoned eth_version lock".to_string());
+        assert_eq!(
+            disconnect_reason_for_inbound_error(&err),
+            DisconnectReason::NetworkError
+        );
+    }
+
+    #[test]
+    fn inbound_timeout_is_network_error() {
+        assert_eq!(
+            disconnect_reason_for_inbound_error(&PeerConnectionError::Timeout),
+            DisconnectReason::NetworkError
+        );
+    }
+
+    fn test_established(outbound_tx: tokio::sync::mpsc::Sender<Message>) -> Established {
+        let store = Store::new("", EngineType::InMemory).expect("in-memory store");
+        let blockchain = Arc::new(Blockchain::default_with_store(store.clone()));
+        let peer_table = PeerTableServer::spawn(H256::from_low_u64_be(1), 10, store.clone());
+        let tx_broadcaster =
+            TxBroadcaster::spawn(peer_table.clone(), blockchain.clone(), 1_000).expect("tx bc");
+        let signer = SecretKey::new(&mut OsRng);
+        let node = Node::new(
+            IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+            30303,
+            30303,
+            decompress_pubkey(&PublicKey::from_secret_key(secp256k1::SECP256K1, &signer)),
+        );
+        let (broadcast_tx, _broadcast_rx) = broadcast::channel(1);
+        Established {
+            signer,
+            outbound_tx,
+            outbound_writer_timed_out: Arc::new(AtomicBool::new(false)),
+            node,
+            is_inbound: false,
+            storage: store,
+            blockchain,
+            capabilities: vec![Capability::eth(68)],
+            negotiated_eth_capability: Some(Capability::eth(68)),
+            negotiated_snap_capability: None,
+            last_block_range_update_block: 0,
+            requested_pooled_txs: HashMap::new(),
+            pending_tx_requests: Vec::new(),
+            client_version: "ethrex-test".to_string(),
+            connection_broadcast_send: broadcast_tx,
+            peer_table,
+            #[cfg(feature = "l2")]
+            l2_state: L2ConnState::Unsupported,
+            tx_broadcaster,
+            current_requests: HashMap::new(),
+            disconnect_reason: None,
+            is_validated: true,
+            serve_request_window_start: Instant::now(),
+            serve_requests_in_window: 0,
+            txs_sent_to_peer: 0,
+            received_txs_from_peer: false,
+            missed_pongs: 0,
+        }
+    }
+
+    #[tokio::test]
+    async fn apply_inbound_stream_failure_records_network_error_reason() {
+        let (outbound_tx, mut outbound_rx) = tokio::sync::mpsc::channel(16);
+        let mut state = test_established(outbound_tx);
+
+        apply_inbound_stream_failure(
+            &mut state,
+            DisconnectReason::NetworkError,
+            "simulated io failure",
+        )
+        .await;
+
+        assert_eq!(
+            state.disconnect_reason,
+            Some(DisconnectReason::NetworkError)
+        );
+        // NetworkError must not enqueue a wire Disconnect.
+        assert!(outbound_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn apply_inbound_stream_failure_preserves_earlier_reason() {
+        let (outbound_tx, mut outbound_rx) = tokio::sync::mpsc::channel(16);
+        let mut state = test_established(outbound_tx);
+        state.disconnect_reason = Some(DisconnectReason::PingTimeout);
+
+        apply_inbound_stream_failure(
+            &mut state,
+            DisconnectReason::ProtocolError,
+            "decode failed after peer disconnect reason was set",
+        )
+        .await;
+
+        assert_eq!(state.disconnect_reason, Some(DisconnectReason::PingTimeout));
+        // Stored reason is not ProtocolError, so no wire Disconnect.
+        assert!(outbound_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn apply_inbound_stream_failure_sends_disconnect_on_protocol_error() {
+        let (outbound_tx, mut outbound_rx) = tokio::sync::mpsc::channel(16);
+        let mut state = test_established(outbound_tx);
+
+        apply_inbound_stream_failure(
+            &mut state,
+            DisconnectReason::ProtocolError,
+            "simulated decode failure",
+        )
+        .await;
+
+        assert_eq!(
+            state.disconnect_reason,
+            Some(DisconnectReason::ProtocolError)
+        );
+        match outbound_rx.try_recv() {
+            Ok(Message::Disconnect(DisconnectMessage {
+                reason: Some(DisconnectReason::ProtocolError),
+            })) => {}
+            other => panic!("expected ProtocolError Disconnect, got {other:?}"),
+        }
+    }
+
+    /// Behavioral regression for https://github.com/lambdaclass/ethrex/issues/7035.
+    ///
+    /// Completes a real TCP RLPx handshake (no test-only `started()` seam), then
+    /// delivers `InboundStreamFailed` — the same message the inbound `Framed`
+    /// listener sends on codec/decode `Err`. Asserts the peer leaves selection
+    /// well before missed-pong timeout (~30s).
+    ///
+    /// Score is not asserted: this path `remove_peer`s the row rather than
+    /// applying `record_failure`.
+    #[tokio::test]
+    async fn inbound_stream_failed_removes_peer_from_selection_after_handshake() {
+        let mut store = Store::new("", EngineType::InMemory).expect("in-memory store");
+        store
+            .add_initial_state(Genesis::default())
+            .await
+            .expect("genesis");
+        let blockchain = Arc::new(Blockchain::default_with_store(store.clone()));
+
+        let sut_signer = SecretKey::new(&mut OsRng);
+        let dialer_signer = SecretKey::new(&mut OsRng);
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind loopback");
+        let bound = listener.local_addr().expect("local_addr");
+
+        let sut_node = Node::new(
+            bound.ip(),
+            bound.port(),
+            bound.port(),
+            decompress_pubkey(&PublicKey::from_secret_key(
+                secp256k1::SECP256K1,
+                &sut_signer,
+            )),
+        );
+        let dialer_node = Node::new(
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            0,
+            0,
+            decompress_pubkey(&PublicKey::from_secret_key(
+                secp256k1::SECP256K1,
+                &dialer_signer,
+            )),
+        );
+        let dialer_id = dialer_node.node_id();
+
+        let sut_table = PeerTableServer::spawn(sut_node.node_id(), 10, store.clone());
+        let dialer_table = PeerTableServer::spawn(dialer_node.node_id(), 10, store.clone());
+
+        let sut_ctx = P2PContext::new(
+            sut_node.clone(),
+            NetworkConfig::from_node(&sut_node),
+            TaskTracker::new(),
+            sut_signer,
+            sut_table.clone(),
+            store.clone(),
+            blockchain.clone(),
+            "ethrex-test-sut".to_string(),
+            None,
+            1_000,
+            1.0,
+        )
+        .expect("sut P2PContext");
+        let dialer_ctx = P2PContext::new(
+            dialer_node.clone(),
+            NetworkConfig::from_node(&dialer_node),
+            TaskTracker::new(),
+            dialer_signer,
+            dialer_table,
+            store,
+            blockchain,
+            "ethrex-test-dialer".to_string(),
+            None,
+            1_000,
+            1.0,
+        )
+        .expect("dialer P2PContext");
+
+        let sut_ctx_accept = sut_ctx.clone();
+        let accept = tokio::spawn(async move {
+            let (stream, peer_addr) = listener.accept().await.expect("accept");
+            let permit = sut_ctx_accept
+                .inbound_admission
+                .clone()
+                .acquire_owned()
+                .await
+                .expect("inbound permit");
+            PeerConnection::spawn_as_receiver(sut_ctx_accept, peer_addr, stream, permit)
+        });
+
+        // Keep the dialer connection alive for the duration of the test so a
+        // remote close does not race our simulated inbound failure.
+        let _dialer_conn = PeerConnection::spawn_as_initiator(dialer_ctx, &sut_node);
+
+        let peer_conn = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                if let Ok(Some(conn)) = sut_table.get_peer_connection(dialer_id).await {
+                    break conn;
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .expect("peer should become selectable after a real RLPx handshake");
+
+        let _sut_conn = accept.await.expect("accept task");
+
+        assert!(
+            sut_table
+                .has_eligible_peer(SUPPORTED_ETH_CAPABILITIES.to_vec())
+                .await
+                .expect("has_eligible_peer"),
+            "peer must be selectable before inbound failure"
+        );
+
+        peer_conn
+            .handle
+            .inbound_stream_failed(
+                DisconnectReason::ProtocolError,
+                "simulated framed decode error".to_string(),
+            )
+            .expect("send InboundStreamFailed");
+        peer_conn.handle.join().await;
+
+        assert!(
+            !sut_table
+                .has_eligible_peer(SUPPORTED_ETH_CAPABILITIES.to_vec())
+                .await
+                .expect("has_eligible_peer"),
+            "peer must not remain selectable after inbound stream failure"
+        );
+        assert!(
+            sut_table
+                .get_peer_connection(dialer_id)
+                .await
+                .expect("get_peer_connection")
+                .is_none(),
+            "peer must be removed from the table after inbound stream failure"
+        );
+        assert!(
+            sut_table
+                .get_best_peer(SUPPORTED_ETH_CAPABILITIES.to_vec())
+                .await
+                .expect("get_best_peer")
+                .is_none(),
+            "get_best_peer must not return the dropped peer"
+        );
     }
 }
