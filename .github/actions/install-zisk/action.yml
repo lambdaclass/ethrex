@@ -16,16 +16,20 @@ runs:
       # and crates/guest-program/bin/zisk/Cargo.toml.
       #
       # ZISK_RUST_TOOLCHAIN pins the Rust toolchain release (0xPolygonHermez/rust tag)
-      # used to build guests. ziskup installs the *latest* toolchain release, which
-      # drifts independently of ZISK_VERSION: the zisk-1.0.0 and zisk-2.0.0 releases
-      # dropped the guest linker script from rustc's riscv64ima-zisk-zkvm-elf target
-      # spec, so guest links fail with undefined _global_pointer / _init_stack_top /
-      # _kernel_heap_* symbols. zisk-0.5.1 is the newest release whose rustc embeds the
-      # script (byte-identical to the one on the fork's default branch). Re-pin when
-      # upstream ships a script-bearing toolchain compatible with ZISK_VERSION.
+      # used to build guests, because ziskup installs whatever release is *latest* and
+      # that drifts independently of ZISK_VERSION. The two must agree on who supplies
+      # the guest linker script: since v1.1.0-alpha the SDK passes its own
+      # (`zisk-build` injects `-C link-arg=-T<zisk_linker_script.ld>`), so the pin has
+      # to name a toolchain whose riscv64ima-zisk-zkvm-elf target spec carries *no*
+      # embedded script — otherwise the link gets two with conflicting memory maps and
+      # rust-lld fails with "region 'rom' already defined".
+      # zisk-1.0.0 onwards dropped the embedded script; zisk-3.0.0 is the newest and is
+      # what ziskup itself installs today. (Before v1.1.0-alpha the dependency ran the
+      # other way: the SDK passed nothing, so the pin had to be zisk-0.5.1, the last
+      # release whose rustc still embedded a script.)
       env:
-        ZISK_VERSION: "1.0.0-alpha"
-        ZISK_RUST_TOOLCHAIN: "zisk-0.5.1"
+        ZISK_VERSION: "1.1.0-alpha"
+        ZISK_RUST_TOOLCHAIN: "zisk-3.0.0"
       run: |
         source "$GITHUB_WORKSPACE/.github/scripts/retry.sh"
 
