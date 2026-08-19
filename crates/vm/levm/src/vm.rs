@@ -1994,6 +1994,10 @@ impl<'a> VM<'a> {
                 0
             };
 
+            // The entry charges fall in two dimensions and are budgeted separately:
+            // the target's warm/cold access and any EIP-7702 delegation access are
+            // execution gas, while reviving a dead target is EIP-8037 state gas. A
+            // frame that cannot afford either half is never entered.
             let frame_entry_gas = if runs_default_verify_code {
                 0
             } else {
@@ -2002,15 +2006,14 @@ impl<'a> VM<'a> {
                 } else {
                     crate::gas_cost::WARM_ADDRESS_ACCESS_COST
                 };
-                target_access
-                    .saturating_add(delegation_access_cost)
-                    .saturating_add(entry_state_gas)
+                target_access.saturating_add(delegation_access_cost)
             };
 
-            // The entry charges come out of the frame's own budget, so a frame that
+            // The entry charges come out of the frame's own budgets, so a frame that
             // cannot afford to be entered fails without executing, forfeiting its
             // whole gas limit (an exceptional halt, not a revert).
-            let frame_entry_unaffordable = frame_entry_gas > frame.gas_limit;
+            let frame_entry_unaffordable =
+                frame_entry_gas > frame.gas_limit || entry_state_gas > frame.state_gas_limit;
             let frame_gas_after_entry = frame.gas_limit.saturating_sub(frame_entry_gas);
 
             // Now that the frame can pay for it, follow the designation: warm the
@@ -2094,6 +2097,10 @@ impl<'a> VM<'a> {
                         i64::try_from(entry_state_gas).map_err(|_| InternalError::Overflow)?,
                     )
                     .ok_or(InternalError::Overflow)?;
+                // Draw it from the frame's own state pool as well, so the charge
+                // lands in the frame's `gas_used.state` like any other state charge
+                // it makes. The affordability check above already proved it fits.
+                self.state_gas_reservoir = self.state_gas_reservoir.saturating_sub(entry_state_gas);
             }
 
             // EIP-7928: capture the access-list recorder before the frame runs. A
