@@ -1013,12 +1013,15 @@ fn sender_frame_reviving_a_dead_target_pays_new_account() {
         Bytes::from(APPROVE_BOTH_CODE.to_vec()),
     )];
 
-    let sender_frame = |gas_limit: u64| Frame {
+    // EIP-8141 budgets the revival charge in the state dimension, so the frame is
+    // refused entry on its `limits.state`, not on its execution gas. The closure
+    // therefore varies the state budget and keeps execution comfortable.
+    let sender_frame = |state_gas_limit: u64| Frame {
         mode: u8::from(FrameMode::Sender),
         flags: 0,
         target: Some(dead),
-        gas_limit,
-        state_gas_limit: 1_000_000,
+        gas_limit: 1_000_000,
+        state_gas_limit,
         value,
         data: Bytes::new(),
     };
@@ -1034,8 +1037,12 @@ fn sender_frame_reviving_a_dead_target_pays_new_account() {
         "a frame that cannot pay its entry charge must fail"
     );
     assert_eq!(
-        frame_results[1].1, 50_000,
-        "a frame that fails at entry forfeits its whole gas limit"
+        frame_results[1].1, 1_000_000,
+        "a frame that fails at entry forfeits its whole execution gas limit"
+    );
+    assert_eq!(
+        frame_results[1].2, 0,
+        "and is attributed no state gas, having created nothing"
     );
     assert_eq!(
         balance_of(&db, dead),
@@ -1059,20 +1066,20 @@ fn sender_frame_reviving_a_dead_target_pays_new_account() {
         value,
         "the revived account must receive the value"
     );
+    // The two charges land in their own dimensions: the target's cold access is
+    // execution gas, and reviving it is EIP-8037 state gas.
     let cold_access = ethrex_levm::gas_cost::cold_account_access_cost(Fork::Hegota);
-    let new_account = frame_results[1].1.saturating_sub(cold_access);
-    assert!(
-        new_account > 0,
-        "the frame must be billed a NEW_ACCOUNT state charge on top of the cold access, \
-         got {} total",
-        frame_results[1].1
+    assert_eq!(
+        frame_results[1].1, cold_access,
+        "the frame's execution gas is the cold access alone; the revival is state gas"
     );
     assert!(
-        report.state_gas_used >= new_account,
-        "the NEW_ACCOUNT charge must also land in the state-gas dimension: \
-         state_gas_used {} < {}",
-        report.state_gas_used,
-        new_account
+        frame_results[1].2 > 0,
+        "the frame must be billed a NEW_ACCOUNT charge in the state dimension"
+    );
+    assert_eq!(
+        report.state_gas_used, frame_results[1].2,
+        "the transaction's state gas is what the reviving frame was attributed"
     );
 }
 
