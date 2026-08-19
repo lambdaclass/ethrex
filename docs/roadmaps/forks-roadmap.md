@@ -19,13 +19,19 @@
 **glamsterdam-devnet-8**
 
 - Spec baseline: [`devnets/glamsterdam/8`](https://github.com/ethereum/execution-specs/tree/devnets/glamsterdam/8)
-- Fixtures: [`tests-glamsterdam-devnet@v8.0.0`](https://github.com/ethereum/execution-specs/releases/tag/tests-glamsterdam-devnet@v8.0.0) (`.github/config/hive/amsterdam.yaml`, `tooling/ef_tests/.fixtures_url_amsterdam`)
-- EELS commit: `d681ca4fd019ee80099dd1899bdbee419cab8e0b`
-- Status: 🟢 aligned — blockchain, state and engine ef-tests all green on the v8.0.0 bundle
+- Fixtures: [`tests-glamsterdam-devnet@v8.1.1`](https://github.com/ethereum/execution-specs/releases/tag/tests-glamsterdam-devnet@v8.1.1) (`.github/config/hive/amsterdam.yaml`, `tooling/ef_tests/.fixtures_url_amsterdam` — keep both on the same release)
+- EELS commit: `32f597f7e56e3843198a83c7cf437a0b49aa6c0e` (the v8.1.1 tag, also the tip of `devnets/glamsterdam/8`)
+- Status: 🟢 aligned — blockchain, state and engine ef-tests all green on the v8.1.1 bundle
 - Tracking: [#6583]
 
-Upstream expects **at least two follow-up test releases** on this devnet (v8.1.0, v8.2.0)
-carrying additional coverage rather than new semantics. On each drop: bump
+Upstream expects **at least two follow-up test releases** on this devnet (v8.1.0 and
+v8.1.1 have shipped) carrying additional coverage rather than new semantics. v8.1.1 was
+announced as coverage-only, and that holds for the numbers — the amsterdam fork diff is a
+`Uint` -> `ExecutionGas` type-wrapper refactor — with one real behaviour change:
+`calculate_excess_blob_gas` now reads the blob fields from a `PreviousHeader` too, so
+accumulated excess blob gas survives a fork transition instead of resetting to zero
+([specs#3352]). ethrex already matched, since `calc_excess_blob_gas` reads the parent
+unconditionally. On each drop: bump
 `tooling/ef_tests/.fixtures_url_amsterdam` and `.github/config/hive/amsterdam.yaml`
 (`fixtures` + `eels_commit`), then re-run the three ef-test suites and hive
 `eels/consume-engine` Amsterdam.
@@ -204,6 +210,7 @@ All Core Devs — Testing meetings on **Mondays**. Agendas/notes at [ethereum/pm
 
 [#9619]: https://github.com/NethermindEth/nethermind/pull/9619
 [hive#1365]: https://github.com/ethereum/hive/pull/1365
+[specs#3352]: https://github.com/ethereum/execution-specs/pull/3352
 
 [#6212]: https://github.com/lambdaclass/ethrex/issues/6212
 [#6361]: https://github.com/lambdaclass/ethrex/pull/6361
