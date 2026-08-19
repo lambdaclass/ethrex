@@ -13,7 +13,7 @@ use tokio::{
     sync::Mutex,
     time::{Duration, sleep},
 };
-use tokio_util::sync::CancellationToken;
+use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{debug, error, info, warn};
 
 use crate::{
@@ -34,6 +34,7 @@ pub struct SyncManager {
 }
 
 impl SyncManager {
+    #[allow(clippy::too_many_arguments)]
     pub async fn new(
         peer_handler: PeerHandler,
         sync_mode: &SyncMode,
@@ -42,6 +43,7 @@ impl SyncManager {
         store: Store,
         datadir: PathBuf,
         backfill_config: BackfillConfig,
+        tracker: TaskTracker,
     ) -> Self {
         let snap_enabled = Arc::new(AtomicBool::new(matches!(sync_mode, SyncMode::Snap)));
 
@@ -99,7 +101,9 @@ impl SyncManager {
         // to the configured floor, resuming across restarts via the persisted
         // frontier. A no-op when `--history.chain off`.
         if backfill_config.mode != HistoryChain::Off {
-            tokio::spawn(run_history_backfill(
+            // Tracked like every other long-lived task, so shutdown waits for it
+            // rather than dropping it mid-batch.
+            tracker.spawn(run_history_backfill(
                 backfill_peers,
                 store.clone(),
                 backfill_blockchain,

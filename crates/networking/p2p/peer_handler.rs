@@ -784,7 +784,8 @@ impl PeerHandler {
                     let _ = self.peer_table.set_disposable(peer_id);
                     return Ok(None);
                 }
-                self.peer_table.record_success(peer_id)?;
+                // Success is recorded by the caller, once the receipts have been
+                // validated against their headers' roots.
                 Ok(Some((receipts, peer_id)))
             }
         }
@@ -831,6 +832,7 @@ impl PeerHandler {
             let mut receipts = receipts;
             receipts.truncate(verified);
             if verified > 0 {
+                self.peer_table.record_success(peer_id)?;
                 return Ok(Some(receipts));
             }
             // Nothing usable: penalize and re-roll onto another peer.

@@ -366,7 +366,15 @@ async fn backfill_step(
         diag.backfill_frontier = Some(frontier);
         diag.backfill_complete = frontier <= floor;
     }
-    if frontier <= floor {
+    // The first batch still has work to do at `frontier == floor`: that block is
+    // the snap pivot, which has a body but no receipts (see below), so completing
+    // here would leave the floor block permanently short of its receipts.
+    if frontier <= floor && !plan.first_batch {
+        info!(floor, "Historical chain backfill complete");
+        return Ok(BackfillProgress::Complete);
+    }
+    if frontier < floor {
+        // Already below the floor: nothing to repair even on the first batch.
         info!(floor, "Historical chain backfill complete");
         return Ok(BackfillProgress::Complete);
     }
@@ -388,6 +396,7 @@ async fn backfill_step(
         frontier - 1
     };
     let batch_lo = batch_hi.saturating_sub(BACKFILL_BATCH_SIZE - 1).max(floor);
+    debug_assert!(batch_lo <= batch_hi, "batch range must be non-empty");
     let mut headers: Vec<BlockHeader> = Vec::with_capacity((batch_hi - batch_lo + 1) as usize);
     for number in (batch_lo..=batch_hi).rev() {
         let header = store

@@ -207,16 +207,19 @@ impl MetricsDB {
         // treat the new value as the delta rather than emitting a decrease.
         if let Ok(mut last) = self.last_cache_tickers.lock() {
             let (last_hits, last_misses) = *last;
-            self.block_cache_hits.inc_by(
-                block_cache_hits
-                    .saturating_sub(last_hits)
-                    .min(block_cache_hits),
-            );
-            self.block_cache_misses.inc_by(
-                block_cache_misses
-                    .saturating_sub(last_misses)
-                    .min(block_cache_misses),
-            );
+            let delta = |current: u64, last: u64| {
+                // On a reset the current value is itself the delta; subtracting
+                // would have discarded everything counted since the reset.
+                if current < last {
+                    current
+                } else {
+                    current - last
+                }
+            };
+            self.block_cache_hits
+                .inc_by(delta(block_cache_hits, last_hits));
+            self.block_cache_misses
+                .inc_by(delta(block_cache_misses, last_misses));
             *last = (block_cache_hits, block_cache_misses);
         }
     }

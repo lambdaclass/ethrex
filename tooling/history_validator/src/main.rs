@@ -18,6 +18,7 @@ use std::sync::{
 use std::time::Instant;
 
 use clap::Parser;
+use ethrex_common::constants::DEFAULT_OMMERS_HASH;
 use ethrex_common::types::{compute_receipts_root, validate_block_body};
 use ethrex_crypto::NativeCrypto;
 use ethrex_storage::{EngineType, Store};
@@ -77,7 +78,20 @@ async fn main() {
                     counts.missing_body.fetch_add(1, Ordering::Relaxed);
                     continue;
                 };
-                // Covers transactions_root, ommers_hash and withdrawals_root.
+                // `validate_block_body` covers transactions_root and
+                // withdrawals_root. It does *not* look at ommers_hash: it only
+                // asserts the ommers list is empty (EIP-3675). That is correct for
+                // post-merge blocks but leaves the header field unchecked, so tie
+                // the two together here. Note this makes the tool post-merge only,
+                // which matches the range backfill can reach (>= Byzantium is the
+                // floor, and pre-merge blocks would need real ommers hashing).
+                if body.ommers.is_empty() && header.ommers_hash != *DEFAULT_OMMERS_HASH {
+                    counts.bad_body.fetch_add(1, Ordering::Relaxed);
+                    println!(
+                        "BAD OMMERS block {n} (empty body ommers, header says {:?})",
+                        header.ommers_hash
+                    );
+                }
                 if validate_block_body(&header, &body, &crypto).is_err() {
                     counts.bad_body.fetch_add(1, Ordering::Relaxed);
                     println!("BAD BODY   block {n}");

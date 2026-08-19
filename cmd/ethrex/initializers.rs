@@ -395,6 +395,7 @@ pub async fn init_rpc_api(
         store.clone(),
         datadir.to_path_buf(),
         backfill_config,
+        tracker.clone(),
     )
     .await;
 

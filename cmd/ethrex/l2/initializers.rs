@@ -336,6 +336,7 @@ pub async fn init_l2(
                 mode: HistoryChain::Off,
                 tx_index_horizon: 0,
             },
+            tracker.clone(),
         )
         .await;
 
