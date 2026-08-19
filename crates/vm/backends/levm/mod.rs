@@ -1576,6 +1576,12 @@ impl LEVM {
         let mut cumulative_gas_used = 0_u64;
         for (_, tx_type, report, _, _, _, _) in exec_results {
             cumulative_gas_used += report.gas_spent;
+            // EIP-8141: a frame transaction's `cumulative_gas_used` is its total gas
+            // across both dimensions, so the state figure joins the execution one
+            // here exactly as on the sequential path.
+            if tx_type == TxType::Frame {
+                cumulative_gas_used = cumulative_gas_used.saturating_add(report.state_gas_used);
+            }
             let mut receipt = Receipt::new(
                 tx_type,
                 matches!(report.result, TxResult::Success),

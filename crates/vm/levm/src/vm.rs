@@ -2504,8 +2504,15 @@ impl<'a> VM<'a> {
             &ctx.tx.blob_versioned_hashes,
             self.env.base_blob_fee_per_gas,
         )?;
+        // The payer owes both dimensions. `max_gas` -- the quantity `max_cost` was
+        // collected over -- sums each frame's execution and state budgets, so
+        // settling against the execution dimension alone would refund the payer the
+        // whole state budget it actually spent.
+        let settled_gas = u64::try_from(self.state_gas_used.max(0))
+            .map_err(|_| InternalError::Overflow)?
+            .saturating_add(total_gas_used);
         let owed = effective_gas_price
-            .checked_mul(U256::from(total_gas_used))
+            .checked_mul(U256::from(settled_gas))
             .and_then(|gas_owed| gas_owed.checked_add(blob_burn))
             .ok_or(VMError::Internal(InternalError::Overflow))?;
         // charged >= owed always: effective <= max_fee (by construction of the
