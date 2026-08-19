@@ -4,7 +4,6 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
-repository.workspace = true
 description = "EVM tool for ethrex: geth-compatible t8n state transition CLI"
 
 [[bin]]

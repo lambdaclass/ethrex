@@ -65,6 +65,10 @@ pub struct T8nArgs {
     /// forks are not supported.
     #[arg(long = "state.reward", default_value_t = 0, allow_hyphen_values = true)]
     pub reward: i64,
+    /// State-test semantics: apply only the transactions, with no system
+    /// operations (no beacon-root/history calls, requests, or withdrawals).
+    #[arg(long = "state-test", default_value_t = false)]
+    pub state_test: bool,
 }
 
 pub fn run(args: T8nArgs) -> Result<(), T8nError> {
@@ -208,7 +212,12 @@ pub fn run(args: T8nArgs) -> Result<(), T8nError> {
         },
     );
     let (result, build_rejections, build_block_exception) = blockchain
-        .build_payload_t8n(Block::new(header, body), transactions, block_hash_cache)
+        .build_payload_t8n(
+            Block::new(header, body),
+            transactions,
+            block_hash_cache,
+            args.state_test,
+        )
         .map_err(|e| T8nError::Build(e.to_string()))?;
 
     // Map build-time rejection indices (into the converted list) back to

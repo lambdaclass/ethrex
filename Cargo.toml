@@ -2,7 +2,6 @@
 members = [
   "benches",
   "cmd/ethrex",
-  "cmd/ethrex-evm",
   "crates/blockchain",
   "crates/blockchain/dev",
   "crates/common",
