@@ -2365,12 +2365,14 @@ impl<'a> VM<'a> {
                 // state — drop the state gas accumulated since batch entry.
                 self.state_gas_used = state_gas_used_at_batch_entry;
 
-                // EIP-8141: frames that executed before the failure retain their
-                // execution status and gas used; only their logs are discarded,
-                // together with the state changes the unroll drops. `total_gas_used`
-                // therefore stands as executed, and the failing frame keeps the gas
-                // the single-frame path already charged it (actual `gas_used` for a
-                // `REVERT`, the full `gas_limit` for an exceptional halt).
+                // EIP-8141: frames that executed before the failure "retain their
+                // execution status and execution gas used, with empty logs and zero
+                // state gas used". `total_gas_used` therefore stands as executed, and
+                // the failing frame keeps the gas the single-frame path already
+                // charged it (actual `gas_used` for a `REVERT`, the full `gas_limit`
+                // for an exceptional halt). The state dimension goes to zero because
+                // the unroll reverts the state those charges paid for, so no frame
+                // may still be billed for it.
                 let ctx = self.frame_tx_context.as_mut().ok_or(VMError::Internal(
                     InternalError::Custom("missing frame tx context".to_string()),
                 ))?;
@@ -2380,6 +2382,7 @@ impl<'a> VM<'a> {
                     .into_iter()
                     .flatten()
                 {
+                    result.2 = 0;
                     result.3 = Vec::new();
                 }
                 // Roll back approvals granted inside the reverted batch.
@@ -2533,8 +2536,12 @@ impl<'a> VM<'a> {
         // trie path even at zero fee). A frame tx is always a user tx (non-zero
         // effective gas price), unlike a system call.
         let priority_fee = effective_gas_price.saturating_sub(self.env.base_fee_per_gas);
+        // The tip is paid over the same gas the payer was charged for, which spans
+        // both dimensions: settling the payer over `settled_gas` while tipping over
+        // the execution dimension alone would burn the difference instead of paying
+        // it to the coinbase.
         let coinbase_fee = priority_fee
-            .checked_mul(U256::from(total_gas_used))
+            .checked_mul(U256::from(settled_gas))
             .ok_or(VMError::Internal(InternalError::Overflow))?;
         if !effective_gas_price.is_zero()
             && let Some(recorder) = self.db.bal_recorder.as_mut()

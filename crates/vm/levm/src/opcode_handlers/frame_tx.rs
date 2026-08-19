@@ -271,6 +271,13 @@ impl OpcodeHandler for OpTxParamHandler {
             .ok_or(ExceptionalHalt::InvalidOpcode)?;
 
         let param_id = u64::try_from(param_id).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
+        // 0x0C is the state gas remaining in the executing frame's pool. It lives on
+        // the VM, not the transaction context, so it is answered here.
+        if param_id == 0x0C {
+            let remaining = U256::from(vm.state_gas_reservoir);
+            vm.current_call_frame.stack.push(remaining)?;
+            return Ok(OpcodeResult::Continue);
+        }
         let result = load_tx_param(ctx, param_id)?;
         vm.current_call_frame.stack.push(result)?;
 
@@ -461,6 +468,27 @@ impl OpcodeHandler for OpFrameParamHandler {
                 // value -- EIP-8141 FRAMEPARAM table
                 frame.value
             }
+            0x09 => {
+                // limits.state -- the frame's declared state-gas budget
+                U256::from(frame.state_gas_limit)
+            }
+            0x0A | 0x0B => {
+                // gas_used.execution (0x0A) and gas_used.state (0x0B) of a past
+                // frame. Reading the current or a later frame halts: neither has a
+                // recorded figure yet.
+                if idx >= ctx.current_frame_index {
+                    return Err(ExceptionalHalt::InvalidOpcode.into());
+                }
+                let result = ctx
+                    .frame_results
+                    .get(idx)
+                    .ok_or(ExceptionalHalt::InvalidOpcode)?;
+                if param_id == 0x0A {
+                    U256::from(result.1)
+                } else {
+                    U256::from(result.2)
+                }
+            }
             _ => return Err(ExceptionalHalt::InvalidOpcode.into()),
         };
 
@@ -623,6 +651,9 @@ pub fn load_tx_param(ctx: &crate::vm::FrameTxContext, param_id: u64) -> Result<U
         0x09 => Ok(U256::from(ctx.tx.frames.len())),
         0x0A => Ok(U256::from(ctx.current_frame_index)),
         0x0B => Ok(U256::from(ctx.tx.signatures.len())),
+        // 0x0C is state gas remaining in the executing frame's pool, which lives on
+        // the VM rather than the context; `load_tx_param` has no access to it, so the
+        // handler answers it before delegating here.
         _ => Err(ExceptionalHalt::InvalidOpcode.into()),
     }
 }
