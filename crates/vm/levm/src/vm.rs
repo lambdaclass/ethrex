@@ -1791,6 +1791,7 @@ impl<'a> VM<'a> {
         let mut batch_start_idx: usize = 0;
         let mut batch_logs_start: usize = 0;
         let mut batch_approval_snapshot: (bool, Option<Address>) = (false, None);
+        let mut batch_state_attribution: Vec<u64> = Vec::new();
         let mut batch_bal_checkpoint: Option<BlockAccessListCheckpoint> = None;
         // EIP-8037: snapshot the shared `state_gas_used` at batch entry so a batch
         // revert (which unrolls every in-batch frame's state) also drops the state
@@ -1881,6 +1882,15 @@ impl<'a> VM<'a> {
                     .as_ref()
                     .map(|c| c.approval_snapshot())
                     .unwrap_or((false, None));
+                // The unroll undoes every state-attribution edit the batch made to
+                // receipts recorded before it began, for the same reason a single
+                // failing frame does: the refills those edits recorded are reverted
+                // with the batch's state.
+                batch_state_attribution = self
+                    .frame_tx_context
+                    .as_ref()
+                    .map(|c| c.frame_results.iter().map(|r| r.2).collect())
+                    .unwrap_or_default();
             }
 
             let ctx =
@@ -2124,6 +2134,15 @@ impl<'a> VM<'a> {
                 .frame_tx_context
                 .as_ref()
                 .map(|c| c.approval_snapshot());
+            // EIP-8141: a frame can lower an earlier frame's `gas_used.state` by
+            // refilling a charge that frame owns. Those edits belong to the frame
+            // that made them, so a frame which fails undoes them along with its own
+            // state changes -- the earlier receipt goes back to what it was.
+            let earlier_state_attribution: Vec<u64> = self
+                .frame_tx_context
+                .as_ref()
+                .map(|c| c.frame_results.iter().map(|r| r.2).collect())
+                .unwrap_or_default();
 
             let (frame_success, frame_gas_used, frame_logs) = if value_transfer_reverted {
                 // A frame whose sender cannot fund its `value` never starts, so it
@@ -2299,6 +2318,15 @@ impl<'a> VM<'a> {
                 {
                     ctx.restore_approvals(snapshot);
                 }
+                if let Some(ctx) = self.frame_tx_context.as_mut() {
+                    for (result, before) in ctx
+                        .frame_results
+                        .iter_mut()
+                        .zip(earlier_state_attribution.iter())
+                    {
+                        result.2 = *before;
+                    }
+                }
                 // EIP-7928: drop the reverted frame's recorded changes. `restore`
                 // re-files a freshly-written slot as a read and leaves
                 // `touched_addresses` alone, so every access the frame made is
@@ -2402,6 +2430,13 @@ impl<'a> VM<'a> {
                 }
                 // Roll back approvals granted inside the reverted batch.
                 ctx.restore_approvals(batch_approval_snapshot);
+                for (result, before) in ctx
+                    .frame_results
+                    .iter_mut()
+                    .zip(batch_state_attribution.iter())
+                {
+                    result.2 = *before;
+                }
                 // Remove only logs from the batch, preserving pre-batch logs
                 all_logs.truncate(batch_logs_start);
 
