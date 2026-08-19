@@ -592,7 +592,7 @@ impl Default for Options {
             mempool_max_queued_txs_per_account: DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT,
             tx_broadcasting_time_interval: Default::default(),
             target_peers: Default::default(),
-            lookup_interval: Default::default(),
+            lookup_interval: INITIAL_LOOKUP_INTERVAL_MS,
             extra_data: get_minimal_client_version(),
             gas_limit: DEFAULT_BUILDER_GAS_CEIL,
             max_blobs_per_block: None,
