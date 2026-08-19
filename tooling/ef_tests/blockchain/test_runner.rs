@@ -796,15 +796,10 @@ async fn check_witness_generation_against_fixture(
 
     const MAX_REPORTED_ITEMS: usize = 8;
 
-    // EEST leniency fixtures (`*_extra_unused_*`) deliberately pad the witness
-    // with unused items (ancestor headers, bytecodes, trie nodes) to prove
-    // consumers accept them. Their `executionWitness` is intentionally NOT the
-    // canonical generation target, so the comparison is skipped.
-    if test_key.contains("extra_unused") {
-        return Ok(());
-    }
-
+    // `errors` fail the test; `differences` are reported only. See the note at
+    // the comparison below for why a witness need not equal the fixture's.
     let mut errors: Vec<String> = Vec::new();
+    let mut differences: Vec<String> = Vec::new();
     for block_fixture in test.blocks.iter() {
         if block_fixture.expect_exception.is_some() {
             continue;
@@ -874,7 +869,7 @@ async fn check_witness_generation_against_fixture(
             let missing: Vec<&&[u8]> = exp_set.difference(&got_set).collect();
             let extra: Vec<&&[u8]> = got_set.difference(&exp_set).collect();
             if missing.is_empty() && extra.is_empty() {
-                errors.push(format!(
+                differences.push(format!(
                     "{test_key} block {block_number} {section}: same item set but \
                      different multiplicity (generated {}, fixture {})",
                     got.len(),
@@ -909,15 +904,32 @@ async fn check_witness_generation_against_fixture(
             if !extra.is_empty() {
                 msg.push_str(&format!(" extra in generated: [{}]", fmt_items(&extra)));
             }
-            errors.push(msg);
+            // Reported, not failed. A witness only has to be *sufficient*, which
+            // is asserted above by re-executing with it; it does not have to
+            // equal the fixture's. EEST ships `validation_codes_extra_unused_bytecode`
+            // (and the `state`/`headers` equivalents) precisely to pin that a
+            // witness carrying extra unused items is valid, so neither direction
+            // of this difference is a defect. Upstream bundles differ in policy
+            // too: the zkevm conformance set excludes bytecode created inside the
+            // block, while the zkevm-benchmark set includes it, so requiring
+            // equality fails whichever one the client does not happen to mirror.
+            differences.push(msg);
         }
+    }
+
+    if !differences.is_empty() {
+        eprintln!(
+            "note: {test_key} witness differs from the fixture's (both valid; the \
+             generated one is proven sufficient above):\n{}",
+            differences.join("\n")
+        );
     }
 
     if errors.is_empty() {
         Ok(())
     } else {
         Err(format!(
-            "witness generation mismatch:\n{}",
+            "generated witness is not usable for stateless execution:\n{}",
             errors.join("\n")
         ))
     }
