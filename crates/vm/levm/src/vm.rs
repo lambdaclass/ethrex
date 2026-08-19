@@ -512,6 +512,15 @@ pub struct FrameTxContext {
     pub frame_results: Vec<crate::errors::FrameResult>,
     /// Index of the currently executing frame
     pub current_frame_index: usize,
+    /// EIP-8141: for each storage slot whose creation charge is still outstanding,
+    /// the index of the frame that paid it.
+    ///
+    /// A frame receipt's `gas_used.state` is not final when the frame ends: it is
+    /// the attribution left standing after every state-gas refill in the
+    /// transaction. When a later frame clears a slot an earlier frame created, the
+    /// refill lowers the *owner's* figure, not the executing frame's -- otherwise
+    /// the executing frame would be handed budget it never declared.
+    pub outstanding_charge_owners: FxHashMap<(Address, H256), usize>,
     /// The sig_hash of the frame transaction
     pub sig_hash: H256,
     /// The full frame transaction (for TXPARAM access)
@@ -1193,6 +1202,35 @@ impl<'a> VM<'a> {
         Ok(())
     }
 
+    /// EIP-8141: credit a state-gas refill to the frame that paid the charge.
+    ///
+    /// The refill lowers the owner's attribution: back into the executing frame's
+    /// own pool when it is the owner -- a frame's refills can never exceed its own
+    /// charges, so the pool never passes the declared budget -- or out of the
+    /// owner's already-recorded receipt otherwise. Crediting the executing frame
+    /// instead would hand it budget it never declared, and would leave the owner
+    /// billed for state that no longer exists.
+    pub fn credit_frame_state_gas_refill(
+        &mut self,
+        owner: usize,
+        amount: u64,
+    ) -> Result<(), VMError> {
+        let current = self
+            .frame_tx_context
+            .as_ref()
+            .map(|ctx| ctx.current_frame_index);
+        if current == Some(owner) {
+            self.state_gas_reservoir = self.state_gas_reservoir.saturating_add(amount);
+            return Ok(());
+        }
+        if let Some(ctx) = self.frame_tx_context.as_mut()
+            && let Some(result) = ctx.frame_results.get_mut(owner)
+        {
+            result.2 = result.2.saturating_sub(amount);
+        }
+        Ok(())
+    }
+
     /// EIP-8037 `credit_state_gas_refund`: refund `amount` LIFO, mirroring EELS. The portion
     /// spilled past the reservoir into this frame's `gas_remaining` (`frame_state_gas_spilled`)
     /// is returned to `gas_remaining` first; only the remainder flows to the shared reservoir.
@@ -1686,6 +1724,7 @@ impl<'a> VM<'a> {
             payer_address: None,
             frame_results: Vec::new(),
             current_frame_index: 0,
+            outstanding_charge_owners: FxHashMap::default(),
             sig_hash,
             tx: frame_tx.clone(),
             approve_called_in_current_frame: false,
@@ -2735,6 +2774,7 @@ impl<'a> VM<'a> {
             payer_address: None,
             frame_results: Vec::new(),
             current_frame_index: 0,
+            outstanding_charge_owners: FxHashMap::default(),
             sig_hash,
             tx: frame_tx.clone(),
             approve_called_in_current_frame: false,

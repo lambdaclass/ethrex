@@ -728,6 +728,7 @@ mod max_cost_tests {
             payer_address: None,
             frame_results: Vec::new(),
             current_frame_index: 0,
+            outstanding_charge_owners: Default::default(),
             sig_hash: H256::zero(),
             tx,
             approve_called_in_current_frame: false,
