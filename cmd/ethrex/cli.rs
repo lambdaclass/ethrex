@@ -17,8 +17,11 @@ use ethrex_blockchain::{
 };
 use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis, validate_block_body};
 use ethrex_p2p::{
-    discovery::INITIAL_LOOKUP_INTERVAL_MS, peer_table::TARGET_PEERS, sync::SyncMode,
-    tx_broadcaster::BROADCAST_INTERVAL_MS, types::Node,
+    discovery::INITIAL_LOOKUP_INTERVAL_MS,
+    peer_table::TARGET_PEERS,
+    sync::{HistoryChain, SyncMode},
+    tx_broadcaster::BROADCAST_INTERVAL_MS,
+    types::Node,
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{DB_COMMIT_THRESHOLD, error::StoreError, has_valid_db};
@@ -123,6 +126,36 @@ pub struct Options {
     pub rocksdb_block_cache_size: usize,
     #[arg(long = "syncmode", default_value = "snap", value_name = "SYNC_MODE", value_parser = utils::parse_sync_mode, help = "The way in which the node will sync its state.", long_help = "Can be either \"full\" or \"snap\" with \"snap\" as default value.", help_heading = "P2P options", env = "ETHREX_SYNCMODE")]
     pub syncmode: SyncMode,
+    #[arg(
+        long = "history.chain",
+        default_value = "off",
+        value_name = "HISTORY_CHAIN",
+        value_parser = utils::parse_history_chain,
+        help = "Backfill historical chain data (bodies + receipts) below the snap pivot.",
+        long_help = "Optionally backfill historical block bodies and receipts after snap sync so \
+                     the node can serve historical block, transaction, receipt and log queries. \
+                     One of \"off\" (default: headers-only below the pivot), \"postmerge\" \
+                     (backfill down to the merge block), \"all\" (as far back as receipts are \
+                     decodable — down to the Byzantium block, not genesis — best-effort as many \
+                     peers no longer serve pre-merge history), or an explicit BLOCK NUMBER \
+                     to backfill down to only that block — use this to keep a recent slice of \
+                     history instead of everything back to the merge. A block number below the \
+                     merge block is honoured but is best-effort like \"all\", and anything below \
+                     Byzantium is clamped up to it. Enabling this adds substantial disk usage. \
+                     It does not enable historical state queries (this is not an archive node).",
+        help_heading = "P2P options",
+        env = "ETHREX_HISTORY_CHAIN",
+    )]
+    pub history_chain: HistoryChain,
+    #[arg(
+        long = "history.transactions",
+        default_value = "0",
+        value_name = "BLOCKS",
+        help = "Blocks of backfilled history to keep the transaction index for (0 = the entire backfilled range).",
+        help_heading = "P2P options",
+        env = "ETHREX_HISTORY_TRANSACTIONS"
+    )]
+    pub history_transactions: u64,
     #[arg(
         long = "metrics.addr",
         value_name = "ADDRESS",
@@ -578,6 +611,8 @@ impl Default for Options {
             datadir: Default::default(),
             rocksdb_block_cache_size: ethrex_storage::DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
             syncmode: Default::default(),
+            history_chain: Default::default(),
+            history_transactions: Default::default(),
             metrics_addr: "0.0.0.0".to_owned(),
             metrics_port: Default::default(),
             metrics_enabled: Default::default(),
@@ -1443,6 +1478,43 @@ mod tests {
     fn http_api_rejects_unknown_namespace() {
         let result = CLI::try_parse_from(["ethrex", "--http.api", "eth,bogus"]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn history_chain_defaults_to_off() {
+        let cli = CLI::parse_from(["ethrex"]);
+        assert_eq!(cli.opts.history_chain, HistoryChain::Off);
+    }
+
+    #[test]
+    fn history_chain_parses_keywords() {
+        for (arg, expected) in [
+            ("off", HistoryChain::Off),
+            ("postmerge", HistoryChain::PostMerge),
+            ("all", HistoryChain::All),
+        ] {
+            let cli = CLI::parse_from(["ethrex", "--history.chain", arg]);
+            assert_eq!(
+                cli.opts.history_chain, expected,
+                "for --history.chain {arg}"
+            );
+        }
+    }
+
+    /// Operators who want only a recent slice of history pass an explicit floor
+    /// block instead of `postmerge`/`all`.
+    #[test]
+    fn history_chain_parses_a_floor_block_number() {
+        let cli = CLI::parse_from(["ethrex", "--history.chain", "22000000"]);
+        assert_eq!(cli.opts.history_chain, HistoryChain::Block(22_000_000));
+    }
+
+    #[test]
+    fn history_chain_rejects_invalid_values() {
+        for arg in ["bogus", "-1", "22_000_000", "1.5", ""] {
+            let result = CLI::try_parse_from(["ethrex", "--history.chain", arg]);
+            assert!(result.is_err(), "--history.chain {arg:?} must be rejected");
+        }
     }
 
     /// Flags hardcoded by external launchers (kurtosis ethereum-package, docker
