@@ -515,6 +515,23 @@ impl RpcHandler for EstimateGasRequest {
         let gas_used = result.gas_used();
         let gas_refunded = result.gas_refunded();
 
+        // Most transactions execute identically at their own `gas_used` as they do with
+        // the whole block's gas available, and nothing can succeed below what an
+        // unconstrained run consumed — so if that one re-run succeeds it *is* the minimum,
+        // and the search can be skipped entirely. Two simulations, exact. Only gas-observing
+        // callers (an explicit `GAS` check, or a subcall needing 63/64 headroom the
+        // consumed total does not imply) fall through to the search below.
+        transaction.gas = Some(gas_used);
+        if let Ok(ExecutionResult::Success { .. }) = simulate_tx(
+            &transaction,
+            &block_header,
+            storage.clone(),
+            blockchain.clone(),
+        ) {
+            return serde_json::to_value(format!("{gas_used:#x}"))
+                .map_err(|error| RpcErr::Internal(error.to_string()));
+        }
+
         // Choose an optimistic start limit. See https://github.com/ethereum/go-ethereum/blob/a5a4fa7032bb248f5a7c40f4e8df2b131c4186a4/eth/gasestimator/gasestimator.go#L135
         let optimistic_limit = (gas_used + gas_refunded + CALL_STIPEND) * 64 / 63;
         let mut lowest_gas_limit = gas_used.saturating_sub(1);
