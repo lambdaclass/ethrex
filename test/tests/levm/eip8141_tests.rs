@@ -254,6 +254,7 @@ fn verify_frame(target: Address) -> Frame {
         flags: 0x03,
         target: Some(target),
         gas_limit: 100_000,
+        state_gas_limit: 0,
         value: U256::zero(),
         data: Bytes::new(),
     }
@@ -342,6 +343,7 @@ fn invalid_frame_tx_leaves_db_cache_clean() {
         flags: 0,
         target: Some(target),
         gas_limit: 100_000,
+        state_gas_limit: 0,
         value: U256::zero(),
         data: Bytes::new(),
     }]);
@@ -381,6 +383,7 @@ fn reverting_sender_frame_returns_value() {
             flags: 0,
             target: Some(target),
             gas_limit: 100_000,
+            state_gas_limit: 0,
             value,
             data: Bytes::new(),
         },
@@ -451,6 +454,7 @@ fn payer_pays_effective_price_no_burn() {
             flags: 0,
             target: Some(stop_contract),
             gas_limit: 30_000,
+            state_gas_limit: 0,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -527,6 +531,7 @@ fn frameparam_reads_frame_index_from_stack_top() {
             // STATE_BYTES_PER_STORAGE_SET * cost_per_state_byte (~98k) into
             // the frame's regular gas, so the budget must cover it.
             gas_limit: 300_000,
+            state_gas_limit: 0,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -608,6 +613,7 @@ fn frameparam_status_of_skipped_frame_is_two() {
             flags: 0x04,
             target: Some(logger),
             gas_limit: ROLLED_BACK_FRAME_GAS_LIMIT,
+            state_gas_limit: 0,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -616,6 +622,7 @@ fn frameparam_status_of_skipped_frame_is_two() {
             flags: 0x04,
             target: Some(reverter),
             gas_limit: 60_000,
+            state_gas_limit: 0,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -624,6 +631,7 @@ fn frameparam_status_of_skipped_frame_is_two() {
             flags: 0x04,
             target: Some(stop_ct),
             gas_limit: 30_000,
+            state_gas_limit: 0,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -632,6 +640,7 @@ fn frameparam_status_of_skipped_frame_is_two() {
             flags: 0x00,
             target: Some(stop_ct),
             gas_limit: 30_000,
+            state_gas_limit: 0,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -643,6 +652,7 @@ fn frameparam_status_of_skipped_frame_is_two() {
             // STATE_BYTES_PER_STORAGE_SET * cost_per_state_byte (~98k) into
             // the frame's regular gas, so the budget must cover it.
             gas_limit: 300_000,
+            state_gas_limit: 0,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -736,6 +746,7 @@ fn approve_halts_when_frame_scope_is_none() {
         flags: 0x00,
         target: Some(FUNDED_SENDER),
         gas_limit: 100_000,
+        state_gas_limit: 0,
         value: U256::zero(),
         data: Bytes::new(),
     }]);
@@ -774,6 +785,7 @@ fn atomic_batch_flag_on_a_verify_frame_is_a_format_rejection() {
             flags: 0x04,
             target: Some(reverter),
             gas_limit: 60_000,
+            state_gas_limit: 0,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -782,6 +794,7 @@ fn atomic_batch_flag_on_a_verify_frame_is_a_format_rejection() {
             flags: 0x00,
             target: Some(stop_ct),
             gas_limit: 30_000,
+            state_gas_limit: 0,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -841,6 +854,7 @@ fn payment_approval_before_execution_approval_reverts() {
             flags: 0,
             target: Some(stop_ct),
             gas_limit: 30_000,
+            state_gas_limit: 0,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -889,6 +903,7 @@ fn sender_frame_transfers_value_to_eoa() {
             flags: 0,
             target: Some(eoa),
             gas_limit: 50_000,
+            state_gas_limit: 0,
             value,
             data: Bytes::new(),
         },
@@ -941,6 +956,7 @@ fn sender_frame_to_eoa_emits_transfer_log() {
             flags: 0,
             target: Some(eoa),
             gas_limit: 50_000,
+            state_gas_limit: 0,
             value,
             data: Bytes::new(),
         },
@@ -1002,6 +1018,7 @@ fn sender_frame_reviving_a_dead_target_pays_new_account() {
         flags: 0,
         target: Some(dead),
         gas_limit,
+        state_gas_limit: 0,
         value,
         data: Bytes::new(),
     };
@@ -1090,6 +1107,7 @@ fn frame_tx_happy_path_sstore_and_log() {
             // STATE_BYTES_PER_STORAGE_SET * cost_per_state_byte (~98k) into
             // the frame's regular gas, so the budget must cover it.
             gas_limit: 300_000,
+            state_gas_limit: 0,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -1197,6 +1215,7 @@ fn multiple_contract_frames_do_not_duplicate_logs() {
             flags: 0,
             target: Some(worker_a),
             gas_limit: 100_000,
+            state_gas_limit: 0,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -1206,6 +1225,7 @@ fn multiple_contract_frames_do_not_duplicate_logs() {
             flags: 0,
             target: Some(worker_b),
             gas_limit: 100_000,
+            state_gas_limit: 0,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -1315,6 +1335,7 @@ fn frame_sstore_set_reports_eip8037_state_gas() {
             flags: 0x00,
             target: Some(writer),
             gas_limit: 2_000_000,
+            state_gas_limit: 0,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -1365,6 +1386,7 @@ fn reverted_frame_reports_no_state_gas() {
             flags: 0x00,
             target: Some(writer),
             gas_limit: 2_000_000,
+            state_gas_limit: 0,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -1389,6 +1411,7 @@ fn frame_tx_below_base_blob_fee_is_rejected() {
         flags: 0x00,
         target: None,
         gas_limit: 100_000,
+        state_gas_limit: 0,
         value: U256::zero(),
         data: Bytes::new(),
     }]);
@@ -1438,6 +1461,7 @@ fn state_gas_reservoir_does_not_leak_across_frames() {
         flags: 0x00,
         target: Some(target),
         gas_limit: 2_000_000,
+        state_gas_limit: 0,
         value: U256::zero(),
         data: Bytes::new(),
     };
@@ -1543,6 +1567,7 @@ mod frame_tx_opcode_handler_tests {
             flags: 0x00,
             target: Some(Address::from_low_u64_be(0xCAFE)),
             gas_limit: 100_000,
+            state_gas_limit: 0,
             value: U256::from(1_234_567u64),
             data: Bytes::new(),
         };
@@ -1693,6 +1718,7 @@ mod frame_tx_opcode_handler_tests {
             flags: 0x03,
             target: Some(Address::from_low_u64_be(0xAA)),
             gas_limit: 50_000,
+            state_gas_limit: 0,
             value: U256::zero(),
             data: Bytes::from(data.to_vec()),
         };
@@ -2308,6 +2334,7 @@ mod validation_observer_tests {
             flags,
             target: Some(target),
             gas_limit,
+            state_gas_limit: 0,
             value: U256::zero(),
             data,
         }
@@ -2319,6 +2346,7 @@ mod validation_observer_tests {
             flags: 0,
             target: Some(target),
             gas_limit,
+            state_gas_limit: 0,
             value: U256::zero(),
             data,
         }
@@ -2820,6 +2848,7 @@ mod frame_validation_prefix_tests {
             flags,
             target: Some(target),
             gas_limit,
+            state_gas_limit: 0,
             value: U256::zero(),
             data: Bytes::new(),
         }
@@ -3754,6 +3783,7 @@ mod sigparam_execution_tests {
                 flags: 0,
                 target: Some(reader),
                 gas_limit: 200_000,
+                state_gas_limit: 0,
                 value: U256::zero(),
                 data: Bytes::new(),
             },
@@ -4005,6 +4035,7 @@ fn storage_refund_from_a_later_frame_reduces_reported_gas() {
         flags: 0,
         target: Some(target),
         gas_limit: 200_000,
+        state_gas_limit: 0,
         value: U256::zero(),
         data,
     };
@@ -4070,6 +4101,7 @@ fn max_gas_reserves_the_calldata_floor_instead_of_rejecting() {
         flags: 0x03,
         target: Some(FUNDED_SENDER),
         gas_limit: 1_000,
+        state_gas_limit: 0,
         value: U256::zero(),
         data: Bytes::from(vec![0x11u8; 4_096]),
     }]);
@@ -4102,6 +4134,7 @@ fn a_floor_bound_frame_transaction_is_charged_the_floor() {
         flags: 0x03,
         target: Some(FUNDED_SENDER),
         gas_limit: 100_000,
+        state_gas_limit: 0,
         value: U256::zero(),
         data: Bytes::from(vec![0x11u8; 4_096]),
     }]);
@@ -4169,6 +4202,7 @@ fn atomic_batch_revert_drops_the_batch_writes_from_the_bal() {
         flags: 0x04,
         target: Some(target),
         gas_limit: 300_000,
+        state_gas_limit: 0,
         value: U256::zero(),
         data: Bytes::new(),
     };
@@ -4177,6 +4211,7 @@ fn atomic_batch_revert_drops_the_batch_writes_from_the_bal() {
         flags: 0x00,
         target: Some(target),
         gas_limit: 100_000,
+        state_gas_limit: 0,
         value: U256::zero(),
         data: Bytes::new(),
     };
@@ -4185,6 +4220,7 @@ fn atomic_batch_revert_drops_the_batch_writes_from_the_bal() {
         flags: 0x03,
         target: Some(FUNDED_SENDER),
         gas_limit: 80_000,
+        state_gas_limit: 0,
         value: U256::zero(),
         data: Bytes::new(),
     };
@@ -4284,6 +4320,7 @@ fn reverted_frame_refiles_its_writes_as_reads_in_the_bal() {
         flags: 0x03,
         target: Some(FUNDED_SENDER),
         gas_limit: 80_000,
+        state_gas_limit: 0,
         value: U256::zero(),
         data: Bytes::new(),
     };
@@ -4294,6 +4331,7 @@ fn reverted_frame_refiles_its_writes_as_reads_in_the_bal() {
         flags: 0x00,
         target: Some(target),
         gas_limit: 300_000,
+        state_gas_limit: 0,
         value: U256::zero(),
         data: Bytes::new(),
     };
@@ -4394,6 +4432,7 @@ fn a_reverting_frame_discards_the_approval_it_granted() {
         flags: 0x03,
         target: Some(FUNDED_SENDER),
         gas_limit: 400_000,
+        state_gas_limit: 0,
         value: U256::zero(),
         data: Bytes::from_static(&[0x01]),
     }]);
@@ -4462,6 +4501,7 @@ fn atomic_batch_unroll_keeps_frame_status_and_gas_but_drops_logs() {
         flags: 0x04,
         target: Some(target),
         gas_limit: BATCH_FRAME_GAS,
+        state_gas_limit: 0,
         value: U256::zero(),
         data: Bytes::new(),
     };
@@ -4477,6 +4517,7 @@ fn atomic_batch_unroll_keeps_frame_status_and_gas_but_drops_logs() {
             flags: 0x00,
             target: Some(terminator),
             gas_limit: 100_000,
+            state_gas_limit: 0,
             value: U256::zero(),
             data: Bytes::new(),
         },

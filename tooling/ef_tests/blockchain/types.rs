@@ -262,6 +262,10 @@ pub struct FrameItem {
     #[serde(default, deserialize_with = "deserialize_empty_as_none_address")]
     pub target: Option<Address>,
     pub gas_limit: U256,
+    /// `limits.state`. Defaulted so a fixture bundle filled before the EIP grew a
+    /// second gas dimension still parses.
+    #[serde(default)]
+    pub state_gas_limit: U256,
     pub value: U256,
     #[serde(with = "ethrex_common::serde_utils::bytes")]
     pub data: Bytes,
@@ -631,6 +635,7 @@ impl From<Transaction> for FrameTransaction {
                     flags: f.flags.try_into().unwrap(),
                     target: f.target,
                     gas_limit: f.gas_limit.try_into().unwrap_or(u64::MAX),
+                    state_gas_limit: f.state_gas_limit.try_into().unwrap_or(u64::MAX),
                     value: f.value,
                     data: f.data,
                 })

@@ -1836,10 +1836,15 @@ pub struct Frame {
     pub flags: u8,
     #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::H160Wrapper>)]
     pub target: Option<Address>,
+    /// `limits.execution` -- the frame's execution-gas budget.
     pub gas_limit: u64,
-    // Per EIP-8141 the frame is a 6-tuple [mode, flags, target, gas_limit, value, data].
-    // Only SENDER frames may carry a non-zero value; see
-    // `validate_static_constraints`.
+    /// `limits.state` -- the frame's EIP-8037 state-gas budget. The two
+    /// dimensions are independent: neither can be spent in pursuit of the other,
+    /// and unused gas in one is not available to the other.
+    pub state_gas_limit: u64,
+    // Per EIP-8141 the frame is a 6-tuple [mode, flags, target, limits, value, data]
+    // where `limits` is itself the 2-list [execution, state]. Only SENDER frames
+    // may carry a non-zero value; see `validate_static_constraints`.
     #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub value: U256,
     #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
@@ -1881,7 +1886,7 @@ impl RLPEncode for Frame {
             .encode_field(&(self.mode as u64))
             .encode_field(&(self.flags as u64))
             .encode_field(&target_kind)
-            .encode_field(&self.gas_limit)
+            .encode_field(&(self.gas_limit, self.state_gas_limit))
             .encode_field(&self.value)
             .encode_field(&self.data)
             .finish();
@@ -1902,7 +1907,8 @@ impl RLPDecode for Frame {
             TxKind::Call(addr) => Some(addr),
             TxKind::Create => None,
         };
-        let (gas_limit, decoder) = decoder.decode_field("gas_limit")?;
+        let ((gas_limit, state_gas_limit), decoder): ((u64, u64), _) =
+            decoder.decode_field("limits")?;
         let (value, decoder): (U256, _) = decoder.decode_field("value")?;
         let (data, decoder) = decoder.decode_field("data")?;
         let frame = Frame {
@@ -1910,6 +1916,7 @@ impl RLPDecode for Frame {
             flags,
             target,
             gas_limit,
+            state_gas_limit,
             value,
             data,
         };
@@ -2701,9 +2708,11 @@ impl RLPEncode for FrameTransaction {
             .encode_field(&self.sender)
             .encode_field(&self.frames)
             .encode_field(&self.signatures)
-            .encode_field(&self.max_priority_fee_per_gas)
-            .encode_field(&self.max_fee_per_gas)
-            .encode_field(&self.max_fee_per_blob_gas)
+            .encode_field(&(
+                self.max_priority_fee_per_gas,
+                self.max_fee_per_gas,
+                self.max_fee_per_blob_gas,
+            ))
             .encode_field(&self.blob_versioned_hashes)
             .finish();
     }
@@ -2717,10 +2726,10 @@ impl RLPDecode for FrameTransaction {
         let (sender, decoder) = decoder.decode_field("sender")?;
         let (frames, decoder) = decoder.decode_field("frames")?;
         let (signatures, decoder) = decoder.decode_field("signatures")?;
-        let (max_priority_fee_per_gas, decoder) =
-            decoder.decode_field("max_priority_fee_per_gas")?;
-        let (max_fee_per_gas, decoder) = decoder.decode_field("max_fee_per_gas")?;
-        let (max_fee_per_blob_gas, decoder) = decoder.decode_field("max_fee_per_blob_gas")?;
+        let ((max_priority_fee_per_gas, max_fee_per_gas, max_fee_per_blob_gas), decoder): (
+            (U256, U256, U256),
+            _,
+        ) = decoder.decode_field("fees")?;
         let (blob_versioned_hashes, decoder) = decoder.decode_field("blob_versioned_hashes")?;
         let tx = FrameTransaction {
             chain_id,
@@ -3076,6 +3085,8 @@ mod serde_impl {
         pub to: Option<Address>,
         #[serde(with = "crate::serde_utils::u64::hex_str")]
         pub gas_limit: u64,
+        #[serde(default, with = "crate::serde_utils::u64::hex_str")]
+        pub state_gas_limit: u64,
         #[serde(
             default,
             serialize_with = "serialize_u256_hex",
@@ -3121,6 +3132,7 @@ mod serde_impl {
                 flags: value.flags as u64,
                 to: value.target,
                 gas_limit: value.gas_limit,
+                state_gas_limit: value.state_gas_limit,
                 value: value.value,
                 data: value.data.clone(),
             }
@@ -3134,6 +3146,7 @@ mod serde_impl {
                 flags: entry.flags as u8,
                 target: entry.to,
                 gas_limit: entry.gas_limit,
+                state_gas_limit: entry.state_gas_limit,
                 value: entry.value,
                 data: entry.data,
             }
@@ -5137,6 +5150,7 @@ mod tests {
                     flags: 0x03, // APPROVE_PAYMENT_AND_EXECUTION
                     target: Some(Address::from_low_u64_be(0xABCD)),
                     gas_limit: 100_000,
+                    state_gas_limit: 0,
                     value: U256::zero(),
                     data: Bytes::from_static(b"verify_data"),
                 },
@@ -5145,6 +5159,7 @@ mod tests {
                     flags: 0x00,
                     target: Some(Address::from_low_u64_be(0x1234)),
                     gas_limit: 200_000,
+                    state_gas_limit: 0,
                     value: U256::zero(),
                     data: Bytes::from_static(b"call_data"),
                 },
@@ -5175,6 +5190,7 @@ mod tests {
                 flags: 0x04, // atomic batch
                 target: Some(Address::from_low_u64_be(0xB0B)),
                 gas_limit: 21_000,
+                state_gas_limit: 0,
                 value: U256::zero(),
                 data: Bytes::new(),
             },
@@ -5183,6 +5199,7 @@ mod tests {
                 flags: 0x04, // atomic batch
                 target: Some(Address::from_low_u64_be(0xB0B)),
                 gas_limit: 21_000,
+                state_gas_limit: 0,
                 value: U256::zero(),
                 data: Bytes::new(),
             },
@@ -5191,6 +5208,7 @@ mod tests {
                 flags: 0x00, // terminator: no flag
                 target: Some(Address::from_low_u64_be(0xCAFE)),
                 gas_limit: 21_000,
+                state_gas_limit: 0,
                 value: U256::zero(),
                 data: Bytes::new(),
             },
@@ -5206,6 +5224,7 @@ mod tests {
             flags: 0x04,
             target: Some(Address::from_low_u64_be(0xCAFE)),
             gas_limit: 21_000,
+            state_gas_limit: 0,
             value: U256::zero(),
             data: Bytes::new(),
         }];
@@ -5220,6 +5239,7 @@ mod tests {
             flags: 0x03,
             target: Some(Address::from_low_u64_be(0x1234)),
             gas_limit: 50_000,
+            state_gas_limit: 0,
             value: U256::zero(),
             data: Bytes::from_static(b"hello"),
         };
@@ -5235,6 +5255,7 @@ mod tests {
             flags: 0x00,
             target: None,
             gas_limit: 10_000,
+            state_gas_limit: 0,
             value: U256::zero(),
             data: Bytes::from_static(b"deploy"),
         };
@@ -5252,6 +5273,7 @@ mod tests {
                 flags: if mode_val == 1 { 0x03 } else { 0x00 },
                 target: Some(Address::from_low_u64_be(0x1234)),
                 gas_limit: 50_000,
+                state_gas_limit: 0,
                 value: U256::zero(),
                 data: Bytes::new(),
             };
@@ -5265,6 +5287,7 @@ mod tests {
             flags: 0x01 | 0x04, // scope=1 + atomic_batch
             target: Some(Address::from_low_u64_be(0x1234)),
             gas_limit: 50_000,
+            state_gas_limit: 0,
             value: U256::zero(),
             data: Bytes::new(),
         };
@@ -5283,6 +5306,7 @@ mod tests {
             flags: 0x00,
             target: Some(Address::from_low_u64_be(0xCAFE)),
             gas_limit: 100_000,
+            state_gas_limit: 0,
             value: U256::from(1_000_000_000_000_000u64), // 0.001 ETH
             data: Bytes::from_static(b"hello"),
         };
@@ -5412,6 +5436,7 @@ mod tests {
                 flags: 0x00,
                 target: Some(Address::from_low_u64_be(0x1234)),
                 gas_limit: gl,
+                state_gas_limit: 0,
                 value: U256::zero(),
                 data: Bytes::new(),
             })
@@ -5509,6 +5534,7 @@ mod tests {
                 flags: 0x01,
                 target: None,
                 gas_limit: 50_000,
+                state_gas_limit: 0,
                 value: U256::from(1u64),
                 data: Bytes::new(),
             }],
@@ -5533,6 +5559,7 @@ mod tests {
                 flags: 0x00,
                 target: Some(Address::from_low_u64_be(0x1234)),
                 gas_limit: 50_000,
+                state_gas_limit: 0,
                 value: U256::from(1u64),
                 data: Bytes::new(),
             }],
@@ -5551,6 +5578,7 @@ mod tests {
                 flags: 0x00,
                 target: Some(Address::from_low_u64_be(0x1234)),
                 gas_limit: 50_000,
+                state_gas_limit: 0,
                 value: U256::from(1u64),
                 data: Bytes::new(),
             }],
@@ -5621,6 +5649,7 @@ mod tests {
             flags: 0x00,
             target: Some(frame_tx_expiry_verifier()),
             gas_limit: 30_000,
+            state_gas_limit: 0,
             value: U256::zero(),
             data: Bytes::copy_from_slice(&deadline.to_be_bytes()),
         }
@@ -5852,10 +5881,13 @@ mod tests {
 
     #[test]
     fn golden_frame_tx_rlp_and_sig_hash() {
-        // Regression lock for the EIP-8141 signatures-list wire format. No
-        // external EEST reference vectors exist yet;
-        // these values are the current canonical output and must only change
-        // with a deliberate, reviewed format change.
+        // Regression lock for the EIP-8141 wire format: the `limits = [execution,
+        // state]` frame tuple, the nested `fees` list, and the signatures list.
+        // The layout itself is pinned against reference-produced bytes by
+        // `reference_frame_tx_reencodes_byte_identically`; this test locks the
+        // exact bytes and signature hash for a transaction that exercises a
+        // non-zero state budget, and must only change with a deliberate,
+        // reviewed format change.
         let tx = FrameTransaction {
             chain_id: 1,
             nonce: 7,
@@ -5866,6 +5898,7 @@ mod tests {
                     flags: 3,
                     target: None,
                     gas_limit: 0x5208,
+                    state_gas_limit: 0x1e8480,
                     value: U256::zero(),
                     data: Bytes::from_static(&[0x11, 0x22]),
                 },
@@ -5874,6 +5907,7 @@ mod tests {
                     flags: 0,
                     target: Some(Address::from_low_u64_be(0x1234)),
                     gas_limit: 0x9c40,
+                    state_gas_limit: 0,
                     value: U256::zero(),
                     data: Bytes::new(),
                 },
@@ -5898,7 +5932,7 @@ mod tests {
         // GOLDEN_RLP: obtained from first run
         assert_eq!(
             rlp_hex,
-            "f8ab010794000000000000000000000000000000000000abcde8ca01038082520880821122dc0280940000000000000000000000000000000000001234829c408080f85cf85a0194000000000000000000000000000000000000abcd80b8410101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101843b9aca008506fc23ac0080c0"
+            "f8b3010794000000000000000000000000000000000000abcdefcf010380c7825208831e848080821122de0280940000000000000000000000000000000000001234c4829c40808080f85cf85a0194000000000000000000000000000000000000abcd80b8410101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101cc843b9aca008506fc23ac0080c0"
         );
 
         // Round-trips losslessly.
@@ -5910,7 +5944,7 @@ mod tests {
         // GOLDEN_SIG_HASH: obtained from first run
         assert_eq!(
             format!("{:#x}", sig_hash),
-            "0xe7dc3f33413fc69c09f9c690be154ded294954e497aeea6ce0010ba513f2f26d",
+            "0x6fb08a74904b78734bae9acf19295923a5bd31a190209a76dec2cd623b577152",
         );
 
         // Elision invariant: changing empty-msg signature bytes must NOT change sig_hash.
