@@ -43,7 +43,7 @@ async fn resolve_postmerge_floor(store: &Store) -> Result<Option<BlockNumber>, S
     if let Some(merge_block) = store.get_chain_config().merge_netsplit_block {
         return Ok(Some(merge_block));
     }
-    let head = store.get_latest_block_number().await?;
+    let head = store.get_latest_block_number()?;
     // A block is proof-of-stake iff its difficulty is zero. A missing header signals
     // a corrupt DB: this only ever walks the already-synced canonical chain.
     first_pos_block(head, |n| {
@@ -128,7 +128,7 @@ async fn resolve_floor(
 ///
 /// Also used by snap sync to record the true frontier at the end of each cycle.
 pub(crate) async fn reconcile_frontier(store: &Store) -> Result<BlockNumber, SyncError> {
-    let head = store.get_latest_block_number().await?;
+    let head = store.get_latest_block_number()?;
     if head == 0 {
         return Ok(0);
     }
@@ -350,7 +350,7 @@ async fn backfill_step(
             };
             plan.insert(BackfillPlan {
                 floor,
-                head: store.get_latest_block_number().await?,
+                head: store.get_latest_block_number()?,
                 mode_label: format!("{:?}", config.mode),
                 first_batch: true,
             })
