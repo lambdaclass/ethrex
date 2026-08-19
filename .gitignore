@@ -40,6 +40,7 @@ jwt.hex
 /tmp
 
 *tests*.tar.gz
+tooling/ef_tests/state/test.tar.gz
 
 .env
 
@@ -139,3 +140,6 @@ core.*
 
 __pycache__/
 .lycheecache
+
+# Scratch output from .github/scripts/extract-stateless-fixture.sh
+/output

@@ -203,6 +203,7 @@ impl TestBuilder {
             fee_token: None,
             disable_balance_check: false,
             disable_nonce_check: false,
+            disable_gas_allowance_check: false,
             is_system_call: false,
         };
 
@@ -223,6 +224,7 @@ impl TestBuilder {
             LevmCallTracer::disabled(),
             VMType::L1,
             &NativeCrypto,
+            None,
         )
         .unwrap();
         vm.execute().unwrap()

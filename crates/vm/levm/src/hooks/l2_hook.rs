@@ -77,7 +77,7 @@ impl Hook for L2Hook {
         // Max fee per gas must be sufficient to cover base fee + operator fee
         validate_sufficient_max_fee_per_gas_l2(vm, &self.fee_config.operator_fee_config)?;
         // Reserve L1 gas from the execution budget so execution can't consume it.
-        // If gas_limit < intrinsic_gas + l1_gas, this returns IntrinsicGasTooLow.
+        // If gas_limit < intrinsic_gas + l1_gas, this returns L1GasReservationTooLow.
         reserve_l1_gas(vm, &self.fee_config.l1_fee_config)?;
         Ok(())
     }
@@ -319,12 +319,19 @@ fn validate_sufficient_max_fee_per_gas_l2(
 /// the griefing vector where a user sets gas_limit = intrinsic_gas.
 ///
 /// If gas_limit < intrinsic_gas + l1_gas, increase_consumed_gas returns
-/// OutOfGas, which we map to IntrinsicGasTooLow to reject the tx upfront.
+/// OutOfGas, which we map to L1GasReservationTooLow to reject the tx upfront.
 ///
 /// On Prague+, also validates gas_limit >= floor + l1_gas (EIP-7623).
 /// Finalize computes actual_gas_used = max(execution_gas, floor) + l1_gas,
 /// so without this check a tx with heavy calldata could pass validation
 /// but underflow in refund_sender.
+///
+/// Both failures use `L1GasReservationTooLow` rather than `IntrinsicGasTooLow`
+/// because `l1_gas` tracks the L1 fee config and the block's gas price: a tx can
+/// fail here purely because L1 data availability was momentarily expensive and
+/// succeed in the next block. Reusing `IntrinsicGasTooLow` would make it
+/// indistinguishable from the tx's own immutable intrinsic-gas shortfall, which
+/// the payload builders evict on.
 fn reserve_l1_gas(vm: &mut VM<'_>, l1_fee_config: &Option<L1FeeConfig>) -> Result<(), VMError> {
     let l1_gas = calculate_l1_fee_gas(vm, l1_fee_config)?;
 
@@ -335,13 +342,13 @@ fn reserve_l1_gas(vm: &mut VM<'_>, l1_fee_config: &Option<L1FeeConfig>) -> Resul
         let floor = vm.get_min_gas_used()?;
         let floor_plus_l1 = floor.checked_add(l1_gas).ok_or(InternalError::Overflow)?;
         if vm.env.gas_limit < floor_plus_l1 {
-            return Err(TxValidationError::IntrinsicGasTooLow.into());
+            return Err(TxValidationError::L1GasReservationTooLow.into());
         }
     }
 
     vm.current_call_frame
         .increase_consumed_gas(l1_gas)
-        .map_err(|_| TxValidationError::IntrinsicGasTooLow)?;
+        .map_err(|_| TxValidationError::L1GasReservationTooLow)?;
     Ok(())
 }
 
@@ -844,6 +851,7 @@ fn simulate_common_bridge_call(
         LevmCallTracer::disabled(),
         VMType::L2(Default::default()),
         vm.crypto,
+        None,
     )?;
     new_vm.hooks = vec![];
     default_hook::set_bytecode_and_code_address(&mut new_vm)?;

@@ -59,6 +59,15 @@ pub struct PollableFilter {
 impl NewFilterRequest {
     pub fn parse(params: &Option<Vec<serde_json::Value>>) -> Result<Self, RpcErr> {
         let filter = LogsFilter::parse(params)?;
+        // EIP-234 defines `blockHash` for eth_newFilter too, but the only thing
+        // it does with such a filter is answer eth_getFilterLogs, which we don't
+        // implement. For eth_getFilterChanges, a moving range by definition, even
+        // geth ignores the hash. Reject it instead of accepting and ignoring.
+        if filter.block_hash.is_some() {
+            return Err(RpcErr::BadParams(
+                "`blockHash` is not a valid filter for eth_newFilter".to_string(),
+            ));
+        }
         Ok(NewFilterRequest {
             request_data: filter,
         })
@@ -86,7 +95,7 @@ impl NewFilterRequest {
             return Err(RpcErr::BadParams("Invalid block range".to_string()));
         }
 
-        let last_block_number = storage.get_latest_block_number().await?;
+        let last_block_number = storage.get_latest_block_number()?;
         let id: u64 = rand::random();
         let timestamp = Instant::now();
         let mut active_filters_guard = filters.lock().unwrap_or_else(|mut poisoned_guard| {
@@ -186,7 +195,7 @@ impl FilterChangesRequest {
         storage: ethrex_storage::Store,
         filters: ActiveFilters,
     ) -> Result<serde_json::Value, crate::utils::RpcErr> {
-        let latest_block_num = storage.get_latest_block_number().await?;
+        let latest_block_num = storage.get_latest_block_number()?;
         // Box needed to keep the future Sync
         // https://github.com/rust-lang/rust/issues/128095
         let mut active_filters_guard =
@@ -477,6 +486,7 @@ mod tests {
                     filter_data: LogsFilter {
                         from_block: BlockIdentifier::Number(1),
                         to_block: BlockIdentifier::Number(2),
+                        block_hash: None,
                         address_filters: None,
                         topics: vec![],
                     },

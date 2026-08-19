@@ -2,7 +2,7 @@
 
 # --- Chef base ---
 # Slim rust image + apt deps needed to compile native crates (rocksdb, openssl-sys, bindgen).
-FROM rust:1.91-slim-bookworm AS chef
+FROM rust:1.93-slim-bookworm AS chef
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
@@ -27,7 +27,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     # uname -m (NOT $TARGETARCH): cargo-chef is a build-platform tool, must match
     # the stage's execution arch, not the target image arch.
-    curl -fsSL https://github.com/cargo-bins/cargo-binstall/releases/download/${CARGO_BINSTALL_VERSION}/cargo-binstall-$(uname -m)-unknown-linux-musl.tgz \
+    curl -fsSL --retry 5 --retry-all-errors --retry-connrefused --connect-timeout 30 \
+      https://github.com/cargo-bins/cargo-binstall/releases/download/${CARGO_BINSTALL_VERSION}/cargo-binstall-$(uname -m)-unknown-linux-musl.tgz \
       | tar -xz -C /usr/local/cargo/bin \
     && cargo binstall --no-confirm cargo-chef
 
@@ -80,7 +81,10 @@ RUN case "$TARGETARCH" in \
         amd64) SOLC_URL=https://github.com/ethereum/solidity/releases/download/v0.8.31/solc-static-linux ;; \
         *) echo "unsupported TARGETARCH=$TARGETARCH" >&2; exit 1 ;; \
     esac \
-    && curl -fsSL -o /usr/bin/solc "$SOLC_URL" \
+    # --retry-all-errors: github.com release downloads serve bursts of 503s and
+    # drop connections mid-transfer. Plain --retry ignores both.
+    && curl -fsSL --retry 5 --retry-all-errors --retry-connrefused --connect-timeout 30 \
+        -o /usr/bin/solc "$SOLC_URL" \
     && chmod +x /usr/bin/solc
 
 COPY --link benches ./benches

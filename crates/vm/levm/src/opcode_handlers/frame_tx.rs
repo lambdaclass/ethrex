@@ -9,7 +9,7 @@
 //!   - `SIGPARAM` (0xB4)
 //!   - Default code for EOAs: `VERIFY` has the signature-check behavior;
 //!     `SENDER` and `DEFAULT` return successfully as if calling empty code
-//!     (pinned EIP-8141 spec §"Default code" lines 412-413).
+//!     (EIP-8141 §"Default code").
 
 use crate::{
     errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
@@ -38,12 +38,12 @@ pub fn u256_to_offset(value: U256) -> Option<usize> {
     usize::try_from(value.0[0]).ok()
 }
 
-/// Compute the transaction's MAXIMUM cost (spec line 387: APPROVE must
+/// Compute the transaction's MAXIMUM cost (EIP-8141 §Gas Accounting: APPROVE must
 /// "collect the transaction's maximum cost from payer"):
-/// `max_cost = max_fee_per_gas * total_gas_limit
-///           + len(blob_hashes) * 131072 * max_fee_per_blob_gas`.
+/// `max_cost = max_fee_per_gas * max_gas
+///           + len(blob_hashes) * 131072 * blob_base_fee`.
 /// This is the single definition of "maximum cost": APPROVE (scopes 0x1/0x3)
-/// debits it from the payer, TXPARAM(0x06) reports it (spec line 455), and the
+/// debits it from the payer, TXPARAM(0x06) reports it, and the
 /// mempool paymaster reservation reserves it. The end-of-tx refund returns
 /// `max_cost - effective_gas_price * total_gas_used - base-rate blob burn`, so
 /// the payer nets the effective-rate cost of the gas actually used plus the
@@ -51,12 +51,12 @@ pub fn u256_to_offset(value: U256) -> Option<usize> {
 /// non-refundable).
 pub(crate) fn compute_tx_max_cost(ctx: &crate::vm::FrameTxContext) -> Result<U256, VMError> {
     let gas_cost = U256::from(ctx.tx.max_fee_per_gas)
-        .checked_mul(U256::from(ctx.total_gas_limit))
+        .checked_mul(U256::from(ctx.max_gas))
         .ok_or(ExceptionalHalt::InvalidOpcode)?;
     let blob_cost = U256::from(ctx.tx.blob_versioned_hashes.len())
         .checked_mul(U256::from(131072u64))
         .ok_or(ExceptionalHalt::InvalidOpcode)?
-        .checked_mul(ctx.tx.max_fee_per_blob_gas)
+        .checked_mul(ctx.blob_base_fee)
         .ok_or(ExceptionalHalt::InvalidOpcode)?;
     gas_cost
         .checked_add(blob_cost)
@@ -83,8 +83,13 @@ pub fn apply_approve(
             if ctx.payer_address.is_some() {
                 return Err(ExceptionalHalt::InvalidOpcode.into());
             }
-            // No sender_approved precondition: the spec allows APPROVE_PAYMENT
-            // in any order relative to APPROVE_EXECUTION.
+            // EIP-8141: payment approval must not precede the sender's execution
+            // approval. Per the spec's APPROVE_PAYMENT rules, revert the frame
+            // while sender_approved == false (the sender authorizes execution
+            // first; only then may a payer be bound and the max cost collected).
+            if !ctx.sender_approved {
+                return Err(VMError::RevertOpcode);
+            }
             let tx_cost = compute_tx_max_cost(ctx)?;
             let sender = ctx.tx.sender;
 
@@ -418,7 +423,7 @@ impl OpcodeHandler for OpFrameParamHandler {
             0x05 => {
                 // status -- exceptional halt if current/future frame.
                 // Returns the EIP-8141 status code: 0 = failure, 1 = success,
-                // 3 = skipped (atomic-batch failure).
+                // 2 = skipped (atomic-batch failure).
                 if idx >= ctx.current_frame_index {
                     return Err(ExceptionalHalt::InvalidOpcode.into());
                 }
@@ -437,7 +442,7 @@ impl OpcodeHandler for OpFrameParamHandler {
                 U256::from(u8::from(frame.is_atomic_batch()))
             }
             0x08 => {
-                // value -- EIP-8141 FRAMEPARAM table (spec line 287)
+                // value -- EIP-8141 FRAMEPARAM table
                 frame.value
             }
             _ => return Err(ExceptionalHalt::InvalidOpcode.into()),
@@ -449,35 +454,96 @@ impl OpcodeHandler for OpFrameParamHandler {
     }
 }
 
-/// SIGPARAM (0xB4) -- signature-scoped metadata (EIP-8141, spec commit fe0940cae2).
-/// Stack: [param, signatureIndex] with signatureIndex on top. Gas cost: 2.
-/// Raw `signature` bytes are intentionally NOT exposed.
+/// SIGPARAM (0xB4) -- signature-scoped metadata and data copy (EIP-8141).
+/// Metadata (params 0x00-0x03): stack `[param, signatureIndex]` with
+/// `signatureIndex` on top; gas 2; returns one word (0x00 effective signer,
+/// 0x01 scheme, 0x02 msg, 0x03 len(signature)). Copy (param 0x04): takes
+/// `[signatureIndex, param, memOffset, dataOffset, length]` with `signatureIndex`
+/// on top (popped first), matching `CALLDATACOPY`'s operand order; CALLDATACOPY
+/// gas; copies an ARBITRARY signature's raw bytes into memory (zero-filled past
+/// the end) and pushes nothing — any other scheme halts.
 pub struct OpSigParamHandler;
 impl OpcodeHandler for OpSigParamHandler {
     #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         let [signature_index, param] = *vm.current_call_frame.stack.pop()?;
+        let param = u64::try_from(param).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
+        let signature_index =
+            u64::try_from(signature_index).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
+        let idx = index_to_usize(signature_index)?;
 
+        // 0x04: copy the referenced ARBITRARY signature's raw bytes into memory,
+        // CALLDATACOPY-style (see FRAMEDATACOPY). Pops three more operands.
+        if param == 0x04 {
+            let [mem_offset, data_offset, length] = *vm.current_call_frame.stack.pop()?;
+            let (length, mem_offset) = size_offset_to_usize(length, mem_offset)?;
+            let data_offset_opt = u256_to_offset(data_offset);
+
+            let new_memory_size = calculate_memory_size(mem_offset, length)?;
+            let current_memory_size = vm.current_call_frame.memory.len();
+            // Charge memory-expansion gas before the context/scheme guards: the
+            // caller pays for the growth it requested even if the opcode halts.
+            vm.current_call_frame
+                .increase_consumed_gas(gas_cost::framedatacopy(
+                    new_memory_size,
+                    current_memory_size,
+                    length,
+                )?)?;
+
+            let ctx = vm
+                .frame_tx_context
+                .as_ref()
+                .ok_or(ExceptionalHalt::InvalidOpcode)?;
+            let sig = ctx
+                .tx
+                .signatures
+                .get(idx)
+                .ok_or(ExceptionalHalt::InvalidOpcode)?;
+            // 0x04 is only defined for ARBITRARY signatures.
+            if sig.scheme != ethrex_common::types::FRAME_SIG_SCHEME_ARBITRARY {
+                return Err(ExceptionalHalt::InvalidOpcode.into());
+            }
+            if length == 0 {
+                return Ok(OpcodeResult::Continue);
+            }
+            let data = &sig.signature;
+            let mut buf = vec![0u8; length];
+            if let Some(data_offset) = data_offset_opt {
+                let available = data.len().saturating_sub(data_offset);
+                let copy_len = length.min(available);
+                if let (Some(dst), Some(src)) = (
+                    buf.get_mut(..copy_len),
+                    data.get(data_offset..data_offset.saturating_add(copy_len)),
+                ) {
+                    dst.copy_from_slice(src);
+                }
+            }
+            vm.current_call_frame.memory.store_data(mem_offset, &buf)?;
+            return Ok(OpcodeResult::Continue);
+        }
+
+        // Metadata (0x00-0x03): fixed gas, returns one word.
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::SIGPARAM)?;
-
         let ctx = vm
             .frame_tx_context
             .as_ref()
             .ok_or(ExceptionalHalt::InvalidOpcode)?;
-
-        let signature_index =
-            u64::try_from(signature_index).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
-        let idx = index_to_usize(signature_index)?;
         let sig = ctx
             .tx
             .signatures
             .get(idx)
             .ok_or(ExceptionalHalt::InvalidOpcode)?;
-
-        let param = u64::try_from(param).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
         let result = match param {
-            0x00 => address_to_u256(sig.signer), // effective signer
+            // Resolved signer: an absent signer resolves to tx.sender. EIP-8141
+            // assigns no resolved signer to ARBITRARY entries, so asking for one
+            // is an exceptional halt.
+            0x00 => {
+                if sig.scheme == ethrex_common::types::FRAME_SIG_SCHEME_ARBITRARY {
+                    return Err(ExceptionalHalt::InvalidOpcode.into());
+                }
+                address_to_u256(sig.signer.unwrap_or(ctx.tx.sender))
+            }
             0x01 => U256::from(sig.scheme),
             0x02 => {
                 // msg: 0 when empty (canonical sig_hash case), else the 32-byte digest.
@@ -532,7 +598,7 @@ pub fn address_to_u256(addr: ethrex_common::Address) -> U256 {
 /// When a frame targets an address with no deployed code (an EOA), the protocol
 /// runs built-in "default code" instead of executing a normal CALL. `VERIFY`
 /// runs the signature-check logic; `SENDER` and `DEFAULT` return successfully
-/// as if calling empty code (pinned EIP-8141 spec §"Default code" lines 412-413).
+/// as if calling empty code (EIP-8141 §"Default code").
 ///
 /// Returns `(success, gas_used, logs)`.
 pub fn execute_default_code(
@@ -542,8 +608,7 @@ pub fn execute_default_code(
 ) -> Result<(bool, u64, Vec<Log>), VMError> {
     match frame.execution_mode() {
         FrameMode::Verify => execute_default_verify(vm, frame, target),
-        // Pinned EIP-8141 spec (fe0940cae2) §"Default code" lines 412-413:
-        // a SENDER or DEFAULT frame whose target has no code "returns
+        // EIP-8141 §"Default code": a SENDER or DEFAULT frame whose target has no code "returns
         // successfully as if calling empty code" — this is what makes a plain
         // ETH transfer to an EOA work (spec §EOA support / Example 1).
         // Consumes no execution gas (the frame's value transfer is handled by
@@ -573,17 +638,20 @@ fn execute_default_verify(
         return Ok((false, 0, Vec::new()));
     }
 
-    // EIP-8141 (spec commit fe0940cae2): the default account approves only if
-    // the outer signature list contains a SECP256K1 signature over the
-    // canonical sig_hash (empty msg) whose signer is the resolved target.
-    // Signatures were already validated in execute_frame_tx, so a match here is
-    // sufficient — no in-frame crypto.
-    let has_sender_sig = ctx.tx.signatures.iter().any(|s| {
+    // EIP-8141: the default account approves only if the signature at a specific
+    // index — 0 when the allowed scope includes APPROVE_EXECUTION, else 1 (the
+    // payment-only case, where index 0 belongs to the sender's own verify frame)
+    // — is a SECP256K1 signature over the canonical sig_hash (empty msg) whose
+    // resolved signer is the resolved target. An absent signer resolves to
+    // tx.sender. Signatures were already validated in execute_frame_tx, so a
+    // match here is sufficient — no in-frame crypto.
+    let sig_index = if (allowed_scope & 0x02) != 0 { 0 } else { 1 };
+    let sender_sig_ok = ctx.tx.signatures.get(sig_index).is_some_and(|s| {
         s.scheme == ethrex_common::types::FRAME_SIG_SCHEME_SECP256K1
             && s.msg.is_empty()
-            && s.signer == target
+            && s.signer.unwrap_or(ctx.tx.sender) == target
     });
-    if !has_sender_sig {
+    if !sender_sig_ok {
         return Ok((false, 0, Vec::new()));
     }
 
@@ -604,10 +672,12 @@ mod max_cost_tests {
     use crate::vm::FrameTxContext;
     use ethrex_common::{H256, U256, types::FrameTransaction};
 
-    fn ctx(max_fee: u64, blobs: usize, max_blob_fee: u64, total_gas_limit: u64) -> FrameTxContext {
+    fn ctx(max_fee: u64, blobs: usize, blob_base_fee: u64, max_gas: u64) -> FrameTxContext {
         let tx = FrameTransaction {
             max_fee_per_gas: max_fee,
-            max_fee_per_blob_gas: U256::from(max_blob_fee),
+            // Deliberately far above the base fee: `max_fee_per_blob_gas` bounds
+            // inclusion only and must not reach `max_cost`.
+            max_fee_per_blob_gas: U256::from(blob_base_fee).saturating_mul(U256::from(1_000u64)),
             blob_versioned_hashes: vec![H256::zero(); blobs],
             ..Default::default()
         };
@@ -619,16 +689,17 @@ mod max_cost_tests {
             sig_hash: H256::zero(),
             tx,
             approve_called_in_current_frame: false,
-            total_gas_limit,
+            max_gas,
+            blob_base_fee: U256::from(blob_base_fee),
         }
     }
 
     #[test]
-    fn max_cost_is_max_fee_times_limit_plus_max_blob_cost() {
+    fn max_cost_is_max_fee_times_limit_plus_base_rate_blob_cost() {
         // 10 * 100_000 + 2 * 131072 * 5 = 1_000_000 + 1_310_720
         let c = ctx(10, 2, 5, 100_000);
         assert_eq!(compute_tx_max_cost(&c).unwrap(), U256::from(2_310_720u64));
-        // No blobs: just max_fee * total_gas_limit.
+        // No blobs: just max_fee * max_gas.
         let c = ctx(7, 0, 999, 21_000);
         assert_eq!(compute_tx_max_cost(&c).unwrap(), U256::from(147_000u64));
     }

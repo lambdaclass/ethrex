@@ -26,7 +26,7 @@ use ethrex_common::{
 
 use ethrex_crypto::NativeCrypto;
 use ethrex_crypto::keccak::Keccak256;
-use ethrex_vm::{Evm, EvmError, check_2d_gas_allowance};
+use ethrex_vm::{Evm, EvmError, check_2d_gas_allowance, compute_burned_fees};
 
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{Store, error::StoreError};
@@ -198,7 +198,15 @@ pub fn create_payload(
     let body = BlockBody {
         transactions: Vec::new(),
         ommers: Vec::new(),
-        withdrawals: args.withdrawals.clone(),
+        // Post-Shanghai the withdrawals field is part of the body schema: emit
+        // an explicit (possibly empty) list, matching the header's
+        // withdrawals_root above, instead of omitting the field. Omitting it
+        // produces blocks that fail `validate_block_body` — the L2 block
+        // producer passes `withdrawals: None`, which previously leaked through
+        // as a body without the field under an empty-root header.
+        withdrawals: chain_config
+            .is_shanghai_activated(args.timestamp)
+            .then(|| args.withdrawals.clone().unwrap_or_default()),
     };
 
     // Delay applying withdrawals until the payload is requested and built
@@ -755,7 +763,7 @@ impl Blockchain {
                 continue;
             }
 
-            // EIP-8141 expiry (spec commit 0b197156): drop frame txs whose
+            // EIP-8141 expiry: drop frame txs whose
             // expiry deadline is behind the block being built. Deterministic
             // for this payload timestamp, so remove from the pool as well.
             if let Transaction::FrameTransaction(frame_tx) = &*head_tx.tx
@@ -778,7 +786,27 @@ impl Blockchain {
                     // whole tx) EXCEPT nonce mismatches, which are transient
                     // queue-ordering artifacts — keep those pooled for a later
                     // block, mirroring how regular txs are treated.
-                    if is_frame && !is_nonce_mismatch(&e) {
+                    //
+                    // Regular txs are likewise kept pooled on failure, since the
+                    // usual cause is a transient queue-ordering/nonce/balance
+                    // artifact that a later block resolves. But a
+                    // DETERMINISTICALLY-invalid regular tx (intrinsic gas below
+                    // the minimum or the calldata floor, or initcode over the
+                    // size cap) can never become valid at its nonce; keeping it
+                    // pooled lets it re-occupy the sender's queue head on every
+                    // build and starve that sender's other txs indefinitely.
+                    // Evict those too.
+                    let evict = if is_frame {
+                        !is_nonce_mismatch(&e)
+                    } else {
+                        is_deterministic_invalid(&e)
+                    };
+                    if evict {
+                        // Neutral wording on purpose: the two branches evict for
+                        // different reasons (a frame tx for any non-nonce-mismatch
+                        // failure, a regular tx only for a deterministic one), so
+                        // naming either reason here would mislabel the other.
+                        debug!("Evicting transaction {tx_hash} from the pool: {e}");
                         self.remove_transaction_from_pool(&tx_hash)?;
                     }
                     txs.pop()
@@ -1040,6 +1068,39 @@ impl Blockchain {
             .map(|bal| bal.compute_hash(&NativeCrypto));
         context.block_access_list = block_access_list;
 
+        // EIP-8079 (LStar+): compute and set burned_fees in block header.
+        // Uses the same helper and identical inputs as the verification path
+        // (backends/mod.rs compute_burned_fees) so production == verification.
+        if context
+            .chain_config()
+            .is_lstar_activated(context.payload.header.timestamp)
+        {
+            let base_fee_per_gas = context.payload.header.base_fee_per_gas.unwrap_or(0);
+            // Post-refund Σ gas_spent: last receipt's cumulative_gas_used (per EIP-8079).
+            // Do NOT use header.gas_used — that is pre-refund for Amsterdam+ per EIP-7778.
+            let gas_spent = context
+                .receipts
+                .last()
+                .map(|r| r.cumulative_gas_used)
+                .unwrap_or(0);
+            let blob_base_fee: u64 = context.base_fee_per_blob_gas.try_into().unwrap_or(u64::MAX);
+            let blob_gas_used = context.payload.header.blob_gas_used.unwrap_or(0);
+            // RLP trailing-optional contiguity: slot_number and burned_fees are adjacent
+            // positional optionals decoded greedily.  A block with slot_number=None but
+            // burned_fees=Some would be mis-decoded (silent corruption).  At LStar both
+            // must be Some.
+            debug_assert!(
+                context.payload.header.slot_number.is_some(),
+                "LStar block sets burned_fees=Some so slot_number must be Some (RLP trailing-optional contiguity)"
+            );
+            context.payload.header.burned_fees = Some(compute_burned_fees(
+                base_fee_per_gas,
+                gas_spent,
+                blob_base_fee,
+                blob_gas_used,
+            ));
+        }
+
         let mut logs = vec![];
         for receipt in context.receipts.iter().cloned() {
             for log in receipt.logs {
@@ -1064,6 +1125,77 @@ impl Blockchain {
 /// account nonce, so the tx becomes valid once earlier nonces are included.
 fn is_nonce_mismatch(e: &ChainError) -> bool {
     e.to_string().contains("Nonce mismatch")
+}
+
+/// Whether a tx failed with an error that recurs at the same nonce for as long as
+/// the active fork's rules hold — i.e. it is intrinsically invalid, not merely
+/// mis-ordered.
+///
+/// "For as long as the fork's rules hold" is the honest bound, not "forever": a
+/// fork can relax the very limit that failed. Amsterdam raises the initcode cap
+/// (`AMSTERDAM_INIT_CODE_MAX_SIZE` vs `INIT_CODE_MAX_SIZE`), lowers the intrinsic
+/// base cost, and removes the per-tx gas cap. A tx evicted just before such a fork
+/// would have become includable just after. The window is one fork boundary and the
+/// sender can resubmit, which is a better trade than starving that sender's queue on
+/// every build until then. Covers the levm intrinsic-gas checks (gas limit
+/// below the minimum intrinsic cost or below the EIP-7623 calldata floor) and
+/// the EIP-3860/7954 initcode size cap. There is no typed variant at the
+/// `ChainError` level, so it is detected by the stable Display substrings; the
+/// `deterministic_invalid_detected_from_chain_error` test pins them through the
+/// real conversion path so a reworded error breaks the test, not eviction.
+///
+/// Such a tx must be evicted rather than kept pooled: otherwise it re-occupies
+/// its sender's queue head on every payload build and starves that sender's
+/// other transactions (a payload-inclusion stall).
+///
+/// The matched set is deliberately narrow, and smaller than the abstract class of
+/// "invalid given the tx bytes and sender" — most of that class cannot reach here,
+/// because mempool admission (`Blockchain::validate_transaction`) already rejects
+/// it. A tx whose priority fee exceeds its max fee per gas is refused there
+/// (`TxTipAboveFeeCapError`), as is `nonce == u64::MAX` (`NonceTooLow`, in both the
+/// existing-account and fresh-sender branches), the initcode cap, and — only while
+/// Osaka is active and Amsterdam is not — the per-tx gas cap. Blob-tx structural
+/// faults are caught by `BlobsBundle::validate`. So a variant being absent below
+/// usually means it never makes it into the pool, not that it was overlooked.
+///
+/// `SenderNotEOA` is excluded on purpose for a different reason: an EIP-7702
+/// delegation can be revoked, so that failure is transient, not permanent.
+///
+/// Note for anyone extending this: the substrings are load-bearing. They are
+/// matched against `Display` output because the typed variant does not survive the
+/// trip to `ChainError` — `impl From<VMError> for EvmError` collapses it into
+/// `EvmError::Transaction(String)`. Reworded LEVM errors must therefore break the
+/// pinning test rather than silently disable eviction, which is what that test is
+/// for. Before adding an arm, check that EVERY site raising that variant is
+/// deterministic: string matching cannot separate two producers of one variant, so
+/// a variant raised from both a permanent and a transient condition is
+/// unclassifiable here. Note that "every site" means both hooks — several of these
+/// variants are raised from `l2_hook` as well as `default_hook`, and the count is
+/// what matters, not the file. `TxValidationError::L1GasReservationTooLow` exists
+/// for exactly that reason: the L2 hook's transient `l1_gas` shortfall would
+/// otherwise be indistinguishable from `IntrinsicGasTooLow`.
+pub fn is_deterministic_invalid(e: &ChainError) -> bool {
+    let msg = e.to_string();
+    // Every producer of `IntrinsicGasTooLow` is deterministic given the tx's bytes
+    // and the active fork: `validate_min_gas_limit`'s `gas_limit < intrinsic` check,
+    // its EIP-8037 `regular.max(floor) > TX_MAX_GAS_LIMIT` cap, and the equivalent
+    // budget check in `VM::add_intrinsic_gas`. The L2 hook's transient `l1_gas`
+    // shortfall raises `L1GasReservationTooLow` instead, so it does not reach here.
+    msg.contains("gas limit lower than the minimum gas cost")
+        || msg.contains("gas cost floor for calldata tokens")
+        || msg.contains("Initcode size exceeded")
+        // EIP-7825 / EIP-8037 per-tx gas cap. Three producers — `default_hook` plus
+        // two in the L2 hook's fee-token path — and all three compare `gas_limit`
+        // against a fork constant, so every one of them is deterministic.
+        //
+        // Admission rejects the cap too, but only at insertion and only while
+        // `is_osaka_activated && !is_amsterdam_activated`, so this arm is
+        // load-bearing in two ways. On L1: a tx admitted before Osaka survives in
+        // the pool and then fails every build once Osaka is live. On L2: the hook
+        // applies the cap from PRAGUE onward, ahead of admission's Osaka gate, so a
+        // fee-token tx over the cap is admitted and then rejected on every build
+        // with no fork boundary involved at all.
+        || msg.contains("gas limit exceeds maximum")
 }
 
 /// Runs a plain (non blob) transaction, updates the gas count and returns the receipt
@@ -1290,9 +1422,167 @@ impl PartialOrd for HeadTransaction {
     }
 }
 
+/// Tests for EIP-8079 burned_fees production (LStar-gated) in finalize_payload.
+#[cfg(test)]
+mod burned_fees_payload_tests {
+    use super::*;
+    use ethrex_common::types::{DEFAULT_BUILDER_GAS_CEIL, ELASTICITY_MULTIPLIER, Genesis};
+    use ethrex_storage::EngineType;
+    use ethrex_vm::compute_burned_fees;
+    use std::path::Path;
+
+    /// Load the execution-api genesis (has all Prague system contracts deployed) and
+    /// override the chain config to add Amsterdam / LStar activation timestamps.
+    fn load_genesis_with_forks(amsterdam: bool, lstar: bool) -> Genesis {
+        let path = Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/genesis/execution-api.json"
+        ));
+        let mut genesis = Genesis::try_from(path).expect("Failed to load execution-api genesis");
+        // Patch the fork timestamps.
+        genesis.config.amsterdam_time = amsterdam.then_some(0);
+        genesis.config.lstar_time = lstar.then_some(0);
+        // Amsterdam/LStar require slot_number in the genesis header; set it here.
+        if amsterdam || lstar {
+            genesis.slot_number = Some(0);
+        }
+        genesis
+    }
+
+    /// Build one empty payload on top of genesis and return the produced block.
+    /// `slot_number` must be `Some` when LStar is active (RLP contiguity invariant).
+    async fn build_empty_payload(genesis: Genesis, slot_number: Option<u64>) -> Block {
+        let mut store =
+            Store::new("store.db", EngineType::InMemory).expect("Failed to create in-memory store");
+        store
+            .add_initial_state(genesis)
+            .await
+            .expect("Failed to add genesis");
+        let blockchain = Blockchain::default_with_store(store.clone());
+        let genesis_header = store.get_block_header(0).unwrap().unwrap();
+        let args = BuildPayloadArgs {
+            parent: genesis_header.hash(),
+            timestamp: 1,
+            fee_recipient: Address::zero(),
+            random: H256::zero(),
+            withdrawals: Some(Vec::new()),
+            beacon_root: Some(H256::zero()),
+            slot_number,
+            version: 1,
+            elasticity_multiplier: ELASTICITY_MULTIPLIER,
+            gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+        };
+        let block_template =
+            create_payload(&args, &store, Bytes::new()).expect("create_payload failed");
+        blockchain
+            .build_payload(block_template)
+            .expect("build_payload failed")
+            .payload
+    }
+
+    /// LStar block must have burned_fees = Some(compute_burned_fees(base_fee, gas_spent,
+    /// blob_base_fee, blob_gas_used)) where gas_spent is post-refund (last receipt's
+    /// cumulative_gas_used), matching the verification path.
+    #[tokio::test]
+    async fn lstar_block_produces_burned_fees() {
+        let genesis = load_genesis_with_forks(true, true);
+        let config = genesis.config;
+        // slot_number=Some(1): required by the RLP trailing-optional contiguity invariant
+        // when burned_fees is Some (LStar+).
+        let block = build_empty_payload(genesis, Some(1)).await;
+        let header = &block.header;
+
+        // Compute expected using the same helper + same-basis inputs as finalize_payload.
+        // Empty block: no receipts → gas_spent = 0; no blobs → blob_gas_used = 0.
+        let blob_base_fee: u64 = calculate_base_fee_per_blob_gas(
+            header.excess_blob_gas.unwrap_or(0),
+            config
+                .get_fork_blob_schedule(header.timestamp)
+                .map(|s| s.base_fee_update_fraction)
+                .unwrap_or(0),
+        )
+        .try_into()
+        .unwrap_or(u64::MAX);
+
+        let expected = compute_burned_fees(
+            header.base_fee_per_gas.unwrap_or(0),
+            0, // gas_spent = 0 (no transactions → no receipts)
+            blob_base_fee,
+            header.blob_gas_used.unwrap_or(0),
+        );
+
+        assert_eq!(
+            header.burned_fees,
+            Some(expected),
+            "LStar: burned_fees must equal compute_burned_fees(base_fee={}, gas_spent=0, blob_base_fee={}, blob_gas_used={})",
+            header.base_fee_per_gas.unwrap_or(0),
+            blob_base_fee,
+            header.blob_gas_used.unwrap_or(0),
+        );
+    }
+
+    /// Pre-LStar (Amsterdam) blocks must leave burned_fees = None.
+    #[tokio::test]
+    async fn amsterdam_block_does_not_set_burned_fees() {
+        let genesis = load_genesis_with_forks(true, false); // Amsterdam only, no LStar
+        let block = build_empty_payload(genesis, None).await;
+        assert_eq!(
+            block.header.burned_fees, None,
+            "Amsterdam (pre-LStar): burned_fees must be None"
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn create_payload_emits_explicit_empty_withdrawals_post_shanghai() {
+        // Regression: the L2 block producer passes `withdrawals: None`, which
+        // `create_payload` used to leak into the body while the header still
+        // committed to the empty withdrawals root — a block shape
+        // `validate_block_body` rejects (and every reference client rejects).
+        let mut store = ethrex_storage::Store::new("", ethrex_storage::EngineType::InMemory)
+            .expect("in-memory store");
+        store
+            .set_chain_config(&ChainConfig {
+                shanghai_time: Some(0),
+                ..Default::default()
+            })
+            .await
+            .expect("chain config");
+        let parent = BlockHeader {
+            gas_limit: 30_000_000,
+            ..Default::default()
+        };
+        let parent_hash = parent.hash();
+        store
+            .add_block_header(parent_hash, parent)
+            .await
+            .expect("parent header");
+
+        let args = BuildPayloadArgs {
+            parent: parent_hash,
+            timestamp: 1,
+            fee_recipient: Address::zero(),
+            random: H256::zero(),
+            withdrawals: None,
+            beacon_root: None,
+            slot_number: None,
+            version: 2,
+            elasticity_multiplier: 2,
+            gas_ceil: 30_000_000,
+        };
+        let block = create_payload(&args, &store, Bytes::new()).expect("payload");
+
+        // The body must carry an explicit empty list matching the header's
+        // empty root, and the produced block must pass body validation.
+        assert_eq!(block.body.withdrawals, Some(vec![]));
+        assert!(block.header.withdrawals_root.is_some());
+        ethrex_common::types::validate_block_body(&block.header, &block.body, &NativeCrypto)
+            .expect("produced block must pass validate_block_body");
+    }
 
     #[test]
     fn nonce_mismatch_detected_from_chain_error() {
@@ -1321,6 +1611,108 @@ mod tests {
         assert!(
             !is_nonce_mismatch(&other),
             "is_nonce_mismatch must not match unrelated errors; got: {other}"
+        );
+    }
+
+    #[test]
+    fn deterministic_invalid_detected_from_chain_error() {
+        // Pin `is_deterministic_invalid`'s Display substrings through the REAL
+        // production conversion path (same rationale as the nonce-mismatch pin
+        // test above): a reworded levm error must break this test, not silently
+        // stop evicting doomed txs.
+        use ethrex_levm::errors::{TxValidationError, VMError};
+        let to_chain = |e: TxValidationError| -> ChainError {
+            EvmError::from(VMError::TxValidation(e)).into()
+        };
+
+        // Intrinsically invalid at this nonce forever -> must be evicted.
+        for (err, name) in [
+            (TxValidationError::IntrinsicGasTooLow, "IntrinsicGasTooLow"),
+            (
+                TxValidationError::IntrinsicGasBelowFloorGasCost,
+                "IntrinsicGasBelowFloorGasCost",
+            ),
+            (
+                TxValidationError::InitcodeSizeExceeded {
+                    max_size: 1,
+                    actual_size: 2,
+                },
+                "InitcodeSizeExceeded",
+            ),
+            (
+                TxValidationError::TxMaxGasLimitExceeded {
+                    tx_hash: H256::zero(),
+                    tx_gas_limit: 1,
+                },
+                "TxMaxGasLimitExceeded",
+            ),
+        ] {
+            let e = to_chain(err);
+            assert!(
+                is_deterministic_invalid(&e),
+                "is_deterministic_invalid must match {name}; got: {e}"
+            );
+        }
+
+        // Transient failures (nonce gap, balance, fees) must NOT be evicted.
+        for (err, name) in [
+            (
+                TxValidationError::NonceMismatch {
+                    expected: 5,
+                    actual: 7,
+                },
+                "NonceMismatch",
+            ),
+            (
+                TxValidationError::InsufficientAccountFunds,
+                "InsufficientAccountFunds",
+            ),
+            (
+                TxValidationError::InsufficientMaxFeePerGas,
+                "InsufficientMaxFeePerGas",
+            ),
+        ] {
+            let e = to_chain(err);
+            assert!(
+                !is_deterministic_invalid(&e),
+                "is_deterministic_invalid must NOT match transient {name}; got: {e}"
+            );
+        }
+    }
+
+    #[test]
+    fn l1_gas_reservation_too_low_is_not_deterministic() {
+        // The L2 hook's `reserve_l1_gas` rejects a tx whose gas limit cannot cover
+        // the reserved `l1_gas`, which tracks the L1 fee config and the block's gas
+        // price — so the same tx can succeed a block later. That failure MUST stay
+        // pooled, which is why it has its own variant instead of reusing
+        // `IntrinsicGasTooLow`. If the two are ever merged again, this test fails
+        // and eviction stops silently dropping recoverable L2 txs.
+        use ethrex_levm::errors::{TxValidationError, VMError};
+        let to_chain = |e: TxValidationError| -> ChainError {
+            EvmError::from(VMError::TxValidation(e)).into()
+        };
+
+        let transient = to_chain(TxValidationError::L1GasReservationTooLow);
+        assert!(
+            !is_deterministic_invalid(&transient),
+            "L1GasReservationTooLow is transient (l1_gas varies per block) and must \
+             NOT be evicted; got: {transient}"
+        );
+
+        // The distinction is only meaningful if the two stringify differently: a
+        // reworded `L1GasReservationTooLow` that drifted into containing the
+        // intrinsic-gas substring would start being evicted.
+        let permanent = to_chain(TxValidationError::IntrinsicGasTooLow);
+        assert!(
+            is_deterministic_invalid(&permanent),
+            "IntrinsicGasTooLow must still be evicted; got: {permanent}"
+        );
+        assert_ne!(
+            transient.to_string(),
+            permanent.to_string(),
+            "L1GasReservationTooLow and IntrinsicGasTooLow must not share a Display \
+             string, or the transient case becomes unclassifiable"
         );
     }
 }
