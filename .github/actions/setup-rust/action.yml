@@ -22,9 +22,11 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Extract Rust version and runner image family
+    - name: Extract Rust version and compose the cache key
       id: rustver
       shell: bash
+      env:
+        CACHE_POOL: ${{ inputs.cache-pool }}
       run: |
         rust_version=$(grep -E '^[[:space:]]*channel[[:space:]]*=' rust-toolchain.toml \
                  | sed -E 's/.*"([^"]+)".*/\1/')
@@ -34,8 +36,19 @@ runs:
         # revisions in one job and runs this action from each, and a differing
         # step list between them trips the runner's post-step bookkeeping with
         # "Index was out of range".
-        echo "image_family=${ImageOS:-unknown}" >>"$GITHUB_OUTPUT"
-        echo "Runner image family: ${ImageOS:-unknown}"
+        image_family="${ImageOS:-unknown}"
+        echo "image_family=${image_family}" >>"$GITHUB_OUTPUT"
+        echo "Runner image family: ${image_family}"
+        # rust-cache appends its `key` input only on the branch that builds a
+        # per-job key; when `shared-key` is set it takes that branch instead and
+        # `key` is dropped entirely. So a pooled job has to carry the image
+        # family inside the shared key itself. Empty when no pool is configured,
+        # which leaves rust-cache on the per-job key where `key` does apply.
+        if [ -n "${CACHE_POOL}" ]; then
+          echo "shared_key=${CACHE_POOL}-${image_family}" >>"$GITHUB_OUTPUT"
+        else
+          echo "shared_key=" >>"$GITHUB_OUTPUT"
+        fi
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@master
@@ -55,6 +68,9 @@ runs:
     # `ImageOS` (ubuntu22 / ubuntu24 / macos15) is the image family, so it
     # separates the glibc floors without keying on `ImageVersion`, which
     # changes with every runner image release and would evict the pool weekly.
+    # It goes into `shared-key`, not `key`: rust-cache ignores `key` whenever
+    # `shared-key` is set, so keying the image family there alone left every
+    # pooled job on the shared, image-blind key it was meant to split.
     # Read via `$GITHUB_OUTPUT` rather than `env.ImageOS` directly: the `env`
     # context is not reliably available to `with:` on a `uses:` step inside a
     # composite action. Self-hosted runners may not set it; they then share one
@@ -80,7 +96,7 @@ runs:
     - name: Add Rust Cache
       uses: Swatinem/rust-cache@v2
       with:
-        shared-key: ${{ inputs.cache-pool }}
+        shared-key: ${{ steps.rustver.outputs.shared_key }}
         key: ${{ steps.rustver.outputs.image_family }}
         save-if: ${{ inputs.save-cache == 'true' && github.ref == 'refs/heads/main' }}
         workspaces: |
