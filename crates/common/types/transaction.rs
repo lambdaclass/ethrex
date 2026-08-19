@@ -2014,6 +2014,8 @@ pub struct FrameTransaction {
 
 /// Intrinsic gas cost for frame transactions (EIP-8141)
 pub const FRAME_TX_INTRINSIC_COST: u64 = 12000;
+/// EIP-2780 `TX_VALUE_COST`: the intrinsic charge for a value-moving frame.
+pub const TX_VALUE_COST: u64 = 6000;
 /// Per-frame cost (EIP-8141): CALL context overhead (100) + G_log (375)
 pub const FRAME_TX_PER_FRAME_COST: u64 = 475;
 /// ENTRY_POINT address used as caller for DEFAULT/VERIFY frames per EIP-8141.
@@ -2166,6 +2168,24 @@ impl FrameTransaction {
         FRAME_TX_INTRINSIC_COST
             .saturating_add((self.frames.len() as u64).saturating_mul(FRAME_TX_PER_FRAME_COST))
             .saturating_add(self.signature_verification_cost())
+            .saturating_add(self.value_transfer_gas())
+    }
+
+    /// EIP-2780's `TX_VALUE_COST` per frame that moves value to an explicit target
+    /// other than `tx.sender`.
+    ///
+    /// A frame with no explicit target resolves to the sender, and a frame paying the
+    /// sender moves nothing between accounts, so neither is a transfer to charge for.
+    pub fn value_transfer_gas(&self) -> u64 {
+        self.frames.iter().fold(0u64, |acc, frame| {
+            let moves_value =
+                !frame.value.is_zero() && frame.target.is_some_and(|target| target != self.sender);
+            if moves_value {
+                acc.saturating_add(TX_VALUE_COST)
+            } else {
+                acc
+            }
+        })
     }
 
     /// EIP-8141 `standard_gas_limit`: mandatory costs + data cost + the frames'

@@ -1215,6 +1215,14 @@ impl<'a> VM<'a> {
         owner: usize,
         amount: u64,
     ) -> Result<(), VMError> {
+        // The refill undoes a charge, so the transaction's state-gas total drops by
+        // the same amount whichever frame owns it. Without this the charge stays
+        // billed at the block level even though the state it paid for is gone.
+        self.state_gas_used = self
+            .state_gas_used
+            .checked_sub(i64::try_from(amount).map_err(|_| InternalError::Overflow)?)
+            .ok_or(InternalError::Underflow)?;
+
         let current = self
             .frame_tx_context
             .as_ref()
