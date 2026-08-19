@@ -3754,19 +3754,21 @@ mod sigparam_execution_tests {
     /// `memOffset`, then `SSTORE(0, MLOAD(memOffset))`. The copy form takes
     /// `[signatureIndex, param, memOffset, dataOffset, length]` with the index on
     /// top, so the pushes run in reverse.
-    fn sigparam_copy_code(index: u8, length: u8, data_offset: u8, mem_offset: u8) -> Bytes {
+    /// `SIGDATACOPY` (0xB5) takes four operands, `memOffset` on top, then
+    /// `dataOffset`, `length` and `signatureIndex` -- so they are pushed in
+    /// reverse. EIP-8141 moved the copy out of `SIGPARAM` to make that opcode's
+    /// stack requirement static.
+    fn sigdatacopy_code(index: u8, length: u8, data_offset: u8, mem_offset: u8) -> Bytes {
         Bytes::from(vec![
+            0x60,
+            index, // PUSH1 signatureIndex
             0x60,
             length, // PUSH1 length
             0x60,
             data_offset, // PUSH1 dataOffset
             0x60,
             mem_offset, // PUSH1 memOffset
-            0x60,
-            0x04, // PUSH1 param (copy)
-            0x60,
-            index, // PUSH1 signatureIndex
-            0xB4,  // SIGPARAM
+            0xB5,       // SIGDATACOPY
             0x60,
             mem_offset, // PUSH1 memOffset
             0x51,       // MLOAD
@@ -3863,11 +3865,11 @@ mod sigparam_execution_tests {
     }
 
     #[test]
-    fn sigparam_0x04_copies_arbitrary_signature_bytes() {
+    fn sigdatacopy_copies_arbitrary_signature_bytes() {
         // 4 payload bytes copied into memory at 0; MLOAD reads them left-aligned
         // in the word, with the rest zero-filled.
         let (result, db, reader) = run_reader(
-            sigparam_copy_code(0, 4, 0, 0),
+            sigdatacopy_code(0, 4, 0, 0),
             vec![arbitrary_sig(vec![0xDE, 0xAD, 0xBE, 0xEF])],
         );
         result.expect("valid tx");
@@ -3880,10 +3882,10 @@ mod sigparam_execution_tests {
     }
 
     #[test]
-    fn sigparam_0x04_zero_fills_past_the_end() {
+    fn sigdatacopy_zero_fills_past_the_end() {
         // Asking for 8 bytes of a 2-byte signature zero-fills the remainder.
         let (result, db, reader) = run_reader(
-            sigparam_copy_code(0, 8, 0, 0),
+            sigdatacopy_code(0, 8, 0, 0),
             vec![arbitrary_sig(vec![0x11, 0x22])],
         );
         result.expect("valid tx");
@@ -3896,13 +3898,13 @@ mod sigparam_execution_tests {
     }
 
     #[test]
-    fn sigparam_0x04_reads_operands_in_calldatacopy_order() {
+    fn sigdatacopy_reads_operands_in_calldatacopy_order() {
         // The copy operands follow `CALLDATACOPY`: memOffset above dataOffset
         // above length. Distinct values for all three, and a destination past the
         // first word, pin the order — reading them in any other order lands the
         // bytes somewhere else (or copies a different count).
         let (result, db, reader) = run_reader(
-            sigparam_copy_code(0, 3, 1, 0x20),
+            sigdatacopy_code(0, 3, 1, 0x20),
             vec![arbitrary_sig(vec![0xAA, 0xBB, 0xCC, 0xDD])],
         );
         result.expect("valid tx");

@@ -488,56 +488,6 @@ impl OpcodeHandler for OpSigParamHandler {
             u64::try_from(signature_index).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
         let idx = index_to_usize(signature_index)?;
 
-        // 0x04: copy the referenced ARBITRARY signature's raw bytes into memory,
-        // CALLDATACOPY-style (see FRAMEDATACOPY). Pops three more operands.
-        if param == 0x04 {
-            let [mem_offset, data_offset, length] = *vm.current_call_frame.stack.pop()?;
-            let (length, mem_offset) = size_offset_to_usize(length, mem_offset)?;
-            let data_offset_opt = u256_to_offset(data_offset);
-
-            let new_memory_size = calculate_memory_size(mem_offset, length)?;
-            let current_memory_size = vm.current_call_frame.memory.len();
-            // Charge memory-expansion gas before the context/scheme guards: the
-            // caller pays for the growth it requested even if the opcode halts.
-            vm.current_call_frame
-                .increase_consumed_gas(gas_cost::framedatacopy(
-                    new_memory_size,
-                    current_memory_size,
-                    length,
-                )?)?;
-
-            let ctx = vm
-                .frame_tx_context
-                .as_ref()
-                .ok_or(ExceptionalHalt::InvalidOpcode)?;
-            let sig = ctx
-                .tx
-                .signatures
-                .get(idx)
-                .ok_or(ExceptionalHalt::InvalidOpcode)?;
-            // 0x04 is only defined for ARBITRARY signatures.
-            if sig.scheme != ethrex_common::types::FRAME_SIG_SCHEME_ARBITRARY {
-                return Err(ExceptionalHalt::InvalidOpcode.into());
-            }
-            if length == 0 {
-                return Ok(OpcodeResult::Continue);
-            }
-            let data = &sig.signature;
-            let mut buf = vec![0u8; length];
-            if let Some(data_offset) = data_offset_opt {
-                let available = data.len().saturating_sub(data_offset);
-                let copy_len = length.min(available);
-                if let (Some(dst), Some(src)) = (
-                    buf.get_mut(..copy_len),
-                    data.get(data_offset..data_offset.saturating_add(copy_len)),
-                ) {
-                    dst.copy_from_slice(src);
-                }
-            }
-            vm.current_call_frame.memory.store_data(mem_offset, &buf)?;
-            return Ok(OpcodeResult::Continue);
-        }
-
         // Metadata (0x00-0x03): fixed gas, returns one word.
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::SIGPARAM)?;
@@ -569,10 +519,86 @@ impl OpcodeHandler for OpSigParamHandler {
                     U256::from_big_endian(&sig.msg)
                 }
             }
-            0x03 => U256::from(sig.signature.len()),
+            0x03 => {
+                // `len(signature)` is ARBITRARY-only: the raw bytes of a
+                // protocol-validated scheme, their length included, are
+                // deliberately not introspectable.
+                if sig.scheme != ethrex_common::types::FRAME_SIG_SCHEME_ARBITRARY {
+                    return Err(ExceptionalHalt::InvalidOpcode.into());
+                }
+                U256::from(sig.signature.len())
+            }
             _ => return Err(ExceptionalHalt::InvalidOpcode.into()),
         };
         vm.current_call_frame.stack.push(result)?;
+        Ok(OpcodeResult::Continue)
+    }
+}
+
+/// SIGDATACOPY (0xB5) -- copy an `ARBITRARY` signature's raw bytes into memory.
+///
+/// EIP-8141 split this out of `SIGPARAM` so that `SIGPARAM`'s stack requirement is
+/// static: it took two operands for metadata and five for the copy form, which no
+/// static analysis could resolve. The copy now has its own opcode with a fixed
+/// four-operand shape.
+///
+/// Stack (top first): `memOffset`, `dataOffset`, `length`, `signatureIndex`. No
+/// output. Gas is `CALLDATACOPY`'s: the fixed 3, the per-word copy cost, and
+/// memory expansion. The raw bytes of protocol-validated schemes stay
+/// unreadable -- referencing one is an exceptional halt -- because they may be
+/// aggregated in future, while `ARBITRARY` bytes are validated in EVM execution
+/// and so may be read.
+pub struct OpSigDataCopyHandler;
+impl OpcodeHandler for OpSigDataCopyHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        let [mem_offset, data_offset, length, signature_index] =
+            *vm.current_call_frame.stack.pop()?;
+        let signature_index =
+            u64::try_from(signature_index).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
+        let idx = index_to_usize(signature_index)?;
+        let (length, mem_offset) = size_offset_to_usize(length, mem_offset)?;
+        let data_offset_opt = u256_to_offset(data_offset);
+
+        let new_memory_size = calculate_memory_size(mem_offset, length)?;
+        let current_memory_size = vm.current_call_frame.memory.len();
+        // Charge memory expansion before the context/scheme guards: the caller pays
+        // for the growth it requested even if the opcode then halts.
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::framedatacopy(
+                new_memory_size,
+                current_memory_size,
+                length,
+            )?)?;
+
+        let ctx = vm
+            .frame_tx_context
+            .as_ref()
+            .ok_or(ExceptionalHalt::InvalidOpcode)?;
+        let sig = ctx
+            .tx
+            .signatures
+            .get(idx)
+            .ok_or(ExceptionalHalt::InvalidOpcode)?;
+        if sig.scheme != ethrex_common::types::FRAME_SIG_SCHEME_ARBITRARY {
+            return Err(ExceptionalHalt::InvalidOpcode.into());
+        }
+        if length == 0 {
+            return Ok(OpcodeResult::Continue);
+        }
+        let data = &sig.signature;
+        let mut buf = vec![0u8; length];
+        if let Some(data_offset) = data_offset_opt {
+            let available = data.len().saturating_sub(data_offset);
+            let copy_len = length.min(available);
+            if let (Some(dst), Some(src)) = (
+                buf.get_mut(..copy_len),
+                data.get(data_offset..data_offset.saturating_add(copy_len)),
+            ) {
+                dst.copy_from_slice(src);
+            }
+        }
+        vm.current_call_frame.memory.store_data(mem_offset, &buf)?;
         Ok(OpcodeResult::Continue)
     }
 }
