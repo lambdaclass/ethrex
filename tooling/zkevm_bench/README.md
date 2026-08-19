@@ -27,6 +27,15 @@ Every entry in `fixtures/manifest.toml` has a `type`:
   [Generating the exhaustive stress set](#generating-the-exhaustive-stress-set-for-slow)
   below).
 
+Benchmark-suite workloads also use the `micro` type. `tests-zkevm-benchmark@v0.8.2`
+is upstream's own Amsterdam compute benchmark set at fixed 10M/30M/60M gas
+targets, pinned by `tooling/ef_tests/.fixtures_url_zkevm_benchmark` and fetched
+with `make -C tooling/ef_tests/blockchain zkevm-benchmark-vectors` (~500MB,
+gitignored). It differs from `stress` in where the witnesses come from: `stress`
+uses ethrex's own witness generation, so those numbers are self-referential,
+while these are filled by the EEST pipeline and are therefore comparable against
+other zkEVM clients. The 10M tier runs in `medium`, 30M and 60M in `slow`.
+
 `real-block` and `stress` both load through the same `Cache` loader
 (`src/cache.rs`); `micro` goes through a separate loader for raw EEST test
 vectors (`src/micro.rs`). All three types declare their `source` relative to

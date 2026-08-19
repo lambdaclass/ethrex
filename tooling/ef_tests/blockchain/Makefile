@@ -1,4 +1,4 @@
-.PHONY: download-test-vectors clean-vectors test test-levm test-stateless amsterdam-vectors zkevm-vectors
+.PHONY: download-test-vectors clean-vectors test test-levm test-stateless amsterdam-vectors zkevm-vectors zkevm-benchmark-vectors
 
 VECTORS_ROOT := vectors
 FIXTURES_FILE := ../.fixtures_url
@@ -39,6 +39,17 @@ ZKEVM_VECTORS_DIR := $(ZKEVM_VECTORS_ROOT)/eest
 ZKEVM_FIXTURES_FILE := ../.fixtures_url_zkevm
 ZKEVM_ARTIFACT := zkevm-tests.tar.gz
 ZKEVM_URL := $(shell cat $(ZKEVM_FIXTURES_FILE))
+
+# tests-zkevm-benchmark@v0.8.2 — Amsterdam compute benchmarks at 10M/30M/60M gas,
+# filled by the EEST pipeline on the same tests-zkevm@v0.8.0 base, so the schema
+# matches what the stateless harness already reads. Kept in its own root and NOT
+# a `download-test-vectors` prerequisite: it is ~500MB and only the zkevm bench
+# reads it. Fetch on demand with `make zkevm-benchmark-vectors`.
+ZKEVM_BENCH_VECTORS_ROOT := vectors_zkevm_benchmark
+ZKEVM_BENCH_VECTORS_DIR := $(ZKEVM_BENCH_VECTORS_ROOT)/eest
+ZKEVM_BENCH_FIXTURES_FILE := ../.fixtures_url_zkevm_benchmark
+ZKEVM_BENCH_ARTIFACT := zkevm-benchmark-tests.tar.gz
+ZKEVM_BENCH_URL := $(shell cat $(ZKEVM_BENCH_FIXTURES_FILE))
 
 VECTORS_TARGETS := $(SPECTEST_VECTORS_DIR) $(LEGACYTEST_VECTORS_DIR)
 
@@ -92,6 +103,17 @@ $(ZKEVM_VECTORS_DIR): $(ZKEVM_ARTIFACT)
 	mkdir -p $(ZKEVM_VECTORS_DIR)
 	tar -xzf $(ZKEVM_ARTIFACT) --strip-components=2 -C $(ZKEVM_VECTORS_DIR) fixtures/blockchain_tests/for_amsterdam
 
+$(ZKEVM_BENCH_ARTIFACT): $(ZKEVM_BENCH_FIXTURES_FILE)
+	$(DOWNLOAD) $(ZKEVM_BENCH_URL) $(ZKEVM_BENCH_ARTIFACT)
+
+# Extracts all three gas tiers (for_amsterdam_at_{0010,0030,0060}M).
+$(ZKEVM_BENCH_VECTORS_DIR): $(ZKEVM_BENCH_ARTIFACT)
+	rm -rf $(ZKEVM_BENCH_VECTORS_DIR)
+	mkdir -p $(ZKEVM_BENCH_VECTORS_DIR)
+	tar -xzf $(ZKEVM_BENCH_ARTIFACT) --strip-components=2 -C $(ZKEVM_BENCH_VECTORS_DIR) fixtures/blockchain_tests
+
+zkevm-benchmark-vectors: $(ZKEVM_BENCH_VECTORS_DIR) ## 📥 Download the zkEVM benchmark fixtures (~500MB)
+
 zkevm-vectors: $(ZKEVM_VECTORS_DIR)
 
 help: ## 📚 Show help for each of the Makefile recipes
@@ -100,8 +122,8 @@ help: ## 📚 Show help for each of the Makefile recipes
 download-test-vectors: $(VECTORS_TARGETS) amsterdam-vectors zkevm-vectors ## 📥 Download test vectors
 
 clean-vectors: ## 🗑️  Clean test vectors
-	rm -rf $(VECTORS_ROOT) $(ZKEVM_VECTORS_ROOT)
-	rm -f $(SPECTEST_ARTIFACT) $(LEGACYTEST_ARTIFACT) $(AMSTERDAM_ARTIFACT) $(AMSTERDAM_ARTIFACT).part $(ZKEVM_ARTIFACT)
+	rm -rf $(VECTORS_ROOT) $(ZKEVM_VECTORS_ROOT) $(ZKEVM_BENCH_VECTORS_ROOT)
+	rm -f $(SPECTEST_ARTIFACT) $(LEGACYTEST_ARTIFACT) $(AMSTERDAM_ARTIFACT) $(AMSTERDAM_ARTIFACT).part $(ZKEVM_ARTIFACT) $(ZKEVM_BENCH_ARTIFACT)
 
 test-levm: $(VECTORS_TARGETS) amsterdam-vectors ## 🧪 Run blockchain tests with LEVM
 	cargo test --profile release-fast

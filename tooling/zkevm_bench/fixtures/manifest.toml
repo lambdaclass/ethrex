@@ -152,3 +152,121 @@ source = "stress/stress_ecrecover_150M.json.gz"
 # NOTE: bls12_381 stress fixture is omitted — ethrex host witness generation
 # needs the `blst` feature for the BLS12-381 precompile; add it and regenerate
 # to include a worst-precompile-bls entry.
+
+# ---- EEST zkEVM benchmark suite (tests-zkevm-benchmark@v0.8.2) ----
+#
+# Amsterdam compute benchmarks at fixed gas targets, filled by the EEST pipeline
+# on the tests-zkevm@v0.8.0 base. Unlike `stress`, these witnesses come from
+# upstream's own t8n rather than ethrex's witness generation, so the numbers are
+# comparable against other zkEVM clients instead of being self-referential.
+#
+# Gitignored downloaded data: run
+#   make -C tooling/ef_tests/blockchain zkevm-benchmark-vectors
+# The three gas tiers map onto run modes so a mode's cost stays proportional:
+# 10M in medium, 30M and 60M in slow.
+
+[[workload]]
+name = "eest_bench_keccak_10M"
+type = "micro"
+category = "bench-10M"
+tier = "medium"
+source = "../../ef_tests/blockchain/vectors_zkevm_benchmark/eest/for_amsterdam_at_0010M/compute/instruction/keccak/keccak.json"
+
+[[workload]]
+name = "eest_bench_bn128_pairing_10M"
+type = "micro"
+category = "bench-10M"
+tier = "medium"
+source = "../../ef_tests/blockchain/vectors_zkevm_benchmark/eest/for_amsterdam_at_0010M/compute/precompile/alt_bn128/bn128_pairings_amortized.json"
+
+[[workload]]
+name = "eest_bench_p256verify_10M"
+type = "micro"
+category = "bench-10M"
+tier = "medium"
+source = "../../ef_tests/blockchain/vectors_zkevm_benchmark/eest/for_amsterdam_at_0010M/compute/precompile/p256verify/p256verify.json"
+
+[[workload]]
+name = "eest_bench_bal_mixed_10M"
+type = "micro"
+category = "bench-10M"
+tier = "medium"
+source = "../../ef_tests/blockchain/vectors_zkevm_benchmark/eest/for_amsterdam_at_0010M/compute/eip7928_block_level_access_lists/block_access_list/mixed_dependency_graph.json"
+
+[[workload]]
+name = "eest_bench_jumpdest_10M"
+type = "micro"
+category = "bench-10M"
+tier = "medium"
+source = "../../ef_tests/blockchain/vectors_zkevm_benchmark/eest/for_amsterdam_at_0010M/compute/scenario/mix_operations/jumpdest_analysis.json"
+
+[[workload]]
+name = "eest_bench_keccak_30M"
+type = "micro"
+category = "bench-30M"
+tier = "slow"
+source = "../../ef_tests/blockchain/vectors_zkevm_benchmark/eest/for_amsterdam_at_0030M/compute/instruction/keccak/keccak.json"
+
+[[workload]]
+name = "eest_bench_bn128_pairing_30M"
+type = "micro"
+category = "bench-30M"
+tier = "slow"
+source = "../../ef_tests/blockchain/vectors_zkevm_benchmark/eest/for_amsterdam_at_0030M/compute/precompile/alt_bn128/bn128_pairings_amortized.json"
+
+[[workload]]
+name = "eest_bench_p256verify_30M"
+type = "micro"
+category = "bench-30M"
+tier = "slow"
+source = "../../ef_tests/blockchain/vectors_zkevm_benchmark/eest/for_amsterdam_at_0030M/compute/precompile/p256verify/p256verify.json"
+
+[[workload]]
+name = "eest_bench_bal_mixed_30M"
+type = "micro"
+category = "bench-30M"
+tier = "slow"
+source = "../../ef_tests/blockchain/vectors_zkevm_benchmark/eest/for_amsterdam_at_0030M/compute/eip7928_block_level_access_lists/block_access_list/mixed_dependency_graph.json"
+
+[[workload]]
+name = "eest_bench_jumpdest_30M"
+type = "micro"
+category = "bench-30M"
+tier = "slow"
+source = "../../ef_tests/blockchain/vectors_zkevm_benchmark/eest/for_amsterdam_at_0030M/compute/scenario/mix_operations/jumpdest_analysis.json"
+
+[[workload]]
+name = "eest_bench_keccak_60M"
+type = "micro"
+category = "bench-60M"
+tier = "slow"
+source = "../../ef_tests/blockchain/vectors_zkevm_benchmark/eest/for_amsterdam_at_0060M/compute/instruction/keccak/keccak.json"
+
+[[workload]]
+name = "eest_bench_bn128_pairing_60M"
+type = "micro"
+category = "bench-60M"
+tier = "slow"
+source = "../../ef_tests/blockchain/vectors_zkevm_benchmark/eest/for_amsterdam_at_0060M/compute/precompile/alt_bn128/bn128_pairings_amortized.json"
+
+[[workload]]
+name = "eest_bench_p256verify_60M"
+type = "micro"
+category = "bench-60M"
+tier = "slow"
+source = "../../ef_tests/blockchain/vectors_zkevm_benchmark/eest/for_amsterdam_at_0060M/compute/precompile/p256verify/p256verify.json"
+
+[[workload]]
+name = "eest_bench_bal_mixed_60M"
+type = "micro"
+category = "bench-60M"
+tier = "slow"
+source = "../../ef_tests/blockchain/vectors_zkevm_benchmark/eest/for_amsterdam_at_0060M/compute/eip7928_block_level_access_lists/block_access_list/mixed_dependency_graph.json"
+
+[[workload]]
+name = "eest_bench_jumpdest_60M"
+type = "micro"
+category = "bench-60M"
+tier = "slow"
+source = "../../ef_tests/blockchain/vectors_zkevm_benchmark/eest/for_amsterdam_at_0060M/compute/scenario/mix_operations/jumpdest_analysis.json"
+
