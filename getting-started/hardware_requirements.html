@@ -34,10 +34,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-7a74d68c.js";
+            window.path_to_searchindex_js = "../searchindex-d335fb9f.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-ec0f4f2d.js"></script>
+        <script src="../toc-c68b2aa5.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -207,6 +207,79 @@
 </tbody>
 </table>
 </div>
+<p>These figures are for the <strong>default</strong> node profile, which keeps only block headers
+below the snap-sync pivot. Enabling historical chain backfill raises the disk
+requirement considerably — see below.</p>
+<hr>
+<h2 id="with-historical-chain-backfill-enabled"><a class="header" href="#with-historical-chain-backfill-enabled">With historical chain backfill enabled</a></h2>
+<p><a href="../l1/fundamentals/history_backfill.html">Historical chain backfill</a>
+(<code>--history.chain</code>, off by default) additionally stores the block bodies and
+receipts for blocks below the sync pivot. This affects <strong>disk only</strong>; RAM and CPU
+requirements are unchanged, because backfill is a bounded, rate-limited
+background task that yields to chain-head following.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th><code>--history.chain</code></th><th>Extra disk (history)</th><th>Total disk, Mainnet</th><th>Status</th></tr>
+</thead>
+<tbody>
+<tr><td><code>off</code> (default)</td><td>—</td><td>see table above</td><td>Measured</td></tr>
+<tr><td><code>postmerge</code></td><td>~1.0 TB</td><td><strong>2 TB minimum, 3 TB recommended</strong></td><td>Measured</td></tr>
+<tr><td><code>all</code></td><td>not measured</td><td>not measured</td><td>Bounded by the Byzantium block</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="measured--mainnet-postmerge-complete-run"><a class="header" href="#measured--mainnet-postmerge-complete-run">Measured — Mainnet, <code>postmerge</code>, complete run</a></h3>
+<p>A mainnet node backfilled the entire post-merge range, from its sync pivot down to
+the merge block, and stopped there:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Metric</th><th>Value</th></tr>
+</thead>
+<tbody>
+<tr><td>Blocks backfilled</td><td>9,993,456 (25,530,850 → 15,537,394)</td></tr>
+<tr><td>Wall-clock duration</td><td>~14 days</td></tr>
+<tr><td>Average cost per block</td><td>~105 KiB</td></tr>
+<tr><td>History on disk (<code>bodies</code> + <code>receipts_v2</code> + <code>transaction_locations</code> + <code>headers</code>)</td><td>~1,019 GB</td></tr>
+<tr><td>State on disk (unchanged by backfill)</td><td>~459 GB</td></tr>
+<tr><td><strong>Database total</strong></td><td><strong>1,490 GiB</strong></td></tr>
+</tbody>
+</table>
+</div>
+<p>Per column family, for sizing a disk:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Column family</th><th>Size</th><th></th></tr>
+</thead>
+<tbody>
+<tr><td><code>bodies</code></td><td>592 GB</td><td>history</td></tr>
+<tr><td><code>receipts_v2</code></td><td>265 GB</td><td>history</td></tr>
+<tr><td><code>transaction_locations</code></td><td>148 GB</td><td>history</td></tr>
+<tr><td><code>headers</code></td><td>12 GB</td><td>history</td></tr>
+<tr><td><code>storage_trie_nodes</code></td><td>190 GB</td><td>state</td></tr>
+<tr><td><code>storage_flatkeyvalue</code></td><td>141 GB</td><td>state</td></tr>
+<tr><td><code>account_trie_nodes</code></td><td>72 GB</td><td>state</td></tr>
+<tr><td><code>account_flatkeyvalue</code></td><td>56 GB</td><td>state</td></tr>
+</tbody>
+</table>
+</div>
+<p>Backfill inverts where the database spends its space. A headers-only node is
+roughly 82% state and 18% history; the same node fully backfilled is 31% state and
+69% history.</p>
+<p>Two things worth knowing when sizing from these numbers. The per-block cost is not
+uniform: recent blocks measured ~125 KiB each, while the full post-merge average
+came out ~105 KiB, because older post-merge blocks are smaller. And the figures
+above are a completed <code>postmerge</code> run, so a node also needs headroom for RocksDB
+compaction and for continued head-following growth; 2 TB is the point at which the
+run fits, not the point at which it is comfortable.</p>
+<blockquote>
+<p><code>all</code> has not been measured. It backfills further, down to the Byzantium block
+rather than genesis (pre-EIP-658 receipts use a format ethrex does not
+represent), and how far it actually gets depends on peer availability for
+pre-merge history, which is limited after the 2025 history expiry rollout.</p>
+</blockquote>
 <hr>
 <h2 id="l2"><a class="header" href="#l2">L2</a></h2>
 <p>TBD</p>
