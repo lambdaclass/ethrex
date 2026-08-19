@@ -16,7 +16,7 @@ use ethrex_common::{
     },
     types::{
         AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-        ChainConfig, MempoolTransaction, Receipt, Transaction, TxKind, TxType, Withdrawal,
+        ChainConfig, MempoolTransaction, Receipt, Transaction, TxType, Withdrawal,
         block_access_list::BlockAccessList,
         bloom_from_logs, calc_excess_blob_gas, calculate_base_fee_per_blob_gas,
         calculate_base_fee_per_gas, compute_receipts_root, compute_transactions_root,
@@ -1051,11 +1051,12 @@ impl Blockchain {
             .as_ref()
             .map(|r| r.tx_checkpoint());
 
+        // Record the tx sender for BAL. The recipient is NOT recorded here:
+        // it is recorded when the prepare region loads it (default_hook), per
+        // the EIP-7928 v7.1.0 update — an EIP-7702 auth halt before the
+        // recipient load must exclude it. Mirrors `execute_block`.
         if let Some(recorder) = context.vm.db.bal_recorder_mut() {
             recorder.record_touched_address(head.tx.sender());
-            if let TxKind::Call(to) = head.to() {
-                recorder.record_touched_address(to);
-            }
         }
 
         let receipt = match self.apply_transaction(&head, context) {
