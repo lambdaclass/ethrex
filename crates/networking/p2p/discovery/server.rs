@@ -8,11 +8,10 @@ use crate::{
         server::{Discv5Message, Discv5State, update_local_ip},
     },
     peer_table::{DiscoveryProtocol, PeerTable, PeerTableServerProtocol as _},
-    types::{INITIAL_ENR_SEQ, Node, NodeRecord},
+    types::{Node, NodeRecord},
 };
 use bytes::BytesMut;
 use ethrex_common::utils::keccak;
-use ethrex_storage::Store;
 use futures::StreamExt;
 use secp256k1::SecretKey;
 use spawned_concurrency::{
@@ -87,7 +86,6 @@ pub struct DiscoveryServer {
     pub local_node_record: NodeRecord,
     pub(crate) signer: SecretKey,
     pub(crate) udp_socket: Arc<UdpSocket>,
-    pub(crate) store: Store,
     pub peer_table: PeerTable,
     pub(crate) config: DiscoveryConfig,
     pub discv4: Option<Discv4State>,
@@ -106,9 +104,11 @@ impl std::fmt::Debug for DiscoveryServer {
 
 #[actor(protocol = DiscoveryServerProtocol)]
 impl DiscoveryServer {
+    /// Starts the discovery actor, advertising `local_node_record` as this
+    /// node's ENR.
     pub async fn spawn(
-        storage: Store,
         local_node: Node,
+        local_node_record: NodeRecord,
         signer: SecretKey,
         udp_socket: Arc<UdpSocket>,
         peer_table: PeerTable,
@@ -116,14 +116,6 @@ impl DiscoveryServer {
         config: DiscoveryConfig,
     ) -> Result<(), DiscoveryServerError> {
         debug!("Starting discovery server");
-
-        let mut local_node_record = NodeRecord::from_node(&local_node, INITIAL_ENR_SEQ, &signer)
-            .expect("Failed to create local node record");
-        if let Ok(fork_id) = storage.get_fork_id().await {
-            local_node_record
-                .set_fork_id(fork_id, &signer)
-                .expect("Failed to set fork_id on local node record");
-        }
 
         let discv4 = if config.discv4_enabled {
             info!(
@@ -154,7 +146,6 @@ impl DiscoveryServer {
             local_node_record,
             signer,
             udp_socket: udp_socket.clone(),
-            store: storage,
             peer_table: peer_table.clone(),
             config,
             discv4,
@@ -438,7 +429,7 @@ pub fn is_discv4_packet(data: &[u8]) -> bool {
 impl DiscoveryServer {
     /// Builds a DiscoveryServer suitable for unit tests of discv5 handlers.
     /// Only discv5 state is initialized; discv4 is disabled.
-    /// Uses an in-memory store and a dummy initial lookup interval.
+    /// Uses a dummy initial lookup interval.
     pub fn new_for_discv5_test(
         local_node: Node,
         local_node_record: NodeRecord,
@@ -451,13 +442,10 @@ impl DiscoveryServer {
             local_node_record,
             signer,
             udp_socket,
-            store: Store::new("", ethrex_storage::EngineType::InMemory)
-                .expect("Failed to create store"),
             peer_table,
             config: DiscoveryConfig {
                 discv4_enabled: false,
                 discv5_enabled: true,
-                initial_lookup_interval: 1000.0,
             },
             discv4: None,
             discv5: Some(Discv5State::default()),
