@@ -5444,7 +5444,7 @@ dependencies = [
 
 [[package]]
 name = "history-validator"
-version = "22.0.0"
+version = "24.0.0"
 dependencies = [
  "clap",
  "ethrex-common",
