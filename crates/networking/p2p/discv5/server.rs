@@ -260,9 +260,7 @@ impl Discv5Message {
 mod tests {
     use super::*;
     use crate::utils::public_key_from_signing_key;
-    use bytes::Bytes;
     use ethrex_common::types::ForkId;
-    use ethrex_rlp::encode::RLPEncode;
     use rand::{SeedableRng, rngs::StdRng};
     use std::net::{Ipv4Addr, Ipv6Addr};
 
@@ -291,22 +289,10 @@ mod tests {
         record
             .edit(&signer, |pairs| {
                 pairs.eth = eth;
-                pairs.other.push((
-                    Bytes::from_static(b"quic"),
-                    QUIC_PORT.encode_to_vec().into(),
-                ));
+                assert!(pairs.set_extra_int(b"quic", QUIC_PORT.into()));
             })
             .unwrap();
         (node, record, signer)
-    }
-
-    fn quic_entry(record: &NodeRecord) -> Option<&Bytes> {
-        record
-            .pairs()
-            .other
-            .iter()
-            .find(|(key, _)| key.as_ref() == b"quic")
-            .map(|(_, value)| value)
     }
 
     #[test]
@@ -321,8 +307,8 @@ mod tests {
         assert_eq!(node.ip, NEW_IP);
         assert_eq!(record.pairs().ip, Some(Ipv4Addr::new(203, 0, 113, 7)));
         assert_eq!(
-            quic_entry(&record).map(|value| value.as_ref()),
-            Some(QUIC_PORT.encode_to_vec().as_slice()),
+            record.pairs().extra_int::<u16>(b"quic"),
+            Some(QUIC_PORT),
             "an entry the update never mentions must survive it"
         );
         assert!(

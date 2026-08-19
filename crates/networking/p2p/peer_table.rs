@@ -10,8 +10,8 @@
 //! protocol-specific lookups to only query compatible contacts.
 
 use crate::{
-    backend,
     metrics::METRICS,
+    peer_filter::{EthForkIdFilter, PeerFilter},
     rlpx::{connection::server::PeerConnection, p2p::Capability},
     types::{Node, NodeRecord},
     utils::distance,
@@ -207,8 +207,14 @@ pub struct Contact {
     pub knows_us: bool,
     /// This is a known-bad peer (on another network, no matching capabilities, etc)
     pub unwanted: bool,
-    /// Whether the last known fork ID is valid, None if unknown.
-    pub is_fork_id_valid: Option<bool>,
+    /// Whether this contact's last known ENR made it through the consumer's
+    /// [`PeerFilter`], or `None` while it has never been filtered.
+    ///
+    /// Unfiltered stays dialable: a contact discovered without an ENR never
+    /// reaches the filter at all, and treating that as a rejection would leave
+    /// it permanently untriable. That is why bootnodes, which arrive as bare
+    /// endpoints, are dialable before they have published anything.
+    pub passes_filter: Option<bool>,
     /// Session information for discv5 (None for discv4 contacts)
     session: Option<Session>,
 }
@@ -231,15 +237,23 @@ impl Contact {
         self.enr_request_hash = Some(request_hash);
     }
 
-    // If hash does not match, ignore. Otherwise, reset enr_request_hash
-    pub fn record_enr_response_received(&mut self, request_hash: H256, record: NodeRecord) {
+    /// Stores `record` if it answers the ENR request we have outstanding.
+    ///
+    /// Returns whether it was stored, so the caller knows whether the contact's
+    /// cached [`Self::passes_filter`] still describes the record it holds. A
+    /// response whose hash does not match is ignored outright: letting it
+    /// through would let a peer restate its own standing from a record we
+    /// refused to keep.
+    pub fn record_enr_response_received(&mut self, request_hash: H256, record: NodeRecord) -> bool {
         if self
             .enr_request_hash
             .take_if(|h| *h == request_hash)
             .is_some()
         {
             self.record = Some(record);
+            return true;
         }
+        false
     }
 
     pub fn has_pending_enr_request(&self) -> bool {
@@ -260,7 +274,7 @@ impl Contact {
             disposable: false,
             knows_us: true,
             unwanted: false,
-            is_fork_id_valid: None,
+            passes_filter: None,
             session: None,
         }
     }
@@ -408,7 +422,6 @@ pub trait PeerTableServerProtocol: Send + Sync {
     fn remove_peer(&self, node_id: H256) -> Result<(), ActorError>;
     fn dec_requests(&self, node_id: H256) -> Result<(), ActorError>;
     fn set_unwanted(&self, node_id: H256) -> Result<(), ActorError>;
-    fn set_is_fork_id_valid(&self, node_id: H256, valid: bool) -> Result<(), ActorError>;
     fn record_success(&self, node_id: H256) -> Result<(), ActorError>;
     fn record_failure(&self, node_id: H256) -> Result<(), ActorError>;
     fn record_critical_failure(&self, node_id: H256) -> Result<(), ActorError>;
@@ -473,14 +486,16 @@ pub trait PeerTableServerProtocol: Send + Sync {
     fn get_peer_connection(&self, peer_id: H256) -> Response<Option<PeerConnection>>;
 }
 
-#[derive(Debug)]
 pub struct PeerTableServer {
     local_node_id: H256,
     buckets: Vec<KBucket>,
     peers: IndexMap<H256, PeerData>,
     already_tried_peers: FxHashSet<H256>,
     target_peers: usize,
-    store: Store,
+    /// What this consumer requires of a discovered peer. Judged as each ENR
+    /// arrives, over either discovery protocol; the answer is cached on the
+    /// contact as [`Contact::passes_filter`].
+    filter: Box<dyn PeerFilter>,
     /// Standalone session store, independent of contacts.
     /// Allows sessions to be stored even before the contact's ENR is known/parseable.
     sessions: FxHashMap<H256, Session>,
@@ -492,20 +507,53 @@ pub struct PeerTableServer {
     connection_pool: IndexMap<H256, Node>,
 }
 
+// Hand-written because `Box<dyn PeerFilter>` is not `Debug`, and requiring that
+// of every consumer's filter buys less than keeping the actor's state printable.
+impl std::fmt::Debug for PeerTableServer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PeerTableServer")
+            .field("local_node_id", &self.local_node_id)
+            .field("peers", &self.peers)
+            .field("already_tried_peers", &self.already_tried_peers)
+            .field("target_peers", &self.target_peers)
+            .field("sessions", &self.sessions)
+            .field("connection_pool", &self.connection_pool)
+            .finish_non_exhaustive()
+    }
+}
+
 #[actor(protocol = PeerTableServerProtocol)]
 impl PeerTableServer {
+    /// Spawn a peer table for an Ethereum L1 node, screening every ENR it sees
+    /// for an EIP-2124 fork id compatible with our chain.
+    ///
+    /// A contact discovered without an ENR is never screened and stays dialable,
+    /// so bootnodes are usable before they have published anything. See
+    /// [`Self::spawn_with_filter`] for consumers on other networks.
     pub fn spawn(local_node_id: H256, target_peers: usize, store: Store) -> PeerTable {
-        PeerTableServer::new(local_node_id, target_peers, store).start()
+        Self::spawn_with_filter(local_node_id, target_peers, EthForkIdFilter::new(store))
     }
 
-    pub(crate) fn new(local_node_id: H256, target_peers: usize, store: Store) -> Self {
+    pub fn spawn_with_filter(
+        local_node_id: H256,
+        target_peers: usize,
+        filter: impl PeerFilter + 'static,
+    ) -> PeerTable {
+        PeerTableServer::new(local_node_id, target_peers, Box::new(filter)).start()
+    }
+
+    pub(crate) fn new(
+        local_node_id: H256,
+        target_peers: usize,
+        filter: Box<dyn PeerFilter>,
+    ) -> Self {
         Self {
             local_node_id,
             buckets: vec![KBucket::default(); NUMBER_OF_BUCKETS],
             peers: Default::default(),
             already_tried_peers: Default::default(),
             target_peers,
-            store,
+            filter,
             sessions: Default::default(),
             connection_pool: IndexMap::with_capacity(MAX_CONNECTION_POOL_SIZE),
         }
@@ -611,17 +659,6 @@ impl PeerTableServer {
     }
 
     #[send_handler]
-    async fn handle_set_is_fork_id_valid(
-        &mut self,
-        msg: peer_table_server_protocol::SetIsForkIdValid,
-        _ctx: &Context<Self>,
-    ) {
-        if let Some(contact) = self.get_contact_mut(&msg.node_id) {
-            contact.is_fork_id_valid = Some(msg.valid);
-        }
-    }
-
-    #[send_handler]
     async fn handle_record_success(
         &mut self,
         msg: peer_table_server_protocol::RecordSuccess,
@@ -693,9 +730,7 @@ impl PeerTableServer {
         msg: peer_table_server_protocol::RecordEnrRequestSent,
         _ctx: &Context<Self>,
     ) {
-        if let Some(contact) = self.get_contact_mut(&msg.node_id) {
-            contact.record_enr_request_sent(msg.request_hash);
-        }
+        self.do_record_enr_request_sent(msg.node_id, msg.request_hash);
     }
 
     #[send_handler]
@@ -704,9 +739,7 @@ impl PeerTableServer {
         msg: peer_table_server_protocol::RecordEnrResponseReceived,
         _ctx: &Context<Self>,
     ) {
-        if let Some(contact) = self.get_contact_mut(&msg.node_id) {
-            contact.record_enr_response_received(msg.request_hash, msg.record);
-        }
+        self.do_record_enr_response_received(msg.node_id, msg.request_hash, msg.record);
     }
 
     #[send_handler]
@@ -1296,7 +1329,7 @@ impl PeerTableServer {
                 || self.already_tried_peers.contains(&node_id)
                 || self
                     .get_contact_or_replacement(&node_id)
-                    .map(|c| !c.knows_us || c.unwanted || c.is_fork_id_valid == Some(false))
+                    .map(|c| !c.knows_us || c.unwanted || c.passes_filter == Some(false))
                     .unwrap_or(false)
             {
                 continue;
@@ -1463,6 +1496,30 @@ impl PeerTableServer {
         }
     }
 
+    fn do_record_enr_request_sent(&mut self, node_id: H256, request_hash: H256) {
+        if let Some(contact) = self.get_contact_mut(&node_id) {
+            contact.record_enr_request_sent(request_hash);
+        }
+    }
+
+    fn do_record_enr_response_received(
+        &mut self,
+        node_id: H256,
+        request_hash: H256,
+        record: NodeRecord,
+    ) {
+        // Filtered here, before the mutable borrow, so a record that reaches us
+        // over discv4 is judged by the same filter as one that arrives over
+        // discv5. The verdict is recorded only if the record was actually
+        // stored, so it always describes the record the contact holds.
+        let passes_filter = self.filter.accepts(&record);
+        if let Some(contact) = self.get_contact_mut(&node_id)
+            && contact.record_enr_response_received(request_hash, record)
+        {
+            contact.passes_filter = Some(passes_filter);
+        }
+    }
+
     async fn do_new_contact_records(&mut self, node_records: Vec<NodeRecord>) {
         for node_record in node_records {
             if !node_record.verify_signature() {
@@ -1487,11 +1544,9 @@ impl PeerTableServer {
                             Some(r) => node_record.seq > r.seq,
                         })
                         .unwrap_or(false);
-                    let is_fork_id_valid = if should_update {
-                        Self::evaluate_fork_id(&node_record, &self.store)
-                    } else {
-                        None
-                    };
+                    // Filtered here, before the mutable borrow, and only when
+                    // the record is newer than the one we already hold.
+                    let passes_filter = should_update.then(|| self.filter.accepts(&node_record));
                     if let Some(contact) = self.get_contact_or_replacement_mut(&node_id) {
                         contact.add_protocol(DiscoveryProtocol::Discv5);
                         if should_update {
@@ -1502,28 +1557,18 @@ impl PeerTableServer {
                             }
                             contact.node = node;
                             contact.record = Some(node_record);
-                            contact.is_fork_id_valid = is_fork_id_valid;
+                            contact.passes_filter = passes_filter;
                         }
                     }
                 } else {
-                    let is_fork_id_valid = Self::evaluate_fork_id(&node_record, &self.store);
+                    let passes_filter = self.filter.accepts(&node_record);
                     let mut contact = Contact::new(node, DiscoveryProtocol::Discv5);
-                    contact.is_fork_id_valid = is_fork_id_valid;
+                    contact.passes_filter = Some(passes_filter);
                     contact.record = Some(node_record);
                     self.insert_contact(node_id, contact);
                     METRICS.record_new_discovery().await;
                 }
             }
-        }
-    }
-
-    fn evaluate_fork_id(record: &NodeRecord, store: &Store) -> Option<bool> {
-        if let Some(remote_fork_id) = record.get_fork_id() {
-            backend::is_fork_id_valid(store, remote_fork_id)
-                .ok()
-                .or(Some(false))
-        } else {
-            Some(false)
         }
     }
 
@@ -1610,6 +1655,7 @@ pub type PeerTable = ActorRef<PeerTableServer>;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::NodeRecordPairs;
     use ethrex_common::H512;
     use std::net::Ipv4Addr;
 
@@ -1620,6 +1666,190 @@ mod tests {
         let node_id = node.node_id();
         let contact = Contact::new(node, DiscoveryProtocol::Discv4);
         (node_id, contact)
+    }
+
+    /// A filter with a fixed answer, so peer-table behaviour can be exercised
+    /// without a storage engine or a real chain behind it.
+    struct FixedAnswer(bool);
+
+    impl PeerFilter for FixedAnswer {
+        fn accepts(&self, _record: &NodeRecord) -> bool {
+            self.0
+        }
+    }
+
+    fn table_with(filter: impl PeerFilter + 'static) -> PeerTableServer {
+        PeerTableServer::new(H256::zero(), 10, Box::new(filter))
+    }
+
+    /// A signed record for `seed`'s node at sequence number `seq`.
+    fn record_for(seed: u8, seq: u64) -> (H256, NodeRecord) {
+        let signer = secp256k1::SecretKey::from_slice(&[seed.max(1); 32]).unwrap();
+        let record = NodeRecord::from_pairs(
+            seq,
+            &signer,
+            NodeRecordPairs {
+                ip: Some(Ipv4Addr::new(127, 0, 0, seed)),
+                udp_port: Some(30303),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        (Node::from_enr(&record).unwrap().node_id(), record)
+    }
+
+    // --- the filter decides which contacts are dialable ---
+
+    #[tokio::test]
+    async fn an_arriving_record_is_run_through_the_filter() {
+        let mut table = table_with(FixedAnswer(false));
+        let (node_id, record) = record_for(1, 1);
+
+        table.do_new_contact_records(vec![record]).await;
+
+        let contact = table.get_contact(&node_id).expect("contact inserted");
+        assert_eq!(contact.passes_filter, Some(false));
+    }
+
+    #[tokio::test]
+    async fn a_rejected_contact_is_never_offered_for_dialing() {
+        let mut table = table_with(FixedAnswer(false));
+        let (node_id, record) = record_for(2, 1);
+
+        table.do_new_contact_records(vec![record]).await;
+        assert!(table.get_contact(&node_id).is_some(), "contact is present");
+
+        assert!(
+            table.do_get_contact_to_initiate().is_none(),
+            "a rejected contact must not be handed out to dial"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_accepted_contact_is_offered_for_dialing() {
+        let mut table = table_with(FixedAnswer(true));
+        let (node_id, record) = record_for(3, 1);
+
+        table.do_new_contact_records(vec![record]).await;
+
+        // Asserting the stored answer too, not just dialability: `None` is also
+        // dialable, so `is_some()` alone would pass even if the filter never ran.
+        assert_eq!(
+            table.get_contact(&node_id).unwrap().passes_filter,
+            Some(true)
+        );
+        assert!(table.do_get_contact_to_initiate().is_some());
+    }
+
+    #[tokio::test]
+    async fn a_contact_discovered_without_a_record_is_never_filtered() {
+        // Bootnodes and discv4 neighbours arrive as bare endpoints. They have
+        // published nothing to judge, so they must stay dialable rather than be
+        // written off by a filter that never saw them.
+        let mut table = table_with(FixedAnswer(false));
+        let (node_id, record) = record_for(6, 1);
+        let node = Node::from_enr(&record).unwrap();
+
+        table
+            .do_new_contacts(vec![node], DiscoveryProtocol::Discv4)
+            .await;
+
+        assert_eq!(table.get_contact(&node_id).unwrap().passes_filter, None);
+        assert!(table.do_get_contact_to_initiate().is_some());
+    }
+
+    #[tokio::test]
+    async fn a_discv4_enr_response_is_run_through_the_filter() {
+        // The discv4 path used to bypass the filter entirely and write a
+        // hardcoded fork-id verdict into the same field, so a consumer's own
+        // policy was overridden depending on which protocol found the peer.
+        let mut table = table_with(FixedAnswer(false));
+        let (node_id, record) = record_for(7, 1);
+        let node = Node::from_enr(&record).unwrap();
+        let request_hash = H256::repeat_byte(0xab);
+
+        table
+            .do_new_contacts(vec![node], DiscoveryProtocol::Discv4)
+            .await;
+        table.do_record_enr_request_sent(node_id, request_hash);
+        table.do_record_enr_response_received(node_id, request_hash, record);
+
+        assert_eq!(
+            table.get_contact(&node_id).unwrap().passes_filter,
+            Some(false)
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unsolicited_enr_response_does_not_set_the_verdict() {
+        // The record is not stored when the hash does not match, so recording a
+        // verdict from it would let a peer restate its own standing from a
+        // record the table refused to keep.
+        let mut table = table_with(FixedAnswer(true));
+        let (node_id, record) = record_for(8, 1);
+        let node = Node::from_enr(&record).unwrap();
+
+        table
+            .do_new_contacts(vec![node], DiscoveryProtocol::Discv4)
+            .await;
+        table.do_record_enr_request_sent(node_id, H256::repeat_byte(0x01));
+        table.do_record_enr_response_received(node_id, H256::repeat_byte(0x02), record);
+
+        let contact = table.get_contact(&node_id).unwrap();
+        assert_eq!(contact.passes_filter, None);
+        assert!(contact.record.is_none(), "the record must not be stored");
+    }
+
+    /// Rejects the first record it is shown and accepts every later one, so a
+    /// test can tell whether a second record was filtered at all.
+    #[derive(Default)]
+    struct AcceptsFromTheSecondRecordOn(std::sync::atomic::AtomicUsize);
+
+    impl PeerFilter for AcceptsFromTheSecondRecordOn {
+        fn accepts(&self, _record: &NodeRecord) -> bool {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) > 0
+        }
+    }
+
+    #[tokio::test]
+    async fn a_rejection_is_reconsidered_on_a_newer_record() {
+        // The reason a rejection is stored rather than acted on once: the peer
+        // republishes and we look again, instead of writing it off for the life
+        // of the process over a fork id read against a head we had not synced.
+        let mut table = table_with(AcceptsFromTheSecondRecordOn::default());
+        let (node_id, first) = record_for(4, 1);
+        let (_, newer) = record_for(4, 2);
+
+        table.do_new_contact_records(vec![first]).await;
+        assert_eq!(
+            table.get_contact(&node_id).unwrap().passes_filter,
+            Some(false)
+        );
+
+        table.do_new_contact_records(vec![newer]).await;
+        assert_eq!(
+            table.get_contact(&node_id).unwrap().passes_filter,
+            Some(true),
+            "a higher-seq record must get a fresh hearing"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_older_record_does_not_re_filter_the_contact() {
+        // `should_update` false means the record has nothing new to say, so the
+        // answer already on the contact has to survive it.
+        let mut table = table_with(AcceptsFromTheSecondRecordOn::default());
+        let (node_id, first) = record_for(5, 2);
+        let (_, older) = record_for(5, 1);
+
+        table.do_new_contact_records(vec![first]).await;
+        table.do_new_contact_records(vec![older]).await;
+
+        assert_eq!(
+            table.get_contact(&node_id).unwrap().passes_filter,
+            Some(false),
+            "a stale record must not overwrite the answer we hold"
+        );
     }
 
     // --- KBucket::insert ---
