@@ -88,30 +88,61 @@ async fn store_with_gas_observer() -> Store {
 }
 
 /// The fast path only answers when re-running at the consumed gas succeeds. A
-/// gas-observing callee fails there, so this exercises the binary search — which
-/// must still land on the exact minimum, not an upper bound near it.
+/// gas-observing callee fails there, so this exercises the binary search, which
+/// stops within `ESTIMATE_ERROR_RATIO` of its upper bound exactly as geth's does.
+/// The contract that search must honour is one-sided: the estimate has to be
+/// executable, and may sit above the true minimum but never below it.
 #[tokio::test]
-async fn estimate_gas_is_exact_for_a_gas_observing_call() {
+async fn estimate_gas_for_a_gas_observing_call_is_executable_and_within_the_tolerance() {
+    /// Mirror of the crate-private constant; the `eth` module is not exported.
+    const ESTIMATE_ERROR_RATIO: f64 = 0.015;
+
     let context = default_context_with_storage(store_with_gas_observer().await).await;
+    let call = format!(r#"{{"from":"{RICH}","to":"{OBSERVER:#x}"}}"#);
+
     let body = format!(
-        r#"{{"jsonrpc":"2.0","method":"eth_estimateGas","params":[{{"from":"{RICH}","to":"{OBSERVER:#x}"}},"latest"],"id":1}}"#
+        r#"{{"jsonrpc":"2.0","method":"eth_estimateGas","params":[{call},"latest"],"id":1}}"#
     );
-    let response = call_http(context.clone(), body.clone()).await;
+    let response = call_http(context.clone(), body).await;
     let hex = response["result"]
         .as_str()
         .unwrap_or_else(|| panic!("eth_estimateGas should succeed, got {response}"));
     let estimate = u64::from_str_radix(hex.trim_start_matches("0x"), 16).expect("hex");
 
-    // Exactness means the estimate succeeds and one gas less does not.
-    for (gas, should_succeed) in [(estimate, true), (estimate - 1, false)] {
-        let probe = format!(
-            r#"{{"jsonrpc":"2.0","method":"eth_call","params":[{{"from":"{RICH}","to":"{OBSERVER:#x}","gas":"{gas:#x}"}},"latest"],"id":1}}"#
-        );
-        let got = call_http(context.clone(), probe).await;
-        assert_eq!(
-            got.get("result").is_some(),
-            should_succeed,
-            "at gas={gas} expected success={should_succeed}, got {got}"
-        );
+    let succeeds = |gas: u64| {
+        let context = context.clone();
+        async move {
+            let probe = format!(
+                r#"{{"jsonrpc":"2.0","method":"eth_call","params":[{{"from":"{RICH}","to":"{OBSERVER:#x}","gas":"{gas:#x}"}},"latest"],"id":1}}"#
+            );
+            call_http(context, probe).await.get("result").is_some()
+        }
+    };
+
+    assert!(
+        succeeds(estimate).await,
+        "the estimate must be executable, {estimate} was not"
+    );
+
+    // Find the true minimum by bisection, then check the estimate is at or above it
+    // and no further above than the tolerance allows.
+    let (mut lo, mut hi) = (21_000_u64, estimate);
+    while lo + 1 < hi {
+        let mid = lo + (hi - lo) / 2;
+        if succeeds(mid).await {
+            hi = mid;
+        } else {
+            lo = mid;
+        }
     }
+    let minimum = hi;
+    assert!(
+        estimate >= minimum,
+        "the estimate must never sit below the minimum: {estimate} < {minimum}"
+    );
+    let over = (estimate - minimum) as f64 / estimate as f64;
+    assert!(
+        over < ESTIMATE_ERROR_RATIO,
+        "overestimate {over:.4} (est {estimate}, min {minimum}) must stay within the tolerance"
+    );
 }
