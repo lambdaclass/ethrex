@@ -509,7 +509,7 @@ pub struct FrameTxContext {
     /// Per-frame execution results (status, gas_used, logs).
     /// `status` is a `FRAME_RECEIPT_STATUS_*` code (0 = failure, 1 = success,
     /// 2 = skipped due to failed atomic batch).
-    pub frame_results: Vec<(u8, u64, Vec<Log>)>,
+    pub frame_results: Vec<crate::errors::FrameResult>,
     /// Index of the currently executing frame
     pub current_frame_index: usize,
     /// The sig_hash of the frame transaction
@@ -645,6 +645,13 @@ pub struct VM<'a> {
     pub state_gas_used: i64,
     /// EIP-8037: State gas reservoir pre-funded from excess gas_limit (Amsterdam+).
     pub state_gas_reservoir: u64,
+    /// EIP-8141: set while executing a frame, whose state budget is declared as
+    /// `limits.state` rather than carved out of a single gas limit. The two
+    /// dimensions are then independent -- "neither can be spent in pursuit of the
+    /// other, and unused gas in one is not available to the other" -- so an
+    /// exhausted state budget is an out-of-gas in the state dimension and must NOT
+    /// spill into the frame's execution gas the way the reservoir model does.
+    pub state_gas_isolated: bool,
     /// EIP-8037: Initial reservoir at tx start (before any execution). Captured in
     /// add_intrinsic_gas so block-dimensional regular gas can be computed
     /// independently of mid-tx reservoir activity (auth refunds, SSTORE credits).
@@ -1067,6 +1074,7 @@ impl<'a> VM<'a> {
             preserve_top_level_backup,
             state_gas_used: 0,
             state_gas_reservoir: 0,
+            state_gas_isolated: false,
             state_gas_reservoir_initial: 0,
             state_gas_spill: 0,
             cost_per_state_byte: cpsb,
@@ -1147,6 +1155,11 @@ impl<'a> VM<'a> {
             self.env.config.fork >= Fork::Amsterdam,
             "increase_state_gas called pre-Amsterdam"
         );
+        // Inside a frame the state budget is its own dimension: exhausting it is an
+        // out-of-gas, not a spill into the execution budget.
+        if self.state_gas_isolated && gas > self.state_gas_reservoir {
+            return Err(ExceptionalHalt::OutOfGas.into());
+        }
         // Draw from reservoir first; only spill to gas_remaining if reservoir exhausted
         let from_reservoir = self.state_gas_reservoir.min(gas);
         // Safe: from_reservoir <= gas
@@ -1768,6 +1781,7 @@ impl<'a> VM<'a> {
                     ctx.frame_results.push((
                         ethrex_common::types::FRAME_RECEIPT_STATUS_SKIPPED,
                         0,
+                        0,
                         Vec::new(),
                     ));
                     if frame_idx == end_idx {
@@ -2013,6 +2027,15 @@ impl<'a> VM<'a> {
             let state_gas_reservoir_at_frame_entry = self.state_gas_reservoir;
             let state_gas_spill_at_frame_entry = self.state_gas_spill;
 
+            // EIP-8141: seed the frame's state pool from its own declared
+            // `limits.state`, and mark the dimension isolated for the duration of
+            // the frame. Before the EIP grew a second dimension a frame drew state
+            // gas from a reservoir carved out of the transaction's single limit and
+            // spilled into execution gas when that ran dry; a frame now brings its
+            // own budget and the two dimensions cannot subsidize each other.
+            self.state_gas_reservoir = frame.state_gas_limit;
+            self.state_gas_isolated = true;
+
             // The entry NEW_ACCOUNT charge belongs to the state dimension as well as to
             // the frame's gas, so record it after the baseline above: a frame that fails
             // rolls `state_gas_used` back to that baseline and creates no account, so it
@@ -2245,6 +2268,19 @@ impl<'a> VM<'a> {
             // entry value unconditionally — a successful frame already folded its
             // inline refund into `state_gas_used`, so the leftover reservoir credit
             // is spent and must be dropped.
+            // EIP-8141 `gas_used.state`: read the frame's spend before the reset
+            // below restores the reservoir for the next frame. The pool was seeded
+            // from this frame's own `limits.state` at entry, so the shortfall is
+            // what the frame spent; a frame that failed commits no state and is
+            // attributed none of it.
+            let frame_state_gas_used = if frame_success {
+                frame
+                    .state_gas_limit
+                    .saturating_sub(self.state_gas_reservoir)
+            } else {
+                0
+            };
+
             self.state_gas_reservoir = state_gas_reservoir_at_frame_entry;
             self.state_gas_spill = state_gas_spill_at_frame_entry;
 
@@ -2265,8 +2301,12 @@ impl<'a> VM<'a> {
             } else {
                 ethrex_common::types::FRAME_RECEIPT_STATUS_FAILURE
             };
-            ctx.frame_results
-                .push((status_code, frame_gas_used, frame_logs));
+            ctx.frame_results.push((
+                status_code,
+                frame_gas_used,
+                frame_state_gas_used,
+                frame_logs,
+            ));
 
             // Atomic batch: if a frame in the batch reverted, revert the
             // batch-level snapshot and skip remaining frames in the batch.
@@ -2301,7 +2341,7 @@ impl<'a> VM<'a> {
                     .into_iter()
                     .flatten()
                 {
-                    result.2 = Vec::new();
+                    result.3 = Vec::new();
                 }
                 // Roll back approvals granted inside the reverted batch.
                 ctx.restore_approvals(batch_approval_snapshot);
@@ -2350,6 +2390,10 @@ impl<'a> VM<'a> {
             // Clear transient storage between frames
             self.substate.clear_transient_storage();
         }
+
+        // The frames are done; fee settlement and refunds below are transaction
+        // level, so state gas is no longer an isolated per-frame budget.
+        self.state_gas_isolated = false;
 
         // Post-execution, per EIP-8141: "verify that `payer` has been set
         // (i.e. `payer != None`). If `payer` is set, refund any unpaid gas to
@@ -2523,7 +2567,7 @@ impl<'a> VM<'a> {
         let any_frame_reverted = ctx
             .frame_results
             .iter()
-            .any(|(status, _, _)| *status != ethrex_common::types::FRAME_RECEIPT_STATUS_SUCCESS);
+            .any(|(status, ..)| *status != ethrex_common::types::FRAME_RECEIPT_STATUS_SUCCESS);
 
         let result = if any_frame_reverted {
             TxResult::Revert(VMError::RevertOpcode)
@@ -3754,6 +3798,7 @@ impl<'a> VM<'a> {
             vm_type: VMType::L1,
             preserve_top_level_backup: false,
             state_gas_used: 0,
+            state_gas_isolated: false,
             state_gas_reservoir,
             state_gas_reservoir_initial: state_gas_reservoir,
             state_gas_spill: 0,

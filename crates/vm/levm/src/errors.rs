@@ -257,6 +257,12 @@ pub enum TxResult {
     Revert(VMError),
 }
 
+/// One frame's outcome: `(status, gas_used.execution, gas_used.state, logs)`.
+///
+/// EIP-8141 gives a frame receipt two gas dimensions, so the execution and
+/// state figures travel together from the frame loop to the receipt.
+pub type FrameResult = (u8, u64, u64, Vec<Log>);
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExecutionReport {
     pub result: TxResult,
@@ -280,7 +286,7 @@ pub struct ExecutionReport {
     /// For frame transactions: per-frame results (status, gas_used, logs).
     /// `status` is a `FRAME_RECEIPT_STATUS_*` code (0 = failure, 1 = success,
     /// 2 = skipped due to failed atomic batch, per EIP-8141 receipt encoding).
-    pub frame_results: Option<Vec<(u8, u64, Vec<Log>)>>,
+    pub frame_results: Option<Vec<FrameResult>>,
 }
 
 impl ExecutionReport {

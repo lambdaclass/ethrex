@@ -2013,7 +2013,7 @@ pub struct FrameTransaction {
 }
 
 /// Intrinsic gas cost for frame transactions (EIP-8141)
-pub const FRAME_TX_INTRINSIC_COST: u64 = 15000;
+pub const FRAME_TX_INTRINSIC_COST: u64 = 12000;
 /// Per-frame cost (EIP-8141): CALL context overhead (100) + G_log (375)
 pub const FRAME_TX_PER_FRAME_COST: u64 = 475;
 /// ENTRY_POINT address used as caller for DEFAULT/VERIFY frames per EIP-8141.
@@ -2093,9 +2093,11 @@ impl FrameTransaction {
             .encode_field(&self.sender)
             .encode_field(&self.frames)
             .encode_field(&elided_signatures)
-            .encode_field(&self.max_priority_fee_per_gas)
-            .encode_field(&self.max_fee_per_gas)
-            .encode_field(&self.max_fee_per_blob_gas)
+            .encode_field(&(
+                self.max_priority_fee_per_gas,
+                self.max_fee_per_gas,
+                self.max_fee_per_blob_gas,
+            ))
             .encode_field(&self.blob_versioned_hashes)
             .finish();
         keccak(&buf)
@@ -2166,17 +2168,33 @@ impl FrameTransaction {
             .saturating_add(self.signature_verification_cost())
     }
 
-    /// EIP-8141 `standard_gas_limit`: mandatory costs + data cost + sum of frame
-    /// gas limits.
+    /// EIP-8141 `standard_gas_limit`: mandatory costs + data cost + the frames'
+    /// total gas budget across **both** dimensions.
+    ///
+    /// `total_frame_gas` sums `limits.execution + limits.state` per frame. The two
+    /// dimensions are separate budgets during execution, but the transaction
+    /// reserves and is charged over their sum -- so a frame's state budget counts
+    /// here even though its execution budget can never be spent on it.
     pub fn standard_gas_limit(&self) -> u64 {
         self.mandatory_gas()
             .saturating_add(self.data_cost())
-            .saturating_add(
-                self.frames
-                    .iter()
-                    .map(|f| f.gas_limit)
-                    .fold(0u64, |acc, g| acc.saturating_add(g)),
-            )
+            .saturating_add(self.total_frame_gas())
+    }
+
+    /// Σ(`limits.execution` + `limits.state`) over every frame.
+    pub fn total_frame_gas(&self) -> u64 {
+        self.frames.iter().fold(0u64, |acc, f| {
+            acc.saturating_add(f.gas_limit)
+                .saturating_add(f.state_gas_limit)
+        })
+    }
+
+    /// Σ(`limits.execution`) over every frame -- the execution half only, which is
+    /// what the EIP-7825 transaction cap is measured against.
+    pub fn total_frame_execution_gas(&self) -> u64 {
+        self.frames
+            .iter()
+            .fold(0u64, |acc, f| acc.saturating_add(f.gas_limit))
     }
 
     /// EIP-8141 `calldata_floor_gas`: the mandatory costs plus the EIP-7623
@@ -5944,7 +5962,7 @@ mod tests {
         // GOLDEN_SIG_HASH: obtained from first run
         assert_eq!(
             format!("{:#x}", sig_hash),
-            "0x6fb08a74904b78734bae9acf19295923a5bd31a190209a76dec2cd623b577152",
+            "0x2518df13bab80fe6bcc7a7e462dea6d617ad6992d53411ddbaff26a8cbc22341",
         );
 
         // Elision invariant: changing empty-msg signature bytes must NOT change sig_hash.

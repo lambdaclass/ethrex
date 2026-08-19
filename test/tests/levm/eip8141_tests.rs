@@ -254,7 +254,7 @@ fn verify_frame(target: Address) -> Frame {
         flags: 0x03,
         target: Some(target),
         gas_limit: 100_000,
-        state_gas_limit: 0,
+        state_gas_limit: 1_000_000,
         value: U256::zero(),
         data: Bytes::new(),
     }
@@ -343,7 +343,7 @@ fn invalid_frame_tx_leaves_db_cache_clean() {
         flags: 0,
         target: Some(target),
         gas_limit: 100_000,
-        state_gas_limit: 0,
+        state_gas_limit: 1_000_000,
         value: U256::zero(),
         data: Bytes::new(),
     }]);
@@ -383,7 +383,7 @@ fn reverting_sender_frame_returns_value() {
             flags: 0,
             target: Some(target),
             gas_limit: 100_000,
-            state_gas_limit: 0,
+            state_gas_limit: 1_000_000,
             value,
             data: Bytes::new(),
         },
@@ -454,7 +454,7 @@ fn payer_pays_effective_price_no_burn() {
             flags: 0,
             target: Some(stop_contract),
             gas_limit: 30_000,
-            state_gas_limit: 0,
+            state_gas_limit: 1_000_000,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -531,7 +531,7 @@ fn frameparam_reads_frame_index_from_stack_top() {
             // STATE_BYTES_PER_STORAGE_SET * cost_per_state_byte (~98k) into
             // the frame's regular gas, so the budget must cover it.
             gas_limit: 300_000,
-            state_gas_limit: 0,
+            state_gas_limit: 1_000_000,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -613,7 +613,7 @@ fn frameparam_status_of_skipped_frame_is_two() {
             flags: 0x04,
             target: Some(logger),
             gas_limit: ROLLED_BACK_FRAME_GAS_LIMIT,
-            state_gas_limit: 0,
+            state_gas_limit: 1_000_000,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -622,7 +622,7 @@ fn frameparam_status_of_skipped_frame_is_two() {
             flags: 0x04,
             target: Some(reverter),
             gas_limit: 60_000,
-            state_gas_limit: 0,
+            state_gas_limit: 1_000_000,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -631,7 +631,7 @@ fn frameparam_status_of_skipped_frame_is_two() {
             flags: 0x04,
             target: Some(stop_ct),
             gas_limit: 30_000,
-            state_gas_limit: 0,
+            state_gas_limit: 1_000_000,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -640,7 +640,7 @@ fn frameparam_status_of_skipped_frame_is_two() {
             flags: 0x00,
             target: Some(stop_ct),
             gas_limit: 30_000,
-            state_gas_limit: 0,
+            state_gas_limit: 1_000_000,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -652,7 +652,7 @@ fn frameparam_status_of_skipped_frame_is_two() {
             // STATE_BYTES_PER_STORAGE_SET * cost_per_state_byte (~98k) into
             // the frame's regular gas, so the budget must cover it.
             gas_limit: 300_000,
-            state_gas_limit: 0,
+            state_gas_limit: 1_000_000,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -713,7 +713,7 @@ fn frameparam_status_of_skipped_frame_is_two() {
         frame_results[1].1
     );
     assert!(
-        frame_results[1].2.is_empty(),
+        frame_results[1].3.is_empty(),
         "logs written before the failure are discarded with the batch state"
     );
     // The failing frame reverted, so it is charged what it used, exactly as it would
@@ -746,7 +746,7 @@ fn approve_halts_when_frame_scope_is_none() {
         flags: 0x00,
         target: Some(FUNDED_SENDER),
         gas_limit: 100_000,
-        state_gas_limit: 0,
+        state_gas_limit: 1_000_000,
         value: U256::zero(),
         data: Bytes::new(),
     }]);
@@ -785,7 +785,7 @@ fn atomic_batch_flag_on_a_verify_frame_is_a_format_rejection() {
             flags: 0x04,
             target: Some(reverter),
             gas_limit: 60_000,
-            state_gas_limit: 0,
+            state_gas_limit: 1_000_000,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -794,7 +794,7 @@ fn atomic_batch_flag_on_a_verify_frame_is_a_format_rejection() {
             flags: 0x00,
             target: Some(stop_ct),
             gas_limit: 30_000,
-            state_gas_limit: 0,
+            state_gas_limit: 1_000_000,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -854,7 +854,7 @@ fn payment_approval_before_execution_approval_reverts() {
             flags: 0,
             target: Some(stop_ct),
             gas_limit: 30_000,
-            state_gas_limit: 0,
+            state_gas_limit: 1_000_000,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -903,7 +903,7 @@ fn sender_frame_transfers_value_to_eoa() {
             flags: 0,
             target: Some(eoa),
             gas_limit: 50_000,
-            state_gas_limit: 0,
+            state_gas_limit: 1_000_000,
             value,
             data: Bytes::new(),
         },
@@ -956,7 +956,7 @@ fn sender_frame_to_eoa_emits_transfer_log() {
             flags: 0,
             target: Some(eoa),
             gas_limit: 50_000,
-            state_gas_limit: 0,
+            state_gas_limit: 1_000_000,
             value,
             data: Bytes::new(),
         },
@@ -982,9 +982,9 @@ fn sender_frame_to_eoa_emits_transfer_log() {
         .as_ref()
         .expect("frame results present");
     assert!(
-        frame_results[1].2.iter().any(is_transfer_log),
+        frame_results[1].3.iter().any(is_transfer_log),
         "EIP-7708 transfer log missing from frame_receipts[1].logs: {:?}",
-        frame_results[1].2
+        frame_results[1].3
     );
     // ...and in the aggregated report logs (eth_getLogs / RPC).
     assert!(
@@ -1018,7 +1018,7 @@ fn sender_frame_reviving_a_dead_target_pays_new_account() {
         flags: 0,
         target: Some(dead),
         gas_limit,
-        state_gas_limit: 0,
+        state_gas_limit: 1_000_000,
         value,
         data: Bytes::new(),
     };
@@ -1107,7 +1107,7 @@ fn frame_tx_happy_path_sstore_and_log() {
             // STATE_BYTES_PER_STORAGE_SET * cost_per_state_byte (~98k) into
             // the frame's regular gas, so the budget must cover it.
             gas_limit: 300_000,
-            state_gas_limit: 0,
+            state_gas_limit: 1_000_000,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -1162,11 +1162,11 @@ fn frame_tx_happy_path_sstore_and_log() {
         "SENDER frame (index 1) must be reported as success"
     );
     assert!(
-        frame_results[1].2.iter().any(|l| l.address == worker),
+        frame_results[1].3.iter().any(|l| l.address == worker),
         "log from worker missing from frame_results[1].logs"
     );
     assert!(
-        frame_results[0].2.is_empty(),
+        frame_results[0].3.is_empty(),
         "approve VERIFY frame (index 0) must have no logs; isolation violated"
     );
 
@@ -1215,7 +1215,7 @@ fn multiple_contract_frames_do_not_duplicate_logs() {
             flags: 0,
             target: Some(worker_a),
             gas_limit: 100_000,
-            state_gas_limit: 0,
+            state_gas_limit: 1_000_000,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -1225,7 +1225,7 @@ fn multiple_contract_frames_do_not_duplicate_logs() {
             flags: 0,
             target: Some(worker_b),
             gas_limit: 100_000,
-            state_gas_limit: 0,
+            state_gas_limit: 1_000_000,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -1257,24 +1257,24 @@ fn multiple_contract_frames_do_not_duplicate_logs() {
 
     // Per-frame isolation: each SENDER frame carries exactly its own log.
     assert_eq!(
-        frame_results[1].2.len(),
+        frame_results[1].3.len(),
         1,
         "worker_a frame must carry exactly one log, got {:?}",
-        frame_results[1].2
+        frame_results[1].3
     );
     assert!(
-        frame_results[1].2.iter().all(|l| l.address == worker_a),
+        frame_results[1].3.iter().all(|l| l.address == worker_a),
         "worker_a frame receipt must contain only worker_a's log"
     );
     assert_eq!(
-        frame_results[2].2.len(),
+        frame_results[2].3.len(),
         1,
         "worker_b frame must carry exactly one log (the bug leaked worker_a's log \
          in here), got {:?}",
-        frame_results[2].2
+        frame_results[2].3
     );
     assert!(
-        frame_results[2].2.iter().all(|l| l.address == worker_b),
+        frame_results[2].3.iter().all(|l| l.address == worker_b),
         "worker_b frame receipt must contain only worker_b's log; worker_a's log leaked in"
     );
 
@@ -1335,7 +1335,7 @@ fn frame_sstore_set_reports_eip8037_state_gas() {
             flags: 0x00,
             target: Some(writer),
             gas_limit: 2_000_000,
-            state_gas_limit: 0,
+            state_gas_limit: 200_000,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -1386,7 +1386,7 @@ fn reverted_frame_reports_no_state_gas() {
             flags: 0x00,
             target: Some(writer),
             gas_limit: 2_000_000,
-            state_gas_limit: 0,
+            state_gas_limit: 1_000_000,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -1411,7 +1411,7 @@ fn frame_tx_below_base_blob_fee_is_rejected() {
         flags: 0x00,
         target: None,
         gas_limit: 100_000,
-        state_gas_limit: 0,
+        state_gas_limit: 1_000_000,
         value: U256::zero(),
         data: Bytes::new(),
     }]);
@@ -1567,7 +1567,7 @@ mod frame_tx_opcode_handler_tests {
             flags: 0x00,
             target: Some(Address::from_low_u64_be(0xCAFE)),
             gas_limit: 100_000,
-            state_gas_limit: 0,
+            state_gas_limit: 1_000_000,
             value: U256::from(1_234_567u64),
             data: Bytes::new(),
         };
@@ -1718,7 +1718,7 @@ mod frame_tx_opcode_handler_tests {
             flags: 0x03,
             target: Some(Address::from_low_u64_be(0xAA)),
             gas_limit: 50_000,
-            state_gas_limit: 0,
+            state_gas_limit: 1_000_000,
             value: U256::zero(),
             data: Bytes::from(data.to_vec()),
         };
@@ -2334,7 +2334,7 @@ mod validation_observer_tests {
             flags,
             target: Some(target),
             gas_limit,
-            state_gas_limit: 0,
+            state_gas_limit: 1_000_000,
             value: U256::zero(),
             data,
         }
@@ -2346,7 +2346,7 @@ mod validation_observer_tests {
             flags: 0,
             target: Some(target),
             gas_limit,
-            state_gas_limit: 0,
+            state_gas_limit: 1_000_000,
             value: U256::zero(),
             data,
         }
@@ -2848,7 +2848,7 @@ mod frame_validation_prefix_tests {
             flags,
             target: Some(target),
             gas_limit,
-            state_gas_limit: 0,
+            state_gas_limit: 1_000_000,
             value: U256::zero(),
             data: Bytes::new(),
         }
@@ -3783,7 +3783,7 @@ mod sigparam_execution_tests {
                 flags: 0,
                 target: Some(reader),
                 gas_limit: 200_000,
-                state_gas_limit: 0,
+                state_gas_limit: 1_000_000,
                 value: U256::zero(),
                 data: Bytes::new(),
             },
@@ -4035,7 +4035,7 @@ fn storage_refund_from_a_later_frame_reduces_reported_gas() {
         flags: 0,
         target: Some(target),
         gas_limit: 200_000,
-        state_gas_limit: 0,
+        state_gas_limit: 1_000_000,
         value: U256::zero(),
         data,
     };
@@ -4070,7 +4070,7 @@ fn storage_refund_from_a_later_frame_reduces_reported_gas() {
 
     // Per-frame `gas_used` is reported before refunds, so the pre-refund total is
     // the mandatory costs plus the data cost plus each frame's gas.
-    let frames_gas: u64 = frame_results.iter().map(|(_, gas, _)| *gas).sum();
+    let frames_gas: u64 = frame_results.iter().map(|(_, gas, ..)| *gas).sum();
     let pre_refund = tx.mandatory_gas() + tx.data_cost() + frames_gas;
     assert!(
         report.gas_used < pre_refund,
@@ -4202,7 +4202,7 @@ fn atomic_batch_revert_drops_the_batch_writes_from_the_bal() {
         flags: 0x04,
         target: Some(target),
         gas_limit: 300_000,
-        state_gas_limit: 0,
+        state_gas_limit: 1_000_000,
         value: U256::zero(),
         data: Bytes::new(),
     };
@@ -4211,7 +4211,7 @@ fn atomic_batch_revert_drops_the_batch_writes_from_the_bal() {
         flags: 0x00,
         target: Some(target),
         gas_limit: 100_000,
-        state_gas_limit: 0,
+        state_gas_limit: 1_000_000,
         value: U256::zero(),
         data: Bytes::new(),
     };
@@ -4220,7 +4220,7 @@ fn atomic_batch_revert_drops_the_batch_writes_from_the_bal() {
         flags: 0x03,
         target: Some(FUNDED_SENDER),
         gas_limit: 80_000,
-        state_gas_limit: 0,
+        state_gas_limit: 1_000_000,
         value: U256::zero(),
         data: Bytes::new(),
     };
@@ -4320,7 +4320,7 @@ fn reverted_frame_refiles_its_writes_as_reads_in_the_bal() {
         flags: 0x03,
         target: Some(FUNDED_SENDER),
         gas_limit: 80_000,
-        state_gas_limit: 0,
+        state_gas_limit: 1_000_000,
         value: U256::zero(),
         data: Bytes::new(),
     };
@@ -4331,7 +4331,7 @@ fn reverted_frame_refiles_its_writes_as_reads_in_the_bal() {
         flags: 0x00,
         target: Some(target),
         gas_limit: 300_000,
-        state_gas_limit: 0,
+        state_gas_limit: 1_000_000,
         value: U256::zero(),
         data: Bytes::new(),
     };
@@ -4432,7 +4432,7 @@ fn a_reverting_frame_discards_the_approval_it_granted() {
         flags: 0x03,
         target: Some(FUNDED_SENDER),
         gas_limit: 400_000,
-        state_gas_limit: 0,
+        state_gas_limit: 1_000_000,
         value: U256::zero(),
         data: Bytes::from_static(&[0x01]),
     }]);
@@ -4501,7 +4501,7 @@ fn atomic_batch_unroll_keeps_frame_status_and_gas_but_drops_logs() {
         flags: 0x04,
         target: Some(target),
         gas_limit: BATCH_FRAME_GAS,
-        state_gas_limit: 0,
+        state_gas_limit: 1_000_000,
         value: U256::zero(),
         data: Bytes::new(),
     };
@@ -4517,7 +4517,7 @@ fn atomic_batch_unroll_keeps_frame_status_and_gas_but_drops_logs() {
             flags: 0x00,
             target: Some(terminator),
             gas_limit: 100_000,
-            state_gas_limit: 0,
+            state_gas_limit: 1_000_000,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -4538,9 +4538,9 @@ fn atomic_batch_unroll_keeps_frame_status_and_gas_but_drops_logs() {
         frames[1].1
     );
     assert!(
-        frames[1].2.is_empty(),
+        frames[1].3.is_empty(),
         "its logs go with the state changes the unroll dropped: {:?}",
-        frames[1].2
+        frames[1].3
     );
 
     // The failing frame reverted, so it is charged what it actually used.

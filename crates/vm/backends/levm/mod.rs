@@ -31,7 +31,7 @@ use ethrex_common::{
     Address, U256,
     types::{
         AccessList, AccountUpdate, Block, BlockHeader, EIP1559Transaction, Fork, FrameReceipt,
-        GWEI_TO_WEI, GenericTransaction, INITIAL_BASE_FEE, Log, Receipt, Transaction, TxKind,
+        GWEI_TO_WEI, GenericTransaction, INITIAL_BASE_FEE, Receipt, Transaction, TxKind,
         Withdrawal, requests::Requests,
     },
 };
@@ -115,14 +115,15 @@ pub struct LEVM;
 /// execution report's `frame_results`. Returns `None` when the report carries
 /// no frame results.
 fn frame_receipts_from(
-    frame_results: Option<Vec<(u8, u64, Vec<Log>)>>,
+    frame_results: Option<Vec<ethrex_levm::errors::FrameResult>>,
 ) -> Option<Vec<FrameReceipt>> {
     frame_results.map(|results| {
         results
             .into_iter()
-            .map(|(status, gas_used, logs)| FrameReceipt {
+            .map(|(status, gas_used, state_gas_used, logs)| FrameReceipt {
                 status,
                 gas_used,
+                state_gas_used,
                 logs,
             })
             .collect()
