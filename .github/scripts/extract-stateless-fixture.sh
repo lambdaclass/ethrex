@@ -14,18 +14,17 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-VECTORS="$ROOT/tooling/ef_tests/blockchain/vectors_stateless_3278/blockchain_tests"
+VECTORS="$ROOT/tooling/ef_tests/blockchain/vectors_zkevm"
 OUT="$ROOT/output"
 mkdir -p "$OUT"
 
 if [[ ! -d $VECTORS ]]; then
-    echo "No vectors at $VECTORS; run 'make -C tooling/ef_tests/blockchain stateless-vector' first" >&2
+    echo "No vectors at $VECTORS; run 'make -C tooling/ef_tests/blockchain zkevm-vectors' first" >&2
     exit 1
 fi
 
 # `find | sort` for determinism, so a failure is reproducible rather than
-# dependent on filesystem order. os-walk rather than a glob because the fill
-# output nests fixtures under a dot-prefixed work directory.
+# dependent on filesystem order.
 FOUND=""
 while IFS= read -r file; do
     PAIR=$(jq -r '

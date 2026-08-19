@@ -380,20 +380,20 @@ impl NewPayloadRequest {
 
 // ── Stateless validation limits ──────────────────────────────────
 
-/// MAX_WITNESS_NODES — max trie-node preimages in an execution witness.
-const MAX_WITNESS_NODES: usize = 1_048_576; // 2^20
+// `state`, `codes` and `public_keys` carry no element-count bound: #3356 made
+// them `ProgressiveList`, which grows without a declared capacity, so the
+// upstream `MAX_WITNESS_NODES` / `MAX_WITNESS_CODES` / `MAX_PUBLIC_KEYS`
+// constants were deleted along with it. The per-element byte caps below stay,
+// and `headers` keeps its count bound — it is deliberately still an `SszList`.
+
 /// MAX_BYTES_PER_WITNESS_NODE — max size of a single witness node.
 const MAX_BYTES_PER_WITNESS_NODE: usize = 1_048_576; // 2^20
-/// MAX_WITNESS_CODES — max contract code preimages in an execution witness.
-const MAX_WITNESS_CODES: usize = 65_536; // 2^16
 /// MAX_BYTES_PER_CODE — max size of a single code preimage (EIP-7954).
 const MAX_BYTES_PER_CODE: usize = 16_777_216; // 2^24
 /// MAX_WITNESS_HEADERS — max RLP-encoded block headers in witness (up to 256).
 const MAX_WITNESS_HEADERS: usize = 256;
 /// MAX_BYTES_PER_HEADER — max size of a single RLP-encoded header.
 const MAX_BYTES_PER_HEADER: usize = 1_024; // 2^10
-/// MAX_PUBLIC_KEYS — max recovered transaction public keys.
-const MAX_PUBLIC_KEYS: usize = 1_048_576; // 2^20
 /// PUBLIC_KEY_BYTES — an uncompressed secp256k1 public key is 65 bytes.
 const PUBLIC_KEY_BYTES: usize = 65;
 
@@ -411,9 +411,12 @@ const PUBLIC_KEY_BYTES: usize = 65;
 /// public output field so a verifier can pin which rules were applied. Upstream
 /// rejects any other id outright; so does ethrex.
 ///
-/// Note that upstream reused `0x1501` across an incompatible body change
-/// (#3248 + #3278 vs `tests-zkevm@v0.6.2`), so the id alone does not distinguish
-/// the two dialects. ethrex speaks the newer one.
+/// Note that upstream keeps `0x1501` across incompatible body changes, so the id
+/// does **not** identify the encoding. Three dialects have shipped under it:
+/// `tests-zkevm@v0.6.2`, then #3248 + #3278, then #3356 (which moved `state`,
+/// `codes` and `public_keys` to `ProgressiveList`). ethrex speaks the last one,
+/// matching `tests-zkevm@v0.8.0`. A bundle from an older dialect will not be
+/// caught by this prefix — it fails later, in decode or on a mismatched root.
 pub const STATELESS_INPUT_SCHEMA_ID: u16 = 0x1501;
 
 /// Byte length of the big-endian [`STATELESS_INPUT_SCHEMA_ID`] prefix.
@@ -422,9 +425,8 @@ pub const STATELESS_INPUT_SCHEMA_ID_SIZE: usize = 2;
 /// SSZ shape of `SszStatelessInput::public_keys`: one fixed-size 65-byte
 /// uncompressed secp256k1 key per transaction.
 ///
-/// Aliased so consumers can name the type without restating the list bounds, and
-/// so the bounds stay private to this module.
-pub type SszPublicKeys = SszList<SszVector<u8, PUBLIC_KEY_BYTES>, MAX_PUBLIC_KEYS>;
+/// Aliased so consumers can name the type without restating it here.
+pub type SszPublicKeys = ProgressiveList<SszVector<u8, PUBLIC_KEY_BYTES>>;
 
 /// SSZ `ExecutionWitness` container matching the execution-specs definition.
 ///
@@ -432,10 +434,14 @@ pub type SszPublicKeys = SszList<SszVector<u8, PUBLIC_KEY_BYTES>, MAX_PUBLIC_KEY
 /// - `state`: trie-node preimages
 /// - `codes`: contract code preimages
 /// - `headers`: RLP-encoded parent block headers (up to 256)
+///
+/// `state` and `codes` are `ProgressiveList` as of execution-specs #3356;
+/// `headers` stays a bounded `SszList`, since execution only ever exposes the
+/// previous 256 block hashes. The mixed shape is upstream's, not an oversight.
 #[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
 pub struct SszExecutionWitness {
-    pub state: SszList<SszList<u8, MAX_BYTES_PER_WITNESS_NODE>, MAX_WITNESS_NODES>,
-    pub codes: SszList<SszList<u8, MAX_BYTES_PER_CODE>, MAX_WITNESS_CODES>,
+    pub state: ProgressiveList<SszList<u8, MAX_BYTES_PER_WITNESS_NODE>>,
+    pub codes: ProgressiveList<SszList<u8, MAX_BYTES_PER_CODE>>,
     pub headers: SszList<SszList<u8, MAX_BYTES_PER_HEADER>, MAX_WITNESS_HEADERS>,
 }
 
@@ -652,8 +658,8 @@ mod tests {
     #[test]
     fn ssz_execution_witness_round_trip() {
         let witness = SszExecutionWitness {
-            state: list(vec![list(vec![1u8, 2, 3]), list(vec![4u8, 5])]),
-            codes: list(vec![list(vec![0x60u8, 0x00, 0x60, 0x00, 0xf3])]),
+            state: vec![list(vec![1u8, 2, 3]), list(vec![4u8, 5])].into(),
+            codes: vec![list(vec![0x60u8, 0x00, 0x60, 0x00, 0xf3])].into(),
             headers: list(vec![list(vec![0xf9u8, 0x02, 0x11])]),
         };
         round_trip(&witness);
@@ -662,8 +668,8 @@ mod tests {
     #[test]
     fn ssz_execution_witness_empty_round_trip() {
         let witness = SszExecutionWitness {
-            state: SszList::new(),
-            codes: SszList::new(),
+            state: ProgressiveList::new(),
+            codes: ProgressiveList::new(),
             headers: SszList::new(),
         };
         round_trip(&witness);
@@ -700,8 +706,8 @@ mod tests {
     fn ssz_public_keys_are_65_byte_vectors_round_trip() {
         let key: SszVector<u8, PUBLIC_KEY_BYTES> =
             vec![0x04u8; 65].try_into().expect("pubkey length");
-        let mut keys: SszList<SszVector<u8, PUBLIC_KEY_BYTES>, MAX_PUBLIC_KEYS> = SszList::new();
-        keys.push(key).expect("one key fits");
+        let mut keys: SszPublicKeys = ProgressiveList::new();
+        keys.push(key);
         round_trip(&keys);
         assert_eq!(keys.first().unwrap().len(), 65);
     }
@@ -841,12 +847,12 @@ mod tests {
         let input = SszStatelessInput {
             new_payload_request: npr,
             witness: SszExecutionWitness {
-                state: SszList::new(),
-                codes: SszList::new(),
+                state: ProgressiveList::new(),
+                codes: ProgressiveList::new(),
                 headers: SszList::new(),
             },
             chain_id: 1,
-            public_keys: SszList::new(),
+            public_keys: ProgressiveList::new(),
         };
         let mut buf = Vec::new();
         input.ssz_append(&mut buf);

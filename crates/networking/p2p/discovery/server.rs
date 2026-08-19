@@ -457,7 +457,6 @@ impl DiscoveryServer {
             config: DiscoveryConfig {
                 discv4_enabled: false,
                 discv5_enabled: true,
-                initial_lookup_interval: 1000.0,
             },
             discv4: None,
             discv5: Some(Discv5State::default()),
