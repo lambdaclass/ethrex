@@ -456,7 +456,7 @@ pub struct Options {
         long = "p2p.lookup-interval",
         default_value_t = INITIAL_LOOKUP_INTERVAL_MS,
         value_name = "INITIAL_LOOKUP_INTERVAL",
-        help = "Initial Lookup Time Interval (ms) to trigger each Discovery lookup message and RLPx connection attempt.",
+        help = "Initial time interval (ms) between RLPx connection attempts. Widens towards 600ms as the target peer count is approached.",
         help_heading = "P2P options",
         env = "ETHREX_P2P_LOOKUP_INTERVAL"
     )]
