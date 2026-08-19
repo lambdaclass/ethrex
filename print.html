@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-d335fb9f.js";
+            window.path_to_searchindex_js = "searchindex-47f61f07.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-c68b2aa5.js"></script>
@@ -12516,7 +12516,7 @@ P2P options:
           [default: 100]
 
       --p2p.lookup-interval &lt;INITIAL_LOOKUP_INTERVAL&gt;
-          Initial Lookup Time Interval (ms) to trigger each Discovery lookup message and RLPx connection attempt.
+          Initial time interval (ms) between RLPx connection attempts. Widens towards 600ms as the target peer count is approached.
           
           [env: ETHREX_P2P_LOOKUP_INTERVAL=]
           [default: 100]
