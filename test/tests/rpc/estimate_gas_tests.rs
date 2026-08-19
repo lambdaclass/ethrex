@@ -146,3 +146,23 @@ async fn estimate_gas_for_a_gas_observing_call_is_executable_and_within_the_tole
         "overestimate {over:.4} (est {estimate}, min {minimum}) must stay within the tolerance"
     );
 }
+
+/// `eth_call` is a simulation, not a submission: a caller passing a gas value above
+/// the EIP-7825 per-transaction cap (tools routinely pass the block gas limit) must
+/// still get an answer. Populating the simulated transaction's envelope for the L2's
+/// L1-fee sizing must not make the hooks' transaction-gas-cap validation fire here.
+#[tokio::test]
+async fn eth_call_tolerates_gas_above_the_per_tx_cap() {
+    // POST_OSAKA_GAS_LIMIT_CAP is 1 << 24; the test genesis activates Osaka.
+    const ABOVE_CAP: u64 = (1 << 24) + 1;
+
+    let context = default_context_with_storage(setup_store().await).await;
+    let body = format!(
+        r#"{{"jsonrpc":"2.0","method":"eth_call","params":[{{"from":"{RICH}","to":"{RICH}","gas":"{ABOVE_CAP:#x}"}},"latest"],"id":1}}"#
+    );
+    let response = call_http(context, body).await;
+    assert!(
+        response.get("result").is_some(),
+        "eth_call above the per-tx gas cap should still simulate, got {response}"
+    );
+}
