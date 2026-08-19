@@ -16,7 +16,7 @@ use ethrex_common::{
     },
     types::{
         AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-        ChainConfig, MempoolTransaction, Receipt, Transaction, TxType, Withdrawal,
+        ChainConfig, Fork, MempoolTransaction, Receipt, Transaction, TxType, Withdrawal,
         block_access_list::BlockAccessList,
         bloom_from_logs, calc_excess_blob_gas, calculate_base_fee_per_blob_gas,
         calculate_base_fee_per_gas, compute_receipts_root, compute_transactions_root,
@@ -595,6 +595,8 @@ impl Blockchain {
         }
         context.explicit_build = true;
 
+        let chain_config = context.chain_config();
+        let block_fork = chain_config.fork(context.payload.header.timestamp);
         let mut rejected = Vec::new();
         let base_fee = context.base_fee_per_gas();
         for (index, tx) in transactions.into_iter().enumerate() {
@@ -611,6 +613,39 @@ impl Blockchain {
                         tx.gas_limit(),
                         context.remaining_gas
                     ),
+                });
+                continue;
+            }
+            // Fork gating and chain id are otherwise only enforced at
+            // mempool admission, which explicit builds bypass.
+            let pre_fork = match tx.tx_type() {
+                TxType::EIP4844 if block_fork < Fork::Cancun => {
+                    Some("Type 3 transactions are not supported before the Cancun fork")
+                }
+                TxType::EIP7702 if block_fork < Fork::Prague => {
+                    Some("Type 4 transactions are not supported before the Prague fork")
+                }
+                _ => None,
+            };
+            if let Some(error) = pre_fork {
+                rejected.push(T8nRejectedTransaction {
+                    index,
+                    hash: tx.hash(&NativeCrypto),
+                    error: error.to_string(),
+                });
+                continue;
+            }
+            if let Some(tx_chain_id) = tx.chain_id()
+                && tx_chain_id != chain_config.chain_id
+            {
+                rejected.push(T8nRejectedTransaction {
+                    index,
+                    hash: tx.hash(&NativeCrypto),
+                    error: InvalidBlockError::InvalidTransactionChainId {
+                        have: tx_chain_id,
+                        want: chain_config.chain_id,
+                    }
+                    .to_string(),
                 });
                 continue;
             }

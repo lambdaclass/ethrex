@@ -78,13 +78,23 @@ fn parse_u64(value: &str) -> Option<u64> {
     }
 }
 
-/// The three t8n inputs. Transactions stay as raw JSON values so a
-/// malformed transaction is rejected individually instead of failing the
-/// whole run.
+/// Blob parameters for the block's fork, as sent by test fillers via
+/// `blobParams` (hex-string numbers).
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlobParamsJson {
+    pub target: U256,
+    pub max: U256,
+    pub base_fee_update_fraction: U256,
+}
+
+/// The t8n inputs. Transactions stay as raw JSON values so a malformed
+/// transaction is rejected individually instead of failing the whole run.
 pub struct Inputs {
     pub alloc: BTreeMap<Address, GenesisAccount>,
     pub env: EnvJson,
     pub txs: Vec<serde_json::Value>,
+    pub blob_params: Option<BlobParamsJson>,
 }
 
 /// Read the alloc/env/txs inputs from files or the stdin bundle,
@@ -129,6 +139,25 @@ pub fn read_inputs(args: &T8nArgs) -> Result<Inputs, T8nError> {
             ));
         }
     };
+    // Blob params ride in the stdin bundle (stream mode) or a file
+    // (`--input.blobParams`, filesystem mode).
+    let blob_params_value = if let Some(path) = &args.input_blob_params {
+        read(path, "blobParams")?
+    } else {
+        stdin_bundle.get("blobParams").cloned().unwrap_or_default()
+    };
+    let blob_params = match blob_params_value {
+        serde_json::Value::Null => None,
+        value => Some(
+            serde_json::from_value(value)
+                .map_err(|e| T8nError::Parse("blobParams".to_string(), e.to_string()))?,
+        ),
+    };
 
-    Ok(Inputs { alloc, env, txs })
+    Ok(Inputs {
+        alloc,
+        env,
+        txs,
+        blob_params,
+    })
 }

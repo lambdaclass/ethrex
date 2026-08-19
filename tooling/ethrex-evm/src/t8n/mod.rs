@@ -19,8 +19,8 @@ use clap::Args;
 use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
 use ethrex_common::constants::DEFAULT_OMMERS_HASH;
 use ethrex_common::types::{
-    Block, BlockBody, BlockHeader, ELASTICITY_MULTIPLIER, Genesis, Transaction,
-    calc_excess_blob_gas, calculate_base_fee_per_gas, compute_receipts_root,
+    BlobSchedule, Block, BlockBody, BlockHeader, ELASTICITY_MULTIPLIER, ForkBlobSchedule, Genesis,
+    Transaction, calc_excess_blob_gas, calculate_base_fee_per_gas, compute_receipts_root,
     compute_transactions_root, compute_withdrawals_root,
 };
 use ethrex_common::validation::validate_block_access_list_size;
@@ -43,6 +43,10 @@ pub struct T8nArgs {
     /// Transactions JSON array: a file path or `stdin`.
     #[arg(long = "input.txs", default_value = "txs.json")]
     pub input_txs: String,
+    /// Blob parameters JSON file for the block's fork; when omitted, the
+    /// stdin bundle's `blobParams` key or the fork's canonical values apply.
+    #[arg(long = "input.blobParams")]
+    pub input_blob_params: Option<String>,
     /// Base directory for relative output paths.
     #[arg(long = "output.basedir", default_value = "")]
     pub output_basedir: PathBuf,
@@ -79,7 +83,34 @@ pub fn run(args: T8nArgs) -> Result<(), T8nError> {
     }
     let inputs = types::read_inputs(&args)?;
     let fork = fork::parse_fork(&args.fork)?;
-    let config = fork::chain_config_for(fork, args.chain_id);
+    let mut config = fork::chain_config_for(fork, args.chain_id);
+    // Filler-provided blob parameters override the canonical schedule for
+    // whichever fork resolves at the block's timestamp.
+    if let Some(params) = &inputs.blob_params {
+        let to_u64 = |value: U256, field: &str| -> Result<u64, T8nError> {
+            u64::try_from(value)
+                .map_err(|_| T8nError::Parse("blobParams".to_string(), field.to_string()))
+        };
+        let schedule = ForkBlobSchedule {
+            target: to_u64(params.target, "target")? as u32,
+            max: to_u64(params.max, "max")? as u32,
+            base_fee_update_fraction: to_u64(
+                params.base_fee_update_fraction,
+                "baseFeeUpdateFraction",
+            )?,
+        };
+        config.blob_schedule = BlobSchedule {
+            cancun: schedule,
+            prague: schedule,
+            osaka: schedule,
+            bpo1: schedule,
+            bpo2: schedule,
+            bpo3: Some(schedule),
+            bpo4: Some(schedule),
+            bpo5: Some(schedule),
+            amsterdam: Some(schedule),
+        };
+    }
     let env = &inputs.env;
     let timestamp = env.current_timestamp;
     let block_hash_cache = env.parsed_block_hashes()?;

@@ -100,7 +100,12 @@ fn y_parity(v: U256) -> Result<bool, String> {
     } else if v == U256::one() {
         Ok(true)
     } else {
-        Err(format!("invalid signature y parity value: {v}"))
+        // The canonical ethrex message for a non-boolean parity, as emitted
+        // by the RLP decoder for the same transaction.
+        Err(format!(
+            "Error decoding field 'signature_y_parity' of type bool: \
+             MalformedBoolean (value: {v})"
+        ))
     }
 }
 
