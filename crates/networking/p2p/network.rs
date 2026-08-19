@@ -137,10 +137,7 @@ pub async fn start_network(
         udp_socket,
         context.table.clone(),
         bootnodes,
-        DiscoveryConfig {
-            initial_lookup_interval: context.initial_lookup_interval,
-            ..config
-        },
+        config,
     )
     .await
     .inspect_err(|e| {
