@@ -53,8 +53,7 @@ libssz-derive = { workspace = true }
 default = ["secp256k1", "rayon"]            
 c-kzg = ["ethrex-crypto/c-kzg"]         
 rayon = ["dep:rayon"]                                                                                                                                                                       
-secp256k1 = ["dep:secp256k1", "ethrex-crypto/secp256k1", "rayon"]                                                                                                                           
-eip-8025 = ["ethrex-trie/eip-8025"]
+secp256k1 = ["dep:secp256k1", "ethrex-crypto/secp256k1"]
 
 risc0 = ["ethrex-crypto/risc0"]
 sp1 = []

@@ -1,7 +1,7 @@
 .PHONY: build lint test clean run-image build-image clean-vectors \
 		setup-hive test-pattern-default run-hive run-hive-debug clean-hive-logs \
 		load-test-fibonacci load-test-io run-hive-eels-blobs run-hive-eels-amsterdam \
-		run-hive-eels-bal-quick run-hive-build-block bench-rlp
+		run-hive-eels-bal-quick run-hive-build-block bench-rlp zkevm-bench-setup
 
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
@@ -228,6 +228,19 @@ sort-genesis-files:
 bench-rlp: ## ⚡ Bench the RLP decoder/encoder
 	cd ./crates/common/rlp && cargo bench
 
+zkevm-bench-setup: ## Install ZisK v1.1.0-alpha toolchain for the zkEVM benchmark (Linux)
+	sudo apt-get update
+	sudo apt-get install -y xz-utils jq curl build-essential qemu-system libomp-dev libgmp-dev nlohmann-json3-dev protobuf-compiler uuid-dev libgrpc++-dev libsecp256k1-dev libsodium-dev libpqxx-dev nasm libopenmpi-dev openmpi-bin openmpi-common libclang-dev clang gcc-riscv64-unknown-elf
+	mkdir -p $(HOME)/.zisk/bin
+	curl -fsSL "https://raw.githubusercontent.com/0xPolygonHermez/zisk/v1.1.0-alpha/ziskup/ziskup" -o $(HOME)/.zisk/bin/ziskup
+	chmod +x $(HOME)/.zisk/bin/ziskup
+	$(HOME)/.zisk/bin/ziskup -v 1.1.0-alpha --nokey -y
+	# ziskup installs whatever Rust toolchain release is latest; pin it to the same
+	# one CI uses so a guest built here links the same way. See the comment in
+	# .github/actions/install-zisk/action.yml for why the two versions are coupled.
+	ZISK_HOME=$(HOME)/.zisk $(HOME)/.zisk/bin/cargo-zisk toolchain install -t zisk-3.0.0
+	@echo "Add $(HOME)/.zisk/bin to PATH (e.g. export PATH=$(HOME)/.zisk/bin:$$PATH). --nokey skips the (large) proving key — emulation doesn't need it."
+
 # Using & so make calls this recipe only once per run
 mermaid-init.js mermaid.min.js &:
 	@# Required for mdbook-mermaid to work
@@ -255,6 +268,7 @@ update-cargo-lock: ## 📦 Update Cargo.lock files
 	cargo tree --manifest-path crates/guest-program/bin/openvm/Cargo.toml
 	cargo tree --manifest-path crates/l2/tee/quote-gen/Cargo.toml
 	cargo tree --manifest-path crates/vm/levm/bench/revm_comparison/Cargo.toml
+	cargo tree --manifest-path tooling/zkevm_bench/Cargo.toml
 	cargo tree --manifest-path tooling/Cargo.toml
 	cargo tree --manifest-path tooling/ef_tests/state/Cargo.toml
 
@@ -267,7 +281,17 @@ check-cargo-lock: ## 🔍 Check Cargo.lock files are up to date
 	# if changes made to the source code CI will run with the toolchain
 	cargo metadata --locked --manifest-path crates/guest-program/bin/zisk/Cargo.toml > /dev/null
 	cargo metadata --locked --manifest-path crates/guest-program/bin/openvm/Cargo.toml > /dev/null
+	# The stateless-validator guest bins are each their own workspace, and
+	# tag_release builds + signs them with `--guest-dir`. Without a committed
+	# lock the published ELF/VK bytes are not pinned. openvm is checked too:
+	# `cargo metadata` only resolves, so the newer-rustc requirement that keeps
+	# it out of the pr_nostd build matrix does not apply here.
+	cargo metadata --locked --manifest-path crates/guest-program/stateless-validator/bin/sp1/Cargo.toml > /dev/null
+	cargo metadata --locked --manifest-path crates/guest-program/stateless-validator/bin/zisk/Cargo.toml > /dev/null
+	cargo metadata --locked --manifest-path crates/guest-program/stateless-validator/bin/openvm/Cargo.toml > /dev/null
 	cargo metadata --locked --manifest-path crates/l2/tee/quote-gen/Cargo.toml > /dev/null
 	cargo metadata --locked --manifest-path crates/vm/levm/bench/revm_comparison/Cargo.toml > /dev/null
+	# zkevm_bench is a standalone workspace (x86-64-only zisk dep); metadata avoids needing the toolchain
+	cargo metadata --locked --manifest-path tooling/zkevm_bench/Cargo.toml > /dev/null
 	cargo metadata --locked --manifest-path tooling/Cargo.toml > /dev/null
 	cargo metadata --locked --manifest-path tooling/ef_tests/state/Cargo.toml > /dev/null
