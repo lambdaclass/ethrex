@@ -22,7 +22,7 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Extract Rust version from rust-toolchain.toml
+    - name: Extract Rust version and runner image family
       id: rustver
       shell: bash
       run: |
@@ -30,6 +30,12 @@ runs:
                  | sed -E 's/.*"([^"]+)".*/\1/')
         echo "rust_version=${rust_version}" >>"$GITHUB_OUTPUT"
         echo "Rust version: ${rust_version}"
+        # Folded into this step rather than its own: `pr_loc.yaml` checks out two
+        # revisions in one job and runs this action from each, and a differing
+        # step list between them trips the runner's post-step bookkeeping with
+        # "Index was out of range".
+        echo "image_family=${ImageOS:-unknown}" >>"$GITHUB_OUTPUT"
+        echo "Runner image family: ${ImageOS:-unknown}"
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@master
@@ -37,6 +43,22 @@ runs:
         toolchain: ${{ steps.rustver.outputs.rust_version }}
         components: ${{ inputs.components }}
 
+    # rust-cache keys on `runner.os` and `runner.arch` only, which are `Linux`
+    # and `x64` for both ubuntu-22.04 and ubuntu-24.04 — so a pool shared by
+    # jobs on different images resolves to one entry spanning both. Cached
+    # proc-macro `.so`s are dynamically linked against the glibc of whichever
+    # image built them, so restoring a 24.04 entry into a 22.04 job produces
+    # `GLIBC_2.39 not found` when rustc dlopens the macro, and the crate fails
+    # with a wall of unresolved-import errors that name the dependency rather
+    # than the cache.
+    #
+    # `ImageOS` (ubuntu22 / ubuntu24 / macos15) is the image family, so it
+    # separates the glibc floors without keying on `ImageVersion`, which
+    # changes with every runner image release and would evict the pool weekly.
+    # Read via `$GITHUB_OUTPUT` rather than `env.ImageOS` directly: the `env`
+    # context is not reliably available to `with:` on a `uses:` step inside a
+    # composite action. Self-hosted runners may not set it; they then share one
+    # `unknown` bucket, which is still consistent within itself.
     # The Actions cache budget defaults to 10GB per repository and is evicted
     # LRU, while one target dir here runs 1.2-2.75GB, so the budget holds only a
     # handful of entries. Two rules keep them from evicting each other:
@@ -59,6 +81,7 @@ runs:
       uses: Swatinem/rust-cache@v2
       with:
         shared-key: ${{ inputs.cache-pool }}
+        key: ${{ steps.rustver.outputs.image_family }}
         save-if: ${{ inputs.save-cache == 'true' && github.ref == 'refs/heads/main' }}
         workspaces: |
           .
