@@ -24,6 +24,13 @@ use serde::Serialize;
 use serde_json::Value;
 use tracing::debug;
 
+/// Allowed upward overestimation before the estimate's binary search stops, matching
+/// geth's `estimateGasErrorRatio` (`internal/ethapi/api.go`). geth's rationale is that a
+/// perfect estimate is not worth extra execution when callers bump by 20-25% anyway, and
+/// that for a transaction which inspects its own remaining gas the true minimum is not
+/// even the useful answer. Only reached when the fast path below cannot answer.
+pub const ESTIMATE_ERROR_RATIO: f64 = 0.015;
+
 pub const CALL_STIPEND: u64 = 2_300; // Free gas given at beginning of call.
 pub const TRANSACTION_GAS: u64 = 21_000; // Per transaction not creating a contract. NOTE: Not payable on data of calls between transactions.
 
@@ -537,14 +544,18 @@ impl RpcHandler for EstimateGasRequest {
         let mut lowest_gas_limit = gas_used.saturating_sub(1);
         let mut middle_gas_limit = (optimistic_limit + lowest_gas_limit) / 2;
 
-        // Converge all the way to `lowest + 1 == highest`, so the returned
-        // `highest_gas_limit` is the least gas the transaction actually executes with.
-        // This used to stop once the bracket was within 1.5% of the upper bound (geth's
-        // `estimateGasErrorRatio`) and return that bound, which reported a plain transfer
-        // as 21165 instead of 21000 and, on the EIP-2780 paths where the intrinsic cost is
-        // lower, a self-send as 12156 instead of 12000. Callers that want headroom can add
-        // it; a caller that wants the minimum cannot recover it from an upper bound.
+        // Reached only by a transaction whose result depends on the gas it is given: an
+        // explicit `GAS` check, or a subcall needing 63/64 headroom the consumed total does
+        // not imply. Bisect as geth does, stopping within `ESTIMATE_ERROR_RATIO` of the
+        // upper bound rather than converging exactly — the same transactions geth's comment
+        // says do not want their true minimum returned.
         while lowest_gas_limit + 1 < highest_gas_limit {
+            if (highest_gas_limit - lowest_gas_limit) as f64 / (highest_gas_limit as f64)
+                < ESTIMATE_ERROR_RATIO
+            {
+                break;
+            };
+
             if middle_gas_limit > lowest_gas_limit * 2 {
                 // Favor the low side, since most transactions don't need much higher gas limit than their gas used.
                 middle_gas_limit = lowest_gas_limit * 2;
