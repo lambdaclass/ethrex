@@ -1,8 +1,8 @@
 use aligned_sdk::types::Network;
-use ethrex_common::types::Block;
 use ethrex_common::types::batch::Batch;
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::normalize_legacy_withdrawals;
+use ethrex_common::types::{Block, BlockNumber};
 use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H256, types::TxType};
 use ethrex_l2_common::prover::{ProverType, verifier_getter};
@@ -180,14 +180,43 @@ where
     Ok(is_up_to_date)
 }
 
-/// Reads a batch's blocks and their respective fee configs from the local stores.
+/// Reads a block from immutable local history, normalizing the legacy
+/// omitted-withdrawals body shape that older ethrex versions stored (see
+/// [`normalize_legacy_withdrawals`]).
 ///
-/// Bodies come from immutable local history, so the legacy omitted-withdrawals
-/// shape older ethrex versions stored is normalized here rather than by each
-/// caller (see [`normalize_legacy_withdrawals`]). Everything derived from these
-/// blocks -- witness generation, based-mode commit calldata, checkpoint
-/// re-execution -- therefore agrees on the canonical body the header commits to.
+/// Every read of a stored block that can end up in a batch has to go through
+/// here, and the reason is byte-equality rather than canonicality: the guest
+/// re-encodes the blocks it is handed and KZG-checks the result against the
+/// committed blob, while `BlockBody`'s RLP omits an absent `withdrawals` field
+/// and writes `0xc0` for an empty one. A block read with normalization on the
+/// path that builds the blob and without it on the path that builds the prover
+/// input therefore differs by one byte, and the mismatch surfaces inside the
+/// zkVM as `InvalidBlobProof`.
+///
+/// Returns `Ok(None)` when the body is absent, which callers walking forward
+/// through the chain read as "no further block yet" rather than as an error.
 /// Never use this for blocks received from the network.
+pub async fn read_trusted_block(
+    store: &Store,
+    block_number: BlockNumber,
+) -> Result<Option<Block>, StoreError> {
+    let Some(body) = store.get_block_body(block_number).await? else {
+        return Ok(None);
+    };
+    let header = store.get_block_header(block_number)?.ok_or_else(|| {
+        StoreError::Custom(format!(
+            "found a body but no header for block {block_number} in storage"
+        ))
+    })?;
+
+    let mut block = Block::new(header, body);
+    normalize_legacy_withdrawals(&block.header, &mut block.body);
+
+    Ok(Some(block))
+}
+
+/// Reads a batch's blocks and their respective fee configs from the local
+/// stores, through [`read_trusted_block`].
 pub async fn fetch_blocks_with_respective_fee_configs<E>(
     batch: &Batch,
     store: &Store,
@@ -200,21 +229,11 @@ where
     let mut fee_configs = vec![];
 
     for block_number in batch.first_block..=batch.last_block {
-        let block_header = store
-            .get_block_header(block_number)?
-            .ok_or(StoreError::Custom(
-                "failed to retrieve block header from storage".to_string(),
-            ))?;
-
-        let block_body = store
-            .get_block_body(block_number)
+        let block = read_trusted_block(store, block_number)
             .await?
             .ok_or(StoreError::Custom(
                 "failed to retrieve block body from storage".to_string(),
             ))?;
-
-        let mut block = Block::new(block_header, block_body);
-        normalize_legacy_withdrawals(&block.header, &mut block.body);
 
         blocks.push(block);
 
