@@ -1311,6 +1311,8 @@ const SSTORE_SET_STATE_GAS: u64 = 64 * 1530;
 
 #[test]
 fn frame_sstore_set_reports_eip8037_state_gas() {
+    // Comfortably above SSTORE_SET_STATE_GAS so the charge fits its own dimension.
+    let frame_state_budget: u64 = 200_000;
     // DEFAULT frame whose target creates slot 0 (0 -> 1): a state-creating SSTORE.
     let writer = Address::from_low_u64_be(0xDA7A);
     let accounts = [
@@ -1335,7 +1337,7 @@ fn frame_sstore_set_reports_eip8037_state_gas() {
             flags: 0x00,
             target: Some(writer),
             gas_limit: 2_000_000,
-            state_gas_limit: 200_000,
+            state_gas_limit: frame_state_budget,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -1347,12 +1349,22 @@ fn frame_sstore_set_reports_eip8037_state_gas() {
         "a frame SSTORE-set must report EIP-8037 state gas (not 0), got {}",
         report.state_gas_used,
     );
-    // The total already includes the state gas; the regular dimension is the rest.
+    // EIP-8141 gave a frame two independent budgets, so `gas_used` is the execution
+    // dimension alone and the state figure is reported beside it rather than inside
+    // it. The old single-budget model spilled state gas into the frame's gas, which
+    // is why this used to assert that the total exceeded the state portion; under
+    // the split there is no arithmetic relation between the two to assert.
     assert!(
-        report.gas_used > report.state_gas_used,
-        "total gas {} must exceed the state portion {}",
+        report.gas_used > 0,
+        "the frame still consumed execution gas for the SSTORE itself"
+    );
+    assert!(
+        report.gas_used < frame_state_budget,
+        "execution gas {} must not include the state charge, which is budgeted \
+         separately ({} of state gas against a {} state budget)",
         report.gas_used,
         report.state_gas_used,
+        frame_state_budget,
     );
 }
 
