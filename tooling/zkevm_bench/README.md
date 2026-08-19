@@ -28,13 +28,21 @@ Every entry in `fixtures/manifest.toml` has a `type`:
   below).
 
 Benchmark-suite workloads also use the `micro` type. `tests-zkevm-benchmark@v0.8.2`
-is upstream's own Amsterdam compute benchmark set at fixed 10M/30M/60M gas
-targets, pinned by `tooling/ef_tests/.fixtures_url_zkevm_benchmark` and fetched
-with `make -C tooling/ef_tests/blockchain zkevm-benchmark-vectors` (~500MB,
-gitignored). It differs from `stress` in where the witnesses come from: `stress`
-uses ethrex's own witness generation, so those numbers are self-referential,
-while these are filled by the EEST pipeline and are therefore comparable against
-other zkEVM clients. The 10M tier runs in `medium`, 30M and 60M in `slow`.
+is upstream's Amsterdam compute benchmark set at fixed 10M/30M/60M gas targets,
+pinned by `tooling/ef_tests/.fixtures_url_zkevm_benchmark` and fetched with
+`make -C tooling/ef_tests/blockchain zkevm-benchmark-vectors` (519MB compressed;
+the target unpacks only the referenced subtrees, ~370MB, rather than the full
+~3.9GB tree). It differs from `stress` in where the witnesses come from:
+`stress` uses ethrex's own witness generation, so those numbers are
+self-referential, while these are filled upstream and are therefore comparable
+against other zkEVM clients. Note the provenance is not identical to the
+`.fixtures_url_zkevm` pin — the benchmark bundle was filled at execution-specs
+`117dd1cf` with go-ethereum's `evm` as t8n, the zkevm bundle at `0695c34c` with
+the EELS t8n 2.19.0 — and the two pins move independently.
+
+All benchmark workloads are `tier = "slow"`. The download is opt-in and is not a
+`download-test-vectors` prerequisite, so putting any of them in the default
+`medium` mode would report a missing download as an AIR-cost regression.
 
 `real-block` and `stress` both load through the same `Cache` loader
 (`src/cache.rs`); `micro` goes through a separate loader for raw EEST test
@@ -66,6 +74,14 @@ any invocation directory (see [Running](#running) below).
 
    ```bash
    make -C tooling/ef_tests/blockchain zkevm-vectors
+   ```
+
+   The benchmark-suite workloads (`eest_bench_*`, all `tier = "slow"`) come from
+   a second, larger bundle and need their own fetch — only required for
+   `--mode slow`:
+
+   ```bash
+   make -C tooling/ef_tests/blockchain zkevm-benchmark-vectors
    ```
 
    Real-block and stress workloads need no download — their fixtures are
@@ -110,8 +126,8 @@ from the repo root as `./target/debug/ethrex-zkevm-bench`.
 ### Tiered modes (`--mode`)
 
 `run` takes a `--mode quick|medium|slow` tier ceiling (default `medium`).
-Each workload in the manifest declares an optional `tier` (`quick` or
-`medium`; absent means `medium`); `--mode` selects which tiers run:
+Each workload in the manifest declares an optional `tier` (`quick`, `medium`
+or `slow`; absent means `medium`); `--mode` selects which tiers run:
 
 - **`quick`** — only `tier = "quick"` workloads: a fast, **committed-only**
   sanity subset (~5–10 min) of real blocks + a few stress categories, so it
@@ -119,9 +135,11 @@ Each workload in the manifest declares an optional `tier` (`quick` or
   it requires `make zkevm-vectors`).
 - **`medium`** (default) — `quick` plus untagged/`medium`-tagged
   workloads, i.e. the full committed manifest (~1–2 h).
-- **`slow`** — everything `medium` runs, plus (if given) `--stress-dir
-  <dir>`, which adds every generated Cache-format fixture found in `<dir>`
-  as additional `stress` workloads. This is the exhaustive sweep.
+- **`slow`** — everything `medium` runs, plus `tier = "slow"` workloads (the
+  `eest_bench_*` benchmark suite, which needs `make zkevm-benchmark-vectors`),
+  plus (if given) `--stress-dir <dir>`, which adds every generated Cache-format
+  fixture found in `<dir>` as additional `stress` workloads. This is the
+  exhaustive sweep.
 
 `quick ⊆ medium ⊆ slow` by construction — each wider mode is a superset of
 the narrower ones.

@@ -40,11 +40,14 @@ ZKEVM_FIXTURES_FILE := ../.fixtures_url_zkevm
 ZKEVM_ARTIFACT := zkevm-tests.tar.gz
 ZKEVM_URL := $(shell cat $(ZKEVM_FIXTURES_FILE))
 
-# tests-zkevm-benchmark@v0.8.2 — Amsterdam compute benchmarks at 10M/30M/60M gas,
-# filled by the EEST pipeline on the same tests-zkevm@v0.8.0 base, so the schema
-# matches what the stateless harness already reads. Kept in its own root and NOT
-# a `download-test-vectors` prerequisite: it is ~500MB and only the zkevm bench
-# reads it. Fetch on demand with `make zkevm-benchmark-vectors`.
+# tests-zkevm-benchmark@v0.8.2 — Amsterdam compute benchmarks at 10M/30M/60M gas.
+# Filled by the EEST pipeline at execution-specs 117dd1cf with go-ethereum's
+# `evm` as t8n, not the EELS t8n that produced tests-zkevm@v0.8.0 (0695c34c);
+# the two pins move independently despite the shared "zkevm" name.
+#
+# Kept in its own root and NOT a `download-test-vectors` prerequisite: 519MB
+# compressed and ~3.9GB extracted, and only the zkevm bench reads it. Fetch on
+# demand with `make zkevm-benchmark-vectors`.
 ZKEVM_BENCH_VECTORS_ROOT := vectors_zkevm_benchmark
 ZKEVM_BENCH_VECTORS_DIR := $(ZKEVM_BENCH_VECTORS_ROOT)/eest
 ZKEVM_BENCH_FIXTURES_FILE := ../.fixtures_url_zkevm_benchmark
@@ -106,13 +109,41 @@ $(ZKEVM_VECTORS_DIR): $(ZKEVM_ARTIFACT)
 $(ZKEVM_BENCH_ARTIFACT): $(ZKEVM_BENCH_FIXTURES_FILE)
 	$(DOWNLOAD) $(ZKEVM_BENCH_URL) $(ZKEVM_BENCH_ARTIFACT)
 
-# Extracts all three gas tiers (for_amsterdam_at_{0010,0030,0060}M).
-$(ZKEVM_BENCH_VECTORS_DIR): $(ZKEVM_BENCH_ARTIFACT)
-	rm -rf $(ZKEVM_BENCH_VECTORS_DIR)
-	mkdir -p $(ZKEVM_BENCH_VECTORS_DIR)
-	tar -xzf $(ZKEVM_BENCH_ARTIFACT) --strip-components=2 -C $(ZKEVM_BENCH_VECTORS_DIR) fixtures/blockchain_tests
+# Only the subtrees the manifest references, not all 339 fixture files: the
+# whole tree unpacks to ~3.9GB for the 15 workloads actually run.
+ZKEVM_BENCH_SUBTREES := \
+  compute/instruction/keccak \
+  compute/precompile/alt_bn128 \
+  compute/precompile/p256verify \
+  compute/eip7928_block_level_access_lists/block_access_list \
+  compute/scenario/mix_operations
+ZKEVM_BENCH_TIERS := for_amsterdam_at_0010M for_amsterdam_at_0030M for_amsterdam_at_0060M
 
-zkevm-benchmark-vectors: $(ZKEVM_BENCH_VECTORS_DIR) ## 📥 Download the zkEVM benchmark fixtures (~500MB)
+# Keyed on the release URL, like `amsterdam-vectors`, and written only after a
+# successful untar. Two things this buys: `clean-vectors` runs from the
+# `$(SPECTEST_ARTIFACT)` rule on any `.fixtures_url` bump, which would otherwise
+# silently discard this opt-in multi-GB download; and an interrupted extraction
+# leaves no stamp, so the next run redoes it instead of reporting "nothing to be
+# done" while workloads fail on missing files.
+ZKEVM_BENCH_STAMP := $(ZKEVM_BENCH_VECTORS_DIR)/.zkevm_benchmark_url
+
+zkevm-benchmark-vectors: ## 📥 Download the zkEVM benchmark fixtures (519MB compressed, ~3.9GB extracted)
+	@have=$$(cat $(ZKEVM_BENCH_STAMP) 2>/dev/null); \
+	if [ "$$have" = "$(ZKEVM_BENCH_URL)" ]; then \
+		echo "zkEVM benchmark fixtures already extracted from $(ZKEVM_BENCH_URL)"; \
+	else \
+		$(MAKE) $(ZKEVM_BENCH_ARTIFACT) && \
+		rm -rf $(ZKEVM_BENCH_VECTORS_DIR) && \
+		mkdir -p $(ZKEVM_BENCH_VECTORS_DIR) && \
+		members=""; \
+		for tier in $(ZKEVM_BENCH_TIERS); do \
+			for sub in $(ZKEVM_BENCH_SUBTREES); do \
+				members="$$members fixtures/blockchain_tests/$$tier/$$sub"; \
+			done; \
+		done; \
+		tar -xzf $(ZKEVM_BENCH_ARTIFACT) --strip-components=2 -C $(ZKEVM_BENCH_VECTORS_DIR) $$members && \
+		echo "$(ZKEVM_BENCH_URL)" > $(ZKEVM_BENCH_STAMP); \
+	fi
 
 zkevm-vectors: $(ZKEVM_VECTORS_DIR)
 
