@@ -195,6 +195,57 @@ Verify the enclave's services are all `RUNNING` and re-run the head checks after
 through 1.20.0 — the only flags are `--full-uuids` and `--help` — so any tooling that
 parses it reads the human-readable table. `publish-artifacts.sh` does exactly that.
 
+## Upgrading Dora
+
+The explorer is the one service on this host whose upgrade is cheap, because nothing
+consensus-critical depends on it. It is also the one whose upgrade is easy to get
+wrong in a way nobody notices, for three reasons worth writing down.
+
+**The image tag does not change.** CI republishes
+`ghcr.io/lambdaclass/dora:heze-decode` on every push to the `heze-decode` branch of
+the fork, so the tag is a moving target and the tag alone tells you nothing about
+what is running. Pull before recreating, and compare digests rather than tags:
+
+```
+docker image inspect ghcr.io/lambdaclass/dora:heze-decode --format '{{.Id}} {{.Created}}'
+docker pull ghcr.io/lambdaclass/dora:heze-decode
+docker image inspect ghcr.io/lambdaclass/dora:heze-decode --format '{{.Id}} {{.Created}}'
+```
+
+**A push does not guarantee a publish.** The 2026-08-06 run for `4ce137b67` failed
+with "The job was not acquired by Runner of type hosted", an infrastructure failure
+rather than a build error, and the commit was never published — so for two weeks the
+running explorer was a commit behind its own branch with nothing to indicate it.
+Check the run's conclusion, not just that you pushed:
+
+```
+gh run list --repo lambdaclass/dora --branch heze-decode --limit 3
+```
+
+**Recreating the container discards the index.** Dora writes
+`/dora-database.sqlite` and `/dora-blockdb.peb` at the container root, and neither
+is a volume, so a recreate re-indexes the chain from the beacon nodes from scratch.
+That is usually the point — a decoder fix only reaches already-indexed slots through
+a re-index, since Dora does not revisit a slot it has already stored — but it means
+the explorer serves partial history while it catches up, and the recreate is
+therefore the one Dora action users can see. Do not carry the writable layer across
+with the snapshot trick from "Changing a node's flags in place" unless you
+specifically want the old index preserved; here it would hide the fix.
+
+Per recreate: pull, then recreate the container from the pulled image with the same
+name, labels, network, aliases, published ports and command that `docker inspect`
+reports, and remove the stale container afterwards or `kurtosis enclave inspect`
+reports the service STOPPED while it runs. The EL procedure above describes the same
+mechanics; the only difference is that Dora is recreated **from the pulled image**
+rather than from a snapshot of itself.
+
+Verify afterwards that the explorer decodes what the chain contains, not merely that
+the page loads: open a frame transaction whose signature omits the signer — the
+shape that was silently unindexable before `d8997712` — and confirm it appears both
+in its slot's transaction list and on its own page. `docker logs` should carry no
+`cannot decode transaction` warnings; those are a decoder defect, and they are now
+logged at warning level precisely so this class of bug cannot hide again.
+
 ## Re-publishing the artifact bundle
 
 Re-run after anything that changes a node's identity or the genesis:
