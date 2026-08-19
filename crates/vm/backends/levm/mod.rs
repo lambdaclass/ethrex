@@ -169,7 +169,24 @@ pub fn check_2d_gas_allowance(
     block_gas_used_state: u64,
     block_gas_limit: u64,
 ) -> Result<(), EvmError> {
-    let tx_gas = tx.gas_limit();
+    // A frame transaction declares its two budgets separately, so each dimension
+    // reserves only what can be spent in it: the execution side mirrors the EIP-7825
+    // cap (`intrinsic + Σ limits.execution`, or the calldata floor, whichever binds),
+    // and the state side is the frames' total state budget. Reserving the combined
+    // figure in both dimensions would double-count every frame transaction.
+    let (regular_gas, state_gas) = match tx {
+        Transaction::FrameTransaction(frame_tx) => (
+            frame_tx
+                .mandatory_gas()
+                .saturating_add(frame_tx.data_cost())
+                .saturating_add(frame_tx.total_frame_execution_gas())
+                .max(frame_tx.calldata_floor_total()),
+            frame_tx
+                .total_frame_gas()
+                .saturating_sub(frame_tx.total_frame_execution_gas()),
+        ),
+        _ => (tx.gas_limit(), tx.gas_limit()),
+    };
     let regular_available = block_gas_limit.saturating_sub(block_gas_used_regular);
     let state_available = block_gas_limit.saturating_sub(block_gas_used_state);
 
@@ -177,7 +194,7 @@ pub fn check_2d_gas_allowance(
     // TX_MAX_GAS_LIMIT. The spec uses the full tx gas with no intrinsic
     // subtraction; intrinsic underfunding is rejected separately in transaction
     // validation, not by this inclusion check.
-    let regular_contrib = tx_gas.min(TX_MAX_GAS_LIMIT_AMSTERDAM);
+    let regular_contrib = regular_gas.min(TX_MAX_GAS_LIMIT_AMSTERDAM);
     if regular_contrib > regular_available {
         return Err(EvmError::Transaction(format!(
             "Gas allowance exceeded: regular dim worst-case {regular_contrib} > \
@@ -187,7 +204,7 @@ pub fn check_2d_gas_allowance(
     }
 
     // State dim: worst-case state contribution = full tx.gas.
-    let state_contrib = tx_gas;
+    let state_contrib = state_gas;
     if state_contrib > state_available {
         return Err(EvmError::Transaction(format!(
             "Gas allowance exceeded: state dim worst-case {state_contrib} > \

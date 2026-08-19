@@ -2230,7 +2230,22 @@ impl FrameTransaction {
     /// is charged over. A transaction whose data floor exceeds what it declared
     /// for execution reserves the floor rather than being rejected.
     pub fn max_gas(&self) -> u64 {
-        self.standard_gas_limit().max(self.calldata_floor_total())
+        // Both sides of the comparison span both dimensions: the floor prices
+        // calldata in the execution dimension only, so the frames' state budget is
+        // added to it. Comparing a floor without the state budget against a standard
+        // limit that includes it would escrow less than a floor-bound transaction
+        // goes on to spend.
+        let floor_side = self
+            .calldata_floor_total()
+            .saturating_add(self.total_frame_state_gas());
+        self.standard_gas_limit().max(floor_side)
+    }
+
+    /// Σ(`limits.state`) over every frame.
+    pub fn total_frame_state_gas(&self) -> u64 {
+        self.frames
+            .iter()
+            .fold(0u64, |acc, f| acc.saturating_add(f.state_gas_limit))
     }
 
     /// The expiry deadline (8-byte big-endian) of this transaction's expiry

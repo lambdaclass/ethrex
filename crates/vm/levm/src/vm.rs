@@ -2530,23 +2530,26 @@ impl<'a> VM<'a> {
         // used before refunds. The EIP-7623 calldata floor then applies to the frame
         // and signature data: the mandatory costs are always charged, and the data
         // cost is floored against what execution actually consumed.
-        let mandatory_gas = frame_tx.mandatory_gas();
-        // EIP-3529 caps the refund at a fifth of the pre-refund usage, and a frame
-        // transaction's usage spans both dimensions. Capping against the execution
-        // dimension alone under-refunds a state-dominated transaction, whose state
-        // charges can dwarf what it spent on execution.
-        let pre_refund_usage = u64::try_from(self.state_gas_used.max(0))
-            .map_err(|_| InternalError::Overflow)?
-            .saturating_add(total_gas_used);
+        // Settlement runs over the combined usage and then splits it back out:
+        //   before   = execution + state, pre-refund
+        //   refund   = min(counter, before / 5)          (EIP-3529)
+        //   after    = before - refund
+        //   execution = max(after - state, calldata_floor)  (EIP-7623)
+        // Capping the refund against the execution dimension alone would
+        // under-refund a state-dominated transaction, and applying the floor before
+        // removing the state dimension would let state gas satisfy a floor that
+        // exists to price calldata.
+        let tx_state_gas =
+            u64::try_from(self.state_gas_used.max(0)).map_err(|_| InternalError::Overflow)?;
+        let gas_used_before_refund = total_gas_used.saturating_add(tx_state_gas);
         let applied_refund = self
             .substate
             .refunded_gas
-            .min(pre_refund_usage / crate::hooks::default_hook::MAX_REFUND_QUOTIENT);
-        let data_and_execution = total_gas_used
-            .saturating_sub(applied_refund)
-            .saturating_sub(mandatory_gas);
-        let total_gas_used =
-            mandatory_gas.saturating_add(data_and_execution.max(frame_tx.calldata_floor_gas()));
+            .min(gas_used_before_refund / crate::hooks::default_hook::MAX_REFUND_QUOTIENT);
+        let gas_used_after_refund = gas_used_before_refund.saturating_sub(applied_refund);
+        let total_gas_used = gas_used_after_refund
+            .saturating_sub(tx_state_gas)
+            .max(frame_tx.calldata_floor_total());
 
         // Gas refunds: the payer was debited the transaction's `max_cost` at
         // APPROVE (`max_gas` at `max_fee_per_gas`, plus the blob cost already at
@@ -2568,9 +2571,7 @@ impl<'a> VM<'a> {
         // collected over -- sums each frame's execution and state budgets, so
         // settling against the execution dimension alone would refund the payer the
         // whole state budget it actually spent.
-        let settled_gas = u64::try_from(self.state_gas_used.max(0))
-            .map_err(|_| InternalError::Overflow)?
-            .saturating_add(total_gas_used);
+        let settled_gas = total_gas_used.saturating_add(tx_state_gas);
         let owed = effective_gas_price
             .checked_mul(U256::from(settled_gas))
             .and_then(|gas_owed| gas_owed.checked_add(blob_burn))
