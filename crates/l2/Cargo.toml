@@ -88,4 +88,3 @@ metrics = ["ethrex-blockchain/metrics"]
 
 l2 = []
 
-eip-8025 = ["ethrex-levm/eip-8025"]

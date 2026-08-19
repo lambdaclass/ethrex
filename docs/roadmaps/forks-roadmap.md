@@ -17,16 +17,24 @@ Next fork: **Glamsterdam** (CL Gloas, EL Amsterdam). Mainnet date not yet schedu
 **glamsterdam-devnet-8**
 
 - Spec baseline: [`devnets/glamsterdam/8`](https://github.com/ethereum/execution-specs/tree/devnets/glamsterdam/8)
-- Fixtures: [`tests-glamsterdam-devnet@v8.0.0`](https://github.com/ethereum/execution-specs/releases/tag/tests-glamsterdam-devnet@v8.0.0)
-- EELS commit: `d681ca4fd019ee80099dd1899bdbee419cab8e0b`
-- Status: 🟢 aligned — blockchain, state and engine ef-tests green on the v8.0.0 bundle
+- Fixtures: [`tests-glamsterdam-devnet@v8.1.1`](https://github.com/ethereum/execution-specs/releases/tag/tests-glamsterdam-devnet@v8.1.1)
+- EELS commit: `32f597f7e56e3843198a83c7cf437a0b49aa6c0e` (the v8.1.1 tag, also the tip of `devnets/glamsterdam/8`)
+- Status: 🟢 aligned — blockchain, state and engine ef-tests green on the v8.1.1 bundle
 - Tracking: [#6583]
 
 **Bumping to a new bundle:** edit `tooling/ef_tests/.fixtures_url_amsterdam` and
-`.github/config/hive/amsterdam.yaml` (`fixtures` + `eels_commit`), then re-run the three
-ef-test suites and hive `eels/consume-engine` Amsterdam. Upstream expects at least two
-follow-up releases on this devnet (v8.1.0, v8.2.0) carrying coverage rather than new
-semantics.
+`.github/config/hive/amsterdam.yaml` (`fixtures` + `eels_commit`) — both, always, since
+grading one release's client against another's bundle fails every fixture the releases
+disagree on — then re-run the three ef-test suites and hive `eels/consume-engine`
+Amsterdam. Upstream expects at least two follow-up releases on this devnet; v8.1.0 and
+v8.1.1 have shipped, carrying coverage rather than new semantics.
+
+v8.1.1 was announced as coverage-only, which holds for the numbers: the amsterdam fork
+diff is a `Uint` -> `ExecutionGas` type-wrapper refactor with every value unchanged. One
+behaviour did change — `calculate_excess_blob_gas` now reads the blob fields from a
+`PreviousHeader` as well as a `Header` ([specs#3352]), so accumulated excess blob gas
+survives a fork transition instead of resetting to zero at the fork block. ethrex already
+matched, since `calc_excess_blob_gas` reads the parent unconditionally.
 
 ## Next up
 
@@ -138,6 +146,7 @@ Agendas and notes for both: [ethereum/pm](https://github.com/ethereum/pm).
 
 [#9619]: https://github.com/NethermindEth/nethermind/pull/9619
 [hive#1365]: https://github.com/ethereum/hive/pull/1365
+[specs#3352]: https://github.com/ethereum/execution-specs/pull/3352
 [#6212]: https://github.com/lambdaclass/ethrex/issues/6212
 [#6361]: https://github.com/lambdaclass/ethrex/pull/6361
 [#6583]: https://github.com/lambdaclass/ethrex/issues/6583

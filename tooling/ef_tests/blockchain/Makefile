@@ -1,4 +1,4 @@
-.PHONY: download-test-vectors clean-vectors test test-levm test-sp1 test-stateless amsterdam-vectors zkevm-vectors test-stateless-zkevm
+.PHONY: download-test-vectors clean-vectors test test-levm test-stateless amsterdam-vectors zkevm-vectors
 
 VECTORS_ROOT := vectors
 FIXTURES_FILE := ../.fixtures_url
@@ -28,11 +28,11 @@ AMSTERDAM_URL := $(shell cat $(AMSTERDAM_FIXTURES_FILE))
 AMSTERDAM_SUBTREES := for_amsterdam for_bpo2toamsterdamattime15k
 AMSTERDAM_STAMP := $(SPECTEST_VECTORS_DIR)/.amsterdam_overlay
 
-# zkevm@v0.6.2 is filled against glamsterdam-devnet v7.2.0 (one devnet behind the
-# Amsterdam bundle) but additionally carries the EIP-8025 stateless witness
-# fields (executionWitness / statelessInputBytes / statelessOutputBytes). Both
-# bundles extract a `for_amsterdam/` subtree, so we keep the zkevm bundle in a
-# separate root that only the stateless harness reads, to avoid overlaying the
+# zkevm@v0.8.0 is filled against tests-glamsterdam-devnet@v8.1.0 — the same base
+# as the Amsterdam bundle — and additionally carries the EIP-8025 stateless
+# witness fields (executionWitness / statelessInputBytes / statelessOutputBytes).
+# Both bundles extract a `for_amsterdam/` subtree, so we keep the zkevm bundle in
+# a separate root that only the stateless harness reads, to avoid overlaying the
 # regular Amsterdam fixtures.
 ZKEVM_VECTORS_ROOT := vectors_zkevm
 ZKEVM_VECTORS_DIR := $(ZKEVM_VECTORS_ROOT)/eest
@@ -106,14 +106,8 @@ clean-vectors: ## 🗑️  Clean test vectors
 test-levm: $(VECTORS_TARGETS) amsterdam-vectors ## 🧪 Run blockchain tests with LEVM
 	cargo test --profile release-fast
 
-test-sp1: $(VECTORS_TARGETS) amsterdam-vectors
-	cargo test --profile release-fast --features sp1
-
 test-stateless: zkevm-vectors
 	cargo test --profile release-fast --features stateless
-
-test-stateless-zkevm: zkevm-vectors
-	cargo test --profile release-fast --features stateless -- eip8025_optional_proofs
 
 test: ## 🧪 Run blockchain tests with LEVM both with state and stateless
 	$(MAKE) test-levm
