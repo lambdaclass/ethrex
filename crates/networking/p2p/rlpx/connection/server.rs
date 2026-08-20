@@ -818,7 +818,7 @@ where
 
     state.peer_table.new_connected_peer(
         state.node.clone(),
-        connection.clone(),
+        Some(connection.clone()),
         state.capabilities.clone(),
         state.is_inbound,
     )?;

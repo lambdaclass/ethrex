@@ -304,6 +304,11 @@ pub struct PeerData {
     /// Set to true if the connection is inbound (aka the connection was started by the peer and not by this node)
     /// It is only valid as long as is_connected is true
     pub is_connection_inbound: bool,
+    /// Whether we hold an RLPx session with this peer, independent of whether we
+    /// also hold a handle to talk over it. This is what "how many peers are we
+    /// connected to" is counted from; anything that needs to *send* something
+    /// must still find a connection in [`PeerData::connection`].
+    pub is_connected: bool,
     /// communication channels between the peer data and its active connection
     pub connection: Option<PeerConnection>,
     /// This tracks the score of a peer
@@ -326,6 +331,7 @@ impl PeerData {
             record,
             supported_capabilities: capabilities,
             is_connection_inbound: false,
+            is_connected: false,
             connection,
             score: Default::default(),
             requests: Default::default(),
@@ -414,7 +420,7 @@ pub trait PeerTableServerProtocol: Send + Sync {
     fn new_connected_peer(
         &self,
         node: Node,
-        connection: PeerConnection,
+        connection: Option<PeerConnection>,
         capabilities: Vec<Capability>,
         is_inbound: bool,
     ) -> Result<(), ActorError>;
@@ -594,10 +600,7 @@ impl PeerTableServer {
         msg: peer_table_server_protocol::NewConnectedPeer,
         _ctx: &Context<Self>,
     ) {
-        let new_peer_id = msg.node.node_id();
-        let mut new_peer = PeerData::new(msg.node, None, Some(msg.connection), msg.capabilities);
-        new_peer.is_connection_inbound = msg.is_inbound;
-        self.peers.insert(new_peer_id, new_peer);
+        self.do_new_connected_peer(msg.node, msg.connection, msg.capabilities, msg.is_inbound);
     }
 
     #[send_handler]
@@ -790,7 +793,7 @@ impl PeerTableServer {
         _msg: peer_table_server_protocol::PeerCount,
         _ctx: &Context<Self>,
     ) -> usize {
-        self.peers.len()
+        self.do_connected_peer_count()
     }
 
     #[request_handler]
@@ -808,7 +811,7 @@ impl PeerTableServer {
         _msg: peer_table_server_protocol::TargetReached,
         _ctx: &Context<Self>,
     ) -> bool {
-        self.peers.len() >= self.target_peers
+        self.do_connected_peer_count() >= self.target_peers
     }
 
     #[request_handler]
@@ -817,7 +820,7 @@ impl PeerTableServer {
         _msg: peer_table_server_protocol::TargetPeersReached,
         _ctx: &Context<Self>,
     ) -> bool {
-        self.peers.len() >= self.target_peers
+        self.do_connected_peer_count() >= self.target_peers
     }
 
     #[request_handler]
@@ -826,7 +829,7 @@ impl PeerTableServer {
         _msg: peer_table_server_protocol::TargetPeersCompletion,
         _ctx: &Context<Self>,
     ) -> f64 {
-        self.peers.len() as f64 / self.target_peers as f64
+        self.do_connected_peer_count() as f64 / self.target_peers as f64
     }
 
     #[request_handler]
@@ -956,6 +959,7 @@ impl PeerTableServer {
     ) -> Vec<Node> {
         self.peers
             .values()
+            .filter(|peer_data| peer_data.is_connected)
             .map(|peer_data| peer_data.node.clone())
             .collect()
     }
@@ -1572,13 +1576,40 @@ impl PeerTableServer {
         }
     }
 
+    /// Record a peer we just completed the RLPx handshake with. The connection is
+    /// optional: the peer counts as connected either way, but peer selection only
+    /// hands it out once there is a connection to talk over.
+    fn do_new_connected_peer(
+        &mut self,
+        node: Node,
+        connection: Option<PeerConnection>,
+        capabilities: Vec<Capability>,
+        is_inbound: bool,
+    ) {
+        let peer_id = node.node_id();
+        let mut peer = PeerData::new(node, None, connection, capabilities);
+        peer.is_connected = true;
+        peer.is_connection_inbound = is_inbound;
+        self.peers.insert(peer_id, peer);
+    }
+
+    /// How many peers we are connected to, whether or not we hold a connection
+    /// handle for them.
+    fn do_connected_peer_count(&self) -> usize {
+        self.peers
+            .values()
+            .filter(|peer_data| peer_data.is_connected)
+            .count()
+    }
+
     fn do_peer_count_by_capabilities(&self, capabilities: Vec<Capability>) -> usize {
         self.peers
             .values()
             .filter(|peer_data| {
-                capabilities
-                    .iter()
-                    .any(|cap| peer_data.supported_capabilities.contains(cap))
+                peer_data.is_connected
+                    && capabilities
+                        .iter()
+                        .any(|cap| peer_data.supported_capabilities.contains(cap))
             })
             .count()
     }
@@ -1659,10 +1690,15 @@ mod tests {
     use ethrex_common::H512;
     use std::net::Ipv4Addr;
 
+    /// Helper: build a dummy node derived from `seed`.
+    fn dummy_node(seed: u8) -> Node {
+        let pk = H512::from_low_u64_be(seed as u64 + 1);
+        Node::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, seed)), 30303, 30303, pk)
+    }
+
     /// Helper: build a dummy contact with a unique node derived from `seed`.
     fn dummy_contact(seed: u8) -> (H256, Contact) {
-        let pk = H512::from_low_u64_be(seed as u64 + 1);
-        let node = Node::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, seed)), 30303, 30303, pk);
+        let node = dummy_node(seed);
         let node_id = node.node_id();
         let contact = Contact::new(node, DiscoveryProtocol::Discv4);
         (node_id, contact)
@@ -2000,6 +2036,37 @@ mod tests {
         assert!(!bucket.contains(&repl_ids[1]));
         // The most recent ones should still be there.
         assert!(bucket.contains(repl_ids.last().unwrap()));
+    }
+
+    // --- connected peers vs. peers we can talk to ---
+
+    #[test]
+    fn a_connected_peer_counts_even_without_a_connection() {
+        let mut table = table_with(FixedAnswer(true));
+        let node = dummy_node(1);
+
+        table.do_new_connected_peer(node.clone(), None, vec![Capability::eth(68)], false);
+
+        let peer = table.peers.get(&node.node_id()).expect("peer inserted");
+        assert!(peer.is_connected, "the peer is connected");
+        assert!(peer.connection.is_none(), "but we hold no connection to it");
+        assert_eq!(table.do_connected_peer_count(), 1);
+        assert_eq!(
+            table.do_peer_count_by_capabilities(vec![Capability::eth(68)]),
+            1
+        );
+    }
+
+    #[test]
+    fn a_peer_without_a_connection_is_never_handed_out() {
+        let mut table = table_with(FixedAnswer(true));
+        let capabilities = vec![Capability::eth(68)];
+
+        table.do_new_connected_peer(dummy_node(2), None, capabilities.clone(), false);
+
+        assert!(table.do_get_best_peer(&capabilities).is_none());
+        assert!(table.do_get_best_n_peers(&capabilities, 5).is_empty());
+        assert!(table.do_get_random_peer(capabilities).is_none());
     }
 
     // --- bucket_index ---
