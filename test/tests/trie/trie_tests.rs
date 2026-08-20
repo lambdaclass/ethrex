@@ -1,14 +1,16 @@
 #![expect(clippy::unnecessary_to_owned, clippy::useless_vec)]
 use cita_trie::{MemoryDB as CitaMemoryDB, PatriciaTrie as CitaTrie, Trie as CitaTrieTrait};
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use ethrex_crypto::NativeCrypto;
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_trie::{InMemoryTrieDB, Nibbles, Node, NodeHash, NodeRef, Trie, db::NodeMap};
+use ethrex_trie::{InMemoryTrieDB, Nibbles, Node, NodeHash, NodeRef, Trie, TrieDB, db::NodeMap};
 
 use hasher::HasherKeccak;
 use hex_literal::hex;
 use proptest::{
+    array,
     collection::{btree_set, vec},
     prelude::*,
     proptest,
@@ -422,6 +424,188 @@ fn get_node_missing_paths_return_empty() {
     assert!(trie.get_node(&vec![0u8; 33]).unwrap().is_empty());
 }
 
+/// Length of the keys used by [`db_backed_trie_case`], matching the 32-byte hashed
+/// keys real state and storage tries are keyed by.
+const HASHED_KEY_LEN: usize = 32;
+
+/// What [`proptest_reopened_trie_reads_and_writes_path_keys`] does to a key that is
+/// already in the committed trie.
+#[derive(Clone, Copy, Debug)]
+enum Mutation {
+    Keep,
+    Overwrite,
+    Remove,
+}
+
+/// One generated scenario for [`proptest_reopened_trie_reads_and_writes_path_keys`].
+#[derive(Clone, Debug)]
+struct DbTrieCase {
+    /// Keys inserted before the trie is committed and re-opened. Sorted and deduped.
+    initial: Vec<[u8; HASHED_KEY_LEN]>,
+    /// Keys inserted only into the re-opened trie, disjoint from `initial`. They
+    /// double as absent keys for the read phase that runs before the mutations.
+    inserted: Vec<[u8; HASHED_KEY_LEN]>,
+    /// Mutation to apply to `initial[i]`, indexed modulo this vector's length.
+    mutations: Vec<Mutation>,
+}
+
+/// Values are kept well over 32 bytes so that every node hashes out into its own
+/// database entry. A node small enough to be inlined into its parent is read straight
+/// out of the parent's RLP and never keyed at all, which would defeat the point.
+fn value_for(key: &[u8; HASHED_KEY_LEN], generation: u8) -> Vec<u8> {
+    let mut value = key.to_vec();
+    value.extend_from_slice(&[generation; 8]);
+    value
+}
+
+/// Shortest extension node the 20-byte-prefix key family can produce: those keys
+/// share their first 40 nibbles, the root branch consumes nibble 0, so the node below
+/// it spans nibbles `1..40` at the very least.
+const SHARED_20_EXTENSION_LEN: usize = 20 * 2 - 1;
+/// Same for the 31-byte-prefix family, whose keys share their first 62 nibbles.
+const SHARED_31_EXTENSION_LEN: usize = 31 * 2 - 1;
+
+/// Key shapes for [`proptest_reopened_trie_reads_and_writes_path_keys`].
+///
+/// Uniformly random 32-byte keys diverge within the first nibble or two, so the trie
+/// over them is a shallow branch fan-out with almost no extension nodes: exactly the
+/// node type a wrong child key breaks. These keys come in three families instead, one
+/// sharing a 20-byte prefix (diverging at nibble depth 40), one sharing a 31-byte
+/// prefix (diverging at nibble depth 62), and one unconstrained for the shallow
+/// shapes.
+///
+/// The first nibble tags the family (`0` shallow, `1` shared-20, `2` shared-31) and
+/// each shared family is drawn from a `btree_set`, so it holds at least two distinct
+/// keys and no key from another family can descend into it. That makes the deep
+/// extension nodes a property of the generator rather than a lucky draw: the node at
+/// path `[1]` is always an extension spanning at least nibbles `1..40`, and the one at
+/// path `[2]` at least `1..62`. The test asserts both, so a regression in the
+/// generator surfaces as a failure instead of silently gutting the coverage.
+fn db_backed_trie_case() -> impl Strategy<Value = DbTrieCase> {
+    let mutation = prop_oneof![
+        Just(Mutation::Keep),
+        Just(Mutation::Overwrite),
+        Just(Mutation::Remove),
+    ];
+    (
+        // Shared prefixes, and the distinct suffixes that diverge after them.
+        array::uniform20(any::<u8>()),
+        array::uniform31(any::<u8>()),
+        btree_set(array::uniform12(any::<u8>()), 2..8),
+        btree_set(any::<u8>(), 2..8),
+        // Unconstrained keys, for the shallow shapes.
+        vec(array::uniform32(any::<u8>()), 1..6),
+        // Suffixes for the keys inserted after re-opening. Same families, so they
+        // split the deep extension nodes instead of widening the root branch.
+        vec(array::uniform12(any::<u8>()), 1..5),
+        vec(any::<u8>(), 1..5),
+        vec(mutation, 1..8),
+    )
+        .prop_map(
+            |(prefix20, prefix31, deep20, deep31, shallow, new20, new31, mutations)| {
+                // `tag` replaces the first nibble, keeping the families disjoint.
+                let tagged = |tag: u8, byte: u8| (tag << 4) | (byte & 0x0f);
+                let with_prefix20 = |suffix: &[u8; 12]| {
+                    let mut key = [0u8; HASHED_KEY_LEN];
+                    key[..20].copy_from_slice(&prefix20);
+                    key[20..].copy_from_slice(suffix);
+                    key[0] = tagged(1, key[0]);
+                    key
+                };
+                let with_prefix31 = |last: u8| {
+                    let mut key = [0u8; HASHED_KEY_LEN];
+                    key[..31].copy_from_slice(&prefix31);
+                    key[31] = last;
+                    key[0] = tagged(2, key[0]);
+                    key
+                };
+                let shallow = shallow.into_iter().map(|mut key: [u8; HASHED_KEY_LEN]| {
+                    key[0] = tagged(0, key[0]);
+                    key
+                });
+
+                let initial: BTreeSet<[u8; HASHED_KEY_LEN]> = deep20
+                    .iter()
+                    .map(&with_prefix20)
+                    .chain(deep31.iter().copied().map(&with_prefix31))
+                    .chain(shallow)
+                    .collect();
+                let inserted: Vec<[u8; HASHED_KEY_LEN]> = new20
+                    .iter()
+                    .map(&with_prefix20)
+                    .chain(new31.iter().copied().map(&with_prefix31))
+                    .filter(|key| !initial.contains(key))
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
+                    .collect();
+
+                DbTrieCase {
+                    initial: initial.into_iter().collect(),
+                    inserted,
+                    mutations,
+                }
+            },
+        )
+}
+
+/// Prefix lengths of the extension nodes of a committed trie whose child is stored
+/// separately (a `NodeHash::Hashed` reference) instead of being inlined into the
+/// extension node. Those are the nodes whose child has to be keyed by
+/// `extension path ++ prefix`, and keying it by the remaining path instead is the bug
+/// this proptest exists to catch, so a generated case containing none of them proves
+/// nothing.
+///
+/// The walk computes its own keys from `Nibbles`, independently of the `PathCursor`
+/// descent under test, so it stays a valid oracle even when that descent is broken.
+fn hashed_child_extension_lengths(trie: &Trie) -> Vec<usize> {
+    fn walk(db: &dyn TrieDB, node_ref: &NodeRef, path: &Nibbles, found: &mut Vec<usize>) {
+        let Some(node) = node_ref.get_node(db, path.as_ref()).unwrap() else {
+            return;
+        };
+        match node.as_ref() {
+            Node::Branch(branch) => {
+                for (choice, child) in branch.choices.iter().enumerate() {
+                    if child.is_valid() {
+                        walk(db, child, &path.append_new(choice as u8), found);
+                    }
+                }
+            }
+            Node::Extension(extension) => {
+                if matches!(extension.child, NodeRef::Hash(NodeHash::Hashed(_))) {
+                    found.push(extension.prefix.len());
+                }
+                walk(db, &extension.child, &path.concat(&extension.prefix), found);
+            }
+            Node::Leaf(_) => {}
+        }
+    }
+
+    let mut found = Vec::new();
+    if trie.root.is_valid() {
+        walk(trie.db(), &trie.root, &Nibbles::default(), &mut found);
+    }
+    found
+}
+
+/// Keys that are guaranteed *not* to be in a trie holding `present`, built by
+/// flipping bits of the last byte of each present key. Flipping the last byte keeps
+/// the whole shared prefix intact, so the lookup descends every extension node before
+/// it fails; a key diverging at the first nibble would exercise nothing.
+fn absent_variants(present: &[[u8; HASHED_KEY_LEN]]) -> Vec<[u8; HASHED_KEY_LEN]> {
+    let known: BTreeSet<&[u8; HASHED_KEY_LEN]> = present.iter().collect();
+    present
+        .iter()
+        .flat_map(|key| {
+            [0x01u8, 0x80].map(|mask| {
+                let mut candidate = *key;
+                candidate[HASHED_KEY_LEN - 1] ^= mask;
+                candidate
+            })
+        })
+        .filter(|candidate| !known.contains(candidate))
+        .collect()
+}
+
 // Proptests
 proptest! {
     #[test]
@@ -657,6 +841,110 @@ proptest! {
         }
     }
 
+    #[test]
+    // Every other proptest here builds a `Trie::new_temp()` and inserts into it, which
+    // leaves each node as an in-memory `NodeRef::Node`; committing does not evict them,
+    // so the descent walks the node graph and `TrieDB::get` is never called with a path
+    // key at all. This one commits and then *re-opens the trie from its root hash*, so
+    // the root is a bare `NodeRef::Hash` and every node below it has to be fetched from
+    // the database under its root-relative nibble path. That is the surface a wrong
+    // read key corrupts.
+    fn proptest_reopened_trie_reads_and_writes_path_keys(case in db_backed_trie_case()) {
+        let DbTrieCase { initial, inserted, mutations } = case;
+
+        // Phase 1: build and commit. `hash` flushes every node to the database, keyed
+        // by its path.
+        let db: NodeMap = Default::default();
+        let mut built = Trie::new(Box::new(InMemoryTrieDB::new(db.clone())));
+        for key in &initial {
+            built.insert(key.to_vec(), value_for(key, 1)).unwrap();
+        }
+        let root = built.hash(&NativeCrypto).unwrap();
+
+        // Phase 2: re-open. `built` keeps answering from memory, so it doubles as the
+        // oracle for everything `reopened` has to answer out of the database.
+        let reopened = Trie::open(Box::new(InMemoryTrieDB::new(db.clone())), root);
+        prop_assert!(matches!(reopened.root, NodeRef::Hash(NodeHash::Hashed(_))));
+        // The deep extension nodes the two shared-prefix key families are there to
+        // build. Without them the trie is a shallow branch fan-out and the child-key
+        // arithmetic this test targets never runs.
+        let extensions = hashed_child_extension_lengths(&reopened);
+        prop_assert!(
+            extensions.iter().any(|len| *len >= SHARED_20_EXTENSION_LEN),
+            "no extension node spanning the 20-byte shared prefix; got {extensions:?}"
+        );
+        prop_assert!(
+            extensions.iter().any(|len| *len >= SHARED_31_EXTENSION_LEN),
+            "no extension node spanning the 31-byte shared prefix; got {extensions:?}"
+        );
+
+        // Reads: present keys, absent keys, proofs for both, and a full iteration.
+        for key in &initial {
+            let path = key.to_vec();
+            prop_assert_eq!(reopened.get(&path).unwrap(), Some(value_for(key, 1)));
+            prop_assert_eq!(reopened.get_proof(&path).unwrap(), built.get_proof(&path).unwrap());
+        }
+        // The not-yet-inserted keys are absent but share the deep prefixes, and the
+        // flipped variants diverge only in the last nibbles.
+        for key in inserted.iter().chain(absent_variants(&initial).iter()) {
+            let path = key.to_vec();
+            prop_assert_eq!(reopened.get(&path).unwrap(), None);
+            prop_assert_eq!(reopened.get_proof(&path).unwrap(), built.get_proof(&path).unwrap());
+        }
+        let expected_content = initial
+            .iter()
+            .map(|key| (key.to_vec(), value_for(key, 1)))
+            .collect::<Vec<_>>();
+        let iterated = Trie::open(Box::new(InMemoryTrieDB::new(db.clone())), root)
+            .into_iter()
+            .content()
+            .collect::<Vec<_>>();
+        prop_assert_eq!(iterated, expected_content);
+
+        // Phase 3: mutate the re-opened trie. This is the assertion that catches a
+        // wrong read key during `insert`/`remove`: a descent that reads the wrong key
+        // sees a different subtree, takes a different structural decision, and lands on
+        // a different root hash than the same key set built from scratch.
+        let mut mutated = Trie::open(Box::new(InMemoryTrieDB::new(db.clone())), root);
+        let mut expected = initial
+            .iter()
+            .map(|key| (key.to_vec(), value_for(key, 1)))
+            .collect::<BTreeMap<_, _>>();
+        for (index, key) in initial.iter().enumerate() {
+            let path = key.to_vec();
+            match mutations[index % mutations.len()] {
+                Mutation::Keep => {}
+                Mutation::Overwrite => {
+                    mutated.insert(path.clone(), value_for(key, 2)).unwrap();
+                    expected.insert(path, value_for(key, 2));
+                }
+                Mutation::Remove => {
+                    let removed = mutated.remove(&path).unwrap();
+                    prop_assert_eq!(removed, Some(value_for(key, 1)));
+                    expected.remove(&path);
+                }
+            }
+        }
+        for key in &inserted {
+            mutated.insert(key.to_vec(), value_for(key, 2)).unwrap();
+            expected.insert(key.to_vec(), value_for(key, 2));
+        }
+
+        let mut from_scratch = Trie::new_temp();
+        for (path, value) in &expected {
+            from_scratch.insert(path.clone(), value.clone()).unwrap();
+        }
+        let mutated_root = mutated.hash(&NativeCrypto).unwrap();
+        prop_assert_eq!(mutated_root, from_scratch.hash(&NativeCrypto).unwrap());
+
+        // Phase 4: the mutated nodes were written under freshly computed path keys.
+        // Re-open once more so those write keys have to be read back.
+        let final_trie = Trie::open(Box::new(InMemoryTrieDB::new(db)), mutated_root);
+        for (path, value) in &expected {
+            let stored = final_trie.get(path).unwrap();
+            prop_assert_eq!(stored.as_ref(), Some(value));
+        }
+    }
 }
 
 fn cita_trie() -> CitaTrie<CitaMemoryDB, HasherKeccak> {

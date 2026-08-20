@@ -1,4 +1,4 @@
-use ethrex_trie::{Nibbles, PathCursor};
+use ethrex_trie::Nibbles;
 use std::cmp::Ordering;
 
 #[test]
