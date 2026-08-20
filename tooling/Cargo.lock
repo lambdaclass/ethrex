@@ -3767,6 +3767,7 @@ version = "24.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
+ "ethrex-blockchain",
  "ethrex-common 24.0.0",
  "ethrex-l2-common",
  "ethrex-l2-rpc",
