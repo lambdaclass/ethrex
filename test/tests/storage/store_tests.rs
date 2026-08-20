@@ -50,6 +50,7 @@ async fn test_store_suite(engine_type: EngineType) {
     run_test(test_store_block, engine_type).await;
     run_test(test_store_block_number, engine_type).await;
     run_test(test_store_block_receipt, engine_type).await;
+    run_test(test_get_receipts_for_block_returns_every_index, engine_type).await;
     run_test(test_store_account_code, engine_type).await;
     run_test(test_store_block_tags, engine_type).await;
     run_test(test_chain_config_storage, engine_type).await;
@@ -376,6 +377,43 @@ async fn test_store_block_receipt(store: Store) {
         .unwrap();
 
     assert_eq!(stored_receipt, receipt);
+}
+
+async fn test_get_receipts_for_block_returns_every_index(store: Store) {
+    let block_header = BlockHeader::default();
+    let block_hash = block_header.hash();
+    let receipts: Vec<Receipt> = (0..4)
+        .map(|i| Receipt::new(TxType::EIP1559, i % 2 == 0, (i as u64 + 1) * 21_000, vec![]))
+        .collect();
+
+    store
+        .add_receipts(block_hash, receipts.clone())
+        .await
+        .unwrap();
+
+    assert_eq!(
+        store.get_receipts_for_block(&block_hash).await.unwrap(),
+        receipts,
+        "every receipt of the block must be returned, not just the first"
+    );
+
+    assert_eq!(
+        store
+            .get_receipts_for_block_from_index(&block_hash, 2, None)
+            .await
+            .unwrap(),
+        receipts[2..],
+        "a non-zero start index must yield that receipt and all later ones"
+    );
+
+    assert_eq!(
+        store
+            .get_receipts_for_block_from_index(&block_hash, 1, Some(2))
+            .await
+            .unwrap(),
+        receipts[1..3],
+        "max_count must bound the number of receipts returned"
+    );
 }
 
 async fn test_store_account_code(store: Store) {

@@ -126,7 +126,7 @@ impl StorageReadView for InMemoryReadTx {
 
         let mut entries: Vec<(Vec<u8>, Vec<u8>)> = table_data
             .into_iter()
-            .filter(|(key, _)| key.starts_with(&prefix_vec))
+            .filter(|(key, _)| key.as_slice() >= prefix_vec.as_slice())
             .collect();
         entries.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
 
