@@ -3,7 +3,6 @@ use super::{
     utils::{decompress_pubkey, snappy_compress},
 };
 use crate::rlpx::utils::{compress_pubkey, snappy_decompress};
-use bytes::BufMut;
 use ethrex_common::H512;
 use ethrex_rlp::structs::{Decoder, Encoder};
 use ethrex_rlp::{
@@ -306,7 +305,7 @@ impl RLPxMessage for DisconnectMessage {
             None => Vec::<u8>::new().encode(&mut encoded_data),
         }
         let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 
@@ -345,7 +344,7 @@ impl RLPxMessage for PingMessage {
         // Ping msg_data is only []
         Vec::<u8>::new().encode(&mut encoded_data);
         let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 
@@ -371,7 +370,7 @@ impl RLPxMessage for PongMessage {
         // Pong msg_data is only []
         Vec::<u8>::new().encode(&mut encoded_data);
         let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 

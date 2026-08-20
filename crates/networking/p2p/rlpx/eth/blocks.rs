@@ -2,7 +2,6 @@ use crate::rlpx::{
     message::RLPxMessage,
     utils::{snappy_compress, snappy_decompress},
 };
-use bytes::BufMut;
 use ethrex_common::types::{BlockBody, BlockHash, BlockHeader, BlockNumber};
 use ethrex_rlp::{
     decode::RLPDecode,
@@ -184,7 +183,7 @@ impl RLPxMessage for GetBlockHeaders {
             .encode_field(&(self.startblock, limit, skip, reverse))
             .finish();
         let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 
@@ -225,7 +224,7 @@ impl RLPxMessage for BlockHeaders {
             .encode_field(&self.block_headers)
             .finish();
         let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 
@@ -291,7 +290,7 @@ impl RLPxMessage for GetBlockBodies {
             .finish();
 
         let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 
@@ -330,7 +329,7 @@ impl RLPxMessage for BlockBodies {
             .finish();
 
         let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 

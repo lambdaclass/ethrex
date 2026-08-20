@@ -164,16 +164,40 @@ fn field_decode_error<T>(field_name: &str, err: RLPDecodeError) -> RLPDecodeErro
 /// assert_eq!(&buf, &[0xc2, 61, 75]);
 /// ```
 #[derive(Debug)]
-#[must_use = "`Encoder` must be consumed with `finish` to perform the encoding"]
+#[must_use = "`Encoder` must be consumed with `finish` to write the list prefix"]
 pub struct Encoder<'a> {
     buf: &'a mut Vec<u8>,
-    /// Where this list's payload starts in `buf`; the prefix is written over
-    /// it in `finish`.
+    /// Where this list's payload starts in `buf`; the prefix is inserted here
+    /// by `finish`.
     start: usize,
 }
 
+/// Catches an `Encoder` that is dropped without `finish`.
+///
+/// Fields are written straight into the output buffer, so a missed `finish`
+/// leaves a payload with no list prefix in front of it. If that happens inside
+/// an outer list, the outer `finish` prefixes the lot and produces a
+/// well-formed but structurally wrong encoding, which decodes cleanly and is
+/// therefore very hard to trace back. `#[must_use]` catches the common shape
+/// (an unused `Encoder` as a statement) but not an encoder bound to a variable
+/// and then abandoned on an early return, so debug builds assert too.
+#[cfg(debug_assertions)]
+impl Drop for Encoder<'_> {
+    fn drop(&mut self) {
+        panic!(
+            "`Encoder` dropped without `finish()`: {} bytes of RLP payload are in \
+             the output buffer with no list prefix in front of them",
+            self.buf.len() - self.start
+        );
+    }
+}
+
 impl<'a> Encoder<'a> {
-    /// Creates a new encoder that writes to the given buffer.
+    /// Creates a new encoder appending to the given buffer.
+    ///
+    /// Records the buffer's current length as the start of this list's payload.
+    /// Fields are written through to `buf` immediately, so the caller must
+    /// reach [`Encoder::finish`] for the result to be valid RLP.
     pub fn new(buf: &'a mut Vec<u8>) -> Self {
         let start = buf.len();
         Self { buf, start }
@@ -204,10 +228,14 @@ impl<'a> Encoder<'a> {
         self
     }
 
-    /// Finishes encoding the struct by writing the list prefix in front of the
-    /// payload that has been accumulating in the output buffer.
+    /// Finishes encoding the struct by inserting the list prefix in front of
+    /// the payload that has been accumulating in the output buffer.
     pub fn finish(self) {
+        // Reborrows rather than moving out of `self`, so this coexists with the
+        // debug-only `Drop` impl above.
         backpatch_list_prefix(self.buf, self.start);
+        // The list is complete; skip the unfinished-encoder assertion.
+        core::mem::forget(self);
     }
 
     /// Adds a raw value to the buffer without rlp-encoding it

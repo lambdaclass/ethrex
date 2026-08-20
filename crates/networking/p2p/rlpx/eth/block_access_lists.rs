@@ -2,7 +2,6 @@ use crate::rlpx::{
     message::RLPxMessage,
     utils::{snappy_compress, snappy_decompress},
 };
-use bytes::BufMut;
 use ethrex_common::types::BlockHash;
 use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_rlp::{
@@ -36,7 +35,7 @@ pub struct OptionalBal(pub Option<BlockAccessList>);
 impl RLPEncode for OptionalBal {
     fn encode(&self, buf: &mut Vec<u8>) {
         match &self.0 {
-            None => buf.put_u8(0x80),
+            None => buf.push(0x80),
             Some(bal) => bal.encode(buf),
         }
     }
@@ -84,7 +83,7 @@ impl RLPxMessage for GetBlockAccessLists {
             .encode_field(&self.block_hashes)
             .finish();
         let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 
@@ -133,7 +132,7 @@ impl RLPxMessage for BlockAccessLists {
             .encode_field(&bals)
             .finish();
         let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 

@@ -2,7 +2,6 @@ use crate::{
     types::{Endpoint, Node, NodeRecord},
     utils::{current_unix_time, node_id},
 };
-use bytes::BufMut;
 use ethrex_common::{H256, H512, H520, utils::keccak};
 use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::{
@@ -174,12 +173,12 @@ impl Message {
         data[signature_size - 1] = Into::<i32>::into(recovery_id) as u8;
 
         let hash = keccak_hash(&data[..]);
-        buf.put_slice(&hash);
-        buf.put_slice(&data[..]);
+        buf.extend_from_slice(&hash);
+        buf.extend_from_slice(&data[..]);
     }
 
     fn encode_with_type(&self, buf: &mut Vec<u8>) {
-        buf.put_u8(self.packet_type());
+        buf.push(self.packet_type());
         match self {
             Message::Ping(msg) => msg.encode(buf),
             Message::Pong(msg) => msg.encode(buf),

@@ -11,7 +11,7 @@ use crate::rlpx::{
     message::RLPxMessage,
     utils::{snappy_compress, snappy_decompress},
 };
-use bytes::{BufMut, Bytes};
+use bytes::Bytes;
 use ethrex_common::{H256, U256, types::AccountStateSlimCodec};
 use ethrex_rlp::{
     decode::RLPDecode,
@@ -54,7 +54,7 @@ impl RLPxMessage for GetAccountRange {
             .finish();
 
         let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 
@@ -90,7 +90,7 @@ impl RLPxMessage for AccountRange {
             .finish();
 
         let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 
@@ -125,7 +125,7 @@ impl RLPxMessage for GetStorageRanges {
             .finish();
 
         let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 
@@ -175,7 +175,7 @@ impl RLPxMessage for StorageRanges {
             .finish();
 
         let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 
@@ -203,7 +203,7 @@ impl RLPxMessage for GetByteCodes {
             .finish();
 
         let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 
@@ -230,7 +230,7 @@ impl RLPxMessage for ByteCodes {
             .finish();
 
         let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 
@@ -258,7 +258,7 @@ impl RLPxMessage for GetTrieNodes {
             .finish();
 
         let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 
@@ -291,7 +291,7 @@ impl RLPxMessage for TrieNodes {
             .finish();
 
         let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 

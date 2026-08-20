@@ -2793,10 +2793,14 @@ mod canonic_encoding {
             buf
         }
 
-        /// Canonical-encoded length without allocating a buffer. Counts the
-        /// 1-byte type prefix for typed txs (EIP-2718) plus the inner RLP
-        /// payload length. Use this when only the size is needed (e.g.
-        /// admission-time size caps) to avoid `encode_canonical_to_vec().len()`.
+        /// Canonical-encoded length: the 1-byte type prefix for typed txs
+        /// (EIP-2718) plus the inner RLP payload length. Use this when only the
+        /// size is needed, e.g. admission-time size caps.
+        ///
+        /// Not allocation-free: none of the transaction types override
+        /// `RLPEncode::length`, so this encodes into a scratch buffer and takes
+        /// its length. It still beats `encode_canonical_to_vec().len()`, which
+        /// allocates a second buffer for the outer copy.
         pub fn encode_canonical_len(&self) -> usize {
             let prefix_len = match self {
                 Transaction::LegacyTransaction(_) => 0,

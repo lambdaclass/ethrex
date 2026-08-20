@@ -5,7 +5,6 @@ use crate::rlpx::{
     utils::{snappy_compress, snappy_decompress, snappy_decompress_bounded},
 };
 use crate::types::Node;
-use bytes::BufMut;
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::error::MempoolError;
@@ -67,7 +66,7 @@ impl RLPxMessage for Transactions {
         }
         encoder.finish();
         let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 
@@ -200,7 +199,7 @@ impl RLPxMessage for NewPooledTransactionHashes {
             .finish();
 
         let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 
@@ -292,7 +291,7 @@ impl RLPxMessage for GetPooledTransactions {
             .finish();
 
         let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 
@@ -428,7 +427,7 @@ impl RLPxMessage for PooledTransactions {
             .encode_field(&self.pooled_transactions)
             .finish();
         let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 

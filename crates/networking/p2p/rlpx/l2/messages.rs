@@ -3,7 +3,6 @@ use crate::rlpx::{
     message::{Message, RLPxMessage},
     utils::{snappy_compress, snappy_decompress},
 };
-use bytes::BufMut;
 use ethrex_common::utils::keccak;
 use ethrex_common::{
     H256, Signature,
@@ -38,7 +37,7 @@ impl RLPxMessage for NewBlock {
             .encode_field(&self.fee_config.to_vec())
             .finish();
         let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 
@@ -128,7 +127,7 @@ impl RLPxMessage for BatchSealed {
             .encode_field(&self.batch.balance_diffs)
             .finish();
         let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 

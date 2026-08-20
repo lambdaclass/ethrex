@@ -10,7 +10,6 @@ use crate::rlpx::{
     utils::{snappy_compress, snappy_decompress},
 };
 
-use bytes::BufMut;
 use ethrex_common::types::BlockHash;
 use ethrex_rlp::{
     error::{RLPDecodeError, RLPEncodeError},
@@ -42,7 +41,7 @@ impl RLPxMessage for GetReceipts {
             .finish();
 
         let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 

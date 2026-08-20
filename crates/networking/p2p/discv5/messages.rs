@@ -1,6 +1,6 @@
 use aes::cipher::{KeyIvInit, StreamCipher, StreamCipherError};
 use aes_gcm::{Aes128Gcm, KeyInit, aead::AeadMutInPlace};
-use bytes::{BufMut, Bytes};
+use bytes::Bytes;
 use ethrex_common::H256;
 use ethrex_rlp::{
     decode::RLPDecode,
@@ -94,13 +94,13 @@ impl Packet {
 
     pub fn encode(&self, buf: &mut Vec<u8>, dest_id: &H256) -> Result<(), PacketCodecError> {
         let masking_iv = self.masking_iv;
-        buf.put_slice(&masking_iv);
+        buf.extend_from_slice(&masking_iv);
 
         let mut cipher =
             <Aes128Ctr64BE as KeyIvInit>::new(dest_id[..16].into(), masking_iv[..].into());
 
         self.header.encode(buf, &mut cipher)?;
-        buf.put_slice(&self.encrypted_message);
+        buf.extend_from_slice(&self.encrypted_message);
 
         Ok(())
     }
@@ -168,17 +168,17 @@ impl PacketHeader {
         cipher: &mut T,
     ) -> Result<(), PacketCodecError> {
         let mut static_header = Vec::new();
-        static_header.put_slice(PROTOCOL_ID);
-        static_header.put_slice(&PROTOCOL_VERSION.to_be_bytes());
-        static_header.put_u8(self.flag);
-        static_header.put_slice(&self.nonce);
-        static_header.put_slice(&(self.authdata.len() as u16).to_be_bytes());
+        static_header.extend_from_slice(PROTOCOL_ID);
+        static_header.extend_from_slice(&PROTOCOL_VERSION.to_be_bytes());
+        static_header.push(self.flag);
+        static_header.extend_from_slice(&self.nonce);
+        static_header.extend_from_slice(&(self.authdata.len() as u16).to_be_bytes());
         cipher.try_apply_keystream(&mut static_header)?;
-        buf.put_slice(&static_header);
+        buf.extend_from_slice(&static_header);
 
         let mut authdata = self.authdata.clone();
         cipher.try_apply_keystream(&mut authdata)?;
-        buf.put_slice(&authdata);
+        buf.extend_from_slice(&authdata);
 
         Ok(())
     }
@@ -252,7 +252,7 @@ impl PacketTrait for Ordinary {
     const TYPE_FLAG: u8 = 0x00;
 
     fn encode_authdata(&self, buf: &mut Vec<u8>) -> Result<(), PacketCodecError> {
-        buf.put_slice(self.src_id.as_bytes());
+        buf.extend_from_slice(self.src_id.as_bytes());
         Ok(())
     }
 
@@ -323,8 +323,8 @@ impl PacketTrait for WhoAreYou {
     const TYPE_FLAG: u8 = 0x01;
 
     fn encode_authdata(&self, buf: &mut Vec<u8>) -> Result<(), PacketCodecError> {
-        buf.put_slice(&self.id_nonce.to_be_bytes());
-        buf.put_slice(&self.enr_seq.to_be_bytes());
+        buf.extend_from_slice(&self.id_nonce.to_be_bytes());
+        buf.extend_from_slice(&self.enr_seq.to_be_bytes());
         Ok(())
     }
 
@@ -444,11 +444,11 @@ impl PacketTrait for Handshake {
             .try_into()
             .map_err(|_| PacketCodecError::InvalidSize)?;
 
-        buf.put_slice(self.src_id.as_bytes());
-        buf.put_u8(sig_size);
-        buf.put_u8(eph_key_size);
-        buf.put_slice(&self.id_signature);
-        buf.put_slice(&self.eph_pubkey);
+        buf.extend_from_slice(self.src_id.as_bytes());
+        buf.push(sig_size);
+        buf.push(eph_key_size);
+        buf.extend_from_slice(&self.id_signature);
+        buf.extend_from_slice(&self.eph_pubkey);
         if let Some(record) = &self.record {
             record.encode(buf);
         }
@@ -533,7 +533,7 @@ impl Message {
     }
 
     pub fn encode(&self, buf: &mut Vec<u8>) {
-        buf.put_u8(self.msg_type());
+        buf.push(self.msg_type());
         match self {
             Message::Ping(ping) => ping.encode(buf),
             Message::Pong(pong) => pong.encode(buf),

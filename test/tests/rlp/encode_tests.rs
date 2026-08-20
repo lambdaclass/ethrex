@@ -2,7 +2,7 @@ use std::net::IpAddr;
 
 use ethereum_types::{Address, U256};
 use ethrex_rlp::constants::{RLP_EMPTY_LIST, RLP_NULL};
-use ethrex_rlp::encode::{RLPEncode, backpatch_list_prefix, encode_length};
+use ethrex_rlp::encode::{RLPEncode, backpatch_list_prefix, encode_list_prefix};
 use hex_literal::hex;
 
 #[test]
@@ -347,7 +347,7 @@ fn can_encode_tuple() {
 /// payload has to survive being shifted right to make room.
 ///
 /// The expected prefixes are spelled out from the RLP spec rather than derived
-/// from `encode_length`: both paths share one helper, so comparing them to each
+/// from `encode_list_prefix`: both paths share one helper, so comparing them to each
 /// other would not catch a bug in the helper.
 #[test]
 fn backpatched_prefix_matches_the_spec() {
@@ -383,10 +383,10 @@ fn backpatched_prefix_matches_the_spec() {
         // The write-ahead path has to agree with it, since both encode the same
         // header.
         let mut written_ahead = Vec::new();
-        encode_length(*payload_len, &mut written_ahead);
+        encode_list_prefix(*payload_len, &mut written_ahead);
         assert_eq!(
             written_ahead, *expected_prefix,
-            "encode_length disagrees for payload_len {payload_len}"
+            "encode_list_prefix disagrees for payload_len {payload_len}"
         );
     }
 }
@@ -407,7 +407,7 @@ fn backpatched_prefix_preserves_preceding_bytes() {
         assert_eq!(&buf[..start], &preceding[..]);
 
         let mut expected_tail = Vec::new();
-        encode_length(payload_len, &mut expected_tail);
+        encode_list_prefix(payload_len, &mut expected_tail);
         expected_tail.extend_from_slice(&payload);
         assert_eq!(&buf[start..], &expected_tail[..]);
     }
@@ -425,7 +425,7 @@ fn can_encode_long_list() {
     assert!(payload_len > 55, "expected the long form");
 
     let mut expected = Vec::new();
-    encode_length(payload_len, &mut expected);
+    encode_list_prefix(payload_len, &mut expected);
     for item in &items {
         item.encode(&mut expected);
     }

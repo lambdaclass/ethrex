@@ -7,7 +7,7 @@ use core::array;
 use ethrex_rlp::{
     constants::RLP_NULL,
     decode::{RLPDecode, decode_bytes},
-    encode::{RLPEncode, encode_length},
+    encode::{RLPEncode, encode_list_prefix},
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };
@@ -37,7 +37,7 @@ impl RLPEncode for BranchNode {
             .iter()
             .fold(value_len, |acc, hash| acc + RLPEncode::length(*hash));
 
-        encode_length(payload_len, buf);
+        encode_list_prefix(payload_len, buf);
         for hash in hashes {
             match hash {
                 NodeHash::Hashed(hash) => hash.0.encode(buf),
@@ -60,7 +60,7 @@ impl RLPEncode for BranchNode {
 
         let mut buf: Vec<u8> = Vec::with_capacity(payload_len + 3); // 3 byte prefix headroom
 
-        encode_length(payload_len, &mut buf);
+        encode_list_prefix(payload_len, &mut buf);
         for child in self.choices.iter() {
             match child.compute_hash_ref(&NativeCrypto) {
                 NodeHash::Hashed(hash) => hash.0.encode(&mut buf),

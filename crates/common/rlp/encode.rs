@@ -300,6 +300,7 @@ impl RLPEncode for U256 {
         bytes[leading_zeros_in_bytes..].encode(buf)
     }
 
+    #[inline]
     fn length(&self) -> usize {
         let ilog = self.bits().saturating_sub(1);
         impl_length_integers(ilog as u32, (self.low_u32() & 0xff) as u8)
@@ -344,7 +345,7 @@ const MAX_LIST_PREFIX_LEN: usize = 1 + size_of::<usize>();
 /// Builds the RLP list prefix for a payload of `payload_len` bytes.
 ///
 /// Returned by value so that both writing a prefix ahead of a payload
-/// ([`encode_length`]) and inserting one in front of a payload already written
+/// ([`encode_list_prefix`]) and inserting one in front of a payload already written
 /// ([`backpatch_list_prefix`]) share a single implementation.
 #[inline]
 fn list_prefix(payload_len: usize) -> ([u8; MAX_LIST_PREFIX_LEN], usize) {
@@ -362,20 +363,27 @@ fn list_prefix(payload_len: usize) -> ([u8; MAX_LIST_PREFIX_LEN], usize) {
     (prefix, 1 + be_len)
 }
 
-/// Writes the list prefix for a payload of `total_len` bytes, which the caller
-/// is about to append.
+/// Appends the list prefix for a payload of `payload_len` bytes, which the
+/// caller is about to write.
+///
+/// Use [`backpatch_list_prefix`] instead when the payload has already been
+/// written and its length was not known up front.
 #[inline]
-pub fn encode_length(total_len: usize, buf: &mut Vec<u8>) {
-    let (prefix, prefix_len) = list_prefix(total_len);
+pub fn encode_list_prefix(payload_len: usize, buf: &mut Vec<u8>) {
+    let (prefix, prefix_len) = list_prefix(payload_len);
     buf.extend_from_slice(&prefix[..prefix_len]);
 }
 
-/// Inserts the list prefix for a payload that has already been appended at
-/// `start`, shifting the payload right to make room.
+/// Inserts the list prefix for a payload occupying `buf[start..]`, shifting the
+/// payload right to make room.
 ///
-/// This is what a concrete sink buys over `&mut dyn BufMut`: a trait object
-/// cannot report how many bytes it holds, so the length had to be computed in a
-/// separate pass before anything could be written.
+/// Lets a list be encoded in one pass: write the payload, then derive the
+/// prefix from how much was written. `start` must be the buffer length recorded
+/// before the payload was written.
+///
+/// # Panics
+///
+/// If `start > buf.len()`.
 #[inline]
 pub fn backpatch_list_prefix(buf: &mut Vec<u8>, start: usize) {
     let payload_len = buf.len() - start;
@@ -502,6 +510,7 @@ impl RLPEncode for Bytes {
         self.as_ref().encode(buf)
     }
 
+    #[inline]
     fn length(&self) -> usize {
         self.as_ref().length()
     }
