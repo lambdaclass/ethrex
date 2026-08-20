@@ -10,6 +10,7 @@ repository.workspace = true
 
 [dependencies]
 ethrex-common.workspace = true
+ethrex-blockchain.workspace = true
 ethrex-rpc.workspace = true
 ethrex-l2-common.workspace = true
 ethrex-l2-rpc.workspace = true

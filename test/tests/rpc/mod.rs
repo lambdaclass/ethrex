@@ -1,6 +1,8 @@
 mod authrpc_batch_tests;
 mod block_access_list_tests;
 mod client_version_tests;
+mod create_access_list_tests;
+mod estimate_gas_tests;
 mod fork_choice_tests;
 mod http_batch_tests;
 mod send_raw_transaction_tests;

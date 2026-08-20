@@ -3923,7 +3923,26 @@ fn env_from_generic(
 ///
 /// Split out from `vm_from_generic` so the caller owns the resulting `Transaction` for at least
 /// the VM's lifetime — `VM` now borrows its tx (`&'a Transaction`) instead of cloning it.
+///
+/// The envelope fields are carried over even though execution reads almost none of them,
+/// because the L2 prices its L1 data fee from `Transaction::length()` — the RLP-encoded byte
+/// count — and reserves that as gas before execution. Leaving them at their defaults made a
+/// simulated transaction encode up to ~104 bytes shorter than the signed one it stands for
+/// (a zero `U256` is one RLP byte, a real signature component is 33), so `eth_estimateGas`
+/// under-reserved the L1 fee and the transaction it was estimating ran out of gas. The
+/// signature is stamped at full width for the same reason, and deliberately at the maximum:
+/// a real component can be shorter after leading-zero trimming, and over-reserving the L1
+/// fee is safe where under-reserving is not.
 fn generic_tx_to_transaction(tx: &GenericTransaction) -> Result<Transaction, VMError> {
+    // Not read during execution — the sender comes from `env.origin` — so this only has to
+    // encode to the same width as a real signature.
+    let (signature_r, signature_s) = (U256::MAX, U256::MAX);
+    let nonce = tx.nonce.unwrap_or_default();
+    let gas_limit = tx.gas.unwrap_or_default();
+    let max_fee_per_gas = tx.max_fee_per_gas.unwrap_or_default();
+    let max_priority_fee_per_gas = tx.max_priority_fee_per_gas.unwrap_or_default();
+    let chain_id = tx.chain_id.unwrap_or_default();
+
     Ok(match &tx.authorization_list {
         Some(authorization_list) => Transaction::EIP7702Transaction(EIP7702Transaction {
             to: match tx.to {
@@ -3943,6 +3962,13 @@ fn generic_tx_to_transaction(tx: &GenericTransaction) -> Result<Transaction, VME
                 .iter()
                 .map(|auth| Into::<AuthorizationTuple>::into(auth.clone()))
                 .collect(),
+            nonce,
+            gas_limit,
+            max_fee_per_gas,
+            max_priority_fee_per_gas,
+            chain_id,
+            signature_r,
+            signature_s,
             ..Default::default()
         }),
         None => Transaction::EIP1559Transaction(EIP1559Transaction {
@@ -3954,6 +3980,13 @@ fn generic_tx_to_transaction(tx: &GenericTransaction) -> Result<Transaction, VME
                 .iter()
                 .map(|list| (list.address, list.storage_keys.clone()))
                 .collect(),
+            nonce,
+            gas_limit,
+            max_fee_per_gas,
+            max_priority_fee_per_gas,
+            chain_id,
+            signature_r,
+            signature_s,
             ..Default::default()
         }),
     })
@@ -4955,5 +4988,76 @@ mod burned_fees_tests {
             result_d.burned_fees, None,
             "pre-LStar: burned_fees must be None"
         );
+    }
+}
+
+#[cfg(test)]
+mod simulated_tx_encoding_tests {
+    //! The L2 prices its L1 data fee from `Transaction::length()` and reserves that
+    //! as gas before execution, so a simulated transaction must never encode shorter
+    //! than the signed one it stands for — otherwise `eth_estimateGas` reserves less
+    //! L1 fee gas than the transaction it is estimating will need, and that
+    //! transaction runs out of gas at exactly the estimate.
+    //!
+    //! This was reached through the L2 fee-token integration test, which submits the
+    //! estimate verbatim. It only surfaced once the estimate became exact; the search's
+    //! former 1.5% tolerance had been absorbing the shortfall.
+    use super::*;
+    use ethrex_common::types::GenericTransaction;
+    use ethrex_rlp::encode::RLPEncode;
+
+    /// The transaction the SDK signs and sends after estimating, with signature
+    /// components at the width secp256k1 actually produces.
+    fn signed_equivalent(gas_limit: u64, data: Bytes) -> Transaction {
+        Transaction::EIP1559Transaction(EIP1559Transaction {
+            chain_id: 9_999,
+            nonce: 42,
+            max_priority_fee_per_gas: 1_000_000_000,
+            max_fee_per_gas: 2_000_000_000,
+            gas_limit,
+            to: TxKind::Create,
+            value: U256::from(1u64),
+            data,
+            access_list: vec![],
+            signature_y_parity: true,
+            signature_r: U256::MAX,
+            signature_s: U256::MAX,
+            ..Default::default()
+        })
+    }
+
+    fn generic(gas_limit: u64, data: Bytes) -> GenericTransaction {
+        GenericTransaction {
+            to: TxKind::Create,
+            value: U256::from(1u64),
+            input: data,
+            nonce: Some(42),
+            gas: Some(gas_limit),
+            max_fee_per_gas: Some(2_000_000_000),
+            max_priority_fee_per_gas: Some(1_000_000_000),
+            chain_id: Some(9_999),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn simulated_tx_never_encodes_shorter_than_the_signed_one() {
+        for (gas_limit, data) in [
+            (21_000u64, Bytes::new()),
+            (150_000, Bytes::from_static(&[0x60, 0x00, 0x60, 0x00])),
+            (5_000_000, Bytes::from(vec![0xab; 4_096])),
+        ] {
+            let simulated = generic_tx_to_transaction(&generic(gas_limit, data.clone()))
+                .expect("conversion should succeed");
+            let signed = signed_equivalent(gas_limit, data.clone());
+            assert!(
+                simulated.length() >= signed.length(),
+                "simulated tx encodes {} bytes, signed one {} — the L2 would under-reserve \
+                 the L1 fee by the difference (gas_limit {gas_limit}, {} data bytes)",
+                simulated.length(),
+                signed.length(),
+                data.len(),
+            );
+        }
     }
 }
