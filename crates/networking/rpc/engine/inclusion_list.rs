@@ -81,8 +81,9 @@ pub type RetainedInclusionListsHandle = Arc<Mutex<RetainedInclusionLists>>;
 ///
 /// An empty inclusion list is trivially satisfied. The algorithm is a pure
 /// state-comparison pass: the validator is seeded from the parent's pre-state,
-/// refreshed from the block's post-state, and consulted once — no transaction
-/// is re-executed.
+/// refreshed from the block's post-state (with same-block withdrawal credits
+/// discounted, since the check point precedes withdrawal processing), and
+/// consulted once — no transaction is re-executed.
 pub async fn block_satisfies_inclusion_list(
     context: &RpcApiContext,
     block_hash: H256,
@@ -127,6 +128,10 @@ pub async fn block_satisfies_inclusion_list(
         .ok_or_else(|| {
             RpcErr::Internal("block body missing for IL satisfaction check".to_string())
         })?;
+    // The satisfaction check evaluates senders at the post-transactions,
+    // PRE-withdrawals point (EELS `apply_body` order), so the withdrawals'
+    // credits must be discounted from the post-state balances.
+    validator.discount_withdrawals(body.withdrawals.as_deref().unwrap_or_default());
     let block_tx_hashes: HashSet<H256> = body
         .transactions
         .iter()

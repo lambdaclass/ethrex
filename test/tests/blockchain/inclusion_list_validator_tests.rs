@@ -7,7 +7,9 @@ use ethrex_blockchain::inclusion_list_builder::{
 use ethrex_blockchain::inclusion_list_validator::{
     IlUnsatisfied, InclusionListSatisfactionValidator, TrackedSender,
 };
-use ethrex_common::types::{BlockHeader, ChainConfig, EIP1559Transaction, Transaction, TxKind};
+use ethrex_common::types::{
+    BlockHeader, ChainConfig, EIP1559Transaction, Transaction, TxKind, Withdrawal,
+};
 use ethrex_common::{Address, Bytes, H256, U256};
 use ethrex_crypto::NativeCrypto;
 use rustc_hash::FxHashMap;
@@ -1118,5 +1120,68 @@ fn il_omitted_blob_tx_invalid_variants_return_ok() {
             Ok(())
         ),
         "blob tx beyond the remaining blob budget must be excused"
+    );
+}
+
+/// The satisfaction check evaluates senders BEFORE same-block withdrawals are
+/// processed: EELS `apply_body` runs `check_inclusion_list_transactions`
+/// between the block's transactions and `process_withdrawals`, so a sender
+/// funded only by a withdrawal in the same block could not have had its tx
+/// appended (mirrors `test_use_value_in_tx[tx_in_withdrawals_block]`'s
+/// inclusion-list variant from tests-focil-devnet@v0.2.0).
+#[test]
+fn il_sender_funded_by_same_block_withdrawal_is_excused() {
+    let crypto = NativeCrypto;
+    let alice = addr(1);
+    let bob = addr(2);
+
+    let il = vec![make_tx(alice, 0, 21_000, U256::from(1))];
+
+    // Pre-state: penniless. Post-state: exactly the withdrawal's credit
+    // (1 gwei = 10^9 wei, comfortably above the 21_001-wei tx cost).
+    let mut pre_accounts: FxHashMap<Address, AccountStateView> = Default::default();
+    pre_accounts.insert(alice, account(0, U256::zero()));
+    let pre_state = MockState::with(pre_accounts);
+    let mut validator =
+        InclusionListSatisfactionValidator::new(&il, &pre_state, &crypto).expect("construct");
+
+    let credit_gwei = 1u64;
+    let mut post_accounts: FxHashMap<Address, AccountStateView> = Default::default();
+    post_accounts.insert(
+        alice,
+        account(0, U256::from(credit_gwei) * U256::from(1_000_000_000u64)),
+    );
+    let post_state = MockState::with(post_accounts);
+    validator
+        .refresh_all_from(&post_state, &crypto)
+        .expect("refresh");
+
+    // Control first (`check` is read-only): with the credit still in the
+    // tracker the tx is includable, so the omission counts against the block.
+    let block_txs: HashSet<H256> = HashSet::new();
+    let control = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
+    assert!(matches!(control, Err(IlUnsatisfied { .. })));
+
+    // Discounting the block's withdrawals (including one to an untracked
+    // address, which must be a no-op) rolls alice back to her
+    // pre-withdrawals balance: the tx is no longer payable → excused.
+    validator.discount_withdrawals(&[
+        Withdrawal {
+            index: 0,
+            validator_index: 0,
+            address: alice,
+            amount: credit_gwei,
+        },
+        Withdrawal {
+            index: 1,
+            validator_index: 1,
+            address: bob,
+            amount: 7,
+        },
+    ]);
+    let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
+    assert!(
+        matches!(result, Ok(())),
+        "withdrawal-funded IL sender must be excused, got {result:?}"
     );
 }

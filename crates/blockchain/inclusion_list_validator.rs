@@ -33,8 +33,9 @@ use ethrex_common::{
     Address, Bytes, H256, U256,
     constants::{EMPTY_KECCAK_HASH, GAS_PER_BLOB, TX_MAX_GAS_LIMIT_AMSTERDAM},
     types::{
-        BlockHeader, ChainConfig, MAX_BLOB_COUNT, Transaction, TxType, VERSIONED_HASH_VERSION_KZG,
-        calculate_base_fee_per_blob_gas, is_eip7702_delegation,
+        BlockHeader, ChainConfig, GWEI_TO_WEI, MAX_BLOB_COUNT, Transaction, TxType,
+        VERSIONED_HASH_VERSION_KZG, Withdrawal, calculate_base_fee_per_blob_gas,
+        is_eip7702_delegation,
     },
 };
 use ethrex_crypto::Crypto;
@@ -252,6 +253,29 @@ impl InclusionListSatisfactionValidator {
             );
         }
         Ok(())
+    }
+
+    /// Roll tracked balances back to the pre-withdrawals point of the block.
+    ///
+    /// EELS `apply_body` runs `check_inclusion_list_transactions` after the
+    /// block's transactions but BEFORE `process_withdrawals`, so a sender
+    /// funded only by a same-block withdrawal is NOT includable at check time.
+    /// The tracker is refreshed from the block's final state root, which
+    /// already includes those credits; withdrawals only ever add balance
+    /// (never touching nonce or code), so subtracting the block's credits per
+    /// sender reconstructs the pre-withdrawals balance exactly. `saturating_`
+    /// arithmetic is defensive only: a final balance below the block's own
+    /// credits to that account cannot occur.
+    pub fn discount_withdrawals(&mut self, withdrawals: &[Withdrawal]) {
+        for withdrawal in withdrawals {
+            if withdrawal.amount == 0 {
+                continue;
+            }
+            if let Some(tracked) = self.il_senders.get_mut(&withdrawal.address) {
+                let credit = U256::from(withdrawal.amount).saturating_mul(U256::from(GWEI_TO_WEI));
+                tracked.balance = tracked.balance.saturating_sub(credit);
+            }
+        }
     }
 
     /// Return `Ok(())` iff every inclusion-list transaction is classified as
