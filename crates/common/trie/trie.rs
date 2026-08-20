@@ -590,7 +590,11 @@ impl Trie {
                     if partial_path.skip_prefix(&extension_node.prefix)
                         && extension_node.child.is_valid()
                     {
-                        let child_path = partial_path.concat(&extension_node.prefix);
+                        // The child's DB key is the extension's own path extended with its
+                        // prefix (this is how `NodeRef::commit` stores it). `partial_path` has
+                        // already been advanced past the prefix by `skip_prefix`, so it must
+                        // not be used here.
+                        let child_path = current_path.concat(&extension_node.prefix);
                         let child_node = extension_node
                             .child
                             .get_node_checked(db, child_path.clone())?

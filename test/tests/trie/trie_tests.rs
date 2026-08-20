@@ -3,7 +3,8 @@ use cita_trie::{MemoryDB as CitaMemoryDB, PatriciaTrie as CitaTrie, Trie as Cita
 use std::sync::Arc;
 
 use ethrex_crypto::NativeCrypto;
-use ethrex_trie::Trie;
+use ethrex_rlp::encode::RLPEncode;
+use ethrex_trie::{InMemoryTrieDB, Nibbles, Node, NodeHash, NodeRef, Trie, db::NodeMap};
 
 use hasher::HasherKeccak;
 use hex_literal::hex;
@@ -308,6 +309,117 @@ fn compute_hash_e() {
         trie.hash(&NativeCrypto).unwrap().0.as_slice(),
         hex!("7a320748f780ad9ad5b0837302075ce0eeba6c26e3d8562c67ccc0f1b273298a").as_slice(),
     );
+}
+
+/// Builds a committed trie backed by a real DB whose root is an extension node with
+/// a *hashed* child, and re-opens it from its root hash.
+///
+/// Re-opening matters: the root is then a `NodeRef::Hash`, so every node below it is
+/// fetched from the DB by its path key instead of being served from the in-memory
+/// `NodeRef::Node` cache, which is what `Trie::get_node` needs to exercise.
+fn extension_rooted_trie() -> (Trie, Vec<[u8; 32]>) {
+    // All keys share the leading nibbles `[0xa, 0xb]`, so the root is an extension
+    // node with that prefix, and then diverge on the next nibble, so the extension's
+    // child is a branch node holding six hashed leaves. Both are far over the
+    // 32-byte limit under which a node would be inlined into its parent.
+    let keys: Vec<[u8; 32]> = (0u8..6)
+        .map(|i| {
+            let mut key = [0u8; 32];
+            key[0] = 0xab;
+            key[1] = i << 4;
+            key[31] = i;
+            key
+        })
+        .collect();
+
+    let db: NodeMap = Default::default();
+    let mut trie = Trie::new(Box::new(InMemoryTrieDB::new(db.clone())));
+    for key in &keys {
+        trie.insert(key.to_vec(), vec![0x11; 40]).unwrap();
+    }
+    let root = trie.hash(&NativeCrypto).unwrap();
+
+    (Trie::open(Box::new(InMemoryTrieDB::new(db)), root), keys)
+}
+
+/// Regression test for the child key used when `get_node` walks an extension node.
+/// The child is stored under `extension path ++ prefix`; computing it from the
+/// *remaining* path instead made every lookup that crosses an extension node with a
+/// hashed child fail with `TrieError::InconsistentTree`.
+#[test]
+fn get_node_partial_path_crossing_extension_node() {
+    let (trie, _keys) = extension_rooted_trie();
+
+    let root = trie.root_node().unwrap().expect("trie should have a root");
+    let Node::Extension(extension) = root.as_ref() else {
+        panic!("expected an extension node at the root, got {root:?}");
+    };
+    let branch_path = extension.prefix.clone();
+    assert_eq!(branch_path, Nibbles::from_hex(vec![0xa, 0xb]));
+    // Precondition: an inline child would be read straight out of the extension node,
+    // never from the DB, and so would not exercise the child path at all.
+    assert!(matches!(
+        extension.child,
+        NodeRef::Hash(NodeHash::Hashed(_))
+    ));
+
+    let branch = extension
+        .child
+        .get_node(trie.db(), branch_path.clone())
+        .unwrap()
+        .expect("extension child should be stored under its path");
+    let Node::Branch(branch_node) = branch.as_ref() else {
+        panic!("expected a branch node below the extension, got {branch:?}");
+    };
+    let leaf_path = branch_path.append_new(0);
+    let leaf = branch_node.choices[0]
+        .get_node(trie.db(), leaf_path.clone())
+        .unwrap()
+        .expect("branch child should be stored under its path");
+
+    // Partial path ending exactly at the extension node's child.
+    assert_eq!(
+        trie.get_node(&branch_path.encode_compact()).unwrap(),
+        branch.encode_to_vec()
+    );
+    // Partial path continuing past the extension node, so the remaining path is no
+    // longer empty once its prefix is skipped. This is the case the wrong child key
+    // broke.
+    assert_eq!(
+        trie.get_node(&leaf_path.encode_compact()).unwrap(),
+        leaf.encode_to_vec()
+    );
+}
+
+/// Same traversal, entered through the full-32-byte-path shape of `get_node`.
+#[test]
+fn get_node_full_path_crossing_extension_node() {
+    let (trie, keys) = extension_rooted_trie();
+    let path = keys[0].to_vec();
+
+    // The key is in the trie.
+    assert!(trie.get(&path).unwrap().is_some());
+    // `get_node` still answers with the documented empty vector: a full path expands
+    // to 65 nibbles (64 plus the leaf flag) and only a node whose own path consumes
+    // all of them is returned, which no leaf ever does because it keeps its remaining
+    // partial path. The lookup does walk the root extension node though, and with the
+    // wrong child key it failed with `TrieError::InconsistentTree` instead.
+    assert!(trie.get_node(&path).unwrap().is_empty());
+}
+
+/// Paths that lead nowhere are reported as an empty node, not as an error.
+#[test]
+fn get_node_missing_paths_return_empty() {
+    let (trie, _keys) = extension_rooted_trie();
+
+    // Diverges from the root extension node's prefix.
+    let diverging = Nibbles::from_hex(vec![0xa, 0xc]).encode_compact();
+    assert!(trie.get_node(&diverging).unwrap().is_empty());
+    // Crosses the extension node, then hits an empty branch choice.
+    let empty_choice = Nibbles::from_hex(vec![0xa, 0xb, 0xf]).encode_compact();
+    assert!(trie.get_node(&empty_choice).unwrap().is_empty());
+    // Paths longer than a full 32-byte path are not handled.
+    assert!(trie.get_node(&vec![0u8; 33]).unwrap().is_empty());
 }
 
 // Proptests
