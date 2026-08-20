@@ -280,8 +280,17 @@ impl NodeRef {
                 }
                 match Arc::make_mut(node) {
                     Node::Branch(node) => {
-                        for (choice, node) in &mut node.choices.iter_mut().enumerate() {
-                            node.commit(path.append_new(choice as u8), acc, crypto);
+                        for (choice, child) in node.choices.iter_mut().enumerate() {
+                            // Only build the child's path for children that are
+                            // actually descended into. `commit` on a
+                            // `NodeRef::Hash` just hands the hash straight back
+                            // without touching `acc`, and the return value is
+                            // discarded here, so for absent and already-hashed
+                            // choices the `append_new` was a pure waste of an
+                            // allocation: up to 16 per branch node.
+                            if matches!(child, NodeRef::Node(..)) {
+                                child.commit(path.append_new(choice as u8), acc, crypto);
+                            }
                         }
                     }
                     Node::Extension(node) => {
