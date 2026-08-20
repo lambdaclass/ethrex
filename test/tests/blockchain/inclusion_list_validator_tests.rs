@@ -5,10 +5,10 @@ use ethrex_blockchain::inclusion_list_builder::{
     AccountStateView, IlStateProvider, IlStateProviderError,
 };
 use ethrex_blockchain::inclusion_list_validator::{
-    IlUnsatisfied, InclusionListSatisfactionValidator,
+    IlUnsatisfied, InclusionListSatisfactionValidator, TrackedSender,
 };
 use ethrex_common::types::{BlockHeader, ChainConfig, EIP1559Transaction, Transaction, TxKind};
-use ethrex_common::{Address, H256, U256};
+use ethrex_common::{Address, Bytes, H256, U256};
 use ethrex_crypto::NativeCrypto;
 use rustc_hash::FxHashMap;
 
@@ -18,6 +18,9 @@ use rustc_hash::FxHashMap;
 #[derive(Debug, Default)]
 struct MockState {
     accounts: FxHashMap<Address, AccountStateView>,
+    /// Per-address contract code, for the sender-is-EOA gate. Addresses
+    /// absent here have no code.
+    codes: FxHashMap<Address, Bytes>,
     panic_on_read: bool,
     read_count: Cell<usize>,
 }
@@ -26,6 +29,7 @@ impl MockState {
     fn with(accounts: FxHashMap<Address, AccountStateView>) -> Self {
         Self {
             accounts,
+            codes: Default::default(),
             panic_on_read: false,
             read_count: Cell::new(0),
         }
@@ -46,11 +50,23 @@ impl IlStateProvider for MockState {
         self.read_count.set(self.read_count.get() + 1);
         Ok(self.accounts.get(&address).copied())
     }
+
+    // Deliberately does not bump `read_count`, which documents the number of
+    // ACCOUNT reads a flow performs.
+    fn get_code(&self, address: Address) -> Result<Option<Bytes>, IlStateProviderError> {
+        if self.panic_on_read {
+            panic!(
+                "MockState::get_code called during a no-EVM/no-state phase \
+                 for address {address:?} — the satisfaction check must not read state"
+            );
+        }
+        Ok(self.codes.get(&address).cloned())
+    }
 }
 
-/// `IlStateProvider` whose `get_account` panics on every call. Used to
-/// confirm that `check()` is purely state-tracker-driven and does not
-/// reach into the provider.
+/// `IlStateProvider` that panics on every call. Used to confirm that
+/// `check()` is purely state-tracker-driven and does not reach into the
+/// provider.
 #[derive(Debug, Default)]
 struct PanicState;
 
@@ -59,6 +75,10 @@ impl IlStateProvider for PanicState {
         &self,
         _address: Address,
     ) -> Result<Option<AccountStateView>, IlStateProviderError> {
+        panic!("check() must not invoke the state provider — pure tracker comparison only");
+    }
+
+    fn get_code(&self, _address: Address) -> Result<Option<Bytes>, IlStateProviderError> {
         panic!("check() must not invoke the state provider — pure tracker comparison only");
     }
 }
@@ -108,7 +128,21 @@ fn header() -> BlockHeader {
 }
 
 fn config() -> ChainConfig {
-    ChainConfig::default()
+    ChainConfig {
+        // Match `make_tx`'s declared chain id: the wrong-chain-id gate would
+        // otherwise excuse every test transaction.
+        chain_id: 1,
+        ..Default::default()
+    }
+}
+
+/// Tracker entry for a code-less sender.
+fn tracked(nonce: u64, balance: U256) -> TrackedSender {
+    TrackedSender {
+        nonce,
+        balance,
+        code: None,
+    }
 }
 
 fn account(nonce: u64, balance: U256) -> AccountStateView {
@@ -267,7 +301,7 @@ fn tracker_updates_when_executed_tx_touches_il_sender() {
     // Pre-condition: tracker has alice's pre-state nonce/balance.
     assert_eq!(
         validator.il_senders.get(&alice),
-        Some(&(5u64, rich_balance()))
+        Some(&tracked(5, rich_balance()))
     );
 
     // Executed tx by bob (NOT in IL set) should NOT update the tracker.
@@ -283,7 +317,7 @@ fn tracker_updates_when_executed_tx_touches_il_sender() {
     // alice unchanged
     assert_eq!(
         validator.il_senders.get(&alice),
-        Some(&(5u64, rich_balance()))
+        Some(&tracked(5, rich_balance()))
     );
     // bob_state was queried 0 times because bob is not tracked.
     assert_eq!(bob_state.read_count.get(), 0);
@@ -298,7 +332,7 @@ fn tracker_updates_when_executed_tx_touches_il_sender() {
         .expect("observe-alice");
     assert_eq!(
         validator.il_senders.get(&alice),
-        Some(&(6u64, U256::from(123u64)))
+        Some(&tracked(6, U256::from(123u64)))
     );
     // alice_state should have been read exactly once.
     assert_eq!(alice_state.read_count.get(), 1);
@@ -375,7 +409,7 @@ fn algorithm_is_idempotent_over_il() {
     // state level, not just the verdict level.
     assert_eq!(
         validator.il_senders.get(&alice),
-        Some(&(0u64, rich_balance()))
+        Some(&tracked(0, rich_balance()))
     );
 }
 
@@ -520,33 +554,6 @@ fn frame_il_tx_present_in_block_is_satisfied() {
     );
 }
 
-/// Build an EIP-4844 (blob) tx with a precached sender.
-fn make_blob_tx(sender: Address, nonce: u64, gas_limit: u64) -> Transaction {
-    use ethrex_common::types::EIP4844Transaction;
-    let inner = EIP4844Transaction {
-        chain_id: 1,
-        nonce,
-        max_priority_fee_per_gas: 1,
-        max_fee_per_gas: 1,
-        gas: gas_limit,
-        to: Address::repeat_byte(0xaa),
-        value: U256::zero(),
-        max_fee_per_blob_gas: U256::from(1),
-        blob_versioned_hashes: vec![H256::repeat_byte(0x01)],
-        signature_r: U256::from(1),
-        signature_s: U256::from(2),
-        ..Default::default()
-    };
-    let tx = Transaction::EIP4844Transaction(inner);
-    match &tx {
-        Transaction::EIP4844Transaction(inner) => {
-            let _ = inner.sender_cache.set(sender);
-        }
-        _ => unreachable!(),
-    }
-    tx
-}
-
 /// Build an EIP-1559 tx with a genuinely invalid signature (`r = s = 0`)
 /// and NO precached sender, so `Transaction::sender` performs real ECDSA
 /// recovery and fails.
@@ -567,27 +574,12 @@ fn make_unsigned_tx(nonce: u64, gas_limit: u64) -> Transaction {
     Transaction::EIP1559Transaction(inner)
 }
 
-/// Blob IL txs are excluded from the satisfaction check: an omitted blob
-/// tx with a funded sender must classify as satisfied (EELS skips blobs).
-#[test]
-fn omitted_blob_il_tx_is_satisfied() {
-    let crypto = NativeCrypto;
-    let alice = addr(1);
-
-    let il = vec![make_blob_tx(alice, 0, 21_000)];
-    let mut accounts: FxHashMap<Address, AccountStateView> = Default::default();
-    accounts.insert(alice, account(0, rich_balance()));
-    let state = MockState::with(accounts);
-
-    let validator =
-        InclusionListSatisfactionValidator::new(&il, &state, &crypto).expect("construct");
-
-    // Empty block, ample gas, funded sender — only the blob-skip rule keeps
-    // this satisfied.
-    let block_txs: HashSet<H256> = HashSet::new();
-    let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
-    assert!(matches!(result, Ok(())), "blob IL tx must be skipped");
-}
+// NOTE: the former `omitted_blob_il_tx_is_satisfied` test pinned the
+// pre-tests-focil-devnet@v0.2.0 rule that excused every blob transaction.
+// That release's spec fix ("Type-3 transactions were considered
+// not-includable by default") evaluates blob txs like any other type; the
+// replacement coverage lives in `il_omitted_includable_blob_tx_returns_unsatisfied`
+// and `il_omitted_blob_tx_invalid_variants_return_ok` below.
 
 /// An IL tx whose gas limit is below intrinsic gas can never be validly
 /// appended → satisfied (EELS `validate_transaction` raises).
@@ -670,4 +662,461 @@ fn omitted_below_base_fee_il_tx_is_satisfied() {
     hdr_ok.base_fee_per_gas = Some(1);
     let control = validator.check(&il, &block_txs, 30_000_000, &hdr_ok, &config(), &crypto);
     assert!(matches!(control, Err(IlUnsatisfied { .. })));
+}
+
+// ─── Includability gates added for tests-focil-devnet@v0.2.0 ─────────────────
+//
+// EELS `check_inclusion_list_transactions` (forks/amsterdam) replays
+// `validate_transaction` + `check_transaction` for every missing IL tx; the
+// tests below pin the ethrex mirror of the gates that release introduced or
+// changed: wrong chain id, nonce overflow, priority fee above the cap,
+// oversized init code, empty authorization list, contract sender, and the
+// full evaluation of blob transactions (previously excused wholesale).
+
+/// EIP-1559 tx with every fee/shape knob exposed, sender pre-cached like
+/// [`make_tx`].
+#[allow(clippy::too_many_arguments)]
+fn make_tx_full(
+    sender: Address,
+    chain_id: u64,
+    nonce: u64,
+    max_priority_fee_per_gas: u64,
+    max_fee_per_gas: u64,
+    gas_limit: u64,
+    to: TxKind,
+    data: Vec<u8>,
+) -> Transaction {
+    let inner = EIP1559Transaction {
+        chain_id,
+        nonce,
+        max_priority_fee_per_gas,
+        max_fee_per_gas,
+        gas_limit,
+        to,
+        value: U256::from(1),
+        data: data.into(),
+        access_list: vec![],
+        signature_y_parity: false,
+        signature_r: U256::from(1),
+        signature_s: U256::from(2),
+        ..Default::default()
+    };
+    let tx = Transaction::EIP1559Transaction(inner);
+    match &tx {
+        Transaction::EIP1559Transaction(inner) => {
+            let _ = inner.sender_cache.set(sender);
+        }
+        _ => unreachable!(),
+    }
+    tx
+}
+
+/// EIP-4844 tx with the given versioned hashes and blob fee cap, sender
+/// pre-cached.
+fn make_blob_tx(
+    sender: Address,
+    nonce: u64,
+    blob_versioned_hashes: Vec<H256>,
+    max_fee_per_blob_gas: U256,
+) -> Transaction {
+    let inner = ethrex_common::types::EIP4844Transaction {
+        chain_id: 1,
+        nonce,
+        max_priority_fee_per_gas: 1,
+        max_fee_per_gas: 1,
+        gas: 100_000,
+        to: Address::repeat_byte(0xaa),
+        value: U256::from(1),
+        data: Default::default(),
+        access_list: vec![],
+        max_fee_per_blob_gas,
+        blob_versioned_hashes,
+        signature_y_parity: false,
+        signature_r: U256::from(1),
+        signature_s: U256::from(2),
+        ..Default::default()
+    };
+    let tx = Transaction::EIP4844Transaction(inner);
+    match &tx {
+        Transaction::EIP4844Transaction(inner) => {
+            let _ = inner.sender_cache.set(sender);
+        }
+        _ => unreachable!(),
+    }
+    tx
+}
+
+/// A KZG-versioned (0x01-prefixed) blob versioned hash.
+fn kzg_hash() -> H256 {
+    let mut h = [0u8; 32];
+    h[0] = 0x01;
+    H256::from(h)
+}
+
+/// Config with blob parameters in force at timestamp 0 (Cancun default
+/// schedule: target 3 / max 6 / fraction 3338477).
+fn blob_config() -> ChainConfig {
+    ChainConfig {
+        cancun_time: Some(0),
+        shanghai_time: Some(0),
+        ..config()
+    }
+}
+
+fn single_sender_validator(
+    il: &[Transaction],
+    sender: Address,
+    nonce: u64,
+) -> InclusionListSatisfactionValidator {
+    let mut accounts: FxHashMap<Address, AccountStateView> = Default::default();
+    accounts.insert(sender, account(nonce, rich_balance()));
+    let state = MockState::with(accounts);
+    InclusionListSatisfactionValidator::new(il, &state, &NativeCrypto).expect("construct")
+}
+
+#[test]
+fn il_omitted_with_wrong_chain_id_returns_ok() {
+    let crypto = NativeCrypto;
+    let alice = addr(1);
+
+    // Declared chain id 2 against config chain id 1 → never includable.
+    let il = vec![make_tx_full(
+        alice,
+        2,
+        0,
+        1,
+        1,
+        21_000,
+        TxKind::Call(Address::repeat_byte(0xaa)),
+        vec![],
+    )];
+    let validator = single_sender_validator(&il, alice, 0);
+
+    let block_txs: HashSet<H256> = HashSet::new();
+    let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
+    assert!(
+        matches!(result, Ok(())),
+        "wrong-chain-id tx must be excused"
+    );
+
+    // Control: identical tx declaring the chain's id flips to Unsatisfied.
+    let il_ok = vec![make_tx_full(
+        alice,
+        1,
+        0,
+        1,
+        1,
+        21_000,
+        TxKind::Call(Address::repeat_byte(0xaa)),
+        vec![],
+    )];
+    let validator_ok = single_sender_validator(&il_ok, alice, 0);
+    let control = validator_ok.check(
+        &il_ok,
+        &block_txs,
+        30_000_000,
+        &header(),
+        &config(),
+        &crypto,
+    );
+    assert!(matches!(control, Err(IlUnsatisfied { .. })));
+}
+
+#[test]
+fn il_omitted_with_max_nonce_returns_ok() {
+    let crypto = NativeCrypto;
+    let alice = addr(1);
+
+    // EIP-2681: nonce == 2**64 - 1 can never be included, even when the
+    // sender's account sits at that nonce (only reachable via pre-state).
+    let il = vec![make_tx(alice, u64::MAX, 21_000, U256::from(1))];
+    let validator = single_sender_validator(&il, alice, u64::MAX);
+
+    let block_txs: HashSet<H256> = HashSet::new();
+    let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
+    assert!(
+        matches!(result, Ok(())),
+        "nonce-overflow tx must be excused"
+    );
+}
+
+#[test]
+fn il_omitted_with_priority_above_max_fee_returns_ok() {
+    let crypto = NativeCrypto;
+    let alice = addr(1);
+
+    let il = vec![make_tx_full(
+        alice,
+        1,
+        0,
+        2, // max_priority_fee_per_gas above...
+        1, // ...max_fee_per_gas
+        21_000,
+        TxKind::Call(Address::repeat_byte(0xaa)),
+        vec![],
+    )];
+    let validator = single_sender_validator(&il, alice, 0);
+
+    let block_txs: HashSet<H256> = HashSet::new();
+    let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
+    assert!(
+        matches!(result, Ok(())),
+        "priority-above-cap tx must be excused"
+    );
+}
+
+#[test]
+fn il_omitted_with_oversized_initcode_returns_ok() {
+    let crypto = NativeCrypto;
+    let alice = addr(1);
+
+    // Default (pre-Amsterdam) cap is MAX_INITCODE_SIZE = 49152 bytes.
+    let il = vec![make_tx_full(
+        alice,
+        1,
+        0,
+        1,
+        1,
+        1_000_000,
+        TxKind::Create,
+        vec![0u8; 49_153],
+    )];
+    let validator = single_sender_validator(&il, alice, 0);
+
+    let block_txs: HashSet<H256> = HashSet::new();
+    let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
+    assert!(
+        matches!(result, Ok(())),
+        "oversized-initcode creation must be excused"
+    );
+
+    // Control: at exactly the cap the creation is includable → Unsatisfied.
+    let il_ok = vec![make_tx_full(
+        alice,
+        1,
+        0,
+        1,
+        1,
+        1_000_000,
+        TxKind::Create,
+        vec![0u8; 49_152],
+    )];
+    let validator_ok = single_sender_validator(&il_ok, alice, 0);
+    let control = validator_ok.check(
+        &il_ok,
+        &block_txs,
+        30_000_000,
+        &header(),
+        &config(),
+        &crypto,
+    );
+    assert!(matches!(control, Err(IlUnsatisfied { .. })));
+}
+
+#[test]
+fn il_omitted_with_empty_authorization_list_returns_ok() {
+    let crypto = NativeCrypto;
+    let alice = addr(1);
+
+    let inner = ethrex_common::types::EIP7702Transaction {
+        chain_id: 1,
+        nonce: 0,
+        max_priority_fee_per_gas: 1,
+        max_fee_per_gas: 1,
+        gas_limit: 100_000,
+        to: Address::repeat_byte(0xaa),
+        value: U256::from(1),
+        data: Default::default(),
+        access_list: vec![],
+        authorization_list: vec![],
+        signature_y_parity: false,
+        signature_r: U256::from(1),
+        signature_s: U256::from(2),
+        ..Default::default()
+    };
+    let tx = Transaction::EIP7702Transaction(inner);
+    match &tx {
+        Transaction::EIP7702Transaction(inner) => {
+            let _ = inner.sender_cache.set(alice);
+        }
+        _ => unreachable!(),
+    }
+    let il = vec![tx];
+    let validator = single_sender_validator(&il, alice, 0);
+
+    let block_txs: HashSet<H256> = HashSet::new();
+    let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
+    assert!(
+        matches!(result, Ok(())),
+        "empty-authorization-list tx must be excused"
+    );
+}
+
+#[test]
+fn il_omitted_from_contract_sender_returns_ok() {
+    let crypto = NativeCrypto;
+    let alice = addr(1);
+
+    let il = vec![make_tx(alice, 0, 21_000, U256::from(1))];
+
+    // Alice's account carries plain contract code → EIP-3607 bars her from
+    // sending, so the omitted tx is excused.
+    let mut accounts: FxHashMap<Address, AccountStateView> = Default::default();
+    accounts.insert(alice, account(0, rich_balance()));
+    let mut codes: FxHashMap<Address, Bytes> = Default::default();
+    codes.insert(alice, Bytes::from(vec![0x60, 0x00]));
+    let state = MockState {
+        accounts: accounts.clone(),
+        codes,
+        panic_on_read: false,
+        read_count: Cell::new(0),
+    };
+    let validator =
+        InclusionListSatisfactionValidator::new(&il, &state, &crypto).expect("construct");
+
+    let block_txs: HashSet<H256> = HashSet::new();
+    let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
+    assert!(matches!(result, Ok(())), "contract sender must be excused");
+
+    // Control: an EIP-7702 delegation designation keeps the account an EOA in
+    // spirit → the omitted tx counts against the block.
+    let mut delegation = vec![0xef, 0x01, 0x00];
+    delegation.extend_from_slice(&[0x11; 20]);
+    let mut delegated_codes: FxHashMap<Address, Bytes> = Default::default();
+    delegated_codes.insert(alice, Bytes::from(delegation));
+    let delegated_state = MockState {
+        accounts,
+        codes: delegated_codes,
+        panic_on_read: false,
+        read_count: Cell::new(0),
+    };
+    let validator_ok =
+        InclusionListSatisfactionValidator::new(&il, &delegated_state, &crypto).expect("construct");
+    let control = validator_ok.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
+    assert!(matches!(control, Err(IlUnsatisfied { .. })));
+}
+
+#[test]
+fn il_omitted_includable_blob_tx_returns_unsatisfied() {
+    let crypto = NativeCrypto;
+    let alice = addr(1);
+
+    // Fully includable blob tx (valid hash, fee covers the blob gas price,
+    // budget available): since tests-focil-devnet@v0.2.0 it counts against
+    // the block instead of being excused as a blob tx.
+    let il = vec![make_blob_tx(alice, 0, vec![kzg_hash()], U256::from(1))];
+    let validator = single_sender_validator(&il, alice, 0);
+
+    let block_txs: HashSet<H256> = HashSet::new();
+    let result = validator.check(
+        &il,
+        &block_txs,
+        30_000_000,
+        &header(),
+        &blob_config(),
+        &crypto,
+    );
+    assert!(
+        matches!(result, Err(IlUnsatisfied { .. })),
+        "includable blob tx must count against the block, got {result:?}"
+    );
+}
+
+#[test]
+fn il_omitted_blob_tx_invalid_variants_return_ok() {
+    let crypto = NativeCrypto;
+    let alice = addr(1);
+    let block_txs: HashSet<H256> = HashSet::new();
+
+    // Zero blobs.
+    let il = vec![make_blob_tx(alice, 0, vec![], U256::from(1))];
+    let validator = single_sender_validator(&il, alice, 0);
+    assert!(
+        matches!(
+            validator.check(
+                &il,
+                &block_txs,
+                30_000_000,
+                &header(),
+                &blob_config(),
+                &crypto
+            ),
+            Ok(())
+        ),
+        "zero-blob tx must be excused"
+    );
+
+    // More blobs than a tx may carry (MAX_BLOB_COUNT = 6).
+    let il = vec![make_blob_tx(alice, 0, vec![kzg_hash(); 7], U256::from(1))];
+    let validator = single_sender_validator(&il, alice, 0);
+    assert!(
+        matches!(
+            validator.check(
+                &il,
+                &block_txs,
+                30_000_000,
+                &header(),
+                &blob_config(),
+                &crypto
+            ),
+            Ok(())
+        ),
+        "over-the-cap blob count must be excused"
+    );
+
+    // Versioned hash that is not KZG-versioned.
+    let il = vec![make_blob_tx(
+        alice,
+        0,
+        vec![H256::repeat_byte(0x02)],
+        U256::from(1),
+    )];
+    let validator = single_sender_validator(&il, alice, 0);
+    assert!(
+        matches!(
+            validator.check(
+                &il,
+                &block_txs,
+                30_000_000,
+                &header(),
+                &blob_config(),
+                &crypto
+            ),
+            Ok(())
+        ),
+        "non-KZG versioned hash must be excused"
+    );
+
+    // Blob fee cap below the block's blob gas price (price is 1 at zero
+    // excess blob gas).
+    let il = vec![make_blob_tx(alice, 0, vec![kzg_hash()], U256::zero())];
+    let validator = single_sender_validator(&il, alice, 0);
+    assert!(
+        matches!(
+            validator.check(
+                &il,
+                &block_txs,
+                30_000_000,
+                &header(),
+                &blob_config(),
+                &crypto
+            ),
+            Ok(())
+        ),
+        "blob fee below the blob gas price must be excused"
+    );
+
+    // Blob budget exhausted: the block already used its whole blob allowance
+    // (6 blobs × 131072 gas).
+    let il = vec![make_blob_tx(alice, 0, vec![kzg_hash()], U256::from(1))];
+    let validator = single_sender_validator(&il, alice, 0);
+    let mut hdr = header();
+    hdr.blob_gas_used = Some(6 * 131_072);
+    assert!(
+        matches!(
+            validator.check(&il, &block_txs, 30_000_000, &hdr, &blob_config(), &crypto),
+            Ok(())
+        ),
+        "blob tx beyond the remaining blob budget must be excused"
+    );
 }

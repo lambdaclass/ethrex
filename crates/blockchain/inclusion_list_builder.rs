@@ -19,7 +19,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ethrex_common::{
-    Address, U256,
+    Address, Bytes, U256,
     types::{MempoolTransaction, Transaction},
 };
 use rustc_hash::FxHashMap;
@@ -52,6 +52,14 @@ pub trait IlStateProvider {
         &self,
         address: Address,
     ) -> Result<Option<AccountStateView>, IlStateProviderError>;
+
+    /// The account's contract code; `None` when the account has none. Consumed
+    /// by the satisfaction validator's sender-is-EOA gate (EELS
+    /// `check_transaction` raises `InvalidSenderError` for a sender whose code
+    /// is set and is not a valid EIP-7702 delegation, per EIP-3607). The
+    /// builder itself never calls this: mempool admission already rejects
+    /// contract senders.
+    fn get_code(&self, address: Address) -> Result<Option<Bytes>, IlStateProviderError>;
 }
 
 #[derive(Debug, thiserror::Error)]
