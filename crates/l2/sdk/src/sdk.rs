@@ -1154,10 +1154,35 @@ pub async fn build_generic_tx(
     }
     tx.gas = Some(match overrides.gas_limit {
         Some(gas) => gas,
-        None => client.estimate_gas(tx.clone()).await?,
+        // `eth_estimateGas` answers what the transaction needs against the state it was
+        // asked about. By the time this transaction is mined that state has moved, so the
+        // estimate is a floor, not a safe limit: a cross-chain commitment in particular is
+        // built against one head and included against another. Headroom belongs here, in
+        // the sender, rather than in the estimator — an estimator that pads cannot be asked
+        // for the minimum, while a sender that pads costs nothing extra, since unused gas is
+        // not charged. This mirrors what wallets do (geth's estimator comments cite a 20-25%
+        // bump) and restores the slack every caller here previously got for free from the
+        // estimator's own 1.5% tolerance.
+        None => estimate_gas_with_headroom(client, tx.clone()).await?,
     });
 
     Ok(tx)
+}
+
+/// Fraction of the estimate added as headroom before submission. Unused gas is refunded,
+/// so the only cost is a larger up-front balance requirement.
+const GAS_LIMIT_HEADROOM_PERCENT: u64 = 20;
+
+async fn estimate_gas_with_headroom(
+    client: &EthClient,
+    tx: GenericTransaction,
+) -> Result<u64, EthClientError> {
+    let estimate = client.estimate_gas(tx).await?;
+    Ok(estimate.saturating_add(
+        estimate
+            .saturating_mul(GAS_LIMIT_HEADROOM_PERCENT)
+            .saturating_div(100),
+    ))
 }
 
 pub fn add_blobs_to_generic_tx(tx: &mut GenericTransaction, bundle: &BlobsBundle) {

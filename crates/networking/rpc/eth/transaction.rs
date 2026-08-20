@@ -24,7 +24,13 @@ use serde::Serialize;
 use serde_json::Value;
 use tracing::debug;
 
+/// Allowed upward overestimation before the estimate's binary search stops, matching
+/// geth's `estimateGasErrorRatio` (`internal/ethapi/api.go`). geth's rationale is that a
+/// perfect estimate is not worth extra execution when callers bump by 20-25% anyway, and
+/// that for a transaction which inspects its own remaining gas the true minimum is not
+/// even the useful answer. Only reached when the fast path below cannot answer.
 pub const ESTIMATE_ERROR_RATIO: f64 = 0.015;
+
 pub const CALL_STIPEND: u64 = 2_300; // Free gas given at beginning of call.
 pub const TRANSACTION_GAS: u64 = 21_000; // Per transaction not creating a contract. NOTE: Not payable on data of calls between transactions.
 
@@ -516,11 +522,33 @@ impl RpcHandler for EstimateGasRequest {
         let gas_used = result.gas_used();
         let gas_refunded = result.gas_refunded();
 
+        // Most transactions execute identically at their own `gas_used` as they do with
+        // the whole block's gas available, and nothing can succeed below what an
+        // unconstrained run consumed — so if that one re-run succeeds it *is* the minimum,
+        // and the search can be skipped entirely. Two simulations, exact. Only gas-observing
+        // callers (an explicit `GAS` check, or a subcall needing 63/64 headroom the
+        // consumed total does not imply) fall through to the search below.
+        transaction.gas = Some(gas_used);
+        if let Ok(ExecutionResult::Success { .. }) = simulate_tx(
+            &transaction,
+            &block_header,
+            storage.clone(),
+            blockchain.clone(),
+        ) {
+            return serde_json::to_value(format!("{gas_used:#x}"))
+                .map_err(|error| RpcErr::Internal(error.to_string()));
+        }
+
         // Choose an optimistic start limit. See https://github.com/ethereum/go-ethereum/blob/a5a4fa7032bb248f5a7c40f4e8df2b131c4186a4/eth/gasestimator/gasestimator.go#L135
         let optimistic_limit = (gas_used + gas_refunded + CALL_STIPEND) * 64 / 63;
         let mut lowest_gas_limit = gas_used.saturating_sub(1);
         let mut middle_gas_limit = (optimistic_limit + lowest_gas_limit) / 2;
 
+        // Reached only by a transaction whose result depends on the gas it is given: an
+        // explicit `GAS` check, or a subcall needing 63/64 headroom the consumed total does
+        // not imply. Bisect as geth does, stopping within `ESTIMATE_ERROR_RATIO` of the
+        // upper bound rather than converging exactly — the same transactions geth's comment
+        // says do not want their true minimum returned.
         while lowest_gas_limit + 1 < highest_gas_limit {
             if (highest_gas_limit - lowest_gas_limit) as f64 / (highest_gas_limit as f64)
                 < ESTIMATE_ERROR_RATIO
