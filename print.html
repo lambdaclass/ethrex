@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-35ffd627.js";
+            window.path_to_searchindex_js = "searchindex-43c46031.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-c68b2aa5.js"></script>
@@ -10767,6 +10767,20 @@ set -a; source cmd/.env; set +a
 <pre><code class="language-bash">curl -sf -X GET http://localhost:5555/committer/stop
 </code></pre>
 <p>No new batches will be committed from this point on. Already-committed batches will still get proved and verified by the running prover.</p>
+<p>The sequencer keeps producing blocks while the committer is stopped, and those
+blocks are what make the rest of this test worth running: they are written by
+<code>$VERSION_FROM</code> but will be committed by <code>$VERSION_TO</code>, which is the only
+situation where a batch mixes an old body encoding with a new committer. Leave a
+few of them behind deliberately and record where they start:</p>
+<pre><code class="language-bash">FIRST_UNCOMMITTED=$(( $(rex call "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" 'lastCommittedBatch()' --rpc-url http://localhost:8545) ))
+echo "last batch committed by $VERSION_FROM: $FIRST_UNCOMMITTED"
+# Give the block producer a few more blocks, then note the L2 head.
+sleep 30
+LEGACY_HEAD=$(rex block-number --rpc-url http://localhost:1729)
+echo "L2 head left uncommitted: $LEGACY_HEAD"
+</code></pre>
+<p>Keep <code>LEGACY_HEAD</code> — step 4.3 checks that the batch covering it is not just
+committed but <em>verified</em>.</p>
 <h3 id="22-wait-until-all-committed-batches-are-verified"><a class="header" href="#22-wait-until-all-committed-batches-are-verified">2.2 Wait until all committed batches are verified</a></h3>
 <pre><code class="language-bash">while :; do
   COMMITTED=$(rex call "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" 'lastCommittedBatch()' --rpc-url http://localhost:8545)
@@ -10920,6 +10934,27 @@ set -a; source cmd/.env; set +a
 ./ethrex l2 prover --proof-coordinators tcp://127.0.0.1:3900 --backend exec
 </code></pre>
 <hr>
+<h3 id="43-check-the-first-version_to-batch-over-version_from-blocks-gets-verified"><a class="header" href="#43-check-the-first-version_to-batch-over-version_from-blocks-gets-verified">4.3 Check the first <code>$VERSION_TO</code> batch over <code>$VERSION_FROM</code> blocks gets verified</a></h3>
+<p>The blocks left uncommitted in step 2.1 are now committed by <code>$VERSION_TO</code>.
+Committing them only proves the sequencer accepted them; the encoding they end up
+with is checked by the prover, because the guest re-encodes the blocks it is
+given and KZG-checks the result against the committed blob. A body read on one
+path with the legacy <code>withdrawals</code> field omitted and on another with it present
+as an empty list differs by a single RLP byte, and that mismatch only ever
+surfaces here, as a proof failure inside the zkVM.</p>
+<p>So wait for verification, not just commitment:</p>
+<pre><code class="language-bash">while :; do
+  COMMITTED=$(rex call "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" 'lastCommittedBatch()' --rpc-url http://localhost:8545)
+  VERIFIED=$(rex call  "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" 'lastVerifiedBatch()'  --rpc-url http://localhost:8545)
+  echo "committed=$COMMITTED verified=$VERIFIED (need a verified batch covering L2 block $LEGACY_HEAD)"
+  [ "$VERIFIED" -gt "$FIRST_UNCOMMITTED" ] &amp;&amp; break
+  sleep 10
+done
+</code></pre>
+<p>If the prover rejects the batch with <code>InvalidBlobProof</code>, the blob path and the
+prover-input path disagreed about the body encoding; both read stored blocks
+through <code>read_trusted_block</code> (<code>crates/l2/sequencer/utils.rs</code>) for exactly this
+reason, so start there.</p>
 <h2 id="step-5--acceptance-check-run-the-integration-tests-against-the-upgraded-l2"><a class="header" href="#step-5--acceptance-check-run-the-integration-tests-against-the-upgraded-l2">Step 5 — Acceptance check: run the integration tests against the upgraded L2</a></h2>
 <p>The simplest and strongest acceptance check is the standard L2 integration test suite (see <a href="#running-integration-tests">Integration tests</a>), pointed at the <strong>already-running</strong> <code>$VERSION_TO</code> sequencer + prover from Step 4. The suite covers deposits, withdrawals, batch commit/verify, gas pricing and several other surfaces, so a green run subsumes the per-check list we used to have here.</p>
 <p>Run it from the <code>$VERSION_TO</code> source tree so the tests match the binary you just upgraded to:</p>
