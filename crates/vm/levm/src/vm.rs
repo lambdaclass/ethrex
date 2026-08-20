@@ -1967,11 +1967,15 @@ impl<'a> VM<'a> {
                             let mut this_frame_logs = self.substate.current_logs();
                             this_frame_logs.extend(logs);
                             self.substate.commit_backup();
-                            (true, frame_entry_gas + gas_used, this_frame_logs)
+                            (
+                                true,
+                                frame_entry_gas.saturating_add(gas_used),
+                                this_frame_logs,
+                            )
                         } else {
                             self.substate.revert_backup();
                             self.restore_cache_state()?;
-                            (false, frame_entry_gas + gas_used, Vec::new())
+                            (false, frame_entry_gas.saturating_add(gas_used), Vec::new())
                         }
                     }
                     Err(_) => {
@@ -2034,13 +2038,17 @@ impl<'a> VM<'a> {
                             // logs, which would duplicate them into frame_receipts[i]).
                             let mut merged_logs = self.substate.current_logs();
                             let this_frame_logs = merged_logs.split_off(substate_logs_before);
-                            (true, frame_entry_gas + gas_used, this_frame_logs)
+                            (
+                                true,
+                                frame_entry_gas.saturating_add(gas_used),
+                                this_frame_logs,
+                            )
                         } else {
                             // A normal EVM revert reaches `handle_state_backup` inside
                             // `run_execution`, which already reverted the backup and
                             // restored the cache for this frame; repeating it here would
                             // revert an extra level.
-                            (false, frame_entry_gas + gas_used, Vec::new())
+                            (false, frame_entry_gas.saturating_add(gas_used), Vec::new())
                         }
                     }
                     Err(_e) => {
