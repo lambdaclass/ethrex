@@ -12,6 +12,10 @@
 
 ## Perf
 
+### 2026-08-19
+
+- Encode trie leaf and extension nodes directly into the hashing buffer, dropping the intermediate `Vec` that each node allocated and copied on every hash [#7155](https://github.com/lambdaclass/ethrex/pull/7155)
+
 ### 2026-07-22
 
 - Unify full-sync batch import onto the per-block execution pipeline, validating every block's state root and reusing the pipeline's BAL-driven parallel execution instead of the bespoke "execute all, apply once" batch path [#7008](https://github.com/lambdaclass/ethrex/pull/7008)

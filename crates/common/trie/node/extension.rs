@@ -247,10 +247,8 @@ impl ExtensionNode {
     /// Computes the node's hash, using the provided buffer
     pub fn compute_hash_no_alloc(&self, buf: &mut Vec<u8>, crypto: &dyn Crypto) -> NodeHash {
         buf.clear();
-        self.encode(buf);
-        let hash = NodeHash::from_encoded(buf, crypto);
-        buf.clear();
-        hash
+        self.encode_into_vec(buf);
+        NodeHash::from_encoded(buf, crypto)
     }
 
     /// Traverses own subtrie until reaching the node containing `path`

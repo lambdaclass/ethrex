@@ -571,10 +571,36 @@ impl Nibbles {
         self.data.push(nibble);
     }
 
+    /// Number of bytes [`Self::encode_compact`] produces, without producing them.
+    ///
+    /// The compact form is one header byte plus one byte per pair of remaining
+    /// nibbles. An odd nibble count folds its first nibble into the header, so
+    /// both parities land on the same expression.
+    ///
+    /// Node encoders need this to size an RLP header before writing the payload,
+    /// which is what lets them skip the intermediate buffer entirely.
+    #[inline]
+    pub fn encode_compact_len(&self) -> usize {
+        (self.data.len() - usize::from(self.is_leaf())) / 2 + 1
+    }
+
     /// Taken from https://github.com/citahub/cita_trie/blob/master/src/nibbles.rs#L56
     /// Encodes the nibbles in compact form
-    #[allow(unsafe_code)]
     pub fn encode_compact(&self) -> Vec<u8> {
+        let mut compact = Vec::with_capacity(self.encode_compact_len());
+        self.encode_compact_into(&mut compact);
+        compact
+    }
+
+    /// Appends the compact form to `out` instead of returning a fresh `Vec`.
+    ///
+    /// Trie node hashing calls this once per leaf and extension node — roughly
+    /// 260k times per mainnet block in the zkVM guest — so the allocation the
+    /// returning form needs is worth avoiding. The guest's bump allocator never
+    /// reclaims and its `realloc` always copies, so each of those allocations is
+    /// permanently consumed heap.
+    #[allow(unsafe_code)]
+    pub fn encode_compact_into(&self, out: &mut Vec<u8>) {
         let is_leaf = self.is_leaf();
         let mut hex = if is_leaf {
             &self.data[0..self.data.len() - 1]
@@ -596,20 +622,19 @@ impl Nibbles {
         };
 
         let pair_count = hex.len() / 2;
-        let mut compact = Vec::with_capacity(1 + pair_count);
-        compact.push(prefix_nibble + if is_leaf { 0x20 } else { 0x00 });
+        out.reserve(1 + pair_count);
+        out.push(prefix_nibble + if is_leaf { 0x20 } else { 0x00 });
 
         // SIMD-accelerated packing of nibble pairs → bytes.
-        // SAFETY: compact has capacity for `pair_count` bytes beyond the one already pushed.
-        // pack_nibble_pairs writes exactly `pair_count` bytes starting at offset 1;
-        // set_len then exposes those initialized bytes.
+        // SAFETY: `reserve` guaranteed `1 + pair_count` bytes of spare capacity and
+        // the push consumed one, so `pair_count` bytes remain writable at `len()`.
+        // pack_nibble_pairs writes exactly that many; set_len then exposes them.
         unsafe {
-            let out_ptr = compact.as_mut_ptr().add(1);
+            let len = out.len();
+            let out_ptr = out.as_mut_ptr().add(len);
             pack_nibble_pairs(hex, out_ptr);
-            compact.set_len(1 + pair_count);
+            out.set_len(len + pair_count);
         }
-
-        compact
     }
 
     /// Encodes the nibbles in compact form
