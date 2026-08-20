@@ -1,4 +1,4 @@
-use bytes::{BufMut, Bytes};
+use bytes::Bytes;
 use ethereum_types::{Address, BigEndianHash, H256, U256};
 use ethrex_rlp::{
     decode::RLPDecode,
@@ -15,14 +15,14 @@ use crate::types::Code;
 use crate::utils::{keccak, u256_to_h256};
 
 /// Encode a slice of items in sorted order without cloning.
-fn encode_sorted_by<T, K, F>(items: &[T], buf: &mut dyn BufMut, key_fn: F)
+fn encode_sorted_by<T, K, F>(items: &[T], buf: &mut Vec<u8>, key_fn: F)
 where
     T: RLPEncode,
     K: Ord,
     F: Fn(&T) -> K,
 {
     if items.is_empty() {
-        buf.put_u8(0xc0);
+        buf.push(0xc0);
         return;
     }
     let mut indices: Vec<usize> = (0..items.len()).collect();
@@ -62,7 +62,7 @@ impl StorageChange {
 }
 
 impl RLPEncode for StorageChange {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         structs::Encoder::new(buf)
             .encode_field(&self.block_access_index)
             .encode_field(&self.post_value)
@@ -116,7 +116,7 @@ impl SlotChange {
 }
 
 impl RLPEncode for SlotChange {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         let payload_len = self.slot.length() + sorted_list_length(&self.slot_changes);
         encode_length(payload_len, buf);
         self.slot.encode(buf);
@@ -152,7 +152,7 @@ impl BalanceChange {
 }
 
 impl RLPEncode for BalanceChange {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         structs::Encoder::new(buf)
             .encode_field(&self.block_access_index)
             .encode_field(&self.post_balance)
@@ -194,7 +194,7 @@ impl NonceChange {
 }
 
 impl RLPEncode for NonceChange {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         structs::Encoder::new(buf)
             .encode_field(&self.block_access_index)
             .encode_field(&self.post_nonce)
@@ -236,7 +236,7 @@ impl CodeChange {
 }
 
 impl RLPEncode for CodeChange {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         structs::Encoder::new(buf)
             .encode_field(&self.block_access_index)
             .encode_field(&self.new_code)
@@ -353,7 +353,7 @@ impl AccountChanges {
 }
 
 impl RLPEncode for AccountChanges {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         let payload_len = self.address.length()
             + sorted_list_length(&self.storage_changes)
             + sorted_list_length(&self.storage_reads)
@@ -730,7 +730,7 @@ pub fn has_exact_change_storage(changes: &[StorageChange], idx: u32) -> bool {
 }
 
 impl RLPEncode for BlockAccessList {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         encode_sorted_by(&self.inner, buf, |a| a.address);
     }
 }

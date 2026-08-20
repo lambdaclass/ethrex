@@ -34,7 +34,7 @@ pub const BLOCK_ACCESS_LIST_LIMIT: usize = 1024;
 pub struct OptionalBal(pub Option<BlockAccessList>);
 
 impl RLPEncode for OptionalBal {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         match &self.0 {
             None => buf.put_u8(0x80),
             Some(bal) => bal.encode(buf),
@@ -77,7 +77,7 @@ impl GetBlockAccessLists {
 impl RLPxMessage for GetBlockAccessLists {
     const CODE: u8 = 0x12;
 
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
             .encode_field(&self.id)
@@ -120,7 +120,7 @@ impl BlockAccessLists {
 impl RLPxMessage for BlockAccessLists {
     const CODE: u8 = 0x13;
 
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         let bals: Vec<OptionalBal> = self
             .block_access_lists

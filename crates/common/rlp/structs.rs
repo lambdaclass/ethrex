@@ -5,7 +5,6 @@ use super::{
 };
 use alloc::format;
 use alloc::vec::Vec;
-use bytes::BufMut;
 use bytes::Bytes;
 
 /// # Struct decoding helper
@@ -143,7 +142,6 @@ fn field_decode_error<T>(field_name: &str, err: RLPDecodeError) -> RLPDecodeErro
 /// ```
 /// # use ethrex_rlp::structs::Encoder;
 /// # use ethrex_rlp::encode::RLPEncode;
-/// # use bytes::BufMut;
 /// #[derive(Debug, PartialEq, Eq)]
 /// struct Simple {
 ///     pub a: u8,
@@ -151,7 +149,7 @@ fn field_decode_error<T>(field_name: &str, err: RLPDecodeError) -> RLPDecodeErro
 /// }
 ///
 /// impl RLPEncode for Simple {
-///     fn encode(&self, buf: &mut dyn BufMut) {
+///     fn encode(&self, buf: &mut Vec<u8>) {
 ///         // The fields are encoded in the order given here
 ///         Encoder::new(buf)
 ///             .encode_field(&self.a)
@@ -165,25 +163,16 @@ fn field_decode_error<T>(field_name: &str, err: RLPDecodeError) -> RLPDecodeErro
 ///
 /// assert_eq!(&buf, &[0xc2, 61, 75]);
 /// ```
+#[derive(Debug)]
 #[must_use = "`Encoder` must be consumed with `finish` to perform the encoding"]
 pub struct Encoder<'a> {
-    buf: &'a mut dyn BufMut,
+    buf: &'a mut Vec<u8>,
     temp_buf: Vec<u8>,
-}
-
-// NOTE: BufMut doesn't implement Debug, so we can't derive Debug for Encoder.
-impl core::fmt::Debug for Encoder<'_> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("Encoder")
-            .field("buf", &"...")
-            .field("temp_buf", &self.temp_buf)
-            .finish()
-    }
 }
 
 impl<'a> Encoder<'a> {
     /// Creates a new encoder that writes to the given buffer.
-    pub fn new(buf: &'a mut dyn BufMut) -> Self {
+    pub fn new(buf: &'a mut Vec<u8>) -> Self {
         // PERF: we could pre-allocate the buffer or switch to `ArrayVec`` if we could
         // bound the size of the encoded data.
         Self {
@@ -212,7 +201,7 @@ impl<'a> Encoder<'a> {
         for (key, value) in list {
             <Bytes>::encode(key, &mut self.temp_buf);
             // value is already encoded
-            self.temp_buf.put_slice(value);
+            self.temp_buf.extend_from_slice(value);
         }
         self
     }
@@ -220,12 +209,12 @@ impl<'a> Encoder<'a> {
     /// Finishes encoding the struct and writes the result to the buffer.
     pub fn finish(self) {
         encode_length(self.temp_buf.len(), self.buf);
-        self.buf.put_slice(&self.temp_buf);
+        self.buf.extend_from_slice(&self.temp_buf);
     }
 
     /// Adds a raw value to the buffer without rlp-encoding it
     pub fn encode_raw(mut self, value: &[u8]) -> Self {
-        self.temp_buf.put_slice(value);
+        self.temp_buf.extend_from_slice(value);
         self
     }
 

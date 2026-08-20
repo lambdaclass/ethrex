@@ -36,7 +36,7 @@ impl RLPEncode for ReceiptItem68 {
     /// Mirrors `ReceiptWithBloom`'s wire encoding:
     /// A) Legacy receipts: `rlp(payload)` (raw list, no Bytes wrap).
     /// B) Non-legacy receipts: `rlp(Bytes(tx_type || rlp(payload)))`.
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         let inner = self.0.encode_inner_with_bloom(&ethrex_crypto::NativeCrypto);
         match self.0.tx_type {
             TxType::Legacy => buf.put_slice(&inner),
@@ -95,7 +95,7 @@ impl Receipts68 {
 impl RLPxMessage for Receipts68 {
     const CODE: u8 = 0x10;
 
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), RLPEncodeError> {
         let wire_receipts: Vec<Vec<ReceiptItem68>> = self
             .receipts
             .iter()

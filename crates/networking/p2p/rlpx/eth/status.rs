@@ -73,7 +73,7 @@ impl StatusDataPost68 {
         })
     }
 
-    pub fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+    pub fn encode(&self, buf: &mut Vec<u8>) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
             .encode_field(&self.eth_version)

@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, LazyLock};
 
-use bytes::{BufMut, Bytes};
+use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_crypto::{Crypto, NativeCrypto};
 use ethrex_trie::Trie;
@@ -305,7 +305,7 @@ pub fn is_eip7702_delegation(code: &[u8]) -> bool {
 }
 
 impl RLPEncode for AccountInfo {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.code_hash)
             .encode_field(&self.balance)
@@ -330,7 +330,7 @@ impl RLPDecode for AccountInfo {
 }
 
 impl RLPEncode for AccountState {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.nonce)
             .encode_field(&self.balance)
@@ -358,10 +358,10 @@ impl RLPDecode for AccountState {
 }
 
 impl RLPEncode for AccountStateSlimCodec {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         struct StorageRootCodec<'a>(&'a H256);
         impl RLPEncode for StorageRootCodec<'_> {
-            fn encode(&self, buf: &mut dyn BufMut) {
+            fn encode(&self, buf: &mut Vec<u8>) {
                 let data = if *self.0 != *EMPTY_TRIE_HASH {
                     self.0.as_bytes()
                 } else {
@@ -374,7 +374,7 @@ impl RLPEncode for AccountStateSlimCodec {
 
         struct CodeHashCodec<'a>(&'a H256);
         impl RLPEncode for CodeHashCodec<'_> {
-            fn encode(&self, buf: &mut dyn BufMut) {
+            fn encode(&self, buf: &mut Vec<u8>) {
                 let data = if *self.0 != *EMPTY_KECCAK_HASH {
                     self.0.as_bytes()
                 } else {

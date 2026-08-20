@@ -92,7 +92,7 @@ impl Packet {
         })
     }
 
-    pub fn encode(&self, buf: &mut dyn BufMut, dest_id: &H256) -> Result<(), PacketCodecError> {
+    pub fn encode(&self, buf: &mut Vec<u8>, dest_id: &H256) -> Result<(), PacketCodecError> {
         let masking_iv = self.masking_iv;
         buf.put_slice(&masking_iv);
 
@@ -164,7 +164,7 @@ impl PacketHeader {
 
     fn encode<T: StreamCipher>(
         &self,
-        buf: &mut dyn BufMut,
+        buf: &mut Vec<u8>,
         cipher: &mut T,
     ) -> Result<(), PacketCodecError> {
         let mut static_header = Vec::new();
@@ -186,7 +186,7 @@ impl PacketHeader {
 
 pub trait PacketTrait {
     const TYPE_FLAG: u8;
-    fn encode_authdata(&self, buf: &mut dyn BufMut) -> Result<(), PacketCodecError>;
+    fn encode_authdata(&self, buf: &mut Vec<u8>) -> Result<(), PacketCodecError>;
     fn get_encoded_message(&self) -> Vec<u8>;
 
     fn build_header(&self, nonce: &[u8; 12]) -> Result<PacketHeader, PacketCodecError> {
@@ -251,7 +251,7 @@ pub struct Ordinary {
 impl PacketTrait for Ordinary {
     const TYPE_FLAG: u8 = 0x00;
 
-    fn encode_authdata(&self, buf: &mut dyn BufMut) -> Result<(), PacketCodecError> {
+    fn encode_authdata(&self, buf: &mut Vec<u8>) -> Result<(), PacketCodecError> {
         buf.put_slice(self.src_id.as_bytes());
         Ok(())
     }
@@ -322,7 +322,7 @@ pub struct WhoAreYou {
 impl PacketTrait for WhoAreYou {
     const TYPE_FLAG: u8 = 0x01;
 
-    fn encode_authdata(&self, buf: &mut dyn BufMut) -> Result<(), PacketCodecError> {
+    fn encode_authdata(&self, buf: &mut Vec<u8>) -> Result<(), PacketCodecError> {
         buf.put_slice(&self.id_nonce.to_be_bytes());
         buf.put_slice(&self.enr_seq.to_be_bytes());
         Ok(())
@@ -432,7 +432,7 @@ pub struct Handshake {
 impl PacketTrait for Handshake {
     const TYPE_FLAG: u8 = 0x02;
 
-    fn encode_authdata(&self, buf: &mut dyn BufMut) -> Result<(), PacketCodecError> {
+    fn encode_authdata(&self, buf: &mut Vec<u8>) -> Result<(), PacketCodecError> {
         let sig_size: u8 = self
             .id_signature
             .len()
@@ -532,7 +532,7 @@ impl Message {
         }
     }
 
-    pub fn encode(&self, buf: &mut dyn BufMut) {
+    pub fn encode(&self, buf: &mut Vec<u8>) {
         buf.put_u8(self.msg_type());
         match self {
             Message::Ping(ping) => ping.encode(buf),
@@ -610,7 +610,7 @@ impl PingMessage {
 }
 
 impl RLPEncode for PingMessage {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.req_id)
             .encode_field(&self.enr_seq)
@@ -636,7 +636,7 @@ pub struct PongMessage {
 }
 
 impl RLPEncode for PongMessage {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.req_id)
             .encode_field(&self.enr_seq)
@@ -673,7 +673,7 @@ pub struct FindNodeMessage {
 }
 
 impl RLPEncode for FindNodeMessage {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.req_id)
             .encode_field(&self.distances)
@@ -705,7 +705,7 @@ pub struct NodesMessage {
 }
 
 impl RLPEncode for NodesMessage {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.req_id)
             .encode_field(&self.total)
@@ -740,7 +740,7 @@ pub struct TalkReqMessage {
 }
 
 impl RLPEncode for TalkReqMessage {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.req_id)
             .encode_field(&self.protocol)
@@ -774,7 +774,7 @@ pub struct TalkResMessage {
 }
 
 impl RLPEncode for TalkResMessage {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.req_id)
             .encode_field(&Bytes::copy_from_slice(&self.response))
@@ -805,7 +805,7 @@ pub struct TicketMessage {
 }
 
 impl RLPEncode for TicketMessage {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.req_id)
             .encode_field(&self.ticket)

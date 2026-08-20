@@ -31,7 +31,7 @@ impl core::fmt::Display for HashOrNumber {
 }
 
 impl RLPEncode for HashOrNumber {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         match self {
             HashOrNumber::Hash(hash) => hash.encode(buf),
             HashOrNumber::Number(number) => number.encode(buf),
@@ -174,7 +174,7 @@ fn get_block_header(
 
 impl RLPxMessage for GetBlockHeaders {
     const CODE: u8 = 0x03;
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         let limit = self.limit;
         let skip = self.skip;
@@ -215,7 +215,7 @@ impl BlockHeaders {
 
 impl RLPxMessage for BlockHeaders {
     const CODE: u8 = 0x04;
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         // Each message is encoded with its own
         // message identifier (code).
@@ -283,7 +283,7 @@ impl GetBlockBodies {
 
 impl RLPxMessage for GetBlockBodies {
     const CODE: u8 = 0x05;
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
             .encode_field(&self.id)
@@ -322,7 +322,7 @@ impl BlockBodies {
 
 impl RLPxMessage for BlockBodies {
     const CODE: u8 = 0x06;
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
             .encode_field(&self.id)
