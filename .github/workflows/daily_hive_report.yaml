@@ -64,12 +64,17 @@ jobs:
               simulation: ethereum/eels/consume-engine,
               limit: ".*fork_Prague.*",
             }
+          # Lower parallelism for the same OOM as consume-rlp Amsterdam below:
+          # with parallelism 4 the runner gets SIGTERM'd (exit 143) mid-run on
+          # the glamsterdam-devnet-8 fixture set; no run has completed since
+          # that bump (2026-08-13).
           - {
               name: "Consume Engine tests (Amsterdam)",
               file_name: consume-engine-amsterdam,
               simulation: ethereum/eels/consume-engine,
               limit: ".*fork_.*Amsterdam.*",
               amsterdam: true,
+              parallelism: 2,
             }
           - {
               name: "Consume RLP tests (Rest)",
