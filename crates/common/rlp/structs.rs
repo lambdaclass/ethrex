@@ -1,6 +1,6 @@
 use super::{
     decode::{RLPDecode, decode_rlp_item, get_item_with_prefix},
-    encode::{RLPEncode, encode_length},
+    encode::{RLPEncode, backpatch_list_prefix},
     error::RLPDecodeError,
 };
 use alloc::format;
@@ -167,61 +167,59 @@ fn field_decode_error<T>(field_name: &str, err: RLPDecodeError) -> RLPDecodeErro
 #[must_use = "`Encoder` must be consumed with `finish` to perform the encoding"]
 pub struct Encoder<'a> {
     buf: &'a mut Vec<u8>,
-    temp_buf: Vec<u8>,
+    /// Where this list's payload starts in `buf`; the prefix is written over
+    /// it in `finish`.
+    start: usize,
 }
 
 impl<'a> Encoder<'a> {
     /// Creates a new encoder that writes to the given buffer.
     pub fn new(buf: &'a mut Vec<u8>) -> Self {
-        // PERF: we could pre-allocate the buffer or switch to `ArrayVec`` if we could
-        // bound the size of the encoded data.
-        Self {
-            buf,
-            temp_buf: Default::default(),
-        }
+        let start = buf.len();
+        Self { buf, start }
     }
 
-    /// Stores a field to be encoded.
-    pub fn encode_field<T: RLPEncode>(mut self, value: &T) -> Self {
-        <T as RLPEncode>::encode(value, &mut self.temp_buf);
+    /// Encodes a field straight into the output buffer.
+    pub fn encode_field<T: RLPEncode>(self, value: &T) -> Self {
+        <T as RLPEncode>::encode(value, self.buf);
         self
     }
 
-    /// If `Some`, stores a field to be encoded, else does nothing.
-    pub fn encode_optional_field<T: RLPEncode>(mut self, opt_value: &Option<T>) -> Self {
+    /// If `Some`, encodes a field, else does nothing.
+    pub fn encode_optional_field<T: RLPEncode>(self, opt_value: &Option<T>) -> Self {
         if let Some(value) = opt_value {
-            <T as RLPEncode>::encode(value, &mut self.temp_buf);
+            <T as RLPEncode>::encode(value, self.buf);
         }
         self
     }
 
-    /// Stores a (key, value) list where the values are already encoded (i.e. value = RLP prefix || payload)
+    /// Encodes a (key, value) list where the values are already encoded (i.e. value = RLP prefix || payload)
     /// but the keys are not encoded
-    pub fn encode_key_value_list<T: RLPEncode>(mut self, list: &Vec<(Bytes, Bytes)>) -> Self {
+    pub fn encode_key_value_list<T: RLPEncode>(self, list: &Vec<(Bytes, Bytes)>) -> Self {
         for (key, value) in list {
-            <Bytes>::encode(key, &mut self.temp_buf);
+            <Bytes>::encode(key, self.buf);
             // value is already encoded
-            self.temp_buf.extend_from_slice(value);
+            self.buf.extend_from_slice(value);
         }
         self
     }
 
-    /// Finishes encoding the struct and writes the result to the buffer.
+    /// Finishes encoding the struct by writing the list prefix in front of the
+    /// payload that has been accumulating in the output buffer.
     pub fn finish(self) {
-        encode_length(self.temp_buf.len(), self.buf);
-        self.buf.extend_from_slice(&self.temp_buf);
+        backpatch_list_prefix(self.buf, self.start);
     }
 
     /// Adds a raw value to the buffer without rlp-encoding it
-    pub fn encode_raw(mut self, value: &[u8]) -> Self {
-        self.temp_buf.extend_from_slice(value);
+    pub fn encode_raw(self, value: &[u8]) -> Self {
+        self.buf.extend_from_slice(value);
         self
     }
 
-    /// Stores a field to be encoded as bytes
+    /// Encodes a field as bytes
     /// This method is used to bypass the conflicting implementations between Vec<T> and Vec<u8>
-    pub fn encode_bytes(mut self, value: &[u8]) -> Self {
-        <[u8] as RLPEncode>::encode(value, &mut self.temp_buf);
+    pub fn encode_bytes(self, value: &[u8]) -> Self {
+        <[u8] as RLPEncode>::encode(value, self.buf);
         self
     }
 }

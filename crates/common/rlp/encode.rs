@@ -312,13 +312,13 @@ impl<T: RLPEncode> RLPEncode for Vec<T> {
         if self.is_empty() {
             buf.push(0xc0);
         } else {
-            let payload_len: usize = self.iter().map(|item| item.length()).sum();
-
-            encode_length(payload_len, buf);
-
+            // Write the payload first and fill the prefix in afterwards: the
+            // `length()` pre-pass this replaces re-encoded every element.
+            let start = buf.len();
             for item in self {
                 item.encode(buf);
             }
+            backpatch_list_prefix(buf, start);
         }
     }
 
@@ -338,17 +338,51 @@ impl<T: RLPEncode> RLPEncode for Vec<T> {
     }
 }
 
+/// Maximum size of a list prefix: the tag plus a `usize` payload length.
+const MAX_LIST_PREFIX_LEN: usize = 1 + size_of::<usize>();
+
+/// Builds the RLP list prefix for a payload of `payload_len` bytes.
+///
+/// Returned by value so that both writing a prefix ahead of a payload
+/// ([`encode_length`]) and inserting one in front of a payload already written
+/// ([`backpatch_list_prefix`]) share a single implementation.
+#[inline]
+fn list_prefix(payload_len: usize) -> ([u8; MAX_LIST_PREFIX_LEN], usize) {
+    let mut prefix = [0u8; MAX_LIST_PREFIX_LEN];
+    if payload_len < 56 {
+        prefix[0] = 0xc0 + payload_len as u8;
+        return (prefix, 1);
+    }
+    // `payload_len >= 56`, so `ilog2` is defined and there is at least one
+    // significant byte.
+    let be_len = payload_len.ilog2() as usize / 8 + 1;
+    let be = payload_len.to_be_bytes();
+    prefix[0] = 0xf7 + be_len as u8;
+    prefix[1..1 + be_len].copy_from_slice(&be[be.len() - be_len..]);
+    (prefix, 1 + be_len)
+}
+
+/// Writes the list prefix for a payload of `total_len` bytes, which the caller
+/// is about to append.
 #[inline]
 pub fn encode_length(total_len: usize, buf: &mut Vec<u8>) {
-    if total_len < 56 {
-        buf.push(0xc0 + total_len as u8);
-    } else {
-        let bytes = total_len.to_be_bytes();
-        let start = bytes.iter().position(|&x| x != 0).unwrap();
-        let len = bytes.len() - start;
-        buf.push(0xf7 + len as u8);
-        buf.extend_from_slice(&bytes[start..]);
-    }
+    let (prefix, prefix_len) = list_prefix(total_len);
+    buf.extend_from_slice(&prefix[..prefix_len]);
+}
+
+/// Inserts the list prefix for a payload that has already been appended at
+/// `start`, shifting the payload right to make room.
+///
+/// This is what a concrete sink buys over `&mut dyn BufMut`: a trait object
+/// cannot report how many bytes it holds, so the length had to be computed in a
+/// separate pass before anything could be written.
+#[inline]
+pub fn backpatch_list_prefix(buf: &mut Vec<u8>, start: usize) {
+    let payload_len = buf.len() - start;
+    let (prefix, prefix_len) = list_prefix(payload_len);
+    buf.resize(buf.len() + prefix_len, 0);
+    buf.copy_within(start..start + payload_len, start + prefix_len);
+    buf[start..start + prefix_len].copy_from_slice(&prefix[..prefix_len]);
 }
 
 impl<S: RLPEncode, T: RLPEncode> RLPEncode for (S, T) {

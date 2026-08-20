@@ -2,7 +2,7 @@ use bytes::Bytes;
 use ethereum_types::{Address, BigEndianHash, H256, U256};
 use ethrex_rlp::{
     decode::RLPDecode,
-    encode::{RLPEncode, encode_length, list_length},
+    encode::{RLPEncode, backpatch_list_prefix},
     structs,
 };
 use indexmap::{IndexMap, IndexSet};
@@ -28,20 +28,14 @@ where
     let mut indices: Vec<usize> = (0..items.len()).collect();
     indices.sort_by(|&i, &j| key_fn(&items[i]).cmp(&key_fn(&items[j])));
 
-    let payload_len: usize = items.iter().map(|item| item.length()).sum();
-    encode_length(payload_len, buf);
+    // Encode the payload first and fill the prefix in afterwards. The
+    // `length()` pre-pass this replaces re-encoded every item, and for the
+    // types in this module `length()` is the allocating default.
+    let start = buf.len();
     for &i in &indices {
         items[i].encode(buf);
     }
-}
-
-/// Calculate the encoded length of a sorted list.
-fn sorted_list_length<T: RLPEncode>(items: &[T]) -> usize {
-    if items.is_empty() {
-        return 1;
-    }
-    let payload_len: usize = items.iter().map(|item| item.length()).sum();
-    list_length(payload_len)
+    backpatch_list_prefix(buf, start);
 }
 
 #[derive(Default, Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -117,10 +111,10 @@ impl SlotChange {
 
 impl RLPEncode for SlotChange {
     fn encode(&self, buf: &mut Vec<u8>) {
-        let payload_len = self.slot.length() + sorted_list_length(&self.slot_changes);
-        encode_length(payload_len, buf);
+        let start = buf.len();
         self.slot.encode(buf);
         encode_sorted_by(&self.slot_changes, buf, |s| s.block_access_index);
+        backpatch_list_prefix(buf, start);
     }
 }
 
@@ -354,20 +348,14 @@ impl AccountChanges {
 
 impl RLPEncode for AccountChanges {
     fn encode(&self, buf: &mut Vec<u8>) {
-        let payload_len = self.address.length()
-            + sorted_list_length(&self.storage_changes)
-            + sorted_list_length(&self.storage_reads)
-            + sorted_list_length(&self.balance_changes)
-            + sorted_list_length(&self.nonce_changes)
-            + sorted_list_length(&self.code_changes);
-
-        encode_length(payload_len, buf);
+        let start = buf.len();
         self.address.encode(buf);
         encode_sorted_by(&self.storage_changes, buf, |s| s.slot);
         encode_sorted_by(&self.storage_reads, buf, |s| *s);
         encode_sorted_by(&self.balance_changes, buf, |b| b.block_access_index);
         encode_sorted_by(&self.nonce_changes, buf, |n| n.block_access_index);
         encode_sorted_by(&self.code_changes, buf, |c| c.block_access_index);
+        backpatch_list_prefix(buf, start);
     }
 }
 
