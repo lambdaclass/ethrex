@@ -147,7 +147,7 @@ use rkyv::{
 
 use ethrex_crypto::{Crypto, NativeCrypto};
 
-use crate::{NodeRLP, TrieDB, error::TrieError, nibbles::Nibbles};
+use crate::{NodeRLP, TrieDB, error::TrieError, nibbles::Nibbles, path_cursor::PathCursor};
 
 use super::{ValueRLP, node_hash::NodeHash};
 
@@ -183,7 +183,7 @@ impl NodeRef {
     /// Gets a shared reference to the inner node.
     /// Requires that the trie is in a consistent state, ie that all leaves being pointed are in the database.
     /// Outside of snapsync this should always be the case.
-    pub fn get_node(&self, db: &dyn TrieDB, path: Nibbles) -> Result<Option<Arc<Node>>, TrieError> {
+    pub fn get_node(&self, db: &dyn TrieDB, path: &[u8]) -> Result<Option<Arc<Node>>, TrieError> {
         match self {
             NodeRef::Node(node, _) => Ok(Some(node.clone())),
             NodeRef::Hash(hash @ NodeHash::Inline(_)) => {
@@ -207,7 +207,7 @@ impl NodeRef {
     pub fn get_node_checked(
         &self,
         db: &dyn TrieDB,
-        path: Nibbles,
+        path: &[u8],
     ) -> Result<Option<Arc<Node>>, TrieError> {
         match self {
             NodeRef::Node(node, _) => Ok(Some(node.clone())),
@@ -236,7 +236,7 @@ impl NodeRef {
     pub(crate) fn get_node_mut(
         &mut self,
         db: &dyn TrieDB,
-        path: Nibbles,
+        path: &[u8],
     ) -> Result<Option<&mut Node>, TrieError> {
         match self {
             NodeRef::Node(node, _) => Ok(Some(Arc::make_mut(node))),
@@ -247,7 +247,7 @@ impl NodeRef {
             }
             NodeRef::Hash(hash @ NodeHash::Hashed(_)) => {
                 let Some(node) = db
-                    .get(path.clone())?
+                    .get(path)?
                     .filter(|rlp| !rlp.is_empty())
                     .map(|rlp| Node::decode(&rlp).map_err(TrieError::RLPDecode))
                     .transpose()?
@@ -445,7 +445,11 @@ impl From<LeafNode> for Node {
 
 impl Node {
     /// Retrieves a value from the subtrie originating from this node given its path
-    pub fn get(&self, db: &dyn TrieDB, path: Nibbles) -> Result<Option<ValueRLP>, TrieError> {
+    pub fn get(
+        &self,
+        db: &dyn TrieDB,
+        path: PathCursor<'_>,
+    ) -> Result<Option<ValueRLP>, TrieError> {
         match self {
             Node::Branch(n) => n.get(db, path),
             Node::Extension(n) => n.get(db, path),
@@ -457,7 +461,7 @@ impl Node {
     pub fn insert(
         &mut self,
         db: &dyn TrieDB,
-        path: Nibbles,
+        path: PathCursor<'_>,
         value: impl Into<ValueOrHash>,
     ) -> Result<(), TrieError> {
         let new_node = match self {
@@ -479,7 +483,7 @@ impl Node {
     pub fn remove(
         &mut self,
         db: &dyn TrieDB,
-        path: Nibbles,
+        path: PathCursor<'_>,
     ) -> Result<(bool, Option<ValueRLP>), TrieError> {
         let (new_root, value) = match self {
             Node::Branch(n) => n.remove(db, path),
@@ -500,7 +504,7 @@ impl Node {
     pub fn get_path(
         &self,
         db: &dyn TrieDB,
-        path: Nibbles,
+        path: PathCursor<'_>,
         node_path: &mut Vec<Vec<u8>>,
     ) -> Result<(), TrieError> {
         match self {

@@ -292,7 +292,7 @@ unsafe fn pack_nibble_pairs_scalar(nibbles: &[u8], output: *mut u8) {
 
 #[allow(unsafe_code)]
 #[inline]
-fn count_common_prefix(a: &[u8], b: &[u8]) -> usize {
+pub(crate) fn count_common_prefix(a: &[u8], b: &[u8]) -> usize {
     #[cfg(target_arch = "x86_64")]
     {
         // SAFETY: x86_64 SIMD; bounds are maintained within the function.
@@ -396,13 +396,20 @@ fn count_common_prefix_scalar(a: &[u8], b: &[u8]) -> usize {
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
-// TODO: move path-tracking logic somewhere else
 // PERF: try using a stack-allocated array
-/// Struct representing a list of nibbles (half-bytes)
+/// An immutable list of nibbles (half-bytes) identifying a path within the trie.
+///
+/// Traversal state lives in [`crate::PathCursor`], not here: this type is only
+/// ever a whole path, either a node's own stored partial path or a lookup key.
 #[derive(
     Debug,
     Clone,
     Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
     serde::Serialize,
     serde::Deserialize,
     rkyv::Deserialize,
@@ -411,46 +418,12 @@ fn count_common_prefix_scalar(a: &[u8], b: &[u8]) -> usize {
 )]
 pub struct Nibbles {
     data: Vec<u8>,
-    /// Parts of the path that have already been consumed (used for tracking
-    /// current position when visiting nodes). See `current()`.
-    already_consumed: Vec<u8>,
-}
-
-// NOTE: custom impls to ignore the `already_consumed` field
-
-impl PartialEq for Nibbles {
-    fn eq(&self, other: &Nibbles) -> bool {
-        self.data == other.data
-    }
-}
-
-impl Eq for Nibbles {}
-
-impl PartialOrd for Nibbles {
-    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for Nibbles {
-    fn cmp(&self, other: &Self) -> cmp::Ordering {
-        self.data.cmp(&other.data)
-    }
-}
-
-impl core::hash::Hash for Nibbles {
-    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-        self.data.hash(state);
-    }
 }
 
 impl Nibbles {
     /// Create `Nibbles` from  hex-encoded nibbles
     pub const fn from_hex(hex: Vec<u8>) -> Self {
-        Self {
-            data: hex,
-            already_consumed: vec![],
-        }
+        Self { data: hex }
     }
 
     /// Splits incoming bytes into nibbles and appends the leaf flag (a 16 nibble at the end)
@@ -475,10 +448,7 @@ impl Nibbles {
             data.push(16);
         }
 
-        Self {
-            data,
-            already_consumed: vec![],
-        }
+        Self { data }
     }
 
     pub fn into_vec(self) -> Vec<u8> {
@@ -495,18 +465,6 @@ impl Nibbles {
         self.data.is_empty()
     }
 
-    /// If `prefix` is a prefix of self, move the offset after
-    /// the prefix and return true, otherwise return false.
-    pub fn skip_prefix(&mut self, prefix: &Nibbles) -> bool {
-        if self.len() >= prefix.len() && &self.data[..prefix.len()] == prefix.as_ref() {
-            self.already_consumed.extend_from_slice(&prefix.data);
-            self.data.drain(..prefix.len());
-            true
-        } else {
-            false
-        }
-    }
-
     /// Compares self to another, comparing prefixes only in case of unequal lengths.
     pub fn compare_prefix(&self, prefix: &Nibbles) -> cmp::Ordering {
         if self.len() > prefix.len() {
@@ -521,29 +479,9 @@ impl Nibbles {
         count_common_prefix(self.as_ref(), other.as_ref())
     }
 
-    /// Removes and returns the first nibble
-    #[allow(clippy::should_implement_trait)]
-    pub fn next(&mut self) -> Option<u8> {
-        (!self.is_empty()).then(|| {
-            self.already_consumed.push(self.data[0]);
-            self.data.remove(0)
-        })
-    }
-
-    /// Removes and returns the first nibble if it is a suitable choice index (aka < 16)
-    pub fn next_choice(&mut self) -> Option<usize> {
-        self.next().filter(|choice| *choice < 16).map(usize::from)
-    }
-
     /// Returns the nibbles after the given offset
     pub fn offset(&self, offset: usize) -> Nibbles {
-        let mut already_consumed = Vec::with_capacity(self.already_consumed.len() + offset);
-        already_consumed.extend_from_slice(&self.already_consumed);
-        already_consumed.extend_from_slice(&self.data[..offset]);
-        Nibbles {
-            data: self.data[offset..].to_vec(),
-            already_consumed,
-        }
+        Nibbles::from_hex(self.data[offset..].to_vec())
     }
 
     /// Returns the nibbles beween the start and end indexes
@@ -648,10 +586,7 @@ impl Nibbles {
         let mut data = Vec::with_capacity(self.data.len() + other.data.len());
         data.extend_from_slice(&self.data);
         data.extend_from_slice(&other.data);
-        Nibbles {
-            data,
-            already_consumed: self.already_consumed.clone(),
-        }
+        Nibbles { data }
     }
 
     /// Returns a copy of self with the nibble added at the end
@@ -659,25 +594,13 @@ impl Nibbles {
         let mut data = Vec::with_capacity(self.data.len() + 1);
         data.extend_from_slice(&self.data);
         data.push(nibble);
-        Nibbles {
-            data,
-            already_consumed: self.already_consumed.clone(),
-        }
-    }
-
-    /// Return already consumed parts of path
-    pub fn current(&self) -> Nibbles {
-        Nibbles {
-            data: self.already_consumed.clone(),
-            already_consumed: vec![],
-        }
+        Nibbles { data }
     }
 
     /// Empties `self.data` and returns the content
     pub fn take(&mut self) -> Self {
         Nibbles {
             data: mem::take(&mut self.data),
-            already_consumed: mem::take(&mut self.already_consumed),
         }
     }
 }
@@ -698,13 +621,7 @@ impl RLPDecode for Nibbles {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let decoder = Decoder::new(rlp)?;
         let (data, decoder) = decoder.decode_field("data")?;
-        Ok((
-            Self {
-                data,
-                already_consumed: vec![],
-            },
-            decoder.finish()?,
-        ))
+        Ok((Self { data }, decoder.finish()?))
     }
 }
 

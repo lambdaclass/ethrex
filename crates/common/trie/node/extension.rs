@@ -7,6 +7,7 @@ use crate::ValueRLP;
 use crate::nibbles::Nibbles;
 use crate::node::NodeRemoveResult;
 use crate::node_hash::NodeHash;
+use crate::path_cursor::PathCursor;
 use crate::{
     TrieDB,
     error::{ExtensionNodeErrorData, InconsistentTreeError, TrieError},
@@ -38,11 +39,15 @@ impl ExtensionNode {
     }
 
     /// Retrieves a value from the subtrie originating from this node given its path
-    pub fn get(&self, db: &dyn TrieDB, mut path: Nibbles) -> Result<Option<ValueRLP>, TrieError> {
+    pub fn get(
+        &self,
+        db: &dyn TrieDB,
+        mut path: PathCursor<'_>,
+    ) -> Result<Option<ValueRLP>, TrieError> {
         // If the path is prefixed by this node's prefix, delegate to its child.
         // Otherwise, no value is present.
-        if path.skip_prefix(&self.prefix) {
-            let child_node = self.child.get_node(db, path.current())?.ok_or_else(|| {
+        if path.skip_prefix(self.prefix.as_ref()) {
+            let child_node = self.child.get_node(db, path.consumed())?.ok_or_else(|| {
                 TrieError::InconsistentTree(Box::new(
                     InconsistentTreeError::ExtensionNodeChildNotFound(ExtensionNodeErrorData {
                         node_hash: self
@@ -53,7 +58,7 @@ impl ExtensionNode {
                             .compute_hash(&NativeCrypto)
                             .finalize(&NativeCrypto),
                         extension_node_prefix: self.prefix.clone(),
-                        node_path: path.current(),
+                        node_path: Nibbles::from_hex(path.consumed().to_vec()),
                     }),
                 ))
             })?;
@@ -69,7 +74,7 @@ impl ExtensionNode {
     pub fn insert(
         &mut self,
         db: &dyn TrieDB,
-        path: Nibbles,
+        path: PathCursor<'_>,
         value: ValueOrHash,
     ) -> Result<Option<Node>, TrieError> {
         /* Possible flow paths:
@@ -82,11 +87,11 @@ impl ExtensionNode {
             * Prefix partially matches path
             Extension { prefix, child } -> Extension { prefix[..match], Extension { path[match..] child } } (insert into new extension node)
         */
-        let match_index = path.count_prefix(&self.prefix);
+        let match_index = path.count_prefix(self.prefix.as_ref());
         if match_index == self.prefix.len() {
-            let path = path.offset(match_index);
+            let path = path.advanced(match_index);
             // Insert into child node
-            let Some(child_node) = self.child.get_node_mut(db, path.current())? else {
+            let Some(child_node) = self.child.get_node_mut(db, path.consumed())? else {
                 return Err(TrieError::InconsistentTree(Box::new(
                     InconsistentTreeError::ExtensionNodeChildNotFound(ExtensionNodeErrorData {
                         node_hash: self
@@ -97,7 +102,7 @@ impl ExtensionNode {
                             .compute_hash(&NativeCrypto)
                             .finalize(&NativeCrypto),
                         extension_node_prefix: self.prefix.clone(),
-                        node_path: path.current(),
+                        node_path: Nibbles::from_hex(path.consumed().to_vec()),
                     }),
                 )));
             };
@@ -116,7 +121,7 @@ impl ExtensionNode {
             };
             let mut choices = BranchNode::EMPTY_CHOICES;
             let mut branch_node = if self.prefix.at(0) == 16 {
-                match new_node.get_node_mut(db, path.current())? {
+                match new_node.get_node_mut(db, path.consumed())? {
                     Some(Node::Leaf(leaf)) => {
                         BranchNode::new_with_value(choices, leaf.value.clone())
                     }
@@ -131,7 +136,7 @@ impl ExtensionNode {
                                         .compute_hash(&NativeCrypto)
                                         .finalize(&NativeCrypto),
                                     extension_node_prefix: self.prefix.clone(),
-                                    node_path: path.current(),
+                                    node_path: Nibbles::from_hex(path.consumed().to_vec()),
                                 },
                             ),
                         )));
@@ -147,7 +152,7 @@ impl ExtensionNode {
                                         .compute_hash(&NativeCrypto)
                                         .finalize(&NativeCrypto),
                                     extension_node_prefix: self.prefix.clone(),
-                                    node_path: path.current(),
+                                    node_path: Nibbles::from_hex(path.consumed().to_vec()),
                                 },
                             ),
                         )));
@@ -163,7 +168,7 @@ impl ExtensionNode {
             let mut new_extension =
                 ExtensionNode::new(self.prefix.offset(match_index), self.child.clone());
             let new_node = new_extension
-                .insert(db, path.offset(match_index), value)?
+                .insert(db, path.advanced(match_index), value)?
                 .unwrap_or(new_extension.into());
             self.prefix = self.prefix.slice(0, match_index);
             self.child = new_node.into();
@@ -174,7 +179,7 @@ impl ExtensionNode {
     pub fn remove(
         &mut self,
         db: &dyn TrieDB,
-        mut path: Nibbles,
+        mut path: PathCursor<'_>,
     ) -> Result<(Option<NodeRemoveResult>, Option<ValueRLP>), TrieError> {
         /* Possible flow paths:
             Extension { prefix, child } -> Extension { prefix, child } (no removal)
@@ -185,8 +190,8 @@ impl ExtensionNode {
         */
 
         // Check if the value is part of the child subtrie according to the prefix
-        if path.skip_prefix(&self.prefix) {
-            let Some(child_node) = self.child.get_node_mut(db, path.current())? else {
+        if path.skip_prefix(self.prefix.as_ref()) {
+            let Some(child_node) = self.child.get_node_mut(db, path.consumed())? else {
                 return Err(TrieError::InconsistentTree(Box::new(
                     InconsistentTreeError::ExtensionNodeChildNotFound(ExtensionNodeErrorData {
                         node_hash: self
@@ -197,7 +202,7 @@ impl ExtensionNode {
                             .compute_hash(&NativeCrypto)
                             .finalize(&NativeCrypto),
                         extension_node_prefix: self.prefix.clone(),
-                        node_path: path.current(),
+                        node_path: Nibbles::from_hex(path.consumed().to_vec()),
                     }),
                 )));
             };
@@ -259,7 +264,7 @@ impl ExtensionNode {
     pub fn get_path(
         &self,
         db: &dyn TrieDB,
-        mut path: Nibbles,
+        mut path: PathCursor<'_>,
         node_path: &mut Vec<Vec<u8>>,
     ) -> Result<(), TrieError> {
         // Add self to node_path (if not inlined in parent)
@@ -268,8 +273,8 @@ impl ExtensionNode {
             node_path.push(encoded);
         };
         // Continue to child
-        if path.skip_prefix(&self.prefix) {
-            let child_node = self.child.get_node(db, path.current())?.ok_or_else(|| {
+        if path.skip_prefix(self.prefix.as_ref()) {
+            let child_node = self.child.get_node(db, path.consumed())?.ok_or_else(|| {
                 TrieError::InconsistentTree(Box::new(
                     InconsistentTreeError::ExtensionNodeChildNotFound(ExtensionNodeErrorData {
                         node_hash: self
@@ -280,7 +285,7 @@ impl ExtensionNode {
                             .compute_hash(&NativeCrypto)
                             .finalize(&NativeCrypto),
                         extension_node_prefix: self.prefix.clone(),
-                        node_path: path.current(),
+                        node_path: Nibbles::from_hex(path.consumed().to_vec()),
                     }),
                 ))
             })?;
@@ -326,13 +331,15 @@ mod test {
             } }
         };
 
+        let path_0 = Nibbles::from_bytes(&[0x00]);
+        let path_1 = Nibbles::from_bytes(&[0x01]);
         assert_eq!(
-            node.get(trie.db.as_ref(), Nibbles::from_bytes(&[0x00]))
+            node.get(trie.db.as_ref(), PathCursor::new(path_0.as_ref()))
                 .unwrap(),
             Some(vec![0x12, 0x34, 0x56, 0x78]),
         );
         assert_eq!(
-            node.get(trie.db.as_ref(), Nibbles::from_bytes(&[0x01]))
+            node.get(trie.db.as_ref(), PathCursor::new(path_1.as_ref()))
                 .unwrap(),
             Some(vec![0x34, 0x56, 0x78, 0x9A]),
         );
@@ -348,8 +355,9 @@ mod test {
             } }
         };
 
+        let path = Nibbles::from_bytes(&[0x02]);
         assert_eq!(
-            node.get(trie.db.as_ref(), Nibbles::from_bytes(&[0x02]))
+            node.get(trie.db.as_ref(), PathCursor::new(path.as_ref()))
                 .unwrap(),
             None,
         );
@@ -365,10 +373,11 @@ mod test {
             } }
         };
 
+        let path = Nibbles::from_bytes(&[0x02]);
         let none = node
             .insert(
                 trie.db.as_ref(),
-                Nibbles::from_bytes(&[0x02]),
+                PathCursor::new(path.as_ref()),
                 Vec::new().into(),
             )
             .unwrap();
@@ -387,10 +396,11 @@ mod test {
             } }
         };
 
+        let path = Nibbles::from_bytes(&[0x10]);
         let node = node
             .insert(
                 trie.db.as_ref(),
-                Nibbles::from_bytes(&[0x10]),
+                PathCursor::new(path.as_ref()),
                 vec![0x20].into(),
             )
             .unwrap();
@@ -399,7 +409,7 @@ mod test {
             _ => panic!("expected a branch node"),
         };
         assert_eq!(
-            node.get(trie.db.as_ref(), Nibbles::from_bytes(&[0x10]))
+            node.get(trie.db.as_ref(), PathCursor::new(path.as_ref()))
                 .unwrap(),
             Some(vec![0x20])
         );
@@ -415,10 +425,11 @@ mod test {
             } }
         };
 
+        let path = Nibbles::from_bytes(&[0x10]);
         let node = node
             .insert(
                 trie.db.as_ref(),
-                Nibbles::from_bytes(&[0x10]),
+                PathCursor::new(path.as_ref()),
                 vec![0x20].into(),
             )
             .unwrap();
@@ -427,7 +438,7 @@ mod test {
             _ => panic!("expected a branch node"),
         };
         assert_eq!(
-            node.get(trie.db.as_ref(), Nibbles::from_bytes(&[0x10]))
+            node.get(trie.db.as_ref(), PathCursor::new(path.as_ref()))
                 .unwrap(),
             Some(vec![0x20])
         );
@@ -447,11 +458,19 @@ mod test {
         let value = vec![0x02];
 
         let none = node
-            .insert(trie.db.as_ref(), path.clone(), value.clone().into())
+            .insert(
+                trie.db.as_ref(),
+                PathCursor::new(path.as_ref()),
+                value.clone().into(),
+            )
             .unwrap();
 
         assert!(none.is_none());
-        assert_eq!(node.get(trie.db.as_ref(), path).unwrap(), Some(value));
+        assert_eq!(
+            node.get(trie.db.as_ref(), PathCursor::new(path.as_ref()))
+                .unwrap(),
+            Some(value)
+        );
     }
 
     #[test]
@@ -468,11 +487,19 @@ mod test {
         let value = vec![0x04];
 
         let none = node
-            .insert(trie.db.as_ref(), path.clone(), value.clone().into())
+            .insert(
+                trie.db.as_ref(),
+                PathCursor::new(path.as_ref()),
+                value.clone().into(),
+            )
             .unwrap();
 
         assert!(none.is_none());
-        assert_eq!(node.get(trie.db.as_ref(), path).unwrap(), Some(value));
+        assert_eq!(
+            node.get(trie.db.as_ref(), PathCursor::new(path.as_ref()))
+                .unwrap(),
+            Some(value)
+        );
     }
 
     #[test]
@@ -485,8 +512,9 @@ mod test {
             } }
         };
 
+        let path = Nibbles::from_bytes(&[0x02]);
         let (node, value) = node
-            .remove(trie.db.as_ref(), Nibbles::from_bytes(&[0x02]))
+            .remove(trie.db.as_ref(), PathCursor::new(path.as_ref()))
             .unwrap();
 
         assert!(matches!(node, Some(NodeRemoveResult::Mutated)));
@@ -503,8 +531,9 @@ mod test {
             } }
         };
 
+        let path = Nibbles::from_bytes(&[0x01]);
         let (node, value) = node
-            .remove(trie.db.as_ref(), Nibbles::from_bytes(&[0x01]))
+            .remove(trie.db.as_ref(), PathCursor::new(path.as_ref()))
             .unwrap();
 
         assert!(matches!(node, Some(NodeRemoveResult::New(Node::Leaf(_)))));
@@ -524,8 +553,9 @@ mod test {
             } }
         };
 
+        let path = Nibbles::from_bytes(&[0x00]);
         let (node, value) = node
-            .remove(trie.db.as_ref(), Nibbles::from_bytes(&[0x00]))
+            .remove(trie.db.as_ref(), PathCursor::new(path.as_ref()))
             .unwrap();
 
         assert!(matches!(

@@ -365,7 +365,7 @@ fn get_node_partial_path_crossing_extension_node() {
 
     let branch = extension
         .child
-        .get_node(trie.db(), branch_path.clone())
+        .get_node(trie.db(), branch_path.as_ref())
         .unwrap()
         .expect("extension child should be stored under its path");
     let Node::Branch(branch_node) = branch.as_ref() else {
@@ -373,7 +373,7 @@ fn get_node_partial_path_crossing_extension_node() {
     };
     let leaf_path = branch_path.append_new(0);
     let leaf = branch_node.choices[0]
-        .get_node(trie.db(), leaf_path.clone())
+        .get_node(trie.db(), leaf_path.as_ref())
         .unwrap()
         .expect("branch child should be stored under its path");
 

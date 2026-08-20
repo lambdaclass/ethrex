@@ -1,6 +1,7 @@
 use ethrex_rlp::encode::RLPEncode;
 
 use crate::{Nibbles, Node, error::TrieError};
+use alloc::borrow::Cow;
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 #[cfg(not(feature = "std"))]
@@ -29,7 +30,13 @@ type NodeMapGuard<'a> = std::sync::MutexGuard<'a, BTreeMap<Vec<u8>, Vec<u8>>>;
 type NodeMapGuard<'a> = spin::MutexGuard<'a, BTreeMap<Vec<u8>, Vec<u8>>>;
 
 pub trait TrieDB: Send + Sync {
-    fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError>;
+    /// Reads the node stored under `key`, the node's root-relative nibble path.
+    ///
+    /// The key is borrowed so that a traversal can hand over
+    /// `PathCursor::consumed()` directly, without materializing an owned path per
+    /// visited node. Writes (`put*`) legitimately own their keys and still take
+    /// `Nibbles`.
+    fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, TrieError>;
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError>;
     // TODO: replace putbatch with this function.
     fn put_batch_no_alloc(&self, key_values: &[(Nibbles, Node)]) -> Result<(), TrieError> {
@@ -49,7 +56,7 @@ pub trait TrieDB: Send + Sync {
         Ok(())
     }
 
-    fn flatkeyvalue_computed(&self, _key: Nibbles) -> bool {
+    fn flatkeyvalue_computed(&self, _key: &[u8]) -> bool {
         false
     }
 }
@@ -88,6 +95,20 @@ impl InMemoryTrieDB {
         match &self.prefix {
             Some(prefix) => prefix.concat(&path),
             None => path,
+        }
+    }
+
+    /// Borrowing counterpart of [`Self::apply_prefix`] for read keys: only the
+    /// prefixed case allocates, exactly as `apply_prefix` already did.
+    fn apply_prefix_borrowed<'a>(&self, path: &'a [u8]) -> Cow<'a, [u8]> {
+        match &self.prefix {
+            Some(prefix) => {
+                let mut key = Vec::with_capacity(prefix.len() + path.len());
+                key.extend_from_slice(prefix.as_ref());
+                key.extend_from_slice(path);
+                Cow::Owned(key)
+            }
+            None => Cow::Borrowed(path),
         }
     }
 
@@ -135,10 +156,10 @@ impl InMemoryTrieDB {
 }
 
 impl TrieDB for InMemoryTrieDB {
-    fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
+    fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, TrieError> {
         Ok(self
             .lock_inner()?
-            .get(self.apply_prefix(key).as_ref())
+            .get(self.apply_prefix_borrowed(key).as_ref())
             .cloned())
     }
 

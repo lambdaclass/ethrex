@@ -1,5 +1,5 @@
 use crate::{
-    EMPTY_TRIE_HASH, Nibbles, Node, TrieDB, TrieError,
+    EMPTY_TRIE_HASH, Nibbles, Node, PathCursor, TrieDB, TrieError,
     node::{BranchNode, ExtensionNode, LeafNode},
     threadpool::ThreadPool,
 };
@@ -105,11 +105,15 @@ fn add_current_to_parent_and_write_queue(
     parent_element: &mut StackElement,
 ) -> Result<(), TrieGenerationError> {
     let mut nodehash_buffer = Vec::with_capacity(512);
-    let mut path = current_node.path.clone();
-    path.skip_prefix(&parent_element.path);
-    let index = path
+    // Pure slicing of the current node's full path: skip the parent's prefix, take
+    // the choice nibble that selects this node within the parent, and keep the rest
+    // as the node's own stored prefix / partial path.
+    let mut cursor = PathCursor::new(current_node.path.as_ref());
+    cursor.skip_prefix(parent_element.path.as_ref());
+    let index = cursor
         .next()
         .ok_or_else(|| TrieGenerationError::IndexNotFound(current_node.path.clone()))?;
+    let path = cursor.to_nibbles();
     let top_path = parent_element.path.append_new(index);
     let (target_path, node): (Nibbles, Node) = match &current_node.element {
         CenterSideElement::Branch { node } => {
@@ -307,18 +311,18 @@ where
             }
             Node::Extension(extension_node) => {
                 extension_node.prefix.prepend(index as u8);
-                // This next works because this target path is always length of 1 element,
+                // This works because this target path is always length of 1 element,
                 // and we're just removing that one element
-                target_path.next();
+                *target_path = target_path.offset(1);
                 extension_node
                     .compute_hash_no_alloc(&mut nodehash_buffer, &NativeCrypto)
                     .finalize(&NativeCrypto)
             }
             Node::Leaf(leaf_node) => {
                 leaf_node.partial.prepend(index as u8);
-                // This next works because this target path is always length of 1 element,
+                // This works because this target path is always length of 1 element,
                 // and we're just removing that one element
-                target_path.next();
+                *target_path = target_path.offset(1);
                 leaf_node
                     .compute_hash_no_alloc(&mut nodehash_buffer, &NativeCrypto)
                     .finalize(&NativeCrypto)
