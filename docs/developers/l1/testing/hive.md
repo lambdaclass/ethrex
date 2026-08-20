@@ -9,7 +9,7 @@ This project uses three key repositories for Hive testing:
 1. **[ethereum/hive](https://github.com/ethereum/hive)** - The main Hive testing framework
    - Current commit: `0921fb7833e3de180eacdc9f26de6e51dcab0dba`
 2. **[ethereum/execution-specs](https://github.com/ethereum/execution-specs)** - Test fixtures and vectors (the former `ethereum/execution-spec-tests` repo is archived)
-   - Mainnet: `tests@v20.0.0` (Osaka + BPO1 + BPO2); Amsterdam: `tests-glamsterdam-devnet@v8.0.0`
+   - Mainnet: `tests@v20.0.1` (Osaka + BPO1 + BPO2); Amsterdam: `tests-glamsterdam-devnet@v8.0.0`
 3. **[ethereum/execution-specs](https://github.com/ethereum/execution-specs)** - Fork specifications
    - Current branch: `forks/amsterdam`
 
@@ -311,7 +311,7 @@ Contents:
 
 ```
 # .fixtures_url
-https://github.com/ethereum/execution-specs/releases/download/tests%40v20.0.0/fixtures.tar.gz
+https://github.com/ethereum/execution-specs/releases/download/tests%40v20.0.1/fixtures.tar.gz
 
 # .fixtures_url_amsterdam
 https://github.com/ethereum/execution-specs/releases/download/tests-glamsterdam-devnet%40v8.0.0/fixtures_glamsterdam-devnet.tar.gz
