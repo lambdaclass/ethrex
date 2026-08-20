@@ -9,6 +9,8 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 
+use crate::path_cursor::PathCursor;
+
 // ── SIMD nibble expansion ────────────────────────────────────────────────────
 //
 // The hot path during block execution converts 32-byte keccak keys to 64
@@ -595,6 +597,16 @@ impl Nibbles {
         data.extend_from_slice(&self.data);
         data.push(nibble);
         Nibbles { data }
+    }
+
+    /// Returns a [`PathCursor`] positioned at the start of this path.
+    ///
+    /// Borrows `self` for the cursor's lifetime, so the path has to outlive the
+    /// traversal: where the `Nibbles` is a temporary it still needs to be bound
+    /// to a local first.
+    #[inline]
+    pub fn cursor(&self) -> PathCursor<'_> {
+        PathCursor::new(&self.data)
     }
 
     /// Empties `self.data` and returns the content

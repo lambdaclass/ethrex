@@ -153,7 +153,7 @@ impl Trie {
             return Ok(Some(value_rlp));
         }
 
-        let cursor = PathCursor::new(path.as_ref());
+        let cursor = path.cursor();
         Ok(match self.root {
             NodeRef::Node(ref node, _) => node.get(self.db.as_ref(), cursor)?,
             NodeRef::Hash(hash) if hash.is_valid() => {
@@ -182,7 +182,7 @@ impl Trie {
                 .ok_or_else(|| {
                     TrieError::InconsistentTree(Box::new(InconsistentTreeError::RootNotFoundNoHash))
                 })?
-                .insert(self.db.as_ref(), PathCursor::new(path.as_ref()), value)?
+                .insert(self.db.as_ref(), path.cursor(), value)?
         } else {
             // If the trie is empty, just add a leaf.
             self.root = Node::from(LeafNode::new(path, value)).into()
@@ -210,7 +210,7 @@ impl Trie {
             .ok_or_else(|| {
                 TrieError::InconsistentTree(Box::new(InconsistentTreeError::RootNotFoundNoHash))
             })?
-            .remove(self.db.as_ref(), PathCursor::new(path.as_ref()))?;
+            .remove(self.db.as_ref(), path.cursor())?;
         if is_trie_empty {
             self.root = NodeRef::default();
         } else {
@@ -318,11 +318,7 @@ impl Trie {
                 None => return Ok(Vec::new()),
             };
             let path = Nibbles::from_bytes(path);
-            root.get_path(
-                self.db.as_ref(),
-                PathCursor::new(path.as_ref()),
-                &mut node_path,
-            )?;
+            root.get_path(self.db.as_ref(), path.cursor(), &mut node_path)?;
 
             Ok(node_path)
         } else {
@@ -635,11 +631,7 @@ impl Trie {
         // Fetch node
         if self.root.is_valid() {
             let root_node = self.get_root_node(&[])?;
-            get_node_inner(
-                self.db.as_ref(),
-                &root_node,
-                PathCursor::new(partial_path.as_ref()),
-            )
+            get_node_inner(self.db.as_ref(), &root_node, partial_path.cursor())
         } else {
             Ok(Vec::new())
         }
@@ -810,11 +802,7 @@ impl ProofTrie {
                 .ok_or_else(|| {
                     TrieError::InconsistentTree(Box::new(InconsistentTreeError::RootNotFoundNoHash))
                 })?
-                .insert(
-                    self.0.db.as_ref(),
-                    PathCursor::new(partial_path.as_ref()),
-                    external_ref,
-                )?;
+                .insert(self.0.db.as_ref(), partial_path.cursor(), external_ref)?;
             self.0.root.clear_hash();
         } else {
             self.0.root = external_ref.into();

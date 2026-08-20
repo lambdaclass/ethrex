@@ -334,13 +334,11 @@ mod test {
         let path_0 = Nibbles::from_bytes(&[0x00]);
         let path_1 = Nibbles::from_bytes(&[0x01]);
         assert_eq!(
-            node.get(trie.db.as_ref(), PathCursor::new(path_0.as_ref()))
-                .unwrap(),
+            node.get(trie.db.as_ref(), path_0.cursor()).unwrap(),
             Some(vec![0x12, 0x34, 0x56, 0x78]),
         );
         assert_eq!(
-            node.get(trie.db.as_ref(), PathCursor::new(path_1.as_ref()))
-                .unwrap(),
+            node.get(trie.db.as_ref(), path_1.cursor()).unwrap(),
             Some(vec![0x34, 0x56, 0x78, 0x9A]),
         );
     }
@@ -356,11 +354,7 @@ mod test {
         };
 
         let path = Nibbles::from_bytes(&[0x02]);
-        assert_eq!(
-            node.get(trie.db.as_ref(), PathCursor::new(path.as_ref()))
-                .unwrap(),
-            None,
-        );
+        assert_eq!(node.get(trie.db.as_ref(), path.cursor()).unwrap(), None,);
     }
 
     #[test]
@@ -375,11 +369,7 @@ mod test {
 
         let path = Nibbles::from_bytes(&[0x02]);
         let none = node
-            .insert(
-                trie.db.as_ref(),
-                PathCursor::new(path.as_ref()),
-                Vec::new().into(),
-            )
+            .insert(trie.db.as_ref(), path.cursor(), Vec::new().into())
             .unwrap();
         assert!(none.is_none());
 
@@ -398,19 +388,14 @@ mod test {
 
         let path = Nibbles::from_bytes(&[0x10]);
         let node = node
-            .insert(
-                trie.db.as_ref(),
-                PathCursor::new(path.as_ref()),
-                vec![0x20].into(),
-            )
+            .insert(trie.db.as_ref(), path.cursor(), vec![0x20].into())
             .unwrap();
         let node = match node {
             Some(Node::Branch(x)) => x,
             _ => panic!("expected a branch node"),
         };
         assert_eq!(
-            node.get(trie.db.as_ref(), PathCursor::new(path.as_ref()))
-                .unwrap(),
+            node.get(trie.db.as_ref(), path.cursor()).unwrap(),
             Some(vec![0x20])
         );
     }
@@ -427,19 +412,14 @@ mod test {
 
         let path = Nibbles::from_bytes(&[0x10]);
         let node = node
-            .insert(
-                trie.db.as_ref(),
-                PathCursor::new(path.as_ref()),
-                vec![0x20].into(),
-            )
+            .insert(trie.db.as_ref(), path.cursor(), vec![0x20].into())
             .unwrap();
         let node = match node {
             Some(Node::Branch(x)) => x,
             _ => panic!("expected a branch node"),
         };
         assert_eq!(
-            node.get(trie.db.as_ref(), PathCursor::new(path.as_ref()))
-                .unwrap(),
+            node.get(trie.db.as_ref(), path.cursor()).unwrap(),
             Some(vec![0x20])
         );
     }
@@ -458,17 +438,12 @@ mod test {
         let value = vec![0x02];
 
         let none = node
-            .insert(
-                trie.db.as_ref(),
-                PathCursor::new(path.as_ref()),
-                value.clone().into(),
-            )
+            .insert(trie.db.as_ref(), path.cursor(), value.clone().into())
             .unwrap();
 
         assert!(none.is_none());
         assert_eq!(
-            node.get(trie.db.as_ref(), PathCursor::new(path.as_ref()))
-                .unwrap(),
+            node.get(trie.db.as_ref(), path.cursor()).unwrap(),
             Some(value)
         );
     }
@@ -487,17 +462,12 @@ mod test {
         let value = vec![0x04];
 
         let none = node
-            .insert(
-                trie.db.as_ref(),
-                PathCursor::new(path.as_ref()),
-                value.clone().into(),
-            )
+            .insert(trie.db.as_ref(), path.cursor(), value.clone().into())
             .unwrap();
 
         assert!(none.is_none());
         assert_eq!(
-            node.get(trie.db.as_ref(), PathCursor::new(path.as_ref()))
-                .unwrap(),
+            node.get(trie.db.as_ref(), path.cursor()).unwrap(),
             Some(value)
         );
     }
@@ -513,9 +483,7 @@ mod test {
         };
 
         let path = Nibbles::from_bytes(&[0x02]);
-        let (node, value) = node
-            .remove(trie.db.as_ref(), PathCursor::new(path.as_ref()))
-            .unwrap();
+        let (node, value) = node.remove(trie.db.as_ref(), path.cursor()).unwrap();
 
         assert!(matches!(node, Some(NodeRemoveResult::Mutated)));
         assert_eq!(value, None);
@@ -532,9 +500,7 @@ mod test {
         };
 
         let path = Nibbles::from_bytes(&[0x01]);
-        let (node, value) = node
-            .remove(trie.db.as_ref(), PathCursor::new(path.as_ref()))
-            .unwrap();
+        let (node, value) = node.remove(trie.db.as_ref(), path.cursor()).unwrap();
 
         assert!(matches!(node, Some(NodeRemoveResult::New(Node::Leaf(_)))));
         assert_eq!(value, Some(vec![0x01]));
@@ -554,9 +520,7 @@ mod test {
         };
 
         let path = Nibbles::from_bytes(&[0x00]);
-        let (node, value) = node
-            .remove(trie.db.as_ref(), PathCursor::new(path.as_ref()))
-            .unwrap();
+        let (node, value) = node.remove(trie.db.as_ref(), path.cursor()).unwrap();
 
         assert!(matches!(
             node,

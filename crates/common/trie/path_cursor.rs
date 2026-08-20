@@ -12,7 +12,7 @@ use crate::nibbles::{Nibbles, count_common_prefix};
 /// Because both accessors hand out slices of the original path with its lifetime
 /// (not borrows of the cursor), a key can be read out and the cursor moved on in
 /// the same expression, which is what the descent code does at every level.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug)]
 pub struct PathCursor<'a> {
     nibbles: &'a [u8],
     /// How many leading nibbles of `nibbles` have been consumed. Always `<= nibbles.len()`.
@@ -85,11 +85,14 @@ impl<'a> PathCursor<'a> {
     /// otherwise produce a cursor that silently reports an exhausted path.
     #[inline]
     pub fn advanced(self, n: usize) -> Self {
-        let idx = self.idx + n;
-        assert!(
-            idx <= self.nibbles.len(),
-            "path cursor advanced past the end of the path"
-        );
+        // A checked add, not `self.idx + n`: release builds have no overflow
+        // checks, and a wrapped index would sail past the bound below and then
+        // hand out silently wrong `consumed()` / `remaining()` slices.
+        let idx = self
+            .idx
+            .checked_add(n)
+            .filter(|idx| *idx <= self.nibbles.len())
+            .expect("path cursor advanced past the end of the path");
         Self {
             nibbles: self.nibbles,
             idx,
@@ -104,6 +107,7 @@ impl<'a> PathCursor<'a> {
 
     /// Compares the remaining path with `other`, comparing only their shared
     /// length so that one being a prefix of the other counts as equal.
+    #[inline]
     pub fn compare_prefix(&self, other: &[u8]) -> Ordering {
         let remaining = self.remaining();
         let len = remaining.len().min(other.len());
@@ -112,8 +116,16 @@ impl<'a> PathCursor<'a> {
 
     /// Copies the remaining path into an owned [`Nibbles`], for storing it as a
     /// new node's partial path or prefix.
+    #[inline]
     pub fn to_nibbles(&self) -> Nibbles {
         Nibbles::from_hex(self.remaining().to_vec())
+    }
+}
+
+impl<'a> From<&'a Nibbles> for PathCursor<'a> {
+    #[inline]
+    fn from(nibbles: &'a Nibbles) -> Self {
+        Self::new(nibbles.as_ref())
     }
 }
 
@@ -188,5 +200,23 @@ mod tests {
     #[should_panic(expected = "path cursor advanced past the end of the path")]
     fn advancing_past_the_end_panics() {
         let _ = PathCursor::new(&[1, 2]).advanced(3);
+    }
+
+    #[test]
+    #[should_panic(expected = "path cursor advanced past the end of the path")]
+    fn advancing_by_an_amount_that_would_wrap_panics() {
+        // Release builds have no overflow checks, so the bound has to be checked
+        // on the addition itself rather than on its (possibly wrapped) result.
+        let _ = PathCursor::new(&[1, 2]).advanced(1).advanced(usize::MAX);
+    }
+
+    #[test]
+    fn a_cursor_can_be_taken_from_an_owned_path() {
+        let path = Nibbles::from_hex(vec![1, 2, 3]);
+        assert_eq!(path.cursor().remaining(), &[1, 2, 3]);
+        assert_eq!(
+            PathCursor::from(&path).remaining(),
+            path.cursor().remaining()
+        );
     }
 }

@@ -210,7 +210,7 @@ mod test {
 
         let path = Nibbles::from_bytes(&[0x12]);
         assert_eq!(
-            node.get(PathCursor::new(path.as_ref())).unwrap(),
+            node.get(path.cursor()).unwrap(),
             Some(vec![0x12, 0x34, 0x56, 0x78]),
         );
     }
@@ -222,7 +222,7 @@ mod test {
         };
 
         let path = Nibbles::from_bytes(&[0x34]);
-        assert!(node.get(PathCursor::new(path.as_ref())).unwrap().is_none());
+        assert!(node.get(path.cursor()).unwrap().is_none());
     }
 
     #[test]
@@ -233,7 +233,7 @@ mod test {
 
         let path = Nibbles::from_bytes(&[0x12]);
         assert!(
-            node.insert(PathCursor::new(path.as_ref()), vec![0x13].into())
+            node.insert(path.cursor(), vec![0x13].into())
                 .unwrap()
                 .is_none()
         );
@@ -249,16 +249,13 @@ mod test {
         };
         let path = Nibbles::from_bytes(&[0x22]);
         let value = vec![0x23];
-        let node = node
-            .insert(PathCursor::new(path.as_ref()), value.clone().into())
-            .unwrap();
+        let node = node.insert(path.cursor(), value.clone().into()).unwrap();
         let node = match node {
             Some(Node::Branch(x)) => x,
             _ => panic!("expected a branch node"),
         };
         assert_eq!(
-            node.get(trie.db.as_ref(), PathCursor::new(path.as_ref()))
-                .unwrap(),
+            node.get(trie.db.as_ref(), path.cursor()).unwrap(),
             Some(value)
         );
     }
@@ -273,15 +270,11 @@ mod test {
         let path = Nibbles::from_bytes(&[0x13]);
         let value = vec![0x15];
 
-        let node = node
-            .insert(PathCursor::new(path.as_ref()), value.clone().into())
-            .unwrap();
+        let node = node.insert(path.cursor(), value.clone().into()).unwrap();
 
         assert!(matches!(node, Some(Node::Extension(_))));
         assert_eq!(
-            node.unwrap()
-                .get(trie.db.as_ref(), PathCursor::new(path.as_ref()))
-                .unwrap(),
+            node.unwrap().get(trie.db.as_ref(), path.cursor()).unwrap(),
             Some(value)
         );
     }
@@ -296,15 +289,11 @@ mod test {
         let path = Nibbles::from_bytes(&[0x12, 0x34]);
         let value = vec![0x17];
 
-        let node = node
-            .insert(PathCursor::new(path.as_ref()), value.clone().into())
-            .unwrap();
+        let node = node.insert(path.cursor(), value.clone().into()).unwrap();
 
         assert!(matches!(node, Some(Node::Extension(_))));
         assert_eq!(
-            node.unwrap()
-                .get(trie.db.as_ref(), PathCursor::new(path.as_ref()))
-                .unwrap(),
+            node.unwrap().get(trie.db.as_ref(), path.cursor()).unwrap(),
             Some(value)
         );
     }
@@ -319,15 +308,11 @@ mod test {
         let path = Nibbles::from_bytes(&[0x12]);
         let value = vec![0x17];
 
-        let node = node
-            .insert(PathCursor::new(path.as_ref()), value.clone().into())
-            .unwrap();
+        let node = node.insert(path.cursor(), value.clone().into()).unwrap();
 
         assert!(matches!(node, Some(Node::Extension(_))));
         assert_eq!(
-            node.unwrap()
-                .get(trie.db.as_ref(), PathCursor::new(path.as_ref()))
-                .unwrap(),
+            node.unwrap().get(trie.db.as_ref(), path.cursor()).unwrap(),
             Some(value)
         );
     }
@@ -347,7 +332,7 @@ mod test {
             vec![0x12, 0x34, 0x56, 0x78],
         );
         let path = Nibbles::from_bytes(&[0x12, 0x34]);
-        let (node, value) = node.remove(PathCursor::new(path.as_ref())).unwrap();
+        let (node, value) = node.remove(path.cursor()).unwrap();
 
         assert!(node.is_none());
         assert_eq!(value, Some(vec![0x12, 0x34, 0x56, 0x78]));
@@ -361,7 +346,7 @@ mod test {
         );
 
         let path = Nibbles::from_bytes(&[0x12]);
-        let (node, value) = node.remove(PathCursor::new(path.as_ref())).unwrap();
+        let (node, value) = node.remove(path.cursor()).unwrap();
 
         assert!(node.is_some());
         assert_eq!(value, None);

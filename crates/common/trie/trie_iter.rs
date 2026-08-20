@@ -131,7 +131,7 @@ impl TrieIterator {
         first_ge(
             self.db.as_ref(),
             root_path,
-            PathCursor::new(target_nibbles.as_ref()),
+            target_nibbles.cursor(),
             root_ref,
             &mut self.stack,
         )?;

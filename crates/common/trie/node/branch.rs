@@ -393,13 +393,11 @@ mod test {
         let path_0 = Nibbles::from_bytes(&[0x00]);
         let path_1 = Nibbles::from_bytes(&[0x10]);
         assert_eq!(
-            node.get(trie.db.as_ref(), PathCursor::new(path_0.as_ref()))
-                .unwrap(),
+            node.get(trie.db.as_ref(), path_0.cursor()).unwrap(),
             Some(vec![0x12, 0x34, 0x56, 0x78]),
         );
         assert_eq!(
-            node.get(trie.db.as_ref(), PathCursor::new(path_1.as_ref()))
-                .unwrap(),
+            node.get(trie.db.as_ref(), path_1.cursor()).unwrap(),
             Some(vec![0x34, 0x56, 0x78, 0x9A]),
         );
     }
@@ -415,11 +413,7 @@ mod test {
         };
 
         let path = Nibbles::from_bytes(&[0x20]);
-        assert_eq!(
-            node.get(trie.db.as_ref(), PathCursor::new(path.as_ref()))
-                .unwrap(),
-            None,
-        );
+        assert_eq!(node.get(trie.db.as_ref(), path.cursor()).unwrap(), None,);
     }
 
     #[test]
@@ -434,16 +428,11 @@ mod test {
         let path = Nibbles::from_bytes(&[2]);
         let value = vec![0x3];
 
-        node.insert(
-            trie.db.as_ref(),
-            PathCursor::new(path.as_ref()),
-            value.clone().into(),
-        )
-        .unwrap();
+        node.insert(trie.db.as_ref(), path.cursor(), value.clone().into())
+            .unwrap();
 
         assert_eq!(
-            node.get(trie.db.as_ref(), PathCursor::new(path.as_ref()))
-                .unwrap(),
+            node.get(trie.db.as_ref(), path.cursor()).unwrap(),
             Some(value)
         );
     }
@@ -461,16 +450,11 @@ mod test {
         let path = Nibbles::from_bytes(&[0x20]);
         let value = vec![0x21];
 
-        node.insert(
-            trie.db.as_ref(),
-            PathCursor::new(path.as_ref()),
-            value.clone().into(),
-        )
-        .unwrap();
+        node.insert(trie.db.as_ref(), path.cursor(), value.clone().into())
+            .unwrap();
 
         assert_eq!(
-            node.get(trie.db.as_ref(), PathCursor::new(path.as_ref()))
-                .unwrap(),
+            node.get(trie.db.as_ref(), path.cursor()).unwrap(),
             Some(value)
         );
     }
@@ -494,7 +478,7 @@ mod test {
         new_node
             .insert(
                 trie.db.as_ref(),
-                PathCursor::new(path.as_ref()).advanced(2),
+                path.cursor().advanced(2),
                 value.clone().into(),
             )
             .unwrap();
@@ -514,9 +498,7 @@ mod test {
         };
 
         let path = Nibbles::from_bytes(&[0x00]);
-        let (node, value) = node
-            .remove(trie.db.as_ref(), PathCursor::new(path.as_ref()))
-            .unwrap();
+        let (node, value) = node.remove(trie.db.as_ref(), path.cursor()).unwrap();
 
         assert!(matches!(node, Some(NodeRemoveResult::New(Node::Leaf(_)))));
         assert_eq!(value, Some(vec![0x00]));
@@ -534,9 +516,7 @@ mod test {
         };
 
         let path = Nibbles::from_bytes(&[0x00]);
-        let (node, value) = node
-            .remove(trie.db.as_ref(), PathCursor::new(path.as_ref()))
-            .unwrap();
+        let (node, value) = node.remove(trie.db.as_ref(), path.cursor()).unwrap();
 
         assert!(matches!(node, Some(NodeRemoveResult::Mutated)));
         assert_eq!(value, Some(vec![0x00]));
@@ -552,9 +532,7 @@ mod test {
         };
 
         let path = Nibbles::from_bytes(&[0x00]);
-        let (node, value) = node
-            .remove(trie.db.as_ref(), PathCursor::new(path.as_ref()))
-            .unwrap();
+        let (node, value) = node.remove(trie.db.as_ref(), path.cursor()).unwrap();
 
         assert!(matches!(node, Some(NodeRemoveResult::New(Node::Leaf(_)))));
         assert_eq!(value, Some(vec![0x00]));
@@ -570,9 +548,7 @@ mod test {
         };
 
         let path = Nibbles::from_bytes(&[]);
-        let (node, value) = node
-            .remove(trie.db.as_ref(), PathCursor::new(path.as_ref()))
-            .unwrap();
+        let (node, value) = node.remove(trie.db.as_ref(), path.cursor()).unwrap();
 
         assert!(matches!(node, Some(NodeRemoveResult::New(Node::Leaf(_)))));
         assert_eq!(value, Some(vec![0xFF]));
@@ -589,9 +565,7 @@ mod test {
         };
 
         let path = Nibbles::from_bytes(&[]);
-        let (node, value) = node
-            .remove(trie.db.as_ref(), PathCursor::new(path.as_ref()))
-            .unwrap();
+        let (node, value) = node.remove(trie.db.as_ref(), path.cursor()).unwrap();
 
         assert!(matches!(node, Some(NodeRemoveResult::Mutated)));
         assert_eq!(value, Some(vec![0xFF]));

@@ -1,5 +1,5 @@
 use crate::{
-    EMPTY_TRIE_HASH, Nibbles, Node, PathCursor, TrieDB, TrieError,
+    EMPTY_TRIE_HASH, Nibbles, Node, TrieDB, TrieError,
     node::{BranchNode, ExtensionNode, LeafNode},
     threadpool::ThreadPool,
 };
@@ -108,7 +108,7 @@ fn add_current_to_parent_and_write_queue(
     // Pure slicing of the current node's full path: skip the parent's prefix, take
     // the choice nibble that selects this node within the parent, and keep the rest
     // as the node's own stored prefix / partial path.
-    let mut cursor = PathCursor::new(current_node.path.as_ref());
+    let mut cursor = current_node.path.cursor();
     cursor.skip_prefix(parent_element.path.as_ref());
     let index = cursor
         .next()
@@ -312,7 +312,10 @@ where
             Node::Extension(extension_node) => {
                 extension_node.prefix.prepend(index as u8);
                 // This works because this target path is always length of 1 element,
-                // and we're just removing that one element
+                // and we're just removing that one element. Unlike the `Nibbles`
+                // cursor this used to be, `offset` panics rather than silently
+                // no-oping if that invariant is ever violated, so assert it.
+                debug_assert_eq!(target_path.len(), 1);
                 *target_path = target_path.offset(1);
                 extension_node
                     .compute_hash_no_alloc(&mut nodehash_buffer, &NativeCrypto)
@@ -321,7 +324,10 @@ where
             Node::Leaf(leaf_node) => {
                 leaf_node.partial.prepend(index as u8);
                 // This works because this target path is always length of 1 element,
-                // and we're just removing that one element
+                // and we're just removing that one element. Unlike the `Nibbles`
+                // cursor this used to be, `offset` panics rather than silently
+                // no-oping if that invariant is ever violated, so assert it.
+                debug_assert_eq!(target_path.len(), 1);
                 *target_path = target_path.offset(1);
                 leaf_node
                     .compute_hash_no_alloc(&mut nodehash_buffer, &NativeCrypto)

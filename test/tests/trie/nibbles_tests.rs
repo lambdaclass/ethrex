@@ -5,7 +5,7 @@ use std::cmp::Ordering;
 fn skip_prefix_true() {
     let a = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
     let b = Nibbles::from_hex(vec![1, 2, 3]);
-    let mut cursor = PathCursor::new(a.as_ref());
+    let mut cursor = a.cursor();
     assert!(cursor.skip_prefix(b.as_ref()));
     assert_eq!(cursor.remaining(), &[4, 5])
 }
@@ -14,7 +14,7 @@ fn skip_prefix_true() {
 fn skip_prefix_true_same_length() {
     let a = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
     let b = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
-    let mut cursor = PathCursor::new(a.as_ref());
+    let mut cursor = a.cursor();
     assert!(cursor.skip_prefix(b.as_ref()));
     assert!(cursor.is_empty());
 }
@@ -23,7 +23,7 @@ fn skip_prefix_true_same_length() {
 fn skip_prefix_longer_prefix() {
     let a = Nibbles::from_hex(vec![1, 2, 3]);
     let b = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
-    let mut cursor = PathCursor::new(a.as_ref());
+    let mut cursor = a.cursor();
     assert!(!cursor.skip_prefix(b.as_ref()));
     assert_eq!(cursor.remaining(), &[1, 2, 3])
 }
@@ -32,7 +32,7 @@ fn skip_prefix_longer_prefix() {
 fn skip_prefix_false() {
     let a = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
     let b = Nibbles::from_hex(vec![1, 2, 4]);
-    let mut cursor = PathCursor::new(a.as_ref());
+    let mut cursor = a.cursor();
     assert!(!cursor.skip_prefix(b.as_ref()));
     assert_eq!(cursor.remaining(), &[1, 2, 3, 4, 5])
 }
