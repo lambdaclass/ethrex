@@ -150,8 +150,8 @@ jobs:
               FLAGS+=" --sim.buildarg branch=$AMSTERDAM_EELS_COMMIT"
             else
               # All other forks (Prague, Osaka, Cancun, Shanghai, Paris) use the
-              # mainnet bundle (execution-specs tests@v20.0.0), which includes
-              # comprehensive coverage including ported static tests.
+              # mainnet bundle, which includes comprehensive coverage including
+              # ported static tests.
               # Config loaded from .github/config/hive/mainnet.yaml
               FLAGS+=" --sim.buildarg fixtures=$MAINNET_FIXTURES"
               FLAGS+=" --sim.buildarg branch=$MAINNET_EELS_COMMIT"
