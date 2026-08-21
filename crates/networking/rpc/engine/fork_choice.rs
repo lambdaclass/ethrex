@@ -382,9 +382,21 @@ async fn handle_forkchoice(
                     syncer.sync_to_head(fork_choice_state.head_block_hash);
                     ForkChoiceResponse::from(PayloadStatus::syncing())
                 }
-                InvalidForkChoice::Disconnected(_, _) | InvalidForkChoice::ElementNotFound(_) => {
+                InvalidForkChoice::Disconnected(_, _) => {
                     warn!("Invalid fork choice state. Reason: {:?}", forkchoice_error);
                     return Err(RpcErr::InvalidForkChoiceState(forkchoice_error.to_string()));
+                }
+                InvalidForkChoice::ElementNotFound(_) => {
+                    // A safe/finalized block we simply do not have yet is missing data, not an
+                    // inconsistent forkchoice: -38002 is for elements we DO hold but that are
+                    // ordered wrongly (`Unordered`) or sit on a disjoint branch (`Disconnected`).
+                    // Reporting the hard error here wedges a node that has fallen behind, because
+                    // unlike `Syncing`/`StateNotReachable` this arm never starts a sync: the very
+                    // blocks we are missing are never fetched, so every later FCU fails
+                    // identically and the node stays stuck for as long as the CL keeps asking.
+                    warn!("Fork choice element not found, syncing. Reason: {forkchoice_error:?}");
+                    syncer.sync_to_head(fork_choice_state.head_block_hash);
+                    ForkChoiceResponse::from(PayloadStatus::syncing())
                 }
                 InvalidForkChoice::TooDeepReorg { .. } => {
                     warn!("Rejecting fork choice update. Reason: {forkchoice_error}");
