@@ -4700,3 +4700,32 @@ fn wrong_blob_version_byte_reports_the_blob_hash_rule() {
         "expected Type3TxInvalidBlobVersionedHash, got {result:?}"
     );
 }
+
+/// A `max_fee_per_gas` that fits `U256` but whose product with `max_gas` does
+/// not makes the transaction unpayable. `APPROVE` collects that product, so
+/// before this was checked up front the arithmetic failed mid-approval and the
+/// transaction was reported as an unapproved payer.
+#[test]
+fn unrepresentable_max_cost_reports_the_product_overflow() {
+    let mut tx = frame_tx_with_frames(vec![Frame {
+        mode: u8::from(FrameMode::Default),
+        flags: 0,
+        target: Some(Address::from_low_u64_be(0xC0)),
+        gas_limit: 100_000,
+        value: U256::zero(),
+        data: Bytes::new(),
+    }]);
+    // Fits the field, but `max_fee_per_gas * max_gas` cannot.
+    tx.max_fee_per_gas = U256::one() << 255;
+
+    let (result, _db) = run_frame_tx(&[], tx);
+    assert!(
+        matches!(
+            result,
+            Err(VMError::TxValidation(
+                ethrex_levm::errors::TxValidationError::GasLimitPriceProductOverflow
+            ))
+        ),
+        "expected GasLimitPriceProductOverflow, got {result:?}"
+    );
+}

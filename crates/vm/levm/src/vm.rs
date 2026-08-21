@@ -1588,6 +1588,28 @@ impl<'a> VM<'a> {
             ));
         }
 
+        // GASLIMIT_PRICE_PRODUCT_OVERFLOW: `APPROVE` collects the transaction's
+        // maximum cost -- `max_gas` at `max_fee_per_gas` plus the blob cost at the
+        // base rate -- from the payer. A cost that cannot be represented makes the
+        // transaction unpayable, so reject it here. Without this the arithmetic
+        // fails inside `APPROVE`, the frame halts, nothing approves, and the
+        // transaction is reported as an unapproved payer instead of an overflow.
+        // Mirrors `compute_tx_max_cost`, which this must stay in step with.
+        let max_cost_representable = frame_tx
+            .max_fee_per_gas
+            .checked_mul(U256::from(max_gas))
+            .and_then(|gas_cost| {
+                U256::from(frame_tx.blob_versioned_hashes.len())
+                    .checked_mul(U256::from(131072u64))
+                    .and_then(|blob_gas| blob_gas.checked_mul(self.env.base_blob_fee_per_gas))
+                    .and_then(|blob_cost| gas_cost.checked_add(blob_cost))
+            });
+        if max_cost_representable.is_none() {
+            return Err(VMError::TxValidation(
+                crate::errors::TxValidationError::GasLimitPriceProductOverflow,
+            ));
+        }
+
         // A nonce at the u64 ceiling can never be incremented, so the transaction
         // is invalid on its own terms rather than merely mismatched against the
         // sender's nonce. Checked first so the specific rule is the one reported.
