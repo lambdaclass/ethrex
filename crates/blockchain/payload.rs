@@ -1,5 +1,6 @@
 use std::{
     cmp::{Ordering, max},
+    collections::BTreeMap,
     ops::Div,
     sync::Arc,
     time::{Duration, Instant},
@@ -15,7 +16,7 @@ use ethrex_common::{
     },
     types::{
         AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-        ChainConfig, MempoolTransaction, Receipt, Transaction, TxKind, TxType, Withdrawal,
+        ChainConfig, Fork, MempoolTransaction, Receipt, Transaction, TxType, Withdrawal,
         block_access_list::BlockAccessList,
         bloom_from_logs, calc_excess_blob_gas, calculate_base_fee_per_blob_gas,
         calculate_base_fee_per_gas, compute_receipts_root, compute_transactions_root,
@@ -269,6 +270,18 @@ impl PayloadBuildContext {
         storage: &Store,
         blockchain_type: &BlockchainType,
     ) -> Result<Self, EvmError> {
+        Self::new_with_block_hash_cache(payload, storage, blockchain_type, BTreeMap::new())
+    }
+
+    /// Same as `new`, but pre-seeds the vm database's BLOCKHASH cache.
+    /// Used by the t8n tool, where ancestor hashes come from the test's
+    /// environment rather than from stored canonical headers.
+    pub fn new_with_block_hash_cache(
+        payload: Block,
+        storage: &Store,
+        blockchain_type: &BlockchainType,
+        block_hash_cache: BTreeMap<BlockNumber, BlockHash>,
+    ) -> Result<Self, EvmError> {
         let config = storage.get_chain_config();
         let base_fee_per_blob_gas = calculate_base_fee_per_blob_gas(
             payload.header.excess_blob_gas.unwrap_or_default(),
@@ -282,7 +295,11 @@ impl PayloadBuildContext {
             .get_block_header_by_hash(payload.header.parent_hash)
             .map_err(|e| EvmError::DB(e.to_string()))?
             .ok_or_else(|| EvmError::DB("parent header not found".to_string()))?;
-        let vm_db = StoreVmDatabase::new(storage.clone(), parent_header)?;
+        let vm_db = StoreVmDatabase::new_with_block_hash_cache(
+            storage.clone(),
+            parent_header,
+            block_hash_cache,
+        )?;
         let mut vm = new_evm(blockchain_type, vm_db)?;
 
         // Enable BAL recording for Amsterdam and later forks (EIP-7928)
@@ -343,6 +360,15 @@ impl PayloadBuildContext {
     fn base_fee_per_gas(&self) -> Option<u64> {
         self.payload.header.base_fee_per_gas
     }
+}
+
+/// A transaction skipped by `build_payload_t8n`, with the reason string
+/// reported in the t8n `rejected` output.
+#[derive(Debug, Clone)]
+pub struct T8nRejectedTransaction {
+    pub index: usize,
+    pub hash: H256,
+    pub error: String,
 }
 
 #[derive(Debug, Clone)]
@@ -529,6 +555,161 @@ impl Blockchain {
         transactions: Vec<Transaction>,
     ) -> Result<PayloadBuildResult, ChainError> {
         self.build_payload_inner(payload, Some(transactions))
+    }
+
+    /// Builds a payload for the t8n tool from an explicit, ordered list of
+    /// transactions. Unlike `build_payload_with_transactions`, an invalid
+    /// transaction does not abort the build: it is skipped and reported, and
+    /// the remaining transactions are still applied (t8n semantics).
+    ///
+    /// `block_hash_cache` pre-seeds BLOCKHASH resolution with the ancestor
+    /// hashes supplied by the t8n environment (`blockHashes`), which have no
+    /// backing headers in the store.
+    ///
+    /// `state_test` selects state-test semantics, matching EELS: no system
+    /// operations of any kind — no beacon-root or history calls, no requests
+    /// extraction, no withdrawals — only the transactions themselves.
+    pub fn build_payload_t8n(
+        &self,
+        payload: Block,
+        transactions: Vec<Transaction>,
+        block_hash_cache: BTreeMap<BlockNumber, BlockHash>,
+        state_test: bool,
+    ) -> Result<
+        (
+            PayloadBuildResult,
+            Vec<T8nRejectedTransaction>,
+            Option<String>,
+        ),
+        ChainError,
+    > {
+        let mut context = PayloadBuildContext::new_with_block_hash_cache(
+            payload,
+            &self.storage,
+            &self.options.r#type,
+            block_hash_cache,
+        )?;
+
+        if !state_test && matches!(self.options.r#type, BlockchainType::L1) {
+            self.apply_system_operations(&mut context)?;
+        }
+        context.explicit_build = true;
+
+        let chain_config = context.chain_config();
+        let block_fork = chain_config.fork(context.payload.header.timestamp);
+        let mut rejected = Vec::new();
+        let base_fee = context.base_fee_per_gas();
+        for (index, tx) in transactions.into_iter().enumerate() {
+            // Classic block gas allowance: a transaction whose gas limit
+            // exceeds the remaining block gas is rejected. Amsterdam replaces
+            // this with the 2D inclusion check inside `apply_tx_to_payload`.
+            if !context.is_amsterdam && tx.gas_limit() > context.remaining_gas {
+                rejected.push(T8nRejectedTransaction {
+                    index,
+                    hash: tx.hash(&NativeCrypto),
+                    error: format!(
+                        "Gas allowance exceeded: transaction gas limit {} is \
+                         more than the block's remaining gas {}",
+                        tx.gas_limit(),
+                        context.remaining_gas
+                    ),
+                });
+                continue;
+            }
+            // Fork gating and chain id are otherwise only enforced at
+            // mempool admission, which explicit builds bypass.
+            let pre_fork = match tx.tx_type() {
+                TxType::EIP4844 if block_fork < Fork::Cancun => {
+                    Some("Type 3 transactions are not supported before the Cancun fork")
+                }
+                TxType::EIP7702 if block_fork < Fork::Prague => {
+                    Some("Type 4 transactions are not supported before the Prague fork")
+                }
+                _ => None,
+            };
+            if let Some(error) = pre_fork {
+                rejected.push(T8nRejectedTransaction {
+                    index,
+                    hash: tx.hash(&NativeCrypto),
+                    error: error.to_string(),
+                });
+                continue;
+            }
+            if let Some(tx_chain_id) = tx.chain_id()
+                && tx_chain_id != chain_config.chain_id
+            {
+                rejected.push(T8nRejectedTransaction {
+                    index,
+                    hash: tx.hash(&NativeCrypto),
+                    error: InvalidBlockError::InvalidTransactionChainId {
+                        have: tx_chain_id,
+                        want: chain_config.chain_id,
+                    }
+                    .to_string(),
+                });
+                continue;
+            }
+            let sender = match tx.sender(&NativeCrypto) {
+                Ok(sender) => sender,
+                Err(error) => {
+                    rejected.push(T8nRejectedTransaction {
+                        index,
+                        hash: tx.hash(&NativeCrypto),
+                        error: format!("Couldn't recover addresses with error: {error}"),
+                    });
+                    continue;
+                }
+            };
+            let tip = tx.effective_gas_tip(base_fee).unwrap_or_default();
+            let head = HeadTransaction {
+                tx: MempoolTransaction::new(tx, sender),
+                tip,
+            };
+            let hash = head.tx.hash(&NativeCrypto);
+            if let Err(error) = self.apply_tx_to_payload(head, &mut context) {
+                rejected.push(T8nRejectedTransaction {
+                    index,
+                    hash,
+                    error: error.to_string(),
+                });
+            }
+        }
+
+        // EIP-7928: Post-tx phase uses index n+1 for both requests and withdrawals.
+        // Order must match geth: requests (system calls) BEFORE withdrawals.
+        if !state_test
+            && context
+                .chain_config()
+                .is_amsterdam_activated(context.payload.header.timestamp)
+        {
+            let post_tx_index =
+                u32::try_from(context.payload.body.transactions.len() + 1).unwrap_or(u32::MAX);
+            context.vm.set_bal_index(post_tx_index);
+            // Record withdrawal recipients as touched addresses per EIP-7928
+            if let Some(recorder) = context.vm.db.bal_recorder_mut()
+                && let Some(withdrawals) = &context.payload.body.withdrawals
+            {
+                recorder.extend_touched_addresses(withdrawals.iter().map(|w| w.address));
+            }
+        }
+        // A failing request-producing system contract — reverting, or absent
+        // where the fork requires it (EIP-7002/7251/8282) — invalidates the
+        // block. The t8n still emits a full result, with the empty requests
+        // set matching EELS, and reports the failure as a block exception.
+        let mut block_exception = None;
+        if !state_test {
+            if let Err(error) = self.extract_requests(&mut context) {
+                block_exception = Some(error.to_string());
+                context.requests = context
+                    .chain_config()
+                    .is_prague_activated(context.payload.header.timestamp)
+                    .then_some(Vec::new());
+            }
+            self.apply_withdrawals(&mut context)?;
+        }
+        self.finalize_payload(&mut context)?;
+
+        Ok((context.into(), rejected, block_exception))
     }
 
     /// Shared block-building pipeline. When `explicit_transactions` is `None` the
@@ -905,11 +1086,12 @@ impl Blockchain {
             .as_ref()
             .map(|r| r.tx_checkpoint());
 
+        // Record the tx sender for BAL. The recipient is NOT recorded here:
+        // it is recorded when the prepare region loads it (default_hook), per
+        // the EIP-7928 v7.1.0 update — an EIP-7702 auth halt before the
+        // recipient load must exclude it. Mirrors `execute_block`.
         if let Some(recorder) = context.vm.db.bal_recorder_mut() {
             recorder.record_touched_address(head.tx.sender());
-            if let TxKind::Call(to) = head.to() {
-                recorder.record_touched_address(to);
-            }
         }
 
         let receipt = match self.apply_transaction(&head, context) {
@@ -995,9 +1177,16 @@ impl Blockchain {
             ))
             .into());
         }
-        if context.blobs_bundle.blobs.len() + blob_count > max_blob_number_per_block {
-            // This error will only be used for debug tracing
-            return Err(EvmError::Custom("max data blobs reached".to_string()).into());
+        // Count already-included blobs via the accumulated header blob gas:
+        // in mempool builds this equals the blobs-bundle length, but explicit
+        // builds (`testing_buildBlockV1`, t8n) carry no sidecars, where the
+        // bundle length would stay zero and never enforce the block cap.
+        let included_blobs =
+            context.payload.header.blob_gas_used.unwrap_or_default() / u64::from(GAS_PER_BLOB);
+        if included_blobs as usize + blob_count > max_blob_number_per_block {
+            return Err(ChainError::InvalidBlock(
+                InvalidBlockError::ExceededMaxBlobGasPerBlock,
+            ));
         };
         // Apply transaction
         let receipt = apply_plain_transaction(head, context)?;
