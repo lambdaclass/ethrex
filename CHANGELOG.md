@@ -12,6 +12,10 @@
 
 ## Perf
 
+### 2026-08-10
+
+- Compile the struct-log tracer and EIP-8141 validation-observer checks out of zkVM guest builds [#7128](https://github.com/lambdaclass/ethrex/pull/7128)
+
 ### 2026-07-22
 
 - Unify full-sync batch import onto the per-block execution pipeline, validating every block's state root and reusing the pipeline's BAL-driven parallel execution instead of the bespoke "execute all, apply once" batch path [#7008](https://github.com/lambdaclass/ethrex/pull/7008)
