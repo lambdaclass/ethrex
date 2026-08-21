@@ -12,6 +12,10 @@
 
 ## Perf
 
+### 2026-08-21
+
+- Replace `RLPEncode::encode`'s `&mut dyn BufMut` sink with a concrete `&mut Vec<u8>`, removing a virtual call per encoded field, and write list payloads first so the length prefix is backpatched in place instead of pre-computed by a full `length()` re-encode. Together these drop the per-list scratch allocation `Encoder` used to make and the double traversal of every nested structure: `BlockHeader` -85%, `Receipt` -74%, `EIP1559Transaction` -73%, trie `Node::Leaf` -66%, `Node::Branch` -45% (-22% median across the RLP encode benchmarks) [#7180](https://github.com/lambdaclass/ethrex/pull/7180)
+
 ### 2026-07-22
 
 - Unify full-sync batch import onto the per-block execution pipeline, validating every block's state root and reusing the pipeline's BAL-driven parallel execution instead of the bespoke "execute all, apply once" batch path [#7008](https://github.com/lambdaclass/ethrex/pull/7008)

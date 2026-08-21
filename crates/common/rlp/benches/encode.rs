@@ -663,6 +663,86 @@ fn bench_encode_trie(c: &mut Criterion) {
     group.finish();
 }
 
+/// Encodes into a single reused, pre-grown buffer. Unlike the `encode_to_vec`
+/// groups this excludes allocation, so it isolates the cost of the write path
+/// itself (i.e. the `&mut Vec<u8>` dispatch).
+fn bench_encode_into_buf(c: &mut Criterion) {
+    let mut group = c.benchmark_group("encode_into_buf");
+
+    fn run<T: RLPEncode>(b: &mut Bencher, data: &[T]) {
+        let mut buf: Vec<u8> = Vec::with_capacity(1 << 20);
+        b.iter(|| {
+            buf.clear();
+            for item in data {
+                RLPEncode::encode(item, &mut buf);
+            }
+            black_box(buf.len());
+        });
+    }
+
+    let mut rng = rand::rng();
+
+    let headers: Vec<BlockHeader> = (0..100).map(|_| random_block_header(&mut rng)).collect();
+    group.bench_function(BenchmarkId::new("BlockHeader", 100), |b| run(b, &headers));
+
+    let receipts: Vec<Receipt> = (0..1000)
+        .map(|_| Receipt {
+            tx_type: TxType::Legacy,
+            succeeded: rng.random(),
+            cumulative_gas_used: rng.random(),
+            logs: (0..2).map(|_| random_log(&mut rng)).collect(),
+            payer: None,
+            frame_receipts: None,
+        })
+        .collect();
+    group.bench_function(BenchmarkId::new("Receipt", 1000), |b| run(b, &receipts));
+
+    let txs: Vec<EIP1559Transaction> = (0..100).map(|_| random_eip1559_tx(&mut rng)).collect();
+    group.bench_function(BenchmarkId::new("EIP1559Transaction", 100), |b| {
+        run(b, &txs)
+    });
+
+    let branches: Vec<Node> = (0..1000)
+        .map(|_| {
+            let mut choices = BranchNode::EMPTY_CHOICES;
+            for i in [0, 3, 7, 15] {
+                choices[i] = NodeRef::Hash(NodeHash::Hashed(H256(rng.random())));
+            }
+            Node::Branch(Box::new(BranchNode::new(choices)))
+        })
+        .collect();
+    group.bench_function(BenchmarkId::new("Node::Branch", 1000), |b| {
+        run(b, &branches)
+    });
+
+    let leaves: Vec<Node> = (0..1000)
+        .map(|_| {
+            let nibbles = Nibbles::from_raw(
+                &(0..10).map(|_| rng.random::<u8>()).collect::<Vec<_>>(),
+                true,
+            );
+            let value: Vec<u8> = (0..32).map(|_| rng.random::<u8>()).collect();
+            Node::Leaf(LeafNode::new(nibbles, value))
+        })
+        .collect();
+    group.bench_function(BenchmarkId::new("Node::Leaf", 1000), |b| run(b, &leaves));
+
+    let words: Vec<u64> = (0..10_000).map(|_| rng.random()).collect();
+    group.bench_function(BenchmarkId::new("u64", 10000), |b| run(b, &words));
+
+    let hashes: Vec<H256> = (0..10_000).map(|_| H256(rng.random())).collect();
+    group.bench_function(BenchmarkId::new("H256", 10000), |b| run(b, &hashes));
+
+    let lists: Vec<Vec<u64>> = (0..1000)
+        .map(|_| (0..16).map(|_| rng.random::<u64>()).collect())
+        .collect();
+    group.bench_function(BenchmarkId::new("Vec<u64>", "len=16/1000"), |b| {
+        run(b, &lists)
+    });
+
+    group.finish();
+}
+
 fn bench_encode_transactions(c: &mut Criterion) {
     let mut group = c.benchmark_group("encode_transactions");
 
@@ -713,5 +793,6 @@ criterion_group!(
     bench_encode_transactions,
     bench_encode_trie,
     bench_encode_tuples,
+    bench_encode_into_buf,
 );
 criterion_main!(benches);
