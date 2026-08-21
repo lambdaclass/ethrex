@@ -34,6 +34,15 @@ impl IlStateProvider for FakeState {
     ) -> Result<Option<AccountStateView>, IlStateProviderError> {
         Ok(self.accounts.borrow().get(&address).copied())
     }
+
+    // The builder never reads code (mempool admission already rejects
+    // contract senders); the fake models every account as code-less.
+    fn get_code(
+        &self,
+        _address: Address,
+    ) -> Result<Option<ethrex_common::Bytes>, IlStateProviderError> {
+        Ok(None)
+    }
 }
 
 fn addr(byte: u8) -> Address {

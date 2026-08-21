@@ -2516,6 +2516,10 @@ impl Blockchain {
         // Snapshot the header for the satisfaction check (intrinsic-gas fork +
         // base fee) before `block` is moved into the inner pipeline.
         let header = block.header.clone();
+        // Withdrawals too: the satisfaction check evaluates senders at the
+        // post-transactions, PRE-withdrawals point (EELS `apply_body` order),
+        // so their credits must be discounted from the post-state balances.
+        let withdrawals = block.body.withdrawals.clone().unwrap_or_default();
 
         let (_, _, result) = self.add_block_pipeline_inner(block, bal, false, None)?;
         result?;
@@ -2558,6 +2562,7 @@ impl Blockchain {
         validator
             .refresh_all_from(&post_state, &crypto)
             .map_err(|e| ChainError::Custom(format!("IL validator refresh failed: {e}")))?;
+        validator.discount_withdrawals(&withdrawals);
 
         match validator.check(
             il,

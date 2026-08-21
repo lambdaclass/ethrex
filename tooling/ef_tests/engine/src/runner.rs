@@ -3,9 +3,7 @@ use std::fmt;
 use ethrex_common::H256;
 use serde_json::Value;
 
-use crate::fixture::{
-    EngineFixture, FixturePayload, IL_UNSATISFIED_STATUS, ValidationError, is_pre_paris,
-};
+use crate::fixture::{EngineFixture, FixturePayload, ValidationError, is_pre_paris};
 use crate::harness::{Backend, EngineApiHarness};
 
 // ─── Public types ─────────────────────────────────────────────────────────────
@@ -68,6 +66,11 @@ pub enum FixtureFailure {
         expected: String,
         got: String,
         validation_error: Option<String>,
+    },
+    IlSatisfiedMismatch {
+        index: usize,
+        expected: bool,
+        got: Option<bool>,
     },
     WrongErrorCode {
         index: usize,
@@ -143,6 +146,14 @@ impl fmt::Display for FixtureFailure {
                 ),
                 None => write!(f, "wrong_status[{index}]  expected={expected}  got={got}"),
             },
+            FixtureFailure::IlSatisfiedMismatch {
+                index,
+                expected,
+                got,
+            } => write!(
+                f,
+                "il_satisfied_mismatch[{index}]  expected={expected}  got={got:?}"
+            ),
             FixtureFailure::WrongErrorCode {
                 index,
                 want,
@@ -239,9 +250,11 @@ pub async fn run_fixture(
 
     // 5. Per-payload loop (mirrors test_via_engine.py:124–240)
     for (i, payload) in fix.engine_new_payloads.iter().enumerate() {
-        // `engine_call()` resolves the version and params, appending the
-        // FOCIL inclusion list (and remapping to V6) when present.
-        let (np_version, np_params) = payload.engine_call();
+        // `params` is the full positional argument list for
+        // `engine_newPayloadV{newPayloadVersion}`; V6 fixtures carry the
+        // EIP-7805 inclusion list as the fifth entry.
+        let np_version = payload.new_payload_version;
+        let np_params = &payload.params;
         // zkevm fixtures carry an expected witness per payload: route those
         // through `engine_newPayloadWithWitnessV5` (same params, same status
         // semantics) so the engine-side witness generation is exercised and
@@ -249,9 +262,9 @@ pub async fn run_fixture(
         // == 6) never carry a witness, so the two paths don't overlap.
         let with_witness = np_version == 5 && payload.execution_witness.is_some();
         let resp = if with_witness {
-            Box::pin(harness.new_payload_with_witness(&np_params)).await
+            Box::pin(harness.new_payload_with_witness(np_params)).await
         } else {
-            Box::pin(harness.new_payload(np_version, &np_params)).await
+            Box::pin(harness.new_payload(np_version, np_params)).await
         }
         .map_err(|e| FixtureFailure::PayloadRpc {
             index: i,
@@ -463,31 +476,9 @@ fn check_payload_response(
         })?
         .to_string();
 
-    // Expected status: VALID / INVALID, or a FOCIL `INCLUSION_LIST_UNSATISFIED`
-    // when the fixture sets an explicit `status`.
+    // Expected status: VALID / INVALID, derived from `validationError`.
     let expected = payload.expected_status();
-    if expected == IL_UNSATISFIED_STATUS {
-        // EIP-7805: `PayloadStatusV2` reports an unsatisfied inclusion list as a
-        // `VALID` payload carrying `inclusionListSatisfied: false` — the block is
-        // valid, the consensus layer just will not attest to it. The fixtures
-        // predate that structure and still name a third status value, so the
-        // fixture's sentinel is checked against the pair that now carries the
-        // same verdict.
-        let satisfied = result
-            .get("inclusionListSatisfied")
-            .and_then(|v| v.as_bool());
-        if status != "VALID" || satisfied != Some(false) {
-            return Err(FixtureFailure::WrongStatus {
-                index,
-                expected: format!("VALID + inclusionListSatisfied=false ({IL_UNSATISFIED_STATUS})"),
-                got: format!("{status} + inclusionListSatisfied={satisfied:?}"),
-                validation_error: result
-                    .get("validationError")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string()),
-            });
-        }
-    } else if status != expected {
+    if status != expected {
         let validation_error = result
             .get("validationError")
             .and_then(|v| v.as_str())
@@ -498,6 +489,30 @@ fn check_payload_response(
             got: status,
             validation_error,
         });
+    }
+
+    // EIP-7805: the fixture's `inclusionListSatisfied` must be matched exactly
+    // by the `PayloadStatusV2` field of the same name (tests-focil-devnet@v0.2.0
+    // release notes). Checked only when the payload is deemed `VALID`:
+    // execution-apis `bogota.md` mandates `inclusionListSatisfied` MUST be
+    // `null` for any other status, yet the fill records the transition tool's
+    // internal verdict (trivially `true`: every such fixture carries an empty
+    // list) on `INVALID` payloads too. Matching those would force a client to
+    // violate the API spec the release notes themselves cite as the field's
+    // definition, so on `INVALID` payloads the artifact is ignored.
+    if status == "VALID"
+        && let Some(expected_sat) = payload.inclusion_list_satisfied
+    {
+        let got = result
+            .get("inclusionListSatisfied")
+            .and_then(|v| v.as_bool());
+        if got != Some(expected_sat) {
+            return Err(FixtureFailure::IlSatisfiedMismatch {
+                index,
+                expected: expected_sat,
+                got,
+            });
+        }
     }
 
     // Expected error code but got success response

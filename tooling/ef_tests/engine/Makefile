@@ -21,45 +21,24 @@ AMSTERDAM_STAMP := $(SPECTEST_VECTORS_DIR)/.amsterdam_overlay
 # fixtures/blockchain_tests_engine/for_bogota/. The datatest harness walks
 # vectors/eest/ recursively, so they're discovered wherever they land in the tree.
 #
-# The pinned release, tests-focil@v0.1.0, CANNOT pass on this branch, and that is
-# the spec-correct outcome rather than a FOCIL defect. It was filled 2026-06-22
-# from execution-specs `devnets/focil/0`, whose Amsterdam base predates the one
-# this branch implements, so its genesis predeploys no EIP-8282 builder
-# deposit/exit contracts -- and EIP-8282 states that if either address has no
-# code once the EIP is active, every block from activation onward MUST be
-# invalid. ethrex rejecting all 24 is exactly that rule firing.
+# The pinned release, tests-focil-devnet@v0.2.0, fills every fixture on the
+# "Bogota" network whose Amsterdam base is glamsterdam-devnet-8 -- the same
+# base this branch implements. (Its predecessor tests-focil@v0.1.0 was filled
+# on an older Amsterdam whose genesis predeployed no EIP-8282 builder
+# deposit/exit contracts, so rejecting its 24 fixtures was the spec-correct
+# outcome; this re-pin aligned the fill base as that analysis predicted.)
+# Besides the eip7805_focil scenarios, the bundle carries inclusion-list
+# variants auto-generated from prior-fork blockchain/state tests: the last
+# transaction of the last block moves into the inclusion list, expecting
+# `inclusionListSatisfied: false` when it was includable and `true` when it
+# was not (execution-specs#3337).
 #
-# The FOCIL logic itself is verified against the SAME upstream test sources,
-# refilled against the Amsterdam this branch implements: **all 24 pass**, inside
-# a fully green engine suite (11014 tests / 75535 fixtures). Reproduce with
-# `focil-eest-fill.patch` in this directory, applied to execution-specs
-# `eips/bogota/eip-7805` @ e5dc8456f:
-#
-#   git clone -b eips/bogota/eip-7805 https://github.com/ethereum/execution-specs
-#   cd execution-specs && git apply /path/to/focil-eest-fill.patch && uv sync
-#   uv run fill tests/bogota/eip7805_focil --fork Bogota --output fx --clean
-#   # then overlay fx/blockchain_tests_engine/for_bogota onto vectors/eest/
-#
-# The patch carries four repairs, none of them FOCIL logic:
-#   * t8n handed `check_inclusion_list_transactions` decoded transactions where
-#     it expects `LegacyTransaction | Bytes`, so nothing filled at all;
-#   * the scenarios sized the block gas limit to their transactions alone,
-#     leaving no budget for the block's own EIP-7928 access list (fixed by
-#     raising the limit and burning the difference on ballast transactions, so
-#     `remaining_gas` -- every "fits"/"does not fit" boundary -- is unchanged);
-#   * one scenario's funding transfer predates value-carrying transfers costing
-#     extra intrinsic gas (`sends_value=True`);
-#   * that branch's Amsterdam is NEWER than glamsterdam-devnet-8 (ACCOUNT_WRITE
-#     8000 vs 9000, CREATE_ACCESS from COLD_STORAGE_ACCESS rather than
-#     COLD_ACCOUNT_ACCESS), pricing a contract creation's intrinsic at 23000
-#     against devnet-8's 24000. Aligning just that pricing is what upstream's
-#     announced EELS/EEST devnet-8 rebase will do; with it, the last scenario
-#     agrees and no client change is needed.
-#
-# So: re-pin FOCIL_URL to the devnet-8 tests-focil release when it lands, and
-# this goes green on its own. Until then the vectors here are the stale release
-# and are expected to fail; coverage comes from the refill above plus the
-# in-repo suite (test/tests/blockchain/focil_tests.rs and inclusion_list_*).
+# 127 of those generated variants ship expected-VALID blocks that the EELS
+# spec at the same tag rejects (stale `blobGasUsed` left by the variant
+# generator; one block whose access list exceeds the EIP-7928 item cap at its
+# pinned 21k gas limit). They are enumerated -- with the full analysis and the
+# exact failure signature the harness enforces -- in
+# tests/upstream_broken_fixtures.txt.
 FOCIL_FIXTURES_FILE := .fixtures_url_focil
 FOCIL_ARTIFACT := focil-tests.tar.gz
 FOCIL_URL := $(shell cat $(FOCIL_FIXTURES_FILE))
