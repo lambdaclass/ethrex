@@ -54,6 +54,16 @@ impl std::fmt::Debug for RocksDBBackend {
     }
 }
 
+/// Resolves a table's column family handle, erroring if the CF is missing.
+/// The handle borrows `db`, so the caller's borrow decides its lifetime.
+fn cf_handle<'a>(
+    db: &'a DBWithThreadMode<MultiThreaded>,
+    table: &str,
+) -> Result<Arc<rocksdb::BoundColumnFamily<'a>>, StoreError> {
+    db.cf_handle(table)
+        .ok_or_else(|| StoreError::Custom(format!("Table {table} not found")))
+}
+
 /// Extracts a RocksDB statistics ticker value from a `get_statistics()` dump.
 /// Ticker lines look like `rocksdb.block.cache.hit COUNT : 12345`.
 fn parse_stats_ticker(stats: &str, ticker: &str) -> u64 {
@@ -354,10 +364,7 @@ impl Drop for RocksDBBackend {
 
 impl StorageBackend for RocksDBBackend {
     fn clear_table(&self, table: &'static str) -> Result<(), StoreError> {
-        let cf = self
-            .db
-            .cf_handle(table)
-            .ok_or_else(|| StoreError::Custom("Column family not found".to_string()))?;
+        let cf = cf_handle(&self.db, table)?;
 
         let mut iter = self.db.iterator_cf(&cf, rocksdb::IteratorMode::Start);
         let mut batch = WriteBatch::default();
@@ -451,9 +458,7 @@ impl StorageBackend for RocksDBBackend {
     ) -> Result<Box<dyn StorageLockedView>, StoreError> {
         let db = Box::leak(Box::new(self.db.clone()));
         let lock = db.snapshot();
-        let cf = db
-            .cf_handle(table_name)
-            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table_name)))?;
+        let cf = cf_handle(db, table_name)?;
 
         Ok(Box::new(RocksDBLocked { db, lock, cf }))
     }
@@ -496,10 +501,7 @@ pub struct RocksDBReadTx {
 
 impl StorageReadView for RocksDBReadTx {
     fn get(&self, table: &'static str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
-        let cf = self
-            .db
-            .cf_handle(table)
-            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
+        let cf = cf_handle(&self.db, table)?;
 
         self.db
             .get_cf(&cf, key)
@@ -533,10 +535,7 @@ impl StorageReadView for RocksDBReadTx {
         table: &'static str,
         prefix: &[u8],
     ) -> Result<Box<dyn Iterator<Item = PrefixResult> + '_>, StoreError> {
-        let cf = self
-            .db
-            .cf_handle(table)
-            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
+        let cf = cf_handle(&self.db, table)?;
 
         let iter = self.db.prefix_iterator_cf(&cf, prefix).map(|result| {
             result.map_err(|e| StoreError::Custom(format!("Failed to iterate: {e}")))
@@ -545,10 +544,7 @@ impl StorageReadView for RocksDBReadTx {
     }
 
     fn first_key(&self, table: &'static str) -> Result<Option<Vec<u8>>, StoreError> {
-        let cf = self
-            .db
-            .cf_handle(table)
-            .ok_or_else(|| StoreError::Custom(format!("Table {table} not found")))?;
+        let cf = cf_handle(&self.db, table)?;
         let mut iter = self.db.iterator_cf(&cf, rocksdb::IteratorMode::Start);
         match iter.next() {
             Some(Ok((k, _))) => Ok(Some(k.to_vec())),
@@ -558,10 +554,7 @@ impl StorageReadView for RocksDBReadTx {
     }
 
     fn last_key(&self, table: &'static str) -> Result<Option<Vec<u8>>, StoreError> {
-        let cf = self
-            .db
-            .cf_handle(table)
-            .ok_or_else(|| StoreError::Custom(format!("Table {table} not found")))?;
+        let cf = cf_handle(&self.db, table)?;
         let mut iter = self.db.iterator_cf(&cf, rocksdb::IteratorMode::End);
         match iter.next() {
             Some(Ok((k, _))) => Ok(Some(k.to_vec())),
@@ -581,10 +574,7 @@ pub struct RocksDBWriteTx {
 
 impl StorageWriteBatch for RocksDBWriteTx {
     fn put(&mut self, table: &'static str, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
-        let cf = self
-            .db
-            .cf_handle(table)
-            .ok_or_else(|| StoreError::Custom(format!("Table {table:?} not found")))?;
+        let cf = cf_handle(&self.db, table)?;
         self.batch.put_cf(&cf, key, value);
         Ok(())
     }
@@ -596,10 +586,7 @@ impl StorageWriteBatch for RocksDBWriteTx {
         table: &'static str,
         batch: Vec<(Vec<u8>, Vec<u8>)>,
     ) -> Result<(), StoreError> {
-        let cf = self
-            .db
-            .cf_handle(table)
-            .ok_or_else(|| StoreError::Custom(format!("Table {table:?} not found")))?;
+        let cf = cf_handle(&self.db, table)?;
 
         for (key, value) in batch {
             self.batch.put_cf(&cf, key, value);
@@ -608,10 +595,7 @@ impl StorageWriteBatch for RocksDBWriteTx {
     }
 
     fn delete(&mut self, table: &'static str, key: &[u8]) -> Result<(), StoreError> {
-        let cf = self
-            .db
-            .cf_handle(table)
-            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
+        let cf = cf_handle(&self.db, table)?;
 
         self.batch.delete_cf(&cf, key);
         Ok(())
@@ -623,10 +607,7 @@ impl StorageWriteBatch for RocksDBWriteTx {
         start: &[u8],
         end: &[u8],
     ) -> Result<(), StoreError> {
-        let cf = self
-            .db
-            .cf_handle(table)
-            .ok_or_else(|| StoreError::Custom(format!("Table {table:?} not found")))?;
+        let cf = cf_handle(&self.db, table)?;
         self.batch.delete_range_cf(&cf, start, end);
         Ok(())
     }
@@ -641,10 +622,7 @@ impl StorageWriteBatch for RocksDBWriteTx {
                 "merge not supported for table {table} (no merge operator registered)"
             )));
         }
-        let cf = self
-            .db
-            .cf_handle(table)
-            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
+        let cf = cf_handle(&self.db, table)?;
 
         self.batch.merge_cf(&cf, key, operand);
         Ok(())
