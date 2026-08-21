@@ -2379,6 +2379,37 @@ impl Store {
         state_trie: &mut Trie,
         account_updates: impl IntoIterator<Item = &'a AccountUpdate>,
     ) -> Result<AccountUpdatesList, StoreError> {
+        self.apply_account_updates_from_trie_inner(state_trie, account_updates, None)
+    }
+
+    /// Performs the same actions as apply_account_updates_from_trie
+    ///  but also returns the used storage tries with witness recorded
+    pub fn apply_account_updates_from_trie_with_witness(
+        &self,
+        mut state_trie: Trie,
+        account_updates: &[AccountUpdate],
+        mut storage_tries: StorageTries,
+    ) -> Result<(StorageTries, AccountUpdatesList), StoreError> {
+        let account_updates_list = self.apply_account_updates_from_trie_inner(
+            &mut state_trie,
+            account_updates,
+            Some(&mut storage_tries),
+        )?;
+        Ok((storage_tries, account_updates_list))
+    }
+
+    /// Applies account updates to the given state trie.
+    ///
+    /// With `storage_tries`, storage tries are opened through [`TrieLogger`] and
+    /// cached in the map (keyed by unhashed address) so witness recording spans
+    /// updates; without it, a fresh storage trie is opened per account at its
+    /// current storage root.
+    fn apply_account_updates_from_trie_inner<'a>(
+        &self,
+        state_trie: &mut Trie,
+        account_updates: impl IntoIterator<Item = &'a AccountUpdate>,
+        mut storage_tries: Option<&mut StorageTries>,
+    ) -> Result<AccountUpdatesList, StoreError> {
         let mut ret_storage_updates = Vec::new();
         let mut code_updates = Vec::new();
         let state_root = state_trie.hash_no_commit(&NativeCrypto);
@@ -2409,8 +2440,31 @@ impl Store {
             }
             // Store the added storage in the account's storage trie and compute its new root
             if !update.added_storage.is_empty() {
-                let mut storage_trie =
-                    self.open_storage_trie(hashed_address, state_root, account_state.storage_root)?;
+                let mut local_trie;
+                let storage_trie = match storage_tries.as_deref_mut() {
+                    Some(tries) => {
+                        let (_witness, storage_trie) = match tries.entry(update.address) {
+                            Entry::Occupied(value) => value.into_mut(),
+                            Entry::Vacant(vacant) => {
+                                let trie = self.open_storage_trie(
+                                    hashed_address,
+                                    state_root,
+                                    account_state.storage_root,
+                                )?;
+                                vacant.insert(TrieLogger::open_trie(trie))
+                            }
+                        };
+                        storage_trie
+                    }
+                    None => {
+                        local_trie = self.open_storage_trie(
+                            hashed_address,
+                            state_root,
+                            account_state.storage_root,
+                        )?;
+                        &mut local_trie
+                    }
+                };
                 for (storage_key, storage_value) in &update.added_storage {
                     let hashed_key = hash_key(storage_key);
                     if storage_value.is_zero() {
@@ -2438,102 +2492,6 @@ impl Store {
             storage_updates: ret_storage_updates,
             code_updates,
         })
-    }
-
-    /// Performs the same actions as apply_account_updates_from_trie
-    ///  but also returns the used storage tries with witness recorded
-    pub fn apply_account_updates_from_trie_with_witness(
-        &self,
-        mut state_trie: Trie,
-        account_updates: &[AccountUpdate],
-        mut storage_tries: StorageTries,
-    ) -> Result<(StorageTries, AccountUpdatesList), StoreError> {
-        let mut ret_storage_updates = Vec::new();
-
-        let mut code_updates = Vec::new();
-
-        let state_root = state_trie.hash_no_commit(&NativeCrypto);
-
-        for update in account_updates.iter() {
-            let hashed_address = hash_address(&update.address);
-
-            if update.removed {
-                // Remove account from trie
-                state_trie.remove(&hashed_address)?;
-
-                continue;
-            }
-
-            // Add or update AccountState in the trie
-            // Fetch current state or create a new state to be inserted
-            let mut account_state = match state_trie.get(&hashed_address)? {
-                Some(encoded_state) => AccountState::decode(&encoded_state)?,
-                None => AccountState::default(),
-            };
-
-            if update.removed_storage {
-                account_state.storage_root = EMPTY_TRIE_HASH;
-            }
-
-            if let Some(info) = &update.info {
-                account_state.nonce = info.nonce;
-
-                account_state.balance = info.balance;
-
-                account_state.code_hash = info.code_hash;
-
-                // Store updated code in DB
-                if let Some(code) = &update.code {
-                    code_updates.push((info.code_hash, code.clone()));
-                }
-            }
-
-            // Store the added storage in the account's storage trie and compute its new root
-            if !update.added_storage.is_empty() {
-                let (_witness, storage_trie) = match storage_tries.entry(update.address) {
-                    Entry::Occupied(value) => value.into_mut(),
-                    Entry::Vacant(vacant) => {
-                        let trie = self.open_storage_trie(
-                            H256::from_slice(&hashed_address),
-                            state_root,
-                            account_state.storage_root,
-                        )?;
-                        vacant.insert(TrieLogger::open_trie(trie))
-                    }
-                };
-
-                for (storage_key, storage_value) in &update.added_storage {
-                    let hashed_key = hash_key(storage_key);
-
-                    if storage_value.is_zero() {
-                        storage_trie.remove(&hashed_key)?;
-                    } else {
-                        storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
-                    }
-                }
-
-                let (storage_hash, storage_updates) =
-                    storage_trie.collect_changes_since_last_hash(&NativeCrypto);
-
-                account_state.storage_root = storage_hash;
-
-                ret_storage_updates.push((H256::from_slice(&hashed_address), storage_updates));
-            }
-
-            state_trie.insert(hashed_address, account_state.encode_to_vec())?;
-        }
-
-        let (state_trie_hash, state_updates) =
-            state_trie.collect_changes_since_last_hash(&NativeCrypto);
-
-        let account_updates_list = AccountUpdatesList {
-            state_trie_hash,
-            state_updates,
-            storage_updates: ret_storage_updates,
-            code_updates,
-        };
-
-        Ok((storage_tries, account_updates_list))
     }
 
     /// Adds all genesis accounts and returns the genesis block's state_root
