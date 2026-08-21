@@ -1557,10 +1557,43 @@ impl<'a> VM<'a> {
         // accounts).
         let sender = frame_tx.sender;
 
-        // Validate static constraints (frame count, reserved modes, atomic batch flags)
-        if let Err(_e) = frame_tx.validate_static_constraints() {
+        // EIP-8141 blob rules that carry their own EIP-4844 exception: a wrong
+        // version byte is `TYPE_3_TX_INVALID_BLOB_VERSIONED_HASH` and too many
+        // blobs is `TYPE_3_TX_BLOB_COUNT_EXCEEDED`, not a generic frame-format
+        // error. Checked before `validate_static_constraints`, which also
+        // rejects a bad version byte but cannot name which rule failed.
+        self.validate_frame_tx_blobs(&frame_tx)?;
+
+        // Validate static constraints (frame count, reserved modes, atomic batch flags).
+        // The reason is carried through: a client that rejects the transaction for the
+        // right reason but reports the wrong one is indistinguishable from a client that
+        // rejected it by accident (see the mapper note above `TxValidationError`).
+        if let Err(e) = frame_tx.validate_static_constraints() {
             return Err(VMError::TxValidation(
-                crate::errors::TxValidationError::InvalidFrameTransaction,
+                crate::errors::TxValidationError::InvalidFrameTransactionFormat(e),
+            ));
+        }
+
+        // EIP-7825, as scoped by EIP-8141: the transaction's execution budget —
+        // the intrinsic cost plus the frames' gas limits, and the calldata floor
+        // measured the same way — must not exceed `TX_MAX_GAS_LIMIT`. `max_gas()`
+        // is the larger of those two anchors, so capping it covers both.
+        let max_gas = frame_tx.max_gas();
+        if max_gas > crate::constants::TX_MAX_GAS_LIMIT_AMSTERDAM {
+            return Err(VMError::TxValidation(
+                crate::errors::TxValidationError::TxMaxGasLimitExceeded {
+                    tx_hash: self.tx.hash(self.crypto),
+                    tx_gas_limit: max_gas,
+                },
+            ));
+        }
+
+        // A nonce at the u64 ceiling can never be incremented, so the transaction
+        // is invalid on its own terms rather than merely mismatched against the
+        // sender's nonce. Checked first so the specific rule is the one reported.
+        if frame_tx.nonce == u64::MAX {
+            return Err(VMError::TxValidation(
+                crate::errors::TxValidationError::NonceIsMax,
             ));
         }
 
@@ -1635,7 +1668,7 @@ impl<'a> VM<'a> {
             self.crypto,
         ) {
             return Err(VMError::TxValidation(
-                crate::errors::TxValidationError::InvalidFrameTransaction,
+                crate::errors::TxValidationError::InvalidFrameSignature,
             ));
         }
 
@@ -2518,6 +2551,61 @@ impl<'a> VM<'a> {
     /// result. Does NOT charge or refund gas. `canonical_paymaster_pay_frame`
     /// is the index of a canonical paymaster's pay frame (always `None` today,
     /// OQ1); when set, the access-restriction skip fires for that frame.
+    /// EIP-8141 blob rules that carry their own EIP-4844 exception.
+    ///
+    /// A frame transaction reaches neither `validate_4844_tx` nor the default
+    /// hook, so the two blob rules whose exceptions are named by EIP-4844 rather
+    /// than by EIP-8141 are enforced here, mirroring `validate_4844_tx`: every
+    /// versioned hash must carry a recognised version byte, and the blob count
+    /// must fit both the fork's blob schedule and the per-transaction cap.
+    ///
+    /// `validate_static_constraints` also rejects a wrong version byte, but it
+    /// reports a frame-format error; calling this first keeps the specific rule
+    /// the one the client reports.
+    fn validate_frame_tx_blobs(
+        &self,
+        frame_tx: &ethrex_common::types::FrameTransaction,
+    ) -> Result<(), VMError> {
+        if frame_tx.blob_versioned_hashes.is_empty() {
+            return Ok(());
+        }
+
+        for blob_hash in &frame_tx.blob_versioned_hashes {
+            if blob_hash.as_bytes().first().is_some_and(|first_byte| {
+                !crate::constants::VALID_BLOB_PREFIXES.contains(first_byte)
+            }) {
+                return Err(
+                    crate::errors::TxValidationError::Type3TxInvalidBlobVersionedHash.into(),
+                );
+            }
+        }
+
+        let max_blob_count: usize = self
+            .env
+            .config
+            .blob_schedule
+            .max
+            .try_into()
+            .map_err(|_| crate::errors::InternalError::TypeConversion)?;
+        let blob_count = frame_tx.blob_versioned_hashes.len();
+        if blob_count > max_blob_count {
+            return Err(crate::errors::TxValidationError::Type3TxBlobCountExceeded {
+                max_blob_count,
+                actual_blob_count: blob_count,
+            }
+            .into());
+        }
+        if self.env.config.fork >= Fork::Osaka && blob_count > crate::constants::MAX_BLOB_COUNT_TX {
+            return Err(crate::errors::TxValidationError::Type3TxBlobCountExceeded {
+                max_blob_count: crate::constants::MAX_BLOB_COUNT_TX,
+                actual_blob_count: blob_count,
+            }
+            .into());
+        }
+
+        Ok(())
+    }
+
     pub fn run_frame_validation_prefix(
         &mut self,
         frame_indices: &[usize],
@@ -2543,9 +2631,9 @@ impl<'a> VM<'a> {
 
         let sender = frame_tx.sender;
 
-        if frame_tx.validate_static_constraints().is_err() {
+        if let Err(e) = frame_tx.validate_static_constraints() {
             return Err(VMError::TxValidation(
-                crate::errors::TxValidationError::InvalidFrameTransaction,
+                crate::errors::TxValidationError::InvalidFrameTransactionFormat(e),
             ));
         }
 
@@ -2596,7 +2684,7 @@ impl<'a> VM<'a> {
             self.crypto,
         ) {
             return Err(VMError::TxValidation(
-                crate::errors::TxValidationError::InvalidFrameTransaction,
+                crate::errors::TxValidationError::InvalidFrameSignature,
             ));
         }
 
