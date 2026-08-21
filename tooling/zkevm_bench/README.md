@@ -42,10 +42,14 @@ any invocation directory (see [Running](#running) below).
    make zkevm-bench-setup
    ```
 
-   This installs ZisK's apt build dependencies and runs `ziskup -v 1.1.0-alpha`
-   with `--nokey`, which skips downloading the (large) proving key —
-   emulation via `ziskemu` doesn't need it. Afterwards, add `~/.zisk/bin` to
-   `PATH` (it provides `ziskemu`):
+   This installs ZisK's apt build dependencies, runs `ziskup -v 1.1.0-alpha`
+   with `--nokey` (skipping the large proving key, which emulation via
+   `ziskemu` doesn't need), and pins the zisk Rust toolchain to the same
+   release CI uses (`zisk-3.0.0` at the time of writing; the root `Makefile`
+   is the source of truth) so a locally built guest links the same way as
+   CI's. Afterwards, add
+   `~/.zisk/bin` to `PATH` (it provides both `ziskemu` and the `cargo-zisk`
+   the build needs):
 
    ```bash
    export PATH="$HOME/.zisk/bin:$PATH"
@@ -64,17 +68,33 @@ any invocation directory (see [Running](#running) below).
 
 ## Build
 
-Build from the repo root:
+Select the crate by manifest path, which works from any cwd (e.g. the repo
+root):
 
 ```bash
-cargo build -p ethrex-zkevm-bench --features zisk-elf
+cargo build --manifest-path tooling/zkevm_bench/Cargo.toml --features zisk-elf
 ```
 
-`tooling/zkevm_bench` is a member of the root workspace, but `tooling/`
-itself also has its own nested workspace (`tooling/Cargo.toml`, used by
-`ef_tests`, `load_test`, etc.) that does *not* include this crate. Running
-cargo from inside `tooling/` picks up that nested workspace instead and
-won't find `ethrex-zkevm-bench` — always invoke cargo from the repo root.
+`tooling/zkevm_bench` is a **standalone workspace** with its own
+`Cargo.lock`. It sits in the root workspace's `exclude` list (see the comment
+in the root `Cargo.toml`) because it hard-depends on zisk's x86-64-only
+`lib-c`, and `tooling/`'s own nested workspace (`tooling/Cargo.toml`, used by
+`ef_tests`, `load_test`, etc.) doesn't include it either. So no plain
+workspace invocation finds it: `-p ethrex-zkevm-bench` from the repo root
+fails with `error: cannot specify features for packages outside of
+workspace`, and a bare `cargo build` inside `tooling/` picks up the nested
+workspace instead. Always point cargo at the manifest (as the root
+`Makefile` does), or `cd tooling/zkevm_bench` and build there.
+
+Being its own workspace, it also has its own target directory: the binary
+lands at `tooling/zkevm_bench/target/debug/ethrex-zkevm-bench`, not under
+the root `target/`.
+
+The ZisK toolchain has to be on `PATH` at **build** time, not just at run
+time: the `zisk-build-elf` build script shells out to `cargo-zisk`
+(`crates/guest-program/build.rs`), and without it the build panics with
+`Failed to execute zisk build command: ... NotFound`. Export
+`PATH="$HOME/.zisk/bin:$PATH"` as in [Setup](#setup) above before building.
 
 The `zisk-elf` feature enables `ethrex-guest-program/{zisk-build-elf,ci}`:
 `zisk-build-elf` compiles the guest program to the zisk RISC-V target and
@@ -88,7 +108,7 @@ Workload `source` paths in the manifest resolve relative to the manifest
 file itself, so `run` can be invoked from any cwd — e.g. from the repo root:
 
 ```bash
-cargo run -p ethrex-zkevm-bench --features zisk-elf -- run \
+cargo run --manifest-path tooling/zkevm_bench/Cargo.toml --features zisk-elf -- run \
   --mode quick \
   --workloads tooling/zkevm_bench/fixtures/manifest.toml \
   --out r.json
@@ -96,7 +116,12 @@ cargo run -p ethrex-zkevm-bench --features zisk-elf -- run \
 
 No `cd` into `tooling/zkevm_bench` needed. The examples below assume the
 binary has already been built (see [Build](#build)) and invoke it directly
-from the repo root as `./target/debug/ethrex-zkevm-bench`.
+from the repo root as `./tooling/zkevm_bench/target/debug/ethrex-zkevm-bench`.
+
+`run` also accepts `--filter <substring>`, which keeps only workloads whose
+name matches, and `--strict-elf`, which fails immediately when the embedded
+guest ELF is empty (the binary was built without `--features zisk-elf`)
+instead of writing a report with every workload `guest_output_ok: false`.
 
 ### Tiered modes (`--mode`)
 
@@ -118,11 +143,11 @@ Each workload in the manifest declares an optional `tier` (`quick` or
 the narrower ones.
 
 ```bash
-./target/debug/ethrex-zkevm-bench run \
+./tooling/zkevm_bench/target/debug/ethrex-zkevm-bench run \
   --workloads tooling/zkevm_bench/fixtures/manifest.toml \
   --mode quick --out quick.json
 
-./target/debug/ethrex-zkevm-bench run \
+./tooling/zkevm_bench/target/debug/ethrex-zkevm-bench run \
   --workloads tooling/zkevm_bench/fixtures/manifest.toml \
   --mode slow --stress-dir /path/to/generated-stress --out slow.json
 ```
@@ -130,7 +155,7 @@ the narrower ones.
 ### Compare two reports (regression gate)
 
 ```bash
-./target/debug/ethrex-zkevm-bench compare baseline.json report.json
+./tooling/zkevm_bench/target/debug/ethrex-zkevm-bench compare baseline.json report.json
 ```
 
 Matches workloads by name, diffs `air_cost.total`, and exits `1` if any
@@ -140,7 +165,7 @@ diff.json` to also write the per-workload deltas as JSON.
 ### Curate real-block fixtures
 
 ```bash
-./target/debug/ethrex-zkevm-bench curate --cache-dir <dir-of-cache_mainnet_*.json> --out curation.json [--ziskemu]
+./tooling/zkevm_bench/target/debug/ethrex-zkevm-bench curate --cache-dir <dir-of-cache_mainnet_*.json> --out curation.json [--ziskemu]
 ```
 
 Scans a directory of ethrex-replay `cache_mainnet_*.json` files, records
@@ -179,6 +204,11 @@ AIR-cost breakdown. Used to select which blocks to commit as fixtures (see
   ]
 }
 ```
+
+`meta.zisk_version` is read from `ziskemu --version` at run time; when
+`ziskemu` isn't on `PATH` (or its output can't be parsed) the run warns and
+records the `v1.0.0-alpha` fallback, so that value in a report can also mean
+"detection failed" rather than "that toolchain produced it".
 
 `air_cost.total` equals the sum of `base + main + opcodes + precompiles +
 memory`. The example above is a real, verified `mainnet_25087668_light` run.
@@ -245,7 +275,7 @@ is generated on demand rather than committed:
    tool, no zisk toolchain):
 
    ```bash
-   ./target/debug/ethrex-zkevm-bench generate-stress \
+   ./tooling/zkevm_bench/target/debug/ethrex-zkevm-bench generate-stress \
      --input-dir <extracted>/blockchain_tests \
      --out-dir <stress-dir>
    ```
