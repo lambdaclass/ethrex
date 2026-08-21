@@ -1209,20 +1209,10 @@ impl Store {
         if last.number == block_number {
             return Ok(Some(last.hash()));
         }
-        let backend = self.backend.clone();
-        tokio::task::spawn_blocking(move || {
-            backend
-                .begin_read()?
-                .get(
-                    CANONICAL_BLOCK_HASHES,
-                    block_number.to_le_bytes().as_slice(),
-                )?
-                .map(|bytes| H256::decode(bytes.as_slice()))
-                .transpose()
-                .map_err(StoreError::from)
-        })
-        .await
-        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+        let store = self.clone();
+        tokio::task::spawn_blocking(move || store.load_canonical_block_hash(block_number))
+            .await
+            .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
     /// Stores the chain configuration values, should only be called once after reading the genesis file
@@ -1604,14 +1594,7 @@ impl Store {
         if last.number == block_number {
             return Ok(Some(last.hash()));
         }
-        let txn = self.backend.begin_read()?;
-        txn.get(
-            CANONICAL_BLOCK_HASHES,
-            block_number.to_le_bytes().as_slice(),
-        )?
-        .map(|bytes| H256::decode(bytes.as_slice()))
-        .transpose()
-        .map_err(StoreError::from)
+        self.load_canonical_block_hash(block_number)
     }
 
     /// CAUTION: This method writes directly to the underlying database, bypassing any caching layer.
