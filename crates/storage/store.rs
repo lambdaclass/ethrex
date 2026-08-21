@@ -2451,6 +2451,7 @@ impl Store {
                                     state_root,
                                     account_state.storage_root,
                                 )?;
+
                                 vacant.insert(TrieLogger::open_trie(trie))
                             }
                         };
@@ -2462,24 +2463,31 @@ impl Store {
                             state_root,
                             account_state.storage_root,
                         )?;
+
                         &mut local_trie
                     }
                 };
                 for (storage_key, storage_value) in &update.added_storage {
                     let hashed_key = hash_key(storage_key);
                     if storage_value.is_zero() {
+
                         storage_trie.remove(&hashed_key)?;
                     } else {
                         storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
+
                     }
                 }
+
                 let (storage_hash, storage_updates) =
+
                     storage_trie.collect_changes_since_last_hash(&NativeCrypto);
+
                 account_state.storage_root = storage_hash;
                 ret_storage_updates.push((hashed_address, storage_updates));
             }
             state_trie.insert(
                 hashed_address.as_bytes().to_vec(),
+
                 account_state.encode_to_vec(),
             )?;
         }
@@ -2494,21 +2502,26 @@ impl Store {
         })
     }
 
+
     /// Adds all genesis accounts and returns the genesis block's state_root
+
     pub async fn setup_genesis_state_trie(
         &self,
         genesis_accounts: BTreeMap<Address, GenesisAccount>,
     ) -> Result<H256, StoreError> {
         let mut storage_trie_nodes = vec![];
         let mut genesis_state_trie = self.open_direct_state_trie(EMPTY_TRIE_HASH)?;
+
         for (address, account) in genesis_accounts {
             let hashed_address = hash_address(&address);
+
             let h256_hashed_address = H256::from_slice(&hashed_address);
 
             // Store account code (as this won't be stored in the trie)
             let code = Code::from_bytecode(account.code, &NativeCrypto);
             let code_hash = code.hash;
             self.add_account_code(code).await?;
+
 
             // Store the account's storage in a clean storage trie and compute its root
             let mut storage_trie =
