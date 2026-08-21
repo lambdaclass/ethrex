@@ -2452,30 +2452,20 @@ impl Store {
 
             // Store the added storage in the account's storage trie and compute its new root
             if !update.added_storage.is_empty() {
-                let mut local_trie;
+                let open_fresh_trie = || {
+                    self.open_storage_trie(hashed_address, state_root, account_state.storage_root)
+                };
+
+                let mut local_trie = None;
+
                 let storage_trie = match storage_tries.as_deref_mut() {
-                    Some(tries) => {
-                        let (_witness, storage_trie) = match tries.entry(update.address) {
-                            Entry::Occupied(value) => value.into_mut(),
-                            Entry::Vacant(vacant) => {
-                                let trie = self.open_storage_trie(
-                                    hashed_address,
-                                    state_root,
-                                    account_state.storage_root,
-                                )?;
-                                vacant.insert(TrieLogger::open_trie(trie))
-                            }
-                        };
-                        storage_trie
-                    }
-                    None => {
-                        local_trie = self.open_storage_trie(
-                            hashed_address,
-                            state_root,
-                            account_state.storage_root,
-                        )?;
-                        &mut local_trie
-                    }
+                    Some(tries) => match tries.entry(update.address) {
+                        Entry::Occupied(cached) => &mut cached.into_mut().1,
+                        Entry::Vacant(vacant) => {
+                            &mut vacant.insert(TrieLogger::open_trie(open_fresh_trie()?)).1
+                        }
+                    },
+                    None => local_trie.insert(open_fresh_trie()?),
                 };
 
                 for (storage_key, storage_value) in &update.added_storage {
