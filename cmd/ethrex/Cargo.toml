@@ -143,3 +143,6 @@ thiserror = { workspace = true, optional = true }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
