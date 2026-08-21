@@ -18,11 +18,11 @@ use ethrex_rlp::{
 use super::GenesisAccount;
 use crate::constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH};
 
-/// Shared empty jump-target table. `Code::default()` and any bytecode without a
+/// Shared empty jumpdest bitmap. `Code::default()` and any bytecode without a
 /// `JUMPDEST` clone this (a refcount bump) instead of allocating a fresh empty
 /// `Arc` header each time. This matters because the per-tx `Code::default()`
 /// placeholder and every EOA / empty-code load would otherwise each allocate.
-static EMPTY_JUMP_TARGETS: LazyLock<Arc<[u32]>> = LazyLock::new(|| Arc::from(Vec::new()));
+static EMPTY_JUMPDESTS: LazyLock<Arc<[u8]>> = LazyLock::new(|| Arc::from(Vec::new()));
 
 /// Trailing STOP bytes appended to every bytecode so the dispatch loop can read
 /// the next opcode without a bounds check. 33 is the widest single-opcode advance
@@ -42,13 +42,19 @@ pub struct Code {
     bytecode: Bytes,
     /// The real bytecode length, needed for some opcodes, `bytecode` is padded with 33 STOPs to avoid checked adds on hot loop.
     bytecode_len: usize,
-    // `Arc<[u32]>` so cloning `Code` (hot: every message-call resolves and clones
-    // the callee's code) is a refcount bump instead of deep-copying the table.
+    /// One bit per bytecode byte, set when that offset holds a `JUMPDEST` that is not
+    /// part of a `PUSH` immediate. Costs `ceil(len / 8)` bytes regardless of how dense
+    /// the jump destinations are, and validating a jump is a bit test rather than a
+    /// search.
+    ///
+    /// Bytecode with no jump destination stores a zero-length bitmap ([`EMPTY_JUMPDESTS`])
+    /// rather than an all-zero one, so this is not always `ceil(len / 8)` bytes long;
+    /// [`Code::is_valid_jumpdest`] reads a missing byte as "no jump destination".
+    //
+    // `Arc<[u8]>` so cloning `Code` (hot: every message-call resolves and clones
+    // the callee's code) is a refcount bump instead of deep-copying the bitmap.
     // Serializes via serde's `rc` feature (enabled workspace-wide).
-    // The valid addresses are 32-bit because, despite EIP-3860 restricting initcode size,
-    // this does not apply to previous forks. This is tested in the EEST tests, which would
-    // panic in debug mode.
-    pub jump_targets: Arc<[u32]>,
+    jumpdests: Arc<[u8]>,
 }
 
 impl Code {
@@ -59,26 +65,26 @@ impl Code {
     // `code` is the logical, unpadded bytecode; `BYTECODE_PADDING` STOP bytes are
     // appended internally by `from_parts_unchecked`.
     pub fn from_bytecode_unchecked(code: Bytes, hash: H256) -> Self {
-        let jump_targets = Self::compute_jump_targets(&code);
-        Self::from_parts_unchecked(hash, &code, jump_targets)
+        let jumpdests = Self::compute_jumpdests(&code);
+        Self::from_parts_unchecked(hash, &code, jumpdests)
     }
 
     /// `code` is the logical, unpadded bytecode; `BYTECODE_PADDING` STOP bytes are
     /// appended internally by `from_parts_unchecked`.
     pub fn from_bytecode(code: Bytes, crypto: &dyn Crypto) -> Self {
-        let jump_targets = Self::compute_jump_targets(&code);
+        let jumpdests = Self::compute_jumpdests(&code);
         let hash = H256(crypto.keccak256(code.as_ref()));
-        Self::from_parts_unchecked(hash, &code, jump_targets)
+        Self::from_parts_unchecked(hash, &code, jumpdests)
     }
 
     /// Builds a `Code` from precomputed parts. The caller must guarantee `hash`
-    /// and `jump_targets` correspond to `code`; neither is recomputed or validated.
+    /// and `jumpdests` correspond to `code`; neither is recomputed or validated.
     ///
     /// `code` is the logical, unpadded bytecode: this function appends
     /// `BYTECODE_PADDING` STOP bytes and records the original length in
     /// `bytecode_len`. Never pass a pre-padded buffer, or the logical length and
     /// every `JUMPDEST`/`PUSH` offset derived from it would be wrong.
-    pub fn from_parts_unchecked(hash: H256, code: &[u8], jump_targets: Arc<[u32]>) -> Self {
+    pub fn from_parts_unchecked(hash: H256, code: &[u8], jumpdests: Arc<[u8]>) -> Self {
         let bytecode_len = code.len();
         let mut padded_code = Vec::with_capacity(bytecode_len + BYTECODE_PADDING);
         padded_code.extend_from_slice(code);
@@ -87,20 +93,38 @@ impl Code {
             hash,
             bytecode: Bytes::from_owner(padded_code),
             bytecode_len,
-            jump_targets,
+            jumpdests,
         }
     }
 
-    fn compute_jump_targets(code: &[u8]) -> Arc<[u32]> {
-        debug_assert!(code.len() <= u32::MAX as usize);
-        let mut targets = Vec::new();
+    /// Builds the [`Code::jumpdests`] bitmap: one pass over the bytecode, setting the
+    /// bit for every `JUMPDEST` while skipping `PUSH` immediates.
+    ///
+    /// The bits of a byte are accumulated in a register and written once the scan leaves
+    /// that byte, which the monotonic `i` makes safe. Reading the bitmap back inside the
+    /// loop instead would turn each `JUMPDEST` into a read-modify-write, and indexing it
+    /// would put a bounds-check panic path in the loop body, which inhibits optimization
+    /// of every iteration rather than only the ones that find a destination.
+    pub fn compute_jumpdests(code: &[u8]) -> Arc<[u8]> {
+        let mut bitmap = vec![0u8; code.len().div_ceil(8)];
+        let mut any = false;
+        let mut current_byte = usize::MAX;
+        let mut bits = 0u8;
         let mut i = 0;
         while i < code.len() {
             // TODO: we don't use the constants from the vm module to avoid a circular dependency
             match code[i] {
                 // OP_JUMPDEST
                 0x5B => {
-                    targets.push(i as u32);
+                    if i / 8 != current_byte {
+                        if let Some(byte) = bitmap.get_mut(current_byte) {
+                            *byte = bits;
+                        }
+                        current_byte = i / 8;
+                        bits = 0;
+                    }
+                    bits |= 1 << (i % 8);
+                    any = true;
                 }
                 // OP_PUSH1..32
                 c @ 0x60..0x80 => {
@@ -111,13 +135,32 @@ impl Code {
             }
             i += 1;
         }
-        // Share the single empty table for jumpless bytecode (very common: EOAs,
-        // tiny contracts) so we don't allocate an `Arc` header for an empty slice.
-        if targets.is_empty() {
-            EMPTY_JUMP_TARGETS.clone()
-        } else {
-            Arc::from(targets)
+        if let Some(byte) = bitmap.get_mut(current_byte) {
+            *byte = bits;
         }
+        // Share the single empty bitmap for jumpless bytecode (very common: EOAs,
+        // tiny contracts) so we don't allocate for an all-zero map; `is_valid_jumpdest`
+        // reads a missing byte as "no jump destination".
+        if any {
+            Arc::from(bitmap)
+        } else {
+            EMPTY_JUMPDESTS.clone()
+        }
+    }
+
+    /// Whether `offset` is a valid jump destination, i.e. it holds a `JUMPDEST` that is
+    /// not part of a `PUSH` immediate. Offsets past the bytecode are not valid.
+    #[inline]
+    pub fn is_valid_jumpdest(&self, offset: usize) -> bool {
+        self.jumpdests
+            .get(offset / 8)
+            .is_some_and(|byte| byte & (1 << (offset % 8)) != 0)
+    }
+
+    /// The raw [`Code::jumpdests`] bitmap, for persisting it alongside the bytecode.
+    #[inline]
+    pub fn jumpdests(&self) -> &[u8] {
+        &self.jumpdests
     }
 
     #[inline]
@@ -151,16 +194,18 @@ impl Code {
     /// Estimates the size of the Code struct in bytes
     /// (including stack size and heap allocation).
     ///
-    /// Note: This is an estimation and may not be exact.
+    /// Note: an estimate. It ignores allocator overhead and the `Arc`/`Bytes` control
+    /// blocks, so it slightly under-counts, and a shared allocation is attributed in
+    /// full to every entry holding it.
     ///
     /// # Returns
     ///
     /// usize - Estimated size in bytes
     pub fn size(&self) -> usize {
         let hash_size = size_of::<H256>();
-        let bytes_size = size_of::<Bytes>();
-        let vec_size = size_of::<Arc<[u32]>>() + self.jump_targets.len() * size_of::<u32>();
-        hash_size + bytes_size + vec_size
+        let bytes_size = size_of::<Bytes>() + self.bytecode.len();
+        let bitmap_size = size_of::<Arc<[u8]>>() + self.jumpdests.len();
+        hash_size + bytes_size + bitmap_size
     }
 }
 
@@ -170,11 +215,14 @@ impl Code {
 /// `Code` is padded with [`BYTECODE_PADDING`] trailing STOPs) sound regardless of
 /// where the bytes came from. Deserializing the padded buffer directly would
 /// otherwise let unpadded input through and cause OOB reads during execution.
+/// The jump destinations are deliberately absent: they are a pure function of the
+/// bytecode, so carrying them would put a derived value in the wire format of everything
+/// that embeds a `Code` (notably `AccountUpdate`, which the L2 rollup store persists with
+/// bincode) and couple that format to how they happen to be represented.
 #[derive(Serialize, Deserialize)]
 struct CodeSerde {
     hash: H256,
     code: Bytes,
-    jump_targets: Arc<[u32]>,
 }
 
 impl Serialize for Code {
@@ -182,7 +230,6 @@ impl Serialize for Code {
         CodeSerde {
             hash: self.hash,
             code: self.code_bytes(),
-            jump_targets: self.jump_targets.clone(),
         }
         .serialize(serializer)
     }
@@ -190,12 +237,12 @@ impl Serialize for Code {
 
 impl<'de> Deserialize<'de> for Code {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let CodeSerde {
+        let CodeSerde { hash, code } = CodeSerde::deserialize(deserializer)?;
+        Ok(Self::from_parts_unchecked(
             hash,
-            code,
-            jump_targets,
-        } = CodeSerde::deserialize(deserializer)?;
-        Ok(Self::from_parts_unchecked(hash, &code, jump_targets))
+            &code,
+            Self::compute_jumpdests(&code),
+        ))
     }
 }
 
@@ -263,7 +310,7 @@ impl Default for Code {
             bytecode: Bytes::from_static(&[0u8; BYTECODE_PADDING]),
             bytecode_len: 0,
             hash: *EMPTY_KECCAK_HASH,
-            jump_targets: EMPTY_JUMP_TARGETS.clone(),
+            jumpdests: EMPTY_JUMPDESTS.clone(),
         }
     }
 }
