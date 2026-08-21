@@ -465,19 +465,63 @@ impl MempoolInner {
     /// Evict the oldest regular (non-blob) transactions until the regular pool is
     /// back under its cap. Only drains `txs_order`, so blob txs are never evicted
     /// by regular-tx pressure.
+    ///
+    /// When the arrival-order victim is a frame transaction, the EIP-8141
+    /// §Replacement and Eviction order picks which frame transaction actually
+    /// goes ([`Self::worst_frame_tx`]). Arrival order still decides *whether* a
+    /// frame transaction is sacrificed at all, so frame transactions are neither
+    /// starved by nor privileged over the rest of the pool.
     fn remove_oldest_regular_transaction(&mut self) -> Result<(), StoreError> {
         while self.regular_tx_count() >= self.max_mempool_size {
-            if let Some(oldest_hash) = self.txs_order.pop_front() {
-                self.remove_transaction_with_lock(&oldest_hash)?;
-            } else {
+            let Some(oldest_hash) = self.txs_order.pop_front() else {
                 warn!(
                     "Regular mempool is full but there are no transactions to remove, this should not happen and will make the mempool grow indefinitely"
                 );
                 break;
+            };
+            let is_frame_tx = self
+                .transaction_pool
+                .get(&oldest_hash)
+                .is_some_and(|tx| matches!(&**tx, Transaction::FrameTransaction(_)));
+            let victim = if is_frame_tx {
+                self.worst_frame_tx().unwrap_or(oldest_hash)
+            } else {
+                oldest_hash
+            };
+            // The arrival-order entry is spent only when it is the victim; a
+            // reprieved transaction keeps its place at the head of the queue.
+            if victim != oldest_hash {
+                self.txs_order.push_front(oldest_hash);
             }
+            self.remove_transaction_with_lock(&victim)?;
         }
 
         Ok(())
+    }
+
+    /// The frame transaction the EIP-8141 eviction order sacrifices first:
+    /// nearest expiry deadline, then lowest priority fee. Transactions with no
+    /// deadline sort last.
+    ///
+    /// The order's first tier — transactions already invalid against the current
+    /// head — is served by `Blockchain::revalidate_frame_txs_after_block`, which
+    /// has the head-state view this path lacks.
+    ///
+    /// Scans the pool, so it runs only when arrival order already picked a frame
+    /// transaction for eviction.
+    fn worst_frame_tx(&self) -> Option<H256> {
+        self.transaction_pool
+            .iter()
+            .filter_map(|(hash, tx)| match &**tx {
+                Transaction::FrameTransaction(frame_tx) => Some((
+                    *hash,
+                    frame_tx.expiry_deadline().unwrap_or(u64::MAX),
+                    tx.max_priority_fee().unwrap_or_default(),
+                )),
+                _ => None,
+            })
+            .min_by_key(|&(_, deadline, priority_fee)| (deadline, priority_fee))
+            .map(|(hash, _, _)| hash)
     }
 
     /// Evict blob transactions until the blob sub-pool is back under its cap.
