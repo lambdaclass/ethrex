@@ -2988,8 +2988,8 @@ impl LEVM {
             block_excess_blob_gas,
             block_blob_gas_used: block_header.blob_gas_used,
             tx_blob_hashes: tx.blob_versioned_hashes(),
-            tx_max_priority_fee_per_gas: tx.max_priority_fee().map(U256::from),
-            tx_max_fee_per_gas: tx.max_fee_per_gas().map(U256::from),
+            tx_max_priority_fee_per_gas: tx.max_priority_fee(),
+            tx_max_fee_per_gas: tx.max_fee_per_gas(),
             tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas(),
             tx_nonce: tx.nonce(),
             block_gas_limit: block_header.gas_limit,
@@ -3285,8 +3285,9 @@ impl LEVM {
     /// uses checked_mul/checked_add and halts on overflow. Saturating to
     /// `U256::MAX` here only makes the reservation larger, never smaller.
     fn frame_tx_reservation_ceiling(frame_tx: &ethrex_common::types::FrameTransaction) -> U256 {
-        let gas_cost =
-            U256::from(frame_tx.max_fee_per_gas).saturating_mul(U256::from(frame_tx.max_gas()));
+        let gas_cost = frame_tx
+            .max_fee_per_gas
+            .saturating_mul(U256::from(frame_tx.max_gas()));
         let blob_cost = U256::from(frame_tx.blob_versioned_hashes.len())
             .saturating_mul(U256::from(131072u64))
             .saturating_mul(frame_tx.max_fee_per_blob_gas);
@@ -3809,13 +3810,13 @@ pub fn calculate_gas_price_for_tx(
         fee_per_gas += operator_fee_config.operator_fee_per_gas;
     }
 
-    if fee_per_gas > max_fee_per_gas {
+    if U256::from(fee_per_gas) > max_fee_per_gas {
         return Err(VMError::TxValidation(
             TxValidationError::InsufficientMaxFeePerGas,
         ));
     }
 
-    Ok(min(max_priority_fee + fee_per_gas, max_fee_per_gas).into())
+    Ok(min(max_priority_fee + fee_per_gas, max_fee_per_gas))
 }
 
 /// When basefee tracking is disabled  (ie. env.disable_base_fee = true; env.disable_block_gas_limit = true;)

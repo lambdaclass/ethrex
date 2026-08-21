@@ -50,7 +50,9 @@ pub fn u256_to_offset(value: U256) -> Option<usize> {
 /// EIP-4844 blob burn (intrinsic gas is inside `total_gas_used`, so it stays
 /// non-refundable).
 pub(crate) fn compute_tx_max_cost(ctx: &crate::vm::FrameTxContext) -> Result<U256, VMError> {
-    let gas_cost = U256::from(ctx.tx.max_fee_per_gas)
+    let gas_cost = ctx
+        .tx
+        .max_fee_per_gas
         .checked_mul(U256::from(ctx.max_gas))
         .ok_or(ExceptionalHalt::InvalidOpcode)?;
     let blob_cost = U256::from(ctx.tx.blob_versioned_hashes.len())
@@ -568,8 +570,8 @@ pub fn load_tx_param(ctx: &crate::vm::FrameTxContext, param_id: u64) -> Result<U
         0x00 => Ok(U256::from(0x06u8)), // tx_type (EIP-8141 = type 6)
         0x01 => Ok(U256::from(ctx.tx.nonce)),
         0x02 => Ok(address_to_u256(ctx.tx.sender)),
-        0x03 => Ok(U256::from(ctx.tx.max_priority_fee_per_gas)),
-        0x04 => Ok(U256::from(ctx.tx.max_fee_per_gas)),
+        0x03 => Ok(ctx.tx.max_priority_fee_per_gas),
+        0x04 => Ok(ctx.tx.max_fee_per_gas),
         0x05 => Ok(ctx.tx.max_fee_per_blob_gas),
         0x06 => compute_tx_max_cost(ctx),
         0x07 => Ok(U256::from(ctx.tx.blob_versioned_hashes.len())),
@@ -674,7 +676,7 @@ mod max_cost_tests {
 
     fn ctx(max_fee: u64, blobs: usize, blob_base_fee: u64, max_gas: u64) -> FrameTxContext {
         let tx = FrameTransaction {
-            max_fee_per_gas: max_fee,
+            max_fee_per_gas: U256::from(max_fee),
             // Deliberately far above the base fee: `max_fee_per_blob_gas` bounds
             // inclusion only and must not reach `max_cost`.
             max_fee_per_blob_gas: U256::from(blob_base_fee).saturating_mul(U256::from(1_000u64)),
