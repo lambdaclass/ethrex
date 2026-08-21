@@ -1425,7 +1425,7 @@ impl<'a> VM<'a> {
         match &ctx_result.result {
             TxResult::Success => {
                 self.current_call_frame.stack.push(SUCCESS)?;
-                self.merge_call_frame_backup_with_parent(&call_frame_backup)?;
+                self.merge_call_frame_backup_with_parent(call_frame_backup)?;
                 // EIP-8037: on success, child's state_gas_used is already
                 // accumulated into the VM-level field (signed sum handles refunds).
                 // No pending flush needed — credits were applied inline.
@@ -1494,7 +1494,7 @@ impl<'a> VM<'a> {
         match ctx_result.result.clone() {
             TxResult::Success => {
                 self.current_call_frame.stack.push(address_to_word(to))?;
-                self.merge_call_frame_backup_with_parent(&call_frame_backup)?;
+                self.merge_call_frame_backup_with_parent(call_frame_backup)?;
                 // EIP-8037: on success, child's state_gas_used is already
                 // accumulated into the VM-level field (signed sum handles refunds).
                 // No pending flush needed — credits were applied inline.
