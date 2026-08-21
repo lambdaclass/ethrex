@@ -748,10 +748,9 @@ pub enum BlockChainExpectedException {
     /// at block RLP decoding (typed tx with a non-bool `y_parity` byte) or during
     /// execution (legacy tx sender recovery rejects the signature).
     InvalidSignature,
-    /// A fee field that exceeds the transaction type's bound: 2^256 for a
-    /// frame transaction's `U256` fee fields (the bound EIP-8141 puts on
-    /// fees), `u64` for every other type. Rejected while decoding rather
-    /// than at validation.
+    /// EIP-8141: a type-0x06 fee field of 2^256 or more, beyond the bound the
+    /// EIP puts on a frame transaction's fees, which does not fit the `U256`
+    /// fee fields. Rejected while decoding rather than at validation.
     FeeOverflow,
     /// EIP-8141: a type-0x06 transaction whose frame list breaks a structural
     /// rule (frame count, reserved mode or flag bits, a target a frame's mode

@@ -433,23 +433,18 @@ fn exception_in_rlp_decoding(block_fixture: &BlockWithRLP) -> bool {
         .iter()
         .any(|case| matches!(case, BlockChainExpectedException::InvalidFrameFormat));
 
-    // A fee field beyond the transaction type's bound (2^256 for a frame
-    // transaction's `U256` fees, `u64` for every other type) does not decode, so
-    // the 2^256-fee fixtures and the legacy `gas_limit * price` fixture (31-byte
-    // price, alone beyond `u64`) fail here. The frame-tx product-overflow fixture
-    // instead carries a 2^255 fee that fits `U256`, decodes fine, and is caught
-    // later at validation without consulting this arm — the same split as the
-    // nonce cases above.
+    // A fee field of 2^256 or more does not fit a transaction's `U256` fee
+    // fields, so the fixtures carrying 33-byte fees fail here. Fees below that
+    // bound always decode — legacy `gas_price` is `U256` as well — so the
+    // `gas_limit * price` product-overflow fixtures (a 31-byte legacy price, a
+    // 2^255 frame fee) decode fine and are rejected later at execution without
+    // consulting this arm — the same split as the nonce cases above.
     let expects_fee_overflow = block_fixture
         .expect_exception
         .as_ref()
         .unwrap_or(&Vec::new())
         .iter()
-        .any(|case| {
-            matches!(case, BlockChainExpectedException::FeeOverflow)
-                || matches!(case, BlockChainExpectedException::TxtException(msg)
-                    if msg == "Gas limit price product overflow")
-        });
+        .any(|case| matches!(case, BlockChainExpectedException::FeeOverflow));
 
     match CoreBlock::decode(block_fixture.rlp.as_ref()) {
         Ok(_) => {
