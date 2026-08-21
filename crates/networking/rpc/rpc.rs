@@ -34,7 +34,7 @@ use crate::eth::{
         GetBlockReceiptsRequest, GetBlockTransactionCountRequest, GetRawBlockRequest,
         GetRawHeaderRequest, GetRawReceipts,
     },
-    block_access_list::BlockAccessListRequest,
+    block_access_list::{BlockAccessListRequest, RawBlockAccessListRequest},
     client::{ChainId, Syncing},
     fee_market::FeeHistoryRequest,
     filter::{self, ActiveFilters, DeleteFilterRequest, FilterChangesRequest, NewFilterRequest},
@@ -420,6 +420,8 @@ fn get_error_kind(err: &RpcErr) -> &'static str {
         RpcErr::InvalidHeaderFormat(_) => "InvalidHeaderFormat",
         RpcErr::InvalidPayload(_) => "InvalidPayload",
         RpcErr::ProofGenerationUnavailable(_) => "ProofGenerationUnavailable",
+        RpcErr::ResourceNotFound(_) => "ResourceNotFound",
+        RpcErr::PrunedHistoryUnavailable(_) => "PrunedHistoryUnavailable",
     }
 }
 
@@ -1428,6 +1430,7 @@ pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Res
         "debug_getRawBlock" => GetRawBlockRequest::call(req, context).await,
         "debug_getRawTransaction" => GetRawTransaction::call(req, context).await,
         "debug_getRawReceipts" => GetRawReceipts::call(req, context).await,
+        "debug_getRawBlockAccessList" => RawBlockAccessListRequest::call(req, context).await,
         "debug_executionWitness" => ExecutionWitnessRequest::call(req, context).await,
         "debug_executionWitnessByBlockHash" => {
             ExecutionWitnessByBlockHashRequest::call(req, context).await
