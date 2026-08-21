@@ -504,11 +504,16 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v6
 
-      - name: Download artifacts
+      # Only the guest artifacts are signed, so only those are needed here. An
+      # unanchored `*ethrex*` would also pull the docker jobs' `.dockerbuild`
+      # build records, which download-artifact cannot extract. This job does not
+      # wait on the docker jobs, so it usually runs before those records exist —
+      # which is exactly why the rehearsal passed while finalize-release failed.
+      - name: Download stateless-validator artifacts
         uses: actions/download-artifact@v6
         with:
           path: ./bin
-          pattern: "*ethrex*"
+          pattern: "stateless-validator-ethrex-*"
 
       - name: Skip notice
         if: env.HAS_MINISIGN_SECRET_KEY != 'true'
@@ -596,14 +601,23 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Download artifacts
+      # Two anchored patterns, not one `*ethrex*`. The release needs `ethrex-*`
+      # (binaries, contracts tarball) and `stateless-validator-ethrex-*` (guest
+      # ELF/VK), but an unanchored pattern also matches the build records the
+      # docker jobs upload as `<org>~ethrex~<id>.dockerbuild`. Those are not zip
+      # archives, so download-artifact cannot extract them and fails the job —
+      # taking the whole release down before anything is published.
+      - name: Download release binaries
         uses: actions/download-artifact@v6
         with:
           path: ./bin
-          # `*ethrex*`, not `ethrex*`: the stateless-validator artifacts are named
-          # stateless-validator-ethrex-<zkvm>-<version>, so a leading-anchor
-          # pattern would silently omit them from the release.
-          pattern: "*ethrex*"
+          pattern: "ethrex*"
+
+      - name: Download stateless-validator artifacts
+        uses: actions/download-artifact@v6
+        with:
+          path: ./bin
+          pattern: "stateless-validator-ethrex-*"
 
       # The zkEVM guest handbook requires the stateless-validator ELF and
       # verification key to ship as signed release assets:
