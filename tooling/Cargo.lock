@@ -3402,6 +3402,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethrex-evm"
+version = "4.0.0"
+dependencies = [
+ "bytes",
+ "clap 4.6.0",
+ "ethrex-blockchain",
+ "ethrex-common 24.0.0",
+ "ethrex-crypto",
+ "ethrex-levm",
+ "ethrex-rlp 24.0.0",
+ "ethrex-storage 24.0.0",
+ "ethrex-vm",
+ "hex",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+]
+
+[[package]]
 name = "ethrex-guest-program"
 version = "24.0.0"
 dependencies = [
