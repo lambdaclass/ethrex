@@ -231,11 +231,13 @@ impl<'a> Encoder<'a> {
     /// Finishes encoding the struct by inserting the list prefix in front of
     /// the payload that has been accumulating in the output buffer.
     pub fn finish(self) {
-        // Reborrows rather than moving out of `self`, so this coexists with the
-        // debug-only `Drop` impl above.
-        backpatch_list_prefix(self.buf, self.start);
-        // The list is complete; skip the unfinished-encoder assertion.
-        core::mem::forget(self);
+        // The list is complete, so defuse the unfinished-encoder assertion.
+        // `ManuallyDrop` rather than `mem::forget` because the `Drop` impl only
+        // exists in debug builds and forgetting a non-`Drop` type is a clippy
+        // error; this reborrows either way instead of moving out of `self`.
+        let mut this = core::mem::ManuallyDrop::new(self);
+        let start = this.start;
+        backpatch_list_prefix(this.buf, start);
     }
 
     /// Adds a raw value to the buffer without rlp-encoding it
