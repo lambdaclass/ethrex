@@ -28,26 +28,23 @@ jobs:
       run_tests: ${{ steps.finish.outputs.run_tests }}
     steps:
       - uses: actions/checkout@v6
+      - uses: ./.github/actions/detect-changes
+        id: changes
       - uses: dorny/paths-filter@v4
         id: filter
         with:
           filters: |
             run_tests:
               - '!crates/l2/**'
-            non_docs:
-              - "!docs/**"
-            code_changed:
-              - "**/*.rs"
-              - "**/*.toml"
-              - "**/*.lock"
       - name: finish
         id: finish
         run: |
-          if [[ "${{ steps.filter.outputs.non_docs_count }}" == 0 ]]; then
+          if [[ "${{ steps.changes.outputs.inert_only }}" == "true" ]]; then
+            # Documentation and repository metadata only: no job here builds it.
             echo "run_tests=false" >> "$GITHUB_OUTPUT"
           elif [[ "${GITHUB_EVENT_NAME}" == "merge_group" ]]; then
               # In merge queue, only run lint if code files changed
-              echo "run_tests=${{ steps.filter.outputs.code_changed }}" >> "$GITHUB_OUTPUT"
+              echo "run_tests=${{ steps.changes.outputs.code_changed }}" >> "$GITHUB_OUTPUT"
           elif [[ "${GITHUB_EVENT_NAME}" != "pull_request" ]]; then
               echo "run_tests=true" >> "$GITHUB_OUTPUT"
           else
