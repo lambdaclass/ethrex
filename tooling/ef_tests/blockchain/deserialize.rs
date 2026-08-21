@@ -29,6 +29,11 @@ where
 }
 
 pub const SENDER_NOT_EOA_REGEX: &str = "Sender account .* shouldn't be a contract";
+/// `INTRINSIC_GAS_TOO_LOW` covers both anchors ethrex reports separately: the
+/// plain minimum and the EIP-7623 calldata-token floor. The upstream
+/// `EthrexExceptionMapper` already accepts both, so accepting only the first
+/// here made the local suite disagree with hive on cases hive passes.
+pub const INTRINSIC_GAS_TOO_LOW_REGEX: &str = "Transaction gas limit lower than the (minimum gas cost to execute the transaction|gas cost floor for calldata tokens)";
 pub const PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS_REGEX: &str =
     "Priority fee .* is greater than max fee per gas .*";
 
@@ -67,7 +72,9 @@ where
                     )
                 }
                 "TransactionException.INTRINSIC_GAS_TOO_LOW" => {
-                    BlockChainExpectedException::TxtException("Transaction gas limit lower than the minimum gas cost to execute the transaction".to_string())
+                    BlockChainExpectedException::TxtException(
+                        INTRINSIC_GAS_TOO_LOW_REGEX.to_string(),
+                    )
                 }
                 "TransactionException.INSUFFICIENT_ACCOUNT_FUNDS" => {
                     BlockChainExpectedException::TxtException(
@@ -163,9 +170,11 @@ where
                         BlockExpectedException::SystemContractCallFailed,
                     )
                 }
-                "BlockException.RLP_BLOCK_LIMIT_EXCEEDED" => BlockChainExpectedException::BlockException(
-                    BlockExpectedException::RlpBlockLimitExceeded,
-                ),
+                "BlockException.RLP_BLOCK_LIMIT_EXCEEDED" => {
+                    BlockChainExpectedException::BlockException(
+                        BlockExpectedException::RlpBlockLimitExceeded,
+                    )
+                }
                 _ => BlockChainExpectedException::Other,
             })
             .collect();

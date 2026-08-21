@@ -292,6 +292,19 @@ fn exception_is_expected(
     returned_error: &ChainError,
 ) -> bool {
     expected_exceptions.iter().any(|exception| {
+        // EIP-8141 structural rejections: `validate_static_constraints` names the
+        // rule it failed and signature validation reports itself, so both satisfy
+        // a fixture expecting an invalid frame format. Before the reasons were
+        // carried, every one of these arrived as the approval error instead.
+        if matches!(exception, BlockChainExpectedException::InvalidFrameFormat)
+            && let ChainError::EvmError(EvmError::Transaction(error_msg))
+            | ChainError::InvalidBlock(InvalidBlockError::InvalidTransaction(error_msg)) =
+                returned_error
+            && (error_msg.starts_with("Invalid frame transaction format:")
+                || error_msg == "Invalid frame transaction: signature validation failed")
+        {
+            return true;
+        }
         if let (
             BlockChainExpectedException::TxtException(expected_error_msg),
             ChainError::EvmError(EvmError::Transaction(error_msg))
