@@ -3695,12 +3695,13 @@ impl Store {
         Ok(Some(proof))
     }
 
-    /// Receives the root of the state trie and a list of paths where the first path will correspond to a path in the state trie
-    /// (aka a hashed account address) and the following paths will be paths in the account's storage trie (aka hashed storage keys)
-    /// If only one hash (account) is received, then the state trie node containing the account will be returned.
-    /// If more than one hash is received, then the storage trie nodes where each storage key is stored will be returned
-    /// For more information check out snap capability message [`GetTrieNodes`](https://github.com/ethereum/devp2p/blob/master/caps/snap.md#gettrienodes-0x06)
-    /// The paths can be either full paths (hash) or partial paths (compact-encoded nibbles), if a partial path is given for the account this method will not return storage nodes for it
+    /// Serve snap [`GetTrieNodes`](https://github.com/ethereum/devp2p/blob/master/caps/snap.md#gettrienodes-0x06)
+    /// for one pathset against `state_root`.
+    ///
+    /// - One path: compact-encoded account-trie path; returns that node via [`Trie::get_node`].
+    /// - Multiple paths: `paths[0]` is the 32-byte account hash used to open the account's
+    ///   storage trie; the rest are compact-encoded storage-trie paths via [`Trie::get_node`].
+    ///   If `paths[0]` is not 32 bytes, returns an empty list.
     pub fn get_trie_nodes(
         &self,
         state_root: H256,

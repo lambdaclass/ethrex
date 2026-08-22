@@ -60,8 +60,8 @@ pub struct GetTrieNodes {
     pub id: u64,
     /// State root hash to query against
     pub root_hash: H256,
-    /// Paths to trie nodes: [[acc_path, slot_path_1, slot_path_2,...]...]
-    /// Paths can be full paths (hash) or partial paths (compact-encoded nibbles)
+    /// Pathsets `[[acc_path, slot_path, ...], ...]`: one entry is a compact account-trie
+    /// path; longer sets use a 32-byte account hash then compact storage-trie paths.
     pub paths: Vec<Vec<Bytes>>,
     /// Maximum response size in bytes
     pub bytes: u64,
