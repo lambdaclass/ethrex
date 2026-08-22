@@ -81,6 +81,7 @@ use fastbloom::AtomicBloomFilter;
 use rayon::prelude::*;
 use rustc_hash::{FxBuildHasher, FxHashMap};
 use std::{
+    borrow::Cow,
     fmt,
     sync::{Arc, RwLock},
 };
@@ -556,6 +557,20 @@ impl TrieWrapper {
             prefix_nibbles,
         }
     }
+
+    /// Prepends the storage-trie prefix, if any, to a borrowed read key. Only the
+    /// prefixed case allocates, exactly as the previous `Nibbles::concat` did.
+    fn prefixed_key<'a>(&self, key: &'a [u8]) -> Cow<'a, [u8]> {
+        match &self.prefix_nibbles {
+            Some(prefix) => {
+                let mut prefixed = Vec::with_capacity(prefix.len() + key.len());
+                prefixed.extend_from_slice(prefix.as_ref());
+                prefixed.extend_from_slice(key);
+                Cow::Owned(prefixed)
+            }
+            None => Cow::Borrowed(key),
+        }
+    }
 }
 
 /// Prepends an account address prefix (with an invalid nibble `17` as separator) to a
@@ -563,15 +578,38 @@ impl TrieWrapper {
 /// key-value namespace. Returns the path unchanged if `prefix` is `None` (state trie).
 pub fn apply_prefix(prefix: Option<H256>, path: Nibbles) -> Nibbles {
     match prefix {
-        Some(prefix) => Nibbles::from_bytes(prefix.as_bytes())
-            .append_new(17)
-            .concat(&path),
+        Some(prefix) => Nibbles::from_hex(apply_prefix_bytes(prefix, path.as_ref())),
         None => path,
     }
 }
 
+/// Borrowing counterpart of [`apply_prefix`], for the read paths that only ever get a
+/// borrowed key (see `TrieDB::get`). Produces the exact same nibble layout.
+///
+/// The prefix is expanded straight into the output rather than through an
+/// intermediate `Nibbles::from_bytes`, whose 65-byte `Vec` was copied over and
+/// dropped immediately: this runs once per level of every storage-trie node read.
+/// The layout it has to reproduce byte for byte is `Nibbles::from_bytes`', i.e. each
+/// prefix byte as two nibbles (high first) plus the appended `16` leaf flag, then the
+/// `17` separator, then the path: 66 nibbles before `path`.
+/// `test/tests/storage/layering_tests.rs` pins that equivalence against the old
+/// expression.
+pub fn apply_prefix_bytes(prefix: H256, path: &[u8]) -> Vec<u8> {
+    let prefix = prefix.as_bytes();
+    let mut key = Vec::with_capacity(prefix.len() * 2 + 2 + path.len());
+    for byte in prefix {
+        key.push(byte >> 4);
+        key.push(byte & 0x0f);
+    }
+    // Leaf flag appended by `Nibbles::from_bytes`, then the storage-trie separator.
+    key.push(16);
+    key.push(17);
+    key.extend_from_slice(path);
+    key
+}
+
 impl TrieDB for TrieWrapper {
-    fn flatkeyvalue_computed(&self, key: Nibbles) -> bool {
+    fn flatkeyvalue_computed(&self, key: &[u8]) -> bool {
         // While a deep-reorg overlay serves this root, flat-KV leaf reads must not
         // trust disk: journal entries written while the FKV generator was running
         // are permanently missing pre-images for keys past the generator frontier,
@@ -583,25 +621,19 @@ impl TrieDB for TrieWrapper {
         }
         // NOTE: we apply the prefix here, since the underlying TrieDB should
         // always be for the state trie.
-        let key = match &self.prefix_nibbles {
-            Some(prefix) => prefix.concat(&key),
-            None => key,
-        };
-        self.db.flatkeyvalue_computed(key)
+        let key = self.prefixed_key(key);
+        self.db.flatkeyvalue_computed(key.as_ref())
     }
 
-    fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
-        let key = match &self.prefix_nibbles {
-            Some(prefix) => prefix.concat(&key),
-            None => key,
-        };
+    fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, TrieError> {
+        let key = self.prefixed_key(key);
         // Read cascade: forward layer cache (new-chain layers above the pivot) ->
         // overlay (reverse-diff bridge to disk during deep reorgs, if installed) ->
         // on-disk state. A layer-cache hit pre-empts the overlay because a
         // side-chain write at this key supersedes the pivot value the overlay holds.
         // An overlay hit pre-empts disk because disk still reflects the OLD chain's
         // edge `D`, not the pivot.
-        if let Some(value) = self.inner.get(self.state_root, key.as_ref()) {
+        if let Some(value) = self.inner.get(self.state_root, &key) {
             return Ok(Some(value));
         }
         // Overlay gate: the overlay reconstructs the pivot's state and the new-chain
@@ -610,11 +642,11 @@ impl TrieDB for TrieWrapper {
         // `D` or an unrelated historical root must fall through to disk, which is
         // unchanged during the overlay window. See [`TrieLayerCache::overlay_serves`].
         if self.inner.overlay_serves(self.state_root)
-            && let Some(overlay_result) = self.inner.lookup_overlay(key.as_ref())
+            && let Some(overlay_result) = self.inner.lookup_overlay(&key)
         {
             return Ok(overlay_result);
         }
-        self.db.get(key)
+        self.db.get(&key)
     }
 
     fn put_batch(&self, _key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
@@ -1186,10 +1218,10 @@ mod overlay_tests {
     fn flatkeyvalue_computed_is_disabled_while_overlay_serves() {
         struct AlwaysComputedDb;
         impl TrieDB for AlwaysComputedDb {
-            fn flatkeyvalue_computed(&self, _key: Nibbles) -> bool {
+            fn flatkeyvalue_computed(&self, _key: &[u8]) -> bool {
                 true
             }
-            fn get(&self, _key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
+            fn get(&self, _key: &[u8]) -> Result<Option<Vec<u8>>, TrieError> {
                 Ok(None)
             }
             fn put_batch(&self, _key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
@@ -1211,13 +1243,13 @@ mod overlay_tests {
 
         let served = TrieWrapper::new(pivot, cache.clone(), Box::new(AlwaysComputedDb), None);
         assert!(
-            !served.flatkeyvalue_computed(key.clone()),
+            !served.flatkeyvalue_computed(key.as_ref()),
             "served root must not trust disk flat-KV"
         );
 
         let unserved = TrieWrapper::new(unrelated, cache.clone(), Box::new(AlwaysComputedDb), None);
         assert!(
-            unserved.flatkeyvalue_computed(key.clone()),
+            unserved.flatkeyvalue_computed(key.as_ref()),
             "unserved root must keep the flat-KV fast path"
         );
 
@@ -1225,7 +1257,7 @@ mod overlay_tests {
         let served_storage =
             TrieWrapper::new(pivot, cache, Box::new(AlwaysComputedDb), Some(h(0x01)));
         assert!(
-            !served_storage.flatkeyvalue_computed(key),
+            !served_storage.flatkeyvalue_computed(key.as_ref()),
             "served storage root must not trust disk flat-KV"
         );
     }

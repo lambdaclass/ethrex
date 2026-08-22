@@ -3,9 +3,10 @@ use crate::api::tables::{
 };
 use crate::api::{StorageBackend, StorageLockedView, StorageReadView};
 use crate::error::StoreError;
-use crate::layering::apply_prefix;
+use crate::layering::{apply_prefix, apply_prefix_bytes};
 use ethrex_common::H256;
 use ethrex_trie::{Nibbles, TrieDB, error::TrieError};
+use std::borrow::Cow;
 use std::sync::Arc;
 
 /// TrieDB implementation that holds a pre-acquired read view for the entire
@@ -111,6 +112,15 @@ impl BackendTrieDB {
         apply_prefix(self.address_prefix, path).into_vec()
     }
 
+    /// Borrowing counterpart of [`Self::make_key`] for reads: the account trie
+    /// (`address_prefix == None`) allocates nothing at all.
+    fn borrowed_key<'a>(&self, path: &'a [u8]) -> Cow<'a, [u8]> {
+        match self.address_prefix {
+            Some(prefix) => Cow::Owned(apply_prefix_bytes(prefix, path)),
+            None => Cow::Borrowed(path),
+        }
+    }
+
     /// Key might be for an account or storage slot
     fn table_for_key(&self, key: &[u8]) -> &'static str {
         let (is_leaf, _) = classify_trie_key(key.len());
@@ -139,13 +149,13 @@ pub fn classify_trie_key(key_len: usize) -> (bool, bool) {
 }
 
 impl TrieDB for BackendTrieDB {
-    fn flatkeyvalue_computed(&self, key: Nibbles) -> bool {
-        let key = apply_prefix(self.address_prefix, key);
-        self.last_computed_flatkeyvalue >= key
+    fn flatkeyvalue_computed(&self, key: &[u8]) -> bool {
+        let key = self.borrowed_key(key);
+        self.last_computed_flatkeyvalue.as_ref() >= key.as_ref()
     }
 
-    fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
-        let prefixed_key = self.make_key(key);
+    fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, TrieError> {
+        let prefixed_key = self.borrowed_key(key);
         let table = self.table_for_key(&prefixed_key);
         self.read_view
             .get(table, prefixed_key.as_ref())
@@ -194,7 +204,7 @@ impl BackendTrieDBLocked {
     }
 
     /// Key is already prefixed
-    fn tx_for_key(&self, key: &Nibbles) -> &dyn StorageLockedView {
+    fn tx_for_key(&self, key: &[u8]) -> &dyn StorageLockedView {
         let (is_leaf, is_account) = classify_trie_key(key.len());
         if is_leaf {
             if is_account {
@@ -211,13 +221,13 @@ impl BackendTrieDBLocked {
 }
 
 impl TrieDB for BackendTrieDBLocked {
-    fn flatkeyvalue_computed(&self, key: Nibbles) -> bool {
-        self.last_computed_flatkeyvalue >= key
+    fn flatkeyvalue_computed(&self, key: &[u8]) -> bool {
+        self.last_computed_flatkeyvalue.as_ref() >= key
     }
 
-    fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
-        let tx = self.tx_for_key(&key);
-        tx.get(key.as_ref())
+    fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, TrieError> {
+        let tx = self.tx_for_key(key);
+        tx.get(key)
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to get from database: {}", e)))
     }
 
