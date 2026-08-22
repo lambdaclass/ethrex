@@ -12,7 +12,7 @@ use ethrex_common::{
     H256,
     types::{Block, BlockBody, BlockHeader, block_access_list::BlockAccessList},
 };
-use ethrex_storage::{DB_COMMIT_THRESHOLD, Store};
+use ethrex_storage::Store;
 use tokio::sync::RwLock;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
@@ -195,7 +195,6 @@ pub async fn sync_cycle_full(
                 blockchain.clone(),
                 cancel_token.clone(),
                 pending_blocks,
-                true,
                 store.clone(),
                 peers,
             )
@@ -538,7 +537,6 @@ pub async fn sync_cycle_full(
             blockchain.clone(),
             cancel_token.clone(),
             blocks,
-            final_batch,
             store.clone(),
             peers,
         )
@@ -581,7 +579,6 @@ pub async fn sync_cycle_full(
                 blockchain.clone(),
                 cancel_token.clone(),
                 pending_blocks,
-                true,
                 store.clone(),
                 peers,
             )
@@ -615,7 +612,6 @@ async fn add_blocks_in_batch(
     blockchain: Arc<Blockchain>,
     cancel_token: CancellationToken,
     blocks: Vec<Block>,
-    final_batch: bool,
     store: Store,
     peers: &mut PeerHandler,
 ) -> Result<(), SyncError> {
@@ -638,8 +634,8 @@ async fn add_blocks_in_batch(
     let blocks_hashes = blocks.iter().map(|block| block.hash()).collect::<Vec<_>>();
     let chain_config = store.get_chain_config();
     let bals: Vec<Option<BlockAccessList>> = {
-        // Fetch BALs for every Amsterdam batch (not just the final one): both the
-        // batch path and `run_blocks_pipeline` now persist them, so peers can serve
+        // Fetch BALs for every Amsterdam batch (not just the final one):
+        // `add_blocks_in_batch` persists them, so peers can serve
         // these blocks over eth/71 later without regenerating against pruned state.
         let any_amsterdam = blocks
             .iter()
@@ -658,7 +654,7 @@ async fn add_blocks_in_batch(
     };
     // Run the batch
     if let Err((err, batch_failure)) =
-        add_blocks(blockchain.clone(), blocks, bals, final_batch, cancel_token).await
+        add_blocks(blockchain.clone(), blocks, bals, cancel_token).await
     {
         if let Some(batch_failure) = batch_failure {
             warn!("Failed to add block during FullSync: {err}");
@@ -709,52 +705,14 @@ async fn add_blocks_in_batch(
     Ok(())
 }
 
-/// Executes the given blocks and stores them.
-///
-/// Both paths execute block-by-block through the same validated pipeline
-/// (`add_block_pipeline_bounded`), which builds fresh per-block VM state. When the sync
-/// head is found the blocks run sequentially on a blocking thread; otherwise
-/// `add_blocks_in_batch` runs them with BAL fetching, progress logging and cancellation.
+/// Execute and store `blocks` via [`Blockchain::add_blocks_in_batch`].
 async fn add_blocks(
     blockchain: Arc<Blockchain>,
     blocks: Vec<Block>,
     bals: Vec<Option<BlockAccessList>>,
-    sync_head_found: bool,
     cancel_token: CancellationToken,
 ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
-    if sync_head_found {
-        return run_blocks_pipeline(blockchain, blocks, bals).await;
-    }
     blockchain
-        .add_blocks_in_batch(blocks, &bals, cancel_token)
+        .add_blocks_in_batch(blocks, bals, cancel_token)
         .await
-}
-
-async fn run_blocks_pipeline(
-    blockchain: Arc<Blockchain>,
-    blocks: Vec<Block>,
-    bals: Vec<Option<BlockAccessList>>,
-) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
-    tokio::task::spawn_blocking(move || {
-        let mut last_valid_hash = H256::default();
-        for (block, bal) in blocks.into_iter().zip(bals.into_iter()) {
-            let block_hash = block.hash();
-            blockchain
-                .add_block_pipeline_bounded(block, bal.map(Arc::new), DB_COMMIT_THRESHOLD)
-                .map(|_| ())
-                .map_err(|e| {
-                    (
-                        e,
-                        Some(BatchBlockProcessingFailure {
-                            last_valid_hash,
-                            failed_block_hash: block_hash,
-                        }),
-                    )
-                })?;
-            last_valid_hash = block_hash;
-        }
-        Ok(())
-    })
-    .await
-    .map_err(|e| (ChainError::Custom(e.to_string()), None))?
 }

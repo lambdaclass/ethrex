@@ -1041,9 +1041,10 @@ pub async fn import_blocks(
                 block_batch.push(block);
                 if block_batch.len() >= IMPORT_BATCH_SIZE || index + MIN_FULL_BLOCKS + 1 == size {
                     blockchain
+                        .clone()
                         .add_blocks_in_batch(
                             mem::take(&mut block_batch),
-                            &[],
+                            vec![],
                             CancellationToken::new(),
                         )
                         .await
