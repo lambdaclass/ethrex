@@ -3,7 +3,11 @@ use cita_trie::{MemoryDB as CitaMemoryDB, PatriciaTrie as CitaTrie, Trie as Cita
 use std::sync::Arc;
 
 use ethrex_crypto::NativeCrypto;
-use ethrex_trie::Trie;
+use ethrex_rlp::encode::RLPEncode;
+use ethrex_trie::{
+    InMemoryTrieDB, Nibbles, Node, NodeHash, NodeRef, Trie,
+    db::NodeMap,
+};
 
 use hasher::HasherKeccak;
 use hex_literal::hex;
@@ -635,4 +639,189 @@ fn get_proof_removed_value() {
     let cita_proof = cita_trie.get_proof(&a).unwrap();
     let trie_proof = trie.get_proof(&a).unwrap();
     assert_eq!(cita_proof, trie_proof);
+}
+
+// Trie::get_node (snap GetTrieNodes path decoding)
+
+/// Trie with a shared-prefix extension root and hashed branch/leaf children.
+fn extension_rooted_trie() -> (Trie, Vec<[u8; 32]>) {
+    let keys: Vec<[u8; 32]> = (0u8..6)
+        .map(|i| {
+            let mut key = [0u8; 32];
+            key[0] = 0xab;
+            key[1] = i << 4;
+            key[31] = i;
+            key
+        })
+        .collect();
+
+    let db: NodeMap = Default::default();
+    let mut trie = Trie::new(Box::new(InMemoryTrieDB::new(db.clone())));
+    for key in &keys {
+        trie.insert(key.to_vec(), vec![0x11; 40]).unwrap();
+    }
+    let root = trie.hash(&NativeCrypto).unwrap();
+    (Trie::open(Box::new(InMemoryTrieDB::new(db)), root), keys)
+}
+
+/// Extension child must load at `extension_path ++ prefix`.
+#[test]
+fn get_node_compact_path_crossing_extension_node() {
+    let (trie, _keys) = extension_rooted_trie();
+
+    let root = trie.root_node().unwrap().expect("trie should have a root");
+    let Node::Extension(extension) = root.as_ref() else {
+        panic!("expected an extension node at the root, got {root:?}");
+    };
+    let branch_path = extension.prefix.clone();
+    assert_eq!(branch_path, Nibbles::from_hex(vec![0xa, 0xb]));
+    assert!(matches!(
+        extension.child,
+        NodeRef::Hash(NodeHash::Hashed(_))
+    ));
+
+    let branch = extension
+        .child
+        .get_node(trie.db(), branch_path.clone())
+        .unwrap()
+        .expect("extension child should be stored under its path");
+    let Node::Branch(branch_node) = branch.as_ref() else {
+        panic!("expected a branch node below the extension, got {branch:?}");
+    };
+    let leaf_path = branch_path.append_new(0);
+    let leaf = branch_node.choices[0]
+        .get_node(trie.db(), leaf_path.clone())
+        .unwrap()
+        .expect("branch child should be stored under its path");
+
+    assert_eq!(
+        trie.get_node(&branch_path.encode_compact()).unwrap(),
+        branch.as_ref().encode_to_vec()
+    );
+    assert_eq!(
+        trie.get_node(&leaf_path.encode_compact()).unwrap(),
+        leaf.as_ref().encode_to_vec()
+    );
+}
+
+/// A 32-byte compact path must decode as compact and resolve the node.
+#[test]
+fn get_node_compact_path_length_32() {
+    // Two keys share 31 bytes plus the high nibble of the last byte → extension of
+    // 63 nibbles (compact length 32) then a branch.
+    let mut key_a = [0u8; 32];
+    let mut key_b = [0u8; 32];
+    key_a[31] = 0x01;
+    key_b[31] = 0x02;
+
+    let db: NodeMap = Default::default();
+    let mut trie = Trie::new(Box::new(InMemoryTrieDB::new(db.clone())));
+    trie.insert(key_a.to_vec(), vec![0x11; 40]).unwrap();
+    trie.insert(key_b.to_vec(), vec![0x22; 40]).unwrap();
+    let root = trie.hash(&NativeCrypto).unwrap();
+    let trie = Trie::open(Box::new(InMemoryTrieDB::new(db)), root);
+
+    let root_node = trie.root_node().unwrap().expect("root");
+    let Node::Extension(extension) = root_node.as_ref() else {
+        panic!("expected extension root, got {root_node:?}");
+    };
+    assert_eq!(extension.prefix.len(), 63);
+
+    let branch_path = extension.prefix.clone();
+    let compact = branch_path.encode_compact();
+    assert_eq!(
+        compact.len(),
+        32,
+        "expected 63-nibble extension path to encode to 32 compact bytes"
+    );
+
+    let branch = extension
+        .child
+        .get_node(trie.db(), branch_path.clone())
+        .unwrap()
+        .expect("branch under extension");
+    assert_eq!(
+        trie.get_node(&compact).unwrap(),
+        branch.as_ref().encode_to_vec()
+    );
+}
+
+/// Raw 32-byte keys are not a valid `get_node` path (use [`Trie::get`] for values).
+#[test]
+fn get_node_raw_32_byte_key_is_not_keybytes() {
+    let (trie, keys) = extension_rooted_trie();
+    let path = keys[0].to_vec();
+
+    assert!(trie.get(&path).unwrap().is_some());
+    assert!(
+        trie.get_node(&path).unwrap().is_empty(),
+        "raw 32-byte key must not resolve a trie node via get_node"
+    );
+}
+
+#[test]
+fn get_node_empty_path_returns_root() {
+    let (trie, _keys) = extension_rooted_trie();
+    let root = trie.root_node().unwrap().unwrap();
+    assert_eq!(
+        trie.get_node(&Vec::new()).unwrap(),
+        root.as_ref().encode_to_vec()
+    );
+}
+
+#[test]
+fn get_node_oversize_path_returns_empty() {
+    let (trie, _keys) = extension_rooted_trie();
+    assert!(trie.get_node(&vec![0u8; 33]).unwrap().is_empty());
+}
+
+#[test]
+fn get_node_missing_paths_return_empty() {
+    let (trie, _keys) = extension_rooted_trie();
+
+    let diverging = Nibbles::from_hex(vec![0xa, 0xc]).encode_compact();
+    assert!(trie.get_node(&diverging).unwrap().is_empty());
+
+    let empty_choice = Nibbles::from_hex(vec![0xa, 0xb, 0xf]).encode_compact();
+    assert!(trie.get_node(&empty_choice).unwrap().is_empty());
+}
+
+/// Leaf terminator at a branch with a value returns that branch node.
+#[test]
+fn get_node_branch_terminator_returns_branch() {
+    // Unequal key lengths so one value sits on the branch at the divergence.
+    let db: NodeMap = Default::default();
+    let mut trie = Trie::new(Box::new(InMemoryTrieDB::new(db.clone())));
+    trie.insert(vec![0x00], vec![0xaa; 40]).unwrap();
+    trie.insert(vec![0x00, 0x11], vec![0xbb; 40]).unwrap();
+    let root = trie.hash(&NativeCrypto).unwrap();
+    let trie = Trie::open(Box::new(InMemoryTrieDB::new(db)), root);
+
+    let root_node = trie.root_node().unwrap().expect("root");
+    // Walk to the branch that owns the short key's value.
+    let (branch_path, branch_rlp) = match root_node.as_ref() {
+        Node::Branch(b) => (Nibbles::default(), b.as_ref().encode_to_vec()),
+        Node::Extension(ext) => {
+            let path = ext.prefix.clone();
+            let child = ext
+                .child
+                .get_node(trie.db(), path.clone())
+                .unwrap()
+                .expect("extension child");
+            let Node::Branch(b) = child.as_ref() else {
+                panic!("expected branch under extension, got {child:?}");
+            };
+            assert!(
+                !b.value.is_empty(),
+                "expected branch to hold the short key's value"
+            );
+            (path, b.as_ref().encode_to_vec())
+        }
+        other => panic!("unexpected root {other:?}"),
+    };
+
+    let mut path_with_term = branch_path;
+    path_with_term.append(16);
+    let compact = path_with_term.encode_compact();
+    assert_eq!(trie.get_node(&compact).unwrap(), branch_rlp);
 }
