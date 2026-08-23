@@ -2969,6 +2969,7 @@ mod frame_validation_prefix_tests {
             &NativeCrypto,
             &prefix,
             None,
+            FRAME_TX_MAX_VERIFY_GAS,
         )
         .expect("simulation runs");
         assert!(
@@ -3007,7 +3008,7 @@ mod frame_validation_prefix_tests {
             .expect("OnlyVerifyPay shape recognized");
         assert_eq!(prefix.shape, PrefixShape::OnlyVerifyPay);
         frame_tx
-            .validate_prefix_structure(&prefix)
+            .validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
             .expect("a pay frame may target a non-sender sponsor (EIP-8141 structural rule 4)");
 
         let mut db = db_with(vec![
@@ -3022,6 +3023,7 @@ mod frame_validation_prefix_tests {
             &NativeCrypto,
             &prefix,
             None,
+            FRAME_TX_MAX_VERIFY_GAS,
         )
         .expect("simulation runs");
         assert!(

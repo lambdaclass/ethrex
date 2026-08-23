@@ -809,6 +809,13 @@ async fn configured_max_verify_gas_overrides_the_spec_default() {
 
     let mut frame_tx = minimal_valid_frame_tx();
     frame_tx.frames[0].gas_limit = prefix_gas;
+    // The minimum priority-fee floor at admission postdates this test's helper,
+    // which builds a zero-fee transaction. Without a tip the raised-budget case
+    // is rejected by the tip floor before the verify-gas budget is consulted,
+    // so the assertion below would fail for an unrelated reason. The fee cap has
+    // to clear the tip as well.
+    frame_tx.max_priority_fee_per_gas = U256::one();
+    frame_tx.max_fee_per_gas = U256::from(1_000_000_000u64);
     let tx = Transaction::FrameTransaction(frame_tx);
     let sender = tx.sender(&NativeCrypto).unwrap();
 
@@ -826,10 +833,16 @@ async fn configured_max_verify_gas_overrides_the_spec_default() {
             ..Default::default()
         },
     );
+    // `minimal_valid_frame_tx` is built to be structurally valid, not executable:
+    // its prefix has no approving code behind it, so once the budget stops
+    // rejecting the transaction it proceeds to prefix simulation and fails there.
+    // What this test pins is the budget itself -- under a raised budget the
+    // verify-gas rejection must no longer be the verdict. Together with the
+    // default case above, that is what makes the budget operator-tunable.
     let admitted = raised_blockchain.validate_transaction(&tx, sender).await;
     assert!(
-        admitted.is_ok(),
-        "raised max_verify_gas should admit the tx, got {admitted:?}"
+        !matches!(admitted, Err(MempoolError::FrameTxVerifyGasBudgetExceeded)),
+        "raised max_verify_gas must not reject on the verify-gas budget, got {admitted:?}"
     );
 }
 

@@ -681,7 +681,8 @@ fn prefix_rejection_verify_frame_after_prefix() {
     let prefix = tx.validation_prefix().expect("SelfVerify recognized");
     assert_eq!(prefix.shape, PrefixShape::SelfVerify);
     assert_eq!(
-        tx.validate_prefix_structure(&prefix).unwrap_err(),
+        tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
+            .unwrap_err(),
         FrameValidationError::VerifyFrameAfterPrefix { frame_index: 1 }
     );
 }
@@ -705,7 +706,7 @@ fn prefix_accepts_non_verify_frames_after_prefix() {
         user_op_frame(),
     ]);
     let prefix = tx.validation_prefix().expect("SelfVerify recognized");
-    tx.validate_prefix_structure(&prefix)
+    tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
         .expect("non-VERIFY frames after the prefix are allowed");
 }
 
@@ -719,7 +720,8 @@ fn prefix_rejection_expiry_frame_not_first() {
     ]);
     let prefix = tx.validation_prefix().expect("SelfVerify recognized");
     assert_eq!(
-        tx.validate_prefix_structure(&prefix).unwrap_err(),
+        tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
+            .unwrap_err(),
         FrameValidationError::ExpiryFrameNotFirst { frame_index: 1 }
     );
 }
@@ -732,6 +734,6 @@ fn prefix_accepts_expiry_frame_as_first_frame() {
         user_op_frame(),
     ]);
     let prefix = tx.validation_prefix().expect("SelfVerify recognized");
-    tx.validate_prefix_structure(&prefix)
+    tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
         .expect("a leading expiry verifier frame is valid");
 }
