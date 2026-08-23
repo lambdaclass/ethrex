@@ -1,15 +1,15 @@
 use bytes::Bytes;
 use ethrex_common::types::{
     Account as ethrexAccount, AccountInfo, Block as CoreBlock, BlockBody, Code, EIP1559Transaction,
-    EIP2930Transaction, EIP4844Transaction, EIP7702Transaction, LegacyTransaction,
-    Transaction as ethrexTransaction, TxKind, code_hash,
+    EIP2930Transaction, EIP4844Transaction, EIP7702Transaction, Frame, FrameSignature,
+    FrameTransaction, LegacyTransaction, Transaction as ethrexTransaction, TxKind, code_hash,
 };
 use ethrex_common::types::{Genesis, GenesisAccount, Withdrawal};
 use ethrex_common::{Address, Bloom, H64, H256, U256, types::BlockHeader};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::deserialize::deserialize_block_expected_exception;
+use crate::deserialize::{deserialize_block_expected_exception, deserialize_empty_as_none_address};
 use crate::fork::Fork;
 
 #[derive(Debug, Deserialize)]
@@ -252,6 +252,38 @@ pub struct AuthorizationListItem {
 }
 pub type AuthorizationList = Vec<AuthorizationListItem>;
 
+/// One entry of an EIP-8141 frame transaction's `frames` list. `target` is
+/// absent for a frame that targets `tx.sender` implicitly.
+#[derive(Debug, PartialEq, Eq, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct FrameItem {
+    pub mode: U256,
+    pub flags: U256,
+    #[serde(default, deserialize_with = "deserialize_empty_as_none_address")]
+    pub target: Option<Address>,
+    pub gas_limit: U256,
+    pub value: U256,
+    #[serde(with = "ethrex_common::serde_utils::bytes")]
+    pub data: Bytes,
+}
+
+/// One entry of an EIP-8141 frame transaction's `signatures` list. `signer` is
+/// absent for an `ARBITRARY` entry, which the protocol assigns no signer.
+#[derive(Debug, PartialEq, Eq, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct FrameSignatureItem {
+    pub scheme: U256,
+    #[serde(default, deserialize_with = "deserialize_empty_as_none_address")]
+    pub signer: Option<Address>,
+    #[serde(with = "ethrex_common::serde_utils::bytes")]
+    pub msg: Bytes,
+    #[serde(with = "ethrex_common::serde_utils::bytes")]
+    pub signature: Bytes,
+}
+
+pub type FrameList = Vec<FrameItem>;
+pub type FrameSignatureList = Vec<FrameSignatureItem>;
+
 #[derive(Debug, PartialEq, Eq, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Header {
@@ -382,6 +414,10 @@ pub struct Transaction {
     pub hash: Option<H256>,
     pub sender: Option<Address>,
     pub to: TxKind,
+    /// EIP-8141 only: a type-0x06 transaction carries frames and an outer
+    /// signature list in place of a single ECDSA signature.
+    pub frames: Option<FrameList>,
+    pub signatures: Option<FrameSignatureList>,
 }
 
 // Conversions between EFtests & ethrex types
@@ -425,6 +461,7 @@ impl From<Transaction> for ethrexTransaction {
                 2 => ethrexTransaction::EIP1559Transaction(val.into()),
                 3 => ethrexTransaction::EIP4844Transaction(val.into()),
                 4 => ethrexTransaction::EIP7702Transaction(val.into()),
+                6 => ethrexTransaction::FrameTransaction(val.into()),
                 _ => unimplemented!(),
             },
             None => ethrexTransaction::LegacyTransaction(val.into()),
@@ -566,6 +603,60 @@ impl From<Transaction> for EIP7702Transaction {
     }
 }
 
+impl From<Transaction> for FrameTransaction {
+    fn from(val: Transaction) -> Self {
+        // A frame transaction has no top-level recipient: `to` in the fixture is
+        // the ENTRY_POINT the caller-side fields are shaped around, and the real
+        // sender is the explicit `sender` field, not a recovered signature.
+        //
+        // The scalar fields saturate rather than panic. The EIP bounds the nonce at
+        // 2**64 and the fee fields at 2**256, so a fixture can legitimately carry a
+        // fee beyond what ethrex's `u64` fields hold -- and does, to assert the
+        // transaction is rejected for it. Saturating keeps this `From` total; it
+        // cannot mask an accepted transaction, since a fee that large is
+        // unaffordable at any balance.
+        FrameTransaction {
+            chain_id: val
+                .chain_id
+                .map(|id| id.try_into().unwrap_or(u64::MAX))
+                .unwrap_or(1),
+            nonce: val.nonce.try_into().unwrap_or(u64::MAX),
+            sender: val.sender.unwrap_or_default(),
+            frames: val
+                .frames
+                .unwrap_or_default()
+                .into_iter()
+                .map(|f| Frame {
+                    mode: f.mode.try_into().unwrap(),
+                    flags: f.flags.try_into().unwrap(),
+                    target: f.target,
+                    gas_limit: f.gas_limit.try_into().unwrap_or(u64::MAX),
+                    value: f.value,
+                    data: f.data,
+                })
+                .collect(),
+            signatures: val
+                .signatures
+                .unwrap_or_default()
+                .into_iter()
+                .map(|s| FrameSignature {
+                    scheme: s.scheme.try_into().unwrap(),
+                    signer: s.signer,
+                    msg: s.msg,
+                    signature: s.signature,
+                })
+                .collect(),
+            max_priority_fee_per_gas: val.max_priority_fee_per_gas.unwrap_or_default(),
+            max_fee_per_gas: val
+                .max_fee_per_gas
+                .unwrap_or(val.gas_price.unwrap_or_default()),
+            max_fee_per_blob_gas: val.max_fee_per_blob_gas.unwrap_or_default(),
+            blob_versioned_hashes: val.blob_versioned_hashes.unwrap_or_default(),
+            ..Default::default()
+        }
+    }
+}
+
 impl From<Transaction> for LegacyTransaction {
     fn from(val: Transaction) -> Self {
         LegacyTransaction {
@@ -657,6 +748,15 @@ pub enum BlockChainExpectedException {
     /// at block RLP decoding (typed tx with a non-bool `y_parity` byte) or during
     /// execution (legacy tx sender recovery rejects the signature).
     InvalidSignature,
+    /// A fee field, or the `gas_limit * price` product, that exceeds what
+    /// ethrex's `u64` fee and gas fields can hold. Rejected while decoding
+    /// rather than at validation.
+    FeeOverflow,
+    /// EIP-8141: a type-0x06 transaction whose frame list breaks a structural
+    /// rule (frame count, reserved mode or flag bits, a target a frame's mode
+    /// forbids). ethrex enforces several of these in the RLP decoder, so this
+    /// surfaces at block decoding rather than at validation.
+    InvalidFrameFormat,
     Other,
 }
 

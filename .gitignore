@@ -10,6 +10,8 @@
 
 tooling/ef_tests/blockchain/vectors
 tooling/ef_tests/blockchain/vectors_zkevm
+# Local execution-specs checkout used to fill the EIP-8141 frame fixtures
+tooling/ef_tests/blockchain/.execution-specs
 
 tooling/ef_tests/state/vectors
 
@@ -40,6 +42,10 @@ jwt.hex
 /tmp
 
 *tests*.tar.gz
+# Partial downloads of the fixture bundles; the Makefile fetches to `.part`
+# first so a failed download cannot truncate the previous bundle.
+*.tar.gz.part
+tooling/ef_tests/state/test.tar.gz
 
 .env
 

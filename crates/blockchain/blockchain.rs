@@ -48,6 +48,7 @@ pub mod fork_choice;
 pub mod mempool;
 pub mod payload;
 pub mod prewarm;
+pub mod sampling;
 pub mod stateless;
 pub mod tracing;
 pub mod vm;
@@ -302,6 +303,10 @@ impl Drop for ReorgGuard<'_> {
     }
 }
 
+/// Default min-tip floor (wei). Matches geth's mempool `PriceLimit = 1 wei`.
+/// Effectively just rejects zero-tip transactions at admission.
+pub const DEFAULT_MIN_TIP_WEI: u64 = 1;
+
 /// Configuration options for the blockchain.
 #[derive(Debug, Clone)]
 pub struct BlockchainOptions {
@@ -327,6 +332,12 @@ pub struct BlockchainOptions {
     /// warmer thread and the executor. Set to false (via `--no-precompile-cache`) to
     /// disable the cache for benchmarking purposes.
     pub precompile_cache_enabled: bool,
+    /// Minimum priority-fee *cap* (in wei) required for a transaction to be
+    /// admitted into the mempool. Compared against the raw tip cap
+    /// (`max_priority_fee_per_gas` for typed txs, `gas_price` for legacy), NOT
+    /// the base-fee-dependent effective tip — matching geth's `PriceLimit`
+    /// check on `tx.GasTipCap()`. Set to 0 to disable the floor.
+    pub min_tip_wei: u64,
     /// Minimum fee-field bump (in percent) required to replace a non-blob
     /// transaction at the same `(sender, nonce)`. Matches the 10%
     /// default of every peer EL client.
@@ -356,6 +367,15 @@ pub struct BlockchainOptions {
     /// `--no-bal-parallel-trie`) to fall back to streaming `AccountUpdate`s from
     /// the executor and merkleizing post-execution.
     pub bal_parallel_trie_enabled: bool,
+    /// EIP-8070: when true, activate the sampler/provider state machine.
+    /// When false (default), the node always acts as provider (p=1.0).
+    pub blob_sampling_enabled: bool,
+    /// EIP-8070: when true, always act as provider (p=1.0) regardless of role
+    /// randomization, as block builders SHOULD (EIP-8070, "Execution clients ::
+    /// Local block builders"). Enabled via `--blob-eager-provider`; a node that
+    /// builds payloads latches it at runtime regardless. Only meaningful when
+    /// `blob_sampling_enabled` is also true.
+    pub blob_eager_provider: bool,
     /// Optional operator override for the maximum reorg depth. `None` ; cap is purely
     /// physical (layer-cache retention plus journal reach; bounded indirectly by finality
     /// because finality advances prune the journal). `Some(d)` ; reject reorgs of
@@ -379,12 +399,15 @@ impl Default for BlockchainOptions {
             precompute_witnesses: false,
             private_mempool: false,
             precompile_cache_enabled: true,
+            min_tip_wei: DEFAULT_MIN_TIP_WEI,
             price_bump_percent: DEFAULT_PRICE_BUMP_PERCENT,
             blob_price_bump_percent: DEFAULT_BLOB_PRICE_BUMP_PERCENT,
             max_queued_txs_per_account: DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT,
             bal_parallel_exec_enabled: true,
             bal_prefetch_enabled: true,
             bal_parallel_trie_enabled: true,
+            blob_sampling_enabled: false,
+            blob_eager_provider: false,
             max_reorg_depth: None,
             gap_admit_occupancy_threshold: DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD,
         }
@@ -499,9 +522,16 @@ impl Blockchain {
     }
 
     pub fn new(store: Store, blockchain_opts: BlockchainOptions) -> Self {
+        let mempool = if blockchain_opts.blob_eager_provider {
+            Mempool::new_with_eager_provider(blockchain_opts.max_mempool_size)
+        } else if blockchain_opts.blob_sampling_enabled {
+            Mempool::new_with_sampling(blockchain_opts.max_mempool_size)
+        } else {
+            Mempool::new(blockchain_opts.max_mempool_size)
+        };
         Self {
             storage: store,
-            mempool: Mempool::new(blockchain_opts.max_mempool_size),
+            mempool,
             is_synced: AtomicBool::new(false),
             reorg_in_progress: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
@@ -533,14 +563,26 @@ impl Blockchain {
         }
     }
 
+    /// Test-permissive `Blockchain` constructor. Mirrors `BlockchainOptions::default`
+    /// but disables admission-policy gates (e.g. the min-tip floor) so that
+    /// unrelated tests don't need to set every mempool option explicitly.
+    ///
+    /// **Do not use in production.** Despite the name, this is not a "sensible
+    /// default" constructor: it deliberately weakens mempool admission. Node
+    /// startup builds its `BlockchainOptions` from the CLI instead (see
+    /// `cmd/ethrex/initializers.rs`). Every current caller is a test harness.
     pub fn default_with_store(store: Store) -> Self {
+        let options = BlockchainOptions {
+            min_tip_wei: 0,
+            ..BlockchainOptions::default()
+        };
         Self {
             storage: store,
             mempool: Mempool::new(MAX_MEMPOOL_SIZE_DEFAULT),
             is_synced: AtomicBool::new(false),
             reorg_in_progress: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
-            options: BlockchainOptions::default(),
+            options,
             merkle_pool: Self::build_merkle_pool(),
             prewarmed: PrewarmedCache::default(),
         }
@@ -3050,7 +3092,13 @@ impl Blockchain {
 
         // Validate blobs bundle after checking if it's already added.
         if let Transaction::EIP4844Transaction(transaction) = &transaction {
-            blobs_bundle.validate(transaction, fork)?;
+            // eth/72 elided bundles carry commitments + cell proofs but no blobs;
+            // full KZG verification is deferred until cells are fetched via GetCells.
+            if blobs_bundle.blobs.is_empty() && !blobs_bundle.commitments.is_empty() {
+                blobs_bundle.validate_elided(transaction, fork)?;
+            } else {
+                blobs_bundle.validate(transaction, fork)?;
+            }
         }
 
         let sender = transaction.sender(&NativeCrypto)?;
@@ -3575,8 +3623,30 @@ impl Blockchain {
         }
 
         // Check priority fee is less or equal than gas fee gap
-        if tx.max_priority_fee().unwrap_or(0) > tx.max_fee_per_gas().unwrap_or(0) {
+        if tx.max_priority_fee().unwrap_or_default() > tx.max_fee_per_gas().unwrap_or_default() {
             return Err(MempoolError::TxTipAboveFeeCapError);
+        }
+
+        // Admission-time minimum tip floor. Compares the raw tip cap
+        // (`max_priority_fee_per_gas` for typed txs, `gas_price` for legacy)
+        // against `min_tip_wei`, matching geth's `PriceLimit` check on
+        // `tx.GasTipCap()` and reth's check on `max_priority_fee_per_gas`.
+        // Using the raw tip cap keeps the admission decision independent of
+        // the current base fee, so a tx that paid the floor at admission
+        // doesn't get reclassified as under-floor when base fee oscillates.
+        // A floor of 0 disables the check.
+        if self.options.min_tip_wei > 0 {
+            // Saturate to u64::MAX on overflow: a U256 tip cap above u64::MAX
+            // wei is astronomically larger than any sane floor, so clamping
+            // (and therefore admitting) is the correct direction here. Do not
+            // reuse this pattern where truncation would flip a comparison.
+            let tip_cap = u64::try_from(tx.gas_tip_cap()).unwrap_or(u64::MAX);
+            if tip_cap < self.options.min_tip_wei {
+                return Err(MempoolError::TipBelowMinimum {
+                    actual: tip_cap,
+                    limit: self.options.min_tip_wei,
+                });
+            }
         }
 
         // EIP-7702 type-4 structural validation, mirroring LEVM's
@@ -3811,11 +3881,11 @@ impl Blockchain {
 
             // Paymaster availability accounting (EIP-8141). The simulation
             // identified the payer (paymaster) and whether its code matched the
-            // canonical paymaster hash (always false today, OQ1). Reserve the
-            // tx's max cost against the paymaster's head balance, summed with all
-            // other pending reservations for that paymaster so concurrently
-            // pending sponsored txs cannot collectively overdraw it.
-            let max_cost = outcome.max_cost;
+            // canonical paymaster hash (always false today, OQ1). Reserve an upper
+            // bound on the tx's cost against the paymaster's head balance, summed
+            // with all other pending reservations for that paymaster so
+            // concurrently pending sponsored txs cannot collectively overdraw it.
+            let max_cost = outcome.reservation_ceiling;
             if let Some((paymaster, code_is_canonical)) = outcome.accessed_paymaster {
                 // OQ1: re-derive the canonical flag from the paymaster's head
                 // code so the (currently always-false) determination lives in

@@ -13,8 +13,8 @@
 use bytes::Bytes;
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::types::{
-    Account, BlockHeader, Code, FRAME_RECEIPT_STATUS_SUCCESS, Fork, Frame, FrameMode,
-    FrameTransaction, Transaction,
+    Account, BlockHeader, Code, FRAME_RECEIPT_STATUS_SKIPPED, FRAME_RECEIPT_STATUS_SUCCESS, Fork,
+    Frame, FrameMode, FrameTransaction, Transaction,
 };
 use ethrex_common::{Address, H256, U256, constants::EMPTY_TRIE_HASH};
 use ethrex_crypto::NativeCrypto;
@@ -110,7 +110,7 @@ fn seeded_db(accounts: &[SeededAccount]) -> GeneralizedDatabase {
 fn frame_tx_env(tx: &FrameTransaction) -> Environment {
     Environment {
         origin: tx.sender,
-        gas_limit: tx.total_gas_limit(),
+        gas_limit: tx.max_gas(),
         block_gas_limit: (i64::MAX - 1) as u64,
         config: EVMConfig::new(Fork::Hegota, EVMConfig::canonical_values(Fork::Hegota)),
         chain_id: U256::from(HARNESS_CHAIN_ID),
@@ -119,7 +119,7 @@ fn frame_tx_env(tx: &FrameTransaction) -> Environment {
         // Fine for tests that don't assert on fee amounts. Tests that check
         // payer balances MUST use `run_frame_tx_with_fees`, which derives the
         // effective price min(base+priority, max_fee) like production.
-        gas_price: U256::from(tx.max_fee_per_gas),
+        gas_price: tx.max_fee_per_gas,
         tx_nonce: tx.nonce,
         ..Default::default()
     }
@@ -135,8 +135,8 @@ fn frame_tx_with_frames(frames: Vec<Frame>) -> FrameTransaction {
         sender: FUNDED_SENDER,
         frames,
         signatures: Vec::new(),
-        max_priority_fee_per_gas: 1,
-        max_fee_per_gas: HARNESS_BASE_FEE + 1_000,
+        max_priority_fee_per_gas: U256::from(1u64),
+        max_fee_per_gas: U256::from(HARNESS_BASE_FEE + 1_000),
         max_fee_per_blob_gas: U256::zero(),
         blob_versioned_hashes: Vec::new(),
         inner_hash: Default::default(),
@@ -200,10 +200,10 @@ fn run_frame_tx_with_fees(
     let mut env = frame_tx_env(&tx);
     env.base_fee_per_gas = U256::from(base_fee);
     // Effective gas price, matching production `calculate_gas_price_for_tx`.
-    let effective = base_fee
+    let effective = U256::from(base_fee)
         .saturating_add(tx.max_priority_fee_per_gas)
         .min(tx.max_fee_per_gas);
-    env.gas_price = U256::from(effective);
+    env.gas_price = effective;
     let transaction = Transaction::FrameTransaction(tx);
 
     let result = {
@@ -455,8 +455,8 @@ fn payer_pays_effective_price_no_burn() {
             data: Bytes::new(),
         },
     ]);
-    tx.max_fee_per_gas = 100_000_000_000; // 100 gwei
-    tx.max_priority_fee_per_gas = 2_000_000_000; // 2 gwei
+    tx.max_fee_per_gas = U256::from(100_000_000_000u64); // 100 gwei
+    tx.max_priority_fee_per_gas = U256::from(2_000_000_000u64); // 2 gwei
     let (result, db) = run_frame_tx_with_fees(
         &[
             (
@@ -570,6 +570,158 @@ fn frameparam_reads_frame_index_from_stack_top() {
     );
 }
 
+/// FRAMEPARAM(param=0x05, frameIndex=3) -> status of frame[3], then SSTORE at slot 0.
+/// FRAMEPARAM takes frameIndex from the top of the stack and param below it, so 0x03 (the
+/// frameIndex) is pushed last.
+/// Bytecode: PUSH1 0x05 (param), PUSH1 0x03 (frameIndex), FRAMEPARAM (0xB3),
+///           PUSH1 0x00 (slot key), SSTORE (0x55), STOP (0x00).
+const FRAMEPARAM_READ_FRAME3_STATUS: &[u8] =
+    &[0x60, 0x05, 0x60, 0x03, 0xB3, 0x60, 0x00, 0x55, 0x00];
+
+/// Covers both halves of an atomic-batch revert: a frame the batch never reached
+/// reports `0x2` SKIPPED and is refunded, and a frame that executed before the
+/// failure keeps the status and gas it earned, losing only its logs. Both feed the
+/// block header `gasUsed` and the receipts trie, so each assertion here is
+/// consensus-visible.
+#[test]
+fn frameparam_status_of_skipped_frame_is_two() {
+    // EIP-8141: a frame skipped by a failed atomic batch reports status 0x2
+    // (not 0x3). Layout:
+    //   frame0: VERIFY on the sender -> APPROVE(3) -> payer + sender_approved.
+    //   frame1: DEFAULT, atomic-batch flag, succeeds -> rolled back with the batch.
+    //   frame2: DEFAULT, atomic-batch flag, reverts -> unrolls the batch.
+    //   frame3: DEFAULT, atomic-batch flag -> SKIPPED.
+    //   frame4: DEFAULT, no flag -> batch terminator, also SKIPPED.
+    //   frame5: DEFAULT, no flag -> reads FRAMEPARAM(0x05, 3) and stores it.
+    const ROLLED_BACK_FRAME_GAS_LIMIT: u64 = 30_000;
+    let reverter = Address::from_low_u64_be(0xD1);
+    let stop_ct = Address::from_low_u64_be(0xD2);
+    let reader = Address::from_low_u64_be(0xD3);
+    // Emits an empty LOG0 and stops, so the rolled-back frame has both gas and a log
+    // to account for: PUSH1 0x00, PUSH1 0x00, LOG0, STOP.
+    let logger = Address::from_low_u64_be(0xD4);
+    const LOGGER_CODE: &[u8] = &[0x60, 0x00, 0x60, 0x00, 0xA0, 0x00];
+    let tx = frame_tx_with_frames(vec![
+        verify_frame(FUNDED_SENDER),
+        Frame {
+            mode: u8::from(FrameMode::Default),
+            flags: 0x04,
+            target: Some(logger),
+            gas_limit: ROLLED_BACK_FRAME_GAS_LIMIT,
+            value: U256::zero(),
+            data: Bytes::new(),
+        },
+        Frame {
+            mode: u8::from(FrameMode::Default),
+            flags: 0x04,
+            target: Some(reverter),
+            gas_limit: 60_000,
+            value: U256::zero(),
+            data: Bytes::new(),
+        },
+        Frame {
+            mode: u8::from(FrameMode::Default),
+            flags: 0x04,
+            target: Some(stop_ct),
+            gas_limit: 30_000,
+            value: U256::zero(),
+            data: Bytes::new(),
+        },
+        Frame {
+            mode: u8::from(FrameMode::Default),
+            flags: 0x00,
+            target: Some(stop_ct),
+            gas_limit: 30_000,
+            value: U256::zero(),
+            data: Bytes::new(),
+        },
+        Frame {
+            mode: u8::from(FrameMode::Default),
+            flags: 0x00,
+            target: Some(reader),
+            // EIP-8037 (active at Hegota): the new-slot SSTORE spills
+            // STATE_BYTES_PER_STORAGE_SET * cost_per_state_byte (~98k) into
+            // the frame's regular gas, so the budget must cover it.
+            gas_limit: 300_000,
+            value: U256::zero(),
+            data: Bytes::new(),
+        },
+    ]);
+    let accounts = [
+        (
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        ),
+        (
+            reverter,
+            U256::zero(),
+            0,
+            Bytes::from(PURE_REVERT_CODE.to_vec()),
+        ),
+        (stop_ct, U256::zero(), 0, Bytes::from(vec![0x00u8])), // STOP
+        (logger, U256::zero(), 0, Bytes::from(LOGGER_CODE.to_vec())),
+        (
+            reader,
+            U256::zero(),
+            0,
+            Bytes::from(FRAMEPARAM_READ_FRAME3_STATUS.to_vec()),
+        ),
+    ];
+    let (result, db) = run_frame_tx(&accounts, tx);
+    let report = result.expect("a DEFAULT-frame batch revert must not invalidate the tx");
+
+    let frame_results = report
+        .frame_results
+        .expect("frame tx report must carry per-frame results");
+    assert_eq!(
+        frame_results[3].0, FRAME_RECEIPT_STATUS_SKIPPED,
+        "frame[3] must be recorded as skipped"
+    );
+    assert_eq!(
+        frame_results[4].0, FRAME_RECEIPT_STATUS_SKIPPED,
+        "the batch terminator is part of the skip"
+    );
+    // Skipped frames are refunded, and `gas_used` here feeds the block header's
+    // `gasUsed`, so the zero is consensus-visible.
+    assert_eq!(frame_results[3].1, 0, "a skipped frame consumes no gas");
+    assert_eq!(frame_results[4].1, 0);
+    // EIP-8141: "Those frame receipts retain their execution status and gas used,
+    // with empty logs." frame[1] ran and succeeded before the batch failed, so it
+    // keeps SUCCESS and the gas it actually used — charging its full gas_limit would
+    // bill the payer for gas the transaction never spent, and bills a frame
+    // differently inside a batch than outside one.
+    assert_eq!(
+        frame_results[1].0,
+        ethrex_common::types::FRAME_RECEIPT_STATUS_SUCCESS,
+        "a frame that succeeded before the batch failed keeps its status"
+    );
+    assert!(
+        frame_results[1].1 > 0 && frame_results[1].1 < ROLLED_BACK_FRAME_GAS_LIMIT,
+        "a rolled-back batch frame keeps the gas it used, not its full limit: {}",
+        frame_results[1].1
+    );
+    assert!(
+        frame_results[1].2.is_empty(),
+        "logs written before the failure are discarded with the batch state"
+    );
+    // The failing frame reverted, so it is charged what it used, exactly as it would
+    // be outside a batch.
+    assert!(
+        frame_results[2].1 < 60_000,
+        "a REVERTing frame is charged its actual gas inside a batch too: {}",
+        frame_results[2].1
+    );
+
+    // FRAMEPARAM(0x05) must surface the same code, and it must be 2.
+    assert_eq!(
+        storage_slot(&db, reader, H256::zero()),
+        U256::from(2u64),
+        "FRAMEPARAM param 0x05 must return 2 for a frame skipped by a failed atomic batch"
+    );
+}
+
 // ==================== APPROVE scope-0 bypass ====================
 
 #[test]
@@ -609,7 +761,7 @@ fn approve_halts_when_frame_scope_is_none() {
 // ==================== Batched VERIFY revert invalidates tx ====================
 
 #[test]
-fn batched_verify_revert_invalidates_tx() {
+fn atomic_batch_flag_on_a_verify_frame_is_a_format_rejection() {
     let reverter = Address::from_low_u64_be(0xF1);
     let stop_ct = Address::from_low_u64_be(0xF2);
     // frame0: VERIFY -> sender, runs APPROVE(3) -> sets payer=sender (tx would be valid).
@@ -649,16 +801,22 @@ fn batched_verify_revert_invalidates_tx() {
         ),
         (stop_ct, U256::zero(), 0, Bytes::from(vec![0x00u8])), // STOP
     ];
+    // EIP-8141 forbids the atomic batch flag on a `VERIFY` frame, so this
+    // transaction never reaches the batch at all: it is rejected by static
+    // validation. The assertion used to read `InvalidFrameTransaction` and so
+    // passed for the wrong reason -- the reverting frame below is never
+    // executed, and a batched `VERIFY` revert is not constructible while the
+    // flag is forbidden.
     let (result, db) = run_frame_tx(&accounts, tx);
-    assert!(
-        matches!(
-            result,
-            Err(VMError::TxValidation(
-                ethrex_levm::errors::TxValidationError::InvalidFrameTransaction
-            ))
+    match result {
+        Err(VMError::TxValidation(
+            ethrex_levm::errors::TxValidationError::InvalidFrameTransactionFormat(ref reason),
+        )) => assert!(
+            reason.contains("atomic batch flag"),
+            "expected the atomic-batch-flag rule, got {reason:?}"
         ),
-        "a batched VERIFY revert must invalidate the tx; got {result:?}"
-    );
+        ref other => panic!("expected InvalidFrameTransactionFormat, got {other:?}"),
+    }
     assert_db_cache_unchanged(&db, &accounts);
 }
 
@@ -735,12 +893,17 @@ fn sender_frame_transfers_value_to_eoa() {
             data: Bytes::new(),
         },
     ]);
-    let accounts = [(
-        FUNDED_SENDER,
-        AUTO_SEED_SENDER_BALANCE,
-        0,
-        Bytes::from(APPROVE_BOTH_CODE.to_vec()),
-    )];
+    // Seeded with a balance so the recipient is already alive: reviving a dead
+    // account is a separate, priced case (`sender_frame_reviving_a_dead_target_pays_new_account`).
+    let accounts = [
+        (
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        ),
+        (eoa, U256::one(), 0, Bytes::new()),
+    ];
     let (result, db) = run_frame_tx(&accounts, tx);
     let report = result.expect("plain EOA transfer must be a VALID, SUCCESSFUL tx");
     // frame[1] (the SENDER frame) succeeded:
@@ -751,7 +914,11 @@ fn sender_frame_transfers_value_to_eoa() {
         "SENDER frame to a code-less EOA must succeed (default code = success)"
     );
     // The EOA actually received the value:
-    assert_eq!(balance_of(&db, eoa), value, "value not delivered to EOA");
+    assert_eq!(
+        balance_of(&db, eoa),
+        value.saturating_add(U256::one()),
+        "value not delivered to EOA"
+    );
 }
 
 #[test]
@@ -778,12 +945,15 @@ fn sender_frame_to_eoa_emits_transfer_log() {
             data: Bytes::new(),
         },
     ]);
-    let accounts = [(
-        FUNDED_SENDER,
-        AUTO_SEED_SENDER_BALANCE,
-        0,
-        Bytes::from(APPROVE_BOTH_CODE.to_vec()),
-    )];
+    let accounts = [
+        (
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        ),
+        (eoa, U256::one(), 0, Bytes::new()),
+    ];
     let (result, _db) = run_frame_tx(&accounts, tx);
     let report = result.expect("EOA transfer must be a valid, successful tx");
     let is_transfer_log = |l: &ethrex_common::types::Log| {
@@ -804,6 +974,88 @@ fn sender_frame_to_eoa_emits_transfer_log() {
     assert!(
         report.logs.iter().any(is_transfer_log),
         "EIP-7708 transfer log missing from report.logs"
+    );
+}
+
+/// A SENDER frame whose value transfer revives a dead account pays the EIP-8037
+/// NEW_ACCOUNT state cost at entry, from its own gas limit and before it runs
+/// (EELS `charge_value_transfer_to_non_alive_account`). A frame that cannot
+/// afford the charge never executes and forfeits its whole gas limit.
+///
+/// Found on a devnet, not by a fixture: ethrex charged nothing here and billed
+/// the frame 3_000 while Nethermind billed it the full limit, so the two split
+/// on the header `gasUsed` of the first frame transaction that paid a fresh
+/// address.
+#[test]
+fn sender_frame_reviving_a_dead_target_pays_new_account() {
+    let dead = Address::from_low_u64_be(0xDEAD1); // never seeded: not alive
+    let value = U256::from(5_000_000u64);
+    let accounts = [(
+        FUNDED_SENDER,
+        AUTO_SEED_SENDER_BALANCE,
+        0,
+        Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+    )];
+
+    let sender_frame = |gas_limit: u64| Frame {
+        mode: u8::from(FrameMode::Sender),
+        flags: 0,
+        target: Some(dead),
+        gas_limit,
+        value,
+        data: Bytes::new(),
+    };
+
+    // A frame limit that covers a cold access but not the account creation.
+    let tx = frame_tx_with_frames(vec![verify_frame(FUNDED_SENDER), sender_frame(50_000)]);
+    let (result, db) = run_frame_tx(&accounts, tx);
+    let report = result.expect("the transaction stays valid; only the frame fails");
+    let frame_results = report.frame_results.expect("frame results present");
+    assert_eq!(
+        frame_results[1].0,
+        ethrex_common::types::FRAME_RECEIPT_STATUS_FAILURE,
+        "a frame that cannot pay its entry charge must fail"
+    );
+    assert_eq!(
+        frame_results[1].1, 50_000,
+        "a frame that fails at entry forfeits its whole gas limit"
+    );
+    assert_eq!(
+        balance_of(&db, dead),
+        U256::zero(),
+        "the account must not be revived by a frame that never ran"
+    );
+
+    // The same frame with room for the charge runs, and is billed exactly the
+    // cold access plus the NEW_ACCOUNT state cost.
+    let tx = frame_tx_with_frames(vec![verify_frame(FUNDED_SENDER), sender_frame(10_000_000)]);
+    let (result, db) = run_frame_tx(&accounts, tx);
+    let report = result.expect("the funded frame must succeed");
+    let frame_results = report.frame_results.expect("frame results present");
+    assert_eq!(
+        frame_results[1].0,
+        ethrex_common::types::FRAME_RECEIPT_STATUS_SUCCESS,
+        "a frame that can pay the revival charge must succeed"
+    );
+    assert_eq!(
+        balance_of(&db, dead),
+        value,
+        "the revived account must receive the value"
+    );
+    let cold_access = ethrex_levm::gas_cost::cold_account_access_cost(Fork::Hegota);
+    let new_account = frame_results[1].1.saturating_sub(cold_access);
+    assert!(
+        new_account > 0,
+        "the frame must be billed a NEW_ACCOUNT state charge on top of the cold access, \
+         got {} total",
+        frame_results[1].1
+    );
+    assert!(
+        report.state_gas_used >= new_account,
+        "the NEW_ACCOUNT charge must also land in the state-gas dimension: \
+         state_gas_used {} < {}",
+        report.state_gas_used,
+        new_account
     );
 }
 
@@ -1334,7 +1586,8 @@ mod frame_tx_opcode_handler_tests {
             sig_hash: ethrex_common::H256::zero(),
             tx,
             approve_called_in_current_frame: false,
-            total_gas_limit: 0,
+            max_gas: 0,
+            blob_base_fee: U256::zero(),
         }
     }
 
@@ -1420,7 +1673,8 @@ mod frame_tx_opcode_handler_tests {
             sig_hash: ethrex_common::H256::zero(),
             tx: FrameTransaction::default(),
             approve_called_in_current_frame: false,
-            total_gas_limit: 0,
+            max_gas: 0,
+            blob_base_fee: U256::zero(),
         };
         let result = load_tx_param(&ctx, 0x0B).unwrap();
         assert_eq!(result, U256::zero());
@@ -1933,7 +2187,6 @@ mod validation_observer_tests {
     #[test]
     fn validation_observer_opcode_byte_pins() {
         use ethrex_levm::opcodes::Opcode;
-        assert_eq!(u8::from(Opcode::ORIGIN), 0x32);
         assert_eq!(u8::from(Opcode::GASPRICE), 0x3A);
         assert_eq!(u8::from(Opcode::BLOCKHASH), 0x40);
         assert_eq!(u8::from(Opcode::COINBASE), 0x41);
@@ -1942,14 +2195,12 @@ mod validation_observer_tests {
         assert_eq!(u8::from(Opcode::PREVRANDAO), 0x44);
         assert_eq!(u8::from(Opcode::GASLIMIT), 0x45);
         assert_eq!(u8::from(Opcode::BASEFEE), 0x48);
-        assert_eq!(u8::from(Opcode::BLOBHASH), 0x49);
         assert_eq!(u8::from(Opcode::BLOBBASEFEE), 0x4A);
+        assert_eq!(u8::from(Opcode::SLOTNUM), 0x4B);
         assert_eq!(u8::from(Opcode::INVALID), 0xFE);
         assert_eq!(u8::from(Opcode::SELFDESTRUCT), 0xFF);
         assert_eq!(u8::from(Opcode::BALANCE), 0x31);
         assert_eq!(u8::from(Opcode::SELFBALANCE), 0x47);
-        assert_eq!(u8::from(Opcode::TLOAD), 0x5C);
-        assert_eq!(u8::from(Opcode::TSTORE), 0x5D);
         assert_eq!(u8::from(Opcode::GAS), 0x5A);
         assert_eq!(u8::from(Opcode::CALL), 0xF1);
         assert_eq!(u8::from(Opcode::CALLCODE), 0xF2);
@@ -2043,8 +2294,8 @@ mod validation_observer_tests {
             sender,
             frames,
             signatures: Vec::new(),
-            max_priority_fee_per_gas: 0,
-            max_fee_per_gas: 0,
+            max_priority_fee_per_gas: U256::from(0u64),
+            max_fee_per_gas: U256::from(0u64),
             max_fee_per_blob_gas: U256::zero(),
             blob_versioned_hashes: Vec::new(),
             ..Default::default()
@@ -2176,6 +2427,64 @@ mod validation_observer_tests {
             "TIMESTAMP inside the expiry verifier must be allowed, got {:?}",
             vm.validation_observer.violation
         );
+    }
+
+    #[test]
+    fn slotnum_is_banned() {
+        let sender = addr(0x4B00);
+        // SLOTNUM (0x4B) then STOP. EIP-7843's slot number changes between
+        // admission and inclusion exactly like NUMBER/TIMESTAMP, so a prefix
+        // branching on it could pass simulation and revert on inclusion. It is
+        // not covered transitively: the handler reads `env.slot_number` from the
+        // header rather than deriving it from TIMESTAMP.
+        let code = Bytes::from(vec![0x4B, 0x00]);
+        let tx = frame_tx_for_obs(
+            sender,
+            vec![verify_frame_obs(sender, 50_000, 0x03, Bytes::new())],
+        );
+        let mut db = build_db(vec![(sender, account_with_code(0, code))]);
+        let (_result, violation) = run(&tx, &mut db, sender, &[0], None);
+        assert_eq!(
+            violation,
+            Some(FrameSimViolation::BannedOpcode(0x4B)),
+            "SLOTNUM must be a banned opcode during prefix simulation"
+        );
+    }
+
+    /// EIP-8141 relaxed the banned list: `ORIGIN` (0x32), `BLOBHASH` (0x49),
+    /// `TLOAD` (0x5C) and `TSTORE` (0x5D) were banned originally and are not any
+    /// more. None of them can make a prefix pass at admission and then fail in a
+    /// block, which is the whole point of the list: `ORIGIN` is fixed per frame by
+    /// the mode, `BLOBHASH` reads the transaction's own versioned hashes, and
+    /// transient storage cannot outlive the transaction that wrote it.
+    ///
+    /// Kept as a test rather than only a comment because the ban is one match arm
+    /// away: re-adding any of the four would silently start rejecting valid frame
+    /// transactions at admission, which no consensus fixture can catch.
+    #[test]
+    fn the_relaxed_opcodes_are_not_banned() {
+        for (opcode, name) in [
+            (0x32u8, "ORIGIN"),
+            (0x49u8, "BLOBHASH"),
+            (0x5Cu8, "TLOAD"),
+            (0x5Du8, "TSTORE"),
+        ] {
+            let sender = addr(0x3200);
+            // The opcode, then POP and STOP: TLOAD/BLOBHASH/ORIGIN each push one
+            // word, and TSTORE needs two operands, so push two zeros up front and
+            // let the extra word be popped.
+            let code = Bytes::from(vec![0x60, 0x00, 0x60, 0x00, opcode, 0x50, 0x00]);
+            let tx = frame_tx_for_obs(
+                sender,
+                vec![verify_frame_obs(sender, 50_000, 0x03, Bytes::new())],
+            );
+            let mut db = build_db(vec![(sender, account_with_code(0, code))]);
+            let (_result, violation) = run(&tx, &mut db, sender, &[0], None);
+            assert!(
+                !matches!(violation, Some(FrameSimViolation::BannedOpcode(op)) if op == opcode),
+                "{name} ({opcode:#04x}) must not be reported as a banned opcode"
+            );
+        }
     }
 
     #[test]
@@ -2523,8 +2832,8 @@ mod frame_validation_prefix_tests {
             sender,
             frames,
             signatures: Vec::new(),
-            max_priority_fee_per_gas: 0,
-            max_fee_per_gas: 0,
+            max_priority_fee_per_gas: U256::from(0u64),
+            max_fee_per_gas: U256::from(0u64),
             max_fee_per_blob_gas: U256::zero(),
             blob_versioned_hashes: Vec::new(),
             ..Default::default()
@@ -2616,6 +2925,114 @@ mod frame_validation_prefix_tests {
         );
         assert_eq!(outcome.accessed_paymaster, Some((sender, false)));
     }
+
+    /// The paymaster reservation bounds the blob fee at the transaction's declared
+    /// `max_fee_per_blob_gas`, not at the head block's `blob_base_fee`. Admission
+    /// simulates against the current head while execution charges the base fee of
+    /// whichever later block includes the transaction, and the blob base fee moves
+    /// per block. EIP-8141 §Blob handling makes `max_fee_per_blob_gas >=
+    /// blob_base_fee` an inclusion condition, so the declared rate bounds every
+    /// block that can include the transaction; the head's rate does not.
+    #[test]
+    fn reservation_ceiling_prices_blobs_at_the_declared_max_rate() {
+        const GAS_PER_BLOB: u64 = 1 << 17;
+        const MAX_FEE_PER_BLOB_GAS: u64 = 1_000;
+
+        let sender = addr(0x5E_11_02);
+        let mut tx = frame_tx_prefix(sender, vec![frame(1, 0x03, sender, 50_000)]);
+        let Transaction::FrameTransaction(frame_tx) = &mut tx else {
+            unreachable!("frame_tx_prefix builds a frame transaction")
+        };
+        frame_tx.max_fee_per_blob_gas = U256::from(MAX_FEE_PER_BLOB_GAS);
+        frame_tx.blob_versioned_hashes = vec![H256([
+            0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0,
+        ])];
+
+        // Enough balance to cover the consensus max cost APPROVE collects, which
+        // prices the blob at the head's base fee — the quantity this reservation
+        // deliberately does not use.
+        let mut db = db_with(vec![(sender, account(1_000_000, approve_code(0x03)))]);
+        let prefix = ValidationPrefix {
+            shape: PrefixShape::SelfVerify,
+            frame_indices: vec![0],
+            deploy_index: None,
+            pay_index: Some(0),
+        };
+        let outcome = LEVM::simulate_frame_validation_prefix(
+            &tx,
+            &header(),
+            &mut db,
+            VMType::L1,
+            &NativeCrypto,
+            &prefix,
+            None,
+        )
+        .expect("simulation runs");
+        assert!(
+            outcome.passed,
+            "the blob-carrying self_verify prefix must pass, got {:?}",
+            outcome.violation
+        );
+        // max_fee_per_gas is zero here, so the ceiling is the blob term alone.
+        assert_eq!(
+            outcome.reservation_ceiling,
+            U256::from(GAS_PER_BLOB * MAX_FEE_PER_BLOB_GAS),
+            "the reservation must price the blob at max_fee_per_blob_gas"
+        );
+    }
+
+    /// A sponsored OnlyVerifyPay prefix whose pay frame targets a non-sender
+    /// sponsor. EIP-8141 structural rule 3 restricts only self_verify /
+    /// only_verify targets to `tx.sender`; rule 4 places no target requirement
+    /// on `pay`, so the sponsor may approve payment for the sender. The prefix
+    /// must pass structural validation and the simulation must establish the
+    /// sponsor as the paymaster.
+    #[test]
+    fn sponsored_pay_frame_may_target_non_sender() {
+        let sender = addr(0x5E_11_02);
+        let sponsor = addr(0x42_D9_3E);
+        let frames = vec![
+            frame(1, 0x02, sender, 40_000),  // only_verify -> sender
+            frame(1, 0x01, sponsor, 40_000), // pay -> sponsor
+        ];
+        let tx = frame_tx_prefix(sender, frames);
+        let Transaction::FrameTransaction(frame_tx) = &tx else {
+            unreachable!("frame_tx_prefix builds a frame transaction")
+        };
+        let prefix = frame_tx
+            .validation_prefix()
+            .expect("OnlyVerifyPay shape recognized");
+        assert_eq!(prefix.shape, PrefixShape::OnlyVerifyPay);
+        frame_tx
+            .validate_prefix_structure(&prefix)
+            .expect("a pay frame may target a non-sender sponsor (EIP-8141 structural rule 4)");
+
+        let mut db = db_with(vec![
+            (sender, account(0, approve_code(0x02))),
+            (sponsor, account(0, approve_code(0x01))),
+        ]);
+        let outcome = LEVM::simulate_frame_validation_prefix(
+            &tx,
+            &header(),
+            &mut db,
+            VMType::L1,
+            &NativeCrypto,
+            &prefix,
+            None,
+        )
+        .expect("simulation runs");
+        assert!(
+            outcome.passed,
+            "a sponsored prefix must pass validation, got {:?}",
+            outcome.violation
+        );
+        assert_eq!(
+            outcome.accessed_paymaster,
+            Some((sponsor, false)),
+            "the sponsor must be identified as the paymaster"
+        );
+    }
 }
 
 // ==================== Relocated from crates/vm/levm/src/vm.rs ====================
@@ -2667,7 +3084,7 @@ mod atomic_batch_end_tests {
 }
 
 mod atomic_batch_approval_rollback_tests {
-    use ethrex_common::Address;
+    use ethrex_common::{Address, U256};
     use ethrex_levm::vm::FrameTxContext;
 
     fn minimal_ctx() -> FrameTxContext {
@@ -2679,7 +3096,8 @@ mod atomic_batch_approval_rollback_tests {
             sig_hash: ethrex_common::H256::zero(),
             tx: ethrex_common::types::FrameTransaction::default(),
             approve_called_in_current_frame: false,
-            total_gas_limit: 0,
+            max_gas: 0,
+            blob_base_fee: U256::zero(),
         }
     }
 
@@ -3287,26 +3705,26 @@ mod sigparam_execution_tests {
         ])
     }
 
-    /// `SIGPARAM(0x04, index)` copying `length` bytes from `dataOffset` to memory
-    /// offset 0, then `SSTORE(0, MLOAD(0))`. The copy form takes
-    /// `[memOffset, dataOffset, length, param, signatureIndex]` with the index on
+    /// `SIGPARAM(0x04, index)` copying `length` bytes from `dataOffset` to
+    /// `memOffset`, then `SSTORE(0, MLOAD(memOffset))`. The copy form takes
+    /// `[signatureIndex, param, memOffset, dataOffset, length]` with the index on
     /// top, so the pushes run in reverse.
-    fn sigparam_copy_code(index: u8, length: u8, data_offset: u8) -> Bytes {
+    fn sigparam_copy_code(index: u8, length: u8, data_offset: u8, mem_offset: u8) -> Bytes {
         Bytes::from(vec![
             0x60,
-            0x00, // PUSH1 memOffset
+            length, // PUSH1 length
             0x60,
             data_offset, // PUSH1 dataOffset
             0x60,
-            length, // PUSH1 length
+            mem_offset, // PUSH1 memOffset
             0x60,
             0x04, // PUSH1 param (copy)
             0x60,
             index, // PUSH1 signatureIndex
             0xB4,  // SIGPARAM
             0x60,
-            0x00, // PUSH1 0
-            0x51, // MLOAD
+            mem_offset, // PUSH1 memOffset
+            0x51,       // MLOAD
             0x60,
             0x00, // PUSH1 0 (slot)
             0x55, // SSTORE
@@ -3403,7 +3821,7 @@ mod sigparam_execution_tests {
         // 4 payload bytes copied into memory at 0; MLOAD reads them left-aligned
         // in the word, with the rest zero-filled.
         let (result, db, reader) = run_reader(
-            sigparam_copy_code(0, 4, 0),
+            sigparam_copy_code(0, 4, 0, 0),
             vec![arbitrary_sig(vec![0xDE, 0xAD, 0xBE, 0xEF])],
         );
         result.expect("valid tx");
@@ -3419,12 +3837,31 @@ mod sigparam_execution_tests {
     fn sigparam_0x04_zero_fills_past_the_end() {
         // Asking for 8 bytes of a 2-byte signature zero-fills the remainder.
         let (result, db, reader) = run_reader(
-            sigparam_copy_code(0, 8, 0),
+            sigparam_copy_code(0, 8, 0, 0),
             vec![arbitrary_sig(vec![0x11, 0x22])],
         );
         result.expect("valid tx");
         let mut expected = [0u8; 32];
         expected[..2].copy_from_slice(&[0x11, 0x22]);
+        assert_eq!(
+            storage_of(&db, reader, U256::zero()),
+            U256::from_big_endian(&expected),
+        );
+    }
+
+    #[test]
+    fn sigparam_0x04_reads_operands_in_calldatacopy_order() {
+        // The copy operands follow `CALLDATACOPY`: memOffset above dataOffset
+        // above length. Distinct values for all three, and a destination past the
+        // first word, pin the order — reading them in any other order lands the
+        // bytes somewhere else (or copies a different count).
+        let (result, db, reader) = run_reader(
+            sigparam_copy_code(0, 3, 1, 0x20),
+            vec![arbitrary_sig(vec![0xAA, 0xBB, 0xCC, 0xDD])],
+        );
+        result.expect("valid tx");
+        let mut expected = [0u8; 32];
+        expected[..3].copy_from_slice(&[0xBB, 0xCC, 0xDD]);
         assert_eq!(
             storage_of(&db, reader, U256::zero()),
             U256::from_big_endian(&expected),
@@ -3610,5 +4047,685 @@ fn storage_refund_from_a_later_frame_reduces_reported_gas() {
     assert!(
         applied <= pre_refund / 5,
         "the applied refund {applied} must respect the EIP-3529 one-fifth cap"
+    );
+}
+
+/// EIP-8141 `max_gas = max(standard_gas_limit, calldata_floor_gas)`. A frame
+/// transaction whose data floor exceeds what it declared for execution reserves
+/// the floor; it is not rejected. Both quantities carry the mandatory costs, so
+/// the floor wins exactly when the EIP-7623 token charge exceeds the declared
+/// data cost plus frame gas.
+#[test]
+fn max_gas_reserves_the_calldata_floor_instead_of_rejecting() {
+    use ethrex_common::types::Frame;
+
+    // A frame carrying a large payload but almost no execution gas: the floor
+    // (64 per byte) dominates the data cost (16 at most) plus the frame gas.
+    let mut tx = frame_tx_with_frames(vec![Frame {
+        mode: u8::from(FrameMode::Verify),
+        flags: 0x03,
+        target: Some(FUNDED_SENDER),
+        gas_limit: 1_000,
+        value: U256::zero(),
+        data: Bytes::from(vec![0x11u8; 4_096]),
+    }]);
+    tx.sender = FUNDED_SENDER;
+
+    assert!(
+        tx.calldata_floor_total() > tx.standard_gas_limit(),
+        "the floor must bind for this to test the reservation"
+    );
+    assert_eq!(
+        tx.max_gas(),
+        tx.calldata_floor_total(),
+        "max_gas must be the floor when the floor binds"
+    );
+    assert!(
+        tx.validate_static_constraints().is_ok(),
+        "a floor-bound transaction is valid; it reserves the floor rather than being rejected"
+    );
+}
+
+/// A floor-bound frame transaction settles at the floor: the reservation raised
+/// to `calldata_floor_gas` is what the payer is charged for, and no frame gas is
+/// reported as refunded because the floor already absorbs it.
+#[test]
+fn a_floor_bound_frame_transaction_is_charged_the_floor() {
+    use ethrex_common::types::Frame;
+
+    let tx = frame_tx_with_frames(vec![Frame {
+        mode: u8::from(FrameMode::Verify),
+        flags: 0x03,
+        target: Some(FUNDED_SENDER),
+        gas_limit: 100_000,
+        value: U256::zero(),
+        data: Bytes::from(vec![0x11u8; 4_096]),
+    }]);
+    let floor_total = tx.calldata_floor_total();
+    assert!(
+        floor_total > tx.standard_gas_limit(),
+        "the floor must bind for this to test the settlement"
+    );
+
+    let (result, _db) = run_frame_tx(
+        &[(
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        )],
+        tx,
+    );
+    let report = result.expect("valid: the self-verify frame approves execution and payment");
+    assert_eq!(
+        report.gas_used, floor_total,
+        "a floor-bound transaction is charged max_gas, which is the floor"
+    );
+    assert_eq!(
+        report.gas_refunded, 0,
+        "the floor leaves no frame gas to report as refunded"
+    );
+}
+
+// ==================== atomic batch unroll / EIP-7928 BAL ====================
+
+/// EIP-7928 requires the block access list to describe the block's actual state
+/// changes. An atomic batch that unrolls performed none of its writes, so the
+/// recorder must forget them: a builder that keeps them writes a BAL the block
+/// contradicts, and re-execution on import rejects the block it just produced.
+#[test]
+fn atomic_batch_revert_drops_the_batch_writes_from_the_bal() {
+    use ethrex_common::types::Frame;
+
+    let writer = Address::from_low_u64_be(0x8141_0001);
+    let reverter = Address::from_low_u64_be(0x8141_0002);
+    let terminator = Address::from_low_u64_be(0x8141_0003);
+    let slot = U256::zero();
+
+    // writer: SSTORE(0, 0x2a) ; STOP
+    let writer_code = Bytes::from(vec![0x60, 0x2a, 0x60, 0x00, 0x55, 0x00]);
+    // reverter: REVERT(0, 0)
+    let reverter_code = Bytes::from(vec![0x60, 0x00, 0x60, 0x00, 0xFD]);
+    let stop_code = Bytes::from(vec![0x00]);
+
+    let accounts: Vec<SeededAccount> = vec![
+        (
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        ),
+        (writer, U256::zero(), 0, writer_code),
+        (reverter, U256::zero(), 0, reverter_code),
+        (terminator, U256::zero(), 0, stop_code),
+    ];
+
+    let batch_frame = |target: Address| Frame {
+        mode: u8::from(FrameMode::Sender),
+        flags: 0x04,
+        target: Some(target),
+        gas_limit: 300_000,
+        value: U256::zero(),
+        data: Bytes::new(),
+    };
+    let plain_frame = |target: Address| Frame {
+        mode: u8::from(FrameMode::Sender),
+        flags: 0x00,
+        target: Some(target),
+        gas_limit: 100_000,
+        value: U256::zero(),
+        data: Bytes::new(),
+    };
+    let verify = Frame {
+        mode: u8::from(FrameMode::Verify),
+        flags: 0x03,
+        target: Some(FUNDED_SENDER),
+        gas_limit: 80_000,
+        value: U256::zero(),
+        data: Bytes::new(),
+    };
+
+    // The batch writes, then a later member reverts, so the whole batch unrolls.
+    // The trailing non-batch frame terminates the batch.
+    let tx = frame_tx_with_frames(vec![
+        verify,
+        batch_frame(writer),
+        batch_frame(reverter),
+        plain_frame(terminator),
+    ]);
+
+    let mut db = seeded_db(&accounts);
+    db.enable_bal_recording();
+    let env = frame_tx_env(&tx);
+    let transaction = Transaction::FrameTransaction(tx);
+    {
+        let mut vm = VM::new(
+            env,
+            &mut db,
+            &transaction,
+            LevmCallTracer::disabled(),
+            VMType::L1,
+            &NativeCrypto,
+            None,
+        )
+        .expect("VM::new should succeed for a frame tx");
+        vm.execute()
+            .expect("a reverting batch must not error the tx");
+    }
+
+    // The write was unrolled, so the live slot is still its prestate value.
+    let live = db
+        .current_accounts_state
+        .get(&writer)
+        .and_then(|acc| acc.storage.get(&H256::zero()).copied())
+        .unwrap_or_default();
+    assert!(
+        live.is_zero(),
+        "the batch unrolled, so the write must not survive; got {live}"
+    );
+
+    let bal = db
+        .bal_recorder
+        .take()
+        .expect("BAL recording was enabled")
+        .build();
+    let writer_entry = bal.accounts().iter().find(|acc| acc.address == writer);
+    if let Some(entry) = writer_entry {
+        assert!(
+            entry
+                .storage_changes
+                .iter()
+                .all(|change| change.slot != slot),
+            "the BAL must not record a storage change for a slot whose write was unrolled"
+        );
+    }
+}
+
+/// EIP-7928: a frame that reverts on its own — with no atomic batch involved —
+/// commits no state, so the recorder must forget its writes exactly as it does
+/// for an unrolled batch. The slot is still *accessed*, so it must be reported
+/// as a read: dropping the write without re-filing it would leave the slot in
+/// neither `storage_changes` nor `storage_reads`, and re-execution (whose shadow
+/// recorder sees the raw SLOAD) then rejects the block the builder just made.
+///
+/// The write-then-read order is the load-bearing part: `record_storage_read`
+/// suppresses a read for a slot that is already written, so the read leaves no
+/// record of its own and the reverted write is the only thing standing in for it.
+#[test]
+fn reverted_frame_refiles_its_writes_as_reads_in_the_bal() {
+    use ethrex_common::types::Frame;
+
+    let target = Address::from_low_u64_be(0x8141_0101);
+    let slot = U256::from(5);
+
+    // SSTORE(5, 1) ; SLOAD(5) ; POP ; REVERT(0, 0)
+    let code = Bytes::from(vec![
+        0x60, 0x01, 0x60, 0x05, 0x55, // SSTORE(5, 1)
+        0x60, 0x05, 0x54, 0x50, // SLOAD(5) ; POP
+        0x60, 0x00, 0x60, 0x00, 0xFD, // REVERT(0, 0)
+    ]);
+
+    let accounts: Vec<SeededAccount> = vec![
+        (
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        ),
+        (target, U256::zero(), 0, code),
+    ];
+
+    let verify = Frame {
+        mode: u8::from(FrameMode::Verify),
+        flags: 0x03,
+        target: Some(FUNDED_SENDER),
+        gas_limit: 80_000,
+        value: U256::zero(),
+        data: Bytes::new(),
+    };
+    // A plain DEFAULT frame: no atomic-batch flag, so the batch unroll path that
+    // already reconciles the recorder is deliberately not exercised here.
+    let reverting = Frame {
+        mode: u8::from(FrameMode::Default),
+        flags: 0x00,
+        target: Some(target),
+        gas_limit: 300_000,
+        value: U256::zero(),
+        data: Bytes::new(),
+    };
+
+    let tx = frame_tx_with_frames(vec![verify, reverting]);
+    let mut db = seeded_db(&accounts);
+    db.enable_bal_recording();
+    let env = frame_tx_env(&tx);
+    let transaction = Transaction::FrameTransaction(tx);
+    {
+        let mut vm = VM::new(
+            env,
+            &mut db,
+            &transaction,
+            LevmCallTracer::disabled(),
+            VMType::L1,
+            &NativeCrypto,
+            None,
+        )
+        .expect("VM::new should succeed for a frame tx");
+        vm.execute()
+            .expect("a reverting DEFAULT frame must not error the tx");
+    }
+
+    // The frame reverted, so the write must not survive in state.
+    let live = db
+        .current_accounts_state
+        .get(&target)
+        .and_then(|acc| acc.storage.get(&H256::from_low_u64_be(5)).copied())
+        .unwrap_or_default();
+    assert!(
+        live.is_zero(),
+        "the frame reverted, so the write must not survive; got {live}"
+    );
+
+    let bal = db
+        .bal_recorder
+        .take()
+        .expect("BAL recording was enabled")
+        .build();
+    let entry = bal
+        .accounts()
+        .iter()
+        .find(|acc| acc.address == target)
+        .expect("the reverting frame's target was accessed, so it must be in the BAL");
+    assert!(
+        entry.storage_changes.iter().all(|c| c.slot != slot),
+        "the BAL must not claim a storage change for a slot whose write was reverted"
+    );
+    assert!(
+        entry.storage_reads.contains(&slot),
+        "the reverted write must be re-filed as a read so the slot is still \
+         reported as accessed; otherwise re-execution rejects the block \
+         (slot missing from both storage_changes and storage_reads)"
+    );
+}
+
+/// EIP-8141: "if a frame's execution reverts, its state changes **and approval
+/// context (`payer`, `sender_approved`)** are discarded."
+///
+/// `APPROVE` exits its own call context, so a frame cannot approve and then revert
+/// directly -- but a nested call back into the frame's target can. The inner call
+/// approves and returns; the outer frame then reverts. Everything `APPROVE` did to
+/// state (the sender nonce increment, the `max_cost` collection) rolls back with the
+/// frame, while `payer` and `sender_approved` live in the transaction context,
+/// outside the substate and the cache, and used to survive.
+///
+/// The consequence is not a lost approval but a free transaction: the payer stays
+/// bound, so the transaction is valid and settles fees against an account whose
+/// `max_cost` debit was rolled back.
+#[test]
+fn a_reverting_frame_discards_the_approval_it_granted() {
+    use ethrex_common::types::Frame;
+
+    // CALLDATASIZE != 0 (the outer frame, which carries `data`) takes the self-call
+    // branch; the inner call gets empty calldata and takes the APPROVE branch.
+    //
+    //   00 CALLDATASIZE ; 01 PUSH1 0x0B ; 03 JUMPI      -> outer branch at 0x0B
+    //   04 PUSH1 3 ; 06 PUSH1 0 ; 08 PUSH1 0 ; 0A APPROVE   (scope 3, exits context)
+    //   0B JUMPDEST ; five PUSH1 0 (ret/args/value) ; 16 ADDRESS ; 17 GAS ; 18 CALL
+    //   19 POP ; 1A PUSH1 0 ; 1C PUSH1 0 ; 1E REVERT
+    let approve_then_revert = Bytes::from(vec![
+        0x36, 0x60, 0x0B, 0x57, // CALLDATASIZE; PUSH1 0x0B; JUMPI
+        0x60, 0x03, 0x60, 0x00, 0x60, 0x00, 0xAA, // PUSH1 3; PUSH1 0; PUSH1 0; APPROVE
+        0x5B, // JUMPDEST
+        0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00, // ret/args/value = 0
+        0x30, 0x5A, 0xF1, 0x50, // ADDRESS; GAS; CALL; POP
+        0x60, 0x00, 0x60, 0x00, 0xFD, // PUSH1 0; PUSH1 0; REVERT
+    ]);
+
+    // A DEFAULT frame targeting `tx.sender`: the approval scopes require the target
+    // to be `tx.sender`, and DEFAULT is the only mode that both reaches the EVM and
+    // carries no precondition of its own -- a VERIFY frame invalidates the
+    // transaction merely by reverting, and a SENDER frame invalidates it by running
+    // before the sender approval exists. Either would mask the behaviour under test.
+    let tx = frame_tx_with_frames(vec![Frame {
+        mode: u8::from(FrameMode::Default),
+        flags: 0x03,
+        target: Some(FUNDED_SENDER),
+        gas_limit: 400_000,
+        value: U256::zero(),
+        data: Bytes::from_static(&[0x01]),
+    }]);
+
+    let (result, _db) = run_frame_tx(
+        &[(
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0,
+            approve_then_revert,
+        )],
+        tx,
+    );
+
+    let err = result.expect_err(
+        "the only frame reverted, so its approval is discarded and the transaction \
+         has no payer -- keeping the payer would settle fees against an account whose \
+         max_cost debit was rolled back",
+    );
+    assert!(
+        matches!(err, VMError::TxValidation(_)),
+        "expected a transaction-validation failure for the missing payer, got {err:?}"
+    );
+}
+
+/// EIP-8141: when an atomic batch unrolls, "logs emitted by frames that executed
+/// before the failure are discarded together with their state changes [...] Those
+/// frame receipts retain their execution status and gas used, with empty logs."
+///
+/// All three halves are consensus-visible: the per-frame status and gas go into
+/// the receipts trie, and the gas also feeds the header `gasUsed` and the payer's
+/// refund. Rewriting the batch to failure-at-full-`gas_limit` would over-charge
+/// the payer and mislabel frames that did run.
+#[test]
+fn atomic_batch_unroll_keeps_frame_status_and_gas_but_drops_logs() {
+    use ethrex_common::types::{
+        FRAME_RECEIPT_STATUS_FAILURE, FRAME_RECEIPT_STATUS_SKIPPED, FRAME_RECEIPT_STATUS_SUCCESS,
+        Frame,
+    };
+
+    let logger = Address::from_low_u64_be(0x8141_0011);
+    let reverter = Address::from_low_u64_be(0x8141_0012);
+    let terminator = Address::from_low_u64_be(0x8141_0013);
+
+    // logger: LOG0(0, 0) ; STOP -- succeeds and emits one log.
+    let logger_code = Bytes::from(vec![0x60, 0x00, 0x60, 0x00, 0xA0, 0x00]);
+    // reverter: REVERT(0, 0) -- a clean revert, so it is charged its actual gas.
+    let reverter_code = Bytes::from(vec![0x60, 0x00, 0x60, 0x00, 0xFD]);
+    let stop_code = Bytes::from(vec![0x00]);
+
+    let accounts: Vec<SeededAccount> = vec![
+        (
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        ),
+        (logger, U256::zero(), 0, logger_code),
+        (reverter, U256::zero(), 0, reverter_code),
+        (terminator, U256::zero(), 0, stop_code),
+    ];
+
+    const BATCH_FRAME_GAS: u64 = 300_000;
+    let batch_frame = |target: Address| Frame {
+        mode: u8::from(FrameMode::Sender),
+        flags: 0x04,
+        target: Some(target),
+        gas_limit: BATCH_FRAME_GAS,
+        value: U256::zero(),
+        data: Bytes::new(),
+    };
+
+    // [logger(flagged), reverter(flagged), terminator(unflagged)] is one batch.
+    // The reverter fails, so the batch unrolls and the terminator is skipped.
+    let tx = frame_tx_with_frames(vec![
+        verify_frame(FUNDED_SENDER),
+        batch_frame(logger),
+        batch_frame(reverter),
+        Frame {
+            mode: u8::from(FrameMode::Sender),
+            flags: 0x00,
+            target: Some(terminator),
+            gas_limit: 100_000,
+            value: U256::zero(),
+            data: Bytes::new(),
+        },
+    ]);
+
+    let (result, _db) = run_frame_tx(&accounts, tx);
+    let report = result.expect("a reverting batch must not invalidate the tx");
+    let frames = report.frame_results.expect("frame results present");
+
+    // The frame that ran before the failure keeps its status and its gas.
+    assert_eq!(
+        frames[1].0, FRAME_RECEIPT_STATUS_SUCCESS,
+        "a frame that succeeded before the failure keeps its status through the unroll"
+    );
+    assert!(
+        frames[1].1 > 0 && frames[1].1 < BATCH_FRAME_GAS,
+        "it keeps the gas it used ({}), not the frame's whole gas_limit",
+        frames[1].1
+    );
+    assert!(
+        frames[1].2.is_empty(),
+        "its logs go with the state changes the unroll dropped: {:?}",
+        frames[1].2
+    );
+
+    // The failing frame reverted, so it is charged what it actually used.
+    assert_eq!(frames[2].0, FRAME_RECEIPT_STATUS_FAILURE);
+    assert!(
+        frames[2].1 < BATCH_FRAME_GAS,
+        "a REVERT is charged its actual gas ({}), not the full gas_limit",
+        frames[2].1
+    );
+
+    // The remaining batch member never executed.
+    assert_eq!(frames[3].0, FRAME_RECEIPT_STATUS_SKIPPED);
+    assert_eq!(frames[3].1, 0, "a skipped frame's gas is refunded");
+
+    // The transaction's log set is the concatenation of the frame receipts' logs,
+    // so the unrolled batch contributes nothing to it either.
+    assert!(
+        report.logs.is_empty(),
+        "the unrolled batch's logs must not reach the transaction log set: {:?}",
+        report.logs
+    );
+    assert!(
+        report.gas_used < 2 * BATCH_FRAME_GAS,
+        "charging every batch frame its full gas_limit would over-bill the payer"
+    );
+}
+
+// ==================== Rejection-reason granularity ====================
+//
+// A frame transaction that is rejected for the right reason but reports the
+// wrong one is indistinguishable, to a conformance harness, from one rejected
+// by accident. These pin the reason, not just the rejection: every case below
+// was already rejected before this suite existed, but every one of them
+// reported `InvalidFrameTransaction` -- the VERIFY-frame-never-approved
+// message -- regardless of what actually failed.
+
+/// A frame with a reserved mode fails static validation, and the reason travels
+/// with the error instead of being flattened into the approval message.
+#[test]
+fn static_constraint_failure_reports_the_format_reason() {
+    let mut tx = frame_tx_with_frames(vec![Frame {
+        mode: 0xFF, // no such mode
+        flags: 0,
+        target: Some(Address::from_low_u64_be(0xC0)),
+        gas_limit: 100_000,
+        value: U256::zero(),
+        data: Bytes::new(),
+    }]);
+    tx.nonce = 0;
+
+    let (result, _db) = run_frame_tx(&[], tx);
+    match result {
+        Err(VMError::TxValidation(
+            ethrex_levm::errors::TxValidationError::InvalidFrameTransactionFormat(reason),
+        )) => {
+            assert!(
+                !reason.is_empty(),
+                "the format error must carry the static-validation reason"
+            );
+        }
+        other => panic!("expected InvalidFrameTransactionFormat, got {other:?}"),
+    }
+}
+
+/// An empty frame list is a format failure, not an approval failure.
+#[test]
+fn empty_frame_list_reports_the_format_reason() {
+    let tx = frame_tx_with_frames(Vec::new());
+    let (result, _db) = run_frame_tx(&[], tx);
+    assert!(
+        matches!(
+            result,
+            Err(VMError::TxValidation(
+                ethrex_levm::errors::TxValidationError::InvalidFrameTransactionFormat(_)
+            ))
+        ),
+        "expected InvalidFrameTransactionFormat, got {result:?}"
+    );
+}
+
+/// EIP-7825 as scoped by EIP-8141: the intrinsic cost plus the frames' gas
+/// limits must fit `TX_MAX_GAS_LIMIT`. Previously this transaction executed and
+/// was only caught downstream.
+#[test]
+fn frame_gas_above_the_transaction_cap_reports_the_gas_cap() {
+    let tx = frame_tx_with_frames(vec![Frame {
+        mode: u8::from(FrameMode::Default),
+        flags: 0,
+        target: Some(Address::from_low_u64_be(0xC0)),
+        gas_limit: ethrex_common::constants::TX_MAX_GAS_LIMIT_AMSTERDAM,
+        value: U256::zero(),
+        data: Bytes::new(),
+    }]);
+    assert!(
+        tx.max_gas() > ethrex_common::constants::TX_MAX_GAS_LIMIT_AMSTERDAM,
+        "the frame gas plus the intrinsic cost must exceed the cap for this to test anything"
+    );
+
+    let (result, _db) = run_frame_tx(&[], tx);
+    assert!(
+        matches!(
+            result,
+            Err(VMError::TxValidation(
+                ethrex_levm::errors::TxValidationError::TxMaxGasLimitExceeded { .. }
+            ))
+        ),
+        "expected TxMaxGasLimitExceeded, got {result:?}"
+    );
+}
+
+/// A transaction sized exactly to the cap stays admissible, so the check is a
+/// bound rather than an off-by-one.
+#[test]
+fn frame_gas_exactly_at_the_transaction_cap_is_not_rejected_for_gas() {
+    let cap = ethrex_common::constants::TX_MAX_GAS_LIMIT_AMSTERDAM;
+    let probe = frame_tx_with_frames(vec![Frame {
+        mode: u8::from(FrameMode::Default),
+        flags: 0,
+        target: Some(Address::from_low_u64_be(0xC0)),
+        gas_limit: 0,
+        value: U256::zero(),
+        data: Bytes::new(),
+    }]);
+    // `max_gas()` with a zero-gas frame is the intrinsic anchor; give the frame
+    // exactly the remainder so the total lands on the cap.
+    let headroom = cap - probe.max_gas();
+    let tx = frame_tx_with_frames(vec![Frame {
+        mode: u8::from(FrameMode::Default),
+        flags: 0,
+        target: Some(Address::from_low_u64_be(0xC0)),
+        gas_limit: headroom,
+        value: U256::zero(),
+        data: Bytes::new(),
+    }]);
+    assert_eq!(tx.max_gas(), cap, "this case must sit exactly on the cap");
+
+    let (result, _db) = run_frame_tx(&[], tx);
+    assert!(
+        !matches!(
+            result,
+            Err(VMError::TxValidation(
+                ethrex_levm::errors::TxValidationError::TxMaxGasLimitExceeded { .. }
+            ))
+        ),
+        "a transaction exactly at the cap must not be rejected for exceeding it; got {result:?}"
+    );
+}
+
+/// A nonce at the u64 ceiling can never be incremented, so it is invalid on its
+/// own terms rather than merely mismatched against the sender's nonce.
+#[test]
+fn nonce_at_the_u64_ceiling_reports_nonce_is_max() {
+    let mut tx = frame_tx_with_frames(vec![Frame {
+        mode: u8::from(FrameMode::Default),
+        flags: 0,
+        target: Some(Address::from_low_u64_be(0xC0)),
+        gas_limit: 100_000,
+        value: U256::zero(),
+        data: Bytes::new(),
+    }]);
+    tx.nonce = u64::MAX;
+
+    // `run_frame_tx` seeds the sender at `tx.nonce`, so the mismatch check
+    // cannot fire and the ceiling rule is the only one left to report.
+    let (result, _db) = run_frame_tx(&[], tx);
+    assert!(
+        matches!(
+            result,
+            Err(VMError::TxValidation(
+                ethrex_levm::errors::TxValidationError::NonceIsMax
+            ))
+        ),
+        "expected NonceIsMax, got {result:?}"
+    );
+}
+
+/// A versioned hash with an unrecognised version byte is an EIP-4844 failure,
+/// not a generic frame-format one.
+#[test]
+fn wrong_blob_version_byte_reports_the_blob_hash_rule() {
+    let mut tx = frame_tx_with_frames(vec![Frame {
+        mode: u8::from(FrameMode::Default),
+        flags: 0,
+        target: Some(Address::from_low_u64_be(0xC0)),
+        gas_limit: 100_000,
+        value: U256::zero(),
+        data: Bytes::new(),
+    }]);
+    let mut hash = [0u8; 32];
+    hash[0] = 0x02; // not VERSIONED_HASH_VERSION_KZG
+    tx.blob_versioned_hashes = vec![H256(hash)];
+    tx.max_fee_per_blob_gas = U256::from(1_000_000_000u64);
+
+    let (result, _db) = run_frame_tx(&[], tx);
+    assert!(
+        matches!(
+            result,
+            Err(VMError::TxValidation(
+                ethrex_levm::errors::TxValidationError::Type3TxInvalidBlobVersionedHash
+            ))
+        ),
+        "expected Type3TxInvalidBlobVersionedHash, got {result:?}"
+    );
+}
+
+/// A `max_fee_per_gas` that fits `U256` but whose product with `max_gas` does
+/// not makes the transaction unpayable. `APPROVE` collects that product, so
+/// before this was checked up front the arithmetic failed mid-approval and the
+/// transaction was reported as an unapproved payer.
+#[test]
+fn unrepresentable_max_cost_reports_the_product_overflow() {
+    let mut tx = frame_tx_with_frames(vec![Frame {
+        mode: u8::from(FrameMode::Default),
+        flags: 0,
+        target: Some(Address::from_low_u64_be(0xC0)),
+        gas_limit: 100_000,
+        value: U256::zero(),
+        data: Bytes::new(),
+    }]);
+    // Fits the field, but `max_fee_per_gas * max_gas` cannot.
+    tx.max_fee_per_gas = U256::one() << 255;
+
+    let (result, _db) = run_frame_tx(&[], tx);
+    assert!(
+        matches!(
+            result,
+            Err(VMError::TxValidation(
+                ethrex_levm::errors::TxValidationError::GasLimitPriceProductOverflow
+            ))
+        ),
+        "expected GasLimitPriceProductOverflow, got {result:?}"
     );
 }

@@ -98,15 +98,28 @@ impl GetBlockHeaders {
         // According to the spec, we don't need to service non-canonical headers,
         // but geth does, and it helps in reorg scenarios, so we handle that case.
         let start_block = match self.startblock {
-            // Try to fetch the block number from the hash
-            // Otherwise keep the hash
-            HashOrNumber::Hash(block_hash) => {
-                if let Ok(Some(block_number)) = storage.get_block_number(block_hash).await {
+            // Only translate a hash to a block number when that hash is the
+            // canonical block at its height. Translating a non-canonical (or
+            // not-yet-canonical) hash to a number and then reading by number
+            // would return a DIFFERENT, canonical block at that height, so the
+            // response would not start at the requested hash and the requesting
+            // peer would reject the whole batch ("did not serve headers"). For
+            // those we keep the hash and serve it directly (walking parents for
+            // reverse requests in the loop below), which is exactly what a
+            // syncing peer asking for a fork/sync head needs.
+            HashOrNumber::Hash(block_hash) => match storage.get_block_number(block_hash).await {
+                Ok(Some(block_number))
+                    if storage
+                        .get_canonical_block_hash(block_number)
+                        .await
+                        .ok()
+                        .flatten()
+                        == Some(block_hash) =>
+                {
                     HashOrNumber::Number(block_number)
-                } else {
-                    self.startblock
                 }
-            }
+                _ => self.startblock,
+            },
             // Don't check if the block number is available
             // because if it it's not, the loop below will
             // break early and return an empty vec.
@@ -141,21 +154,31 @@ impl GetBlockHeaders {
                 trace!(block_ref=%current_block, "Block header not found");
                 break;
             };
+            // Compute the next block to fetch before moving `block_header`.
+            let next_block = match current_block {
+                // By hash we can only walk descending (NewToOld) with no skip, by
+                // following parent hashes. This lets us serve a non-canonical
+                // chain (e.g. a syncing peer's fork/sync head) that cannot be
+                // addressed by number. Ascending or skipping by hash isn't
+                // representable, so we stop after the single requested header.
+                HashOrNumber::Hash(_) => {
+                    if self.reverse && self.skip == 0 {
+                        Some(HashOrNumber::Hash(block_header.parent_hash))
+                    } else {
+                        None
+                    }
+                }
+                HashOrNumber::Number(number) => (number as i64 + block_skip)
+                    .try_into()
+                    .ok()
+                    .map(HashOrNumber::Number),
+            };
+
             headers.push(block_header);
 
-            // Update to next block to fetch
-            match current_block {
-                // We don't support fetching multiple headers by hash, unless it's
-                // part of the canonical chain, so we break here.
-                // TODO: we could support fetching by hash in descending order,
-                // by fetching the parent of each block.
-                HashOrNumber::Hash(_) => break,
-                HashOrNumber::Number(number) => {
-                    let Ok(new_number) = (number as i64 + block_skip).try_into() else {
-                        break;
-                    };
-                    current_block = HashOrNumber::Number(new_number)
-                }
+            match next_block {
+                Some(next) => current_block = next,
+                None => break,
             }
         }
         headers
@@ -341,5 +364,93 @@ impl RLPxMessage for BlockBodies {
         let (block_bodies, _): (Vec<BlockBody>, _) = decoder.decode_field("blockBodies")?;
 
         Ok(Self::new(id, block_bodies))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethrex_common::types::{Block, BlockBody};
+    use ethrex_storage::EngineType;
+
+    fn hdr(number: BlockNumber, parent: BlockHash, gas_limit: u64) -> BlockHeader {
+        BlockHeader {
+            number,
+            parent_hash: parent,
+            // vary a field so sibling headers at the same height hash differently
+            gas_limit,
+            ..Default::default()
+        }
+    }
+
+    fn blk(header: BlockHeader) -> Block {
+        Block {
+            header,
+            body: BlockBody::default(),
+        }
+    }
+
+    // A by-hash GetBlockHeaders request for a NON-canonical (but stored) block
+    // must return that exact block, not the canonical block at the same height.
+    // Regression for the sync stall where a syncing peer's request for its
+    // (non-canonical / not-yet-canonical) sync head was answered with the
+    // responder's canonical block at that height, so headers[0].hash() != the
+    // requested hash and the requester rejected the whole batch.
+    #[tokio::test]
+    async fn serves_non_canonical_block_by_hash() {
+        let store = Store::new("", EngineType::InMemory).expect("in-memory store");
+
+        let genesis = hdr(0, BlockHash::default(), 0);
+        let genesis_hash = genesis.hash();
+        let canon = hdr(1, genesis_hash, 1);
+        let canon_hash = canon.hash();
+        // sibling at height 1, distinct hash, left non-canonical
+        let orphan = hdr(1, genesis_hash, 2);
+        let orphan_hash = orphan.hash();
+        assert_ne!(canon_hash, orphan_hash);
+
+        store
+            .add_blocks(vec![blk(genesis), blk(canon), blk(orphan)])
+            .await
+            .expect("store blocks");
+        // canonical chain is 0 -> genesis, 1 -> canon; orphan stays non-canonical
+        store
+            .forkchoice_update(
+                vec![(0, genesis_hash), (1, canon_hash)],
+                1,
+                canon_hash,
+                None,
+                None,
+            )
+            .await
+            .expect("set canonical");
+
+        // preconditions: canonical@1 is `canon`, but `orphan` is stored by number too
+        assert_eq!(
+            store.get_canonical_block_hash(1).await.unwrap(),
+            Some(canon_hash)
+        );
+        assert_eq!(store.get_block_number(orphan_hash).await.unwrap(), Some(1));
+
+        // by-hash, NewToOld: must return the requested orphan, then walk to its parent
+        let headers = GetBlockHeaders::new(1, HashOrNumber::Hash(orphan_hash), 10, 0, true)
+            .fetch_headers(&store)
+            .await;
+        assert_eq!(
+            headers.first().map(|h| h.hash()),
+            Some(orphan_hash),
+            "by-hash request must serve the requested non-canonical block, not the canonical one"
+        );
+        assert_eq!(
+            headers.get(1).map(|h| h.hash()),
+            Some(genesis_hash),
+            "reverse by-hash walk must follow parent_hash"
+        );
+
+        // a canonical hash still resolves via the by-number path
+        let headers_canon = GetBlockHeaders::new(2, HashOrNumber::Hash(canon_hash), 10, 0, true)
+            .fetch_headers(&store)
+            .await;
+        assert_eq!(headers_canon.first().map(|h| h.hash()), Some(canon_hash));
     }
 }

@@ -443,11 +443,10 @@ impl ChainConfig {
         self.eip155_block.is_some_and(|num| num <= block_number)
     }
 
-    pub fn display_config(&self) -> String {
-        let network = NETWORK_NAMES.get(&self.chain_id).unwrap_or(&"unknown");
-        let mut output = format!("Chain ID: {} ({})\n\n", self.chain_id, network);
-
-        let post_merge_forks = [
+    /// The post-merge forks in activation order, paired with their configured
+    /// activation timestamps.
+    fn post_merge_schedule(&self) -> [(&'static str, Option<u64>); 7] {
+        [
             ("Shanghai", self.shanghai_time),
             ("Cancun", self.cancun_time),
             ("Prague", self.prague_time),
@@ -455,7 +454,38 @@ impl ChainConfig {
             ("Osaka", self.osaka_time),
             ("Amsterdam", self.amsterdam_time),
             ("Hegota", self.hegota_time),
-        ];
+        ]
+    }
+
+    /// Post-merge forks left unscheduled while a later fork is scheduled, in
+    /// activation order.
+    ///
+    /// Such a schedule is not a configuration a live network can have, and it
+    /// resolves inconsistently: fork *rules* come from the fork ordinal (see
+    /// [`ChainConfig::get_fork`]), so scheduling a fork silently activates the
+    /// rules of every fork below it, while each check keyed on a specific fork's
+    /// own timestamp field stays inactive. A chain that sets `hegotaTime` without
+    /// `amsterdamTime` therefore runs Amsterdam's EVM rules under a pre-Amsterdam
+    /// header schema.
+    ///
+    /// Verkle is excluded: it is a placeholder no schedule sets.
+    pub fn unscheduled_predecessor_forks(&self) -> Vec<&'static str> {
+        let schedule = self.post_merge_schedule();
+        let Some(last_scheduled) = schedule.iter().rposition(|(_, time)| time.is_some()) else {
+            return Vec::new();
+        };
+        schedule[..last_scheduled]
+            .iter()
+            .filter(|(name, time)| time.is_none() && *name != "Verkle")
+            .map(|(name, _)| *name)
+            .collect()
+    }
+
+    pub fn display_config(&self) -> String {
+        let network = NETWORK_NAMES.get(&self.chain_id).unwrap_or(&"unknown");
+        let mut output = format!("Chain ID: {} ({})\n\n", self.chain_id, network);
+
+        let post_merge_forks = self.post_merge_schedule();
 
         let active_forks: Vec<_> = post_merge_forks
             .iter()
@@ -468,6 +498,21 @@ impl ChainConfig {
             output.push_str(&active_forks.join("\n"));
         } else {
             output.push_str("Network is at Paris\n\n");
+        }
+
+        let unscheduled = self.unscheduled_predecessor_forks();
+        if !unscheduled.is_empty() {
+            output.push_str(&format!(
+                "\n\nWARNING: {} scheduled after an unscheduled fork ({}). Fork rules \
+                 resolve from the fork ordinal, so those rules are active while every \
+                 check keyed on their own activation timestamp is not.",
+                post_merge_forks
+                    .iter()
+                    .rev()
+                    .find_map(|(name, time)| time.map(|_| *name))
+                    .unwrap_or("A fork"),
+                unscheduled.join(", "),
+            ));
         }
 
         output
@@ -504,22 +549,16 @@ impl ChainConfig {
     }
 
     pub fn get_fork_blob_schedule(&self, block_timestamp: u64) -> Option<ForkBlobSchedule> {
-        // Hegotá inherits Amsterdam's blob schedule unless an explicit Hegotá
-        // entry is added to BlobSchedule in a future change.
-        if self.is_hegota_activated(block_timestamp)
+        // EIP-7892: from Prague onward the blob schedule only changes at BPO forks.
+        // Named forks (Osaka, Amsterdam, Hegotá) carry no blob params of their own and
+        // inherit the highest activated BPO entry, so resolution falls through the BPO
+        // chain. A genesis that pins an entry for the named fork anyway takes precedence.
+        if (self.is_hegota_activated(block_timestamp)
+            || self.is_amsterdam_activated(block_timestamp))
             && let Some(schedule) = self.blob_schedule.amsterdam
         {
             return Some(schedule);
         }
-        // Amsterdam (and BPO3-5) don't independently define blob params in Hive;
-        // they inherit from the highest activated BPO fork. If the fork-specific
-        // entry is None, fall through to find the right BPO schedule.
-        if self.is_amsterdam_activated(block_timestamp)
-            && let Some(schedule) = self.blob_schedule.amsterdam
-        {
-            return Some(schedule);
-        }
-        // Fall through to BPO chain
         if self.is_bpo5_activated(block_timestamp)
             && let Some(schedule) = self.blob_schedule.bpo5
         {
@@ -535,14 +574,21 @@ impl ChainConfig {
         {
             return Some(schedule);
         }
-        // Amsterdam/LStar imply BPO2 blob params when no explicit schedule is set.
-        if self.is_bpo2_activated(block_timestamp)
-            || self.is_amsterdam_activated(block_timestamp)
-            || self.is_lstar_activated(block_timestamp)
-        {
+        if self.is_bpo2_activated(block_timestamp) {
             Some(self.blob_schedule.bpo2)
         } else if self.is_bpo1_activated(block_timestamp) {
             Some(self.blob_schedule.bpo1)
+        } else if self.is_lstar_activated(block_timestamp)
+            || self.is_hegota_activated(block_timestamp)
+            || self.is_amsterdam_activated(block_timestamp)
+        {
+            // A genesis that jumps straight to Amsterdam or later without scheduling
+            // any BPO fork — the native-rollup L2 genesis does exactly this — still
+            // runs the post-BPO2 blob parameters, since Amsterdam is defined on top of
+            // them; falling through to the Osaka entry would under-report the limit.
+            // Below the whole BPO chain, so a network that does schedule its BPOs keeps
+            // inheriting the highest one it activated.
+            Some(self.blob_schedule.bpo2)
         } else if self.is_osaka_activated(block_timestamp) {
             Some(self.blob_schedule.osaka)
         } else if self.is_prague_activated(block_timestamp) {
@@ -651,22 +697,16 @@ impl ChainConfig {
     }
 
     pub fn get_blob_schedule_for_fork(&self, fork: Fork) -> Option<ForkBlobSchedule> {
-        match fork {
-            Fork::Cancun => Some(self.blob_schedule.cancun),
-            Fork::Prague => Some(self.blob_schedule.prague),
-            Fork::Osaka => Some(self.blob_schedule.osaka),
-            Fork::BPO1 => Some(self.blob_schedule.bpo1),
-            Fork::BPO2 => Some(self.blob_schedule.bpo2),
-            Fork::BPO3 => self.blob_schedule.bpo3,
-            Fork::BPO4 => self.blob_schedule.bpo4,
-            Fork::BPO5 => self.blob_schedule.bpo5,
-            Fork::Amsterdam => self.blob_schedule.amsterdam,
-            // Hegotá inherits Amsterdam's blob schedule unless an explicit
-            // Hegotá entry is added to BlobSchedule in a future change.
-            Fork::Hegota => self.blob_schedule.amsterdam,
-            Fork::LStar => self.blob_schedule.amsterdam,
-            _ => None,
+        // Blob params are timestamp-scheduled from Cancun onward; earlier forks are
+        // activated by block number and have no blob schedule. Resolving through the
+        // fork's activation timestamp keeps this in step with the inheritance rules in
+        // `get_fork_blob_schedule`, so a named fork that declares no entry of its own
+        // reports the entry actually in force at its activation.
+        if fork < Fork::Cancun {
+            return None;
         }
+        self.get_activation_timestamp_for_fork(fork)
+            .and_then(|timestamp| self.get_fork_blob_schedule(timestamp))
     }
 
     pub fn gather_forks(&self, genesis_header: BlockHeader) -> (Vec<u64>, Vec<u64>) {
@@ -1483,5 +1523,80 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(config.next_fork(0), None);
+    }
+
+    #[test]
+    fn amsterdam_inherits_highest_activated_bpo_schedule() {
+        // EIP-7892: Amsterdam declares no blob params of its own, so a genesis that
+        // schedules BPO1 and then Amsterdam keeps BPO1's target and max across the
+        // Amsterdam boundary. An unscheduled BPO2 must never contribute its schedule.
+        let config: ChainConfig = serde_json::from_str(
+            r#"{
+                "chainId": 1,
+                "depositContractAddress": "0x00000000219ab540356cbb839cbe05303d7705fa",
+                "osakaTime": 0,
+                "bpo1Time": 0,
+                "amsterdamTime": 100,
+                "blobSchedule": {
+                    "cancun": {"target": 3, "max": 6, "baseFeeUpdateFraction": 3338477},
+                    "prague": {"target": 6, "max": 9, "baseFeeUpdateFraction": 5007716},
+                    "bpo1": {"target": 10, "max": 15, "baseFeeUpdateFraction": 8346193}
+                }
+            }"#,
+        )
+        .expect("genesis should parse");
+
+        let bpo1 = ForkBlobSchedule {
+            target: 10,
+            max: 15,
+            base_fee_update_fraction: 8346193,
+        };
+        assert_eq!(config.get_fork_blob_schedule(99), Some(bpo1));
+        assert_eq!(config.get_fork_blob_schedule(100), Some(bpo1));
+    }
+
+    #[test]
+    fn blob_schedule_for_fork_reports_the_inherited_entry() {
+        // `eth_config` (EIP-7910) must report the blob params actually in force at a
+        // fork's activation, which for Amsterdam is the highest activated BPO entry.
+        let config = ChainConfig {
+            osaka_time: Some(0),
+            bpo1_time: Some(0),
+            amsterdam_time: Some(100),
+            ..Default::default()
+        };
+
+        let schedule = config
+            .get_blob_schedule_for_fork(Fork::Amsterdam)
+            .expect("Amsterdam must report a blob schedule");
+        assert_eq!((schedule.target, schedule.max), (10, 15));
+
+        // Forks that were never scheduled have nothing to report, and pre-Cancun forks
+        // are activated by block number rather than timestamp.
+        assert_eq!(config.get_blob_schedule_for_fork(Fork::BPO2), None);
+        assert_eq!(config.get_blob_schedule_for_fork(Fork::London), None);
+    }
+
+    #[test]
+    fn amsterdam_prefers_explicitly_pinned_schedule() {
+        let mut config = ChainConfig {
+            osaka_time: Some(0),
+            bpo1_time: Some(0),
+            bpo2_time: Some(50),
+            amsterdam_time: Some(100),
+            ..Default::default()
+        };
+        assert_eq!(
+            config.get_fork_blob_schedule(100),
+            Some(default_bpo2_schedule())
+        );
+
+        let pinned = ForkBlobSchedule {
+            target: 16,
+            max: 24,
+            base_fee_update_fraction: 13353910,
+        };
+        config.blob_schedule.amsterdam = Some(pinned);
+        assert_eq!(config.get_fork_blob_schedule(100), Some(pinned));
     }
 }

@@ -467,7 +467,7 @@ impl Transaction {
     }
 
     fn calc_effective_gas_price(&self, base_fee_per_gas: Option<u64>) -> Option<U256> {
-        let base_fee = base_fee_per_gas?;
+        let base_fee = U256::from(base_fee_per_gas?);
         let max_fee = self.max_fee_per_gas()?;
         if max_fee < base_fee {
             // This is invalid, can't calculate
@@ -475,7 +475,7 @@ impl Transaction {
         }
 
         let priority_fee_per_gas = min(self.max_priority_fee()?, max_fee.saturating_sub(base_fee));
-        Some(U256::from(priority_fee_per_gas) + U256::from(base_fee))
+        Some(priority_fee_per_gas + base_fee)
     }
 
     pub fn effective_gas_price(&self, base_fee_per_gas: Option<u64>) -> Option<U256> {
@@ -495,11 +495,11 @@ impl Transaction {
         let price = match self.tx_type() {
             TxType::Legacy => self.gas_price(),
             TxType::EIP2930 => self.gas_price(),
-            TxType::EIP1559 => U256::from(self.max_fee_per_gas()?),
-            TxType::EIP4844 => U256::from(self.max_fee_per_gas()?),
-            TxType::EIP7702 => U256::from(self.max_fee_per_gas()?),
-            TxType::Frame => U256::from(self.max_fee_per_gas()?),
-            TxType::FeeToken => U256::from(self.max_fee_per_gas()?),
+            TxType::EIP1559 => self.max_fee_per_gas()?,
+            TxType::EIP4844 => self.max_fee_per_gas()?,
+            TxType::EIP7702 => self.max_fee_per_gas()?,
+            TxType::Frame => self.max_fee_per_gas()?,
+            TxType::FeeToken => self.max_fee_per_gas()?,
             TxType::Privileged => self.gas_price(),
         };
 
@@ -1409,7 +1409,7 @@ impl Transaction {
             Transaction::EIP4844Transaction(tx) => tx.gas,
             Transaction::PrivilegedL2Transaction(tx) => tx.gas_limit,
             Transaction::FeeTokenTransaction(tx) => tx.gas_limit,
-            Transaction::FrameTransaction(tx) => tx.total_gas_limit(),
+            Transaction::FrameTransaction(tx) => tx.max_gas(),
         }
     }
 
@@ -1423,7 +1423,7 @@ impl Transaction {
             Transaction::EIP4844Transaction(tx) => U256::from(tx.max_fee_per_gas),
             Transaction::PrivilegedL2Transaction(tx) => U256::from(tx.max_fee_per_gas),
             Transaction::FeeTokenTransaction(tx) => U256::from(tx.max_fee_per_gas),
-            Transaction::FrameTransaction(tx) => U256::from(tx.max_fee_per_gas),
+            Transaction::FrameTransaction(tx) => tx.max_fee_per_gas,
         }
     }
 
@@ -1453,15 +1453,18 @@ impl Transaction {
         }
     }
 
-    pub fn max_priority_fee(&self) -> Option<u64> {
+    /// Widened to `U256` for the same reason as [`Self::max_fee_per_gas`].
+    pub fn max_priority_fee(&self) -> Option<U256> {
         match self {
             Transaction::LegacyTransaction(_tx) => None,
             Transaction::EIP2930Transaction(_tx) => None,
-            Transaction::EIP1559Transaction(tx) => Some(tx.max_priority_fee_per_gas),
-            Transaction::EIP4844Transaction(tx) => Some(tx.max_priority_fee_per_gas),
-            Transaction::EIP7702Transaction(tx) => Some(tx.max_priority_fee_per_gas),
-            Transaction::PrivilegedL2Transaction(tx) => Some(tx.max_priority_fee_per_gas),
-            Transaction::FeeTokenTransaction(tx) => Some(tx.max_priority_fee_per_gas),
+            Transaction::EIP1559Transaction(tx) => Some(U256::from(tx.max_priority_fee_per_gas)),
+            Transaction::EIP4844Transaction(tx) => Some(U256::from(tx.max_priority_fee_per_gas)),
+            Transaction::EIP7702Transaction(tx) => Some(U256::from(tx.max_priority_fee_per_gas)),
+            Transaction::PrivilegedL2Transaction(tx) => {
+                Some(U256::from(tx.max_priority_fee_per_gas))
+            }
+            Transaction::FeeTokenTransaction(tx) => Some(U256::from(tx.max_priority_fee_per_gas)),
             Transaction::FrameTransaction(tx) => Some(tx.max_priority_fee_per_gas),
         }
     }
@@ -1593,15 +1596,18 @@ impl Transaction {
         matches!(self, Transaction::PrivilegedL2Transaction(_))
     }
 
-    pub fn max_fee_per_gas(&self) -> Option<u64> {
+    /// The transaction's `max_fee_per_gas`, widened to `U256` because EIP-8141
+    /// bounds a frame transaction's fee fields at 2**256 while every other type
+    /// keeps them within `u64`.
+    pub fn max_fee_per_gas(&self) -> Option<U256> {
         match self {
             Transaction::LegacyTransaction(_tx) => None,
             Transaction::EIP2930Transaction(_tx) => None,
-            Transaction::EIP1559Transaction(tx) => Some(tx.max_fee_per_gas),
-            Transaction::EIP4844Transaction(tx) => Some(tx.max_fee_per_gas),
-            Transaction::EIP7702Transaction(tx) => Some(tx.max_fee_per_gas),
-            Transaction::PrivilegedL2Transaction(tx) => Some(tx.max_fee_per_gas),
-            Transaction::FeeTokenTransaction(tx) => Some(tx.max_fee_per_gas),
+            Transaction::EIP1559Transaction(tx) => Some(U256::from(tx.max_fee_per_gas)),
+            Transaction::EIP4844Transaction(tx) => Some(U256::from(tx.max_fee_per_gas)),
+            Transaction::EIP7702Transaction(tx) => Some(U256::from(tx.max_fee_per_gas)),
+            Transaction::PrivilegedL2Transaction(tx) => Some(U256::from(tx.max_fee_per_gas)),
+            Transaction::FeeTokenTransaction(tx) => Some(U256::from(tx.max_fee_per_gas)),
             Transaction::FrameTransaction(tx) => Some(tx.max_fee_per_gas),
         }
     }
@@ -1629,15 +1635,11 @@ impl Transaction {
     }
 
     pub fn gas_tip_cap(&self) -> U256 {
-        self.max_priority_fee()
-            .map(U256::from)
-            .unwrap_or_else(|| self.gas_price())
+        self.max_priority_fee().unwrap_or_else(|| self.gas_price())
     }
 
     pub fn gas_fee_cap(&self) -> U256 {
-        self.max_fee_per_gas()
-            .map(U256::from)
-            .unwrap_or_else(|| self.gas_price())
+        self.max_fee_per_gas().unwrap_or_else(|| self.gas_price())
     }
 
     /// Returns the effective tip per gas for this transaction.
@@ -1986,8 +1988,13 @@ pub struct FrameTransaction {
     /// EIP-8141 outer signature list. Validated
     /// before any frame executes; referenced by VERIFY frames and SIGPARAM.
     pub signatures: Vec<FrameSignature>,
-    pub max_priority_fee_per_gas: u64,
-    pub max_fee_per_gas: u64,
+    /// EIP-8141 bounds the fee fields at 2**256, not 2**64: a frame transaction
+    /// may legitimately name a fee no balance could pay, and a node still has to
+    /// decode it to reject it for the balance rather than for the field width.
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
+    pub max_priority_fee_per_gas: U256,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
+    pub max_fee_per_gas: U256,
     #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub max_fee_per_blob_gas: U256,
     #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::H256Wrapper>)]
@@ -2152,9 +2159,9 @@ impl FrameTransaction {
             .saturating_add(self.signature_verification_cost())
     }
 
-    /// Compute total gas limit: mandatory costs + data cost + sum of frame gas
-    /// limits.
-    pub fn total_gas_limit(&self) -> u64 {
+    /// EIP-8141 `standard_gas_limit`: mandatory costs + data cost + sum of frame
+    /// gas limits.
+    pub fn standard_gas_limit(&self) -> u64 {
         self.mandatory_gas()
             .saturating_add(self.data_cost())
             .saturating_add(
@@ -2163,6 +2170,22 @@ impl FrameTransaction {
                     .map(|f| f.gas_limit)
                     .fold(0u64, |acc, g| acc.saturating_add(g)),
             )
+    }
+
+    /// EIP-8141 `calldata_floor_gas`: the mandatory costs plus the EIP-7623
+    /// floor over every byte this transaction carries. The mandatory costs are
+    /// always charged, so they sit on both sides of the `max_gas` comparison.
+    pub fn calldata_floor_total(&self) -> u64 {
+        self.mandatory_gas()
+            .saturating_add(self.calldata_floor_gas())
+    }
+
+    /// EIP-8141 `max_gas = max(standard_gas_limit, calldata_floor_gas)`: the gas
+    /// reserved from the block pool before execution and the quantity `max_cost`
+    /// is charged over. A transaction whose data floor exceeds what it declared
+    /// for execution reserves the floor rather than being rejected.
+    pub fn max_gas(&self) -> u64 {
+        self.standard_gas_limit().max(self.calldata_floor_total())
     }
 
     /// The expiry deadline (8-byte big-endian) of this transaction's expiry
@@ -2330,15 +2353,26 @@ impl FrameTransaction {
                     Some(_) => {}
                 }
             }
-        }
-        // Per EIP-8141, the EIP-7623 calldata floor must be reserved independently
-        // of execution: the derived `tx_gas_limit` has to cover the mandatory costs
-        // plus the floor, or the transaction cannot pay for the data it carries.
-        let floor_gas = self.calldata_floor_gas();
-        if self.total_gas_limit() < self.mandatory_gas().saturating_add(floor_gas) {
-            return Err(format!(
-                "Total gas limit does not reserve the calldata floor of {floor_gas}"
-            ));
+
+            // Per EIP-8141, approval scope is disallowed on every frame of an
+            // atomic batch, including its terminating frame -- a frame belongs to a
+            // batch when it or its predecessor carries the flag. This keeps the
+            // approval context constant across a batch, so unrolling one can never
+            // withdraw an execution approval later SENDER frames rely on, nor make
+            // whether the transaction sets a payer depend on a batch outcome.
+            // Approval can be placed in a frame preceding the batch instead.
+            let predecessor_batches = i
+                .checked_sub(1)
+                .and_then(|prev| self.frames.get(prev))
+                .is_some_and(|prev| prev.is_atomic_batch());
+            if (frame.is_atomic_batch() || predecessor_batches)
+                && frame.flags & APPROVE_EXECUTION_AND_PAYMENT != 0
+            {
+                return Err(format!(
+                    "Frame {i}: approval scope on an atomic-batch frame (flags={:#04x})",
+                    frame.flags
+                ));
+            }
         }
         Ok(())
     }
@@ -2445,12 +2479,16 @@ impl FrameTransaction {
     /// - Deploy frame (if any) is at index 0 and uses DEFAULT execution mode.
     /// - At most one deploy frame exists in the prefix.
     /// - self_verify / only_verify / pay frames use VERIFY execution mode.
-    /// - Resolved target of each VERIFY frame matches `tx.sender` (target == None
-    ///   means sender; a non-None target must equal sender).
+    /// - Resolved target of each self_verify / only_verify frame matches
+    ///   `tx.sender` (target == None means sender). The pay frame of the
+    ///   OnlyVerifyPay / DeployOnlyVerifyPay shapes has no target restriction
+    ///   (EIP-8141 structural rule 4): it may target a non-sender sponsor.
     /// - Scope restriction matches the frame's role:
     ///   self_verify → `APPROVE_EXECUTION_AND_PAYMENT`, only_verify → `APPROVE_EXECUTION`,
     ///   pay → `APPROVE_PAYMENT`.
     /// - No frame in the prefix has the atomic-batch flag set.
+    /// - An expiry verifier frame, if present, is the first frame of the transaction.
+    /// - No VERIFY frame follows the validation prefix.
     /// - Total gas budget: Σ(prefix frame gas_limits) + signature_verification_cost() ≤ MAX_VERIFY_GAS.
     pub fn validate_prefix_structure(
         &self,
@@ -2493,10 +2531,24 @@ impl FrameTransaction {
                         });
                     }
 
-                    // Resolved target must be tx.sender (None means sender).
+                    // EIP-8141 structural rule 3 restricts the target to
+                    // tx.sender (None means sender) only for self_verify /
+                    // only_verify frames. Rule 4 places no target requirement
+                    // on the pay frame: it may target a non-sender sponsor,
+                    // which approves payment via APPROVE(APPROVE_PAYMENT)
+                    // when the frame executes.
+                    // The shape guard is load-bearing: every shape populates
+                    // `pay_index`, and for SelfVerify / DeploySelfVerify it points
+                    // at the self_verify frame, which carries
+                    // APPROVE_EXECUTION_AND_PAYMENT and does require the sender as
+                    // its target. Matching on `pay_index` alone would exempt it.
+                    let is_pay_frame = matches!(
+                        prefix.shape,
+                        PrefixShape::OnlyVerifyPay | PrefixShape::DeployOnlyVerifyPay
+                    ) && prefix.pay_index == Some(idx);
                     let target_ok = match frame.target {
                         None => true,
-                        Some(addr) => addr == self.sender,
+                        Some(addr) => addr == self.sender || is_pay_frame,
                     };
                     if !target_ok {
                         return Err(FrameValidationError::VerifyTargetNotSender {
@@ -2527,6 +2579,36 @@ impl FrameTransaction {
                     }
                 }
             }
+        }
+
+        // EIP-8141 §Expiry Verifier Frame: an expiry verifier frame may appear
+        // only as the first frame of the frame list. Expiry frames are otherwise
+        // transparent to prefix matching, so a misplaced one would silently pin
+        // the transaction's validity to a deadline outside the recognized shapes.
+        if let Some((frame_index, _)) = self
+            .frames
+            .iter()
+            .enumerate()
+            .skip(1)
+            .find(|(_, frame)| frame.is_expiry_verifier())
+        {
+            return Err(FrameValidationError::ExpiryFrameNotFirst { frame_index });
+        }
+
+        // EIP-8141 §Structural Rules rule 8: no VERIFY frame may follow the
+        // validation prefix. A reverting VERIFY frame invalidates the whole
+        // transaction wherever it sits, so one placed after the prefix would make
+        // validity depend on state that prefix simulation never inspects — the
+        // unbounded-invalidation case the public mempool rules exist to prevent.
+        if let Some(&prefix_end) = prefix.frame_indices.last()
+            && let Some((frame_index, _)) = self
+                .frames
+                .iter()
+                .enumerate()
+                .skip(prefix_end.saturating_add(1))
+                .find(|(_, frame)| frame.execution_mode() == FrameMode::Verify)
+        {
+            return Err(FrameValidationError::VerifyFrameAfterPrefix { frame_index });
         }
 
         // Gas budget: prefix frame gas limits + signature cost ≤ MAX_VERIFY_GAS.
@@ -2598,6 +2680,10 @@ pub enum FrameValidationError {
     },
     #[error("frame {frame_index}: prefix frame has atomic-batch flag set")]
     AtomicBatchInPrefix { frame_index: usize },
+    #[error("frame {frame_index}: expiry verifier frame must be the first frame")]
+    ExpiryFrameNotFirst { frame_index: usize },
+    #[error("frame {frame_index}: VERIFY frame follows the validation prefix")]
+    VerifyFrameAfterPrefix { frame_index: usize },
     #[error("prefix gas budget exceeded: {actual} > {limit} (MAX_VERIFY_GAS)")]
     VerifyGasBudgetExceeded { actual: u64, limit: u64 },
 }
@@ -4218,11 +4304,17 @@ mod serde_impl {
                 nonce: Some(value.nonce),
                 to: TxKind::Call(value.sender),
                 from: value.sender,
-                gas: Some(value.total_gas_limit()),
+                gas: Some(value.max_gas()),
                 value: U256::zero(),
-                gas_price: value.max_fee_per_gas.into(),
-                max_priority_fee_per_gas: Some(value.max_priority_fee_per_gas),
-                max_fee_per_gas: Some(value.max_fee_per_gas),
+                gas_price: value.max_fee_per_gas,
+                // `GenericTransaction` keeps these as `u64`, and `U256::as_u64`
+                // panics rather than truncating, so saturate: this conversion feeds
+                // RPC and simulation shapes, and a fee this large is unaffordable at
+                // any balance, so the clamp cannot change an outcome.
+                max_priority_fee_per_gas: Some(
+                    u64::try_from(value.max_priority_fee_per_gas).unwrap_or(u64::MAX),
+                ),
+                max_fee_per_gas: Some(u64::try_from(value.max_fee_per_gas).unwrap_or(u64::MAX)),
                 max_fee_per_blob_gas: if value.blob_versioned_hashes.is_empty() {
                     None
                 } else {
@@ -5058,8 +5150,8 @@ mod tests {
                 msg: Bytes::new(),
                 signature: Bytes::from(vec![0u8; 65]),
             }],
-            max_priority_fee_per_gas: 1_000_000_000,
-            max_fee_per_gas: 30_000_000_000,
+            max_priority_fee_per_gas: U256::from(1_000_000_000u64),
+            max_fee_per_gas: U256::from(30_000_000_000u64),
             max_fee_per_blob_gas: U256::zero(),
             blob_versioned_hashes: vec![],
             inner_hash: OnceCell::new(),
@@ -5251,8 +5343,8 @@ mod tests {
         assert_eq!(tx.data(), &Bytes::new());
         assert!(tx.access_list().is_empty());
         assert!(tx.authorization_list().is_none());
-        assert_eq!(tx.max_priority_fee(), Some(1_000_000_000));
-        assert_eq!(tx.max_fee_per_gas(), Some(30_000_000_000));
+        assert_eq!(tx.max_priority_fee(), Some(U256::from(1_000_000_000u64)));
+        assert_eq!(tx.max_fee_per_gas(), Some(U256::from(30_000_000_000u64)));
         assert_eq!(tx.max_fee_per_blob_gas(), None); // no blobs
         assert!(!tx.is_contract_creation());
         // sender returns explicit sender, no ECDSA
@@ -5325,8 +5417,8 @@ mod tests {
             sender: Address::from_low_u64_be(0xABCD),
             frames,
             signatures: vec![],
-            max_priority_fee_per_gas: 1_000_000_000,
-            max_fee_per_gas: 30_000_000_000,
+            max_priority_fee_per_gas: U256::from(1_000_000_000u64),
+            max_fee_per_gas: U256::from(30_000_000_000u64),
             max_fee_per_blob_gas: U256::zero(),
             blob_versioned_hashes: vec![],
             inner_hash: OnceCell::new(),
@@ -5416,8 +5508,8 @@ mod tests {
                 data: Bytes::new(),
             }],
             signatures: vec![],
-            max_priority_fee_per_gas: 1_000_000_000,
-            max_fee_per_gas: 30_000_000_000,
+            max_priority_fee_per_gas: U256::from(1_000_000_000u64),
+            max_fee_per_gas: U256::from(30_000_000_000u64),
             max_fee_per_blob_gas: U256::zero(),
             blob_versioned_hashes: vec![],
             inner_hash: OnceCell::new(),
@@ -5739,9 +5831,9 @@ mod tests {
     }
 
     #[test]
-    fn total_gas_limit_includes_signature_costs() {
+    fn max_gas_includes_signature_costs() {
         let mut tx = make_test_frame_tx();
-        let base = tx.total_gas_limit();
+        let base = tx.max_gas();
         // Add a P256 signature; cost must rise by at least 6700 + its calldata.
         tx.signatures.push(FrameSignature {
             scheme: FRAME_SIG_SCHEME_P256,
@@ -5749,7 +5841,7 @@ mod tests {
             msg: Bytes::new(),
             signature: Bytes::from(vec![0u8; 128]),
         });
-        assert!(tx.total_gas_limit() >= base + 6700);
+        assert!(tx.max_gas() >= base + 6700);
         assert_eq!(tx.signature_verification_cost(), 2800 + 6700);
     }
 
@@ -5787,8 +5879,8 @@ mod tests {
                 msg: Bytes::new(),
                 signature: Bytes::from(vec![0x01u8; 65]),
             }],
-            max_priority_fee_per_gas: 0x3b9aca00,
-            max_fee_per_gas: 0x6fc23ac00,
+            max_priority_fee_per_gas: U256::from(0x3b9aca00u64),
+            max_fee_per_gas: U256::from(0x6fc23ac00u64),
             max_fee_per_blob_gas: U256::zero(),
             blob_versioned_hashes: vec![],
             inner_hash: OnceCell::new(),

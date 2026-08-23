@@ -57,52 +57,54 @@ pub async fn start_block_producer(config: BlockProducerConfig) -> Result<(), Eng
         };
 
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-        let is_amsterdam = chain_config.is_amsterdam_activated(timestamp);
+        slot_number += 1;
 
-        // Amsterdam+ payload attributes carry `slotNumber` (EIP-7843) and
-        // `targetGasLimit` (execution-apis#796) and MUST be sent with
-        // forkchoiceUpdatedV4; V3 attributes are rejected for an Amsterdam
-        // timestamp. Earlier forks use V3, which rejects the V4-only fields.
-        let (fork_choice_result, fcu_version) = if is_amsterdam {
-            slot_number += 1;
-            let payload_attributes = PayloadAttributesV4 {
-                timestamp,
-                prev_randao: H256::zero(),
-                suggested_fee_recipient: coinbase_address,
-                parent_beacon_block_root: Some(parent_beacon_block_root),
-                withdrawals: Some(Vec::new()),
-                slot_number,
-                target_gas_limit,
-            };
-            (
-                engine_client
-                    .engine_forkchoice_updated_v4(fork_choice_state, Some(payload_attributes))
-                    .await,
-                "engine_forkchoiceUpdatedV4",
-            )
+        // Amsterdam+ payload attributes carry `slotNumber` and `targetGasLimit`
+        // and MUST use forkchoiceUpdatedV4; V3 attributes are rejected for an
+        // Amsterdam timestamp.
+        let is_amsterdam = chain_config.is_amsterdam_activated(timestamp);
+        let fork_choice_result = if is_amsterdam {
+            engine_client
+                .engine_forkchoice_updated_v4(
+                    fork_choice_state,
+                    Some(PayloadAttributesV4 {
+                        timestamp,
+                        prev_randao: H256::zero(),
+                        suggested_fee_recipient: coinbase_address,
+                        parent_beacon_block_root: Some(parent_beacon_block_root),
+                        withdrawals: Some(Vec::new()),
+                        slot_number,
+                        target_gas_limit,
+                    }),
+                )
+                .await
         } else {
-            let payload_attributes = PayloadAttributesV3 {
-                timestamp,
-                prev_randao: H256::zero(),
-                suggested_fee_recipient: coinbase_address,
-                parent_beacon_block_root: Some(parent_beacon_block_root),
-                withdrawals: Some(Vec::new()),
-            };
-            (
-                engine_client
-                    .engine_forkchoice_updated_v3(fork_choice_state, Some(payload_attributes))
-                    .await,
-                "engine_forkchoiceUpdatedV3",
-            )
+            engine_client
+                .engine_forkchoice_updated_v3(
+                    fork_choice_state,
+                    Some(PayloadAttributesV3 {
+                        timestamp,
+                        prev_randao: H256::zero(),
+                        suggested_fee_recipient: coinbase_address,
+                        parent_beacon_block_root: Some(parent_beacon_block_root),
+                        withdrawals: Some(Vec::new()),
+                    }),
+                )
+                .await
+        };
+        let fcu_endpoint = if is_amsterdam {
+            "engine_forkchoiceUpdatedV4"
+        } else {
+            "engine_forkchoiceUpdatedV3"
         };
         let fork_choice_response = match fork_choice_result {
             Ok(response) => {
-                tracing::debug!("{fcu_version} response: {response:?}");
+                tracing::debug!("{fcu_endpoint} response: {response:?}");
                 response
             }
             Err(error) => {
                 tracing::error!(
-                    "Failed to produce block: error sending {fcu_version} with PayloadAttributes: {error}"
+                    "Failed to produce block: error sending {fcu_endpoint} with PayloadAttributes: {error}"
                 );
                 sleep(Duration::from_millis(300)).await;
                 tries += 1;
@@ -120,27 +122,25 @@ pub async fn start_block_producer(config: BlockProducerConfig) -> Result<(), Eng
         // Note that this makes getPayload failures result in skipped blocks.
         sleep(Duration::from_millis(block_production_interval_ms)).await;
 
-        // Amsterdam+ payloads are retrieved with getPayloadV6; V5 serves Osaka
-        // only and is capped below Amsterdam.
-        let (get_payload_result, get_payload_version) = if is_amsterdam {
-            (
-                engine_client.engine_get_payload_v6(payload_id).await,
-                "engine_getPayloadV6",
-            )
+        // V5 serves Osaka only; Amsterdam+ payloads must be fetched with V6.
+        let get_payload_result = if is_amsterdam {
+            engine_client.engine_get_payload_v6(payload_id).await
         } else {
-            (
-                engine_client.engine_get_payload_v5(payload_id).await,
-                "engine_getPayloadV5",
-            )
+            engine_client.engine_get_payload_v5(payload_id).await
+        };
+        let get_payload_endpoint = if is_amsterdam {
+            "engine_getPayloadV6"
+        } else {
+            "engine_getPayloadV5"
         };
         let execution_payload_response = match get_payload_result {
             Ok(response) => {
-                tracing::debug!("{get_payload_version} response: {response:?}");
+                tracing::debug!("{get_payload_endpoint} response: {response:?}");
                 response
             }
             Err(error) => {
                 tracing::error!(
-                    "Failed to produce block: error sending {get_payload_version}: {error}"
+                    "Failed to produce block: error sending {get_payload_endpoint}: {error}"
                 );
                 sleep(Duration::from_millis(300)).await;
                 tries += 1;

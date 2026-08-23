@@ -945,7 +945,7 @@ pub fn calc_excess_blob_gas(parent: &BlockHeader, schedule: ForkBlobSchedule, fo
 mod test {
     use super::*;
     use crate::constants::EMPTY_KECCAK_HASH;
-    use crate::types::{BLOB_BASE_FEE_UPDATE_FRACTION, ELASTICITY_MULTIPLIER};
+    use crate::types::{BLOB_BASE_FEE_UPDATE_FRACTION, ELASTICITY_MULTIPLIER, INITIAL_BASE_FEE};
     use ethereum_types::H160;
     use hex_literal::hex;
     use std::str::FromStr;
@@ -1167,6 +1167,37 @@ mod test {
 
         let res = calc_excess_blob_gas(&parent, schedule, fork);
         assert_eq!(res, 3538944)
+    }
+
+    #[test]
+    fn test_calc_excess_blob_gas_at_amsterdam_inherits_bpo1_target() {
+        // Amsterdam carries no blob params of its own, so a chain that scheduled BPO1
+        // and never scheduled BPO2 keeps BPO1's target of 10 and max of 15 across the
+        // Amsterdam boundary. A parent that spent 12 blobs is above that target, so the
+        // EIP-7918 reserve-price branch raises the excess by `used * (max - target) / max`.
+        // Resolving the schedule from an unscheduled BPO2 (target 14) instead would put
+        // the parent below target and wrongly return 0.
+        let parent = BlockHeader {
+            excess_blob_gas: Some(0),
+            blob_gas_used: Some(12 * GAS_PER_BLOB as u64),
+            base_fee_per_gas: Some(INITIAL_BASE_FEE),
+            ..Default::default()
+        };
+        let config = ChainConfig {
+            osaka_time: Some(0),
+            bpo1_time: Some(0),
+            amsterdam_time: Some(100),
+            ..Default::default()
+        };
+
+        let schedule = config
+            .get_fork_blob_schedule(100)
+            .expect("Amsterdam must resolve a blob schedule");
+        assert_eq!(schedule.target, 10);
+        assert_eq!(schedule.max, 15);
+
+        let res = calc_excess_blob_gas(&parent, schedule, config.fork(100));
+        assert_eq!(res, 4 * GAS_PER_BLOB as u64);
     }
 
     #[test]

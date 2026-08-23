@@ -33,7 +33,7 @@ pub struct RpcReceipt {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RpcFrameReceipt {
-    /// EIP-8141 frame status code: 0 = failure, 1 = success, 3 = skipped
+    /// EIP-8141 frame status code: 0 = failure, 1 = success, 2 = skipped
     /// (atomic-batch failure). Serialized as a hex-encoded byte.
     #[serde(with = "serde_utils::u8::hex_str")]
     pub status: u8,
@@ -225,9 +225,16 @@ impl RpcReceiptTxInfo {
             ),
             _ => (None, None),
         };
-        let (contract_address, to) = match transaction.to() {
-            TxKind::Create => (Some(calculate_create_address(from, nonce)), None),
-            TxKind::Call(addr) => (None, Some(addr)),
+        let (contract_address, to) = match &transaction {
+            // EIP-8141: a frame transaction carries no `to` field and creates nothing at the top
+            // level. Each frame names its own target, and a creation happens inside a deploy frame.
+            // `Transaction::to()` reports the sender for one so the generic call paths have an
+            // address to work with; that is not a recipient and must not be presented as one.
+            Transaction::FrameTransaction(_) => (None, None),
+            _ => match transaction.to() {
+                TxKind::Create => (Some(calculate_create_address(from, nonce)), None),
+                TxKind::Call(addr) => (None, Some(addr)),
+            },
         };
         Ok(Self {
             transaction_hash,
@@ -248,7 +255,7 @@ mod tests {
     use super::*;
     use ethrex_common::{
         Bytes,
-        types::{Log, TxType},
+        types::{FrameTransaction, Log, TxType},
     };
     use hex_literal::hex;
 
@@ -288,5 +295,25 @@ mod tests {
         );
         let expected = r#"{"type":"0x3","status":"0x1","cumulativeGasUsed":"0x93","logsBloom":"0x00000000000000000080000000000000000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","logs":[{"address":"0x0000000000000000000000000000000000000000","topics":[],"data":"0x73747261776265727279","logIndex":"0x0","removed":false,"transactionHash":"0x0000000000000000000000000000000000000000000000000000000000000000","transactionIndex":"0x1","blockHash":"0x0000000000000000000000000000000000000000000000000000000000000000","blockNumber":"0x3"}],"transactionHash":"0x0000000000000000000000000000000000000000000000000000000000000000","transactionIndex":"0x1","from":"0x0000000000000000000000000000000000000000","to":"0x7435ed30a8b4aeb0877cef0c6e8cffe834eb865f","contractAddress":null,"gasUsed":"0x93","effectiveGasPrice":"0x9d","blockHash":"0x0000000000000000000000000000000000000000000000000000000000000000","blockNumber":"0x3"}"#;
         assert_eq!(serde_json::to_string(&receipt).unwrap(), expected);
+    }
+
+    // EIP-8141: a frame transaction has no top-level recipient and creates nothing at the top level,
+    // so a receipt must name neither. `Transaction::to()` reports the sender for one, which would
+    // otherwise be presented as `to` and read by wallets as the account the transaction called.
+    #[test]
+    fn frame_transaction_receipt_names_neither_to_nor_contract_address() {
+        let sender = Address::from(hex!("7435ed30a8b4aeb0877cef0c6e8cffe834eb865f"));
+        let tx = Transaction::FrameTransaction(FrameTransaction {
+            sender,
+            max_fee_per_gas: ethrex_common::U256::one(),
+            max_priority_fee_per_gas: ethrex_common::U256::one(),
+            ..Default::default()
+        });
+
+        let info = RpcReceiptTxInfo::from_transaction(tx, 0, 21_000, 0, Some(0)).unwrap();
+
+        assert_eq!(info.from, sender);
+        assert_eq!(info.to, None);
+        assert_eq!(info.contract_address, None);
     }
 }

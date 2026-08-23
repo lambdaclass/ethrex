@@ -158,6 +158,10 @@ pub enum TxValidationError {
         "Transaction gas limit exceeds maximum. Transaction hash: {tx_hash}, transaction gas limit: {tx_gas_limit}"
     )]
     TxMaxGasLimitExceeded { tx_hash: H256, tx_gas_limit: u64 },
+    #[error("Invalid frame transaction format: {0}")]
+    InvalidFrameTransactionFormat(String),
+    #[error("Invalid frame transaction: signature validation failed")]
+    InvalidFrameSignature,
     #[error("Invalid frame transaction: VERIFY frame did not call APPROVE or payer not approved")]
     InvalidFrameTransaction,
 }
@@ -275,7 +279,7 @@ pub struct ExecutionReport {
     pub payer_address: Option<Address>,
     /// For frame transactions: per-frame results (status, gas_used, logs).
     /// `status` is a `FRAME_RECEIPT_STATUS_*` code (0 = failure, 1 = success,
-    /// 3 = skipped due to failed atomic batch, per EIP-8141 receipt encoding).
+    /// 2 = skipped due to failed atomic batch, per EIP-8141 receipt encoding).
     pub frame_results: Option<Vec<(u8, u64, Vec<Log>)>>,
 }
 

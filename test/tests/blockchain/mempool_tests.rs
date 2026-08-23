@@ -10,7 +10,9 @@ use ethrex_blockchain::error::MempoolError;
 use ethrex_blockchain::mempool::{
     FramePaymasterReservation, Mempool, is_canonical_paymaster, transaction_intrinsic_gas,
 };
-use ethrex_blockchain::{Blockchain, BlockchainOptions};
+use ethrex_blockchain::{
+    Blockchain, BlockchainOptions, DEFAULT_BLOB_PRICE_BUMP_PERCENT, DEFAULT_PRICE_BUMP_PERCENT,
+};
 use ethrex_crypto::NativeCrypto;
 use rustc_hash::FxHashMap;
 
@@ -111,9 +113,9 @@ fn create_transaction_intrinsic_gas() {
 /// EIP-2780 (PRELIMINARY EIPs#11645): Amsterdam CREATE tx intrinsic must match
 /// the VM charge, not the legacy `TX_CREATE_GAS_COST = 53000`. The regular
 /// portion is the resource-based decomposition
-/// `TX_BASE_COST_AMSTERDAM (12000) + CREATE_ACCESS_AMSTERDAM (11000) = 23000`
+/// `TX_BASE_COST_AMSTERDAM (12000) + CREATE_ACCESS_AMSTERDAM (12000) = 24000`
 /// (no value transfer here). The state portion is 0: the `NEW_ACCOUNT` charge
-/// is no longer part of the intrinsic (v7 Task 4.1) — it is charged IN-REGION
+/// is not part of the intrinsic — it is charged IN-REGION
 /// by `prepare_execution` (EELS `prepare_dispatch` create branch), conditioned
 /// on `get_pre_state_account(created_addr) == EMPTY_ACCOUNT`, so mempool
 /// admission cannot know it upfront without simulating the tx. Mempool
@@ -547,7 +549,7 @@ fn minimal_valid_frame_tx() -> FrameTransaction {
             mode: FrameMode::Verify as u8,
             flags: APPROVE_EXECUTION_AND_PAYMENT,
             target: Some(sender),
-            // Small per-frame gas so total_gas_limit() stays below the legacy
+            // Small per-frame gas so max_gas() stays below the legacy
             // 21000 intrinsic floor: this tx is only admitted once the frame-tx
             // intrinsic-gas fix prices it correctly.
             gas_limit: 100,
@@ -555,8 +557,8 @@ fn minimal_valid_frame_tx() -> FrameTransaction {
             data: Bytes::new(),
         }],
         signatures: vec![],
-        max_priority_fee_per_gas: 0,
-        max_fee_per_gas: 0,
+        max_priority_fee_per_gas: U256::from(0u64),
+        max_fee_per_gas: U256::from(0u64),
         max_fee_per_blob_gas: U256::zero(),
         blob_versioned_hashes: vec![],
         ..Default::default()
@@ -942,8 +944,8 @@ fn frame_tx_with_expiry(deadline: u64) -> FrameTransaction {
             },
         ],
         signatures: vec![],
-        max_priority_fee_per_gas: 0,
-        max_fee_per_gas: 0,
+        max_priority_fee_per_gas: U256::from(0u64),
+        max_fee_per_gas: U256::from(0u64),
         max_fee_per_blob_gas: U256::zero(),
         blob_versioned_hashes: vec![],
         ..Default::default()
@@ -1075,6 +1077,304 @@ fn blobs_bundle_insert_and_remove() {
             .expect("should return empty"),
         vec![None]
     );
+}
+
+// --- min-tip floor admission tests ----------------------------------------
+
+/// Builds a blockchain configured with `min_tip_wei` as the admission floor
+/// (everything else permissive for tests).
+fn blockchain_with_min_tip(store: Store, min_tip_wei: u64) -> Blockchain {
+    let mut bc = Blockchain::default_with_store(store);
+    let mut opts = bc.options.clone();
+    opts.min_tip_wei = min_tip_wei;
+    bc.options = opts;
+    bc
+}
+
+#[tokio::test]
+async fn zero_tip_eip1559_rejected_under_default_floor() {
+    let (config, header) = build_basic_config_and_header(false, false);
+    let store = setup_storage(config, header).await.expect("Storage setup");
+    let blockchain = blockchain_with_min_tip(store, 1_000_000);
+
+    let tx = EIP1559Transaction {
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 1_000_000,
+        gas_limit: 50_000_000,
+        to: TxKind::Call(Address::from_low_u64_be(1)),
+        ..Default::default()
+    };
+    let tx = Transaction::EIP1559Transaction(tx);
+
+    let res = blockchain
+        .validate_transaction(&tx, Address::random())
+        .await;
+    assert!(matches!(
+        res,
+        Err(MempoolError::TipBelowMinimum {
+            actual: 0,
+            limit: 1_000_000,
+        }),
+    ));
+}
+
+#[tokio::test]
+async fn at_floor_eip1559_passes_tip_check() {
+    // Tip at the floor passes the min-tip check. The random sender has no
+    // funds, so the tx fails later with `NotEnoughBalance`; that's the only
+    // accepted post-tip-check outcome. Asserting the specific downstream
+    // error guards against a future refactor that accidentally skips the
+    // tip check (where a different error would still satisfy a `!matches!`
+    // negative assertion).
+    let (config, header) = build_basic_config_and_header(false, false);
+    let store = setup_storage(config, header).await.expect("Storage setup");
+    let blockchain = blockchain_with_min_tip(store, 1_000_000);
+
+    let tx = EIP1559Transaction {
+        max_priority_fee_per_gas: 1_000_000,
+        max_fee_per_gas: 1_000_000,
+        gas_limit: 50_000_000,
+        to: TxKind::Call(Address::from_low_u64_be(1)),
+        ..Default::default()
+    };
+    let tx = Transaction::EIP1559Transaction(tx);
+
+    let res = blockchain
+        .validate_transaction(&tx, Address::random())
+        .await;
+    // The tip check itself must not fire; the downstream account-lookup
+    // (state root or balance) is what should fail in this minimal setup.
+    // Asserting on the concrete next-stage error keeps the test honest if
+    // a future refactor accidentally skips the tip check.
+    assert!(
+        matches!(
+            res,
+            Err(MempoolError::NotEnoughBalance) | Err(MempoolError::StoreError(_))
+        ),
+        "expected the tip check to pass and an account-lookup error to fire next, got {res:?}",
+    );
+}
+
+#[tokio::test]
+async fn floor_uses_raw_tip_cap_not_base_fee_adjusted_effective_tip() {
+    // Pins the deliberate semantic: the floor is compared against the RAW tip
+    // cap, not the base-fee-dependent effective tip
+    // `min(max_priority_fee_per_gas, max_fee_per_gas - base_fee_per_gas)`.
+    //
+    // Here `max_fee_per_gas == base_fee_per_gas`, so the actually-payable tip
+    // is 0 — under an "effective tip" reading this tx would be rejected. It
+    // must NOT be: geth's `PriceLimit` compares `tx.GasTipCap()` (raw), and
+    // keying on the effective tip would make admission depend on the current
+    // base fee, so the same tx could be admitted at block N and rejected at
+    // N+1 as the base fee drifts. Admission decisions must be stable.
+    let (config, mut header) = build_basic_config_and_header(false, false);
+    header.base_fee_per_gas = Some(1_000_000);
+    let store = setup_storage(config, header).await.expect("Storage setup");
+    let blockchain = blockchain_with_min_tip(store, 1_000_000);
+
+    let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+        // Raw tip cap is exactly at the floor …
+        max_priority_fee_per_gas: 1_000_000,
+        // … but the fee cap leaves no room above base fee, so the effective
+        // tip is 0.
+        max_fee_per_gas: 1_000_000,
+        gas_limit: 50_000_000,
+        to: TxKind::Call(Address::from_low_u64_be(1)),
+        ..Default::default()
+    });
+
+    let res = blockchain
+        .validate_transaction(&tx, Address::random())
+        .await;
+    assert!(
+        !matches!(res, Err(MempoolError::TipBelowMinimum { .. })),
+        "min-tip floor must compare the raw tip cap, not the base-fee-adjusted \
+         effective tip; got {res:?}",
+    );
+    // As with the other floor tests, the unfunded random sender means the
+    // account-lookup stage is the expected next failure.
+    assert!(
+        matches!(
+            res,
+            Err(MempoolError::NotEnoughBalance) | Err(MempoolError::StoreError(_))
+        ),
+        "expected an account-lookup error after the tip check passed, got {res:?}",
+    );
+}
+
+#[tokio::test]
+async fn floor_of_zero_admits_zero_tip() {
+    // Operators can disable the floor with --mempool.min-tip 0. Same
+    // structure as `at_floor_eip1559_passes_tip_check`: we want a specific
+    // downstream error (the balance check) to fire, NOT just "any error
+    // other than TipBelowMinimum".
+    let (config, header) = build_basic_config_and_header(false, false);
+    let store = setup_storage(config, header).await.expect("Storage setup");
+    let blockchain = blockchain_with_min_tip(store, 0);
+
+    let tx = EIP1559Transaction {
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 0,
+        gas_limit: 50_000_000,
+        to: TxKind::Call(Address::from_low_u64_be(1)),
+        ..Default::default()
+    };
+    let tx = Transaction::EIP1559Transaction(tx);
+
+    let res = blockchain
+        .validate_transaction(&tx, Address::random())
+        .await;
+    assert!(
+        matches!(
+            res,
+            Err(MempoolError::NotEnoughBalance) | Err(MempoolError::StoreError(_))
+        ),
+        "expected the tip check to skip (floor=0) and an account-lookup error to fire next, got {res:?}",
+    );
+}
+
+#[tokio::test]
+async fn legacy_gas_price_below_floor_rejected() {
+    // Legacy tx: `gas_tip_cap()` returns `gas_price` so the floor applies to
+    // the raw gas price for legacy txs (geth applies `PriceLimit` to
+    // `tx.GasTipCap()` which is `gas_price` for legacy).
+    let (config, header) = build_basic_config_and_header(false, false);
+    let store = setup_storage(config, header).await.expect("Storage setup");
+    let blockchain = blockchain_with_min_tip(store, 1_000_000);
+
+    let tx = ethrex_common::types::LegacyTransaction {
+        gas_price: U256::from(999_999u64), // 1 wei below floor
+        gas: 50_000_000,
+        to: TxKind::Call(Address::from_low_u64_be(1)),
+        ..Default::default()
+    };
+    let tx = Transaction::LegacyTransaction(tx);
+
+    let res = blockchain
+        .validate_transaction(&tx, Address::random())
+        .await;
+    assert!(matches!(
+        res,
+        Err(MempoolError::TipBelowMinimum {
+            actual: 999_999,
+            limit: 1_000_000,
+        }),
+    ));
+}
+
+#[tokio::test]
+async fn options_field_is_used_in_validate_transaction() {
+    // Smoke test that BlockchainOptions::min_tip_wei is consulted (not
+    // accidentally ignored if the option-plumbing breaks).
+    let (config, header) = build_basic_config_and_header(false, false);
+    let store = setup_storage(config, header).await.expect("Storage setup");
+
+    let mut bc = Blockchain::default_with_store(store);
+    bc.options = BlockchainOptions {
+        min_tip_wei: 5_000_000_000, // 5 gwei
+        ..BlockchainOptions::default()
+    };
+
+    let tx = EIP1559Transaction {
+        max_priority_fee_per_gas: 1_000_000_000, // 1 gwei (below 5 gwei)
+        max_fee_per_gas: 5_000_000_000,
+        gas_limit: 50_000_000,
+        to: TxKind::Call(Address::from_low_u64_be(1)),
+        ..Default::default()
+    };
+    let tx = Transaction::EIP1559Transaction(tx);
+
+    let res = bc.validate_transaction(&tx, Address::random()).await;
+    assert!(matches!(
+        res,
+        Err(MempoolError::TipBelowMinimum {
+            actual: 1_000_000_000,
+            limit: 5_000_000_000,
+        }),
+    ));
+}
+
+#[tokio::test]
+async fn shipped_default_floor_rejects_zero_tip_admits_one() {
+    // Pin the actual shipped default (`DEFAULT_MIN_TIP_WEI = 1`, matching
+    // geth's `PriceLimit = 1 wei`). Without this test the default could
+    // silently regress to 0 (admit-everything) or to the old 1 Mwei value.
+    let (config, header) = build_basic_config_and_header(false, false);
+    let store = setup_storage(config, header).await.expect("Storage setup");
+    let blockchain = blockchain_with_min_tip(store, ethrex_blockchain::DEFAULT_MIN_TIP_WEI);
+
+    // tip = 0 → rejected
+    let zero = Transaction::EIP1559Transaction(EIP1559Transaction {
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 1,
+        gas_limit: 50_000_000,
+        to: TxKind::Call(Address::from_low_u64_be(1)),
+        ..Default::default()
+    });
+    assert!(matches!(
+        blockchain
+            .validate_transaction(&zero, Address::random())
+            .await,
+        Err(MempoolError::TipBelowMinimum {
+            actual: 0,
+            limit: 1
+        }),
+    ));
+
+    // tip = 1 → passes the tip check; sender has no funds so the next
+    // failure is `NotEnoughBalance`. Assert that specifically rather than
+    // "not TipBelowMinimum" so the test catches accidental skip of the
+    // tip check in future refactors.
+    let one = Transaction::EIP1559Transaction(EIP1559Transaction {
+        max_priority_fee_per_gas: 1,
+        max_fee_per_gas: 1,
+        gas_limit: 50_000_000,
+        to: TxKind::Call(Address::from_low_u64_be(1)),
+        ..Default::default()
+    });
+    let res = blockchain
+        .validate_transaction(&one, Address::random())
+        .await;
+    // The tip check itself must not fire; the downstream account-lookup
+    // (state root or balance) is what should fail in this minimal setup.
+    // Asserting on the concrete next-stage error keeps the test honest if
+    // a future refactor accidentally skips the tip check.
+    assert!(
+        matches!(
+            res,
+            Err(MempoolError::NotEnoughBalance) | Err(MempoolError::StoreError(_))
+        ),
+        "expected the tip check to pass and an account-lookup error to fire next, got {res:?}",
+    );
+}
+
+#[tokio::test]
+async fn blob_tx_under_floor_rejected() {
+    // EIP-4844 path uses the same `gas_tip_cap()` accessor. Confirm an
+    // under-floor blob tx is also rejected so a regression in the per-type
+    // dispatch wouldn't slip through.
+    let (config, header) = build_basic_config_and_header(false, false);
+    let store = setup_storage(config, header).await.expect("Storage setup");
+    let blockchain = blockchain_with_min_tip(store, 1_000_000);
+
+    let tx = Transaction::EIP4844Transaction(EIP4844Transaction {
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 1_000_000,
+        max_fee_per_blob_gas: 1.into(),
+        gas: 50_000_000,
+        to: Address::from_low_u64_be(1),
+        ..Default::default()
+    });
+
+    assert!(matches!(
+        blockchain
+            .validate_transaction(&tx, Address::random())
+            .await,
+        Err(MempoolError::TipBelowMinimum {
+            actual: 0,
+            limit: 1_000_000,
+        }),
+    ));
 }
 
 #[test]
@@ -1363,6 +1663,10 @@ async fn setup_hegota_store_funded() -> Store {
 /// so `max_cost = gas_limit * max_fee_per_gas > 0`. The sender must be seeded
 /// with enough balance to cover it (use `setup_hegota_store_funded`).
 fn funded_frame_tx(max_fee_per_gas: u64, max_priority_fee_per_gas: u64) -> FrameTransaction {
+    let (max_fee_per_gas, max_priority_fee_per_gas) = (
+        U256::from(max_fee_per_gas),
+        U256::from(max_priority_fee_per_gas),
+    );
     let sender = Address::from_low_u64_be(FRAME_TX_SELF_SENDER);
     FrameTransaction {
         chain_id: 0,
@@ -1408,7 +1712,7 @@ async fn mempool_rejects_underfunded_paymaster() {
     // frame tx with FrameTxPaymasterUnderfunded.
     //
     // Note: since APPROVE now collects the tx's MAXIMUM cost during the
-    // validation-prefix simulation (max_fee_per_gas * total_gas_limit), a payer
+    // validation-prefix simulation (max_fee_per_gas * max_gas), a payer
     // that cannot cover max_cost reverts *inside* the simulation
     // (FrameTxValidationFailed), never reaching this check. The availability
     // check is therefore only reachable when the payer covers a single tx's
@@ -1423,7 +1727,7 @@ async fn mempool_rejects_underfunded_paymaster() {
     let max_fee_per_gas = 2_000_000_000u64;
     let max_priority_fee_per_gas = 1_000_000_000u64;
     let frame_tx = funded_frame_tx(max_fee_per_gas, max_priority_fee_per_gas);
-    let total_gas = frame_tx.total_gas_limit();
+    let total_gas = frame_tx.max_gas();
     let max_cost = U256::from(max_fee_per_gas) * U256::from(total_gas);
 
     let paymaster = Address::from_low_u64_be(FRAME_TX_SELF_SENDER);
@@ -1477,8 +1781,8 @@ async fn mempool_rejects_underfunded_paymaster() {
             data: Bytes::new(),
         }],
         signatures: vec![],
-        max_priority_fee_per_gas: 0,
-        max_fee_per_gas: 0,
+        max_priority_fee_per_gas: U256::from(0u64),
+        max_fee_per_gas: U256::from(0u64),
         max_fee_per_blob_gas: U256::zero(),
         blob_versioned_hashes: vec![],
         ..Default::default()
@@ -1555,8 +1859,8 @@ async fn mempool_enforces_noncanonical_paymaster_limit() {
             data: Bytes::new(),
         }],
         signatures: vec![],
-        max_priority_fee_per_gas: 0,
-        max_fee_per_gas: 0,
+        max_priority_fee_per_gas: U256::from(0u64),
+        max_fee_per_gas: U256::from(0u64),
         max_fee_per_blob_gas: U256::zero(),
         blob_versioned_hashes: vec![],
         ..Default::default()
@@ -1631,8 +1935,8 @@ async fn mempool_rejects_second_frame_tx_same_sender_new_nonce() {
             data: Bytes::new(),
         }],
         signatures: vec![],
-        max_priority_fee_per_gas: 0,
-        max_fee_per_gas: 0,
+        max_priority_fee_per_gas: U256::from(0u64),
+        max_fee_per_gas: U256::from(0u64),
         max_fee_per_blob_gas: U256::zero(),
         blob_versioned_hashes: vec![],
         ..Default::default()
@@ -1805,7 +2109,7 @@ async fn mempool_fee_bump_not_blocked_by_own_stale_reservation() {
     // old reservation before re-validating availability.
     let low_fee = 100_000_000u64;
     let high_fee = 200_000_000u64;
-    let gas = funded_frame_tx(high_fee, high_fee).total_gas_limit();
+    let gas = funded_frame_tx(high_fee, high_fee).max_gas();
     // Exactly covers the bumped tx (high_fee * gas), but not old + new together.
     let balance = U256::from(high_fee) * U256::from(gas);
     let store = setup_hegota_store_with_balance(balance).await;
@@ -1841,7 +2145,7 @@ async fn mempool_fee_bump_rejected_leaves_original_intact() {
     // non-canonical slot, isolating the AVAILABILITY rejection from the limit.
     let low_fee = 100_000_000u64;
     let high_fee = 200_000_000u64;
-    let gas = funded_frame_tx(high_fee, high_fee).total_gas_limit();
+    let gas = funded_frame_tx(high_fee, high_fee).max_gas();
     // Exactly covers one high-fee tx (high_fee * gas).
     let balance = U256::from(high_fee) * U256::from(gas);
     let store = setup_hegota_store_with_balance(balance).await;
@@ -1875,8 +2179,8 @@ async fn mempool_fee_bump_rejected_leaves_original_intact() {
             data: Bytes::new(),
         }],
         signatures: vec![],
-        max_priority_fee_per_gas: 0,
-        max_fee_per_gas: 0,
+        max_priority_fee_per_gas: U256::from(0u64),
+        max_fee_per_gas: U256::from(0u64),
         max_fee_per_blob_gas: U256::zero(),
         blob_versioned_hashes: vec![],
         ..Default::default()
@@ -2059,8 +2363,8 @@ async fn mempool_revalidation_evicts_invalid_frame_tx() {
     let deadline: u64 = 2000;
     let sender = Address::from_low_u64_be(FRAME_TX_SELF_SENDER);
     let mut expiry_tx = frame_tx_with_expiry(deadline);
-    expiry_tx.max_fee_per_gas = 1_000_000_000;
-    expiry_tx.max_priority_fee_per_gas = 1_000_000_000;
+    expiry_tx.max_fee_per_gas = U256::from(1_000_000_000u64);
+    expiry_tx.max_priority_fee_per_gas = U256::from(1_000_000_000u64);
     let tx = Transaction::FrameTransaction(expiry_tx);
     let tx_hash = blockchain
         .add_transaction_to_pool(tx)
@@ -2799,8 +3103,8 @@ mod p2p_serve_tests {
                 msg: bytes::Bytes::new(),
                 signature: bytes::Bytes::from(vec![0u8; 65]),
             }],
-            max_priority_fee_per_gas: 1_000_000_000,
-            max_fee_per_gas: 30_000_000_000,
+            max_priority_fee_per_gas: U256::from(1_000_000_000u64),
+            max_fee_per_gas: U256::from(30_000_000_000u64),
             max_fee_per_blob_gas: U256::zero(),
             blob_versioned_hashes: vec![],
             ..Default::default()
@@ -2957,6 +3261,181 @@ mod cumulative_balance_tests {
         let total = mempool.sum_cost_for_sender(sender, 2, None).expect("sum");
         assert_eq!(total, expected);
     }
+}
+
+// ---------------------------------------------------------------------------
+// EIP-8141 §Replacement and Eviction
+// ---------------------------------------------------------------------------
+
+/// A frame tx from `sender` at `nonce` bidding `max_fee` / `priority_fee`, with
+/// an optional expiry deadline carried by a leading expiry verifier frame.
+fn priced_frame_tx(
+    sender: Address,
+    nonce: u64,
+    max_fee: u64,
+    priority_fee: u64,
+    deadline: Option<u64>,
+) -> Transaction {
+    let mut frame_tx = match deadline {
+        Some(deadline) => {
+            let mut tx = frame_tx_with_expiry(deadline);
+            tx.sender = sender;
+            tx.frames[1].target = Some(sender);
+            tx
+        }
+        None => {
+            let mut tx = minimal_valid_frame_tx();
+            tx.sender = sender;
+            tx.frames[0].target = Some(sender);
+            tx
+        }
+    };
+    frame_tx.nonce = nonce;
+    frame_tx.max_fee_per_gas = U256::from(max_fee);
+    frame_tx.max_priority_fee_per_gas = U256::from(priority_fee);
+    Transaction::FrameTransaction(frame_tx)
+}
+
+fn insert_frame_tx(mempool: &Mempool, sender: Address, tx: Transaction) -> H256 {
+    let hash = tx.hash(&NativeCrypto);
+    mempool
+        .add_transaction(
+            hash,
+            sender,
+            MempoolTransaction::new(tx, sender),
+            None,
+            None,
+        )
+        .expect("direct frame tx insert");
+    hash
+}
+
+#[test]
+fn frame_tx_replacement_requires_a_minimum_bump_on_both_fees() {
+    // EIP-8141 §Replacement and Eviction: a replacement is accepted only if it
+    // raises BOTH max_fee_per_gas and max_priority_fee_per_gas by at least the
+    // node's minimum increment. Each frame-tx replacement re-runs the
+    // validation-prefix simulation, so one-wei bumps would be free EVM work.
+    let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
+    let sender = Address::from_low_u64_be(0xF00D);
+    let pooled = priced_frame_tx(sender, 0, 100, 10, None);
+    insert_frame_tx(&mempool, sender, pooled);
+
+    let cases: [(u64, u64, bool, &str); 5] = [
+        (101, 11, false, "a one-percent bump is under the increment"),
+        (
+            109,
+            11,
+            false,
+            "max_fee just below the increment is rejected",
+        ),
+        (110, 10, false, "an unbumped priority fee is rejected"),
+        (200, 5, false, "a lowered priority fee is rejected"),
+        (
+            110,
+            11,
+            true,
+            "both fees bumped by the increment is accepted",
+        ),
+    ];
+    for (max_fee, priority_fee, accepted, note) in cases {
+        let replacement = priced_frame_tx(sender, 0, max_fee, priority_fee, None);
+        let result = mempool.find_tx_to_replace(
+            sender,
+            0,
+            &replacement,
+            DEFAULT_PRICE_BUMP_PERCENT,
+            DEFAULT_BLOB_PRICE_BUMP_PERCENT,
+        );
+        if accepted {
+            assert!(
+                matches!(result, Ok(Some(_))),
+                "{note}: expected a replacement, got {result:?}"
+            );
+        } else {
+            assert!(
+                matches!(result, Err(MempoolError::UnderpricedReplacement)),
+                "{note}: expected UnderpricedReplacement, got {result:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn frame_tx_eviction_drops_the_nearest_expiry_first() {
+    // Under pool pressure the spec order sacrifices the frame tx closest to
+    // expiring, not the one that arrived first.
+    let mempool = Mempool::new(3);
+    let far = insert_frame_tx(
+        &mempool,
+        Address::from_low_u64_be(0xA1),
+        priced_frame_tx(Address::from_low_u64_be(0xA1), 0, 100, 100, Some(5_000)),
+    );
+    let near = insert_frame_tx(
+        &mempool,
+        Address::from_low_u64_be(0xA2),
+        priced_frame_tx(Address::from_low_u64_be(0xA2), 0, 100, 100, Some(2_000)),
+    );
+    let undated = insert_frame_tx(
+        &mempool,
+        Address::from_low_u64_be(0xA3),
+        priced_frame_tx(Address::from_low_u64_be(0xA3), 0, 100, 100, None),
+    );
+
+    // A fourth insert forces one eviction.
+    insert_frame_tx(
+        &mempool,
+        Address::from_low_u64_be(0xA4),
+        priced_frame_tx(Address::from_low_u64_be(0xA4), 0, 100, 100, Some(9_000)),
+    );
+
+    assert!(
+        !mempool.contains_tx(near).unwrap(),
+        "the nearest-expiry frame tx must be evicted first"
+    );
+    assert!(
+        mempool.contains_tx(far).unwrap(),
+        "a later-expiring frame tx must survive"
+    );
+    assert!(
+        mempool.contains_tx(undated).unwrap(),
+        "a frame tx with no deadline must outlive one that is about to expire"
+    );
+}
+
+#[test]
+fn frame_tx_eviction_falls_back_to_the_lowest_priority_fee() {
+    // With no deadlines to compare, the spec order sacrifices the lowest
+    // effective priority fee rather than the oldest arrival.
+    let mempool = Mempool::new(3);
+    let richest = insert_frame_tx(
+        &mempool,
+        Address::from_low_u64_be(0xB1),
+        priced_frame_tx(Address::from_low_u64_be(0xB1), 0, 100, 90, None),
+    );
+    let cheapest = insert_frame_tx(
+        &mempool,
+        Address::from_low_u64_be(0xB2),
+        priced_frame_tx(Address::from_low_u64_be(0xB2), 0, 100, 1, None),
+    );
+    let middle = insert_frame_tx(
+        &mempool,
+        Address::from_low_u64_be(0xB3),
+        priced_frame_tx(Address::from_low_u64_be(0xB3), 0, 100, 50, None),
+    );
+
+    insert_frame_tx(
+        &mempool,
+        Address::from_low_u64_be(0xB4),
+        priced_frame_tx(Address::from_low_u64_be(0xB4), 0, 100, 70, None),
+    );
+
+    assert!(
+        !mempool.contains_tx(cheapest).unwrap(),
+        "the lowest-priority-fee frame tx must be evicted first"
+    );
+    assert!(mempool.contains_tx(richest).unwrap());
+    assert!(mempool.contains_tx(middle).unwrap());
 }
 
 /// `add_transaction` queues the tx for P2P broadcast (the default path).

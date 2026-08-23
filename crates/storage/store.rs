@@ -36,7 +36,7 @@ use ethrex_common::{
 };
 use ethrex_crypto::{NativeCrypto, keccak::keccak_hash};
 use ethrex_rlp::{
-    decode::{RLPDecode, decode_bytes},
+    decode::{RLPDecode, decode_bytes, decode_rlp_item},
     encode::RLPEncode,
 };
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Trie, TrieLogger, TrieNode, TrieWitness};
@@ -89,7 +89,7 @@ fn shard_count(n: usize) -> usize {
     n.div_ceil(KEYS_PER_SHARD).clamp(1, MAX_SHARDS)
 }
 
-/// Default size in bytes of the RocksDB shared block cache: 12 GiB.
+/// Ceiling on the RocksDB shared block cache: 12 GiB.
 ///
 /// This cache holds both data blocks AND the index/bloom-filter blocks for every
 /// open SST file (because we enable `cache_index_and_filter_blocks`), so its size
@@ -98,7 +98,131 @@ fn shard_count(n: usize) -> usize {
 /// synced mainnet node (32 GiB cap) found 8-16 GiB all keep up with head-following,
 /// with larger giving no gain (the OS page cache backstops the uncompressed state
 /// CFs) and ~8 GiB the floor where the filter set starts to thrash.
-pub const DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES: usize = 12 * 1024 * 1024 * 1024;
+pub const MAX_ROCKSDB_BLOCK_CACHE_SIZE_BYTES: usize = 12 * 1024 * 1024 * 1024;
+
+/// Floor on the RocksDB shared block cache: 512 MiB. Below this the per-SST
+/// index and filter blocks no longer stay resident and every trie read pays an
+/// extra disk seek, which is worse than the memory it saves. Applied even when
+/// it exceeds [`ROCKSDB_BLOCK_CACHE_MEMORY_PERCENT`] of a very small host, and
+/// even when it exceeds the detected limit outright: a node given less than this
+/// much memory cannot follow the chain anyway, so the floor is the more useful
+/// failure mode than a cache too small to hold the filters.
+pub const MIN_ROCKSDB_BLOCK_CACHE_SIZE_BYTES: usize = 512 * 1024 * 1024;
+
+/// Share of the host's (or cgroup's) memory the block cache may claim by default.
+///
+/// The rest has to cover the in-memory trie-layer backlog, block execution, the
+/// mempool, peer buffers and allocator slack, so the cache cannot have most of the
+/// machine. At 40% a 32 GiB host lands on the 12 GiB ceiling and a 16 GiB host gets
+/// ~6.4 GiB — under the ~8 GiB thrash floor, but that is the memory-constrained
+/// tradeoff the ceiling's docs describe, and it leaves the node room not to be
+/// OOM-killed.
+pub const ROCKSDB_BLOCK_CACHE_MEMORY_PERCENT: usize = 40;
+
+/// Default RocksDB shared block cache size, derived from the memory this process
+/// is actually allowed to use.
+///
+/// A fixed default cannot serve both a 64 GiB validator and a 16 GiB CI runner: the
+/// ceiling alone is 71% of a 16 GiB host, which leaves no headroom for the rest of
+/// the node. Sizes to [`ROCKSDB_BLOCK_CACHE_MEMORY_PERCENT`] of the detected limit,
+/// clamped to [`MIN_ROCKSDB_BLOCK_CACHE_SIZE_BYTES`] ..=
+/// [`MAX_ROCKSDB_BLOCK_CACHE_SIZE_BYTES`]. Falls back to the ceiling when the limit
+/// cannot be detected, preserving the previous behavior.
+pub fn default_rocksdb_block_cache_size() -> usize {
+    rocksdb_block_cache_size_for(host_memory_limit_bytes())
+}
+
+/// Pure part of [`default_rocksdb_block_cache_size`]: the clamp, with the detected
+/// memory limit supplied by the caller. `None` means detection failed.
+pub fn rocksdb_block_cache_size_for(memory_limit: Option<usize>) -> usize {
+    let Some(limit) = memory_limit else {
+        return MAX_ROCKSDB_BLOCK_CACHE_SIZE_BYTES;
+    };
+    (limit.saturating_mul(ROCKSDB_BLOCK_CACHE_MEMORY_PERCENT) / 100).clamp(
+        MIN_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
+        MAX_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
+    )
+}
+
+/// Memory this process may use: the smaller of the host's physical memory and the
+/// cgroup memory limit, so a container gets sized against its own limit rather than
+/// the machine it happens to run on. `None` when nothing could be read (non-Linux,
+/// or an unreadable/absent `/proc`), which callers treat as "unknown".
+fn host_memory_limit_bytes() -> Option<usize> {
+    [physical_memory_bytes(), cgroup_memory_limit_bytes()]
+        .into_iter()
+        .flatten()
+        .min()
+}
+
+/// `MemTotal` from `/proc/meminfo`, in bytes.
+fn physical_memory_bytes() -> Option<usize> {
+    let meminfo = std::fs::read_to_string("/proc/meminfo").ok()?;
+    let kib: usize = meminfo
+        .lines()
+        .find_map(|line| line.strip_prefix("MemTotal:"))?
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()?;
+    kib.checked_mul(1024)
+}
+
+/// The cgroup memory limit that applies to this process, in bytes: `memory.max`
+/// under cgroup v2, falling back to `memory.limit_in_bytes` under v1. Both report
+/// "no limit" out of band — v2 with the literal `max`, v1 with a sentinel near
+/// `u64::MAX` — which yields `None` here (v1's sentinel simply exceeds any real
+/// `MemTotal`, so the `min` above discards it).
+///
+/// The limit may sit on any cgroup between the one the process belongs to and the
+/// mount root — a systemd slice, a Kubernetes pod's parent, an outer container — and
+/// the mount root itself is usually unlimited, so reading the root alone would miss
+/// it. The process's own cgroup comes from `/proc/self/cgroup` and every level up to
+/// the root is read, with the smallest limit winning.
+fn cgroup_memory_limit_bytes() -> Option<usize> {
+    let cgroups = std::fs::read_to_string("/proc/self/cgroup").ok()?;
+    let v2 = cgroups
+        .lines()
+        .find_map(|line| line.strip_prefix("0::"))
+        .and_then(|relative| {
+            cgroup_limit_up_to_root(Path::new("/sys/fs/cgroup"), relative, "memory.max")
+        });
+    v2.or_else(|| {
+        let relative = cgroups.lines().find_map(|line| {
+            // `hierarchy-ID:controller-list:cgroup-path`
+            let mut fields = line.splitn(3, ':');
+            let controllers = fields.nth(1)?;
+            let path = fields.next()?;
+            controllers
+                .split(',')
+                .any(|controller| controller == "memory")
+                .then_some(path)
+        })?;
+        cgroup_limit_up_to_root(
+            Path::new("/sys/fs/cgroup/memory"),
+            relative,
+            "memory.limit_in_bytes",
+        )
+    })
+}
+
+/// Smallest value of `file` across `<mount>/<relative>` and each of its ancestors up
+/// to `mount`, skipping levels whose file is absent or reports no limit.
+fn cgroup_limit_up_to_root(mount: &Path, relative: &str, file: &str) -> Option<usize> {
+    let mut dir = mount.join(relative.trim_start_matches('/'));
+    let mut limit: Option<usize> = None;
+    loop {
+        if let Some(value) = std::fs::read_to_string(dir.join(file))
+            .ok()
+            .and_then(|contents| contents.trim().parse::<usize>().ok())
+        {
+            limit = Some(limit.map_or(value, |current| current.min(value)));
+        }
+        if dir == mount || !dir.pop() {
+            return limit;
+        }
+    }
+}
 
 /// Tunable configuration for [`Store::new_with_config`] and related constructors.
 ///
@@ -121,7 +245,7 @@ pub struct StoreConfig {
 impl Default for StoreConfig {
     fn default() -> Self {
         Self {
-            rocksdb_block_cache_size: DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
+            rocksdb_block_cache_size: default_rocksdb_block_cache_size(),
             persist_channel_capacity: DEFAULT_PERSIST_CHANNEL_CAPACITY,
         }
     }
@@ -134,8 +258,32 @@ enum FKVGeneratorControlMessage {
     Continue,
 }
 
-// 64mb
-const CODE_CACHE_MAX_SIZE: u64 = 64 * 1024 * 1024;
+/// Share of the process's memory budget the bytecode cache may claim.
+///
+/// Bytecode is a small fraction of the working set next to trie nodes and flat
+/// key-values (which the RocksDB block cache serves, see
+/// [`ROCKSDB_BLOCK_CACHE_MEMORY_PERCENT`]), but a cold code read costs a blob-file
+/// fetch, so caching a few tens of thousands of contracts pays for itself.
+const CODE_CACHE_MEMORY_PERCENT: usize = 2;
+
+/// Floor for [`code_cache_size_for`], so a small or undetectable host still caches
+/// the hot contracts.
+const MIN_CODE_CACHE_SIZE_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Ceiling for [`code_cache_size_for`]: past this the cache holds more distinct
+/// bytecode than any block realistically touches.
+const MAX_CODE_CACHE_SIZE_BYTES: u64 = 1024 * 1024 * 1024;
+
+/// Size of the in-memory bytecode cache, derived from the memory this process is
+/// allowed to use, clamped to [`MIN_CODE_CACHE_SIZE_BYTES`] ..=
+/// [`MAX_CODE_CACHE_SIZE_BYTES`]. `None` means detection failed.
+fn code_cache_size_for(memory_limit: Option<usize>) -> u64 {
+    let Some(limit) = memory_limit else {
+        return MIN_CODE_CACHE_SIZE_BYTES;
+    };
+    ((limit / 100 * CODE_CACHE_MEMORY_PERCENT) as u64)
+        .clamp(MIN_CODE_CACHE_SIZE_BYTES, MAX_CODE_CACHE_SIZE_BYTES)
+}
 
 /// Key used to persist the `flushed_upto` block number in `MISC_VALUES`.
 const FLUSHED_UPTO_KEY: &[u8] = b"bodies_flushed_upto";
@@ -150,6 +298,7 @@ const MAX_BAD_BLOCKS: usize = 16;
 struct CodeCache {
     inner_cache: LruCache<H256, Code, FxBuildHasher>,
     cache_size: u64,
+    max_size: u64,
 }
 
 impl Default for CodeCache {
@@ -157,6 +306,7 @@ impl Default for CodeCache {
         Self {
             inner_cache: LruCache::unbounded_with_hasher(FxBuildHasher),
             cache_size: 0,
+            max_size: code_cache_size_for(host_memory_limit_bytes()),
         }
     }
 }
@@ -167,15 +317,17 @@ impl CodeCache {
     }
 
     fn insert(&mut self, code: &Code) -> Result<(), StoreError> {
-        let code_size = code.size();
-        let cache_len = self.inner_cache.len() + 1;
-        self.cache_size += code_size as u64;
-        let current_size = self.cache_size;
-        debug!(
-            "[ACCOUNT CODE CACHE] cache elements (): {cache_len}, total size: {current_size} bytes"
-        );
+        // A hash already cached must not be added to `cache_size` again, or the counter
+        // drifts up permanently and evicts entries that fit. `get` also refreshes
+        // recency, which is what a repeated read should do.
+        if self.inner_cache.get(&code.hash).is_some() {
+            return Ok(());
+        }
 
-        while self.cache_size > CODE_CACHE_MAX_SIZE {
+        self.cache_size += code.size() as u64;
+        self.inner_cache.put(code.hash, code.clone());
+
+        while self.cache_size > self.max_size {
             if let Some((_, code)) = self.inner_cache.pop_lru() {
                 self.cache_size -= code.size() as u64;
             } else {
@@ -183,7 +335,11 @@ impl CodeCache {
             }
         }
 
-        self.inner_cache.get_or_insert(code.hash, || code.clone());
+        let cache_len = self.inner_cache.len();
+        let current_size = self.cache_size;
+        debug!(
+            "[ACCOUNT CODE CACHE] cache elements (): {cache_len}, total size: {current_size} bytes"
+        );
         Ok(())
     }
 }
@@ -926,11 +1082,11 @@ impl Store {
         else {
             return Ok(None);
         };
-        let (bytecode_slice, targets) = decode_bytes(&bytes)?;
+        let (bytecode_slice, jumpdests) = decode_bytes(&bytes)?;
         let code = Code::from_parts_unchecked(
             code_hash,
             bytecode_slice,
-            <Vec<u32>>::decode(targets)?.into(),
+            decode_jumpdests(bytecode_slice, jumpdests)?,
         );
 
         // insert into cache and evict if needed
@@ -4240,11 +4396,33 @@ impl Store {
         .expect("block_data_buffer lock poisoned");
     }
 
+    /// Insert a block and its receipts into the in-memory buffer without writing
+    /// to disk. For testing only — gates production code off.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn buffer_block_with_receipts_for_test(&self, block: &Block, receipts: Vec<Receipt>) {
+        mutate_block_buffer(&self.block_data_buffer, |b| {
+            b.insert(block.clone(), receipts.clone(), vec![])
+        })
+        .expect("block_data_buffer lock poisoned");
+    }
+
     /// Synchronously flush the block data buffer to disk.
     /// For testing only — gates production code off.
     #[cfg(any(test, feature = "testing"))]
     pub fn flush_block_data_for_test(&self) -> Result<(), StoreError> {
         flush_block_data(self.backend.as_ref(), &self.block_data_buffer)
+    }
+
+    /// Read a receipt by block hash, bypassing the canonical-hash lookup that
+    /// [`Store::get_receipt`] performs. For testing only — lets a test assert
+    /// what a flush wrote without staging a canonical chain.
+    #[cfg(any(test, feature = "testing"))]
+    pub async fn get_receipt_by_hash_for_test(
+        &self,
+        block_hash: BlockHash,
+        index: Index,
+    ) -> Result<Option<Receipt>, StoreError> {
+        self.get_receipt_by_block_hash(block_hash, index).await
     }
 
     /// Read a raw trie node straight from the on-disk account/storage trie-node
@@ -4500,10 +4678,14 @@ fn flush_block_data(
         let hash = b.header.hash();
         write_block_data(tx.as_mut(), b.number, hash, &b.header, &b.body)?;
         for (index, receipt) in b.receipts.iter().enumerate() {
+            // `RECEIPTS_V2` holds the internal storage codec, which for frame
+            // receipts carries `succeeded` and the aggregated logs that the
+            // consensus layout omits. Identical to `encode_to_vec` for non-frame
+            // receipts.
             tx.put(
                 RECEIPTS_V2,
                 &receipt_key(&hash, index as u64),
-                &receipt.encode_to_vec(),
+                &receipt.encode_storage(),
             )?;
         }
         max_number = max_number.max(b.number);
@@ -5235,13 +5417,25 @@ pub fn receipt_key(block_hash: &BlockHash, index: u64) -> Vec<u8> {
 }
 
 fn encode_code(code: &Code) -> Vec<u8> {
-    let mut buf =
-        Vec::with_capacity(6 + code.len() + std::mem::size_of_val::<[u32]>(&code.jump_targets));
+    let jumpdests = code.jumpdests();
+    let mut buf = Vec::with_capacity(6 + code.len() + jumpdests.len());
     code.code().encode(&mut buf);
-    // `Arc<[u32]>` (the in-memory share) has no `RLPEncode` impl; encode through an
-    // owned `Vec` on this cold DB-write path (code is persisted once per hash).
-    code.jump_targets.to_vec().encode(&mut buf);
+    jumpdests.encode(&mut buf);
     buf
+}
+
+/// Decodes the JUMPDEST bitmap stored after the bytecode in an [`ACCOUNT_CODES`] value.
+///
+/// Values written before the bitmap representation hold an RLP *list* of `u32` offsets
+/// there instead. The RLP item header distinguishes a list from a byte string, so both
+/// forms are readable: for the older one the bitmap is rebuilt from the bytecode, which
+/// is cheaper than decoding the list.
+fn decode_jumpdests(code: &[u8], encoded: &[u8]) -> Result<Arc<[u8]>, StoreError> {
+    let (is_list, payload, _) = decode_rlp_item(encoded)?;
+    if is_list {
+        return Ok(Code::compute_jumpdests(code));
+    }
+    Ok(Arc::from(payload))
 }
 
 #[derive(Debug, Default, Clone)]
@@ -5366,8 +5560,8 @@ pub fn read_chain_id_from_db(path: &Path) -> Option<u64> {
     #[cfg(feature = "rocksdb")]
     {
         // The cache size is irrelevant for this one-shot chain-id read (the LRU
-        // is sized as a ceiling, not pre-allocated), so we use the default.
-        let backend = match RocksDBBackend::open(path, DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES) {
+        // is sized as a ceiling, not pre-allocated), so we use the ceiling.
+        let backend = match RocksDBBackend::open(path, MAX_ROCKSDB_BLOCK_CACHE_SIZE_BYTES) {
             Ok(backend) => backend,
             Err(e) => {
                 warn!("Failed to open RocksDB at {path:?} to read chain ID: {e}");
@@ -5414,6 +5608,149 @@ pub fn read_chain_id_from_db(path: &Path) -> Option<u64> {
     {
         let _ = path;
         None
+    }
+}
+
+#[cfg(test)]
+mod account_code_tests {
+    use super::*;
+
+    const JUMPDEST: u8 = 0x5b;
+    const PUSH1: u8 = 0x60;
+
+    /// A max-size contract that is almost entirely JUMPDESTs, the shape that makes the
+    /// jump-destination representation matter: as a list of offsets it is ~4x the size
+    /// of the bytecode it describes.
+    fn jumpdest_dense_code() -> Code {
+        let mut bytecode = vec![JUMPDEST; 24576];
+        bytecode[0] = 0x00;
+        Code::from_bytecode_unchecked(bytecode.into(), H256::zero())
+    }
+
+    /// Encodes an `ACCOUNT_CODES` value the way it was written before the bitmap: the
+    /// bytecode followed by an RLP list of `u32` JUMPDEST offsets.
+    fn encode_code_legacy(code: &Code) -> Vec<u8> {
+        let offsets: Vec<u32> = (0..code.len())
+            .filter(|offset| code.is_valid_jumpdest(*offset))
+            .map(|offset| offset as u32)
+            .collect();
+        let mut buf = Vec::new();
+        code.code().encode(&mut buf);
+        offsets.encode(&mut buf);
+        buf
+    }
+
+    #[test]
+    fn encoded_value_carries_one_bitmap_bit_per_code_byte() {
+        let code = jumpdest_dense_code();
+        let encoded = encode_code(&code);
+
+        assert_eq!(encoded.len(), 6 + code.len() + code.len().div_ceil(8));
+    }
+
+    #[test]
+    fn round_trip_preserves_the_bitmap() {
+        let code = jumpdest_dense_code();
+        let encoded = encode_code(&code);
+
+        let (bytecode, jumpdests) = decode_bytes(&encoded).unwrap();
+        assert_eq!(bytecode, code.code());
+        assert_eq!(
+            decode_jumpdests(bytecode, jumpdests).unwrap().as_ref(),
+            code.jumpdests()
+        );
+    }
+
+    /// Values written before the bitmap SHALL still decode, with the bitmap rebuilt from
+    /// the bytecode, so an existing database needs no migration.
+    #[test]
+    fn legacy_offset_list_values_decode_to_the_same_bitmap() {
+        for bytecode in [
+            vec![0x00, JUMPDEST, 0x00, JUMPDEST],
+            vec![PUSH1, JUMPDEST, JUMPDEST],
+            vec![0x00; 32],
+        ] {
+            let code = Code::from_bytecode_unchecked(bytecode.into(), H256::zero());
+            let legacy = encode_code_legacy(&code);
+
+            let (decoded_bytecode, jumpdests) = decode_bytes(&legacy).unwrap();
+            assert_eq!(decoded_bytecode, code.code());
+            assert_eq!(
+                decode_jumpdests(decoded_bytecode, jumpdests)
+                    .unwrap()
+                    .as_ref(),
+                code.jumpdests()
+            );
+        }
+    }
+
+    /// Re-inserting a cached hash SHALL NOT grow the accounted size, or the counter
+    /// drifts up until the cache evicts entries that fit.
+    #[test]
+    fn repeated_inserts_do_not_inflate_the_accounted_size() {
+        let code = jumpdest_dense_code();
+        let mut cache = CodeCache::default();
+
+        cache.insert(&code).unwrap();
+        let after_first = cache.cache_size;
+        for _ in 0..8 {
+            cache.insert(&code).unwrap();
+        }
+
+        assert_eq!(cache.cache_size, after_first);
+        assert_eq!(cache.inner_cache.len(), 1);
+    }
+
+    /// The accounted size SHALL include the bytecode itself, so the cache honors its
+    /// memory budget instead of holding orders of magnitude more than it accounts for.
+    #[test]
+    fn accounted_size_covers_the_bytecode_and_bitmap() {
+        let code = jumpdest_dense_code();
+        let mut cache = CodeCache::default();
+        cache.insert(&code).unwrap();
+
+        assert!(cache.cache_size >= (code.len() + code.jumpdests().len()) as u64);
+    }
+
+    #[test]
+    fn cache_evicts_down_to_its_budget() {
+        let mut cache = CodeCache {
+            max_size: 128 * 1024,
+            ..Default::default()
+        };
+
+        for i in 0..16u8 {
+            let mut bytecode = vec![JUMPDEST; 24576];
+            bytecode[0] = i;
+            cache
+                .insert(&Code::from_bytecode_unchecked(
+                    bytecode.into(),
+                    H256::from_low_u64_be(i.into()),
+                ))
+                .unwrap();
+        }
+
+        assert!(cache.cache_size <= cache.max_size);
+        assert!(cache.inner_cache.len() < 16);
+    }
+
+    #[test]
+    fn code_cache_size_is_clamped_to_its_bounds() {
+        assert_eq!(code_cache_size_for(None), MIN_CODE_CACHE_SIZE_BYTES);
+        assert_eq!(
+            code_cache_size_for(Some(1024 * 1024 * 1024)),
+            MIN_CODE_CACHE_SIZE_BYTES
+        );
+        assert_eq!(
+            code_cache_size_for(Some(1024 * 1024 * 1024 * 1024)),
+            MAX_CODE_CACHE_SIZE_BYTES
+        );
+        let expected = 32u64 * 1024 * 1024 * 1024 / 100 * CODE_CACHE_MEMORY_PERCENT as u64;
+        assert_eq!(
+            code_cache_size_for(Some(32 * 1024 * 1024 * 1024)),
+            expected,
+            "a 32 GiB budget lands between the bounds"
+        );
     }
 }
 
@@ -6684,5 +7021,95 @@ mod flatkeyvalue_completeness_tests {
         assert!(!Store::flatkeyvalue_generation_complete(Some(&[
             0xff, 0xff
         ])));
+    }
+}
+
+#[cfg(test)]
+mod cgroup_memory_limit_tests {
+    use super::*;
+    use std::fs;
+
+    /// Builds `<root>/<relative>` and writes `contents` into the `file` of every
+    /// directory the map names, keyed by path relative to `root` ("" is the root).
+    fn cgroup_tree(root: &Path, relative: &str, file: &str, limits: &[(&str, &str)]) {
+        fs::create_dir_all(root.join(relative)).expect("create cgroup tree");
+        for (dir, contents) in limits {
+            fs::write(root.join(dir).join(file), contents).expect("write limit");
+        }
+    }
+
+    /// A limit set on an ancestor cgroup (a systemd slice, a pod's parent) applies to
+    /// the process, so it must be found even though the process's own cgroup is
+    /// unlimited and the mount root reports `max`.
+    #[test]
+    fn ancestor_limit_applies() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        cgroup_tree(
+            root,
+            "system.slice/ethrex.service",
+            "memory.max",
+            &[("", "max"), ("system.slice", "4294967296")],
+        );
+
+        assert_eq!(
+            cgroup_limit_up_to_root(root, "/system.slice/ethrex.service", "memory.max"),
+            Some(4 * 1024 * 1024 * 1024)
+        );
+    }
+
+    /// With limits at several levels the tightest one is what the kernel enforces.
+    #[test]
+    fn smallest_limit_in_the_chain_wins() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        cgroup_tree(
+            root,
+            "kubepods/pod123/container",
+            "memory.max",
+            &[
+                ("kubepods", "8589934592"),
+                ("kubepods/pod123", "2147483648"),
+                ("kubepods/pod123/container", "4294967296"),
+            ],
+        );
+
+        assert_eq!(
+            cgroup_limit_up_to_root(root, "kubepods/pod123/container", "memory.max"),
+            Some(2 * 1024 * 1024 * 1024)
+        );
+    }
+
+    /// An unlimited chain is "unknown", not zero: v2 writes the literal `max` and v1 a
+    /// sentinel near `u64::MAX`, and absent files must not count either.
+    #[test]
+    fn unlimited_chain_yields_no_limit() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        cgroup_tree(root, "docker/abc", "memory.max", &[("", "max")]);
+
+        assert_eq!(
+            cgroup_limit_up_to_root(root, "docker/abc", "memory.max"),
+            None
+        );
+        // A cgroup path that does not exist under this mount (a v1 controller that is
+        // not mounted, a stale line in /proc/self/cgroup) reads as unknown too.
+        assert_eq!(
+            cgroup_limit_up_to_root(root, "not/here", "memory.max"),
+            None
+        );
+    }
+
+    /// The root cgroup is itself a level: a limit set there still applies.
+    #[test]
+    fn root_limit_applies_to_the_root_cgroup() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        cgroup_tree(root, "", "memory.limit_in_bytes", &[("", "536870912")]);
+
+        assert_eq!(
+            cgroup_limit_up_to_root(root, "/", "memory.limit_in_bytes"),
+            Some(512 * 1024 * 1024)
+        );
     }
 }

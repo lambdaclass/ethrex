@@ -56,15 +56,16 @@ pub fn parse_and_execute(
     let mut failures = Vec::new();
 
     for (test_key, test) in tests {
-        // TEMPORARY: the stateless run uses the tests-zkevm@v0.5.0 bundle (filled
-        // against glamsterdam-devnet v6.1.0), which predeploys the EIP-8282 builder
-        // deposit/exit contracts at the OLD addresses. This client uses the devnet-7
-        // addresses, so every Amsterdam+ block's end-of-block builder system call
-        // finds no code at the new addresses and fails. Skip Amsterdam+ fixtures in
-        // the stateless run — by fork, not by name, since cross-fork dirs like
-        // `for_amsterdam/prague/...` still run at the Amsterdam fork — until a zkevm
-        // bundle filled with the new predeploy addresses is released and
-        // `.fixtures_url_zkevm` is bumped. See docs/known_issues.md.
+        // TEMPORARY: the stateless run uses the tests-zkevm@v0.6.2 bundle, filled
+        // against glamsterdam-devnet v7.2.0, while this client targets devnet-8. The
+        // devnet-8 gas schedule differs (EIP-2780 folds the transfer log cost into
+        // TX_VALUE_COST, EIP-8038 reprices access-list entries to cold minus
+        // WARM_ACCESS), so every Amsterdam+ fixture in the bundle expects gas this
+        // client no longer charges. Skip Amsterdam+ fixtures in the stateless run —
+        // by fork, not by name, since cross-fork dirs like `for_amsterdam/prague/...`
+        // still run at the Amsterdam fork — until a zkevm bundle filled against
+        // devnet-8 is released and `.fixtures_url_zkevm` is bumped.
+        // See docs/known_issues.md.
         let skip_stateless_amsterdam =
             stateless_backend.is_some() && test.network >= Fork::Amsterdam;
         let should_skip_test = test.network < Fork::Merge
@@ -135,7 +136,7 @@ pub async fn run_ef_test(
     // benefit in single-threaded zkVM guest builds. The non-stateless runs are the right
     // home for this check.
     #[cfg(not(feature = "stateless"))]
-    if test.network == Fork::Amsterdam {
+    if test.network >= Fork::Amsterdam {
         run_two_pass_parallel(test_key, test).await?;
     }
 
@@ -291,6 +292,19 @@ fn exception_is_expected(
     returned_error: &ChainError,
 ) -> bool {
     expected_exceptions.iter().any(|exception| {
+        // EIP-8141 structural rejections: `validate_static_constraints` names the
+        // rule it failed and signature validation reports itself, so both satisfy
+        // a fixture expecting an invalid frame format. Before the reasons were
+        // carried, every one of these arrived as the approval error instead.
+        if matches!(exception, BlockChainExpectedException::InvalidFrameFormat)
+            && let ChainError::EvmError(EvmError::Transaction(error_msg))
+            | ChainError::InvalidBlock(InvalidBlockError::InvalidTransaction(error_msg)) =
+                returned_error
+            && (error_msg.starts_with("Invalid frame transaction format:")
+                || error_msg == "Invalid frame transaction: signature validation failed")
+        {
+            return true;
+        }
         if let (
             BlockChainExpectedException::TxtException(expected_error_msg),
             ChainError::EvmError(EvmError::Transaction(error_msg))
@@ -413,13 +427,42 @@ fn exception_in_rlp_decoding(block_fixture: &BlockWithRLP) -> bool {
         .iter()
         .any(|case| matches!(case, BlockChainExpectedException::TxtException(msg) if msg == "Nonce is max"));
 
+    // EIP-8141 structural frame rules (frame count, reserved modes, forbidden
+    // flag/target combinations) are enforced in ethrex's type-0x06 decoder, so a
+    // fixture expecting an invalid frame format legitimately fails to decode.
+    let expects_invalid_frame_format = block_fixture
+        .expect_exception
+        .as_ref()
+        .unwrap_or(&Vec::new())
+        .iter()
+        .any(|case| matches!(case, BlockChainExpectedException::InvalidFrameFormat));
+
+    // A fee field or `gas_limit * price` beyond `u64` does not fit the transaction
+    // types, so these fixtures also fail at decoding rather than at validation.
+    let expects_fee_overflow = block_fixture
+        .expect_exception
+        .as_ref()
+        .unwrap_or(&Vec::new())
+        .iter()
+        .any(|case| {
+            matches!(case, BlockChainExpectedException::FeeOverflow)
+                || matches!(case, BlockChainExpectedException::TxtException(msg)
+                    if msg == "Gas limit price product overflow")
+        });
+
     match CoreBlock::decode(block_fixture.rlp.as_ref()) {
         Ok(_) => {
             assert!(!expects_rlp_exception);
             false
         }
         Err(_) => {
-            assert!(expects_rlp_exception || expects_invalid_signature || expects_nonce_too_high);
+            assert!(
+                expects_rlp_exception
+                    || expects_invalid_signature
+                    || expects_nonce_too_high
+                    || expects_invalid_frame_format
+                    || expects_fee_overflow
+            );
             true
         }
     }

@@ -78,6 +78,9 @@ pub mod tx_broadcaster;
 pub mod types;
 pub mod utils;
 
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils;
+
 pub use discovery::DiscoveryConfig;
 pub use network::periodically_show_peer_stats;
 pub use network::start_network;
