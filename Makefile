@@ -70,7 +70,12 @@ dev: ## 🏃 Run the ethrex client in DEV_MODE with the InMemory Engine
 		--dev \
 		--datadir memory
 
-ETHEREUM_PACKAGE_REVISION := d47e98799c84a71d94371472e05f5e93030b3a7b
+# Pins a revision whose genesis generator is 6.1.4 or newer, which deploys the
+# EIP-8282 builder deposit/exit predeploys. EIP-8282 is part of Glamsterdam and
+# invalidates every block from Amsterdam onward when either predeploy has no
+# code, so an older generator produces a genesis on which any Amsterdam-scheduled
+# devnet stops producing blocks at the fork boundary.
+ETHEREUM_PACKAGE_REVISION := b5b3af65248f11702216e377d0377bcd8ccf4caf
 ETHEREUM_PACKAGE_DIR := ethereum-package
 
 checkout-ethereum-package: ## 📦 Checkout specific Ethereum package revision
