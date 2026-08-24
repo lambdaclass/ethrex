@@ -937,7 +937,7 @@ async fn send_block_range_update(state: &mut Established) -> Result<(), PeerConn
         .is_some_and(|eth| eth.version >= 69)
     {
         trace!(peer=%state.node, "Sending BlockRangeUpdate");
-        let update = BlockRangeUpdate::new(&state.storage)?;
+        let update = BlockRangeUpdate::new(&state.storage).await?;
         let latest_block = update.latest_block;
         send(state, Message::BlockRangeUpdate(update)).await?;
         state.last_block_range_update_block = latest_block - (latest_block % 32);

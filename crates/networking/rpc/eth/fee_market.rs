@@ -100,6 +100,15 @@ impl RpcHandler for FeeHistoryRequest {
 
         let (start_block, end_block) =
             get_range(storage, self.block_count, &self.newest_block).await?;
+        // `get_range` clamps `start` up to the earliest available block but leaves
+        // `end` where the caller put it, so an entirely-unavailable range (every
+        // requested block below the prune cutoff / snap-sync pivot) comes back
+        // inverted. Report it as empty, matching the `block_count == 0` case above;
+        // subtracting here would underflow.
+        if start_block > end_block {
+            return serde_json::to_value(FeeHistoryResponse::default())
+                .map_err(|error| RpcErr::Internal(error.to_string()));
+        }
         let oldest_block = start_block;
         let block_count = (end_block - start_block + 1) as usize;
         let mut base_fee_per_gas = vec![0_u64; block_count + 1];
@@ -274,4 +283,67 @@ fn calculate_percentiles_for_block(block: Block, percentiles: &[f32]) -> Vec<u64
             effective_priority_fees.get(i).cloned().unwrap_or_default()
         })
         .collect()
+}
+
+#[cfg(test)]
+mod pruned_range_tests {
+    use super::*;
+    use crate::test_utils::{add_legacy_tx_blocks, default_context_with_storage, setup_store};
+
+    /// Regression: `eth_feeHistory` must not panic when the requested range lies
+    /// entirely below the earliest available block.
+    ///
+    /// `get_range` clamps `start` up to `EarliestBlockNumber` but leaves `end` at the
+    /// caller's `newestBlock`, so those two can cross. `handle` then computed
+    /// `end - start + 1`, which underflows: in release builds (no `overflow-checks`)
+    /// that wraps to ~1.8e19 and the subsequent `vec![0; block_count + 1]` aborts the
+    /// connection task with a capacity-overflow panic.
+    ///
+    /// Reachable without `--history.retention`: snap-sync completion and the v3→v4
+    /// migration both set `EarliestBlockNumber` to the pivot, and asking for fee
+    /// history over pre-pivot blocks is an ordinary wallet/explorer query.
+    #[tokio::test]
+    async fn fee_history_below_earliest_block_returns_empty_not_panic() {
+        let storage = setup_store().await;
+        add_legacy_tx_blocks(&storage, 20, 1).await;
+        // Simulate a snap-synced / pruned node whose history starts at 15.
+        storage.advance_earliest_block_number(15).await.unwrap();
+
+        let context = default_context_with_storage(storage).await;
+        let request = FeeHistoryRequest {
+            block_count: 1,
+            // Well below `earliest`, so `get_range` returns an inverted pair.
+            newest_block: BlockIdentifier::Number(3),
+            reward_percentiles: vec![],
+        };
+
+        // The assertion that matters is that this returns at all rather than
+        // panicking; the shape is the same empty response `block_count == 0` gives.
+        let response = request.handle(context).await.unwrap();
+        let expected = serde_json::to_value(FeeHistoryResponse::default()).unwrap();
+        assert_eq!(response, expected);
+    }
+
+    /// A range that only *partially* precedes the earliest block still returns the
+    /// available portion — the guard must not swallow satisfiable requests.
+    #[tokio::test]
+    async fn fee_history_straddling_earliest_block_returns_available_portion() {
+        let storage = setup_store().await;
+        add_legacy_tx_blocks(&storage, 20, 1).await;
+        storage.advance_earliest_block_number(15).await.unwrap();
+
+        let context = default_context_with_storage(storage).await;
+        // Asks for 10 blocks ending at 18, i.e. 9..=18; clamped to 15..=18.
+        let request = FeeHistoryRequest {
+            block_count: 10,
+            newest_block: BlockIdentifier::Number(18),
+            reward_percentiles: vec![],
+        };
+
+        let response = request.handle(context).await.unwrap();
+        assert_eq!(response["oldestBlock"], serde_json::json!("0xf"));
+        // 4 blocks (15..=18) plus the projected next-block value.
+        assert_eq!(response["baseFeePerGas"].as_array().unwrap().len(), 5);
+        assert_eq!(response["gasUsedRatio"].as_array().unwrap().len(), 4);
+    }
 }

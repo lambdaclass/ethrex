@@ -3844,6 +3844,7 @@ dependencies = [
  "bytes",
  "ethrex-common 24.0.0",
  "ethrex-crypto",
+ "ethrex-metrics",
  "ethrex-rlp 24.0.0",
  "ethrex-trie 24.0.0",
  "fastbloom",
@@ -3855,6 +3856,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
  "tracing",
 ]
 
