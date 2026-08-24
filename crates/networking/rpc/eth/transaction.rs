@@ -12,6 +12,7 @@ use crate::{
 use ethrex_blockchain::{Blockchain, vm::StoreVmDatabase};
 use ethrex_common::{
     H256, U256,
+    constants::GAS_PER_BLOB,
     types::{AccessListEntry, BlockHash, BlockHeader, BlockNumber, GenericTransaction, TxKind},
 };
 
@@ -643,6 +644,22 @@ impl RpcHandler for EstimateGasRequest {
     }
 }
 
+/// The most a call object's blobs can cost, mirroring levm's `get_max_blob_gas_price`:
+/// `max_fee_per_blob_gas * GAS_PER_BLOB * blobs`.
+///
+/// Saturates rather than erroring on overflow. A product that cannot fit a `U256` is one no
+/// balance could cover, so `U256::MAX` leaves nothing available and caps the ceiling at
+/// zero, which is the arithmetically correct answer rather than a fallback.
+fn max_blob_gas_cost(blob_versioned_hashes: &[H256], max_fee_per_blob_gas: Option<U256>) -> U256 {
+    let Some(max_fee) = max_fee_per_blob_gas else {
+        return U256::zero();
+    };
+    U256::from(GAS_PER_BLOB)
+        .checked_mul(blob_versioned_hashes.len().into())
+        .and_then(|blob_gas| max_fee.checked_mul(blob_gas))
+        .unwrap_or(U256::MAX)
+}
+
 /// Caps the estimation ceiling at the gas the sender can actually pay for.
 ///
 /// `fee_cap` is the per-gas price the transaction's balance check uses: `max_fee_per_gas`
@@ -667,7 +684,21 @@ async fn recap_with_account_balances(
         .await?
         .map(|acc| acc.balance)
         .unwrap_or_default();
-    let account_gas = account_balance.saturating_sub(transaction.value) / fee_cap;
+    // Blob gas is a separate market with its own fee, and `validate_sufficient_balance`
+    // adds `max_fee_per_blob_gas * GAS_PER_BLOB * blobs` to what the sender must hold.
+    // Balance spent there cannot also pay for execution gas, so it comes off before the
+    // division — the same subtraction geth makes — or the ceiling this returns is one the
+    // check will reject. `validate_sender_balance` runs ahead of `validate_4844_tx` in
+    // `prepare_execution`, so a call object carrying blob fields reaches the check even
+    // when it is not a well-formed blob transaction.
+    let blob_cost = max_blob_gas_cost(
+        &transaction.blob_versioned_hashes,
+        transaction.max_fee_per_blob_gas,
+    );
+    let available = account_balance
+        .saturating_sub(transaction.value)
+        .saturating_sub(blob_cost);
+    let account_gas = available / fee_cap;
     // If account_gas exceeds u64, the account can afford any gas limit.
     let account_gas = u64::try_from(account_gas).unwrap_or(highest_gas_limit);
     Ok(highest_gas_limit.min(account_gas))
@@ -926,6 +957,45 @@ mod estimate_gas_fee_cap_tests {
         }))
         .await;
         assert_eq!(result, Value::String("0x5208".to_string()));
+    }
+
+    /// Blob gas is priced in its own market, and `validate_sufficient_balance` adds
+    /// `max_fee_per_blob_gas * GAS_PER_BLOB * blobs` to what the sender must hold. Balance
+    /// committed there cannot also pay for execution gas, so the recap has to spend it
+    /// too: one blob at 45 gwei is ~0.0059 ETH against this sender's 0.01, so a ceiling
+    /// computed from the full balance is one the check then rejects.
+    #[tokio::test]
+    async fn estimate_gas_recaps_blob_cost_out_of_the_available_balance() {
+        let result = run_estimate_gas(json!({
+            "from": SENDER,
+            "to": SENDER,
+            "value": "0x1",
+            "input": "0x0102030405060708",
+            "maxFeePerGas": ONE_GWEI,
+            "maxPriorityFeePerGas": "0x0",
+            "maxFeePerBlobGas": "0xa7a358200",  // 45 gwei
+            "blobVersionedHashes": [
+                "0x0100000000000000000000000000000000000000000000000000000000000001"
+            ],
+        }))
+        .await;
+        assert_eq!(result, Value::String("0x5348".to_string()));
+    }
+
+    /// A call object with no blob fields must be unaffected: nothing is subtracted, so the
+    /// whole balance still backs the ceiling.
+    #[tokio::test]
+    async fn a_request_without_blobs_loses_no_balance_to_them() {
+        let result = run_estimate_gas(json!({
+            "from": SENDER,
+            "to": SENDER,
+            "value": "0x1",
+            "input": "0x0102030405060708",
+            "maxFeePerGas": ONE_GWEI,
+            "maxPriorityFeePerGas": "0x0",
+        }))
+        .await;
+        assert_eq!(result, Value::String("0x5348".to_string()));
     }
 
     /// A request that states no fee at all asks not to be capped, and must not divide
