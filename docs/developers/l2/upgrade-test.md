@@ -468,35 +468,29 @@ TO_COMMIT_HASH=$(cast keccak "$TO_SHA")
 TO_VK=0x$(tr -d '\n' < ethrex-riscv32im-succinct-zkvm-vk-bn254 | sed 's/^0x//')
 ```
 
-The call itself is:
-
-```solidity
-OnChainProposer.upgradeSP1VerificationKey(bytes32 commit_hash, bytes32 new_vk)
-```
-
-`upgradeSP1VerificationKey` is `onlyOwner` and that owner is the Timelock, so it
-routes like any other privileged call: Governance `schedule` + `execute` after
-the delay, or Security Council `emergencyExecute` to skip it. See
-[Timelock](../../l2/fundamentals/timelock.md). In this test both roles are the
-account passed as `--on-chain-proposer-owner`, so `emergencyExecute` from that
-key needs no delay:
+`rex l2 register-vk` derives the commit hash, routes the call through the
+Timelock, and reads the key back afterwards:
 
 ```bash
-cast send "$ETHREX_TIMELOCK_ADDRESS" 'emergencyExecute(address,uint256,bytes)' \
-  "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" 0 \
-  "$(cast calldata 'upgradeSP1VerificationKey(bytes32,bytes32)' "$TO_COMMIT_HASH" "$TO_VK")" \
+rex l2 register-vk \
+  --commit "$TO_SHA" \
+  --vk "$TO_VK" \
+  --on-chain-proposer "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" \
+  --timelock "$ETHREX_TIMELOCK_ADDRESS" \
   --private-key 0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e \
   --rpc-url http://localhost:8545
 ```
 
-Confirm it landed, and sanity-check the derivation against the key the
-`$VERSION_FROM` deploy registered for itself (`1` is the SP1 verifier id):
+The `--timelock` flag is what makes this work: `upgradeSP1VerificationKey` is
+`onlyOwner`, that owner is the Timelock, and the command routes through
+`emergencyExecute` — which needs no delay because in this test the Security
+Council is the account passed as `--on-chain-proposer-owner`. Sending straight to
+the OnChainProposer instead reverts with `OwnableUnauthorizedAccount`. See
+[Timelock](../../l2/fundamentals/timelock.md) for the Governance
+`schedule` + `execute` route.
 
-```bash
-cast call "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" \
-  'verificationKeys(bytes32,uint8)(bytes32)' "$TO_COMMIT_HASH" 1 \
-  --rpc-url http://localhost:8545
-```
+Run it with `--dry-run` first if you want to see the derived commit hash and the
+key currently on chain without sending anything.
 
 ---
 

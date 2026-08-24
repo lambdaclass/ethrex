@@ -5,47 +5,32 @@
 Applies to any deployment that verifies real proofs (`--sp1 true` at deploy
 time), whether or not the release changes a contract.
 
-A batch is committed under `keccak(VERGEN_GIT_SHA)` of the binary that committed
-it, and `commitBatch` rejects a commit hash it holds no key for. Your deployment
-only holds the key of the version that deployed it, so an upgraded sequencer
-commits **nothing** until its key is registered — every commit reverts with
-`MissingVerificationKeyForCommit()`, selector `0xf6b9798e`, surfacing in the
-committer log as:
+A batch is committed under the git sha of the binary that committed it, and
+`commitBatch` rejects a commit hash the deployment holds no key for. Your
+deployment only holds the key of the version that deployed it, so an upgraded
+sequencer commits **nothing** until the new key is registered — every commit
+reverts with `MissingVerificationKeyForCommit()` (`0xf6b9798e`), surfacing as:
 
 ```
 Failed to send commitment for batch N ... execution reverted: 0xf6b9798e
 ```
 
-The L2 keeps producing blocks the whole time, so it reads as a stuck committer
+The L2 keeps producing blocks throughout, so it reads as a stuck committer
 rather than a missing key. Nothing is lost: register the key and the pending
-batches commit and verify on the next attempt.
+batch commits on the next attempt.
 
-Register the new release's key before or right after swapping the binary:
-
-```solidity
-OnChainProposer.upgradeSP1VerificationKey(bytes32 commit_hash, bytes32 new_vk)
+```
+rex l2 register-vk --commit <GIT_SHA> --vk <VERIFICATION_KEY> \
+  --on-chain-proposer <OCP> --timelock <TIMELOCK> --private-key <SECURITY_COUNCIL_PK>
 ```
 
-- `commit_hash` — `keccak256` of the ASCII git sha the new binary reports in
-  `ethrex --version` (the segment after `HEAD-`), not the release tag.
-- `new_vk` — the `ethrex-riscv32im-succinct-zkvm-vk-bn254` file from the new
-  release's `ethrex-contracts.tar.gz`, the same hex-text file the deployer takes
-  via `--sp1-vk-path`.
+The sha is the one the new binary prints after `HEAD-` in `ethrex --version`; the
+key is the `ethrex-riscv32im-succinct-zkvm-vk-bn254` file from the new release's
+`ethrex-contracts.tar.gz`. See
+[Registering a new verification key](../fundamentals/upgrades.md#registering-a-new-verification-key)
+for what the command does and why the Timelock is in the path.
 
-The function is `onlyOwner` and that owner is the Timelock, so route it as
-Governance `schedule` + `execute`, or Security Council `emergencyExecute` to skip
-the delay. Use `upgradeRISC0VerificationKey` for a RISC0 deployment.
-
-`verificationKeys` is public, so you can confirm the mapping before and after —
-and confirm the deployment's existing key was derived the same way, which is the
-cheapest way to check you have the right commit hash (`1` is the SP1 verifier id):
-
-```bash
-cast call "$ON_CHAIN_PROPOSER" 'verificationKeys(bytes32,uint8)(bytes32)' \
-  "$(cast keccak "$SHA")" 1 --rpc-url "$L1_RPC"
-```
-
-Keys are per commit hash rather than per version, so the old key stays valid —
+Keys are stored per commit hash, not per version, so the old key stays valid —
 which is what lets a rollback keep verifying.
 
 ## From v7 to v8
