@@ -34,7 +34,7 @@ Node options:
           Base directory for the database. For public networks a subdirectory named after the network is appended (e.g. ~/.local/share/ethrex/mainnet). If the value is `memory`, the InMemory Engine is used instead.
           
           [env: ETHREX_DATADIR=]
-          [default: "/Users/ivanlitteri/Library/Application Support/ethrex"]
+          [default: /home/runner/.local/share/ethrex]
 
       --force
           Delete the database without confirmation.
