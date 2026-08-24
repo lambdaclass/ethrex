@@ -15,7 +15,7 @@ use ethrex_common::{
     },
     types::{
         AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-        ChainConfig, MempoolTransaction, Receipt, Transaction, TxKind, TxType, Withdrawal,
+        ChainConfig, MempoolTransaction, Receipt, Transaction, TxType, Withdrawal,
         block_access_list::BlockAccessList,
         bloom_from_logs, calc_excess_blob_gas, calculate_base_fee_per_blob_gas,
         calculate_base_fee_per_gas, compute_receipts_root, compute_transactions_root,
@@ -918,11 +918,19 @@ impl Blockchain {
             .as_ref()
             .map(|r| r.tx_checkpoint());
 
+        // Only the sender is pre-recorded. Its nonce bump and fee deduction happen
+        // before the atomic prepare region and are never rolled back, so the sender is
+        // touched no matter how the tx ends.
+        //
+        // The recipient is NOT recorded here. Since v7.1.0 the spec loads it only in the
+        // top-frame `prepare_dispatch`, which an EIP-7702 authorization halt precedes: a
+        // tx that OOGs while applying its authorization never accesses the recipient, so
+        // the recipient must be absent from the BAL. The VM records it at its real load
+        // point, gated on `pending_prep_oog` (see `default_hook.rs`), which is the only
+        // place with the information needed to get this right. Pre-recording it here
+        // produced a BAL our own validator rejects, destroying our own payloads.
         if let Some(recorder) = context.vm.db.bal_recorder_mut() {
             recorder.record_touched_address(head.tx.sender());
-            if let TxKind::Call(to) = head.to() {
-                recorder.record_touched_address(to);
-            }
         }
 
         let receipt = match self.apply_transaction(&head, context) {
