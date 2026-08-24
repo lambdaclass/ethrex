@@ -327,9 +327,14 @@ async fn collect_block_logs(
     // Transactions share indices with their receipts; pair them by index.
     for (tx_index, tx) in block_body.transactions.iter().enumerate() {
         let tx_hash = tx.hash(&NativeCrypto);
-        let receipt = receipts.get(tx_index).ok_or(RpcErr::Internal(format!(
-            "Missing receipt for block {block_num} tx {tx_index}"
-        )))?;
+        // Below the prune barrier a missing receipt is the normal outcome rather
+        // than corruption, so report it as unavailable history: a caller can act on
+        // 4444 by asking a node that still holds the range, but not on a 500.
+        let receipt = receipts
+            .get(tx_index)
+            .ok_or(RpcErr::PrunedHistoryUnavailable(format!(
+                "Receipts for block {block_num} are no longer stored (missing tx {tx_index})"
+            )))?;
 
         if receipt.succeeded {
             for log in &receipt.logs {

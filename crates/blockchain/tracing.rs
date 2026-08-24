@@ -64,6 +64,16 @@ impl Blockchain {
             .storage
             .get_receipts_for_block_from_index(&block_hash, 0, Some(tx_count))
             .await?;
+        // Summing a short read would silently under-count and shift every log index
+        // in the trace — a wrong answer rather than a reported failure. Below the
+        // prune barrier a short read is the normal outcome, so check it explicitly.
+        if receipts.len() != tx_count {
+            return Err(ChainError::Custom(format!(
+                "cannot compute log indices for block {block_hash:#x}: expected {tx_count} \
+                 receipts, found {}",
+                receipts.len()
+            )));
+        }
         let total = receipts
             .iter()
             .map(|r| u64::try_from(r.logs.len()).unwrap_or(u64::MAX))
