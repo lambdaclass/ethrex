@@ -24,8 +24,9 @@ use ethrex_p2p::{
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
 };
+use ethrex_rpc::clients::eth::EthClient;
 use ethrex_rpc::{SubscriptionManager, WebSocketConfig};
-use ethrex_storage::{HistoryPruner, Store, StoreConfig};
+use ethrex_storage::{HistoryPruner, Store, StoreConfig, error::StoreError};
 use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
 use eyre::OptionExt;
 use secp256k1::SecretKey;
@@ -379,7 +380,7 @@ pub async fn init_l2(
         };
 
         info!(
-            retention_secs = retention.as_secs(),
+            ?retention,
             l1_authoritative_cap = l1_source.is_some(),
             "History pruning enabled: block bodies, receipts and transaction locations older \
              than the retention window will be deleted permanently (canonical headers are kept)"

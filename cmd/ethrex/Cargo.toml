@@ -54,7 +54,6 @@ thiserror.workspace = true
 itertools = "0.14.0"
 url.workspace = true
 tracing-appender = "0.2"
-humantime = "2.1"
 pprof = { version = "0.15", features = ["cpp", "prost-codec", "frame-pointer"], optional = true }
 
 spawned-rt.workspace = true
