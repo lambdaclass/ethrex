@@ -45,6 +45,15 @@ pub fn clean_outdated_filters(filters: ActiveFilters, filter_duration: Duration)
 /// Maps IDs to active pollable filters and their timestamps.
 pub type ActiveFilters = Arc<Mutex<HashMap<u64, (Instant, PollableFilter)>>>;
 
+/// What a pollable filter yields on each `eth_getFilterChanges`.
+#[derive(Debug, Clone)]
+pub enum FilterKind {
+    /// `eth_newFilter`: logs matching the filter over the polled range.
+    Logs(LogsFilter),
+    /// `eth_newBlockFilter`: the hashes of blocks added since the last poll.
+    Blocks,
+}
+
 #[derive(Debug, Clone)]
 pub struct PollableFilter {
     /// Last block number from when this
@@ -53,7 +62,7 @@ pub struct PollableFilter {
     /// the log will be applied from this
     /// block number up to the latest one.
     pub last_block_number: BlockNumber,
-    pub filter_data: LogsFilter,
+    pub kind: FilterKind,
 }
 
 impl NewFilterRequest {
@@ -110,12 +119,63 @@ impl NewFilterRequest {
                 timestamp,
                 PollableFilter {
                     last_block_number,
-                    filter_data: self.request_data.clone(),
+                    kind: FilterKind::Logs(self.request_data.clone()),
                 },
             ),
         );
         let as_hex = json!(format!("0x{:x}", id));
         Ok(as_hex)
+    }
+
+    pub async fn stateful_call(
+        req: &RpcRequest,
+        storage: Store,
+        state: ActiveFilters,
+    ) -> Result<Value, RpcErr> {
+        let request = Self::parse(&req.params)?;
+        request.handle(storage, state).await
+    }
+}
+
+/// `eth_newBlockFilter`: registers a filter that yields the hash of every block
+/// appended since the previous poll. Takes no parameters.
+pub struct NewBlockFilterRequest;
+
+impl NewBlockFilterRequest {
+    pub fn parse(params: &Option<Vec<serde_json::Value>>) -> Result<Self, RpcErr> {
+        // Other clients accept both an absent and an empty params array here.
+        match params.as_deref() {
+            None | Some([]) => Ok(NewBlockFilterRequest),
+            Some(_) => Err(RpcErr::BadParams("Expected no params".to_string())),
+        }
+    }
+
+    pub async fn handle(
+        &self,
+        storage: ethrex_storage::Store,
+        filters: ActiveFilters,
+    ) -> Result<serde_json::Value, crate::utils::RpcErr> {
+        // Anchor at the current head so the first poll reports only blocks that
+        // arrive after registration, matching the log filters and other clients.
+        let last_block_number = storage.get_latest_block_number().await?;
+        let id: u64 = rand::random();
+        let mut active_filters_guard = filters.lock().unwrap_or_else(|mut poisoned_guard| {
+            error!("THREAD CRASHED WITH MUTEX TAKEN; SYSTEM MIGHT BE UNSTABLE");
+            **poisoned_guard.get_mut() = HashMap::new();
+            filters.clear_poison();
+            poisoned_guard.into_inner()
+        });
+        active_filters_guard.insert(
+            id,
+            (
+                Instant::now(),
+                PollableFilter {
+                    last_block_number,
+                    kind: FilterKind::Blocks,
+                },
+            ),
+        );
+        Ok(json!(format!("0x{:x}", id)))
     }
 
     pub async fn stateful_call(
@@ -206,9 +266,32 @@ impl FilterChangesRequest {
                 poisoned_guard.into_inner()
             }));
         if let Some((timestamp, filter)) = active_filters_guard.get_mut(&self.id) {
+            // A block filter has no range to validate: it always reports whatever
+            // blocks arrived since the last poll.
+            if matches!(filter.kind, FilterKind::Blocks) {
+                *timestamp = Instant::now();
+                let from = filter.last_block_number.saturating_add(1);
+                filter.last_block_number = latest_block_num;
+                drop(active_filters_guard);
+                let mut hashes = Vec::new();
+                for number in from..=latest_block_num {
+                    // A number with no canonical hash means the chain reorged out
+                    // from under us mid-scan; skip rather than fail the poll.
+                    if let Some(hash) = storage.get_canonical_block_hash(number).await? {
+                        hashes.push(format!("{hash:#x}"));
+                    }
+                }
+                return serde_json::to_value(hashes).map_err(|error| {
+                    tracing::error!("Block filter request failed with: {error}");
+                    RpcErr::Internal("Failed to collect block hashes".to_string())
+                });
+            }
+            let FilterKind::Logs(filter_data) = &filter.kind else {
+                unreachable!("block filters are handled above")
+            };
             // We'll only get changes for a filter that either has a block
             // range for upcoming blocks, or for the 'latest' tag.
-            let valid_block_range = match filter.filter_data.to_block {
+            let valid_block_range = match filter_data.to_block {
                 BlockIdentifier::Tag(BlockTag::Latest) => true,
                 BlockIdentifier::Number(block_num) if block_num >= latest_block_num => true,
                 _ => false,
@@ -223,14 +306,18 @@ impl FilterChangesRequest {
                 *timestamp = Instant::now();
                 // Update this filter so the current query
                 // starts from the last polled block.
-                filter.filter_data.from_block = BlockIdentifier::Number(filter.last_block_number);
+                let mut logs_filter = match &filter.kind {
+                    FilterKind::Logs(data) => data.clone(),
+                    FilterKind::Blocks => unreachable!("block filters are handled above"),
+                };
+                logs_filter.from_block = BlockIdentifier::Number(filter.last_block_number);
+                logs_filter.to_block = BlockIdentifier::Number(latest_block_num);
                 filter.last_block_number = latest_block_num;
-                let mut filter = filter.clone();
-                filter.filter_data.to_block = BlockIdentifier::Number(latest_block_num);
+                filter.kind = FilterKind::Logs(logs_filter.clone());
                 // Drop the lock early to process this filter's query
                 // and not keep the lock more than we should.
                 drop(active_filters_guard);
-                let logs = fetch_logs_with_filter(&filter.filter_data, storage).await?;
+                let logs = fetch_logs_with_filter(&logs_filter, storage).await?;
                 serde_json::to_value(logs).map_err(|error| {
                     tracing::error!("Log filtering request failed with: {error}");
                     RpcErr::Internal("Failed to filter logs".to_string())
@@ -280,6 +367,17 @@ mod tests {
 
     use serde_json::{Value, json};
 
+    /// Every filter these tests register is a log filter; unwrap the kind so the
+    /// assertions can keep reading the `LogsFilter` fields directly.
+    fn logs_filter(filter: &PollableFilter) -> &LogsFilter {
+        match &filter.kind {
+            crate::eth::filter::FilterKind::Logs(data) => data,
+            crate::eth::filter::FilterKind::Blocks => {
+                panic!("test filter should be a log filter")
+            }
+        }
+    }
+
     #[tokio::test]
     async fn filter_request_smoke_test_valid_params() {
         let filter_req_params = json!(
@@ -306,16 +404,16 @@ mod tests {
         assert!(filters.len() == 1);
         let (_, filter) = filters.clone().get(&id).unwrap().clone();
         assert!(matches!(
-            filter.filter_data.from_block,
+            logs_filter(&filter).from_block,
             BlockIdentifier::Number(1)
         ));
         assert!(matches!(
-            filter.filter_data.to_block,
+            logs_filter(&filter).to_block,
             BlockIdentifier::Number(2)
         ));
-        assert!(filter.filter_data.address_filters.is_none());
+        assert!(logs_filter(&filter).address_filters.is_none());
         assert!(matches!(
-            &filter.filter_data.topics[..],
+            &logs_filter(&filter).topics[..],
             [TopicFilter::Topic(_)]
         ));
     }
@@ -343,15 +441,15 @@ mod tests {
         assert!(filters.len() == 1);
         let (_, filter) = filters.clone().get(&id).unwrap().clone();
         assert!(matches!(
-            filter.filter_data.from_block,
+            logs_filter(&filter).from_block,
             BlockIdentifier::Number(1)
         ));
         assert!(matches!(
-            filter.filter_data.to_block,
+            logs_filter(&filter).to_block,
             BlockIdentifier::Number(255)
         ));
-        assert!(filter.filter_data.address_filters.is_none());
-        assert!(matches!(&filter.filter_data.topics[..], []));
+        assert!(logs_filter(&filter).address_filters.is_none());
+        assert!(matches!(&logs_filter(&filter).topics[..], []));
     }
 
     #[tokio::test]
@@ -377,18 +475,18 @@ mod tests {
         assert!(filters.len() == 1);
         let (_, filter) = filters.clone().get(&id).unwrap().clone();
         assert!(matches!(
-            filter.filter_data.from_block,
+            logs_filter(&filter).from_block,
             BlockIdentifier::Number(1)
         ));
         assert!(matches!(
-            filter.filter_data.to_block,
+            logs_filter(&filter).to_block,
             BlockIdentifier::Number(255)
         ));
         assert!(matches!(
-            filter.filter_data.address_filters.unwrap(),
+            logs_filter(&filter).address_filters.clone().unwrap(),
             AddressFilter::Many(_)
         ));
-        assert!(matches!(&filter.filter_data.topics[..], []));
+        assert!(matches!(&logs_filter(&filter).topics[..], []));
     }
 
     #[tokio::test]
@@ -483,13 +581,13 @@ mod tests {
                 Instant::now(),
                 PollableFilter {
                     last_block_number: 0,
-                    filter_data: LogsFilter {
+                    kind: crate::eth::filter::FilterKind::Logs(LogsFilter {
                         from_block: BlockIdentifier::Number(1),
                         to_block: BlockIdentifier::Number(2),
                         block_hash: None,
                         address_filters: None,
                         topics: vec![],
-                    },
+                    }),
                 },
             ),
         );
