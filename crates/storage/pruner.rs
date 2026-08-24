@@ -1150,3 +1150,62 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod retention_tests {
+    use super::*;
+
+    /// The default must be exactly the CL block-retention window.
+    #[test]
+    fn cl_window_is_the_consensus_window() {
+        assert_eq!(
+            HistoryRetention::CL_WINDOW,
+            HistoryRetention::Epochs(33_024),
+            "the default must be MIN_EPOCHS_FOR_BLOCK_REQUESTS"
+        );
+        // 33024 epochs * 32 slots = 1,056,768 slots, plus a day of slack.
+        let head = 25_000_000;
+        assert_eq!(
+            HistoryRetention::CL_WINDOW.oldest_kept(head),
+            Some(head - 1_056_768 - 7_200)
+        );
+    }
+
+    #[test]
+    fn all_never_prunes() {
+        assert_eq!(HistoryRetention::All.oldest_kept(25_000_000), None);
+    }
+
+    /// A chain shorter than the window must keep everything rather than
+    /// underflowing into a barrier near u64::MAX.
+    #[test]
+    fn a_chain_shorter_than_the_window_keeps_everything() {
+        assert_eq!(HistoryRetention::CL_WINDOW.oldest_kept(0), Some(0));
+        assert_eq!(HistoryRetention::CL_WINDOW.oldest_kept(1_000), Some(0));
+        assert_eq!(HistoryRetention::Epochs(u64::MAX).oldest_kept(10), Some(0));
+    }
+
+    /// The barrier is a block distance standing in for a slot distance. Missed
+    /// slots mean fewer blocks than slots, so the barrier sits *lower* than the
+    /// slot-exact one and we keep more than required — never less. This is the
+    /// property that makes the substitution safe.
+    #[test]
+    fn missed_slots_only_ever_make_us_keep_more() {
+        let window_slots = 33_024 * 32;
+        let head = 20_000_000;
+        let barrier = HistoryRetention::CL_WINDOW.oldest_kept(head).unwrap();
+        // Even with zero missed slots the barrier is below the oldest slot the CL
+        // can ask about, so any miss rate only widens the margin.
+        assert!(
+            barrier < head - window_slots + 1,
+            "barrier {barrier} must sit below the slot-exact boundary"
+        );
+    }
+
+    /// Blocks is the raw unit, with no slack applied.
+    #[test]
+    fn blocks_applies_no_slack() {
+        assert_eq!(HistoryRetention::Blocks(10).oldest_kept(20), Some(10));
+        assert_eq!(HistoryRetention::Blocks(0).oldest_kept(20), Some(20));
+    }
+}
