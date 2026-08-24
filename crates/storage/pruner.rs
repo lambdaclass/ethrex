@@ -12,6 +12,65 @@ use tokio_util::sync::CancellationToken;
 #[cfg(feature = "metrics")]
 use ethrex_metrics::pruning::METRICS_PRUNING;
 
+/// `MIN_EPOCHS_FOR_BLOCK_REQUESTS` from the consensus specs:
+/// `MIN_VALIDATOR_WITHDRAWABILITY_DELAY` (256) + `CHURN_LIMIT_QUOTIENT` (65536) / 2.
+/// This is the window a CL is required to serve blocks over, and therefore the
+/// natural lower bound for execution history: the EL must be able to supply
+/// payloads at least as long as the CL has to serve them.
+pub const MIN_EPOCHS_FOR_BLOCK_REQUESTS: u64 = 33_024;
+pub const SLOTS_PER_EPOCH: u64 = 32;
+/// Roughly a day of extra margin, for a CL backfilling at the very edge of its
+/// own window when it asks us for a body we would otherwise have just deleted.
+pub const CL_WINDOW_SLACK_BLOCKS: u64 = 7_200;
+
+/// How much history to keep.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HistoryRetention {
+    /// Never prune.
+    All,
+    /// Keep this many epochs' worth of blocks behind the head, plus
+    /// [`CL_WINDOW_SLACK_BLOCKS`].
+    Epochs(u64),
+    /// Keep exactly this many blocks behind the head, with no slack added.
+    ///
+    /// The epoch form is what operators configure; this is the underlying unit the
+    /// barrier is actually computed in. It exists so tests can exercise the pruning
+    /// path on a short chain — an epoch is 32 blocks but the slack alone is 7200, so
+    /// no `Epochs` value can produce a barrier above zero on a test-sized chain.
+    Blocks(u64),
+}
+
+impl HistoryRetention {
+    /// The default: exactly the CL block-retention window.
+    pub const CL_WINDOW: Self = Self::Epochs(MIN_EPOCHS_FOR_BLOCK_REQUESTS);
+
+    /// The oldest block worth keeping, or `None` when nothing may be pruned.
+    ///
+    /// A block distance is a sound proxy for a slot distance: EIP-3675 permits at
+    /// most one block per slot and a missed slot produces no block, so the first
+    /// canonical block inside the last `W` slots is always *above*
+    /// `head - W - slack`. The error is one-sided toward over-retention — missed
+    /// slots make us keep more, never less — which is the safe direction.
+    ///
+    /// Deliberately no clock and no timestamp search: deriving the cutoff from the
+    /// host clock let a machine skewed a year forward prune a year of history, and
+    /// a timestamp bisection additionally assumes every canonical height in range
+    /// has a header, which is false on a database with a header hole.
+    pub fn oldest_kept(&self, head: u64) -> Option<u64> {
+        match self {
+            Self::All => None,
+            Self::Epochs(epochs) => Some(
+                head.saturating_sub(
+                    epochs
+                        .saturating_mul(SLOTS_PER_EPOCH)
+                        .saturating_add(CL_WINDOW_SLACK_BLOCKS),
+                ),
+            ),
+            Self::Blocks(blocks) => Some(head.saturating_sub(*blocks)),
+        }
+    }
+}
+
 /// How often a pruner loop re-checks the retention window. Shared by the L1 and
 /// L2 entry points ([`HistoryPruner::run`] and
 /// [`HistoryPruner::run_with_floor`]) so the two cadences cannot drift.
@@ -69,7 +128,7 @@ const LOWEST_PRUNABLE_BLOCK: u64 = 1;
 
 pub struct HistoryPruner {
     store: Store,
-    retention: Duration,
+    retention: HistoryRetention,
     /// Heights within this distance of the head are never pruned. Defaults to
     /// [`KEEP_RECENT`]; only tests override it (to exercise the floor without
     /// building 256-block chains).
@@ -83,7 +142,7 @@ pub struct HistoryPruner {
 }
 
 impl HistoryPruner {
-    pub fn new(store: Store, retention: Duration) -> Self {
+    pub fn new(store: Store, retention: HistoryRetention) -> Self {
         Self {
             store,
             retention,
@@ -188,7 +247,7 @@ impl HistoryPruner {
     /// is the last block of the newest batch that has a commit transaction.
     pub async fn tick_with_floor(
         &self,
-        now_secs: u64,
+        _now_secs: u64,
         max_prunable: Option<BlockNumber>,
     ) -> Result<usize, StoreError> {
         // Empty / pre-init store: nothing to prune. Bail before touching any
@@ -227,14 +286,9 @@ impl HistoryPruner {
             None => head.saturating_sub(SAFETY_DISTANCE),
         };
 
-        let target_ts = now_secs.saturating_sub(self.retention.as_secs());
-        let retention_block = match self
-            .store
-            .find_canonical_block_by_timestamp(target_ts, finalized)
-            .await?
-        {
-            Some(n) => n,
-            None => return Ok(0),
+        let Some(retention_block) = self.retention.oldest_kept(head) else {
+            // `All`: nothing may be pruned.
+            return Ok(0);
         };
 
         // Never prune at or above the last block whose state trie is persisted
@@ -394,10 +448,10 @@ mod tests {
 
     /// Build a pruner with an explicit `keep_recent`, so tests can exercise the
     /// head floor without constructing 256-block chains.
-    fn pruner_with_keep_recent(store: Store, secs: u64, keep_recent: u64) -> HistoryPruner {
+    fn pruner_with_keep_recent(store: Store, blocks: u64, keep_recent: u64) -> HistoryPruner {
         HistoryPruner {
             store,
-            retention: Duration::from_secs(secs),
+            retention: HistoryRetention::Blocks(blocks),
             keep_recent,
             // Synthetic test chains have no persisted trie state, so the
             // production persisted-floor query would return 0 and block all
@@ -475,7 +529,7 @@ mod tests {
         // stands in the way. `HistoryPruner::new` leaves it enabled.
         let pruner = HistoryPruner {
             store: store.clone(),
-            retention: Duration::from_secs(1),
+            retention: HistoryRetention::Blocks(1),
             keep_recent: 0,
             persisted_floor_override: None,
         };
@@ -576,7 +630,7 @@ mod tests {
     #[tokio::test]
     async fn tick_uninitialised_store_no_work() {
         let store = Store::new("", EngineType::InMemory).unwrap();
-        let pruner = HistoryPruner::new(store, Duration::from_secs(3600));
+        let pruner = HistoryPruner::new(store, HistoryRetention::Blocks(3600));
         let done = pruner.tick(10_000).await.unwrap();
         assert_eq!(done, 0);
     }
@@ -676,7 +730,7 @@ mod tests {
         store.set_latest_block_number_for_test(head).await.unwrap();
 
         // No overrides: this is exactly what `init_l1` constructs.
-        let pruner = HistoryPruner::new(store.clone(), Duration::from_secs(1));
+        let pruner = HistoryPruner::new(store.clone(), HistoryRetention::Blocks(1));
 
         // These synthetic headers carry the default (empty) state root and no trie was
         // ever committed, so the honest persisted height is 0 and it is the binding
@@ -726,7 +780,7 @@ mod tests {
         // keep_recent = 10 → prune_ceiling = 30; persisted = 25. The lower one wins.
         let pruner = HistoryPruner {
             store: store.clone(),
-            retention: Duration::from_secs(1),
+            retention: HistoryRetention::Blocks(1),
             keep_recent: 10,
             persisted_floor_override: Some(25),
         };
@@ -763,7 +817,7 @@ mod tests {
         // keep_recent = 25 → prune_ceiling = 15; persisted = 30. Now the margin wins.
         let pruner2 = HistoryPruner {
             store: store2.clone(),
-            retention: Duration::from_secs(1),
+            retention: HistoryRetention::Blocks(1),
             keep_recent: 25,
             persisted_floor_override: Some(30),
         };
@@ -835,7 +889,7 @@ mod tests {
         let store = Store::new("", EngineType::InMemory).unwrap();
         store.advance_earliest_block_number(0).await.unwrap();
 
-        // ts 0..900 step 100; now=950, retention=200s -> cutoff ts<=750 -> block 7.
+        // head=9, retention=2 blocks -> oldest kept is 9-2=7, so heights 1..=7 go.
         let mut parent = ethrex_common::H256::zero();
         for n in 0..10u64 {
             let h = header_with_ts(n, n * 100, parent);
@@ -853,7 +907,7 @@ mod tests {
 
         // keep_recent = 0 isolates the retention/finalized logic from the head
         // floor (covered by its own tests below).
-        let pruner = pruner_with_keep_recent(store.clone(), 200, 0);
+        let pruner = pruner_with_keep_recent(store.clone(), 2, 0);
         let pruned = pruner.tick(950).await.unwrap();
 
         // Heights 1..=7: genesis is never pruned, so 7 rather than 8. The pointer
@@ -909,9 +963,9 @@ mod tests {
         store.set_finalized_block_number_for_test(20).await.unwrap();
         store.set_latest_block_number_for_test(20).await.unwrap();
 
-        // Pass 1: now=1500, retention=500s → prune 1..=10 (genesis retained).
+        // Pass 1: head=20, retention=10 blocks → oldest kept 10, so 1..=10 go.
         // keep_recent = 0 isolates retention logic from the head floor.
-        let pruner = pruner_with_keep_recent(store.clone(), 500, 0);
+        let pruner = pruner_with_keep_recent(store.clone(), 10, 0);
         let pruned = pruner.tick(1500).await.unwrap();
         assert_eq!(pruned, 10);
 
@@ -937,14 +991,17 @@ mod tests {
         );
         assert_eq!(store.get_earliest_block_number().await.unwrap(), 11);
 
-        // Pass 2: restart resilience — same now, no-op.
-        let pruner2 = pruner_with_keep_recent(store.clone(), 500, 0);
+        // Pass 2: restart resilience — same window, no-op.
+        let pruner2 = pruner_with_keep_recent(store.clone(), 10, 0);
         assert_eq!(pruner2.tick(1500).await.unwrap(), 0);
         assert_eq!(store.get_earliest_block_number().await.unwrap(), 11);
 
-        // Pass 3: now=2500 → prune 11..=20.
-        let pruner3 = pruner_with_keep_recent(store.clone(), 500, 0);
-        assert_eq!(pruner3.tick(2500).await.unwrap(), 10);
+        // Pass 3: the rest goes once the window shrinks to nothing. Note the tick
+        // timestamp is now irrelevant — the barrier is a block distance from the
+        // head, so wall-clock time no longer moves it. That is the point: the old
+        // timestamp cutoff let a host clock skewed forward delete real history.
+        let pruner3 = pruner_with_keep_recent(store.clone(), 0, 0);
+        assert_eq!(pruner3.tick(1500).await.unwrap(), 10);
         assert_eq!(store.get_earliest_block_number().await.unwrap(), 21);
         for n in 11..=20 {
             assert!(store.get_block_body(n).await.unwrap().is_none(), "body {n}");
@@ -1032,7 +1089,7 @@ mod tests {
         // unpersisted bulk-sync window). The pruner must stop at 8.
         let pruner = HistoryPruner {
             store: store.clone(),
-            retention: Duration::from_secs(1),
+            retention: HistoryRetention::Blocks(1),
             keep_recent: 0,
             persisted_floor_override: Some(8),
         };

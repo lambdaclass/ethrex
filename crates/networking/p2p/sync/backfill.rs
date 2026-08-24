@@ -127,7 +127,7 @@ async fn resolve_floor(
 /// pivot.
 ///
 /// Also used by snap sync to record the true frontier at the end of each cycle.
-pub(crate) async fn reconcile_frontier(store: &Store) -> Result<BlockNumber, SyncError> {
+pub async fn reconcile_frontier(store: &Store) -> Result<BlockNumber, SyncError> {
     let head = store.get_latest_block_number()?;
     if head == 0 {
         return Ok(0);

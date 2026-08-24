@@ -149,8 +149,13 @@ Node options:
           
           [env: ETHREX_PRECOMPUTE_WITNESSES=]
 
-      --history.retention <DURATION>
-          Enable history pruning. Bodies/receipts/tx-locations older than this wall-clock duration are deleted (canonical headers preserved). Example: --history.retention=30d
+      --history.retention <RETENTION>
+          How much block history to keep. `cl-window` (default) keeps the CL block-retention window of 33024 epochs, which is the longest range a consensus client is required to serve and therefore the least an execution client should hold. `all` never prunes. `<N>epochs` keeps N epochs. Bodies, receipts and transaction locations below the window are deleted permanently; canonical headers are always kept.
+
+          [env: ETHREX_HISTORY_RETENTION=]
+
+      --history.retention.below-cl-window
+          Permit a --history.retention below the CL block-retention window. Such a node cannot serve the range its peers are entitled to ask for; intended for devnets and short-lived chains.
           
           [env: ETHREX_HISTORY_RETENTION=]
 

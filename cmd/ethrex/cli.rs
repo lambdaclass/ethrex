@@ -24,6 +24,7 @@ use ethrex_p2p::{
     types::Node,
 };
 use ethrex_rlp::encode::RLPEncode;
+use ethrex_storage::pruner::HistoryRetention;
 use ethrex_storage::{DB_COMMIT_THRESHOLD, error::StoreError, has_valid_db};
 use tokio_util::sync::CancellationToken;
 use tracing::{Level, error, info, warn};
@@ -532,13 +533,21 @@ pub struct Options {
     pub precompute_witnesses: bool,
     #[arg(
         long = "history.retention",
-        value_name = "DURATION",
+        value_name = "RETENTION",
         value_parser = parse_history_retention,
-        help = "Enable history pruning. Bodies/receipts/tx-locations older than this wall-clock duration are deleted (canonical headers preserved). Example: --history.retention=30d",
-        help_heading = "Node options",
+        help = "How much block history to keep. `cl-window` (default) keeps the CL block-retention window of 33024 epochs, which is the longest range a consensus client is required to serve and therefore the least an execution client should hold. `all` never prunes. `<N>epochs` keeps N epochs. Bodies, receipts and transaction locations below the window are deleted permanently; canonical headers are always kept.",
+        help_heading = "P2P options",
         env = "ETHREX_HISTORY_RETENTION"
     )]
-    pub history_retention: Option<std::time::Duration>,
+    pub history_retention: Option<HistoryRetention>,
+    #[arg(
+        long = "history.retention.below-cl-window",
+        default_value_t = false,
+        help = "Permit a --history.retention below the CL block-retention window. Such a node cannot serve the range its peers are entitled to ask for; intended for devnets and short-lived chains.",
+        help_heading = "P2P options",
+        env = "ETHREX_HISTORY_RETENTION_BELOW_CL_WINDOW"
+    )]
+    pub history_retention_below_cl_window: bool,
     #[arg(
         long = "max-reorg-depth",
         value_name = "MAX_REORG_DEPTH",
@@ -645,6 +654,7 @@ impl Default for Options {
             skip_genesis_validation: false,
             no_precompile_cache: false,
             history_retention: None,
+            history_retention_below_cl_window: false,
             no_bal_parallel_exec: false,
             no_bal_prefetch: false,
             no_bal_parallel_trie: false,
@@ -1415,8 +1425,34 @@ pub async fn export_blocks(
     );
 }
 
-fn parse_history_retention(s: &str) -> Result<std::time::Duration, String> {
-    humantime::parse_duration(s).map_err(|e| format!("invalid duration `{s}`: {e}"))
+/// `cl-window` | `all` | `<N>epochs`.
+///
+/// Deliberately not a bare integer: `--history.chain=22000000` already means an
+/// absolute block number, so an adjacent flag where a bare number meant a
+/// *distance* would read identically and mean something else. The `epochs` suffix
+/// removes the ambiguity. Wall-clock durations are gone too — the window is
+/// defined in epochs by the consensus specs, and deriving it from a clock made a
+/// skewed host prune real history.
+fn parse_history_retention(s: &str) -> Result<HistoryRetention, String> {
+    let value = s.trim().to_ascii_lowercase();
+    match value.as_str() {
+        "cl-window" => return Ok(HistoryRetention::CL_WINDOW),
+        "all" => return Ok(HistoryRetention::All),
+        _ => {}
+    }
+    if let Some(epochs) = value.strip_suffix("epochs") {
+        let epochs: u64 = epochs
+            .trim()
+            .parse()
+            .map_err(|_| format!("invalid epoch count in `{s}`"))?;
+        if epochs == 0 {
+            return Err("a retention of 0 epochs would keep nothing; use a positive count".into());
+        }
+        return Ok(HistoryRetention::Epochs(epochs));
+    }
+    Err(format!(
+        "invalid history retention `{s}`: expected `cl-window`, `all`, or `<N>epochs`"
+    ))
 }
 
 #[cfg(test)]
@@ -1424,24 +1460,44 @@ mod tests {
     use super::*;
     use clap::Parser;
     use ethrex_rpc::RpcNamespace;
-    use std::time::Duration;
 
     #[test]
-    fn parses_history_retention_days() {
-        let cli = CLI::try_parse_from(["ethrex", "--history.retention", "30d"]).unwrap();
+    fn parses_history_retention_named_modes() {
+        let cli = CLI::try_parse_from(["ethrex", "--history.retention", "cl-window"]).unwrap();
         assert_eq!(
             cli.opts.history_retention,
-            Some(Duration::from_secs(30 * 86400))
+            Some(HistoryRetention::CL_WINDOW)
         );
+        let cli = CLI::try_parse_from(["ethrex", "--history.retention", "all"]).unwrap();
+        assert_eq!(cli.opts.history_retention, Some(HistoryRetention::All));
     }
 
     #[test]
-    fn parses_history_retention_hours() {
-        let cli = CLI::try_parse_from(["ethrex", "--history.retention", "12h"]).unwrap();
+    fn parses_history_retention_epochs() {
+        let cli = CLI::try_parse_from(["ethrex", "--history.retention", "82125epochs"]).unwrap();
         assert_eq!(
             cli.opts.history_retention,
-            Some(Duration::from_secs(12 * 3600))
+            Some(HistoryRetention::Epochs(82125))
         );
+    }
+
+    /// A bare number is rejected: `--history.chain` already takes an absolute block
+    /// number, so a neighbouring flag where a bare number meant a *distance* would
+    /// read identically and mean something else.
+    #[test]
+    fn rejects_history_retention_without_a_unit() {
+        assert!(CLI::try_parse_from(["ethrex", "--history.retention", "1056768"]).is_err());
+        assert!(CLI::try_parse_from(["ethrex", "--history.retention", "30d"]).is_err());
+        assert!(CLI::try_parse_from(["ethrex", "--history.retention", "0epochs"]).is_err());
+    }
+
+    /// Absent means "use the default", which the initializer resolves to the CL
+    /// window; it must stay distinguishable from an explicit value, because only an
+    /// explicit one may delete history a node already holds.
+    #[test]
+    fn history_retention_defaults_to_unset() {
+        let cli = CLI::try_parse_from(["ethrex"]).unwrap();
+        assert_eq!(cli.opts.history_retention, None);
     }
 
     #[test]

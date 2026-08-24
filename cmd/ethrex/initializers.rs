@@ -20,14 +20,17 @@ use ethrex_p2p::{
     network::P2PContext,
     peer_handler::PeerHandler,
     peer_table::{PeerTable, PeerTableServer},
-    sync::{BackfillConfig, HistoryChain, SyncMode},
+    sync::{BackfillConfig, HistoryChain, SyncMode, reconcile_frontier},
     sync_manager::SyncManager,
     types::{NetworkConfig, Node, NodeRecord},
     utils::public_key_from_signing_key,
 };
 use ethrex_storage::{
-    DB_COMMIT_THRESHOLD, EngineType, HistoryPruner, Store, StoreConfig, error::StoreError,
-    has_valid_db, read_chain_id_from_db,
+    DB_COMMIT_THRESHOLD, EngineType, HistoryPruner, Store, StoreConfig,
+    error::StoreError,
+    has_valid_db,
+    pruner::{HistoryRetention, MIN_EPOCHS_FOR_BLOCK_REQUESTS},
+    read_chain_id_from_db,
 };
 use local_ip_address::{local_ip, local_ipv6};
 use rand::rngs::OsRng;
@@ -927,16 +930,9 @@ pub async fn init_l1(
     // Handed back to the caller so shutdown can await this specific task before
     // `Store::shutdown` fsyncs. The shared `tracker` is unsuitable: awaiting it would
     // also wait on p2p/RPC tasks that are not guaranteed to stop promptly.
-    let pruner_handle = opts.history_retention.map(|retention| {
-        info!(
-            retention_secs = retention.as_secs(),
-            "History pruning enabled: block bodies, receipts and transaction locations older \
-             than the retention window will be deleted permanently (canonical headers are kept). \
-             This cannot be undone without a resync"
-        );
-        let pruner = HistoryPruner::new(store.clone(), retention);
-        tokio::spawn(pruner.run(cancel_token.clone()))
-    });
+    let pruner_handle = resolve_history_retention(&store, &opts, cancel_token.clone())
+        .await?
+        .map(|pruner| tokio::spawn(pruner.run(cancel_token.clone())));
 
     let p2p_context = P2PContext::new(
         local_p2p_node.clone(),
@@ -1215,6 +1211,95 @@ pub async fn regenerate_head_state(
     info!("Finished regenerating state");
 
     Ok(())
+}
+
+/// Decides whether to prune, and returns the pruner to spawn if so.
+///
+/// The default is the CL block-retention window, but a default that prunes must
+/// never delete history an existing datadir already holds. So the rule is:
+/// **an explicit flag prunes; the default only prunes what it would have kept
+/// anyway.** A node that already holds pre-window history keeps it and says so on
+/// every boot, until the operator opts in.
+async fn resolve_history_retention(
+    store: &Store,
+    opts: &Options,
+    _cancel_token: CancellationToken,
+) -> eyre::Result<Option<HistoryPruner>> {
+    let explicit = opts.history_retention.is_some();
+    // `--history.chain` asks us to *download* history below the pivot. Deleting it
+    // by default would have the two flags fight, so the explicit one wins.
+    let retention = match opts.history_retention {
+        Some(r) => r,
+        None if opts.history_chain != HistoryChain::Off => {
+            warn!(
+                "--history.chain is set, so history pruning is disabled: backfilled history \
+                 would otherwise be deleted as fast as it arrives. Pass --history.retention \
+                 explicitly to override"
+            );
+            HistoryRetention::All
+        }
+        None => HistoryRetention::CL_WINDOW,
+    };
+
+    if retention == HistoryRetention::All {
+        return Ok(None);
+    }
+
+    if let HistoryRetention::Epochs(epochs) = retention
+        && epochs < MIN_EPOCHS_FOR_BLOCK_REQUESTS
+        && !opts.history_retention_below_cl_window
+    {
+        return Err(eyre::eyre!(format!(
+            "--history.retention is {epochs} epochs, below the CL block-retention window of \
+             {MIN_EPOCHS_FOR_BLOCK_REQUESTS}. Such a node cannot serve the range its peers are \
+             entitled to request. Pass --history.retention.below-cl-window to allow it"
+        )));
+    }
+
+    let head = store.get_latest_block_number()?;
+    let Some(barrier) = retention.oldest_kept(head) else {
+        return Ok(None);
+    };
+
+    // `EarliestBlockNumber` is only trustworthy if something wrote it. A node that
+    // snap-synced on an older build still reports the genesis-init placeholder of 0
+    // while holding no bodies below its pivot, and reading that 0 would grandfather
+    // every such node. Probe block 1, never 0: genesis always has a body, so a probe
+    // at 0 always succeeds and would conclude a stale pointer is sound.
+    let earliest = store.get_earliest_block_number().await?;
+    let earliest = if store.get_block_body(earliest.max(1)).await?.is_none() {
+        let reconciled = reconcile_frontier(store).await?;
+        info!(
+            recorded = earliest,
+            actual = reconciled,
+            "Corrected the earliest-block pointer; it did not match the bodies on disk"
+        );
+        store.set_earliest_block_number(reconciled).await?;
+        reconciled
+    } else {
+        earliest
+    };
+
+    if earliest < barrier && !explicit {
+        warn!(
+            earliest,
+            barrier,
+            "This node holds history below the CL retention window. Pruning is NOT enabled by \
+             default, because that would permanently delete history you already have. Pass \
+             --history.retention=cl-window to prune it, or --history.retention=all to silence \
+             this"
+        );
+        return Ok(None);
+    }
+
+    info!(
+        ?retention,
+        barrier,
+        "History pruning enabled: block bodies, receipts and transaction locations below the \
+         retention window will be deleted permanently (canonical headers are kept). This cannot \
+         be undone without a resync"
+    );
+    Ok(Some(HistoryPruner::new(store.clone(), retention)))
 }
 
 #[cfg(test)]
