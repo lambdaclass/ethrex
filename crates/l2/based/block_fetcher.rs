@@ -117,7 +117,7 @@ impl BlockFetcher {
         {
             info!("Node is not up to date. Syncing via L1");
 
-            let last_l2_block_number_known = self.store.get_latest_block_number().await?;
+            let last_l2_block_number_known = self.store.get_latest_block_number()?;
 
             let last_l2_batch_number_known = self
                 .rollup_store
@@ -258,6 +258,7 @@ impl BlockFetcher {
             latest_hash_on_batch,
             latest_hash_on_batch,
             latest_hash_on_batch,
+            None,
         )
         .await?;
 

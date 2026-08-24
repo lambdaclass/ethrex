@@ -5,10 +5,6 @@ mod block;
 pub mod block_access_list;
 pub mod block_execution_witness;
 mod constants;
-#[cfg(all(feature = "eip-8025", target_arch = "riscv64"))]
-pub(crate) mod eip8025_cell;
-#[cfg(feature = "eip-8025")]
-pub mod eip8025_ssz;
 mod fork_id;
 mod genesis;
 pub mod l2;
@@ -16,8 +12,11 @@ pub mod payload;
 pub mod prover;
 mod receipt;
 pub mod requests;
+pub mod stateless_ssz;
 pub mod transaction;
 pub mod tx_fields;
+#[cfg(all(feature = "zisk", target_arch = "riscv64"))]
+pub(crate) mod unsync_cell;
 
 pub use account::*;
 pub use account_update::*;

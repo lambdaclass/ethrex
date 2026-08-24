@@ -24,7 +24,13 @@ use serde::Serialize;
 use serde_json::Value;
 use tracing::debug;
 
+/// Allowed upward overestimation before the estimate's binary search stops, matching
+/// geth's `estimateGasErrorRatio` (`internal/ethapi/api.go`). geth's rationale is that a
+/// perfect estimate is not worth extra execution when callers bump by 20-25% anyway, and
+/// that for a transaction which inspects its own remaining gas the true minimum is not
+/// even the useful answer. Only reached when the fast path below cannot answer.
 pub const ESTIMATE_ERROR_RATIO: f64 = 0.015;
+
 pub const CALL_STIPEND: u64 = 2_300; // Free gas given at beginning of call.
 pub const TRANSACTION_GAS: u64 = 21_000; // Per transaction not creating a contract. NOTE: Not payable on data of calls between transactions.
 
@@ -516,11 +522,33 @@ impl RpcHandler for EstimateGasRequest {
         let gas_used = result.gas_used();
         let gas_refunded = result.gas_refunded();
 
+        // Most transactions execute identically at their own `gas_used` as they do with
+        // the whole block's gas available, and nothing can succeed below what an
+        // unconstrained run consumed — so if that one re-run succeeds it *is* the minimum,
+        // and the search can be skipped entirely. Two simulations, exact. Only gas-observing
+        // callers (an explicit `GAS` check, or a subcall needing 63/64 headroom the
+        // consumed total does not imply) fall through to the search below.
+        transaction.gas = Some(gas_used);
+        if let Ok(ExecutionResult::Success { .. }) = simulate_tx(
+            &transaction,
+            &block_header,
+            storage.clone(),
+            blockchain.clone(),
+        ) {
+            return serde_json::to_value(format!("{gas_used:#x}"))
+                .map_err(|error| RpcErr::Internal(error.to_string()));
+        }
+
         // Choose an optimistic start limit. See https://github.com/ethereum/go-ethereum/blob/a5a4fa7032bb248f5a7c40f4e8df2b131c4186a4/eth/gasestimator/gasestimator.go#L135
         let optimistic_limit = (gas_used + gas_refunded + CALL_STIPEND) * 64 / 63;
         let mut lowest_gas_limit = gas_used.saturating_sub(1);
         let mut middle_gas_limit = (optimistic_limit + lowest_gas_limit) / 2;
 
+        // Reached only by a transaction whose result depends on the gas it is given: an
+        // explicit `GAS` check, or a subcall needing 63/64 headroom the consumed total does
+        // not imply. Bisect as geth does, stopping within `ESTIMATE_ERROR_RATIO` of the
+        // upper bound rather than converging exactly — the same transactions geth's comment
+        // says do not want their true minimum returned.
         while lowest_gas_limit + 1 < highest_gas_limit {
             if (highest_gas_limit - lowest_gas_limit) as f64 / (highest_gas_limit as f64)
                 < ESTIMATE_ERROR_RATIO
@@ -606,10 +634,14 @@ impl RpcHandler for SendRawTransactionRequest {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        // RPC submissions go through the *local* entry points so the
+        // BlockchainOptions::private_mempool flag controls whether the tx is
+        // propagated to peers. P2P-received txs continue to use the
+        // non-local methods elsewhere.
         let hash = if let SendRawTransactionRequest::EIP4844(wrapped_blob_tx) = self {
             context
                 .blockchain
-                .add_blob_transaction_to_pool(
+                .add_local_blob_transaction_to_pool(
                     wrapped_blob_tx.tx.clone(),
                     wrapped_blob_tx.blobs_bundle.clone(),
                 )
@@ -617,7 +649,7 @@ impl RpcHandler for SendRawTransactionRequest {
         } else {
             context
                 .blockchain
-                .add_transaction_to_pool(self.to_transaction())
+                .add_local_transaction_to_pool(self.to_transaction())
                 .await
         }?;
         serde_json::to_value(format!("{hash:#x}"))
@@ -641,4 +673,79 @@ fn get_transaction_data(rpc_req_params: &Option<Vec<Value>>) -> Result<Vec<u8>, 
         .strip_prefix("0x")
         .ok_or(RpcErr::BadParams("Params are note 0x prefixed".to_owned()))?;
     hex::decode(str_data).map_err(|error| RpcErr::BadParams(error.to_string()))
+}
+
+#[cfg(test)]
+mod call_nonce_tests {
+    use std::str::FromStr;
+
+    use crate::rpc::map_http_requests;
+    use crate::test_utils::default_context_with_storage;
+    use crate::utils::RpcRequest;
+    use ethrex_common::Address;
+    use ethrex_common::types::Genesis;
+    use ethrex_storage::{EngineType, Store};
+    use serde_json::{Value, json};
+
+    /// Funded EOA from fixtures/genesis/l1.json.
+    const SENDER: &str = "0x00000a8d3f37af8def18832962ee008d8dca4f7b";
+
+    /// In-memory store from the l1 test genesis with `SENDER`'s account nonce
+    /// bumped, so call objects can be exercised against a sender whose
+    /// on-chain nonce is nonzero.
+    async fn setup_store_with_sender_nonce(nonce: u64) -> Store {
+        let genesis: &str = include_str!("../../../../fixtures/genesis/l1.json");
+        let mut genesis: Genesis =
+            serde_json::from_str(genesis).expect("Fatal: test config is invalid");
+        genesis
+            .alloc
+            .get_mut(&Address::from_str(SENDER).unwrap())
+            .expect("test sender missing from genesis")
+            .nonce = nonce;
+        let mut store =
+            Store::new("test-store", EngineType::InMemory).expect("Fail to create in-memory db");
+        store.add_initial_state(genesis).await.unwrap();
+        store
+    }
+
+    async fn run_eth_call(call_object: Value) -> Value {
+        let storage = setup_store_with_sender_nonce(5).await;
+        let context = default_context_with_storage(storage).await;
+        let request: RpcRequest = serde_json::from_value(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "eth_call",
+            "params": [call_object, "latest"],
+        }))
+        .unwrap();
+        map_http_requests(&request, context).await.unwrap()
+    }
+
+    /// A call object without `nonce` must not be rejected for senders whose
+    /// account nonce is nonzero: the env defaults the tx nonce to 0, which the
+    /// hook used to enforce against the state nonce.
+    #[tokio::test]
+    async fn eth_call_ignores_missing_nonce() {
+        let result = run_eth_call(json!({
+            "from": SENDER,
+            "to": "0xc100000000000000000000000000000000000000",
+            "value": "0x1",
+        }))
+        .await;
+        assert_eq!(result, Value::String("0x".to_string()));
+    }
+
+    /// An explicit stale nonce is ignored too: no client validates the sender
+    /// nonce on eth_call, even when the call object supplies one.
+    #[tokio::test]
+    async fn eth_call_ignores_explicit_stale_nonce() {
+        let result = run_eth_call(json!({
+            "from": SENDER,
+            "to": "0xc100000000000000000000000000000000000000",
+            "value": "0x1",
+            "nonce": "0x0",
+        }))
+        .await;
+        assert_eq!(result, Value::String("0x".to_string()));
+    }
 }

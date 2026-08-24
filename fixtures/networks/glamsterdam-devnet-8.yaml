@@ -1,0 +1,61 @@
+participants:
+  - el_type: geth
+    el_image: ethpandaops/geth:glamsterdam-devnet-8
+    cl_type: lodestar
+    cl_image: ethpandaops/lodestar:glamsterdam-devnet-8
+  - el_type: besu
+    el_image: ethpandaops/besu:glamsterdam-devnet-8
+    cl_type: teku
+    cl_image: ethpandaops/teku:glamsterdam-devnet-8
+  - el_type: nethermind
+    el_image: ethpandaops/nethermind:glamsterdam-devnet-8
+    cl_type: teku
+    cl_image: ethpandaops/teku:glamsterdam-devnet-8
+  - el_type: reth
+    el_image: ethpandaops/reth:glamsterdam-devnet-8
+    cl_type: grandine
+    cl_image: ethpandaops/grandine:glamsterdam-devnet-8-minimal
+  - el_type: erigon
+    el_image: ethpandaops/erigon:glamsterdam-devnet-8
+    cl_type: lodestar
+    cl_image: ethpandaops/lodestar:glamsterdam-devnet-8
+  - el_type: ethrex
+    el_image: ethrex:local
+    cl_type: grandine
+    cl_image: ethpandaops/grandine:glamsterdam-devnet-8-minimal
+
+global_log_level: debug
+network_params:
+  preset: minimal
+  deploy_eip8282_contracts: true
+  gloas_fork_epoch: 1
+  gas_limit: 600000000
+  genesis_gaslimit: 600000000
+  withdrawal_type: "0x02"
+
+additional_services:
+  - dora
+  - spamoor
+  - assertoor
+  - otel
+  - buildoor
+
+buildoor_params:
+  image: ethpandaops/buildoor:main
+  builder_api: true
+  epbs_builder: true
+  lifecycle: false
+  instances:
+    - participant: 1
+    - participant: 3
+
+assertoor_params:
+  run_stability_check: false
+  run_block_proposal_check: false
+  tests:
+    - file: "https://raw.githubusercontent.com/ethpandaops/assertoor/3f8697c64823f9fe0aaeed8065df0a4a412843a5/playbooks/gloas-dev/builder-prefork-queuefill.yaml"
+      config:
+        builderCount: 1
+        builderKeyIndex: 0
+        builderMnemonic: "test test test test test test test test test test test junk"
+        junkCount: 20

@@ -93,6 +93,18 @@ impl LevmDatabase for DynVmDatabase {
         Ok(acc_state)
     }
 
+    fn get_account_states_batch(
+        &self,
+        addresses: &[CoreAddress],
+    ) -> Result<Vec<AccountState>, DatabaseError> {
+        let states = <dyn VmDatabase>::get_account_states_batch(self.as_ref(), addresses)
+            .map_err(|e| DatabaseError::Custom(e.to_string()))?;
+        Ok(states
+            .into_iter()
+            .map(|opt| opt.unwrap_or_default())
+            .collect())
+    }
+
     fn get_storage_value(
         &self,
         address: CoreAddress,
@@ -103,6 +115,18 @@ impl LevmDatabase for DynVmDatabase {
                 .map_err(|e| DatabaseError::Custom(e.to_string()))?
                 .unwrap_or_default(),
         )
+    }
+
+    fn get_storage_values_batch(
+        &self,
+        keys: &[(CoreAddress, CoreH256)],
+    ) -> Result<Vec<CoreU256>, DatabaseError> {
+        let values = <dyn VmDatabase>::get_storage_slots_batch(self.as_ref(), keys)
+            .map_err(|e| DatabaseError::Custom(e.to_string()))?;
+        Ok(values
+            .into_iter()
+            .map(|opt| opt.unwrap_or_default())
+            .collect())
     }
 
     fn get_block_hash(&self, block_number: u64) -> Result<CoreH256, DatabaseError> {

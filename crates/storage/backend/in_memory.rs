@@ -81,18 +81,6 @@ pub struct InMemoryLocked {
     table_name: &'static str,
 }
 
-pub struct InMemoryPrefixIter {
-    results: std::vec::IntoIter<PrefixResult>,
-}
-
-impl Iterator for InMemoryPrefixIter {
-    type Item = PrefixResult;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.results.next()
-    }
-}
-
 impl StorageLockedView for InMemoryLocked {
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
         Ok(self
@@ -122,11 +110,10 @@ impl StorageReadView for InMemoryReadTx {
         prefix: &[u8],
     ) -> Result<Box<dyn Iterator<Item = PrefixResult> + '_>, StoreError> {
         let table_data = self.snapshot.get(table).cloned().unwrap_or_default();
-        let prefix_vec = prefix.to_vec();
 
         let mut entries: Vec<(Vec<u8>, Vec<u8>)> = table_data
             .into_iter()
-            .filter(|(key, _)| key.starts_with(&prefix_vec))
+            .filter(|(key, _)| key.starts_with(prefix))
             .collect();
         entries.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
 
@@ -135,10 +122,21 @@ impl StorageReadView for InMemoryReadTx {
             .map(|(k, v)| Ok((k.into_boxed_slice(), v.into_boxed_slice())))
             .collect();
 
-        let iter = InMemoryPrefixIter {
-            results: results.into_iter(),
+        Ok(Box::new(results.into_iter()))
+    }
+
+    fn first_key(&self, table: &'static str) -> Result<Option<Vec<u8>>, StoreError> {
+        let Some(table_data) = self.snapshot.get(table) else {
+            return Ok(None);
         };
-        Ok(Box::new(iter))
+        Ok(table_data.keys().min().cloned())
+    }
+
+    fn last_key(&self, table: &'static str) -> Result<Option<Vec<u8>>, StoreError> {
+        let Some(table_data) = self.snapshot.get(table) else {
+            return Ok(None);
+        };
+        Ok(table_data.keys().max().cloned())
     }
 }
 
@@ -181,6 +179,24 @@ impl StorageWriteBatch for InMemoryWriteTx {
         Ok(())
     }
 
+    fn delete_range(
+        &mut self,
+        table: &'static str,
+        start: &[u8],
+        end: &[u8],
+    ) -> Result<(), StoreError> {
+        let mut db = self
+            .backend
+            .write()
+            .map_err(|_| StoreError::Custom("Failed to acquire write lock".to_string()))?;
+
+        let db_mut = Arc::make_mut(&mut *db);
+        if let Some(table_ref) = db_mut.get_mut(table) {
+            table_ref.retain(|k, _| !(k.as_slice() >= start && k.as_slice() < end));
+        }
+        Ok(())
+    }
+
     fn merge(&mut self, table: &'static str, key: &[u8], operand: &[u8]) -> Result<(), StoreError> {
         // InMemory has no native merge operator, so apply the merge inline.
         // Only TRANSACTION_LOCATIONS uses merge today; dispatch by table.
@@ -203,7 +219,14 @@ impl StorageWriteBatch for InMemoryWriteTx {
     }
 
     fn commit(&mut self) -> Result<(), StoreError> {
-        // FIXME: in-memory writes aren't atomic
+        // NOTE: every `put`, `delete`, and `delete_range` above mutates the live
+        // `Arc<Database>` immediately under the write lock, so `commit` is a no-op
+        // and multi-op sequences (e.g. the journal entry + trie writes in
+        // `commit_to_disk`, or the `delete_range` + finalized-number update in
+        // `forkchoice_update_inner`) are not atomic. That's acceptable here: this
+        // backend is RAM-backed (dev/test only), and atomicity only guards crash
+        // recovery — a process death loses all in-memory state anyway, so a
+        // half-applied batch is never observable.
         Ok(())
     }
 }

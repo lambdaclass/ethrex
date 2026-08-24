@@ -22,8 +22,8 @@ use bytes::Bytes;
 
 // Re-export public server functions
 pub use server::{
-    process_account_range_request, process_byte_codes_request, process_storage_ranges_request,
-    process_trie_nodes_request,
+    MAX_SERVE_LOOKUPS, process_account_range_request, process_byte_codes_request,
+    process_storage_ranges_request, process_trie_nodes_request,
 };
 
 // Re-export error types

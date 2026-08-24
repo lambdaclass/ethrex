@@ -313,7 +313,12 @@ impl RpcHandler for NewPayloadV5Request {
                 let hex_str = v
                     .as_str()
                     .ok_or(RpcErr::WrongParam("blockAccessList".to_string()))?;
-                let bytes = hex::decode(hex_str.trim_start_matches("0x"))
+                // EIP-7928 blockAccessList is a DATA field: the `0x` prefix is
+                // mandatory. Reject an unprefixed value rather than trimming it.
+                let hex_body = hex_str
+                    .strip_prefix("0x")
+                    .ok_or(RpcErr::WrongParam("blockAccessList".to_string()))?;
+                let bytes = hex::decode(hex_body)
                     .map_err(|_| RpcErr::WrongParam("blockAccessList".to_string()))?;
                 Ok::<_, RpcErr>(ethrex_common::utils::keccak(bytes))
             })
@@ -749,7 +754,7 @@ impl RpcHandler for GetPayloadBodiesByRangeV1Request {
         if self.count > GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE {
             return Err(RpcErr::TooLargeRequest);
         }
-        let latest_block_number = context.storage.get_latest_block_number().await?;
+        let latest_block_number = context.storage.get_latest_block_number()?;
         // NOTE: we truncate the range because the spec says we "MUST NOT return trailing
         // null values if the request extends past the current latest known block"
         let last = latest_block_number.min(self.start + self.count - 1);
@@ -883,7 +888,7 @@ impl RpcHandler for GetPayloadBodiesByRangeV2Request {
         if self.count > GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE {
             return Err(RpcErr::TooLargeRequest);
         }
-        let latest_block_number = context.storage.get_latest_block_number().await?;
+        let latest_block_number = context.storage.get_latest_block_number()?;
         // NOTE: we truncate the range because the spec says we "MUST NOT return trailing
         // null values if the request extends past the current latest known block"
         let last = latest_block_number.min(self.start + self.count - 1);
@@ -930,6 +935,19 @@ fn parse_execution_payload(params: &Option<Vec<Value>>) -> Result<ExecutionPaylo
     serde_json::from_value(params[0].clone()).map_err(|_| RpcErr::WrongParam("payload".to_string()))
 }
 
+/// The Amsterdam payload fields (EIP-7928 block access list, EIP-7843 slot number) must be
+/// absent from every pre-Amsterdam payload version.
+fn reject_amsterdam_payload_fields(payload: &ExecutionPayload) -> Result<(), RpcErr> {
+    if payload.block_access_list.is_some() {
+        return Err(RpcErr::WrongParam("block_access_list".to_string()));
+    }
+    if payload.slot_number.is_some() {
+        return Err(RpcErr::WrongParam("slot_number".to_string()));
+    }
+
+    Ok(())
+}
+
 fn validate_execution_payload_v1(payload: &ExecutionPayload) -> Result<(), RpcErr> {
     // Validate that only the required arguments are present
     if payload.withdrawals.is_some() {
@@ -942,7 +960,7 @@ fn validate_execution_payload_v1(payload: &ExecutionPayload) -> Result<(), RpcEr
         return Err(RpcErr::WrongParam("excess_blob_gas".to_string()));
     }
 
-    Ok(())
+    reject_amsterdam_payload_fields(payload)
 }
 
 fn validate_execution_payload_v2(payload: &ExecutionPayload) -> Result<(), RpcErr> {
@@ -957,11 +975,11 @@ fn validate_execution_payload_v2(payload: &ExecutionPayload) -> Result<(), RpcEr
         return Err(RpcErr::WrongParam("excess_blob_gas".to_string()));
     }
 
-    Ok(())
+    reject_amsterdam_payload_fields(payload)
 }
 
-fn validate_execution_payload_v3(payload: &ExecutionPayload) -> Result<(), RpcErr> {
-    // Validate that only the required arguments are present
+/// Fields shared by every payload version from Cancun onwards.
+fn validate_execution_payload_cancun_fields(payload: &ExecutionPayload) -> Result<(), RpcErr> {
     if payload.withdrawals.is_none() {
         return Err(RpcErr::WrongParam("withdrawals".to_string()));
     }
@@ -975,16 +993,25 @@ fn validate_execution_payload_v3(payload: &ExecutionPayload) -> Result<(), RpcEr
     Ok(())
 }
 
+/// Shared by `engine_newPayloadV3` and `engine_newPayloadV4`, both of which predate Amsterdam.
+fn validate_execution_payload_v3(payload: &ExecutionPayload) -> Result<(), RpcErr> {
+    // Validate that only the required arguments are present
+    validate_execution_payload_cancun_fields(payload)?;
+
+    reject_amsterdam_payload_fields(payload)
+}
+
 #[inline]
 fn validate_execution_payload_v4(payload: &ExecutionPayload) -> Result<(), RpcErr> {
-    // This method follows the same specification as `engine_newPayloadV4` additionally
-    // rejects payload without block access list
+    // The Amsterdam payload shape: the Cancun fields plus a block access list. Reached only
+    // through `validate_execution_payload_v5`, so the Amsterdam fields are required here
+    // rather than rejected.
 
     if payload.block_access_list.is_none() {
         return Err(RpcErr::WrongParam("block_access_list".to_string()));
     }
 
-    validate_execution_payload_v3(payload)?;
+    validate_execution_payload_cancun_fields(payload)?;
 
     Ok(())
 }
@@ -1211,33 +1238,100 @@ async fn try_execute_payload(
     let block_hash = block.hash();
     let block_number = block.header.number;
     let storage = &context.storage;
-    // If we already know this block, return valid without re-importing it.
-    // Witness requests still need to include a witness in the response.
-    // We check for header only as we do not download the block bodies before the pivot during snap sync
-    // https://github.com/lambdaclass/ethrex/issues/1766
-    if storage.get_block_header_by_hash(block_hash)?.is_some() {
-        return payload_status_for_existing_block(&block, context, make_witness).await;
+    // A deep-reorg apply pass swaps the layer cache and replays the side chain
+    // through `add_block` directly. Executing a payload concurrently can enqueue
+    // a `PersistMessage::Block` whose phase1 RCU-reads the pre-swap cache and
+    // writes back after the swap, clobbering the freshly installed overlay —
+    // replay reads would then fall through to old-chain disk state. Defer to
+    // SYNCING (the CL retries) for the duration of the pass.
+    if context.blockchain.is_reorg_in_progress() {
+        return Ok(PayloadStatus::syncing());
+    }
+    // Fast path: if we already have this block's header AND its state is reachable,
+    // we know it has been fully validated previously and can reply VALID (with a
+    // witness if requested) without re-execution.
+    //
+    // The historical version of this check only inspected the header (issue
+    // https://github.com/lambdaclass/ethrex/issues/1766) so that snap-sync
+    // pre-pivot blocks ; whose bodies aren't downloaded locally ; could still be
+    // marked VALID without trying to execute them. That fast path is preserved
+    // below: when the state isn't materialized AND the parent state isn't
+    // reachable either (the snap-sync condition), we still return VALID. The
+    // only behavior change is that we fall through to re-execution when the
+    // header is known but our local state was evicted (e.g. a deep-reorg
+    // overlay install wiped the layer cache), as long as the parent state IS
+    // reachable so the re-execution can succeed. This rebuilds the layer and
+    // prevents subsequent FCUs from looping back into `reorg_apply_deep`.
+    if let Some(known_header) = storage.get_block_header_by_hash(block_hash)? {
+        let state_materialized = storage.is_state_in_layer_cache(known_header.state_root)?
+            || storage.has_state_root(known_header.state_root)?;
+        if state_materialized {
+            return payload_status_for_existing_block(&block, context, make_witness).await;
+        }
+        // Header known but our state was evicted. Only re-execute when we can:
+        // the parent state must be reachable (cache, disk, or overlay-backed)
+        // for execution to make progress. Otherwise preserve the legacy
+        // snap-sync fast-path and reply VALID without re-execution.
+        let parent_reachable = match storage.get_block_header_by_hash(block.header.parent_hash)? {
+            Some(parent) => {
+                storage.is_state_in_layer_cache(parent.state_root)?
+                    || storage.has_state_root(parent.state_root)?
+            }
+            None => false,
+        };
+        if !parent_reachable {
+            return payload_status_for_existing_block(&block, context, make_witness).await;
+        }
+        // Fall through ; `add_block` below will re-execute and rebuild the layer.
     }
 
-    // A payload whose parent *state* we don't have yet must be answered with
-    // SYNCING, never INVALID: without the parent state we cannot validate it,
-    // so we must not declare it invalid. This happens after a restart, when
-    // state regeneration hasn't caught up to the CL head, or when the CL sends a
-    // newPayload for a block beyond our current state. Without this guard,
-    // execution fails with `EvmError::DB("state root missing")` and gets mapped
-    // to INVALID below, wrongly poisoning the CL's view of a valid block (and
-    // persisting it via `set_latest_valid_ancestor`). The parent block being
-    // entirely absent is handled as `ParentNotFound` by `add_block` below.
-    if let Some(parent_header) = storage.get_block_header_by_hash(block.header.parent_hash)?
-        && !storage.has_state_root(parent_header.state_root)?
-    {
-        debug!(%block_hash, %block_number, "Parent state missing, returning SYNCING and triggering sync");
-        syncer.sync_to_head(block_hash);
-        return Ok(PayloadStatus::syncing());
+    // A payload whose parent block is known but whose parent *state* is not
+    // reachable (neither on disk nor via the layer cache / overlay) must NOT be
+    // executed here: execution would fail with `EvmError::DB("state root
+    // missing")` and be mapped to INVALID, wrongly poisoning the CL's view of a
+    // valid block. It is handled by the ACCEPTED-stash below, which stores the
+    // block without executing and lets a later forkchoiceUpdated drive the
+    // deep-reorg apply. (Previously a SYNCING guard here short-circuited this
+    // exact case and returned SYNCING *without storing the block*, which
+    // shadowed the stash entirely and left the deep-reorg replay with no blocks
+    // to reorg to. `has_state_root` already cascades through the layer cache, so
+    // that guard fired on precisely the stash's condition.) A parent block that
+    // is entirely absent still falls through to `add_block` below and is
+    // reported as `SYNCING` via `ParentNotFound`.
+
+    // Defer eager execution when the parent block is known but its state is
+    // not currently materialized (parent state neither in the layer cache nor
+    // on disk). Stash the block in HEADERS+BODIES and return ACCEPTED; a later
+    // forkchoiceUpdated pointing at this block (or a descendant) will drive
+    // the deep-reorg apply path. Matches geth's `eth/catalyst/api.go` behavior
+    // with the `HasBlockAndState` predicate.
+    //
+    // If the parent is itself unknown, fall through to `add_block` which
+    // returns `ChainError::ParentNotFound` and stashes the block; handled
+    // below as `SYNCING`, preserving existing behavior.
+    if let Some(parent_header) = storage.get_block_header_by_hash(block.header.parent_hash)? {
+        let parent_state = parent_header.state_root;
+        let in_cache = storage.is_state_in_layer_cache(parent_state)?;
+        let on_disk = !in_cache && storage.has_state_root(parent_state)?;
+        if !in_cache && !on_disk {
+            debug!(
+                %block_hash,
+                %block_number,
+                parent_hash = %block.header.parent_hash,
+                "Parent state not materialized; stashing payload as ACCEPTED"
+            );
+            storage.add_block(block).await?;
+            return Ok(PayloadStatus::accepted());
+        }
     }
 
     // Execute and store the block
     debug!(%block_hash, %block_number, "Executing payload");
+
+    // Retain a copy so we can record it via `debug_getBadBlocks` if it turns out
+    // to be invalid. `add_block` consumes the block, so we must clone beforehand;
+    // this happens once per newPayload and is negligible next to block execution.
+    let bad_block_candidate = block.clone();
 
     match add_block(context, block, bal, make_witness).await {
         Err(ChainError::ParentNotFound) => {
@@ -1260,6 +1354,7 @@ async fn try_execute_payload(
                 .storage
                 .set_latest_valid_ancestor(block_hash, latest_valid_hash)
                 .await?;
+            context.storage.add_bad_block(bad_block_candidate).await?;
             Ok(PayloadStatus::invalid_with(
                 latest_valid_hash,
                 error.to_string(),
@@ -1271,6 +1366,7 @@ async fn try_execute_payload(
                 .storage
                 .set_latest_valid_ancestor(block_hash, latest_valid_hash)
                 .await?;
+            context.storage.add_bad_block(bad_block_candidate).await?;
             Ok(PayloadStatus::invalid_with(
                 latest_valid_hash,
                 error.to_string(),
@@ -1487,6 +1583,7 @@ mod tests {
             excess_blob_gas: Some(0),
             slot_number: Some(0),
             block_access_list: Some(BlockAccessList::default()),
+            burned_fees: None,
         }
     }
 

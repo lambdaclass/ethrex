@@ -31,7 +31,7 @@ use ethrex_p2p::{
     peer_handler::PeerHandler,
     peer_table::{PeerTable, PeerTableServer, TARGET_PEERS},
     rlpx::initiator::RLPxInitiator,
-    sync::SyncMode,
+    sync::{BackfillConfig, HistoryChain, SyncMode},
     sync_manager::SyncManager,
     types::{NetworkConfig, Node, NodeRecord},
 };
@@ -296,6 +296,7 @@ pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
             DEFAULT_BUILDER_GAS_CEIL,
             String::new(),
             all_namespaces_for_tests(),
+            tokio_util::sync::CancellationToken::new(),
         )
         .await
         .unwrap()
@@ -311,6 +312,7 @@ pub fn all_namespaces_for_tests() -> HashSet<RpcNamespace> {
         RpcNamespace::Debug,
         RpcNamespace::Admin,
         RpcNamespace::Mempool,
+        RpcNamespace::Testing,
     ])
 }
 
@@ -366,6 +368,11 @@ pub async fn dummy_sync_manager() -> SyncManager {
         Store::new("temp.db", ethrex_storage::EngineType::InMemory)
             .expect("Failed to start Storage Engine"),
         ".".into(),
+        BackfillConfig {
+            mode: HistoryChain::Off,
+            tx_index_horizon: 0,
+        },
+        TaskTracker::new(),
     )
     .await
 }

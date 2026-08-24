@@ -10,16 +10,21 @@ use std::{
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_blockchain::{
-    BlockchainOptions, BlockchainType, L2Config,
+    BlockchainOptions, BlockchainType, DEFAULT_BLOB_PRICE_BUMP_PERCENT,
+    DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD, DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT, DEFAULT_MIN_TIP_WEI,
+    DEFAULT_PRICE_BUMP_PERCENT, L2Config,
     error::{ChainError, InvalidBlockError},
 };
 use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis, validate_block_body};
 use ethrex_p2p::{
-    discovery::INITIAL_LOOKUP_INTERVAL_MS, peer_table::TARGET_PEERS, sync::SyncMode,
-    tx_broadcaster::BROADCAST_INTERVAL_MS, types::Node,
+    discovery::INITIAL_LOOKUP_INTERVAL_MS,
+    peer_table::TARGET_PEERS,
+    sync::{HistoryChain, SyncMode},
+    tx_broadcaster::BROADCAST_INTERVAL_MS,
+    types::Node,
 };
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_storage::{error::StoreError, has_valid_db};
+use ethrex_storage::{DB_COMMIT_THRESHOLD, error::StoreError, has_valid_db};
 use tokio_util::sync::CancellationToken;
 use tracing::{Level, error, info, warn};
 
@@ -121,6 +126,36 @@ pub struct Options {
     pub rocksdb_block_cache_size: usize,
     #[arg(long = "syncmode", default_value = "snap", value_name = "SYNC_MODE", value_parser = utils::parse_sync_mode, help = "The way in which the node will sync its state.", long_help = "Can be either \"full\" or \"snap\" with \"snap\" as default value.", help_heading = "P2P options", env = "ETHREX_SYNCMODE")]
     pub syncmode: SyncMode,
+    #[arg(
+        long = "history.chain",
+        default_value = "off",
+        value_name = "HISTORY_CHAIN",
+        value_parser = utils::parse_history_chain,
+        help = "Backfill historical chain data (bodies + receipts) below the snap pivot.",
+        long_help = "Optionally backfill historical block bodies and receipts after snap sync so \
+                     the node can serve historical block, transaction, receipt and log queries. \
+                     One of \"off\" (default: headers-only below the pivot), \"postmerge\" \
+                     (backfill down to the merge block), \"all\" (as far back as receipts are \
+                     decodable — down to the Byzantium block, not genesis — best-effort as many \
+                     peers no longer serve pre-merge history), or an explicit BLOCK NUMBER \
+                     to backfill down to only that block — use this to keep a recent slice of \
+                     history instead of everything back to the merge. A block number below the \
+                     merge block is honoured but is best-effort like \"all\", and anything below \
+                     Byzantium is clamped up to it. Enabling this adds substantial disk usage. \
+                     It does not enable historical state queries (this is not an archive node).",
+        help_heading = "P2P options",
+        env = "ETHREX_HISTORY_CHAIN",
+    )]
+    pub history_chain: HistoryChain,
+    #[arg(
+        long = "history.transactions",
+        default_value = "0",
+        value_name = "BLOCKS",
+        help = "Blocks of backfilled history to keep the transaction index for (0 = the entire backfilled range).",
+        help_heading = "P2P options",
+        env = "ETHREX_HISTORY_TRANSACTIONS"
+    )]
+    pub history_transactions: u64,
     #[arg(
         long = "metrics.addr",
         value_name = "ADDRESS",
@@ -238,6 +273,61 @@ pub struct Options {
     )]
     pub mempool_max_size: usize,
     #[arg(
+        help = "Minimum priority-fee cap (in wei) required for a transaction to be admitted into the mempool. Compared against the raw tip cap: `max_priority_fee_per_gas` for typed transactions, `gas_price` for legacy transactions (independent of current base fee, so admission stays stable as base fee oscillates). Set to 0 to disable the floor.",
+        long = "mempool.min-tip",
+        default_value_t = DEFAULT_MIN_TIP_WEI,
+        value_name = "MIN_TIP_WEI",
+        help_heading = "Node options",
+        env = "ETHREX_MEMPOOL_MIN_TIP"
+    )]
+    pub mempool_min_tip: u64,
+    #[arg(
+        long = "mempool.private",
+        default_value_t = false,
+        action = ArgAction::SetTrue,
+        help = "Node-level config (not a protocol/EIP behavior): keep RPC-submitted transactions private. They enter the mempool and may be included in blocks built locally, but are not propagated to peers. P2P-received transactions are unaffected.",
+        help_heading = "Node options",
+        env = "ETHREX_MEMPOOL_PRIVATE"
+    )]
+    pub mempool_private: bool,
+    #[arg(
+        help = "Minimum fee bump (in percent) required to replace a non-blob pooled transaction at the same (sender, nonce).",
+        long = "mempool.price-bump",
+        default_value_t = DEFAULT_PRICE_BUMP_PERCENT,
+        value_name = "PERCENT",
+        help_heading = "Node options",
+        env = "ETHREX_MEMPOOL_PRICE_BUMP"
+    )]
+    pub mempool_price_bump: u64,
+    #[arg(
+        help = "Minimum fee bump (in percent) required to replace an EIP-4844 blob pooled transaction.",
+        long = "mempool.blob-price-bump",
+        default_value_t = DEFAULT_BLOB_PRICE_BUMP_PERCENT,
+        value_name = "PERCENT",
+        help_heading = "Node options",
+        env = "ETHREX_MEMPOOL_BLOB_PRICE_BUMP"
+    )]
+    pub mempool_blob_price_bump: u64,
+    #[arg(
+        help = "Mempool occupancy percentage (0-100) at or above which incoming transactions with a nonce gap relative to the sender's on-chain nonce are rejected. Setting to 100 disables the check.",
+        long = "mempool.gap-admit-occupancy-threshold",
+        default_value_t = DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD,
+        value_name = "PERCENTAGE",
+        value_parser = clap::value_parser!(u8).range(0..=100),
+        help_heading = "Node options",
+        env = "ETHREX_MEMPOOL_GAP_ADMIT_OCCUPANCY_THRESHOLD"
+    )]
+    pub mempool_gap_admit_occupancy_threshold: u8,
+    #[arg(
+        help = "Maximum number of queued (future/nonce-gapped) transactions a single sender may hold in the mempool. Executable (contiguous-nonce) txs are not capped (geth AccountQueue-style).",
+        long = "mempool.max-queued-txs-per-account",
+        default_value_t = DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT,
+        value_name = "MAX_QUEUED_TXS_PER_ACCOUNT",
+        help_heading = "Node options",
+        env = "ETHREX_MEMPOOL_MAX_QUEUED_TXS_PER_ACCOUNT"
+    )]
+    pub mempool_max_queued_txs_per_account: usize,
+    #[arg(
         long = "http.addr",
         default_value = "127.0.0.1",
         value_name = "ADDRESS",
@@ -263,7 +353,7 @@ pub struct Options {
         value_delimiter = ',',
         value_parser = utils::parse_http_namespace,
         help = "Comma-separated JSON-RPC namespaces enabled over HTTP/WS.",
-        long_help = "Comma-separated list of JSON-RPC namespaces exposed on the public HTTP and WebSocket endpoints. Defaults to `eth,net,web3`. Enable `admin`, `debug` or `txpool` only when needed; the `engine` namespace is served on the authenticated RPC port and cannot be toggled here.",
+        long_help = "Comma-separated list of JSON-RPC namespaces exposed on the public HTTP and WebSocket endpoints. Defaults to `eth,net,web3`. Enable `admin`, `debug`, `txpool` or `testing` only when needed; the `engine` namespace is served on the authenticated RPC port and cannot be toggled here.",
         help_heading = "RPC options",
         env = "ETHREX_HTTP_API"
     )]
@@ -278,24 +368,24 @@ pub struct Options {
     pub ws_enabled: bool,
     #[arg(
         long = "ws.addr",
-        default_value = "0.0.0.0",
         value_name = "ADDRESS",
         requires = "ws_enabled",
-        help = "Listening address for the websocket rpc server.",
+        help = "Listening address for the websocket rpc server. Defaults to the http.addr value.",
+        long_help = "Listening address for the WebSocket JSON-RPC server. When unset it inherits `--http.addr` (loopback by default). Set it equal to the HTTP address to serve HTTP and WebSocket on a single listener.",
         help_heading = "RPC options",
         env = "ETHREX_WS_ADDR"
     )]
-    pub ws_addr: String,
+    pub ws_addr: Option<String>,
     #[arg(
         long = "ws.port",
-        default_value = "8546",
         value_name = "PORT",
         requires = "ws_enabled",
-        help = "Listening port for the websocket rpc server.",
+        help = "Listening port for the websocket rpc server. Defaults to the http.port value.",
+        long_help = "Listening port for the WebSocket JSON-RPC server. When unset it inherits `--http.port`, so an enabled WebSocket shares the HTTP listener unless a different port is given.",
         help_heading = "RPC options",
         env = "ETHREX_WS_PORT"
     )]
-    pub ws_port: String,
+    pub ws_port: Option<String>,
     #[arg(
         long = "authrpc.addr",
         default_value = "127.0.0.1",
@@ -399,7 +489,7 @@ pub struct Options {
         long = "p2p.lookup-interval",
         default_value_t = INITIAL_LOOKUP_INTERVAL_MS,
         value_name = "INITIAL_LOOKUP_INTERVAL",
-        help = "Initial Lookup Time Interval (ms) to trigger each Discovery lookup message and RLPx connection attempt.",
+        help = "Initial time interval (ms) between RLPx connection attempts. Widens towards 600ms as the target peer count is approached.",
         help_heading = "P2P options",
         env = "ETHREX_P2P_LOOKUP_INTERVAL"
     )]
@@ -440,6 +530,14 @@ pub struct Options {
         env = "ETHREX_PRECOMPUTE_WITNESSES"
     )]
     pub precompute_witnesses: bool,
+    #[arg(
+        long = "max-reorg-depth",
+        value_name = "MAX_REORG_DEPTH",
+        help = "Optional operator override for the maximum reorg depth. Omit for finality-bounded cap. Set to 0 to disable deep reorgs entirely. Set to d to reject reorgs of depth > d.",
+        help_heading = "Node options",
+        env = "ETHREX_MAX_REORG_DEPTH"
+    )]
+    pub max_reorg_depth: Option<u64>,
 }
 
 impl Options {
@@ -513,15 +611,23 @@ impl Default for Options {
             datadir: Default::default(),
             rocksdb_block_cache_size: ethrex_storage::DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
             syncmode: Default::default(),
+            history_chain: Default::default(),
+            history_transactions: Default::default(),
             metrics_addr: "0.0.0.0".to_owned(),
             metrics_port: Default::default(),
             metrics_enabled: Default::default(),
             dev: Default::default(),
             force: false,
             mempool_max_size: Default::default(),
+            mempool_min_tip: DEFAULT_MIN_TIP_WEI,
+            mempool_private: false,
+            mempool_price_bump: DEFAULT_PRICE_BUMP_PERCENT,
+            mempool_blob_price_bump: DEFAULT_BLOB_PRICE_BUMP_PERCENT,
+            mempool_gap_admit_occupancy_threshold: DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD,
+            mempool_max_queued_txs_per_account: DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT,
             tx_broadcasting_time_interval: Default::default(),
             target_peers: Default::default(),
-            lookup_interval: Default::default(),
+            lookup_interval: INITIAL_LOOKUP_INTERVAL_MS,
             extra_data: get_minimal_client_version(),
             gas_limit: DEFAULT_BUILDER_GAS_CEIL,
             max_blobs_per_block: None,
@@ -532,6 +638,7 @@ impl Default for Options {
             no_bal_parallel_exec: false,
             no_bal_prefetch: false,
             no_bal_parallel_trie: false,
+            max_reorg_depth: None,
         }
     }
 }
@@ -945,7 +1052,7 @@ pub async fn import_blocks(
             } else {
                 // We need to have the state of the latest 128 blocks
                 blockchain
-                .add_block_pipeline(block, None)
+                .add_block_pipeline_bounded(block, None, DB_COMMIT_THRESHOLD)
                 .inspect_err(|err| match err {
                     // Block number 1's parent not found, the chain must not belong to the same network as the genesis file
                     ChainError::ParentNotFound if number == 1 => warn!("The chain file is not compatible with the genesis file. Are you sure you selected the correct network?"),
@@ -1030,14 +1137,15 @@ pub async fn import_blocks_bench(
         info!(path = %bal_path, "Loading BALs from file (parallel path)");
         use ethrex_common::types::block_access_list::BlockAccessList;
         use ethrex_rlp::decode::RLPDecode as _;
+        use std::sync::Arc;
         let data = std::fs::read(bal_path)
             .unwrap_or_else(|e| panic!("failed to read BAL file at {bal_path:?}: {e}"));
         let mut remaining = data.as_slice();
-        let mut bals = Vec::new();
+        let mut bals: Vec<Arc<BlockAccessList>> = Vec::new();
         while !remaining.is_empty() {
             let (bal, rest) = BlockAccessList::decode_unfinished(remaining)
                 .unwrap_or_else(|e| panic!("failed to decode BAL from {bal_path:?}: {e}"));
-            bals.push(bal);
+            bals.push(Arc::new(bal));
             remaining = rest;
         }
         let amsterdam_blocks = chains
@@ -1104,7 +1212,10 @@ pub async fn import_blocks_bench(
             // BALs are only produced for Amsterdam+ blocks, so use a separate counter
             // that only advances for blocks that have a BAL hash in the header.
             let bal = if block.header.block_access_list_hash.is_some() {
-                let b = preloaded_bals.as_ref().and_then(|bals| bals.get(bal_index));
+                let b = preloaded_bals
+                    .as_ref()
+                    .and_then(|bals| bals.get(bal_index))
+                    .cloned();
                 bal_index += 1;
                 b
             } else {
@@ -1114,7 +1225,7 @@ pub async fn import_blocks_bench(
             if export_bal_path.is_some() {
                 // Sequential path: execute and capture the produced BAL
                 let produced_bal = blockchain
-                    .add_block_pipeline_bal(block, None)
+                    .add_block_pipeline_bounded(block, None, DB_COMMIT_THRESHOLD)
                     .inspect_err(|err| match err {
                         ChainError::ParentNotFound if number == 1 => warn!("The chain file is not compatible with the genesis file. Are you sure you selected the correct network?"),
                         _ => warn!("Failed to add block {number} with hash {hash:#x}"),
@@ -1126,17 +1237,17 @@ pub async fn import_blocks_bench(
             } else {
                 // Normal path (or parallel if BAL was loaded)
                 blockchain
-                    .add_block_pipeline(block, bal)
+                    .add_block_pipeline_bounded(block, bal, DB_COMMIT_THRESHOLD)
                     .inspect_err(|err| match err {
                         ChainError::ParentNotFound if number == 1 => warn!("The chain file is not compatible with the genesis file. Are you sure you selected the correct network?"),
                         _ => warn!("Failed to add block {number} with hash {hash:#x}"),
                     })?;
             }
 
-            // Wait for the trie-update worker's Phase 2 (disk write of bottom-most
-            // diff layer) and Phase 3 (in-memory layer removal) for the block just
-            // applied to drain. Keeps the next block's per-block timer from
-            // absorbing the previous block's background persistence cost.
+            // Wait for the persist worker to drain the block just applied: its
+            // trie diff-layer build, the disk flush and the in-memory eviction.
+            // Keeps the next block's per-block timer from absorbing the previous
+            // block's background persistence cost.
             store.wait_for_persistence_idle().await?;
         }
 
@@ -1193,7 +1304,7 @@ pub async fn export_blocks(
     let start = first_number.unwrap_or_default();
 
     // If we have no latest block then we don't have any blocks to export
-    let latest_number = match store.get_latest_block_number().await {
+    let latest_number = match store.get_latest_block_number() {
         Ok(number) => number,
         Err(StoreError::MissingLatestBlockNumber) => {
             warn!("No blocks in the current chain, nothing to export!");
@@ -1308,6 +1419,26 @@ mod tests {
         assert_eq!(cli.opts.http_addr, "127.0.0.1");
     }
 
+    /// `--ws.addr`/`--ws.port` inherit the HTTP address/port when unset, so an enabled
+    /// WebSocket defaults to a single listener on the (loopback) HTTP endpoint — matching
+    /// geth/reth/nethermind and keeping WS off public interfaces by default.
+    #[test]
+    fn ws_defaults_to_http_endpoint() {
+        let cli = CLI::parse_from(["ethrex", "--ws.enabled"]);
+        assert!(cli.opts.ws_addr.is_none());
+        assert!(cli.opts.ws_port.is_none());
+        let http = crate::initializers::get_http_socket_addr(&cli.opts);
+        let ws = crate::initializers::get_ws_socket_addr(&cli.opts);
+        assert!(
+            ws.ip().is_loopback(),
+            "WS must default to loopback like HTTP"
+        );
+        assert_eq!(
+            ws, http,
+            "WS must share the HTTP endpoint by default (single listener)"
+        );
+    }
+
     /// `--http.api` must default to `eth,net,web3`. Operators have to opt in
     /// explicitly to expose `admin`, `debug` or `txpool`.
     #[test]
@@ -1329,6 +1460,15 @@ mod tests {
     }
 
     #[test]
+    fn http_api_parses_testing_namespace() {
+        let cli = CLI::parse_from(["ethrex", "--http.api", "eth,testing"]);
+        assert_eq!(
+            cli.opts.http_api,
+            vec![RpcNamespace::Eth, RpcNamespace::Testing]
+        );
+    }
+
+    #[test]
     fn http_api_rejects_engine_namespace() {
         let result = CLI::try_parse_from(["ethrex", "--http.api", "eth,engine"]);
         assert!(result.is_err(), "engine must not be allowed on --http.api");
@@ -1338,6 +1478,43 @@ mod tests {
     fn http_api_rejects_unknown_namespace() {
         let result = CLI::try_parse_from(["ethrex", "--http.api", "eth,bogus"]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn history_chain_defaults_to_off() {
+        let cli = CLI::parse_from(["ethrex"]);
+        assert_eq!(cli.opts.history_chain, HistoryChain::Off);
+    }
+
+    #[test]
+    fn history_chain_parses_keywords() {
+        for (arg, expected) in [
+            ("off", HistoryChain::Off),
+            ("postmerge", HistoryChain::PostMerge),
+            ("all", HistoryChain::All),
+        ] {
+            let cli = CLI::parse_from(["ethrex", "--history.chain", arg]);
+            assert_eq!(
+                cli.opts.history_chain, expected,
+                "for --history.chain {arg}"
+            );
+        }
+    }
+
+    /// Operators who want only a recent slice of history pass an explicit floor
+    /// block instead of `postmerge`/`all`.
+    #[test]
+    fn history_chain_parses_a_floor_block_number() {
+        let cli = CLI::parse_from(["ethrex", "--history.chain", "22000000"]);
+        assert_eq!(cli.opts.history_chain, HistoryChain::Block(22_000_000));
+    }
+
+    #[test]
+    fn history_chain_rejects_invalid_values() {
+        for arg in ["bogus", "-1", "22_000_000", "1.5", ""] {
+            let result = CLI::try_parse_from(["ethrex", "--history.chain", arg]);
+            assert!(result.is_err(), "--history.chain {arg:?} must be rejected");
+        }
     }
 
     /// Flags hardcoded by external launchers (kurtosis ethereum-package, docker

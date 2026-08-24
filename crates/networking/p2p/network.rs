@@ -13,7 +13,7 @@ use crate::{
         p2p::SUPPORTED_SNAP_CAPABILITIES,
     },
     tx_broadcaster::{TxBroadcaster, TxBroadcasterError},
-    types::{NetworkConfig, Node},
+    types::{INITIAL_ENR_SEQ, NetworkConfig, Node, NodeError, NodeRecord},
 };
 use ethrex_blockchain::Blockchain;
 use ethrex_common::H256;
@@ -48,7 +48,15 @@ pub struct P2PContext {
     pub based_context: Option<P2PBasedContext>,
     pub tx_broadcaster: ActorRef<TxBroadcaster>,
     pub initial_lookup_interval: f64,
+    /// Caps concurrent INBOUND connections (including pre-handshake) so a flood of inbound
+    /// dials can't accumulate connection actors/sockets without bound. Each inbound connection
+    /// actor holds a permit for its lifetime; the permit is released when the actor is dropped.
+    pub(crate) inbound_admission: Arc<tokio::sync::Semaphore>,
 }
+
+/// Max concurrent inbound connections (peer_table TARGET_PEERS = 100, plus headroom for
+/// pre-handshake churn and short-lived overlap).
+const MAX_INBOUND_CONNECTIONS: usize = 150;
 
 impl P2PContext {
     #[allow(clippy::too_many_arguments)]
@@ -96,6 +104,7 @@ impl P2PContext {
             based_context,
             tx_broadcaster,
             initial_lookup_interval: lookup_interval,
+            inbound_admission: Arc::new(tokio::sync::Semaphore::new(MAX_INBOUND_CONNECTIONS)),
         })
     }
 }
@@ -108,6 +117,26 @@ pub enum NetworkError {
     TxBroadcasterError(#[from] TxBroadcasterError),
     #[error("Failed to bind UDP socket: {0}")]
     UdpSocketError(std::io::Error),
+    #[error("Failed to build the local node record: {0}")]
+    LocalNodeRecordError(#[from] NodeError),
+}
+
+/// The ENR this node publishes: whatever `local_node` advertises, plus our own
+/// EIP-2124 fork id.
+///
+/// Built here rather than inside discovery, which has no say in what this node
+/// announces about itself.
+///
+/// A chain that cannot supply a fork id leaves the entry out instead of failing
+/// startup. The record is still usable for discovery, and a peer that requires
+/// `eth` simply passes us over until we republish with it. A record we cannot
+/// sign is different, and is reported.
+async fn build_local_node_record(context: &P2PContext) -> Result<NodeRecord, NodeError> {
+    let mut record = NodeRecord::from_node(&context.local_node, INITIAL_ENR_SEQ, &context.signer)?;
+    if let Ok(fork_id) = context.storage.get_fork_id().await {
+        record.set_fork_id(fork_id, &context.signer)?;
+    }
+    Ok(record)
 }
 
 pub async fn start_network(
@@ -121,17 +150,16 @@ pub async fn start_network(
             .map_err(NetworkError::UdpSocketError)?,
     );
 
+    let local_node_record = build_local_node_record(&context).await?;
+
     DiscoveryServer::spawn(
-        context.storage.clone(),
         context.local_node.clone(),
+        local_node_record,
         context.signer,
         udp_socket,
         context.table.clone(),
         bootnodes,
-        DiscoveryConfig {
-            initial_lookup_interval: context.initial_lookup_interval,
-            ..config
-        },
+        config,
     )
     .await
     .inspect_err(|e| {
@@ -167,7 +195,18 @@ pub(crate) async fn serve_p2p_requests(context: P2PContext) {
             continue;
         }
 
-        let _ = PeerConnection::spawn_as_receiver(context.clone(), peer_addr, stream);
+        // Bound concurrent inbound connections: if we're at capacity, drop this one instead
+        // of letting connection actors/sockets accumulate. The permit is moved into the
+        // connection actor and released when the actor is dropped.
+        let permit = match context.inbound_admission.clone().try_acquire_owned() {
+            Ok(permit) => permit,
+            Err(_) => {
+                tracing::debug!(peer = %peer_addr, "Inbound connection cap reached, dropping connection");
+                continue;
+            }
+        };
+
+        let _ = PeerConnection::spawn_as_receiver(context.clone(), peer_addr, stream, permit);
     }
 }
 

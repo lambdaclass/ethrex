@@ -11,7 +11,7 @@ repository.workspace = true
 [dependencies]
 ethrex-common = { workspace = true, default-features = false }
 ethrex-crypto.workspace = true
-ethrex-levm = { path = "./levm", version = "17.0.0", default-features = false }
+ethrex-levm = { path = "./levm", version = "24.0.0", default-features = false }
 ethrex-rlp.workspace = true
 
 derive_more = { version = "1.0.0", features = ["full"] }
@@ -26,17 +26,17 @@ dyn-clone = "1.0"
 
 [dev-dependencies]
 hex.workspace = true
+k256 = { workspace = true }
 
 [lib]
 path = "./lib.rs"
 
 [features]
-default = ["secp256k1"]
+default = ["secp256k1", "rayon"]
 
 rayon = ["dep:rayon", "ethrex-levm/rayon"]
-secp256k1 = ["ethrex-levm/secp256k1", "ethrex-common/secp256k1", "rayon"]
+secp256k1 = ["ethrex-levm/secp256k1", "ethrex-common/secp256k1"]
 c-kzg = ["ethrex-levm/c-kzg", "ethrex-common/c-kzg"]
-eip-8025 = ["ethrex-levm/eip-8025", "ethrex-common/eip-8025"]
 
 sp1 = ["ethrex-levm/sp1", "ethrex-common/sp1"]
 risc0 = ["ethrex-levm/risc0", "ethrex-common/risc0", "c-kzg"]

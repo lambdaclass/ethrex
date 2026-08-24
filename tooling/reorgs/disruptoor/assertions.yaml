@@ -1,0 +1,181 @@
+# Assertoor task spec for deep-reorg via network partition
+#
+# Flow:
+#   1. Wait for stable head (~10 slots post-genesis)
+#   2. Partition the network: ethrex node vs 3-node majority (via disruptoor)
+#   3. Wait ~200 slots; both halves build independent forks
+#   4. Heal the partition (clear disruptoor state)
+#   5. Wait ~30 slots for re-convergence
+#   6. Assert ethrex accepted the deep reorg (metrics + head check)
+#
+# How to run standalone (requires a running disruptoor instance):
+#   assertoor run --config assertions.yaml
+#
+# In CI this file is referenced by network-partition-deep-reorg.yaml and
+# triggered via .github/workflows/deep_reorg.yaml (workflow_dispatch only).
+
+id: deep-reorg-assertions
+name: "Deep reorg: partition-driven 200-slot fork validation"
+# 200 slots partition + 30 slots heal + overhead; 12s/slot -> ~2760s + margin
+timeout: 60m
+
+tasks:
+  # -------------------------------------------------------------------------
+  # Step 1: wait for a stable chain head before disrupting
+  # -------------------------------------------------------------------------
+  - name: check_clients_are_healthy
+    title: "Wait for all clients to be healthy"
+    timeout: 3m
+
+  - name: wait_for_slot
+    title: "Wait for slot 10 (stable genesis)"
+    timeout: 5m
+    config:
+      minSlot: 10
+
+  # -------------------------------------------------------------------------
+  # Step 2: partition the network via disruptoor HTTP API
+  #
+  # Payload splits nodes into two groups by their p2p container names.
+  # Group A: ethrex node (minority, will build a deep fork)
+  # Group B: geth + reth + geth (majority, will finalize their chain)
+  #
+  # disruptoor API: PUT http://disruptoor:7700/v1/state
+  # Body reference: https://github.com/ethpandaops/disruptoor#api
+  # -------------------------------------------------------------------------
+  - name: run_shell
+    title: "Partition network: ethrex isolated from majority"
+    timeout: 30s
+    config:
+      shell: sh
+      command: |
+        # Resolve the disruptoor service address injected by Kurtosis
+        DISRUPTOOR_URL="${DISRUPTOOR_URL:-http://disruptoor:7700}"
+
+        # Container name patterns as reported by `docker ps` inside the enclave.
+        # Adjust the names to match actual Kurtosis service names if needed
+        # (run `kurtosis service ls deep-reorg` to inspect them).
+        curl -sf -X PUT "${DISRUPTOOR_URL}/v1/state" \
+          -H "Content-Type: application/json" \
+          -d '{
+            "partitions": [
+              {
+                "name": "minority",
+                "services": ["el-1-ethrex-lighthouse"]
+              },
+              {
+                "name": "majority",
+                "services": [
+                  "el-1-geth-lighthouse",
+                  "el-1-reth-lighthouse",
+                  "el-2-geth-lighthouse"
+                ]
+              }
+            ]
+          }'
+        echo "Partition applied."
+
+  # -------------------------------------------------------------------------
+  # Step 3: let both halves build their own forks for ~200 slots
+  # -------------------------------------------------------------------------
+  - name: wait_for_slot
+    title: "Wait 200 slots while partition holds (~40 min)"
+    timeout: 50m
+    config:
+      # Poll from current slot; wait an additional 200 slots
+      minSlotDelta: 200
+
+  # -------------------------------------------------------------------------
+  # Step 4: heal the partition
+  # -------------------------------------------------------------------------
+  - name: run_shell
+    title: "Heal partition: clear disruptoor state"
+    timeout: 30s
+    config:
+      shell: sh
+      command: |
+        DISRUPTOOR_URL="${DISRUPTOOR_URL:-http://disruptoor:7700}"
+        curl -sf -X POST "${DISRUPTOOR_URL}/v1/state/clear"
+        echo "Partition cleared."
+
+  # -------------------------------------------------------------------------
+  # Step 5: wait for re-convergence (~30 slots)
+  # -------------------------------------------------------------------------
+  - name: wait_for_slot
+    title: "Wait 30 slots for re-convergence"
+    timeout: 10m
+    config:
+      minSlotDelta: 30
+
+  # -------------------------------------------------------------------------
+  # Step 6a: assert ethrex deep-reorg metrics are populated
+  #
+  # Expected metrics (exposed at :9090/metrics on the ethrex node):
+  #   ethrex_deep_reorg_attempts_total >= 1
+  #   ethrex_reorg_depth_count > 0  (histogram has data points)
+  # -------------------------------------------------------------------------
+  - name: run_shell
+    title: "Assert ethrex deep-reorg metrics"
+    timeout: 2m
+    config:
+      shell: sh
+      command: |
+        # Kurtosis exposes service ports via port-forwarding; adjust host/port
+        # if metrics are mapped to a different address in the enclave.
+        ETHREX_METRICS="${ETHREX_METRICS_URL:-http://el-1-ethrex-lighthouse:9090/metrics}"
+
+        metrics=$(curl -sf "${ETHREX_METRICS}")
+
+        attempts=$(echo "$metrics" \
+          | grep '^ethrex_deep_reorg_attempts_total' \
+          | awk '{print $2}')
+        depth_count=$(echo "$metrics" \
+          | grep '^ethrex_reorg_depth_count' \
+          | awk '{print $2}')
+
+        echo "deep_reorg_attempts_total=${attempts}"
+        echo "reorg_depth_count=${depth_count}"
+
+        if [ -z "$attempts" ] || [ "$(echo "$attempts >= 1" | bc)" -ne 1 ]; then
+          echo "FAIL: ethrex_deep_reorg_attempts_total < 1 (got: ${attempts})"
+          exit 1
+        fi
+
+        if [ -z "$depth_count" ] || [ "$(echo "$depth_count > 0" | bc)" -ne 1 ]; then
+          echo "FAIL: ethrex_reorg_depth_count not populated (got: ${depth_count})"
+          exit 1
+        fi
+
+        echo "PASS: deep-reorg metrics look good."
+
+  # -------------------------------------------------------------------------
+  # Step 6b: assert ethrex head matches majority chain tip
+  # -------------------------------------------------------------------------
+  - name: run_shell
+    title: "Assert ethrex head matches majority chain"
+    timeout: 2m
+    config:
+      shell: sh
+      command: |
+        ETHREX_RPC="${ETHREX_RPC_URL:-http://el-1-ethrex-lighthouse:8545}"
+        GETH_RPC="${GETH_RPC_URL:-http://el-1-geth-lighthouse:8545}"
+
+        ethrex_head=$(curl -sf -X POST "${ETHREX_RPC}" \
+          -H "Content-Type: application/json" \
+          -d '{"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest",false],"id":1}' \
+          | jq -r '.result.hash')
+
+        geth_head=$(curl -sf -X POST "${GETH_RPC}" \
+          -H "Content-Type: application/json" \
+          -d '{"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest",false],"id":1}' \
+          | jq -r '.result.hash')
+
+        echo "ethrex head: ${ethrex_head}"
+        echo "geth head:   ${geth_head}"
+
+        if [ "${ethrex_head}" != "${geth_head}" ]; then
+          echo "FAIL: ethrex head does not match majority chain head."
+          exit 1
+        fi
+
+        echo "PASS: ethrex converged to majority chain."

@@ -5,17 +5,50 @@ inputs:
     description: "Rust components to install (e.g., rustfmt, clippy)"
     required: false
     default: ""
+  cache-pool:
+    description: >
+      Name of the cache pool to share with other jobs that build a comparable
+      dependency graph (e.g. "l1", "l2", "ef-tests"). Jobs in the same pool read
+      and write one cache entry per platform instead of one per job. Leave unset
+      to fall back to a per-job entry.
+    required: false
+    default: ""
+  save-cache:
+    description: >
+      Set to 'true' on the single job that owns a pool's entry, i.e. the one
+      building its widest dependency set. Every other job restores only.
+    required: false
+    default: "false"
 runs:
   using: "composite"
   steps:
-    - name: Extract Rust version from rust-toolchain.toml
+    - name: Extract Rust version and compose the cache key
       id: rustver
       shell: bash
+      env:
+        CACHE_POOL: ${{ inputs.cache-pool }}
       run: |
         rust_version=$(grep -E '^[[:space:]]*channel[[:space:]]*=' rust-toolchain.toml \
                  | sed -E 's/.*"([^"]+)".*/\1/')
         echo "rust_version=${rust_version}" >>"$GITHUB_OUTPUT"
         echo "Rust version: ${rust_version}"
+        # Folded into this step rather than its own: `pr_loc.yaml` checks out two
+        # revisions in one job and runs this action from each, and a differing
+        # step list between them trips the runner's post-step bookkeeping with
+        # "Index was out of range".
+        image_family="${ImageOS:-unknown}"
+        echo "image_family=${image_family}" >>"$GITHUB_OUTPUT"
+        echo "Runner image family: ${image_family}"
+        # rust-cache appends its `key` input only on the branch that builds a
+        # per-job key; when `shared-key` is set it takes that branch instead and
+        # `key` is dropped entirely. So a pooled job has to carry the image
+        # family inside the shared key itself. Empty when no pool is configured,
+        # which leaves rust-cache on the per-job key where `key` does apply.
+        if [ -n "${CACHE_POOL}" ]; then
+          echo "shared_key=${CACHE_POOL}-${image_family}" >>"$GITHUB_OUTPUT"
+        else
+          echo "shared_key=" >>"$GITHUB_OUTPUT"
+        fi
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@master
@@ -23,6 +56,49 @@ runs:
         toolchain: ${{ steps.rustver.outputs.rust_version }}
         components: ${{ inputs.components }}
 
+    # rust-cache keys on `runner.os` and `runner.arch` only, which are `Linux`
+    # and `x64` for both ubuntu-22.04 and ubuntu-24.04 — so a pool shared by
+    # jobs on different images resolves to one entry spanning both. Cached
+    # proc-macro `.so`s are dynamically linked against the glibc of whichever
+    # image built them, so restoring a 24.04 entry into a 22.04 job produces
+    # `GLIBC_2.39 not found` when rustc dlopens the macro, and the crate fails
+    # with a wall of unresolved-import errors that name the dependency rather
+    # than the cache.
+    #
+    # `ImageOS` (ubuntu22 / ubuntu24 / macos15) is the image family, so it
+    # separates the glibc floors without keying on `ImageVersion`, which
+    # changes with every runner image release and would evict the pool weekly.
+    # It goes into `shared-key`, not `key`: rust-cache ignores `key` whenever
+    # `shared-key` is set, so keying the image family there alone left every
+    # pooled job on the shared, image-blind key it was meant to split.
+    # Read via `$GITHUB_OUTPUT` rather than `env.ImageOS` directly: the `env`
+    # context is not reliably available to `with:` on a `uses:` step inside a
+    # composite action. Self-hosted runners may not set it; they then share one
+    # `unknown` bucket, which is still consistent within itself.
+    # The Actions cache budget defaults to 10GB per repository and is evicted
+    # LRU, while one target dir here runs 1.2-2.75GB, so the budget holds only a
+    # handful of entries. Two rules keep them from evicting each other:
+    #
+    # - Only main writes. Entries saved on a PR ref are unreadable from every
+    #   other branch, so they cost budget without ever being restored.
+    # - Jobs building comparable dependency graphs share one entry via
+    #   `cache-pool` (rust-cache's `shared-key`), which replaces the per-job
+    #   segment of the key. Exactly one job per pool opts into `save-cache`, and
+    #   it is the one building the pool's widest dependency set; the rest restore
+    #   only, so a lean target dir can never claim the slot. Actions cache keys
+    #   are immutable, so a first-writer-wins race would persist until the key
+    #   rotates. Per-job keys would put ~32 writers on main, several times what
+    #   the budget holds.
+    #
+    # `tooling` is a second workspace with its own target dir, and the default
+    # `workspaces` covers only the repo root, so the ef_tests, reorgs, loc and
+    # hive_report builds were never cached at all.
     - name: Add Rust Cache
       uses: Swatinem/rust-cache@v2
-
+      with:
+        shared-key: ${{ steps.rustver.outputs.shared_key }}
+        key: ${{ steps.rustver.outputs.image_family }}
+        save-if: ${{ inputs.save-cache == 'true' && github.ref == 'refs/heads/main' }}
+        workspaces: |
+          .
+          tooling

@@ -113,13 +113,29 @@ impl BackendTrieDB {
 
     /// Key might be for an account or storage slot
     fn table_for_key(&self, key: &[u8]) -> &'static str {
-        let is_leaf = key.len() == 65 || key.len() == 131;
+        let (is_leaf, _) = classify_trie_key(key.len());
         if is_leaf {
             self.fkv_table
         } else {
             self.nodes_table
         }
     }
+}
+
+/// Classifies an on-disk trie/flat-KV key by its length.
+///
+/// Returns `(is_leaf, is_account)`:
+/// - `is_leaf = true` iff the key is a flat-KV leaf (account leaf at 65 bytes, storage leaf at 131 bytes).
+/// - `is_account = true` iff the key targets account-space (length <= 65: account trie nodes and account leaves).
+///
+/// Used by every CF-dispatch site (write loop in `commit_to_disk`, read dispatch
+/// in `BackendTrieDBLocked::tx_for_key`, table selection in
+/// `BackendTrieDB::table_for_key`). Centralised here so a future change to the key
+/// layout only needs to touch one place.
+pub fn classify_trie_key(key_len: usize) -> (bool, bool) {
+    let is_leaf = key_len == 65 || key_len == 131;
+    let is_account = key_len <= 65;
+    (is_leaf, is_account)
 }
 
 impl TrieDB for BackendTrieDB {
@@ -179,8 +195,7 @@ impl BackendTrieDBLocked {
 
     /// Key is already prefixed
     fn tx_for_key(&self, key: &Nibbles) -> &dyn StorageLockedView {
-        let is_leaf = key.len() == 65 || key.len() == 131;
-        let is_account = key.len() <= 65;
+        let (is_leaf, is_account) = classify_trie_key(key.len());
         if is_leaf {
             if is_account {
                 &*self.account_fkv_tx

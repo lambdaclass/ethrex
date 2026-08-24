@@ -24,8 +24,7 @@ guest-program/
 │   │   └── openvm.rs
 │   ├── l1/             # L1 (mainnet) program
 │   │   ├── mod.rs
-│   │   ├── input.rs
-│   │   ├── output.rs
+│   │   ├── input.rs    # schema-id prefix check + SSZ decode
 │   │   └── program.rs
 │   ├── l2/             # L2 (rollup) program
 │   │   ├── mod.rs
@@ -127,7 +126,7 @@ cargo check -p ethrex-guest-program --features sp1
 | `l2` | Enables L2 (rollup) program mode. Used for L2 provers. Can be combined with one zkVM feature |
 | `sp1-cycles` | Reports cycle counts (SP1 only) |
 | `c-kzg` | Enables KZG precompile support |
-| `ci` | Skip rom-setup for CI builds |
+| `ci` | Skip `cargo-zisk setup` (proving-key generation) for CI builds |
 
 Guest binaries use base features (`sp1`, `risc0`, etc.) to get their `Crypto` implementation without triggering the build script. The prover host uses `-build-elf` features which include the base feature plus build tooling.
 
@@ -145,7 +144,7 @@ Each subdirectory in `bin/` contains a guest implementation for a specific zkVM.
 - **ELF output**: `bin/risc0/out/riscv32im-risc0-elf`
 - **VK output**: `bin/risc0/out/riscv32im-risc0-vk`
 
-### ZisK v0.16.1 (Polygon)
+### ZisK v1.1.0-alpha (Polygon)
 - **Architecture**: RISC-V 64-bit
 - **ELF output**: `bin/zisk/out/riscv64ima-zisk-elf`
 - **Requires**: `cargo-zisk` toolchain installed
@@ -161,16 +160,18 @@ Each subdirectory in `bin/` contains a guest implementation for a specific zkVM.
 │                            Host (Prover)                              │
 │                                                                       │
 │  ┌─────────────┐    ┌────────────────────┐    ┌────────────────┐     │
-│  │ ProgramInput│───>│ ethrex-guest-program│───>│ ProgramOutput  │     │
-│  │ (blocks,    │    │    (zkVM exec)      │    │ (state root,   │     │
-│  │  witnesses) │    └────────────────────┘    │  receipts root)│     │
+│  │ input bytes │───>│ ethrex-guest-program│───>│ output bytes   │     │
+│  │ (schema id +│    │    (zkVM exec)      │    │ (43 B on L1:   │     │
+│  │  SSZ input) │    └────────────────────┘    │  root/valid/…) │     │
 │  └─────────────┘                              └────────────────┘     │
 └───────────────────────────────────────────────────────────────────────┘
 ```
 
-1. **Input**: `ProgramInput` contains block data and execution witnesses
+1. **Input**: a 2-byte big-endian schema id followed by the SSZ `SszStatelessInput`
+   (payload, execution witness, chain id, public keys). On L2 the shape differs; see `l2/input.rs`.
 2. **Execution**: The guest program re-executes blocks inside the zkVM
-3. **Output**: `ProgramOutput` contains the resulting state/receipts roots
+3. **Output**: on L1, 43 bytes —
+   `new_payload_request_root (32) || successful_validation (1) || chain_id (8) || schema_id (2)`
 
 ## Integrating a New zkVM
 
@@ -263,42 +264,48 @@ use std::sync::Arc;
 
 // Import L1 or L2 program based on feature flag
 #[cfg(feature = "l2")]
-use ethrex_guest_program::l2::{ProgramInput, execution_program};
+use ethrex_guest_program::l2::run_guest;
 #[cfg(not(feature = "l2"))]
-use ethrex_guest_program::l1::{ProgramInput, execution_program};
+use ethrex_guest_program::l1::run_stateless_guest;
 
 // Import your Crypto implementation
 use ethrex_guest_program::crypto::<zkvm>::MyZkvmCrypto;
-
-use rkyv::rancor::Error;
 
 // Use your zkVM's entrypoint macro
 <zkvm>::entrypoint!(main);
 
 pub fn main() {
-    // 1. Read input bytes using your zkVM's IO
+    // 1. Read the input bytes using your zkVM's IO. Do NOT deserialize them here:
+    //    the L1 guest takes the raw slice, because the leading 2-byte schema-id
+    //    prefix has to be validated before the SSZ body is parsed. Wrapping the
+    //    input in another encoding (rkyv, bincode, ...) makes that check fail.
     let input = <zkvm>::io::read_vec();
 
-    // 2. Deserialize input
-    let input = rkyv::from_bytes::<ProgramInput, Error>(&input).unwrap();
-
-    // 3. Execute the program with your crypto provider
+    // 2. Execute the program with your crypto provider.
     let crypto = Arc::new(MyZkvmCrypto);
-    let output = execution_program(input, crypto).unwrap();
+    #[cfg(not(feature = "l2"))]
+    let output = run_stateless_guest(&input, crypto);
+    #[cfg(feature = "l2")]
+    let output = run_guest(&input, crypto).unwrap();
 
-    // 4. Commit output using your zkVM's commit mechanism
-    //    Some zkVMs commit raw bytes, others require hashing first
-    <zkvm>::io::commit(&output.encode());
+    // 3. Commit the output using your zkVM's commit mechanism. `output` is already
+    //    the encoded byte vector (43 bytes for L1), so commit it directly.
+    //    Some zkVMs commit raw bytes, others require hashing first.
+    <zkvm>::io::commit(&output);
 }
 ```
+
+Note that the L1 path is infallible by design: a validation failure is reported inside the
+committed output (`successful_validation`), not as an `Err`, so that a proof of an invalid
+block is still a usable proof. The L2 path returns a `Result`.
 
 The pattern for output commitment varies by zkVM:
 
 | zkVM | Output Commitment |
 |------|-------------------|
-| SP1 | `sp1_zkvm::io::commit_slice(&output.encode())` |
-| RISC0 | `risc0_zkvm::guest::env::commit_slice(&output.encode())` |
-| ZisK | Hash with SHA256, then `ziskos::set_output(idx, u32)` for each chunk |
+| SP1 | `sp1_zkvm::io::commit_slice(&output)` |
+| RISC0 | `risc0_zkvm::guest::env::commit_slice(&output)` |
+| ZisK | `ziskos::io::commit_slice(&output)` |
 | OpenVM | Hash with Keccak256, then `openvm::io::reveal_bytes32(hash)` |
 
 #### 3. Add Build Function in `build.rs`

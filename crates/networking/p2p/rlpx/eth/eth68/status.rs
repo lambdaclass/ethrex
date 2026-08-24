@@ -75,7 +75,7 @@ impl RLPxMessage for StatusMessage68 {
 }
 
 impl StatusMessage68 {
-    pub async fn new(storage: &Store) -> Result<Self, PeerConnectionError> {
+    pub fn new(storage: &Store) -> Result<Self, PeerConnectionError> {
         let chain_config = storage.get_chain_config();
         let total_difficulty =
             U256::from(chain_config.terminal_total_difficulty.unwrap_or_default());
@@ -85,7 +85,7 @@ impl StatusMessage68 {
         let genesis_header = storage
             .get_block_header(0)?
             .ok_or(PeerConnectionError::NotFound("Genesis Block".to_string()))?;
-        let latest_block = storage.get_latest_block_number().await?;
+        let latest_block = storage.get_latest_block_number()?;
         let block_header =
             storage
                 .get_block_header(latest_block)?

@@ -21,27 +21,33 @@ impl ExecBackend {
         Self
     }
 
-    /// Core execution - runs the guest program directly.
+    /// Core execution - runs the L1 stateless validator directly.
+    ///
+    /// `ProgramInput` is the spec's `statelessInputBytes`, so this is the same
+    /// entrypoint the released guest ELF runs. `successful_validation = false`
+    /// surfaces as `Err` so result-only callers (ef_tests) treat it as failure.
+    #[cfg(not(feature = "l2"))]
+    fn execute_core(input: ProgramInput) -> Result<ProgramOutput, BackendError> {
+        use libssz::SszDecode;
+
+        let crypto = Arc::new(NativeCrypto);
+        let output_bytes = ethrex_guest_program::l1::run_stateless_guest(&input, crypto);
+        let output = ProgramOutput::from_ssz_bytes(&output_bytes)
+            .map_err(|e| BackendError::execution(format!("output decode: {e:?}")))?;
+        if !output.successful_validation {
+            return Err(BackendError::execution(
+                "stateless validation returned successful_validation = false",
+            ));
+        }
+        Ok(output)
+    }
+
+    /// Core execution - runs the L2 batch guest directly.
+    #[cfg(feature = "l2")]
     fn execute_core(input: ProgramInput) -> Result<ProgramOutput, BackendError> {
         let crypto = Arc::new(NativeCrypto);
-        #[cfg(feature = "eip-8025")]
-        {
-            let output = ethrex_guest_program::l1::execute_decoded(input, crypto)
-                .map_err(BackendError::execution)?;
-            // Surface `valid = false` as Err so result-only callers (e.g. ef_tests)
-            // treat it as execution failure, matching the legacy path's semantics.
-            if !output.valid {
-                return Err(BackendError::execution(
-                    "eip-8025 stateless execution: valid=false",
-                ));
-            }
-            Ok(output)
-        }
-        #[cfg(not(feature = "eip-8025"))]
-        {
-            ethrex_guest_program::execution::execution_program(input, crypto)
-                .map_err(BackendError::execution)
-        }
+        ethrex_guest_program::execution::execution_program(input, crypto)
+            .map_err(BackendError::execution)
     }
 
     fn empty_proof_bytes() -> ProverOutput {
@@ -80,15 +86,9 @@ impl ProverBackend for ExecBackend {
         input: ProgramInput,
         _format: ProofFormat,
     ) -> Result<Self::ProofOutput, BackendError> {
-        // The `Direct` variant returns a zero `new_payload_request_root` sentinel
-        // that callers must not interpret as a real commitment. `execute()` is
-        // fine (discards the output) but `prove()` exposes it.
-        #[cfg(feature = "eip-8025")]
-        if matches!(input, ProgramInput::Direct { .. }) {
-            return Err(BackendError::execution(
-                "ExecBackend::prove does not accept ProgramInput::Direct (test-only path)",
-            ));
-        }
+        // The old `ProgramInput::Direct` guard is gone with the variant: every L1
+        // input is now real `statelessInputBytes`, so the zero-root sentinel it
+        // protected against cannot arise.
         warn!("\"exec\" prover backend generates no proof, only executes");
         Self::execute_core(input)
     }

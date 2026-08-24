@@ -158,6 +158,30 @@ pub fn download_script() {
         );
     }
 
+    // Native rollup contracts. They depend on OpenZeppelin's MerkleProof,
+    // so reuse the same remappings the L1/L2 contracts use, and extend the
+    // `allow_paths` to cover the OZ checkout under `out_dir/lib`.
+    let native_rollup_l1_path = Path::new("../../crates/l2/contracts/src/nativeRollup/l1");
+    let native_rollup_l2_path = Path::new("../../crates/l2/contracts/src/nativeRollup/l2");
+    let oz_path = output_contracts_path.join("lib");
+    compile_contract_to_bytecode(
+        &output_contracts_path,
+        &native_rollup_l1_path.join("NativeRollup.sol"),
+        "NativeRollup",
+        false,
+        false,
+        Some(&remappings),
+        &[native_rollup_l1_path, oz_path.as_path()],
+    );
+    compile_contract_to_bytecode(
+        &output_contracts_path,
+        &native_rollup_l2_path.join("L2Bridge.sol"),
+        "L2Bridge",
+        true,
+        false,
+        Some(&remappings),
+        &[native_rollup_l2_path, oz_path.as_path()],
+    );
     // Based contracts
     compile_contract_to_bytecode(
         &output_contracts_path,
@@ -201,6 +225,8 @@ fn write_empty_bytecode_files(output_contracts_path: &Path) {
         "SequencerRegistry",
         "OnChainProposerBased",
         "Timelock",
+        "NativeRollup",
+        "L2Bridge",
     ];
 
     for name in &contract_names {

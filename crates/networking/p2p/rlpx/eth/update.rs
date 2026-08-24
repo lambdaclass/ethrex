@@ -19,8 +19,8 @@ pub struct BlockRangeUpdate {
 }
 
 impl BlockRangeUpdate {
-    pub async fn new(storage: &Store) -> Result<Self, PeerConnectionError> {
-        let latest_block = storage.get_latest_block_number().await?;
+    pub fn new(storage: &Store) -> Result<Self, PeerConnectionError> {
+        let latest_block = storage.get_latest_block_number()?;
         let block_header =
             storage
                 .get_block_header(latest_block)?

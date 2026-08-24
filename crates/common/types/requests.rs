@@ -15,6 +15,10 @@ pub type Bytes96 = [u8; 96];
 const DEPOSIT_TYPE: u8 = 0x00;
 const WITHDRAWAL_TYPE: u8 = 0x01;
 const CONSOLIDATION_TYPE: u8 = 0x02;
+// EIP-8282 builder deposit/exit request types, per EELS amsterdam `requests.py`
+// (BUILDER_DEPOSIT_REQUEST_TYPE = 0x03, BUILDER_EXIT_REQUEST_TYPE = 0x04).
+const BUILDER_DEPOSIT_TYPE: u8 = 0x03;
+const BUILDER_EXIT_TYPE: u8 = 0x04;
 
 #[derive(Clone, Debug)]
 pub struct EncodedRequests(pub Bytes);
@@ -63,6 +67,8 @@ pub enum Requests {
     Deposit(Vec<Deposit>),
     Withdrawal(Vec<u8>),
     Consolidation(Vec<u8>),
+    BuilderDeposit(Vec<u8>),
+    BuilderExit(Vec<u8>),
 }
 
 impl Requests {
@@ -76,6 +82,12 @@ impl Requests {
                 .chain(data.iter().cloned())
                 .collect(),
             Requests::Consolidation(data) => std::iter::once(CONSOLIDATION_TYPE)
+                .chain(data.iter().cloned())
+                .collect(),
+            Requests::BuilderDeposit(data) => std::iter::once(BUILDER_DEPOSIT_TYPE)
+                .chain(data.iter().cloned())
+                .collect(),
+            Requests::BuilderExit(data) => std::iter::once(BUILDER_EXIT_TYPE)
                 .chain(data.iter().cloned())
                 .collect(),
         };
@@ -111,6 +123,14 @@ impl Requests {
 
     pub fn from_consolidation_data(data: Vec<u8>) -> Requests {
         Requests::Consolidation(data)
+    }
+
+    pub fn from_builder_deposit_data(data: Vec<u8>) -> Requests {
+        Requests::BuilderDeposit(data)
+    }
+
+    pub fn from_builder_exit_data(data: Vec<u8>) -> Requests {
+        Requests::BuilderExit(data)
     }
 }
 

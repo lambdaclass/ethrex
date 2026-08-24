@@ -48,8 +48,6 @@ spawned-concurrency.workspace = true
 rayon.workspace = true
 
 # EIP-8025 dependencies (optional)
-libssz-merkle = { workspace = true, optional = true }
-libssz-types = { workspace = true, optional = true }
 
 # Clients
 envy = "0.4.2"
@@ -70,7 +68,6 @@ redundant_clone = "warn"
 
 [features]
 jemalloc_profiling = ["dep:jemalloc_pprof"]
-eip-8025 = ["ethrex-blockchain/eip-8025", "ethrex-common/eip-8025"]
 # Exposes the `test_utils` module (test scaffolding) to other crates' test
 # builds. Off by default so it is excluded from the published library.
 test-utils = []

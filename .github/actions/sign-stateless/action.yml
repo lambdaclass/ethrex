@@ -1,0 +1,51 @@
+name: Sign stateless-validator artifacts
+description: >
+  Install minisign and sign the stateless-validator ELFs and verification keys
+  in a directory, as required by the zkEVM guest handbook.
+
+  Exists so the release job and the dry-run job cannot drift apart: a dry run
+  that signs differently from the real release is not testing the real release.
+
+inputs:
+  artifact-dir:
+    description: Directory to scan for stateless-validator .elf/.vk files.
+    required: true
+  secret-key:
+    description: minisign private key (the MINISIGN_SECRET_KEY secret).
+    required: true
+  password:
+    description: Password for the private key. Empty for a `-W` key.
+    required: false
+    default: ""
+  public-key:
+    description: >
+      Recorded public key (the MINISIGN_PUBLIC_KEY secret). Optional, and
+      cross-checked against the key derived from the private key rather than
+      used in its place.
+    required: false
+    default: ""
+  trusted-comment-suffix:
+    description: >
+      Appended to each signed trusted comment, e.g. the tag and commit. Covered
+      by the signature, so it is a provenance claim rather than a label.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Install minisign
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y minisign
+
+    - name: Sign
+      shell: bash
+      env:
+        MINISIGN_SECRET_KEY: ${{ inputs.secret-key }}
+        MINISIGN_PASSWORD: ${{ inputs.password }}
+        MINISIGN_PUBLIC_KEY: ${{ inputs.public-key }}
+        TRUSTED_COMMENT_SUFFIX: ${{ inputs.trusted-comment-suffix }}
+        ARTIFACT_DIR: ${{ inputs.artifact-dir }}
+      run: .github/scripts/sign-stateless-artifacts.sh "$ARTIFACT_DIR"

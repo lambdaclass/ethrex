@@ -1,4 +1,7 @@
-use std::{cmp::Ordering, sync::Arc};
+use alloc::sync::Arc;
+#[cfg(not(feature = "std"))]
+use alloc::{boxed::Box, vec::Vec};
+use core::cmp::Ordering;
 
 use crate::{
     PathRLP, Trie, TrieDB, TrieError, ValueRLP,

@@ -9,6 +9,8 @@ on:
     paths:
       - "crates/common/**"
       - "crates/vm/**"
+      - "crates/guest-program/**"
+      - ".github/targets/**"
       - ".github/workflows/pr_nostd.yaml"
 
 permissions:
@@ -24,17 +26,94 @@ env:
 
 jobs:
   no-std-check:
-    name: no_std build check (riscv64imac)
+    # Builds the guest crates against the eth-act zkVM standard target to catch
+    # `use std::` regressions. Needs nightly (JSON target spec + build-std);
+    # see .github/targets/README.md.
+    name: no_std build check (riscv64im_zicclsm)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@1.91.0
+      # Pinned for reproducibility (build-std + json-target-spec are nightly-only);
+      # bump the date deliberately. dtolnay has no per-date ref, so pass it as input.
+      - name: Install Rust nightly + rust-src
+        uses: dtolnay/rust-toolchain@master
         with:
-          targets: riscv64imac-unknown-none-elf
+          toolchain: nightly-2026-06-29
+          components: rust-src
 
-      - name: Check no_std crates
+      - name: Check no_std crates against the zkVM standard target
         run: |
-          cargo check -p ethrex-rlp -p ethrex-crypto --no-default-features --target riscv64imac-unknown-none-elf
-          cargo check -p ethrex-crypto --no-default-features --features kzg-rs --target riscv64imac-unknown-none-elf
+          TARGET=.github/targets/riscv64im_zicclsm-unknown-none-elf.json
+          cargo +nightly-2026-06-29 -Z json-target-spec -Z build-std=core,alloc check \
+            -p ethrex-rlp -p ethrex-crypto -p ethrex-trie --no-default-features --target "$TARGET"
+          cargo +nightly-2026-06-29 -Z json-target-spec -Z build-std=core,alloc check \
+            -p ethrex-crypto --no-default-features --features kzg-rs --target "$TARGET"
+
+  stateless-validator-features:
+    # The stateless-validator guest is its own workspace, so `cargo check
+    # --workspace` never sees it, and its zkVM crypto providers sit behind
+    # features a host build does not enable. Without this, the first thing to
+    # compile `crypto/zkvm_interface.rs` is the Ere docker build in tag_release.
+    name: stateless-validator feature check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+
+      - name: Check each feature combination
+        working-directory: crates/guest-program/stateless-validator
+        run: |
+          set -euo pipefail
+          # `host` alone compiles neither crypto provider, which is why it missed
+          # the alloc regression — check the providers too.
+          for features in host ere zkvm-interface host,ere; do
+            echo "::group::cargo check --features $features"
+            cargo check --features "$features" --all-targets
+            echo "::endgroup::"
+          done
+
+          # openvm is absent from THIS loop only because its crates need a newer
+          # rustc than the pinned toolchain; it is checked in the step below on a
+          # newer one. The crate now carries the same `[patch]` as `bin/openvm`,
+          # so it resolves the versions the real build uses.
+
+      # `crypto/openvm.rs` is the largest provider and used to be compiled first by
+      # the tag-time Ere docker build, which meant a break in it was found at release
+      # time. It needs rustc >= 1.91.1, so it gets its own toolchain rather than
+      # holding back the pinned one.
+      - name: Accelerated crypto agrees with the host provider
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.93.0 --profile minimal --no-self-update
+          cd crates/guest-program/stateless-validator
+          # Compiles the openvm provider, and asserts it returns what NativeCrypto
+          # returns for the precompiles it overrides. A divergence here would make a
+          # guest prove a different post-state than the node computed.
+          cargo +1.93.0 test --features openvm,host --test crypto_parity
+
+      - name: Field elements are serialized only via fp_be
+        working-directory: crates/guest-program/stateless-validator
+        run: |
+          set -euo pipefail
+          # OpenVM does not constrain field element limbs to be < p after arithmetic
+          # (IntMod::assert_reduced). Serializing raw limbs would let a prover pick
+          # between `v` and `v + p` as precompile return data and fork execution, so
+          # every serialization must go through `fp_be`, which asserts first.
+          #
+          # This is a textual guard because the clippy `disallowed-methods` rule in
+          # clippy.toml cannot fire here: `crypto/openvm.rs` is only compiled with the
+          # `openvm` feature, which the matrix above excludes on toolchain grounds.
+          # Delete this once that file is compiled in CI and clippy runs on it.
+          offenders=$(grep -n 'as_le_bytes\|to_be_bytes' src/crypto/openvm.rs \
+                      | grep -v 'fn fp_be' \
+                      | grep -v '^\s*[0-9]*://' \
+                      | grep -v 'v.to_be_bytes()' || true)
+          if [ -n "$offenders" ]; then
+            echo "::error::serialize field elements via fp_be(), which calls assert_reduced()"
+            echo "$offenders"
+            exit 1
+          fi
+          echo "ok  no raw field-element serialization outside fp_be"

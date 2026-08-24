@@ -1,0 +1,109 @@
+[package]
+version = "23.0.0"
+name = "ethrex-stateless-validator"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+# Own workspace, like the guest bins. This crate pins zkVM SDK versions to what
+# eth-act's `ere` catalog expects, which is deliberately independent of the L2
+# prover's pins — bumping SP1 here must not move the L2 verification keys.
+[workspace]
+
+[dependencies]
+thiserror = "2.0.9"
+
+ethrex-common = { path = "../../common/", default-features = false }
+ethrex-crypto = { path = "../../common/crypto", default-features = false }
+ethrex-guest-program = { path = "../", default-features = false }
+
+# Must track the root workspace exactly: these are the same containers the host
+# encodes, and two libssz versions in one binary would have the guest merkleize
+# with a different progressive child order than ethrex-common does.
+libssz = "0.3.0"
+libssz-merkle = "0.3.0"
+libssz-types = "0.3.0"
+
+# ere platform abstraction (entrypoint / IO / cycle scopes) used by the per-zkVM
+# bins. Pinned to one ere rev; the ere-compiler and ere-server image tags in
+# tag_release.yaml are derived from the same rev.
+ere-platform-core = { git = "https://github.com/eth-act/ere", rev = "a25f1aed9664c3b63e73ef05360090a4c41da31b", optional = true }
+
+# zkvm-standards syscall bindings backing the ZisK and SP1 crypto providers. Keeps
+# guest crypto independent of per-SDK patched-crate stacks, so the SP1 guest needs
+# no sp1-patches tags at all.
+zkvm-interface = { git = "https://github.com/eth-act/zkvm-standards", rev = "282cd356c3a0498416bb0619f9c8a347ce9933fb", optional = true }
+
+# OpenVM crypto provider (OpenVM 2.0.0 line). Note openvm-kzg and
+# openvm-curve-utils come from axiom-crypto/openvm-eth, NOT axiom-crypto/openvm-kzg.
+openvm-ecc-guest = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.0", optional = true }
+openvm-sha2 = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.0", optional = true }
+openvm-pairing = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.0", features = ["bn254", "bls12_381"], optional = true }
+openvm-k256 = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.0", package = "k256", optional = true }
+openvm-p256 = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.0", package = "p256", optional = true }
+openvm-keccak256 = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.0", optional = true }
+openvm-curve-utils = { git = "https://github.com/axiom-crypto/openvm-eth", rev = "aa8bbe17e624d317f14ea925df7c256c0b205134", optional = true }
+openvm-kzg = { git = "https://github.com/axiom-crypto/openvm-eth", rev = "aa8bbe17e624d317f14ea925df7c256c0b205134", optional = true }
+bls12_381 = { git = "https://github.com/zkcrypto/bls12_381", rev = "6bb96951d5c2035caf4989b6e4a018435379590f", default-features = false, features = ["experimental"], optional = true }
+
+[dev-dependencies]
+hex = "0.4.3"
+serde = { version = "1.0.203", features = ["derive"] }
+serde_json = "1.0.117"
+
+[features]
+default = []
+
+# Host-side execution (fixture tests, no zkVM): the native crypto backends
+# `NativeCrypto` needs.
+host = [
+    "ethrex-crypto/blst",
+    "ethrex-crypto/kzg-rs",
+    "ethrex-crypto/secp256k1",
+]
+
+# ere-platform entrypoint, used by the per-zkVM guest bins.
+ere = ["dep:ere-platform-core"]
+
+# Crypto providers, one per zkVM.
+zkvm-interface = ["dep:zkvm-interface"]
+sp1 = ["zkvm-interface"]
+# `ethrex-common/zisk` swaps the tx/block `OnceCell` for the single-threaded
+# `unsync_cell` one on riscv64, matching what `guest-program/bin/zisk` already
+# enables. Without it the two ZisK guests compile different cell types.
+zisk = ["zkvm-interface", "ethrex-common/zisk"]
+openvm = [
+    "dep:openvm-ecc-guest",
+    "dep:openvm-sha2",
+    "dep:openvm-pairing",
+    "dep:openvm-k256",
+    "dep:openvm-p256",
+    "dep:openvm-keccak256",
+    "dep:openvm-curve-utils",
+    "dep:openvm-kzg",
+    "dep:bls12_381",
+]
+
+# Mirrors the `[patch]` in `bin/openvm/Cargo.toml`. Without it this crate resolves
+# different openvm versions than the real guest build, so `--features openvm` failed
+# to compile here (`is_in_correct_subgroup` not found) and the provider could not be
+# checked or tested outside the tag-time Ere docker build.
+[patch."https://github.com/openvm-org/openvm.git"]
+openvm = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
+openvm-algebra-complex-macros = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
+openvm-algebra-guest = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
+openvm-algebra-moduli-macros = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
+openvm-custom-insn = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
+openvm-ecc-guest = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
+openvm-ecc-sw-macros = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
+openvm-k256 = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0", package = "k256" }
+openvm-keccak256 = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
+openvm-keccak256-guest = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
+openvm-macros-common = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
+openvm-p256 = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0", package = "p256" }
+openvm-pairing = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
+openvm-pairing-guest = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
+openvm-platform = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
+openvm-rv32im-guest = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
+openvm-sha2 = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
+openvm-sha2-guest = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
+

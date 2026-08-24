@@ -10,6 +10,15 @@ services:
       - /bin/bash
       - -c
       - touch /env/.env; ./ethrex l2 deploy "$0" "$@"
+    # The Timelock is initialized with the committer and proof-sender addresses
+    # as its authorized sequencers, and both deployer options default to the
+    # accounts ethrex_l2 uses. L2B runs from its own accounts (see ethrex_l2_b
+    # below), so its deployment has to authorize those instead, or every
+    # commitBatch from L2B reverts at gas estimation as an unauthorized caller.
+    # These two addresses must stay in sync with ethrex_l2_b's private keys.
+    environment:
+      - ETHREX_DEPLOYER_COMMITTER_L1_ADDRESS=0x000990B05481b1661bc6211298f6429451B09425
+      - ETHREX_DEPLOYER_PROOF_SENDER_L1_ADDRESS=0x000cDF8Dba2393a40857cbCB0FCD9b998a941078
     command: >
       --use-compiled-genesis false
       --genesis-l2-path ${DOCKER_ETHREX_WORKDIR}/fixtures/genesis/l2.json
@@ -62,6 +71,19 @@ services:
       - -c
       - export $(xargs < /env/.env); ./ethrex l2 "$0" "$@"
     # ETHREX_WATCHER_BRIDGE_ADDRESS and ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS are set in the .env file by the contract_deployer service.
+    #
+    # The L1 keys below MUST differ from the ones ethrex_l2 uses in
+    # docker-compose.yaml. Both sequencers post to the same L1, so two
+    # committers on one account race for the same nonce, and the loser cannot
+    # recover: its send is rejected as an underpriced replacement, then as a
+    # too-low nonce until it exhausts its retries, and it re-wedges on the same
+    # batch every cycle. One chain then never commits, so its L2->L2 messages
+    # never become pending on the router and the shared-bridge test observes no
+    # balance change on the destination chain.
+    #
+    # These are rich accounts from fixtures/keys/private_keys_l1.txt. Their only
+    # other L1 use is the deployer's rich deposit, which is sent from each rich
+    # account itself but completes before either sequencer starts.
     command: >
       --network /genesis/l2.json
       --http.addr 0.0.0.0
@@ -69,8 +91,8 @@ services:
       --authrpc.port 8553
       --proof-coordinator.addr 0.0.0.0
       --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d
-      --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924
-      --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d
+      --committer.l1-private-key 0xfc8ae6457da1052f379f9a7eb925e11d10d3fc1dc0b59fe93658704babcfe78c
+      --proof-coordinator.l1-private-key 0xfdb73112480f2b033ff2fe2e6f5bd358fc46307a3fc2aeb70c79e77a8704ad82
       --datadir dev_ethrex_l2b
       --proof-coordinator.port 3901
       --no-monitor

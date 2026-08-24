@@ -26,7 +26,3 @@ The default port of the L2 JSON-RPC is 1729 you can test it by running
 ```sh
 rex block-number http://localhost:1729
 ```
-
-## Guides
-
-For more information on how to perform certain operations, go to [Guides]().

@@ -1,3 +1,5 @@
+#[cfg(not(feature = "std"))]
+use alloc::{boxed::Box, vec::Vec};
 use ethrex_crypto::{Crypto, NativeCrypto};
 use ethrex_rlp::encode::RLPEncode;
 

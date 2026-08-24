@@ -46,7 +46,7 @@ async fn seed_store(headers: &[BlockHeader], canonical: &[&BlockHeader]) -> Stor
 
 #[tokio::test]
 async fn canonical_and_stateful_is_resume_point() {
-    let h = header(1, *EMPTY_TRIE_HASH, H256::zero());
+    let h = header(1, EMPTY_TRIE_HASH, H256::zero());
     let store = seed_store(std::slice::from_ref(&h), &[&h]).await;
     assert!(
         is_resume_point(&store, &h).unwrap(),
@@ -68,7 +68,7 @@ async fn canonical_but_stateless_is_not_resume_point() {
 #[tokio::test]
 async fn non_canonical_is_not_resume_point() {
     // Present state but never canonicalized -> not a resume point.
-    let h = header(1, *EMPTY_TRIE_HASH, H256::zero());
+    let h = header(1, EMPTY_TRIE_HASH, H256::zero());
     let store = seed_store(std::slice::from_ref(&h), &[]).await;
     assert!(!is_resume_point(&store, &h).unwrap());
 }
@@ -81,7 +81,7 @@ async fn walk_back_anchors_on_state_head_not_canonical_head() {
     let mut parent = H256::zero();
     for number in 1..=7u64 {
         let state_root = if number <= 2 {
-            *EMPTY_TRIE_HASH
+            EMPTY_TRIE_HASH
         } else {
             H256::from_low_u64_be(0xc0de_0000 + number)
         };
@@ -114,7 +114,7 @@ async fn seed_chain(tip: u64, stateful: &[u64]) -> (Store, Vec<BlockHeader>) {
     let mut parent = H256::zero();
     for number in 1..=tip {
         let state_root = if stateful.contains(&number) {
-            *EMPTY_TRIE_HASH
+            EMPTY_TRIE_HASH
         } else {
             H256::from_low_u64_be(0xc0de_0000 + number)
         };

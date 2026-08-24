@@ -20,7 +20,7 @@ impl RpcHandler for MaxPriorityFee {
             .gas_tip_estimator
             .lock()
             .await
-            .estimate_gas_tip(&context.storage)
+            .estimate_gas_tip(&context.storage, context.blockchain.options.min_tip_wei)
             .await?;
 
         let gas_as_hex = format!("0x{gas_tip:x}");

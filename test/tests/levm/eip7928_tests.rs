@@ -172,6 +172,31 @@ fn test_storage_net_zero_with_intermediate_write() {
 }
 
 #[test]
+fn test_read_then_write_then_selfdestruct_slot_stays_a_read() {
+    // Regression for the parallel BAL validator's phantom-read check: a slot
+    // that is read, then written, then whose account selfdestructs in the same
+    // tx must still be returned by `take_storage_reads` (the shadow-reads set).
+    // `record_storage_write` never removes the slot from `storage_reads`, and
+    // `track_selfdestruct` converts the tx's writes back into reads, so the
+    // genuine read survives and its declared BAL storage_reads entry is
+    // satisfied instead of being wrongly rejected as a phantom read.
+    let mut recorder = BlockAccessListRecorder::new();
+    recorder.set_block_access_index(1);
+    let slot = U256::from(0x7);
+
+    recorder.record_storage_read(ALICE, slot);
+    recorder.capture_pre_storage(ALICE, slot, U256::from(1));
+    recorder.record_storage_write(ALICE, slot, U256::from(2));
+    recorder.track_selfdestruct(ALICE, false);
+
+    let reads = recorder.take_storage_reads();
+    assert!(
+        reads.contains(&(ALICE, slot)),
+        "a read-then-written slot on a selfdestructed account must remain a read"
+    );
+}
+
+#[test]
 fn test_storage_non_zero_change_recorded() {
     // Non-zero changes should be recorded
     let mut recorder = BlockAccessListRecorder::new();

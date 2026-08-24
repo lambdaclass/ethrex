@@ -115,7 +115,9 @@ lazy_static! {
 #[derive(Debug, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Fork {
     Constantinople,
+    #[serde(alias = "TangerineWhistle")]
     EIP150,
+    #[serde(alias = "SpuriousDragon")]
     EIP158,
     EIP158ToByzantiumAt5,
     ArrowGlacierToParisAtDiffC0000,

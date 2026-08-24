@@ -62,6 +62,46 @@ const DEFAULT_ON_CHAIN_PROPOSER_ADDRESS: Address = H160([
     0x58, 0x95, 0x11, 0x67,
 ]);
 
+/// Longest a cross-chain message may take to be picked up before the test gives
+/// up. Deliberately more generous than the fixed sleep it replaces, since
+/// waiting on the condition costs nothing when the message lands sooner.
+const MESSAGE_TIMEOUT: Duration = Duration::from_secs(240);
+
+/// How often to re-probe while waiting for a message.
+const MESSAGE_POLL_INTERVAL: Duration = Duration::from_secs(2);
+
+/// Polls `probe` until it observes `expected`, and returns what it saw. On
+/// timeout the last observed value is returned, so the caller's assertion still
+/// reports the real mismatch.
+///
+/// Waiting on the condition rather than sleeping a fixed interval is what keeps
+/// these assertions meaningful: a plain sleep checks whatever state the system
+/// happens to be in when the timer fires, so a change in how long the rest of
+/// the job takes can flip the result without anything about the chains
+/// changing. That is exactly how this test began failing.
+async fn wait_for_message<T, F, Fut>(what: &str, expected: T, mut probe: F) -> T
+where
+    T: PartialEq + std::fmt::Debug + Copy,
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = T>,
+{
+    let started = std::time::Instant::now();
+    loop {
+        let observed = probe().await;
+        if observed == expected {
+            println!("{what}: observed after {:?}", started.elapsed());
+            return observed;
+        }
+        if started.elapsed() >= MESSAGE_TIMEOUT {
+            println!(
+                "{what}: timed out after {MESSAGE_TIMEOUT:?}; expected {expected:?}, last saw {observed:?}"
+            );
+            return observed;
+        }
+        sleep(MESSAGE_POLL_INTERVAL).await;
+    }
+}
+
 fn on_chain_proposer_address() -> Address {
     std::env::var("ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS")
         .map(|address| address.parse().expect("Invalid proposer address"))
@@ -160,10 +200,13 @@ async fn test_transfer_erc_20() -> Result<()> {
         "erc20_shared_bridge",
     )
     .await?;
-    sleep(Duration::from_secs(180)).await; // Wait for the message to be processed
 
-    let l2b_new_balance =
-        test_balance_of(&l2b_client, l2b_erc20_contract_address, sender_address).await;
+    let l2b_new_balance = wait_for_message(
+        "erc20 shared bridge transfer credited on L2B",
+        l2b_balance + transfer_amount,
+        || test_balance_of(&l2b_client, l2b_erc20_contract_address, sender_address),
+    )
+    .await;
     assert_eq!(
         l2b_new_balance,
         l2b_balance + transfer_amount,
@@ -172,18 +215,34 @@ async fn test_transfer_erc_20() -> Result<()> {
 
     // Verify L1 bridge deposits accounting was updated correctly.
     // Each L2 has its own bridge on L1, so we use the bridge addresses queried from the Router.
-    let l1_deposits_l2a_after = get_bridge_deposits(
-        &l1_client,
-        l2a_bridge,
-        l1_erc20_contract_address,
-        l2a_erc20_contract_address,
+    //
+    // Waited on separately rather than assumed to be done: the L2B credit above
+    // and this L1-side accounting are updated by different transactions on
+    // different chains, and nothing here guarantees an order between them.
+    let l1_deposits_l2a_after = wait_for_message(
+        "L1 deposits accounting for L2A debited",
+        U256::from(DEPOSIT_VALUE) - transfer_amount,
+        || {
+            get_bridge_deposits(
+                &l1_client,
+                l2a_bridge,
+                l1_erc20_contract_address,
+                l2a_erc20_contract_address,
+            )
+        },
     )
     .await;
-    let l1_deposits_l2b_after = get_bridge_deposits(
-        &l1_client,
-        l2b_bridge,
-        l1_erc20_contract_address,
-        l2b_erc20_contract_address,
+    let l1_deposits_l2b_after = wait_for_message(
+        "L1 deposits accounting for L2B credited",
+        transfer_amount,
+        || {
+            get_bridge_deposits(
+                &l1_client,
+                l2b_bridge,
+                l1_erc20_contract_address,
+                l2b_erc20_contract_address,
+            )
+        },
     )
     .await;
 
@@ -392,14 +451,18 @@ async fn test_counter() -> Result<()> {
     .await
     .expect("Error sending shared bridge transaction");
 
-    println!("Waiting 3 minutes for message to be processed...");
-    sleep(Duration::from_secs(180)).await; // Wait for the message to be processed
-
-    println!("Getting final balances...");
-    let receiver_balance_after = l2a_client
-        .get_balance(receiver_address, BlockIdentifier::Tag(BlockTag::Latest))
-        .await
-        .expect("Error getting balance");
+    println!("Waiting for the message to be processed on L2A...");
+    let receiver_balance_after = wait_for_message(
+        "shared bridge transfer credited on L2A",
+        receiver_balance + value,
+        || async {
+            l2a_client
+                .get_balance(receiver_address, BlockIdentifier::Tag(BlockTag::Latest))
+                .await
+                .expect("Error getting balance")
+        },
+    )
+    .await;
 
     let sender_balance_after = l2b_client
         .get_balance(sender_address, BlockIdentifier::Tag(BlockTag::Latest))
@@ -464,14 +527,18 @@ async fn test_counter() -> Result<()> {
     .await
     .expect("Error sending shared bridge transaction");
 
-    println!("Waiting 3 minutes for message to be processed...");
-    sleep(Duration::from_secs(180)).await; // Wait for the message to be processed
-
-    println!("Getting final counter state...");
-    let counter_balance_after = l2a_client
-        .get_balance(counter, BlockIdentifier::Tag(BlockTag::Latest))
-        .await
-        .expect("Error getting counter balance");
+    println!("Waiting for the message to be processed on L2A...");
+    let counter_balance_after = wait_for_message(
+        "shared bridge call credited to the counter on L2A",
+        counter_balance + value,
+        || async {
+            l2a_client
+                .get_balance(counter, BlockIdentifier::Tag(BlockTag::Latest))
+                .await
+                .expect("Error getting counter balance")
+        },
+    )
+    .await;
 
     let counter_value_after = l2a_client
         .call(
@@ -821,4 +888,66 @@ async fn get_bridge_address_from_router(
         .unwrap();
     let bytes = hex::decode(res.trim_start_matches("0x")).unwrap();
     Address::from_slice(&bytes[12..32])
+}
+
+/// L2B's sequencer keys and the addresses its deployment authorizes as
+/// `SEQUENCER` live in two separate blocks of the same override file. A
+/// mismatch is invisible until runtime, where it surfaces as a `commitBatch`
+/// that reverts at gas estimation with an ABI-undecodable
+/// `AccessControlUnauthorizedAccount` — a failure that looks nothing like its
+/// cause, and whose only visible symptom is that L2B silently stops committing.
+/// Pin the two together so drift fails here instead.
+#[test]
+fn test_shared_bridge_l2b_authorized_addresses_match_its_keys() {
+    let overrides_path =
+        workspace_root().join("crates/l2/docker-compose-l2-shared-bridge.overrides.yaml");
+    let overrides = std::fs::read_to_string(&overrides_path)
+        .unwrap_or_else(|e| panic!("Failed to read {}: {e}", overrides_path.display()));
+
+    for (key_flag, address_var) in [
+        (
+            "--committer.l1-private-key",
+            "ETHREX_DEPLOYER_COMMITTER_L1_ADDRESS",
+        ),
+        (
+            "--proof-coordinator.l1-private-key",
+            "ETHREX_DEPLOYER_PROOF_SENDER_L1_ADDRESS",
+        ),
+    ] {
+        let key = last_token_on_line_containing(&overrides, key_flag)
+            .unwrap_or_else(|| panic!("{key_flag} not found in {}", overrides_path.display()));
+        let declared = value_after_equals(&overrides, address_var)
+            .unwrap_or_else(|| panic!("{address_var} not found in {}", overrides_path.display()));
+
+        let secret_key = SecretKey::from_str(key.trim_start_matches("0x"))
+            .unwrap_or_else(|e| panic!("{key_flag} is not a valid secret key: {e}"));
+        let derived =
+            ethrex_l2_common::utils::get_address_from_secret_key(&secret_key.secret_bytes())
+                .expect("Failed to derive the address");
+        let declared = Address::from_str(&declared)
+            .unwrap_or_else(|e| panic!("{address_var} is not a valid address: {e}"));
+
+        assert_eq!(
+            derived, declared,
+            "{key_flag} belongs to {derived:#x} but {address_var} authorizes {declared:#x}; \
+             L2B would be rejected as an unauthorized sequencer"
+        );
+    }
+}
+
+/// Last whitespace-separated token on the first line containing `needle`.
+fn last_token_on_line_containing(haystack: &str, needle: &str) -> Option<String> {
+    haystack
+        .lines()
+        .find(|line| line.contains(needle))
+        .and_then(|line| line.split_whitespace().last())
+        .map(str::to_owned)
+}
+
+/// Value of the first `needle=<value>` occurrence.
+fn value_after_equals(haystack: &str, needle: &str) -> Option<String> {
+    haystack
+        .lines()
+        .find_map(|line| line.trim().strip_prefix(&format!("- {needle}=")))
+        .map(str::to_owned)
 }

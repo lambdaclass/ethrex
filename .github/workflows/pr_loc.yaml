@@ -46,6 +46,7 @@ jobs:
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
         with:
+          cache-pool: l1
           components: rustfmt, clippy
 
       - name: Run Lines of Code Counter for base
@@ -64,6 +65,7 @@ jobs:
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
         with:
+          cache-pool: l1
           components: rustfmt, clippy
 
       - name: Run Lines of Code Counter for PR

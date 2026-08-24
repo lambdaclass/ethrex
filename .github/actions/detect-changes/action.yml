@@ -1,0 +1,59 @@
+name: Detect changes
+description: >
+  Classify the files a push or pull request touches so callers can skip build
+  and test jobs when nothing they compile or execute changed.
+
+outputs:
+  inert_only:
+    description: >
+      'true' when every changed file is documentation or repository metadata.
+    value: ${{ steps.classify.outputs.inert_only }}
+  code_changed:
+    description: >
+      'true' when a Rust source file, a Cargo manifest or a lockfile changed.
+    value: ${{ steps.filter.outputs.code_changed }}
+
+runs:
+  using: composite
+  steps:
+    - uses: dorny/paths-filter@v4
+      id: filter
+      with:
+        # `inert` is a positive list, compared against `all_files` in the next
+        # step, rather than a list of `!` negations. paths-filter ORs a filter's
+        # patterns together, so `['!docs/**', '!**/*.md']` still matches
+        # `README.md`: that file is not under `docs/`, the first negation
+        # accepts it, and the gate never closes.
+        filters: |
+          all_files:
+            - '**'
+          inert:
+            - 'docs/**'
+            - '**/*.md'
+            - '.gitignore'
+            - '**/.gitignore'
+            - 'audits/**'
+            - 'LICENSE-*'
+            - '.github/ISSUE_TEMPLATE/**'
+          code_changed:
+            - '**/*.rs'
+            - '**/*.toml'
+            - '**/*.lock'
+
+    - name: Classify changed files
+      id: classify
+      shell: bash
+      env:
+        ALL_FILES: ${{ steps.filter.outputs.all_files_count }}
+        INERT: ${{ steps.filter.outputs.inert_count }}
+      run: |
+        set -euo pipefail
+        # Equality, not `inert_count > 0`: a commit that touches a README *and*
+        # a source file still has to build.
+        if [[ "$INERT" == "$ALL_FILES" ]]; then
+          inert_only=true
+        else
+          inert_only=false
+        fi
+        echo "inert_only=${inert_only}" >> "$GITHUB_OUTPUT"
+        echo "inert_only=${inert_only} (changed=${ALL_FILES}, inert=${INERT})"

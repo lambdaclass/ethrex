@@ -1,6 +1,7 @@
 use crate::backends::levm::LEVM;
+use ethrex_common::H256;
 use ethrex_common::tracing::{CallTrace, OpcodeTraceResult, PrestateResult};
-use ethrex_common::types::Block;
+use ethrex_common::types::{Block, BlockHeader, GenericTransaction};
 pub use ethrex_levm::tracing::OpcodeTracerConfig;
 
 use crate::{Evm, EvmError};
@@ -16,6 +17,7 @@ impl Evm {
         tx_index: usize,
         only_top_call: bool,
         with_log: bool,
+        log_index_base: u64,
     ) -> Result<CallTrace, EvmError> {
         let tx = block
             .body
@@ -31,8 +33,10 @@ impl Evm {
             tx,
             only_top_call,
             with_log,
+            log_index_base,
             self.vm_type,
             self.crypto.as_ref(),
+            self.stateless_validator.as_deref(),
         )
     }
 
@@ -90,6 +94,112 @@ impl Evm {
         )
     }
 
+    /// Traces a synthetic `eth_call`-shaped request with the callTracer (`debug_traceCall`).
+    /// Assumes `db` already reflects the target block/tx state to call against.
+    pub fn trace_call_calls(
+        &mut self,
+        block_header: &BlockHeader,
+        tx: &GenericTransaction,
+        only_top_call: bool,
+        with_log: bool,
+        log_index_base: u64,
+    ) -> Result<CallTrace, EvmError> {
+        LEVM::trace_call_calls(
+            &mut self.db,
+            block_header,
+            tx,
+            only_top_call,
+            with_log,
+            log_index_base,
+            self.vm_type,
+            self.crypto.as_ref(),
+        )
+    }
+
+    /// Traces a synthetic `eth_call`-shaped request with the prestateTracer (`debug_traceCall`).
+    pub fn trace_call_prestate(
+        &mut self,
+        block_header: &BlockHeader,
+        tx: &GenericTransaction,
+        diff_mode: bool,
+        include_empty: bool,
+    ) -> Result<PrestateResult, EvmError> {
+        LEVM::trace_call_prestate(
+            &mut self.db,
+            block_header,
+            tx,
+            diff_mode,
+            include_empty,
+            self.vm_type,
+            self.crypto.as_ref(),
+        )
+    }
+
+    /// Traces a synthetic `eth_call`-shaped request with the opcode (EIP-3155) tracer
+    /// (`debug_traceCall`).
+    pub fn trace_call_opcodes(
+        &mut self,
+        block_header: &BlockHeader,
+        tx: &GenericTransaction,
+        cfg: OpcodeTracerConfig,
+    ) -> Result<OpcodeTraceResult, EvmError> {
+        LEVM::trace_call_opcodes(
+            &mut self.db,
+            block_header,
+            tx,
+            cfg,
+            self.vm_type,
+            self.crypto.as_ref(),
+        )
+    }
+
+    /// Traces every transaction in `block` with the callTracer. Assumes `self`'s state is
+    /// the block's parent state. Runs the whole block in a single pass, reusing the
+    /// block-invariant EVM config across transactions.
+    pub fn trace_block_calls(
+        &mut self,
+        block: &Block,
+        only_top_call: bool,
+        with_log: bool,
+    ) -> Result<Vec<(H256, CallTrace)>, EvmError> {
+        LEVM::trace_block_calls(
+            &mut self.db,
+            block,
+            only_top_call,
+            with_log,
+            self.vm_type,
+            self.crypto.as_ref(),
+        )
+    }
+
+    /// Traces every transaction in `block` with the prestateTracer. See
+    /// [`Self::trace_block_calls`].
+    pub fn trace_block_prestate(
+        &mut self,
+        block: &Block,
+        diff_mode: bool,
+        include_empty: bool,
+    ) -> Result<Vec<(H256, PrestateResult)>, EvmError> {
+        LEVM::trace_block_prestate(
+            &mut self.db,
+            block,
+            diff_mode,
+            include_empty,
+            self.vm_type,
+            self.crypto.as_ref(),
+        )
+    }
+
+    /// Traces every transaction in `block` with the opcode (EIP-3155) tracer. See
+    /// [`Self::trace_block_calls`].
+    pub fn trace_block_opcodes(
+        &mut self,
+        block: &Block,
+        cfg: OpcodeTracerConfig,
+    ) -> Result<Vec<(H256, OpcodeTraceResult)>, EvmError> {
+        LEVM::trace_block_opcodes(&mut self.db, block, cfg, self.vm_type, self.crypto.as_ref())
+    }
+
     /// Reruns the given block, saving the changes on the state, doesn't output any results or receipts.
     /// If the optional argument `stop_index` is set, the run will stop just before executing the transaction at that index
     /// and won't process the withdrawals afterwards.
@@ -105,6 +215,7 @@ impl Evm {
             stop_index,
             self.vm_type,
             self.crypto.as_ref(),
+            self.stateless_validator.as_deref(),
         )
     }
 }
