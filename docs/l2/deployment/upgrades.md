@@ -28,6 +28,15 @@ The function is `onlyOwner` and that owner is the Timelock, so route it as
 Governance `schedule` + `execute`, or Security Council `emergencyExecute` to skip
 the delay. Use `upgradeRISC0VerificationKey` for a RISC0 deployment.
 
+`verificationKeys` is public, so you can confirm the mapping before and after —
+and confirm the deployment's existing key was derived the same way, which is the
+cheapest way to check you have the right commit hash (`1` is the SP1 verifier id):
+
+```bash
+cast call "$ON_CHAIN_PROPOSER" 'verificationKeys(bytes32,uint8)(bytes32)' \
+  "$(cast keccak "$SHA")" 1 --rpc-url "$L1_RPC"
+```
+
 Keys are per commit hash rather than per version, so the old key stays valid —
 which is what lets a rollback keep verifying.
 
