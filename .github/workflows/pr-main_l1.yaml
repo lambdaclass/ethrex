@@ -473,12 +473,20 @@ jobs:
     # status check, so a gate that skips is a gate that always passes: inside the
     # merge queue, where assertoor and hive do not run, that let a pull request
     # whose suites were red merge on a vacuous green.
-    if: ${{ always() && needs.detect-changes.outputs.run_tests == 'true' }}
+    if: ${{ always() && (needs.detect-changes.result != 'success' || needs.detect-changes.outputs.run_tests == 'true') }}
     permissions:
       contents: read
       checks: read
       pull-requests: read
     steps:
+      - name: Fail if change detection did not conclude
+        if: ${{ needs.detect-changes.result != 'success' }}
+        run: |
+          # Without a run_tests answer there is no way to tell whether the suites
+          # below were required, and an unanswerable gate must not report success.
+          echo "detect-changes concluded '${{ needs.detect-changes.result }}'"
+          exit 1
+
       - name: Checkout sources
         uses: actions/checkout@v6
 
