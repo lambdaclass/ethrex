@@ -12,7 +12,7 @@ use crate::{
 use ethrex_blockchain::{Blockchain, vm::StoreVmDatabase};
 use ethrex_common::{
     H256, U256,
-    constants::GAS_PER_BLOB,
+    constants::{EMPTY_KECCAK_HASH, GAS_PER_BLOB},
     types::{AccessListEntry, BlockHash, BlockHeader, BlockNumber, GenericTransaction, TxKind},
 };
 
@@ -519,12 +519,24 @@ impl RpcHandler for EstimateGasRequest {
         };
 
         // If the transaction is a plain value transfer, short circuit estimation.
-        if let TxKind::Call(address) = transaction.to {
+        //
+        // A transfer is a call carrying no calldata to a recipient with no code, which is
+        // what geth checks (`len(call.Data) == 0 && GetCodeSize(to) == 0`), and reth and
+        // nethermind equivalently. Both halves matter: calldata to a code-less account is
+        // still 21000 plus its per-byte cost, and an empty call to a contract runs that
+        // contract's fallback.
+        if let TxKind::Call(address) = transaction.to
+            && transaction.input.is_empty()
+        {
             let account_info = storage
                 .get_account_info(block_header.number, address)
                 .await?;
-            let code = account_info.map(|info| storage.get_account_code(info.code_hash));
-            if code.is_none() {
+            // An account absent from state has no code either, so it takes this path too.
+            // Compared against the code hash rather than through `get_account_code`: the
+            // hash is already in hand, and the code itself is not needed to know it is
+            // empty.
+            let has_code = account_info.is_some_and(|info| info.code_hash != *EMPTY_KECCAK_HASH);
+            if !has_code {
                 let mut value_transfer_transaction = transaction.clone();
                 value_transfer_transaction.gas = Some(TRANSACTION_GAS);
                 let result: Result<ExecutionResult, RpcErr> = simulate_tx(
@@ -996,6 +1008,70 @@ mod estimate_gas_fee_cap_tests {
         }))
         .await;
         assert_eq!(result, Value::String("0x5348".to_string()));
+    }
+
+    /// A transfer to an ordinary funded account is what the short circuit exists for, and
+    /// what it used to miss: the recipient exists, so the old `code.is_none()` was false
+    /// and every such request ran the binary search instead of answering at once.
+    #[tokio::test]
+    async fn a_transfer_to_a_code_less_account_short_circuits() {
+        let result = run_estimate_gas(json!({
+            "from": SENDER,
+            "to": "0x00002132ce94eefb06eb15898c1aabd94feb0ac2",
+            "value": "0x1",
+        }))
+        .await;
+        assert_eq!(result, Value::String("0x5208".to_string()));
+    }
+
+    /// An account absent from state has no code either, so it keeps taking the same path.
+    #[tokio::test]
+    async fn a_transfer_to_an_absent_account_short_circuits() {
+        let result = run_estimate_gas(json!({
+            "from": SENDER,
+            "to": "0x00000000000000000000000000000000deadbeef",
+            "value": "0x1",
+        }))
+        .await;
+        assert_eq!(result, Value::String("0x5208".to_string()));
+    }
+
+    /// Calldata is not free, so a call carrying it is not a plain transfer however
+    /// code-less the recipient: 21000 would under-report by the per-byte cost.
+    #[tokio::test]
+    async fn calldata_is_not_a_plain_transfer() {
+        let result = run_estimate_gas(json!({
+            "from": SENDER,
+            "to": "0x00000000000000000000000000000000deadbeef",
+            "value": "0x1",
+            "input": "0x0102030405060708",
+        }))
+        .await;
+        assert_eq!(result, Value::String("0x5348".to_string()));
+    }
+
+    /// An empty call to a contract runs its fallback, which the short circuit must not
+    /// price at 21000. The deposit contract from the l1 genesis reverts on an empty call,
+    /// so the estimate is an error rather than a number.
+    #[tokio::test]
+    async fn an_empty_call_to_a_contract_is_not_a_plain_transfer() {
+        let storage = setup_store_with_poor_sender().await;
+        let context = default_context_with_storage(storage).await;
+        let request: RpcRequest = serde_json::from_value(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "eth_estimateGas",
+            "params": [{
+                "from": SENDER,
+                "to": "0x00000000219ab540356cbb839cbe05303d7705fa",
+                "value": "0x0",
+            }, "latest"],
+        }))
+        .unwrap();
+        assert!(
+            map_http_requests(&request, context).await.is_err(),
+            "an empty call to the deposit contract must not be priced as a transfer"
+        );
     }
 
     /// A request that states no fee at all asks not to be capped, and must not divide
