@@ -972,10 +972,37 @@ jobs:
         uniswap-swap,
         integration-test-shared-bridge,
       ]
-    # Make sure this job runs even if the previous jobs failed or were skipped
-    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && always() && needs.integration-test.result != 'skipped' && needs.state-diff-test.result != 'skipped' && needs.integration-test-tdx.result != 'skipped' && needs.uniswap-swap.result != 'skipped' && needs.integration-test-shared-bridge.result != 'skipped' }}
+    # Runs even when a dependency failed, and deliberately does not bail out on a
+    # skipped one. GitHub counts a skipped check run as satisfying a required
+    # status check, so a gate that skips is a gate that always passes: inside the
+    # merge queue, where none of these suites run, that let a pull request whose
+    # suites were red merge on a vacuous green.
+    if: ${{ always() && needs.detect-changes.outputs.run_tests == 'true' }}
+    permissions:
+      contents: read
+      checks: read
+      pull-requests: read
     steps:
+      - name: Checkout sources
+        uses: actions/checkout@v6
+
+      # These suites are skipped in the merge queue to keep it cheap, so there is
+      # no local result to inspect. Read the queued pull request's own results
+      # instead, which also catches a suite that turned red or was re-triggered
+      # after the pull request was added to the queue.
+      - name: Check the queued pull request's suites
+        if: ${{ github.event_name == 'merge_group' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ./.github/scripts/check-queued-pr-checks.sh \
+            "Integration Test - " \
+            "State Reconstruction Tests" \
+            "Uniswap Swap Token Flow" \
+            "Integration Test Shared Bridge - "
+
       - name: Check if any job failed
+        if: ${{ github.event_name != 'merge_group' }}
         run: |
           if [ "${{ needs.integration-test.result }}" != "success" ]; then
             echo "Job Integration Tests failed"

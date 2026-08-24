@@ -468,10 +468,32 @@ jobs:
     name: Integration Test
     runs-on: ubuntu-latest
     needs: [detect-changes, run-assertoor, run-hive, check-cargo-locks, engine-ef-tests]
-    # Make sure this job runs even if the previous jobs failed or were skipped
-    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && always() && needs.run-assertoor.result != 'skipped' && needs.run-hive.result != 'skipped' }}
+    # Runs even when a dependency failed, and deliberately does not bail out on a
+    # skipped one. GitHub counts a skipped check run as satisfying a required
+    # status check, so a gate that skips is a gate that always passes: inside the
+    # merge queue, where assertoor and hive do not run, that let a pull request
+    # whose suites were red merge on a vacuous green.
+    if: ${{ always() && needs.detect-changes.outputs.run_tests == 'true' }}
+    permissions:
+      contents: read
+      checks: read
+      pull-requests: read
     steps:
+      - name: Checkout sources
+        uses: actions/checkout@v6
+
+      # Assertoor and hive are skipped in the merge queue to keep it cheap, so
+      # there is no local result to inspect. Read the queued pull request's own
+      # results instead, which also catches a suite that turned red or was
+      # re-triggered after the pull request was added to the queue.
+      - name: Check the queued pull request's suites
+        if: ${{ github.event_name == 'merge_group' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./.github/scripts/check-queued-pr-checks.sh "Hive - " "Assertoor - "
+
       - name: Check if any job failed
+        if: ${{ github.event_name != 'merge_group' }}
         run: |
           if [ "${{ needs.run-assertoor.result }}" != "success" ]; then
             echo "Job Assertoor Tx Check failed"
@@ -483,7 +505,9 @@ jobs:
             exit 1
           fi
 
-          # engine-ef-tests is skipped in the merge queue (merge_group), which is OK.
+          # Tolerating a skipped engine-ef-tests is defensive rather than load
+          # bearing: outside the merge queue it only skips when run_tests is
+          # false, and then this job does not run either.
           if [ "${{ needs.engine-ef-tests.result }}" != "success" ] && [ "${{ needs.engine-ef-tests.result }}" != "skipped" ]; then
             echo "Job Engine EF tests failed"
             exit 1
