@@ -24,7 +24,7 @@ use ethrex_p2p::{
     types::Node,
 };
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_storage::pruner::HistoryRetention;
+use ethrex_storage::pruner::{ASSUMED_SECONDS_PER_SLOT, HistoryRetention};
 use ethrex_storage::{DB_COMMIT_THRESHOLD, error::StoreError, has_valid_db};
 use tokio_util::sync::CancellationToken;
 use tracing::{Level, error, info, warn};
@@ -535,7 +535,7 @@ pub struct Options {
         long = "history.retention",
         value_name = "RETENTION",
         value_parser = parse_history_retention,
-        help = "How much block history to keep. `cl-window` (default) keeps the CL block-retention window of 33024 epochs, which is the longest range a consensus client is required to serve and therefore the least an execution client should hold. `all` never prunes. `<N>epochs` keeps N epochs. Bodies, receipts and transaction locations below the window are deleted permanently; canonical headers are always kept.",
+        help = "How much block history to keep. `cl-window` (default) keeps the CL block-retention window of 33024 epochs, the longest range a consensus client is required to serve and therefore the least an execution client should hold. `all` never prunes. `<N>epochs` keeps N epochs exactly. `<N>d`/`<N>h`/`<N>m` keep a wall-clock window, converted to a block distance once at startup assuming 12s slots — convenient, but `<N>epochs` is exact and survives a slot-time change. Bodies, receipts and transaction locations below the window are deleted permanently; canonical headers are always kept.",
         help_heading = "P2P options",
         env = "ETHREX_HISTORY_RETENTION"
     )]
@@ -1440,6 +1440,24 @@ fn parse_history_retention(s: &str) -> Result<HistoryRetention, String> {
         "all" => return Ok(HistoryRetention::All),
         _ => {}
     }
+    // A wall-clock window is converted to a block distance here, once, rather than
+    // being compared against the host clock on every pruning pass — that is what made
+    // the previous duration-based implementation able to delete a year of history from
+    // a machine whose clock was a year fast. The conversion assumes
+    // `ASSUMED_SECONDS_PER_SLOT`, so `<N>epochs` remains the exact spelling.
+    for (suffix, secs) in [("d", 86_400u64), ("h", 3_600), ("m", 60)] {
+        if let Some(count) = value.strip_suffix(suffix)
+            && let Ok(count) = count.trim().parse::<u64>()
+        {
+            if count == 0 {
+                return Err("a retention of 0 would keep nothing; use a positive value".into());
+            }
+            let blocks = count
+                .saturating_mul(secs)
+                .saturating_div(ASSUMED_SECONDS_PER_SLOT);
+            return Ok(HistoryRetention::Blocks(blocks));
+        }
+    }
     if let Some(epochs) = value.strip_suffix("epochs") {
         let epochs: u64 = epochs
             .trim()
@@ -1487,8 +1505,27 @@ mod tests {
     #[test]
     fn rejects_history_retention_without_a_unit() {
         assert!(CLI::try_parse_from(["ethrex", "--history.retention", "1056768"]).is_err());
-        assert!(CLI::try_parse_from(["ethrex", "--history.retention", "30d"]).is_err());
         assert!(CLI::try_parse_from(["ethrex", "--history.retention", "0epochs"]).is_err());
+        assert!(CLI::try_parse_from(["ethrex", "--history.retention", "30"]).is_err());
+        assert!(CLI::try_parse_from(["ethrex", "--history.retention", "30years"]).is_err());
+    }
+
+    /// A wall-clock window is a convenience that resolves to a block distance at
+    /// startup, so it never reads the host clock while running.
+    #[test]
+    fn parses_history_retention_wall_clock() {
+        let cli = CLI::try_parse_from(["ethrex", "--history.retention", "30d"]).unwrap();
+        assert_eq!(
+            cli.opts.history_retention,
+            // 30 days of 12s slots.
+            Some(HistoryRetention::Blocks(30 * 86_400 / 12))
+        );
+        let cli = CLI::try_parse_from(["ethrex", "--history.retention", "12h"]).unwrap();
+        assert_eq!(
+            cli.opts.history_retention,
+            Some(HistoryRetention::Blocks(12 * 3_600 / 12))
+        );
+        assert!(CLI::try_parse_from(["ethrex", "--history.retention", "0d"]).is_err());
     }
 
     /// Absent means "use the default", which the initializer resolves to the CL

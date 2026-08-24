@@ -235,7 +235,7 @@ P2P options:
           [default: 100]
 
       --history.retention <RETENTION>
-          How much block history to keep. `cl-window` (default) keeps the CL block-retention window of 33024 epochs, which is the longest range a consensus client is required to serve and therefore the least an execution client should hold. `all` never prunes. `<N>epochs` keeps N epochs. Bodies, receipts and transaction locations below the window are deleted permanently; canonical headers are always kept.
+          How much block history to keep. `cl-window` (default) keeps the CL block-retention window of 33024 epochs, the longest range a consensus client is required to serve and therefore the least an execution client should hold. `all` never prunes. `<N>epochs` keeps N epochs exactly. `<N>d`/`<N>h`/`<N>m` keep a wall-clock window, converted to a block distance once at startup assuming 12s slots — convenient, but `<N>epochs` is exact and survives a slot-time change. Bodies, receipts and transaction locations below the window are deleted permanently; canonical headers are always kept.
           
           [env: ETHREX_HISTORY_RETENTION=]
 

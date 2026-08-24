@@ -22,6 +22,12 @@ pub const SLOTS_PER_EPOCH: u64 = 32;
 /// Roughly a day of extra margin, for a CL backfilling at the very edge of its
 /// own window when it asks us for a body we would otherwise have just deleted.
 pub const CL_WINDOW_SLACK_BLOCKS: u64 = 7_200;
+/// Slot time assumed when converting an operator-supplied wall-clock window into a
+/// block distance. Only used for that conversion, which happens once at startup —
+/// the barrier itself is never derived from a clock. If EIP-7782 changes slot time
+/// this is the single place to update, and an epoch-denominated window needs no
+/// change at all, which is why `<N>epochs` is the preferred spelling.
+pub const ASSUMED_SECONDS_PER_SLOT: u64 = 12;
 
 /// How much history to keep.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
