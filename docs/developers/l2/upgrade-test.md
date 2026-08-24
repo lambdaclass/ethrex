@@ -26,11 +26,13 @@ mkdir -p "$WORK"
 > `--backend exec`. The `exec` backend produces no proof, so it never consults a
 > verification key — and the verification key is the thing an upgrade changes.
 > Batches are committed under `keccak(VERGEN_GIT_SHA)`, baked into the binary at
-> build time, and `OnChainProposer.verificationKeys[commitHash][SP1_VERIFIER_ID]`
-> is read at verification, so `$VERSION_TO`'s batches cannot be verified until
-> its key is registered ([Step 3.6](#36-register-the-version_to-verification-key)).
-> Under `exec` that failure is invisible: the test passes and the real upgrade
-> stalls at the first batch.
+> build time, and `commitBatch` refuses a commit hash it holds no key for. Until
+> `$VERSION_TO`'s key is registered
+> ([Step 3.6](#36-register-the-version_to-verification-key)) the upgraded
+> sequencer cannot commit **anything**: every `commitBatch` reverts with
+> `MissingVerificationKeyForCommit()` (selector `0xf6b9798e`) and the L2 keeps
+> producing blocks locally while nothing reaches L1. Under `exec` that failure is
+> invisible — the test passes and the real upgrade stops at the first batch.
 
 ## Prerequisites
 
@@ -440,12 +442,19 @@ rex send "$ETHREX_WATCHER_BRIDGE_ADDRESS" 'setL2GasLimit(uint256)' <NEW_GAS_LIMI
 
 Required on every release bump, not just the ones that change contracts.
 
-Each committed batch carries `keccak(VERGEN_GIT_SHA)` of the binary that
-committed it, and the OnChainProposer reads
-`verificationKeys[commitHash][SP1_VERIFIER_ID]` when verifying. The
-`$VERSION_FROM` deployer registered only `$VERSION_FROM`'s key, so
-`$VERSION_TO`'s batches are unverifiable until its key is registered:
-`lastCommittedBatch` keeps advancing while `lastVerifiedBatch` stops.
+Each batch carries `keccak(VERGEN_GIT_SHA)` of the binary that committed it, and
+`commitBatch` rejects a commit hash with no registered key before it stores
+anything. The `$VERSION_FROM` deployer registered only `$VERSION_FROM`'s key, so
+until this step runs the upgraded sequencer commits nothing at all — the
+committer logs
+
+```
+Failed to send commitment for batch N ... execution reverted: 0xf6b9798e
+```
+
+which is `MissingVerificationKeyForCommit()`. Both `lastCommittedBatch` and
+`lastVerifiedBatch` sit still while the L2 keeps producing blocks, so the symptom
+looks like a stuck committer rather than a key problem.
 
 Both arguments come from the release you are upgrading to:
 

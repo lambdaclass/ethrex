@@ -6,11 +6,19 @@ Applies to any deployment that verifies real proofs (`--sp1 true` at deploy
 time), whether or not the release changes a contract.
 
 A batch is committed under `keccak(VERGEN_GIT_SHA)` of the binary that committed
-it, and the OnChainProposer reads
-`verificationKeys[commitHash][SP1_VERIFIER_ID]` when verifying. Your deployment
-only holds the key of the version that deployed it, so after upgrading the
-sequencer, its batches commit fine and then fail to verify:
-`lastCommittedBatch` keeps advancing while `lastVerifiedBatch` stands still.
+it, and `commitBatch` rejects a commit hash it holds no key for. Your deployment
+only holds the key of the version that deployed it, so an upgraded sequencer
+commits **nothing** until its key is registered — every commit reverts with
+`MissingVerificationKeyForCommit()`, selector `0xf6b9798e`, surfacing in the
+committer log as:
+
+```
+Failed to send commitment for batch N ... execution reverted: 0xf6b9798e
+```
+
+The L2 keeps producing blocks the whole time, so it reads as a stuck committer
+rather than a missing key. Nothing is lost: register the key and the pending
+batches commit and verify on the next attempt.
 
 Register the new release's key before or right after swapping the binary:
 
