@@ -1,0 +1,22 @@
+[workspace]
+
+[package]
+version = "23.0.0"
+name = "stateless-validator-ethrex-zisk"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+# NOTE: Using `default-features = false, features = ["inputcpy"]` mainly to disable the other
+#       feature enabled by default `user-hints`, which this binary doesn't use but introduces lots
+#       of dependencies.
+ere-platform-zisk = { git = "https://github.com/eth-act/ere", rev = "a25f1aed9664c3b63e73ef05360090a4c41da31b", default-features = false, features = ["inputcpy"] }
+
+ethrex-stateless-validator = { path = "../..", features = ["ere", "zisk"] }
+
+[features]
+cycle-scope = ["ere-platform-zisk/cycle-scope"]
+
+[profile.release]
+codegen-units = 1
+lto = "fat"

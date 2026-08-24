@@ -24,8 +24,8 @@ impl RLPxMessage for StatusMessage69 {
 }
 
 impl StatusMessage69 {
-    pub async fn new(storage: &Store) -> Result<Self, PeerConnectionError> {
-        StatusDataPost68::new(69, storage).await.map(Self)
+    pub fn new(storage: &Store) -> Result<Self, PeerConnectionError> {
+        StatusDataPost68::new(69, storage).map(Self)
     }
 }
 

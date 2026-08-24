@@ -20,6 +20,7 @@ use ethrex_p2p::{
     peer_handler::PeerHandler,
     peer_table::PeerTableServer,
     rlpx::{initiator::RLPxInitiator, l2::l2_connection::P2PBasedContext},
+    sync::{BackfillConfig, HistoryChain},
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
 };
@@ -253,6 +254,7 @@ pub async fn init_l2(
         precompute_witnesses: opts.node_opts.precompute_witnesses,
         private_mempool: opts.node_opts.mempool_private,
         precompile_cache_enabled: true,
+        min_tip_wei: opts.node_opts.mempool_min_tip,
         price_bump_percent: opts.node_opts.mempool_price_bump,
         blob_price_bump_percent: opts.node_opts.mempool_blob_price_bump,
         max_queued_txs_per_account: opts.node_opts.mempool_max_queued_txs_per_account,
@@ -329,6 +331,12 @@ pub async fn init_l2(
             blockchain.clone(),
             store.clone(),
             opts.node_opts.datadir.clone(),
+            // L2 nodes do not backfill L1 historical chain data.
+            BackfillConfig {
+                mode: HistoryChain::Off,
+                tx_index_horizon: 0,
+            },
+            tracker.clone(),
         )
         .await;
 
@@ -394,7 +402,12 @@ pub async fn init_l2(
 
     // Initialize metrics if enabled
     if opts.node_opts.metrics_enabled {
-        init_metrics(&opts.node_opts, &network.to_string(), tracker);
+        init_metrics(&opts.node_opts, &network.to_string(), tracker.clone());
+        initializers::spawn_rocksdb_metrics_collector(
+            store.clone(),
+            &tracker,
+            sequencer_cancellation_token.clone(),
+        );
     }
 
     let l2_url = Url::parse(&format!(
@@ -486,6 +499,7 @@ pub async fn init_native_rollup_l2(
         private_mempool: opts.node_opts.mempool_private,
         price_bump_percent: opts.node_opts.mempool_price_bump,
         blob_price_bump_percent: opts.node_opts.mempool_blob_price_bump,
+        min_tip_wei: opts.node_opts.mempool_min_tip,
     };
 
     let blockchain = init_blockchain(store.clone(), blockchain_opts);

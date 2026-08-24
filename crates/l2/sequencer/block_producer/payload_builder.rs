@@ -125,7 +125,7 @@ pub async fn fill_transactions(
 
     debug!("Fetching transactions from mempool");
     // Fetch mempool transactions
-    let latest_block_number = store.get_latest_block_number().await?;
+    let latest_block_number = store.get_latest_block_number()?;
     let mut txs = fetch_mempool_transactions(blockchain.as_ref(), context)?;
 
     // Execute and add transactions to payload (if suitable)

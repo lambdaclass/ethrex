@@ -20,7 +20,7 @@ use ethrex_p2p::{
     network::P2PContext,
     peer_handler::PeerHandler,
     peer_table::{PeerTable, PeerTableServer},
-    sync::SyncMode,
+    sync::{BackfillConfig, HistoryChain, SyncMode},
     sync_manager::SyncManager,
     types::{NetworkConfig, Node, NodeRecord},
     utils::public_key_from_signing_key,
@@ -144,6 +144,75 @@ pub fn init_metrics(opts: &Options, network: &Network, tracker: TaskTracker) {
 
     // Metrics is a non-fatal sidecar: its failure is logged loudly but must not down the node.
     spawn_logged(&tracker, "metrics server", metrics_api);
+}
+
+/// Interval between RocksDB observability samples. Property reads are cheap
+/// metadata lookups, so a tight-ish cadence gives responsive Grafana panels
+/// without measurable overhead.
+const DB_METRICS_SAMPLE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// Periodically exports RocksDB observability metrics: per-column-family sizes,
+/// key/file counts and compaction debt, plus DB-wide block-cache usage and the
+/// history-backfill frontier. Populates the gauges surfaced by the metrics API.
+///
+/// A no-op for non-RocksDB backends (`rocksdb_stats()` returns `None`). Spawned
+/// only when metrics are enabled.
+pub(crate) fn spawn_rocksdb_metrics_collector(
+    store: Store,
+    tracker: &TaskTracker,
+    cancel_token: CancellationToken,
+) {
+    use ethrex_metrics::db::METRICS_DB;
+
+    tracker.spawn(async move {
+        loop {
+            // Each sample reads several RocksDB properties per column family;
+            // keep that off the async runtime like the rest of the storage layer.
+            let stats = {
+                let store = store.clone();
+                match tokio::task::spawn_blocking(move || store.rocksdb_stats()).await {
+                    Ok(stats) => stats,
+                    Err(e) => {
+                        warn!("RocksDB metrics sample panicked: {e}");
+                        None
+                    }
+                }
+            };
+            if let Some(stats) = stats {
+                let mut total_live_sst = 0u64;
+                for cf in &stats.cfs {
+                    METRICS_DB.set_cf(
+                        &cf.name,
+                        cf.live_sst_bytes,
+                        cf.total_sst_bytes,
+                        cf.live_data_bytes,
+                        cf.num_keys,
+                        cf.num_files,
+                        cf.blob_bytes,
+                        cf.pending_compaction_bytes,
+                        cf.memtable_bytes,
+                    );
+                    total_live_sst += cf.live_sst_bytes;
+                }
+                METRICS_DB.set_global(
+                    total_live_sst,
+                    stats.block_cache_usage_bytes,
+                    stats.block_cache_capacity_bytes,
+                    stats.block_cache_pinned_bytes,
+                    stats.running_compactions,
+                    stats.block_cache_hits,
+                    stats.block_cache_misses,
+                );
+            }
+            if let Ok(frontier) = store.get_earliest_block_number().await {
+                METRICS_DB.set_backfill_frontier(frontier);
+            }
+            tokio::select! {
+                _ = tokio::time::sleep(DB_METRICS_SAMPLE_INTERVAL) => {}
+                _ = cancel_token.cancelled() => return,
+            }
+        }
+    });
 }
 
 /// Opens a new or pre-existing Store with default tunables and loads the initial
@@ -300,6 +369,23 @@ pub async fn init_rpc_api(
         &opts.syncmode
     };
 
+    // Historical-chain backfill is opt-in via `--history.chain`; it is
+    // meaningless in dev mode (single-node chain, full state from genesis), so
+    // force it off there like syncmode.
+    if !opts.dev && opts.history_chain == HistoryChain::Off && opts.history_transactions != 0 {
+        warn!(
+            "--history.transactions has no effect with --history.chain off: no backfill runs, so there is nothing to bound"
+        );
+    }
+    let backfill_config = BackfillConfig {
+        mode: if opts.dev {
+            HistoryChain::Off
+        } else {
+            opts.history_chain.clone()
+        },
+        tx_index_horizon: opts.history_transactions,
+    };
+
     // Create SyncManager
     let syncer = SyncManager::new(
         peer_handler.clone(),
@@ -308,6 +394,8 @@ pub async fn init_rpc_api(
         blockchain.clone(),
         store.clone(),
         datadir.to_path_buf(),
+        backfill_config,
+        tracker.clone(),
     )
     .await;
 
@@ -382,7 +470,6 @@ pub async fn init_network(
     let discovery_config = DiscoveryConfig {
         discv4_enabled: opts.discv4_enabled,
         discv5_enabled: opts.discv5_enabled,
-        ..Default::default()
     };
 
     ethrex_p2p::start_network(context, bootnodes, discovery_config)
@@ -407,7 +494,7 @@ pub async fn init_dev_network(
     let chain_config = store.get_chain_config();
 
     let (head_block_hash, target_gas_limit) = {
-        let current_block_number = store.get_latest_block_number().await.unwrap();
+        let current_block_number = store.get_latest_block_number().unwrap();
         let head_block_hash = store
             .get_canonical_block_hash(current_block_number)
             .await
@@ -793,6 +880,7 @@ pub async fn init_l1(
             precompute_witnesses: opts.precompute_witnesses,
             private_mempool: opts.mempool_private,
             precompile_cache_enabled: !opts.no_precompile_cache,
+            min_tip_wei: opts.mempool_min_tip,
             price_bump_percent: opts.mempool_price_bump,
             blob_price_bump_percent: opts.mempool_blob_price_bump,
             max_queued_txs_per_account: opts.mempool_max_queued_txs_per_account,
@@ -855,6 +943,7 @@ pub async fn init_l1(
 
     if opts.metrics_enabled {
         init_metrics(&opts, &network, tracker.clone());
+        spawn_rocksdb_metrics_collector(store.clone(), &tracker, cancel_token.clone());
     }
 
     if opts.dev {
@@ -1023,7 +1112,7 @@ pub async fn regenerate_head_state(
     // which clamp `LatestBlockNumber` to `flushed_upto`. All blocks up to
     // `head_block_number` are therefore on disk; callers that skip that clamp
     // would break this assumption.
-    let head_block_number = store.get_latest_block_number().await?;
+    let head_block_number = store.get_latest_block_number()?;
     debug!("regenerate_head_state head clamped to durable block {head_block_number}");
 
     let Some(last_header) = store.get_block_header(head_block_number)? else {
@@ -1065,10 +1154,14 @@ pub async fn regenerate_head_state(
     for i in (last_state_number + 1)..=head_block_number {
         debug!("Re-applying block {i} to regenerate state");
 
-        let block = store
+        let mut block = store
             .get_block_by_number(i)
             .await?
             .ok_or_else(|| eyre::eyre!("Block {i} not found"))?;
+
+        // Stored blocks produced by older ethrex versions may carry the legacy
+        // omitted-withdrawals body shape, which block validation now rejects.
+        ethrex_common::types::normalize_legacy_withdrawals(&block.header, &mut block.body);
 
         // Single canonical chain: commit by depth so the in-memory trie-layer
         // backlog stays bounded (~DB_COMMIT_THRESHOLD) instead of growing with the

@@ -111,6 +111,11 @@ Node options:
           [env: ETHREX_MEMPOOL_MAX_SIZE=]
           [default: 10000]
 
+      --mempool.min-tip <MIN_TIP_WEI>
+          Minimum priority-fee cap (in wei) required for a transaction to be admitted into the mempool. Compared against the raw tip cap: `max_priority_fee_per_gas` for typed transactions, `gas_price` for legacy transactions (independent of current base fee, so admission stays stable as base fee oscillates). Set to 0 to disable the floor.
+
+          [env: ETHREX_MEMPOOL_MIN_TIP=]
+          [default: 1]
       --mempool.private
           Node-level config (not a protocol/EIP behavior): keep RPC-submitted transactions private. They enter the mempool and may be included in blocks built locally, but are not propagated to peers. P2P-received transactions are unaffected.
 
@@ -160,6 +165,18 @@ P2P options:
           
           [env: ETHREX_SYNCMODE=]
           [default: snap]
+
+      --history.chain <HISTORY_CHAIN>
+          Optionally backfill historical block bodies and receipts after snap sync so the node can serve historical block, transaction, receipt and log queries. One of "off" (default: headers-only below the pivot), "postmerge" (backfill down to the merge block), "all" (as far back as receipts are decodable — down to the Byzantium block, not genesis — best-effort as many peers no longer serve pre-merge history), or an explicit BLOCK NUMBER to backfill down to only that block — use this to keep a recent slice of history instead of everything back to the merge. A block number below the merge block is honoured but is best-effort like "all", and anything below Byzantium is clamped up to it. Enabling this adds substantial disk usage. It does not enable historical state queries (this is not an archive node).
+          
+          [env: ETHREX_HISTORY_CHAIN=]
+          [default: off]
+
+      --history.transactions <BLOCKS>
+          Blocks of backfilled history to keep the transaction index for (0 = the entire backfilled range).
+          
+          [env: ETHREX_HISTORY_TRANSACTIONS=]
+          [default: 0]
 
       --p2p.disabled
           [env: ETHREX_P2P_DISABLED=]
@@ -211,7 +228,7 @@ P2P options:
           [default: 100]
 
       --p2p.lookup-interval <INITIAL_LOOKUP_INTERVAL>
-          Initial Lookup Time Interval (ms) to trigger each Discovery lookup message and RLPx connection attempt.
+          Initial time interval (ms) between RLPx connection attempts. Widens towards 600ms as the target peer count is approached.
           
           [env: ETHREX_P2P_LOOKUP_INTERVAL=]
           [default: 100]
@@ -284,7 +301,7 @@ Block building options:
           Block extra data message.
           
           [env: ETHREX_BUILDER_EXTRA_DATA=]
-          [default: "ethrex 23.0.0"]
+          [default: "ethrex 24.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.
@@ -498,7 +515,7 @@ Block building options:
           Block extra data message.
 
           [env: ETHREX_BUILDER_EXTRA_DATA=]
-          [default: "ethrex 23.0.0"]
+          [default: "ethrex 24.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.
