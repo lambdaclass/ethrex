@@ -7,10 +7,12 @@ use std::{
 use ethrex_common::types::prover::{ProofFormat, ProverOutput, ProverType};
 use ethrex_guest_program::{ZKVM_ZISK_PROGRAM_ELF, input::ProgramInput};
 
+use crate::backend::zisk_profile::{ZiskAirCost, parse_air_cost};
 use crate::backend::{BackendError, ProverBackend};
 
 const INPUT_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zisk_input.bin");
 const OUTPUT_DIR_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zisk_output");
+const PROOF_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zisk_output/proof.bin");
 const ELF_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zkvm-zisk-program");
 
 /// ZisK-specific proof output containing the proof bytes.
@@ -18,8 +20,11 @@ pub struct ZiskProveOutput(pub Vec<u8>);
 
 /// ZisK prover backend.
 ///
-/// This backend uses external commands (`ziskemu` and `cargo-zisk`) to execute
-/// and prove programs.
+/// This backend drives the `cargo-zisk` CLI (ZisK v1.0.0-alpha and later) to
+/// execute and prove programs: `cargo-zisk execute` for a dry run and
+/// `cargo-zisk prove` / `cargo-zisk verify` for proving and verification.
+/// Profiling ([`ZiskBackend::execute_profiled`]) instead uses the `ziskemu`
+/// emulator with `-X`, the only tool that emits the AIR-cost breakdown.
 #[derive(Default)]
 pub struct ZiskBackend;
 
@@ -66,9 +71,8 @@ impl ZiskBackend {
 
     /// Execute assuming input is already serialized to INPUT_PATH.
     fn execute_core(&self) -> Result<(), BackendError> {
-        let args = vec!["--elf", ELF_PATH, "--inputs", INPUT_PATH];
-        let output = Command::new("ziskemu")
-            .args(args)
+        let output = Command::new("cargo-zisk")
+            .args(["execute", "-e", ELF_PATH, "-i", INPUT_PATH])
             .stdin(Stdio::inherit())
             .stderr(Stdio::inherit())
             .output()
@@ -86,26 +90,27 @@ impl ZiskBackend {
 
     /// Prove assuming input is already serialized to INPUT_PATH.
     fn prove_core(&self, format: ProofFormat) -> Result<ZiskProveOutput, BackendError> {
-        let static_args = vec![
-            "prove",
-            "--elf",
-            ELF_PATH,
-            "--input",
-            INPUT_PATH,
-            "--output-dir",
-            OUTPUT_DIR_PATH,
-            "--aggregation",
-            "--unlock-mapped-memory",
-        ];
-        let conditional_groth16_arg = if let ProofFormat::Groth16 = format {
-            vec!["--final-snark"]
-        } else {
-            vec![]
+        std::fs::create_dir_all(OUTPUT_DIR_PATH).map_err(BackendError::proving)?;
+
+        // Proof shape:
+        // - Groth16 -> `--plonk`: PLONK-wrapped SNARK for on-chain EVM verification.
+        // - Compressed -> `--minimal`: smaller fixed-size STARK proof.
+        let format_arg: &[&str] = match format {
+            ProofFormat::Groth16 => &["--plonk"],
+            ProofFormat::Compressed => &["--minimal"],
         };
 
+        // Use GPU acceleration when built with the `gpu` feature. This requires the
+        // GPU build of the ZisK toolchain (installed via `ziskup --gpu`).
+        #[cfg(feature = "gpu")]
+        let gpu_arg: &[&str] = &["--gpu"];
+        #[cfg(not(feature = "gpu"))]
+        let gpu_arg: &[&str] = &[];
+
         let output = Command::new("cargo-zisk")
-            .args(static_args)
-            .args(conditional_groth16_arg)
+            .args(["prove", "-e", ELF_PATH, "-i", INPUT_PATH, "-o", PROOF_PATH])
+            .args(format_arg)
+            .args(gpu_arg)
             .stdin(Stdio::inherit())
             .stderr(Stdio::inherit())
             .output()
@@ -118,10 +123,34 @@ impl ZiskBackend {
             )));
         }
 
-        let proof_bytes = std::fs::read(format!("{OUTPUT_DIR_PATH}/vadcop_final_proof.bin"))
-            .map_err(BackendError::proving)?;
+        let proof_bytes = std::fs::read(PROOF_PATH).map_err(BackendError::proving)?;
 
         Ok(ZiskProveOutput(proof_bytes))
+    }
+
+    /// Run the guest under ziskemu with profiling and return the AIR-cost
+    /// breakdown. No proof generated.
+    pub fn execute_profiled(&self, input: ProgramInput) -> Result<ZiskAirCost, BackendError> {
+        Self::write_elf_file()?;
+        self.serialize_input(&input)?;
+        const PROFILE_FLAGS: &[&str] = &["-X"];
+        let mut args: Vec<&str> = vec!["--elf", ELF_PATH, "--inputs", INPUT_PATH];
+        args.extend_from_slice(PROFILE_FLAGS);
+        let output = Command::new("ziskemu")
+            .args(&args)
+            .stdin(Stdio::inherit())
+            .output()
+            .map_err(BackendError::execution)?;
+        if !output.status.success() {
+            return Err(BackendError::execution(format!(
+                "ziskemu profiled execution failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )));
+        }
+        let mut combined = String::from_utf8_lossy(&output.stdout).into_owned();
+        combined.push('\n');
+        combined.push_str(&String::from_utf8_lossy(&output.stderr));
+        parse_air_cost(&combined)
     }
 }
 
@@ -134,11 +163,18 @@ impl ProverBackend for ZiskBackend {
     }
 
     fn serialize_input(&self, input: &ProgramInput) -> Result<Self::SerializedInput, BackendError> {
+        // On the L1 path `ProgramInput` IS the spec's `statelessInputBytes`, so it
+        // must reach the guest byte-for-byte — rkyv-wrapping it would make the
+        // guest's schema-prefix check fail. Only the L2 batch input is rkyv.
+        #[cfg(feature = "l2")]
         let input_bytes =
             rkyv::to_bytes::<rkyv::rancor::Error>(input).map_err(BackendError::serialization)?;
+        #[cfg(not(feature = "l2"))]
+        let input_bytes = input;
 
-        // ZisK v0.16.1 expects input in ZiskStdin format:
-        // [8-byte LE length][data][zero-padding to 8-byte alignment]
+        // ZisK expects input in ZiskStdin format: an 8-byte little-endian length
+        // prefix, the data, then zero-padding to 8-byte alignment. The guest reads
+        // it back via `ziskos::io::read_slice()` (the standard `read_input` C ABI).
         let data_len = input_bytes.len();
         let total_len = 8 + data_len;
         let padding = (8 - (total_len % 8)) % 8;
@@ -146,7 +182,7 @@ impl ProverBackend for ZiskBackend {
         let mut buf = Vec::with_capacity(total_len + padding);
         buf.extend_from_slice(&data_len.to_le_bytes());
         buf.extend_from_slice(&input_bytes);
-        buf.extend(std::iter::repeat(0u8).take(padding));
+        buf.extend(std::iter::repeat_n(0u8, padding));
 
         std::fs::write(INPUT_PATH, &buf).map_err(BackendError::serialization)?;
         Ok(())
@@ -181,35 +217,33 @@ impl ProverBackend for ZiskBackend {
         input: ProgramInput,
         format: ProofFormat,
     ) -> Result<(Self::ProofOutput, Duration), BackendError> {
-        // ZisK reports its own timing in result.json, so we use that instead of measuring
         Self::write_elf_file()?;
         self.serialize_input(&input)?;
+        let start = Instant::now();
         let proof = self.prove_core(format)?;
-
-        #[derive(serde::Deserialize)]
-        struct ZisKResult {
-            #[serde(rename = "cycles")]
-            _cycles: u64,
-            #[serde(rename = "id")]
-            _id: String,
-            time: f64,
-        }
-
-        let zisk_result_bytes = std::fs::read(format!("{OUTPUT_DIR_PATH}/result.json"))
-            .map_err(BackendError::proving)?;
-
-        let zisk_result: ZisKResult =
-            serde_json::from_slice(&zisk_result_bytes).map_err(BackendError::proving)?;
-
-        let duration = Duration::from_secs_f64(zisk_result.time);
-
-        Ok((proof, duration))
+        Ok((proof, start.elapsed()))
     }
 
-    fn verify(&self, _proof: &Self::ProofOutput) -> Result<(), BackendError> {
-        Err(BackendError::not_implemented(
-            "verify is not implemented for ZisK backend",
-        ))
+    fn verify(&self, proof: &Self::ProofOutput) -> Result<(), BackendError> {
+        // `cargo-zisk verify` reads the proof from a file and auto-detects its kind.
+        std::fs::create_dir_all(OUTPUT_DIR_PATH).map_err(BackendError::verification)?;
+        std::fs::write(PROOF_PATH, &proof.0).map_err(BackendError::verification)?;
+
+        let output = Command::new("cargo-zisk")
+            .args(["verify", "-p", PROOF_PATH])
+            .stdin(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .output()
+            .map_err(BackendError::verification)?;
+
+        if !output.status.success() {
+            return Err(BackendError::verification(format!(
+                "ZisK proof verification failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )));
+        }
+
+        Ok(())
     }
 
     fn to_proof_bytes(

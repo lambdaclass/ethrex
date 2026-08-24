@@ -1,5 +1,5 @@
 [package]
-version = "17.0.0"
+version = "24.0.0"
 name = "ethrex-guest-openvm"
 edition = "2024"
 license = "MIT OR Apache-2.0"
@@ -29,4 +29,3 @@ ethrex-guest-program = { path = "../..", default-features = false, features = [
 
 [features]
 l2 = ["ethrex-guest-program/l2"]
-eip-8025 = ["ethrex-guest-program/eip-8025"]

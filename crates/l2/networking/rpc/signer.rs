@@ -198,6 +198,8 @@ pub enum SignerError {
     FromHexError(#[from] FromHexError),
     #[error("Tried to sign Privileged L2 transaction")]
     PrivilegedL2TxUnsupported,
+    #[error("Tried to sign EIP-8141 frame transaction")]
+    FrameTxUnsupported,
     #[error("Web3signer error: {0}")]
     Web3SignerError(String),
 }
@@ -241,6 +243,9 @@ impl Signable for Transaction {
             Transaction::EIP7702Transaction(tx) => tx.sign_inplace(signer).await,
             Transaction::PrivilegedL2Transaction(_) => Err(SignerError::PrivilegedL2TxUnsupported), // Privileged Transactions are not signed
             Transaction::FeeTokenTransaction(tx) => tx.sign_inplace(signer).await,
+            // EIP-8141 frame transactions are authenticated via the outer
+            // signatures list / on-chain APPROVE, not by an ECDSA sign_inplace.
+            Transaction::FrameTransaction(_) => Err(SignerError::FrameTxUnsupported),
         }
     }
 }

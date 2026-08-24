@@ -68,7 +68,7 @@ impl RpcHandler for BlobsV1Request {
         // block timestamp to compare against Osaka, so the node is treated as pre-Osaka.
         if let Some(current_block_header) = context
             .storage
-            .get_block_header(context.storage.get_latest_block_number().await?)?
+            .get_block_header(context.storage.get_latest_block_number()?)?
             && context
                 .storage
                 .get_chain_config()
@@ -93,11 +93,17 @@ impl RpcHandler for BlobsV1Request {
         let res: Vec<Option<BlobAndProofV1>> = blob_tuples
             .into_iter()
             .map(|b| {
-                b.map(|(blob, _, proofs)| BlobAndProofV1 {
-                    blob: *blob,
-                    // If blob bundle version is 0 then the proofs vec will have only one proof.
-                    // Look at `get_blob_tuple_by_index` for reference.
-                    proof: proofs[0],
+                b.and_then(|(blob, _, proofs)| {
+                    // getBlobsV1 serves the single EIP-4844 blob proof. A v0 bundle yields
+                    // exactly one proof here (see `get_blob_tuple_by_index`); a v1 (EIP-7594)
+                    // sidecar yields 128 cell proofs per blob and can now reach a pre-Osaka
+                    // mempool. Cell proofs can't be represented as a single blob proof, so
+                    // report the blob as unavailable (the CL re-fetches it from gossip)
+                    // rather than returning a cell proof in the blob-proof field.
+                    (proofs.len() == 1).then(|| BlobAndProofV1 {
+                        blob: *blob,
+                        proof: proofs[0],
+                    })
                 })
             })
             .collect();
@@ -121,7 +127,7 @@ impl RpcHandler for BlobsV2Request {
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         debug!("Received new engine request: Requested Blobs V2");
-        let res = get_blobs_and_proof(&self.blob_versioned_hashes, context).await?;
+        let res = get_blobs_and_proof(&self.blob_versioned_hashes, context)?;
         if res.iter().any(|blob| blob.is_none()) {
             return Ok(Value::Null);
         }
@@ -144,13 +150,13 @@ impl RpcHandler for BlobsV3Request {
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         debug!("Received new engine request: Requested Blobs V3");
-        let res = get_blobs_and_proof(&self.blob_versioned_hashes, context).await?;
+        let res = get_blobs_and_proof(&self.blob_versioned_hashes, context)?;
         serde_json::to_value(res).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
 
 /// Get blob data and proofs for a given list of blob versioned hashes.
-async fn get_blobs_and_proof(
+fn get_blobs_and_proof(
     blob_versioned_hashes: &[H256],
     context: RpcApiContext,
 ) -> Result<Vec<Option<BlobAndProofV2>>, RpcErr> {
@@ -167,7 +173,7 @@ async fn get_blobs_and_proof(
     // (the spec likewise prescribes `null` while syncing).
     let head_is_osaka = match context
         .storage
-        .get_block_header(context.storage.get_latest_block_number().await?)?
+        .get_block_header(context.storage.get_latest_block_number()?)?
     {
         Some(current_block_header) => context
             .storage
@@ -228,6 +234,26 @@ mod tests {
             commitments,
             proofs,
             version: 1,
+        };
+        (bundle, hashes)
+    }
+
+    fn sample_v0_bundle(count: usize) -> (BlobsBundle, Vec<H256>) {
+        let blobs = vec![[1u8; BYTES_PER_BLOB]; count];
+        let commitments: Vec<Commitment> = (0..count).map(|i| [i as u8; 48]).collect();
+        // v0 (EIP-4844): exactly one blob proof per blob.
+        let proofs: Vec<Proof> = vec![[2u8; 48]; count];
+
+        let hashes = commitments
+            .iter()
+            .map(kzg_commitment_to_versioned_hash)
+            .collect();
+
+        let bundle = BlobsBundle {
+            blobs,
+            commitments,
+            proofs,
+            version: 0,
         };
         (bundle, hashes)
     }
@@ -324,9 +350,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn blobs_v1_returns_full_before_osaka() {
+    async fn blobs_v1_returns_v0_proof_before_osaka() {
         let context = context_with_chain_config(false).await;
-        let (bundle, hashes) = sample_bundle(1);
+        let (bundle, hashes) = sample_v0_bundle(1);
         context
             .blockchain
             .mempool
@@ -343,6 +369,28 @@ mod tests {
             proof: bundle.proofs[0],
         })])
         .unwrap();
+        assert_eq!(result, expected);
+    }
+
+    #[tokio::test]
+    async fn blobs_v1_returns_null_for_v1_sidecar_before_osaka() {
+        // A v1 (cell-proof) sidecar can reach a pre-Osaka mempool, but getBlobsV1 can only
+        // serve a single EIP-4844 blob proof, so it must report the blob as unavailable
+        // rather than returning a cell proof in the blob-proof field.
+        let context = context_with_chain_config(false).await;
+        let (bundle, hashes) = sample_bundle(1);
+        context
+            .blockchain
+            .mempool
+            .add_blobs_bundle(H256::from_low_u64_be(1), bundle)
+            .unwrap();
+
+        let request = BlobsV1Request {
+            blob_versioned_hashes: hashes,
+        };
+
+        let result = request.handle(context).await.unwrap();
+        let expected = serde_json::to_value(vec![None::<BlobAndProofV1>]).unwrap();
         assert_eq!(result, expected);
     }
 
