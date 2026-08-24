@@ -12,7 +12,7 @@ use crate::{
 use ethrex_blockchain::{Blockchain, vm::StoreVmDatabase};
 use ethrex_common::{
     H256, U256,
-    constants::GAS_PER_BLOB,
+    constants::{EMPTY_KECCAK_HASH, GAS_PER_BLOB},
     types::{AccessListEntry, BlockHash, BlockHeader, BlockNumber, GenericTransaction, TxKind},
 };
 
@@ -519,12 +519,24 @@ impl RpcHandler for EstimateGasRequest {
         };
 
         // If the transaction is a plain value transfer, short circuit estimation.
-        if let TxKind::Call(address) = transaction.to {
+        //
+        // A transfer is a call carrying no calldata to a recipient with no code, which is
+        // what geth checks (`len(call.Data) == 0 && GetCodeSize(to) == 0`), and reth and
+        // nethermind equivalently. Both halves matter: calldata to a code-less account is
+        // still 21000 plus its per-byte cost, and an empty call to a contract runs that
+        // contract's fallback.
+        if let TxKind::Call(address) = transaction.to
+            && transaction.input.is_empty()
+        {
             let account_info = storage
                 .get_account_info(block_header.number, address)
                 .await?;
-            let code = account_info.map(|info| storage.get_account_code(info.code_hash));
-            if code.is_none() {
+            // An account absent from state has no code either, so it takes this path too.
+            // Compared against the code hash rather than through `get_account_code`: the
+            // hash is already in hand, and the code itself is not needed to know it is
+            // empty.
+            let has_code = account_info.is_some_and(|info| info.code_hash != *EMPTY_KECCAK_HASH);
+            if !has_code {
                 let mut value_transfer_transaction = transaction.clone();
                 value_transfer_transaction.gas = Some(TRANSACTION_GAS);
                 let result: Result<ExecutionResult, RpcErr> = simulate_tx(
@@ -874,6 +886,14 @@ mod estimate_gas_fee_cap_tests {
     /// genesis block gas limit (1 gwei * 25M = 0.025 ETH).
     const SENDER_BALANCE: u64 = 10_000_000_000_000_000;
     const ONE_GWEI: &str = "0x3b9aca00";
+    /// Eight bytes of calldata, carried by every test that asserts on the recap.
+    ///
+    /// Without it the request is a plain transfer, which the short circuit above the recap
+    /// answers with `TRANSACTION_GAS` before the cap is ever computed — so the test would
+    /// pass whatever the recap does, which is the opposite of what it is for.
+    const CALLDATA: &str = "0x0102030405060708";
+    /// 21000 + eight non-zero bytes at the EIP-7623 floor.
+    const WITH_CALLDATA: &str = "0x5348";
 
     async fn setup_store_with_poor_sender() -> Store {
         let genesis: &str = include_str!("../../../../fixtures/genesis/l1.json");
@@ -918,12 +938,12 @@ mod estimate_gas_fee_cap_tests {
             "from": SENDER,
             "to": SENDER,
             "value": "0x1",
-            "input": "0x0102030405060708",
+            "input": CALLDATA,
             "maxFeePerGas": ONE_GWEI,
             "maxPriorityFeePerGas": "0x0",
         }))
         .await;
-        assert_eq!(result, Value::String("0x5348".to_string()));
+        assert_eq!(result, Value::String(WITH_CALLDATA.to_string()));
     }
 
     /// A call object may carry both fee fields — `GenericTransaction` has no conflict
@@ -938,11 +958,12 @@ mod estimate_gas_fee_cap_tests {
             "from": SENDER,
             "to": SENDER,
             "value": "0x1",
+            "input": CALLDATA,
             "gasPrice": "0x77359400",      // 2 gwei
             "maxFeePerGas": "0xb2d05e00",  // 3 gwei
         }))
         .await;
-        assert_eq!(result, Value::String("0x5208".to_string()));
+        assert_eq!(result, Value::String(WITH_CALLDATA.to_string()));
     }
 
     /// The legacy path keeps recapping by `gasPrice`, which is the only fee such a
@@ -953,10 +974,11 @@ mod estimate_gas_fee_cap_tests {
             "from": SENDER,
             "to": SENDER,
             "value": "0x1",
+            "input": CALLDATA,
             "gasPrice": ONE_GWEI,
         }))
         .await;
-        assert_eq!(result, Value::String("0x5208".to_string()));
+        assert_eq!(result, Value::String(WITH_CALLDATA.to_string()));
     }
 
     /// Blob gas is priced in its own market, and `validate_sufficient_balance` adds
@@ -970,7 +992,7 @@ mod estimate_gas_fee_cap_tests {
             "from": SENDER,
             "to": SENDER,
             "value": "0x1",
-            "input": "0x0102030405060708",
+            "input": CALLDATA,
             "maxFeePerGas": ONE_GWEI,
             "maxPriorityFeePerGas": "0x0",
             "maxFeePerBlobGas": "0xa7a358200",  // 45 gwei
@@ -979,7 +1001,7 @@ mod estimate_gas_fee_cap_tests {
             ],
         }))
         .await;
-        assert_eq!(result, Value::String("0x5348".to_string()));
+        assert_eq!(result, Value::String(WITH_CALLDATA.to_string()));
     }
 
     /// A call object with no blob fields must be unaffected: nothing is subtracted, so the
@@ -990,12 +1012,12 @@ mod estimate_gas_fee_cap_tests {
             "from": SENDER,
             "to": SENDER,
             "value": "0x1",
-            "input": "0x0102030405060708",
+            "input": CALLDATA,
             "maxFeePerGas": ONE_GWEI,
             "maxPriorityFeePerGas": "0x0",
         }))
         .await;
-        assert_eq!(result, Value::String("0x5348".to_string()));
+        assert_eq!(result, Value::String(WITH_CALLDATA.to_string()));
     }
 
     /// A request that states no fee at all asks not to be capped, and must not divide
@@ -1006,8 +1028,120 @@ mod estimate_gas_fee_cap_tests {
             "from": SENDER,
             "to": SENDER,
             "value": "0x1",
+            "input": CALLDATA,
         }))
         .await;
+        assert_eq!(result, Value::String(WITH_CALLDATA.to_string()));
+    }
+}
+
+/// The plain-transfer short circuit: which requests may skip estimation entirely.
+///
+/// Separate from `estimate_gas_fee_cap_tests` because it is a different subject — that
+/// module is about the balance the ceiling is capped against, this one about whether the
+/// ceiling is computed at all — and because these need only the stock genesis, with no
+/// balance staged on the sender.
+#[cfg(test)]
+mod plain_transfer_short_circuit_tests {
+    use crate::rpc::map_http_requests;
+    use crate::test_utils::default_context_with_storage;
+    use crate::utils::RpcRequest;
+    use ethrex_common::types::Genesis;
+    use ethrex_storage::{EngineType, Store};
+    use serde_json::{Value, json};
+
+    /// Funded EOA from fixtures/genesis/l1.json.
+    const SENDER: &str = "0x00000a8d3f37af8def18832962ee008d8dca4f7b";
+    /// Another genesis EOA: an account that exists and has no code, which is the case the
+    /// short circuit is for and the one the old condition missed.
+    const CODE_LESS_ACCOUNT: &str = "0x00002132ce94eefb06eb15898c1aabd94feb0ac2";
+    /// Absent from genesis entirely, so it has no code either.
+    const ABSENT_ACCOUNT: &str = "0x00000000000000000000000000000000deadbeef";
+    /// The beacon deposit contract from the l1 genesis, which reverts on an empty call.
+    const CONTRACT: &str = "0x00000000219ab540356cbb839cbe05303d7705fa";
+    const CALLDATA: &str = "0x0102030405060708";
+    /// 21000 + eight non-zero bytes at the EIP-7623 floor.
+    const WITH_CALLDATA: &str = "0x5348";
+
+    async fn stock_store() -> Store {
+        let genesis: &str = include_str!("../../../../fixtures/genesis/l1.json");
+        let genesis: Genesis =
+            serde_json::from_str(genesis).expect("Fatal: test config is invalid");
+        let mut store =
+            Store::new("test-store", EngineType::InMemory).expect("Fail to create in-memory db");
+        store.add_initial_state(genesis).await.unwrap();
+        store
+    }
+
+    async fn estimate(call_object: Value) -> Result<Value, crate::utils::RpcErr> {
+        let context = default_context_with_storage(stock_store().await).await;
+        let request: RpcRequest = serde_json::from_value(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "eth_estimateGas",
+            "params": [call_object, "latest"],
+        }))
+        .unwrap();
+        map_http_requests(&request, context).await
+    }
+
+    /// A transfer to an ordinary funded account is what the short circuit exists for, and
+    /// what it used to miss: the recipient exists, so the old `code.is_none()` was false
+    /// and every such request ran the binary search instead of answering at once.
+    #[tokio::test]
+    async fn a_transfer_to_a_code_less_account_short_circuits() {
+        let result = estimate(json!({
+            "from": SENDER,
+            "to": CODE_LESS_ACCOUNT,
+            "value": "0x1",
+        }))
+        .await
+        .unwrap();
         assert_eq!(result, Value::String("0x5208".to_string()));
+    }
+
+    /// An account absent from state has no code either, so it keeps taking the same path.
+    #[tokio::test]
+    async fn a_transfer_to_an_absent_account_short_circuits() {
+        let result = estimate(json!({
+            "from": SENDER,
+            "to": ABSENT_ACCOUNT,
+            "value": "0x1",
+        }))
+        .await
+        .unwrap();
+        assert_eq!(result, Value::String("0x5208".to_string()));
+    }
+
+    /// Calldata is not free, so a call carrying it is not a plain transfer however
+    /// code-less the recipient: 21000 would under-report by the per-byte cost.
+    #[tokio::test]
+    async fn calldata_is_not_a_plain_transfer() {
+        let result = estimate(json!({
+            "from": SENDER,
+            "to": ABSENT_ACCOUNT,
+            "value": "0x1",
+            "input": CALLDATA,
+        }))
+        .await
+        .unwrap();
+        assert_eq!(result, Value::String(WITH_CALLDATA.to_string()));
+    }
+
+    /// An empty call to a contract runs its fallback, which the short circuit must not
+    /// price at 21000. The deposit contract from the l1 genesis reverts on an empty call,
+    /// so the estimate is an error rather than a number.
+    #[tokio::test]
+    async fn an_empty_call_to_a_contract_is_not_a_plain_transfer() {
+        assert!(
+            estimate(json!({
+                "from": SENDER,
+                "to": CONTRACT,
+                "value": "0x0",
+            }))
+            .await
+            .is_err(),
+            "an empty call to the deposit contract must not be priced as a transfer"
+        );
     }
 }
