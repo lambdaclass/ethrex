@@ -26,7 +26,9 @@ use ethrex_p2p::{
 };
 use ethrex_rpc::clients::eth::EthClient;
 use ethrex_rpc::{SubscriptionManager, WebSocketConfig};
-use ethrex_storage::{HistoryPruner, Store, StoreConfig, error::StoreError};
+use ethrex_storage::{
+    HistoryPruner, Store, StoreConfig, error::StoreError, pruner::HistoryRetention,
+};
 use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
 use eyre::OptionExt;
 use secp256k1::SecretKey;
@@ -356,11 +358,23 @@ pub async fn init_l2(
 
     let cancel_token = tokio_util::sync::CancellationToken::new();
 
-    // History pruner — only when --history.retention is set. Shares
-    // `HistoryPruner`'s loop with L1 via `run_with_floor`, supplying the L2-only cap
-    // (the last block committed to L1) on every pass; uncommitted blocks are still
-    // needed by the committer and prover.
+    // History pruner — opt-in on L2, unlike L1 where an omitted flag resolves to the
+    // CL block-retention window. That window is the range a beacon chain must serve
+    // blocks over; no beacon chain serves an L2's blocks, so the default has no
+    // meaning here and inheriting it would delete history for a reason that does not
+    // apply. An L2 operator who wants pruning states a window explicitly.
+    //
+    // Shares `HistoryPruner`'s loop with L1 via `run_with_floor`, supplying the
+    // L2-only cap (the last block committed to L1) on every pass; uncommitted blocks
+    // are still needed by the committer and prover.
     if let Some(retention) = opts.node_opts.history_retention {
+        if retention == HistoryRetention::CL_WINDOW {
+            warn!(
+                "--history.retention=cl-window on an L2: the CL block-retention window is \
+                 defined by the beacon chain, which does not serve L2 blocks. Prefer an \
+                 explicit `<N>epochs` so the retained range is a deliberate choice"
+            );
+        }
         // Prefer the authoritative L1 source when this node is configured to talk to
         // L1. Both pieces are needed, so fall back if either is absent.
         let l1_source = match (
