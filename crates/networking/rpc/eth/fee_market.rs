@@ -100,6 +100,16 @@ impl RpcHandler for FeeHistoryRequest {
 
         let (start_block, end_block) =
             get_range(storage, self.block_count, &self.newest_block).await?;
+        // `get_range` clamps its two bounds independently: the finish is capped by the
+        // latest block, the start is raised to the earliest block we still hold. On a
+        // snap-synced node (earliest = pivot) a request whose window lies entirely
+        // below the pivot therefore yields start > end. The subtraction below would
+        // wrap, and `vec![0; huge]` aborts the process, so answer the empty history
+        // the caller is entitled to instead.
+        if start_block > end_block {
+            return serde_json::to_value(FeeHistoryResponse::default())
+                .map_err(|error| RpcErr::Internal(error.to_string()));
+        }
         let oldest_block = start_block;
         let block_count = (end_block - start_block + 1) as usize;
         let mut base_fee_per_gas = vec![0_u64; block_count + 1];

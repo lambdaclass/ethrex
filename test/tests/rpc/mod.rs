@@ -3,6 +3,7 @@ mod block_access_list_tests;
 mod client_version_tests;
 mod create_access_list_tests;
 mod estimate_gas_tests;
+mod fee_history_range_tests;
 mod fork_choice_tests;
 mod http_batch_tests;
 mod missing_rpc_methods_tests;
