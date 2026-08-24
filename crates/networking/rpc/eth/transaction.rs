@@ -44,6 +44,13 @@ pub struct GetTransactionByBlockNumberAndIndexRequest {
     pub transaction_index: usize,
 }
 
+/// `eth_getRawTransactionByBlockHashAndIndex` / `...ByBlockNumberAndIndex`.
+/// `BlockIdentifierOrHash` covers both spellings with one handler.
+pub struct GetRawTransactionByBlockAndIndex {
+    pub block: BlockIdentifierOrHash,
+    pub transaction_index: usize,
+}
+
 pub struct GetTransactionByBlockHashAndIndexRequest {
     pub block: BlockHash,
     pub transaction_index: usize,
@@ -383,6 +390,46 @@ impl RpcHandler for CreateAccessListRequest {
         };
 
         serde_json::to_value(result).map_err(|error| RpcErr::Internal(error.to_string()))
+    }
+}
+
+impl RpcHandler for GetRawTransactionByBlockAndIndex {
+    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let params = params
+            .as_ref()
+            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+        if params.len() != 2 {
+            return Err(RpcErr::BadParams(format!(
+                "Expected two params and {} were provided",
+                params.len()
+            )));
+        };
+        let index_as_string: String = serde_json::from_value(params[1].clone())?;
+        Ok(GetRawTransactionByBlockAndIndex {
+            block: BlockIdentifierOrHash::parse(params[0].clone(), 0)?,
+            transaction_index: usize::from_str_radix(index_as_string.trim_start_matches("0x"), 16)
+                .map_err(|error| RpcErr::BadParams(error.to_string()))?,
+        })
+    }
+
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        debug!(
+            "Requested raw transaction at index {} of block {}",
+            self.transaction_index, self.block
+        );
+        // An unknown block, or an index past the end of a known one, both yield
+        // `null` rather than an error — same as the decoded by-index getters.
+        let Some(block_number) = self.block.resolve_block_number(&context.storage).await? else {
+            return Ok(Value::Null);
+        };
+        let Some(block_body) = context.storage.get_block_body(block_number).await? else {
+            return Ok(Value::Null);
+        };
+        let Some(tx) = block_body.transactions.get(self.transaction_index) else {
+            return Ok(Value::Null);
+        };
+        serde_json::to_value(format!("0x{}", &hex::encode(tx.encode_to_vec())))
+            .map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
 

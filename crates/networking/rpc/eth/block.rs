@@ -47,6 +47,11 @@ pub struct GetRawReceipts {
     pub block: BlockIdentifier,
 }
 
+/// `eth_getUncleCountByBlockHash` / `eth_getUncleCountByBlockNumber`.
+pub struct GetUncleCountRequest {
+    pub block: BlockIdentifierOrHash,
+}
+
 pub struct BlockNumberRequest;
 pub struct GetBlobBaseFee;
 
@@ -146,6 +151,40 @@ impl RpcHandler for GetBlockTransactionCountRequest {
         let transaction_count = block_body.transactions.len();
 
         serde_json::to_value(format!("{transaction_count:#x}"))
+            .map_err(|error| RpcErr::Internal(error.to_string()))
+    }
+}
+
+impl RpcHandler for GetUncleCountRequest {
+    fn parse(params: &Option<Vec<Value>>) -> Result<GetUncleCountRequest, RpcErr> {
+        let params = params
+            .as_ref()
+            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+        if params.len() != 1 {
+            return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
+        };
+        Ok(GetUncleCountRequest {
+            block: BlockIdentifierOrHash::parse(params[0].clone(), 0)?,
+        })
+    }
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        debug!("Requested uncle count for block: {}", self.block);
+        // Post-merge every canonical block has an empty ommers list, so this is
+        // always `0x0` in practice. It is still derived from the stored body
+        // rather than hardcoded, so pre-merge history read from a synced archive
+        // answers truthfully. An unknown block yields `null`, matching the
+        // transaction-count getters and the other clients.
+        let block_number = match self.block.resolve_block_number(&context.storage).await? {
+            Some(block_number) => block_number,
+            _ => return Ok(Value::Null),
+        };
+        let block_body = match context.storage.get_block_body(block_number).await? {
+            Some(block_body) => block_body,
+            _ => return Ok(Value::Null),
+        };
+        let uncle_count = block_body.ommers.len();
+
+        serde_json::to_value(format!("{uncle_count:#x}"))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
