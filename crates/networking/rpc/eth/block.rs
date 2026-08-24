@@ -453,5 +453,27 @@ pub async fn get_all_block_receipts(
         return Ok(Vec::new());
     }
     let block_hash = header.hash();
-    Ok(storage.get_receipts_for_block(&block_hash).await?)
+    let receipts = storage.get_receipts_for_block(&block_hash).await?;
+    // `get_receipts_for_block` returns a bare Vec, so a block whose receipts are
+    // absent is indistinguishable from a block that genuinely has none. Returning
+    // the empty list would be a wrong answer rather than a reported failure, so
+    // check it against the block's own transaction count. This mirrors the
+    // mismatch check the by-index receipt path already performs.
+    let expected = match storage.get_block_body_by_hash(block_hash).await? {
+        Some(body) => body.transactions.len(),
+        // No body means the block's history is not retained; without it there is
+        // nothing to validate the receipt count against.
+        None => {
+            return Err(RpcErr::Internal(format!(
+                "Body unavailable for block {block_hash:#x}, cannot serve its receipts"
+            )));
+        }
+    };
+    if receipts.len() != expected {
+        return Err(RpcErr::Internal(format!(
+            "Expected {expected} receipts for block {block_hash:#x}, got {}",
+            receipts.len()
+        )));
+    }
+    Ok(receipts)
 }
