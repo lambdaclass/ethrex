@@ -1,5 +1,36 @@
 # Upgrades
 
+## Every release — register the new verification key
+
+Applies to any deployment that verifies real proofs (`--sp1 true` at deploy
+time), whether or not the release changes a contract.
+
+A batch is committed under `keccak(VERGEN_GIT_SHA)` of the binary that committed
+it, and the OnChainProposer reads
+`verificationKeys[commitHash][SP1_VERIFIER_ID]` when verifying. Your deployment
+only holds the key of the version that deployed it, so after upgrading the
+sequencer, its batches commit fine and then fail to verify:
+`lastCommittedBatch` keeps advancing while `lastVerifiedBatch` stands still.
+
+Register the new release's key before or right after swapping the binary:
+
+```solidity
+OnChainProposer.upgradeSP1VerificationKey(bytes32 commit_hash, bytes32 new_vk)
+```
+
+- `commit_hash` — `keccak256` of the ASCII git sha the new binary reports in
+  `ethrex --version` (the segment after `HEAD-`), not the release tag.
+- `new_vk` — the `ethrex-riscv32im-succinct-zkvm-vk-bn254` file from the new
+  release's `ethrex-contracts.tar.gz`, the same hex-text file the deployer takes
+  via `--sp1-vk-path`.
+
+The function is `onlyOwner` and that owner is the Timelock, so route it as
+Governance `schedule` + `execute`, or Security Council `emergencyExecute` to skip
+the delay. Use `upgradeRISC0VerificationKey` for a RISC0 deployment.
+
+Keys are per commit hash rather than per version, so the old key stays valid —
+which is what lets a rollback keep verifying.
+
 ## From v7 to v8
 
 ### Database migration (local node)

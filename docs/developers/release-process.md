@@ -96,7 +96,7 @@ Before publishing the release, run through the following checks using the pre-re
 - [ ] Upgrade `ethrex-teku`
 - [ ] Upgrade `ethrex-grandine`
 - [ ] Launch multisync on `ethrex-multisync-main`
-- [ ] Upgrade a local L2 created with the previous version and run the integration tests
+- [ ] Upgrade an L2 created with the previous version and run the integration tests, on the GPU server (`l2-gpu`) with the SP1 prover
 - [ ] Run the L2 integration tests with a SP1 prover on the GPU server (`l2-gpu`)
 
 The commands for each target follow. The host roster changes between releases — fill in the ones you run and leave the placeholders for the rest. Replace `vX.Y.Z-rc.W` / `release/vX.Y.Z` with the version under test.
@@ -155,13 +155,28 @@ tmux new-session -d -s sync "make multisync-loop-auto MULTISYNC_BRANCH=release/v
 
 Check progress later with `tmux attach -t sync` (detach with `Ctrl-b` then `d`).
 
-#### Local L2 upgrade + integration tests
+#### L2 upgrade + integration tests (`l2-gpu`)
 
 See [Upgrade test](l2/upgrade-test.md) for the full procedure.
+
+Run it on `l2-gpu` with `--backend sp1`, not locally with `--backend exec`. The
+`exec` backend produces no proof, so it never consults a verification key — and
+the verification key is exactly what an upgrade changes. Batches are committed
+under `keccak(VERGEN_GIT_SHA)`, baked into the binary at build time, and the
+OnChainProposer looks the key up by that hash, so a new release's batches are
+unverifiable until its key is registered. Under `exec` that whole class of
+upgrade failure is invisible.
+
+Both L2 checks share the ports and datadirs on `l2-gpu`, so run them one after
+the other, not concurrently.
 
 #### L2 integration tests with a SP1 prover (`l2-gpu`)
 
 See [L2 integration tests with a SP1 GPU prover](l2/sp1-gpu-integration-test.md) for the full procedure.
+
+This one deploys the new version from scratch; the upgrade test above covers the
+path from the previous release. Keep both: a release can deploy cleanly and still
+fail to upgrade, and the reverse.
 
 ### Publish
 

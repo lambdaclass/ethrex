@@ -5,6 +5,7 @@ This is a per-release acceptance test. The goal is to verify that:
 1. A node running the **previous release** (`<VERSION_FROM>`) can be cleanly stopped.
 2. The L1 contracts can be upgraded following the per-release migration guide.
 3. The **new release** (`<VERSION_TO>`) sequencer and prover resume operation against the upgraded contracts without re-deploying from scratch.
+4. Batches produced by `<VERSION_FROM>` and committed by `<VERSION_TO>` are **proved and verified on L1** under the new release's verification key.
 
 The commands below are ready to copy-paste. The only thing you need to substitute is the version tags. Every other value (private keys, addresses, ports, fee parameters) is taken from the defaults in `crates/l2/Makefile`; feel free to override them, but the values below give you a working baseline.
 
@@ -15,13 +16,25 @@ Replace these once at the top of your shell session:
 ```bash
 export VERSION_FROM=<previous release tag, e.g. v11.0.0>
 export VERSION_TO=<new release tag, e.g. v12.0.0-rc.2>
-export ARCH=linux-x86_64       # or linux-aarch64, macos-aarch64
+export ARCH=linux-x86_64
 export WORK=$HOME/upgrade-test  # workspace
 mkdir -p "$WORK"
 ```
 
+> [!IMPORTANT]
+> Run this on the GPU server (`l2-gpu`) with the **SP1** prover, not locally with
+> `--backend exec`. The `exec` backend produces no proof, so it never consults a
+> verification key — and the verification key is the thing an upgrade changes.
+> Batches are committed under `keccak(VERGEN_GIT_SHA)`, baked into the binary at
+> build time, and `OnChainProposer.verificationKeys[commitHash][SP1_VERIFIER_ID]`
+> is read at verification, so `$VERSION_TO`'s batches cannot be verified until
+> its key is registered ([Step 3.6](#36-register-the-version_to-verification-key)).
+> Under `exec` that failure is invisible: the test passes and the real upgrade
+> stalls at the first batch.
+
 ## Prerequisites
 
+- A CUDA-capable GPU (this is why it runs on `l2-gpu`), and the `ethrex-l2-$ARCH-gpu` release asset
 - [`rex`](https://github.com/lambdaclass/rex) on `$PATH` (used to call `upgradeToAndCall` and read contract state)
 - `curl`, `jq`
 - `git` (to fetch genesis / fixture files for each version)
@@ -71,16 +84,26 @@ cd "$WORK"
 git clone --branch "$VERSION_FROM" --depth 1 https://github.com/lambdaclass/ethrex.git "ethrex-$VERSION_FROM"
 git clone --branch "$VERSION_TO"   --depth 1 https://github.com/lambdaclass/ethrex.git "ethrex-$VERSION_TO"
 
-# Binaries
-curl -L "https://github.com/lambdaclass/ethrex/releases/download/$VERSION_FROM/ethrex-l2-$ARCH" -o "ethrex-$VERSION_FROM/ethrex"
-curl -L "https://github.com/lambdaclass/ethrex/releases/download/$VERSION_TO/ethrex-l2-$ARCH"   -o "ethrex-$VERSION_TO/ethrex"
-chmod +x "ethrex-$VERSION_FROM/ethrex" "ethrex-$VERSION_TO/ethrex"
+# Binaries. The `-gpu` asset is the one that can prove with SP1 on a GPU.
+# Remove before downloading: curl-ing over a binary that is currently running
+# reuses the inode and gets the live process killed.
+for V in "$VERSION_FROM" "$VERSION_TO"; do
+  rm -f "ethrex-$V/ethrex"
+  curl -fL "https://github.com/lambdaclass/ethrex/releases/download/$V/ethrex-l2-$ARCH-gpu" -o "ethrex-$V/ethrex"
+  chmod +x "ethrex-$V/ethrex"
+  "ethrex-$V/ethrex" --version
+done
 
-"ethrex-$VERSION_FROM/ethrex" --version
-"ethrex-$VERSION_TO/ethrex"   --version
+# Verification keys ship in each release's contracts tarball; both versions'
+# keys are needed — VERSION_FROM's to deploy, VERSION_TO's for Step 3.6.
+for V in "$VERSION_FROM" "$VERSION_TO"; do
+  mkdir -p "contracts-$V"
+  curl -fL "https://github.com/lambdaclass/ethrex/releases/download/$V/ethrex-contracts.tar.gz" \
+    | tar xz -C "contracts-$V"
+done
 ```
 
-> Use the `ethrex-l2-*` asset (the plain `ethrex-*` asset is an L1-only build and does not have the `l2` subcommand).
+> Use an `ethrex-l2-*` asset (the plain `ethrex-*` asset is an L1-only build and does not have the `l2` subcommand), and specifically the `-gpu` variant — the others carry no CUDA support, so `--backend sp1` falls back to CPU proving and a batch takes long enough to look like a hang.
 
 ### 0.1 Save the `$VERSION_FROM` L2 genesis
 
@@ -125,12 +148,20 @@ COMPILE_CONTRACTS=true ./ethrex l2 deploy \
   --on-chain-proposer-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
   --bridge-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
   --bridge-owner-pk 0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e \
+  --sp1 true \
+  --sp1-vk-path "$WORK/contracts-$VERSION_FROM/ethrex-riscv32im-succinct-zkvm-vk-bn254" \
   --deposit-rich \
   --private-keys-file-path fixtures/keys/private_keys_l1.txt \
   --genesis-l1-path fixtures/genesis/l1.json \
   --genesis-l2-path fixtures/genesis/l2.json \
   --env-file-path cmd/.env
 ```
+
+`--sp1 true` is what makes the OnChainProposer require a real proof, and
+`--sp1-vk-path` registers `$VERSION_FROM`'s verification key against
+`$VERSION_FROM`'s commit hash. Both matter: without them the deployment accepts
+anything and [Step 3.6](#36-register-the-version_to-verification-key) has nothing
+to prove.
 
 After this finishes, capture the addresses we'll need later:
 
@@ -176,7 +207,7 @@ set -a; source cmd/.env; set +a
 cd "$WORK/ethrex-$VERSION_FROM"
 ./ethrex l2 prover \
   --proof-coordinators tcp://127.0.0.1:3900 \
-  --backend exec
+  --backend sp1
 ```
 
 ### 1.5 Confirm the stack is healthy
@@ -405,6 +436,40 @@ rex send "$ETHREX_WATCHER_BRIDGE_ADDRESS" 'setL2GasLimit(uint256)' <NEW_GAS_LIMI
   --rpc-url http://localhost:8545
 ```
 
+### 3.6 Register the `$VERSION_TO` verification key
+
+Required on every release bump, not just the ones that change contracts.
+
+Each committed batch carries `keccak(VERGEN_GIT_SHA)` of the binary that
+committed it, and the OnChainProposer reads
+`verificationKeys[commitHash][SP1_VERIFIER_ID]` when verifying. The
+`$VERSION_FROM` deployer registered only `$VERSION_FROM`'s key, so
+`$VERSION_TO`'s batches are unverifiable until its key is registered:
+`lastCommittedBatch` keeps advancing while `lastVerifiedBatch` stops.
+
+Both arguments come from the release you are upgrading to:
+
+```bash
+# The hashed value is the ASCII sha the binary reports, not the tag.
+TO_SHA=$("$WORK/ethrex-$VERSION_TO/ethrex" --version | sed 's|.*HEAD-||; s|/.*||')
+TO_COMMIT_HASH=$(cast keccak "$TO_SHA")
+
+# The vk is the same hex-text file the deployer takes via --sp1-vk-path,
+# from $VERSION_TO's ethrex-contracts.tar.gz.
+TO_VK=0x$(tr -d '\n' < ethrex-riscv32im-succinct-zkvm-vk-bn254 | sed 's/^0x//')
+```
+
+The call itself is:
+
+```solidity
+OnChainProposer.upgradeSP1VerificationKey(bytes32 commit_hash, bytes32 new_vk)
+```
+
+`upgradeSP1VerificationKey` is `onlyOwner` and that owner is the Timelock, so it
+routes like any other privileged call: Governance `schedule` + `execute` after
+the delay, or Security Council `emergencyExecute` to skip it. See
+[Timelock](../../l2/fundamentals/timelock.md).
+
 ---
 
 ## Step 4 — Run the `$VERSION_TO` stack
@@ -447,7 +512,7 @@ Note:
 
 ```bash
 cd "$WORK/ethrex-$VERSION_TO"
-./ethrex l2 prover --proof-coordinators tcp://127.0.0.1:3900 --backend exec
+./ethrex l2 prover --proof-coordinators tcp://127.0.0.1:3900 --backend sp1
 ```
 
 ---
