@@ -1469,7 +1469,8 @@ fn parse_history_retention(s: &str) -> Result<HistoryRetention, String> {
         return Ok(HistoryRetention::Epochs(epochs));
     }
     Err(format!(
-        "invalid history retention `{s}`: expected `cl-window`, `all`, or `<N>epochs`"
+        "invalid history retention `{s}`: expected `cl-window`, `all`, `<N>epochs`, \
+         or a wall-clock window such as `30d`, `12h` or `90m`"
     ))
 }
 
