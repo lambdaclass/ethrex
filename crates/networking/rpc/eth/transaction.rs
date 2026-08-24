@@ -547,33 +547,29 @@ impl RpcHandler for EstimateGasRequest {
         };
 
         // The cap has to be computed against the same fee the balance check will be
-        // measured against. `default_hook` requires `tx_max_fee_per_gas * gas_limit`,
-        // falling back to `gas_price` only when the former is absent, so recapping by
-        // `gas_price` alone leaves a 1559 request — where the legacy field is absent and
-        // deserializes to zero — uncapped at the block gas limit, and the simulation then
-        // fails `InsufficientAccountFunds` for any sender that cannot afford the whole
-        // block's gas at its fee cap.
-        let fee_cap = if transaction.gas_price.is_zero() {
-            transaction
-                .max_fee_per_gas
-                .map(U256::from)
-                .unwrap_or_default()
-        } else {
-            transaction.gas_price
-        };
+        // measured against, and by the same rule: `default_hook` requires
+        // `tx_max_fee_per_gas * gas_limit`, falling back to `gas_price` only when the
+        // former is absent. Recapping by `gas_price` alone left a 1559 request — where the
+        // legacy field is absent and deserializes to zero — uncapped at the block gas
+        // limit, and the simulation then failed `InsufficientAccountFunds` for any sender
+        // that could not afford the whole block's gas at its fee cap. Written as the same
+        // expression rather than an equivalent one, so the two sites cannot drift: a call
+        // object setting both fields (which `GenericTransaction` accepts, and which
+        // `calculate_gas_price_for_generic` resolves legacy-first) would otherwise cap
+        // against one fee and be checked against the other.
+        let fee_cap = transaction
+            .max_fee_per_gas
+            .map(U256::from)
+            .unwrap_or(transaction.gas_price);
 
-        // Zero means no fee was specified at all, which is the caller asking not to be
-        // capped; it also guards the division below.
-        if !fee_cap.is_zero() {
-            highest_gas_limit = recap_with_account_balances(
-                highest_gas_limit,
-                &transaction,
-                fee_cap,
-                storage,
-                block_header.number,
-            )
-            .await?;
-        }
+        highest_gas_limit = recap_with_account_balances(
+            highest_gas_limit,
+            &transaction,
+            fee_cap,
+            storage,
+            block_header.number,
+        )
+        .await?;
 
         // Check whether the execution is possible
         let mut transaction = transaction.clone();
@@ -649,8 +645,13 @@ impl RpcHandler for EstimateGasRequest {
 
 /// Caps the estimation ceiling at the gas the sender can actually pay for.
 ///
-/// `fee_cap` must be the per-gas price the transaction's balance check uses: the legacy
-/// `gas_price` when it is set, otherwise `max_fee_per_gas`. It must be non-zero.
+/// `fee_cap` is the per-gas price the transaction's balance check uses: `max_fee_per_gas`
+/// when the call object carries one, otherwise the legacy `gas_price`.
+///
+/// A zero `fee_cap` is a request that names no fee at all, or names a fee of zero, and in
+/// both cases no balance bounds the gas: the ceiling is returned unchanged. Checked here
+/// rather than at the call site so no caller can reach the division with a zero divisor,
+/// which is the same split this function's `fee_cap` argument exists to close.
 async fn recap_with_account_balances(
     highest_gas_limit: u64,
     transaction: &GenericTransaction,
@@ -658,6 +659,9 @@ async fn recap_with_account_balances(
     storage: &Store,
     block_number: BlockNumber,
 ) -> Result<u64, RpcErr> {
+    if fee_cap.is_zero() {
+        return Ok(highest_gas_limit);
+    }
     let account_balance = storage
         .get_account_info(block_number, transaction.from)
         .await?
@@ -876,12 +880,35 @@ mod estimate_gas_fee_cap_tests {
     /// block's worth of gas at its own fee cap.
     #[tokio::test]
     async fn estimate_gas_recaps_a_1559_request_by_its_max_fee_per_gas() {
+        // Calldata so the plain-transfer short circuit above the recap cannot answer this
+        // request: it returns TRANSACTION_GAS without ever reaching the cap, which would
+        // make the test pass for a reason unrelated to what it is asserting.
         let result = run_estimate_gas(json!({
             "from": SENDER,
             "to": SENDER,
             "value": "0x1",
+            "input": "0x0102030405060708",
             "maxFeePerGas": ONE_GWEI,
             "maxPriorityFeePerGas": "0x0",
+        }))
+        .await;
+        assert_eq!(result, Value::String("0x5348".to_string()));
+    }
+
+    /// A call object may carry both fee fields — `GenericTransaction` has no conflict
+    /// check, and `calculate_gas_price_for_generic` resolves `env.gas_price` legacy-first
+    /// while `env.tx_max_fee_per_gas` comes straight from `maxFeePerGas`, so the two can
+    /// hold different numbers. The balance check reads the max fee, so the recap must too:
+    /// capping against 2 gwei while the check demands 3 gwei would leave a ceiling the
+    /// sender cannot afford, which is this PR's bug in a second guise.
+    #[tokio::test]
+    async fn estimate_gas_recaps_by_the_max_fee_when_both_fees_are_set() {
+        let result = run_estimate_gas(json!({
+            "from": SENDER,
+            "to": SENDER,
+            "value": "0x1",
+            "gasPrice": "0x77359400",      // 2 gwei
+            "maxFeePerGas": "0xb2d05e00",  // 3 gwei
         }))
         .await;
         assert_eq!(result, Value::String("0x5208".to_string()));
