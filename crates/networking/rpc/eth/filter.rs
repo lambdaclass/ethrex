@@ -157,7 +157,7 @@ impl NewBlockFilterRequest {
     ) -> Result<serde_json::Value, crate::utils::RpcErr> {
         // Anchor at the current head so the first poll reports only blocks that
         // arrive after registration, matching the log filters and other clients.
-        let last_block_number = storage.get_latest_block_number().await?;
+        let last_block_number = storage.get_latest_block_number()?;
         let id: u64 = rand::random();
         let mut active_filters_guard = filters.lock().unwrap_or_else(|mut poisoned_guard| {
             error!("THREAD CRASHED WITH MUTEX TAKEN; SYSTEM MIGHT BE UNSTABLE");
