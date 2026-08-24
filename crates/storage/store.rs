@@ -7744,7 +7744,7 @@ mod backfill_write_tests {
     #[tokio::test]
     async fn writes_data_indexes_txs_and_lowers_frontier() {
         let store = Store::new("", EngineType::InMemory).expect("in-memory store");
-        store.update_earliest_block_number(100).await.unwrap();
+        store.set_earliest_block_number(100).await.unwrap();
 
         let header = test_header(99);
         let hash = header.hash();
@@ -7806,7 +7806,7 @@ mod backfill_write_tests {
     #[tokio::test]
     async fn skips_tx_index_when_disabled() {
         let store = Store::new("", EngineType::InMemory).expect("in-memory store");
-        store.update_earliest_block_number(100).await.unwrap();
+        store.set_earliest_block_number(100).await.unwrap();
 
         let header = test_header(99);
         let hash = header.hash();
@@ -7860,7 +7860,7 @@ mod backfill_write_tests {
     #[tokio::test]
     async fn historical_getters_transition_from_null_to_present() {
         let store = Store::new("", EngineType::InMemory).expect("in-memory store");
-        store.update_earliest_block_number(100).await.unwrap();
+        store.set_earliest_block_number(100).await.unwrap();
 
         let header = test_header(99);
         let hash = header.hash();
@@ -7933,7 +7933,7 @@ mod backfill_write_tests {
     #[tokio::test]
     async fn resume_fills_contiguously_without_gaps() {
         let store = Store::new("", EngineType::InMemory).expect("in-memory store");
-        store.update_earliest_block_number(100).await.unwrap();
+        store.set_earliest_block_number(100).await.unwrap();
 
         let make_batch = |range: std::ops::Range<u64>| -> Vec<BackfilledBlock> {
             range
