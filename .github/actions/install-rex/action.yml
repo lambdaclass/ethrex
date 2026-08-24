@@ -1,0 +1,25 @@
+name: "Install rex"
+description: "Install the rex CLI from a GitHub release"
+
+inputs:
+  version:
+    description: "rex release tag"
+    required: false
+    default: "v8.0.0"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install rex
+      shell: bash
+      env:
+        REX_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        # Download via the shared helper (retries, and fails instead of writing
+        # an HTTP error page to disk: a 503 page installed as the rex binary only
+        # surfaces later as an unrelated-looking "cannot execute" error).
+        "$GITHUB_WORKSPACE/.github/scripts/download.sh" \
+          "https://github.com/lambdaclass/rex/releases/download/${REX_VERSION}/rex-linux-x86_64" \
+          "$RUNNER_TEMP/rex"
+        sudo install -m 755 "$RUNNER_TEMP/rex" /usr/local/bin/rex

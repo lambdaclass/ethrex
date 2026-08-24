@@ -36,6 +36,7 @@ use crate::snap::{
     },
     request_account_range, request_bytecodes, request_storage_ranges,
 };
+use crate::sync::backfill::reconcile_frontier;
 use crate::sync::code_collector::CodeHashCollector;
 use crate::sync::healing::{heal_state_trie_wrap, heal_storage_trie};
 use crate::utils::{
@@ -233,7 +234,7 @@ pub async fn sync_cycle_snap(
         current_head_number = last_block_number;
 
         // If the sync head is not 0 we search to fullsync
-        let head_found = sync_head_found && store.get_latest_block_number().await? > 0;
+        let head_found = sync_head_found && store.get_latest_block_number()? > 0;
         // Or the head is very close to 0. A pre-check in `sync.rs::sync_cycle`
         // also gates on `< MIN_FULL_BLOCKS`; keep both — this one stays as a
         // safety net for callers that enter `sync_cycle_snap` directly.
@@ -288,7 +289,7 @@ pub async fn sync_cycle_snap(
     // `block_sync_state.block_hashes` — the latter can be empty when the
     // header fetch loop returned a single-header batch and never invoked
     // `process_incoming_headers`.
-    let pivot_number = store.get_latest_block_number().await?;
+    let pivot_number = store.get_latest_block_number()?;
     store.advance_earliest_block_number(pivot_number).await?;
 
     store.clear_snap_state().await?;
@@ -667,6 +668,19 @@ pub async fn snap_sync(
             None,
             None,
         )
+        .await?;
+
+    // Snap sync stores bodies only from the pivot onward; every block below the
+    // pivot is headers-only. Record the true frontier — the lowest block with a
+    // stored body — so RPC (`earliest` tag, feeHistory) reflects what is
+    // actually available instead of genesis. Historical backfill, when enabled,
+    // lowers this frontier further as it fills bodies/receipts downward.
+    // Recomputing rather than writing the pivot keeps the value a lower bound:
+    // a later snap cycle must not push the frontier above blocks that already
+    // have bodies (e.g. backfilled ones), and a fresh node must not keep the
+    // genesis-init placeholder (0) that `min` with the pivot would preserve.
+    store
+        .set_earliest_block_number(reconcile_frontier(store).await?)
         .await?;
     Ok(())
 }

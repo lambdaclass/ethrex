@@ -210,7 +210,7 @@ impl HistoryPruner {
         // bodies on restart, so pruning inside that window bricks the node and
         // pruning the head's body stalls block production. If the chain is
         // shorter than `keep_recent`, there is nothing safe to prune yet.
-        let head = match self.store.get_latest_block_number().await {
+        let head = match self.store.get_latest_block_number() {
             Ok(n) => n,
             Err(StoreError::MissingLatestBlockNumber) => return Ok(0),
             Err(e) => return Err(e),

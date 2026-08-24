@@ -1,0 +1,27 @@
+[workspace]
+
+[package]
+version = "23.0.0"
+name = "stateless-validator-ethrex-sp1"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+ere-platform-sp1 = { git = "https://github.com/eth-act/ere", rev = "a25f1aed9664c3b63e73ef05360090a4c41da31b" }
+
+ethrex-stateless-validator = { path = "../..", features = ["ere", "sp1"] }
+
+# FIXME: Remove the patch once https://github.com/succinctlabs/sp1/pull/2865 is merged and released.
+# (Mirrors the ere-guests sp1 bin: the fork exports the zkvm-standards IO symbols.)
+[patch.crates-io]
+sp1-lib = { git = "https://github.com/han0110/sp1", rev = "8564a70ea1952826fc0926eba5a3ce62af53ffac" }
+
+[patch."https://github.com/succinctlabs/sp1.git"]
+sp1-lib = { git = "https://github.com/han0110/sp1", rev = "8564a70ea1952826fc0926eba5a3ce62af53ffac" }
+sp1-primitives = { git = "https://github.com/han0110/sp1", rev = "8564a70ea1952826fc0926eba5a3ce62af53ffac" }
+sp1-zkvm = { git = "https://github.com/han0110/sp1", rev = "8564a70ea1952826fc0926eba5a3ce62af53ffac" }
+sp1-libzkevm = { git = "https://github.com/han0110/sp1", rev = "8564a70ea1952826fc0926eba5a3ce62af53ffac", package = "libzkevm" }
+
+[profile.release]
+codegen-units = 1
+lto = "fat"

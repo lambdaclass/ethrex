@@ -48,6 +48,11 @@ pub struct GetRawReceipts {
     pub block: BlockIdentifier,
 }
 
+/// `eth_getUncleCountByBlockHash` / `eth_getUncleCountByBlockNumber`.
+pub struct GetUncleCountRequest {
+    pub block: BlockIdentifierOrHash,
+}
+
 pub struct BlockNumberRequest;
 pub struct GetBlobBaseFee;
 
@@ -150,6 +155,40 @@ impl RpcHandler for GetBlockTransactionCountRequest {
         let transaction_count = block_body.transactions.len();
 
         serde_json::to_value(format!("{transaction_count:#x}"))
+            .map_err(|error| RpcErr::Internal(error.to_string()))
+    }
+}
+
+impl RpcHandler for GetUncleCountRequest {
+    fn parse(params: &Option<Vec<Value>>) -> Result<GetUncleCountRequest, RpcErr> {
+        let params = params
+            .as_ref()
+            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+        if params.len() != 1 {
+            return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
+        };
+        Ok(GetUncleCountRequest {
+            block: BlockIdentifierOrHash::parse(params[0].clone(), 0)?,
+        })
+    }
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        debug!("Requested uncle count for block: {}", self.block);
+        // Post-merge every canonical block has an empty ommers list, so this is
+        // always `0x0` in practice. It is still derived from the stored body
+        // rather than hardcoded, so pre-merge history read from a synced archive
+        // answers truthfully. An unknown block yields `null`, matching the
+        // transaction-count getters and the other clients.
+        let block_number = match self.block.resolve_block_number(&context.storage).await? {
+            Some(block_number) => block_number,
+            _ => return Ok(Value::Null),
+        };
+        let block_body = match context.storage.get_block_body(block_number).await? {
+            Some(block_body) => block_body,
+            _ => return Ok(Value::Null),
+        };
+        let uncle_count = block_body.ommers.len();
+
+        serde_json::to_value(format!("{uncle_count:#x}"))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -311,11 +350,8 @@ impl RpcHandler for BlockNumberRequest {
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         debug!("Requested latest block number");
-        serde_json::to_value(format!(
-            "{:#x}",
-            context.storage.get_latest_block_number().await?
-        ))
-        .map_err(|error| RpcErr::Internal(error.to_string()))
+        serde_json::to_value(format!("{:#x}", context.storage.get_latest_block_number()?))
+            .map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
 
@@ -326,7 +362,7 @@ impl RpcHandler for GetBlobBaseFee {
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         debug!("Requested blob gas price");
-        let block_number = context.storage.get_latest_block_number().await?;
+        let block_number = context.storage.get_latest_block_number()?;
         let header = match context.storage.get_block_header(block_number)? {
             Some(header) => header,
             _ => return Err(RpcErr::Internal("Could not get block header".to_owned())),
@@ -377,6 +413,7 @@ pub async fn get_all_block_rpc_receipts(
         .map_err(|_| RpcErr::Internal("blob_base_fee does not fit in u64".to_owned()))?;
     // Fetch receipt info from block
     let block_hash = header.hash();
+    let block_timestamp = header.timestamp;
     let block_info = RpcReceiptBlockInfo::from_block_header(header);
     // Fetch receipts: only up to target_index+1 when set, otherwise all
     let fetch_count = target_index
@@ -416,6 +453,7 @@ pub async fn get_all_block_rpc_receipts(
             tx_info,
             block_info.clone(),
             current_log_index,
+            block_timestamp,
         );
         last_cumulative_gas_used += gas_used;
         current_log_index += receipt.logs.len() as u64;

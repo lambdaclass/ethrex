@@ -55,7 +55,7 @@ pub mod vm;
 use ::tracing::{error, info, instrument, warn};
 // Every `debug!` call site lives in the rayon warmer path, so the import is
 // unused in any configuration that compiles that path out.
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 use ::tracing::debug;
 use constants::{AMSTERDAM_MAX_INITCODE_SIZE, MAX_INITCODE_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
 use error::MempoolError;
@@ -97,10 +97,10 @@ use ethrex_storage::{
 };
 use ethrex_trie::node::{BranchNode, ExtensionNode, LeafNode};
 use ethrex_trie::{Nibbles, Node, NodeRef, Trie, TrieError, TrieLogger, TrieNode};
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 use ethrex_vm::backends::BLOATED_BATCH_THRESHOLD;
 use ethrex_vm::backends::CachingDatabase;
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 use ethrex_vm::backends::levm::LEVM;
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError, VmDatabase};
@@ -140,7 +140,7 @@ const MAX_MEMPOOL_SIZE_DEFAULT: usize = 10_000;
 pub const DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD: u8 = 90;
 
 /// Merkle write set for the trie-node prefetch: written storage slots and changed accounts.
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 type TriePrefetchInput = (Vec<(Address, H256)>, Vec<Address>);
 
 /// Background thread for dropping large tree structures off the critical path.
@@ -302,6 +302,10 @@ impl Drop for ReorgGuard<'_> {
     }
 }
 
+/// Default min-tip floor (wei). Matches geth's mempool `PriceLimit = 1 wei`.
+/// Effectively just rejects zero-tip transactions at admission.
+pub const DEFAULT_MIN_TIP_WEI: u64 = 1;
+
 /// Configuration options for the blockchain.
 #[derive(Debug, Clone)]
 pub struct BlockchainOptions {
@@ -327,6 +331,12 @@ pub struct BlockchainOptions {
     /// warmer thread and the executor. Set to false (via `--no-precompile-cache`) to
     /// disable the cache for benchmarking purposes.
     pub precompile_cache_enabled: bool,
+    /// Minimum priority-fee *cap* (in wei) required for a transaction to be
+    /// admitted into the mempool. Compared against the raw tip cap
+    /// (`max_priority_fee_per_gas` for typed txs, `gas_price` for legacy), NOT
+    /// the base-fee-dependent effective tip — matching geth's `PriceLimit`
+    /// check on `tx.GasTipCap()`. Set to 0 to disable the floor.
+    pub min_tip_wei: u64,
     /// Minimum fee-field bump (in percent) required to replace a non-blob
     /// transaction at the same `(sender, nonce)`. Matches the 10%
     /// default of every peer EL client.
@@ -379,6 +389,7 @@ impl Default for BlockchainOptions {
             precompute_witnesses: false,
             private_mempool: false,
             precompile_cache_enabled: true,
+            min_tip_wei: DEFAULT_MIN_TIP_WEI,
             price_bump_percent: DEFAULT_PRICE_BUMP_PERCENT,
             blob_price_bump_percent: DEFAULT_BLOB_PRICE_BUMP_PERCENT,
             max_queued_txs_per_account: DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT,
@@ -533,14 +544,26 @@ impl Blockchain {
         }
     }
 
+    /// Test-permissive `Blockchain` constructor. Mirrors `BlockchainOptions::default`
+    /// but disables admission-policy gates (e.g. the min-tip floor) so that
+    /// unrelated tests don't need to set every mempool option explicitly.
+    ///
+    /// **Do not use in production.** Despite the name, this is not a "sensible
+    /// default" constructor: it deliberately weakens mempool admission. Node
+    /// startup builds its `BlockchainOptions` from the CLI instead (see
+    /// `cmd/ethrex/initializers.rs`). Every current caller is a test harness.
     pub fn default_with_store(store: Store) -> Self {
+        let options = BlockchainOptions {
+            min_tip_wei: 0,
+            ..BlockchainOptions::default()
+        };
         Self {
             storage: store,
             mempool: Mempool::new(MAX_MEMPOOL_SIZE_DEFAULT),
             is_synced: AtomicBool::new(false),
             reorg_in_progress: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
-            options: BlockchainOptions::default(),
+            options,
             merkle_pool: Self::build_merkle_pool(),
             prewarmed: PrewarmedCache::default(),
         }
@@ -804,7 +827,7 @@ impl Blockchain {
         // be recorded as state accesses the canonical execution never makes,
         // polluting the witness (e.g. `engine_newPayloadWithWitnessV5`), so
         // warming is skipped entirely when a witness is being collected.
-        #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+        #[cfg(feature = "rayon")]
         if self.options.bal_prefetch_enabled
             && !collect_witness
             && let Some(bal_ref) = bal.as_ref()
@@ -831,7 +854,7 @@ impl Blockchain {
         // `prefetch_trie_nodes` reads the trie-node CFs directly via
         // `backend.begin_read()`, bypassing the witness-recording caching layer, so
         // it cannot pollute the witness.
-        #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+        #[cfg(feature = "rayon")]
         let trie_prefetch_input: Option<TriePrefetchInput> = if self.options.bal_prefetch_enabled
             && let Some(updates) = optimistic_updates.as_ref()
         {
@@ -852,17 +875,17 @@ impl Blockchain {
         };
 
         // Each thread that captures `bal` needs its own Arc clone (cheap pointer bump).
-        #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+        #[cfg(feature = "rayon")]
         let bal_warmer = bal.clone();
 
         let (execution_result, merkleization_result, warmer_duration) = std::thread::scope(
             |s| -> Result<_, ChainError> {
-                #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+                #[cfg(feature = "rayon")]
                 let vm_type = vm.vm_type;
                 let cancelled_ref = &cancelled;
-                #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+                #[cfg(feature = "rayon")]
                 let bal_prefetch_enabled = self.options.bal_prefetch_enabled;
-                #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+                #[cfg(feature = "rayon")]
                 let warm_handle = (!collect_witness)
                     .then(|| {
                         std::thread::Builder::new()
@@ -928,7 +951,7 @@ impl Blockchain {
                 // before the block returns, but it shares the trie-node cold reads with
                 // the merkleizer at higher aggregate queue depth, so it completes
                 // within the exec/merkle window rather than extending it.
-                #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+                #[cfg(feature = "rayon")]
                 let trie_prefetch_handle = match trie_prefetch_input {
                     Some((slots, accounts)) => {
                         let storage = &self.storage;
@@ -1125,7 +1148,7 @@ impl Blockchain {
                         "merkleization thread panicked".to_string(),
                     ))
                 });
-                #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+                #[cfg(feature = "rayon")]
                 let warmer_duration = warm_handle
                     .map(|handle| {
                         handle
@@ -1135,12 +1158,12 @@ impl Blockchain {
                             .unwrap_or(Duration::ZERO)
                     })
                     .unwrap_or(Duration::ZERO);
-                #[cfg(any(not(feature = "rayon"), feature = "eip-8025"))]
+                #[cfg(not(feature = "rayon"))]
                 let warmer_duration = Duration::ZERO;
                 // Best-effort prefetch: join so the scope's borrows end cleanly.
                 // The warming result is discarded, but surface a panic so a failing
                 // prefetch (e.g. a RocksDB error) is observable rather than silent.
-                #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+                #[cfg(feature = "rayon")]
                 if let Some(h) = trie_prefetch_handle
                     && let Err(e) = h.join()
                 {
@@ -3023,7 +3046,7 @@ impl Blockchain {
         blobs_bundle: BlobsBundle,
         broadcast: bool,
     ) -> Result<H256, MempoolError> {
-        let fork = self.current_fork().await?;
+        let fork = self.current_fork()?;
 
         let transaction = Transaction::EIP4844Transaction(transaction);
         let hash = transaction.hash(&NativeCrypto);
@@ -3437,7 +3460,7 @@ impl Blockchain {
         // Frame transactions: skip balance/EOA checks (payer unknown until execution)
         let is_frame_tx = matches!(tx, Transaction::FrameTransaction(_));
 
-        let header_no = self.storage.get_latest_block_number().await?;
+        let header_no = self.storage.get_latest_block_number()?;
         let header = self
             .storage
             .get_block_header(header_no)?
@@ -3577,6 +3600,28 @@ impl Blockchain {
         // Check priority fee is less or equal than gas fee gap
         if tx.max_priority_fee().unwrap_or(0) > tx.max_fee_per_gas().unwrap_or(0) {
             return Err(MempoolError::TxTipAboveFeeCapError);
+        }
+
+        // Admission-time minimum tip floor. Compares the raw tip cap
+        // (`max_priority_fee_per_gas` for typed txs, `gas_price` for legacy)
+        // against `min_tip_wei`, matching geth's `PriceLimit` check on
+        // `tx.GasTipCap()` and reth's check on `max_priority_fee_per_gas`.
+        // Using the raw tip cap keeps the admission decision independent of
+        // the current base fee, so a tx that paid the floor at admission
+        // doesn't get reclassified as under-floor when base fee oscillates.
+        // A floor of 0 disables the check.
+        if self.options.min_tip_wei > 0 {
+            // Saturate to u64::MAX on overflow: a U256 tip cap above u64::MAX
+            // wei is astronomically larger than any sane floor, so clamping
+            // (and therefore admitting) is the correct direction here. Do not
+            // reuse this pattern where truncation would flip a comparison.
+            let tip_cap = u64::try_from(tx.gas_tip_cap()).unwrap_or(u64::MAX);
+            if tip_cap < self.options.min_tip_wei {
+                return Err(MempoolError::TipBelowMinimum {
+                    actual: tip_cap,
+                    limit: self.options.min_tip_wei,
+                });
+            }
         }
 
         // EIP-7702 type-4 structural validation, mirroring LEVM's
@@ -3811,11 +3856,11 @@ impl Blockchain {
 
             // Paymaster availability accounting (EIP-8141). The simulation
             // identified the payer (paymaster) and whether its code matched the
-            // canonical paymaster hash (always false today, OQ1). Reserve the
-            // tx's max cost against the paymaster's head balance, summed with all
-            // other pending reservations for that paymaster so concurrently
-            // pending sponsored txs cannot collectively overdraw it.
-            let max_cost = outcome.max_cost;
+            // canonical paymaster hash (always false today, OQ1). Reserve an upper
+            // bound on the tx's cost against the paymaster's head balance, summed
+            // with all other pending reservations for that paymaster so
+            // concurrently pending sponsored txs cannot collectively overdraw it.
+            let max_cost = outcome.reservation_ceiling;
             if let Some((paymaster, code_is_canonical)) = outcome.accessed_paymaster {
                 // OQ1: re-derive the canonical flag from the paymaster's head
                 // code so the (currently always-false) determination lives in
@@ -3989,9 +4034,9 @@ impl Blockchain {
     }
 
     /// Get the current fork of the chain, based on the latest block's timestamp
-    pub async fn current_fork(&self) -> Result<Fork, StoreError> {
+    pub fn current_fork(&self) -> Result<Fork, StoreError> {
         let chain_config = self.storage.get_chain_config();
-        let latest_block_number = self.storage.get_latest_block_number().await?;
+        let latest_block_number = self.storage.get_latest_block_number()?;
         let latest_block = self
             .storage
             .get_block_header(latest_block_number)?
@@ -4519,8 +4564,8 @@ pub fn validate_state_root(
 }
 
 // Returns the hash of the head of the canonical chain (the latest valid hash).
-pub async fn latest_canonical_block_hash(storage: &Store) -> Result<H256, ChainError> {
-    let latest_block_number = storage.get_latest_block_number().await?;
+pub fn latest_canonical_block_hash(storage: &Store) -> Result<H256, ChainError> {
+    let latest_block_number = storage.get_latest_block_number()?;
     if let Some(latest_valid_header) = storage.get_block_header(latest_block_number)? {
         let latest_valid_hash = latest_valid_header.hash();
         return Ok(latest_valid_hash);

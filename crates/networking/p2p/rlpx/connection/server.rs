@@ -938,15 +938,15 @@ async fn send_block_range_update(state: &mut Established) -> Result<(), PeerConn
     {
         trace!(peer=%state.node, "Sending BlockRangeUpdate");
         let update = BlockRangeUpdate::new(&state.storage).await?;
-        let lastet_block = update.latest_block;
+        let latest_block = update.latest_block;
         send(state, Message::BlockRangeUpdate(update)).await?;
-        state.last_block_range_update_block = lastet_block - (lastet_block % 32);
+        state.last_block_range_update_block = latest_block - (latest_block % 32);
     }
     Ok(())
 }
 
-async fn should_send_block_range_update(state: &Established) -> Result<bool, PeerConnectionError> {
-    let latest_block = state.storage.get_latest_block_number().await?;
+fn should_send_block_range_update(state: &Established) -> Result<bool, PeerConnectionError> {
+    let latest_block = state.storage.get_latest_block_number()?;
     if latest_block < state.last_block_range_update_block
         || latest_block - state.last_block_range_update_block >= 32
     {
@@ -965,10 +965,10 @@ where
     // Sending eth Status if peer supports it
     if let Some(eth) = state.negotiated_eth_capability.clone() {
         let status = match eth.version {
-            68 => Message::Status68(StatusMessage68::new(&state.storage).await?),
-            69 => Message::Status69(StatusMessage69::new(&state.storage).await?),
-            70 => Message::Status70(StatusMessage70::new(&state.storage).await?),
-            71 => Message::Status71(StatusMessage71::new(&state.storage).await?),
+            68 => Message::Status68(StatusMessage68::new(&state.storage)?),
+            69 => Message::Status69(StatusMessage69::new(&state.storage)?),
+            70 => Message::Status70(StatusMessage70::new(&state.storage)?),
+            71 => Message::Status71(StatusMessage71::new(&state.storage)?),
             ver => {
                 return Err(PeerConnectionError::HandshakeError(format!(
                     "Invalid eth version {ver}"
@@ -987,19 +987,19 @@ where
         match msg {
             Message::Status68(msg_data) => {
                 trace!(peer=%state.node, "Received Status(68)");
-                backend::validate_status(msg_data, &state.storage, &eth).await?
+                backend::validate_status(msg_data, &state.storage, &eth)?
             }
             Message::Status69(msg_data) => {
                 trace!(peer=%state.node, "Received Status(69)");
-                backend::validate_status(msg_data, &state.storage, &eth).await?
+                backend::validate_status(msg_data, &state.storage, &eth)?
             }
             Message::Status70(msg_data) => {
                 trace!(peer=%state.node, "Received Status(70)");
-                backend::validate_status(msg_data, &state.storage, &eth).await?
+                backend::validate_status(msg_data, &state.storage, &eth)?
             }
             Message::Status71(msg_data) => {
                 trace!(peer=%state.node, "Received Status(71)");
-                backend::validate_status(msg_data, &state.storage, &eth).await?
+                backend::validate_status(msg_data, &state.storage, &eth)?
             }
             Message::Disconnect(disconnect) => {
                 return Err(PeerConnectionError::HandshakeError(format!(
@@ -1348,22 +1348,22 @@ async fn handle_incoming_message(
         }
         Message::Status68(msg_data) => {
             if let Some(eth) = &state.negotiated_eth_capability {
-                backend::validate_status(msg_data, &state.storage, eth).await?
+                backend::validate_status(msg_data, &state.storage, eth)?
             };
         }
         Message::Status69(msg_data) => {
             if let Some(eth) = &state.negotiated_eth_capability {
-                backend::validate_status(msg_data, &state.storage, eth).await?
+                backend::validate_status(msg_data, &state.storage, eth)?
             };
         }
         Message::Status70(msg_data) => {
             if let Some(eth) = &state.negotiated_eth_capability {
-                backend::validate_status(msg_data, &state.storage, eth).await?
+                backend::validate_status(msg_data, &state.storage, eth)?
             };
         }
         Message::Status71(msg_data) => {
             if let Some(eth) = &state.negotiated_eth_capability {
-                backend::validate_status(msg_data, &state.storage, eth).await?
+                backend::validate_status(msg_data, &state.storage, eth)?
             };
         }
         Message::GetAccountRange(req) => {
@@ -1639,7 +1639,7 @@ async fn handle_incoming_message(
             }
             if state.blockchain.is_synced() {
                 if let Some((announced, requested_hashes, _)) = &removed_request {
-                    let fork = state.blockchain.current_fork().await?;
+                    let fork = state.blockchain.current_fork()?;
                     if let Err(error) = msg.validate_requested(announced, fork) {
                         debug!(
                             peer=%state.node,
@@ -1799,7 +1799,7 @@ async fn handle_broadcast(
 }
 
 async fn handle_block_range_update(state: &mut Established) -> Result<(), PeerConnectionError> {
-    if should_send_block_range_update(state).await? {
+    if should_send_block_range_update(state)? {
         send_block_range_update(state).await
     } else {
         Ok(())

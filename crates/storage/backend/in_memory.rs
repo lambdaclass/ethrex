@@ -81,18 +81,6 @@ pub struct InMemoryLocked {
     table_name: &'static str,
 }
 
-pub struct InMemoryPrefixIter {
-    results: std::vec::IntoIter<PrefixResult>,
-}
-
-impl Iterator for InMemoryPrefixIter {
-    type Item = PrefixResult;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.results.next()
-    }
-}
-
 impl StorageLockedView for InMemoryLocked {
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
         Ok(self
@@ -122,11 +110,10 @@ impl StorageReadView for InMemoryReadTx {
         prefix: &[u8],
     ) -> Result<Box<dyn Iterator<Item = PrefixResult> + '_>, StoreError> {
         let table_data = self.snapshot.get(table).cloned().unwrap_or_default();
-        let prefix_vec = prefix.to_vec();
 
         let mut entries: Vec<(Vec<u8>, Vec<u8>)> = table_data
             .into_iter()
-            .filter(|(key, _)| key.starts_with(&prefix_vec))
+            .filter(|(key, _)| key.starts_with(prefix))
             .collect();
         entries.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
 
@@ -135,10 +122,7 @@ impl StorageReadView for InMemoryReadTx {
             .map(|(k, v)| Ok((k.into_boxed_slice(), v.into_boxed_slice())))
             .collect();
 
-        let iter = InMemoryPrefixIter {
-            results: results.into_iter(),
-        };
-        Ok(Box::new(iter))
+        Ok(Box::new(results.into_iter()))
     }
 
     fn full_scan(
@@ -155,10 +139,7 @@ impl StorageReadView for InMemoryReadTx {
             .map(|(k, v)| Ok((k.into_boxed_slice(), v.into_boxed_slice())))
             .collect();
 
-        let iter = InMemoryPrefixIter {
-            results: results.into_iter(),
-        };
-        Ok(Box::new(iter))
+        Ok(Box::new(results.into_iter()))
     }
 
     fn first_key(&self, table: &'static str) -> Result<Option<Vec<u8>>, StoreError> {
