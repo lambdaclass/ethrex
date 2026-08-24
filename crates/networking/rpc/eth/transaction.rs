@@ -11,7 +11,7 @@ use crate::{
 };
 use ethrex_blockchain::{Blockchain, vm::StoreVmDatabase};
 use ethrex_common::{
-    H256,
+    H256, U256,
     types::{AccessListEntry, BlockHash, BlockHeader, BlockNumber, GenericTransaction, TxKind},
 };
 
@@ -546,10 +546,29 @@ impl RpcHandler for EstimateGasRequest {
             None => highest_gas_limit,
         };
 
-        if !transaction.gas_price.is_zero() {
+        // The cap has to be computed against the same fee the balance check will be
+        // measured against. `default_hook` requires `tx_max_fee_per_gas * gas_limit`,
+        // falling back to `gas_price` only when the former is absent, so recapping by
+        // `gas_price` alone leaves a 1559 request — where the legacy field is absent and
+        // deserializes to zero — uncapped at the block gas limit, and the simulation then
+        // fails `InsufficientAccountFunds` for any sender that cannot afford the whole
+        // block's gas at its fee cap.
+        let fee_cap = if transaction.gas_price.is_zero() {
+            transaction
+                .max_fee_per_gas
+                .map(U256::from)
+                .unwrap_or_default()
+        } else {
+            transaction.gas_price
+        };
+
+        // Zero means no fee was specified at all, which is the caller asking not to be
+        // capped; it also guards the division below.
+        if !fee_cap.is_zero() {
             highest_gas_limit = recap_with_account_balances(
                 highest_gas_limit,
                 &transaction,
+                fee_cap,
                 storage,
                 block_header.number,
             )
@@ -628,9 +647,14 @@ impl RpcHandler for EstimateGasRequest {
     }
 }
 
+/// Caps the estimation ceiling at the gas the sender can actually pay for.
+///
+/// `fee_cap` must be the per-gas price the transaction's balance check uses: the legacy
+/// `gas_price` when it is set, otherwise `max_fee_per_gas`. It must be non-zero.
 async fn recap_with_account_balances(
     highest_gas_limit: u64,
     transaction: &GenericTransaction,
+    fee_cap: U256,
     storage: &Store,
     block_number: BlockNumber,
 ) -> Result<u64, RpcErr> {
@@ -639,7 +663,7 @@ async fn recap_with_account_balances(
         .await?
         .map(|acc| acc.balance)
         .unwrap_or_default();
-    let account_gas = account_balance.saturating_sub(transaction.value) / transaction.gas_price;
+    let account_gas = account_balance.saturating_sub(transaction.value) / fee_cap;
     // If account_gas exceeds u64, the account can afford any gas limit.
     let account_gas = u64::try_from(account_gas).unwrap_or(highest_gas_limit);
     Ok(highest_gas_limit.min(account_gas))
@@ -794,5 +818,99 @@ mod call_nonce_tests {
         }))
         .await;
         assert_eq!(result, Value::String("0x".to_string()));
+    }
+}
+
+#[cfg(test)]
+mod estimate_gas_fee_cap_tests {
+    use std::str::FromStr;
+
+    use crate::rpc::map_http_requests;
+    use crate::test_utils::default_context_with_storage;
+    use crate::utils::RpcRequest;
+    use ethrex_common::types::Genesis;
+    use ethrex_common::{Address, U256};
+    use ethrex_storage::{EngineType, Store};
+    use serde_json::{Value, json};
+
+    /// Funded EOA from fixtures/genesis/l1.json.
+    const SENDER: &str = "0x00000a8d3f37af8def18832962ee008d8dca4f7b";
+    /// 0.01 ETH: enough for any real fill, far short of the fee cap times the
+    /// genesis block gas limit (1 gwei * 25M = 0.025 ETH).
+    const SENDER_BALANCE: u64 = 10_000_000_000_000_000;
+    const ONE_GWEI: &str = "0x3b9aca00";
+
+    async fn setup_store_with_poor_sender() -> Store {
+        let genesis: &str = include_str!("../../../../fixtures/genesis/l1.json");
+        let mut genesis: Genesis =
+            serde_json::from_str(genesis).expect("Fatal: test config is invalid");
+        genesis
+            .alloc
+            .get_mut(&Address::from_str(SENDER).unwrap())
+            .expect("test sender missing from genesis")
+            .balance = U256::from(SENDER_BALANCE);
+        let mut store =
+            Store::new("test-store", EngineType::InMemory).expect("Fail to create in-memory db");
+        store.add_initial_state(genesis).await.unwrap();
+        store
+    }
+
+    async fn run_estimate_gas(call_object: Value) -> Value {
+        let storage = setup_store_with_poor_sender().await;
+        let context = default_context_with_storage(storage).await;
+        let request: RpcRequest = serde_json::from_value(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "eth_estimateGas",
+            "params": [call_object, "latest"],
+        }))
+        .unwrap();
+        map_http_requests(&request, context).await.unwrap()
+    }
+
+    /// A 1559 call object carries its fee cap in `maxFeePerGas`, leaving the legacy
+    /// `gasPrice` to deserialize to zero. The estimation ceiling used to be recapped by
+    /// `gasPrice` alone, so such a request kept the whole block's gas limit as its
+    /// ceiling while the balance check measured that ceiling against `maxFeePerGas` —
+    /// failing `InsufficientAccountFunds` for every sender holding less than a full
+    /// block's worth of gas at its own fee cap.
+    #[tokio::test]
+    async fn estimate_gas_recaps_a_1559_request_by_its_max_fee_per_gas() {
+        let result = run_estimate_gas(json!({
+            "from": SENDER,
+            "to": SENDER,
+            "value": "0x1",
+            "maxFeePerGas": ONE_GWEI,
+            "maxPriorityFeePerGas": "0x0",
+        }))
+        .await;
+        assert_eq!(result, Value::String("0x5208".to_string()));
+    }
+
+    /// The legacy path keeps recapping by `gasPrice`, which is the only fee such a
+    /// request states.
+    #[tokio::test]
+    async fn estimate_gas_recaps_a_legacy_request_by_its_gas_price() {
+        let result = run_estimate_gas(json!({
+            "from": SENDER,
+            "to": SENDER,
+            "value": "0x1",
+            "gasPrice": ONE_GWEI,
+        }))
+        .await;
+        assert_eq!(result, Value::String("0x5208".to_string()));
+    }
+
+    /// A request that states no fee at all asks not to be capped, and must not divide
+    /// by a zero fee cap on the way there.
+    #[tokio::test]
+    async fn estimate_gas_without_any_fee_is_not_recapped() {
+        let result = run_estimate_gas(json!({
+            "from": SENDER,
+            "to": SENDER,
+            "value": "0x1",
+        }))
+        .await;
+        assert_eq!(result, Value::String("0x5208".to_string()));
     }
 }
