@@ -162,10 +162,10 @@ See [Upgrade test](l2/upgrade-test.md) for the full procedure.
 Run it on `l2-gpu` with `--backend sp1`, not locally with `--backend exec`. The
 `exec` backend produces no proof, so it never consults a verification key — and
 the verification key is exactly what an upgrade changes. Batches are committed
-under `keccak(VERGEN_GIT_SHA)`, baked into the binary at build time, and the
-OnChainProposer looks the key up by that hash, so a new release's batches are
-unverifiable until its key is registered. Under `exec` that whole class of
-upgrade failure is invisible.
+under `keccak(VERGEN_GIT_SHA)`, baked into the binary at build time, and
+`commitBatch` rejects a commit hash the deployment holds no key for, so an
+upgraded sequencer commits nothing at all until the new release's key is
+registered. Under `exec` that whole class of upgrade failure is invisible.
 
 Both L2 checks share the ports and datadirs on `l2-gpu`, so run them one after
 the other, not concurrently.
