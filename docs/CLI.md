@@ -239,6 +239,11 @@ P2P options:
           
           [env: ETHREX_HISTORY_RETENTION=]
 
+      --history.retention.dry-run
+          Resolve the retention policy, report what pruning would delete, and exit without deleting anything. Use this before enabling pruning on a datadir you cannot replace: pruning is irreversible without a resync.
+          
+          [env: ETHREX_HISTORY_RETENTION_DRY_RUN=]
+
       --history.retention.below-cl-window
           Permit a --history.retention below the CL block-retention window. Such a node cannot serve the range its peers are entitled to ask for; intended for devnets and short-lived chains.
           

@@ -1280,7 +1280,7 @@ async fn resolve_history_retention(
         earliest
     };
 
-    if earliest < barrier && !explicit {
+    if earliest < barrier && !explicit && !opts.history_retention_dry_run {
         warn!(
             earliest,
             barrier,
@@ -1288,6 +1288,22 @@ async fn resolve_history_retention(
              default, because that would permanently delete history you already have. Pass \
              --history.retention=cl-window to prune it, or --history.retention=all to silence \
              this"
+        );
+        return Ok(None);
+    }
+
+    if opts.history_retention_dry_run {
+        let deletable = barrier.saturating_sub(earliest);
+        info!(
+            ?retention,
+            head,
+            earliest,
+            barrier,
+            deletable_blocks = deletable,
+            "DRY RUN: pruning would run and delete the bodies, receipts and transaction \
+             locations of the {deletable} block heights in ({earliest}, {barrier}]. Canonical \
+             headers would be kept. Nothing has been deleted. Remove \
+             --history.retention.dry-run to enable pruning for real"
         );
         return Ok(None);
     }

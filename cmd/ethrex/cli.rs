@@ -541,6 +541,14 @@ pub struct Options {
     )]
     pub history_retention: Option<HistoryRetention>,
     #[arg(
+        long = "history.retention.dry-run",
+        default_value_t = false,
+        help = "Resolve the retention policy, report what pruning would delete, and exit without deleting anything. Use this before enabling pruning on a datadir you cannot replace: pruning is irreversible without a resync.",
+        help_heading = "P2P options",
+        env = "ETHREX_HISTORY_RETENTION_DRY_RUN"
+    )]
+    pub history_retention_dry_run: bool,
+    #[arg(
         long = "history.retention.below-cl-window",
         default_value_t = false,
         help = "Permit a --history.retention below the CL block-retention window. Such a node cannot serve the range its peers are entitled to ask for; intended for devnets and short-lived chains.",
@@ -655,6 +663,7 @@ impl Default for Options {
             no_precompile_cache: false,
             history_retention: None,
             history_retention_below_cl_window: false,
+            history_retention_dry_run: false,
             no_bal_parallel_exec: false,
             no_bal_prefetch: false,
             no_bal_parallel_trie: false,
