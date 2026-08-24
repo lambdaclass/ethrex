@@ -24,6 +24,11 @@ pub struct RpcTransaction {
     pub hash: H256,
     #[serde(with = "serde_utils::u64::hex_str_opt")]
     transaction_index: Option<u64>,
+    /// Timestamp of the block this tx was mined in; `None` while pending. Other
+    /// clients expose this on transaction objects, and consumers use it to date a
+    /// transaction without a second round trip for the block.
+    #[serde(with = "serde_utils::u64::hex_str_opt")]
+    block_timestamp: Option<u64>,
 }
 
 impl RpcTransaction {
@@ -32,6 +37,7 @@ impl RpcTransaction {
         block_number: Option<BlockNumber>,
         block_hash: Option<BlockHash>,
         transaction_index: Option<usize>,
+        block_timestamp: Option<u64>,
     ) -> Result<Self, RpcErr> {
         let from = tx.sender(&NativeCrypto)?;
         let hash = tx.hash(&NativeCrypto);
@@ -43,6 +49,7 @@ impl RpcTransaction {
             from,
             hash,
             transaction_index,
+            block_timestamp,
         })
     }
 }

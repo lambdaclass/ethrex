@@ -75,7 +75,12 @@ impl RpcBlock {
     ) -> Result<RpcBlock, RpcErr> {
         let size = Block::new(header.clone(), body.clone()).length();
         let body_wrapper = if full_transactions {
-            BlockBodyWrapper::Full(FullBlockBody::from_body(body, header.number, hash)?)
+            BlockBodyWrapper::Full(FullBlockBody::from_body(
+                body,
+                header.number,
+                hash,
+                header.timestamp,
+            )?)
         } else {
             BlockBodyWrapper::OnlyHashes(OnlyHashesBlockBody {
                 transactions: body
@@ -102,6 +107,7 @@ impl FullBlockBody {
         body: BlockBody,
         block_number: BlockNumber,
         block_hash: BlockHash,
+        block_timestamp: u64,
     ) -> Result<FullBlockBody, RpcErr> {
         let mut transactions = Vec::new();
         for (index, tx) in body.transactions.iter().enumerate() {
@@ -110,6 +116,7 @@ impl FullBlockBody {
                 Some(block_number),
                 Some(block_hash),
                 Some(index),
+                Some(block_timestamp),
             )?);
         }
         Ok(FullBlockBody {
