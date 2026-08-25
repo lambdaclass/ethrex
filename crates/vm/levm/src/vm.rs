@@ -663,6 +663,19 @@ pub struct VM<'a> {
     pub state_gas_used: i64,
     /// EIP-8037: State gas reservoir pre-funded from excess gas_limit (Amsterdam+).
     pub state_gas_reservoir: u64,
+    /// EIP-8141: the current frame's remaining state-gas pool, `Some` only while a
+    /// frame transaction's frame is executing.
+    ///
+    /// A frame transaction declares `limits.state` per frame rather than deriving a
+    /// split from one gas field, so inside a frame this pool REPLACES the reservoir
+    /// and the spill-to-`gas_remaining` path entirely: the two pools never mix, and
+    /// execution gas can never be spent on state charges.
+    ///
+    /// It is frame-scoped, not call-frame-scoped. EVM call frames at any depth
+    /// within the frame draw from it directly; it is never forwarded, split, or
+    /// given the 63/64 treatment execution gas gets. Exhausting it halts the current
+    /// call frame with ordinary out-of-gas semantics.
+    pub frame_state_gas_left: Option<u64>,
     /// EIP-8037: Initial reservoir at tx start (before any execution). Captured in
     /// add_intrinsic_gas so block-dimensional regular gas can be computed
     /// independently of mid-tx reservoir activity (auth refunds, SSTORE credits).
@@ -1137,6 +1150,7 @@ impl<'a> VM<'a> {
             preserve_top_level_backup,
             state_gas_used: 0,
             state_gas_reservoir: 0,
+            frame_state_gas_left: None,
             state_gas_reservoir_initial: 0,
             state_gas_spill: 0,
             cost_per_state_byte: cpsb,
@@ -1219,6 +1233,22 @@ impl<'a> VM<'a> {
             self.env.config.fork >= Fork::Amsterdam,
             "increase_state_gas called pre-Amsterdam"
         );
+        // EIP-8141: inside a frame transaction's frame the state pool is declared,
+        // not derived, so it replaces the reservoir/spill model outright. Draw the
+        // whole charge from `limits.state`; running it dry is an ordinary
+        // out-of-gas halt of the current call frame, and execution gas is never
+        // touched. `state_gas_used` still accumulates so per-frame receipts and the
+        // block's state-gas total stay correct.
+        if let Some(left) = self.frame_state_gas_left {
+            let remaining = left.checked_sub(gas).ok_or(ExceptionalHalt::OutOfGas)?;
+            self.frame_state_gas_left = Some(remaining);
+            self.state_gas_used = self
+                .state_gas_used
+                .checked_add(i64::try_from(gas).map_err(|_| InternalError::Overflow)?)
+                .ok_or(InternalError::Overflow)?;
+            return Ok(());
+        }
+
         // Draw from reservoir first; only spill to gas_remaining if reservoir exhausted
         let from_reservoir = self.state_gas_reservoir.min(gas);
         // Safe: from_reservoir <= gas
@@ -2354,6 +2384,13 @@ impl<'a> VM<'a> {
             let state_gas_reservoir_at_frame_entry = self.state_gas_reservoir;
             let state_gas_spill_at_frame_entry = self.state_gas_spill;
 
+            // EIP-8141: open this frame's declared state pool. Budgets are
+            // per-frame precisely because unused gas does not roll over between
+            // frames — frames belong to mutually distrusting parties, and a shared
+            // pool would let one drain the state gas a later frame (a paymaster's
+            // post-op, say) depends on.
+            self.frame_state_gas_left = Some(frame.limits.state);
+
             // EIP-7928: capture the access-list recorder before the frame runs. A
             // reverted frame's state changes are rolled back, so its recorded
             // changes must be rolled back too — otherwise the builder emits an
@@ -2542,6 +2579,11 @@ impl<'a> VM<'a> {
             // is spent and must be dropped.
             self.state_gas_reservoir = state_gas_reservoir_at_frame_entry;
             self.state_gas_spill = state_gas_spill_at_frame_entry;
+            // EIP-8141: close this frame's state pool. Leaving it open would let the
+            // gap between frames — settlement, the next frame's setup — draw on a
+            // budget no frame declared, and would hand the next frame whatever this
+            // one did not spend.
+            self.frame_state_gas_left = None;
 
             total_gas_used = total_gas_used
                 .checked_add(frame_gas_used)
@@ -4257,6 +4299,7 @@ impl<'a> VM<'a> {
             preserve_top_level_backup: false,
             state_gas_used: 0,
             state_gas_reservoir,
+            frame_state_gas_left: None,
             state_gas_reservoir_initial: state_gas_reservoir,
             state_gas_spill: 0,
             cost_per_state_byte: 0,

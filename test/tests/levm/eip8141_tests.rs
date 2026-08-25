@@ -13,8 +13,8 @@
 use bytes::Bytes;
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::types::{
-    Account, BlockHeader, Code, FRAME_RECEIPT_STATUS_SUCCESS, Fork, Frame, FrameLimits, FrameMode,
-    FrameTransaction, MAX_BLOBS_PER_TX, Transaction,
+    Account, BlockHeader, Code, FRAME_RECEIPT_STATUS_FAILURE, FRAME_RECEIPT_STATUS_SUCCESS, Fork,
+    Frame, FrameLimits, FrameMode, FrameTransaction, MAX_BLOBS_PER_TX, Transaction,
 };
 use ethrex_common::{Address, H256, U256, constants::EMPTY_TRIE_HASH};
 use ethrex_crypto::NativeCrypto;
@@ -1131,12 +1131,17 @@ fn frame_sstore_set_reports_eip8037_state_gas() {
         "a frame SSTORE-set must report EIP-8037 state gas (not 0), got {}",
         report.state_gas_used,
     );
-    // The total already includes the state gas; the regular dimension is the rest.
+    // EIP-8141 keeps the two pools apart: the state charge is drawn from the
+    // frame's `limits.state`, never from its execution gas. So the reported
+    // execution total must NOT contain the state-set cost — under the previous
+    // spilling model it did, and this frame's execution gas was ~SSTORE_SET_STATE_GAS
+    // larger as a result.
     assert!(
-        report.gas_used > report.state_gas_used,
-        "total gas {} must exceed the state portion {}",
+        report.gas_used < SSTORE_SET_STATE_GAS,
+        "execution gas {} must not absorb the state-set charge {} — the pools are \
+         independent and execution gas can never be spent on state",
         report.gas_used,
-        report.state_gas_used,
+        SSTORE_SET_STATE_GAS,
     );
 }
 
@@ -1235,22 +1240,26 @@ fn frame_tx_below_base_blob_fee_is_rejected() {
 }
 
 #[test]
-fn state_gas_reservoir_does_not_leak_across_frames() {
-    // Frame A creates then clears a slot (0 -> 5 -> 0), which credits the EIP-8037
-    // state-gas reservoir. Frame B then creates a fresh slot. Because frames are
-    // gas-isolated, A's reservoir credit must NOT subsidize B's state charge: B's
-    // gas_used must include the full state-set cost (the charge spills to
-    // gas_remaining), not be silently drawn from A's leftover credit. Without the
-    // per-frame reservoir reset, B's gas_used would be ~SSTORE_SET_STATE_GAS lower.
+fn state_gas_does_not_leak_across_frames() {
+    // Frame A creates then clears a slot (0 -> 5 -> 0); frame B then creates a
+    // fresh slot. Under EIP-8141 each frame spends its OWN declared `limits.state`,
+    // so whatever A leaves unspent — including the credit from its clear — can
+    // never pay for B's set. Budgets are per-frame precisely so that frames
+    // belonging to mutually distrusting parties cannot drain each other.
+    //
+    // Tested by starving B directly: B's pool alone is below one state-set, so if
+    // A's leftover could reach it the transaction would succeed. It must not.
     let a = Address::from_low_u64_be(0xAA01);
     let b = Address::from_low_u64_be(0xBB01);
-    let mk = |target| Frame {
+    // A is given far more state budget than its set-then-clear needs, so it ends
+    // with a large surplus. B is given less than one state-set.
+    let mk = |target, state| Frame {
         mode: u8::from(FrameMode::Default),
         flags: 0x00,
         target: Some(target),
         limits: FrameLimits {
             execution: 2_000_000,
-            state: 2_000_000,
+            state,
         },
         value: U256::zero(),
         data: Bytes::new(),
@@ -1279,16 +1288,23 @@ fn state_gas_reservoir_does_not_leak_across_frames() {
             Bytes::from(vec![0x60, 0x01, 0x60, 0x06, 0x55, 0x00]),
         ),
     ];
-    let tx = frame_tx_with_frames(vec![verify_frame(FUNDED_SENDER), mk(a), mk(b)]);
+    let tx = frame_tx_with_frames(vec![
+        verify_frame(FUNDED_SENDER),
+        mk(a, 2_000_000),
+        mk(b, SSTORE_SET_STATE_GAS - 1),
+    ]);
     let (result, _db) = run_frame_tx(&accounts, tx);
     let report = result.expect("valid frame tx (payer approved)");
     let fr = report.frame_results.expect("frame results present");
     // fr[0] = VERIFY, fr[1] = A (set+clear), fr[2] = B (fresh set).
-    assert!(
-        fr[2].1 > SSTORE_SET_STATE_GAS,
-        "frame B gas_used ({}) must include the full state-set cost — frame A's \
-         reservoir credit must not subsidize it",
-        fr[2].1,
+    assert_eq!(
+        fr[1].0, FRAME_RECEIPT_STATUS_SUCCESS,
+        "frame A's budget covers its own set and clear"
+    );
+    assert_eq!(
+        fr[2].0, FRAME_RECEIPT_STATUS_FAILURE,
+        "frame B declared less state than one set costs, so it must run out of \
+         state gas — frame A's unspent surplus is not reachable from B"
     );
 }
 
@@ -3882,10 +3898,10 @@ fn storage_refund_from_a_later_frame_reduces_reported_gas() {
         target: Some(target),
         limits: FrameLimits {
             execution: 200_000,
-            // The storage refund under test is an execution-gas refund. A declared
-            // state budget would enlarge `total_gas_limit` — which reserves both
-            // dimensions — and so move the pre-refund total this compares against.
-            state: 0,
+            // These frames set and clear a storage slot, and an SSTORE's state
+            // charge now draws from the frame's own declared pool. One slot set is
+            // STATE_BYTES_PER_STORAGE_SET (64) * CPSB (1530) = 97_920.
+            state: 200_000,
         },
         value: U256::zero(),
         data,
