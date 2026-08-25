@@ -7,6 +7,7 @@ use crate::rlpx::l2::{
 };
 use crate::{
     backend,
+    discovery::DiscoveryHandle,
     metrics::METRICS,
     network::P2PContext,
     peer_table::{PeerTable, PeerTableServerProtocol as _},
@@ -286,6 +287,9 @@ pub struct Established {
     /// See https://github.com/lambdaclass/ethrex/issues/3388
     pub(crate) connection_broadcast_send: PeerConnBroadcastSender,
     pub(crate) peer_table: PeerTable,
+    /// Reports this connection's lifecycle back to discovery, so a node we are
+    /// talking to stops being offered as a dial candidate.
+    pub(crate) discovery: DiscoveryHandle,
     #[cfg(feature = "l2")]
     pub(crate) l2_state: L2ConnState,
     pub(crate) tx_broadcaster: ActorRef<TxBroadcaster>,
@@ -389,12 +393,9 @@ impl PeerConnectionServer {
                     match &reason {
                         PeerConnectionError::NoMatchingCapabilities
                         | PeerConnectionError::HandshakeError(_) => {
-                            if let Err(e) = established_state
-                                .peer_table
-                                .set_unwanted(established_state.node.node_id())
-                            {
-                                debug!("Failed to set peer as unwanted: {e}");
-                            }
+                            established_state
+                                .discovery
+                                .set_unwanted(established_state.node.node_id());
                         }
                         _ => {}
                     }
@@ -461,6 +462,12 @@ impl PeerConnectionServer {
                 {
                     debug!("Failed to remove peer from table: {e}");
                 }
+                // Pairs with the `mark_connected` in `initialize_connection`: this
+                // branch is the only teardown an established connection takes, and
+                // it runs even when a handler panicked.
+                established_state
+                    .discovery
+                    .mark_disconnected(established_state.node.node_id());
                 // Free the peer's tx-broadcaster index (and clear its bit across known txs) so
                 // the broadcaster's per-peer index map / PeerMask widths stay bounded to live peers.
                 if let Err(e) = established_state
@@ -822,6 +829,7 @@ where
         state.capabilities.clone(),
         state.is_inbound,
     )?;
+    state.discovery.mark_connected(state.node.node_id());
 
     trace!(peer=%state.node, "Peer connection initialized.");
 

@@ -153,7 +153,7 @@ pub async fn sync_cycle_snap(
 
     loop {
         // Prune dead/unresponsive peers periodically to allow replacements to be promoted
-        let _ = peers.peer_table.prune_table();
+        peers.discovery.prune();
 
         debug!("Requesting Block Headers from {current_head}");
 

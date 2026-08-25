@@ -11,12 +11,17 @@
 //! 2. Otherwise → DiscV5
 
 pub mod codec;
+pub mod contact_table;
 mod discv4_handlers;
 mod discv5_handlers;
 pub mod lookup;
 pub mod server;
 
-pub use server::{DiscoveryServer, DiscoveryServerError, is_discv4_packet};
+pub use contact_table::{Contact, ContactTable, ContactValidation, DiscoveryProtocol, Session};
+pub use server::{
+    DiscoveryHandle, DiscoveryServer, DiscoveryServerError, DiscoveryServerProtocol,
+    is_discv4_packet,
+};
 
 use std::time::Duration;
 
@@ -25,6 +30,9 @@ use std::time::Duration;
 pub struct DiscoveryConfig {
     pub discv4_enabled: bool,
     pub discv5_enabled: bool,
+    /// How many connections the consumer wants. Discovery never opens one; it
+    /// uses this only to pace its lookups against how far along the consumer is.
+    pub target_peers: usize,
 }
 
 /// Lookup interval bounds for the RLPx initiator's connection attempts. The

@@ -103,6 +103,19 @@ impl PeerFilter for EthForkIdFilter {
     }
 }
 
+/// Accepts every peer discovery finds.
+///
+/// What a consumer that only wants the discovery stack passes: it has no
+/// requirement of its own to express, and screening on our behalf would only
+/// throw away peers it might want.
+pub struct AcceptAllFilter;
+
+impl PeerFilter for AcceptAllFilter {
+    fn accepts(&self, _record: &NodeRecord) -> bool {
+        true
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

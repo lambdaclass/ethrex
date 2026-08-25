@@ -1,3 +1,4 @@
+use crate::discovery::DiscoveryHandle;
 use crate::rlpx::initiator::RLPxInitiator;
 use crate::{
     metrics::{CurrentStepValue, METRICS},
@@ -50,6 +51,9 @@ pub use crate::snap::{DumpError, RequestMetadata, RequestStorageTrieNodesError, 
 #[derive(Debug, Clone)]
 pub struct PeerHandler {
     pub peer_table: PeerTable,
+    /// Reports peers that turned out to be useless back to discovery, and asks
+    /// it to prune. Inert when discovery is not running.
+    pub discovery: DiscoveryHandle,
     pub initiator: ActorRef<RLPxInitiator>,
 }
 
@@ -150,9 +154,14 @@ async fn ask_peer_head_number(
 }
 
 impl PeerHandler {
-    pub fn new(peer_table: PeerTable, initiator: ActorRef<RLPxInitiator>) -> PeerHandler {
+    pub fn new(
+        peer_table: PeerTable,
+        initiator: ActorRef<RLPxInitiator>,
+        discovery: DiscoveryHandle,
+    ) -> PeerHandler {
         Self {
             peer_table,
+            discovery,
             initiator,
         }
     }
@@ -606,7 +615,7 @@ impl PeerHandler {
                             "Peer returned more block bodies than requested, disposing"
                         );
                         self.peer_table.record_failure(peer_id)?;
-                        let _ = self.peer_table.set_disposable(peer_id);
+                        self.discovery.set_disposable(peer_id);
                         return Ok(None);
                     }
                     if !block_bodies.is_empty() {
@@ -763,7 +772,7 @@ impl PeerHandler {
                     _ => {
                         debug!("Didn't receive receipts from peer, penalizing peer {peer_id}");
                         self.peer_table.record_failure(peer_id)?;
-                        let _ = self.peer_table.set_disposable(peer_id);
+                        self.discovery.set_disposable(peer_id);
                         return Ok(None);
                     }
                 };
@@ -781,7 +790,7 @@ impl PeerHandler {
                 if receipts.len() > block_hashes_len {
                     debug!("Received oversized receipts from peer {peer_id}, penalizing");
                     self.peer_table.record_failure(peer_id)?;
-                    let _ = self.peer_table.set_disposable(peer_id);
+                    self.discovery.set_disposable(peer_id);
                     return Ok(None);
                 }
                 // Success is recorded by the caller, once the receipts have been

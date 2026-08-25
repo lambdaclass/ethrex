@@ -27,6 +27,7 @@ use ethrex_common::{
     },
 };
 use ethrex_p2p::{
+    discovery::DiscoveryHandle,
     network::P2PContext,
     peer_handler::PeerHandler,
     peer_table::{PeerTable, PeerTableServer, TARGET_PEERS},
@@ -379,9 +380,14 @@ pub async fn dummy_sync_manager() -> SyncManager {
 
 /// Creates a dummy PeerHandler for tests where interacting with peers is not needed
 /// This should only be used in tests as it won't be able to interact with the node's connected peers
-pub async fn dummy_peer_handler(store: Store) -> PeerHandler {
-    let peer_table = PeerTableServer::spawn(H256::random(), TARGET_PEERS, store);
-    PeerHandler::new(peer_table.clone(), dummy_actor(peer_table).await)
+pub async fn dummy_peer_handler(_store: Store) -> PeerHandler {
+    let peer_table = PeerTableServer::spawn(TARGET_PEERS);
+    // No discovery server behind this handle: the dummy handler never dials.
+    PeerHandler::new(
+        peer_table.clone(),
+        dummy_actor(peer_table).await,
+        DiscoveryHandle::new(),
+    )
 }
 
 /// Creates a dummy RLPx initiator actor for tests

@@ -470,6 +470,7 @@ pub async fn init_network(
     let discovery_config = DiscoveryConfig {
         discv4_enabled: opts.discv4_enabled,
         discv5_enabled: opts.discv5_enabled,
+        target_peers: opts.target_peers,
     };
 
     ethrex_p2p::start_network(context, bootnodes, discovery_config)
@@ -900,8 +901,7 @@ pub async fn init_l1(
 
     let local_node_record = get_local_node_record(&datadir, &local_p2p_node, &signer);
 
-    let peer_table =
-        PeerTableServer::spawn(local_p2p_node.node_id(), opts.target_peers, store.clone());
+    let peer_table = PeerTableServer::spawn(opts.target_peers);
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
@@ -925,7 +925,8 @@ pub async fn init_l1(
 
     let initiator = RLPxInitiator::spawn(p2p_context.clone());
 
-    let peer_handler = PeerHandler::new(peer_table.clone(), initiator);
+    let peer_handler =
+        PeerHandler::new(peer_table.clone(), initiator, p2p_context.discovery.clone());
 
     init_rpc_api(
         &opts,

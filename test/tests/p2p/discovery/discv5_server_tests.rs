@@ -1,11 +1,10 @@
 use bytes::Bytes;
 use ethrex_common::H256;
 use ethrex_p2p::discovery::DiscoveryServer;
+use ethrex_p2p::discovery::{ContactTable, Session as ContactSession};
 use ethrex_p2p::discv5::messages::PongMessage;
-use ethrex_p2p::discv5::session::Session;
-use ethrex_p2p::peer_table::{PeerTable, PeerTableServer, PeerTableServerProtocol as _};
+use ethrex_p2p::peer_filter::AcceptAllFilter;
 use ethrex_p2p::types::{Node, NodeRecord};
-use ethrex_storage::{EngineType, Store};
 use rand::{SeedableRng, rngs::StdRng};
 use rustc_hash::FxHashSet;
 use secp256k1::SecretKey;
@@ -16,26 +15,23 @@ use std::{
 };
 use tokio::net::UdpSocket;
 
-async fn test_server(peer_table: Option<PeerTable>) -> DiscoveryServer {
+async fn test_server(contacts: Option<ContactTable>) -> DiscoveryServer {
     let local_node = Node::from_enode_url(
         "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
     ).expect("Bad enode url");
     let signer = SecretKey::new(&mut rand::rngs::OsRng);
     let local_node_record = NodeRecord::from_node(&local_node, 1, &signer).unwrap();
-    let peer_table = peer_table.unwrap_or_else(|| {
-        PeerTableServer::spawn(
-            local_node.node_id(),
-            10,
-            Store::new("", EngineType::InMemory).expect("Failed to create store"),
-        )
-    });
-    DiscoveryServer::new_for_discv5_test(
+    let mut server = DiscoveryServer::new_for_discv5_test(
         local_node,
         local_node_record,
         signer,
         Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
-        peer_table,
-    )
+        Box::new(AcceptAllFilter),
+    );
+    if let Some(contacts) = contacts {
+        *server.contacts_mut() = contacts;
+    }
+    server
 }
 
 /// Helper to get a mutable reference to the discv5 state.
@@ -175,34 +171,29 @@ async fn test_enr_update_request_on_pong() {
     let remote_node = Node::from_enr(&remote_record).expect("Should create node from record");
     let remote_node_id = remote_node.node_id();
 
-    let peer_table = PeerTableServer::spawn(
-        local_node.node_id(),
-        10,
-        Store::new("", EngineType::InMemory).expect("Failed to create store"),
+    let mut contacts = ContactTable::new(local_node.node_id(), 10, Box::new(AcceptAllFilter));
+    contacts.new_contact_records(vec![remote_record]).await;
+    contacts.set_session(
+        remote_node_id,
+        ContactSession {
+            outbound_key: [0u8; 16],
+            inbound_key: [0u8; 16],
+        },
     );
-
-    peer_table.new_contact_records(vec![remote_record]).unwrap();
-
-    let session = Session {
-        outbound_key: [0u8; 16],
-        inbound_key: [0u8; 16],
-    };
-    peer_table
-        .set_session_info(remote_node_id, session)
-        .unwrap();
 
     let mut server = DiscoveryServer::new_for_discv5_test(
         local_node,
         local_node_record,
         signer,
         Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
-        peer_table,
+        Box::new(AcceptAllFilter),
     );
+    *server.contacts_mut() = contacts;
 
-    let contact = server.peer_table.get_contact(remote_node_id).await.unwrap();
+    let contact = server.contacts_mut().get_contact(&remote_node_id).cloned();
     assert!(
         contact.is_some(),
-        "Contact should have been added to peer_table"
+        "Contact should have been added to the contact table"
     );
     let contact = contact.unwrap();
     assert_eq!(
