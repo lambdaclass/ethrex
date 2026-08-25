@@ -24,10 +24,10 @@
 //! self-contained and computed identically by every client, or the omission
 //! verdict splits between nodes.
 
-use ethrex_common::types::Fork;
-use ethrex_crypto::Crypto;
 use ethrex_common::Address;
+use ethrex_common::types::Fork;
 use ethrex_common::types::{FrameTransaction, Transaction, TxType, is_eip7702_delegation};
+use ethrex_crypto::Crypto;
 
 /// EIP-8369 `MAX_VERIFY_GAS_PER_IL`: the VERIFY budget one inclusion list may
 /// consume across all of its Profile 2 occurrences.
@@ -164,9 +164,7 @@ pub fn fee_valid(tx: &Transaction, base_fee_per_gas: u64) -> bool {
 /// deliberately excludes expiry frames, so summing it alone would undercount;
 /// they are added back here.
 pub fn verify_budget_cost(tx: &FrameTransaction) -> Option<u64> {
-    Some(
-        verify_budget_prefix_cost(tx)?.saturating_add(verify_budget_signature_cost(tx)),
-    )
+    Some(verify_budget_prefix_cost(tx)?.saturating_add(verify_budget_signature_cost(tx)))
 }
 
 /// The validation-prefix half of the VERIFY budget: the prefix frames' gas limits

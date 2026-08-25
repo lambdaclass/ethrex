@@ -14,9 +14,9 @@ use std::{collections::BTreeMap, fs::File, io::BufReader, path::PathBuf};
 
 use bytes::Bytes;
 use ethrex_blockchain::{
-    mempool::KeyedConcurrency,
     Blockchain,
     constants::GAS_LIMIT_BOUND_DIVISOR,
+    mempool::KeyedConcurrency,
     payload::{BuildPayloadArgs, calc_gas_limit, create_payload},
 };
 use ethrex_common::{
