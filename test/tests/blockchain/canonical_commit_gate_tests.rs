@@ -34,7 +34,7 @@ use ethrex_storage::{EngineType, Store};
 // backend does not use it. Keep the import on the same cfg as its call sites so a
 // build without `rocksdb` does not leave it unused.
 #[cfg(feature = "rocksdb")]
-use ethrex_storage::DB_COMMIT_THRESHOLD;
+use ethrex_storage::{DB_COMMIT_THRESHOLD, DEPTH_GATED_COMMIT_STRIDE};
 use secp256k1::SecretKey;
 
 /// Test private key from fixtures/keys/private_keys_tests.txt.
@@ -322,7 +322,7 @@ async fn forkchoice_flushes_committable_backlog_and_prunes_genesis() {
 /// (`add_block_pipeline_bounded(.., DB_COMMIT_THRESHOLD)`), which commits by depth
 /// regardless of the safe-commit cell, keeping ~128 layers resident.
 ///
-/// This drives that exact shape — >128 blocks through the bounded path, no FCU — and
+/// This drives that exact shape — enough blocks for a depth-gated commit, no FCU — and
 /// asserts both properties end-to-end on real execution:
 ///   (a) BOUNDED: with NO forkchoice_update the backlog is still flushed forward, so the
 ///       genesis root is pruned/clobbered off disk. Under the buggy canonical gate
@@ -338,9 +338,10 @@ async fn forkchoice_flushes_committable_backlog_and_prunes_genesis() {
 #[cfg(feature = "rocksdb")]
 #[tokio::test]
 async fn bounded_reexec_without_fcu_bounds_memory_and_serves_window() {
-    // Comfortably above DB_COMMIT_THRESHOLD (128) so the depth gate fires, the flush
-    // boundary lands well past genesis (~head-128), and a mid-window block stays resident.
-    const BLOCKS: u64 = 135;
+    // Past the first strided retain-window flush (`DB_COMMIT_THRESHOLD +
+    // DEPTH_GATED_COMMIT_STRIDE`) so genesis is committed and a mid-window block stays resident.
+    const BLOCKS: u64 =
+        (DB_COMMIT_THRESHOLD + DEPTH_GATED_COMMIT_STRIDE + 40) as u64;
 
     let sk = test_secret_key();
     let sender = sender_from_key(&sk);
@@ -417,9 +418,7 @@ async fn bounded_reexec_without_fcu_bounds_memory_and_serves_window() {
          leaves safe_commit_root at zero, nothing commits, and memory grows to OOM)"
     );
 
-    // (b) WINDOW RETAINED + NO CLOBBER — the recent window stays resident and serves the
-    // correct historical state. A mid-window block sits well inside the retained ~128
-    // layers (mid > BLOCKS - DB_COMMIT_THRESHOLD).
+    // (b) WINDOW RETAINED + NO CLOBBER — mid is 40 below head, inside the retain window.
     let mid = BLOCKS - 40; // block number
     let mid_root = roots[(mid - 1) as usize];
     assert!(
