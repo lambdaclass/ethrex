@@ -180,12 +180,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "arrayref"
-version = "0.3.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "76a2e8124351fda1ef8aaaa3bbd7ebbcb486bbcd4225aca0aa0d84bb2db8fecb"
-
-[[package]]
 name = "arrayvec"
 version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -270,11 +264,10 @@ dependencies = [
 
 [[package]]
 name = "blake3"
-version = "1.8.6"
+version = "1.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "76ae7bad254120e9e4c63bafc385310756f90c484eac0e36b8317cf09cb92a77"
+checksum = "6d9e454fc11f76977dc803893aff6304ed33d6a26efae8696573bea74baa27ae"
 dependencies = [
- "arrayref",
  "arrayvec",
  "cc",
  "cfg-if",
@@ -348,7 +341,7 @@ checksum = "46d07918caa9eeaaf06b7873925c53a61daac173539b4f7715090745e44e4e69"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.3",
+ "syn 3.0.4",
 ]
 
 [[package]]
@@ -368,7 +361,7 @@ checksum = "fc0e56a716f1e132ff6bf4bdac1c944a3fcdc1cae65f70a4a2a1ac3b401d2d1f"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.3",
+ "syn 3.0.4",
 ]
 
 [[package]]
@@ -388,9 +381,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.4.2"
+version = "1.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5d262e149917187838d5b42777c8253bcb64500067342904e7d429499a6f277e"
+checksum = "0ad534f4357a5264cce5019c989cf66a4f0dc4e0d1b1d15f8aacec0ff7360273"
 dependencies = [
  "find-msvc-tools",
  "shlex 2.0.1",
@@ -508,9 +501,9 @@ dependencies = [
 
 [[package]]
 name = "crc32fast"
-version = "1.5.0"
+version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9481c1c90cbf2ac953f07c8d4a58aa3945c425b7185c9154d67a65e4230da511"
+checksum = "8498c871161e1742aaa9d52551b2d6ebdd4c3d45a3be423e3728f33b955be550"
 dependencies = [
  "cfg-if",
 ]
@@ -769,9 +762,9 @@ dependencies = [
 
 [[package]]
 name = "either"
-version = "1.17.0"
+version = "1.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e5e8f6c15a24b9a3ee5efec809ccd006d3b30e8b3bb63c39af737c7f87daa1d"
+checksum = "252afb9ae5eaa683babdc6a068b3f5726eb19e05070c731f9b2a23a7c3e8ed34"
 
 [[package]]
 name = "elf"
@@ -828,7 +821,7 @@ checksum = "a65863d15a4ce2888bd2f0f543cc963d3879c3a022c8ee43f6141d479a3ac815"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.3",
+ "syn 3.0.4",
 ]
 
 [[package]]
@@ -839,13 +832,13 @@ checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 
 [[package]]
 name = "ere-platform-core"
-version = "0.13.0"
-source = "git+https://github.com/eth-act/ere?rev=a25f1aed9664c3b63e73ef05360090a4c41da31b#a25f1aed9664c3b63e73ef05360090a4c41da31b"
+version = "0.16.2"
+source = "git+https://github.com/eth-act/ere?rev=8961a4e7ac5c9ca2dc6a2fc848452f23a186b1aa#8961a4e7ac5c9ca2dc6a2fc848452f23a186b1aa"
 
 [[package]]
 name = "ere-platform-sp1"
-version = "0.13.0"
-source = "git+https://github.com/eth-act/ere?rev=a25f1aed9664c3b63e73ef05360090a4c41da31b#a25f1aed9664c3b63e73ef05360090a4c41da31b"
+version = "0.16.2"
+source = "git+https://github.com/eth-act/ere?rev=8961a4e7ac5c9ca2dc6a2fc848452f23a186b1aa#8961a4e7ac5c9ca2dc6a2fc848452f23a186b1aa"
 dependencies = [
  "ere-platform-core",
  "libzkevm",
@@ -1075,9 +1068,9 @@ dependencies = [
 
 [[package]]
 name = "find-msvc-tools"
-version = "0.1.10"
+version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "26b73573e6edcd2af0cdf47bd6cb58f0b3839491263c314eaad1ccf24430e1de"
+checksum = "d45db016d36b838f563236e9193d0ee6ce38f3f68b6c94e914b4929c96bbb890"
 
 [[package]]
 name = "fixed-hash"
@@ -1171,7 +1164,7 @@ checksum = "9fb9654ba8355388abeb8dcb4fc62f511300867002afc858860463bdd9fe0c44"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.3",
+ "syn 3.0.4",
 ]
 
 [[package]]
@@ -1695,8 +1688,8 @@ dependencies = [
 
 [[package]]
 name = "libzkevm"
-version = "6.3.1"
-source = "git+https://github.com/han0110/sp1?rev=8564a70ea1952826fc0926eba5a3ce62af53ffac#8564a70ea1952826fc0926eba5a3ce62af53ffac"
+version = "6.4.0"
+source = "git+https://github.com/han0110/sp1?rev=7929b001303feb6803ce1214557d5ab1f17eee84#7929b001303feb6803ce1214557d5ab1f17eee84"
 dependencies = [
  "bls12_381",
  "k256 0.13.4 (git+https://github.com/sp1-patches/elliptic-curves?tag=patch-k256-13.4-sp1-6.2.0)",
@@ -1718,9 +1711,9 @@ checksum = "2b23ac50abb8261cb38c6e2a7192d3302e0836dac1628f6a93b82b4fad185897"
 
 [[package]]
 name = "log"
-version = "0.4.33"
+version = "0.4.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad"
+checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
 name = "lru"
@@ -1862,9 +1855,9 @@ checksum = "521739c6d2bac4aa25192232afe6841231376b2b26d4d9fae5ecf8ca5772e441"
 
 [[package]]
 name = "num-integer"
-version = "0.1.46"
+version = "0.1.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7969661fd2958a5cb096e56c8e1ad0444ac2bbcd0061bd28660485a44879858f"
+checksum = "7ce2d95d4b3734dc35aa2f45e1aa22cd416814592a4f9d9205e11affd5b8e10b"
 dependencies = [
  "num-traits",
 ]
@@ -2232,7 +2225,7 @@ checksum = "1c8d9ca532f185d5d4db7a7c9d51420b452168ea1c2b913953281bd6fe1fcbd0"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.3",
+ "syn 3.0.4",
 ]
 
 [[package]]
@@ -2267,9 +2260,9 @@ dependencies = [
 
 [[package]]
 name = "rand"
-version = "0.8.7"
+version = "0.8.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22f6172bdec972074665ed81ed53b71da00bfc44b65a753cfde883ec4c702a1a"
+checksum = "e058c7de0b26af77780c769414d6257830bb240f3c38477dbc2c16e5f54d6d4c"
 dependencies = [
  "libc",
  "rand_chacha",
@@ -2317,22 +2310,22 @@ dependencies = [
 
 [[package]]
 name = "ref-cast"
-version = "1.0.26"
+version = "1.0.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "216e8f773d7923bcba9ceb86a86c93cabb3903a11872fc3f138c49630e50b96d"
+checksum = "7e440fb4e4b4147295338efb76001ab9e4efc0e5839df2c47fc5ac2381d365c3"
 dependencies = [
  "ref-cast-impl",
 ]
 
 [[package]]
 name = "ref-cast-impl"
-version = "1.0.26"
+version = "1.0.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c9283685feec7d69af75fb0e858d5e7378f33fe4fc699383b2916ab9273e03c"
+checksum = "92ecd8964f8453721699a1ed72037b0db49ce2f5a5138486ee89bed6f67cdf3a"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.3",
+ "syn 3.0.4",
 ]
 
 [[package]]
@@ -2428,7 +2421,7 @@ checksum = "1c25ef604ac7dd839d44d64648952ea23c97866f124ff671b0ed2cf3ad9bb06e"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.3",
+ "syn 3.0.4",
 ]
 
 [[package]]
@@ -2575,7 +2568,7 @@ checksum = "e7a5d71263a5a7d47b41f6b3f06ba276f10cc18b0931f1799f710578e2309348"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.3",
+ "syn 3.0.4",
 ]
 
 [[package]]
@@ -2691,8 +2684,8 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
 name = "slop-algebra"
-version = "6.3.1"
-source = "git+https://github.com/han0110/sp1?rev=8564a70ea1952826fc0926eba5a3ce62af53ffac#8564a70ea1952826fc0926eba5a3ce62af53ffac"
+version = "6.4.0"
+source = "git+https://github.com/han0110/sp1?rev=7929b001303feb6803ce1214557d5ab1f17eee84#7929b001303feb6803ce1214557d5ab1f17eee84"
 dependencies = [
  "itertools 0.14.0",
  "p3-field",
@@ -2701,8 +2694,8 @@ dependencies = [
 
 [[package]]
 name = "slop-bn254"
-version = "6.3.1"
-source = "git+https://github.com/han0110/sp1?rev=8564a70ea1952826fc0926eba5a3ce62af53ffac#8564a70ea1952826fc0926eba5a3ce62af53ffac"
+version = "6.4.0"
+source = "git+https://github.com/han0110/sp1?rev=7929b001303feb6803ce1214557d5ab1f17eee84#7929b001303feb6803ce1214557d5ab1f17eee84"
 dependencies = [
  "ff",
  "p3-bn254-fr",
@@ -2715,8 +2708,8 @@ dependencies = [
 
 [[package]]
 name = "slop-challenger"
-version = "6.3.1"
-source = "git+https://github.com/han0110/sp1?rev=8564a70ea1952826fc0926eba5a3ce62af53ffac#8564a70ea1952826fc0926eba5a3ce62af53ffac"
+version = "6.4.0"
+source = "git+https://github.com/han0110/sp1?rev=7929b001303feb6803ce1214557d5ab1f17eee84#7929b001303feb6803ce1214557d5ab1f17eee84"
 dependencies = [
  "futures",
  "p3-challenger",
@@ -2727,8 +2720,8 @@ dependencies = [
 
 [[package]]
 name = "slop-koala-bear"
-version = "6.3.1"
-source = "git+https://github.com/han0110/sp1?rev=8564a70ea1952826fc0926eba5a3ce62af53ffac#8564a70ea1952826fc0926eba5a3ce62af53ffac"
+version = "6.4.0"
+source = "git+https://github.com/han0110/sp1?rev=7929b001303feb6803ce1214557d5ab1f17eee84#7929b001303feb6803ce1214557d5ab1f17eee84"
 dependencies = [
  "lazy_static",
  "p3-koala-bear",
@@ -2741,24 +2734,24 @@ dependencies = [
 
 [[package]]
 name = "slop-poseidon2"
-version = "6.3.1"
-source = "git+https://github.com/han0110/sp1?rev=8564a70ea1952826fc0926eba5a3ce62af53ffac#8564a70ea1952826fc0926eba5a3ce62af53ffac"
+version = "6.4.0"
+source = "git+https://github.com/han0110/sp1?rev=7929b001303feb6803ce1214557d5ab1f17eee84#7929b001303feb6803ce1214557d5ab1f17eee84"
 dependencies = [
  "p3-poseidon2",
 ]
 
 [[package]]
 name = "slop-primitives"
-version = "6.3.1"
-source = "git+https://github.com/han0110/sp1?rev=8564a70ea1952826fc0926eba5a3ce62af53ffac#8564a70ea1952826fc0926eba5a3ce62af53ffac"
+version = "6.4.0"
+source = "git+https://github.com/han0110/sp1?rev=7929b001303feb6803ce1214557d5ab1f17eee84#7929b001303feb6803ce1214557d5ab1f17eee84"
 dependencies = [
  "slop-algebra",
 ]
 
 [[package]]
 name = "slop-symmetric"
-version = "6.3.1"
-source = "git+https://github.com/han0110/sp1?rev=8564a70ea1952826fc0926eba5a3ce62af53ffac#8564a70ea1952826fc0926eba5a3ce62af53ffac"
+version = "6.4.0"
+source = "git+https://github.com/han0110/sp1?rev=7929b001303feb6803ce1214557d5ab1f17eee84#7929b001303feb6803ce1214557d5ab1f17eee84"
 dependencies = [
  "p3-symmetric",
 ]
@@ -2771,8 +2764,8 @@ checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
 
 [[package]]
 name = "sp1-lib"
-version = "6.3.1"
-source = "git+https://github.com/han0110/sp1?rev=8564a70ea1952826fc0926eba5a3ce62af53ffac#8564a70ea1952826fc0926eba5a3ce62af53ffac"
+version = "6.4.0"
+source = "git+https://github.com/han0110/sp1?rev=7929b001303feb6803ce1214557d5ab1f17eee84#7929b001303feb6803ce1214557d5ab1f17eee84"
 dependencies = [
  "bincode",
  "elliptic-curve",
@@ -2782,8 +2775,8 @@ dependencies = [
 
 [[package]]
 name = "sp1-primitives"
-version = "6.3.1"
-source = "git+https://github.com/han0110/sp1?rev=8564a70ea1952826fc0926eba5a3ce62af53ffac#8564a70ea1952826fc0926eba5a3ce62af53ffac"
+version = "6.4.0"
+source = "git+https://github.com/han0110/sp1?rev=7929b001303feb6803ce1214557d5ab1f17eee84#7929b001303feb6803ce1214557d5ab1f17eee84"
 dependencies = [
  "bincode",
  "blake3",
@@ -2805,8 +2798,8 @@ dependencies = [
 
 [[package]]
 name = "sp1-zkvm"
-version = "6.3.1"
-source = "git+https://github.com/han0110/sp1?rev=8564a70ea1952826fc0926eba5a3ce62af53ffac#8564a70ea1952826fc0926eba5a3ce62af53ffac"
+version = "6.4.0"
+source = "git+https://github.com/han0110/sp1?rev=7929b001303feb6803ce1214557d5ab1f17eee84#7929b001303feb6803ce1214557d5ab1f17eee84"
 dependencies = [
  "cfg-if",
  "critical-section",
@@ -2924,9 +2917,9 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "3.0.3"
+version = "3.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "53e9bae58849f64dfa4f5d5ae372c8341f7305f82a3868709269343628b659a3"
+checksum = "e6275cddf4610d1775e6d1fe9469b2e77d0f39fd98fb7450901b821e0c53649f"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2956,7 +2949,7 @@ checksum = "bc04cd3e1236dd4a98afca4569f2deb3f120e5422a4023be2cb683f8486292af"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.3",
+ "syn 3.0.4",
 ]
 
 [[package]]
@@ -3123,9 +3116,9 @@ checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
 
 [[package]]
 name = "uuid"
-version = "1.24.0"
+version = "1.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf3923a6f5c4c6382e0b653c4117f48d631ea17f38ed86e2a828e6f7412f5239"
+checksum = "f053576934f05a761a402421fbbe3d425d9366f75f978806a037b3ca481abecc"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
