@@ -80,8 +80,8 @@ pub use api::{CfStats, RocksDbStats};
 pub use layering::apply_prefix;
 pub use store::{
     AccountUpdatesList, BATCH_COMMIT_THRESHOLD, BackfilledBlock, DB_COMMIT_THRESHOLD,
-    DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES, EngineType, Store, StoreConfig, UpdateBatch,
-    has_valid_db, hash_address, hash_key, read_chain_id_from_db,
+    DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES, DEPTH_GATED_COMMIT_STRIDE, EngineType, Store,
+    StoreConfig, UpdateBatch, has_valid_db, hash_address, hash_key, read_chain_id_from_db,
 };
 
 /// Store Schema Version, must be updated on any breaking change.
