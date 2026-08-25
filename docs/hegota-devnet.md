@@ -31,13 +31,15 @@ EIP-8312 carries its own timestamp and is inert until a chain opts in.
 |------|--------|-----|------|
 | `0xAA` | `APPROVE` | 8141 | |
 | `0xB0`–`0xB4` | `TXPARAM`/`FRAMEDATALOAD`/`FRAMEDATACOPY`/`FRAMEPARAM`/`SIGPARAM` | 8141 | |
-| `0xB5` | `RECENTROOTREFLOAD` | 8272 | spec-conformant; EIP-8272 assigns `0xB5` itself, to avoid the `SIGPARAM` collision |
+| `0xB5` | `RECENTROOTREFLOAD` | 8272 | ⚠️ **now contested** — EIP-8141 has since assigned `SIGDATACOPY` to `0xB5` too; see below |
 | `0xB6` | `TXTRACE` | 7906 | ethrex allocation; EIP-7906 assigns no opcode bytes |
 | `0xB7` | `EVENTDATACOPY` | 7906 | as above |
 | `0xB8` | `TXDIFF` | 7906 | as above |
 | `0xB9` | `NONCEKEYLOAD` | 8250 | **ethrex-only extension** — indexed `nonce_keys[i]`; spec defines no per-index accessor (see `docs/eip-8250.md`) |
 
 EIP-7906's Constants table carries only `TXTRACE_GAS_COST`, `EVENTDATACOPY_GAS_COST` and `POST_TX`, so `0xB6`/`0xB7`/`0xB8` are ethrex's allocation, chosen to leave `0xB5` to EIP-8272. The standalone `eip-7906` branch uses the same three bytes, so the two agree; `test/tests/levm/eip7906_tests.rs` and `crates/vm/levm/src/opcode_handlers/tx_trace.rs` carry them. Flag upstream so the 8141-family drafts settle non-overlapping bytes.
+
+**`0xB5` is now claimed by two live drafts.** EIP-8272 assigns it to `RECENTROOTREFLOAD`, and EIP-8141 has since added `SIGDATACOPY` — which exposes an `ARBITRARY` signature entry's raw bytes to EVM code — at the same byte. This branch keeps `RECENTROOTREFLOAD` there, because EIP-8272 assigned it first and the implementation, tests and the running devnet all depend on it. `SIGDATACOPY` is **not implemented yet**; when it is, it needs a free byte (`0xBA` onward — `0xB6`-`0xB9` are taken above). This is the same class of problem as the TXPARAM `0x0B`/`0x0F` conflict already listed under Upstream items, and the same fix applies: the 8141 family needs one opcode registry rather than per-draft allocation.
 
 ## Per-EIP divergences
 
@@ -51,7 +53,14 @@ EIP-7906's Constants table carries only `TXTRACE_GAS_COST`, `EVENTDATACOPY_GAS_C
 
 ### EIP-7906 (Tx Assertions)
 - Opcodes renumbered as above. Behaviour otherwise unchanged.
+- Reconciled against `f767a1e807`: `TXDIFF`'s live-state params (`0x00`-`0x05`) now record their access in the EIP-7928 block access list. The spec's other four changes in that range — `APPROVE` halting inside `POST_TX`, an exceptional halt reverting the body exactly as a revert does, the net-change definitions of the three diff counters, and the absent-topic and reserved-operand halts — were already implemented here.
 - Frame mode stays at **3**; EIP-8312 takes 5 rather than renumbering it (see below).
+
+### EIP-8141 (Frame Transactions)
+- **No MAX_VERIFY_GAS deviation any more.** This branch previously raised it to `500_000` because EIP-8037 repricing put account creation out of reach of a single combined prefix budget. The spec has since split the budget in two — `MAX_VERIFY_GAS` (`100_000`, execution) and `MAX_VERIFY_STATE_GAS` (`500_000`, state) — so the constant is back at the spec value and the state dimension carries the growth. `--mempool.max-verify-state-gas` is the operator knob for the second lane.
+- Frames declare `limits = [execution, state]` and spend two independent pools; the EIP-8037 reservoir does not apply inside a frame.
+- ⚠️ **Frame receipts still report a single gas figure**, so `gas_used.state` is not yet surfaced per frame. `standard_gas_limit` therefore also omits the spec's `sum(limits.state)` reservation term, which would otherwise be billed as consumed and never returned.
+- ⚠️ **`SIGDATACOPY` is not implemented** — see the opcode note above.
 
 ### EIP-8312 (UTXO Frames) — see `docs/eip-8312.md`
 - Frame mode **5** (spec `3`, already taken by EIP-7906 upstream; mode 4 stays reserved for EIP-8288 DEP_VERIFY).
@@ -85,13 +94,17 @@ EIP-7906's Constants table carries only `TXTRACE_GAS_COST`, `EVENTDATACOPY_GAS_C
 The commit each implementation has been reconciled against, per `EIPS/eip-<n>.md`.
 Bump a line only after verifying the implementation against that revision, since the
 point of the pin is to make "what changed since we aligned" an exact question.
-`/hegota-eips` diffs these against the head of each pinned source.
+`/hegota-eips` diffs these against the head of each pinned source. Note that these
+are repo-level commit SHAs, not per-file commits: querying a source's commit list
+filtered to `EIPS/eip-<n>.md` will not find them and reports a false "pin not
+found". Compare the file's content at the pinned SHA against its content at the
+source head instead.
 
 ```pins
-eip-8141  4093c21847  core      2026-08-10
-eip-8250  4093c21847  core      2026-08-10
-eip-8272  4093c21847  core      2026-08-10
-eip-7906  ab022ace2a  core      2026-07-29
+eip-8141  7d1c8bfb94  core      2026-08-25
+eip-8250  c9d962f194  core      2026-08-25
+eip-8272  a96bfaebd2  core      2026-08-25
+eip-7906  f767a1e807  core      2026-08-25
 eip-8312  a5da3f608c  core      2026-08-05  nerolation/EIPs@nerolation/utxo-frame
 eip-7805  4093c21847  focil     2026-08-10
 eip-8369  6f818e27dd  focil     2026-08-10  soispoke/EIPs@codex/vops-profiles-focil
@@ -123,6 +136,7 @@ FOCIL work on the `focil` branch must target.
 
 - EIP-8272 TXPARAM `0x0D → 0x0F` fix PR (drafted; from `lambdaclass/EIPs`).
 - EIP-8250/8141 TXPARAM `0x0B` conflict (raise for an authoritative registry).
+- **EIP-8141 `SIGDATACOPY` vs EIP-8272 `RECENTROOTREFLOAD`, both at `0xB5`.** The second opcode-byte collision between two live 8141-family drafts, and the strongest argument yet that the family needs a shared registry rather than per-draft allocation. Raise alongside the `0x0B` conflict.
 
 ## Deploying
 
