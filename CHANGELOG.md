@@ -16,6 +16,10 @@
 
 - EIP-8037 (execution-specs#3478, consensus-breaking): when a successful child frame merges, the state-gas reservoir now repays the spill still outstanding in the merged frame back into `gas_remaining`, debiting the reservoir by the same amount. A cross-frame refund can credit the reservoir while the `gas_remaining` that funded the charge stays reduced; the merge is the first point where the claim and the credit share a frame. Billing-neutral by construction — the user total (`gas_limit - gas_remaining - reservoir`) and the EIP-7778 dimensions are unchanged — but it changes how much execution gas a parent frame has after a child returns, so it is consensus-visible. Fixtures move to `tests-glamsterdam-devnet@v8.1.4` [#7250](https://github.com/lambdaclass/ethrex/pull/7250)
 
+### 2026-08-25
+
+- Stride depth-gated trie commits every 32 layers once the retain window is warm, amortizing `rebuild_bloom` / FKV / write-batch fixed costs on full-sync and regen paths [#7214](https://github.com/lambdaclass/ethrex/pull/7214)
+
 ### 2026-08-24
 
 - Make `eth_estimateGas`'s plain-transfer short circuit fire. Its condition tested whether the recipient account existed rather than whether it had code, so every transfer to an ordinary funded wallet ran the full binary search instead of returning `TRANSACTION_GAS` at once [#7211](https://github.com/lambdaclass/ethrex/pull/7211)
