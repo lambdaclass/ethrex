@@ -24,8 +24,8 @@ libssz-merkle = "0.3.0"
 libssz-types = "0.3.0"
 
 # ere platform abstraction (entrypoint / IO / cycle scopes) used by the per-zkVM
-# bins. Pinned to one ere rev; the immutable ere-compiler and ere-server image
-# digests in tag_release.yaml come from the same release.
+# bins. Pinned to one ere rev; the ere-compiler and ere-server image tag in
+# tag_release.yaml selects the matching ERE release.
 ere-platform-core = { git = "https://github.com/eth-act/ere", rev = "8961a4e7ac5c9ca2dc6a2fc848452f23a186b1aa", optional = true }
 
 # zkvm-standards syscall bindings backing the ZisK and SP1 crypto providers. Keeps
