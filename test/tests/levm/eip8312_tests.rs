@@ -534,7 +534,7 @@ fn install_records_code_and_nonce_in_the_block_access_list() {
 // matrix (spent bits staged by actual UTXO frames inside a batch and a POST_TX
 // body) arrives with the frame handler.
 
-use ethrex_common::types::{spent_bit_location, utxo_vault as vault_addr};
+use ethrex_common::types::{FrameLimits, spent_bit_location, utxo_vault as vault_addr};
 use ethrex_levm::utils::restore_cache_state;
 
 /// Run `body` against a VM whose db has the vault installed, then return the db
@@ -897,7 +897,10 @@ fn self_funded_fixture(
             mode: FrameMode::Utxo as u8,
             flags: 0,
             target: None,
-            gas_limit: 3_000_000,
+            limits: FrameLimits {
+                execution: 3_000_000,
+                state: 3_000_000,
+            },
             value: U256::zero(),
             data: Bytes::from(spend.encode_to_vec()),
         }],
@@ -951,7 +954,13 @@ fn run_spend_at(
     let fork = Fork::Hegota;
     let env = Environment {
         origin: fixture.tx.sender,
-        gas_limit: fixture.tx.frames.iter().map(|f| f.gas_limit).sum::<u64>() + 1_000_000,
+        gas_limit: fixture
+            .tx
+            .frames
+            .iter()
+            .map(|f| f.limits.execution)
+            .sum::<u64>()
+            + 1_000_000,
         config: {
             // A fork-only EVMConfig carries no EIP-8312 activation timestamp, so
             // the production default is inactive; opt in explicitly.
@@ -1183,7 +1192,10 @@ fn a_spend_by_a_non_actor_is_rejected() {
             mode: FrameMode::Utxo as u8,
             flags: 0,
             target: None,
-            gas_limit: 3_000_000,
+            limits: FrameLimits {
+                execution: 3_000_000,
+                state: 3_000_000,
+            },
             value: U256::zero(),
             data: Bytes::from(spend.encode_to_vec()),
         }],
@@ -1483,7 +1495,10 @@ fn a_batch_proof_spends_a_utxo_whose_ring_entry_aged_out() {
             mode: FrameMode::Utxo as u8,
             flags: 0,
             target: None,
-            gas_limit: 3_000_000,
+            limits: FrameLimits {
+                execution: 3_000_000,
+                state: 3_000_000,
+            },
             value: U256::zero(),
             data: Bytes::from(spend.encode_to_vec()),
         }],
@@ -1640,7 +1655,10 @@ fn sponsored_fixture_paying(
             mode: FrameMode::Verify as u8,
             flags: 0x01, // APPROVE_PAYMENT scope
             target: Some(sponsor),
-            gas_limit: 100_000,
+            limits: FrameLimits {
+                execution: 100_000,
+                state: 100_000,
+            },
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -1648,7 +1666,10 @@ fn sponsored_fixture_paying(
             mode: FrameMode::Utxo as u8,
             flags: 0,
             target: None,
-            gas_limit: 3_000_000,
+            limits: FrameLimits {
+                execution: 3_000_000,
+                state: 3_000_000,
+            },
             value: U256::zero(),
             data: Bytes::from(spend.encode_to_vec()),
         },
@@ -1724,7 +1745,10 @@ fn a_spent_bit_survives_a_sibling_frames_failure() {
         mode: FrameMode::Default as u8,
         flags: 0,
         target: Some(Address::from_low_u64_be(0xFA11)),
-        gas_limit: 100_000,
+        limits: FrameLimits {
+            execution: 100_000,
+            state: 100_000,
+        },
         value: U256::zero(),
         data: Bytes::new(),
     };
@@ -1770,7 +1794,10 @@ fn an_invalid_transaction_leaves_no_spent_bit() {
         mode: FrameMode::Verify as u8,
         flags: 0,
         target: Some(Address::from_low_u64_be(0xFA12)),
-        gas_limit: 100_000,
+        limits: FrameLimits {
+            execution: 100_000,
+            state: 100_000,
+        },
         value: U256::zero(),
         data: Bytes::new(),
     };
@@ -2380,7 +2407,10 @@ fn consolidation_fixture(n: usize, payout: U256) -> (SpendFixture, Vec<Address>,
             mode: FrameMode::Utxo as u8,
             flags: 0,
             target: None,
-            gas_limit: 3_000_000,
+            limits: FrameLimits {
+                execution: 3_000_000,
+                state: 3_000_000,
+            },
             value: U256::zero(),
             data: Bytes::from(spend.encode_to_vec()),
         }],

@@ -6,7 +6,8 @@ use bytes::Bytes;
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::types::{
     Account, BlockHeader, ChainConfig, Code, FRAME_TX_RECENT_ROOT_USABLE_WINDOW, Fork, Frame,
-    FrameMode, FrameTransaction, RecentRootReference, Transaction, frame_tx_recent_root,
+    FrameLimits, FrameMode, FrameTransaction, RecentRootReference, Transaction,
+    frame_tx_recent_root,
 };
 use ethrex_common::{Address, H256, U256, constants::EMPTY_TRIE_HASH};
 use ethrex_crypto::NativeCrypto;
@@ -75,7 +76,10 @@ fn frame(mode: FrameMode, flags: u8, target: Address, gas_limit: u64, data: &[u8
         mode: u8::from(mode),
         flags,
         target: Some(target),
-        gas_limit,
+        limits: FrameLimits {
+            execution: gas_limit,
+            state: gas_limit,
+        },
         value: U256::zero(),
         data: Bytes::from(data.to_vec()),
     }

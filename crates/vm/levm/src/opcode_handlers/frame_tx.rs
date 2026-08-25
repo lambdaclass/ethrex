@@ -462,7 +462,7 @@ impl OpcodeHandler for OpFrameParamHandler {
             }
             0x01 => {
                 // gas_limit
-                U256::from(frame.gas_limit)
+                U256::from(frame.limits.execution)
             }
             0x02 => {
                 // mode
@@ -823,9 +823,9 @@ fn execute_recent_root_frame(
     if is_static || frame.data.len() != 64 || !frame.value.is_zero() {
         return Ok((false, 0, Vec::new()));
     }
-    if frame.gas_limit < gas_cost::RECENT_ROOT_WRITE_GAS {
+    if frame.limits.execution < gas_cost::RECENT_ROOT_WRITE_GAS {
         // The write out-of-gasses: the frame consumes its whole budget.
-        return Ok((false, frame.gas_limit, Vec::new()));
+        return Ok((false, frame.limits.execution, Vec::new()));
     }
     let ctx = vm
         .frame_tx_context
@@ -1095,7 +1095,7 @@ pub fn execute_utxo_frame(
 
     // Per the EIP an under-provisioned UTXO frame invalidates the transaction —
     // it is not a failed frame that the transaction survives.
-    if frame.gas_limit < utxo_frame_gas {
+    if frame.limits.execution < utxo_frame_gas {
         return Ok(None);
     }
 

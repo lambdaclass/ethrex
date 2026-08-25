@@ -2068,7 +2068,7 @@ impl<'a> VM<'a> {
         let sum_frame_gas_limits: u64 = frame_tx
             .frames
             .iter()
-            .map(|f| f.gas_limit)
+            .map(|f| f.limits.execution)
             .fold(0u64, |acc, g| acc.saturating_add(g));
         let intrinsic_gas = total_gas_limit.saturating_sub(sum_frame_gas_limits);
         let mut total_gas_used: u64 = intrinsic_gas;
@@ -2366,7 +2366,7 @@ impl<'a> VM<'a> {
             let (frame_success, frame_gas_used, frame_logs) = if value_transfer_reverted {
                 self.substate.revert_backup();
                 self.restore_cache_state()?;
-                (false, frame.gas_limit, Vec::new())
+                (false, frame.limits.execution, Vec::new())
             } else if bytecode.is_empty() && !is_delegation_7702 {
                 // Default code runs only when the target has NEITHER code NOR a delegation
                 // indicator (EIP-8141 §Execution). After eip7702_get_code,
@@ -2400,7 +2400,7 @@ impl<'a> VM<'a> {
                     Err(_) => {
                         self.substate.revert_backup();
                         self.restore_cache_state()?;
-                        (false, frame.gas_limit, Vec::new())
+                        (false, frame.limits.execution, Vec::new())
                     }
                 }
             } else {
@@ -2414,12 +2414,12 @@ impl<'a> VM<'a> {
                     caller,                                    // msg_sender
                     target,                                    // to (delegator; ADDRESS/storage)
                     code_address,                              // code_address (delegatee when 7702)
-                    bytecode,           // bytecode (delegatee's code when 7702)
-                    frame.value,        // msg_value -- CALLVALUE
-                    frame.data.clone(), // calldata
-                    is_static,          // is_static
-                    frame.gas_limit,    // gas_limit
-                    0,                  // depth
+                    bytecode,               // bytecode (delegatee's code when 7702)
+                    frame.value,            // msg_value -- CALLVALUE
+                    frame.data.clone(),     // calldata
+                    is_static,              // is_static
+                    frame.limits.execution, // gas_limit
+                    0,                      // depth
                     false, // should_transfer_value (do_frame_value_transfer! handles it)
                     false, // is_create
                     0,     // ret_offset
@@ -2472,7 +2472,7 @@ impl<'a> VM<'a> {
                         // must be reverted (and the cache restored) here.
                         self.substate.revert_backup();
                         self.restore_cache_state()?;
-                        (false, frame.gas_limit, Vec::new())
+                        (false, frame.limits.execution, Vec::new())
                     }
                 };
 
@@ -3310,7 +3310,7 @@ impl<'a> VM<'a> {
             let (frame_success, frame_gas_used) = if value_transfer_reverted {
                 self.substate.revert_backup();
                 self.restore_cache_state()?;
-                (false, frame.gas_limit)
+                (false, frame.limits.execution)
             } else if bytecode.is_empty() && !is_delegation_7702 {
                 // Default-code path (target has neither code nor a delegation).
                 if !frame.value.is_zero() {
@@ -3331,7 +3331,7 @@ impl<'a> VM<'a> {
                     Err(_) => {
                         self.substate.revert_backup();
                         self.restore_cache_state()?;
-                        (false, frame.gas_limit)
+                        (false, frame.limits.execution)
                     }
                 }
             } else {
@@ -3344,7 +3344,7 @@ impl<'a> VM<'a> {
                     frame.value,
                     frame.data.clone(),
                     is_static,
-                    frame.gas_limit,
+                    frame.limits.execution,
                     0,
                     false,
                     false,
@@ -3375,7 +3375,7 @@ impl<'a> VM<'a> {
                     Err(_e) => {
                         self.substate.revert_backup();
                         self.restore_cache_state()?;
-                        (false, frame.gas_limit)
+                        (false, frame.limits.execution)
                     }
                 };
 

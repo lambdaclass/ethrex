@@ -2075,7 +2075,7 @@ pub fn transaction_intrinsic_gas(
     // formula below misprices them (their data() is empty and the base differs),
     // so report exactly the non-frame-gas overhead the VM charges as intrinsic.
     if let Transaction::FrameTransaction(frame_tx) = tx {
-        let frame_gas: u64 = frame_tx.frames.iter().map(|f| f.gas_limit).sum();
+        let frame_gas: u64 = frame_tx.frames.iter().map(|f| f.limits.execution).sum();
         return Ok(frame_tx.total_gas_limit().saturating_sub(frame_gas));
     }
 

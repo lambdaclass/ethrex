@@ -140,14 +140,14 @@ pub fn verify_budget_cost(tx: &FrameTransaction) -> Option<u64> {
     let prefix_gas = prefix
         .frame_indices
         .iter()
-        .map(|&i| tx.frames.get(i).map_or(0, |f| f.gas_limit))
+        .map(|&i| tx.frames.get(i).map_or(0, |f| f.limits.execution))
         .fold(0u64, |acc, g| acc.saturating_add(g));
 
     let expiry_gas = tx
         .frames
         .iter()
         .filter(|f| f.is_expiry_verifier())
-        .map(|f| f.gas_limit)
+        .map(|f| f.limits.execution)
         .fold(0u64, |acc, g| acc.saturating_add(g));
 
     Some(
@@ -216,8 +216,12 @@ pub fn is_profile_2_candidate(tx: &FrameTransaction, utxo_frames_active: bool) -
 
     // Structural conformance only. The budget is checked separately below
     // against the FOCIL constant, so `u64::MAX` disables the caller-supplied
-    // mempool budget inside this call rather than letting it decide eligibility.
-    if tx.validate_prefix_structure(&prefix, u64::MAX).is_err() {
+    // mempool budgets — both dimensions — inside this call rather than letting
+    // node configuration decide an attested verdict.
+    if tx
+        .validate_prefix_structure(&prefix, u64::MAX, u64::MAX)
+        .is_err()
+    {
         return false;
     }
 

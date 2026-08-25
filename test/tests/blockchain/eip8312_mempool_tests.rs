@@ -25,7 +25,7 @@ use ethrex_blockchain::{Blockchain, error::MempoolError};
 use ethrex_common::{
     Address, Bytes as CommonBytes, H256, U256,
     types::{
-        Frame, FrameMode, FrameSignature, FrameTransaction, Genesis, GenesisAccount,
+        Frame, FrameLimits, FrameMode, FrameSignature, FrameTransaction, Genesis, GenesisAccount,
         SLOT_NEXT_INDEX, Spend, SpendInput, SpendOutput, Transaction, merkle_proof, merkle_root,
         opening_leaf, ring_slot, utxo_vault,
     },
@@ -182,7 +182,10 @@ fn spend_tx(
             mode: FrameMode::Utxo as u8,
             flags: 0,
             target: None,
-            gas_limit: 3_000_000,
+            limits: FrameLimits {
+                execution: 3_000_000,
+                state: 3_000_000,
+            },
             value: U256::zero(),
             data: CommonBytes::from(spend.encode_to_vec()),
         }],

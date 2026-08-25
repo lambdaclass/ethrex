@@ -13,7 +13,7 @@
 use bytes::Bytes;
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::types::{
-    Account, BlockHeader, Code, FRAME_RECEIPT_STATUS_SUCCESS, Fork, Frame, FrameMode,
+    Account, BlockHeader, Code, FRAME_RECEIPT_STATUS_SUCCESS, Fork, Frame, FrameLimits, FrameMode,
     FrameTransaction, MAX_BLOBS_PER_TX, Transaction,
 };
 use ethrex_common::{Address, H256, U256, constants::EMPTY_TRIE_HASH};
@@ -265,7 +265,10 @@ fn verify_frame(target: Address) -> Frame {
         mode: u8::from(FrameMode::Verify),
         flags: 0x03,
         target: Some(target),
-        gas_limit: 100_000,
+        limits: FrameLimits {
+            execution: 100_000,
+            state: 100_000,
+        },
         value: U256::zero(),
         data: Bytes::new(),
     }
@@ -353,7 +356,10 @@ fn invalid_frame_tx_leaves_db_cache_clean() {
         mode: u8::from(FrameMode::Default),
         flags: 0,
         target: Some(target),
-        gas_limit: 100_000,
+        limits: FrameLimits {
+            execution: 100_000,
+            state: 100_000,
+        },
         value: U256::zero(),
         data: Bytes::new(),
     }]);
@@ -392,7 +398,10 @@ fn reverting_sender_frame_returns_value() {
             mode: u8::from(FrameMode::Sender),
             flags: 0,
             target: Some(target),
-            gas_limit: 100_000,
+            limits: FrameLimits {
+                execution: 100_000,
+                state: 100_000,
+            },
             value,
             data: Bytes::new(),
         },
@@ -462,7 +471,10 @@ fn payer_pays_effective_price_no_burn() {
             mode: u8::from(FrameMode::Sender),
             flags: 0,
             target: Some(stop_contract),
-            gas_limit: 30_000,
+            limits: FrameLimits {
+                execution: 30_000,
+                state: 30_000,
+            },
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -538,13 +550,16 @@ fn frameparam_reads_frame_index_from_stack_top() {
             // EIP-8037 (active at Hegota): the new-slot SSTORE spills
             // STATE_BYTES_PER_STORAGE_SET * cost_per_state_byte (~98k) into
             // the frame's regular gas, so the budget must cover it.
-            gas_limit: 300_000,
+            limits: FrameLimits {
+                execution: 300_000,
+                state: 300_000,
+            },
             value: U256::zero(),
             data: Bytes::new(),
         },
     ];
     // Set a distinctive gas_limit on frame[0] that FRAMEPARAM(param=1, frameIndex=0) must read.
-    frames[0].gas_limit = 77_777;
+    frames[0].limits.execution = 77_777;
     let tx = frame_tx_with_frames(frames);
     let (result, db) = run_frame_tx(
         &[
@@ -595,7 +610,10 @@ fn approve_halts_when_frame_scope_is_none() {
         mode: u8::from(FrameMode::Default),
         flags: 0x00,
         target: Some(FUNDED_SENDER),
-        gas_limit: 100_000,
+        limits: FrameLimits {
+            execution: 100_000,
+            state: 100_000,
+        },
         value: U256::zero(),
         data: Bytes::new(),
     }]);
@@ -633,7 +651,10 @@ fn batched_verify_revert_invalidates_tx() {
             mode: u8::from(FrameMode::Verify),
             flags: 0x04,
             target: Some(reverter),
-            gas_limit: 60_000,
+            limits: FrameLimits {
+                execution: 60_000,
+                state: 60_000,
+            },
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -641,7 +662,10 @@ fn batched_verify_revert_invalidates_tx() {
             mode: u8::from(FrameMode::Default),
             flags: 0x00,
             target: Some(stop_ct),
-            gas_limit: 30_000,
+            limits: FrameLimits {
+                execution: 30_000,
+                state: 30_000,
+            },
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -694,7 +718,10 @@ fn payment_approval_before_execution_approval_reverts() {
             mode: u8::from(FrameMode::Sender),
             flags: 0,
             target: Some(stop_ct),
-            gas_limit: 30_000,
+            limits: FrameLimits {
+                execution: 30_000,
+                state: 30_000,
+            },
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -742,7 +769,10 @@ fn sender_frame_transfers_value_to_eoa() {
             mode: u8::from(FrameMode::Sender),
             flags: 0,
             target: Some(eoa),
-            gas_limit: 50_000,
+            limits: FrameLimits {
+                execution: 50_000,
+                state: 50_000,
+            },
             value,
             data: Bytes::new(),
         },
@@ -785,7 +815,10 @@ fn sender_frame_to_eoa_emits_transfer_log() {
             mode: u8::from(FrameMode::Sender),
             flags: 0,
             target: Some(eoa),
-            gas_limit: 50_000,
+            limits: FrameLimits {
+                execution: 50_000,
+                state: 50_000,
+            },
             value,
             data: Bytes::new(),
         },
@@ -849,7 +882,10 @@ fn frame_tx_happy_path_sstore_and_log() {
             // EIP-8037 (active at Hegota): the new-slot SSTORE spills
             // STATE_BYTES_PER_STORAGE_SET * cost_per_state_byte (~98k) into
             // the frame's regular gas, so the budget must cover it.
-            gas_limit: 300_000,
+            limits: FrameLimits {
+                execution: 300_000,
+                state: 300_000,
+            },
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -956,7 +992,10 @@ fn multiple_contract_frames_do_not_duplicate_logs() {
             mode: u8::from(FrameMode::Sender),
             flags: 0,
             target: Some(worker_a),
-            gas_limit: 100_000,
+            limits: FrameLimits {
+                execution: 100_000,
+                state: 100_000,
+            },
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -965,7 +1004,10 @@ fn multiple_contract_frames_do_not_duplicate_logs() {
             mode: u8::from(FrameMode::Sender),
             flags: 0,
             target: Some(worker_b),
-            gas_limit: 100_000,
+            limits: FrameLimits {
+                execution: 100_000,
+                state: 100_000,
+            },
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -1074,7 +1116,10 @@ fn frame_sstore_set_reports_eip8037_state_gas() {
             mode: u8::from(FrameMode::Default),
             flags: 0x00,
             target: Some(writer),
-            gas_limit: 2_000_000,
+            limits: FrameLimits {
+                execution: 2_000_000,
+                state: 2_000_000,
+            },
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -1124,7 +1169,10 @@ fn reverted_frame_reports_no_state_gas() {
             mode: u8::from(FrameMode::Default),
             flags: 0x00,
             target: Some(writer),
-            gas_limit: 2_000_000,
+            limits: FrameLimits {
+                execution: 2_000_000,
+                state: 2_000_000,
+            },
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -1148,7 +1196,10 @@ fn frame_tx_below_base_blob_fee_is_rejected() {
         mode: u8::from(FrameMode::Sender),
         flags: 0x00,
         target: None,
-        gas_limit: 100_000,
+        limits: FrameLimits {
+            execution: 100_000,
+            state: 100_000,
+        },
         value: U256::zero(),
         data: Bytes::new(),
     }]);
@@ -1197,7 +1248,10 @@ fn state_gas_reservoir_does_not_leak_across_frames() {
         mode: u8::from(FrameMode::Default),
         flags: 0x00,
         target: Some(target),
-        gas_limit: 2_000_000,
+        limits: FrameLimits {
+            execution: 2_000_000,
+            state: 2_000_000,
+        },
         value: U256::zero(),
         data: Bytes::new(),
     };
@@ -1296,13 +1350,16 @@ mod frame_tx_opcode_handler_tests {
 
     #[test]
     fn frameparam_0x08_returns_frame_value() {
-        use ethrex_common::types::{Frame, FrameMode};
+        use ethrex_common::types::{Frame, FrameLimits, FrameMode};
         // The 0x08 arm of OpFrameParamHandler maps directly to `frame.value`.
         let frame = Frame {
             mode: u8::from(FrameMode::Sender),
             flags: 0x00,
             target: Some(Address::from_low_u64_be(0xCAFE)),
-            gas_limit: 100_000,
+            limits: FrameLimits {
+                execution: 100_000,
+                state: 100_000,
+            },
             value: U256::from(1_234_567u64),
             data: Bytes::new(),
         };
@@ -1444,7 +1501,7 @@ mod frame_tx_opcode_handler_tests {
 
     #[test]
     fn framedataload_verify_frame_returns_real_data() {
-        use ethrex_common::types::{Frame, FrameMode};
+        use ethrex_common::types::{Frame, FrameLimits, FrameMode};
         // After the VERIFY-zeroing removal, loading data from a VERIFY frame
         // should return the actual bytes in frame.data, not zero.
         let mut data = [0u8; 32];
@@ -1454,7 +1511,10 @@ mod frame_tx_opcode_handler_tests {
             mode: u8::from(FrameMode::Verify),
             flags: 0x03,
             target: Some(Address::from_low_u64_be(0xAA)),
-            gas_limit: 50_000,
+            limits: FrameLimits {
+                execution: 50_000,
+                state: 50_000,
+            },
             value: U256::zero(),
             data: Bytes::from(data.to_vec()),
         };
@@ -1930,8 +1990,8 @@ mod validation_observer_tests {
     use ethrex_common::types::Fork;
     use ethrex_common::types::Transaction;
     use ethrex_common::types::{
-        Account, AccountState, ChainConfig, Code, CodeMetadata, Frame, FrameTransaction,
-        frame_tx_expiry_verifier,
+        Account, AccountState, ChainConfig, Code, CodeMetadata, Frame, FrameLimits,
+        FrameTransaction, frame_tx_expiry_verifier,
     };
     use ethrex_common::{Address, H256, U256};
     use ethrex_levm::db::{Database, gen_db::GeneralizedDatabase};
@@ -2073,7 +2133,10 @@ mod validation_observer_tests {
             mode: 1, // VERIFY
             flags,
             target: Some(target),
-            gas_limit,
+            limits: FrameLimits {
+                execution: gas_limit,
+                state: gas_limit,
+            },
             value: U256::zero(),
             data,
         }
@@ -2084,7 +2147,10 @@ mod validation_observer_tests {
             mode: 0, // DEFAULT
             flags: 0,
             target: Some(target),
-            gas_limit,
+            limits: FrameLimits {
+                execution: gas_limit,
+                state: gas_limit,
+            },
             value: U256::zero(),
             data,
         }
@@ -2422,8 +2488,8 @@ mod frame_validation_prefix_tests {
     use ethrex_common::types::Transaction;
     use ethrex_common::types::{
         Account, AccountState, BlockHeader, ChainConfig, Code, CodeMetadata,
-        DEFAULT_AA_VOPS_SLOT_COUNT, FRAME_TX_MAX_VERIFY_GAS, Frame, FrameTransaction, PrefixShape,
-        ValidationPrefix,
+        DEFAULT_AA_VOPS_SLOT_COUNT, FRAME_TX_MAX_VERIFY_GAS, FRAME_TX_MAX_VERIFY_STATE_GAS, Frame,
+        FrameLimits, FrameTransaction, PrefixShape, ValidationPrefix,
     };
     use ethrex_common::{Address, H256, U256};
     use ethrex_crypto::NativeCrypto;
@@ -2548,7 +2614,10 @@ mod frame_validation_prefix_tests {
             mode,
             flags,
             target: Some(target),
-            gas_limit,
+            limits: FrameLimits {
+                execution: gas_limit,
+                state: gas_limit,
+            },
             value: U256::zero(),
             data: Bytes::new(),
         }
@@ -2683,7 +2752,11 @@ mod frame_validation_prefix_tests {
             .expect("OnlyVerifyPay shape recognized");
         assert_eq!(prefix.shape, PrefixShape::OnlyVerifyPay);
         frame_tx
-            .validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
+            .validate_prefix_structure(
+                &prefix,
+                FRAME_TX_MAX_VERIFY_GAS,
+                FRAME_TX_MAX_VERIFY_STATE_GAS,
+            )
             .expect("a pay frame may target a non-sender sponsor (EIP-8141 structural rule 4)");
 
         let mut db = db_with(vec![
@@ -3553,7 +3626,10 @@ mod sigparam_execution_tests {
                 mode: u8::from(FrameMode::Default),
                 flags: 0,
                 target: Some(reader),
-                gas_limit: 200_000,
+                limits: FrameLimits {
+                    execution: 200_000,
+                    state: 200_000,
+                },
                 value: U256::zero(),
                 data: Bytes::new(),
             },
@@ -3804,7 +3880,10 @@ fn storage_refund_from_a_later_frame_reduces_reported_gas() {
         mode: u8::from(FrameMode::Default),
         flags: 0,
         target: Some(target),
-        gas_limit: 200_000,
+        limits: FrameLimits {
+            execution: 200_000,
+            state: 200_000,
+        },
         value: U256::zero(),
         data,
     };
@@ -3891,7 +3970,10 @@ fn atomic_batch_revert_drops_the_batch_writes_from_the_bal() {
         mode: u8::from(FrameMode::Sender),
         flags: 0x04,
         target: Some(target),
-        gas_limit: 300_000,
+        limits: FrameLimits {
+            execution: 300_000,
+            state: 300_000,
+        },
         value: U256::zero(),
         data: Bytes::new(),
     };
@@ -3899,7 +3981,10 @@ fn atomic_batch_revert_drops_the_batch_writes_from_the_bal() {
         mode: u8::from(FrameMode::Sender),
         flags: 0x00,
         target: Some(target),
-        gas_limit: 100_000,
+        limits: FrameLimits {
+            execution: 100_000,
+            state: 100_000,
+        },
         value: U256::zero(),
         data: Bytes::new(),
     };
@@ -3907,7 +3992,10 @@ fn atomic_batch_revert_drops_the_batch_writes_from_the_bal() {
         mode: u8::from(FrameMode::Verify),
         flags: 0x03,
         target: Some(FUNDED_SENDER),
-        gas_limit: 80_000,
+        limits: FrameLimits {
+            execution: 80_000,
+            state: 80_000,
+        },
         value: U256::zero(),
         data: Bytes::new(),
     };
@@ -4006,7 +4094,10 @@ fn reverted_frame_refiles_its_writes_as_reads_in_the_bal() {
         mode: u8::from(FrameMode::Verify),
         flags: 0x03,
         target: Some(FUNDED_SENDER),
-        gas_limit: 80_000,
+        limits: FrameLimits {
+            execution: 80_000,
+            state: 80_000,
+        },
         value: U256::zero(),
         data: Bytes::new(),
     };
@@ -4016,7 +4107,10 @@ fn reverted_frame_refiles_its_writes_as_reads_in_the_bal() {
         mode: u8::from(FrameMode::Default),
         flags: 0x00,
         target: Some(target),
-        gas_limit: 300_000,
+        limits: FrameLimits {
+            execution: 300_000,
+            state: 300_000,
+        },
         value: U256::zero(),
         data: Bytes::new(),
     };
@@ -4116,7 +4210,10 @@ fn atomic_batch_unroll_keeps_frame_status_and_gas_but_drops_logs() {
         mode: u8::from(FrameMode::Sender),
         flags: 0x04,
         target: Some(target),
-        gas_limit: BATCH_FRAME_GAS,
+        limits: FrameLimits {
+            execution: BATCH_FRAME_GAS,
+            state: BATCH_FRAME_GAS,
+        },
         value: U256::zero(),
         data: Bytes::new(),
     };
@@ -4131,7 +4228,10 @@ fn atomic_batch_unroll_keeps_frame_status_and_gas_but_drops_logs() {
             mode: u8::from(FrameMode::Sender),
             flags: 0x00,
             target: Some(terminator),
-            gas_limit: 100_000,
+            limits: FrameLimits {
+                execution: 100_000,
+                state: 100_000,
+            },
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -4197,7 +4297,10 @@ fn max_gas_reserves_the_calldata_floor_instead_of_rejecting() {
         mode: u8::from(FrameMode::Verify),
         flags: 0x03,
         target: Some(FUNDED_SENDER),
-        gas_limit: 1_000,
+        limits: FrameLimits {
+            execution: 1_000,
+            state: 1_000,
+        },
         value: U256::zero(),
         data: Bytes::from(vec![0x11u8; 4_096]),
     }]);
@@ -4233,7 +4336,10 @@ fn frame_tx_over_the_per_tx_blob_limit_is_rejected() {
         mode: u8::from(FrameMode::Verify),
         flags: 0x03, // APPROVE_EXECUTION_AND_PAYMENT
         target: Some(FUNDED_SENDER),
-        gas_limit: 100_000,
+        limits: FrameLimits {
+            execution: 100_000,
+            state: 100_000,
+        },
         value: U256::zero(),
         data: Bytes::new(),
     };
@@ -4273,7 +4379,7 @@ mod intrinsic_gas_accounting_tests {
     use bytes::Bytes;
     use ethrex_common::types::{
         FRAME_SIG_SCHEME_SECP256K1, FRAME_TX_INTRINSIC_COST, FRAME_TX_PER_FRAME_COST, Frame,
-        FrameSignature, FrameTransaction, Transaction,
+        FrameLimits, FrameSignature, FrameTransaction, Transaction,
     };
     use ethrex_common::{Address, U256};
 
@@ -4299,7 +4405,10 @@ mod intrinsic_gas_accounting_tests {
                     mode: 1,
                     flags: 3,
                     target: None,
-                    gas_limit: 50_000,
+                    limits: FrameLimits {
+                        execution: 50_000,
+                        state: 50_000,
+                    },
                     value: U256::zero(),
                     data: Bytes::new(),
                 },
@@ -4307,7 +4416,10 @@ mod intrinsic_gas_accounting_tests {
                     mode: 2,
                     flags: 0,
                     target: Some(Address::repeat_byte(0x11)),
-                    gas_limit: 100_000,
+                    limits: FrameLimits {
+                        execution: 100_000,
+                        state: 100_000,
+                    },
                     value: U256::from(500_000_000_000_000u64),
                     data: Bytes::new(),
                 },
@@ -4400,7 +4512,7 @@ mod intrinsic_gas_accounting_tests {
         assert!(baseline.frames.len() >= 2);
 
         let mut restructured = interop_reference_tx();
-        restructured.frames[0].gas_limit += 1_000;
+        restructured.frames[0].limits.execution += 1_000;
         restructured.frames[1].value = U256::from(1u64);
 
         // Asserting the two components separately rather than their sum minus the

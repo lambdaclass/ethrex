@@ -76,8 +76,8 @@ use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{
     AccountInfo, AccountState, AccountUpdate, BalSynthesisItem, Block, BlockHash, BlockHeader,
-    BlockNumber, Code, FRAME_TX_MAX_VERIFY_GAS, FrameTransaction, Transaction,
-    WrappedEIP4844Transaction, WrappedFrameTransaction, synthesize_bal_updates,
+    BlockNumber, Code, FRAME_TX_MAX_VERIFY_GAS, FRAME_TX_MAX_VERIFY_STATE_GAS, FrameTransaction,
+    Transaction, WrappedEIP4844Transaction, WrappedFrameTransaction, synthesize_bal_updates,
     validate_block_body,
 };
 use ethrex_common::types::{EIP7702_DELEGATED_CODE_LEN, is_eip7702_delegation};
@@ -358,6 +358,11 @@ pub struct BlockchainOptions {
     /// validating signatures and simulating a frame transaction's validation
     /// prefix. Mempool policy (SHOULD), not consensus, so it is operator-tunable.
     pub max_verify_gas: u64,
+    /// EIP-8141 §Mempool `MAX_VERIFY_STATE_GAS`: the maximum EIP-8037 state gas a
+    /// frame transaction may budget across its validation prefix. Bounds state
+    /// growth admitted through the public mempool rather than node work, so it is
+    /// a separate, larger lane than `max_verify_gas`. Mempool policy, not consensus.
+    pub max_verify_state_gas: u64,
     /// EIP-8312 admission budget for transactions carrying UTXO frames. Separate
     /// knob from `max_verify_gas`: the two lanes are disjoint, and this devnet
     /// already runs a raised `max_verify_gas` for EIP-8272 proof benchmarking.
@@ -387,6 +392,7 @@ impl Default for BlockchainOptions {
             max_reorg_depth: None,
             gap_admit_occupancy_threshold: DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD,
             max_verify_gas: DEFAULT_MAX_VERIFY_GAS,
+            max_verify_state_gas: DEFAULT_MAX_VERIFY_STATE_GAS,
             max_utxo_verify_gas: ethrex_common::types::MAX_UTXO_VERIFY_GAS,
             private_mempool: false,
         }
@@ -401,6 +407,9 @@ pub const DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT: usize = 64;
 /// Default frame-transaction verify-gas budget: the EIP-8141 §Mempool
 /// `MAX_VERIFY_GAS` value.
 pub const DEFAULT_MAX_VERIFY_GAS: u64 = FRAME_TX_MAX_VERIFY_GAS;
+
+/// Node default for [`BlockchainOptions::max_verify_state_gas`]; the EIP-8141 value.
+pub const DEFAULT_MAX_VERIFY_STATE_GAS: u64 = FRAME_TX_MAX_VERIFY_STATE_GAS;
 
 #[derive(Debug, Clone)]
 pub struct BatchBlockProcessingFailure {
@@ -3934,7 +3943,11 @@ impl Blockchain {
                 // sig-cost pre-filter above; both are kept for defence-in-depth.
                 let prefix = frame_tx.validation_prefix().map_err(MempoolError::from)?;
                 frame_tx
-                    .validate_prefix_structure(&prefix, self.options.max_verify_gas)
+                    .validate_prefix_structure(
+                        &prefix,
+                        self.options.max_verify_gas,
+                        self.options.max_verify_state_gas,
+                    )
                     .map_err(MempoolError::from)?;
             }
 

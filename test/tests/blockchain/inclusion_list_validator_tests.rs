@@ -8,7 +8,9 @@ use ethrex_blockchain::inclusion_list_builder::{
 use ethrex_blockchain::inclusion_list_validator::{
     IlSenderState, IlUnsatisfied, InclusionListSatisfactionValidator,
 };
-use ethrex_common::types::{BlockHeader, ChainConfig, EIP1559Transaction, Transaction, TxKind};
+use ethrex_common::types::{
+    BlockHeader, ChainConfig, EIP1559Transaction, FrameLimits, Transaction, TxKind,
+};
 use ethrex_common::{Address, H256, U256};
 use ethrex_crypto::NativeCrypto;
 use rustc_hash::FxHashMap;
@@ -516,7 +518,10 @@ fn make_frame_tx(sender: Address, nonce: u64, frame_gas_limit: u64) -> Transacti
             mode: FrameMode::Sender as u8,
             flags: 0x00,
             target: Some(Address::repeat_byte(0xaa)),
-            gas_limit: frame_gas_limit,
+            limits: FrameLimits {
+                execution: frame_gas_limit,
+                state: frame_gas_limit,
+            },
             value: U256::zero(),
             data: Default::default(),
         }],

@@ -220,7 +220,11 @@ impl RpcHandler for SimulateFrameTransactionRequest {
             Ok(prefix) => prefix,
             Err(error) => return structurally_invalid(error.to_string(), max_cost),
         };
-        if let Err(error) = frame_tx.validate_prefix_structure(&prefix, max_verify_gas) {
+        if let Err(error) = frame_tx.validate_prefix_structure(
+            &prefix,
+            max_verify_gas,
+            context.blockchain.options.max_verify_state_gas,
+        ) {
             return structurally_invalid(error.to_string(), max_cost);
         }
         let prefix_shape = Some(prefix_shape_name(&prefix.shape).to_owned());

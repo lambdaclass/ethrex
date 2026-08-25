@@ -35,7 +35,7 @@ use ethrex_common::validation::BlockValidationContext;
 use ethrex_common::{
     Address, H256, U256,
     types::{
-        APPROVE_EXECUTION_AND_PAYMENT, BlockHeader, ChainConfig, Frame, FrameMode,
+        APPROVE_EXECUTION_AND_PAYMENT, BlockHeader, ChainConfig, Frame, FrameLimits, FrameMode,
         FrameTransaction, Genesis, GenesisAccount, Transaction,
     },
 };
@@ -111,7 +111,10 @@ fn verify_frame(target: Option<Address>, scope: u8, gas_limit: u64) -> Frame {
         mode: FrameMode::Verify as u8,
         flags: scope,
         target,
-        gas_limit,
+        limits: FrameLimits {
+            execution: gas_limit,
+            state: gas_limit,
+        },
         value: U256::zero(),
         data: Default::default(),
     }
@@ -408,7 +411,7 @@ async fn import_block_omitting_il(
     il: Vec<Transaction>,
 ) -> (BlockHeader, Result<(), ChainError>) {
     use ethrex_blockchain::payload::{BuildPayloadArgs, create_payload};
-    use ethrex_common::types::{DEFAULT_BUILDER_GAS_CEIL, ELASTICITY_MULTIPLIER};
+    use ethrex_common::types::{DEFAULT_BUILDER_GAS_CEIL, ELASTICITY_MULTIPLIER, FrameLimits};
 
     let args = BuildPayloadArgs {
         parent: parent.hash(),
@@ -585,7 +588,10 @@ async fn frame_tx_with_a_utxo_frame_is_undecided() {
         mode: FrameMode::Utxo as u8,
         flags: 0,
         target: None,
-        gas_limit: 0,
+        limits: FrameLimits {
+            execution: 0,
+            state: 0,
+        },
         value: U256::zero(),
         data: Default::default(),
     });

@@ -29,7 +29,7 @@ use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::types::AccountInfo;
 use ethrex_common::types::{
     Account, BlockHeader, Code, EIP1559Transaction, FRAME_RECEIPT_STATUS_FAILURE, Fork, Frame,
-    FrameMode, FrameTransaction, Transaction, TxKind,
+    FrameLimits, FrameMode, FrameTransaction, Transaction, TxKind,
 };
 use ethrex_common::{Address, H256, U256, constants::EMPTY_TRIE_HASH};
 use ethrex_crypto::NativeCrypto;
@@ -265,7 +265,10 @@ fn verify_frame(target: Address) -> Frame {
         mode: u8::from(FrameMode::Verify),
         flags: 0x03,
         target: Some(target),
-        gas_limit: 200_000,
+        limits: FrameLimits {
+            execution: 200_000,
+            state: 200_000,
+        },
         value: U256::zero(),
         data: Bytes::new(),
     }
@@ -287,7 +290,10 @@ fn default_frame(target: Address) -> Frame {
         mode: u8::from(FrameMode::Default),
         flags: 0x00,
         target: Some(target),
-        gas_limit: 2_000_000,
+        limits: FrameLimits {
+            execution: 2_000_000,
+            state: 2_000_000,
+        },
         value: U256::zero(),
         data: Bytes::new(),
     }
@@ -300,7 +306,10 @@ fn posttx_frame(target: Address) -> Frame {
         mode: u8::from(FrameMode::PostTx),
         flags: 0x00,
         target: Some(target),
-        gas_limit: 400_000,
+        limits: FrameLimits {
+            execution: 400_000,
+            state: 400_000,
+        },
         value: U256::zero(),
         data: Bytes::new(),
     }

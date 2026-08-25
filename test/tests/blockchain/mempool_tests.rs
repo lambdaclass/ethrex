@@ -21,7 +21,7 @@ use ethrex_common::types::{
     BlockBody, BlockHeader, ChainConfig, EIP1559Transaction, EIP4844Transaction,
     EIP7702Transaction, FRAME_SIG_SCHEME_P256, FRAME_SIG_SCHEME_SECP256K1,
     FRAME_TX_EXPIRY_DATA_LENGTH, FRAME_TX_MAX_VERIFY_GAS, FRAME_TX_RECENT_ROOT_USABLE_WINDOW,
-    FeeTokenTransaction, Frame, FrameMode, FrameSignature, FrameTransaction, Genesis,
+    FeeTokenTransaction, Frame, FrameLimits, FrameMode, FrameSignature, FrameTransaction, Genesis,
     GenesisAccount, MAX_TX_SIZE, MempoolTransaction, PrivilegedL2Transaction, RecentRootReference,
     Transaction, TxKind, frame_tx_expiry_verifier, frame_tx_recent_root,
     kzg_commitment_to_versioned_hash,
@@ -693,7 +693,10 @@ fn minimal_valid_frame_tx() -> FrameTransaction {
             // intrinsic-gas fix prices it correctly. It must still cover the
             // EIP-7623 floor, which EIP-8250's nonce calldata makes non-zero even
             // for a frame tx carrying no frame or signature data.
-            gas_limit: 200,
+            limits: FrameLimits {
+                execution: 200,
+                state: 200,
+            },
             value: U256::zero(),
             data: Bytes::new(),
         }],
@@ -712,7 +715,7 @@ fn minimal_valid_frame_tx() -> FrameTransaction {
 fn reserve_calldata_floor(tx: &mut FrameTransaction) {
     let floor = tx.calldata_floor_gas();
     if let Some(frame) = tx.frames.first_mut() {
-        frame.gas_limit = frame.gas_limit.max(floor);
+        frame.limits.execution = frame.limits.execution.max(floor);
     }
 }
 
@@ -874,12 +877,15 @@ async fn mempool_rejects_oversized_frame_data() {
         mode: FrameMode::Sender as u8,
         flags: 0x00,
         target: Some(Address::from_low_u64_be(0xCAFE)),
-        gas_limit: 0,
+        limits: FrameLimits {
+            execution: 0,
+            state: 0,
+        },
         value: U256::zero(),
         data: payload,
     });
     let floor = frame_tx.calldata_floor_gas();
-    frame_tx.frames[1].gas_limit = floor;
+    frame_tx.frames[1].limits.execution = floor;
 
     let tx = Transaction::FrameTransaction(frame_tx);
     let validation = blockchain.validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap());
@@ -957,7 +963,7 @@ async fn configured_max_verify_gas_overrides_the_spec_default() {
     assert!(prefix_gas > FRAME_TX_MAX_VERIFY_GAS && prefix_gas < raised_budget);
 
     let mut frame_tx = minimal_valid_frame_tx();
-    frame_tx.frames[0].gas_limit = prefix_gas;
+    frame_tx.frames[0].limits.execution = prefix_gas;
     let tx = Transaction::FrameTransaction(frame_tx);
     let sender = tx.sender(&NativeCrypto).unwrap();
 
@@ -1122,7 +1128,10 @@ fn frame_tx_with_expiry(deadline: u64) -> FrameTransaction {
                 flags: 0x00,
                 target: Some(frame_tx_expiry_verifier()),
                 // Enough to reserve the EIP-7623 floor of the 8-byte deadline.
-                gas_limit: 1_000,
+                limits: FrameLimits {
+                    execution: 1_000,
+                    state: 1_000,
+                },
                 value: U256::zero(),
                 data: Bytes::from(data.to_vec()),
             },
@@ -1130,7 +1139,10 @@ fn frame_tx_with_expiry(deadline: u64) -> FrameTransaction {
                 mode: FrameMode::Verify as u8,
                 flags: APPROVE_EXECUTION_AND_PAYMENT,
                 target: Some(sender),
-                gas_limit: 200,
+                limits: FrameLimits {
+                    execution: 200,
+                    state: 200,
+                },
                 value: U256::zero(),
                 data: Bytes::new(),
             },
@@ -1764,7 +1776,10 @@ fn funded_frame_tx(max_fee_per_gas: u64, max_priority_fee_per_gas: u64) -> Frame
             mode: FrameMode::Verify as u8,
             flags: APPROVE_EXECUTION_AND_PAYMENT,
             target: Some(sender),
-            gas_limit: 200,
+            limits: FrameLimits {
+                execution: 200,
+                state: 200,
+            },
             value: U256::zero(),
             data: Bytes::new(),
         }],
@@ -1865,7 +1880,10 @@ async fn mempool_rejects_underfunded_paymaster() {
             mode: FrameMode::Verify as u8,
             flags: APPROVE_EXECUTION_AND_PAYMENT,
             target: Some(phantom_sender),
-            gas_limit: 200,
+            limits: FrameLimits {
+                execution: 200,
+                state: 200,
+            },
             value: U256::zero(),
             data: Bytes::new(),
         }],
@@ -1950,7 +1968,10 @@ async fn mempool_enforces_noncanonical_paymaster_limit() {
                 mode: FrameMode::Verify as u8,
                 flags: APPROVE_EXECUTION_AND_PAYMENT,
                 target: Some(sender),
-                gas_limit: 200,
+                limits: FrameLimits {
+                    execution: 200,
+                    state: 200,
+                },
                 value: U256::zero(),
                 data: Bytes::new(),
             }],
@@ -2048,7 +2069,10 @@ fn self_pay_frame_tx_exempt_from_noncanonical_paymaster_limit() {
                 mode: FrameMode::Verify as u8,
                 flags: APPROVE_EXECUTION_AND_PAYMENT,
                 target: Some(sender),
-                gas_limit: 200,
+                limits: FrameLimits {
+                    execution: 200,
+                    state: 200,
+                },
                 value: U256::zero(),
                 data: Bytes::new(),
             }],
@@ -2133,7 +2157,10 @@ async fn mempool_rejects_second_frame_tx_same_sender_new_nonce() {
             mode: FrameMode::Verify as u8,
             flags: APPROVE_EXECUTION_AND_PAYMENT,
             target: Some(sender),
-            gas_limit: 200,
+            limits: FrameLimits {
+                execution: 200,
+                state: 200,
+            },
             value: U256::zero(),
             data: Bytes::new(),
         }],
@@ -2380,7 +2407,10 @@ async fn mempool_fee_bump_rejected_leaves_original_intact() {
             mode: FrameMode::Verify as u8,
             flags: APPROVE_EXECUTION_AND_PAYMENT,
             target: Some(phantom_sender),
-            gas_limit: 200,
+            limits: FrameLimits {
+                execution: 200,
+                state: 200,
+            },
             value: U256::zero(),
             data: Bytes::new(),
         }],
@@ -3399,7 +3429,7 @@ fn keyed_frame_tx(keys: Vec<U256>, nonce_seq: u64, max_fee: u64) -> Transaction 
     // this tx is run through full admission (validation-prefix simulation); the
     // 100-gas floor from `minimal_valid_frame_tx` is only enough for the key-0
     // path (which just bumps the account nonce, no NONCE_MANAGER write).
-    ftx.frames[0].gas_limit = 80_000;
+    ftx.frames[0].limits.execution = 80_000;
     Transaction::FrameTransaction(ftx)
 }
 
@@ -3697,8 +3727,8 @@ mod p2p_serve_tests {
     use ethrex_blockchain::Blockchain;
     use ethrex_blockchain::mempool::KeyedConcurrency;
     use ethrex_common::types::{
-        FRAME_SIG_SCHEME_SECP256K1, Frame, FrameMode, FrameSignature, FrameTransaction,
-        MempoolTransaction, P2PTransaction, Transaction,
+        FRAME_SIG_SCHEME_SECP256K1, Frame, FrameLimits, FrameMode, FrameSignature,
+        FrameTransaction, MempoolTransaction, P2PTransaction, Transaction,
     };
     use ethrex_common::{Address, U256};
     use ethrex_crypto::NativeCrypto;
@@ -3714,7 +3744,10 @@ mod p2p_serve_tests {
                 mode: FrameMode::Sender as u8,
                 flags: 0x00,
                 target: Some(Address::from_low_u64_be(0x1234)),
-                gas_limit: 100_000,
+                limits: FrameLimits {
+                    execution: 100_000,
+                    state: 100_000,
+                },
                 value: U256::zero(),
                 data: bytes::Bytes::from_static(b"call_data"),
             }],
@@ -3906,7 +3939,10 @@ fn self_pay_removal_does_not_release_a_noncanonical_paymaster_slot() {
                 mode: FrameMode::Verify as u8,
                 flags: APPROVE_EXECUTION_AND_PAYMENT,
                 target: Some(sender),
-                gas_limit: 200,
+                limits: FrameLimits {
+                    execution: 200,
+                    state: 200,
+                },
                 value: U256::zero(),
                 data: Bytes::new(),
             }],
@@ -4564,7 +4600,10 @@ fn utxo_input_indices_reads_every_utxo_frames_inputs() {
         mode: FrameMode::Utxo as u8,
         flags: 0,
         target: None,
-        gas_limit: 100_000,
+        limits: FrameLimits {
+            execution: 100_000,
+            state: 100_000,
+        },
         value: U256::zero(),
         data: Bytes::from(spend.encode_to_vec()),
     };
@@ -4588,7 +4627,10 @@ fn utxo_input_indices_reads_every_utxo_frames_inputs() {
         mode: FrameMode::Default as u8,
         flags: 0,
         target: None,
-        gas_limit: 1,
+        limits: FrameLimits {
+            execution: 1,
+            state: 1,
+        },
         value: U256::zero(),
         data: Bytes::from(a.encode_to_vec()), // spend-shaped, but not a UTXO frame
     });
@@ -4612,7 +4654,10 @@ fn utxo_input_indices_reads_every_utxo_frames_inputs() {
             mode: FrameMode::Utxo as u8,
             flags: 0,
             target: None,
-            gas_limit: 1,
+            limits: FrameLimits {
+                execution: 1,
+                state: 1,
+            },
             value: U256::zero(),
             data: Bytes::from_static(&[0xFF, 0xFF]),
         }],

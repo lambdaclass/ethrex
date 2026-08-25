@@ -1957,6 +1957,47 @@ impl From<FrameMode> for u8 {
     }
 }
 
+/// EIP-8141 `limits = [execution, state]`: a frame's two independent gas budgets.
+///
+/// EIP-8037 meters execution gas and state gas separately, but an ordinary
+/// transaction carries a single gas field, so the split has to be derived at
+/// runtime via a reservoir. The frame transaction is a new envelope, so it
+/// declares the split instead: the two pools never mix, which keeps the EIP-7825
+/// check static, lets the mempool bound the validation prefix per dimension
+/// without simulation, and makes block reservations exact.
+///
+/// Budgets are per-frame for the same reason unused gas does not roll over
+/// between frames: frames belong to mutually distrusting parties, and a shared
+/// pool would let a user operation drain the state gas a paymaster's post-op
+/// frame depends on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
+pub struct FrameLimits {
+    /// Maximum execution gas the frame may expend. Initializes `gas_left`.
+    pub execution: u64,
+    /// Maximum EIP-8037 state gas the frame may expend. Initializes
+    /// `state_gas_left`, which is frame-scoped: inner call frames draw from it
+    /// directly rather than being forwarded a split of it.
+    pub state: u64,
+}
+
+impl RLPEncode for FrameLimits {
+    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        Encoder::new(buf)
+            .encode_field(&self.execution)
+            .encode_field(&self.state)
+            .finish();
+    }
+}
+
+impl RLPDecode for FrameLimits {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        let decoder = Decoder::new(rlp)?;
+        let (execution, decoder) = decoder.decode_field("execution")?;
+        let (state, decoder) = decoder.decode_field("state")?;
+        Ok((FrameLimits { execution, state }, decoder.finish()?))
+    }
+}
+
 /// EIP-8141 Frame: a single execution step within a frame transaction.
 ///
 /// `mode` is the wire execution-mode byte; its meaning is era-dependent, see
@@ -1969,8 +2010,9 @@ pub struct Frame {
     pub flags: u8,
     #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::H160Wrapper>)]
     pub target: Option<Address>,
-    pub gas_limit: u64,
-    // Per EIP-8141 the frame is a 6-tuple [mode, flags, target, gas_limit, value, data].
+    /// Per EIP-8141 the frame is a 6-tuple `[mode, flags, target, limits, value, data]`,
+    /// where `limits` is itself the 2-list `[execution, state]`.
+    pub limits: FrameLimits,
     // Only SENDER frames may carry a non-zero value; see
     // `validate_static_constraints`.
     #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
@@ -2018,7 +2060,7 @@ impl RLPEncode for Frame {
             .encode_field(&(self.mode as u64))
             .encode_field(&(self.flags as u64))
             .encode_field(&target_kind)
-            .encode_field(&self.gas_limit)
+            .encode_field(&self.limits)
             .encode_field(&self.value)
             .encode_field(&self.data)
             .finish();
@@ -2039,14 +2081,14 @@ impl RLPDecode for Frame {
             TxKind::Call(addr) => Some(addr),
             TxKind::Create => None,
         };
-        let (gas_limit, decoder) = decoder.decode_field("gas_limit")?;
+        let (limits, decoder): (FrameLimits, _) = decoder.decode_field("limits")?;
         let (value, decoder): (U256, _) = decoder.decode_field("value")?;
         let (data, decoder) = decoder.decode_field("data")?;
         let frame = Frame {
             mode,
             flags,
             target,
-            gas_limit,
+            limits,
             value,
             data,
         };
@@ -2214,33 +2256,27 @@ fn calldata_cost(data: &[u8]) -> u64 {
 pub const FRAME_SIG_SCHEME_ARBITRARY: u8 = 0;
 pub const FRAME_SIG_SCHEME_SECP256K1: u8 = 1;
 pub const FRAME_SIG_SCHEME_P256: u8 = 2;
-/// EIP-8141 §Mempool `MAX_VERIFY_GAS`: the maximum gas
-/// a public-mempool node should expend validating signatures and simulating the
-/// validation prefix. Signature validation counts against this budget (rule #6),
-/// so a frame tx whose `signature_verification_cost()` alone exceeds it can never
-/// satisfy the prefix budget and must be rejected at admission.
+/// EIP-8141 §Mempool `MAX_VERIFY_GAS`: the maximum *execution* gas a public-mempool
+/// node should expend validating signatures and simulating the validation prefix.
+/// Signature validation counts against this budget (rule 6), so a frame tx whose
+/// `signature_verification_cost()` alone exceeds it can never satisfy the prefix
+/// budget and must be rejected at admission.
 ///
-/// DELIBERATE DEVIATION: EIP-8141 specifies 100_000. This chain raises it to
-/// 500_000 because under EIP-8037 state-gas repricing 100_000 does not cover
-/// even a minimal counterfactual account deployment — the `DeploySelfVerify` /
-/// `DeployOnlyVerifyPay` prefix shapes this very module defines.
+/// This is the spec value. An earlier revision of this branch raised it to 500_000
+/// because EIP-8037 repricing made account creation unaffordable inside a single
+/// combined budget; the spec has since split the budget into two dimensions, so the
+/// deviation is obsolete — state growth is bounded by
+/// [`FRAME_TX_MAX_VERIFY_STATE_GAS`] instead.
+pub const FRAME_TX_MAX_VERIFY_GAS: u64 = 100_000;
+
+/// EIP-8141 §Mempool `MAX_VERIFY_STATE_GAS`: the maximum EIP-8037 *state* gas that
+/// may be budgeted across the validation prefix.
 ///
-/// Measured on this chain: the deploy frame of a self-paid deployment that
-/// CREATE2s a 66-byte account costs **112_103 gas** and succeeds once the frame
-/// is given 120_000, so the bare minimum already exceeds a 100_000 total prefix
-/// budget. Cost scales from there: 1530 gas per deposited code byte, ~111_500
-/// per constructor-initialized storage slot, and a further 183_600
-/// (`STATE_BYTES_PER_NEW_ACCOUNT` 120 * `cost_per_state_byte` 1530) if the
-/// account is genuinely new rather than a pre-funded counterfactual address.
-/// The deploy frame is part of the validation prefix and correctly counts
-/// against the budget — exempting it would defeat the point of bounding what
-/// the mempool must simulate — so the constant is the only lever.
-///
-/// 500_000 stays inside the `1 << 20` per-transaction verify budget EIP-8369
-/// assumes for FOCIL eligibility, so raising it here does not push frame
-/// transactions outside what the inclusion-list work is designed to simulate.
-/// Revisit if EIP-8141 reconciles `MAX_VERIFY_GAS` with EIP-8037 upstream.
-pub const FRAME_TX_MAX_VERIFY_GAS: u64 = 500_000;
+/// State gas does not measure node validation work, so this does not bound
+/// simulation; it bounds the state growth admitted through the public mempool. A
+/// `deploy` frame may spend it on account and code creation, and a `VERIFY` frame
+/// only through `APPROVE` when incrementing the nonce creates the sender account.
+pub const FRAME_TX_MAX_VERIFY_STATE_GAS: u64 = 500_000;
 /// EIP-8141 APPROVE scope-restriction values (bits 0-1 of `Frame.flags`).
 /// Used by VERIFY and PAY frames to declare which capabilities they grant.
 pub const APPROVE_PAYMENT: u8 = 0x1;
@@ -2538,7 +2574,7 @@ impl FrameTransaction {
             .saturating_add(
                 self.frames
                     .iter()
-                    .map(|f| f.gas_limit)
+                    .map(|f| f.limits.execution)
                     .fold(0u64, |acc, g| acc.saturating_add(g)),
             )
     }
@@ -2878,14 +2914,20 @@ impl FrameTransaction {
             // in docs/eip-8141.md. It is effectively unreachable: any gas_limit
             // >= 2**63 dwarfs every real block gas limit and is rejected by the
             // gas-limit-vs-block-limit check regardless.
-            if frame.gas_limit > i64::MAX as u64 {
+            if frame.limits.execution > i64::MAX as u64 {
                 return Err(format!(
-                    "Frame {i}: gas_limit {} exceeds 2**63-1",
-                    frame.gas_limit
+                    "Frame {i}: limits.execution {} exceeds 2**63-1",
+                    frame.limits.execution
+                ));
+            }
+            if frame.limits.state > i64::MAX as u64 {
+                return Err(format!(
+                    "Frame {i}: limits.state {} exceeds 2**63-1",
+                    frame.limits.state
                 ));
             }
             total_frame_gas = total_frame_gas
-                .checked_add(frame.gas_limit as u128)
+                .checked_add(frame.limits.execution as u128)
                 .ok_or_else(|| format!("Frame {i}: cumulative gas_limit overflow"))?;
             if total_frame_gas > i64::MAX as u128 {
                 return Err(format!(
@@ -3081,6 +3123,7 @@ impl FrameTransaction {
         &self,
         prefix: &ValidationPrefix,
         max_verify_gas: u64,
+        max_verify_state_gas: u64,
     ) -> Result<(), FrameValidationError> {
         let mut deploy_count = 0usize;
 
@@ -3194,17 +3237,40 @@ impl FrameTransaction {
             return Err(FrameValidationError::VerifyFrameAfterPrefix { frame_index });
         }
 
-        // Gas budget: prefix frame gas limits + signature cost ≤ MAX_VERIFY_GAS.
+        // EIP-8141 §Mempool rule 6, both dimensions.
+        //
+        // Execution: the prefix's `limits.execution` plus the intrinsic cost of
+        // validating the signatures must fit `MAX_VERIFY_GAS`. This bounds the
+        // work a public-mempool node performs.
         let prefix_gas: u64 = prefix
             .frame_indices
             .iter()
-            .map(|&i| self.frames[i].gas_limit)
+            .map(|&i| self.frames[i].limits.execution)
             .fold(0u64, |acc, g| acc.saturating_add(g));
         let total_verify_gas = prefix_gas.saturating_add(self.signature_verification_cost());
         if total_verify_gas > max_verify_gas {
             return Err(FrameValidationError::VerifyGasBudgetExceeded {
                 actual: total_verify_gas,
                 limit: max_verify_gas,
+            });
+        }
+
+        // State: the prefix's `limits.state` must fit `MAX_VERIFY_STATE_GAS`.
+        // State gas does not measure node validation work — simulation stays
+        // bounded by the execution budget alone — so this is a separate, larger
+        // cap whose job is to bound the state growth admitted through the public
+        // mempool. It is what lets a deploy frame in the prefix pay for account
+        // and code creation, which the execution budget could never cover under
+        // EIP-8037 repricing.
+        let prefix_state_gas: u64 = prefix
+            .frame_indices
+            .iter()
+            .map(|&i| self.frames[i].limits.state)
+            .fold(0u64, |acc, g| acc.saturating_add(g));
+        if prefix_state_gas > max_verify_state_gas {
+            return Err(FrameValidationError::VerifyStateGasBudgetExceeded {
+                actual: prefix_state_gas,
+                limit: max_verify_state_gas,
             });
         }
 
@@ -3269,6 +3335,8 @@ pub enum FrameValidationError {
     VerifyFrameAfterPrefix { frame_index: usize },
     #[error("prefix gas budget exceeded: {actual} > {limit} (MAX_VERIFY_GAS)")]
     VerifyGasBudgetExceeded { actual: u64, limit: u64 },
+    #[error("validation prefix state gas budget {actual} exceeds MAX_VERIFY_STATE_GAS {limit}")]
+    VerifyStateGasBudgetExceeded { actual: u64, limit: u64 },
 }
 
 impl RLPEncode for FrameTransaction {
@@ -3669,7 +3737,9 @@ mod serde_impl {
         pub flags: u64,
         pub to: Option<Address>,
         #[serde(with = "crate::serde_utils::u64::hex_str")]
-        pub gas_limit: u64,
+        pub execution_gas_limit: u64,
+        #[serde(with = "crate::serde_utils::u64::hex_str")]
+        pub state_gas_limit: u64,
         #[serde(
             default,
             serialize_with = "serialize_u256_hex",
@@ -3734,7 +3804,8 @@ mod serde_impl {
                 mode: value.mode as u64,
                 flags: value.flags as u64,
                 to: value.target,
-                gas_limit: value.gas_limit,
+                execution_gas_limit: value.limits.execution,
+                state_gas_limit: value.limits.state,
                 value: value.value,
                 data: value.data.clone(),
             }
@@ -3747,7 +3818,10 @@ mod serde_impl {
                 mode: entry.mode as u8,
                 flags: entry.flags as u8,
                 target: entry.to,
-                gas_limit: entry.gas_limit,
+                limits: FrameLimits {
+                    execution: entry.execution_gas_limit,
+                    state: entry.state_gas_limit,
+                },
                 value: entry.value,
                 data: entry.data,
             }
