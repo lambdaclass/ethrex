@@ -24,10 +24,17 @@ members = [
   "crates/vm/levm",
   "tooling/runner",
   "crates/common/config",
+  "tooling/history_validator",
   "tooling/repl",
   "test",
 ]
-exclude = ["tooling/revm_comparison"]
+# zkevm_bench is a standalone workspace: it hard-depends on zisk (lib-c),
+# which is x86-64-only (nasm + x86 asm) and cannot build on arm/macos. Keeping
+# it out of the root workspace keeps default builds, lint and Docker portable.
+exclude = [
+  "tooling/revm_comparison",
+  "tooling/zkevm_bench",
+]
 resolver = "2"
 
 default-members = ["cmd/ethrex"]
@@ -84,7 +91,7 @@ ethrex-l2 = { path = "./crates/l2" }
 ethrex-l2-common = { path = "./crates/l2/common", version = "24.0.0" }
 ethrex-sdk = { path = "./crates/l2/sdk", version = "24.0.0" }
 ethrex-l2-prover = { path = "./crates/l2/prover" }
-ethrex-prover = { path = "./crates/prover" }
+ethrex-prover = { path = "./crates/prover", default-features = false }
 ethrex-guest-program = { path = "./crates/guest-program", default-features = false }
 ethrex-storage-rollup = { path = "./crates/l2/storage", version = "24.0.0" }
 ethrex = { path = "./cmd/ethrex" }
@@ -151,10 +158,14 @@ rocksdb = { version = "0.24.0", default-features = false, features = [
 ] }
 
 # libssz (EIP-8025 SSZ support)
-libssz = "0.2.2"
-libssz-types = "0.2.2"
-libssz-merkle = "0.2.2"
-libssz-derive = "0.2.2"
+# 0.3.0 carries the EIP-7916 progressive child-order fix (subtree left,
+# remainder right). 0.2.2 had them swapped, which made every progressive
+# hash_tree_root disagree with remerkleable and the spec fixtures;
+# `test/tests/common/progressive_ssz_tests.rs` is what holds this floor.
+libssz = "0.3.0"
+libssz-types = "0.3.0"
+libssz-merkle = "0.3.0"
+libssz-derive = "0.3.0"
 
 [workspace.lints.clippy]
 redundant_clone = "warn"

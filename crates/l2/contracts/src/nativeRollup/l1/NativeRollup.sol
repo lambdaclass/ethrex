@@ -96,12 +96,24 @@ contract NativeRollup {
     // test/tests/l2/native_rollup_sol_offsets.rs.
     uint256 constant MAX_L2_GAS_LIMIT = 16_777_216;
 
-    // SSZ `StatelessValidationResult`: root(32) + successful_validation(1, @32) +
-    // chain_config(variable → 4-byte offset @33). chain_config's first field is
-    // chain_id (uint64 LE), read at the dereferenced offset.
-    uint256 constant RESULT_FIXED_LEN = 37; // root(32) + bool(1) + chain_config offset(4)
+    // SSZ `StatelessValidationResult` is entirely fixed-size since execution-specs
+    // #3278 removed `ChainConfig` from the wire:
+    //   root(32) + successful_validation(1, @32) + chain_id(8 LE, @33) + schema_id(2 LE, @41)
+    // = 43 bytes, with no offset to dereference. Pinned by
+    // test/tests/l2/native_rollup_sol_offsets.rs.
+    uint256 constant RESULT_FIXED_LEN = 43;
     uint256 constant RESULT_SUCCESS_OFFSET = 32;
-    uint256 constant RESULT_CHAIN_CONFIG_OFFSET_POS = 33;
+    uint256 constant RESULT_CHAIN_ID_OFFSET = 33;
+    uint256 constant RESULT_SCHEMA_ID_OFFSET = 41;
+
+    // The only stateless-input schema this rollup accepts: fork 0x15 (Amsterdam),
+    // revision 0x01. The guest echoes it so we can pin which rules were applied.
+    uint16 constant EXPECTED_SCHEMA_ID = 0x1501;
+
+    // `statelessInputBytes` is a 2-byte big-endian schema id followed by the SSZ
+    // body, so every absolute read into the body is shifted by this much. The
+    // SSZ fixed part of `SszStatelessInput` begins at this offset.
+    uint256 constant INPUT_SCHEMA_PREFIX_LEN = 2;
 
     // Byte offsets inside the SSZ `ExecutionPayload` fixed prefix.
     uint256 constant EP_PARENT_HASH_OFFSET = 0;
@@ -283,14 +295,20 @@ contract NativeRollup {
         (bool success, bytes memory result) = EXECUTE_PRECOMPILE.staticcall(sszInput);
         require(success, "NativeRollup: EXECUTE precompile failed");
 
-        require(result.length >= RESULT_FIXED_LEN, "NativeRollup: invalid result length");
+        // Exact length, not a minimum: the container is fully fixed-size, so any
+        // other length means the guest is speaking a different schema.
+        require(result.length == RESULT_FIXED_LEN, "NativeRollup: invalid result length");
         require(uint8(result[RESULT_SUCCESS_OFFSET]) == 1, "NativeRollup: L2 validation failed");
 
-        // chain_config is variable-size (contains active_fork); it is offset-encoded.
-        // chain_id is its first field.
-        uint256 ccOffset = _decodeSszUint32LE(result, RESULT_CHAIN_CONFIG_OFFSET_POS);
-        uint64 provenChainId = _decodeSszUint64LE(result, ccOffset);
+        // Both remaining fields are direct reads now that chain_config is gone.
+        uint64 provenChainId = _decodeSszUint64LE(result, RESULT_CHAIN_ID_OFFSET);
         require(provenChainId == chainId, "NativeRollup: chain_id mismatch");
+
+        // Pin the schema the guest decoded. Upstream reused id 0x1501 across an
+        // incompatible body change, so this is a guard against a guest built
+        // against the older dialect, not just against a future fork.
+        uint16 provenSchemaId = _decodeSszUint16LE(result, RESULT_SCHEMA_ID_OFFSET);
+        require(provenSchemaId == EXPECTED_SCHEMA_ID, "NativeRollup: schema_id mismatch");
     }
 
     function _checkAndDecodeProvenFields(
@@ -348,8 +366,16 @@ contract NativeRollup {
             bytes32 parentBeaconBlockRoot
         )
     {
-        require(sszInput.length >= 20, "SSZ: input too short");
-        uint256 nprAbs = _readU32LECalldata(sszInput, 0);
+        // 22 = 2-byte schema prefix + the 20-byte SszStatelessInput fixed part
+        // (npr_off 4 | witness_off 4 | chain_id 8 | public_keys_off 4).
+        require(sszInput.length >= INPUT_SCHEMA_PREFIX_LEN + 20, "SSZ: input too short");
+        require(
+            (uint16(uint8(sszInput[0])) << 8) | uint16(uint8(sszInput[1])) == EXPECTED_SCHEMA_ID,
+            "SSZ: unexpected schema id"
+        );
+        // SSZ offsets are relative to the body, so rebase them past the prefix.
+        uint256 nprAbs =
+            INPUT_SCHEMA_PREFIX_LEN + _readU32LECalldata(sszInput, INPUT_SCHEMA_PREFIX_LEN);
         // 44 = NPR fixed prefix: 3 var-field offsets (12) + parent_beacon_block_root (32).
         require(sszInput.length >= nprAbs + 44, "SSZ: NPR offset out of range");
         parentBeaconBlockRoot = _readBytes32Calldata(sszInput, nprAbs + 8);
@@ -495,6 +521,12 @@ contract NativeRollup {
             value |= uint64(uint8(data[offset + i])) << uint64(8 * i);
         }
         return value;
+    }
+
+    /// @dev Decode an SSZ `uint16` (2 little-endian bytes) at `offset` into `data` (memory).
+    function _decodeSszUint16LE(bytes memory data, uint256 offset) internal pure returns (uint16) {
+        require(data.length >= offset + 2, "SSZ: u16 out of bounds");
+        return uint16(uint8(data[offset])) | (uint16(uint8(data[offset + 1])) << 8);
     }
 
     /// @dev Decode an SSZ `uint32` (4 little-endian bytes) at `offset` into `data` (calldata).

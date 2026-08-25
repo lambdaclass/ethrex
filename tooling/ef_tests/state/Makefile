@@ -29,16 +29,29 @@ $(VECTORS_DIR): $(STATETEST_ARTIFACT)
 	$(MAKE) setup-test-dirs
 	$(MAKE) clone-ef-tests
 	tar -xzf $(STATETEST_ARTIFACT) --strip-components=2 -C $(VECTORS_DIR)/state_tests fixtures/state_tests
-	rm -f $(STATETEST_ARTIFACT)
 	rm -rf $(TMP_DIR)
 
-$(AMSTERDAM_ARTIFACT): $(AMSTERDAM_FIXTURES_FILE)
-	$(DOWNLOAD) $(AMSTERDAM_URL) $(AMSTERDAM_ARTIFACT)
+AMSTERDAM_SUBTREE := $(VECTORS_DIR)/state_tests/for_amsterdam
+AMSTERDAM_STAMP := $(VECTORS_DIR)/state_tests/.amsterdam_overlay
 
-$(VECTORS_DIR)/state_tests/for_amsterdam: $(AMSTERDAM_ARTIFACT) $(VECTORS_DIR)
-	tar -xzf $(AMSTERDAM_ARTIFACT) --strip-components=2 -C $(VECTORS_DIR)/state_tests fixtures/state_tests/for_amsterdam
-
-amsterdam-vectors: $(VECTORS_DIR)/state_tests/for_amsterdam
+# The overlay is keyed on the release URL it was built from, recorded in
+# $(AMSTERDAM_STAMP). Timestamps cannot express this: a bundle left on disk by
+# another branch says nothing in its mtime about which release it came from, so one
+# that merely looks newer than the URL file would be re-extracted as if it were the
+# requested release. Clearing the subtree before extracting also drops fixtures that
+# upstream renamed or removed, which would otherwise survive and run against the
+# current client. $(DOWNLOAD) fetches through a temporary file, so a failed download
+# leaves the previous bundle and stamp untouched instead of truncating them.
+amsterdam-vectors: | $(VECTORS_DIR) ## 📥 Overlay Amsterdam fixtures, re-fetching when the pinned release changed
+	@if [ "$$(cat $(AMSTERDAM_STAMP) 2>/dev/null)" = "$(AMSTERDAM_URL)" ] && [ -d $(AMSTERDAM_SUBTREE) ]; then \
+		echo "Amsterdam fixtures already overlaid from $(AMSTERDAM_URL)"; \
+	else \
+		$(DOWNLOAD) $(AMSTERDAM_URL) $(AMSTERDAM_ARTIFACT) && \
+		rm -rf $(AMSTERDAM_SUBTREE) && \
+		tar -xzf $(AMSTERDAM_ARTIFACT) --strip-components=2 -C $(VECTORS_DIR)/state_tests \
+			fixtures/state_tests/for_amsterdam && \
+		echo "$(AMSTERDAM_URL)" > $(AMSTERDAM_STAMP); \
+	fi
 
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
@@ -61,7 +74,7 @@ download-evm-ef-tests: $(VECTORS_DIR) amsterdam-vectors ## 📥 Download and set
 clean-evm-ef-tests: ## 🗑️ Clean test vectors and temporary files
 	rm -rf $(VECTORS_DIR)
 	rm -rf $(TMP_DIR)
-	rm -f $(STATETEST_ARTIFACT) $(AMSTERDAM_ARTIFACT)
+	rm -f $(STATETEST_ARTIFACT) $(AMSTERDAM_ARTIFACT) $(AMSTERDAM_ARTIFACT).part
 
 refresh-evm-ef-tests: clean-evm-ef-tests download-evm-ef-tests ## Cleans and re-downloads tests, useful when they are outdated!
 
@@ -74,10 +87,10 @@ run-evm-ef-tests: ## 🏃‍♂️ Run EF Tests
 		time cargo test --test all --profile release-fast -- $(flags);\
 	fi
 
-run-evm-ef-tests-ci: $(VECTORS_DIR) ## 🏃‍♂️ Run EF Tests only with LEVM and without spinner, for CI.
+run-evm-ef-tests-ci: $(VECTORS_DIR) amsterdam-vectors ## 🏃‍♂️ Run EF Tests only with LEVM and without spinner, for CI.
 	time cargo test -p ef_tests-state --test all --profile release-fast -- --summary
 
-test-levm: $(VECTORS_DIR)
+test-levm: $(VECTORS_DIR) amsterdam-vectors
 	$(MAKE) run-evm-ef-tests flags="--summary"
 
 test-levm-nostd-crypto: $(VECTORS_DIR) ## 🧪 Run EF state tests with no_std crypto fallbacks
