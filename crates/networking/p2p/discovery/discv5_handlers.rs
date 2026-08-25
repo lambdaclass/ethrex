@@ -13,9 +13,8 @@ use crate::{
         },
     },
     metrics::METRICS,
-    rlpx::utils::compress_pubkey,
     types::{Node, NodeRecord},
-    utils::{distance, node_id},
+    utils::{compress_pubkey, distance, node_id},
 };
 use bytes::{Bytes, BytesMut};
 use ethrex_common::{H256, H512};

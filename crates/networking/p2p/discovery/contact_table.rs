@@ -36,6 +36,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::discv5::server::SESSION_TTL;
 /// Session information for discv5 protocol.
 /// Contains symmetric keys derived from ECDH for message encryption/decryption.
 pub use crate::discv5::session::Session;
@@ -310,9 +311,14 @@ pub struct ContactTable {
     /// allows (k-buckets: 256 x 16 = 4,096 max; this pool: up to 10,000).
     /// K-buckets are still used for all Kademlia protocol operations.
     connection_pool: IndexMap<H256, Node>,
-    /// Standalone session store, independent of contacts.
-    /// Allows sessions to be stored even before the contact's ENR is known/parseable.
-    sessions: FxHashMap<H256, Session>,
+    /// Standalone session store, independent of contacts. Allows a session to be stored
+    /// before the contact's ENR is known or parseable, which is why it cannot simply live
+    /// on the contact.
+    ///
+    /// Each entry carries when it was established, because a remote peer decides how many
+    /// of these we hold: every handshake inserts one, and nothing about a handshake
+    /// obliges the peer to ever come back. [`Self::prune`] evicts on [`SESSION_TTL`].
+    sessions: FxHashMap<H256, (Session, Instant)>,
     /// What this consumer requires of a discovered peer. Judged as each ENR
     /// arrives, over either discovery protocol; the answer is cached on the
     /// contact as [`Contact::passes_filter`].
@@ -387,6 +393,15 @@ impl ContactTable {
         self.connected.len() as f64 / self.target_peers as f64
     }
 
+    /// Backdates every stored session by `by`, so a test can drive the TTL sweep in
+    /// [`Self::prune`] without waiting out a real hour.
+    #[cfg(test)]
+    pub(crate) fn age_sessions_for_test(&mut self, by: Duration) {
+        for (_, established_at) in self.sessions.values_mut() {
+            *established_at -= by;
+        }
+    }
+
     // --- Sessions ---
 
     /// The discv5 session for a node, if one was ever negotiated.
@@ -396,11 +411,18 @@ impl ContactTable {
     /// disconnect cleanup below, so a session was never actually dropped for a
     /// node that still had a contact.
     pub fn session(&self, node_id: &H256) -> Option<Session> {
-        self.sessions.get(node_id).cloned()
+        self.sessions
+            .get(node_id)
+            .map(|(session, _)| session.clone())
     }
 
+    /// Store a session, stamped with the moment it was established.
+    ///
+    /// Re-handshaking restamps it, which is the only way an entry's life is extended:
+    /// merely using a session does not, so keys expire on the same schedule as the
+    /// `session_ips` entry guarding them and a still-wanted peer simply re-handshakes.
     pub fn set_session(&mut self, node_id: H256, session: Session) {
-        self.sessions.insert(node_id, session);
+        self.sessions.insert(node_id, (session, Instant::now()));
     }
 
     // --- Contact flags ---
@@ -565,9 +587,16 @@ impl ContactTable {
     /// Pruned contacts remain in the connection pool so they can be retried
     /// later: the consumer will reject them on connecting if they are truly bad.
     ///
-    /// Dropping a contact drops its discv5 session too. That is what bounds the
-    /// session store, which would otherwise grow by one entry per handshake for
-    /// the life of the process.
+    /// Dropping a contact drops its discv5 session too, and any session older than
+    /// [`SESSION_TTL`] goes with it.
+    ///
+    /// The age sweep is what actually bounds the store. Pruning by contact is not
+    /// enough on its own: a contact can leave the table without ever being marked
+    /// disposable (evicted from a replacement queue, or simply never pruned because
+    /// it was only ever marked `unwanted`), and a session can be stored for a node
+    /// whose ENR never parsed into a contact at all. Both leave an entry that the
+    /// contact-driven path can no longer reach, and a peer can create them as fast
+    /// as the WHOAREYOU rate limit allows.
     pub fn prune(&mut self) {
         let mut pruned: Vec<H256> = Vec::new();
         for bucket in &mut self.buckets {
@@ -597,6 +626,11 @@ impl ContactTable {
         for node_id in pruned {
             self.sessions.remove(&node_id);
         }
+
+        let now = Instant::now();
+        self.sessions.retain(|_, (_, established_at)| {
+            now.saturating_duration_since(*established_at) < SESSION_TTL
+        });
     }
 
     /// Pick the next node to hand to the RLPx dialer, or `None` when the pool
@@ -622,13 +656,19 @@ impl ContactTable {
                 continue;
             };
             let node_id = *node_id;
-            let contact = self.get_contact_or_replacement(&node_id);
 
-            if self.connected.contains(&node_id)
-                || self.already_tried_peers.contains(&node_id)
-                || contact
-                    .map(|c| !c.knows_us || c.unwanted || c.passes_filter == Some(false))
-                    .unwrap_or(false)
+            // Two set lookups before the bucket walk: on the pass that clears
+            // `already_tried_peers` every entry is rejected here, and doing the
+            // O(k) bucket scan first would turn that into a full walk of the pool
+            // inside the loop that also has to drain UDP.
+            if self.connected.contains(&node_id) || self.already_tried_peers.contains(&node_id) {
+                continue;
+            }
+
+            let contact = self.get_contact_or_replacement(&node_id);
+            if contact
+                .map(|c| !c.knows_us || c.unwanted || c.passes_filter == Some(false))
+                .unwrap_or(false)
             {
                 continue;
             }
@@ -1169,6 +1209,91 @@ mod tests {
         assert!(
             table.session(&node_id).is_none(),
             "its session goes with it"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_session_outlives_neither_its_ttl_nor_a_node_it_was_never_matched_to() {
+        // The store's real bound. A session can be reached by neither the
+        // contact-driven path nor anything else: this one belongs to a node id
+        // that never became a contact at all, which is the documented reason the
+        // store is standalone. Only age can reclaim it.
+        let mut table = table_with(FixedAnswer(true));
+        let orphan = H256::repeat_byte(0x5e);
+
+        table.set_session(orphan, session());
+        table.prune();
+        assert!(
+            table.session(&orphan).is_some(),
+            "a fresh session must survive a prune"
+        );
+
+        table.age_sessions_for_test(SESSION_TTL);
+        table.prune();
+
+        assert!(
+            table.session(&orphan).is_none(),
+            "an aged session is reaped"
+        );
+    }
+
+    #[tokio::test]
+    async fn pruning_reaches_a_contact_in_the_replacement_list() {
+        // The replacement half of `prune` had no coverage: dropping the
+        // `pruned.push` inside `retain` left every test green.
+        let mut table = table_with(FixedAnswer(true));
+
+        // Fill one bucket's main list so the next arrival becomes a replacement.
+        let (target_id, _) = dummy_contact(1);
+        let bucket = bucket_index(&table.local_node_id, &target_id).expect("not the local node");
+        let mut overflow = Vec::new();
+        for seed in 0..u8::MAX {
+            let (id, contact) = dummy_contact(seed);
+            if bucket_index(&table.local_node_id, &id) == Some(bucket) {
+                overflow.push(id);
+                table.insert_contact(id, contact);
+                if overflow.len() > MAX_NODES_PER_BUCKET {
+                    break;
+                }
+            }
+        }
+        let replacement = *overflow.last().expect("a contact overflowed the bucket");
+        assert!(
+            table.buckets[bucket]
+                .replacements
+                .iter()
+                .any(|(id, _)| *id == replacement),
+            "the last insert landed in the replacement list"
+        );
+
+        table.set_session(replacement, session());
+        table.set_disposable(&replacement);
+        table.prune();
+
+        assert!(table.get_contact(&replacement).is_none());
+        assert!(
+            table.session(&replacement).is_none(),
+            "a replacement-list contact takes its session with it"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_pooled_node_with_no_contact_is_still_dialable() {
+        // The fallback arm of `next_dial_candidate`. Contacts get pruned out of the
+        // buckets while their pool entry stays, and those nodes must still be
+        // offered, or a prune would quietly retire them.
+        let mut table = table_with(FixedAnswer(true));
+        let (node_id, record) = record_for(16, 1);
+
+        table.new_contact_records(vec![record]).await;
+        table.set_disposable(&node_id);
+        table.prune();
+        assert!(table.get_contact(&node_id).is_none(), "contact is gone");
+
+        assert_eq!(
+            table.next_dial_candidate().map(|n| n.node_id()),
+            Some(node_id),
+            "the pool entry is the fallback, and it is still dialable"
         );
     }
 

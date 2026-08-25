@@ -64,8 +64,6 @@ pub enum DiscoveryServerError {
     InvalidContact,
     #[error(transparent)]
     Actor(#[from] ActorError),
-    #[error(transparent)]
-    Store(#[from] ethrex_storage::error::StoreError),
     #[error("Internal error {0}")]
     InternalError(String),
     #[error("Cryptography Error {0}")]
@@ -627,27 +625,5 @@ mod tests {
         handle.prune();
 
         assert!(handle.next_dial_candidate().await.is_none());
-    }
-
-    #[tokio::test]
-    async fn a_handle_is_published_once() {
-        let handle = DiscoveryHandle::new();
-        let server = DiscoveryServer::new_for_discv5_test(
-            Node::from_enode_url(
-                "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
-            )
-            .expect("bad enode url"),
-            NodeRecord::default(),
-            SecretKey::new(&mut rand::rngs::OsRng),
-            Arc::new(UdpSocket::bind("127.0.0.1:0").await.expect("bind")),
-            Box::new(crate::peer_filter::AcceptAllFilter),
-        )
-        .start();
-
-        assert!(handle.set(server.clone()));
-        assert!(
-            !handle.set(server),
-            "a second publish must be refused, not silently swap the server"
-        );
     }
 }

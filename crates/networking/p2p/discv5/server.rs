@@ -23,9 +23,15 @@ const IP_VOTE_WINDOW: Duration = Duration::from_secs(300);
 const IP_VOTE_THRESHOLD: usize = 3;
 /// Timeout for pending messages awaiting WhoAreYou response.
 const MESSAGE_CACHE_TIMEOUT: Duration = Duration::from_secs(2);
-/// Max age of a `session_ips` entry before it is evicted. Bounds the map: it is inserted
-/// per discv5 handshake and (absent this) was never removed for nodes we don't keep as peers.
-const SESSION_TTL: Duration = Duration::from_secs(3600);
+/// Max age of a discv5 session before it is evicted. Bounds both halves of a session:
+/// the symmetric keys in the contact table and the `session_ips` entry that guards them.
+/// Both are inserted per handshake, by a remote peer's schedule, so without this neither
+/// is ever removed for a node we do not keep as a peer.
+///
+/// Shared rather than duplicated: when the keys outlive their `session_ips` entry, the
+/// IP-rebinding check in `discv5_handle_ordinary` silently stops applying to a session
+/// that still decrypts.
+pub const SESSION_TTL: Duration = Duration::from_secs(3600);
 
 /// Source IP a discv5 session was established from, paired with when it was recorded so stale
 /// entries can be evicted (see `SESSION_TTL`).

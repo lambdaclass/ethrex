@@ -353,6 +353,9 @@ impl PeerTableServer {
         _msg: peer_table_server_protocol::TargetPeersCompletion,
         _ctx: &Context<Self>,
     ) -> f64 {
+        if self.target_peers == 0 {
+            return 1.0;
+        }
         self.peers.len() as f64 / self.target_peers as f64
     }
 

@@ -18,9 +18,11 @@ use tracing::debug;
 /// discv5 alike. A contact discovered without an ENR is never filtered and stays
 /// dialable.
 ///
-/// Implementations run inside the peer table's message loop, so a slow `accepts`
-/// stalls every other peer-table operation: keep it to work proportional to the
-/// record, and cache anything expensive at construction.
+/// Implementations run inside the discovery server's message loop, so a slow
+/// `accepts` stalls inbound UDP, revalidation, lookups, and the dial-candidate
+/// request the initiator is waiting on. A remote peer decides how often this runs:
+/// an unsolicited discv5 NODES message is filtered per ENR it carries. Keep it to
+/// work proportional to the record, and cache anything expensive at construction.
 ///
 /// `accepts` is synchronous, which states that requirement in the type rather
 /// than in this comment. It also keeps the trait object-safe without boxing a

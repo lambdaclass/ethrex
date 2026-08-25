@@ -462,9 +462,16 @@ impl PeerConnectionServer {
                 {
                     debug!("Failed to remove peer from table: {e}");
                 }
-                // Pairs with the `mark_connected` in `initialize_connection`: this
-                // branch is the only teardown an established connection takes, and
-                // it runs even when a handler panicked.
+                // Pairs with the `mark_connected` in `initialize_connection`. This is
+                // the only teardown an established connection takes, and it still runs
+                // when a message handler panics, because the actor loop catches the
+                // unwind before falling through to `stopped()`.
+                //
+                // It does not cover a panic inside `started()` itself, which cancels the
+                // actor and returns without running this hook. `mark_connected` is sent
+                // from there, so that window can strand an id in discovery's connected
+                // set. `remove_peer` above is lost to the same window, leaving the peer
+                // table's own map equally stale, so the two stores at least agree.
                 established_state
                     .discovery
                     .mark_disconnected(established_state.node.node_id());
