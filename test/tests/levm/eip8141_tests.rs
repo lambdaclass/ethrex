@@ -3572,7 +3572,8 @@ mod expiry_verifier_tests {
 mod sigparam_execution_tests {
     use super::*;
     use ethrex_common::types::{
-        FRAME_RECEIPT_STATUS_FAILURE, FRAME_SIG_SCHEME_ARBITRARY, FrameSignature,
+        FRAME_RECEIPT_STATUS_FAILURE, FRAME_SIG_SCHEME_ARBITRARY, FRAME_SIG_SCHEME_SECP256K1,
+        FrameSignature,
     };
 
     /// Read slot `slot` of `addr` from the post-execution cache.
@@ -3726,6 +3727,73 @@ mod sigparam_execution_tests {
         assert_eq!(
             storage_of(&db, reader, U256::zero()),
             U256::from_big_endian(&expected),
+        );
+    }
+
+    /// `SIGDATACOPY` (`0xBA`): the standalone opcode EIP-8141 added for copying an
+    /// `ARBITRARY` signature entry's raw bytes. Its stack is `memOffset`,
+    /// `dataOffset`, `length`, `signatureIndex` top-down, so the pushes run in
+    /// reverse of that.
+    ///
+    /// The byte is `0xBA`, not the spec's `0xB5`: EIP-8272's `RECENTROOTREFLOAD`
+    /// holds `0xB5` here. See `docs/hegota-devnet.md`.
+    fn sigdatacopy_code(index: u8, length: u8, data_offset: u8, mem_offset: u8) -> Bytes {
+        Bytes::from(vec![
+            0x60,
+            index, // PUSH1 signatureIndex
+            0x60,
+            length, // PUSH1 length
+            0x60,
+            data_offset, // PUSH1 dataOffset
+            0x60,
+            mem_offset, // PUSH1 memOffset
+            0xBA,       // SIGDATACOPY
+            0x60,
+            mem_offset, // PUSH1 memOffset
+            0x51,       // MLOAD
+            0x60,
+            0x00, // PUSH1 0 (slot)
+            0x55, // SSTORE
+            0x00, // STOP
+        ])
+    }
+
+    #[test]
+    fn sigdatacopy_copies_arbitrary_signature_bytes_and_zero_fills() {
+        // Asking for 8 bytes of a 4-byte signature copies what exists and
+        // zero-fills the rest, exactly as CALLDATACOPY does.
+        let (result, db, reader) = run_reader(
+            sigdatacopy_code(0, 8, 0, 0),
+            vec![arbitrary_sig(vec![0xDE, 0xAD, 0xBE, 0xEF])],
+        );
+        result.expect("valid tx");
+        let mut expected = [0u8; 32];
+        expected[..4].copy_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
+        assert_eq!(
+            storage_of(&db, reader, U256::zero()),
+            U256::from_big_endian(&expected),
+        );
+    }
+
+    #[test]
+    fn sigdatacopy_halts_on_an_out_of_range_index() {
+        // EIP-8141: an out-of-bounds `signatureIndex` is an exceptional halt, not
+        // a zero-filled read. Index 0 against an empty signature list is the
+        // smallest case that exercises it.
+        //
+        // The sibling guard — a non-ARBITRARY scheme must also halt, so that
+        // protocol-validated signatures stay unreachable from the EVM and
+        // therefore aggregatable — is NOT covered here. Reaching it needs a
+        // protocol signature that actually verifies, because EIP-8141 rejects the
+        // whole transaction before any frame runs when one does not, so a
+        // throwaway entry never gets far enough to reach the opcode. Same reason
+        // the SIGPARAM 0x04 tests do not cover it either.
+        let (result, _db, _reader) = run_reader(sigdatacopy_code(0, 4, 0, 0), vec![]);
+        let report = result.expect("tx stays valid; the DEFAULT frame is what fails");
+        assert!(
+            !report.is_success(),
+            "an out-of-range signature index must halt the frame: {:?}",
+            report.result
         );
     }
 

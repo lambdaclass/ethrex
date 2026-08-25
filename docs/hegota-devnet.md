@@ -35,11 +35,12 @@ EIP-8312 carries its own timestamp and is inert until a chain opts in.
 | `0xB6` | `TXTRACE` | 7906 | ethrex allocation; EIP-7906 assigns no opcode bytes |
 | `0xB7` | `EVENTDATACOPY` | 7906 | as above |
 | `0xB8` | `TXDIFF` | 7906 | as above |
+| `0xBA` | `SIGDATACOPY` | 8141 | ethrex allocation; the spec assigns `0xB5`, taken by EIP-8272's `RECENTROOTREFLOAD` here |
 | `0xB9` | `NONCEKEYLOAD` | 8250 | **ethrex-only extension** — indexed `nonce_keys[i]`; spec defines no per-index accessor (see `docs/eip-8250.md`) |
 
 EIP-7906's Constants table carries only `TXTRACE_GAS_COST`, `EVENTDATACOPY_GAS_COST` and `POST_TX`, so `0xB6`/`0xB7`/`0xB8` are ethrex's allocation, chosen to leave `0xB5` to EIP-8272. The standalone `eip-7906` branch uses the same three bytes, so the two agree; `test/tests/levm/eip7906_tests.rs` and `crates/vm/levm/src/opcode_handlers/tx_trace.rs` carry them. Flag upstream so the 8141-family drafts settle non-overlapping bytes.
 
-**`0xB5` is now claimed by two live drafts.** EIP-8272 assigns it to `RECENTROOTREFLOAD`, and EIP-8141 has since added `SIGDATACOPY` — which exposes an `ARBITRARY` signature entry's raw bytes to EVM code — at the same byte. This branch keeps `RECENTROOTREFLOAD` there, because EIP-8272 assigned it first and the implementation, tests and the running devnet all depend on it. `SIGDATACOPY` is **not implemented yet**; when it is, it needs a free byte (`0xBA` onward — `0xB6`-`0xB9` are taken above). This is the same class of problem as the TXPARAM `0x0B`/`0x0F` conflict already listed under Upstream items, and the same fix applies: the 8141 family needs one opcode registry rather than per-draft allocation.
+**`0xB5` is now claimed by two live drafts.** EIP-8272 assigns it to `RECENTROOTREFLOAD`, and EIP-8141 has since added `SIGDATACOPY` — which exposes an `ARBITRARY` signature entry's raw bytes to EVM code — at the same byte. This branch keeps `RECENTROOTREFLOAD` there, because EIP-8272 assigned it first and the implementation, tests and the running devnet all depend on it. `SIGDATACOPY` is implemented at **`0xBA`**, the next free byte (`0xB6`-`0xB9` are taken above). This is the same class of problem as the TXPARAM `0x0B`/`0x0F` conflict already listed under Upstream items, and the same fix applies: the 8141 family needs one opcode registry rather than per-draft allocation.
 
 ## Per-EIP divergences
 
@@ -60,7 +61,7 @@ EIP-7906's Constants table carries only `TXTRACE_GAS_COST`, `EVENTDATACOPY_GAS_C
 - **No MAX_VERIFY_GAS deviation any more.** This branch previously raised it to `500_000` because EIP-8037 repricing put account creation out of reach of a single combined prefix budget. The spec has since split the budget in two — `MAX_VERIFY_GAS` (`100_000`, execution) and `MAX_VERIFY_STATE_GAS` (`500_000`, state) — so the constant is back at the spec value and the state dimension carries the growth. `--mempool.max-verify-state-gas` is the operator knob for the second lane.
 - Frames declare `limits = [execution, state]` and spend two independent pools; the EIP-8037 reservoir does not apply inside a frame.
 - ⚠️ **Frame receipts still report a single gas figure**, so `gas_used.state` is not yet surfaced per frame. `standard_gas_limit` therefore also omits the spec's `sum(limits.state)` reservation term, which would otherwise be billed as consumed and never returned.
-- ⚠️ **`SIGDATACOPY` is not implemented** — see the opcode note above.
+- `SIGDATACOPY` lives at `0xBA` rather than the spec's `0xB5` — see the opcode note above.
 
 ### EIP-8312 (UTXO Frames) — see `docs/eip-8312.md`
 - Frame mode **5** (spec `3`, already taken by EIP-7906 upstream; mode 4 stays reserved for EIP-8288 DEP_VERIFY).
