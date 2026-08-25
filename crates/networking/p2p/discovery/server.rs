@@ -32,7 +32,7 @@ use tracing::{debug, error, info, trace};
 
 use super::{
     DiscoveryConfig, codec::DiscriminatingCodec, contact_table::ContactTable,
-    contact_table::DiscoveryProtocol, lookup_interval_function,
+    contact_table::DiscoveryProtocol, contact_table::PeerStatus, lookup_interval_function,
 };
 use std::sync::OnceLock;
 
@@ -75,16 +75,9 @@ pub enum DiscoveryServerError {
 #[protocol]
 pub trait DiscoveryServerProtocol: Send + Sync {
     fn raw_packet(&self, data: BytesMut, from: SocketAddr) -> Result<(), ActorError>;
-    /// The consumer established a connection to this node: stop offering it as
-    /// a dial candidate, and count it towards how hard we look for more.
-    fn mark_connected(&self, node_id: H256) -> Result<(), ActorError>;
-    /// The consumer's connection to this node is gone.
-    fn mark_disconnected(&self, node_id: H256) -> Result<(), ActorError>;
-    /// This node is known-bad to the consumer (wrong network, no usable
-    /// capabilities): never offer it again.
-    fn set_unwanted(&self, node_id: H256) -> Result<(), ActorError>;
-    /// This node is not worth keeping in the routing table.
-    fn set_disposable(&self, node_id: H256) -> Result<(), ActorError>;
+    /// Report what the consumer has just learned about a peer. See
+    /// [`PeerStatus`] for what each variant does.
+    fn update_status(&self, node_id: H256, status: PeerStatus) -> Result<(), ActorError>;
     fn revalidate_v4(&self) -> Result<(), ActorError>;
     fn revalidate_v5(&self) -> Result<(), ActorError>;
     fn lookup_v4(&self) -> Result<(), ActorError>;
@@ -128,27 +121,12 @@ impl DiscoveryHandle {
         self.0.get()
     }
 
-    pub fn mark_connected(&self, node_id: H256) {
+    /// Report what just happened to a peer. See [`PeerStatus`]: the variants
+    /// are separate reports rather than exclusive states, so a peer can be
+    /// reported `Disposable` while its connection is still up.
+    pub fn update_status(&self, node_id: H256, status: PeerStatus) {
         if let Some(server) = self.server() {
-            let _ = server.mark_connected(node_id);
-        }
-    }
-
-    pub fn mark_disconnected(&self, node_id: H256) {
-        if let Some(server) = self.server() {
-            let _ = server.mark_disconnected(node_id);
-        }
-    }
-
-    pub fn set_unwanted(&self, node_id: H256) {
-        if let Some(server) = self.server() {
-            let _ = server.set_unwanted(node_id);
-        }
-    }
-
-    pub fn set_disposable(&self, node_id: H256) {
-        if let Some(server) = self.server() {
-            let _ = server.set_disposable(node_id);
+            let _ = server.update_status(node_id, status);
         }
     }
 
@@ -414,39 +392,12 @@ impl DiscoveryServer {
     }
 
     #[send_handler]
-    async fn handle_mark_connected(
+    async fn handle_update_status(
         &mut self,
-        msg: discovery_server_protocol::MarkConnected,
+        msg: discovery_server_protocol::UpdateStatus,
         _ctx: &Context<Self>,
     ) {
-        self.contacts.mark_connected(msg.node_id);
-    }
-
-    #[send_handler]
-    async fn handle_mark_disconnected(
-        &mut self,
-        msg: discovery_server_protocol::MarkDisconnected,
-        _ctx: &Context<Self>,
-    ) {
-        self.contacts.mark_disconnected(&msg.node_id);
-    }
-
-    #[send_handler]
-    async fn handle_set_unwanted(
-        &mut self,
-        msg: discovery_server_protocol::SetUnwanted,
-        _ctx: &Context<Self>,
-    ) {
-        self.contacts.set_unwanted(&msg.node_id);
-    }
-
-    #[send_handler]
-    async fn handle_set_disposable(
-        &mut self,
-        msg: discovery_server_protocol::SetDisposable,
-        _ctx: &Context<Self>,
-    ) {
-        self.contacts.set_disposable(&msg.node_id);
+        self.contacts.update_status(msg.node_id, msg.status);
     }
 
     #[request_handler]
@@ -618,10 +569,14 @@ mod tests {
         // answer `None` rather than wait for a server that may never arrive.
         let handle = DiscoveryHandle::new();
 
-        handle.mark_connected(H256::repeat_byte(1));
-        handle.mark_disconnected(H256::repeat_byte(1));
-        handle.set_unwanted(H256::repeat_byte(1));
-        handle.set_disposable(H256::repeat_byte(1));
+        for status in [
+            PeerStatus::Connected,
+            PeerStatus::Disconnected,
+            PeerStatus::Unwanted,
+            PeerStatus::Disposable,
+        ] {
+            handle.update_status(H256::repeat_byte(1), status);
+        }
         handle.prune();
 
         assert!(handle.next_dial_candidate().await.is_none());

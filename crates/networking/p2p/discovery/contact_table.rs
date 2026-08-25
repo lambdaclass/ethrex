@@ -282,6 +282,36 @@ impl Contact {
     }
 }
 
+/// What the consumer has just learned about a peer.
+///
+/// A report of one event, not a state machine. The variants are not mutually
+/// exclusive over a peer's life and each touches only what it names:
+/// [`Self::Connected`] and [`Self::Disconnected`] toggle a membership, while
+/// [`Self::Unwanted`] and [`Self::Disposable`] are verdicts that accumulate on
+/// the contact and are never cleared.
+///
+/// In particular the two verdicts deliberately leave the connected set alone. A
+/// live peer that serves a bad response is reported `Disposable` by the sync
+/// layer without its connection going anywhere, and treating that as a
+/// disconnection would put a peer we are still talking to back into the dial
+/// pool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PeerStatus {
+    /// A connection to this peer is up: stop offering it as a dial candidate,
+    /// and count it towards how hard discovery looks for more.
+    Connected,
+    /// The connection is gone. Says nothing about whether the peer is worth
+    /// having; verdicts already recorded stay recorded.
+    Disconnected,
+    /// Known-bad to the consumer: on another network, or advertising no
+    /// capability it wants. Never offered as a dial candidate again.
+    Unwanted,
+    /// Not worth keeping in the routing table. Dropped by the next
+    /// [`ContactTable::prune`], though its pool entry survives so it can still
+    /// be dialed.
+    Disposable,
+}
+
 /// Result of contact validation.
 #[derive(Debug, Clone)]
 pub enum ContactValidation {
@@ -365,9 +395,23 @@ impl ContactTable {
 
     // --- Consumer lifecycle ---
 
+    /// Record what the consumer has just learned about a peer.
+    ///
+    /// The single door through which the consumer reports anything about a
+    /// peer; see [`PeerStatus`] for what each variant does and, more
+    /// importantly, what it deliberately does not touch.
+    pub fn update_status(&mut self, node_id: H256, status: PeerStatus) {
+        match status {
+            PeerStatus::Connected => self.mark_connected(node_id),
+            PeerStatus::Disconnected => self.mark_disconnected(&node_id),
+            PeerStatus::Unwanted => self.set_unwanted(&node_id),
+            PeerStatus::Disposable => self.set_disposable(&node_id),
+        }
+    }
+
     /// Record that the consumer is now connected to `node_id`, so it stops
     /// being offered as a dial candidate and counts towards lookup pacing.
-    pub fn mark_connected(&mut self, node_id: H256) {
+    pub(crate) fn mark_connected(&mut self, node_id: H256) {
         self.connected.insert(node_id);
     }
 
@@ -379,7 +423,7 @@ impl ContactTable {
     /// nothing about the discv5 keys, and tearing them down there would force a
     /// WHOAREYOU round trip to talk to a node we are still perfectly able to
     /// reach. Sessions go when the contact does, in [`Self::prune`].
-    pub fn mark_disconnected(&mut self, node_id: &H256) {
+    pub(crate) fn mark_disconnected(&mut self, node_id: &H256) {
         self.connected.remove(node_id);
     }
 
@@ -429,7 +473,7 @@ impl ContactTable {
 
     /// Mark a contact as one we should stop keeping: it failed to answer a ping,
     /// or the consumer found it useless. Pruned on the next [`Self::prune`].
-    pub fn set_disposable(&mut self, node_id: &H256) {
+    pub(crate) fn set_disposable(&mut self, node_id: &H256) {
         if let Some(contact) = self.get_contact_mut(node_id) {
             contact.disposable = true;
         }
@@ -437,7 +481,7 @@ impl ContactTable {
 
     /// Mark a contact as known-bad: on another network, no matching
     /// capabilities, or otherwise rejected by the consumer. Never dialed again.
-    pub fn set_unwanted(&mut self, node_id: &H256) {
+    pub(crate) fn set_unwanted(&mut self, node_id: &H256) {
         if let Some(contact) = self.get_contact_mut(node_id) {
             contact.unwanted = true;
         }
@@ -1363,6 +1407,48 @@ mod tests {
             table.next_dial_candidate().map(|n| n.node_id()),
             Some(node_id),
             "the exhausted cycle resets, so the candidate comes back around"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_verdict_does_not_disconnect_a_live_peer() {
+        // The reason `PeerStatus` is a report and not a state. The sync layer
+        // marks a peer `Disposable` when it serves a bad response, and that peer
+        // is still connected: folding the verdict into the connected set would
+        // hand a peer we are actively talking to back to the dialer.
+        let mut table = table_with(FixedAnswer(true));
+        let (node_id, record) = record_for(17, 1);
+
+        table.new_contact_records(vec![record]).await;
+        table.update_status(node_id, PeerStatus::Connected);
+        table.update_status(node_id, PeerStatus::Disposable);
+
+        assert_eq!(table.peer_completion(), 0.1, "still counted as connected");
+        assert!(
+            table.next_dial_candidate().is_none(),
+            "a connected peer must not be offered for dialing, verdict or not"
+        );
+
+        table.update_status(node_id, PeerStatus::Unwanted);
+        assert_eq!(table.peer_completion(), 0.1, "nor does the other verdict");
+    }
+
+    #[tokio::test]
+    async fn disconnecting_leaves_earlier_verdicts_standing() {
+        // The other half of the same rule: verdicts accumulate, so a later
+        // disconnection must not quietly rehabilitate a peer we rejected.
+        let mut table = table_with(FixedAnswer(true));
+        let (node_id, record) = record_for(18, 1);
+
+        table.new_contact_records(vec![record]).await;
+        table.update_status(node_id, PeerStatus::Connected);
+        table.update_status(node_id, PeerStatus::Unwanted);
+        table.update_status(node_id, PeerStatus::Disconnected);
+
+        assert_eq!(table.peer_completion(), 0.0, "no longer connected");
+        assert!(
+            table.next_dial_candidate().is_none(),
+            "but still unwanted, so still never dialed"
         );
     }
 

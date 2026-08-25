@@ -7,7 +7,7 @@ use crate::rlpx::l2::{
 };
 use crate::{
     backend,
-    discovery::DiscoveryHandle,
+    discovery::{DiscoveryHandle, PeerStatus},
     metrics::METRICS,
     network::P2PContext,
     peer_table::{PeerTable, PeerTableServerProtocol as _},
@@ -393,9 +393,10 @@ impl PeerConnectionServer {
                     match &reason {
                         PeerConnectionError::NoMatchingCapabilities
                         | PeerConnectionError::HandshakeError(_) => {
-                            established_state
-                                .discovery
-                                .set_unwanted(established_state.node.node_id());
+                            established_state.discovery.update_status(
+                                established_state.node.node_id(),
+                                PeerStatus::Unwanted,
+                            );
                         }
                         _ => {}
                     }
@@ -462,19 +463,19 @@ impl PeerConnectionServer {
                 {
                     debug!("Failed to remove peer from table: {e}");
                 }
-                // Pairs with the `mark_connected` in `initialize_connection`. This is
+                // Pairs with the `Connected` report in `initialize_connection`. This is
                 // the only teardown an established connection takes, and it still runs
                 // when a message handler panics, because the actor loop catches the
                 // unwind before falling through to `stopped()`.
                 //
                 // It does not cover a panic inside `started()` itself, which cancels the
-                // actor and returns without running this hook. `mark_connected` is sent
+                // actor and returns without running this hook. `Connected` is reported
                 // from there, so that window can strand an id in discovery's connected
                 // set. `remove_peer` above is lost to the same window, leaving the peer
                 // table's own map equally stale, so the two stores at least agree.
                 established_state
                     .discovery
-                    .mark_disconnected(established_state.node.node_id());
+                    .update_status(established_state.node.node_id(), PeerStatus::Disconnected);
                 // Free the peer's tx-broadcaster index (and clear its bit across known txs) so
                 // the broadcaster's per-peer index map / PeerMask widths stay bounded to live peers.
                 if let Err(e) = established_state
@@ -836,7 +837,9 @@ where
         state.capabilities.clone(),
         state.is_inbound,
     )?;
-    state.discovery.mark_connected(state.node.node_id());
+    state
+        .discovery
+        .update_status(state.node.node_id(), PeerStatus::Connected);
 
     trace!(peer=%state.node, "Peer connection initialized.");
 
