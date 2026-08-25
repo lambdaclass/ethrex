@@ -33,9 +33,21 @@ const SENDER: Address = Address::repeat_byte(0xAA);
 /// actually reached the environment from one that was silently dropped.
 const SLOTNUM_READER: Address = Address::repeat_byte(0xBB);
 
+/// Holds `GASLIMIT_READER_CODE`, so calling it returns the block gas limit the
+/// environment was built with.
+const GASLIMIT_READER: Address = Address::repeat_byte(0xCC);
+
 /// `SLOTNUM; PUSH0; MSTORE; PUSH1 0x20; PUSH0; RETURN` — returns the slot
 /// number as a 32-byte word.
 const SLOTNUM_READER_CODE: [u8; 7] = [0x4B, 0x5F, 0x52, 0x60, 0x20, 0x5F, 0xF3];
+
+/// `GASLIMIT; PUSH1 0x00; MSTORE; PUSH1 0x20; PUSH1 0x00; RETURN` — returns the
+/// block gas limit as a 32-byte word. Byte-for-byte the probe used to report the
+/// divergence against the other five clients (`0x4560005260206000f3`).
+const GASLIMIT_READER_CODE: [u8; 9] = [0x45, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xF3];
+
+/// The header gas limit every test in this file builds its block with.
+const BLOCK_GAS_LIMIT: u64 = 30_000_000;
 
 fn amsterdam_db_and_header(slot_number: Option<u64>) -> (GeneralizedDatabase, BlockHeader) {
     let mut store = Store::new("", EngineType::InMemory).unwrap();
@@ -57,7 +69,7 @@ fn amsterdam_db_and_header(slot_number: Option<u64>) -> (GeneralizedDatabase, Bl
     let header = BlockHeader {
         number: 1,
         timestamp: 1,
-        gas_limit: 30_000_000,
+        gas_limit: BLOCK_GAS_LIMIT,
         base_fee_per_gas: Some(7),
         state_root: *EMPTY_TRIE_HASH,
         slot_number,
@@ -80,6 +92,15 @@ fn amsterdam_db_and_header(slot_number: Option<u64>) -> (GeneralizedDatabase, Bl
         Account::new(
             U256::zero(),
             Code::from_bytecode(Bytes::from_static(&SLOTNUM_READER_CODE), &NativeCrypto),
+            0,
+            FxHashMap::default(),
+        ),
+    );
+    cache.insert(
+        GASLIMIT_READER,
+        Account::new(
+            U256::zero(),
+            Code::from_bytecode(Bytes::from_static(&GASLIMIT_READER_CODE), &NativeCrypto),
             0,
             FxHashMap::default(),
         ),
@@ -136,5 +157,50 @@ fn simulation_uses_the_slot_number_when_present() {
         simulated_slot_number(Some(1234)),
         U256::from(1234u64),
         "SLOTNUM must read the header's slot_number"
+    );
+}
+
+/// Simulates a call to `GASLIMIT_READER` and returns the block gas limit the
+/// environment ended up with. `gas` is the call object's own gas field, left
+/// unset when `None`.
+fn simulated_block_gas_limit(gas: Option<u64>) -> U256 {
+    let (mut db, header) = amsterdam_db_and_header(Some(0));
+    let tx = GenericTransaction {
+        from: SENDER,
+        to: ethrex_common::types::TxKind::Call(GASLIMIT_READER),
+        gas,
+        ..Default::default()
+    };
+    let result = LEVM::simulate_tx_from_generic(&tx, &header, &mut db, VMType::L1, &NativeCrypto, None)
+        .expect("simulation must not error");
+    match result {
+        ExecutionResult::Success { output, .. } => U256::from_big_endian(&output),
+        other => panic!("expected GASLIMIT call to succeed, got {other:?}"),
+    }
+}
+
+#[test]
+fn simulation_reports_the_header_gas_limit_to_gaslimit() {
+    // The simulation env used to set `block_gas_limit` to `i64::MAX` in order to
+    // skip the block gas-allowance check. That field is what opcode 0x45 pushes,
+    // so eth_call reported 2^63-1 where the other five clients reported the
+    // header's limit, and any contract budgeting against GASLIMIT read nonsense
+    // under simulation. The bypass now has its own flag.
+    assert_eq!(
+        simulated_block_gas_limit(Some(0x200000)),
+        U256::from(BLOCK_GAS_LIMIT),
+        "GASLIMIT under eth_call must equal the header's gas limit"
+    );
+}
+
+#[test]
+fn simulation_still_runs_a_call_asking_for_more_gas_than_the_block_allows() {
+    // The other half of the contract: keeping `block_gas_limit` honest must not
+    // reintroduce the gas-allowance rejection that the `i64::MAX` hack was there
+    // to avoid. A call may ask for more gas than a block could ever hold.
+    assert_eq!(
+        simulated_block_gas_limit(Some(BLOCK_GAS_LIMIT * 2)),
+        U256::from(BLOCK_GAS_LIMIT),
+        "an over-limit `gas` must still run, and still see the real GASLIMIT"
     );
 }

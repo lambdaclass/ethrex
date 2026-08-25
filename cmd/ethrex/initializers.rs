@@ -22,12 +22,12 @@ use ethrex_p2p::{
     peer_table::{PeerTable, PeerTableServer},
     sync::SyncMode,
     sync_manager::SyncManager,
-    types::{NetworkConfig, Node, NodeRecord},
+    types::{LocalNode, NetworkConfig, Node, NodeRecord, SharedLocalNode},
     utils::public_key_from_signing_key,
 };
 use ethrex_storage::{
-    DB_COMMIT_THRESHOLD, EngineType, Store, StoreConfig, error::StoreError, has_valid_db,
-    read_chain_id_from_db,
+    DB_COMMIT_THRESHOLD, EngineType, Store, StoreConfig, default_rocksdb_block_cache_size,
+    error::StoreError, has_valid_db, read_chain_id_from_db,
 };
 use local_ip_address::{local_ip, local_ipv6};
 use rand::rngs::OsRng;
@@ -39,7 +39,7 @@ use std::{
     io::IsTerminal,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, RwLock},
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
@@ -282,8 +282,7 @@ pub async fn init_rpc_api(
     opts: &Options,
     datadir: &Path,
     peer_handler: PeerHandler,
-    local_p2p_node: Node,
-    local_node_record: NodeRecord,
+    shared_local_node: SharedLocalNode,
     store: Store,
     blockchain: Arc<Blockchain>,
     cancel_token: CancellationToken,
@@ -355,8 +354,7 @@ pub async fn init_rpc_api(
         store,
         blockchain,
         read_jwtsecret_file(&opts.authrpc_jwtsecret),
-        local_p2p_node,
-        local_node_record,
+        shared_local_node,
         syncer,
         peer_handler,
         get_client_version(),
@@ -385,6 +383,7 @@ pub async fn init_network(
     tracker: TaskTracker,
     blockchain: Arc<Blockchain>,
     context: P2PContext,
+    shared_local_node: SharedLocalNode,
 ) {
     #[cfg(not(feature = "l2"))]
     if opts.dev {
@@ -399,10 +398,11 @@ pub async fn init_network(
     let discovery_config = DiscoveryConfig {
         discv4_enabled: opts.discv4_enabled,
         discv5_enabled: opts.discv5_enabled,
+        nat_extip_set: opts.nat_extip.is_some(),
         ..Default::default()
     };
 
-    ethrex_p2p::start_network(context, bootnodes, discovery_config)
+    ethrex_p2p::start_network(context, bootnodes, discovery_config, shared_local_node)
         .await
         .expect("Network starts");
 
@@ -617,7 +617,17 @@ pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> (Node, NetworkC
         local_ipv6().ok(),
     );
 
-    let node = Node::new(external_addr, udp_port, tcp_port, local_public_key);
+    // Advertise the detected address immediately, even when it is RFC1918 private.
+    // On a flat private network (local / kurtosis devnet) the private IP is the
+    // address peers actually reach us at, and tooling such as ethereum-package
+    // snapshots `admin_nodeInfo` at startup to seed other nodes' bootnodes; an
+    // advertised `0.0.0.0` there is undiallable and breaks discovery permanently.
+    // For a genuinely NAT'd public node the IpPredictor upgrades this to the public
+    // IP once PONG votes reach quorum (see IpPredictor::finalize_ip_vote_round, which
+    // prefers a public winner and only falls back to a private one).
+    let announce_addr = external_addr;
+
+    let node = Node::new(announce_addr, udp_port, tcp_port, local_public_key);
     let network_config = NetworkConfig {
         bind_addr,
         tcp_port,
@@ -755,7 +765,13 @@ async fn set_sync_block(store: &Store) {
 pub async fn init_l1(
     opts: Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
-) -> eyre::Result<(PathBuf, CancellationToken, PeerTable, NodeRecord, Store)> {
+) -> eyre::Result<(
+    PathBuf,
+    CancellationToken,
+    PeerTable,
+    SharedLocalNode,
+    Store,
+)> {
     let network = get_network(&opts);
     let datadir = crate::cli::compute_effective_datadir(&opts.datadir, &network, opts.dev);
 
@@ -773,7 +789,9 @@ pub async fn init_l1(
     ethrex_crypto::kzg::warm_up_trusted_setup();
 
     let store_config = StoreConfig {
-        rocksdb_block_cache_size: opts.rocksdb_block_cache_size,
+        rocksdb_block_cache_size: opts
+            .rocksdb_block_cache_size
+            .unwrap_or_else(default_rocksdb_block_cache_size),
         ..StoreConfig::default()
     };
     let store_result = if opts.skip_genesis_validation {
@@ -820,6 +838,8 @@ pub async fn init_l1(
             bal_parallel_exec_enabled: !opts.no_bal_parallel_exec,
             bal_prefetch_enabled: !opts.no_bal_prefetch,
             bal_parallel_trie_enabled: !opts.no_bal_parallel_trie,
+            blob_sampling_enabled: opts.blob_sampling || opts.blob_eager_provider,
+            blob_eager_provider: opts.blob_eager_provider,
             max_reorg_depth: opts.max_reorg_depth,
             gap_admit_occupancy_threshold: opts.mempool_gap_admit_occupancy_threshold,
             max_verify_gas: opts.mempool_max_verify_gas,
@@ -834,6 +854,12 @@ pub async fn init_l1(
     let (local_p2p_node, network_config) = get_local_p2p_node(&opts, &signer);
 
     let local_node_record = get_local_node_record(&datadir, &local_p2p_node, &signer);
+
+    // Build the shared live identity Arc once; threaded into RPC, discovery, and shutdown.
+    let shared_local_node: SharedLocalNode = Arc::new(RwLock::new(LocalNode {
+        node: local_p2p_node.clone(),
+        record: local_node_record,
+    }));
 
     let peer_table =
         PeerTableServer::spawn(local_p2p_node.node_id(), opts.target_peers, store.clone());
@@ -866,8 +892,7 @@ pub async fn init_l1(
         &opts,
         &datadir,
         peer_handler.clone(),
-        local_p2p_node,
-        local_node_record.clone(),
+        shared_local_node.clone(),
         store.clone(),
         blockchain.clone(),
         cancel_token.clone(),
@@ -892,6 +917,7 @@ pub async fn init_l1(
             tracker.clone(),
             blockchain.clone(),
             p2p_context,
+            shared_local_node.clone(),
         )
         .await;
     } else {
@@ -902,7 +928,7 @@ pub async fn init_l1(
         datadir.clone(),
         cancel_token,
         peer_handler.peer_table,
-        local_node_record,
+        shared_local_node,
         store,
     ))
 }
@@ -1248,5 +1274,17 @@ mod tests {
     #[should_panic(expected = "--p2p.addr and --nat.extip must use the same address family")]
     fn family_mismatch_panics() {
         let _ = resolve_p2p_endpoints(Some("0.0.0.0"), Some("::1"), None, None);
+    }
+
+    /// Regression: on a flat private network (docker / kurtosis devnet) with no
+    /// `--nat.extip` or `--p2p.addr`, the detected RFC1918 IP must be announced
+    /// as-is. Previously `get_local_p2p_node` clobbered any private IP to `0.0.0.0`,
+    /// producing an undiallable `enode://...@0.0.0.0` that broke peer discovery.
+    #[test]
+    fn no_flags_announces_detected_private_ip() {
+        let docker_ip = ip("172.16.0.10");
+        let (bind, ext) = resolve_p2p_endpoints(None, None, Some(docker_ip), None);
+        assert_eq!(bind, docker_ip);
+        assert_eq!(ext, docker_ip, "private IP must be announced, not 0.0.0.0");
     }
 }

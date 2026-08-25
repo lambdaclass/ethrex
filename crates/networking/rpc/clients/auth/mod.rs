@@ -111,6 +111,9 @@ impl EngineClient {
         let request = RpcRequest::from(ForkChoiceUpdatedV4 {
             fork_choice_state: state,
             payload_attributes,
+            // EIP-8070: `null` custody set — this client stands in for a consensus
+            // client that provides no custody services.
+            custody_columns: None,
         });
 
         match self.send_request(request).await? {

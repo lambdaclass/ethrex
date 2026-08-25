@@ -209,6 +209,10 @@ passed / 0 failed**, `cargo test -p ethrex-rpc --lib` is 122 passed, and
     one zero byte. That lands on the same curve as the 127 256 recorded for an
     all-non-zero payload, 12 gas per zero byte above the EIP-7623 floor, which is the
     third independent confirmation that the three figures on record are one curve.
+    **These figures are from the pre-glamsterdam-devnet-8 base.** On that base the
+    EIP-8038 v8.1.0 schedule prices a cold storage access at 2100 rather than 3000, so
+    the write costs 900 gas less: the all-non-zero payload measures 126 356. The curve is
+    unchanged; only its offset moved.
   - **`MAX_VERIFY_GAS_PER_TX = 2**20` gates eligibility end to end.** Two frame
     transactions identical at 199 bytes apart from the VERIFY frame's gas limit, one
     either side of the constant, submitted against the same built payload through

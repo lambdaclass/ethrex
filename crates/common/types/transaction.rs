@@ -2265,8 +2265,8 @@ pub fn frame_tx_recent_root() -> Address {
 /// raised values always apply and neither needs a fork parameter. Defined here
 /// rather than in levm's `gas_cost` because ethrex-common cannot depend on it;
 /// `gas_cost` asserts at compile time that the two agree.
-pub const FRAME_TX_RECENT_ROOT_REFERENCE_ADDRESS_GAS: u64 = 3000;
-pub const FRAME_TX_RECENT_ROOT_REFERENCE_GAS: u64 = 3000 + 2 * 30 + 7 * 6;
+pub const FRAME_TX_RECENT_ROOT_REFERENCE_ADDRESS_GAS: u64 = 2400;
+pub const FRAME_TX_RECENT_ROOT_REFERENCE_GAS: u64 = 1900 + 2 * 30 + 7 * 6;
 
 /// EIP-8272 recent-root ring-buffer length: the RECENT_ROOT_ADDRESS predeploy
 /// keeps one entry per source per slot for the last `RECENT_ROOT_LENGTH` slots;

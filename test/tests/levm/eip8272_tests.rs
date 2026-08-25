@@ -805,7 +805,12 @@ fn plain_eoa_call_writes_the_entry() {
     // one token against a non-zero byte's four), and execution is far above the
     // calldata floor, so the floor never binds. Pinned so a repricing that moves
     // the write shows up here rather than at bring-up.
-    assert_eq!(report.gas_used, 127_256, "measured write gas");
+    //
+    // 126_356 on the glamsterdam-devnet-8 base, 127_256 before it: the EIP-8038 v8.1.0
+    // schedule prices a cold storage access at 2100 where the earlier draft charged 3000,
+    // and the write touches one cold slot. This pin caught that reprice, which is exactly
+    // what it exists for -- see the divergence ledger for the consensus consequence.
+    assert_eq!(report.gas_used, 126_356, "measured write gas");
 }
 
 #[test]

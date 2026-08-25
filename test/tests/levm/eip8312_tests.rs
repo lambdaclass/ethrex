@@ -124,6 +124,7 @@ fn call_vault(
 
     let fork = Fork::Hegota;
     let env = Environment {
+        disable_gas_allowance_check: false,
         origin: depositor(),
         gas_limit: GAS_LIMIT,
         config: EVMConfig::new(fork, EVMConfig::canonical_values(fork)),
@@ -565,6 +566,7 @@ where
 
     let fork = Fork::Hegota;
     let env = Environment {
+        disable_gas_allowance_check: false,
         origin: depositor(),
         gas_limit: GAS_LIMIT,
         config: EVMConfig::new(fork, EVMConfig::canonical_values(fork)),
@@ -950,6 +952,7 @@ fn run_spend_at(
     );
     let fork = Fork::Hegota;
     let env = Environment {
+        disable_gas_allowance_check: false,
         origin: fixture.tx.sender,
         gas_limit: fixture.tx.frames.iter().map(|f| f.gas_limit).sum::<u64>() + 1_000_000,
         config: {
@@ -1521,6 +1524,7 @@ fn a_batch_proof_spends_a_utxo_whose_ring_entry_aged_out() {
 
     let fork = Fork::Hegota;
     let env = Environment {
+        disable_gas_allowance_check: false,
         origin: tx.sender,
         gas_limit: 4_000_000,
         config: {

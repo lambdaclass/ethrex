@@ -287,6 +287,11 @@ pub struct PeerData {
     pub node: Node,
     pub record: Option<NodeRecord>,
     pub supported_capabilities: Vec<Capability>,
+    /// The eth version in force for this session: the highest version both sides
+    /// advertised. Message shapes on the wire must be chosen from this and never
+    /// from `supported_capabilities`, which is only what the peer offered and may
+    /// name versions we did not advertise back.
+    pub negotiated_eth: Option<Capability>,
     /// Set to true if the connection is inbound (aka the connection was started by the peer and not by this node)
     /// It is only valid as long as is_connected is true
     pub is_connection_inbound: bool,
@@ -306,11 +311,13 @@ impl PeerData {
         record: Option<NodeRecord>,
         connection: Option<PeerConnection>,
         capabilities: Vec<Capability>,
+        negotiated_eth: Option<Capability>,
     ) -> Self {
         Self {
             node,
             record,
             supported_capabilities: capabilities,
+            negotiated_eth,
             is_connection_inbound: false,
             connection,
             score: Default::default(),
@@ -396,6 +403,7 @@ pub trait PeerTableServerProtocol: Send + Sync {
         node: Node,
         connection: PeerConnection,
         capabilities: Vec<Capability>,
+        negotiated_eth: Option<Capability>,
         is_inbound: bool,
     ) -> Result<(), ActorError>;
     fn set_session_info(&self, node_id: H256, session: Session) -> Result<(), ActorError>;
@@ -454,8 +462,8 @@ pub trait PeerTableServerProtocol: Send + Sync {
     fn has_eligible_peer(&self, capabilities: Vec<Capability>) -> Response<bool>;
     fn get_score(&self, node_id: H256) -> Response<i64>;
     fn get_connected_nodes(&self) -> Response<Vec<Node>>;
-    fn get_peers_with_capabilities(&self)
-    -> Response<Vec<(H256, PeerConnection, Vec<Capability>)>>;
+    /// Every connected peer with the eth version negotiated for its session.
+    fn get_connected_peers(&self) -> Response<Vec<(H256, PeerConnection, Option<Capability>)>>;
     fn insert_if_new(&self, node: Node, protocol: DiscoveryProtocol) -> Response<bool>;
     fn validate_contact(&self, node_id: H256, sender_ip: IpAddr) -> Response<ContactValidation>;
     fn get_closest_nodes(&self, node_id: H256) -> Response<Vec<Node>>;
@@ -544,7 +552,13 @@ impl PeerTableServer {
         _ctx: &Context<Self>,
     ) {
         let new_peer_id = msg.node.node_id();
-        let mut new_peer = PeerData::new(msg.node, None, Some(msg.connection), msg.capabilities);
+        let mut new_peer = PeerData::new(
+            msg.node,
+            None,
+            Some(msg.connection),
+            msg.capabilities,
+            msg.negotiated_eth,
+        );
         new_peer.is_connection_inbound = msg.is_inbound;
         self.peers.insert(new_peer_id, new_peer);
     }
@@ -925,21 +939,18 @@ impl PeerTableServer {
     }
 
     #[request_handler]
-    async fn handle_get_peers_with_capabilities(
+    async fn handle_get_connected_peers(
         &mut self,
-        _msg: peer_table_server_protocol::GetPeersWithCapabilities,
+        _msg: peer_table_server_protocol::GetConnectedPeers,
         _ctx: &Context<Self>,
-    ) -> Vec<(H256, PeerConnection, Vec<Capability>)> {
+    ) -> Vec<(H256, PeerConnection, Option<Capability>)> {
         self.peers
             .iter()
             .filter_map(|(peer_id, peer_data)| {
-                peer_data.connection.clone().map(|connection| {
-                    (
-                        *peer_id,
-                        connection,
-                        peer_data.supported_capabilities.clone(),
-                    )
-                })
+                peer_data
+                    .connection
+                    .clone()
+                    .map(|connection| (*peer_id, connection, peer_data.negotiated_eth.clone()))
             })
             .collect()
     }

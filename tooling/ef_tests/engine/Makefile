@@ -10,6 +10,13 @@ AMSTERDAM_FIXTURES_FILE := ../.fixtures_url_amsterdam
 AMSTERDAM_ARTIFACT := amsterdam-tests.tar.gz
 AMSTERDAM_URL := $(shell cat $(AMSTERDAM_FIXTURES_FILE))
 
+# Subtrees the Amsterdam bundle contributes. `for_bpo2toamsterdamattime15k` holds the
+# fork-activation fixtures (a header field appearing mid-chain, the gas schedule
+# switching between blocks); it exists only in this bundle, so omitting it leaves the
+# whole fork boundary untested.
+AMSTERDAM_SUBTREES := for_amsterdam for_bpo2toamsterdamattime15k
+AMSTERDAM_STAMP := $(SPECTEST_VECTORS_DIR)/.amsterdam_overlay
+
 # EIP-7805 (FOCIL) engine fixtures. As of tests-focil@v0.1.0 the tarball nests
 # them under fixtures/blockchain_tests_engine/for_bogota/bogota/eip7805_focil.
 # The datatest harness walks vectors/eest/ recursively, so they're discovered
@@ -30,14 +37,29 @@ $(SPECTEST_VECTORS_DIR): $(SPECTEST_ARTIFACT)
 	mkdir -p $(SPECTEST_VECTORS_DIR)
 	tar -xzf $(SPECTEST_ARTIFACT) --strip-components=2 -C $(SPECTEST_VECTORS_DIR) fixtures/blockchain_tests_engine
 
-$(AMSTERDAM_ARTIFACT): $(AMSTERDAM_FIXTURES_FILE)
-	curl -L -o $(AMSTERDAM_ARTIFACT) $(AMSTERDAM_URL)
-
-$(SPECTEST_VECTORS_DIR)/for_amsterdam: $(AMSTERDAM_ARTIFACT) $(SPECTEST_VECTORS_DIR)
-	rm -rf $@
-	tar -xzf $(AMSTERDAM_ARTIFACT) --strip-components=2 -C $(SPECTEST_VECTORS_DIR) fixtures/blockchain_tests_engine/for_amsterdam
-
-amsterdam-vectors: $(SPECTEST_VECTORS_DIR)/for_amsterdam ## 📥 Overlay glamsterdam-devnet engine fixtures onto vectors/eest
+# The overlay is keyed on the release URL it was built from, recorded in
+# $(AMSTERDAM_STAMP). Timestamps cannot express this: a bundle left on disk by
+# another branch says nothing in its mtime about which release it came from, so one
+# that merely looks newer than the URL file would be re-extracted as if it were the
+# requested release. Clearing the subtrees before extracting also drops fixtures that
+# upstream renamed or removed, which would otherwise survive and run against the
+# current client. The fetch lands in a temporary file so a failed download leaves
+# the previous bundle and stamp untouched instead of truncating them.
+amsterdam-vectors: | $(SPECTEST_VECTORS_DIR) ## 📥 Overlay Amsterdam fixtures, re-fetching when the pinned release changed
+	@have=$$(cat $(AMSTERDAM_STAMP) 2>/dev/null); \
+	for subtree in $(AMSTERDAM_SUBTREES); do \
+		[ -d $(SPECTEST_VECTORS_DIR)/$$subtree ] || have=; \
+	done; \
+	if [ "$$have" = "$(AMSTERDAM_URL)" ]; then \
+		echo "Amsterdam fixtures already overlaid from $(AMSTERDAM_URL)"; \
+	else \
+		curl -fL -o $(AMSTERDAM_ARTIFACT).part $(AMSTERDAM_URL) && \
+		mv $(AMSTERDAM_ARTIFACT).part $(AMSTERDAM_ARTIFACT) && \
+		rm -rf $(addprefix $(SPECTEST_VECTORS_DIR)/,$(AMSTERDAM_SUBTREES)) && \
+		tar -xzf $(AMSTERDAM_ARTIFACT) --strip-components=2 -C $(SPECTEST_VECTORS_DIR) \
+			$(addprefix fixtures/blockchain_tests_engine/,$(AMSTERDAM_SUBTREES)) && \
+		echo "$(AMSTERDAM_URL)" > $(AMSTERDAM_STAMP); \
+	fi
 
 $(FOCIL_ARTIFACT): $(FOCIL_FIXTURES_FILE)
 	curl -L -o $(FOCIL_ARTIFACT) $(FOCIL_URL)
@@ -54,7 +76,7 @@ download-test-vectors: $(VECTORS_TARGETS) amsterdam-vectors focil-vectors ## �
 
 clean-vectors: ## 🗑️  Clean test vectors
 	rm -rf $(VECTORS_ROOT)
-	rm -f $(SPECTEST_ARTIFACT) $(AMSTERDAM_ARTIFACT) $(FOCIL_ARTIFACT)
+	rm -f $(SPECTEST_ARTIFACT) $(AMSTERDAM_ARTIFACT) $(AMSTERDAM_ARTIFACT).part $(FOCIL_ARTIFACT)
 
 test: $(VECTORS_TARGETS) amsterdam-vectors focil-vectors ## 🧪 Run engine-format fixture suite (InMemory, release)
 	cargo test -p ef_tests-engine --release

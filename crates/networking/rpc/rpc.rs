@@ -4,7 +4,7 @@ use crate::debug::chain_config::ChainConfigRequest;
 use crate::debug::execution_witness::ExecutionWitnessRequest;
 use crate::debug::execution_witness_by_hash::ExecutionWitnessByBlockHashRequest;
 use crate::debug::set_head::SetHeadRequest;
-use crate::engine::blobs::{BlobsV2Request, BlobsV3Request};
+use crate::engine::blobs::{BlobsV2Request, BlobsV3Request, BlobsV4Request};
 use crate::engine::client_version::GetClientVersionV1Request;
 use crate::engine::fork_choice::ForkChoiceUpdatedV5;
 use crate::engine::inclusion_list::GetInclusionListV1Request;
@@ -53,7 +53,9 @@ use crate::eth::{
 };
 use crate::subscription_manager::{SubscriptionManager, SubscriptionManagerProtocol};
 use crate::testing::BuildBlockV1Request;
-use crate::tracing::{TraceBlockByNumberRequest, TraceTransactionRequest};
+use crate::tracing::{
+    TraceBlockByHashRequest, TraceBlockByNumberRequest, TraceCallRequest, TraceTransactionRequest,
+};
 use crate::types::transaction::SendRawTransactionRequest;
 use crate::utils::{
     RpcErr, RpcErrorMetadata, RpcErrorResponse, RpcNamespace, RpcRequest, RpcRequestId,
@@ -77,8 +79,7 @@ use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_metrics::rpc::{RpcOutcome, record_async_duration, record_rpc_outcome};
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
-use ethrex_p2p::types::Node;
-use ethrex_p2p::types::NodeRecord;
+use ethrex_p2p::types::SharedLocalNode;
 use ethrex_storage::Store;
 use serde::Deserialize;
 use serde_json::Value;
@@ -346,10 +347,10 @@ impl std::fmt::Display for ClientVersion {
 pub struct NodeData {
     /// JWT secret for authenticating Engine API requests from consensus clients.
     pub jwt_secret: Bytes,
-    /// Local P2P node identity (public key and address).
-    pub local_p2p_node: Node,
-    /// ENR (Ethereum Node Record) for node discovery.
-    pub local_node_record: NodeRecord,
+    /// Live-updated local node identity (public key, address, and ENR).
+    /// Guarded by a std RwLock; callers must clone values out and drop the guard
+    /// before any `.await` to avoid holding a !Send guard across await points.
+    pub shared_local_node: SharedLocalNode,
     /// Client version information.
     pub client_version: ClientVersion,
     /// Extra data included in mined blocks.
@@ -564,8 +565,7 @@ pub fn start_block_executor(blockchain: Arc<Blockchain>) -> UnboundedSender<Bloc
 /// * `storage` - Database storage instance
 /// * `blockchain` - Blockchain instance for block operations
 /// * `jwt_secret` - JWT secret for Engine API authentication
-/// * `local_p2p_node` - Local node identity for P2P networking
-/// * `local_node_record` - ENR for node discovery
+/// * `shared_local_node` - Live-updated local node identity (public key, address, and ENR)
 /// * `syncer` - Sync manager for block synchronization
 /// * `peer_handler` - Handler for P2P peer operations
 /// * `client_version` - Client version information for `web3_clientVersion` and `engine_getClientVersionV1`
@@ -590,8 +590,7 @@ pub async fn bind_api(
     storage: Store,
     blockchain: Arc<Blockchain>,
     jwt_secret: Bytes,
-    local_p2p_node: Node,
-    local_node_record: NodeRecord,
+    shared_local_node: SharedLocalNode,
     syncer: SyncManager,
     peer_handler: PeerHandler,
     client_version: ClientVersion,
@@ -613,8 +612,7 @@ pub async fn bind_api(
         peer_handler: Some(peer_handler),
         node_data: NodeData {
             jwt_secret,
-            local_p2p_node,
-            local_node_record,
+            shared_local_node,
             client_version,
             extra_data: extra_data.into(),
         },
@@ -807,8 +805,7 @@ pub async fn start_api(
     storage: Store,
     blockchain: Arc<Blockchain>,
     jwt_secret: Bytes,
-    local_p2p_node: Node,
-    local_node_record: NodeRecord,
+    shared_local_node: SharedLocalNode,
     syncer: SyncManager,
     peer_handler: PeerHandler,
     client_version: ClientVersion,
@@ -827,8 +824,7 @@ pub async fn start_api(
         storage,
         blockchain,
         jwt_secret,
-        local_p2p_node,
-        local_node_record,
+        shared_local_node,
         syncer,
         peer_handler,
         client_version,
@@ -1462,7 +1458,7 @@ pub async fn map_testing_requests(
 /// Handles debugging and introspection methods:
 /// - Raw data: `debug_getRawHeader`, `debug_getRawBlock`, `debug_getRawTransaction`, `debug_getRawReceipts`
 /// - Execution witness: `debug_executionWitness` (for stateless validation)
-/// - Tracing: `debug_traceTransaction`, `debug_traceBlockByNumber`
+/// - Tracing: `debug_traceTransaction`, `debug_traceBlockByNumber`, `debug_traceBlockByHash`, `debug_traceCall`
 pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "debug_getRawHeader" => GetRawHeaderRequest::call(req, context).await,
@@ -1479,6 +1475,8 @@ pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Res
         "debug_setHead" => SetHeadRequest::call(req, context).await,
         "debug_traceTransaction" => TraceTransactionRequest::call(req, context).await,
         "debug_traceBlockByNumber" => TraceBlockByNumberRequest::call(req, context).await,
+        "debug_traceBlockByHash" => TraceBlockByHashRequest::call(req, context).await,
+        "debug_traceCall" => TraceCallRequest::call(req, context).await,
         unknown_debug_method => Err(RpcErr::MethodNotFound(unknown_debug_method.to_owned())),
     }
 }
@@ -1511,7 +1509,7 @@ pub async fn map_ethrex_requests(
 /// - Payload submission: `engine_newPayloadV1/V2/V3/V4/V5`, `engine_newPayloadWithWitnessV5`
 /// - Payload retrieval: `engine_getPayloadV1/V2/V3/V4/V5/V6`
 /// - Payload bodies: `engine_getPayloadBodiesByHashV1`, `engine_getPayloadBodiesByRangeV1`
-/// - Blob retrieval: `engine_getBlobsV1/V2/V3`
+/// - Blob retrieval: `engine_getBlobsV1/V2/V3/V4`
 /// - Capabilities: `engine_exchangeCapabilities`, `engine_exchangeTransitionConfigurationV1`
 pub async fn map_engine_requests(
     req: &RpcRequest,
@@ -1565,6 +1563,7 @@ pub async fn map_engine_requests(
         "engine_getBlobsV1" => BlobsV1Request::call(req, context).await,
         "engine_getBlobsV2" => BlobsV2Request::call(req, context).await,
         "engine_getBlobsV3" => BlobsV3Request::call(req, context).await,
+        "engine_getBlobsV4" => BlobsV4Request::call(req, context).await,
         "engine_getClientVersionV1" => GetClientVersionV1Request::call(req, context).await,
         unknown_engine_method => Err(RpcErr::MethodNotFound(unknown_engine_method.to_owned())),
     }
@@ -1815,9 +1814,12 @@ mod tests {
             .await
             .unwrap();
         let context = default_context_with_storage(storage).await;
-        let local_p2p_node = context.node_data.local_p2p_node.clone();
-
-        let enr_url = context.node_data.local_node_record.enr_url().unwrap();
+        let (local_p2p_node, enr_url) = {
+            let guard = context.node_data.shared_local_node.read().unwrap();
+            let node = guard.node.clone();
+            let enr_url = guard.record.enr_url().unwrap();
+            (node, enr_url)
+        };
         let result = map_http_requests(&request, context).await;
         let rpc_response = rpc_response(request.id, result).unwrap();
         let blob_schedule = serde_json::json!({

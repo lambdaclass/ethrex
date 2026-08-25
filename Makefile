@@ -167,20 +167,23 @@ run-hive-eels-blobs: ## Run hive EELS Blobs tests
 	$(MAKE) run-hive-eels EELS_SIM=ethereum/eels/execute-blobs
 
 AMSTERDAM_FIXTURES_URL ?= $(shell cat tooling/ef_tests/.fixtures_url_amsterdam)
-AMSTERDAM_FIXTURES_BRANCH ?= devnets/glamsterdam/7
+AMSTERDAM_FIXTURES_BRANCH ?= devnets/glamsterdam/8
+# `fork_.*Amsterdam` rather than `fork_Amsterdam` so the BPO2->Amsterdam activation
+# fixtures (`fork_BPO2ToAmsterdamAtTime15k`) are swept alongside the Amsterdam ones.
+AMSTERDAM_FORK_PATTERN ?= .*fork_.*Amsterdam.*
 run-hive-eels-amsterdam: build-image setup-hive ## 🧪 Run hive EELS Amsterdam Engine tests
-	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim ethereum/eels/consume-engine --sim.limit ".*fork_Amsterdam.*" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) --sim.buildarg fixtures=$(AMSTERDAM_FIXTURES_URL) --sim.buildarg branch=$(AMSTERDAM_FIXTURES_BRANCH)
+	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim ethereum/eels/consume-engine --sim.limit "$(AMSTERDAM_FORK_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) --sim.buildarg fixtures=$(AMSTERDAM_FIXTURES_URL) --sim.buildarg branch=$(AMSTERDAM_FIXTURES_BRANCH)
 
-run-hive-eels-bal-quick: build-image setup-hive ## 🧪 Run hive EELS quick tests for the glam-7 EIPs
-	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim ethereum/eels/consume-engine --sim.limit ".*(8024|7708|7778|7843|7928|7954|8037|8038|2780|7997|7610|8246|8282).*" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) --sim.buildarg fixtures=$(AMSTERDAM_FIXTURES_URL) --sim.buildarg branch=$(AMSTERDAM_FIXTURES_BRANCH)
+run-hive-eels-bal-quick: build-image setup-hive ## 🧪 Run hive EELS quick tests for the Amsterdam EIPs
+	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim ethereum/eels/consume-engine --sim.limit ".*(2780|7708|7732|7778|7843|7928|7954|7975|7976|7981|7997|8024|8037|8038|8045|8061|8070|8159|8246|8282).*" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) --sim.buildarg fixtures=$(AMSTERDAM_FIXTURES_URL) --sim.buildarg branch=$(AMSTERDAM_FIXTURES_BRANCH)
 
 # Block-building simulator (execution-specs PR #2679). Not yet upstream in Hive,
 # so we install the simulator Dockerfile into the hive clone and patch the
 # ethrex hive client to expose the `testing` namespace (testing_buildBlockV1
 # lives on the public HTTP port). Defaults to the Amsterdam/BAL fixtures.
-# Defaults to the BAL EIP set (mirrors run-hive-eels-bal-quick) rather than all
-# .*fork_Amsterdam.* fixtures, which pull in ~21k cross-fork cases. Override with
-# BUILD_BLOCK_TEST_PATTERN=.*fork_Amsterdam.* for the full sweep.
+# Defaults to the EIPs whose block-building behaviour this simulator exercises, rather
+# than every Amsterdam fixture, which pulls in ~21k cross-fork cases. Override with
+# BUILD_BLOCK_TEST_PATTERN=$(AMSTERDAM_FORK_PATTERN) for the full sweep.
 BUILD_BLOCK_TEST_PATTERN ?= .*(7708|7778|7843|7928|7954|7976|7981|8024|8037).*
 run-hive-build-block: build-image setup-hive ## 🧱 Run hive build-block simulator (testing_buildBlockV1)
 	mkdir -p hive/simulators/ethereum/eels/build-block

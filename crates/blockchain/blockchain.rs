@@ -52,6 +52,7 @@ pub mod inclusion_list_validator;
 pub mod mempool;
 pub mod payload;
 pub mod prewarm;
+pub mod sampling;
 pub mod stateless;
 pub mod tracing;
 pub mod vm;
@@ -359,6 +360,15 @@ pub struct BlockchainOptions {
     /// `--no-bal-parallel-trie`) to fall back to streaming `AccountUpdate`s from
     /// the executor and merkleizing post-execution.
     pub bal_parallel_trie_enabled: bool,
+    /// EIP-8070: when true, activate the sampler/provider state machine.
+    /// When false (default), the node always acts as provider (p=1.0).
+    pub blob_sampling_enabled: bool,
+    /// EIP-8070: when true, always act as provider (p=1.0) regardless of role
+    /// randomization, as block builders SHOULD (EIP-8070, "Execution clients ::
+    /// Local block builders"). Enabled via `--blob-eager-provider`; a node that
+    /// builds payloads latches it at runtime regardless. Only meaningful when
+    /// `blob_sampling_enabled` is also true.
+    pub blob_eager_provider: bool,
     /// Optional operator override for the maximum reorg depth. `None` ; cap is purely
     /// physical (layer-cache retention plus journal reach; bounded indirectly by finality
     /// because finality advances prune the journal). `Some(d)` ; reject reorgs of
@@ -396,6 +406,8 @@ impl Default for BlockchainOptions {
             bal_parallel_exec_enabled: true,
             bal_prefetch_enabled: true,
             bal_parallel_trie_enabled: true,
+            blob_sampling_enabled: false,
+            blob_eager_provider: false,
             max_reorg_depth: None,
             gap_admit_occupancy_threshold: DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD,
             max_verify_gas: DEFAULT_MAX_VERIFY_GAS,
@@ -516,9 +528,16 @@ impl Blockchain {
     }
 
     pub fn new(store: Store, blockchain_opts: BlockchainOptions) -> Self {
+        let mempool = if blockchain_opts.blob_eager_provider {
+            Mempool::new_with_eager_provider(blockchain_opts.max_mempool_size)
+        } else if blockchain_opts.blob_sampling_enabled {
+            Mempool::new_with_sampling(blockchain_opts.max_mempool_size)
+        } else {
+            Mempool::new(blockchain_opts.max_mempool_size)
+        };
         Self {
             storage: store,
-            mempool: Mempool::new(blockchain_opts.max_mempool_size),
+            mempool,
             is_synced: AtomicBool::new(false),
             reorg_in_progress: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
@@ -3201,7 +3220,18 @@ impl Blockchain {
         }
 
         // Validate blobs bundle after checking if it's already added.
-        blobs_bundle.validate(transaction.blob_versioned_hashes_ref(), fork)?;
+        // eth/72 elided bundles carry commitments and cell proofs but no blobs, and
+        // full KZG verification is deferred until the cells arrive via GetCells. Only
+        // the 4844 envelope can be elided -- `validate_elided` is typed to it -- so any
+        // other blob-carrying transaction takes the full check against its hashes.
+        let bundle_is_elided =
+            blobs_bundle.blobs.is_empty() && !blobs_bundle.commitments.is_empty();
+        match (&transaction, bundle_is_elided) {
+            (Transaction::EIP4844Transaction(blob_tx), true) => {
+                blobs_bundle.validate_elided(blob_tx, fork)?
+            }
+            _ => blobs_bundle.validate(transaction.blob_versioned_hashes_ref(), fork)?,
+        }
 
         let sender = transaction.sender(&NativeCrypto)?;
 

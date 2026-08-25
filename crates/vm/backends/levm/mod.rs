@@ -3024,6 +3024,7 @@ impl LEVM {
             fee_token: tx.fee_token(),
             disable_balance_check: false,
             disable_nonce_check: false,
+            disable_gas_allowance_check: false,
             is_system_call: false,
         };
 
@@ -3124,7 +3125,10 @@ impl LEVM {
     ) -> Result<ExecutionResult, EvmError> {
         let mut env = env_from_generic(tx, block_header, db)?;
 
-        env.block_gas_limit = i64::MAX as u64; // disable block gas limit
+        // Let the call run with a `gas` above the block's limit, but leave
+        // `block_gas_limit` at the block's real value: the GASLIMIT opcode reads it, so
+        // overwriting it makes 0x45 return a number that appears nowhere on chain.
+        env.disable_gas_allowance_check = true;
 
         adjust_disabled_base_fee(&mut env);
 
@@ -4232,6 +4236,9 @@ fn env_from_generic(
         // `tx_nonce` to 0 above, which the hook would otherwise reject for
         // any sender whose nonce is nonzero.
         disable_nonce_check: true,
+        // Opt-in per caller: `simulate_tx_from_generic` and `debug_traceCall` relax it so
+        // an over-limit `gas` still runs, while `create_access_list` keeps enforcing it.
+        disable_gas_allowance_check: false,
         is_system_call: false,
     })
 }
