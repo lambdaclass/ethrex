@@ -1229,6 +1229,19 @@ async fn resolve_history_retention(
     // `--history.chain` asks us to *download* history below the pivot. Deleting it
     // by default would have the two flags fight, so the explicit one wins.
     let retention = match opts.history_retention {
+        // Both flags set explicitly is a conflict, not a preference. --history.chain
+        // fills history downward toward an absolute floor while retention deletes
+        // upward from a rolling barrier; with the floor below the barrier the node
+        // downloads blocks only to delete them, then re-detects the gap and downloads
+        // again. Reject it rather than let the two fight.
+        Some(r) if r != HistoryRetention::All && opts.history_chain != HistoryChain::Off => {
+            return Err(eyre::eyre!(format!(
+                "--history.retention={r:?} conflicts with --history.chain={:?}: backfill fills \
+                 history downward while pruning deletes it upward, so the two would churn. \
+                 Choose one, or pass --history.retention=all to keep the backfilled range",
+                opts.history_chain
+            )));
+        }
         Some(r) => r,
         None if opts.history_chain != HistoryChain::Off => {
             warn!(
@@ -1280,14 +1293,16 @@ async fn resolve_history_retention(
         earliest
     };
 
-    if earliest < barrier && !explicit && !opts.history_retention_dry_run {
+    if earliest < barrier && !explicit {
         warn!(
             earliest,
             barrier,
+            would_delete = barrier.saturating_sub(earliest),
             "This node holds history below the CL retention window. Pruning is NOT enabled by \
-             default, because that would permanently delete history you already have. Pass \
-             --history.retention=cl-window to prune it, or --history.retention=all to silence \
-             this"
+             default, because that would permanently delete history you already have. Passing \
+             --history.retention=cl-window would delete the {} block heights in ({earliest}, \
+             {barrier}]; --history.retention=all silences this warning",
+            barrier.saturating_sub(earliest)
         );
         return Ok(None);
     }
