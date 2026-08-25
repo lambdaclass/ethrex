@@ -880,6 +880,11 @@ fn max_gas_takes_the_calldata_floor_when_it_exceeds_the_standard_limit() {
     tx.frames[1].data = Bytes::new();
     tx.frames[0].limits.execution = 100;
     tx.frames[1].limits.execution = 100;
+    // No declared state growth: `standard_gas_limit` reserves both dimensions, so
+    // a state budget would be what outweighs the floor rather than the frames'
+    // execution gas, which is the thing under test here.
+    tx.frames[0].limits.state = 0;
+    tx.frames[1].limits.state = 0;
     assert_eq!(tx.calldata_floor_gas(), 4288);
     assert!(tx.calldata_floor_total() > tx.standard_gas_limit());
     assert_eq!(tx.total_gas_limit(), tx.calldata_floor_total());

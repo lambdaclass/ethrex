@@ -2229,7 +2229,17 @@ pub struct FrameTransaction {
 }
 
 /// Intrinsic gas cost for frame transactions (EIP-8141)
-pub const FRAME_TX_INTRINSIC_COST: u64 = 15000;
+pub const FRAME_TX_INTRINSIC_COST: u64 = 12000;
+
+/// EIP-8141 `TX_VALUE_COST`: charged once per value-bearing frame, for the
+/// recipient balance write and the transfer log, as EIP-2780 charges top-level
+/// transfers. Static, because `value` and `target` are transaction fields.
+///
+/// Frame targets deliberately do NOT pay EIP-2780's unconditional cold-rate
+/// recipient touch: frames behave like internal calls, which stay on the
+/// EIP-2929 warm/cold model, so a transaction repeatedly targeting the same
+/// account would otherwise overpay.
+pub const FRAME_TX_VALUE_COST: u64 = 6000;
 /// Per-frame cost (EIP-8141): CALL context overhead (100) + G_log (375)
 pub const FRAME_TX_PER_FRAME_COST: u64 = 475;
 /// ENTRY_POINT address used as caller for DEFAULT/VERIFY frames per EIP-8141.
@@ -2535,6 +2545,17 @@ impl FrameTransaction {
         FRAME_TX_INTRINSIC_COST
             .saturating_add((self.frames.len() as u64).saturating_mul(FRAME_TX_PER_FRAME_COST))
             .saturating_add(self.signature_verification_cost())
+            .saturating_add(self.value_transfer_cost())
+    }
+
+    /// EIP-8141 `value_transfer_cost`: `TX_VALUE_COST` per frame that actually
+    /// moves value to someone other than the sender. A zero-value frame, a frame
+    /// with no target, and a self-directed frame each cost nothing.
+    pub fn value_transfer_cost(&self) -> u64 {
+        self.frames
+            .iter()
+            .filter(|f| !f.value.is_zero() && f.target.is_some_and(|target| target != self.sender))
+            .fold(0u64, |acc, _| acc.saturating_add(FRAME_TX_VALUE_COST))
     }
 
     /// EIP-8272 `recent_root_calldata`: `rlp(recent_root_references)`. The bytes
@@ -2571,12 +2592,32 @@ impl FrameTransaction {
         self.mandatory_gas()
             .saturating_add(self.data_cost())
             .saturating_add(self.recent_root_reference_intrinsic_gas())
-            .saturating_add(
-                self.frames
-                    .iter()
-                    .map(|f| f.limits.execution)
-                    .fold(0u64, |acc, g| acc.saturating_add(g)),
-            )
+            .saturating_add(self.total_execution_limit())
+    }
+
+    // NOTE: per EIP-8141 `standard_gas_limit` also reserves `sum(limits.state)`,
+    // because a builder must reserve the transaction's full gas in both
+    // dimensions. That term is deliberately NOT added yet: the VM does not
+    // maintain `state_gas_left` per frame, so reserved state gas would be
+    // counted as consumed and never returned to the payer. It lands together
+    // with the per-frame state pool.
+
+    /// Sum of every frame's declared execution budget. This is the dimension the
+    /// EIP-7825 transaction cap applies to; state gas is excluded from that cap
+    /// and bounded only by the encoding limit and block state-gas capacity.
+    pub fn total_execution_limit(&self) -> u64 {
+        self.frames
+            .iter()
+            .map(|f| f.limits.execution)
+            .fold(0u64, |acc, g| acc.saturating_add(g))
+    }
+
+    /// Sum of every frame's declared state budget.
+    pub fn total_state_limit(&self) -> u64 {
+        self.frames
+            .iter()
+            .map(|f| f.limits.state)
+            .fold(0u64, |acc, g| acc.saturating_add(g))
     }
 
     /// EIP-8141 `calldata_floor_gas`: the mandatory costs plus the EIP-7623
@@ -2971,6 +3012,25 @@ impl FrameTransaction {
                 "a vault-sender transaction must contain at least one UTXO frame (EIP-8312)"
                     .to_string(),
             );
+        }
+
+        use crate::constants::TX_MAX_GAS_LIMIT_AMSTERDAM;
+        // EIP-8141 §Transaction execution gas cap: EIP-7825 caps the transaction's
+        // full *execution* budget. State gas is excluded — it is bounded by the
+        // encoding limit and the block's state-gas capacity instead, matching
+        // EIP-8037 — so this deliberately sums `limits.execution` only. The
+        // calldata floor is checked against the same cap, because a transaction
+        // whose floor exceeds the cap could never be paid for either.
+        let execution_budget = self
+            .mandatory_gas()
+            .saturating_add(self.data_cost())
+            .saturating_add(self.recent_root_reference_intrinsic_gas())
+            .saturating_add(self.total_execution_limit());
+        let capped = execution_budget.max(self.calldata_floor_total());
+        if capped > TX_MAX_GAS_LIMIT_AMSTERDAM {
+            return Err(format!(
+                "transaction execution gas {capped} exceeds TX_MAX_GAS_LIMIT {TX_MAX_GAS_LIMIT_AMSTERDAM} (EIP-7825)"
+            ));
         }
 
         Ok(())

@@ -190,7 +190,7 @@ fn run_with_committed_roots(
 /// A data-heavy, execution-light frame tx: enough frame data that the EIP-7623
 /// calldata floor exceeds what execution consumes, so the floor binds.
 fn floor_bound_frame_tx() -> FrameTransaction {
-    frame_tx(vec![
+    let mut tx = frame_tx(vec![
         frame(FrameMode::Verify, 0x03, SENDER, 100_000, &[0xFFu8; 2048]),
         frame(
             FrameMode::Sender,
@@ -199,7 +199,15 @@ fn floor_bound_frame_tx() -> FrameTransaction {
             30_000,
             &[],
         ),
-    ])
+    ]);
+    // The floor has to actually bind for these tests to mean anything, and
+    // `standard_gas_limit` reserves the declared state budgets alongside the
+    // execution ones. These frames grow no state, so declaring none is both
+    // faithful and what keeps the floor on top.
+    for f in &mut tx.frames {
+        f.limits.state = 0;
+    }
+    tx
 }
 
 /// source_id = keccak256(caller || salt) over the 20-byte address and 32-byte salt.

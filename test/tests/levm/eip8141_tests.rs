@@ -3882,7 +3882,10 @@ fn storage_refund_from_a_later_frame_reduces_reported_gas() {
         target: Some(target),
         limits: FrameLimits {
             execution: 200_000,
-            state: 200_000,
+            // The storage refund under test is an execution-gas refund. A declared
+            // state budget would enlarge `total_gas_limit` — which reserves both
+            // dimensions — and so move the pre-refund total this compares against.
+            state: 0,
         },
         value: U256::zero(),
         data,
@@ -4212,7 +4215,10 @@ fn atomic_batch_unroll_keeps_frame_status_and_gas_but_drops_logs() {
         target: Some(target),
         limits: FrameLimits {
             execution: BATCH_FRAME_GAS,
-            state: BATCH_FRAME_GAS,
+            // Execution-gas accounting is what is under test; a declared state
+            // budget would enlarge `total_gas_limit` (which reserves both
+            // dimensions) and move the bound this asserts against.
+            state: 0,
         },
         value: U256::zero(),
         data: Bytes::new(),
@@ -4378,8 +4384,8 @@ fn frame_tx_over_the_per_tx_blob_limit_is_rejected() {
 mod intrinsic_gas_accounting_tests {
     use bytes::Bytes;
     use ethrex_common::types::{
-        FRAME_SIG_SCHEME_SECP256K1, FRAME_TX_INTRINSIC_COST, FRAME_TX_PER_FRAME_COST, Frame,
-        FrameLimits, FrameSignature, FrameTransaction, Transaction,
+        FRAME_SIG_SCHEME_SECP256K1, FRAME_TX_INTRINSIC_COST, FRAME_TX_PER_FRAME_COST,
+        FRAME_TX_VALUE_COST, Frame, FrameLimits, FrameSignature, FrameTransaction, Transaction,
     };
     use ethrex_common::{Address, U256};
 
@@ -4492,12 +4498,23 @@ mod intrinsic_gas_accounting_tests {
              EIP-8141 figure for that field"
         );
 
+        // EIP-8141 charges TX_VALUE_COST per frame that actually moves value to
+        // someone other than the sender, for the recipient balance write and the
+        // transfer log — the same thing EIP-2780 charges a top-level transfer.
+        let expected_value_cost = tx
+            .frames
+            .iter()
+            .filter(|f| !f.value.is_zero() && f.target.is_some_and(|t| t != tx.sender))
+            .count() as u64
+            * FRAME_TX_VALUE_COST;
+
         let expected_intrinsic_gas = FRAME_TX_INTRINSIC_COST
             + tx.frames.len() as u64 * FRAME_TX_PER_FRAME_COST
             + SECP256K1_VERIFY_GAS
             + payload_calldata_gas
             + nonce_calldata_gas
-            + recent_root_calldata_gas;
+            + recent_root_calldata_gas
+            + expected_value_cost;
 
         assert_eq!(tx.mandatory_gas() + tx.data_cost(), expected_intrinsic_gas);
         assert_eq!(
