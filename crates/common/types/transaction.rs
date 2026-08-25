@@ -2593,14 +2593,13 @@ impl FrameTransaction {
             .saturating_add(self.data_cost())
             .saturating_add(self.recent_root_reference_intrinsic_gas())
             .saturating_add(self.total_execution_limit())
+            // EIP-8141: the reservation covers BOTH dimensions, because a builder
+            // must reserve the transaction's full gas in each — either could be
+            // consumed in full. Frames now spend state from their own declared
+            // pools and report what they used per frame, so an unspent state
+            // budget is reserved without being charged.
+            .saturating_add(self.total_state_limit())
     }
-
-    // NOTE: per EIP-8141 `standard_gas_limit` also reserves `sum(limits.state)`,
-    // because a builder must reserve the transaction's full gas in both
-    // dimensions. That term is deliberately NOT added yet: the VM does not
-    // maintain `state_gas_left` per frame, so reserved state gas would be
-    // counted as consumed and never returned to the payer. It lands together
-    // with the per-frame state pool.
 
     /// Sum of every frame's declared execution budget. This is the dimension the
     /// EIP-7825 transaction cap applies to; state gas is excluded from that cap

@@ -1131,16 +1131,23 @@ fn frame_sstore_set_reports_eip8037_state_gas() {
         "a frame SSTORE-set must report EIP-8037 state gas (not 0), got {}",
         report.state_gas_used,
     );
-    // EIP-8141 keeps the two pools apart: the state charge is drawn from the
-    // frame's `limits.state`, never from its execution gas. So the reported
-    // execution total must NOT contain the state-set cost — under the previous
-    // spilling model it did, and this frame's execution gas was ~SSTORE_SET_STATE_GAS
-    // larger as a result.
+    // EIP-8141 keeps the two pools apart, and the receipt reports them apart:
+    // `gas_used.state` carries the whole state-set charge while
+    // `gas_used.execution` carries none of it. Under the previous spilling model
+    // the set landed in execution gas, so this is the load-bearing distinction.
+    let fr = report
+        .frame_results
+        .as_ref()
+        .expect("per-frame results present");
+    // fr[0] = VERIFY, fr[1] = the writing DEFAULT frame.
+    assert_eq!(
+        fr[1].3, SSTORE_SET_STATE_GAS,
+        "the writing frame's receipt must report the state-set charge as state gas",
+    );
     assert!(
-        report.gas_used < SSTORE_SET_STATE_GAS,
-        "execution gas {} must not absorb the state-set charge {} — the pools are \
-         independent and execution gas can never be spent on state",
-        report.gas_used,
+        fr[1].1 < SSTORE_SET_STATE_GAS,
+        "the same frame's execution gas ({}) must not absorb the state charge ({})",
+        fr[1].1,
         SSTORE_SET_STATE_GAS,
     );
 }
@@ -4005,7 +4012,12 @@ fn storage_refund_from_a_later_frame_reduces_reported_gas() {
 
     // Per-frame `gas_used` is reported before refunds, so the pre-refund total is
     // the mandatory costs plus the data cost plus each frame's gas.
-    let frames_gas: u64 = frame_results.iter().map(|(_, gas, _)| *gas).sum();
+    // Both dimensions: a frame's gross usage is its execution gas plus the state
+    // gas it drew from its own pool, and the transaction total charges both.
+    let frames_gas: u64 = frame_results
+        .iter()
+        .map(|(_, gas, _, state_gas)| *gas + *state_gas)
+        .sum();
     let pre_refund = tx.mandatory_gas() + tx.data_cost() + frames_gas;
     assert!(
         report.gas_used < pre_refund,
@@ -4553,6 +4565,9 @@ mod intrinsic_gas_accounting_tests {
     fn interop_reference_tx_intrinsic_gas_charges_payload_bytes_only() {
         const SECP256K1_VERIFY_GAS: u64 = 2_800;
         const FRAME_GAS_LIMITS: u64 = 50_000 + 100_000;
+        // `standard_gas_limit` reserves BOTH dimensions: a builder must reserve
+        // gas the transaction could spend in either.
+        const FRAME_STATE_LIMITS: u64 = 50_000 + 100_000;
 
         let tx = interop_reference_tx();
 
@@ -4603,7 +4618,7 @@ mod intrinsic_gas_accounting_tests {
         assert_eq!(tx.mandatory_gas() + tx.data_cost(), expected_intrinsic_gas);
         assert_eq!(
             tx.total_gas_limit(),
-            expected_intrinsic_gas + FRAME_GAS_LIMITS
+            expected_intrinsic_gas + FRAME_GAS_LIMITS + FRAME_STATE_LIMITS
         );
     }
 

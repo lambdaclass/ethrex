@@ -22,7 +22,13 @@ pub const FRAME_RECEIPT_STATUS_SKIPPED: u8 = 2;
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct FrameReceipt {
     pub status: u8,
+    /// EIP-8141 `gas_used.execution`: `frame.limits.execution - gas_left` at
+    /// frame exit.
     pub gas_used: u64,
+    /// EIP-8141 `gas_used.state`: the EIP-8037 state gas this frame drew from its
+    /// own `limits.state` pool. Reported separately because the two pools never
+    /// mix, so a single figure could not express either one.
+    pub state_gas_used: u64,
     pub logs: Vec<Log>,
 }
 
@@ -31,6 +37,7 @@ impl RLPEncode for FrameReceipt {
         Encoder::new(buf)
             .encode_field(&self.status)
             .encode_field(&self.gas_used)
+            .encode_field(&self.state_gas_used)
             .encode_field(&self.logs)
             .finish();
     }
@@ -41,11 +48,13 @@ impl RLPDecode for FrameReceipt {
         let decoder = Decoder::new(rlp)?;
         let (status, decoder) = decoder.decode_field("status")?;
         let (gas_used, decoder) = decoder.decode_field("gas_used")?;
+        let (state_gas_used, decoder) = decoder.decode_field("state_gas_used")?;
         let (logs, decoder) = decoder.decode_field("logs")?;
         Ok((
             FrameReceipt {
                 status,
                 gas_used,
+                state_gas_used,
                 logs,
             },
             decoder.finish()?,

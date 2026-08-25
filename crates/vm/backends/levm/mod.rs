@@ -117,14 +117,15 @@ pub struct LEVM;
 /// execution report's `frame_results`. Returns `None` when the report carries
 /// no frame results.
 fn frame_receipts_from(
-    frame_results: Option<Vec<(u8, u64, Vec<Log>)>>,
+    frame_results: Option<Vec<(u8, u64, Vec<Log>, u64)>>,
 ) -> Option<Vec<FrameReceipt>> {
     frame_results.map(|results| {
         results
             .into_iter()
-            .map(|(status, gas_used, logs)| FrameReceipt {
+            .map(|(status, gas_used, logs, state_gas_used)| FrameReceipt {
                 status,
                 gas_used,
+                state_gas_used,
                 logs,
             })
             .collect()

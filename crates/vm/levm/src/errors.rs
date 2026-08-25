@@ -293,7 +293,11 @@ pub struct ExecutionReport {
     /// For frame transactions: per-frame results (status, gas_used, logs).
     /// `status` is a `FRAME_RECEIPT_STATUS_*` code (0 = failure, 1 = success,
     /// 3 = skipped due to failed atomic batch, per EIP-8141 receipt encoding).
-    pub frame_results: Option<Vec<(u8, u64, Vec<Log>)>>,
+    /// Per-frame `(status, execution_gas_used, logs, state_gas_used)`.
+    ///
+    /// State gas is appended rather than inserted so the three original
+    /// positions keep their meaning for existing readers.
+    pub frame_results: Option<Vec<(u8, u64, Vec<Log>, u64)>>,
 }
 
 impl ExecutionReport {

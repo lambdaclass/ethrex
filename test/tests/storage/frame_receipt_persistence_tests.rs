@@ -41,11 +41,13 @@ fn frame_receipt() -> Receipt {
             FrameReceipt {
                 status: FRAME_RECEIPT_STATUS_SUCCESS,
                 gas_used: 0x1234,
+                state_gas_used: 0,
                 logs: vec![log_at(Address::from_low_u64_be(0xaaaa))],
             },
             FrameReceipt {
                 status: FRAME_RECEIPT_STATUS_SUCCESS,
                 gas_used: 0,
+                state_gas_used: 0,
                 logs: vec![],
             },
         ]),
@@ -130,6 +132,7 @@ async fn flushed_frame_receipt_preserves_a_skipped_frame() {
     receipt.frame_receipts = Some(vec![FrameReceipt {
         status: FRAME_RECEIPT_STATUS_SKIPPED,
         gas_used: 0,
+        state_gas_used: 0,
         logs: vec![],
     }]);
 

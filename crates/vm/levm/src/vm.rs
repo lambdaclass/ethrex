@@ -524,7 +524,8 @@ pub struct FrameTxContext {
     /// Per-frame execution results (status, gas_used, logs).
     /// `status` is a `FRAME_RECEIPT_STATUS_*` code (0 = failure, 1 = success,
     /// 3 = skipped due to failed atomic batch).
-    pub frame_results: Vec<(u8, u64, Vec<Log>)>,
+    /// Per-frame `(status, execution_gas_used, logs, state_gas_used)`.
+    pub frame_results: Vec<(u8, u64, Vec<Log>, u64)>,
     /// Index of the currently executing frame
     pub current_frame_index: usize,
     /// The sig_hash of the frame transaction
@@ -2100,7 +2101,20 @@ impl<'a> VM<'a> {
             .iter()
             .map(|f| f.limits.execution)
             .fold(0u64, |acc, g| acc.saturating_add(g));
-        let intrinsic_gas = total_gas_limit.saturating_sub(sum_frame_gas_limits);
+        // `total_gas_limit` is the RESERVATION: intrinsic plus both dimensions of
+        // every frame's declared budget, because a builder must reserve gas it
+        // might spend in either. Settlement charges what was actually used, so
+        // both declared sums come back out here and each frame then adds its real
+        // execution and state usage below. Subtracting only the execution sum
+        // would bill the entire state reservation as consumed and never return it.
+        let sum_frame_state_limits: u64 = frame_tx
+            .frames
+            .iter()
+            .map(|f| f.limits.state)
+            .fold(0u64, |acc, g| acc.saturating_add(g));
+        let intrinsic_gas = total_gas_limit
+            .saturating_sub(sum_frame_gas_limits)
+            .saturating_sub(sum_frame_state_limits);
         let mut total_gas_used: u64 = intrinsic_gas;
         let mut tx_invalid = false;
 
@@ -2151,6 +2165,7 @@ impl<'a> VM<'a> {
                         ethrex_common::types::FRAME_RECEIPT_STATUS_SKIPPED,
                         0,
                         Vec::new(),
+                        0,
                     ));
                     if frame_idx == end_idx {
                         skip_until_batch_end = None;
@@ -2256,6 +2271,7 @@ impl<'a> VM<'a> {
                             ethrex_common::types::FRAME_RECEIPT_STATUS_SUCCESS,
                             frame_gas,
                             Vec::new(),
+                            0,
                         ));
                     }
                     None => {
@@ -2588,6 +2604,20 @@ impl<'a> VM<'a> {
             total_gas_used = total_gas_used
                 .checked_add(frame_gas_used)
                 .ok_or(VMError::Internal(InternalError::Overflow))?;
+            // Charge the state gas this frame actually drew, not what it declared.
+            // The declared budgets were removed from the reservation above, so a
+            // frame that spends none of its state pool costs the payer nothing for
+            // it.
+            total_gas_used = total_gas_used
+                .checked_add(
+                    u64::try_from(
+                        self.state_gas_used
+                            .saturating_sub(state_gas_used_at_frame_entry)
+                            .max(0),
+                    )
+                    .map_err(|_| InternalError::Overflow)?,
+                )
+                .ok_or(VMError::Internal(InternalError::Overflow))?;
             all_logs.extend(frame_logs.clone());
 
             // Store frame result in context
@@ -2602,8 +2632,20 @@ impl<'a> VM<'a> {
             } else {
                 ethrex_common::types::FRAME_RECEIPT_STATUS_FAILURE
             };
-            ctx.frame_results
-                .push((status_code, frame_gas_used, frame_logs));
+            // EIP-8141 `gas_used.state`: what this frame drew from its own
+            // `limits.state`. Taken as the delta over the frame's entry snapshot,
+            // which is already zero for a failed frame — its state changes were
+            // rolled back, so it created no state and owes no state gas.
+            let frame_state_gas_used = self
+                .state_gas_used
+                .saturating_sub(state_gas_used_at_frame_entry)
+                .max(0) as u64;
+            ctx.frame_results.push((
+                status_code,
+                frame_gas_used,
+                frame_logs,
+                frame_state_gas_used,
+            ));
 
             // Atomic batch: if a frame in the batch reverted, revert the
             // batch-level snapshot and skip remaining frames in the batch.
@@ -3072,7 +3114,7 @@ impl<'a> VM<'a> {
         let any_frame_reverted = ctx
             .frame_results
             .iter()
-            .any(|(status, _, _)| *status != ethrex_common::types::FRAME_RECEIPT_STATUS_SUCCESS);
+            .any(|(status, _, _, _)| *status != ethrex_common::types::FRAME_RECEIPT_STATUS_SUCCESS);
 
         let result = if any_frame_reverted {
             TxResult::Revert(VMError::RevertOpcode)

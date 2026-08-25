@@ -60,7 +60,7 @@ EIP-7906's Constants table carries only `TXTRACE_GAS_COST`, `EVENTDATACOPY_GAS_C
 ### EIP-8141 (Frame Transactions)
 - **No MAX_VERIFY_GAS deviation any more.** This branch previously raised it to `500_000` because EIP-8037 repricing put account creation out of reach of a single combined prefix budget. The spec has since split the budget in two — `MAX_VERIFY_GAS` (`100_000`, execution) and `MAX_VERIFY_STATE_GAS` (`500_000`, state) — so the constant is back at the spec value and the state dimension carries the growth. `--mempool.max-verify-state-gas` is the operator knob for the second lane.
 - Frames declare `limits = [execution, state]` and spend two independent pools; the EIP-8037 reservoir does not apply inside a frame.
-- ⚠️ **Frame receipts still report a single gas figure**, so `gas_used.state` is not yet surfaced per frame. `standard_gas_limit` therefore also omits the spec's `sum(limits.state)` reservation term, which would otherwise be billed as consumed and never returned.
+- Frame receipts report both dimensions (`gas_used` / `state_gas_used`), and `standard_gas_limit` reserves both, as the spec requires of a builder. Settlement charges what each frame actually drew, so an unspent state budget is reserved without being paid for.
 - `SIGDATACOPY` lives at `0xBA` rather than the spec's `0xB5` — see the opcode note above.
 
 ### EIP-8312 (UTXO Frames) — see `docs/eip-8312.md`
