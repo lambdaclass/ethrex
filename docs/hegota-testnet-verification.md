@@ -158,16 +158,38 @@ above are all silent until a specific fork boundary.
     emergent from the EVM rather than a constant, so it is a measurement, not an
     assertion. Both rejection paths are part of the check — EIP-8272 requires a call to
     revert unless calldata is exactly 64 bytes *and* call value is zero.
-11. A deposit from an address holding no gater token reverts with "Not enough tokens",
+11. **EIP-8250 keyed nonces admit concurrency the linear nonce forbids.** Two frame
+    transactions from **a contract sender** carrying *different* `nonce_keys`, each at the
+    sequence its own key is at, are both admitted and both mine — the whole point of keyed
+    nonces, and the one EIP in the rule set that nothing else on this list exercises.
+
+    **The sender must be a contract, and this is the trap.** `keyed_concurrency_verdict`
+    grants concurrency only when the prefix is provably independent of everything the
+    sender's other transactions can change: the sender runs real (non-EIP-7702-delegated)
+    contract code, no deploy frame installs code mid-flight, the prefix reads no sender
+    storage, and it does not read `TXPARAM(0x0C)`. An EOA sender fails the first condition,
+    because its default-code prefix authenticates against its own nonce, which a sibling
+    key-0 transaction bumps. So the obvious version of this test — a funded EOA sending two
+    keyed transactions — correctly gets `A pending frame transaction from this sender is
+    already in the pool` on the second, and proves nothing about keyed nonces. Verified on
+    a devnet: an EOA sender is denied concurrency by design.
+
+    Then the negative halves, which are what prove the gate is real rather than absent: a
+    transaction reusing a key at a sequence already consumed is rejected, and key `0` is
+    the account's linear nonce domain, so a key-`0` transaction still obeys ordinary nonce
+    ordering — a future sequence there is rejected outright rather than queued, because a
+    frame transaction is simulated against head state at admission.
+
+12. A deposit from an address holding no gater token reverts with "Not enough tokens",
     and the same deposit succeeds after `gating-cli mint`. Both halves are required:
     only the second proves the gate is not simply broken for everyone.
-12. That deposit produces a standard `DepositEvent` that appears in the block's
+13. That deposit produces a standard `DepositEvent` that appears in the block's
     `requestsHash`, and the consensus client activates the validator. `eth_getLogs` on
     the deposit address shows `DEPOSIT_TOPIC`
     `0x649bbc62d0e31342afea4e5cd82d4049e7e1ee912fc0889aa790803be39038c5` and **no
     additional event** — an extra event would mean the gated contract is not transparent
     to the execution layer after all.
 
-Checks 7 and 9 to 12 need the frame-transaction submitters in `scripts/hegota-testnet/`
+Checks 7 and 9 to 13 need the frame-transaction submitters in `scripts/hegota-testnet/`
 and the `pk910/gated-deposit-contract-cli` container; the rest need only `curl` and
 `jq`.
