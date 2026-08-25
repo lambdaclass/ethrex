@@ -24,6 +24,8 @@
 //! self-contained and computed identically by every client, or the omission
 //! verdict splits between nodes.
 
+use ethrex_common::types::Fork;
+use ethrex_crypto::Crypto;
 use ethrex_common::Address;
 use ethrex_common::types::{FrameTransaction, Transaction, TxType, is_eip7702_delegation};
 
@@ -162,6 +164,16 @@ pub fn fee_valid(tx: &Transaction, base_fee_per_gas: u64) -> bool {
 /// deliberately excludes expiry frames, so summing it alone would undercount;
 /// they are added back here.
 pub fn verify_budget_cost(tx: &FrameTransaction) -> Option<u64> {
+    Some(
+        verify_budget_prefix_cost(tx)?.saturating_add(verify_budget_signature_cost(tx)),
+    )
+}
+
+/// The validation-prefix half of the VERIFY budget: the prefix frames' gas limits
+/// plus the expiry-verifier frames'. EIP-8369 debits this half only after the
+/// transaction's protocol signatures have been checked, so it is exposed
+/// separately from the signature half.
+pub fn verify_budget_prefix_cost(tx: &FrameTransaction) -> Option<u64> {
     let prefix = tx.validation_prefix().ok()?;
 
     let prefix_gas = prefix
@@ -177,11 +189,13 @@ pub fn verify_budget_cost(tx: &FrameTransaction) -> Option<u64> {
         .map(|f| f.gas_limit)
         .fold(0u64, |acc, g| acc.saturating_add(g));
 
-    Some(
-        prefix_gas
-            .saturating_add(expiry_gas)
-            .saturating_add(tx.signature_verification_cost()),
-    )
+    Some(prefix_gas.saturating_add(expiry_gas))
+}
+
+/// The signature half of the VERIFY budget, debited before any protocol
+/// signature is checked so a bad signature still pays for the attempt.
+pub fn verify_budget_signature_cost(tx: &FrameTransaction) -> u64 {
+    tx.signature_verification_cost()
 }
 
 /// Classify a transaction into its VOPS profile from the transaction alone.
@@ -321,6 +335,12 @@ pub enum FillOutcome {
     /// runs after the debit. EIP-8369: "A failed candidate keeps the budget
     /// debit but is not admitted."
     ChargedNotAdmitted { cost: u64 },
+    /// A protocol signature failed after the signature half was debited.
+    /// EIP-8369: "Deduct the signature cost before checking protocol
+    /// signatures. If a signature fails, keep only that debit." The
+    /// validation-prefix half is never charged, so an invalid signature cannot
+    /// consume a whole list's budget.
+    SignatureFailed { cost: u64 },
 }
 
 impl FillOutcome {
@@ -333,14 +353,22 @@ impl FillOutcome {
 /// Run EIP-8369's static budget fill over one inclusion list, in list order and
 /// per occurrence, before any deduplication.
 ///
-/// The ordering is the point of the rule and is what bounds signature work:
-/// compute the cost from decoding and shape checks alone, and only then, if it
-/// fits, deduct it *before* verifying any cryptographic signature. A structurally
-/// valid transaction with an invalid signature therefore pays for the attempt
-/// instead of forcing free verification work.
+/// The ordering is the point of the rule and is what bounds signature work. The
+/// budget is debited in two stages: price the occurrence from decoding and shape
+/// checks alone, ignore it outright if the signature and validation-prefix costs
+/// together do not fit, then debit the signature half *before* checking any
+/// protocol signature. A signature failure keeps only that debit, so a
+/// structurally valid transaction with a bad signature pays for the attempt
+/// without consuming the prefix budget a whole list may depend on. The prefix
+/// half is debited only once the signatures pass.
 ///
 /// Returns one outcome per input transaction, positionally.
-pub fn fill_il_budget(il: &[Transaction], utxo_frames_active: bool) -> Vec<FillOutcome> {
+pub fn fill_il_budget(
+    il: &[Transaction],
+    utxo_frames_active: bool,
+    fork: Fork,
+    crypto: &dyn Crypto,
+) -> Vec<FillOutcome> {
     let mut remaining = MAX_VERIFY_GAS_PER_IL;
     let mut outcomes = Vec::with_capacity(il.len());
 
@@ -354,23 +382,40 @@ pub fn fill_il_budget(il: &[Transaction], utxo_frames_active: bool) -> Vec<FillO
             continue;
         }
 
-        // Decoding and structural shape checks only, enough to price the
-        // occurrence. No signature verification has happened yet.
-        let Some(cost) = verify_budget_cost(frame_tx) else {
+        // Decoding and structural shape checks only, enough to price both halves
+        // of the occurrence. No signature verification has happened yet.
+        let Some(prefix_cost) = verify_budget_prefix_cost(frame_tx) else {
             outcomes.push(FillOutcome::Ignored);
             continue;
         };
-        if cost > MAX_VERIFY_GAS_PER_TX || cost > remaining {
+        let signature_cost = verify_budget_signature_cost(frame_tx);
+        let total_cost = signature_cost.saturating_add(prefix_cost);
+        if total_cost > MAX_VERIFY_GAS_PER_TX || total_cost > remaining {
             outcomes.push(FillOutcome::Ignored);
             continue;
         }
 
-        remaining -= cost;
+        // Signature half first, then the check it pays for.
+        remaining -= signature_cost;
+        if !ethrex_vm::validate_frame_signatures(
+            &frame_tx.signatures,
+            frame_tx.compute_sig_hash(),
+            frame_tx.sender,
+            fork,
+            crypto,
+        ) {
+            outcomes.push(FillOutcome::SignatureFailed {
+                cost: signature_cost,
+            });
+            continue;
+        }
+
+        remaining -= prefix_cost;
 
         if is_profile_2_candidate(frame_tx, utxo_frames_active) {
-            outcomes.push(FillOutcome::Admitted { cost });
+            outcomes.push(FillOutcome::Admitted { cost: total_cost });
         } else {
-            outcomes.push(FillOutcome::ChargedNotAdmitted { cost });
+            outcomes.push(FillOutcome::ChargedNotAdmitted { cost: total_cost });
         }
     }
 

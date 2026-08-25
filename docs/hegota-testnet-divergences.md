@@ -14,13 +14,17 @@ Spec lookups go through `eipmcp`; PR state through `gh`. Audited against
 `diff_eip(n, since=<pin>)` for each core EIP, against the pinned revisions in the rule-set
 table of `docs/hegota-testnet-joining.md`.
 
+Re-audited 2026-08-25 against `ethereum/EIPs@master`, 70 commits past the pin. The four
+core EIPs were pinned at `4093c21847`; 8250, 8272 and 7805 are byte-identical to it still,
+8141 is not, and EIP-8369's PR head has moved.
+
 | EIP | Pin | Drift to head | Consensus-visible | Action | Owner |
 | --- | --- | --- | --- | --- | --- |
-| 8141 | `4a9ad32cf2` | none — byte-identical | no | closed | — |
-| 7805 | `9a345f96c2` | none — byte-identical | no | closed | — |
+| 8141 | `4093c21847` | **+326/−96 — a new envelope, see §6** | **yes** | open: adopt v2 (re-genesis) or stay pinned | — |
+| 7805 | `4093c21847` | none — byte-identical | no | closed | — |
 | 8250 | `81b976ac01` | one Abstract sentence: privacy applications sharing one sender | no | bump pin to `4093c2184` | Edgar |
 | 8272 | `d8636a330d` | one Abstract sentence: proofs against recent commitment roots | no | bump pin to `4093c2184` | Edgar |
-| 8369 | `ad8571028a` | two commits on PR #12110 (2026-08-10), extension-requirements paragraph expanded | no (prose about a future extension) | bump pin to `6f818e27d`; the prose is already reflected in `docs/hegota-testnet.md` §"Profile 2 enforcement judges two fixed endpoints" | Edgar |
+| 8369 | `6f818e27dd` → **`33724bd7da`** | three commits, +17/−13: Profile 1 candidacy stated by transaction type, `MAX_VERIFY_GAS_PER_TX` demoted to "up to `MAX_VERIFY_GAS_PER_IL`", and **budget fill split into a two-stage debit** | **yes** — it decides Profile 2 admission | **implemented**, see §7; pin bumped | — |
 | 8312 | `a5da3f608c` | not diffable — author's fork only, no upstream `EIPS/eip-8312.md` | n/a while `utxoFramesTime` is unset | inert; re-check if the EIP is upstreamed | Edgar |
 
 The core EIPs have not moved normatively since the branch reconciled against them.
@@ -154,19 +158,98 @@ file does not contain. **Owner:** Edgar.
 | | |
 | --- | --- |
 | ethrex | `SLOTNUM` (`0x4B`) is in the banned set (`crates/vm/levm/src/vm.rs:3474`) |
-| EIP-8141 | banned list does not include it; the ban is open PR #12066 |
-| Consensus-visible | **yes** |
+| EIP-8141 | banned list now includes it: PR #12066 **merged 2026-08-11** |
+| Consensus-visible | was yes; now **conformant** |
 
 ethrex adopted the proposed ban ahead of merge (`#7108`, commits `d43ebdda2`,
 `fc018b526`). A validation prefix branching on `SLOTNUM` is admitted by a spec-literal
 client and rejected here. The ban is right — EIP-8272 makes the beacon slot load-bearing,
 which gives `SLOTNUM` exactly the admission-time/inclusion-time divergence the banned
-list exists to prevent — but it is a divergence until #12066 merges.
+list exists to prevent — and #12066 merged on 2026-08-11, so the early adoption is now
+plain conformance rather than a divergence.
 
 **Note:** `docs/eip-8272.md` still claims ethrex "keeps following the list as written
 until it merges", which the code contradicts. Corrected in this pass.
 
-**Action:** carry; track #12066. **Owner:** Edgar.
+**Action:** closed — #12066 merged; nothing to carry.
+
+## 6. EIP-8141 v2: a new envelope, and therefore a re-genesis
+
+EIP-8141 moved +326/−96 since the pin. Six of the new sections are Rationale and one is
+Security Considerations, so they need no code; what is normative is:
+
+- the envelope nests the fee fields: `[chain_id, nonce, sender, frames, signatures, fees,
+  blob_versioned_hashes]`;
+- each frame carries `limits = [execution, state]` in place of one `gas_limit`, giving
+  per-frame two-dimensional budgets that never mix;
+- `FRAME_TX_INTRINSIC_COST` drops from 15 000 to 12 000;
+- `SIGPARAM`'s copy operation becomes a new `SIGDATACOPY` opcode at `0xb5`;
+- receipts carry `gas_used = [execution, state]`, and a cross-frame state-gas refill
+  retroactively reduces an *earlier* frame's `gas_used.state`;
+- EIP-2929 warm/cold is charged at frame entry, before the balance check and dispatch;
+- the EIP-7825 cap applies to `intrinsic + Σ limits.execution`, state gas excluded;
+- `ecrecover` and `P256VERIFY` must not appear in the block access list;
+- extra expiry-frame constraints, and an atomic-batch `APPROVE_SCOPE_MASK` assert.
+
+**The envelope change means this cannot be an in-place upgrade of a running chain.**
+Adopting it is a re-genesis, and it also invalidates the published tooling: the Python
+frame-tx encoder, the go-ethereum fork the explorer decodes with, and every joiner's
+transaction builder.
+
+Cherry-picking is the one option to avoid: taking `12 000` without the two-dimensional
+model produces a rule set that matches no published revision, which is exactly what this
+ledger exists to prevent.
+
+**Action:** decide before announcing. ethrex already carries EIP-8037 state-gas machinery
+in 15 files, so the second dimension is not from zero.
+
+## 7. The glamsterdam-devnet-8 base reprices Amsterdam
+
+The testnet is now built on `origin/glamsterdam-devnet-8`, whose commit `fe6b15abb`
+updates the EIP-8038 vectors to the v8.1.0 schedule:
+
+| primitive | before | on this base |
+| --- | --- | --- |
+| cold storage access (Amsterdam) | 3000 | 2100 |
+| `ACCESS_LIST_ADDRESS_COST` | 3000 | 2400 |
+| `ACCESS_LIST_STORAGE_KEY_COST` | 3000 | 1900 |
+| `TX_VALUE_COST` (Amsterdam) | 4244 + 1756 transfer log | 6000 combined |
+
+EIP-8272 defines its charges by formula over the access-list costs, so the spec-faithful
+values follow the schedule: the reference-address charge goes 3000 → 2400 and the
+reference charge 3102 → 2002. **Recent roots are live on the running chain**, so this
+reprices a rule already in force; a node on this base disagrees with that chain's history.
+The pinned EIP-8272 write measurement moved by exactly the cold-access delta,
+127 256 → 126 356.
+
+EIP-8312 instead publishes absolute totals, and its Rationale decomposes them over the
+old schedule (13 000 = 3000 + 10 000). Under v8.1.0 the same decomposition yields 12 100.
+The published totals are what a second client implements, so `GAS_UTXO_FRAME` and
+`GAS_UTXO_INPUT` stay pinned at 13 000 and 16 048 and the stale decomposition is recorded
+in `crates/vm/levm/src/gas_cost.rs`. `GAS_UTXO_ACCOUNT_OUT` still reproduces its published
+9000, because the new `TX_VALUE_COST` absorbs the transfer log exactly. Worth raising with
+the EIP-8312 author.
+
+**Action:** this is the second independent reason the live chain needs a re-genesis rather
+than an upgrade. Owner: unassigned.
+
+## 8. EIP-8369's two-stage budget debit — implemented
+
+The re-pin from `6f818e27dd` to `33724bd7da` changed budget fill normatively. Fill used to
+price an occurrence from its shape, then debit the whole cost before any signature check.
+It now computes the signature and validation-prefix costs, ignores the occurrence outright
+if their sum does not fit, debits the **signature half** before checking protocol
+signatures, keeps only that debit when a signature fails, and debits the prefix half only
+once the signatures pass.
+
+`fill_il_budget` therefore verifies protocol signatures (it takes the fork and a crypto
+backend), and a new `FillOutcome::SignatureFailed` records the signature-only debit. The
+behavioural difference is pinned by
+`an_invalid_signature_debits_only_the_signature_half`: two occurrences at half the list
+budget each, where the old single debit would have starved the second and the new rule
+admits it.
+
+**Action:** closed.
 
 ## 4. Items upstream has closed in ethrex's favour
 
@@ -375,7 +458,7 @@ Task 6.7's bar: zero rows may end the phase as "yes / unresolved / no fallback".
 | §3.3 attester state reconstruction | no | closed |
 | §3.4 per-IL code-byte budget | yes | **carried** — published in the artifact set and the extension draft |
 | §3.5 `AA_VOPS_SLOT_COUNT = 4`, absent means 4 not off | yes | **carried** — published; a joining client MUST NOT read the missing key as "off" |
-| §3.6 `SLOTNUM` banned in the validation prefix | yes | **carried** — one-way (ethrex stricter); track EIPs#12066 |
+| §3.6 `SLOTNUM` banned in the validation prefix | yes | **closed** — EIPs#12066 merged 2026-08-11 |
 | §5 `RECENT_ROOT_CODE` bytes | yes | **carried** — byte-identical to EIPs#12131; unmerged, so track it |
 | §5 static-context gas not pinned by a test | yes | **open test gap**, behaviour is spec-conformant; see §10.2 |
 | §8 canonical paymaster hash | yes | **carried** — matches EIPs#12041; unmerged, so track it |

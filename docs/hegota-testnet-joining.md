@@ -43,7 +43,7 @@ this network runs is the list below, pinned to exact revisions.
 | 8250 | Keyed Nonces | `4093c21847` | `ethereum/EIPs` |
 | 8272 | Recent Roots | `4093c21847` | `ethereum/EIPs` |
 | 7805 | Fork-choice enforced Inclusion Lists (FOCIL) | `4093c21847` | `ethereum/EIPs` |
-| 8369 | VOPS Profiles for FOCIL Eligibility | `6f818e27dd` | `soispoke/EIPs@codex/vops-profiles-focil` (PR #12110, unmerged) |
+| 8369 | VOPS Profiles for FOCIL Eligibility | `33724bd7da` | `soispoke/EIPs@codex/vops-profiles-focil` (PR #12110, unmerged) |
 
 All five activate together at one timestamp. There is no per-EIP activation and no
 intermediate state in which some are live and others are not.
