@@ -607,3 +607,47 @@ impl DiscoveryServer {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn an_unpublished_handle_is_inert() {
+        // Every consumer holds this handle from the moment the P2P context is
+        // built, which is before discovery starts and forever if p2p runs
+        // without it. Casts must be dropped quietly and the one request must
+        // answer `None` rather than wait for a server that may never arrive.
+        let handle = DiscoveryHandle::new();
+
+        handle.mark_connected(H256::repeat_byte(1));
+        handle.mark_disconnected(H256::repeat_byte(1));
+        handle.set_unwanted(H256::repeat_byte(1));
+        handle.set_disposable(H256::repeat_byte(1));
+        handle.prune();
+
+        assert!(handle.next_dial_candidate().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_handle_is_published_once() {
+        let handle = DiscoveryHandle::new();
+        let server = DiscoveryServer::new_for_discv5_test(
+            Node::from_enode_url(
+                "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
+            )
+            .expect("bad enode url"),
+            NodeRecord::default(),
+            SecretKey::new(&mut rand::rngs::OsRng),
+            Arc::new(UdpSocket::bind("127.0.0.1:0").await.expect("bind")),
+            Box::new(crate::peer_filter::AcceptAllFilter),
+        )
+        .start();
+
+        assert!(handle.set(server.clone()));
+        assert!(
+            !handle.set(server),
+            "a second publish must be refused, not silently swap the server"
+        );
+    }
+}

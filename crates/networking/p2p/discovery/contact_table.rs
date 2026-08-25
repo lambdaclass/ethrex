@@ -318,8 +318,8 @@ pub struct ContactTable {
     /// contact as [`Contact::passes_filter`].
     filter: Box<dyn PeerFilter>,
     /// Nodes the consumer has reported as connected. Kept here rather than read
-    /// back from the consumer so discovery never has to call into it: the two
-    /// lifecycle casts are the only thing crossing the boundary.
+    /// back from the consumer, so that discovery never has to call into it:
+    /// every message across that boundary travels inward.
     connected: FxHashSet<H256>,
     /// Nodes already offered to the dialer this cycle, cleared once the pool is
     /// exhausted so failed dials get another turn.
@@ -367,12 +367,14 @@ impl ContactTable {
 
     /// Record that the consumer's connection to `node_id` is gone.
     ///
-    /// Also drops the node's discv5 session: the keys were negotiated for a
-    /// peer we are no longer talking to, and keeping them would leave the
-    /// session store growing with every peer that ever connected.
+    /// Deliberately leaves the discv5 session alone. The consumer's connection
+    /// and the discovery session are separate conversations with the same node:
+    /// an RLPx attempt that is rejected for having no capability we want says
+    /// nothing about the discv5 keys, and tearing them down there would force a
+    /// WHOAREYOU round trip to talk to a node we are still perfectly able to
+    /// reach. Sessions go when the contact does, in [`Self::prune`].
     pub fn mark_disconnected(&mut self, node_id: &H256) {
         self.connected.remove(node_id);
-        self.sessions.remove(node_id);
     }
 
     /// How far along the consumer is towards the connection count it wants.
@@ -561,8 +563,13 @@ impl ContactTable {
     /// Prune disposable contacts from both main and replacement lists.
     /// When a main contact is removed, a replacement is automatically promoted.
     /// Pruned contacts remain in the connection pool so they can be retried
-    /// later — the RLPx handshake will reject them if they're truly bad.
+    /// later: the consumer will reject them on connecting if they are truly bad.
+    ///
+    /// Dropping a contact drops its discv5 session too. That is what bounds the
+    /// session store, which would otherwise grow by one entry per handshake for
+    /// the life of the process.
     pub fn prune(&mut self) {
+        let mut pruned: Vec<H256> = Vec::new();
         for bucket in &mut self.buckets {
             // Collect disposable contacts from main list
             let main_disposable: Vec<H256> = bucket
@@ -575,11 +582,20 @@ impl ContactTable {
             // Remove from main list and promote replacements
             for node_id in main_disposable {
                 bucket.remove_and_promote(&node_id);
+                pruned.push(node_id);
             }
 
             // Remove disposable contacts from replacement list
             // (these don't get promoted, just removed)
-            bucket.replacements.retain(|(_, c)| !c.disposable);
+            bucket.replacements.retain(|(id, c)| {
+                if c.disposable {
+                    pruned.push(*id);
+                }
+                !c.disposable
+            });
+        }
+        for node_id in pruned {
+            self.sessions.remove(&node_id);
         }
     }
 
@@ -602,22 +618,28 @@ impl ContactTable {
         let start = rand::random::<usize>() % pool_len;
         for offset in 0..pool_len {
             let idx = (start + offset) % pool_len;
-            let Some((node_id, node)) = self.connection_pool.get_index(idx) else {
+            let Some((node_id, pool_node)) = self.connection_pool.get_index(idx) else {
                 continue;
             };
             let node_id = *node_id;
+            let contact = self.get_contact_or_replacement(&node_id);
 
             if self.connected.contains(&node_id)
                 || self.already_tried_peers.contains(&node_id)
-                || self
-                    .get_contact_or_replacement(&node_id)
+                || contact
                     .map(|c| !c.knows_us || c.unwanted || c.passes_filter == Some(false))
                     .unwrap_or(false)
             {
                 continue;
             }
 
-            let node = node.clone();
+            // The contact's endpoint wins over the pool's. A pool entry is
+            // written on first sight and never refreshed, so for a node first
+            // heard of over an unauthenticated discv4 Neighbors packet it can
+            // hold a wrong or zero TCP port forever, while the contact tracks
+            // whatever the newest signed ENR says. Falls back to the pool for
+            // an id the k-buckets have already evicted.
+            let node = contact.map_or_else(|| pool_node.clone(), |c| c.node.clone());
             self.already_tried_peers.insert(node_id);
             return Some(node);
         }
@@ -904,6 +926,14 @@ mod tests {
         ContactTable::new(H256::zero(), 10, Box::new(filter))
     }
 
+    /// Session keys whose values are irrelevant; only presence is asserted.
+    fn session() -> Session {
+        Session {
+            outbound_key: [1; 16],
+            inbound_key: [2; 16],
+        }
+    }
+
     /// A signed record for `seed`'s node at sequence number `seq`.
     fn record_for(seed: u8, seq: u64) -> (H256, NodeRecord) {
         let signer = secp256k1::SecretKey::from_slice(&[seed.max(1); 32]).unwrap();
@@ -1106,26 +1136,84 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn disconnecting_drops_the_discv5_session() {
-        // The keys were negotiated for a peer we are no longer talking to, and
-        // holding them would grow the session store with every peer that ever
-        // connected.
+    async fn disconnecting_leaves_the_discv5_session_alone() {
+        // An RLPx teardown is not a discovery event. Dropping the keys here
+        // would force a WHOAREYOU round trip on a node we can still reach, and
+        // it fires on connections that were rejected before they ever carried
+        // traffic.
         let mut table = table_with(FixedAnswer(true));
         let (node_id, record) = record_for(11, 1);
 
         table.new_contact_records(vec![record]).await;
-        table.set_session(
-            node_id,
-            Session {
-                outbound_key: [1; 16],
-                inbound_key: [2; 16],
-            },
-        );
-        assert!(table.session(&node_id).is_some());
+        table.set_session(node_id, session());
 
         table.mark_disconnected(&node_id);
 
-        assert!(table.session(&node_id).is_none());
+        assert!(table.session(&node_id).is_some());
+    }
+
+    #[tokio::test]
+    async fn pruning_a_contact_drops_its_discv5_session() {
+        // What actually bounds the session store: without this it grows by one
+        // entry per handshake for the life of the process.
+        let mut table = table_with(FixedAnswer(true));
+        let (node_id, record) = record_for(14, 1);
+
+        table.new_contact_records(vec![record]).await;
+        table.set_session(node_id, session());
+        table.set_disposable(&node_id);
+
+        table.prune();
+
+        assert!(table.get_contact(&node_id).is_none(), "contact is pruned");
+        assert!(
+            table.session(&node_id).is_none(),
+            "its session goes with it"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_dial_candidate_uses_the_endpoint_from_the_newest_record() {
+        // The connection pool is written on first sight and never refreshed, so
+        // a node first heard of over an unauthenticated discv4 Neighbors packet
+        // sits there with whatever port that packet claimed. Dialing the pool
+        // entry rather than the contact would keep hammering that address after
+        // the node published a signed ENR correcting it.
+        let mut table = table_with(FixedAnswer(true));
+        let signer = secp256k1::SecretKey::from_slice(&[15; 32]).unwrap();
+        let record = NodeRecord::from_pairs(
+            2,
+            &signer,
+            NodeRecordPairs {
+                ip: Some(Ipv4Addr::new(127, 0, 0, 15)),
+                udp_port: Some(30303),
+                tcp_port: Some(30303),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let announced = Node::from_enr(&record).unwrap();
+        let node_id = announced.node_id();
+
+        // First sighting: a bare endpoint with the wrong TCP port.
+        let stale = Node::new(
+            IpAddr::V4(Ipv4Addr::new(127, 0, 0, 15)),
+            30303,
+            0,
+            announced.public_key,
+        );
+        table
+            .new_contacts(vec![stale], DiscoveryProtocol::Discv4)
+            .await;
+        // Then the signed record, which corrects it.
+        table.new_contact_records(vec![record]).await;
+
+        let candidate = table.next_dial_candidate().expect("a candidate");
+        assert_eq!(candidate.node_id(), node_id);
+        assert_eq!(
+            candidate.tcp_port, 30303,
+            "the dialer must get the endpoint from the newest record, not the first sighting"
+        );
     }
 
     #[tokio::test]

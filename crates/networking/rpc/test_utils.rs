@@ -284,7 +284,7 @@ pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
             local_p2p_node,
             local_node_record,
             dummy_sync_manager().await,
-            dummy_peer_handler(storage).await,
+            dummy_peer_handler().await,
             ClientVersion::new(
                 "ethrex".to_string(),
                 "0.1.0".to_string(),
@@ -329,7 +329,7 @@ pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
         blockchain: blockchain.clone(),
         active_filters: Default::default(),
         syncer: Some(Arc::new(dummy_sync_manager().await)),
-        peer_handler: Some(dummy_peer_handler(storage).await),
+        peer_handler: Some(dummy_peer_handler().await),
         node_data: NodeData {
             jwt_secret: Default::default(),
             local_p2p_node: example_p2p_node(),
@@ -362,7 +362,7 @@ pub async fn dummy_sync_manager() -> SyncManager {
         merkle_pool(),
     ));
     SyncManager::new(
-        dummy_peer_handler(store).await,
+        dummy_peer_handler().await,
         &SyncMode::Full,
         CancellationToken::new(),
         blockchain,
@@ -380,7 +380,7 @@ pub async fn dummy_sync_manager() -> SyncManager {
 
 /// Creates a dummy PeerHandler for tests where interacting with peers is not needed
 /// This should only be used in tests as it won't be able to interact with the node's connected peers
-pub async fn dummy_peer_handler(_store: Store) -> PeerHandler {
+pub async fn dummy_peer_handler() -> PeerHandler {
     let peer_table = PeerTableServer::spawn(TARGET_PEERS);
     // No discovery server behind this handle: the dummy handler never dials.
     PeerHandler::new(

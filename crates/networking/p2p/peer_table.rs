@@ -191,8 +191,8 @@ pub trait PeerTableServerProtocol: Send + Sync {
 
 pub struct PeerTableServer {
     peers: IndexMap<H256, PeerData>,
-    /// How many connections this node wants. Only ever compared against
-    /// `peers.len()`; discovery keeps its own copy to pace its lookups.
+    /// How many connections this node wants. Discovery keeps its own copy to
+    /// pace its lookups, fed from the same config value.
     target_peers: usize,
 }
 
