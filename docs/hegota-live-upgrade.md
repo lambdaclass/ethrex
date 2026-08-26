@@ -64,6 +64,24 @@ items above already mirror what an in-place swap actually requires, and they pas
 full genesis replay would mean era-gating every internal accounting change this devnet has
 ever carried across its life, which is an unbounded project unrelated to this fork.
 
+## Rehearsal: PASSED
+
+Rehearsed end-to-end on a purpose-built chain of this exact lineage (`hegota-devnet`), seeded
+with scalar-format frame history so it started where the live chain starts. All four
+properties held: the binary swap resumed consensus; pre-fork transactions kept their hashes,
+transactions roots and block hashes; the era gate rejected the wrong encoding on each side of
+the boundary; and the chain crossed the activation and kept **finalizing** past it.
+
+Two things the rehearsal changed about the procedure below:
+
+- **`chmod +x` the binary before `docker cp`.** `docker cp` does not set the exec bit, and the
+  first attempt died with `exec ethrex failed: Permission denied`. Nodes shut down cleanly, but
+  the chain stalls until it is fixed.
+- **Every EL has its own `/network-configs` volume.** The activation timestamp must be written
+  to all of them identically (verify by md5) or they disagree about the era and the chain forks.
+- Set the activation far enough ahead that every node is swapped before it passes; an
+  un-swapped node produces frames the swapped nodes reject.
+
 ## Decision: ship it as a fork
 
 The options below were written before that was on the table. **The chosen path is a fork** —
