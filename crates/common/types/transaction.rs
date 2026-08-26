@@ -1957,6 +1957,27 @@ impl From<FrameMode> for u8 {
     }
 }
 
+/// Which wire form a frame's slot 3 uses.
+///
+/// EIP-8141 changed it from a scalar `gas_limit` to the `[execution, state]`
+/// list. A chain crosses that at `ChainConfig::frame_limits_time`, so blocks on
+/// either side of the boundary encode frames differently and a frame has to
+/// remember which form it came from — re-encoding a pre-fork frame in the new
+/// form changes its transaction hash and its block's transactions root.
+///
+/// Decoding sets this from the bytes, which are self-describing: an RLP list
+/// prefix is `>= 0xc0`. Frames built in memory default to [`FrameEncoding::Limits`],
+/// so anything newly constructed encodes in the current form.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
+pub enum FrameEncoding {
+    /// Pre-fork: slot 3 is a scalar `gas_limit`, and the frame has no declared
+    /// state budget.
+    Scalar,
+    /// Post-fork: slot 3 is `[execution, state]`.
+    #[default]
+    Limits,
+}
+
 /// EIP-8141 `limits = [execution, state]`: a frame's two independent gas budgets.
 ///
 /// EIP-8037 meters execution gas and state gas separately, but an ordinary
@@ -2013,6 +2034,10 @@ pub struct Frame {
     /// Per EIP-8141 the frame is a 6-tuple `[mode, flags, target, limits, value, data]`,
     /// where `limits` is itself the 2-list `[execution, state]`.
     pub limits: FrameLimits,
+    /// Which wire form slot 3 came in. Not part of the frame's meaning — it exists
+    /// so a pre-fork frame re-encodes to the bytes it was hashed from. See
+    /// [`FrameEncoding`].
+    pub encoding: FrameEncoding,
     // Only SENDER frames may carry a non-zero value; see
     // `validate_static_constraints`.
     #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
@@ -2056,11 +2081,18 @@ impl RLPEncode for Frame {
             Some(addr) => TxKind::Call(addr),
             None => TxKind::Create, // RLP_NULL encodes "no target" → sender
         };
-        Encoder::new(buf)
+        let encoder = Encoder::new(buf)
             .encode_field(&(self.mode as u64))
             .encode_field(&(self.flags as u64))
-            .encode_field(&target_kind)
-            .encode_field(&self.limits)
+            .encode_field(&target_kind);
+        // Slot 3 must go back out in the form it came in: a pre-fork frame
+        // re-encoded as a list would hash differently from the bytes its
+        // transaction hash and its block's transactions root were built from.
+        let encoder = match self.encoding {
+            FrameEncoding::Scalar => encoder.encode_field(&self.limits.execution),
+            FrameEncoding::Limits => encoder.encode_field(&self.limits),
+        };
+        encoder
             .encode_field(&self.value)
             .encode_field(&self.data)
             .finish();
@@ -2081,7 +2113,26 @@ impl RLPDecode for Frame {
             TxKind::Call(addr) => Some(addr),
             TxKind::Create => None,
         };
-        let (limits, decoder): (FrameLimits, _) = decoder.decode_field("limits")?;
+        // RLP is self-describing, so the two forms are distinguishable with no fork
+        // context threaded into decoding: a list prefix is `>= 0xc0`. Whether the
+        // form is *allowed* at this height is a validation question, checked
+        // against `ChainConfig::is_frame_limits_activated` where block context
+        // exists — decoding stays context-free.
+        let slot3_is_list = decoder.peek_is_list().unwrap_or(true);
+        let (limits, encoding, decoder) = if slot3_is_list {
+            let (limits, decoder): (FrameLimits, _) = decoder.decode_field("limits")?;
+            (limits, FrameEncoding::Limits, decoder)
+        } else {
+            let (execution, decoder): (u64, _) = decoder.decode_field("gas_limit")?;
+            (
+                FrameLimits {
+                    execution,
+                    state: 0,
+                },
+                FrameEncoding::Scalar,
+                decoder,
+            )
+        };
         let (value, decoder): (U256, _) = decoder.decode_field("value")?;
         let (data, decoder) = decoder.decode_field("data")?;
         let frame = Frame {
@@ -2089,6 +2140,7 @@ impl RLPDecode for Frame {
             flags,
             target,
             limits,
+            encoding,
             value,
             data,
         };
@@ -3881,8 +3933,11 @@ mod serde_impl {
                     execution: entry.execution_gas_limit,
                     state: entry.state_gas_limit,
                 },
+                // This is the RPC/serde view, which only ever describes a frame a
+                // caller is submitting now, so it is always the current form.
                 value: entry.value,
                 data: entry.data,
+                encoding: FrameEncoding::Limits,
             }
         }
     }
@@ -5898,7 +5953,11 @@ mod tests {
                     mode: FrameMode::Verify as u8,
                     flags: 0x03, // APPROVE_PAYMENT_AND_EXECUTION
                     target: Some(Address::from_low_u64_be(0xABCD)),
-                    gas_limit: 100_000,
+                    limits: FrameLimits {
+                        execution: 100_000,
+                        state: 0,
+                    },
+                    encoding: FrameEncoding::Limits,
                     value: U256::zero(),
                     data: Bytes::from_static(b"verify_data"),
                 },
@@ -5906,7 +5965,11 @@ mod tests {
                     mode: FrameMode::Sender as u8,
                     flags: 0x00,
                     target: Some(Address::from_low_u64_be(0x1234)),
-                    gas_limit: 200_000,
+                    limits: FrameLimits {
+                        execution: 200_000,
+                        state: 0,
+                    },
+                    encoding: FrameEncoding::Limits,
                     value: U256::zero(),
                     data: Bytes::from_static(b"call_data"),
                 },
@@ -5937,7 +6000,11 @@ mod tests {
                 mode: FrameMode::Default as u8,
                 flags: 0x04, // atomic batch
                 target: Some(Address::from_low_u64_be(0xB0B)),
-                gas_limit: 21_000,
+                limits: FrameLimits {
+                    execution: 21_000,
+                    state: 0,
+                },
+                encoding: FrameEncoding::Limits,
                 value: U256::zero(),
                 data: Bytes::new(),
             },
@@ -5945,7 +6012,11 @@ mod tests {
                 mode: FrameMode::Sender as u8,
                 flags: 0x04, // atomic batch
                 target: Some(Address::from_low_u64_be(0xB0B)),
-                gas_limit: 21_000,
+                limits: FrameLimits {
+                    execution: 21_000,
+                    state: 0,
+                },
+                encoding: FrameEncoding::Limits,
                 value: U256::zero(),
                 data: Bytes::new(),
             },
@@ -5953,7 +6024,11 @@ mod tests {
                 mode: FrameMode::Sender as u8,
                 flags: 0x00, // terminator: no flag
                 target: Some(Address::from_low_u64_be(0xCAFE)),
-                gas_limit: 21_000,
+                limits: FrameLimits {
+                    execution: 21_000,
+                    state: 0,
+                },
+                encoding: FrameEncoding::Limits,
                 value: U256::zero(),
                 data: Bytes::new(),
             },
@@ -5968,7 +6043,11 @@ mod tests {
             mode: FrameMode::Sender as u8,
             flags: 0x04,
             target: Some(Address::from_low_u64_be(0xCAFE)),
-            gas_limit: 21_000,
+            limits: FrameLimits {
+                execution: 21_000,
+                state: 0,
+            },
+            encoding: FrameEncoding::Limits,
             value: U256::zero(),
             data: Bytes::new(),
         }];
@@ -5982,7 +6061,11 @@ mod tests {
             mode: FrameMode::Verify as u8,
             flags: 0x03,
             target: Some(Address::from_low_u64_be(0x1234)),
-            gas_limit: 50_000,
+            limits: FrameLimits {
+                execution: 50_000,
+                state: 0,
+            },
+            encoding: FrameEncoding::Limits,
             value: U256::zero(),
             data: Bytes::from_static(b"hello"),
         };
@@ -5997,7 +6080,11 @@ mod tests {
             mode: FrameMode::Default as u8,
             flags: 0x00,
             target: None,
-            gas_limit: 10_000,
+            limits: FrameLimits {
+                execution: 10_000,
+                state: 0,
+            },
+            encoding: FrameEncoding::Limits,
             value: U256::zero(),
             data: Bytes::from_static(b"deploy"),
         };
@@ -6014,7 +6101,11 @@ mod tests {
                 mode: mode_val,
                 flags: if mode_val == 1 { 0x03 } else { 0x00 },
                 target: Some(Address::from_low_u64_be(0x1234)),
-                gas_limit: 50_000,
+                limits: FrameLimits {
+                    execution: 50_000,
+                    state: 0,
+                },
+                encoding: FrameEncoding::Limits,
                 value: U256::zero(),
                 data: Bytes::new(),
             };
@@ -6027,7 +6118,11 @@ mod tests {
             mode: 2,            // SENDER
             flags: 0x01 | 0x04, // scope=1 + atomic_batch
             target: Some(Address::from_low_u64_be(0x1234)),
-            gas_limit: 50_000,
+            limits: FrameLimits {
+                execution: 50_000,
+                state: 0,
+            },
+            encoding: FrameEncoding::Limits,
             value: U256::zero(),
             data: Bytes::new(),
         };
@@ -6045,7 +6140,11 @@ mod tests {
             mode: FrameMode::Sender as u8,
             flags: 0x00,
             target: Some(Address::from_low_u64_be(0xCAFE)),
-            gas_limit: 100_000,
+            limits: FrameLimits {
+                execution: 100_000,
+                state: 0,
+            },
+            encoding: FrameEncoding::Limits,
             value: U256::from(1_000_000_000_000_000u64), // 0.001 ETH
             data: Bytes::from_static(b"hello"),
         };
@@ -6288,7 +6387,11 @@ mod tests {
                 mode: FrameMode::Sender as u8,
                 flags: 0x00,
                 target: Some(Address::from_low_u64_be(0x1234)),
-                gas_limit: gl,
+                limits: FrameLimits {
+                    execution: gl,
+                    state: 0,
+                },
+                encoding: FrameEncoding::Limits,
                 value: U256::zero(),
                 data: Bytes::new(),
             })
@@ -6388,7 +6491,11 @@ mod tests {
                 mode: FrameMode::Verify as u8,
                 flags: 0x01,
                 target: None,
-                gas_limit: 50_000,
+                limits: FrameLimits {
+                    execution: 50_000,
+                    state: 0,
+                },
+                encoding: FrameEncoding::Limits,
                 value: U256::from(1u64),
                 data: Bytes::new(),
             }],
@@ -6413,7 +6520,11 @@ mod tests {
                 mode: FrameMode::Default as u8,
                 flags: 0x00,
                 target: Some(Address::from_low_u64_be(0x1234)),
-                gas_limit: 50_000,
+                limits: FrameLimits {
+                    execution: 50_000,
+                    state: 0,
+                },
+                encoding: FrameEncoding::Limits,
                 value: U256::from(1u64),
                 data: Bytes::new(),
             }],
@@ -6431,7 +6542,11 @@ mod tests {
                 mode: FrameMode::Sender as u8,
                 flags: 0x00,
                 target: Some(Address::from_low_u64_be(0x1234)),
-                gas_limit: 50_000,
+                limits: FrameLimits {
+                    execution: 50_000,
+                    state: 0,
+                },
+                encoding: FrameEncoding::Limits,
                 value: U256::from(1u64),
                 data: Bytes::new(),
             }],
@@ -6502,7 +6617,11 @@ mod tests {
             mode: FrameMode::Verify as u8,
             flags: 0x00,
             target: Some(frame_tx_expiry_verifier()),
-            gas_limit: 30_000,
+            limits: FrameLimits {
+                execution: 30_000,
+                state: 0,
+            },
+            encoding: FrameEncoding::Limits,
             value: U256::zero(),
             data: Bytes::copy_from_slice(&deadline.to_be_bytes()),
         }
@@ -6749,7 +6868,11 @@ mod tests {
                     mode: 1,
                     flags: 3,
                     target: None,
-                    gas_limit: 0x5208,
+                    limits: FrameLimits {
+                        execution: 0x5208,
+                        state: 0,
+                    },
+                    encoding: FrameEncoding::Limits,
                     value: U256::zero(),
                     data: Bytes::from_static(&[0x11, 0x22]),
                 },
@@ -6757,7 +6880,11 @@ mod tests {
                     mode: 2,
                     flags: 0,
                     target: Some(Address::from_low_u64_be(0x1234)),
-                    gas_limit: 0x9c40,
+                    limits: FrameLimits {
+                        execution: 0x9c40,
+                        state: 0,
+                    },
+                    encoding: FrameEncoding::Limits,
                     value: U256::zero(),
                     data: Bytes::new(),
                 },

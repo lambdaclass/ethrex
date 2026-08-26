@@ -9,7 +9,7 @@ use ethrex_blockchain::inclusion_list_validator::{
     IlSenderState, IlUnsatisfied, InclusionListSatisfactionValidator,
 };
 use ethrex_common::types::{
-    BlockHeader, ChainConfig, EIP1559Transaction, FrameLimits, Transaction, TxKind,
+    BlockHeader, ChainConfig, EIP1559Transaction, FrameEncoding, FrameLimits, Transaction, TxKind,
 };
 use ethrex_common::{Address, H256, U256};
 use ethrex_crypto::NativeCrypto;
@@ -524,6 +524,7 @@ fn make_frame_tx(sender: Address, nonce: u64, frame_gas_limit: u64) -> Transacti
             },
             value: U256::zero(),
             data: Default::default(),
+            encoding: FrameEncoding::Limits,
         }],
         signatures: vec![FrameSignature {
             scheme: FRAME_SIG_SCHEME_SECP256K1,

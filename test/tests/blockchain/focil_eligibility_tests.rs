@@ -7,8 +7,8 @@ use ethrex_blockchain::focil_eligibility::{
 };
 use ethrex_common::types::{
     APPROVE_EXECUTION, APPROVE_EXECUTION_AND_PAYMENT, APPROVE_PAYMENT, EIP1559Transaction,
-    FRAME_SIG_SCHEME_SECP256K1, Frame, FrameLimits, FrameMode, FrameSignature, FrameTransaction,
-    LegacyTransaction, Transaction, TxKind, frame_tx_expiry_verifier,
+    FRAME_SIG_SCHEME_SECP256K1, Frame, FrameEncoding, FrameLimits, FrameMode, FrameSignature,
+    FrameTransaction, LegacyTransaction, Transaction, TxKind, frame_tx_expiry_verifier,
 };
 use ethrex_common::{Address, U256};
 
@@ -27,6 +27,7 @@ fn verify_frame(target: Option<Address>, scope: u8, gas_limit: u64) -> Frame {
         },
         value: U256::zero(),
         data: Default::default(),
+        encoding: FrameEncoding::Limits,
     }
 }
 
@@ -140,6 +141,7 @@ fn an_unrecognized_prefix_is_not_a_candidate() {
         },
         value: U256::zero(),
         data: Default::default(),
+        encoding: FrameEncoding::Limits,
     }]);
     assert_eq!(
         classify(&Transaction::FrameTransaction(tx), false),
@@ -170,6 +172,7 @@ fn an_expiry_verifier_frames_gas_counts_toward_the_budget() {
             },
             value: U256::zero(),
             data: 0u64.to_be_bytes().to_vec().into(),
+            encoding: FrameEncoding::Limits,
         },
     );
 

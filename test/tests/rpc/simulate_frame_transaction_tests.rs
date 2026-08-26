@@ -2,7 +2,7 @@ use std::{fs::File, io::BufReader, path::PathBuf};
 
 use ethrex_common::types::{
     APPROVE_EXECUTION_AND_PAYMENT, EIP1559Transaction, FRAME_SIG_SCHEME_SECP256K1, Frame,
-    FrameLimits, FrameMode, FrameSignature, FrameTransaction, Transaction,
+    FrameEncoding, FrameLimits, FrameMode, FrameSignature, FrameTransaction, Transaction,
 };
 use ethrex_common::{Address, U256};
 use ethrex_rpc::ethrex::SimulateFrameTransactionRequest;
@@ -114,6 +114,7 @@ fn self_verify_tx() -> FrameTransaction {
             },
             value: U256::zero(),
             data: Default::default(),
+            encoding: FrameEncoding::Limits,
         }],
         signatures: vec![FrameSignature {
             scheme: FRAME_SIG_SCHEME_SECP256K1,

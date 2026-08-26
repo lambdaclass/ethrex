@@ -29,7 +29,7 @@ use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::types::AccountInfo;
 use ethrex_common::types::{
     Account, BlockHeader, Code, EIP1559Transaction, FRAME_RECEIPT_STATUS_FAILURE, Fork, Frame,
-    FrameLimits, FrameMode, FrameTransaction, Transaction, TxKind,
+    FrameEncoding, FrameLimits, FrameMode, FrameTransaction, Transaction, TxKind,
 };
 use ethrex_common::{Address, H256, U256, constants::EMPTY_TRIE_HASH};
 use ethrex_crypto::NativeCrypto;
@@ -285,6 +285,7 @@ fn verify_frame(target: Address) -> Frame {
         },
         value: U256::zero(),
         data: Bytes::new(),
+        encoding: FrameEncoding::Limits,
     }
 }
 
@@ -310,6 +311,7 @@ fn default_frame(target: Address) -> Frame {
         },
         value: U256::zero(),
         data: Bytes::new(),
+        encoding: FrameEncoding::Limits,
     }
 }
 
@@ -326,6 +328,7 @@ fn posttx_frame(target: Address) -> Frame {
         },
         value: U256::zero(),
         data: Bytes::new(),
+        encoding: FrameEncoding::Limits,
     }
 }
 

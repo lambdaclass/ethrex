@@ -12,15 +12,17 @@ use ethrex_common::types::{
     APPROVE_EXECUTION, APPROVE_EXECUTION_AND_PAYMENT, APPROVE_PAYMENT, BATCH_PATH_LEN, Block,
     BlockBody, BlockHeader, ChainConfig, EIP4844Transaction, FRAME_SIG_SCHEME_ARBITRARY,
     FRAME_SIG_SCHEME_SECP256K1, FRAME_TX_MAX_VERIFY_GAS, FRAME_TX_MAX_VERIFY_STATE_GAS, Frame,
-    FrameLimits, FrameMode, FrameSignature, FrameTransaction, FrameValidationError, MAX_SIBLINGS,
-    P2PTransaction, PrefixShape, RING_SIZE, SLOT_NEXT_INDEX, SLOT_RING_BASE, Spend, SpendInput,
-    SpendOutput, Transaction, WrappedFrameTransaction, batch_slot, batch_slot_for_block, fold,
-    frame_tx_expiry_verifier, hash_pair, is_spent, merkle_proof, merkle_root, opening_leaf,
-    ring_slot, seals_batch, slot_batch_base, slot_spent_base, spent_bit_location, utxo_vault,
+    FrameEncoding, FrameLimits, FrameMode, FrameSignature, FrameTransaction, FrameValidationError,
+    MAX_SIBLINGS, P2PTransaction, PrefixShape, RING_SIZE, SLOT_NEXT_INDEX, SLOT_RING_BASE, Spend,
+    SpendInput, SpendOutput, Transaction, TxKind, WrappedFrameTransaction, batch_slot,
+    batch_slot_for_block, fold, frame_tx_expiry_verifier, hash_pair, is_spent, merkle_proof,
+    merkle_root, opening_leaf, ring_slot, seals_batch, slot_batch_base, slot_spent_base,
+    spent_bit_location, utxo_vault,
 };
 use ethrex_common::types::{BlobsBundle, Fork, MAX_BLOBS_PER_TX, TxType};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
+use ethrex_rlp::structs::Encoder;
 
 /// EIP-4844 `VERSIONED_HASH_VERSION_KZG`. The constant itself lives in a private
 /// module of `ethrex-common`, so it is restated here.
@@ -58,6 +60,7 @@ fn frame_tx_with_blobs(n_blobs: usize) -> FrameTransaction {
             },
             value: Default::default(),
             data: Bytes::new(),
+            encoding: FrameEncoding::Limits,
         }],
         signatures: vec![],
         max_priority_fee_per_gas: 0,
@@ -144,6 +147,7 @@ fn expiry_verifier_frame() -> Frame {
         },
         value: U256::zero(),
         data: Bytes::from(vec![0u8; 8]),
+        encoding: FrameEncoding::Limits,
     }
 }
 
@@ -158,6 +162,7 @@ fn self_verify_frame() -> Frame {
         },
         value: U256::zero(),
         data: Bytes::new(),
+        encoding: FrameEncoding::Limits,
     }
 }
 
@@ -172,6 +177,7 @@ fn only_verify_frame() -> Frame {
         },
         value: U256::zero(),
         data: Bytes::new(),
+        encoding: FrameEncoding::Limits,
     }
 }
 
@@ -186,6 +192,7 @@ fn pay_frame() -> Frame {
         },
         value: U256::zero(),
         data: Bytes::new(),
+        encoding: FrameEncoding::Limits,
     }
 }
 
@@ -200,6 +207,7 @@ fn deploy_frame() -> Frame {
         },
         value: U256::zero(),
         data: Bytes::from_static(b"deploy_bytecode"),
+        encoding: FrameEncoding::Limits,
     }
 }
 
@@ -374,6 +382,7 @@ fn prefix_rejection_unrecognized_shape() {
         },
         value: U256::zero(),
         data: Bytes::new(),
+        encoding: FrameEncoding::Limits,
     }]);
     assert_eq!(
         tx.validation_prefix().unwrap_err(),
@@ -398,6 +407,7 @@ fn prefix_rejection_deploy_not_first() {
             },
             value: U256::zero(),
             data: Bytes::new(),
+            encoding: FrameEncoding::Limits,
         },
         deploy_frame(),
     ]);
@@ -482,6 +492,7 @@ fn prefix_rejection_wrong_scope_self_verify() {
         },
         value: U256::zero(),
         data: Bytes::new(),
+        encoding: FrameEncoding::Limits,
     }]);
     assert_eq!(
         tx2.validation_prefix().unwrap_err(),
@@ -680,6 +691,7 @@ fn make_test_frame_tx() -> FrameTransaction {
                 },
                 value: U256::zero(),
                 data: Bytes::from_static(b"verify_data"),
+                encoding: FrameEncoding::Limits,
             },
             Frame {
                 mode: FrameMode::Sender as u8,
@@ -691,6 +703,7 @@ fn make_test_frame_tx() -> FrameTransaction {
                 },
                 value: U256::zero(),
                 data: Bytes::from_static(b"call_data"),
+                encoding: FrameEncoding::Limits,
             },
         ],
         signatures: vec![FrameSignature {
@@ -721,6 +734,7 @@ fn atomic_batch_flag_on_verify_frame_is_invalid() {
             },
             value: U256::zero(),
             data: Bytes::new(),
+            encoding: FrameEncoding::Limits,
         },
         Frame {
             mode: FrameMode::Sender as u8,
@@ -732,6 +746,7 @@ fn atomic_batch_flag_on_verify_frame_is_invalid() {
             },
             value: U256::zero(),
             data: Bytes::new(),
+            encoding: FrameEncoding::Limits,
         },
     ];
     assert!(
@@ -757,6 +772,7 @@ fn atomic_batch_followed_by_verify_frame_is_invalid() {
             },
             value: U256::zero(),
             data: Bytes::new(),
+            encoding: FrameEncoding::Limits,
         },
         Frame {
             mode: FrameMode::Verify as u8,
@@ -768,6 +784,7 @@ fn atomic_batch_followed_by_verify_frame_is_invalid() {
             },
             value: U256::zero(),
             data: Bytes::new(),
+            encoding: FrameEncoding::Limits,
         },
     ];
     assert!(
@@ -920,6 +937,7 @@ fn utxo_frame() -> Frame {
         },
         value: U256::zero(),
         data: Bytes::new(),
+        encoding: FrameEncoding::Limits,
     }
 }
 
@@ -934,6 +952,7 @@ fn post_tx_frame() -> Frame {
         },
         value: U256::zero(),
         data: Bytes::new(),
+        encoding: FrameEncoding::Limits,
     }
 }
 
@@ -1354,6 +1373,7 @@ fn utxo_frame_with(spend: &Spend) -> Frame {
         },
         value: U256::zero(),
         data: Bytes::from(spend.encode_to_vec()),
+        encoding: FrameEncoding::Limits,
     }
 }
 
@@ -1976,6 +1996,7 @@ fn user_op_frame() -> Frame {
         },
         value: U256::zero(),
         data: Bytes::new(),
+        encoding: FrameEncoding::Limits,
     }
 }
 
@@ -2012,6 +2033,7 @@ fn prefix_accepts_non_verify_frames_after_prefix() {
         },
         value: U256::zero(),
         data: Bytes::new(),
+        encoding: FrameEncoding::Limits,
     };
     let tx = base_frame_tx_with_frames(vec![
         self_verify_frame(),
@@ -2160,4 +2182,71 @@ fn p2p_blobless_frame_transaction_must_not_be_wrapped() {
         format!("{err:?}").contains("must not carry a sidecar"),
         "unexpected error: {err:?}"
     );
+}
+
+/// A frame decoded from the pre-fork encoding must re-encode to the bytes it came
+/// from.
+///
+/// This is what the whole fork gate exists for. `Transaction::hash()` is
+/// `keccak256(encode_canonical_to_vec())` and `transactions_root` is a trie over
+/// the same encoding, so a pre-fork frame that re-encodes into the current form
+/// reports a different hash than the one it was included under. Measured against
+/// real devnet history before this gate existed, a decoder that merely tolerated
+/// both forms returned `0x982949…` for a transaction whose hash is `0x7dcb84…`.
+#[test]
+fn a_pre_fork_frame_round_trips_to_its_original_bytes() {
+    // Slot 3 as a scalar: `[mode, flags, target, gas_limit, value, data]`.
+    let mut buf = Vec::new();
+    Encoder::new(&mut buf)
+        .encode_field(&1u64) // mode: VERIFY
+        .encode_field(&3u64) // flags: APPROVE_EXECUTION_AND_PAYMENT
+        .encode_field(&TxKind::Call(sender_addr()))
+        .encode_field(&80_000u64) // scalar gas_limit, the pre-fork form
+        .encode_field(&U256::zero())
+        .encode_field(&Bytes::new())
+        .finish();
+
+    let (frame, rest) = Frame::decode_unfinished(&buf).expect("pre-fork frame must decode");
+    assert!(rest.is_empty());
+    assert_eq!(
+        frame.encoding,
+        FrameEncoding::Scalar,
+        "the wire form must be recorded, or re-encoding cannot reproduce it"
+    );
+    assert_eq!(frame.limits.execution, 80_000);
+    assert_eq!(
+        frame.limits.state, 0,
+        "a pre-fork frame declared no state budget"
+    );
+
+    assert_eq!(
+        frame.encode_to_vec(),
+        buf,
+        "a pre-fork frame must re-encode to its original bytes, or its transaction \
+         hash and its block's transactions root both change"
+    );
+}
+
+/// The other side: a frame built now encodes in the current form, and survives a
+/// round trip as such.
+#[test]
+fn a_current_frame_round_trips_as_two_dimensional() {
+    let frame = Frame {
+        mode: 1,
+        flags: 3,
+        target: Some(sender_addr()),
+        limits: FrameLimits {
+            execution: 80_000,
+            state: 120_000,
+        },
+        value: U256::zero(),
+        data: Bytes::new(),
+        encoding: FrameEncoding::Limits,
+    };
+    let bytes = frame.encode_to_vec();
+    let (decoded, rest) = Frame::decode_unfinished(&bytes).expect("must decode");
+    assert!(rest.is_empty());
+    assert_eq!(decoded, frame);
+    assert_eq!(decoded.encoding, FrameEncoding::Limits);
+    assert_eq!(decoded.limits.state, 120_000);
 }

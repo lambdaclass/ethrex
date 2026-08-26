@@ -24,8 +24,8 @@ use ethrex_common::{
     constants::GAS_PER_BLOB,
     types::{
         BlobsBundle, ChainConfig, DEFAULT_BUILDER_GAS_CEIL, ELASTICITY_MULTIPLIER, Fork, Frame,
-        FrameLimits, FrameMode, FrameTransaction, Genesis, GenesisAccount, MAX_TX_SIZE,
-        P2PTransaction, Transaction, blobs_bundle::blob_from_bytes,
+        FrameEncoding, FrameLimits, FrameMode, FrameTransaction, Genesis, GenesisAccount,
+        MAX_TX_SIZE, P2PTransaction, Transaction, blobs_bundle::blob_from_bytes,
     },
 };
 use ethrex_p2p::rlpx::eth::transactions::{NewPooledTransactionHashes, PooledTransactions};
@@ -105,6 +105,7 @@ fn blob_frame_tx(versioned_hashes: Vec<H256>) -> FrameTransaction {
             },
             value: U256::zero(),
             data: Bytes::new(),
+            encoding: FrameEncoding::Limits,
         }],
         signatures: vec![],
         max_priority_fee_per_gas: 0,
@@ -262,6 +263,7 @@ async fn blob_frame_transaction_over_the_plain_size_cap_is_admitted() {
         },
         value: U256::zero(),
         data: Bytes::from(data),
+        encoding: FrameEncoding::Limits,
     });
     let tx = Transaction::FrameTransaction(tx);
     assert!(tx.encode_canonical_len() > MAX_TX_SIZE);

@@ -9,9 +9,9 @@ use ethrex_blockchain::inclusion_list_builder::{
 use ethrex_blockchain::mempool::{KeyedConcurrency, Mempool};
 use ethrex_common::types::{
     APPROVE_EXECUTION_AND_PAYMENT, EIP1559Transaction, EIP4844Transaction,
-    FRAME_SIG_SCHEME_SECP256K1, Frame, FrameLimits, FrameMode, FrameSignature, FrameTransaction,
-    LegacyTransaction, MempoolTransaction, PrivilegedL2Transaction, Transaction, TxKind,
-    utxo_vault,
+    FRAME_SIG_SCHEME_SECP256K1, Frame, FrameEncoding, FrameLimits, FrameMode, FrameSignature,
+    FrameTransaction, LegacyTransaction, MempoolTransaction, PrivilegedL2Transaction, Transaction,
+    TxKind, utxo_vault,
 };
 use ethrex_common::{Address, H256, U256};
 use ethrex_crypto::NativeCrypto;
@@ -144,6 +144,7 @@ fn keyed_frame_tx(nonce_keys: Vec<U256>, nonce_seq: u64) -> Transaction {
             },
             value: U256::zero(),
             data: Default::default(),
+            encoding: FrameEncoding::Limits,
         }],
         signatures: vec![FrameSignature {
             scheme: FRAME_SIG_SCHEME_SECP256K1,

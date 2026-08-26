@@ -16,8 +16,8 @@
 use bytes::Bytes;
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::types::{
-    Account, BlockHeader, Code, Fork, Frame, FrameLimits, FrameMode, FrameTransaction, Transaction,
-    frame_tx_nonce_manager,
+    Account, BlockHeader, Code, Fork, Frame, FrameEncoding, FrameLimits, FrameMode,
+    FrameTransaction, Transaction, frame_tx_nonce_manager,
 };
 use ethrex_common::{Address, H256, U256, constants::EMPTY_TRIE_HASH};
 use ethrex_crypto::NativeCrypto;
@@ -116,6 +116,7 @@ fn frame(mode: FrameMode, flags: u8, target: Address, gas_limit: u64, data: &[u8
         },
         value: U256::zero(),
         data: Bytes::from(data.to_vec()),
+        encoding: FrameEncoding::Limits,
     }
 }
 

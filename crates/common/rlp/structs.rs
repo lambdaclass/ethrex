@@ -68,6 +68,16 @@ impl<'a> Decoder<'a> {
         Ok((field, updated_self))
     }
 
+    /// Whether the next field is an RLP list, without consuming it.
+    ///
+    /// RLP is self-describing: a list's prefix byte is `>= 0xc0`. This lets a
+    /// decoder accept two shapes for the same slot — needed where a wire format
+    /// changed at a fork and both eras must still decode — without threading
+    /// block context into decoding. `None` when the payload is exhausted.
+    pub fn peek_is_list(&self) -> Option<bool> {
+        self.payload.first().map(|prefix| *prefix >= 0xc0)
+    }
+
     /// Returns the next field without decoding it, i.e. the payload bytes including its prefix.
     pub fn get_encoded_item(self) -> Result<(Vec<u8>, Self), RLPDecodeError> {
         self.get_encoded_item_ref()

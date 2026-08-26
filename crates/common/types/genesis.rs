@@ -345,6 +345,28 @@ pub struct ChainConfig {
     #[serde(default)]
     pub utxo_frames_time: Option<u64>,
 
+    /// EIP-8141 two-dimensional frame budgets: when a frame's slot 3 stops being
+    /// a scalar `gas_limit` and becomes `limits = [execution, state]`.
+    ///
+    /// Decoupled from the named forks for the same reason `utxo_frames_time` is:
+    /// upstream has not named a fork for this, and inventing one in [`Fork`] would
+    /// imply a schedule position we do not have.
+    ///
+    /// This is a WIRE-FORMAT change, unlike EIP-8312's inert new frame mode, so a
+    /// FUTURE timestamp is what makes a state-preserving upgrade possible at all:
+    /// every already-produced block keeps the encoding it was built with, and so
+    /// keeps its transaction hashes and transactions root. Without the gate the
+    /// new decoder cannot read pre-existing frame transactions, and a decoder that
+    /// merely tolerates both forms re-encodes them into the new one and reports
+    /// the wrong hash.
+    ///
+    /// `None` = the chain never adopts the new format (the default: every existing
+    /// network and fixture). Setting it also requires Hegota to be scheduled,
+    /// since there are no frames before Hegota; see
+    /// [`ChainConfig::is_frame_limits_activated`].
+    #[serde(default)]
+    pub frame_limits_time: Option<u64>,
+
     /// EIP-8369 `AA_VOPS_SLOT_COUNT`: how many leading storage slots of `sender`
     /// and `payer` sit inside the FOCIL Profile 2 validation surface. A read
     /// outside the surface makes a transaction ineligible for inclusion-list
@@ -499,6 +521,19 @@ impl ChainConfig {
     /// remaining exception.
     pub fn is_utxo_frames_activated(&self, block_timestamp: u64) -> bool {
         self.utxo_frames_time
+            .is_some_and(|time| time <= block_timestamp)
+            && self.get_fork(block_timestamp) >= Fork::Hegota
+    }
+
+    /// Whether frames at `block_timestamp` carry `limits = [execution, state]`
+    /// rather than a scalar `gas_limit`.
+    ///
+    /// Gated on the fork ORDINAL, not on `hegota_time` being set, for the reason
+    /// spelled out on [`ChainConfig::is_utxo_frames_activated`]: a chain that
+    /// reaches Hegota through a named fork rather than the field would otherwise
+    /// have admission disagree with execution.
+    pub fn is_frame_limits_activated(&self, block_timestamp: u64) -> bool {
+        self.frame_limits_time
             .is_some_and(|time| time <= block_timestamp)
             && self.get_fork(block_timestamp) >= Fork::Hegota
     }

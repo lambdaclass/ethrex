@@ -25,9 +25,9 @@ use ethrex_blockchain::{Blockchain, error::MempoolError};
 use ethrex_common::{
     Address, Bytes as CommonBytes, H256, U256,
     types::{
-        Frame, FrameLimits, FrameMode, FrameSignature, FrameTransaction, Genesis, GenesisAccount,
-        SLOT_NEXT_INDEX, Spend, SpendInput, SpendOutput, Transaction, merkle_proof, merkle_root,
-        opening_leaf, ring_slot, utxo_vault,
+        Frame, FrameEncoding, FrameLimits, FrameMode, FrameSignature, FrameTransaction, Genesis,
+        GenesisAccount, SLOT_NEXT_INDEX, Spend, SpendInput, SpendOutput, Transaction, merkle_proof,
+        merkle_root, opening_leaf, ring_slot, utxo_vault,
     },
 };
 use ethrex_rlp::encode::RLPEncode;
@@ -188,6 +188,7 @@ fn spend_tx(
             },
             value: U256::zero(),
             data: CommonBytes::from(spend.encode_to_vec()),
+            encoding: FrameEncoding::Limits,
         }],
         signatures: vec![],
         // Both fee fields must rise for a replacement to count as a fee bump, so the

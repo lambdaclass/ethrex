@@ -14,7 +14,7 @@ use bytes::Bytes;
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::types::{
     Account, BlockHeader, Code, FRAME_RECEIPT_STATUS_FAILURE, FRAME_RECEIPT_STATUS_SUCCESS, Fork,
-    Frame, FrameLimits, FrameMode, FrameTransaction, MAX_BLOBS_PER_TX, Transaction,
+    Frame, FrameEncoding, FrameLimits, FrameMode, FrameTransaction, MAX_BLOBS_PER_TX, Transaction,
 };
 use ethrex_common::{Address, H256, U256, constants::EMPTY_TRIE_HASH};
 use ethrex_crypto::NativeCrypto;
@@ -271,6 +271,7 @@ fn verify_frame(target: Address) -> Frame {
         },
         value: U256::zero(),
         data: Bytes::new(),
+        encoding: FrameEncoding::Limits,
     }
 }
 
@@ -362,6 +363,7 @@ fn invalid_frame_tx_leaves_db_cache_clean() {
         },
         value: U256::zero(),
         data: Bytes::new(),
+        encoding: FrameEncoding::Limits,
     }]);
     let (result, db) = run_frame_tx(&accounts, tx);
     assert!(
@@ -404,6 +406,7 @@ fn reverting_sender_frame_returns_value() {
             },
             value,
             data: Bytes::new(),
+            encoding: FrameEncoding::Limits,
         },
     ]);
     let (result, db) = run_frame_tx(
@@ -477,6 +480,7 @@ fn payer_pays_effective_price_no_burn() {
             },
             value: U256::zero(),
             data: Bytes::new(),
+            encoding: FrameEncoding::Limits,
         },
     ]);
     tx.max_fee_per_gas = 100_000_000_000; // 100 gwei
@@ -556,6 +560,7 @@ fn frameparam_reads_frame_index_from_stack_top() {
             },
             value: U256::zero(),
             data: Bytes::new(),
+            encoding: FrameEncoding::Limits,
         },
     ];
     // Set a distinctive gas_limit on frame[0] that FRAMEPARAM(param=1, frameIndex=0) must read.
@@ -616,6 +621,7 @@ fn approve_halts_when_frame_scope_is_none() {
         },
         value: U256::zero(),
         data: Bytes::new(),
+        encoding: FrameEncoding::Limits,
     }]);
     let accounts = [(
         FUNDED_SENDER,
@@ -657,6 +663,7 @@ fn batched_verify_revert_invalidates_tx() {
             },
             value: U256::zero(),
             data: Bytes::new(),
+            encoding: FrameEncoding::Limits,
         },
         Frame {
             mode: u8::from(FrameMode::Default),
@@ -668,6 +675,7 @@ fn batched_verify_revert_invalidates_tx() {
             },
             value: U256::zero(),
             data: Bytes::new(),
+            encoding: FrameEncoding::Limits,
         },
     ]);
     let accounts = [
@@ -724,6 +732,7 @@ fn payment_approval_before_execution_approval_reverts() {
             },
             value: U256::zero(),
             data: Bytes::new(),
+            encoding: FrameEncoding::Limits,
         },
     ]);
     let accounts = [
@@ -775,6 +784,7 @@ fn sender_frame_transfers_value_to_eoa() {
             },
             value,
             data: Bytes::new(),
+            encoding: FrameEncoding::Limits,
         },
     ]);
     let accounts = [(
@@ -821,6 +831,7 @@ fn sender_frame_to_eoa_emits_transfer_log() {
             },
             value,
             data: Bytes::new(),
+            encoding: FrameEncoding::Limits,
         },
     ]);
     let accounts = [(
@@ -888,6 +899,7 @@ fn frame_tx_happy_path_sstore_and_log() {
             },
             value: U256::zero(),
             data: Bytes::new(),
+            encoding: FrameEncoding::Limits,
         },
     ]);
 
@@ -998,6 +1010,7 @@ fn multiple_contract_frames_do_not_duplicate_logs() {
             },
             value: U256::zero(),
             data: Bytes::new(),
+            encoding: FrameEncoding::Limits,
         },
         // Frame 2: SENDER to worker_b — emits LOG0 at worker_b.
         Frame {
@@ -1010,6 +1023,7 @@ fn multiple_contract_frames_do_not_duplicate_logs() {
             },
             value: U256::zero(),
             data: Bytes::new(),
+            encoding: FrameEncoding::Limits,
         },
     ]);
 
@@ -1122,6 +1136,7 @@ fn frame_sstore_set_reports_eip8037_state_gas() {
             },
             value: U256::zero(),
             data: Bytes::new(),
+            encoding: FrameEncoding::Limits,
         },
     ]);
     let (result, _db) = run_frame_tx(&accounts, tx);
@@ -1187,6 +1202,7 @@ fn reverted_frame_reports_no_state_gas() {
             },
             value: U256::zero(),
             data: Bytes::new(),
+            encoding: FrameEncoding::Limits,
         },
     ]);
     let (result, _db) = run_frame_tx(&accounts, tx);
@@ -1214,6 +1230,7 @@ fn frame_tx_below_base_blob_fee_is_rejected() {
         },
         value: U256::zero(),
         data: Bytes::new(),
+        encoding: FrameEncoding::Limits,
     }]);
     tx.blob_versioned_hashes = vec![H256::repeat_byte(0x01)];
     tx.max_fee_per_blob_gas = U256::zero();
@@ -1270,6 +1287,7 @@ fn state_gas_does_not_leak_across_frames() {
         },
         value: U256::zero(),
         data: Bytes::new(),
+        encoding: FrameEncoding::Limits,
     };
     let accounts = [
         (
@@ -1373,7 +1391,7 @@ mod frame_tx_opcode_handler_tests {
 
     #[test]
     fn frameparam_0x08_returns_frame_value() {
-        use ethrex_common::types::{Frame, FrameLimits, FrameMode};
+        use ethrex_common::types::{Frame, FrameEncoding, FrameLimits, FrameMode};
         // The 0x08 arm of OpFrameParamHandler maps directly to `frame.value`.
         let frame = Frame {
             mode: u8::from(FrameMode::Sender),
@@ -1385,6 +1403,7 @@ mod frame_tx_opcode_handler_tests {
             },
             value: U256::from(1_234_567u64),
             data: Bytes::new(),
+            encoding: FrameEncoding::Limits,
         };
 
         let param_id: u64 = 0x08;
@@ -1524,7 +1543,7 @@ mod frame_tx_opcode_handler_tests {
 
     #[test]
     fn framedataload_verify_frame_returns_real_data() {
-        use ethrex_common::types::{Frame, FrameLimits, FrameMode};
+        use ethrex_common::types::{Frame, FrameEncoding, FrameLimits, FrameMode};
         // After the VERIFY-zeroing removal, loading data from a VERIFY frame
         // should return the actual bytes in frame.data, not zero.
         let mut data = [0u8; 32];
@@ -1540,6 +1559,7 @@ mod frame_tx_opcode_handler_tests {
             },
             value: U256::zero(),
             data: Bytes::from(data.to_vec()),
+            encoding: FrameEncoding::Limits,
         };
         // Simulate the load logic (no VERIFY special-case any more)
         let byte_offset: usize = 0;
@@ -2013,7 +2033,7 @@ mod validation_observer_tests {
     use ethrex_common::types::Fork;
     use ethrex_common::types::Transaction;
     use ethrex_common::types::{
-        Account, AccountState, ChainConfig, Code, CodeMetadata, Frame, FrameLimits,
+        Account, AccountState, ChainConfig, Code, CodeMetadata, Frame, FrameEncoding, FrameLimits,
         FrameTransaction, frame_tx_expiry_verifier,
     };
     use ethrex_common::{Address, H256, U256};
@@ -2162,6 +2182,7 @@ mod validation_observer_tests {
             },
             value: U256::zero(),
             data,
+            encoding: FrameEncoding::Limits,
         }
     }
 
@@ -2176,6 +2197,7 @@ mod validation_observer_tests {
             },
             value: U256::zero(),
             data,
+            encoding: FrameEncoding::Limits,
         }
     }
 
@@ -2512,7 +2534,7 @@ mod frame_validation_prefix_tests {
     use ethrex_common::types::{
         Account, AccountState, BlockHeader, ChainConfig, Code, CodeMetadata,
         DEFAULT_AA_VOPS_SLOT_COUNT, FRAME_TX_MAX_VERIFY_GAS, FRAME_TX_MAX_VERIFY_STATE_GAS, Frame,
-        FrameLimits, FrameTransaction, PrefixShape, ValidationPrefix,
+        FrameEncoding, FrameLimits, FrameTransaction, PrefixShape, ValidationPrefix,
     };
     use ethrex_common::{Address, H256, U256};
     use ethrex_crypto::NativeCrypto;
@@ -2641,6 +2663,7 @@ mod frame_validation_prefix_tests {
                 execution: gas_limit,
                 state: gas_limit,
             },
+            encoding: FrameEncoding::Limits,
             value: U256::zero(),
             data: Bytes::new(),
         }
@@ -3656,6 +3679,7 @@ mod sigparam_execution_tests {
                 },
                 value: U256::zero(),
                 data: Bytes::new(),
+                encoding: FrameEncoding::Limits,
             },
         ]);
         tx.signatures = signatures;
@@ -3980,6 +4004,7 @@ fn storage_refund_from_a_later_frame_reduces_reported_gas() {
         },
         value: U256::zero(),
         data,
+        encoding: FrameEncoding::Limits,
     };
     let tx = frame_tx_with_frames(vec![
         verify_frame(FUNDED_SENDER),
@@ -4075,6 +4100,7 @@ fn atomic_batch_revert_drops_the_batch_writes_from_the_bal() {
         },
         value: U256::zero(),
         data: Bytes::new(),
+        encoding: FrameEncoding::Limits,
     };
     let plain_frame = |target: Address| Frame {
         mode: u8::from(FrameMode::Sender),
@@ -4086,6 +4112,7 @@ fn atomic_batch_revert_drops_the_batch_writes_from_the_bal() {
         },
         value: U256::zero(),
         data: Bytes::new(),
+        encoding: FrameEncoding::Limits,
     };
     let verify = Frame {
         mode: u8::from(FrameMode::Verify),
@@ -4097,6 +4124,7 @@ fn atomic_batch_revert_drops_the_batch_writes_from_the_bal() {
         },
         value: U256::zero(),
         data: Bytes::new(),
+        encoding: FrameEncoding::Limits,
     };
 
     // The batch writes, then a later member reverts, so the whole batch unrolls.
@@ -4199,6 +4227,7 @@ fn reverted_frame_refiles_its_writes_as_reads_in_the_bal() {
         },
         value: U256::zero(),
         data: Bytes::new(),
+        encoding: FrameEncoding::Limits,
     };
     // A plain DEFAULT frame: no atomic-batch flag, so the batch unroll path that
     // already reconciles the recorder is deliberately not exercised here.
@@ -4212,6 +4241,7 @@ fn reverted_frame_refiles_its_writes_as_reads_in_the_bal() {
         },
         value: U256::zero(),
         data: Bytes::new(),
+        encoding: FrameEncoding::Limits,
     };
 
     let tx = frame_tx_with_frames(vec![verify, reverting]);
@@ -4279,7 +4309,7 @@ fn reverted_frame_refiles_its_writes_as_reads_in_the_bal() {
 fn atomic_batch_unroll_keeps_frame_status_and_gas_but_drops_logs() {
     use ethrex_common::types::{
         FRAME_RECEIPT_STATUS_FAILURE, FRAME_RECEIPT_STATUS_SKIPPED, FRAME_RECEIPT_STATUS_SUCCESS,
-        Frame,
+        Frame, FrameEncoding,
     };
 
     let logger = Address::from_low_u64_be(0x8141_0011);
@@ -4318,6 +4348,7 @@ fn atomic_batch_unroll_keeps_frame_status_and_gas_but_drops_logs() {
         },
         value: U256::zero(),
         data: Bytes::new(),
+        encoding: FrameEncoding::Limits,
     };
 
     // [logger(flagged), reverter(flagged), terminator(unflagged)] is one batch.
@@ -4336,6 +4367,7 @@ fn atomic_batch_unroll_keeps_frame_status_and_gas_but_drops_logs() {
             },
             value: U256::zero(),
             data: Bytes::new(),
+            encoding: FrameEncoding::Limits,
         },
     ]);
 
@@ -4405,6 +4437,7 @@ fn max_gas_reserves_the_calldata_floor_instead_of_rejecting() {
         },
         value: U256::zero(),
         data: Bytes::from(vec![0x11u8; 4_096]),
+        encoding: FrameEncoding::Limits,
     }]);
     tx.sender = FUNDED_SENDER;
 
@@ -4444,6 +4477,7 @@ fn frame_tx_over_the_per_tx_blob_limit_is_rejected() {
         },
         value: U256::zero(),
         data: Bytes::new(),
+        encoding: FrameEncoding::Limits,
     };
     let accounts = [(
         FUNDED_SENDER,
@@ -4481,7 +4515,8 @@ mod intrinsic_gas_accounting_tests {
     use bytes::Bytes;
     use ethrex_common::types::{
         FRAME_SIG_SCHEME_SECP256K1, FRAME_TX_INTRINSIC_COST, FRAME_TX_PER_FRAME_COST,
-        FRAME_TX_VALUE_COST, Frame, FrameLimits, FrameSignature, FrameTransaction, Transaction,
+        FRAME_TX_VALUE_COST, Frame, FrameEncoding, FrameLimits, FrameSignature, FrameTransaction,
+        Transaction,
     };
     use ethrex_common::{Address, U256};
 
@@ -4513,6 +4548,7 @@ mod intrinsic_gas_accounting_tests {
                     },
                     value: U256::zero(),
                     data: Bytes::new(),
+                    encoding: FrameEncoding::Limits,
                 },
                 Frame {
                     mode: 2,
@@ -4524,6 +4560,7 @@ mod intrinsic_gas_accounting_tests {
                     },
                     value: U256::from(500_000_000_000_000u64),
                     data: Bytes::new(),
+                    encoding: FrameEncoding::Limits,
                 },
             ],
             signatures: vec![FrameSignature {

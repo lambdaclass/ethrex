@@ -5,8 +5,8 @@
 use ethrex_blockchain::payload::TransactionQueue;
 use ethrex_common::types::{
     APPROVE_EXECUTION_AND_PAYMENT, EIP1559Transaction, FRAME_SIG_SCHEME_SECP256K1, Frame,
-    FrameLimits, FrameMode, FrameSignature, FrameTransaction, MempoolTransaction, Transaction,
-    TxKind, utxo_vault,
+    FrameEncoding, FrameLimits, FrameMode, FrameSignature, FrameTransaction, MempoolTransaction,
+    Transaction, TxKind, utxo_vault,
 };
 use ethrex_common::{Address, H256, U256};
 use ethrex_crypto::NativeCrypto;
@@ -46,6 +46,7 @@ fn frame_tx(sender: Address, nonce_keys: Vec<U256>, nonce_seq: u64) -> Transacti
             },
             value: U256::zero(),
             data: Default::default(),
+            encoding: FrameEncoding::Limits,
         }],
         signatures: vec![FrameSignature {
             scheme: FRAME_SIG_SCHEME_SECP256K1,

@@ -21,10 +21,10 @@ use ethrex_common::types::{
     BlockBody, BlockHeader, ChainConfig, EIP1559Transaction, EIP4844Transaction,
     EIP7702Transaction, FRAME_SIG_SCHEME_P256, FRAME_SIG_SCHEME_SECP256K1,
     FRAME_TX_EXPIRY_DATA_LENGTH, FRAME_TX_MAX_VERIFY_GAS, FRAME_TX_RECENT_ROOT_USABLE_WINDOW,
-    FeeTokenTransaction, Frame, FrameLimits, FrameMode, FrameSignature, FrameTransaction, Genesis,
-    GenesisAccount, MAX_TX_SIZE, MempoolTransaction, PrivilegedL2Transaction, RecentRootReference,
-    Transaction, TxKind, frame_tx_expiry_verifier, frame_tx_recent_root,
-    kzg_commitment_to_versioned_hash,
+    FeeTokenTransaction, Frame, FrameEncoding, FrameLimits, FrameMode, FrameSignature,
+    FrameTransaction, Genesis, GenesisAccount, MAX_TX_SIZE, MempoolTransaction,
+    PrivilegedL2Transaction, RecentRootReference, Transaction, TxKind, frame_tx_expiry_verifier,
+    frame_tx_recent_root, kzg_commitment_to_versioned_hash,
 };
 use ethrex_common::{Address, Bytes, H160, H256, U256};
 use ethrex_storage::error::StoreError;
@@ -699,6 +699,7 @@ fn minimal_valid_frame_tx() -> FrameTransaction {
             },
             value: U256::zero(),
             data: Bytes::new(),
+            encoding: FrameEncoding::Limits,
         }],
         signatures: vec![],
         max_priority_fee_per_gas: 0,
@@ -883,6 +884,7 @@ async fn mempool_rejects_oversized_frame_data() {
         },
         value: U256::zero(),
         data: payload,
+        encoding: FrameEncoding::Limits,
     });
     let floor = frame_tx.calldata_floor_gas();
     frame_tx.frames[1].limits.execution = floor;
@@ -1134,6 +1136,7 @@ fn frame_tx_with_expiry(deadline: u64) -> FrameTransaction {
                 },
                 value: U256::zero(),
                 data: Bytes::from(data.to_vec()),
+                encoding: FrameEncoding::Limits,
             },
             Frame {
                 mode: FrameMode::Verify as u8,
@@ -1145,6 +1148,7 @@ fn frame_tx_with_expiry(deadline: u64) -> FrameTransaction {
                 },
                 value: U256::zero(),
                 data: Bytes::new(),
+                encoding: FrameEncoding::Limits,
             },
         ],
         signatures: vec![],
@@ -1782,6 +1786,7 @@ fn funded_frame_tx(max_fee_per_gas: u64, max_priority_fee_per_gas: u64) -> Frame
             },
             value: U256::zero(),
             data: Bytes::new(),
+            encoding: FrameEncoding::Limits,
         }],
         signatures: vec![],
         max_priority_fee_per_gas,
@@ -1886,6 +1891,7 @@ async fn mempool_rejects_underfunded_paymaster() {
             },
             value: U256::zero(),
             data: Bytes::new(),
+            encoding: FrameEncoding::Limits,
         }],
         signatures: vec![],
         max_priority_fee_per_gas: 0,
@@ -1974,6 +1980,7 @@ async fn mempool_enforces_noncanonical_paymaster_limit() {
                 },
                 value: U256::zero(),
                 data: Bytes::new(),
+                encoding: FrameEncoding::Limits,
             }],
             signatures: vec![],
             max_priority_fee_per_gas: 0,
@@ -2075,6 +2082,7 @@ fn self_pay_frame_tx_exempt_from_noncanonical_paymaster_limit() {
                 },
                 value: U256::zero(),
                 data: Bytes::new(),
+                encoding: FrameEncoding::Limits,
             }],
             signatures: vec![],
             max_priority_fee_per_gas: 0,
@@ -2163,6 +2171,7 @@ async fn mempool_rejects_second_frame_tx_same_sender_new_nonce() {
             },
             value: U256::zero(),
             data: Bytes::new(),
+            encoding: FrameEncoding::Limits,
         }],
         signatures: vec![],
         max_priority_fee_per_gas: 0,
@@ -2413,6 +2422,7 @@ async fn mempool_fee_bump_rejected_leaves_original_intact() {
             },
             value: U256::zero(),
             data: Bytes::new(),
+            encoding: FrameEncoding::Limits,
         }],
         signatures: vec![],
         max_priority_fee_per_gas: 0,
@@ -3727,7 +3737,7 @@ mod p2p_serve_tests {
     use ethrex_blockchain::Blockchain;
     use ethrex_blockchain::mempool::KeyedConcurrency;
     use ethrex_common::types::{
-        FRAME_SIG_SCHEME_SECP256K1, Frame, FrameLimits, FrameMode, FrameSignature,
+        FRAME_SIG_SCHEME_SECP256K1, Frame, FrameEncoding, FrameLimits, FrameMode, FrameSignature,
         FrameTransaction, MempoolTransaction, P2PTransaction, Transaction,
     };
     use ethrex_common::{Address, U256};
@@ -3750,6 +3760,7 @@ mod p2p_serve_tests {
                 },
                 value: U256::zero(),
                 data: bytes::Bytes::from_static(b"call_data"),
+                encoding: FrameEncoding::Limits,
             }],
             signatures: vec![FrameSignature {
                 scheme: FRAME_SIG_SCHEME_SECP256K1,
@@ -3945,6 +3956,7 @@ fn self_pay_removal_does_not_release_a_noncanonical_paymaster_slot() {
                 },
                 value: U256::zero(),
                 data: Bytes::new(),
+                encoding: FrameEncoding::Limits,
             }],
             signatures: vec![],
             max_priority_fee_per_gas: 0,
@@ -4606,6 +4618,7 @@ fn utxo_input_indices_reads_every_utxo_frames_inputs() {
         },
         value: U256::zero(),
         data: Bytes::from(spend.encode_to_vec()),
+        encoding: FrameEncoding::Limits,
     };
 
     let a = make_spend(&[3, 9]);
@@ -4633,6 +4646,7 @@ fn utxo_input_indices_reads_every_utxo_frames_inputs() {
         },
         value: U256::zero(),
         data: Bytes::from(a.encode_to_vec()), // spend-shaped, but not a UTXO frame
+        encoding: FrameEncoding::Limits,
     });
     let mut indices = utxo_input_indices(&tx);
     indices.sort_unstable();
@@ -4660,6 +4674,7 @@ fn utxo_input_indices_reads_every_utxo_frames_inputs() {
             },
             value: U256::zero(),
             data: Bytes::from_static(&[0xFF, 0xFF]),
+            encoding: FrameEncoding::Limits,
         }],
         ..Default::default()
     };

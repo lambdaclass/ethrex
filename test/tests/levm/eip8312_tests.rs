@@ -534,7 +534,9 @@ fn install_records_code_and_nonce_in_the_block_access_list() {
 // matrix (spent bits staged by actual UTXO frames inside a batch and a POST_TX
 // body) arrives with the frame handler.
 
-use ethrex_common::types::{FrameLimits, spent_bit_location, utxo_vault as vault_addr};
+use ethrex_common::types::{
+    FrameEncoding, FrameLimits, spent_bit_location, utxo_vault as vault_addr,
+};
 use ethrex_levm::utils::restore_cache_state;
 
 /// Run `body` against a VM whose db has the vault installed, then return the db
@@ -903,6 +905,7 @@ fn self_funded_fixture(
             },
             value: U256::zero(),
             data: Bytes::from(spend.encode_to_vec()),
+            encoding: FrameEncoding::Limits,
         }],
         signatures: vec![],
         max_priority_fee_per_gas: 1,
@@ -1198,6 +1201,7 @@ fn a_spend_by_a_non_actor_is_rejected() {
             },
             value: U256::zero(),
             data: Bytes::from(spend.encode_to_vec()),
+            encoding: FrameEncoding::Limits,
         }],
         signatures: vec![],
         max_priority_fee_per_gas: 1,
@@ -1501,6 +1505,7 @@ fn a_batch_proof_spends_a_utxo_whose_ring_entry_aged_out() {
             },
             value: U256::zero(),
             data: Bytes::from(spend.encode_to_vec()),
+            encoding: FrameEncoding::Limits,
         }],
         signatures: vec![],
         max_priority_fee_per_gas: 1,
@@ -1661,6 +1666,7 @@ fn sponsored_fixture_paying(
             },
             value: U256::zero(),
             data: Bytes::new(),
+            encoding: FrameEncoding::Limits,
         },
         Frame {
             mode: FrameMode::Utxo as u8,
@@ -1672,6 +1678,7 @@ fn sponsored_fixture_paying(
             },
             value: U256::zero(),
             data: Bytes::from(spend.encode_to_vec()),
+            encoding: FrameEncoding::Limits,
         },
     ];
     if let Some(extra) = sibling {
@@ -1751,6 +1758,7 @@ fn a_spent_bit_survives_a_sibling_frames_failure() {
         },
         value: U256::zero(),
         data: Bytes::new(),
+        encoding: FrameEncoding::Limits,
     };
     let (mut fixture, _sponsor) = sponsored_fixture(Some(reverting));
     fixture.accounts.insert(
@@ -1800,6 +1808,7 @@ fn an_invalid_transaction_leaves_no_spent_bit() {
         },
         value: U256::zero(),
         data: Bytes::new(),
+        encoding: FrameEncoding::Limits,
     };
     let (mut fixture, _sponsor) = sponsored_fixture(Some(reverting_verify));
     fixture.accounts.insert(
@@ -2413,6 +2422,7 @@ fn consolidation_fixture(n: usize, payout: U256) -> (SpendFixture, Vec<Address>,
             },
             value: U256::zero(),
             data: Bytes::from(spend.encode_to_vec()),
+            encoding: FrameEncoding::Limits,
         }],
         signatures: vec![],
         max_priority_fee_per_gas: 1,
