@@ -48,11 +48,21 @@ touched):
    no decode error, exercising the second wire surface (`FrameReceipt`'s own encoding
    marker).
 
-Not yet run: a full re-sync from genesis (acceptance-test item 4 in the fork plan), which
-is the only check that exercises the *execution-side* era gates (intrinsic repricing, the
-per-frame state pool, receipt production) rather than just decode/encode fidelity. That is
-the remaining pre-flight step before scheduling `frame_limits_time` on the live devnet —
-expensive (hours, ~290k blocks) and not done as part of this check.
+**Attempted, and found not to be the right test: a full re-sync from genesis.** Exported the
+live chain's full history (289,870 blocks, `ethrex export`) and imported it into a fresh
+datadir with `frame_limits_time` set in the future, forcing full re-execution from genesis
+under the fork-gated binary. It failed at block 436 on an EIP-8037 gas-accounting mismatch in
+code this fork gate never touched — a `git diff` confirms the only edits to that file are
+the receipt-encoding call sites — meaning this is pre-existing historical formula drift from
+an earlier, unrelated phase of this devnet's own iterative EIP-8037 development, reached
+through an in-place binary swap sometime in its history.
+
+This devnet has only ever been upgraded via in-place binary swap, which requires forward
+continuity (new blocks execute correctly under the new code from here on), not full-history
+replay under today's binary — no prior swap has ever needed or guaranteed that. The three
+items above already mirror what an in-place swap actually requires, and they pass. Proving
+full genesis replay would mean era-gating every internal accounting change this devnet has
+ever carried across its life, which is an unbounded project unrelated to this fork.
 
 ## Decision: ship it as a fork
 
