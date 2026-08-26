@@ -62,6 +62,20 @@ EIP-7906's Constants table carries only `TXTRACE_GAS_COST`, `EVENTDATACOPY_GAS_C
 - Frames declare `limits = [execution, state]` and spend two independent pools; the EIP-8037 reservoir does not apply inside a frame.
 - Frame receipts report both dimensions (`gas_used` / `state_gas_used`), and `standard_gas_limit` reserves both, as the spec requires of a builder. Settlement charges what each frame actually drew, so an unspent state budget is reserved without being paid for.
 - `SIGDATACOPY` lives at `0xBA` rather than the spec's `0xB5` — see the opcode note above.
+- **The `limits` encoding is activation-gated, via `frameLimitsTime`.** A chain that already
+  produced frames under the earlier revision (scalar `gas_limit` in slot 3) cannot simply adopt
+  the new one: transaction hashes and the transactions root are derived by re-encoding, so a
+  re-encoded historical frame reports a hash it was never included under. Each `Frame` therefore
+  records the wire form it was decoded from and re-encodes in that form, and a block admits only
+  its own era — before the timestamp, scalar; at or after it, `limits`. Unset means the chain has
+  always used the current format, which is the opposite default from `utxoFramesTime` and
+  deliberate: that flag gates a new frame mode that must stay off until scheduled, while this one
+  gates the current spec against a superseded revision, and a chain with no old history has no
+  boundary to place. The live devnet crossed its boundary on 2026-08-26.
+- **A frame that creates an account by sending it value pays EIP-8037 state gas for it.**
+  `CALL` and `CREATE` charge `state_gas_new_account` before moving value; a frame's own `value`
+  field reached the balance write directly, so frames were an unmetered account-creation path.
+  The two paths now price the same state change identically.
 
 ### EIP-8312 (UTXO Frames) — see `docs/eip-8312.md`
 - Frame mode **5** (spec `3`, already taken by EIP-7906 upstream; mode 4 stays reserved for EIP-8288 DEP_VERIFY).
