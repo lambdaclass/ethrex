@@ -28,7 +28,7 @@ use std::{
 };
 use tokio::net::{TcpListener, TcpSocket, UdpSocket};
 use tokio_util::task::TaskTracker;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 pub const MAX_MESSAGES_TO_BROADCAST: usize = 100000;
 
@@ -152,6 +152,13 @@ pub async fn start_network(
 
     let local_node_record = build_local_node_record(&context).await?;
 
+    // The ENR's `eth` entry is only correct for the fork the chain is on. Nothing
+    // recomputed it after startup, so once the chain crossed a fork we kept
+    // advertising the old fork id and geth's dial-candidate filter
+    // (`NewNodeFilter`) dropped us. Publish it on a channel instead: this layer
+    // decides what the node announces, discovery only republishes.
+    let fork_id_rx = spawn_fork_id_publisher(&context);
+
     DiscoveryServer::spawn(
         context.local_node.clone(),
         local_node_record,
@@ -160,6 +167,7 @@ pub async fn start_network(
         context.table.clone(),
         bootnodes,
         config,
+        fork_id_rx,
     )
     .await
     .inspect_err(|e| {
@@ -846,4 +854,43 @@ fn format_duration(duration: Duration) -> String {
     let minutes = (total_seconds % 3600) / 60;
     let seconds = total_seconds % 60;
     format!("{hours:02}:{minutes:02}:{seconds:02}")
+}
+
+/// How often to re-derive the fork id. A fork boundary is a timestamp, so the ENR
+/// can lag a crossing by at most this long; cheap enough to keep tight.
+const FORK_ID_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Publishes the current fork id, re-deriving it periodically.
+///
+/// Returns `None` when the chain cannot supply one at all, which keeps the existing
+/// behaviour of announcing a record without an `eth` entry rather than failing startup.
+fn spawn_fork_id_publisher(
+    context: &P2PContext,
+) -> Option<tokio::sync::watch::Receiver<ethrex_common::types::ForkId>> {
+    let storage = context.storage.clone();
+    let initial = futures::executor::block_on(storage.get_fork_id()).ok()?;
+    let (tx, rx) = tokio::sync::watch::channel(initial);
+    context.tracker.spawn(async move {
+        let mut interval = tokio::time::interval(FORK_ID_REFRESH_INTERVAL);
+        loop {
+            interval.tick().await;
+            match storage.get_fork_id().await {
+                // `send_if_modified` keeps the receiver's change flag clean when the
+                // chain has not moved across a fork, so discovery does no work.
+                Ok(fork_id) => {
+                    tx.send_if_modified(|current| {
+                        if *current == fork_id {
+                            false
+                        } else {
+                            *current = fork_id;
+                            true
+                        }
+                    });
+                }
+                // Transient: the next tick retries. Logging every 30s would be noise.
+                Err(e) => debug!(error = ?e, "Could not derive the fork id for the local ENR"),
+            }
+        }
+    });
+    Some(rx)
 }
