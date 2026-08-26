@@ -7,6 +7,13 @@ use ethrex_common::{
 use serde::{Deserialize, Serialize};
 use thiserror;
 
+/// One frame's outcome: `(status, execution_gas_used, logs, state_gas_used)`.
+///
+/// EIP-8141 meters execution and state gas in separate pools, so a frame reports
+/// both. State gas is appended rather than inserted so the three original
+/// positions keep their meaning for existing readers.
+pub type FrameResult = (u8, u64, Vec<Log>, u64);
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize, Display)]
 pub enum VMError {
     /// Errors that break execution, they shouldn't ever happen. Contains subcategory `DatabaseError`.
@@ -293,11 +300,7 @@ pub struct ExecutionReport {
     /// For frame transactions: per-frame results (status, gas_used, logs).
     /// `status` is a `FRAME_RECEIPT_STATUS_*` code (0 = failure, 1 = success,
     /// 3 = skipped due to failed atomic batch, per EIP-8141 receipt encoding).
-    /// Per-frame `(status, execution_gas_used, logs, state_gas_used)`.
-    ///
-    /// State gas is appended rather than inserted so the three original
-    /// positions keep their meaning for existing readers.
-    pub frame_results: Option<Vec<(u8, u64, Vec<Log>, u64)>>,
+    pub frame_results: Option<Vec<FrameResult>>,
 }
 
 impl ExecutionReport {

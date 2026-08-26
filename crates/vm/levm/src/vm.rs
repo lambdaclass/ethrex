@@ -6,8 +6,8 @@ use crate::{
     debug::DebugMode,
     environment::Environment,
     errors::{
-        ContextResult, ExceptionalHalt, ExecutionReport, InternalError, OpcodeResult, TxResult,
-        VMError,
+        ContextResult, ExceptionalHalt, ExecutionReport, FrameResult, InternalError, OpcodeResult,
+        TxResult, VMError,
     },
     gas_cost::{
         STATE_BYTES_PER_AUTH_BASE, STATE_BYTES_PER_NEW_ACCOUNT, STATE_BYTES_PER_STORAGE_SET,
@@ -524,8 +524,7 @@ pub struct FrameTxContext {
     /// Per-frame execution results (status, gas_used, logs).
     /// `status` is a `FRAME_RECEIPT_STATUS_*` code (0 = failure, 1 = success,
     /// 3 = skipped due to failed atomic batch).
-    /// Per-frame `(status, execution_gas_used, logs, state_gas_used)`.
-    pub frame_results: Vec<(u8, u64, Vec<Log>, u64)>,
+    pub frame_results: Vec<FrameResult>,
     /// Index of the currently executing frame
     pub current_frame_index: usize,
     /// The sig_hash of the frame transaction
@@ -2636,10 +2635,12 @@ impl<'a> VM<'a> {
             // `limits.state`. Taken as the delta over the frame's entry snapshot,
             // which is already zero for a failed frame — its state changes were
             // rolled back, so it created no state and owes no state gas.
-            let frame_state_gas_used = self
-                .state_gas_used
-                .saturating_sub(state_gas_used_at_frame_entry)
-                .max(0) as u64;
+            let frame_state_gas_used = u64::try_from(
+                self.state_gas_used
+                    .saturating_sub(state_gas_used_at_frame_entry)
+                    .max(0),
+            )
+            .map_err(|_| InternalError::Overflow)?;
             ctx.frame_results.push((
                 status_code,
                 frame_gas_used,

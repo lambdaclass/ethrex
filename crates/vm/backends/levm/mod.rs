@@ -55,7 +55,7 @@ use ethrex_levm::db::gen_db::{
 };
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_levm::db::{Database, gen_db::CacheDB};
-use ethrex_levm::errors::{InternalError, TxValidationError};
+use ethrex_levm::errors::{FrameResult, InternalError, TxValidationError};
 use ethrex_levm::memory::Memory;
 #[cfg(feature = "perf_opcode_timings")]
 use ethrex_levm::timings::{OPCODE_TIMINGS, PRECOMPILES_TIMINGS};
@@ -116,9 +116,7 @@ pub struct LEVM;
 /// Build the per-frame receipts (EIP-8141) for a frame transaction from an
 /// execution report's `frame_results`. Returns `None` when the report carries
 /// no frame results.
-fn frame_receipts_from(
-    frame_results: Option<Vec<(u8, u64, Vec<Log>, u64)>>,
-) -> Option<Vec<FrameReceipt>> {
+fn frame_receipts_from(frame_results: Option<Vec<FrameResult>>) -> Option<Vec<FrameReceipt>> {
     frame_results.map(|results| {
         results
             .into_iter()
