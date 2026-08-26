@@ -565,6 +565,7 @@ fn expiry_frame(deadline: u64) -> Frame {
         flags: 0x00,
         target: Some(frame_tx_expiry_verifier()),
         gas_limit: 30_000,
+        state_limit: 0,
         value: U256::zero(),
         data: Bytes::copy_from_slice(&deadline.to_be_bytes()),
     }

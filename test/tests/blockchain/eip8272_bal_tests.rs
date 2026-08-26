@@ -180,6 +180,7 @@ fn reference_tx(chain_id: u64) -> Transaction {
             flags: 0x03,
             target: Some(FRAME_SENDER),
             gas_limit: 100_000,
+            state_limit: 0,
             value: U256::zero(),
             data: Bytes::new(),
         }],

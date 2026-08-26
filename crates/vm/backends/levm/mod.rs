@@ -124,6 +124,7 @@ fn frame_receipts_from(
             .map(|(status, gas_used, logs)| FrameReceipt {
                 status,
                 gas_used,
+                state_gas_used: 0,
                 logs,
             })
             .collect()

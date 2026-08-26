@@ -81,6 +81,7 @@ fn frame(mode: FrameMode, flags: u8, target: Address, gas_limit: u64, data: &[u8
         flags,
         target: Some(target),
         gas_limit,
+        state_limit: 0,
         value: U256::zero(),
         data: Bytes::from(data.to_vec()),
     }

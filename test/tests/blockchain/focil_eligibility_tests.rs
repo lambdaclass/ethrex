@@ -3,7 +3,6 @@
 use ethrex_common::types::Fork;
 use ethrex_crypto::NativeCrypto;
 use k256::ecdsa::SigningKey;
-use k256::elliptic_curve::sec1::ToEncodedPoint;
 
 use ethrex_blockchain::focil_eligibility::{
     FillOutcome, MAX_VERIFY_GAS_PER_IL, MAX_VERIFY_GAS_PER_TX, SenderCode, VopsProfile, classify,
@@ -53,6 +52,7 @@ fn verify_frame(target: Option<Address>, scope: u8, gas_limit: u64) -> Frame {
         flags: scope,
         target,
         gas_limit,
+        state_limit: 0,
         value: U256::zero(),
         data: Default::default(),
     }
@@ -182,6 +182,7 @@ fn an_unrecognized_prefix_is_not_a_candidate() {
         flags: 0,
         target: Some(Address::repeat_byte(0xaa)),
         gas_limit: 1_000,
+        state_limit: 0,
         value: U256::zero(),
         data: Default::default(),
     }]);
@@ -209,6 +210,7 @@ fn an_expiry_verifier_frames_gas_counts_toward_the_budget() {
             flags: 0,
             target: Some(frame_tx_expiry_verifier()),
             gas_limit: 7_000,
+            state_limit: 0,
             value: U256::zero(),
             data: 0u64.to_be_bytes().to_vec().into(),
         },

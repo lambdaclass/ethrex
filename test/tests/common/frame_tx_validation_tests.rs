@@ -53,6 +53,7 @@ fn frame_tx_with_blobs(n_blobs: usize) -> FrameTransaction {
             flags: 0x00,
             target: None,
             gas_limit: 0,
+            state_limit: 0,
             value: Default::default(),
             data: Bytes::new(),
         }],
@@ -136,6 +137,7 @@ fn expiry_verifier_frame() -> Frame {
         flags: 0x00,
         target: Some(frame_tx_expiry_verifier()),
         gas_limit: 1_000,
+        state_limit: 0,
         value: U256::zero(),
         data: Bytes::from(vec![0u8; 8]),
     }
@@ -147,6 +149,7 @@ fn self_verify_frame() -> Frame {
         flags: APPROVE_EXECUTION_AND_PAYMENT,
         target: Some(sender_addr()),
         gas_limit: 10_000,
+        state_limit: 0,
         value: U256::zero(),
         data: Bytes::new(),
     }
@@ -158,6 +161,7 @@ fn only_verify_frame() -> Frame {
         flags: APPROVE_EXECUTION,
         target: Some(sender_addr()),
         gas_limit: 10_000,
+        state_limit: 0,
         value: U256::zero(),
         data: Bytes::new(),
     }
@@ -169,6 +173,7 @@ fn pay_frame() -> Frame {
         flags: APPROVE_PAYMENT,
         target: Some(sender_addr()),
         gas_limit: 10_000,
+        state_limit: 0,
         value: U256::zero(),
         data: Bytes::new(),
     }
@@ -180,6 +185,7 @@ fn deploy_frame() -> Frame {
         flags: 0x00,
         target: None,
         gas_limit: 50_000,
+        state_limit: 0,
         value: U256::zero(),
         data: Bytes::from_static(b"deploy_bytecode"),
     }
@@ -323,6 +329,7 @@ fn prefix_rejection_unrecognized_shape() {
         flags: 0x00,
         target: None,
         gas_limit: 10_000,
+        state_limit: 0,
         value: U256::zero(),
         data: Bytes::new(),
     }]);
@@ -344,6 +351,7 @@ fn prefix_rejection_deploy_not_first() {
             flags: APPROVE_EXECUTION_AND_PAYMENT,
             target: Some(sender_addr()),
             gas_limit: 5_000,
+            state_limit: 0,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -413,6 +421,7 @@ fn prefix_rejection_wrong_scope_self_verify() {
         flags: APPROVE_EXECUTION,
         target: Some(sender_addr()),
         gas_limit: 10_000,
+        state_limit: 0,
         value: U256::zero(),
         data: Bytes::new(),
     }]);
@@ -499,6 +508,7 @@ fn make_test_frame_tx() -> FrameTransaction {
                 flags: 0x03, // APPROVE_EXECUTION_AND_PAYMENT
                 target: Some(Address::from_low_u64_be(0xABCD)),
                 gas_limit: 100_000,
+                state_limit: 0,
                 value: U256::zero(),
                 data: Bytes::from_static(b"verify_data"),
             },
@@ -507,6 +517,7 @@ fn make_test_frame_tx() -> FrameTransaction {
                 flags: 0x00,
                 target: Some(Address::from_low_u64_be(0x1234)),
                 gas_limit: 200_000,
+                state_limit: 0,
                 value: U256::zero(),
                 data: Bytes::from_static(b"call_data"),
             },
@@ -534,6 +545,7 @@ fn atomic_batch_flag_on_verify_frame_is_invalid() {
             flags: 0x04 | 0x03, // atomic batch + scope bits
             target: None,
             gas_limit: 21_000,
+            state_limit: 0,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -542,6 +554,7 @@ fn atomic_batch_flag_on_verify_frame_is_invalid() {
             flags: 0x00,
             target: Some(Address::from_low_u64_be(0xCAFE)),
             gas_limit: 21_000,
+            state_limit: 0,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -564,6 +577,7 @@ fn atomic_batch_followed_by_verify_frame_is_invalid() {
             flags: 0x04, // atomic batch
             target: Some(Address::from_low_u64_be(0xB0B)),
             gas_limit: 21_000,
+            state_limit: 0,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -572,6 +586,7 @@ fn atomic_batch_followed_by_verify_frame_is_invalid() {
             flags: 0x03,
             target: None,
             gas_limit: 21_000,
+            state_limit: 0,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -716,6 +731,7 @@ fn utxo_frame() -> Frame {
         flags: 0x00,
         target: None,
         gas_limit: 50_000,
+        state_limit: 0,
         value: U256::zero(),
         data: Bytes::new(),
     }
@@ -1096,6 +1112,7 @@ fn utxo_frame_with(spend: &Spend) -> Frame {
         flags: 0x00,
         target: None,
         gas_limit: 100_000,
+        state_limit: 0,
         value: U256::zero(),
         data: Bytes::from(spend.encode_to_vec()),
     }
@@ -1715,6 +1732,7 @@ fn user_op_frame() -> Frame {
         flags: 0x00,
         target: Some(Address::from_low_u64_be(0x1234)),
         gas_limit: 10_000,
+        state_limit: 0,
         value: U256::zero(),
         data: Bytes::new(),
     }
@@ -1744,6 +1762,7 @@ fn prefix_accepts_non_verify_frames_after_prefix() {
         flags: 0x00,
         target: Some(Address::from_low_u64_be(0x5678)),
         gas_limit: 10_000,
+        state_limit: 0,
         value: U256::zero(),
         data: Bytes::new(),
     };

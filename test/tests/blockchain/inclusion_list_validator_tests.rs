@@ -517,6 +517,7 @@ fn make_frame_tx(sender: Address, nonce: u64, frame_gas_limit: u64) -> Transacti
             flags: 0x00,
             target: Some(Address::repeat_byte(0xaa)),
             gas_limit: frame_gas_limit,
+            state_limit: 0,
             value: U256::zero(),
             data: Default::default(),
         }],

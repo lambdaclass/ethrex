@@ -266,6 +266,7 @@ fn verify_frame(target: Address) -> Frame {
         flags: 0x03,
         target: Some(target),
         gas_limit: 100_000,
+        state_limit: 0,
         value: U256::zero(),
         data: Bytes::new(),
     }
@@ -354,6 +355,7 @@ fn invalid_frame_tx_leaves_db_cache_clean() {
         flags: 0,
         target: Some(target),
         gas_limit: 100_000,
+        state_limit: 0,
         value: U256::zero(),
         data: Bytes::new(),
     }]);
@@ -393,6 +395,7 @@ fn reverting_sender_frame_returns_value() {
             flags: 0,
             target: Some(target),
             gas_limit: 100_000,
+            state_limit: 0,
             value,
             data: Bytes::new(),
         },
@@ -463,6 +466,7 @@ fn payer_pays_effective_price_no_burn() {
             flags: 0,
             target: Some(stop_contract),
             gas_limit: 30_000,
+            state_limit: 0,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -539,6 +543,7 @@ fn frameparam_reads_frame_index_from_stack_top() {
             // STATE_BYTES_PER_STORAGE_SET * cost_per_state_byte (~98k) into
             // the frame's regular gas, so the budget must cover it.
             gas_limit: 300_000,
+            state_limit: 0,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -596,6 +601,7 @@ fn approve_halts_when_frame_scope_is_none() {
         flags: 0x00,
         target: Some(FUNDED_SENDER),
         gas_limit: 100_000,
+        state_limit: 0,
         value: U256::zero(),
         data: Bytes::new(),
     }]);
@@ -634,6 +640,7 @@ fn batched_verify_revert_invalidates_tx() {
             flags: 0x04,
             target: Some(reverter),
             gas_limit: 60_000,
+            state_limit: 0,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -642,6 +649,7 @@ fn batched_verify_revert_invalidates_tx() {
             flags: 0x00,
             target: Some(stop_ct),
             gas_limit: 30_000,
+            state_limit: 0,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -695,6 +703,7 @@ fn payment_approval_before_execution_approval_reverts() {
             flags: 0,
             target: Some(stop_ct),
             gas_limit: 30_000,
+            state_limit: 0,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -743,6 +752,7 @@ fn sender_frame_transfers_value_to_eoa() {
             flags: 0,
             target: Some(eoa),
             gas_limit: 50_000,
+            state_limit: 0,
             value,
             data: Bytes::new(),
         },
@@ -786,6 +796,7 @@ fn sender_frame_to_eoa_emits_transfer_log() {
             flags: 0,
             target: Some(eoa),
             gas_limit: 50_000,
+            state_limit: 0,
             value,
             data: Bytes::new(),
         },
@@ -850,6 +861,7 @@ fn frame_tx_happy_path_sstore_and_log() {
             // STATE_BYTES_PER_STORAGE_SET * cost_per_state_byte (~98k) into
             // the frame's regular gas, so the budget must cover it.
             gas_limit: 300_000,
+            state_limit: 0,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -957,6 +969,7 @@ fn multiple_contract_frames_do_not_duplicate_logs() {
             flags: 0,
             target: Some(worker_a),
             gas_limit: 100_000,
+            state_limit: 0,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -966,6 +979,7 @@ fn multiple_contract_frames_do_not_duplicate_logs() {
             flags: 0,
             target: Some(worker_b),
             gas_limit: 100_000,
+            state_limit: 0,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -1075,6 +1089,7 @@ fn frame_sstore_set_reports_eip8037_state_gas() {
             flags: 0x00,
             target: Some(writer),
             gas_limit: 2_000_000,
+            state_limit: 0,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -1125,6 +1140,7 @@ fn reverted_frame_reports_no_state_gas() {
             flags: 0x00,
             target: Some(writer),
             gas_limit: 2_000_000,
+            state_limit: 0,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -1149,6 +1165,7 @@ fn frame_tx_below_base_blob_fee_is_rejected() {
         flags: 0x00,
         target: None,
         gas_limit: 100_000,
+        state_limit: 0,
         value: U256::zero(),
         data: Bytes::new(),
     }]);
@@ -1198,6 +1215,7 @@ fn state_gas_reservoir_does_not_leak_across_frames() {
         flags: 0x00,
         target: Some(target),
         gas_limit: 2_000_000,
+        state_limit: 0,
         value: U256::zero(),
         data: Bytes::new(),
     };
@@ -1303,6 +1321,7 @@ mod frame_tx_opcode_handler_tests {
             flags: 0x00,
             target: Some(Address::from_low_u64_be(0xCAFE)),
             gas_limit: 100_000,
+            state_limit: 0,
             value: U256::from(1_234_567u64),
             data: Bytes::new(),
         };
@@ -1455,6 +1474,7 @@ mod frame_tx_opcode_handler_tests {
             flags: 0x03,
             target: Some(Address::from_low_u64_be(0xAA)),
             gas_limit: 50_000,
+            state_limit: 0,
             value: U256::zero(),
             data: Bytes::from(data.to_vec()),
         };
@@ -2077,6 +2097,7 @@ mod validation_observer_tests {
             flags,
             target: Some(target),
             gas_limit,
+            state_limit: 0,
             value: U256::zero(),
             data,
         }
@@ -2088,6 +2109,7 @@ mod validation_observer_tests {
             flags: 0,
             target: Some(target),
             gas_limit,
+            state_limit: 0,
             value: U256::zero(),
             data,
         }
@@ -2578,6 +2600,7 @@ mod frame_validation_prefix_tests {
             flags,
             target: Some(target),
             gas_limit,
+            state_limit: 0,
             value: U256::zero(),
             data: Bytes::new(),
         }
@@ -3544,23 +3567,21 @@ mod sigparam_execution_tests {
         ])
     }
 
-    /// `SIGPARAM(0x04, index)` copying `length` bytes from `dataOffset` to
-    /// `memOffset`, then `SSTORE(0, MLOAD(memOffset))`. The copy form takes
-    /// `[signatureIndex, param, memOffset, dataOffset, length]` with the index on
-    /// top, so the pushes run in reverse.
-    fn sigparam_copy_code(index: u8, length: u8, data_offset: u8, mem_offset: u8) -> Bytes {
+    /// `SIGDATACOPY` copying `length` bytes from `dataOffset` to `memOffset`, then
+    /// `SSTORE(0, MLOAD(memOffset))`. EIP-8141 v2's stack is `memOffset`, `dataOffset`,
+    /// `length`, `signatureIndex` from the top down, so the pushes run in reverse and the
+    /// index sits *beneath* the three copy operands -- where SIGPARAM(0x04) had it on top.
+    fn sigdatacopy_code(index: u8, length: u8, data_offset: u8, mem_offset: u8) -> Bytes {
         Bytes::from(vec![
+            0x60,
+            index, // PUSH1 signatureIndex
             0x60,
             length, // PUSH1 length
             0x60,
             data_offset, // PUSH1 dataOffset
             0x60,
             mem_offset, // PUSH1 memOffset
-            0x60,
-            0x04, // PUSH1 param (copy)
-            0x60,
-            index, // PUSH1 signatureIndex
-            0xB4,  // SIGPARAM
+            0xB5,       // SIGDATACOPY
             0x60,
             mem_offset, // PUSH1 memOffset
             0x51,       // MLOAD
@@ -3568,6 +3589,20 @@ mod sigparam_execution_tests {
             0x00, // PUSH1 0 (slot)
             0x55, // SSTORE
             0x00, // STOP
+        ])
+    }
+
+    /// `SIGPARAM(0x04, index)`, which v2 no longer defines: the copy operation moved to
+    /// its own instruction, so this param must halt.
+    fn sigparam_retired_copy_code(index: u8) -> Bytes {
+        Bytes::from(vec![
+            0x60, 0x00, // PUSH1 length
+            0x60, 0x00, // PUSH1 dataOffset
+            0x60, 0x00, // PUSH1 memOffset
+            0x60, 0x04, // PUSH1 param (retired copy)
+            0x60, index, // PUSH1 signatureIndex
+            0xB4,  // SIGPARAM
+            0x00,  // STOP
         ])
     }
 
@@ -3589,6 +3624,7 @@ mod sigparam_execution_tests {
                 flags: 0,
                 target: Some(reader),
                 gas_limit: 200_000,
+                state_limit: 0,
                 value: U256::zero(),
                 data: Bytes::new(),
             },
@@ -3656,11 +3692,11 @@ mod sigparam_execution_tests {
     }
 
     #[test]
-    fn sigparam_0x04_copies_arbitrary_signature_bytes() {
+    fn sigdatacopy_copies_arbitrary_signature_bytes() {
         // 4 payload bytes copied into memory at 0; MLOAD reads them left-aligned
         // in the word, with the rest zero-filled.
         let (result, db, reader) = run_reader(
-            sigparam_copy_code(0, 4, 0, 0),
+            sigdatacopy_code(0, 4, 0, 0),
             vec![arbitrary_sig(vec![0xDE, 0xAD, 0xBE, 0xEF])],
         );
         result.expect("valid tx");
@@ -3673,10 +3709,10 @@ mod sigparam_execution_tests {
     }
 
     #[test]
-    fn sigparam_0x04_zero_fills_past_the_end() {
+    fn sigdatacopy_zero_fills_past_the_end() {
         // Asking for 8 bytes of a 2-byte signature zero-fills the remainder.
         let (result, db, reader) = run_reader(
-            sigparam_copy_code(0, 8, 0, 0),
+            sigdatacopy_code(0, 8, 0, 0),
             vec![arbitrary_sig(vec![0x11, 0x22])],
         );
         result.expect("valid tx");
@@ -3689,13 +3725,13 @@ mod sigparam_execution_tests {
     }
 
     #[test]
-    fn sigparam_0x04_reads_operands_in_calldatacopy_order() {
-        // The copy operands follow `CALLDATACOPY`: memOffset above dataOffset
-        // above length. Distinct values for all three, and a destination past the
-        // first word, pin the order — reading them in any other order lands the
-        // bytes somewhere else (or copies a different count).
+    fn sigdatacopy_reads_operands_in_calldatacopy_order() {
+        // The copy operands follow `CALLDATACOPY`: memOffset above dataOffset above
+        // length, with signatureIndex beneath all three. Distinct values for all three,
+        // and a destination past the first word, pin the order — reading them in any
+        // other order lands the bytes somewhere else (or copies a different count).
         let (result, db, reader) = run_reader(
-            sigparam_copy_code(0, 3, 1, 0x20),
+            sigdatacopy_code(0, 3, 1, 0x20),
             vec![arbitrary_sig(vec![0xAA, 0xBB, 0xCC, 0xDD])],
         );
         result.expect("valid tx");
@@ -3705,6 +3741,47 @@ mod sigparam_execution_tests {
             storage_of(&db, reader, U256::zero()),
             U256::from_big_endian(&expected),
         );
+    }
+
+    /// v2 retires `SIGPARAM(0x04)`. If it still copied, the operation would exist at two
+    /// bytes at once and a contract written against either would work — which is exactly
+    /// how a chain ends up with two encodings of the same behaviour.
+    #[test]
+    fn sigparam_0x04_is_retired_and_halts() {
+        let (result, db, reader) = run_reader(
+            sigparam_retired_copy_code(0),
+            vec![arbitrary_sig(vec![0xDE, 0xAD])],
+        );
+        result.expect("the transaction itself is valid");
+        assert_eq!(
+            storage_of(&db, reader, U256::zero()),
+            U256::zero(),
+            "the frame halted, so nothing was stored"
+        );
+    }
+
+    /// Raw signature bytes of protocol-validated schemes stay un-introspectable, so
+    /// aggregation remains possible later. Only ARBITRARY may be copied.
+    #[test]
+    fn sigdatacopy_halts_for_a_protocol_validated_scheme() {
+        let (result, db, reader) = run_reader(sigdatacopy_code(0, 4, 0, 0), vec![]);
+        result.expect("the transaction itself is valid");
+        assert_eq!(
+            storage_of(&db, reader, U256::zero()),
+            U256::zero(),
+            "a SECP256K1 entry cannot be copied, so the frame halted"
+        );
+    }
+
+    /// An out-of-range signature index is an exceptional halt, not a zero read.
+    #[test]
+    fn sigdatacopy_halts_on_an_out_of_range_index() {
+        let (result, db, reader) = run_reader(
+            sigdatacopy_code(7, 4, 0, 0),
+            vec![arbitrary_sig(vec![0xDE, 0xAD])],
+        );
+        result.expect("the transaction itself is valid");
+        assert_eq!(storage_of(&db, reader, U256::zero()), U256::zero());
     }
 }
 
@@ -3840,6 +3917,7 @@ fn storage_refund_from_a_later_frame_reduces_reported_gas() {
         flags: 0,
         target: Some(target),
         gas_limit: 200_000,
+        state_limit: 0,
         value: U256::zero(),
         data,
     };
@@ -3927,6 +4005,7 @@ fn atomic_batch_revert_drops_the_batch_writes_from_the_bal() {
         flags: 0x04,
         target: Some(target),
         gas_limit: 300_000,
+        state_limit: 0,
         value: U256::zero(),
         data: Bytes::new(),
     };
@@ -3935,6 +4014,7 @@ fn atomic_batch_revert_drops_the_batch_writes_from_the_bal() {
         flags: 0x00,
         target: Some(target),
         gas_limit: 100_000,
+        state_limit: 0,
         value: U256::zero(),
         data: Bytes::new(),
     };
@@ -3943,6 +4023,7 @@ fn atomic_batch_revert_drops_the_batch_writes_from_the_bal() {
         flags: 0x03,
         target: Some(FUNDED_SENDER),
         gas_limit: 80_000,
+        state_limit: 0,
         value: U256::zero(),
         data: Bytes::new(),
     };
@@ -4042,6 +4123,7 @@ fn reverted_frame_refiles_its_writes_as_reads_in_the_bal() {
         flags: 0x03,
         target: Some(FUNDED_SENDER),
         gas_limit: 80_000,
+        state_limit: 0,
         value: U256::zero(),
         data: Bytes::new(),
     };
@@ -4052,6 +4134,7 @@ fn reverted_frame_refiles_its_writes_as_reads_in_the_bal() {
         flags: 0x00,
         target: Some(target),
         gas_limit: 300_000,
+        state_limit: 0,
         value: U256::zero(),
         data: Bytes::new(),
     };
@@ -4152,6 +4235,7 @@ fn atomic_batch_unroll_keeps_frame_status_and_gas_but_drops_logs() {
         flags: 0x04,
         target: Some(target),
         gas_limit: BATCH_FRAME_GAS,
+        state_limit: 0,
         value: U256::zero(),
         data: Bytes::new(),
     };
@@ -4167,6 +4251,7 @@ fn atomic_batch_unroll_keeps_frame_status_and_gas_but_drops_logs() {
             flags: 0x00,
             target: Some(terminator),
             gas_limit: 100_000,
+            state_limit: 0,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -4233,6 +4318,7 @@ fn max_gas_reserves_the_calldata_floor_instead_of_rejecting() {
         flags: 0x03,
         target: Some(FUNDED_SENDER),
         gas_limit: 1_000,
+        state_limit: 0,
         value: U256::zero(),
         data: Bytes::from(vec![0x11u8; 4_096]),
     }]);
@@ -4269,6 +4355,7 @@ fn frame_tx_over_the_per_tx_blob_limit_is_rejected() {
         flags: 0x03, // APPROVE_EXECUTION_AND_PAYMENT
         target: Some(FUNDED_SENDER),
         gas_limit: 100_000,
+        state_limit: 0,
         value: U256::zero(),
         data: Bytes::new(),
     };
@@ -4335,6 +4422,7 @@ mod intrinsic_gas_accounting_tests {
                     flags: 3,
                     target: None,
                     gas_limit: 50_000,
+                    state_limit: 0,
                     value: U256::zero(),
                     data: Bytes::new(),
                 },
@@ -4343,6 +4431,7 @@ mod intrinsic_gas_accounting_tests {
                     flags: 0,
                     target: Some(Address::repeat_byte(0x11)),
                     gas_limit: 100_000,
+                    state_limit: 0,
                     value: U256::from(500_000_000_000_000u64),
                     data: Bytes::new(),
                 },
@@ -4514,6 +4603,7 @@ fn probe_gas_used_with_sender_code(
         flags: 0x03,
         target: Some(FUNDED_SENDER),
         gas_limit: 100_000,
+        state_limit: 0,
         value: U256::zero(),
         data: Bytes::new(),
     }];
@@ -4523,6 +4613,7 @@ fn probe_gas_used_with_sender_code(
         flags: 0,
         target: Some(PROBE),
         gas_limit: 100_000,
+        state_limit: 0,
         value: U256::zero(),
         data: Bytes::new(),
     });
@@ -4601,6 +4692,7 @@ fn being_a_frame_target_does_not_warm_an_address() {
         flags: 0,
         target: Some(later_target),
         gas_limit: 50_000,
+        state_limit: 0,
         value: U256::zero(),
         data: Bytes::new(),
     };
@@ -4694,6 +4786,7 @@ mod signature_validation_touches_no_precompile {
             flags: 0x03,
             target: Some(FUNDED_SENDER),
             gas_limit: 100_000,
+            state_limit: 0,
             value: U256::zero(),
             data: Bytes::new(),
         }]);

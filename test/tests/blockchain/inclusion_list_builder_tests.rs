@@ -139,6 +139,7 @@ fn keyed_frame_tx(nonce_keys: Vec<U256>, nonce_seq: u64) -> Transaction {
             flags: APPROVE_EXECUTION_AND_PAYMENT,
             target: Some(addr(0x01)),
             gas_limit: 21_000,
+            state_limit: 0,
             value: U256::zero(),
             data: Default::default(),
         }],

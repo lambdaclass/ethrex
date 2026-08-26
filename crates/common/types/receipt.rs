@@ -22,15 +22,23 @@ pub const FRAME_RECEIPT_STATUS_SKIPPED: u8 = 2;
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct FrameReceipt {
     pub status: u8,
+    /// `gas_used.execution`: the frame's execution gas, before refunds.
     pub gas_used: u64,
+    /// `gas_used.state`: the frame's EIP-8037 state gas *after* every state-gas refill and
+    /// rollback in the transaction has been applied. A later frame clearing state an
+    /// earlier frame created reduces the earlier frame's figure, so this is the only
+    /// receipt field a subsequent frame can move, and the sum across frames is the
+    /// transaction's net state growth.
+    pub state_gas_used: u64,
     pub logs: Vec<Log>,
 }
 
 impl RLPEncode for FrameReceipt {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        // `gas_used = [execution, state]` per EIP-8141 v2.
         Encoder::new(buf)
             .encode_field(&self.status)
-            .encode_field(&self.gas_used)
+            .encode_field(&(self.gas_used, self.state_gas_used))
             .encode_field(&self.logs)
             .finish();
     }
@@ -40,12 +48,14 @@ impl RLPDecode for FrameReceipt {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let decoder = Decoder::new(rlp)?;
         let (status, decoder) = decoder.decode_field("status")?;
-        let (gas_used, decoder) = decoder.decode_field("gas_used")?;
+        let ((gas_used, state_gas_used), decoder): ((u64, u64), _) =
+            decoder.decode_field("gas_used")?;
         let (logs, decoder) = decoder.decode_field("logs")?;
         Ok((
             FrameReceipt {
                 status,
                 gas_used,
+                state_gas_used,
                 logs,
             },
             decoder.finish()?,
@@ -731,6 +741,7 @@ mod test {
         let fr = FrameReceipt {
             status: FRAME_RECEIPT_STATUS_SUCCESS,
             gas_used: 21000,
+            state_gas_used: 0,
             logs: vec![Log {
                 address: Address::random(),
                 topics: vec![],
@@ -748,6 +759,7 @@ mod test {
         let fr = FrameReceipt {
             status: FRAME_RECEIPT_STATUS_SKIPPED,
             gas_used: 0,
+            state_gas_used: 0,
             logs: vec![],
         };
         let encoded = fr.encode_to_vec();
@@ -771,11 +783,13 @@ mod test {
                 FrameReceipt {
                     status: FRAME_RECEIPT_STATUS_SUCCESS,
                     gas_used: 100000,
+                    state_gas_used: 0,
                     logs: vec![],
                 },
                 FrameReceipt {
                     status: FRAME_RECEIPT_STATUS_SUCCESS,
                     gas_used: 200000,
+                    state_gas_used: 0,
                     logs: vec![Log {
                         address: Address::from_low_u64_be(0xbeef),
                         topics: vec![],
@@ -806,11 +820,13 @@ mod test {
                 FrameReceipt {
                     status: FRAME_RECEIPT_STATUS_SUCCESS,
                     gas_used: 50000,
+                    state_gas_used: 0,
                     logs: vec![],
                 },
                 FrameReceipt {
                     status: FRAME_RECEIPT_STATUS_FAILURE,
                     gas_used: 50000,
+                    state_gas_used: 0,
                     logs: vec![],
                 },
             ]),
@@ -834,11 +850,13 @@ mod test {
                 FrameReceipt {
                     status: FRAME_RECEIPT_STATUS_SUCCESS,
                     gas_used: 50000,
+                    state_gas_used: 0,
                     logs: vec![],
                 },
                 FrameReceipt {
                     status: FRAME_RECEIPT_STATUS_SKIPPED,
                     gas_used: 0,
+                    state_gas_used: 0,
                     logs: vec![],
                 },
             ]),
@@ -865,11 +883,13 @@ mod test {
                 FrameReceipt {
                     status: FRAME_RECEIPT_STATUS_FAILURE,
                     gas_used: 1000,
+                    state_gas_used: 0,
                     logs: vec![],
                 }, // a DEFAULT frame failed
                 FrameReceipt {
                     status: FRAME_RECEIPT_STATUS_SUCCESS,
                     gas_used: 2000,
+                    state_gas_used: 0,
                     logs: vec![log],
                 },
             ]),
@@ -899,6 +919,7 @@ mod test {
             frame_receipts: Some(vec![FrameReceipt {
                 status: FRAME_RECEIPT_STATUS_SUCCESS,
                 gas_used: 21_000,
+                state_gas_used: 0,
                 logs: Vec::new(),
             }]),
         };
@@ -970,11 +991,13 @@ mod test {
                 FrameReceipt {
                     status: FRAME_RECEIPT_STATUS_SUCCESS,
                     gas_used: 100000,
+                    state_gas_used: 0,
                     logs: vec![],
                 },
                 FrameReceipt {
                     status: FRAME_RECEIPT_STATUS_SUCCESS,
                     gas_used: 200000,
+                    state_gas_used: 0,
                     logs: vec![Log {
                         address: Address::from_low_u64_be(0xbeef),
                         topics: vec![],
@@ -1007,6 +1030,7 @@ mod test {
             frame_receipts: Some(vec![FrameReceipt {
                 status: FRAME_RECEIPT_STATUS_SUCCESS,
                 gas_used: 21000,
+                state_gas_used: 0,
                 logs: vec![],
             }]),
         };

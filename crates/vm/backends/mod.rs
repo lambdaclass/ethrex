@@ -181,6 +181,7 @@ impl Evm {
                         |(status, gas_used, logs)| ethrex_common::types::FrameReceipt {
                             status,
                             gas_used,
+                            state_gas_used: 0,
                             logs,
                         },
                     )

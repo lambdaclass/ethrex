@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
-"""Current-format EIP-8141/8250/8272/7906 frame-transaction (type 0x06) encoder.
+"""Current-format EIP-8141/8250/8272 frame-transaction (type 0x06) encoder.
 
-Wire layout (ethrex hegota-devnet), verified against the repo golden vector:
+EIP-8141 v2 wire layout, verified against the repo golden vector:
   raw = 0x06 || rlp([chain_id, nonce_keys, nonce_seq, sender, frames, signatures,
-                     max_priority_fee, max_fee, max_blob_fee, blob_hashes,
-                     recent_root_references])
-  frame     = rlp([mode, flags, target_or_empty, gas_limit, value, data])
+                     fees, blob_hashes, recent_root_references])
+  fees      = rlp([max_priority_fee, max_fee, max_blob_fee])
+  frame     = rlp([mode, flags, target_or_empty, limits, value, data])
+  limits    = rlp([execution, state])
+
+The composition of the three EIPs is this chain's choice, because none of them specifies
+it: EIP-8250 replaces the canonical scalar `nonce` with `nonce_keys, nonce_seq` in place,
+EIP-8272 appends `recent_root_references` last, and EIP-8141 v2's `fees` list sits where
+its three flat fee fields used to be.
   signature = rlp([scheme, signer, msg, signature_bytes])  # scheme: 0=ARBITRARY, 1=SECP256K1, 2=P256
   sig_hash  = keccak256(0x06 || rlp(envelope with empty-msg signatures' bytes elided))
 """
@@ -41,13 +47,15 @@ def addr20(a: int | bytes | str) -> bytes:
 
 # ---------- frame-tx model ----------
 class Frame:
-    def __init__(self, mode, flags, target, gas_limit, value, data):
+    def __init__(self, mode, flags, target, gas_limit, value, data, state_limit=0):
         self.mode, self.flags, self.target = mode, flags, target  # target: 20-byte int/bytes or None
         self.gas_limit, self.value, self.data = gas_limit, value, data
+        self.state_limit = state_limit  # EIP-8037 state-gas budget; limits = [execution, state]
     def rlp(self):
         tgt = rlp_bytes(addr20(self.target)) if self.target is not None else rlp_bytes(b"")
+        limits = rlp_list([rlp_int(self.gas_limit), rlp_int(self.state_limit)])
         return rlp_list([rlp_int(self.mode), rlp_int(self.flags), tgt,
-                         rlp_int(self.gas_limit), rlp_int(self.value), rlp_bytes(self.data)])
+                         limits, rlp_int(self.value), rlp_bytes(self.data)])
 
 class FrameSig:
     # EIP-8141 signature schemes: ARBITRARY=0, SECP256K1=1, P256=2.
@@ -77,9 +85,8 @@ class FrameTx:
             rlp_bytes(addr20(self.sender)),
             rlp_list([f.rlp() for f in self.frames]),
             rlp_list([s.rlp(elide=elide_sigs) for s in self.signatures]),
-            rlp_int(self.max_priority_fee),
-            rlp_int(self.max_fee),
-            rlp_int(self.max_blob_fee),
+            rlp_list([rlp_int(self.max_priority_fee), rlp_int(self.max_fee),
+                      rlp_int(self.max_blob_fee)]),
             rlp_list([rlp_bytes(h) for h in self.blob_hashes]),
             rlp_list([r for r in self.recent_root_refs]),  # entries pre-encoded if any
         ]
@@ -105,8 +112,8 @@ if __name__ == "__main__":
         max_priority_fee=0x3b9aca00,
         max_fee=0x6fc23ac00,
     )
-    EXPECT_RLP = "f8ae01c1800794000000000000000000000000000000000000abcde8ca01038082520880821122dc0280940000000000000000000000000000000000001234829c408080f85cf85a0194000000000000000000000000000000000000abcd80b8410101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101843b9aca008506fc23ac0080c0c0"
-    EXPECT_SIGHASH = "0x989e6ce4dc87b2afd5cfa6c780ff60f01fc3b40c77057cf872410145d69f715c"
+    EXPECT_RLP = "f8b301c1800794000000000000000000000000000000000000abcdeccc010380c48252088080821122de0280940000000000000000000000000000000000001234c4829c40808080f85cf85a0194000000000000000000000000000000000000abcd80b8410101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101cc843b9aca008506fc23ac0080c0c0"
+    EXPECT_SIGHASH = "0xd4df51143828c0338882dbd10c3308f3569972fe1928a7b5040ee18057920510"
     got_rlp = golden.encode().hex()
     got_sh = "0x" + golden.sig_hash().hex()
     print("RLP match:     ", got_rlp == EXPECT_RLP)

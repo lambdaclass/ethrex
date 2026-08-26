@@ -183,6 +183,7 @@ fn spend_tx(
             flags: 0,
             target: None,
             gas_limit: 3_000_000,
+            state_limit: 0,
             value: U256::zero(),
             data: CommonBytes::from(spend.encode_to_vec()),
         }],

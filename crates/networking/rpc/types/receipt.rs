@@ -37,8 +37,14 @@ pub struct RpcFrameReceipt {
     /// (atomic-batch failure). Serialized as a hex-encoded byte.
     #[serde(with = "serde_utils::u8::hex_str")]
     pub status: u8,
+    /// `gas_used.execution` on the wire.
     #[serde(with = "serde_utils::u64::hex_str")]
     pub gas_used: u64,
+    /// `gas_used.state` on the wire: the frame's EIP-8037 state gas after every
+    /// cross-frame refill in the transaction has been applied, so a later frame can
+    /// reduce it.
+    #[serde(with = "serde_utils::u64::hex_str")]
+    pub state_gas_used: u64,
     pub logs: Vec<RpcLogInfo>,
 }
 
@@ -47,6 +53,7 @@ impl From<FrameReceipt> for RpcFrameReceipt {
         Self {
             status: fr.status,
             gas_used: fr.gas_used,
+            state_gas_used: fr.state_gas_used,
             logs: fr.logs.into_iter().map(RpcLogInfo::from).collect(),
         }
     }
