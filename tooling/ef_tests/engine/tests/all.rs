@@ -8,7 +8,9 @@ use std::path::Path;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use ef_tests_engine::{EngineFixtureFile, FixtureFailure, RunOptions, render_summary, run_fixture};
+use ef_tests_engine::{
+    EngineFixtureFile, FixtureFailure, RunOptions, render_failures, render_summary, run_fixture,
+};
 use regex::Regex;
 
 // Aggregate fixture counters across all `engine_runner` calls. libtest reports
@@ -190,10 +192,7 @@ fn engine_runner(path: &Path) -> datatest_stable::Result<()> {
         return Ok(());
     }
 
-    let mut report = String::new();
-    for (name, failure) in &failures {
-        writeln!(report, "FAIL {name}: {failure}").expect("write to String is infallible");
-    }
+    let mut report = render_failures(&failures);
     report.push('\n');
     report.push_str(&render_summary(total, passed, skipped, failures.len()));
     if xfail_upstream > 0 {
