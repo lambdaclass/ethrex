@@ -143,13 +143,7 @@ impl Drop for RequestPermit {
 #[protocol]
 pub trait PeerTableServerProtocol: Send + Sync {
     // Send (cast) methods
-    fn new_connected_peer(
-        &self,
-        node: Node,
-        connection: PeerConnection,
-        capabilities: Vec<Capability>,
-        is_inbound: bool,
-    ) -> Result<(), ActorError>;
+
     fn remove_peer(&self, node_id: H256) -> Result<(), ActorError>;
     fn dec_requests(&self, node_id: H256) -> Result<(), ActorError>;
     fn record_success(&self, node_id: H256) -> Result<(), ActorError>;
@@ -158,6 +152,20 @@ pub trait PeerTableServerProtocol: Send + Sync {
     fn shutdown(&self) -> Result<(), ActorError>;
 
     // Request (call) methods
+
+    /// Claim the slot for this peer, returning whether it was granted.
+    ///
+    /// `false` means we already hold a connection to this node id and the
+    /// caller lost a race, so it should hang up rather than register. The
+    /// check and the insert both happen in this actor's message loop, which is
+    /// what makes the claim atomic between two connection actors.
+    fn new_connected_peer(
+        &self,
+        node: Node,
+        connection: PeerConnection,
+        capabilities: Vec<Capability>,
+        is_inbound: bool,
+    ) -> Response<bool>;
     fn peer_count(&self) -> Response<usize>;
     fn peer_count_by_capabilities(&self, capabilities: Vec<Capability>) -> Response<usize>;
     fn target_peers_reached(&self) -> Response<bool>;
@@ -229,16 +237,18 @@ impl PeerTableServer {
 
     // === Send handlers ===
 
-    #[send_handler]
+    #[request_handler]
     async fn handle_new_connected_peer(
         &mut self,
         msg: peer_table_server_protocol::NewConnectedPeer,
         _ctx: &Context<Self>,
-    ) {
-        let new_peer_id = msg.node.node_id();
-        let mut new_peer = PeerData::new(msg.node, None, Some(msg.connection), msg.capabilities);
-        new_peer.is_connection_inbound = msg.is_inbound;
-        self.peers.insert(new_peer_id, new_peer);
+    ) -> bool {
+        self.do_new_connected_peer(
+            msg.node,
+            Some(msg.connection),
+            msg.capabilities,
+            msg.is_inbound,
+        )
     }
 
     #[send_handler]
@@ -538,6 +548,31 @@ impl PeerTableServer {
 
     // --- Peer selection ---
 
+    /// Claim the slot for `node`, returning whether it was granted.
+    ///
+    /// Refuses rather than overwrites. Two connection actors can reach this
+    /// point for one node id (crossing dials, or a peer opening a second
+    /// socket), and overwriting let the second silently displace the first: the
+    /// displaced connection stayed open but became invisible to peer selection,
+    /// and whichever actor stopped first then removed the survivor's entry on
+    /// its way out.
+    fn do_new_connected_peer(
+        &mut self,
+        node: Node,
+        connection: Option<PeerConnection>,
+        capabilities: Vec<Capability>,
+        is_inbound: bool,
+    ) -> bool {
+        let new_peer_id = node.node_id();
+        if self.peers.contains_key(&new_peer_id) {
+            return false;
+        }
+        let mut new_peer = PeerData::new(node, None, connection, capabilities);
+        new_peer.is_connection_inbound = is_inbound;
+        self.peers.insert(new_peer_id, new_peer);
+        true
+    }
+
     fn weight_peer(&self, score: &i64, requests: &i64) -> i64 {
         score * SCORE_WEIGHT - requests * REQUESTS_WEIGHT
     }
@@ -669,3 +704,65 @@ impl PeerTableServer {
 }
 
 pub type PeerTable = ActorRef<PeerTableServer>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethrex_common::H512;
+    use std::net::Ipv4Addr;
+
+    fn node(seed: u8) -> Node {
+        Node::new(
+            IpAddr::V4(Ipv4Addr::new(127, 0, 0, seed)),
+            30303,
+            30303,
+            H512::from_low_u64_be(seed as u64 + 1),
+        )
+    }
+
+    /// Registration with no live connection behind it: enough to exercise the
+    /// claim, which only ever looks at the node id.
+    fn claim(table: &mut PeerTableServer, node: Node) -> bool {
+        table.do_new_connected_peer(node, None, vec![], false)
+    }
+
+    #[test]
+    fn a_second_connection_to_the_same_peer_is_refused() {
+        // Two connection actors can reach registration for one node id, and the
+        // loser has to find out so it can hang up. Overwriting instead left two
+        // live sockets and one table entry, so the first actor to stop evicted
+        // the other's connection.
+        let mut table = PeerTableServer::new(10);
+
+        assert!(
+            claim(&mut table, node(1)),
+            "first connection claims the slot"
+        );
+        assert!(!claim(&mut table, node(1)), "the second is refused");
+        assert_eq!(table.peers.len(), 1, "and did not displace the first");
+    }
+
+    #[test]
+    fn a_different_peer_is_unaffected() {
+        let mut table = PeerTableServer::new(10);
+
+        assert!(claim(&mut table, node(1)));
+        assert!(claim(&mut table, node(2)), "the claim is per node id");
+        assert_eq!(table.peers.len(), 2);
+    }
+
+    #[test]
+    fn a_peer_can_register_again_after_disconnecting() {
+        // The claim must not outlive the connection, or a reconnecting peer
+        // would be turned away for the life of the process.
+        let mut table = PeerTableServer::new(10);
+
+        assert!(claim(&mut table, node(3)));
+        table.peers.swap_remove(&node(3).node_id());
+
+        assert!(
+            claim(&mut table, node(3)),
+            "a reconnect is granted the slot"
+        );
+    }
+}

@@ -298,6 +298,10 @@ pub struct Established {
     pub(crate) disconnect_reason: Option<DisconnectReason>,
     // Indicates if the peer has been validated (ie. the connection was established successfully)
     pub(crate) is_validated: bool,
+    /// Whether this actor holds the peer table's slot for this node id. Only the
+    /// actor that claimed it may release it: a duplicate connection that lost
+    /// the race must leave the winner's registration alone on its way out.
+    pub(crate) registered: bool,
     // Rate limiting: start of the current incoming-request window
     pub(crate) serve_request_window_start: Instant,
     // Rate limiting: number of data-serving requests received in the current window
@@ -457,32 +461,38 @@ impl PeerConnectionServer {
                         )
                         .await;
                 }
-                if let Err(e) = established_state
-                    .peer_table
-                    .remove_peer(established_state.node.node_id())
-                {
-                    debug!("Failed to remove peer from table: {e}");
-                }
-                // Pairs with the `Connected` report in `initialize_connection`. This is
-                // the only teardown an established connection takes, and it still runs
-                // when a message handler panics, because the actor loop catches the
-                // unwind before falling through to `stopped()`.
-                //
-                // It does not cover a panic inside `started()` itself, which cancels the
-                // actor and returns without running this hook. `Connected` is reported
-                // from there, so that window can strand an id in discovery's connected
-                // set. `remove_peer` above is lost to the same window, leaving the peer
-                // table's own map equally stale, so the two stores at least agree.
-                established_state
-                    .discovery
-                    .record_peer_event(established_state.node.node_id(), PeerEvent::Disconnected);
-                // Free the peer's tx-broadcaster index (and clear its bit across known txs) so
-                // the broadcaster's per-peer index map / PeerMask widths stay bounded to live peers.
-                if let Err(e) = established_state
-                    .tx_broadcaster
-                    .remove_peer(established_state.node.node_id())
-                {
-                    debug!("Failed to remove peer from tx broadcaster: {e}");
+                // Gated on `registered`: an actor that lost the claim never put
+                // anything in these tables, and releasing on its way out would
+                // evict the connection that won.
+                if established_state.registered {
+                    if let Err(e) = established_state
+                        .peer_table
+                        .remove_peer(established_state.node.node_id())
+                    {
+                        debug!("Failed to remove peer from table: {e}");
+                    }
+                    // Pairs with the `Connected` report in `initialize_connection`. This is
+                    // the only teardown an established connection takes, and it still runs
+                    // when a message handler panics, because the actor loop catches the
+                    // unwind before falling through to `stopped()`.
+                    //
+                    // It does not cover a panic inside `started()` itself, which cancels the
+                    // actor and returns without running this hook. `Connected` is reported
+                    // from there, so that window can strand an id in discovery's connected
+                    // set. `remove_peer` above is lost to the same window, leaving the peer
+                    // table's own map equally stale, so the two stores at least agree.
+                    established_state.discovery.record_peer_event(
+                        established_state.node.node_id(),
+                        PeerEvent::Disconnected,
+                    );
+                    // Free the peer's tx-broadcaster index (and clear its bit across known txs) so
+                    // the broadcaster's per-peer index map / PeerMask widths stay bounded to live peers.
+                    if let Err(e) = established_state
+                        .tx_broadcaster
+                        .remove_peer(established_state.node.node_id())
+                    {
+                        debug!("Failed to remove peer from tx broadcaster: {e}");
+                    }
                 }
                 established_state.teardown().await;
             }
@@ -831,12 +841,24 @@ where
         handle: ctx.actor_ref(),
     };
 
-    state.peer_table.new_connected_peer(
-        state.node.clone(),
-        connection.clone(),
-        state.capabilities.clone(),
-        state.is_inbound,
-    )?;
+    // Claim the slot before telling anyone we have this peer. Losing means
+    // another actor already holds a connection to the same node id, so we hang
+    // up with the reason devp2p expects and touch neither table.
+    let claimed = state
+        .peer_table
+        .new_connected_peer(
+            state.node.clone(),
+            connection.clone(),
+            state.capabilities.clone(),
+            state.is_inbound,
+        )
+        .await?;
+    if !claimed {
+        return Err(PeerConnectionError::DisconnectSent(
+            DisconnectReason::AlreadyConnected,
+        ));
+    }
+    state.registered = true;
     state
         .discovery
         .record_peer_event(state.node.node_id(), PeerEvent::Connected);
