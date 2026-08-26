@@ -8,16 +8,18 @@
 use bytes::Bytes;
 use ethrex_common::constants::GAS_PER_BLOB;
 use ethrex_common::types::BATCH_SIZE;
+use ethrex_common::types::Log;
 use ethrex_common::types::{
     APPROVE_EXECUTION, APPROVE_EXECUTION_AND_PAYMENT, APPROVE_PAYMENT, BATCH_PATH_LEN, Block,
     BlockBody, BlockHeader, ChainConfig, EIP4844Transaction, FRAME_SIG_SCHEME_ARBITRARY,
-    FRAME_SIG_SCHEME_SECP256K1, FRAME_TX_MAX_VERIFY_GAS, FRAME_TX_MAX_VERIFY_STATE_GAS, Frame,
-    FrameEncoding, FrameLimits, FrameMode, FrameSignature, FrameTransaction, FrameValidationError,
-    MAX_SIBLINGS, P2PTransaction, PrefixShape, RING_SIZE, SLOT_NEXT_INDEX, SLOT_RING_BASE, Spend,
-    SpendInput, SpendOutput, Transaction, TxKind, WrappedFrameTransaction, batch_slot,
-    batch_slot_for_block, fold, frame_tx_expiry_verifier, hash_pair, is_spent, merkle_proof,
-    merkle_root, opening_leaf, ring_slot, seals_batch, slot_batch_base, slot_spent_base,
-    spent_bit_location, utxo_vault,
+    FRAME_SIG_SCHEME_SECP256K1, FRAME_TX_INTRINSIC_COST, FRAME_TX_INTRINSIC_COST_PRE_LIMITS,
+    FRAME_TX_MAX_VERIFY_GAS, FRAME_TX_MAX_VERIFY_STATE_GAS, FRAME_TX_VALUE_COST, Frame,
+    FrameEncoding, FrameLimits, FrameMode, FrameReceipt, FrameSignature, FrameTransaction,
+    FrameValidationError, MAX_SIBLINGS, P2PTransaction, PrefixShape, RING_SIZE, SLOT_NEXT_INDEX,
+    SLOT_RING_BASE, Spend, SpendInput, SpendOutput, Transaction, TxKind, WrappedFrameTransaction,
+    batch_slot, batch_slot_for_block, fold, frame_tx_expiry_verifier, hash_pair, is_spent,
+    merkle_proof, merkle_root, opening_leaf, ring_slot, seals_batch, slot_batch_base,
+    slot_spent_base, spent_bit_location, utxo_vault,
 };
 use ethrex_common::types::{BlobsBundle, Fork, MAX_BLOBS_PER_TX, TxType};
 use ethrex_rlp::decode::RLPDecode;
@@ -1445,7 +1447,7 @@ fn an_actor_is_covered_only_by_its_own_signature_over_the_spend_hash() {
         "the correctly-signed spend must pass, or the rejection below proves nothing"
     );
 
-    let mut wrong_signer = tx.clone();
+    let mut wrong_signer = tx;
     wrong_signer
         .signatures
         .push(spend_sig_entry(Address::from_low_u64_be(0x5151), hash));
@@ -2249,4 +2251,136 @@ fn a_current_frame_round_trips_as_two_dimensional() {
     assert_eq!(decoded, frame);
     assert_eq!(decoded.encoding, FrameEncoding::Limits);
     assert_eq!(decoded.limits.state, 120_000);
+}
+
+/// A receipt written before `state_gas_used` existed must re-encode to its
+/// original bytes.
+///
+/// Same hazard as the frame, one layer down: the receipts root is a trie over
+/// this encoding, and stored rows are these bytes, so re-encoding a
+/// three-field receipt with four fields would both change the root a node
+/// recomputes on re-execution and make every receipt it already wrote
+/// unreadable.
+#[test]
+fn a_pre_fork_frame_receipt_round_trips_to_its_original_bytes() {
+    let mut buf = Vec::new();
+    Encoder::new(&mut buf)
+        .encode_field(&1u8) // status
+        .encode_field(&21_000u64) // gas_used
+        .encode_field(&Vec::<Log>::new()) // logs, directly after gas_used
+        .finish();
+
+    let (receipt, rest) = FrameReceipt::decode_unfinished(&buf).expect("must decode");
+    assert!(rest.is_empty());
+    assert_eq!(receipt.encoding, FrameEncoding::Scalar);
+    assert_eq!(receipt.gas_used, 21_000);
+    assert_eq!(
+        receipt.state_gas_used, 0,
+        "a receipt from before the state pools drew no pooled state gas"
+    );
+    assert_eq!(
+        receipt.encode_to_vec(),
+        buf,
+        "a pre-fork receipt must re-encode to its original bytes, or its block's \
+         receipts root changes and its stored row stops matching"
+    );
+}
+
+/// The current layout survives a round trip and keeps its state figure.
+#[test]
+fn a_current_frame_receipt_round_trips_with_state_gas() {
+    let receipt = FrameReceipt {
+        status: 1,
+        gas_used: 21_000,
+        state_gas_used: 97_920,
+        logs: vec![],
+        encoding: FrameEncoding::Limits,
+    };
+    let bytes = receipt.encode_to_vec();
+    let (decoded, rest) = FrameReceipt::decode_unfinished(&bytes).expect("must decode");
+    assert!(rest.is_empty());
+    assert_eq!(decoded, receipt);
+    assert_eq!(decoded.state_gas_used, 97_920);
+}
+
+/// The era gate is what keeps a frame's encoding marker honest: without it a
+/// sender could pick the cheaper intrinsic price by choosing an encoding, since
+/// `mandatory_gas` prices a transaction by the era its frames declare.
+#[test]
+fn frames_must_match_their_block_era() {
+    let scalar_frame = Frame {
+        mode: 1,
+        flags: 3,
+        target: Some(sender_addr()),
+        limits: FrameLimits {
+            execution: 80_000,
+            state: 0,
+        },
+        encoding: FrameEncoding::Scalar,
+        value: U256::zero(),
+        data: Bytes::new(),
+    };
+    let mut limits_frame = scalar_frame.clone();
+    limits_frame.encoding = FrameEncoding::Limits;
+
+    let scalar_tx = base_frame_tx_with_frames(vec![scalar_frame.clone()]);
+    let limits_tx = base_frame_tx_with_frames(vec![limits_frame.clone()]);
+
+    assert!(scalar_tx.validate_frame_encoding_era(false).is_ok());
+    assert!(
+        scalar_tx.validate_frame_encoding_era(true).is_err(),
+        "a block at or after activation must reject the scalar encoding"
+    );
+    assert!(limits_tx.validate_frame_encoding_era(true).is_ok());
+    assert!(
+        limits_tx.validate_frame_encoding_era(false).is_err(),
+        "a block before activation must reject the two-dimensional encoding"
+    );
+
+    let mixed = base_frame_tx_with_frames(vec![scalar_frame, limits_frame]);
+    assert!(
+        mixed.validate_frame_encoding_era(true).is_err()
+            && mixed.validate_frame_encoding_era(false).is_err(),
+        "a transaction mixing encodings belongs to no era and is never admissible"
+    );
+}
+
+/// The intrinsic reprice landed with the state pools, so it follows the era a
+/// transaction's frames declare — otherwise re-executing pre-fork history would
+/// settle every frame transaction at a price it was never charged.
+#[test]
+fn pre_fork_frames_keep_the_pre_fork_intrinsic_price() {
+    let frame = Frame {
+        mode: 1,
+        flags: 3,
+        // Not the sender: TX_VALUE_COST prices moving value to someone else, and
+        // a self-directed frame is exempt.
+        target: Some(Address::from_low_u64_be(0xBEEF)),
+        limits: FrameLimits {
+            execution: 80_000,
+            state: 0,
+        },
+        encoding: FrameEncoding::Scalar,
+        value: U256::one(),
+        data: Bytes::new(),
+    };
+    let mut current = frame.clone();
+    current.encoding = FrameEncoding::Limits;
+
+    let pre_fork = base_frame_tx_with_frames(vec![frame]);
+    let post_fork = base_frame_tx_with_frames(vec![current]);
+
+    // The current era pays 3000 less intrinsic but 6000 for the value-bearing
+    // frame, so it is the dearer of the two on this transaction.
+    assert_eq!(
+        post_fork.mandatory_gas() - pre_fork.mandatory_gas(),
+        (FRAME_TX_INTRINSIC_COST + FRAME_TX_VALUE_COST) - FRAME_TX_INTRINSIC_COST_PRE_LIMITS,
+        "the two eras differ by exactly the reprice and the value cost"
+    );
+    assert_eq!(
+        pre_fork.value_transfer_cost(),
+        0,
+        "TX_VALUE_COST arrived with the state pools and cannot apply before them"
+    );
+    assert_eq!(post_fork.value_transfer_cost(), FRAME_TX_VALUE_COST);
 }

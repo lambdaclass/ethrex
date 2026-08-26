@@ -412,7 +412,7 @@ async fn import_block_omitting_il(
     il: Vec<Transaction>,
 ) -> (BlockHeader, Result<(), ChainError>) {
     use ethrex_blockchain::payload::{BuildPayloadArgs, create_payload};
-    use ethrex_common::types::{DEFAULT_BUILDER_GAS_CEIL, ELASTICITY_MULTIPLIER, FrameLimits};
+    use ethrex_common::types::{DEFAULT_BUILDER_GAS_CEIL, ELASTICITY_MULTIPLIER};
 
     let args = BuildPayloadArgs {
         parent: parent.hash(),

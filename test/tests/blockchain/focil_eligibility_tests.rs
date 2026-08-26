@@ -159,7 +159,7 @@ fn an_expiry_verifier_frames_gas_counts_toward_the_budget() {
     let without = self_verify_tx(50_000);
     let base = verify_budget_cost(&without).expect("priceable");
 
-    let mut with_expiry = without.clone();
+    let mut with_expiry = without;
     with_expiry.frames.insert(
         0,
         Frame {
@@ -191,7 +191,7 @@ fn signature_verification_gas_is_part_of_the_budget() {
     let one_sig = self_verify_tx(50_000);
     let base = verify_budget_cost(&one_sig).expect("priceable");
 
-    let mut two_sigs = one_sig.clone();
+    let mut two_sigs = one_sig;
     two_sigs.signatures.push(FrameSignature {
         scheme: FRAME_SIG_SCHEME_SECP256K1,
         signer: Some(sender()),

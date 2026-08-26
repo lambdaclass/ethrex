@@ -129,7 +129,9 @@ impl RLPxMessage for Receipts68 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ethrex_common::types::{FRAME_RECEIPT_STATUS_SUCCESS, FrameReceipt, Log, ReceiptWithBloom};
+    use ethrex_common::types::{
+        FRAME_RECEIPT_STATUS_SUCCESS, FrameEncoding, FrameReceipt, Log, ReceiptWithBloom,
+    };
     use ethrex_common::{Address, Bytes as CommonBytes};
 
     fn sample_nonframe_receipts() -> Vec<Vec<Receipt>> {
@@ -248,12 +250,14 @@ mod tests {
                     status: FRAME_RECEIPT_STATUS_SUCCESS,
                     gas_used: 100000,
                     state_gas_used: 0,
+                    encoding: FrameEncoding::Limits,
                     logs: vec![],
                 },
                 FrameReceipt {
                     status: FRAME_RECEIPT_STATUS_SUCCESS,
                     gas_used: 150000,
                     state_gas_used: 0,
+                    encoding: FrameEncoding::Limits,
                     logs: vec![Log {
                         address: Address::from_low_u64_be(0xbeef),
                         topics: vec![],
@@ -310,6 +314,7 @@ mod tests {
                 status: FRAME_RECEIPT_STATUS_SUCCESS,
                 gas_used: 29000,
                 state_gas_used: 0,
+                encoding: FrameEncoding::Limits,
                 logs: vec![],
             }]),
         };

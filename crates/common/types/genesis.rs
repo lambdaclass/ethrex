@@ -360,9 +360,12 @@ pub struct ChainConfig {
     /// merely tolerates both forms re-encodes them into the new one and reports
     /// the wrong hash.
     ///
-    /// `None` = the chain never adopts the new format (the default: every existing
-    /// network and fixture). Setting it also requires Hegota to be scheduled,
-    /// since there are no frames before Hegota; see
+    /// `None` = the chain has always used the current format, which is what every
+    /// network without pre-revision frame history wants and so is the default.
+    /// The scalar era is not a stage every chain passes through: it exists only
+    /// for a chain that already produced frame transactions under the earlier
+    /// EIP-8141 revision, and such a chain opts in by setting this to the
+    /// timestamp at which it switched. See
     /// [`ChainConfig::is_frame_limits_activated`].
     #[serde(default)]
     pub frame_limits_time: Option<u64>,
@@ -528,14 +531,16 @@ impl ChainConfig {
     /// Whether frames at `block_timestamp` carry `limits = [execution, state]`
     /// rather than a scalar `gas_limit`.
     ///
-    /// Gated on the fork ORDINAL, not on `hegota_time` being set, for the reason
-    /// spelled out on [`ChainConfig::is_utxo_frames_activated`]: a chain that
-    /// reaches Hegota through a named fork rather than the field would otherwise
-    /// have admission disagree with execution.
+    /// Unset means yes, always. This is the opposite default from
+    /// [`ChainConfig::is_utxo_frames_activated`], and deliberately: that flag
+    /// gates a new frame mode that must stay unavailable until scheduled, while
+    /// this one gates the current spec against a superseded revision. A chain
+    /// with no history under the old revision has no boundary to place, and
+    /// making it declare one would be a footgun — forget it, and the chain quietly
+    /// produces frames in a format no longer in the EIP.
     pub fn is_frame_limits_activated(&self, block_timestamp: u64) -> bool {
         self.frame_limits_time
-            .is_some_and(|time| time <= block_timestamp)
-            && self.get_fork(block_timestamp) >= Fork::Hegota
+            .is_none_or(|time| time <= block_timestamp)
     }
 
     /// EIP-8369 `AA_VOPS_SLOT_COUNT`, falling back to

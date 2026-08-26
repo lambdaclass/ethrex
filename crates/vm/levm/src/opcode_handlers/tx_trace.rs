@@ -928,10 +928,16 @@ mod pure_fn_tests {
         // Global table is sorted by address then slot: (1,0x0A) (1,0x0B) (2,0x0C).
         assert_eq!(address_slot_indices(&changes, addr(1)), vec![0, 1]);
         assert_eq!(address_slot_indices(&changes, addr(2)), vec![2]);
-        // The mapped global index must address the same entry in the global table.
-        let global = address_slot_indices(&changes, addr(2))[0];
-        assert_eq!(changes[global].0, addr(2));
-        assert_eq!(slot_num(&changes[global].1), 0x0C);
+        // The mapped global indices must address the same entries in the global
+        // table. Resolved through `get` rather than indexing so an out-of-range
+        // index drops the entry and fails the comparison, instead of panicking
+        // somewhere less legible.
+        let mapped: Vec<(Address, u64)> = address_slot_indices(&changes, addr(2))
+            .into_iter()
+            .filter_map(|index| changes.get(index))
+            .map(|entry| (entry.0, slot_num(&entry.1)))
+            .collect();
+        assert_eq!(mapped, vec![(addr(2), 0x0C)]);
     }
 
     #[test]

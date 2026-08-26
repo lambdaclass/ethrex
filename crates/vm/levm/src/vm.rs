@@ -1889,6 +1889,16 @@ impl<'a> VM<'a> {
             ));
         }
 
+        // EIP-8141: only this block's era of frame encoding is admissible. Enforced
+        // here as well as at admission because the encoding a frame declares is
+        // what prices it, so a block accepting the wrong era would settle at the
+        // wrong intrinsic cost.
+        if let Err(_e) = frame_tx.validate_frame_encoding_era(self.env.config.frame_limits_active) {
+            return Err(VMError::TxValidation(
+                crate::errors::TxValidationError::InvalidFrameTransaction,
+            ));
+        }
+
         // Check nonce matches
         let sender_info = self.db.get_account(sender)?.info.clone();
         // EIP-8250 keyed-nonce validation: every selected key's current sequence
@@ -2404,7 +2414,17 @@ impl<'a> VM<'a> {
             // frames — frames belong to mutually distrusting parties, and a shared
             // pool would let one drain the state gas a later frame (a paymaster's
             // post-op, say) depends on.
-            self.frame_state_gas_left = Some(frame.limits.state);
+            //
+            // Before the pools existed, frames declared no state budget and drew
+            // on the EIP-8037 reservoir like any other transaction. Opening a
+            // zero pool for such a frame would fail its first state write, so
+            // pre-activation blocks keep the reservoir path — which is also the
+            // only way they re-execute to the state they were built with.
+            self.frame_state_gas_left = self
+                .env
+                .config
+                .frame_limits_active
+                .then_some(frame.limits.state);
 
             // EIP-7928: capture the access-list recorder before the frame runs. A
             // reverted frame's state changes are rolled back, so its recorded
@@ -3194,6 +3214,9 @@ impl<'a> VM<'a> {
         if frame_tx
             .validate_static_constraints(self.env.config.utxo_frames_active)
             .is_err()
+            || frame_tx
+                .validate_frame_encoding_era(self.env.config.frame_limits_active)
+                .is_err()
         {
             return Err(VMError::TxValidation(
                 crate::errors::TxValidationError::InvalidFrameTransaction,

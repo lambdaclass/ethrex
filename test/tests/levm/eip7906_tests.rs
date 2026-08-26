@@ -1443,7 +1443,7 @@ fn txdiff_invalid_before_hegota() {
 /// diff and must add nothing, which is the other half of the assertion.
 #[test]
 fn txdiff_live_state_reads_are_recorded_in_the_block_access_list() {
-    let probe = Address::from_low_u64_be(0x7906_BA1);
+    let probe = Address::from_low_u64_be(0x0790_6ba1);
     let slot = U256::from(7);
 
     // POST_TX assertion body: TXDIFF(param=0x01 /* slot_after */, address=probe,

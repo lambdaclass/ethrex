@@ -7,8 +7,8 @@ use crate::execution_result::ExecutionResult;
 use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_common::types::requests::Requests;
 use ethrex_common::types::{
-    AccessList, AccountUpdate, Block, BlockHeader, Fork, GenericTransaction, Receipt, Transaction,
-    Withdrawal,
+    AccessList, AccountUpdate, Block, BlockHeader, Fork, FrameEncoding, GenericTransaction,
+    Receipt, Transaction, Withdrawal,
 };
 use ethrex_common::{Address, types::fee_config::FeeConfig};
 use ethrex_crypto::Crypto;
@@ -183,6 +183,7 @@ impl Evm {
                             gas_used,
                             state_gas_used,
                             logs,
+                            encoding: frame_encoding_of(tx),
                         }
                     })
                     .collect()
@@ -386,6 +387,20 @@ impl Evm {
 ///
 /// Formula: `base_fee_per_gas * gas_spent + blob_base_fee * blob_gas_used`
 ///
+/// Which EIP-8141 revision a transaction's frames were written for.
+///
+/// Receipts inherit their transaction's revision rather than re-deriving it from
+/// the block timestamp: block validation already rejects a transaction whose
+/// frames disagree with their block's era, so the transaction is the narrower
+/// and non-duplicative source. A non-frame transaction has no frames and never
+/// produces frame receipts; the current revision is the harmless answer.
+pub fn frame_encoding_of(tx: &Transaction) -> FrameEncoding {
+    match tx {
+        Transaction::FrameTransaction(frame_tx) => frame_tx.encoding(),
+        _ => FrameEncoding::Limits,
+    }
+}
+
 /// `gas_spent` is the post-refund Σ gas_spent across all transactions (= the last
 /// receipt's `cumulative_gas_used`).  Per EIP-8079 the fee basis is post-refund:
 /// users receive EIP-3529 refunds, so only the net gas actually charged is burned.

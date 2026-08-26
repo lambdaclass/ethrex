@@ -3602,8 +3602,7 @@ mod expiry_verifier_tests {
 mod sigparam_execution_tests {
     use super::*;
     use ethrex_common::types::{
-        FRAME_RECEIPT_STATUS_FAILURE, FRAME_SIG_SCHEME_ARBITRARY, FRAME_SIG_SCHEME_SECP256K1,
-        FrameSignature,
+        FRAME_RECEIPT_STATUS_FAILURE, FRAME_SIG_SCHEME_ARBITRARY, FrameSignature,
     };
 
     /// Read slot `slot` of `addr` from the post-execution cache.

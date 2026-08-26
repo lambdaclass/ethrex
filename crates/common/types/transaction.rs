@@ -30,7 +30,7 @@ pub static GLOBAL_SIGNER_CACHE: LazyLock<Mutex<LruCache<H256, Address>>> = LazyL
     ))
 });
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
-use serde::{Serialize, ser::SerializeStruct};
+use serde::{Deserialize, Serialize, ser::SerializeStruct};
 pub use serde_impl::{
     AccessListEntry, AuthorizationTupleEntry, FrameEntry, GenericTransaction,
     GenericTransactionError,
@@ -1968,7 +1968,19 @@ impl From<FrameMode> for u8 {
 /// Decoding sets this from the bytes, which are self-describing: an RLP list
 /// prefix is `>= 0xc0`. Frames built in memory default to [`FrameEncoding::Limits`],
 /// so anything newly constructed encodes in the current form.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Default,
+    Serialize,
+    Deserialize,
+    RSerialize,
+    RDeserialize,
+    Archive,
+)]
 pub enum FrameEncoding {
     /// Pre-fork: slot 3 is a scalar `gas_limit`, and the frame has no declared
     /// state budget.
@@ -2283,6 +2295,15 @@ pub struct FrameTransaction {
 /// Intrinsic gas cost for frame transactions (EIP-8141)
 pub const FRAME_TX_INTRINSIC_COST: u64 = 12000;
 
+/// The intrinsic cost EIP-8141 charged before frames declared a state budget.
+///
+/// Repricing came in the same revision as `limits = [execution, state]`, so a
+/// frame's [`FrameEncoding`] tells which price applies: a transaction included
+/// under the old encoding settled at the old price, and re-executing it at the
+/// new one would not reproduce its block. Post-fork transactions cannot reach
+/// this constant, because a block at or after activation rejects scalar frames.
+pub const FRAME_TX_INTRINSIC_COST_PRE_LIMITS: u64 = 15000;
+
 /// EIP-8141 `TX_VALUE_COST`: charged once per value-bearing frame, for the
 /// recipient balance write and the transfer log, as EIP-2780 charges top-level
 /// transfers. Static, because `value` and `target` are transaction fields.
@@ -2591,10 +2612,30 @@ impl FrameTransaction {
             .saturating_mul(FRAME_TX_TOTAL_COST_FLOOR_PER_TOKEN)
     }
 
+    /// Which EIP-8141 revision this transaction's frames were written against.
+    ///
+    /// Read from the frames themselves rather than from a block timestamp, so
+    /// pricing and encoding can never disagree: the marker that decides how a
+    /// frame re-encodes is the marker that decides what it costs. Block-level
+    /// validation is what keeps the marker honest, by rejecting a transaction
+    /// whose era does not match the block it appears in.
+    ///
+    /// An empty frame list is treated as current-era; such a transaction is
+    /// rejected as malformed before pricing matters.
+    pub fn encoding(&self) -> FrameEncoding {
+        self.frames
+            .first()
+            .map_or(FrameEncoding::Limits, |frame| frame.encoding)
+    }
+
     /// The mandatory costs, always charged in full: the intrinsic cost, the
     /// per-frame cost, and signature verification.
     pub fn mandatory_gas(&self) -> u64 {
-        FRAME_TX_INTRINSIC_COST
+        let intrinsic = match self.encoding() {
+            FrameEncoding::Scalar => FRAME_TX_INTRINSIC_COST_PRE_LIMITS,
+            FrameEncoding::Limits => FRAME_TX_INTRINSIC_COST,
+        };
+        intrinsic
             .saturating_add((self.frames.len() as u64).saturating_mul(FRAME_TX_PER_FRAME_COST))
             .saturating_add(self.signature_verification_cost())
             .saturating_add(self.value_transfer_cost())
@@ -2603,7 +2644,13 @@ impl FrameTransaction {
     /// EIP-8141 `value_transfer_cost`: `TX_VALUE_COST` per frame that actually
     /// moves value to someone other than the sender. A zero-value frame, a frame
     /// with no target, and a self-directed frame each cost nothing.
+    ///
+    /// Introduced alongside `limits = [execution, state]`, so frames from before
+    /// that revision are not charged it — see [`Self::encoding`].
     pub fn value_transfer_cost(&self) -> u64 {
+        if self.encoding() == FrameEncoding::Scalar {
+            return 0;
+        }
         self.frames
             .iter()
             .filter(|f| !f.value.is_zero() && f.target.is_some_and(|target| target != self.sender))
@@ -2716,6 +2763,39 @@ impl FrameTransaction {
                 let bytes: [u8; FRAME_TX_EXPIRY_DATA_LENGTH] = f.data.as_ref().try_into().ok()?;
                 Some(u64::from_be_bytes(bytes))
             })
+    }
+
+    /// Reject a transaction whose frames are encoded for the other side of the
+    /// `frame_limits` activation.
+    ///
+    /// Decoding accepts both encodings unconditionally — it has no block context,
+    /// and a node must be able to read history written before the switch. This is
+    /// what makes each block's encoding unambiguous instead: before activation
+    /// only the scalar `gas_limit` form is admissible, at or after it only
+    /// `limits = [execution, state]`. Without this check a sender could pick the
+    /// cheaper intrinsic price by choosing an encoding, since
+    /// [`Self::mandatory_gas`] prices a transaction by the era its frames declare.
+    ///
+    /// `frame_limits_active` is [`ChainConfig::is_frame_limits_activated`] for the
+    /// block being validated against. Never pass a literal at a consensus site.
+    pub fn validate_frame_encoding_era(&self, frame_limits_active: bool) -> Result<(), String> {
+        let expected = if frame_limits_active {
+            FrameEncoding::Limits
+        } else {
+            FrameEncoding::Scalar
+        };
+        // Checked per frame, not via `encoding()`: a transaction mixing both
+        // encodings has no single era, and would otherwise be priced by whichever
+        // frame happened to come first.
+        for (index, frame) in self.frames.iter().enumerate() {
+            if frame.encoding != expected {
+                return Err(format!(
+                    "frame {index} uses the {:?} encoding, but this block requires {expected:?}",
+                    frame.encoding
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// Validate static constraints per EIP-8141 spec.
@@ -6429,12 +6509,20 @@ mod tests {
     }
 
     #[test]
-    fn cumulative_frame_gas_limit_equal_to_i64_max_is_accepted() {
+    fn cumulative_frame_gas_limit_equal_to_i64_max_clears_the_cumulative_bound() {
+        // The 2**63-1 cumulative bound is inclusive, so an exact total passes it.
+        // It is not accepted outright: EIP-7825 caps a transaction's execution gas
+        // far lower and rejects it next. Asserting the specific rejection is what
+        // distinguishes "cleared one bound" from "rejected by that same bound".
         let a = (i64::MAX as u64) / 2;
         let b = i64::MAX as u64 - a;
         let tx = make_frame_tx_with_gas_limits(vec![a, b]);
-        tx.validate_static_constraints(true)
-            .expect("exact i64::MAX total should be accepted");
+        let err = tx.validate_static_constraints(true).unwrap_err();
+        assert!(
+            !err.contains("cumulative"),
+            "an exact i64::MAX total is within the inclusive cumulative bound: {err}"
+        );
+        assert!(err.contains("TX_MAX_GAS_LIMIT"), "unexpected error: {err}");
     }
 
     #[test]
@@ -6858,7 +6946,13 @@ mod tests {
         // external EEST reference vectors exist yet;
         // these values are the current canonical output and must only change
         // with a deliberate, reviewed format change.
-        let tx = FrameTransaction {
+        //
+        // Locked for both frame encodings. The scalar vector is not historical
+        // trivia: it is the exact output a chain with pre-`limits` frame history
+        // must keep producing, because transaction hashes and the transactions
+        // root are derived by re-encoding. If a change breaks it, that chain can
+        // no longer serve its own history under the right identities.
+        let build = |encoding: FrameEncoding| FrameTransaction {
             chain_id: 1,
             nonce_keys: vec![U256::zero()],
             nonce_seq: 7,
@@ -6872,7 +6966,7 @@ mod tests {
                         execution: 0x5208,
                         state: 0,
                     },
-                    encoding: FrameEncoding::Limits,
+                    encoding,
                     value: U256::zero(),
                     data: Bytes::from_static(&[0x11, 0x22]),
                 },
@@ -6884,7 +6978,7 @@ mod tests {
                         execution: 0x9c40,
                         state: 0,
                     },
-                    encoding: FrameEncoding::Limits,
+                    encoding,
                     value: U256::zero(),
                     data: Bytes::new(),
                 },
@@ -6904,13 +6998,29 @@ mod tests {
             cached_canonical: OnceCell::new(),
         };
 
+        // GOLDEN_RLP (scalar): the pre-`limits` encoding, obtained from first run.
+        let scalar_tx = build(FrameEncoding::Scalar);
+        let mut scalar_buf = Vec::new();
+        scalar_tx.encode(&mut scalar_buf);
+        assert_eq!(
+            hex::encode(&scalar_buf),
+            "f8ae01c1800794000000000000000000000000000000000000abcde8ca01038082520880821122dc0280940000000000000000000000000000000000001234829c408080f85cf85a0194000000000000000000000000000000000000abcd80b8410101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101843b9aca008506fc23ac0080c0c0"
+        );
+        let (decoded, rest) = FrameTransaction::decode_unfinished(&scalar_buf).unwrap();
+        assert!(rest.is_empty());
+        assert_eq!(
+            decoded, scalar_tx,
+            "a scalar-encoded transaction must decode back to itself, marker included"
+        );
+
+        let tx = build(FrameEncoding::Limits);
         let mut buf = Vec::new();
         tx.encode(&mut buf);
         let rlp_hex = hex::encode(&buf);
         // GOLDEN_RLP: obtained from first run
         assert_eq!(
             rlp_hex,
-            "f8ae01c1800794000000000000000000000000000000000000abcde8ca01038082520880821122dc0280940000000000000000000000000000000000001234829c408080f85cf85a0194000000000000000000000000000000000000abcd80b8410101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101843b9aca008506fc23ac0080c0c0"
+            "f8b201c1800794000000000000000000000000000000000000abcdeccc010380c48252088080821122de0280940000000000000000000000000000000000001234c4829c40808080f85cf85a0194000000000000000000000000000000000000abcd80b8410101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101843b9aca008506fc23ac0080c0c0"
         );
 
         // Round-trips losslessly.
@@ -6918,11 +7028,18 @@ mod tests {
         assert!(rest.is_empty());
         assert_eq!(decoded, tx);
 
+        // GOLDEN_SIG_HASH (scalar): what a signer on the pre-`limits` encoding
+        // signed. Locked for the same reason as the scalar RLP above.
+        assert_eq!(
+            format!("{:#x}", scalar_tx.compute_sig_hash()),
+            "0x989e6ce4dc87b2afd5cfa6c780ff60f01fc3b40c77057cf872410145d69f715c",
+        );
+
         let sig_hash = tx.compute_sig_hash();
         // GOLDEN_SIG_HASH: obtained from first run
         assert_eq!(
             format!("{:#x}", sig_hash),
-            "0x989e6ce4dc87b2afd5cfa6c780ff60f01fc3b40c77057cf872410145d69f715c",
+            "0xb42101cc078751f769ad722fb0795eb59a6ed1403bec9061ecd1d6b72924de34",
         );
 
         // Elision invariant: changing empty-msg signature bytes must NOT change sig_hash.

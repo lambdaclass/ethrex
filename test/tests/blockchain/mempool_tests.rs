@@ -4722,7 +4722,7 @@ fn utxo_admission_gas_matches_the_eip_schedule() {
     // Documented ceiling: each account output carries a full new-account reserve,
     // so two fresh-account outputs already exceed the default budget even though
     // such a spend is consensus-valid. Pinned so the consequence stays visible.
-    let mut two_account_outs = spend.clone();
+    let mut two_account_outs = spend;
     two_account_outs.utxo_outs.clear();
     two_account_outs.account_outs = vec![
         SpendOutput {

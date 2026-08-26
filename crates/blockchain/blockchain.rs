@@ -3894,6 +3894,14 @@ impl Blockchain {
                 .validate_static_constraints(utxo_frames_active)
                 .map_err(MempoolError::InvalidFrameTransaction)?;
 
+            // EIP-8141: admit only the frame encoding the next block will accept,
+            // resolved from the same predicate execution uses. A sender whose
+            // transaction sits in the pool across the activation boundary is told
+            // now rather than having it silently become unincludable.
+            frame_tx
+                .validate_frame_encoding_era(config.is_frame_limits_activated(header.timestamp))
+                .map_err(MempoolError::InvalidFrameTransaction)?;
+
             // Frame `data` size is bounded by the wire-size cap below
             // (MAX_TX_SIZE over encode_canonical_len), which covers the
             // frames' payloads since they are part of the canonical encoding.
