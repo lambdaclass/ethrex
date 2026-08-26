@@ -3816,7 +3816,15 @@ pub fn calculate_gas_price_for_tx(
         ));
     }
 
-    Ok(min(max_priority_fee + fee_per_gas, max_fee_per_gas))
+    // Saturating, not checked: a frame transaction's priority fee is only bounded
+    // by 2**256 (EIP-8141 static constraints), so the sum can leave `U256` where
+    // every other type stays under `u64::MAX`. `U256`'s `Add` panics on overflow.
+    // The result is identical either way -- a sum past `U256::MAX` exceeds
+    // `max_fee_per_gas`, so `min` clamps to the cap exactly as it would have.
+    Ok(min(
+        max_priority_fee.saturating_add(U256::from(fee_per_gas)),
+        max_fee_per_gas,
+    ))
 }
 
 /// When basefee tracking is disabled  (ie. env.disable_base_fee = true; env.disable_block_gas_limit = true;)
