@@ -31,7 +31,23 @@ bytes, which means a per-frame format discriminator living permanently on the co
 hash path — and `transactions_root` is a trie over the same encoding, so it inherits the
 problem.
 
-## The three options
+## Decision: ship it as a fork
+
+The options below were written before that was on the table. **The chosen path is a fork** —
+gate the new encoding on a new activation timestamp, so pre-fork blocks keep the old encoding
+and their hashes, and post-fork blocks use the new one. It preserves the chain and its
+history, needs no exception to the never-re-genesis rule (new-fork decoupling is one of the
+techniques that rule allows, and EIP-8312 shipped exactly this way), and is cheap here
+because this is an ethrex-only devnet with no cross-client coordination.
+
+It is not option C. C carried both formats forever with no way to tell which era a block
+belonged to; a fork makes the era explicit and bounded, which is how every client already
+handles a wire change. The design is in the frame-limits fork plan.
+
+The three options below are kept for the reasoning behind them, and because the measurements
+in the previous section are what ruled out the naive paths.
+
+## The three options (superseded)
 
 ### A. Promote (recommended)
 
@@ -76,9 +92,9 @@ dead format carried in consensus code indefinitely, for a devnet exercising a dr
    match, then re-validate a historical block's `transactions_root`.
 4. Only then perform the ordinary in-place binary swap.
 
-## Recommendation
+## Recommendation (superseded)
 
-**A.** It satisfies the goal, costs nothing irreversible, leaves the old chain readable for
-anyone mid-investigation, and needs no exception to a standing rule. B is defensible if
-keeping the endpoints and chain id matters more than the history. C buys history at a price
-that outlives the devnet, and should not be paid for a draft-EIP testbed.
+A was the recommendation while the choice was between these three: it cost nothing
+irreversible and needed no exception to a standing rule. The fork approach above is better
+than all of them — it keeps the chain, keeps the history, keeps the endpoints, and bounds the
+dual-format handling to an explicit era boundary rather than carrying it indefinitely.
