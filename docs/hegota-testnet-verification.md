@@ -215,7 +215,17 @@ believe without testing and wrong to:
   `inclusionListSatisfied: false`. A client that excused frame transactions wholesale would
   answer `true` and pass every other check.
 
-One check remains manual: an *ineligible* frame transaction being **excused** rather than
-reported unsatisfied (item 9's third clause). It needs a transaction that is admissible to
-the mempool yet outside EIP-8369 Profile 2's budget, which the script has no way to build
-without filling an inclusion list to its limit first.
+One clause of item 9 is not automated: an *ineligible* frame transaction being **excused**
+rather than reported unsatisfied. It is covered by unit tests — see
+`an_omitted_tx_from_a_contract_sender_is_excused` and the Profile 2 suite in
+`test/tests/blockchain/` — but not on a live chain, because the fixture is awkward to build:
+`MAX_VERIFY_GAS_PER_TX` (1 048 576) is larger than any mempool-admissible prefix
+(`--mempool.max-verify-gas`, 500 000 here), so no single admitted transaction is ineligible
+on budget alone. Demonstrating it needs a transaction that becomes ineligible *after*
+admission — a contract payer drained by a sibling transaction on another key while the first
+is still pending — which is a race, not a check.
+
+Note which direction that leaves untested. A client that wrongly **excused** frame
+transactions would be caught by check 14's `newPayloadV6` replay; the missing clause is a
+client that is wrongly **strict**, whose failure mode is refusing to attest to good blocks
+rather than splitting consensus.
