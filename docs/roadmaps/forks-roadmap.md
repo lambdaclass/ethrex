@@ -19,19 +19,24 @@
 **glamsterdam-devnet-8**
 
 - Spec baseline: [`devnets/glamsterdam/8`](https://github.com/ethereum/execution-specs/tree/devnets/glamsterdam/8)
-- Fixtures: [`tests-glamsterdam-devnet@v8.1.1`](https://github.com/ethereum/execution-specs/releases/tag/tests-glamsterdam-devnet@v8.1.1) (`.github/config/hive/amsterdam.yaml`, `tooling/ef_tests/.fixtures_url_amsterdam` — keep both on the same release)
-- EELS commit: `32f597f7e56e3843198a83c7cf437a0b49aa6c0e` (the v8.1.1 tag, also the tip of `devnets/glamsterdam/8`)
-- Status: 🟢 aligned — blockchain, state and engine ef-tests all green on the v8.1.1 bundle
+- Fixtures: [`tests-glamsterdam-devnet@v8.1.2`](https://github.com/ethereum/execution-specs/releases/tag/tests-glamsterdam-devnet@v8.1.2) (`.github/config/hive/amsterdam.yaml`, `tooling/ef_tests/.fixtures_url_amsterdam` — keep both on the same release)
+- EELS commit: `50a7f6ecaf4963dc0c2b46b4ac55462a2efee314` (the v8.1.2 tag, also the tip of `devnets/glamsterdam/8`)
+- Status: 🟢 aligned — blockchain, state and engine ef-tests all green on the v8.1.2 bundle
 - Tracking: [#6583]
 
-Upstream expects **at least two follow-up test releases** on this devnet (v8.1.0 and
-v8.1.1 have shipped) carrying additional coverage rather than new semantics. v8.1.1 was
-announced as coverage-only, and that holds for the numbers — the amsterdam fork diff is a
-`Uint` -> `ExecutionGas` type-wrapper refactor — with one real behaviour change:
-`calculate_excess_blob_gas` now reads the blob fields from a `PreviousHeader` too, so
-accumulated excess blob gas survives a fork transition instead of resetting to zero
-([specs#3352]). ethrex already matched, since `calc_excess_blob_gas` reads the parent
-unconditionally. On each drop: bump
+Upstream expects **at least two follow-up test releases** on this devnet (v8.1.0, v8.1.1 and
+v8.1.2 have shipped) carrying additional coverage rather than new semantics. v8.1.2 is
+announced as spec-equal to v8.1.1 apart from the EIP-7610 removals, and the diff agrees: no
+repricing, and the only behavioural change under `src/ethereum/forks/amsterdam` is EIP-7610
+dropping out ([specs#3417]) — the one remaining hunk there just deletes a stale TODO comment
+from `get_last_256_block_hashes`. `account_deployable` no longer rejects a target with
+storage, and `generic_create` correspondingly stops refunding the `NEW_ACCOUNT` state gas on
+a collision, because a collision now implies the target has code or a nonce and was therefore
+never charged. ethrex still applies the EIP-7610 storage check (`LevmAccount::has_storage`) —
+see the EIP table below — but its state-gas side already agreed, so the whole bundle passes
+unchanged. The devnet-8 baseline also still carries v8.1.1's one behaviour change, excess blob
+gas surviving a fork transition instead of resetting ([specs#3352]), which ethrex already
+matched. On each drop: bump
 `tooling/ef_tests/.fixtures_url_amsterdam` and `.github/config/hive/amsterdam.yaml`
 (`fixtures` + `eels_commit`), then re-run the three ef-test suites and hive
 `eels/consume-engine` Amsterdam.
@@ -67,7 +72,7 @@ The devnet-8 scope is 16 EIPs; ethrex implements all of them.
 | **7976** | Increase Calldata Floor Cost | ✅ | |
 | **7981** | Increase Access List Cost | ✅ | |
 | **7954** | Increase Max Contract Size (24→32 KiB) | ✅ | |
-| **7610** | Revert Creation on Non-empty Storage | ✅ (`LevmAccount::has_storage`) | |
+| **7610** | Revert Creation on Non-empty Storage | ✅ (`LevmAccount::has_storage`) — but DFI'd for Glamsterdam; upstream dropped the check and its fixtures in v8.1.2 ([specs#3417]), leaving the storage-only collision undefined in protocol. ethrex keeps it; dropping it is a mainnet-affecting decision, not a fixture bump. | |
 | **8246** | Remove SELFDESTRUCT Balance Burn | ✅ | |
 | **8282** | Builder Execution Requests | ✅ | |
 | **8070** | eth/72 Sparse Blobpool | ✅ — but see "Next up": no fixture coverage | |
@@ -211,6 +216,7 @@ All Core Devs — Testing meetings on **Mondays**. Agendas/notes at [ethereum/pm
 [#9619]: https://github.com/NethermindEth/nethermind/pull/9619
 [hive#1365]: https://github.com/ethereum/hive/pull/1365
 [specs#3352]: https://github.com/ethereum/execution-specs/pull/3352
+[specs#3417]: https://github.com/ethereum/execution-specs/pull/3417
 
 [#6212]: https://github.com/lambdaclass/ethrex/issues/6212
 [#6361]: https://github.com/lambdaclass/ethrex/pull/6361

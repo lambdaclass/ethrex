@@ -1,7 +1,7 @@
 # Amsterdam (BAL) hive test configuration
-# Pinned to tests-glamsterdam-devnet@v8.1.1 (execution-specs `devnets/glamsterdam/8`).
+# Pinned to tests-glamsterdam-devnet@v8.1.2 (execution-specs `devnets/glamsterdam/8`).
 # Keep this in lock-step with `tooling/ef_tests/.fixtures_url_amsterdam`: the two pins
 # grade the same client, so a release that only one of them follows fails every fixture
 # the other release changed.
-fixtures: https://github.com/ethereum/execution-specs/releases/download/tests-glamsterdam-devnet%40v8.1.1/fixtures_glamsterdam-devnet.tar.gz
-eels_commit: 32f597f7e56e3843198a83c7cf437a0b49aa6c0e
+fixtures: https://github.com/ethereum/execution-specs/releases/download/tests-glamsterdam-devnet%40v8.1.2/fixtures_glamsterdam-devnet.tar.gz
+eels_commit: 50a7f6ecaf4963dc0c2b46b4ac55462a2efee314
