@@ -2305,25 +2305,27 @@ impl<'a> VM<'a> {
             // CallFrame receives the resolved `code_address`. Mirrors the pattern used at
             // top-level tx entry in default_hook::set_bytecode_and_code_address.
             //
-            // access_cost is intentionally discarded: this frame entry is analogous to a
-            // top-level tx entry (a call from 0xaa / tx.sender, not a CALL opcode), and
-            // default_hook.rs drops the same cost there. EIP-8141 §Execution is silent on
-            // billing the 7702 access cost for `resolved_target`, so we keep frame-entry
-            // behavior consistent with tx-entry behavior.
-            let (is_delegation_7702, _access_cost, code_address, bytecode) =
-                crate::utils::eip7702_get_code(
-                    self.db,
-                    &mut self.substate,
-                    target,
-                    self.env.config.fork,
-                )?;
-
-            // Mirror default_hook::set_bytecode_and_code_address: when delegation was
-            // followed, record the delegatee (code_address) as touched in BAL so EIP-7928
-            // reconstructors see the cross-address read.
-            if is_delegation_7702 && let Some(recorder) = self.db.bal_recorder.as_mut() {
-                recorder.record_touched_address(code_address);
-            }
+            // PEEK first, resolve later. Whether the target is delegated decides which
+            // dispatch branch runs, but *following* the delegation warms the delegatee and
+            // records it as touched in the EIP-7928 access list — effects a frame that
+            // cannot afford its entry access charge must not leave behind. They are not
+            // recoverable afterwards either: the frame's BAL checkpoint is taken below,
+            // and an unaffordable frame forfeits its whole gas limit, so the receipts
+            // cannot contradict a stray touch and the access list is the only place it
+            // shows. `eip7702_peek_delegation` answers the question without the effects;
+            // `eip7702_get_code` runs once the charge is paid.
+            //
+            // The delegatee's own access cost stays discarded, as at top-level tx entry
+            // (`default_hook::set_bytecode_and_code_address`): EIP-8141 v2 charges "the
+            // resolved target's warm or cold account access", and `resolved_target` is the
+            // delegator.
+            let (target_code, delegation) = crate::utils::eip7702_peek_delegation(
+                self.db,
+                &self.substate,
+                target,
+                self.env.config.fork,
+            )?;
+            let is_delegation_7702 = delegation.is_some();
 
             // Log count of the scope this frame's backup will be committed into.
             // The CallFrame branch below relies on `run_execution` having already
@@ -2355,7 +2357,8 @@ impl<'a> VM<'a> {
                 Some(remaining) => remaining,
                 None => {
                     // The declared execution budget cannot even cover entry, so the frame
-                    // halts exceptionally and consumes what it declared.
+                    // halts exceptionally and consumes what it declared. Nothing was
+                    // resolved or recorded for it: the delegation was only peeked at.
                     self.substate.revert_backup();
                     self.restore_cache_state()?;
                     let ctx = self.frame_tx_context.as_mut().ok_or(VMError::Internal(
@@ -2370,6 +2373,21 @@ impl<'a> VM<'a> {
                     total_gas_used = total_gas_used.saturating_add(frame.gas_limit);
                     continue;
                 }
+            };
+
+            // The charge is paid, so the delegation may now be followed: this warms the
+            // delegatee and files it in the block access list, which EIP-7928
+            // reconstructors need to see the cross-address read. For an undelegated target
+            // this is exactly the code the peek already returned.
+            let (code_address, bytecode) = match delegation {
+                Some((delegatee, _access_cost)) => {
+                    self.substate.add_accessed_address(delegatee);
+                    if let Some(recorder) = self.db.bal_recorder.as_mut() {
+                        recorder.record_touched_address(delegatee);
+                    }
+                    (delegatee, self.db.get_account_code(delegatee)?.clone())
+                }
+                None => (target, target_code),
             };
 
             // EIP-8141 top-level value transfer: the outer

@@ -266,6 +266,32 @@ Two changes a joiner will see rather than cause: receipts report `stateGasUsed` 
 executing frame's remaining state budget — the read a paymaster needs to check that a
 frame it is about to sponsor can afford what it intends to do.
 
+### 6.2 Cross-checked against the other v2 implementation line
+
+`frames-devnet-0` (131 commits, not merged anywhere) is a second implementation of the same
+rule set, developed against the frame-transaction fixtures added to execution-specs#3047.
+Diffing its frame-entry work against this branch's found one bug here and confirmed one
+divergence that is only apparent:
+
+- **Found:** the EIP-7702 delegate of a frame's target was resolved *before* the frame was
+  known to afford its entry access charge, so an unaffordable frame still warmed the
+  delegatee and filed it as touched in the EIP-7928 access list. Nothing in the receipts can
+  contradict that — an unaffordable frame forfeits its whole gas limit either way — so the
+  access list is the only place it shows, and a builder that files a stray touch writes a
+  list its own block contradicts. Fixed by peeking at the delegation to pick the dispatch
+  branch and following it only once the charge is paid, with
+  `an_unaffordable_frame_files_no_delegatee_in_the_block_access_list` covering both halves.
+- **Not a divergence:** that branch runs the default code only for a *codeless VERIFY*
+  target and sends every other frame through the EVM. EIP-8141 v2 orders the branches
+  differently — precompile first, then empty code hash for any mode, then EIP-7702 — so on
+  v2 the observable difference between the two readings is precompiles alone, which this
+  branch dispatches (§6.1). Its account-creation charge likewise spills into execution gas,
+  which is correct for v1's derived split and wrong for v2's declared one.
+
+Its remaining value is the fixture harness: it runs the released frame-transaction suite (44
+frame fixtures, 14 908 blockchain fixtures) which this branch does not. Worth taking on its
+own, separately from the rule set.
+
 ## 7. The glamsterdam-devnet-8 base reprices Amsterdam
 
 The testnet is now built on `origin/glamsterdam-devnet-8`, whose commit `fe6b15abb`
@@ -353,28 +379,31 @@ Still open, from the PR review and not yet addressed upstream or here:
 | PR's broader test matrix (calldata 0/63/64/65, value, `CALL`/top-level/`STATICCALL`/`DELEGATECALL`/`CALLCODE`/7702, cold/warm/overwrite, enclosing revert, repeated same-slot writes, slots `0`/`1`/`8191`/`8192`/`8195`/`2**64-1`, reference ages `0`/`1`/`8191`/`8192`) | yes | fill the gaps against `test/tests/levm/eip8272_tests.rs` | Edgar |
 | `RECENT_ROOT_CODE` is still an unmerged PR | yes — a byte change moves the code hash and the write's gas, a fork for a running chain | track #12131 to merge | Edgar |
 
-## 6. Open upstream PRs (Task 6.3)
+## 6. Upstream PRs this rule set depends on (Task 6.3)
 
-All confirmed **open** on 2026-08-10 via `pending_prs_for_eip`.
+Re-audited **2026-08-26**. Six of the eleven have merged since the 2026-08-10 pass, and
+every merged one is implemented here — several were adopted ahead of merge, which is why
+this table exists: an early adoption is a divergence until the text lands, and then it
+silently stops being one.
 
-| Upstream PR | Subject | ethrex | Ships meanwhile |
+| Upstream PR | Subject | State | ethrex |
 | --- | --- | --- | --- |
-| EIPs#12066 | ban `SLOTNUM` in validation prefix | `#7108`, transplanted | the ban (see §3.6) |
-| EIPs#12041 | canonical paymaster reference bytecode | implemented ahead of merge | the pinned 355-byte runtime's hash; see §8 — **Task 6.4 closed** |
-| EIPs#12039 | keyed mempool concurrency | none | `keyed_concurrency_verdict` |
-| EIPs#12109 | atomic-batch approval scope | none | `docs/eip-8250.md` divergence #4 |
-| EIPs#12091 | block inclusion gating and payer solvency | none | — |
-| EIPs#12113 | initial `accessed_addresses` set | none | **Task 6.5, open** |
-| EIPs#12026 | floor repricing, signature validation, `frame.value` gas | none | **Task 6.5, open** |
-| EIPs#12061 | frame receipt has no transaction-level status | none | — |
-| EIPs#12110 | VOPS profiles for FOCIL eligibility (EIP-8369 itself) | implemented ahead of merge | §3.2–3.5 |
-| EIPs#12131 | specify `RECENT_ROOT_CODE` | `#7120` | §5 — bytes verified identical |
+| EIPs#12066 | ban `SLOTNUM` in validation prefix | **merged 2026-08-11** | conformant; adopted ahead in `#7108` (§3.6) |
+| EIPs#12109 | atomic-batch approval scope | **merged 2026-08-14** | conformant — `APPROVE_SCOPE_MASK` asserted statically |
+| EIPs#12026 | floor repricing, signature validation, `frame.value` gas | **merged 2026-08-14** | conformant — uniform floor tokens, no precompile in the BAL (§9.2), and the value-frame account-creation charge (§9.2) |
+| EIPs#12061 | frame receipt has no transaction-level status | **merged 2026-08-14** | conformant — the receipt is `[tx_type, cumulative_gas_used, payer, [frame_receipt…]]` with no top-level `succeeded` |
+| EIPs#12062 | explicit second dimension for state gas on frames | **merged 2026-08-13** | implemented — this is v2's two-pool model (§6, §6.1). It was a *draft to watch* at the last pass |
+| EIPs#12113 | initial `accessed_addresses` set | **merged 2026-08-17** | conformant — five clauses, one test each (§9.1) |
+| EIPs#12091 | block inclusion gating and payer solvency | **closed unmerged** | nothing owed; drop from the watch list |
+| EIPs#12041 | canonical paymaster reference bytecode | open | implemented ahead of merge; the pinned 355-byte runtime's hash (§8 — Task 6.4 closed) |
+| EIPs#12039 | keyed mempool concurrency | open | ships `keyed_concurrency_verdict`; devnet-verified for a contract sender |
+| EIPs#12110 | VOPS profiles for FOCIL eligibility (EIP-8369 itself) | open | implemented ahead of merge, pinned at `33724bd7da` (§3.2–3.5, §8) |
+| EIPs#12131 | specify `RECENT_ROOT_CODE` | open | `#7120`; bytes verified identical (§5) — a byte change would move the code hash and the write's gas, so this one is still a fork risk for a running chain |
 
-Not in the plan's list, found this pass:
+Editorial or idle, tracked so a later pass need not rediscover them:
 
 | Upstream PR | Subject | Bearing |
 | --- | --- | --- |
-| EIPs#12062 (draft) | explicit second dimension for state gas on frames | would change frame gas accounting; watch |
 | EIPs#12121 | link first reference to each cited proposal | editorial |
 | EIPs#11681, #11555, #11580, #11482 | guarantors, payer-approves-first, precompiles in VERIFY frames | long-idle drafts, no ethrex surface |
 

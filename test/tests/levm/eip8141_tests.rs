@@ -779,6 +779,111 @@ fn sender_frame_transfers_value_to_eoa() {
     assert_eq!(balance_of(&db, eoa), value, "value not delivered to EOA");
 }
 
+/// A frame that cannot afford its entry access charge must leave NOTHING behind — in
+/// particular not the delegatee of an EIP-7702 target in the EIP-7928 block access list.
+///
+/// Following a delegation is what warms the delegatee and files it as touched, so it has to
+/// happen after the charge is paid, not while deciding which dispatch branch to take. The
+/// receipts cannot expose a mistake here: an unaffordable frame forfeits its whole gas
+/// limit either way, so the access list is the only place a stray touch shows, and a
+/// builder that files one writes a list its own block contradicts.
+#[test]
+fn an_unaffordable_frame_files_no_delegatee_in_the_block_access_list() {
+    let delegatee = Address::from_low_u64_be(0x7702_D1);
+    let delegator = Address::from_low_u64_be(0x7702_D0);
+    // `0xef0100 || delegatee`, the EIP-7702 designation.
+    let mut indicator = vec![0xEF, 0x01, 0x00];
+    indicator.extend_from_slice(delegatee.as_bytes());
+
+    let accounts = [
+        (
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        ),
+        (delegator, U256::from(1u64), 0, Bytes::from(indicator)),
+        // The delegatee holds real code, so following the delegation is observable.
+        (delegatee, U256::zero(), 0, Bytes::from(vec![0x00])),
+    ];
+
+    let touched_delegatee = |gas_limit: u64| {
+        let tx = frame_tx_with_frames(vec![
+            verify_frame(FUNDED_SENDER),
+            Frame {
+                mode: u8::from(FrameMode::Default),
+                flags: 0,
+                target: Some(delegator),
+                gas_limit,
+                state_limit: 0,
+                value: U256::zero(),
+                data: Bytes::new(),
+            },
+        ]);
+        let mut db = seeded_db(&accounts);
+        db.enable_bal_recording();
+        let env = frame_tx_env(&tx);
+        let transaction = Transaction::FrameTransaction(tx);
+        let report = {
+            let mut vm = VM::new(
+                env,
+                &mut db,
+                &transaction,
+                LevmCallTracer::disabled(),
+                VMType::L1,
+                &NativeCrypto,
+                None,
+            )
+            .expect("VM::new should succeed for a frame tx");
+            vm.execute()
+                .expect("the transaction stays valid; only the frame's fate differs")
+        };
+        let status = report
+            .frame_results
+            .expect("per-frame results")
+            .get(1)
+            .expect("the delegated frame has a receipt")
+            .status;
+        let bal = db
+            .bal_recorder
+            .take()
+            .expect("BAL recording was enabled")
+            .build();
+        let touched = bal
+            .accounts()
+            .iter()
+            .any(|account| account.address == delegatee);
+        (status, touched)
+    };
+
+    let cold =
+        ethrex_levm::gas_cost::cold_account_access_cost(ethrex_common::types::Fork::Amsterdam);
+    let (status, touched) = touched_delegatee(cold - 1);
+    assert_eq!(
+        status,
+        ethrex_common::types::FRAME_RECEIPT_STATUS_FAILURE,
+        "a frame below the entry access charge must halt"
+    );
+    assert!(
+        !touched,
+        "a frame that never paid its entry charge must not file its target's delegatee in \
+         the block access list"
+    );
+
+    // The control: once the frame can pay, following the delegation is exactly what should
+    // record the delegatee, so the check above cannot pass by never recording at all.
+    let (status, touched) = touched_delegatee(cold + 50_000);
+    assert_eq!(
+        status,
+        ethrex_common::types::FRAME_RECEIPT_STATUS_SUCCESS,
+        "a funded frame targeting a delegated account must run"
+    );
+    assert!(
+        touched,
+        "following a delegation must file the delegatee as touched (EIP-7928)"
+    );
+}
+
 /// A transaction whose data floor exceeds what it declared for execution is charged the
 /// floor, not the declaration. `max_gas` reserves the floor rather than rejecting the
 /// transaction, and settlement then charges it — otherwise a frame transaction could carry
