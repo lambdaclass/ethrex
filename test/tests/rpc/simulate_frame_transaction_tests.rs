@@ -1,13 +1,15 @@
 use std::{fs::File, io::BufReader, path::PathBuf};
 
 use ethrex_common::types::{
-    APPROVE_EXECUTION_AND_PAYMENT, EIP1559Transaction, FRAME_SIG_SCHEME_SECP256K1, Frame,
-    FrameEncoding, FrameLimits, FrameMode, FrameSignature, FrameTransaction, Transaction,
+    APPROVE_EXECUTION_AND_PAYMENT, EIP1559Transaction, FRAME_RECEIPT_STATUS_SUCCESS,
+    FRAME_SIG_SCHEME_SECP256K1, Frame, FrameEncoding, FrameLimits, FrameMode, FrameReceipt,
+    FrameSignature, FrameTransaction, Transaction,
 };
 use ethrex_common::{Address, U256};
 use ethrex_rpc::ethrex::SimulateFrameTransactionRequest;
 use ethrex_rpc::rpc::{RpcApiContext, RpcHandler};
 use ethrex_rpc::test_utils::default_context_with_storage;
+use ethrex_rpc::types::receipt::RpcFrameReceipt;
 use ethrex_rpc::utils::RpcErr;
 use ethrex_storage::{EngineType, Store};
 use serde_json::json;
@@ -184,5 +186,39 @@ async fn simulate_reports_max_cost_even_when_a_gate_rejects() {
             .as_str()
             .is_some_and(|c| c.starts_with("0x")),
         "maxCost must be reported on every path"
+    );
+}
+
+/// Both per-frame gas dimensions must reach JSON-RPC.
+///
+/// EIP-8141 made `gas_used` two-dimensional, and the two pools never mix. A
+/// frame that only moves value does no EVM work, so its execution figure is
+/// zero and the state figure is the whole of its cost — a receipt reporting
+/// only `gasUsed` shows `0x0` and reads as "this frame was free". The consensus
+/// receipt carried `state_gas_used` while both RPC views dropped it, which is
+/// exactly the shape of bug that survives because the number it hides is
+/// usually small.
+#[test]
+fn rpc_frame_receipt_reports_both_gas_dimensions() {
+    let receipt = FrameReceipt {
+        status: FRAME_RECEIPT_STATUS_SUCCESS,
+        gas_used: 0,
+        state_gas_used: 183_600,
+        logs: vec![],
+        encoding: FrameEncoding::Limits,
+    };
+    let rpc: RpcFrameReceipt = receipt.into();
+    let json = serde_json::to_value(&rpc).expect("must serialize");
+
+    assert_eq!(
+        json.get("stateGasUsed").and_then(|v| v.as_str()),
+        Some("0x2cd30"),
+        "the state dimension must be present and hex-encoded: {json}"
+    );
+    assert_eq!(
+        json.get("gasUsed").and_then(|v| v.as_str()),
+        Some("0x0"),
+        "the execution dimension is genuinely zero here, which is why the \
+         state figure is the only one that describes this frame"
     );
 }

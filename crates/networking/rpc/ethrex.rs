@@ -86,8 +86,13 @@ struct SimulateFrameTransactionResult {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct FrameExecResult {
-    /// Gas used by this frame, as `0x`-hex.
+    /// EIP-8141 `gas_used.execution` for this frame, as `0x`-hex.
     gas_used: String,
+    /// EIP-8141 `gas_used.state` for this frame, as `0x`-hex. A frame that only
+    /// moves value does no EVM work, so `gas_used` is zero and this carries its
+    /// entire cost; a simulation that reported only the former would tell a
+    /// sender the frame was free.
+    state_gas_used: String,
     /// Whether this frame completed successfully (did not revert/halt/skip).
     succeeded: bool,
 }
@@ -374,6 +379,7 @@ impl SimulateFrameTransactionRequest {
                         .into_iter()
                         .map(|frame| FrameExecResult {
                             gas_used: format!("0x{:x}", frame.gas_used),
+                            state_gas_used: format!("0x{:x}", frame.state_gas_used),
                             succeeded: frame.status == FRAME_RECEIPT_STATUS_SUCCESS,
                         })
                         .collect()

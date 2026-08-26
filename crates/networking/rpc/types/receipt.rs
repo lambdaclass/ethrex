@@ -37,8 +37,16 @@ pub struct RpcFrameReceipt {
     /// (atomic-batch failure). Serialized as a hex-encoded byte.
     #[serde(with = "serde_utils::u8::hex_str")]
     pub status: u8,
+    /// EIP-8141 `gas_used.execution`: the execution gas this frame drew from
+    /// its own `limits.execution` budget.
     #[serde(with = "serde_utils::u64::hex_str")]
     pub gas_used: u64,
+    /// EIP-8141 `gas_used.state`: the EIP-8037 state gas this frame drew from
+    /// its own `limits.state` budget. Reported separately because the two pools
+    /// never mix — a frame that only moves value does no EVM work, so its
+    /// execution figure is zero and this is the only number that describes it.
+    #[serde(with = "serde_utils::u64::hex_str")]
+    pub state_gas_used: u64,
     pub logs: Vec<RpcLogInfo>,
 }
 
@@ -47,6 +55,7 @@ impl From<FrameReceipt> for RpcFrameReceipt {
         Self {
             status: fr.status,
             gas_used: fr.gas_used,
+            state_gas_used: fr.state_gas_used,
             logs: fr.logs.into_iter().map(RpcLogInfo::from).collect(),
         }
     }
