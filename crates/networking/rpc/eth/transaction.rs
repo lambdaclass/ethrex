@@ -15,7 +15,6 @@ use ethrex_common::{
     types::{AccessListEntry, BlockHash, BlockHeader, BlockNumber, GenericTransaction, TxKind},
 };
 
-use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::Store;
 
 use ethrex_vm::{ExecutionResult, backends::levm::get_max_allowed_gas_limit};
@@ -407,7 +406,15 @@ impl RpcHandler for GetRawTransaction {
             Some(tx) => tx,
             _ => return Ok(Value::Null),
         };
-        serde_json::to_value(format!("0x{}", &hex::encode(tx.encode_to_vec())))
+        // Canonical encoding, not the network one: `debug_getRawTransaction` returns the
+        // bytes as they appear in the block, so `0x06f84f…` for a typed transaction rather
+        // than an RLP string wrapping them. `encode_to_vec` produces the network form,
+        // whose length prefix makes the result unusable where the raw bytes are expected —
+        // `eth_sendRawTransaction`, and an engine payload's `transactions` list, both
+        // reject it with an RLP `UnexpectedString`.
+        let mut canonical = Vec::new();
+        tx.encode_canonical(&mut canonical);
+        serde_json::to_value(format!("0x{}", &hex::encode(canonical)))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }

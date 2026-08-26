@@ -90,7 +90,16 @@ def addr(a) -> bytes:
 
 
 def cast_cmd(*args) -> str:
-    return subprocess.run([CAST, *args], capture_output=True, text=True, check=True).stdout.strip()
+    """Run `cast`, raising with its stderr attached.
+
+    `check=True` alone raises a `CalledProcessError` whose message is the argv and an exit
+    code, which for a usage error or a rejected transaction says nothing about the cause.
+    """
+    done = subprocess.run([CAST, *args], capture_output=True, text=True)
+    if done.returncode != 0:
+        raise RuntimeError(f"cast {' '.join(args[:2])} failed: "
+                           f"{(done.stderr or done.stdout).strip()[:200]}")
+    return done.stdout.strip()
 
 
 def rpc(url: str, method: str, params, auth: bool = False):
@@ -118,18 +127,172 @@ def frame(mode: int, flags: int, target, execution: int, state: int, value: int,
     return rl([ri(mode), ri(flags), target_field, limits, ri(value), rb(data)])
 
 
-def build_frame_tx(chain_id, sender, key, seq, frames, priority, max_fee, sender_key):
-    """v2 envelope; fees are one nested list and the signature covers the whole thing."""
-    def envelope(signature: bytes) -> bytes:
-        entry = rl([ri(1), rb(addr(sender)), rb(b""), rb(signature)])
+def engine_new_payload_v6(block, inclusion_list) -> dict:
+    """Replay a mined block through `engine_newPayloadV6` against `inclusion_list`.
+
+    The block is rebuilt as an engine payload from its RPC form plus `debug_getRawTransaction`
+    for each transaction and `debug_getRawBlockAccessList` for its EIP-7928 list — the RPC
+    block carries decoded transactions, and the payload needs their canonical bytes.
+
+    Replaying a block the node already has is not a short cut past the check: ethrex
+    evaluates `inclusionListSatisfied` for every payload that comes back VALID, against the
+    list supplied with that call, so an already-known block still answers honestly about a
+    list it was never built for.
+    """
+    raws = [rpc(RPC, "debug_getRawTransaction", [h]) for h in block["transactions"]]
+    payload = {
+        "parentHash": block["parentHash"],
+        "feeRecipient": block["miner"],
+        "stateRoot": block["stateRoot"],
+        "receiptsRoot": block["receiptsRoot"],
+        "logsBloom": block["logsBloom"],
+        "prevRandao": block["mixHash"],
+        "blockNumber": block["number"],
+        "gasLimit": block["gasLimit"],
+        "gasUsed": block["gasUsed"],
+        "timestamp": block["timestamp"],
+        "extraData": block["extraData"],
+        "baseFeePerGas": block["baseFeePerGas"],
+        "blockHash": block["hash"],
+        "transactions": raws,
+        "withdrawals": block.get("withdrawals") or [],
+        "blobGasUsed": block.get("blobGasUsed", "0x0"),
+        "excessBlobGas": block.get("excessBlobGas", "0x0"),
+    }
+    for rpc_field, payload_field in [("slotNumber", "slotNumber"), ("burnedFees", "burnedFees")]:
+        if rpc_field in block:
+            payload[payload_field] = block[rpc_field]
+    bal = rpc(RPC, "debug_getRawBlockAccessList", [block["hash"]])
+    if isinstance(bal, str):
+        payload["blockAccessList"] = bal
+    return rpc(AUTH, "engine_newPayloadV6",
+               [payload, [], block.get("parentBeaconBlockRoot"), [], list(inclusion_list)],
+               auth=True)
+
+
+def drain_pool(what: str) -> None:
+    """Block until the mempool is empty.
+
+    Sections that send from the same EOA have to start from a clean pool. A pending frame
+    transaction occupies the sender's key-0 sequence, so a following `cast send` collides
+    with it as an underpriced replacement, and the keyed-admission check would see the
+    EOA-concurrency denial instead of the answer it is asking for. Both failures look like
+    the feature being broken when they are only two transactions racing.
+    """
+    for _ in range(60):
+        status = rpc(RPC, "txpool_status", [])
+        if int(status["pending"], 16) + int(status["queued"], 16) == 0:
+            return
+        time.sleep(2)
+    print(f"  WARN  pool still not empty before {what}; results below may be a race")
+
+
+def recent_root_reference(source_id: bytes, slot: int, root: bytes) -> bytes:
+    """EIP-8272 reference: [source_id, slot, root]."""
+    return rl([rb(source_id), ri(slot), rb(root)])
+
+
+def build_frame_tx(chain_id, sender, key, seq, frames, priority, max_fee, sender_key,
+                   references=(), sign=True):
+    """v2 envelope; fees are one nested list and the signature covers the whole thing.
+
+    `sign=False` builds a zero-signature envelope, which is what a contract sender uses:
+    its own code decides whether to `APPROVE`, so the transaction carries no signature for
+    the protocol to validate. `sender_key` is then unused.
+    """
+    def envelope(signature) -> bytes:
+        entries = [] if signature is None else [rl([ri(1), rb(addr(sender)), rb(b""), rb(signature)])]
         fees = rl([ri(priority), ri(max_fee), ri(0)])
         return rl([ri(chain_id), rl([ri(key)]), ri(seq), rb(addr(sender)), rl(frames),
-                   rl([entry]), fees, rl([]), rl([])])
+                   rl(entries), fees, rl([]), rl(list(references))])
 
+    if not sign:
+        return "0x06" + envelope(None).hex()
     sig_hash = cast_cmd("keccak", "0x06" + envelope(b"").hex())
     raw = bytes.fromhex(cast_cmd("wallet", "sign", "--private-key", sender_key, "--no-hash", sig_hash)[2:])
     v = raw[64] - 27 if raw[64] >= 27 else raw[64]
     return "0x06" + envelope(bytes([v]) + raw[:64]).hex()
+
+
+# A sender contract that unconditionally approves execution and payment for itself:
+#   PUSH1 3; PUSH1 0; PUSH1 0; APPROVE; STOP
+# It reads no storage, reads no `TXPARAM`, and carries real (non-delegated) code, which is
+# exactly the shape `keyed_concurrency_verdict` grants concurrency to. Anyone can spend its
+# balance, which is fine for a devnet and is the point: the contract, not a signature,
+# decides who may pay.
+SENDER_CONTRACT_RUNTIME = bytes([0x60, 0x03, 0x60, 0x00, 0x60, 0x00, 0xAA, 0x00])
+
+
+def deploy_sender_contract(endowment: int) -> str:
+    """Deploy `SENDER_CONTRACT_RUNTIME` with `endowment` wei, and return its address.
+
+    The init code copies the runtime into memory and returns it:
+      PUSH1 len; PUSH1 offset; PUSH1 0; CODECOPY; PUSH1 len; PUSH1 0; RETURN
+    with `offset` being the length of the init code itself.
+
+    The endowment goes in with the creation rather than as a later transfer: a transfer
+    would execute the runtime, and `APPROVE` outside a frame transaction halts, so the
+    contract cannot be funded after the fact.
+    """
+    body = SENDER_CONTRACT_RUNTIME
+    init = bytes([0x60, len(body), 0x60, 0x0C, 0x60, 0x00, 0x39,
+                  0x60, len(body), 0x60, 0x00, 0xF3]) + body
+    assert init[3] == 0x0C and len(init) - len(body) == 12, "init-code offset must match its length"
+    # `--create <CODE> [SIG] [ARGS]...` swallows everything after it, so `--value` and
+    # `--json` have to come first or cast reads them as constructor arguments.
+    out = json.loads(cast_cmd("send", "--rpc-url", RPC, "--private-key", KEY,
+                              "--value", str(endowment), "--json",
+                              "--create", "0x" + init.hex()))
+    return out["contractAddress"]
+
+
+def concurrency_check(chain_id, funder, base_fee) -> None:
+    """EIP-8250's headline feature: two frame transactions from one sender, different keys,
+    both pending at once and both mined. Only a contract sender qualifies."""
+    contract = deploy_sender_contract(10**18)
+    code = rpc(RPC, "eth_getCode", [contract, "latest"])
+    check("the sender contract deploys with its approve-both runtime",
+          bytes.fromhex(code[2:]) == SENDER_CONTRACT_RUNTIME, f"{len(code[2:]) // 2} bytes")
+    funded = int(rpc(RPC, "eth_getBalance", [contract, "latest"]), 16)
+    check("it is funded to pay for its own transactions", funded > 0, f"{funded / 1e18:.3f} ETH")
+
+    # Two keys, each at sequence 0 because neither has ever been used, and no signature:
+    # the contract's code is the authorization. A recipient per key, so neither frame's
+    # account-creation charge depends on the other having run.
+    raws = []
+    for index in (0, 1):
+        key = 0x8250_0000 + index
+        recipient = derived_address("beef", index)
+        raws.append(build_frame_tx(
+            chain_id, contract, key, 0,
+            [frame(1, 0x03, contract, 80_000, 0, 0, b""),
+             frame(2, 0x00, recipient, 30_000, NEW_ACCOUNT_STATE_GAS, 100, b"")],
+            10**9, base_fee * 2 + 10**9, None,
+            sign=False))
+
+    hashes = []
+    for index, raw in enumerate(raws):
+        try:
+            hashes.append(rpc(RPC, "eth_sendRawTransaction", [raw]))
+        except RuntimeError as exc:
+            check(f"keyed transaction {index} from a contract sender is admitted", False,
+                  str(exc)[:110])
+    check("both keys are admitted at once — concurrency the linear nonce forbids",
+          len(hashes) == 2, f"{len(hashes)} of 2 admitted")
+
+    mined = {}
+    for _ in range(30):
+        mined = {h: rpc(RPC, "eth_getTransactionReceipt", [h]) for h in hashes}
+        if all(mined.values()):
+            break
+        time.sleep(2)
+    check("both mine", bool(hashes) and all(mined.get(h) for h in hashes),
+          ",".join(f"{(mined.get(h) or {}).get('status', 'pending')}" for h in hashes))
+    if hashes and all(mined.get(h) for h in hashes):
+        check("both succeed",
+              all(mined[h]["status"] == "0x1" for h in hashes),
+              ",".join(mined[h]["status"] for h in hashes))
+    return contract
 
 
 def main() -> int:
@@ -216,7 +379,10 @@ def main() -> int:
     code = rpc(RPC, "eth_getCode", [RECENT_ROOT_ADDRESS, "latest"])
     check("the predeploy is RECENT_ROOT_CODE", len(code[2:]) // 2 == RECENT_ROOT_CODE_LEN,
           f"{len(code[2:]) // 2} bytes")
-    salt, root = bytes([0x11]) * 32, bytes([0x22]) * 32
+    # A salt derived from the sequence, so each run writes its own entry rather than
+    # overwriting one an earlier run is still referencing.
+    salt = seq.to_bytes(32, "big")
+    root = bytes([0x22]) * 32
     written = cast_cmd("send", "--rpc-url", RPC, "--private-key", KEY, RECENT_ROOT_ADDRESS,
                        "0x" + (salt + root).hex(), "--value", "0", "--json")
     written = json.loads(written)
@@ -232,7 +398,36 @@ def main() -> int:
         except subprocess.CalledProcessError:
             check(label, True)
 
+    # The reference half. The predeploy derives `source_id = keccak(CALLER || salt)` over the
+    # unpadded 20-byte caller, and stores the entry under the slot the write executed in, so
+    # a reference to (source_id, that slot, root) is the one a frame transaction can declare.
+    # This is the read side of EIP-8272 end to end: the protocol recomputes `entry_hash` and
+    # compares it against the predeploy's storage before the transaction is admitted.
+    if written.get("status") == "0x1":
+        source_id = bytes.fromhex(
+            cast_cmd("keccak", "0x" + bytes.fromhex(sender[2:]).hex() + salt.hex())[2:])
+        write_block = rpc(RPC, "eth_getBlockByHash", [written["blockHash"], False])
+        write_slot = int(write_block["slotNumber"], 16)
+        seq = int(rpc(RPC, "eth_getTransactionCount", [sender, "latest"]), 16)
+        for label, referenced_root, expect_valid in [
+            ("a frame transaction referencing the written root is admitted", root, True),
+            ("one referencing a root that was never written is rejected", bytes([0x33]) * 32, False),
+        ]:
+            raw = build_frame_tx(
+                chain_id, sender, 0, seq,
+                [frame(1, 0x03, sender, 80_000, 0, 0, b"")],
+                10**9, base_fee * 2 + 10**9, KEY,
+                references=[recent_root_reference(source_id, write_slot, referenced_root)])
+            try:
+                rpc(RPC, "eth_sendRawTransaction", [raw])
+                check(label, expect_valid, "admitted")
+                if expect_valid:
+                    seq += 1
+            except RuntimeError as exc:
+                check(label, not expect_valid, str(exc)[:100])
+
     print("\nEIP-8250 — keyed nonces")
+    drain_pool("the keyed-nonce checks")
     seq = int(rpc(RPC, "eth_getTransactionCount", [sender, "latest"]), 16)
     gapped = build_frame_tx(chain_id, sender, 0, seq + 5, frames, 10**9, base_fee * 2 + 10**9, KEY)
     try:
@@ -240,6 +435,7 @@ def main() -> int:
         check("key 0 cannot queue a future sequence", False, "a gapped key-0 tx was admitted")
     except RuntimeError as exc:
         check("key 0 cannot queue a future sequence", "Nonce mismatch" in str(exc), str(exc)[:90])
+
     # A key this sender has never used is at sequence 0 by definition, which is what makes
     # this check independent of every earlier run.
     fresh_key = 0x8141_0000 + seq
@@ -251,7 +447,37 @@ def main() -> int:
     except RuntimeError as exc:
         check("a keyed frame transaction is admitted", False, str(exc)[:90])
 
+    # The trap, asserted rather than stumbled into: an EOA gets no concurrency. Its
+    # default-code prefix authenticates against its own account nonce, which a sibling
+    # key-0 transaction bumps, so `keyed_concurrency_verdict` denies it and the second
+    # pending frame transaction is refused whatever key it carries.
+    second_key = build_frame_tx(chain_id, sender, fresh_key + 1, 0, frames, 10**9,
+                                base_fee * 2 + 10**9, KEY)
+    try:
+        rpc(RPC, "eth_sendRawTransaction", [second_key])
+        check("an EOA sender is denied concurrency", False,
+              "a second keyed tx from an EOA was admitted")
+    except RuntimeError as exc:
+        # Two messages, one verdict: the mempool names the other-key case and the
+        # same-sender case differently, and either is the denial this asserts.
+        denied = "nonce-key domain" in str(exc) or "already in the pool" in str(exc)
+        check("an EOA sender is denied concurrency", denied, str(exc)[:100])
+
+    print("\nEIP-8250 — concurrency, which needs a contract sender")
+    drain_pool("the contract-sender deploy")
+    sender_contract = concurrency_check(chain_id, sender, base_fee)
+
     print("\nEIP-7805 — FOCIL")
+    # An inclusion list only has something to say about a transaction that is pending, so
+    # put one there first. The contract sender is used rather than the faucet EOA because a
+    # contract may hold several pending frame transactions at once, and this must not race
+    # with whatever the earlier sections left behind.
+    pending_raw = build_frame_tx(
+        chain_id, sender_contract, 0x7805_0000, 0,
+        [frame(1, 0x03, sender_contract, 80_000, 0, 0, b"")],
+        10**9, base_fee * 2 + 10**9, None, sign=False)
+    pending_hash = rpc(RPC, "eth_sendRawTransaction", [pending_raw])
+
     head = rpc(RPC, "eth_getBlockByNumber", ["latest", False])
     il = rpc(AUTH, "engine_getInclusionListV1", [head["hash"]], auth=True)
     entries = il if isinstance(il, list) else (il.get("transactions") or [])
@@ -259,6 +485,40 @@ def main() -> int:
     check("the inclusion list carries the pending frame transaction",
           any(isinstance(e, str) and e.startswith("0x06") for e in entries),
           "types=" + ",".join(sorted({e[:4] for e in entries if isinstance(e, str)})) or "empty")
+
+    # Enforcement, not just the surface: an inclusion list the builder was given must be
+    # satisfied by the block it builds. Checked by following the pending transaction to a
+    # block rather than by reading the builder's intent.
+    included_in = None
+    for _ in range(30):
+        receipt = rpc(RPC, "eth_getTransactionReceipt", [pending_hash])
+        if receipt:
+            included_in = int(receipt["blockNumber"], 16)
+            break
+        time.sleep(2)
+    check("a frame transaction an inclusion list carried is built into a block",
+          included_in is not None,
+          f"block={included_in}" if included_in else "never included")
+
+    # And the negative that proves the enforcement is real rather than absent: replay the
+    # head payload against an inclusion list holding a frame transaction that block cannot
+    # contain (it was submitted after it). EIP-8369 Profile 2 makes frame transactions
+    # enforceable, so this must report the list unsatisfied. A client that still excused
+    # frame transactions wholesale would answer `true` here and pass every check above.
+    unbuilt_raw = build_frame_tx(
+        chain_id, sender_contract, 0x7805_0001, 0,
+        [frame(1, 0x03, sender_contract, 80_000, 0, 0, b"")],
+        10**9, base_fee * 2 + 10**9, None, sign=False)
+    rpc(RPC, "eth_sendRawTransaction", [unbuilt_raw])
+    head = rpc(RPC, "eth_getBlockByNumber", ["latest", False])
+    try:
+        verdict = engine_new_payload_v6(head, [unbuilt_raw])
+        satisfied = verdict.get("inclusionListSatisfied")
+        check("an omitted eligible frame transaction leaves the list unsatisfied",
+              satisfied is False, f"status={verdict.get('status')} satisfied={satisfied}")
+    except RuntimeError as exc:
+        check("an omitted eligible frame transaction leaves the list unsatisfied", False,
+              str(exc)[:120])
 
     print()
     if FAILURES:
