@@ -31,6 +31,29 @@ bytes, which means a per-frame format discriminator living permanently on the co
 hash path — and `transactions_root` is a trie over the same encoding, so it inherits the
 problem.
 
+## Confirmed fixed
+
+The fork gate (`spec/hegota-eips-refresh`, `52fb06427` + `1c496e8ae`) closes exactly this
+gap. Re-ran the same measurement against a **fresh copy** of the live datadir (2.1 GB,
+copied from the running `el-1` container's volume; the live enclave was never stopped or
+touched):
+
+1. The fork-gated binary opens the copy and serves the head (289,869) — as before.
+2. `eth_getTransactionByHash` on the same historical frame tx now returns
+   **`hash: 0x7dcb84…`, matching the query exactly.** This is the assertion the
+   tolerant-decoder prototype failed on.
+3. `eth_getBlockByNumber` on its block decodes, is fully populated, and the tx appears in
+   its `transactions` list.
+4. `eth_getTransactionReceipt` reads back the frame receipts (3 frames, logs intact) with
+   no decode error, exercising the second wire surface (`FrameReceipt`'s own encoding
+   marker).
+
+Not yet run: a full re-sync from genesis (acceptance-test item 4 in the fork plan), which
+is the only check that exercises the *execution-side* era gates (intrinsic repricing, the
+per-frame state pool, receipt production) rather than just decode/encode fidelity. That is
+the remaining pre-flight step before scheduling `frame_limits_time` on the live devnet —
+expensive (hours, ~290k blocks) and not done as part of this check.
+
 ## Decision: ship it as a fork
 
 The options below were written before that was on the table. **The chosen path is a fork** —
