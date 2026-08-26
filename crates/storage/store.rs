@@ -845,12 +845,7 @@ impl Store {
         }
         self.read_async(BLOCK_NUMBERS, block_hash.encode_to_vec())
             .await?
-            .map(|bytes| -> Result<BlockNumber, StoreError> {
-                let array: [u8; 8] = bytes
-                    .try_into()
-                    .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
-                Ok(BlockNumber::from_le_bytes(array))
-            })
+            .map(decode_block_number)
             .transpose()
     }
 
@@ -1246,46 +1241,34 @@ impl Store {
         self.write_async(CHAIN_DATA, key, value).await
     }
 
+    /// Reads a block number stored under the given chain-data index.
+    async fn read_chain_data_block_number(
+        &self,
+        index: ChainDataIndex,
+    ) -> Result<Option<BlockNumber>, StoreError> {
+        self.read_async(CHAIN_DATA, chain_data_key(index))
+            .await?
+            .map(decode_block_number)
+            .transpose()
+    }
+
     /// Obtain earliest block number
     pub async fn get_earliest_block_number(&self) -> Result<BlockNumber, StoreError> {
-        let key = chain_data_key(ChainDataIndex::EarliestBlockNumber);
-        self.read_async(CHAIN_DATA, key)
+        self.read_chain_data_block_number(ChainDataIndex::EarliestBlockNumber)
             .await?
-            .map(|bytes| -> Result<BlockNumber, StoreError> {
-                let array: [u8; 8] = bytes
-                    .try_into()
-                    .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
-                Ok(BlockNumber::from_le_bytes(array))
-            })
-            .ok_or(StoreError::MissingEarliestBlockNumber)?
+            .ok_or(StoreError::MissingEarliestBlockNumber)
     }
 
     /// Obtain finalized block number
     pub async fn get_finalized_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        let key = chain_data_key(ChainDataIndex::FinalizedBlockNumber);
-        self.read_async(CHAIN_DATA, key)
-            .await?
-            .map(|bytes| -> Result<BlockNumber, StoreError> {
-                let array: [u8; 8] = bytes
-                    .try_into()
-                    .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
-                Ok(BlockNumber::from_le_bytes(array))
-            })
-            .transpose()
+        self.read_chain_data_block_number(ChainDataIndex::FinalizedBlockNumber)
+            .await
     }
 
     /// Obtain safe block number
     pub async fn get_safe_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        let key = chain_data_key(ChainDataIndex::SafeBlockNumber);
-        self.read_async(CHAIN_DATA, key)
-            .await?
-            .map(|bytes| -> Result<BlockNumber, StoreError> {
-                let array: [u8; 8] = bytes
-                    .try_into()
-                    .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
-                Ok(BlockNumber::from_le_bytes(array))
-            })
-            .transpose()
+        self.read_chain_data_block_number(ChainDataIndex::SafeBlockNumber)
+            .await
     }
 
     /// Obtain latest block number
@@ -1305,16 +1288,8 @@ impl Store {
 
     /// Obtain pending block number
     pub async fn get_pending_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        let key = chain_data_key(ChainDataIndex::PendingBlockNumber);
-        self.read_async(CHAIN_DATA, key)
-            .await?
-            .map(|bytes| -> Result<BlockNumber, StoreError> {
-                let array: [u8; 8] = bytes
-                    .try_into()
-                    .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
-                Ok(BlockNumber::from_le_bytes(array))
-            })
-            .transpose()
+        self.read_chain_data_block_number(ChainDataIndex::PendingBlockNumber)
+            .await
     }
 
     /// DB mutation step of `forkchoice_update`.
@@ -1586,12 +1561,7 @@ impl Store {
         }
         let txn = self.backend.begin_read()?;
         txn.get(BLOCK_NUMBERS, &block_hash.encode_to_vec())?
-            .map(|bytes| -> Result<BlockNumber, StoreError> {
-                let array: [u8; 8] = bytes
-                    .try_into()
-                    .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
-                Ok(BlockNumber::from_le_bytes(array))
-            })
+            .map(decode_block_number)
             .transpose()
     }
 
@@ -4203,16 +4173,8 @@ impl Store {
 
     /// Loads the latest block number stored in the database, bypassing the latest block number cache
     async fn load_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        let key = chain_data_key(ChainDataIndex::LatestBlockNumber);
-        self.read_async(CHAIN_DATA, key)
-            .await?
-            .map(|bytes| -> Result<BlockNumber, StoreError> {
-                let array: [u8; 8] = bytes
-                    .try_into()
-                    .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
-                Ok(BlockNumber::from_le_bytes(array))
-            })
-            .transpose()
+        self.read_chain_data_block_number(ChainDataIndex::LatestBlockNumber)
+            .await
     }
 
     fn load_canonical_block_hash(
@@ -5302,6 +5264,14 @@ pub fn hash_key_fixed(key: &H256) -> [u8; 32] {
 
 fn chain_data_key(index: ChainDataIndex) -> Vec<u8> {
     (index as u8).encode_to_vec()
+}
+
+/// Decodes a block number stored as little-endian bytes.
+fn decode_block_number(bytes: Vec<u8>) -> Result<BlockNumber, StoreError> {
+    let array: [u8; 8] = bytes
+        .try_into()
+        .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
+    Ok(BlockNumber::from_le_bytes(array))
 }
 
 fn snap_state_key(index: SnapStateIndex) -> Vec<u8> {

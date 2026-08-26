@@ -99,6 +99,9 @@ fn discover_stress_workloads(dir: &str) -> eyre::Result<Vec<WorkloadSpec>> {
             category: None,
             source: entry.path().to_string_lossy().to_string(),
             gas: None,
+            // Discovered stress caches are whole-file inputs, not EEST fixtures
+            // with multiple pytest ids, so there is nothing to select.
+            case: None,
             tier: None,
         });
     }
@@ -155,9 +158,11 @@ pub fn run_bench(
         let result: eyre::Result<ZiskAirCost> = (|| {
             let input = match spec.r#type {
                 WorkloadType::RealBlock => cache_to_program_input(load_cache(&spec.source)?)?,
-                WorkloadType::Micro => {
-                    crate::micro::micro_to_program_input(&spec.source, spec.gas)?
-                }
+                WorkloadType::Micro => crate::micro::micro_to_program_input(
+                    &spec.source,
+                    spec.case.as_deref(),
+                    spec.gas,
+                )?,
                 WorkloadType::Stress => cache_to_program_input(load_cache(&spec.source)?)?,
             };
             backend

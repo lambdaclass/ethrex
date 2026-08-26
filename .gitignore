@@ -10,6 +10,7 @@
 
 tooling/ef_tests/blockchain/vectors
 tooling/ef_tests/blockchain/vectors_zkevm
+tooling/ef_tests/blockchain/vectors_zkevm_benchmark
 
 tooling/ef_tests/state/vectors
 
@@ -90,6 +91,13 @@ openspec/
 # Default database directories for Ethrex in Dev mode
 dev_ethrex_l1/
 dev_ethrex_l2/
+
+# ZisK backend run artifacts: the backend writes the guest ELF and its proof
+# output next to the crate manifest (see crates/prover/src/backend/zisk.rs),
+# so any zisk execute/prove/bench run dirties the tree. Its zisk_input.bin
+# sibling is already covered by *.bin above.
+crates/prover/zkvm-zisk-program
+crates/prover/zisk_output/
 
 # Logs
 logs/

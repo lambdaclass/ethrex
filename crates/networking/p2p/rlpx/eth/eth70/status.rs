@@ -75,7 +75,7 @@ impl RLPxMessage for StatusMessage70 {
 }
 
 impl StatusMessage70 {
-    pub fn new(storage: &Store) -> Result<Self, PeerConnectionError> {
+    pub async fn new(storage: &Store) -> Result<Self, PeerConnectionError> {
         let chain_config = storage.get_chain_config();
         let network_id = chain_config.chain_id;
 
@@ -104,7 +104,7 @@ impl StatusMessage70 {
             network_id,
             genesis,
             fork_id,
-            earliest_block: 0,
+            earliest_block: storage.get_earliest_block_number().await?,
             latest_block,
             latest_block_hash,
         })
