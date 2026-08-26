@@ -1,25 +1,29 @@
-# Hegotá devnet — user guide
+# Hegotá devnet: user guide
 
-A public devnet running the EIP-8141 frame-transaction family: EIP-8141 (frame transactions),
-EIP-8250 (keyed nonces), EIP-8272 (recent roots), EIP-7906 (post-transaction assertions),
-EIP-8312 (UTXO frames), EIP-7805/8369 (FOCIL). It exists so these EIPs can be exercised against
-a real chain rather than a local harness.
+A public devnet for the frame-transaction family of EIPs:
 
-For what this branch does differently from the specs, see `hegota-devnet.md`. This file is for
-people *using* the devnet.
+| | |
+|---|---|
+| [EIP-8141](https://eips.ethereum.org/EIPS/eip-8141) | Frame transactions (type `0x06`) |
+| [EIP-8250](https://eips.ethereum.org/EIPS/eip-8250) | Keyed nonces |
+| [EIP-8272](https://eips.ethereum.org/EIPS/eip-8272) | Recent roots |
+| [EIP-7906](https://eips.ethereum.org/EIPS/eip-7906) | Post-transaction assertions |
+| [EIP-7805](https://eips.ethereum.org/EIPS/eip-7805) + [EIP-8369](https://github.com/ethereum/EIPs/pull/12110) | FOCIL inclusion lists |
+| [Native UTXOs](https://ethresear.ch/t/native-utxos-on-ethereum/25368/23) | UTXO frames |
+
+Implementation notes and deviations from the specs are in `hegota-devnet.md`.
 
 ## Endpoints
 
-| What | Where |
+| | |
 |---|---|
-| JSON-RPC | `https://rpc1.hegota.ethrex.xyz` (also `rpc2`, `rpc3`) |
+| Chain ID | `3151908` |
+| JSON-RPC | `https://rpc1.hegota.ethrex.xyz`, `rpc2`, `rpc3` |
 | Faucet | `https://faucet.hegota.ethrex.xyz` |
 | Explorer | `https://dora.hegota.ethrex.xyz` |
-| Chain ID | `3151908` |
 
-The `ethrex` RPC namespace is exposed alongside `eth`/`net`/`web3`, so
-`ethrex_simulateFrameTransaction` is reachable. Use it to dry-run a validation prefix before
-paying for it.
+The `ethrex` namespace is exposed alongside `eth`/`net`/`web3`, so
+`ethrex_simulateFrameTransaction` is available for dry-running a validation prefix.
 
 ## Getting ETH
 
@@ -29,33 +33,24 @@ curl -X POST https://faucet.hegota.ethrex.xyz/api/claim \
   -d '{"address":"0xYourChecksummedAddress"}'
 ```
 
-Two things surprise people:
+Dispenses 1 ETH. Test ETH has no value.
 
-- **The address must be EIP-55 checksummed.** A lowercase address is rejected with
-  `address checksum mismatch`, not silently accepted.
-- **Rate limiting is per source IP, not per address.** `rate limited, try again in N minute(s)`
-  means someone sharing your egress IP claimed recently. Automated suites should fund from a
-  prefunded account instead of the faucet, or they become unrunnable from shared CI ranges.
-- `faucet is empty, ask an operator to top it up` means the dispensing account fell below its
-  reserve. It is an operator problem, not something a caller can retry around.
+- The address must be EIP-55 checksummed; lowercase is rejected with `address checksum mismatch`.
+- Rate limiting is per source IP, not per address. CI should fund from a prefunded account
+  instead, since shared egress ranges hit the limit.
+- `faucet is empty` means the dispensing account is below its reserve. Ask an operator.
 
 ## Sending a frame transaction
 
-The easiest path is [`rex`](https://github.com/lambdaclass/rex), which builds the envelope from
-ethrex's own types, so its encoding cannot drift from what the node expects.
-
-**Install from the `hegota-devnet` branch — the default branch will not work here:**
+[`rex`](https://github.com/lambdaclass/rex) builds the envelope from ethrex's own types.
+Install from the `hegota-devnet` branch:
 
 ```bash
 cargo install --git https://github.com/lambdaclass/rex --branch hegota-devnet --locked
 ```
 
-The branch is load-bearing, not a preference. `main` still emits the pre-revision frame layout
-(a scalar `gas_limit` in slot 3) and the `27`/`28` signature form, so every frame transaction it
-builds is rejected here — on the encoding first, and on the signature after that. Both are fixed
-on `hegota-devnet`.
-
-Then:
+The default branch emits the pre-revision frame layout and the `27`/`28` signature form, both
+of which this chain rejects.
 
 ```bash
 rex frame send \
@@ -65,83 +60,68 @@ rex frame send \
   --rpc-url https://rpc1.hegota.ethrex.xyz
 ```
 
-Add `--dry-run` to print the raw `0x06` bytes without sending, and see
-[the CLI README](https://github.com/lambdaclass/rex/blob/hegota-devnet/cli/README.md) for
-`frame build` (construct an envelope from explicit frames) and `frame inspect` (decode a
-transaction and pair its frames with their results).
+`--dry-run` prints the raw `0x06` bytes without sending. `rex frame build` constructs an
+envelope from explicit frames and `rex frame inspect` decodes a transaction alongside its
+per-frame results; see the
+[CLI README](https://github.com/lambdaclass/rex/blob/hegota-devnet/cli/README.md).
 
-## The two budgets — the thing that trips everyone up
-
-A frame declares gas in **two dimensions**, and they never mix:
+## Frame gas: two budgets
 
 ```
 frame = [mode, flags, target, [execution, state], value, data]
-                              ^^^^^^^^^^^^^^^^^^
 ```
 
-- `execution` pays for running EVM code.
-- `state` pays EIP-8037's charge for *growing* the state: creating an account, writing a
-  storage slot that did not exist. Roughly 183,600 gas to create an account and ~98,000 per
-  fresh storage slot on this chain.
+`execution` pays for running code. `state` pays EIP-8037's charge for state growth: 183,600 gas
+to create an account, 97,920 per new storage slot. The pools are independent, so execution gas
+cannot cover state growth.
 
-Execution gas cannot pay for state growth. A frame that writes new state while declaring
-`state: 0` halts on that write — and because a halt consumes the frame's whole execution
-budget, **it looks like the execution limit was too low**. If a frame reverts having spent
-exactly its `execution` budget, check `stateGasUsed` on the receipt before raising the
-execution number: if it reads `0x0`, the state budget is what is missing.
+A frame that writes new state with `state: 0` halts on that write, consuming its whole execution
+budget. That looks like an execution limit set too low. Check `stateGasUsed` on the receipt
+first: if it is `0x0`, the missing budget is the state one.
 
-Unused state gas is refunded, so declaring a generous bound costs nothing but the reservation.
+Unused state gas is refunded, so an over-generous bound costs only the reservation.
 
-Two constants bound the *validation prefix* (the leading frames a node simulates before
-admitting a transaction):
+The validation prefix (the leading frames simulated before admission) is bounded by:
 
-| Constant | Spec default | **On this devnet** | Applies to |
+| | Spec | Here | Applies to |
 |---|---|---|---|
-| `MAX_VERIFY_GAS` | 100,000 | **500,000** | Σ prefix `limits.execution` + signature intrinsic |
+| `MAX_VERIFY_GAS` | 100,000 | 500,000 | Σ prefix `limits.execution` + signature intrinsic |
 | `MAX_VERIFY_STATE_GAS` | 500,000 | 500,000 | Σ prefix `limits.state` |
 
-Frames outside the prefix are not bound by these.
+These nodes run `--mempool.max-verify-gas 500000`. A prefix that fits here can still be rejected
+by a node on spec defaults, so do not treat 500,000 as portable. Frames outside the prefix are
+unbounded by both.
 
-The nodes here run `--mempool.max-verify-gas 500000`, so the execution bound is five times the
-spec default. That override predates the two-dimensional split — it existed because account
-creation had to fit in a single combined budget — and it is no longer load-bearing now that the
-state dimension carries growth. It is called out because a prefix that fits here can still be
-rejected by a node running spec defaults: **do not treat 500,000 as portable**.
-
-## Errors you are likely to hit
+## Common errors
 
 **`frame N uses the Scalar encoding, but this block requires Limits`**
 
-Your tooling is emitting the older frame format, where slot 3 was a bare `gas_limit` scalar.
-The chain crossed its `frameLimitsTime` activation on 2026-08-26 and now accepts only
-`[execution, state]`. Update your client. `rex` on `hegota-devnet` emits the current form; a
-frontend building frames by hand needs slot 3 changed to a two-element list.
+Slot 3 is being sent as a scalar `gas_limit`. The chain activated the `[execution, state]` form
+on 2026-08-26 and accepts only that.
 
-**A frame reverts having used exactly its `execution` budget, with `stateGasUsed: 0x0`**
+**A frame reverts having used exactly its `execution` budget, `stateGasUsed: 0x0`**
 
-Missing state budget — see above. Raising `execution` will not help.
+Missing state budget. Raising `execution` will not help.
 
 **`Invalid frame transaction signature`**
 
-For SECP256K1 the wire layout is `v || r || s` (65 bytes) and `v` must be a **bare recovery id**
-(`0` or `1`), not the `27`/`28` EVM form that `ecrecover` takes. Anything above `1` is rejected.
+For SECP256K1 the layout is `v || r || s` (65 bytes) with `v` a bare recovery id (`0` or `1`),
+not the `27`/`28` form `ecrecover` takes. `r` and `s` must also be canonical: `0 < r < n` and
+low-s (`0 < s <= n/2`).
 
 **`Frame transaction signature verification cost exceeds MAX_VERIFY_GAS`**
 
-The validation prefix is over the execution budget above. Move work out of the prefix, or
-reduce the number of signatures.
+The prefix exceeds the execution bound above. Move work out of the prefix or reduce signatures.
 
 ## Reading results
 
-`eth_getTransactionReceipt` returns `frameReceipts`, one per frame, each with:
+`eth_getTransactionReceipt` returns one `frameReceipts` entry per frame:
 
 ```json
 { "status": "0x1", "gasUsed": "0x...", "stateGasUsed": "0x...", "logs": [] }
 ```
 
-`gasUsed` is the execution dimension and `stateGasUsed` the state dimension, reported apart
-because the pools are apart. A frame that only moves value does no EVM work, so its `gasUsed`
-is legitimately `0x0` and `stateGasUsed` carries its whole cost.
+`gasUsed` is the execution dimension, `stateGasUsed` the state dimension. A frame that only
+moves value runs no code, so `gasUsed` is `0x0` and `stateGasUsed` carries its cost.
 
-`rex frame inspect <txhash>` pairs the decoded frames with their per-frame results, which is
-usually easier to read than the raw receipt.
+`rex frame inspect <txhash>` renders the same data with the frames decoded.
