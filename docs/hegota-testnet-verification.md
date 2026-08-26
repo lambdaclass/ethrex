@@ -167,7 +167,7 @@ above are all silent until a specific fork boundary.
     grants concurrency only when the prefix is provably independent of everything the
     sender's other transactions can change: the sender runs real (non-EIP-7702-delegated)
     contract code, no deploy frame installs code mid-flight, the prefix reads no sender
-    storage, and it does not read `TXPARAM(0x0C)`. An EOA sender fails the first condition,
+    storage, and it does not read `TXPARAM(0x12)`. An EOA sender fails the first condition,
     because its default-code prefix authenticates against its own nonce, which a sibling
     key-0 transaction bumps. So the obvious version of this test — a funded EOA sending two
     keyed transactions — correctly gets `A pending frame transaction from this sender is
@@ -190,6 +190,15 @@ above are all silent until a specific fork boundary.
     additional event** — an extra event would mean the gated contract is not transparent
     to the execution layer after all.
 
-Checks 7 and 9 to 13 need the frame-transaction submitters in `scripts/hegota-testnet/`
-and the `pk910/gated-deposit-contract-cli` container; the rest need only `curl` and
-`jq`.
+14. **EIP-8141 v2's second gas dimension is enforced, not merely reported.** Both halves:
+    a frame transaction whose value-bearing frame declares the account-creation state gas
+    mines with a non-zero `stateGasUsed` on that frame and zero on the `VERIFY` frame; the
+    same transaction one gas short of the charge mines too, but with that frame's status
+    `0x0`, its `stateGasUsed` zero, and the recipient's balance still zero. A chain that
+    only encodes `limits.state` passes the first half and fails the second, which is the
+    difference between shipping the v2 envelope and shipping v2.
+
+Checks 7, 9 to 13 and 14 need the frame-transaction submitters in `scripts/hegota-testnet/`
+and the `pk910/gated-deposit-contract-cli` container; the rest need only `curl` and `jq`.
+Checks 7, 10, 11 and 14 are automated end to end by
+`scripts/hegota-testnet/verify_v2_devnet.py`, which needs only foundry's `cast`.

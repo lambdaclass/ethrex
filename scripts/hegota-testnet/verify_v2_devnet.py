@@ -16,8 +16,14 @@ Stdlib only, plus foundry's `cast` for keccak and secp256k1 signing: the devnet 
 have cast but no python3-venv, and installing system packages on a shared box to run a
 verification script is not a trade worth making.
 
+Re-runnable against the same devnet: every address it funds and every nonce key it uses
+are derived from the sender's current sequence, so a second run does not collide with the
+state the first one left. That matters for the state-gas checks in particular — a frame
+funding an address that already exists creates nothing and is charged nothing, so a fixed
+recipient would make the strongest check pass once and then fail forever.
+
 Usage:
-  verify_v2_devnet.py <rpc_url> <authrpc_url> <jwt_path> <sender_key_hex> <recipient_addr>
+  verify_v2_devnet.py <rpc_url> <authrpc_url> <jwt_path> <sender_key_hex>
 """
 import base64
 import hashlib
@@ -36,10 +42,16 @@ RECENT_ROOT_CODE_LEN = 144
 # funding an address that does not exist yet, drawn from that frame's own `limits.state`.
 NEW_ACCOUNT_STATE_GAS = 120 * 1530
 
-RPC, AUTH, JWT, KEY, RECIP = sys.argv[1:6]
-# An address that must never receive funds: the under-budget frame below is expected to
-# halt before delivering its value, and the check is that this balance stays zero.
-UNFUNDED = "0x" + "8141dead" * 5
+RPC, AUTH, JWT, KEY = sys.argv[1:5]
+
+
+def derived_address(tag: str, seq: int) -> str:
+    """A fresh address per (tag, sequence), so re-runs never reuse one.
+
+    `tag` is 4 hex digits naming what the address is for, which keeps the two addresses
+    this script uses distinguishable when reading a devnet's state by hand.
+    """
+    return "0x" + tag + format(seq, "036x")
 FAILURES: list[str] = []
 
 
@@ -126,15 +138,20 @@ def main() -> int:
     head = rpc(RPC, "eth_getBlockByNumber", ["latest", False])
     base_fee = int(head.get("baseFeePerGas", "0x0"), 16)
     seq = int(rpc(RPC, "eth_getTransactionCount", [sender, "latest"]), 16)
-    print(f"devnet chain={chain_id} head={int(head['number'], 16)} sender={sender} seq={seq}\n")
+    # Both derived from the current sequence: the address the funded transfer creates, and
+    # the address the under-budgeted frame must fail to create.
+    recipient = derived_address("c0de", seq)
+    unfunded = derived_address("dead", seq)
+    print(f"devnet chain={chain_id} head={int(head['number'], 16)} sender={sender} seq={seq}")
+    print(f"funding {recipient}, and expecting {unfunded} to stay empty\n")
 
     print("EIP-8141 — v2 envelope end to end")
-    # The SENDER frame funds `RECIP`, so it declares the account-creation state gas. A
-    # frame that declared none would halt on the charge — which is the point of v2's
-    # second dimension, and is checked directly below.
+    # The SENDER frame funds a never-seen address, so it declares the account-creation
+    # state gas. A frame that declared none would halt on the charge — which is the point
+    # of v2's second dimension, and is checked directly below.
     frames = [
         frame(1, 0x03, sender, 80_000, 0, 0, b""),          # VERIFY, approves both scopes
-        frame(2, 0x00, RECIP, 30_000, NEW_ACCOUNT_STATE_GAS, 100, b""),  # SENDER, 100 wei
+        frame(2, 0x00, recipient, 30_000, NEW_ACCOUNT_STATE_GAS, 100, b""),  # SENDER, 100 wei
     ]
     raw = build_frame_tx(chain_id, sender, 0, seq, frames, 10**9, base_fee * 2 + 10**9, KEY)
     sim = rpc(RPC, "ethrex_simulateFrameTransaction", [raw])
@@ -171,7 +188,7 @@ def main() -> int:
     starved = [
         frame(1, 0x03, sender, 80_000, 0, 0, b""),
         # One gas short of the account-creation charge on an address that does not exist.
-        frame(2, 0x00, UNFUNDED, 30_000, NEW_ACCOUNT_STATE_GAS - 1, 100, b""),
+        frame(2, 0x00, unfunded, 30_000, NEW_ACCOUNT_STATE_GAS - 1, 100, b""),
     ]
     raw = build_frame_tx(chain_id, sender, 0, seq, starved, 10**9, base_fee * 2 + 10**9, KEY)
     starved_receipt = None
@@ -193,7 +210,7 @@ def main() -> int:
         check("the halted frame reports no state gas",
               bool(starved_frs) and int(starved_frs[1].get("stateGasUsed", "0x0"), 16) == 0)
         check("its value was not delivered",
-              int(rpc(RPC, "eth_getBalance", [UNFUNDED, "latest"]), 16) == 0)
+              int(rpc(RPC, "eth_getBalance", [unfunded, "latest"]), 16) == 0)
 
     print("\nEIP-8272 — recent roots")
     code = rpc(RPC, "eth_getCode", [RECENT_ROOT_ADDRESS, "latest"])
@@ -223,10 +240,14 @@ def main() -> int:
         check("key 0 cannot queue a future sequence", False, "a gapped key-0 tx was admitted")
     except RuntimeError as exc:
         check("key 0 cannot queue a future sequence", "Nonce mismatch" in str(exc), str(exc)[:90])
-    keyed = build_frame_tx(chain_id, sender, 0x11, 0, frames, 10**9, base_fee * 2 + 10**9, KEY)
+    # A key this sender has never used is at sequence 0 by definition, which is what makes
+    # this check independent of every earlier run.
+    fresh_key = 0x8141_0000 + seq
+    keyed = build_frame_tx(chain_id, sender, fresh_key, 0, frames, 10**9,
+                           base_fee * 2 + 10**9, KEY)
     try:
         rpc(RPC, "eth_sendRawTransaction", [keyed])
-        check("a keyed frame transaction is admitted", True)
+        check("a keyed frame transaction is admitted", True, f"key={hex(fresh_key)}")
     except RuntimeError as exc:
         check("a keyed frame transaction is admitted", False, str(exc)[:90])
 

@@ -2459,12 +2459,23 @@ impl<'a> VM<'a> {
                 self.substate.revert_backup();
                 self.restore_cache_state()?;
                 (false, frame.gas_limit, Vec::new())
-            } else if bytecode.is_empty() && !is_delegation_7702 {
+            } else if bytecode.is_empty()
+                && !is_delegation_7702
+                && !precompiles::is_precompile(&target, self.env.config.fork, self.vm_type)
+            {
                 // Default code runs only when the target has NEITHER code NOR a delegation
                 // indicator (EIP-8141 §Execution). After eip7702_get_code,
                 // bytecode is the delegatee's code when delegated, so a delegation to an
                 // empty delegatee still falls into the CallFrame branch below and returns
                 // success without executing anything — NOT into the default-code path.
+                //
+                // A precompile is excluded for the same reason in reverse: its code is
+                // empty, but EIP-8141 v2 §Behavior says "if `resolved_target` is an active
+                // precompile at the current fork, the frame dispatches it as an ordinary
+                // call would". It therefore has to reach the CallFrame branch, where
+                // `run_execution` dispatches it against the frame's data and budget.
+                // Running the default code instead would return success without computing
+                // anything, and charge nothing for a call the sender paid for.
                 // current_call_frame is the OUTER frame here; its backup is the
                 // one this branch's failure path restores, so the deferred
                 // transfer is correctly undone on a default-code revert.

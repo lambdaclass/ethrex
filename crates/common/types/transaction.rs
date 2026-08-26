@@ -2195,6 +2195,14 @@ pub struct FrameTransaction {
 pub const FRAME_TX_INTRINSIC_COST: u64 = 12000;
 /// Per-frame cost (EIP-8141): CALL context overhead (100) + G_log (375)
 pub const FRAME_TX_PER_FRAME_COST: u64 = 475;
+/// EIP-8141 v2 `TX_VALUE_COST`: charged once per value-carrying frame, covering the
+/// recipient balance write and the EIP-7708 transfer log, exactly as EIP-2780 prices a
+/// top-level transfer. Static, because `value` and `target` are transaction fields.
+///
+/// A value-carrying frame does NOT additionally pay EIP-2780's unconditional cold-rate
+/// recipient touch: frames behave like internal calls, which stay on EIP-2929 warm/cold,
+/// and a transaction targeting one account repeatedly would otherwise overpay.
+pub const FRAME_TX_VALUE_COST: u64 = 6000;
 /// ENTRY_POINT address used as caller for DEFAULT/VERIFY frames per EIP-8141.
 pub const FRAME_TX_ENTRY_POINT_U64: u64 = 0xaa;
 /// Maximum number of frames allowed per EIP-8141 frame transaction.
@@ -2212,6 +2220,7 @@ pub const FRAME_TX_MAX_RECENT_ROOT_REFERENCES: usize = 16;
 // constant, so it can check the formula's composition but never the published figure.
 const _: () = assert!(FRAME_TX_INTRINSIC_COST == 12_000);
 const _: () = assert!(FRAME_TX_PER_FRAME_COST == 475);
+const _: () = assert!(FRAME_TX_VALUE_COST == 6_000);
 const _: () = assert!(FRAME_TX_MAX_FRAMES == 64);
 const _: () = assert!(FRAME_TX_EXPIRY_DATA_LENGTH == 8);
 const _: () = assert!(FRAME_TX_STANDARD_TOKEN_COST == 4);
@@ -2496,11 +2505,25 @@ impl FrameTransaction {
     }
 
     /// The mandatory costs, always charged in full: the intrinsic cost, the
-    /// per-frame cost, and signature verification.
+    /// per-frame cost, signature verification, and the value-transfer cost.
+    ///
+    /// These are the terms `frame_tx_intrinsic_gas` and `calldata_floor_gas` share, which
+    /// is why they live in one function: the floor replaces only the data term, so a cost
+    /// that belongs on both sides of the `max_gas` comparison must be added here or it is
+    /// silently dropped whenever the floor binds.
     pub fn mandatory_gas(&self) -> u64 {
         FRAME_TX_INTRINSIC_COST
             .saturating_add((self.frames.len() as u64).saturating_mul(FRAME_TX_PER_FRAME_COST))
             .saturating_add(self.signature_verification_cost())
+            .saturating_add(self.value_transfer_cost())
+    }
+
+    /// EIP-8141 v2 `value_transfer_cost`: `TX_VALUE_COST` per frame carrying value.
+    pub fn value_transfer_cost(&self) -> u64 {
+        self.frames
+            .iter()
+            .filter(|frame| !frame.value.is_zero())
+            .fold(0u64, |acc, _| acc.saturating_add(FRAME_TX_VALUE_COST))
     }
 
     /// EIP-8272 `recent_root_calldata`: `rlp(recent_root_references)`. The bytes

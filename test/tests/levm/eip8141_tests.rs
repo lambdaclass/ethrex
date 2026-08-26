@@ -779,6 +779,64 @@ fn sender_frame_transfers_value_to_eoa() {
     assert_eq!(balance_of(&db, eoa), value, "value not delivered to EOA");
 }
 
+/// EIP-8141 v2 §Behavior: "if `resolved_target` is an active precompile at the current
+/// fork, the frame dispatches it as an ordinary call would."
+///
+/// A precompile's code is empty, which is also the condition for running the default
+/// code, so the two cases have to be told apart at dispatch. Getting it wrong is silent:
+/// the default code returns success without computing anything and without charging the
+/// precompile's gas, so a frame that paid for `ecrecover` would get an empty answer and a
+/// refund, and a paymaster verifying through a precompile would be trivially spoofable.
+#[test]
+fn a_frame_targeting_a_precompile_dispatches_it() {
+    // ecrecover (0x01) costs a flat 3000 gas. A frame budgeted below that must run out;
+    // under the default-code path it would succeed for free, which is what this catches.
+    let ecrecover = Address::from_low_u64_be(1);
+    let accounts = [(
+        FUNDED_SENDER,
+        AUTO_SEED_SENDER_BALANCE,
+        0,
+        Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+    )];
+    let status_with_budget = |gas_limit: u64| {
+        let tx = frame_tx_with_frames(vec![
+            verify_frame(FUNDED_SENDER),
+            Frame {
+                mode: u8::from(FrameMode::Default),
+                flags: 0,
+                target: Some(ecrecover),
+                gas_limit,
+                state_limit: 0,
+                value: U256::zero(),
+                data: Bytes::from(vec![0u8; 128]),
+            },
+        ]);
+        let (result, _db) = run_frame_tx(&accounts, tx);
+        let report = result.expect("the transaction stays valid; only the frame's fate differs");
+        report
+            .frame_results
+            .expect("per-frame results")
+            .get(1)
+            .expect("the precompile frame has a receipt")
+            .status
+    };
+
+    // Precompiles start warm (EIP-2929/EIP-3651), so the frame-entry access charge is the
+    // warm rate and the budget below is spent almost entirely on ecrecover itself.
+    let warm = ethrex_levm::gas_cost::WARM_ADDRESS_ACCESS_COST;
+    assert_eq!(
+        status_with_budget(warm + 2_999),
+        ethrex_common::types::FRAME_RECEIPT_STATUS_FAILURE,
+        "a frame one gas short of ecrecover's 3000 must fail — if it succeeds, the frame \
+         ran the default code instead of the precompile"
+    );
+    assert_eq!(
+        status_with_budget(warm + 3_000),
+        ethrex_common::types::FRAME_RECEIPT_STATUS_SUCCESS,
+        "a frame budgeted for exactly ecrecover's 3000 plus its entry access must succeed"
+    );
+}
+
 /// EIP-8141 v2 §Behavior: a value-bearing frame whose resolved target does not exist
 /// pays EIP-2780's account-creation state gas from its own `limits.state`, and halts
 /// exceptionally if it declared too little. Funding a fresh account grows the state, and
@@ -4742,6 +4800,9 @@ mod intrinsic_gas_accounting_tests {
         // byte charge, so pin the fixture properties that keep the list closed:
         // no frame data, and exactly one signature with no signer or explicit msg.
         assert_eq!(tx.frames.len(), 2);
+        // And one value-carrying frame, which EIP-8141 v2 charges `TX_VALUE_COST` for.
+        let value_frames = tx.frames.iter().filter(|f| !f.value.is_zero()).count() as u64;
+        assert_eq!(value_frames, 1);
         assert!(tx.frames.iter().all(|frame| frame.data.is_empty()));
         assert_eq!(tx.signatures.len(), 1);
         assert_eq!(tx.signatures[0].scheme, FRAME_SIG_SCHEME_SECP256K1);
@@ -4767,6 +4828,7 @@ mod intrinsic_gas_accounting_tests {
         let expected_intrinsic_gas = FRAME_TX_INTRINSIC_COST
             + tx.frames.len() as u64 * FRAME_TX_PER_FRAME_COST
             + SECP256K1_VERIFY_GAS
+            + value_frames * ethrex_common::types::FRAME_TX_VALUE_COST
             + payload_calldata_gas
             + nonce_calldata_gas
             + recent_root_calldata_gas;
@@ -4776,6 +4838,55 @@ mod intrinsic_gas_accounting_tests {
             tx.total_gas_limit(),
             expected_intrinsic_gas + FRAME_GAS_LIMITS
         );
+    }
+
+    /// EIP-8141 v2 `value_transfer_cost`: `TX_VALUE_COST` per value-carrying frame, in
+    /// the intrinsic AND in the calldata floor. It is charged per frame rather than per
+    /// distinct recipient, and adding value to a frame is the only thing that moves it.
+    #[test]
+    fn each_value_carrying_frame_adds_the_value_transfer_cost() {
+        let baseline = interop_reference_tx();
+        let baseline_value_frames = baseline
+            .frames
+            .iter()
+            .filter(|f| !f.value.is_zero())
+            .count() as u64;
+        assert_eq!(
+            baseline.value_transfer_cost(),
+            baseline_value_frames * ethrex_common::types::FRAME_TX_VALUE_COST
+        );
+
+        // Give a zero-value frame a value: exactly one more TX_VALUE_COST, in both the
+        // intrinsic and the floor, because the term sits on both sides of `max_gas`.
+        let mut with_value = interop_reference_tx();
+        let zero_valued = with_value
+            .frames
+            .iter()
+            .position(|f| f.value.is_zero())
+            .expect("the fixture has a zero-value frame");
+        with_value.frames[zero_valued].value = U256::one();
+
+        assert_eq!(
+            with_value.mandatory_gas(),
+            baseline.mandatory_gas() + ethrex_common::types::FRAME_TX_VALUE_COST,
+            "a newly value-carrying frame adds exactly one TX_VALUE_COST"
+        );
+        assert_eq!(
+            with_value.calldata_floor_total(),
+            baseline.calldata_floor_total() + ethrex_common::types::FRAME_TX_VALUE_COST,
+            "the value cost is mandatory, so the calldata floor carries it too"
+        );
+
+        // Raising an already value-carrying frame's value changes nothing: the charge is
+        // per frame, and `value` is a transaction field, not a measured quantity.
+        let mut raised = interop_reference_tx();
+        let valued = raised
+            .frames
+            .iter()
+            .position(|f| !f.value.is_zero())
+            .expect("the fixture has a value-carrying frame");
+        raised.frames[valued].value = U256::from(10u64).pow(U256::from(18u64));
+        assert_eq!(raised.mandatory_gas(), baseline.mandatory_gas());
     }
 
     #[test]

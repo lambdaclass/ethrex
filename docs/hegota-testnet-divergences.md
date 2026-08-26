@@ -18,9 +18,14 @@ Re-audited 2026-08-25 against `ethereum/EIPs@master`, 70 commits past the pin. T
 core EIPs were pinned at `4093c21847`; 8250, 8272 and 7805 are byte-identical to it still,
 8141 is not, and EIP-8369's PR head has moved.
 
+EIP-8141 is now pinned at `7d1c8bfb94` (2026-08-24, "account block execution gas before
+refund (EIP-7778)"), verified byte-identical to the copy this implementation was written
+against. That revision is the reason the frame path reports a pre-refund `gas_used` for
+the block and a post-refund `gas_spent` for the payer.
+
 | EIP | Pin | Drift to head | Consensus-visible | Action | Owner |
 | --- | --- | --- | --- | --- | --- |
-| 8141 | `4093c21847` | **+326/−96 — a new envelope, see §6** | **yes** | open: adopt v2 (re-genesis) or stay pinned | — |
+| 8141 | `4093c21847` → **`7d1c8bfb94`** | **+326/−96 — a new envelope, see §6** | **yes** | **v2 adopted and implemented**, pin bumped; re-genesis required | — |
 | 7805 | `4093c21847` | none — byte-identical | no | closed | — |
 | 8250 | `81b976ac01` | one Abstract sentence: privacy applications sharing one sender | no | bump pin to `4093c2184` | Edgar |
 | 8272 | `d8636a330d` | one Abstract sentence: proofs against recent commitment roots | no | bump pin to `4093c2184` | Edgar |
@@ -192,9 +197,8 @@ claim.** Raised with the authors; recorded here because a second client that pic
 different bytes diverges on every validation prefix touching either.
 
 `0x11` was not available as a destination for the nonce read — it is the resolved-payer
-param — so it went to `0x12`. `0x0C` itself is reserved and currently halts: reporting
-`state_gas_left` needs the per-frame state pool, and a number that is wrong is worse than
-an unimplemented id.
+param — so it went to `0x12`. `0x0C` reports the executing frame's `state_gas_left`, read
+from the live frame pool rather than from the transaction view the other ids come from.
 
 Four compile-time asserts in `crates/vm/levm/src/opcodes.rs` now pin the opcode bytes and
 forbid sharing, so a fifth relocation is a compile error rather than a chain split.
@@ -228,8 +232,39 @@ Cherry-picking is the one option to avoid: taking `12 000` without the two-dimen
 model produces a rule set that matches no published revision, which is exactly what this
 ledger exists to prevent.
 
-**Action:** decide before announcing. ethrex already carries EIP-8037 state-gas machinery
-in 15 files, so the second dimension is not from zero.
+**Action:** adopted, and implemented. The two-dimensional model is enforced, not merely
+encoded — see §6.1 for what a joiner has to change because of it.
+
+### 6.1 What the second dimension costs a transaction builder
+
+Enforcement is the part with user-visible consequences. Three of them:
+
+**Every frame that creates state must declare `limits.state` for it.** A charge past the
+declared budget halts that frame — a `VERIFY` frame halting invalidates the whole
+transaction — and no frame can borrow state gas from its own execution budget, from
+another frame, or from a reservoir. The charges a plain transaction meets:
+
+| what the frame does | state gas |
+| --- | --- |
+| funds an address that does not exist yet | `120 * 1530` = 183 600 |
+| creates a storage slot (`0 → non-zero`) | `64 * 1530` = 97 920 |
+| installs a 7702 delegation | `23 * 1530` = 35 190 |
+
+**Every frame's execution budget must cover one account access.** The resolved target's
+EIP-2929 warm/cold access is charged at frame entry from `limits.execution`, so the
+minimum viable per-frame budget rises by 3 000 (cold, this base's Amsterdam rate) or 100
+where an earlier frame already touched the address. This applies to the expiry-verifier
+frame too: protocol-defined evaluation is an optimization, never a discount, so a frame
+that declared 1 000 gas because a client evaluates its deadline directly now halts.
+
+**Over-declaring is nearly free, under-declaring is fatal.** Unused budget in either pool
+is refunded at settlement; it only raises the `max_cost` collected from the payer up
+front. So a builder that cannot predict a frame's state growth should over-declare.
+
+Two changes a joiner will see rather than cause: receipts report `stateGasUsed` per frame
+(net of refills, and zero for a frame that reverted), and `TXPARAM 0x0C` returns the
+executing frame's remaining state budget — the read a paymaster needs to check that a
+frame it is about to sponsor can afford what it intends to do.
 
 ## 7. The glamsterdam-devnet-8 base reprices Amsterdam
 
@@ -401,9 +436,9 @@ survives a repricing of the warm/cold spread itself.
 | --- | --- |
 | `accessed_addresses` starts as EIP-2929/EIP-3651 (`tx.sender`, coinbase, precompiles) | conformant — `env.origin` is `tx.sender` for a frame tx |
 | `accessed_storage_keys` starts empty | conformant — `FrameTransaction` returns `EMPTY_ACCESS_LIST` |
-| being a frame target does not warm an address | conformant |
+| being a frame target does not warm an address | conformant — appearing in `tx.frames` warms nothing; the target is warmed when its own frame runs and is charged for it (v2 §Behavior), and stays warm for later frames because the journal is shared across them |
 | `ENTRY_POINT` is not pre-warmed | conformant — it is only ever the frame *caller*, never inserted |
-| the payer is added when a payment-scope `APPROVE` collects `max_cost` | **was divergent, now fixed** |
+| the payer is added when a payment-scope `APPROVE` collects `max_cost` | **was divergent, now fixed** — and v2 makes it structural: the payer is always its frame's resolved target, so the frame-entry access charge warms it and no separate rule is needed |
 
 The payer clause was a real gap: `APPROVE` scopes `0x1` and `0x3` debited the payer's
 balance via `decrease_account_balance` without adding it to `accessed_addresses`, so a
@@ -426,7 +461,7 @@ asserts no address at or below `0x100` appears.
 | Clause | Bearing |
 | --- | --- |
 | `floor_cost` is the calldata floor function *of the fork in force* — EIP-7623's 10/40 per token, or EIP-7976's flat 64 gas per byte where scheduled | consensus-visible through the frame-tx calldata floor; re-check when EIP-7976 lands on this chain's fork schedule |
-| `frame.value` follows ordinary `CALL` value-transfer semantics, charged inside the frame's `gas_limit` including the fork's account-creation cost; a frame that cannot cover it reverts without transferring, so no EIP-7708 log | not yet asserted by a test |
+| `frame.value` follows ordinary `CALL` value-transfer semantics, charged inside the frame's budgets including the fork's account-creation cost; a frame that cannot cover it halts without transferring, so no EIP-7708 log | **implemented and asserted** — v2 puts the account-creation charge in `limits.state`, after the balance check and before the frame's code; `a_value_bearing_frame_pays_account_creation_from_its_state_budget` covers both the charge and the one-gas-short halt |
 
 ### 9.3 EIP-8272 reference reads in the BAL — keep the record
 
