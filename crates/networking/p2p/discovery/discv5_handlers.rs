@@ -543,7 +543,7 @@ impl DiscoveryServer {
     ) -> Result<(), DiscoveryServerError> {
         // Only accept a NODES that answers a FINDNODE we actually sent to this
         // peer. Without the check, any peer that has completed a handshake can
-        // push ENRs of its choosing into our peer table with an unsolicited
+        // push ENRs of its choosing into our contact table with an unsolicited
         // NODES, and we then hand them back out in our own FINDNODE responses.
         let solicited = self.discv5.as_ref().is_some_and(|discv5| {
             discv5
