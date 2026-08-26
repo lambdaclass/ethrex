@@ -2242,6 +2242,8 @@ pub const FRAME_TX_MAX_VERIFY_GAS: u64 = 100_000;
 /// Used by VERIFY and PAY frames to declare which capabilities they grant.
 pub const APPROVE_PAYMENT: u8 = 0x1;
 pub const APPROVE_EXECUTION: u8 = 0x2;
+/// EIP-8141 `APPROVE_SCOPE_MASK`: the two scope bits of a frame's `flags`.
+pub const APPROVE_SCOPE_MASK: u8 = APPROVE_PAYMENT | APPROVE_EXECUTION;
 pub const APPROVE_EXECUTION_AND_PAYMENT: u8 = 0x3;
 /// Maximum number of pending frame txs using a non-canonical paymaster per
 /// paymaster address. A `pay` frame whose target's runtime code hash equals
@@ -2782,6 +2784,20 @@ impl FrameTransaction {
                         "Frame {i}: expiry verifier frame data must be {FRAME_TX_EXPIRY_DATA_LENGTH} bytes"
                     ));
                 }
+                // EIP-8141 v2 pins the whole shape of this frame, not just its flags and
+                // data length. Clients are allowed to evaluate the expiry frame directly
+                // instead of running the predeploy, so every field it carries has to be
+                // fixed or the two evaluation paths could disagree.
+                if !frame.value.is_zero() {
+                    return Err(format!(
+                        "Frame {i}: expiry verifier frame must have value == 0"
+                    ));
+                }
+                if frame.state_limit != 0 {
+                    return Err(format!(
+                        "Frame {i}: expiry verifier frame must have limits.state == 0"
+                    ));
+                }
             }
             // EIP-8312 UTXO frame rules. `value == 0` comes free from the
             // SENDER-only value rule below; `flags == 0` and `target == None`
@@ -2920,6 +2936,22 @@ impl FrameTransaction {
                     }
                     Some(_) => {}
                 }
+            }
+            // EIP-8141 v2: a frame belonging to an atomic batch approves no scope. A
+            // batch unrolls as a unit, so an approval granted inside one could be relied
+            // on by code the unroll then reverses. Membership is either end of the pair:
+            // the frame carrying the flag, or the frame after it. Checked after the
+            // VERIFY-frame rules above so their more specific error keeps precedence.
+            let in_atomic_batch = frame.is_atomic_batch()
+                || (i > 0
+                    && self
+                        .frames
+                        .get(i.saturating_sub(1))
+                        .is_some_and(|prev| prev.is_atomic_batch()));
+            if in_atomic_batch && frame.flags & APPROVE_SCOPE_MASK != 0 {
+                return Err(format!(
+                    "Frame {i}: a frame in an atomic batch must not approve a scope"
+                ));
             }
         }
 

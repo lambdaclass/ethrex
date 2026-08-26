@@ -1902,3 +1902,129 @@ fn p2p_blobless_frame_transaction_must_not_be_wrapped() {
         "unexpected error: {err:?}"
     );
 }
+
+// ==================== EIP-8141 v2 additions ====================
+
+/// v2 pins the expiry-verifier frame's whole shape, not just its flags and data length.
+/// Clients may evaluate this frame directly instead of running the predeploy, so any field
+/// left free is a field on which the two evaluation paths could disagree.
+#[test]
+fn an_expiry_verifier_frame_carrying_value_is_invalid() {
+    let mut tx = make_test_frame_tx();
+    let mut expiry = expiry_verifier_frame();
+    expiry.value = U256::one();
+    tx.frames = vec![expiry, self_verify_frame()];
+    assert!(
+        tx.validate_static_constraints(false)
+            .unwrap_err()
+            .contains("expiry verifier frame must have value == 0")
+    );
+}
+
+#[test]
+fn an_expiry_verifier_frame_carrying_a_state_budget_is_invalid() {
+    let mut tx = make_test_frame_tx();
+    let mut expiry = expiry_verifier_frame();
+    expiry.state_limit = 1;
+    tx.frames = vec![expiry, self_verify_frame()];
+    assert!(
+        tx.validate_static_constraints(false)
+            .unwrap_err()
+            .contains("expiry verifier frame must have limits.state == 0")
+    );
+}
+
+/// v2: a frame belonging to an atomic batch approves no scope. The batch unrolls as a
+/// unit, so an approval granted inside one could be relied on by code the unroll reverses.
+/// Both ends of the pair are in the batch, so both are checked: the frame carrying the
+/// flag, and the frame after it.
+#[test]
+fn the_flag_carrying_frame_of_a_batch_may_not_approve_a_scope() {
+    let mut tx = make_test_frame_tx();
+    tx.frames = vec![
+        self_verify_frame(),
+        Frame {
+            mode: FrameMode::Default as u8,
+            flags: 0x04 | APPROVE_PAYMENT, // atomic batch + a scope
+            target: Some(Address::from_low_u64_be(0xCAFE)),
+            gas_limit: 21_000,
+            state_limit: 0,
+            value: U256::zero(),
+            data: Bytes::new(),
+        },
+        Frame {
+            mode: FrameMode::Sender as u8,
+            flags: 0x00,
+            target: Some(Address::from_low_u64_be(0xBEEF)),
+            gas_limit: 21_000,
+            state_limit: 0,
+            value: U256::zero(),
+            data: Bytes::new(),
+        },
+    ];
+    assert!(
+        tx.validate_static_constraints(false)
+            .unwrap_err()
+            .contains("must not approve a scope")
+    );
+}
+
+#[test]
+fn the_second_frame_of_a_batch_may_not_approve_a_scope() {
+    let mut tx = make_test_frame_tx();
+    tx.frames = vec![
+        self_verify_frame(),
+        Frame {
+            mode: FrameMode::Default as u8,
+            flags: 0x04, // atomic batch, no scope
+            target: Some(Address::from_low_u64_be(0xCAFE)),
+            gas_limit: 21_000,
+            state_limit: 0,
+            value: U256::zero(),
+            data: Bytes::new(),
+        },
+        Frame {
+            mode: FrameMode::Sender as u8,
+            flags: APPROVE_PAYMENT, // in the batch by succession, so this is invalid
+            target: Some(Address::from_low_u64_be(0xBEEF)),
+            gas_limit: 21_000,
+            state_limit: 0,
+            value: U256::zero(),
+            data: Bytes::new(),
+        },
+    ];
+    assert!(
+        tx.validate_static_constraints(false)
+            .unwrap_err()
+            .contains("must not approve a scope")
+    );
+}
+
+/// The mirror image: a batch whose frames approve nothing is valid, so the rule above is
+/// rejecting the scope bits rather than the batch.
+#[test]
+fn a_batch_approving_no_scope_is_valid() {
+    let mut tx = make_test_frame_tx();
+    tx.frames = vec![
+        self_verify_frame(),
+        Frame {
+            mode: FrameMode::Default as u8,
+            flags: 0x04,
+            target: Some(Address::from_low_u64_be(0xCAFE)),
+            gas_limit: 21_000,
+            state_limit: 0,
+            value: U256::zero(),
+            data: Bytes::new(),
+        },
+        Frame {
+            mode: FrameMode::Sender as u8,
+            flags: 0x00,
+            target: Some(Address::from_low_u64_be(0xBEEF)),
+            gas_limit: 21_000,
+            state_limit: 0,
+            value: U256::zero(),
+            data: Bytes::new(),
+        },
+    ];
+    assert_eq!(tx.validate_static_constraints(false), Ok(()));
+}

@@ -309,6 +309,56 @@ fn a_frame_write_is_recorded_in_the_block_access_list() {
     );
 }
 
+/// EIP-8141 v2: "since the signature validation does not happen in EVM execution, the
+/// related precompiles `ecrecover` and `P256VERIFY` must not be added to the block-level
+/// access list."
+///
+/// ethrex satisfies this by construction — outer signatures are checked by a direct call
+/// to `validate_frame_signatures`, never through EVM dispatch, so the BAL recorder never
+/// sees the precompile addresses. That is exactly the kind of property that holds until
+/// someone routes the check through the EVM for convenience, and an extra BAL entry
+/// changes the list's hash and invalidates the block. Pinned here, alongside the positive
+/// case above, so the two are read together: 0x8272 *must* appear, 0x01 and 0x100 must
+/// not.
+#[test]
+fn signature_precompiles_stay_out_of_the_block_access_list() {
+    let salt = [0x77u8; 32];
+    let root = H256::repeat_byte(0x88);
+    let accounts = [
+        (SENDER, big(), 0, Bytes::from(APPROVE_BOTH_CODE.to_vec())),
+        recent_root_predeploy(),
+    ];
+    let tx = frame_tx(vec![
+        frame(FrameMode::Verify, 0x03, SENDER, 100_000, &[]),
+        frame(
+            FrameMode::Sender,
+            0x00,
+            frame_tx_recent_root(),
+            300_000,
+            &[salt.as_slice(), root.as_bytes()].concat(),
+        ),
+    ]);
+    let (result, mut db) = run_at_slot_bal(&accounts, tx, 400u64, true);
+    result.expect("the transaction executes with BAL recording active");
+    let bal = db.take_bal().expect("BAL recorder was active");
+
+    let ecrecover = Address::from_low_u64_be(0x01);
+    let p256verify = Address::from_low_u64_be(0x100);
+    for (address, name) in [(ecrecover, "ecrecover"), (p256verify, "P256VERIFY")] {
+        assert!(
+            !bal.accounts().iter().any(|a| a.address == address),
+            "{name} must not appear in the BlockAccessList: outer signature validation \
+             happens outside EVM execution"
+        );
+    }
+    assert!(
+        bal.accounts()
+            .iter()
+            .any(|a| a.address == frame_tx_recent_root()),
+        "the EIP-8272 predeploy is a deliberate BAL entry and must still be recorded"
+    );
+}
+
 #[test]
 fn committed_reference_validates_and_executes() {
     // Pre-seed the predeploy with a committed root, then reference it from a
