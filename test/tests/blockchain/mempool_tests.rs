@@ -1265,8 +1265,12 @@ fn frame_tx_with_expiry(deadline: u64) -> FrameTransaction {
                 mode: FrameMode::Verify as u8,
                 flags: 0x00,
                 target: Some(frame_tx_expiry_verifier()),
-                // Enough to reserve the EIP-7623 floor of the 8-byte deadline.
-                gas_limit: 1_000,
+                // Enough to reserve the EIP-7623 floor of the 8-byte deadline, and to
+                // cover the EIP-8141 v2 frame-entry access charge on the verifier
+                // address — the expiry frame is priced by normal EVM rules even where a
+                // client evaluates it directly, so protocol evaluation stays an
+                // optimization rather than a discount.
+                gas_limit: 5_000,
                 state_limit: 0,
                 value: U256::zero(),
                 data: Bytes::from(data.to_vec()),
@@ -1275,7 +1279,8 @@ fn frame_tx_with_expiry(deadline: u64) -> FrameTransaction {
                 mode: FrameMode::Verify as u8,
                 flags: APPROVE_EXECUTION_AND_PAYMENT,
                 target: Some(sender),
-                gas_limit: 200,
+                // Covers the v2 frame-entry access charge on the sender.
+                gas_limit: 5_000,
                 state_limit: 0,
                 value: U256::zero(),
                 data: Bytes::new(),

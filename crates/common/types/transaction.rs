@@ -2531,25 +2531,43 @@ impl FrameTransaction {
         )
     }
 
-    /// EIP-8141 `standard_gas_limit`: mandatory costs + data cost + EIP-8272
-    /// reference intrinsic gas + sum of frame gas limits.
-    pub fn standard_gas_limit(&self) -> u64 {
+    /// EIP-8141 `frame_tx_intrinsic_gas`: the transaction's intrinsic cost in the
+    /// EIP-2780 sense — derivable from the transaction fields alone, with no state
+    /// access — charged entirely in the execution dimension. This is
+    /// `standard_gas_limit` less both declared frame budgets, and must be computed
+    /// directly rather than by subtracting the frame budgets from `total_gas_limit`:
+    /// the latter is `max_gas`, which can be the calldata-floor branch.
+    pub fn frame_tx_intrinsic_gas(&self) -> u64 {
         self.mandatory_gas()
             .saturating_add(self.data_cost())
             .saturating_add(self.recent_root_reference_intrinsic_gas())
+    }
+
+    /// EIP-8141 `standard_gas_limit`: mandatory costs + data cost + EIP-8272
+    /// reference intrinsic gas + the sum of both declared frame budgets.
+    ///
+    /// Both dimensions are included because this is the quantity settlement
+    /// subtracts `tx_unused_gas` from, and unused gas is summed over both pools.
+    /// The EIP-7825 cap is a *different* quantity — `frame_tx_intrinsic_gas +
+    /// total_frame_execution_gas`, state excluded — and is checked separately in
+    /// `validate_frame_tx_static`.
+    pub fn standard_gas_limit(&self) -> u64 {
+        self.frame_tx_intrinsic_gas()
             .saturating_add(
                 self.frames
                     .iter()
                     .map(|f| f.gas_limit)
                     .fold(0u64, |acc, g| acc.saturating_add(g)),
             )
+            .saturating_add(self.state_gas_limit())
     }
 
-    /// Sum of the frames' EIP-8037 state budgets (`limits.state`). Deliberately not
-    /// part of `standard_gas_limit`: EIP-8141 excludes state gas from the EIP-7825
-    /// transaction cap and from the EIP-7623 calldata floor, because both bound an
-    /// execution-dimension resource. The state dimension is bounded by the encoding
-    /// limit and by the block's state-gas capacity instead.
+    /// Sum of the frames' EIP-8037 state budgets (`limits.state`). Kept separate
+    /// because state gas is excluded from the EIP-7825 transaction cap and is never
+    /// absorbed by the EIP-7623 calldata floor: both bound an execution-dimension
+    /// resource, so the floor branch of `max_gas` adds the state sum on top rather
+    /// than covering it. The state dimension is bounded by the encoding limit and by
+    /// the block's state-gas capacity instead.
     pub fn state_gas_limit(&self) -> u64 {
         self.frames
             .iter()
@@ -2566,12 +2584,16 @@ impl FrameTransaction {
             .saturating_add(self.calldata_floor_gas())
     }
 
-    /// EIP-8141 `max_gas = max(standard_gas_limit, calldata_floor_gas)`: the gas
-    /// reserved from the block pool before execution and the quantity `max_cost`
-    /// is charged over. A transaction whose data floor exceeds what it declared
-    /// for execution reserves the floor rather than being rejected.
+    /// EIP-8141 `max_gas = max(standard_gas_limit, calldata_floor_gas + sum(limits.state))`:
+    /// the gas reserved from the block pool before execution and the quantity
+    /// `max_cost` is charged over. A transaction whose data floor exceeds what it
+    /// declared for execution reserves the floor rather than being rejected — and
+    /// pays its state dimension on top of that floor, never inside it.
     pub fn total_gas_limit(&self) -> u64 {
-        self.standard_gas_limit().max(self.calldata_floor_total())
+        self.standard_gas_limit().max(
+            self.calldata_floor_total()
+                .saturating_add(self.state_gas_limit()),
+        )
     }
 
     /// TXPARAM `0x06` max cost: the largest amount the payer may be charged,

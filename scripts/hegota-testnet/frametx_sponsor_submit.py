@@ -28,6 +28,14 @@ import sys, json, time, urllib.request
 from eth_keys import keys
 from frametx import Frame, FrameSig, FrameTx
 
+# EIP-8141 v2 state budgets. Each frame declares `limits = [execution, state]`, the two
+# never mix, and a state charge past `limits.state` halts the frame. One charge reaches a
+# plain transfer: funding an address that does not exist yet costs
+# STATE_BYTES_PER_NEW_ACCOUNT * CPSB = 120 * 1530, and the frame pays it from its own
+# state budget. Declaring it when the recipient already exists is free in practice — the
+# unused budget is refunded at settlement, it only raises the up-front max_cost.
+NEW_ACCOUNT_STATE_GAS = 120 * 1530
+
 # OpenSponsor.verify() — keccak256("verify()")[:4]
 SPONSOR_VERIFY_SELECTOR = bytes.fromhex("fc735e99")
 
@@ -79,7 +87,8 @@ def main():
                 Frame(mode=1, flags=APPROVE_PAYMENT, target=sponsor, gas_limit=40_000, value=0,
                       data=SPONSOR_VERIFY_SELECTOR),
                 # the actual transfer, executed as the sender.
-                Frame(mode=2, flags=0, target=recipient, gas_limit=30_000, value=amount, data=b""),
+                Frame(mode=2, flags=0, target=recipient, gas_limit=30_000, value=amount, data=b"",
+                      state_limit=NEW_ACCOUNT_STATE_GAS),
             ],
             signatures=[FrameSig(FrameSig.SECP256K1, sender, b"", b"")],
             max_priority_fee=max_priority, max_fee=max_fee)

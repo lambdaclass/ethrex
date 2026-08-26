@@ -13,6 +13,14 @@ import sys, json, time, urllib.request
 from eth_keys import keys
 from frametx import Frame, FrameSig, FrameTx, addr20
 
+# EIP-8141 v2 state budgets. Each frame declares `limits = [execution, state]`, the two
+# never mix, and a state charge past `limits.state` halts the frame. One charge reaches a
+# plain transfer: funding an address that does not exist yet costs
+# STATE_BYTES_PER_NEW_ACCOUNT * CPSB = 120 * 1530, and the frame pays it from its own
+# state budget. Declaring it when the recipient already exists is free in practice — the
+# unused budget is refunded at settlement, it only raises the up-front max_cost.
+NEW_ACCOUNT_STATE_GAS = 120 * 1530
+
 def rpc(url, method, params):
     req = urllib.request.Request(
         url, headers={"content-type": "application/json"},
@@ -44,7 +52,8 @@ def main():
             chain_id=chain_id, nonce_keys=[0], nonce_seq=nonce_seq, sender=sender,
             frames=[
                 Frame(mode=1, flags=0x03, target=sender, gas_limit=80_000, value=0, data=b""),
-                Frame(mode=2, flags=0, target=recipient, gas_limit=30_000, value=amount, data=b""),
+                Frame(mode=2, flags=0, target=recipient, gas_limit=30_000, value=amount, data=b"",
+                      state_limit=NEW_ACCOUNT_STATE_GAS),
             ],
             signatures=[FrameSig(FrameSig.SECP256K1, sender, b"", b"")],
             max_priority_fee=max_priority, max_fee=max_fee)

@@ -339,7 +339,7 @@ impl OpcodeHandler for OpSStoreHandler {
             )?)?;
 
         if needs_state_gas {
-            vm.increase_state_gas(vm.state_gas_storage_set)?;
+            vm.increase_state_gas_for_slot(vm.state_gas_storage_set, to, key)?;
         }
         // EIP-8037 (Amsterdam+) 0→N→0: the slot was created in this tx (original == 0),
         // dirtied to N (current_value != 0), and now being reset to 0 (value == original == 0).
@@ -403,7 +403,7 @@ impl OpcodeHandler for OpSStoreHandler {
 
         // EIP-8037: credit the state gas refund via clamp-and-spill (after regular gas processing).
         if is_zero_to_n_to_zero_amsterdam {
-            vm.credit_state_gas_refund(vm.state_gas_storage_set)?;
+            vm.credit_state_gas_refund_for_slot(vm.state_gas_storage_set, to, key)?;
         }
 
         if value != current_value {

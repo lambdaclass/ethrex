@@ -32,8 +32,14 @@ import urllib.request
 CAST = os.path.expanduser("~/.foundry/bin/cast")
 RECENT_ROOT_ADDRESS = "0x0000000000000000000000000000000000008272"
 RECENT_ROOT_CODE_LEN = 144
+# EIP-8037 STATE_BYTES_PER_NEW_ACCOUNT * CPSB: what a value-bearing frame is charged for
+# funding an address that does not exist yet, drawn from that frame's own `limits.state`.
+NEW_ACCOUNT_STATE_GAS = 120 * 1530
 
 RPC, AUTH, JWT, KEY, RECIP = sys.argv[1:6]
+# An address that must never receive funds: the under-budget frame below is expected to
+# halt before delivering its value, and the check is that this balance stays zero.
+UNFUNDED = "0x" + "8141dead" * 5
 FAILURES: list[str] = []
 
 
@@ -123,9 +129,12 @@ def main() -> int:
     print(f"devnet chain={chain_id} head={int(head['number'], 16)} sender={sender} seq={seq}\n")
 
     print("EIP-8141 — v2 envelope end to end")
+    # The SENDER frame funds `RECIP`, so it declares the account-creation state gas. A
+    # frame that declared none would halt on the charge — which is the point of v2's
+    # second dimension, and is checked directly below.
     frames = [
         frame(1, 0x03, sender, 80_000, 0, 0, b""),          # VERIFY, approves both scopes
-        frame(2, 0x00, RECIP, 30_000, 0, 100, b""),         # SENDER, transfers 100 wei
+        frame(2, 0x00, RECIP, 30_000, NEW_ACCOUNT_STATE_GAS, 100, b""),  # SENDER, 100 wei
     ]
     raw = build_frame_tx(chain_id, sender, 0, seq, frames, 10**9, base_fee * 2 + 10**9, KEY)
     sim = rpc(RPC, "ethrex_simulateFrameTransaction", [raw])
@@ -147,6 +156,44 @@ def main() -> int:
         check("per-frame receipts carry the state dimension",
               all("stateGasUsed" in fr for fr in frs),
               "keys=" + ",".join(sorted(frs[0].keys())) if frs else "none")
+        # The state dimension has to be metered, not merely serialized. The VERIFY frame
+        # creates nothing and must report zero; whichever frames did create state must
+        # report a non-zero figure, and the transaction's total must agree with the sum.
+        if len(frs) == len(frames):
+            state_used = [int(fr.get("stateGasUsed", "0x0"), 16) for fr in frs]
+            check("the VERIFY frame reports no state gas", state_used[0] == 0,
+                  f"reported {state_used[0]}")
+            check("the funding frame is charged for the account it created",
+                  state_used[1] > 0, f"reported {state_used[1]}")
+
+    print("\nEIP-8141 — the state dimension is enforced, not just reported")
+    seq = int(rpc(RPC, "eth_getTransactionCount", [sender, "latest"]), 16)
+    starved = [
+        frame(1, 0x03, sender, 80_000, 0, 0, b""),
+        # One gas short of the account-creation charge on an address that does not exist.
+        frame(2, 0x00, UNFUNDED, 30_000, NEW_ACCOUNT_STATE_GAS - 1, 100, b""),
+    ]
+    raw = build_frame_tx(chain_id, sender, 0, seq, starved, 10**9, base_fee * 2 + 10**9, KEY)
+    starved_receipt = None
+    try:
+        starved_hash = rpc(RPC, "eth_sendRawTransaction", [raw])
+        for _ in range(30):
+            starved_receipt = rpc(RPC, "eth_getTransactionReceipt", [starved_hash])
+            if starved_receipt:
+                break
+            time.sleep(2)
+    except RuntimeError as exc:
+        check("an under-budgeted frame is admitted (it is valid, it just halts)", False,
+              str(exc)[:90])
+    if starved_receipt:
+        starved_frs = starved_receipt.get("frameReceipts") or []
+        check("a frame that cannot cover its state charge halts",
+              len(starved_frs) == 2 and starved_frs[1].get("status") == "0x0",
+              f"statuses={[fr.get('status') for fr in starved_frs]}")
+        check("the halted frame reports no state gas",
+              bool(starved_frs) and int(starved_frs[1].get("stateGasUsed", "0x0"), 16) == 0)
+        check("its value was not delivered",
+              int(rpc(RPC, "eth_getBalance", [UNFUNDED, "latest"]), 16) == 0)
 
     print("\nEIP-8272 — recent roots")
     code = rpc(RPC, "eth_getCode", [RECENT_ROOT_ADDRESS, "latest"])

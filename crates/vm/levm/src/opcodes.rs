@@ -210,9 +210,15 @@ pub enum Opcode {
 // EIP-8141 v2 publishes SIGDATACOPY at 0xB5, EIP-8272's RECENTROOTREFLOAD moved to 0xB6
 // after already having moved off 0xB4, and nothing in the set may share a byte. A future
 // relocation is then a compile error instead of two clients disagreeing about an opcode.
+// A discriminant read is the only way to assert an opcode's byte at compile time; the
+// crate's blanket ban on silent `as` exists for value conversions, as in `From<u8>` below.
+#[expect(clippy::as_conversions)]
 const _: () = assert!(Opcode::SIGDATACOPY as u8 == 0xB5);
+#[expect(clippy::as_conversions)]
 const _: () = assert!(Opcode::RECENTROOTREFLOAD as u8 == 0xB6);
+#[expect(clippy::as_conversions)]
 const _: () = assert!(Opcode::SIGPARAM as u8 != Opcode::SIGDATACOPY as u8);
+#[expect(clippy::as_conversions)]
 const _: () = assert!(Opcode::SIGDATACOPY as u8 != Opcode::RECENTROOTREFLOAD as u8);
 
 impl From<u8> for Opcode {

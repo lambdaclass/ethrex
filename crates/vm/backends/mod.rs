@@ -177,14 +177,12 @@ impl Evm {
             receipt.frame_receipts = execution_report.frame_results.take().map(|results| {
                 results
                     .into_iter()
-                    .map(
-                        |(status, gas_used, logs)| ethrex_common::types::FrameReceipt {
-                            status,
-                            gas_used,
-                            state_gas_used: 0,
-                            logs,
-                        },
-                    )
+                    .map(|result| ethrex_common::types::FrameReceipt {
+                        status: result.status,
+                        gas_used: result.gas_used,
+                        state_gas_used: result.state_gas_used,
+                        logs: result.logs,
+                    })
                     .collect()
             });
         }

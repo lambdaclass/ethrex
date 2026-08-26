@@ -75,13 +75,19 @@ fn frame_tx(frames: Vec<Frame>) -> FrameTransaction {
     }
 }
 
+/// A state budget covering one `RECENT_ROOT_CODE` entry write (a new storage slot in
+/// the predeploy, ~126k of EIP-8037 state gas) with room to spare. EIP-8141 v2 frames
+/// declare `limits.state` and a charge past it halts the frame, so a write frame that
+/// declared nothing would revert; read-only frames spend none of it and it is refunded.
+const STATE_BUDGET: u64 = 1_000_000;
+
 fn frame(mode: FrameMode, flags: u8, target: Address, gas_limit: u64, data: &[u8]) -> Frame {
     Frame {
         mode: u8::from(mode),
         flags,
         target: Some(target),
         gas_limit,
-        state_limit: 0,
+        state_limit: STATE_BUDGET,
         value: U256::zero(),
         data: Bytes::from(data.to_vec()),
     }
@@ -250,10 +256,10 @@ fn a_frame_targeting_the_predeploy_commits_the_entry() {
     let report = result.expect("write frame tx must execute (this is where the RPC path failed)");
     let fr = report.frame_results.expect("frame results");
     assert_eq!(
-        fr[1].0,
+        fr[1].status,
         1,
         "the recent-root write frame must succeed; statuses={:?}",
-        fr.iter().map(|f| f.0).collect::<Vec<_>>()
+        fr.iter().map(|f| f.status).collect::<Vec<_>>()
     );
     // The predeploy must now hold entry_hash at storage_key for (source_id, write_slot).
     let sid = source_id(SENDER, &salt);
@@ -296,7 +302,7 @@ fn a_frame_write_is_recorded_in_the_block_access_list() {
     let (result, mut db) = run_at_slot_bal(&accounts, tx, write_slot, true);
     let report = result.expect("write frame tx must execute even with BAL recording active");
     let fr = report.frame_results.expect("frame results");
-    assert_eq!(fr[1].0, 1, "write frame must succeed with BAL on");
+    assert_eq!(fr[1].status, 1, "write frame must succeed with BAL on");
     // The BAL must build without panicking and include the 0x8272 storage write.
     let bal = db.take_bal().expect("BAL recorder was active");
     let touched = bal

@@ -287,6 +287,11 @@ impl OpcodeHandler for OpApproveHandler {
 /// earlier `0x0B -> 0x10` move for `nonce_keys[0]` after `0x0B` collided.
 const TXPARAM_LEGACY_SENDER_NONCE: u64 = 0x12;
 
+/// EIP-8141 v2 TXPARAM `0x0C`: "`state_gas_left` remaining in the currently executing
+/// frame". Served from the live VM pool rather than from `FrameTxContext`, which only
+/// carries transaction fields.
+const TXPARAM_STATE_GAS_LEFT: u64 = 0x0C;
+
 /// Gas cost: 2
 pub struct OpTxParamHandler;
 impl OpcodeHandler for OpTxParamHandler {
@@ -308,6 +313,18 @@ impl OpcodeHandler for OpTxParamHandler {
             .ok_or(ExceptionalHalt::InvalidOpcode)?;
 
         let param_id = u64::try_from(param_id).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
+        // `state_gas_left` is live execution state, not a transaction field, so it is
+        // read here instead of in the `FrameTxContext`-only `load_tx_param`. The pool is
+        // set for the whole of a frame's execution, so a `None` means TXPARAM was reached
+        // outside frame execution, which halts as any undefined parameter does.
+        if param_id == TXPARAM_STATE_GAS_LEFT {
+            let left = vm
+                .frame_state_pool
+                .map(|pool| pool.left)
+                .ok_or(ExceptionalHalt::InvalidOpcode)?;
+            vm.current_call_frame.stack.push(U256::from(left))?;
+            return Ok(OpcodeResult::Continue);
+        }
         let result = load_tx_param(ctx, param_id, payer_txparam_active)?;
         // EIP-8250 §Mempool: a validation prefix that reads the sender's legacy
         // account nonce depends on it, so the mempool must revalidate when that
@@ -487,11 +504,11 @@ impl OpcodeHandler for OpFrameParamHandler {
                 if idx >= ctx.current_frame_index {
                     return Err(ExceptionalHalt::InvalidOpcode.into());
                 }
-                let (status, _, _) = ctx
+                let result = ctx
                     .frame_results
                     .get(idx)
                     .ok_or(ExceptionalHalt::InvalidOpcode)?;
-                U256::from(*status)
+                U256::from(result.status)
             }
             0x06 => {
                 // allowed_scope (flags & 0x03)
@@ -699,11 +716,9 @@ pub fn load_tx_param(
         0x09 => Ok(U256::from(ctx.tx.frames.len())),
         0x0A => Ok(U256::from(ctx.current_frame_index)),
         0x0B => Ok(U256::from(ctx.tx.signatures.len())),
-        // EIP-8250 keyed nonces.
-        // 0x0C is reserved for EIP-8141 v2's `state_gas_left`, which needs the per-frame
-        // state pool to exist before it can report anything true. Until then it is not
-        // implemented and falls through to the exceptional halt below, rather than
-        // returning a number that would be wrong.
+        // EIP-8250 keyed nonces. (`0x0C` is EIP-8141 v2's `state_gas_left`, handled by
+        // the TXPARAM opcode itself: it reads the live frame pool, which this
+        // transaction-only view has no access to.)
         0x12 => Ok(U256::from(ctx.legacy_sender_nonce)),
         0x0D => Ok(U256::from(ctx.tx.nonce_keys.len())),
         0x0E => Ok(U256::from_big_endian(ctx.tx.nonce_keys_hash().as_bytes())),
