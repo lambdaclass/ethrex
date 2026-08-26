@@ -7,7 +7,7 @@ use crate::rlpx::l2::{
 };
 use crate::{
     backend,
-    discovery::{DiscoveryHandle, PeerStatus},
+    discovery::{DiscoveryHandle, PeerEvent},
     metrics::METRICS,
     network::P2PContext,
     peer_table::{PeerTable, PeerTableServerProtocol as _},
@@ -393,9 +393,9 @@ impl PeerConnectionServer {
                     match &reason {
                         PeerConnectionError::NoMatchingCapabilities
                         | PeerConnectionError::HandshakeError(_) => {
-                            established_state.discovery.update_status(
+                            established_state.discovery.record_peer_event(
                                 established_state.node.node_id(),
-                                PeerStatus::Unwanted,
+                                PeerEvent::Rejected,
                             );
                         }
                         _ => {}
@@ -475,7 +475,7 @@ impl PeerConnectionServer {
                 // table's own map equally stale, so the two stores at least agree.
                 established_state
                     .discovery
-                    .update_status(established_state.node.node_id(), PeerStatus::Disconnected);
+                    .record_peer_event(established_state.node.node_id(), PeerEvent::Disconnected);
                 // Free the peer's tx-broadcaster index (and clear its bit across known txs) so
                 // the broadcaster's per-peer index map / PeerMask widths stay bounded to live peers.
                 if let Err(e) = established_state
@@ -839,7 +839,7 @@ where
     )?;
     state
         .discovery
-        .update_status(state.node.node_id(), PeerStatus::Connected);
+        .record_peer_event(state.node.node_id(), PeerEvent::Connected);
 
     trace!(peer=%state.node, "Peer connection initialized.");
 

@@ -18,7 +18,7 @@ pub mod lookup;
 pub mod server;
 
 pub use contact_table::{
-    Contact, ContactTable, ContactValidation, DiscoveryProtocol, PeerStatus, Session,
+    Contact, ContactTable, ContactValidation, DiscoveryProtocol, PeerEvent, Session,
 };
 pub use server::{
     DiscoveryHandle, DiscoveryServer, DiscoveryServerError, DiscoveryServerProtocol,

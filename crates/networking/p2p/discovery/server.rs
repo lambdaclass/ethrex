@@ -32,7 +32,7 @@ use tracing::{debug, error, info, trace};
 
 use super::{
     DiscoveryConfig, codec::DiscriminatingCodec, contact_table::ContactTable,
-    contact_table::DiscoveryProtocol, contact_table::PeerStatus, lookup_interval_function,
+    contact_table::DiscoveryProtocol, contact_table::PeerEvent, lookup_interval_function,
 };
 use std::sync::OnceLock;
 
@@ -75,9 +75,9 @@ pub enum DiscoveryServerError {
 #[protocol]
 pub trait DiscoveryServerProtocol: Send + Sync {
     fn raw_packet(&self, data: BytesMut, from: SocketAddr) -> Result<(), ActorError>;
-    /// Report what the consumer has just learned about a peer. See
-    /// [`PeerStatus`] for what each variant does.
-    fn update_status(&self, node_id: H256, status: PeerStatus) -> Result<(), ActorError>;
+    /// Report something that happened to the consumer's relationship with a
+    /// peer. See [`PeerEvent`] for what each variant does.
+    fn record_peer_event(&self, node_id: H256, event: PeerEvent) -> Result<(), ActorError>;
     fn revalidate_v4(&self) -> Result<(), ActorError>;
     fn revalidate_v5(&self) -> Result<(), ActorError>;
     fn lookup_v4(&self) -> Result<(), ActorError>;
@@ -121,12 +121,12 @@ impl DiscoveryHandle {
         self.0.get()
     }
 
-    /// Report what just happened to a peer. See [`PeerStatus`]: the variants
-    /// are separate reports rather than exclusive states, so a peer can be
-    /// reported `Disposable` while its connection is still up.
-    pub fn update_status(&self, node_id: H256, status: PeerStatus) {
+    /// Report something that happened to a peer. See [`PeerEvent`]: these are
+    /// events, not a state machine, and `Rejected` is only ever reported for an
+    /// attempt that never became a connection.
+    pub fn record_peer_event(&self, node_id: H256, event: PeerEvent) {
         if let Some(server) = self.server() {
-            let _ = server.update_status(node_id, status);
+            let _ = server.record_peer_event(node_id, event);
         }
     }
 
@@ -392,12 +392,12 @@ impl DiscoveryServer {
     }
 
     #[send_handler]
-    async fn handle_update_status(
+    async fn handle_record_peer_event(
         &mut self,
-        msg: discovery_server_protocol::UpdateStatus,
+        msg: discovery_server_protocol::RecordPeerEvent,
         _ctx: &Context<Self>,
     ) {
-        self.contacts.update_status(msg.node_id, msg.status);
+        self.contacts.record_peer_event(msg.node_id, msg.event);
     }
 
     #[request_handler]
@@ -569,12 +569,12 @@ mod tests {
         // answer `None` rather than wait for a server that may never arrive.
         let handle = DiscoveryHandle::new();
 
-        for status in [
-            PeerStatus::Connected,
-            PeerStatus::Disconnected,
-            PeerStatus::Unwanted,
+        for event in [
+            PeerEvent::Connected,
+            PeerEvent::Disconnected,
+            PeerEvent::Rejected,
         ] {
-            handle.update_status(H256::repeat_byte(1), status);
+            handle.record_peer_event(H256::repeat_byte(1), event);
         }
         handle.prune();
 
