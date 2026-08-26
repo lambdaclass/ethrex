@@ -17,24 +17,41 @@ Next fork: **Glamsterdam** (CL Gloas, EL Amsterdam). Mainnet date not yet schedu
 **glamsterdam-devnet-8**
 
 - Spec baseline: [`devnets/glamsterdam/8`](https://github.com/ethereum/execution-specs/tree/devnets/glamsterdam/8)
-- Fixtures: [`tests-glamsterdam-devnet@v8.1.1`](https://github.com/ethereum/execution-specs/releases/tag/tests-glamsterdam-devnet@v8.1.1)
-- EELS commit: `32f597f7e56e3843198a83c7cf437a0b49aa6c0e` (the v8.1.1 tag, also the tip of `devnets/glamsterdam/8`)
-- Status: 🟢 aligned — blockchain, state and engine ef-tests green on the v8.1.1 bundle
+- Fixtures: [`tests-glamsterdam-devnet@v8.1.2`](https://github.com/ethereum/execution-specs/releases/tag/tests-glamsterdam-devnet@v8.1.2)
+- EELS commit: `50a7f6ecaf4963dc0c2b46b4ac55462a2efee314` (the v8.1.2 tag, also the tip of `devnets/glamsterdam/8`)
+- Status: 🟢 aligned — blockchain, state and engine ef-tests green on the v8.1.2 bundle
 - Tracking: [#6583]
 
 **Bumping to a new bundle:** edit `tooling/ef_tests/.fixtures_url_amsterdam` and
 `.github/config/hive/amsterdam.yaml` (`fixtures` + `eels_commit`) — both, always, since
 grading one release's client against another's bundle fails every fixture the releases
 disagree on — then re-run the three ef-test suites and hive `eels/consume-engine`
-Amsterdam. Upstream expects at least two follow-up releases on this devnet; v8.1.0 and
-v8.1.1 have shipped, carrying coverage rather than new semantics.
+Amsterdam. Upstream expects at least two follow-up releases on this devnet; v8.1.0,
+v8.1.1 and v8.1.2 have shipped, carrying coverage rather than new semantics.
 
-v8.1.1 was announced as coverage-only, which holds for the numbers: the amsterdam fork
-diff is a `Uint` -> `ExecutionGas` type-wrapper refactor with every value unchanged. One
-behaviour did change — `calculate_excess_blob_gas` now reads the blob fields from a
-`PreviousHeader` as well as a `Header` ([specs#3352]), so accumulated excess blob gas
-survives a fork transition instead of resetting to zero at the fork block. ethrex already
-matched, since `calc_excess_blob_gas` reads the parent unconditionally.
+v8.1.2 is announced as spec-equal to v8.1.1 apart from the EIP-7610 removals, and the
+diff agrees. Across the whole of `src/` it adds two lines, both comment text, so no gas
+constant can have moved. Under `src/ethereum/forks/amsterdam` the only behavioural change
+is EIP-7610 dropping out ([specs#3417]): `account_deployable` no longer rejects a create
+target that has storage but neither code nor a nonce, and `generic_create` correspondingly
+stops refunding the `NEW_ACCOUNT` state gas on a collision, since a collision now implies
+the target has code or a nonce and so was never charged. ethrex keeps the storage check
+(`LevmAccount::has_storage`) — see the note below — and its state-gas side already agreed,
+so the whole bundle passes unchanged.
+
+**EIP-7610 is DFI'd for Glamsterdam** ([EIP-7773]), and upstream has dropped both the check
+and its fixtures. ethrex still applies it. Upstream's replacement collision matrix
+deliberately omits the one cell where the two disagree — a zero-nonce, empty-code account
+holding storage — on the grounds that its behaviour is undefined in protocol, so no fixture
+grades it either way. Dropping the check in ethrex is not fork-gated and would change
+behaviour for historical mainnet blocks, so it wants its own PR and its own review rather
+than riding along with a fixture bump.
+
+The devnet-8 baseline still carries v8.1.1's one behaviour change: `calculate_excess_blob_gas`
+reads the blob fields from a `PreviousHeader` as well as a `Header` ([specs#3352]), so
+accumulated excess blob gas survives a fork transition instead of resetting to zero at the
+fork block. ethrex already matched, since `calc_excess_blob_gas` reads the parent
+unconditionally.
 
 ## Next up
 
@@ -65,9 +82,10 @@ matched, since `calc_excess_blob_gas` reads the parent unconditionally.
 Also implemented and passing: **7708** ETH transfers emit logs (Edgar), **7778** block gas
 accounting without refunds (Edgar), **7843** SLOTNUM (Esteve), **8024**
 DUPN/SWAPN/EXCHANGE (Esteve), **7976** calldata floor cost, **7981** access list cost,
-**7954** max contract size (24→32 KiB), **7610** revert creation on non-empty storage,
-**8246** remove SELFDESTRUCT burn, **8282** builder execution requests, **7997**
-deterministic factory (genesis predeploy, no client code).
+**7954** max contract size (24→32 KiB), **7610** revert creation on non-empty storage
+(DFI'd for Glamsterdam and dropped upstream in v8.1.2; ethrex keeps it — see "Current
+Devnet"), **8246** remove SELFDESTRUCT burn, **8282** builder execution requests,
+**7997** deterministic factory (genesis predeploy, no client code).
 
 Outside the devnet-8 set: **8159** eth/71 BAL exchange, **7975** eth/70 partial receipt
 lists, **7872** max blob flag (PFI), **8025** optional execution proofs ([#6361], #6516,
@@ -146,6 +164,7 @@ Agendas and notes for both: [ethereum/pm](https://github.com/ethereum/pm).
 [#9619]: https://github.com/NethermindEth/nethermind/pull/9619
 [hive#1365]: https://github.com/ethereum/hive/pull/1365
 [specs#3352]: https://github.com/ethereum/execution-specs/pull/3352
+[specs#3417]: https://github.com/ethereum/execution-specs/pull/3417
 [#6212]: https://github.com/lambdaclass/ethrex/issues/6212
 [#6361]: https://github.com/lambdaclass/ethrex/pull/6361
 [#6583]: https://github.com/lambdaclass/ethrex/issues/6583
