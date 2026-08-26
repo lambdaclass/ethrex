@@ -977,7 +977,7 @@ async fn send_block_range_update(state: &mut Established) -> Result<(), PeerConn
         .is_some_and(|eth| eth.version >= 69)
     {
         trace!(peer=%state.node, "Sending BlockRangeUpdate");
-        let update = BlockRangeUpdate::new(&state.storage)?;
+        let update = BlockRangeUpdate::new(&state.storage).await?;
         let latest_block = update.latest_block;
         send(state, Message::BlockRangeUpdate(update)).await?;
         state.last_block_range_update_block = latest_block - (latest_block % 32);
@@ -1006,9 +1006,9 @@ where
     if let Some(eth) = state.negotiated_eth_capability.clone() {
         let status = match eth.version {
             68 => Message::Status68(StatusMessage68::new(&state.storage)?),
-            69 => Message::Status69(StatusMessage69::new(&state.storage)?),
-            70 => Message::Status70(StatusMessage70::new(&state.storage)?),
-            71 => Message::Status71(StatusMessage71::new(&state.storage)?),
+            69 => Message::Status69(StatusMessage69::new(&state.storage).await?),
+            70 => Message::Status70(StatusMessage70::new(&state.storage).await?),
+            71 => Message::Status71(StatusMessage71::new(&state.storage).await?),
             ver => {
                 return Err(PeerConnectionError::HandshakeError(format!(
                     "Invalid eth version {ver}"
