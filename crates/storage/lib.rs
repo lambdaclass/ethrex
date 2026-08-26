@@ -76,9 +76,10 @@ pub mod store;
 pub mod trie;
 pub mod utils;
 
+pub use api::{CfStats, RocksDbStats};
 pub use layering::apply_prefix;
 pub use store::{
-    AccountUpdatesList, BATCH_COMMIT_THRESHOLD, DB_COMMIT_THRESHOLD, EngineType,
+    AccountUpdatesList, BATCH_COMMIT_THRESHOLD, BackfilledBlock, DB_COMMIT_THRESHOLD, EngineType,
     MAX_ROCKSDB_BLOCK_CACHE_SIZE_BYTES, MIN_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
     ROCKSDB_BLOCK_CACHE_MEMORY_PERCENT, Store, StoreConfig, UpdateBatch,
     default_rocksdb_block_cache_size, has_valid_db, hash_address, hash_key, read_chain_id_from_db,

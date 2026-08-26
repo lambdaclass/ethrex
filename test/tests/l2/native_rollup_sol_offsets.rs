@@ -17,9 +17,8 @@
 #![allow(clippy::unwrap_used)]
 
 use ethrex_common::types::stateless_ssz::{
-    Bytes20, ExecutionPayload, ExecutionRequests, NewPayloadRequest, SszChainConfig,
-    SszExecutionWitness, SszForkActivation, SszForkConfig, SszStatelessInput,
-    SszStatelessValidationResult,
+    Bytes20, ExecutionPayload, ExecutionRequests, NewPayloadRequest, SszExecutionWitness,
+    SszStatelessInput, SszStatelessValidationResult,
 };
 use libssz::SszEncode;
 
@@ -34,26 +33,50 @@ fn read_contract() -> String {
         .unwrap_or_else(|e| panic!("failed to read {NATIVE_ROLLUP_SOL}: {e}"))
 }
 
-/// Parse `uint256 constant <name> = <value>;` out of the contract source. Anchors
-/// on `uint256 constant <name>` so it matches the declaration, not a comment.
+/// Parse `uint<N> constant <name> = <value>;` out of the contract source.
+///
+/// Anchors on `constant <name>` so it matches the declaration rather than a comment,
+/// then asserts the declared type is some `uint`. Accepts any width and both decimal
+/// and `0x` hex literals: pinning `uint16 constant EXPECTED_SCHEMA_ID = 0x1501` needs
+/// both, and an earlier `uint256`-and-decimal-only version silently could not read it,
+/// which left the schema id as the one constant with no drift guard.
 fn sol_uint_const(src: &str, name: &str) -> usize {
-    let needle = format!("uint256 constant {name}");
+    let needle = format!("constant {name}");
     let start = src
         .find(&needle)
-        .unwrap_or_else(|| panic!("`uint256 constant {name}` not found in NativeRollup.sol"));
+        .unwrap_or_else(|| panic!("`constant {name}` not found in NativeRollup.sol"));
+
+    let declared_type = src[..start]
+        .trim_end()
+        .rsplit(char::is_whitespace)
+        .next()
+        .unwrap_or("");
+    assert!(
+        declared_type.starts_with("uint"),
+        "{name} is declared `{declared_type}`, expected a uint type"
+    );
+
     let after = &src[start + needle.len()..];
     let eq = after
         .find('=')
         .unwrap_or_else(|| panic!("no `=` after constant {name}"));
-    // Solidity allows `_` digit separators (e.g. `300_000`); strip them.
-    let value: String = after[eq + 1..]
-        .trim_start()
+    let literal = after[eq + 1..].trim_start();
+
+    // Solidity allows `_` digit separators (e.g. `300_000`) and `0x` hex literals.
+    let (radix, digits) = match literal
+        .strip_prefix("0x")
+        .or_else(|| literal.strip_prefix("0X"))
+    {
+        Some(hex) => (16, hex),
+        None => (10, literal),
+    };
+    let value: String = digits
         .chars()
-        .take_while(|c| c.is_ascii_digit() || *c == '_')
+        .take_while(|c| c.is_digit(radix) || *c == '_')
         .filter(|c| *c != '_')
         .collect();
-    value
-        .parse()
+    assert!(!value.is_empty(), "could not parse value for {name}");
+    usize::from_str_radix(&value, radix)
         .unwrap_or_else(|_| panic!("could not parse value for {name}"))
 }
 
@@ -80,36 +103,31 @@ fn sample_execution_payload() -> ExecutionPayload {
         extra_data: vec![].try_into().expect("extra_data"),
         base_fee_per_gas: [0u8; 32],
         block_hash: [0x66; 32],
-        transactions: vec![].try_into().expect("transactions"),
-        withdrawals: vec![].try_into().expect("withdrawals"),
+        transactions: Vec::new().into(),
+        withdrawals: Vec::new().into(),
         blob_gas_used: 0,
         excess_blob_gas: 0,
-        block_access_list: vec![].try_into().expect("block_access_list"),
+        block_access_list: Vec::new().into(),
         slot_number: 0x7843,
     }
 }
 
-fn empty_fork_config() -> SszForkConfig {
-    SszForkConfig {
-        fork: 0,
-        activation: SszForkActivation {
-            block_number: vec![].try_into().expect("block_number"),
-            timestamp: vec![].try_into().expect("timestamp"),
-        },
-        blob_schedule: vec![].try_into().expect("blob_schedule"),
-    }
-}
-
+/// Encode a sample `statelessInputBytes`: the 2-byte big-endian schema id then
+/// the SSZ body, exactly as `build_ssz_stateless_input` emits it. The prefix is
+/// modelled here on purpose — the contract rebases every absolute read past it,
+/// so a guard over an unprefixed body would not catch a framing mismatch.
 fn encode_sample_input() -> Vec<u8> {
     let input = SszStatelessInput {
         new_payload_request: NewPayloadRequest {
             execution_payload: sample_execution_payload(),
-            versioned_hashes: vec![].try_into().expect("versioned_hashes"),
+            versioned_hashes: Vec::new().into(),
             parent_beacon_block_root: [0u8; 32],
             execution_requests: ExecutionRequests {
-                deposits: vec![].try_into().expect("deposits"),
-                withdrawals: vec![].try_into().expect("withdrawals"),
-                consolidations: vec![].try_into().expect("consolidations"),
+                deposits: Vec::new().into(),
+                withdrawals: Vec::new().into(),
+                consolidations: Vec::new().into(),
+                builder_deposits: Vec::new().into(),
+                builder_exits: Vec::new().into(),
             },
         },
         witness: SszExecutionWitness {
@@ -117,13 +135,12 @@ fn encode_sample_input() -> Vec<u8> {
             codes: vec![].try_into().expect("codes"),
             headers: vec![].try_into().expect("headers"),
         },
-        chain_config: SszChainConfig {
-            chain_id: 1,
-            active_fork: empty_fork_config(),
-        },
+        chain_id: 1,
         public_keys: vec![].try_into().expect("public_keys"),
     };
-    let mut buf = Vec::new();
+    let mut buf = ethrex_common::types::stateless_ssz::STATELESS_INPUT_SCHEMA_ID
+        .to_be_bytes()
+        .to_vec();
     input.ssz_append(&mut buf);
     buf
 }
@@ -134,9 +151,17 @@ fn encode_sample_input() -> Vec<u8> {
 fn sol_ep_offsets_match_encoding() {
     let src = read_contract();
     let buf = encode_sample_input();
+    let prefix_len = sol_uint_const(&src, "INPUT_SCHEMA_PREFIX_LEN");
+    assert_eq!(prefix_len, 2, "INPUT_SCHEMA_PREFIX_LEN must be 2");
+    assert_eq!(
+        u16::from_be_bytes([buf[0], buf[1]]),
+        ethrex_common::types::stateless_ssz::STATELESS_INPUT_SCHEMA_ID,
+        "sample input must carry the schema-id prefix the contract requires"
+    );
 
     // StatelessInput fixed part: 4 offsets; new_payload_request is field 0.
-    let npr_abs = u32_le(&buf, 0);
+    // SSZ offsets are body-relative, so rebase past the prefix as `advance()` does.
+    let npr_abs = prefix_len + u32_le(&buf, prefix_len);
     // NewPayloadRequest fixed prefix: execution_payload offset @ npr_abs.
     let ep_abs = npr_abs + u32_le(&buf, npr_abs);
 
@@ -213,10 +238,8 @@ fn sol_result_offsets_match_encoding() {
     let result = SszStatelessValidationResult {
         new_payload_request_root: [0xAA; 32],
         successful_validation: true,
-        chain_config: SszChainConfig {
-            chain_id: 0x1122334455667788,
-            active_fork: empty_fork_config(),
-        },
+        chain_id: 0x1122334455667788,
+        schema_id: ethrex_common::types::stateless_ssz::STATELESS_INPUT_SCHEMA_ID,
     };
     let mut buf = Vec::new();
     result.ssz_append(&mut buf);
@@ -227,18 +250,29 @@ fn sol_result_offsets_match_encoding() {
         "RESULT_SUCCESS_OFFSET does not point at successful_validation"
     );
 
-    let cc_off_pos = sol_uint_const(&src, "RESULT_CHAIN_CONFIG_OFFSET_POS");
+    // Since execution-specs #3278 the result is entirely fixed-size, so
+    // RESULT_FIXED_LEN is the exact encoded length and both remaining fields are
+    // direct reads — there is no chain_config offset to dereference.
     let fixed_len = sol_uint_const(&src, "RESULT_FIXED_LEN");
-    let cc_off = u32_le(&buf, cc_off_pos);
     assert_eq!(
-        cc_off, fixed_len,
-        "chain_config data must start at RESULT_FIXED_LEN"
+        buf.len(),
+        fixed_len,
+        "RESULT_FIXED_LEN must equal the exact encoded result length"
     );
-    // chain_id is chain_config's first field (uint64 LE) at the dereferenced offset.
-    let chain_id = u64::from_le_bytes(buf[cc_off..cc_off + 8].try_into().unwrap());
+
+    let chain_id_off = sol_uint_const(&src, "RESULT_CHAIN_ID_OFFSET");
+    let chain_id = u64::from_le_bytes(buf[chain_id_off..chain_id_off + 8].try_into().unwrap());
     assert_eq!(
         chain_id, 0x1122334455667788,
-        "chain_id must be readable at the RESULT_CHAIN_CONFIG_OFFSET_POS deref"
+        "RESULT_CHAIN_ID_OFFSET does not point at chain_id"
+    );
+
+    let schema_off = sol_uint_const(&src, "RESULT_SCHEMA_ID_OFFSET");
+    let schema_id = u16::from_le_bytes(buf[schema_off..schema_off + 2].try_into().unwrap());
+    assert_eq!(
+        schema_id,
+        ethrex_common::types::stateless_ssz::STATELESS_INPUT_SCHEMA_ID,
+        "RESULT_SCHEMA_ID_OFFSET does not point at schema_id"
     );
 }
 
@@ -272,5 +306,25 @@ fn sol_max_l2_gas_limit_matches_rust() {
         sol,
         ethrex_common::constants::TX_MAX_GAS_LIMIT_AMSTERDAM,
         "MAX_L2_GAS_LIMIT in NativeRollup.sol drifted from TX_MAX_GAS_LIMIT_AMSTERDAM"
+    );
+}
+
+/// The deployed contract rejects any proof whose schema id is not its own compiled-in
+/// `EXPECTED_SCHEMA_ID`. Bumping `STATELESS_INPUT_SCHEMA_ID` for a new fork without
+/// redeploying therefore reverts every `advance()` and wedges the rollup, and because
+/// the contract is immutable that is not recoverable in place.
+///
+/// The other assertions in this file build their buffers from the Rust constant and so
+/// cannot catch this: comparing the Rust value to itself is a tautology with respect to
+/// the Solidity literal. This reads the `.sol` value directly.
+#[test]
+fn sol_expected_schema_id_matches_rust() {
+    let src = read_contract();
+    let sol = sol_uint_const(&src, "EXPECTED_SCHEMA_ID") as u16;
+    assert_eq!(
+        sol,
+        ethrex_common::types::stateless_ssz::STATELESS_INPUT_SCHEMA_ID,
+        "EXPECTED_SCHEMA_ID in NativeRollup.sol drifted from STATELESS_INPUT_SCHEMA_ID; \
+         deploying this would revert every advance()"
     );
 }

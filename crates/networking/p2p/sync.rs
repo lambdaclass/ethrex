@@ -4,10 +4,13 @@
 //! between full sync mode (all blocks executed) and snap sync mode (state fetched
 //! via snap protocol).
 
+mod backfill;
 mod code_collector;
 mod full;
 mod healing;
 mod snap_sync;
+
+pub use backfill::{BackfillConfig, run_history_backfill};
 
 /// Test-only re-export of the full-sync resume-point predicate so integration tests can
 /// assert that canonical-but-stateless blocks are not treated as already-executed.
@@ -19,7 +22,7 @@ use crate::peer_handler::{BlockRequestOrder, HeaderFetchOutcome, PeerHandler, Pe
 use crate::snap::constants::{EXECUTE_BATCH_SIZE_DEFAULT, MIN_FULL_BLOCKS};
 use crate::utils::delete_leaves_folder;
 use ethrex_blockchain::{Blockchain, error::ChainError};
-use ethrex_common::H256;
+use ethrex_common::{H256, types::BlockNumber};
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_storage::{Store, error::StoreError};
 use ethrex_trie::TrieError;
@@ -58,6 +61,31 @@ pub enum SyncMode {
     Snap,
 }
 
+/// Controls optional backfill of historical chain data (block bodies + receipts)
+/// for blocks below the snap-sync pivot. Snap sync itself only stores headers
+/// below the pivot; when enabled, a background task fills bodies and receipts
+/// down to a floor so the node can serve historical block/tx/receipt/log queries.
+/// Off by default (opt-in via `--history.chain`).
+#[derive(Debug, PartialEq, Clone, Default)]
+pub enum HistoryChain {
+    /// No backfill — headers-only below the pivot (current behavior).
+    #[default]
+    Off,
+    /// Backfill down to the merge (Paris) activation block.
+    PostMerge,
+    /// Backfill as far back as receipts are decodable — down to the Byzantium
+    /// block, not genesis (pre-EIP-658 receipts carry a post-state root, which
+    /// [`ethrex_common::types::Receipt`] cannot represent). Best-effort: many
+    /// peers no longer serve pre-merge history after the 2025 history-expiry
+    /// rollout.
+    All,
+    /// Backfill down to an explicit block number, for operators who want only a
+    /// recent slice of history rather than everything back to the merge. A value
+    /// below the merge block is honoured but is best-effort for the same reason
+    /// as [`HistoryChain::All`].
+    Block(BlockNumber),
+}
+
 /// Diagnostic snapshot of the sync state, used by admin RPC endpoints.
 #[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct SyncDiagnostics {
@@ -76,6 +104,19 @@ pub struct SyncDiagnostics {
     pub phase_progress: std::collections::HashMap<String, u64>,
     pub recent_pivot_changes: std::collections::VecDeque<PivotChangeEvent>,
     pub recent_errors: std::collections::VecDeque<SyncErrorEvent>,
+    /// `--history.chain` mode, present only when historical backfill is enabled.
+    pub backfill_mode: Option<String>,
+    /// Lowest block the backfill will fill down to (merge block or genesis).
+    pub backfill_floor: Option<u64>,
+    /// Lowest block currently holding full chain data (the backfill frontier,
+    /// equal to `earliest_block_number`); decreases toward `backfill_floor`.
+    pub backfill_frontier: Option<u64>,
+    /// Whether backfill has reached its floor (nothing left to fill).
+    pub backfill_complete: bool,
+    /// Set when backfill has made no progress for several consecutive attempts,
+    /// i.e. no peer is serving the range it needs. Distinguishes a genuine stall
+    /// from a healthy idle, which otherwise look identical.
+    pub backfill_stalled: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]

@@ -5,13 +5,15 @@
 //! tree-hashing `NewPayloadRequest` and producing the `PublicInput`
 //! committed to by execution proofs. The second section layers the
 //! native-rollup types (`SszStatelessInput`, `SszStatelessValidationResult`,
-//! `SszExecutionWitness`, `SszChainConfig`) on top of those.
+//! `SszExecutionWitness`) on top of those.
 
 use bytes::Bytes;
 use libssz::{SszDecode, SszEncode};
 use libssz_derive::{HashTreeRoot, SszDecode, SszEncode};
-use libssz_merkle::{HashTreeRoot, Sha256Hasher};
-use libssz_types::{SszList, SszVector};
+use libssz_merkle::{
+    HashTreeRoot, Node, Sha256Hasher, merkleize_progressive, mix_in_active_fields,
+};
+use libssz_types::{ProgressiveList, SszList, SszVector};
 
 use super::requests::EncodedRequests;
 
@@ -21,28 +23,16 @@ use super::requests::EncodedRequests;
 
 // ── Spec limits (Electra) ──────────────────────────────────────────
 
-/// `MAX_TRANSACTIONS_PER_PAYLOAD` (Electra).
-const MAX_TRANSACTIONS_PER_PAYLOAD: usize = 1_048_576;
-/// `MAX_WITHDRAWALS_PER_PAYLOAD` (Electra).
-const MAX_WITHDRAWALS_PER_PAYLOAD: usize = 16;
-/// `MAX_BYTES_PER_TRANSACTION`.
-const MAX_BYTES_PER_TRANSACTION: usize = 1_073_741_824;
 /// `MAX_EXTRA_DATA_BYTES`.
 const MAX_EXTRA_DATA_BYTES: usize = 32;
-/// `MAX_DEPOSIT_REQUESTS_PER_PAYLOAD` (Electra).
-const MAX_DEPOSIT_REQUESTS_PER_PAYLOAD: usize = 8192;
-/// `MAX_WITHDRAWAL_REQUESTS_PER_PAYLOAD` (Electra).
-const MAX_WITHDRAWAL_REQUESTS_PER_PAYLOAD: usize = 16;
-/// `MAX_CONSOLIDATION_REQUESTS_PER_PAYLOAD` (Electra).
-const MAX_CONSOLIDATION_REQUESTS_PER_PAYLOAD: usize = 2;
-/// `MAX_BLOB_COMMITMENTS_PER_BLOCK` (Electra).
-const MAX_BLOB_COMMITMENTS_PER_BLOCK: usize = 4096;
 
 // ── EIP-7685 request type prefixes ─────────────────────────────────
 
 const DEPOSIT_REQUEST_TYPE: u8 = 0x00;
 const WITHDRAWAL_REQUEST_TYPE: u8 = 0x01;
 const CONSOLIDATION_REQUEST_TYPE: u8 = 0x02;
+const BUILDER_DEPOSIT_REQUEST_TYPE: u8 = 0x03;
+const BUILDER_EXIT_REQUEST_TYPE: u8 = 0x04;
 
 // ── Bytes20 wrapper (address) ──────────────────────────────────────
 //
@@ -150,10 +140,32 @@ pub struct ConsolidationRequest {
     pub target_pubkey: [u8; 48],
 }
 
+/// SSZ `BuilderDepositRequest` container (EIP-8282).
+#[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
+pub struct BuilderDepositRequest {
+    pub pubkey: [u8; 48],
+    pub withdrawal_credentials: [u8; 32],
+    pub amount: u64,
+    pub signature: [u8; 96],
+}
+
+/// SSZ `BuilderExitRequest` container (EIP-8282).
+#[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
+pub struct BuilderExitRequest {
+    pub source_address: Bytes20,
+    pub pubkey: [u8; 48],
+}
+
 // ── ExecutionPayload ───────────────────────────────────────────────
 
-/// SSZ container matching the `85fc20ca` `SszExecutionPayload` (Electra fields + EIP-7928 `block_access_list`; 18 fields).
-#[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
+/// SSZ container matching `SszExecutionPayload` at execution-specs `3c3b6f4af`
+/// (#3248): a `ProgressiveContainer(active_fields=[1; 19])` whose transaction,
+/// withdrawal and block-access-list fields are progressive lists.
+///
+/// `HashTreeRoot` is hand-written because `libssz-derive` has no progressive
+/// support; encode/decode still derive, since nothing progressive changes the
+/// wire layout (`ProgressiveList` delegates both to `Vec<T>`).
+#[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode)]
 pub struct ExecutionPayload {
     pub parent_hash: [u8; 32],
     pub fee_recipient: Bytes20,
@@ -169,34 +181,111 @@ pub struct ExecutionPayload {
     /// `base_fee_per_gas` encoded as a 256-bit unsigned integer (little-endian).
     pub base_fee_per_gas: [u8; 32],
     pub block_hash: [u8; 32],
-    pub transactions: SszList<SszList<u8, MAX_BYTES_PER_TRANSACTION>, MAX_TRANSACTIONS_PER_PAYLOAD>,
-    pub withdrawals: SszList<Withdrawal, MAX_WITHDRAWALS_PER_PAYLOAD>,
+    pub transactions: ProgressiveList<ProgressiveList<u8>>,
+    pub withdrawals: ProgressiveList<Withdrawal>,
     pub blob_gas_used: u64,
     pub excess_blob_gas: u64,
     /// EIP-7928 block-level access list (full serialized BAL bytes).
-    pub block_access_list: SszList<u8, MAX_BLOCK_ACCESS_LIST_BYTES>,
+    pub block_access_list: ProgressiveList<u8>,
     /// EIP-7843 slot number (Amsterdam+). Last field, matching the execution-specs
     /// `ExecutionPayloadV4` layout so the native path is byte-compatible with the
     /// spec-current payload. Provided by the L2 producer and carried to L1.
     pub slot_number: u64,
 }
 
+/// `ProgressiveContainer` merkleization, per EIP-7495/EIP-7916:
+/// `mix_in_active_fields(merkleize_progressive(field_roots), active_fields)`.
+///
+/// Hand-written because `libssz-derive` has no progressive support.
+///
+/// The roots are verified against remerkleable by
+/// `test/tests/common/progressive_ssz_tests.rs`. `libssz-merkle 0.2.2` had its
+/// progressive subtree children reversed relative to the reference, which made
+/// every root here wrong; the workspace pins 0.3.0, which fixes it, and those
+/// tests are what hold that pin in place.
+fn progressive_container_root<const N: usize>(
+    hasher: &impl Sha256Hasher,
+    field_roots: [Node; N],
+) -> Node {
+    let root = merkleize_progressive(hasher, &field_roots);
+    mix_in_active_fields(hasher, &root, &[true; N])
+}
+
+impl HashTreeRoot for ExecutionPayload {
+    fn hash_tree_root(&self, hasher: &impl Sha256Hasher) -> Node {
+        // Destructured without `..` on purpose: this list is hand-maintained, so
+        // a field added to the struct must fail to compile here rather than be
+        // silently left out of the root and out of `active_fields`.
+        // Declaration order is the SSZ field order; do not reorder.
+        let Self {
+            parent_hash,
+            fee_recipient,
+            state_root,
+            receipts_root,
+            logs_bloom,
+            prev_randao,
+            block_number,
+            gas_limit,
+            gas_used,
+            timestamp,
+            extra_data,
+            base_fee_per_gas,
+            block_hash,
+            transactions,
+            withdrawals,
+            blob_gas_used,
+            excess_blob_gas,
+            block_access_list,
+            slot_number,
+        } = self;
+        progressive_container_root(
+            hasher,
+            [
+                parent_hash.hash_tree_root(hasher),
+                fee_recipient.hash_tree_root(hasher),
+                state_root.hash_tree_root(hasher),
+                receipts_root.hash_tree_root(hasher),
+                logs_bloom.hash_tree_root(hasher),
+                prev_randao.hash_tree_root(hasher),
+                block_number.hash_tree_root(hasher),
+                gas_limit.hash_tree_root(hasher),
+                gas_used.hash_tree_root(hasher),
+                timestamp.hash_tree_root(hasher),
+                extra_data.hash_tree_root(hasher),
+                base_fee_per_gas.hash_tree_root(hasher),
+                block_hash.hash_tree_root(hasher),
+                transactions.hash_tree_root(hasher),
+                withdrawals.hash_tree_root(hasher),
+                blob_gas_used.hash_tree_root(hasher),
+                excess_blob_gas.hash_tree_root(hasher),
+                block_access_list.hash_tree_root(hasher),
+                slot_number.hash_tree_root(hasher),
+            ],
+        )
+    }
+}
+
 // ── ExecutionRequests ──────────────────────────────────────────────
 
-/// SSZ `ExecutionRequests` container (Electra) — the typed EIP-7685 bundle
-/// that the CL commits to alongside `ExecutionPayload`.
-#[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
+/// SSZ `ExecutionRequests` at execution-specs `3c3b6f4af`: a
+/// `ProgressiveContainer(active_fields=[1; 5])` carrying the EIP-7685 bundle
+/// including the EIP-8282 builder requests.
+///
+/// `HashTreeRoot` is hand-written; see [`ExecutionPayload`].
+#[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode)]
 pub struct ExecutionRequests {
-    pub deposits: SszList<DepositRequest, MAX_DEPOSIT_REQUESTS_PER_PAYLOAD>,
-    pub withdrawals: SszList<WithdrawalRequest, MAX_WITHDRAWAL_REQUESTS_PER_PAYLOAD>,
-    pub consolidations: SszList<ConsolidationRequest, MAX_CONSOLIDATION_REQUESTS_PER_PAYLOAD>,
+    pub deposits: ProgressiveList<DepositRequest>,
+    pub withdrawals: ProgressiveList<WithdrawalRequest>,
+    pub consolidations: ProgressiveList<ConsolidationRequest>,
+    pub builder_deposits: ProgressiveList<BuilderDepositRequest>,
+    pub builder_exits: ProgressiveList<BuilderExitRequest>,
 }
 
 impl ExecutionRequests {
-    /// Produce the EIP-7685 encoded form: three `EncodedRequests` entries,
+    /// Produce the EIP-7685 encoded form: five `EncodedRequests` entries,
     /// one per request type, each `[type_byte] ++ concat(ssz_encode(item))`.
     ///
-    /// The three request types are all fixed-size SSZ containers, so their
+    /// The five request types are all fixed-size SSZ containers, so their
     /// SSZ encoding is byte-for-byte the EL wire concatenation that
     /// `compute_requests_hash` expects.
     pub fn to_encoded_requests(&self) -> Vec<EncodedRequests> {
@@ -219,7 +308,38 @@ impl ExecutionRequests {
                 CONSOLIDATION_REQUEST_TYPE,
                 self.consolidations.iter().cloned(),
             ),
+            encode(
+                BUILDER_DEPOSIT_REQUEST_TYPE,
+                self.builder_deposits.iter().cloned(),
+            ),
+            encode(
+                BUILDER_EXIT_REQUEST_TYPE,
+                self.builder_exits.iter().cloned(),
+            ),
         ]
+    }
+}
+
+impl HashTreeRoot for ExecutionRequests {
+    fn hash_tree_root(&self, hasher: &impl Sha256Hasher) -> Node {
+        // Destructured without `..` — see [`ExecutionPayload`].
+        let Self {
+            deposits,
+            withdrawals,
+            consolidations,
+            builder_deposits,
+            builder_exits,
+        } = self;
+        progressive_container_root(
+            hasher,
+            [
+                deposits.hash_tree_root(hasher),
+                withdrawals.hash_tree_root(hasher),
+                consolidations.hash_tree_root(hasher),
+                builder_deposits.hash_tree_root(hasher),
+                builder_exits.hash_tree_root(hasher),
+            ],
+        )
     }
 }
 
@@ -230,7 +350,7 @@ impl ExecutionRequests {
 #[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
 pub struct NewPayloadRequest {
     pub execution_payload: ExecutionPayload,
-    pub versioned_hashes: SszList<[u8; 32], MAX_BLOB_COMMITMENTS_PER_BLOCK>,
+    pub versioned_hashes: ProgressiveList<[u8; 32]>,
     pub parent_beacon_block_root: [u8; 32],
     pub execution_requests: ExecutionRequests,
 }
@@ -260,28 +380,22 @@ impl NewPayloadRequest {
 
 // ── Stateless validation limits ──────────────────────────────────
 
-/// MAX_WITNESS_NODES — max trie-node preimages in an execution witness.
-const MAX_WITNESS_NODES: usize = 1_048_576; // 2^20
+// `state`, `codes` and `public_keys` carry no element-count bound: #3356 made
+// them `ProgressiveList`, which grows without a declared capacity, so the
+// upstream `MAX_WITNESS_NODES` / `MAX_WITNESS_CODES` / `MAX_PUBLIC_KEYS`
+// constants were deleted along with it. The per-element byte caps below stay,
+// and `headers` keeps its count bound — it is deliberately still an `SszList`.
+
 /// MAX_BYTES_PER_WITNESS_NODE — max size of a single witness node.
 const MAX_BYTES_PER_WITNESS_NODE: usize = 1_048_576; // 2^20
-/// MAX_WITNESS_CODES — max contract code preimages in an execution witness.
-const MAX_WITNESS_CODES: usize = 65_536; // 2^16
 /// MAX_BYTES_PER_CODE — max size of a single code preimage (EIP-7954).
 const MAX_BYTES_PER_CODE: usize = 16_777_216; // 2^24
 /// MAX_WITNESS_HEADERS — max RLP-encoded block headers in witness (up to 256).
 const MAX_WITNESS_HEADERS: usize = 256;
 /// MAX_BYTES_PER_HEADER — max size of a single RLP-encoded header.
 const MAX_BYTES_PER_HEADER: usize = 1_024; // 2^10
-/// MAX_PUBLIC_KEYS — max recovered transaction public keys.
-const MAX_PUBLIC_KEYS: usize = 1_048_576; // 2^20
 /// PUBLIC_KEY_BYTES — an uncompressed secp256k1 public key is 65 bytes.
 const PUBLIC_KEY_BYTES: usize = 65;
-/// MAX_BLOCK_ACCESS_LIST_BYTES — EIP-7928 BAL byte cap.
-const MAX_BLOCK_ACCESS_LIST_BYTES: usize = 16_777_216; // 2^24
-/// MAX_BLOB_SCHEDULES_PER_FORK — SSZ Optional[BlobSchedule] as List[T, 1].
-const MAX_BLOB_SCHEDULES_PER_FORK: usize = 1;
-/// MAX_FORK_ACTIVATION_VALUES — SSZ Optional[uint64] as List[uint64, 1].
-const MAX_FORK_ACTIVATION_VALUES: usize = 1;
 
 // ── Stateless validation types ───────────────────────────────────
 //
@@ -289,40 +403,32 @@ const MAX_FORK_ACTIVATION_VALUES: usize = 1;
 // commit EIP-8025 PR #11604 pins:
 // https://github.com/ethereum/execution-specs/blob/85fc20ca5937719a854472a87cb48d01ef1dffca/src/ethereum/forks/amsterdam/stateless_ssz.py
 
-/// SSZ Optional[uint64] modelled as `List[uint64, 1]`.
-pub type SszOptionalForkActivationValue = SszList<u64, MAX_FORK_ACTIVATION_VALUES>;
-/// SSZ Optional[BlobSchedule] modelled as `List[SszBlobSchedule, 1]`.
-pub type SszOptionalBlobSchedule = SszList<SszBlobSchedule, MAX_BLOB_SCHEDULES_PER_FORK>;
+/// Schema id of the stateless input wire format: `fork_index << 8 | revision`,
+/// where fork `0x15` is Amsterdam and revision `0x01` is the current encoding.
+///
+/// The 2-byte big-endian prefix is how the fork reaches the guest at all — #3278
+/// removed all chain configuration from the SSZ body — and it is echoed as a
+/// public output field so a verifier can pin which rules were applied. Upstream
+/// rejects any other id outright; so does ethrex.
+///
+/// Note that upstream keeps `0x1501` across incompatible body changes, so the id
+/// does **not** identify the encoding. Three dialects have shipped under it:
+/// `tests-zkevm@v0.6.2`, then #3248 + #3278, then #3356 (which moved `state`,
+/// `codes` and `public_keys` to `ProgressiveList`). ethrex speaks the last one,
+/// matching `tests-zkevm@v0.8.0` and unchanged in `v0.8.2` (upstream #3372 only
+/// renamed the Python classes; SSZ encoding is positional, so the wire is
+/// identical). A bundle from an older dialect will not be caught by this
+/// prefix — it fails later, in decode or on a mismatched root.
+pub const STATELESS_INPUT_SCHEMA_ID: u16 = 0x1501;
 
-/// SSZ `BlobSchedule` — effective blob params for a fork.
-#[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
-pub struct SszBlobSchedule {
-    pub target: u64,
-    pub max: u64,
-    pub base_fee_update_fraction: u64,
-}
+/// Byte length of the big-endian [`STATELESS_INPUT_SCHEMA_ID`] prefix.
+pub const STATELESS_INPUT_SCHEMA_ID_SIZE: usize = 2;
 
-/// SSZ `ForkActivation` — the (optional) block/timestamp a fork activates at.
-#[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
-pub struct SszForkActivation {
-    pub block_number: SszOptionalForkActivationValue,
-    pub timestamp: SszOptionalForkActivationValue,
-}
-
-/// SSZ `ForkConfig` — the active fork id, its activation, and blob schedule.
-#[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
-pub struct SszForkConfig {
-    pub fork: u64,
-    pub activation: SszForkActivation,
-    pub blob_schedule: SszOptionalBlobSchedule,
-}
-
-/// SSZ `ChainConfig` container. Variable-size (nests `active_fork`'s lists).
-#[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
-pub struct SszChainConfig {
-    pub chain_id: u64,
-    pub active_fork: SszForkConfig,
-}
+/// SSZ shape of `SszStatelessInput::public_keys`: one fixed-size 65-byte
+/// uncompressed secp256k1 key per transaction.
+///
+/// Aliased so consumers can name the type without restating it here.
+pub type SszPublicKeys = ProgressiveList<SszVector<u8, PUBLIC_KEY_BYTES>>;
 
 /// SSZ `ExecutionWitness` container matching the execution-specs definition.
 ///
@@ -330,10 +436,14 @@ pub struct SszChainConfig {
 /// - `state`: trie-node preimages
 /// - `codes`: contract code preimages
 /// - `headers`: RLP-encoded parent block headers (up to 256)
+///
+/// `state` and `codes` are `ProgressiveList` as of execution-specs #3356;
+/// `headers` stays a bounded `SszList`, since execution only ever exposes the
+/// previous 256 block hashes. The mixed shape is upstream's, not an oversight.
 #[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
 pub struct SszExecutionWitness {
-    pub state: SszList<SszList<u8, MAX_BYTES_PER_WITNESS_NODE>, MAX_WITNESS_NODES>,
-    pub codes: SszList<SszList<u8, MAX_BYTES_PER_CODE>, MAX_WITNESS_CODES>,
+    pub state: ProgressiveList<SszList<u8, MAX_BYTES_PER_WITNESS_NODE>>,
+    pub codes: ProgressiveList<SszList<u8, MAX_BYTES_PER_CODE>>,
     pub headers: SszList<SszList<u8, MAX_BYTES_PER_HEADER>, MAX_WITNESS_HEADERS>,
 }
 
@@ -345,16 +455,25 @@ pub struct SszExecutionWitness {
 pub struct SszStatelessInput {
     pub new_payload_request: NewPayloadRequest,
     pub witness: SszExecutionWitness,
-    pub chain_config: SszChainConfig,
-    pub public_keys: SszList<SszVector<u8, PUBLIC_KEY_BYTES>, MAX_PUBLIC_KEYS>,
+    /// Chain identifier. #3278 removed `ChainConfig` from the wire: fork
+    /// activation info and blob schedules are guest-internal, keyed by
+    /// `(chain_id, fork)`, with the fork coming from the schema-id prefix.
+    pub chain_id: u64,
+    pub public_keys: SszPublicKeys,
 }
 
 /// SSZ `StatelessValidationResult` — the output of `verify_stateless_new_payload`.
-#[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
 pub struct SszStatelessValidationResult {
     pub new_payload_request_root: [u8; 32],
     pub successful_validation: bool,
-    pub chain_config: SszChainConfig,
+    /// Chain identifier echoed from the input — real even when validation fails;
+    /// only a decode failure yields the all-zero default.
+    pub chain_id: u64,
+    /// The full schema id the guest decoded (`0x1501` for Amsterdam revision 1).
+    /// Public so a verifier can pin which fork rules and encoding were used, for
+    /// forks that share a payload shape. Added by execution-specs #3278.
+    pub schema_id: u16,
 }
 
 // ── Conversions to internal types ────────────────────────────────
@@ -430,23 +549,25 @@ mod tests {
             .expect("withdrawals fit"),
             blob_gas_used: 0,
             excess_blob_gas: 0,
-            block_access_list: SszList::new(), // TODO(Plan 02): populate full BAL
+            block_access_list: ProgressiveList::new(), // TODO(Plan 02): populate full BAL
             slot_number: 0,
         }
     }
 
     fn empty_requests() -> ExecutionRequests {
         ExecutionRequests {
-            deposits: vec![].try_into().expect("empty deposits"),
-            withdrawals: vec![].try_into().expect("empty withdrawals"),
-            consolidations: vec![].try_into().expect("empty consolidations"),
+            deposits: Vec::new().into(),
+            withdrawals: Vec::new().into(),
+            consolidations: Vec::new().into(),
+            builder_deposits: Vec::new().into(),
+            builder_exits: Vec::new().into(),
         }
     }
 
     fn sample_request() -> NewPayloadRequest {
         NewPayloadRequest {
             execution_payload: sample_payload(),
-            versioned_hashes: vec![].try_into().expect("empty versioned_hashes"),
+            versioned_hashes: Vec::new().into(),
             parent_beacon_block_root: [8u8; 32],
             execution_requests: empty_requests(),
         }
@@ -483,26 +604,28 @@ mod tests {
                 signature: [0x33; 96],
                 index: 7,
             }]
-            .try_into()
-            .expect("one deposit fits"),
+            .into(),
             withdrawals: vec![WithdrawalRequest {
                 source_address: Bytes20([0x44; 20]),
                 validator_pubkey: [0x55; 48],
                 amount: 1_000_000,
             }]
-            .try_into()
-            .expect("one withdrawal fits"),
+            .into(),
             consolidations: vec![ConsolidationRequest {
                 source_address: Bytes20([0x66; 20]),
                 source_pubkey: [0x77; 48],
                 target_pubkey: [0x88; 48],
             }]
-            .try_into()
-            .expect("one consolidation fits"),
+            .into(),
+            builder_deposits: ProgressiveList::new(),
+            builder_exits: ProgressiveList::new(),
         };
 
         let encoded = requests.to_encoded_requests();
-        assert_eq!(encoded.len(), 3, "must emit 3 EIP-7685 entries");
+        // Five entries since EIP-8282: the two builder lists are empty here, and
+        // `compute_requests_hash` skips entries of length <= 1, so an empty
+        // builder list leaves the requests hash unchanged.
+        assert_eq!(encoded.len(), 5, "must emit 5 EIP-7685 entries");
 
         // Deposit: [0x00] ++ 192 bytes
         assert_eq!(encoded[0].0[0], DEPOSIT_REQUEST_TYPE);
@@ -518,38 +641,6 @@ mod tests {
     }
 
     // ── Stateless helpers ────────────────────────────────────────
-
-    fn sample_active_fork() -> SszForkConfig {
-        SszForkConfig {
-            fork: 25, // Amsterdam (spec ProtocolFork index)
-            activation: SszForkActivation {
-                block_number: SszList::new(),
-                timestamp: {
-                    let mut v = SszList::new();
-                    v.push(0u64).expect("one value fits");
-                    v
-                },
-            },
-            blob_schedule: SszList::new(),
-        }
-    }
-
-    #[test]
-    fn ssz_chain_config_with_active_fork_round_trip() {
-        round_trip(&SszChainConfig {
-            chain_id: 1,
-            active_fork: sample_active_fork(),
-        });
-        round_trip(&SszForkActivation {
-            block_number: SszList::new(),
-            timestamp: SszList::new(),
-        });
-        round_trip(&SszBlobSchedule {
-            target: 3,
-            max: 6,
-            base_fee_update_fraction: 3_338_477,
-        });
-    }
 
     fn list<T: SszEncode + SszDecode, const N: usize>(items: Vec<T>) -> SszList<T, N> {
         let mut list = SszList::new();
@@ -567,26 +658,10 @@ mod tests {
     }
 
     #[test]
-    fn ssz_chain_config_round_trip() {
-        round_trip(&SszChainConfig {
-            chain_id: 1,
-            active_fork: sample_active_fork(),
-        });
-        round_trip(&SszChainConfig {
-            chain_id: 0,
-            active_fork: sample_active_fork(),
-        });
-        round_trip(&SszChainConfig {
-            chain_id: u64::MAX,
-            active_fork: sample_active_fork(),
-        });
-    }
-
-    #[test]
     fn ssz_execution_witness_round_trip() {
         let witness = SszExecutionWitness {
-            state: list(vec![list(vec![1u8, 2, 3]), list(vec![4u8, 5])]),
-            codes: list(vec![list(vec![0x60u8, 0x00, 0x60, 0x00, 0xf3])]),
+            state: vec![list(vec![1u8, 2, 3]), list(vec![4u8, 5])].into(),
+            codes: vec![list(vec![0x60u8, 0x00, 0x60, 0x00, 0xf3])].into(),
             headers: list(vec![list(vec![0xf9u8, 0x02, 0x11])]),
         };
         round_trip(&witness);
@@ -595,8 +670,8 @@ mod tests {
     #[test]
     fn ssz_execution_witness_empty_round_trip() {
         let witness = SszExecutionWitness {
-            state: SszList::new(),
-            codes: SszList::new(),
+            state: ProgressiveList::new(),
+            codes: ProgressiveList::new(),
             headers: SszList::new(),
         };
         round_trip(&witness);
@@ -618,11 +693,11 @@ mod tests {
             extra_data: list(vec![0xde, 0xad]),
             base_fee_per_gas: [0u8; 32],
             block_hash: [0x66; 32],
-            transactions: SszList::new(),
-            withdrawals: SszList::new(),
+            transactions: ProgressiveList::new(),
+            withdrawals: ProgressiveList::new(),
             blob_gas_used: 0,
             excess_blob_gas: 0,
-            block_access_list: list(vec![0x01, 0x02, 0x03]),
+            block_access_list: vec![0x01u8, 0x02, 0x03].into(),
             slot_number: 0,
         };
         round_trip(&payload);
@@ -633,8 +708,8 @@ mod tests {
     fn ssz_public_keys_are_65_byte_vectors_round_trip() {
         let key: SszVector<u8, PUBLIC_KEY_BYTES> =
             vec![0x04u8; 65].try_into().expect("pubkey length");
-        let mut keys: SszList<SszVector<u8, PUBLIC_KEY_BYTES>, MAX_PUBLIC_KEYS> = SszList::new();
-        keys.push(key).expect("one key fits");
+        let mut keys: SszPublicKeys = ProgressiveList::new();
+        keys.push(key);
         round_trip(&keys);
         assert_eq!(keys.first().unwrap().len(), 65);
     }
@@ -644,20 +719,16 @@ mod tests {
         let result = SszStatelessValidationResult {
             new_payload_request_root: [0xab; 32],
             successful_validation: true,
-            chain_config: SszChainConfig {
-                chain_id: 42,
-                active_fork: sample_active_fork(),
-            },
+            chain_id: 42,
+            schema_id: 0x1501,
         };
         round_trip(&result);
 
         let result_false = SszStatelessValidationResult {
             new_payload_request_root: [0x00; 32],
             successful_validation: false,
-            chain_config: SszChainConfig {
-                chain_id: 1,
-                active_fork: sample_active_fork(),
-            },
+            chain_id: 1,
+            schema_id: 0x1501,
         };
         round_trip(&result_false);
     }
@@ -670,8 +741,12 @@ mod tests {
     // reading the wrong bytes on L1.
 
     const SOL_RESULT_SUCCESS_OFFSET: usize = 32;
-    // result bytes 33..36 hold the u32 LE OFFSET to chain_config's variable data (not chain_id itself).
-    const SOL_RESULT_CHAIN_CONFIG_OFFSET_POS: usize = 33;
+    // Since #3278 the result is entirely fixed-size (32 + 1 + 8 + 2 = 43 bytes):
+    // chain_id is read directly at 33, schema_id at 41. There is no longer an
+    // offset to dereference.
+    const SOL_RESULT_CHAIN_ID_OFFSET: usize = 33;
+    const SOL_RESULT_SCHEMA_ID_OFFSET: usize = 41;
+    const SOL_RESULT_FIXED_LEN: usize = 43;
     const SOL_EP_STATE_ROOT_OFFSET: usize = 52;
     const SOL_EP_BLOCK_NUMBER_OFFSET: usize = 404;
     const SOL_EP_GAS_LIMIT_OFFSET: usize = 412;
@@ -704,11 +779,11 @@ mod tests {
             extra_data: SszList::new(),
             base_fee_per_gas: [0u8; 32],
             block_hash: [0x66; 32],
-            transactions: SszList::new(),
-            withdrawals: SszList::new(),
+            transactions: ProgressiveList::new(),
+            withdrawals: ProgressiveList::new(),
             blob_gas_used: 0,
             excess_blob_gas: 0,
-            block_access_list: SszList::new(),
+            block_access_list: ProgressiveList::new(),
             slot_number: 0x7843,
         }
     }
@@ -716,35 +791,42 @@ mod tests {
     #[test]
     fn nativerollup_sol_result_layout_matches() {
         // Encode a StatelessValidationResult and confirm the contract's fixed
-        // offsets: successful_validation @32, chain_config offset @33, and chain_id
-        // (first field of chain_config) at the dereferenced offset.
+        // offsets. Under #3278 every field is fixed-size, so all three are direct
+        // reads and the total length is exactly 43 bytes.
         let result = SszStatelessValidationResult {
             new_payload_request_root: [0xAA; 32],
             successful_validation: true,
-            chain_config: SszChainConfig {
-                chain_id: 0x1122334455667788,
-                active_fork: sample_active_fork(),
-            },
+            chain_id: 0x1122334455667788,
+            schema_id: 0x1501,
         };
         let mut buf = Vec::new();
         result.ssz_append(&mut buf);
 
         assert_eq!(
+            buf.len(),
+            SOL_RESULT_FIXED_LEN,
+            "result must be exactly 43 fixed bytes; a variable tail means \
+             ChainConfig is still in there"
+        );
+        assert_eq!(
             buf[SOL_RESULT_SUCCESS_OFFSET], 1,
             "successful_validation must be byte 32"
         );
-        let cc_off = u32_le(&buf, SOL_RESULT_CHAIN_CONFIG_OFFSET_POS);
-        assert_eq!(
-            cc_off, 37,
-            "chain_config offset value must be 37 (fixed part length), actual: {}",
-            cc_off
+        let chain_id = u64::from_le_bytes(
+            buf[SOL_RESULT_CHAIN_ID_OFFSET..SOL_RESULT_CHAIN_ID_OFFSET + 8]
+                .try_into()
+                .unwrap(),
         );
-        // chain_id is the first field of SszChainConfig, uint64 LE, at cc_off.
-        let chain_id = u64::from_le_bytes(buf[cc_off..cc_off + 8].try_into().unwrap());
         assert_eq!(
             chain_id, 0x1122334455667788,
-            "chain_id must be readable at the deref offset"
+            "chain_id must be a direct u64 LE read at 33"
         );
+        let schema_id = u16::from_le_bytes(
+            buf[SOL_RESULT_SCHEMA_ID_OFFSET..SOL_RESULT_SCHEMA_ID_OFFSET + 2]
+                .try_into()
+                .unwrap(),
+        );
+        assert_eq!(schema_id, 0x1501, "schema_id must be a u16 LE read at 41");
     }
 
     #[test]
@@ -754,31 +836,33 @@ mod tests {
         let ep = sample_execution_payload();
         let npr = NewPayloadRequest {
             execution_payload: ep,
-            versioned_hashes: SszList::new(),
+            versioned_hashes: ProgressiveList::new(),
             parent_beacon_block_root: [0x00; 32],
             execution_requests: ExecutionRequests {
-                deposits: SszList::new(),
-                withdrawals: SszList::new(),
-                consolidations: SszList::new(),
+                deposits: ProgressiveList::new(),
+                withdrawals: ProgressiveList::new(),
+                consolidations: ProgressiveList::new(),
+                builder_deposits: ProgressiveList::new(),
+                builder_exits: ProgressiveList::new(),
             },
         };
         let input = SszStatelessInput {
             new_payload_request: npr,
             witness: SszExecutionWitness {
-                state: SszList::new(),
-                codes: SszList::new(),
+                state: ProgressiveList::new(),
+                codes: ProgressiveList::new(),
                 headers: SszList::new(),
             },
-            chain_config: SszChainConfig {
-                chain_id: 1,
-                active_fork: sample_active_fork(),
-            },
-            public_keys: SszList::new(),
+            chain_id: 1,
+            public_keys: ProgressiveList::new(),
         };
         let mut buf = Vec::new();
         input.ssz_append(&mut buf);
 
-        // StatelessInput fixed part = 4 offsets (16 bytes); new_payload_request is field 0.
+        // StatelessInput fixed part = npr offset(4) + witness offset(4) +
+        // chain_id(8) + public_keys offset(4) = 20 bytes. new_payload_request is
+        // still field 0, so its offset is at byte 0 and the contract's dynamic
+        // read there is unaffected.
         let npr_abs = u32_le(&buf, 0);
         // NewPayloadRequest fixed prefix: execution_payload offset @ npr_abs.
         let ep_abs = npr_abs + u32_le(&buf, npr_abs);
@@ -831,195 +915,6 @@ mod tests {
             ),
             0x7843,
             "slot_number must be readable at EP+532",
-        );
-    }
-
-    /// Equivalence guard for the duplicated SSZ wire-format definitions in
-    /// `stateless_ssz` vs `eip8025_ssz`. The two modules independently define
-    /// the same containers; they are byte-identical today, but nothing in the
-    /// type system forces them to stay that way. If someone edits one (field
-    /// order, a type, a `MAX_*` bound affecting offsets) without the other, the
-    /// EXECUTE precompile path (`stateless_ssz`) and the zk-guest path
-    /// (`eip8025_ssz`) would silently disagree on the wire format. This test
-    /// fails loudly when that happens by encoding equivalent values in both
-    /// modules and asserting the bytes match. Gated on `eip-8025` because
-    /// `eip8025_ssz` (the zk-guest path) only exists under that feature.
-    #[test]
-    #[cfg(feature = "eip-8025")]
-    fn stateless_ssz_matches_eip8025_ssz_wire_format() {
-        use crate::types::eip8025_ssz as e;
-
-        fn enc<T: SszEncode>(x: &T) -> Vec<u8> {
-            let mut b = Vec::new();
-            x.ssz_append(&mut b);
-            b
-        }
-
-        // Withdrawal
-        assert_eq!(
-            enc(&Withdrawal {
-                index: 1,
-                validator_index: 2,
-                address: Bytes20([3u8; 20]),
-                amount: 4,
-            }),
-            enc(&e::Withdrawal {
-                index: 1,
-                validator_index: 2,
-                address: e::Bytes20([3u8; 20]),
-                amount: 4,
-            }),
-            "Withdrawal wire format diverged between stateless_ssz and eip8025_ssz",
-        );
-
-        // DepositRequest
-        assert_eq!(
-            enc(&DepositRequest {
-                pubkey: [5u8; 48],
-                withdrawal_credentials: [6u8; 32],
-                amount: 7,
-                signature: [8u8; 96],
-                index: 9,
-            }),
-            enc(&e::DepositRequest {
-                pubkey: [5u8; 48],
-                withdrawal_credentials: [6u8; 32],
-                amount: 7,
-                signature: [8u8; 96],
-                index: 9,
-            }),
-            "DepositRequest wire format diverged",
-        );
-
-        // WithdrawalRequest
-        assert_eq!(
-            enc(&WithdrawalRequest {
-                source_address: Bytes20([10u8; 20]),
-                validator_pubkey: [11u8; 48],
-                amount: 12,
-            }),
-            enc(&e::WithdrawalRequest {
-                source_address: e::Bytes20([10u8; 20]),
-                validator_pubkey: [11u8; 48],
-                amount: 12,
-            }),
-            "WithdrawalRequest wire format diverged",
-        );
-
-        // ConsolidationRequest
-        assert_eq!(
-            enc(&ConsolidationRequest {
-                source_address: Bytes20([13u8; 20]),
-                source_pubkey: [14u8; 48],
-                target_pubkey: [15u8; 48],
-            }),
-            enc(&e::ConsolidationRequest {
-                source_address: e::Bytes20([13u8; 20]),
-                source_pubkey: [14u8; 48],
-                target_pubkey: [15u8; 48],
-            }),
-            "ConsolidationRequest wire format diverged",
-        );
-
-        // ExecutionRequests (one of each; exercises the offset layout too)
-        let reqs = ExecutionRequests {
-            deposits: vec![DepositRequest {
-                pubkey: [5u8; 48],
-                withdrawal_credentials: [6u8; 32],
-                amount: 7,
-                signature: [8u8; 96],
-                index: 9,
-            }]
-            .try_into()
-            .expect("deposits fit"),
-            withdrawals: vec![WithdrawalRequest {
-                source_address: Bytes20([10u8; 20]),
-                validator_pubkey: [11u8; 48],
-                amount: 12,
-            }]
-            .try_into()
-            .expect("withdrawals fit"),
-            consolidations: vec![ConsolidationRequest {
-                source_address: Bytes20([13u8; 20]),
-                source_pubkey: [14u8; 48],
-                target_pubkey: [15u8; 48],
-            }]
-            .try_into()
-            .expect("consolidations fit"),
-        };
-        let e_reqs = e::ExecutionRequests {
-            deposits: vec![e::DepositRequest {
-                pubkey: [5u8; 48],
-                withdrawal_credentials: [6u8; 32],
-                amount: 7,
-                signature: [8u8; 96],
-                index: 9,
-            }]
-            .try_into()
-            .expect("deposits fit"),
-            withdrawals: vec![e::WithdrawalRequest {
-                source_address: e::Bytes20([10u8; 20]),
-                validator_pubkey: [11u8; 48],
-                amount: 12,
-            }]
-            .try_into()
-            .expect("withdrawals fit"),
-            consolidations: vec![e::ConsolidationRequest {
-                source_address: e::Bytes20([13u8; 20]),
-                source_pubkey: [14u8; 48],
-                target_pubkey: [15u8; 48],
-            }]
-            .try_into()
-            .expect("consolidations fit"),
-        };
-        assert_eq!(
-            enc(&reqs),
-            enc(&e_reqs),
-            "ExecutionRequests wire format diverged",
-        );
-
-        // Full payload: stateless_ssz::ExecutionPayload must be byte-identical to
-        // eip8025_ssz::ExecutionPayloadV4 (both are the Electra payload + EIP-7928
-        // block_access_list + EIP-7843 slot_number).
-        let ep = sample_payload();
-        let e_ep = e::ExecutionPayloadV4 {
-            parent_hash: ep.parent_hash,
-            fee_recipient: e::Bytes20(ep.fee_recipient.0),
-            state_root: ep.state_root,
-            receipts_root: ep.receipts_root,
-            logs_bloom: vec![0u8; 256].try_into().expect("logs_bloom length"),
-            prev_randao: ep.prev_randao,
-            block_number: ep.block_number,
-            gas_limit: ep.gas_limit,
-            gas_used: ep.gas_used,
-            timestamp: ep.timestamp,
-            extra_data: vec![0xAB, 0xCD].try_into().expect("extra_data fits"),
-            base_fee_per_gas: ep.base_fee_per_gas,
-            block_hash: ep.block_hash,
-            transactions: vec![
-                vec![0xDE, 0xAD, 0xBE, 0xEF]
-                    .try_into()
-                    .expect("tx bytes fit"),
-            ]
-            .try_into()
-            .expect("txs fit"),
-            withdrawals: vec![e::Withdrawal {
-                index: 0,
-                validator_index: 1,
-                address: e::Bytes20([7u8; 20]),
-                amount: 1_000_000,
-            }]
-            .try_into()
-            .expect("withdrawals fit"),
-            blob_gas_used: ep.blob_gas_used,
-            excess_blob_gas: ep.excess_blob_gas,
-            block_access_list: SszList::new(),
-            slot_number: ep.slot_number,
-        };
-        assert_eq!(
-            enc(&ep),
-            enc(&e_ep),
-            "ExecutionPayload(V4) wire format diverged between stateless_ssz and eip8025_ssz",
         );
     }
 }
