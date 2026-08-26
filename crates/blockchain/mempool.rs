@@ -146,7 +146,7 @@ fn is_bumped_u256(existing: U256, new: U256, bump_percent: u64) -> bool {
 /// independent of everything the sender's other transactions can change: the
 /// sender runs real (non-EIP-7702-delegated) contract code, no deploy frame
 /// installs code mid-flight, the prefix reads no sender storage, and it does not
-/// read `TXPARAM(0x0C)` (the legacy account nonce, which a key-0 transaction
+/// read `TXPARAM(0x12)` (the legacy account nonce, which a key-0 transaction
 /// bumps). Anything else falls back to one pending frame transaction per sender.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum KeyedConcurrency {
@@ -168,7 +168,7 @@ pub enum KeyedConcurrency {
 ///   the code the sibling prefixes run is not yet fixed.
 /// - `reads_sender_storage`: a sibling transaction's `SSTORE` to the sender would
 ///   invalidate this prefix.
-/// - `reads_legacy_nonce`: the prefix read `TXPARAM(0x0C)`, which a key-0
+/// - `reads_legacy_nonce`: the prefix read `TXPARAM(0x12)`, which a key-0
 ///   transaction bumps on inclusion.
 pub fn keyed_concurrency_verdict(
     sender_runs_contract_code: bool,

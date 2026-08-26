@@ -173,6 +173,34 @@ until it merges", which the code contradicts. Corrected in this pass.
 
 **Action:** closed — #12066 merged; nothing to carry.
 
+## 5.1 Opcode and TXPARAM ids v2 collides with — relocated
+
+Adopting EIP-8141 v2 forced two id moves, both consensus-visible, both because v2 claims
+an id this chain had already assigned to another EIP in the same set.
+
+| id | v2 assigns | ethrex had | Resolution |
+| --- | --- | --- | --- |
+| `0xB5` | `SIGDATACOPY` | EIP-8272 `RECENTROOTREFLOAD` | v2 takes `0xB5`; `RECENTROOTREFLOAD` moves to `0xB6` |
+| `0x0C` (TXPARAM) | `state_gas_left` | EIP-8250 `legacy_sender_nonce` | v2 reserves `0x0C`; the nonce read moves to `0x12` |
+
+EIP-8141 gets the disputed id in both cases: it is the EIP the rest of the set extends, and
+in both cases the *other* EIP had already been relocated once for the same reason —
+`RECENTROOTREFLOAD` moved off `0xB4` when it collided with `SIGPARAM`, and `nonce_keys[0]`
+moved off `0x0B` to `0x10`. That is four relocations across three EIPs, which is the real
+finding: **EIP-8141 needs a shared registry for the frame-surface ids its extensions
+claim.** Raised with the authors; recorded here because a second client that picks
+different bytes diverges on every validation prefix touching either.
+
+`0x11` was not available as a destination for the nonce read — it is the resolved-payer
+param — so it went to `0x12`. `0x0C` itself is reserved and currently halts: reporting
+`state_gas_left` needs the per-frame state pool, and a number that is wrong is worse than
+an unimplemented id.
+
+Four compile-time asserts in `crates/vm/levm/src/opcodes.rs` now pin the opcode bytes and
+forbid sharing, so a fifth relocation is a compile error rather than a chain split.
+
+**Action:** closed for this chain; upstream registry request open.
+
 ## 6. EIP-8141 v2: a new envelope, and therefore a re-genesis
 
 EIP-8141 moved +326/−96 since the pin. Six of the new sections are Rationale and one is

@@ -425,7 +425,7 @@ pub struct FrameValidationOutcome {
     /// Sender storage slots touched during the prefix, recorded for the
     /// admission-time revalidation affected-set.
     pub touched_sender_slots: Vec<ethrex_common::H256>,
-    /// Whether the prefix read `TXPARAM(0x0C)`, the sender's legacy account nonce
+    /// Whether the prefix read `TXPARAM(0x12)`, the sender's legacy account nonce
     /// (EIP-8250 §Mempool).
     pub read_legacy_nonce: bool,
     /// EIP-8369 Profile 2: the per-inclusion-list code-body allowance as this

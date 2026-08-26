@@ -201,7 +201,7 @@ pub struct ValidationObserver {
     /// Sender storage slots touched (read or written) during the prefix. Recorded
     /// for the admission-time revalidation affected-set.
     pub touched_sender_slots: Vec<H256>,
-    /// Whether the prefix read `TXPARAM(0x0C)`, the sender's legacy account nonce
+    /// Whether the prefix read `TXPARAM(0x12)`, the sender's legacy account nonce
     /// (EIP-8250 §Mempool). Such a prefix depends on the legacy nonce even when
     /// the transaction's own nonce lives in a keyed domain.
     pub read_legacy_nonce: bool,

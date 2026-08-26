@@ -279,7 +279,13 @@ impl OpcodeHandler for OpApproveHandler {
 
 /// TXPARAM (0xB0) -- Load a transaction parameter as a 32-byte word.
 /// TXPARAM index of the sender's legacy account nonce (EIP-8250).
-const TXPARAM_LEGACY_SENDER_NONCE: u64 = 0x0C;
+/// EIP-8250's legacy account-nonce read, relocated from `0x0C` to `0x12`.
+///
+/// EIP-8141 v2 assigns `0x0C` to `state_gas_left`, and the spec's id wins. `0x11` was not
+/// available either -- it is the resolved-payer read -- so this lands on the next free id.
+/// Precedent for relocating an EIP-8250 id is in `docs/eip-8250.md`, which records the
+/// earlier `0x0B -> 0x10` move for `nonce_keys[0]` after `0x0B` collided.
+const TXPARAM_LEGACY_SENDER_NONCE: u64 = 0x12;
 
 /// Gas cost: 2
 pub struct OpTxParamHandler;
@@ -694,7 +700,11 @@ pub fn load_tx_param(
         0x0A => Ok(U256::from(ctx.current_frame_index)),
         0x0B => Ok(U256::from(ctx.tx.signatures.len())),
         // EIP-8250 keyed nonces.
-        0x0C => Ok(U256::from(ctx.legacy_sender_nonce)),
+        // 0x0C is reserved for EIP-8141 v2's `state_gas_left`, which needs the per-frame
+        // state pool to exist before it can report anything true. Until then it is not
+        // implemented and falls through to the exceptional halt below, rather than
+        // returning a number that would be wrong.
+        0x12 => Ok(U256::from(ctx.legacy_sender_nonce)),
         0x0D => Ok(U256::from(ctx.tx.nonce_keys.len())),
         0x0E => Ok(U256::from_big_endian(ctx.tx.nonce_keys_hash().as_bytes())),
         // EIP-8272: count of recent-root references.
