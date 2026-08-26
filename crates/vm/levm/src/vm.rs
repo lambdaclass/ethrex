@@ -2386,6 +2386,20 @@ impl<'a> VM<'a> {
             macro_rules! do_frame_value_transfer {
                 () => {
                     if !frame.value.is_zero() && !value_transfer_reverted {
+                        // EIP-8037: a transfer that brings a non-existent account into being
+                        // grows the state trie, and that growth is priced in state gas — the
+                        // same charge `CALL` and `CREATE` make before they move value (see
+                        // `opcode_handlers::system`). A frame moving value reached the raw
+                        // balance write directly, so it created accounts for free: unmetered
+                        // state growth, which is a chain-bloat vector rather than a rounding
+                        // error. `is_empty()` is exactly EELS' `not is_account_alive`, and
+                        // reading the target here also records the access for the EIP-7928
+                        // block access list, matching the opcode paths.
+                        if self.env.config.fork >= Fork::Amsterdam
+                            && self.get_account_mut(target)?.is_empty()
+                        {
+                            self.increase_state_gas(self.state_gas_new_account)?;
+                        }
                         self.transfer(sender, target, frame.value)?;
                         // EIP-7708 log parity with default_hook::transfer_value:
                         // only Amsterdam+ and only when sender != target.

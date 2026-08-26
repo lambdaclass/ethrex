@@ -779,8 +779,11 @@ fn sender_frame_transfers_value_to_eoa() {
             flags: 0,
             target: Some(eoa),
             limits: FrameLimits {
+                // The target does not exist yet, so delivering value creates it and the
+                // frame must budget EIP-8037's new-account state gas (120 * 1530). 50_000
+                // covered this only while frames created accounts for free.
                 execution: 50_000,
-                state: 50_000,
+                state: 250_000,
             },
             value,
             data: Bytes::new(),
@@ -826,8 +829,11 @@ fn sender_frame_to_eoa_emits_transfer_log() {
             flags: 0,
             target: Some(eoa),
             limits: FrameLimits {
+                // The target does not exist yet, so delivering value creates it and the
+                // frame must budget EIP-8037's new-account state gas (120 * 1530). 50_000
+                // covered this only while frames created accounts for free.
                 execution: 50_000,
-                state: 50_000,
+                state: 250_000,
             },
             value,
             data: Bytes::new(),
@@ -4679,4 +4685,103 @@ mod intrinsic_gas_accounting_tests {
             baseline.total_gas_limit() + 1_000
         );
     }
+}
+
+/// STATE_BYTES_PER_NEW_ACCOUNT (120) * cost_per_state_byte (1530).
+const NEW_ACCOUNT_STATE_GAS: u64 = 120 * 1530;
+
+/// A frame that brings an account into being by sending it value must pay
+/// EIP-8037's state gas for that growth.
+///
+/// `CALL` and `CREATE` both charge `state_gas_new_account` before they move value, but a
+/// frame's own `value` field reached the balance write directly, so frames were a free
+/// account-creation path — unmetered state growth, which is a chain-bloat vector rather
+/// than a rounding error. Two paths in one client disagreeing about the price of the same
+/// state change is a bug on its face, whatever else the spec settles.
+#[test]
+fn frame_value_transfer_creating_an_account_charges_state_gas() {
+    let fresh = Address::from_low_u64_be(0xBEEF_1234);
+    let accounts = [(
+        FUNDED_SENDER,
+        AUTO_SEED_SENDER_BALANCE,
+        0u64,
+        Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+    )];
+    // SENDER frame moving value to an address that does not exist yet.
+    let tx = frame_tx_with_frames(vec![
+        verify_frame(FUNDED_SENDER),
+        Frame {
+            mode: u8::from(FrameMode::Sender),
+            flags: 0x00,
+            target: Some(fresh),
+            limits: FrameLimits {
+                execution: 2_000_000,
+                state: 2_000_000,
+            },
+            value: U256::from(100u64),
+            data: Bytes::new(),
+            encoding: FrameEncoding::Limits,
+        },
+    ]);
+    let (result, _db) = run_frame_tx(&accounts, tx);
+    let report = result.expect("valid frame tx (payer approved)");
+
+    assert_eq!(
+        report.state_gas_used, NEW_ACCOUNT_STATE_GAS,
+        "creating an account by frame transfer must cost the same state gas as creating it \
+         with CALL, got {}",
+        report.state_gas_used,
+    );
+    let fr = report
+        .frame_results
+        .as_ref()
+        .expect("per-frame results present");
+    // fr[0] = VERIFY (creates nothing), fr[1] = the value-bearing SENDER frame.
+    assert_eq!(
+        fr[0].3, 0,
+        "the VERIFY frame grows no state and must report none"
+    );
+    assert_eq!(
+        fr[1].3, NEW_ACCOUNT_STATE_GAS,
+        "the receipt must attribute the growth to the frame that caused it",
+    );
+}
+
+/// The converse: paying an account that already exists grows nothing, so it owes no state
+/// gas. Without this the fix above could "pass" by charging every transfer.
+#[test]
+fn frame_value_transfer_to_an_existing_account_charges_no_state_gas() {
+    let existing = Address::from_low_u64_be(0xBEEF_5678);
+    let accounts = [
+        (
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0u64,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        ),
+        // Already alive: a non-zero balance is enough to make it non-empty.
+        (existing, U256::from(1u64), 0u64, Bytes::new()),
+    ];
+    let tx = frame_tx_with_frames(vec![
+        verify_frame(FUNDED_SENDER),
+        Frame {
+            mode: u8::from(FrameMode::Sender),
+            flags: 0x00,
+            target: Some(existing),
+            limits: FrameLimits {
+                execution: 2_000_000,
+                state: 2_000_000,
+            },
+            value: U256::from(100u64),
+            data: Bytes::new(),
+            encoding: FrameEncoding::Limits,
+        },
+    ]);
+    let (result, _db) = run_frame_tx(&accounts, tx);
+    let report = result.expect("valid frame tx (payer approved)");
+    assert_eq!(
+        report.state_gas_used, 0,
+        "paying an existing account grows no state and must cost no state gas, got {}",
+        report.state_gas_used,
+    );
 }
