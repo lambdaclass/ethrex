@@ -1,4 +1,4 @@
-use crate::discovery::{DiscoveryHandle, PeerStatus};
+use crate::discovery::DiscoveryHandle;
 use crate::rlpx::initiator::RLPxInitiator;
 use crate::{
     metrics::{CurrentStepValue, METRICS},
@@ -607,16 +607,14 @@ impl PeerHandler {
                 {
                     if block_bodies.len() > block_hashes_len {
                         // More bodies than hashes requested: a protocol violation, so
-                        // drop the peer rather than just scoring it down.
+                        // bottom out its score rather than just nudging it down.
                         debug!(
                             %peer_id,
                             got = block_bodies.len(),
                             requested = block_hashes_len,
                             "Peer returned more block bodies than requested, disposing"
                         );
-                        self.peer_table.record_failure(peer_id)?;
-                        self.discovery
-                            .update_status(peer_id, PeerStatus::Disposable);
+                        self.peer_table.record_critical_failure(peer_id)?;
                         return Ok(None);
                     }
                     if !block_bodies.is_empty() {
@@ -772,9 +770,7 @@ impl PeerHandler {
                     }
                     _ => {
                         debug!("Didn't receive receipts from peer, penalizing peer {peer_id}");
-                        self.peer_table.record_failure(peer_id)?;
-                        self.discovery
-                            .update_status(peer_id, PeerStatus::Disposable);
+                        self.peer_table.record_critical_failure(peer_id)?;
                         return Ok(None);
                     }
                 };
@@ -791,9 +787,7 @@ impl PeerHandler {
                 }
                 if receipts.len() > block_hashes_len {
                     debug!("Received oversized receipts from peer {peer_id}, penalizing");
-                    self.peer_table.record_failure(peer_id)?;
-                    self.discovery
-                        .update_status(peer_id, PeerStatus::Disposable);
+                    self.peer_table.record_critical_failure(peer_id)?;
                     return Ok(None);
                 }
                 // Success is recorded by the caller, once the receipts have been

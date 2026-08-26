@@ -290,11 +290,16 @@ impl Contact {
 /// [`Self::Unwanted`] and [`Self::Disposable`] are verdicts that accumulate on
 /// the contact and are never cleared.
 ///
-/// In particular the two verdicts deliberately leave the connected set alone. A
-/// live peer that serves a bad response is reported `Disposable` by the sync
-/// layer without its connection going anywhere, and treating that as a
-/// disconnection would put a peer we are still talking to back into the dial
-/// pool.
+/// [`Self::Unwanted`] deliberately leaves the connected set alone: it is a
+/// verdict about whether to dial a peer in future, not a statement that the
+/// current connection is over.
+///
+/// There is no variant for `disposable`. That flag means a contact did not
+/// answer us over UDP, which only discovery is in a position to observe, so it
+/// is set internally rather than reported. The sync layer used to reach for it
+/// to mean "stop using this peer", which is not what it does: it deletes the
+/// peer's routing-table entry, leaves the connection up, and is erased by the
+/// next prune. Scoring the peer down is the mechanism for that.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PeerStatus {
     /// A connection to this peer is up: stop offering it as a dial candidate,
@@ -305,11 +310,10 @@ pub enum PeerStatus {
     Disconnected,
     /// Known-bad to the consumer: on another network, or advertising no
     /// capability it wants. Never offered as a dial candidate again.
+    ///
+    /// Ignored for a peer that is currently connected; see
+    /// [`ContactTable::update_status`].
     Unwanted,
-    /// Not worth keeping in the routing table. Dropped by the next
-    /// [`ContactTable::prune`], though its pool entry survives so it can still
-    /// be dialed.
-    Disposable,
 }
 
 /// Result of contact validation.
@@ -404,8 +408,19 @@ impl ContactTable {
         match status {
             PeerStatus::Connected => self.mark_connected(node_id),
             PeerStatus::Disconnected => self.mark_disconnected(&node_id),
+            // A peer we are connected to is, demonstrably, wanted. This report
+            // can only reach us for one while a second connection attempt to the
+            // same node fails its handshake, and nothing dedupes those: a
+            // transient error on the redundant attempt would otherwise mark a
+            // peer we are happily syncing from as never-dial-again, permanently
+            // and invisibly. The live connection is the better evidence.
+            PeerStatus::Unwanted if self.connected.contains(&node_id) => {
+                tracing::debug!(
+                    peer = %node_id,
+                    "Ignoring unwanted verdict for a peer we are connected to"
+                );
+            }
             PeerStatus::Unwanted => self.set_unwanted(&node_id),
-            PeerStatus::Disposable => self.set_disposable(&node_id),
         }
     }
 
@@ -1411,26 +1426,40 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_verdict_does_not_disconnect_a_live_peer() {
-        // The reason `PeerStatus` is a report and not a state. The sync layer
-        // marks a peer `Disposable` when it serves a bad response, and that peer
-        // is still connected: folding the verdict into the connected set would
-        // hand a peer we are actively talking to back to the dialer.
+    async fn a_connected_peer_is_never_marked_unwanted() {
+        // Connected-and-unwanted is a contradiction, and it was reachable: two
+        // connection actors can race for one node id, and a transient handshake
+        // error on the loser would permanently retire a peer the winner is
+        // syncing from. The live connection outranks the verdict.
         let mut table = table_with(FixedAnswer(true));
         let (node_id, record) = record_for(17, 1);
 
         table.new_contact_records(vec![record]).await;
         table.update_status(node_id, PeerStatus::Connected);
-        table.update_status(node_id, PeerStatus::Disposable);
+        table.update_status(node_id, PeerStatus::Unwanted);
 
-        assert_eq!(table.peer_completion(), 0.1, "still counted as connected");
+        assert_eq!(table.peer_completion(), 0.1, "still connected");
+        table.update_status(node_id, PeerStatus::Disconnected);
+        assert_eq!(
+            table.next_dial_candidate().map(|n| n.node_id()),
+            Some(node_id),
+            "and still dialable once it disconnects: the verdict never landed"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unwanted_verdict_lands_when_the_peer_is_not_connected() {
+        // The guard must not swallow the verdict it exists to record.
+        let mut table = table_with(FixedAnswer(true));
+        let (node_id, record) = record_for(19, 1);
+
+        table.new_contact_records(vec![record]).await;
+        table.update_status(node_id, PeerStatus::Unwanted);
+
         assert!(
             table.next_dial_candidate().is_none(),
-            "a connected peer must not be offered for dialing, verdict or not"
+            "an unwanted peer that was never connected is never dialed"
         );
-
-        table.update_status(node_id, PeerStatus::Unwanted);
-        assert_eq!(table.peer_completion(), 0.1, "nor does the other verdict");
     }
 
     #[tokio::test]
@@ -1440,9 +1469,11 @@ mod tests {
         let mut table = table_with(FixedAnswer(true));
         let (node_id, record) = record_for(18, 1);
 
+        // The verdict has to be recorded while disconnected, since a connected
+        // peer's verdict is ignored outright.
         table.new_contact_records(vec![record]).await;
-        table.update_status(node_id, PeerStatus::Connected);
         table.update_status(node_id, PeerStatus::Unwanted);
+        table.update_status(node_id, PeerStatus::Connected);
         table.update_status(node_id, PeerStatus::Disconnected);
 
         assert_eq!(table.peer_completion(), 0.0, "no longer connected");

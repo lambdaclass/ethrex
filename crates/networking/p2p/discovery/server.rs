@@ -573,7 +573,6 @@ mod tests {
             PeerStatus::Connected,
             PeerStatus::Disconnected,
             PeerStatus::Unwanted,
-            PeerStatus::Disposable,
         ] {
             handle.update_status(H256::repeat_byte(1), status);
         }
