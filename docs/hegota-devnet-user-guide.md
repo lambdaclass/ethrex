@@ -41,8 +41,21 @@ Two things surprise people:
 
 ## Sending a frame transaction
 
-The easiest path is `rex` (branch `hegota-devnet`), which builds the envelope from ethrex's own
-types so it cannot drift from the node:
+The easiest path is [`rex`](https://github.com/lambdaclass/rex), which builds the envelope from
+ethrex's own types, so its encoding cannot drift from what the node expects.
+
+**Install from the `hegota-devnet` branch — the default branch will not work here:**
+
+```bash
+cargo install --git https://github.com/lambdaclass/rex --branch hegota-devnet --locked
+```
+
+The branch is load-bearing, not a preference. `main` still emits the pre-revision frame layout
+(a scalar `gas_limit` in slot 3) and the `27`/`28` signature form, so every frame transaction it
+builds is rejected here — on the encoding first, and on the signature after that. Both are fixed
+on `hegota-devnet`.
+
+Then:
 
 ```bash
 rex frame send \
@@ -52,7 +65,10 @@ rex frame send \
   --rpc-url https://rpc1.hegota.ethrex.xyz
 ```
 
-Add `--dry-run` to print the raw `0x06` bytes without sending.
+Add `--dry-run` to print the raw `0x06` bytes without sending, and see
+[the CLI README](https://github.com/lambdaclass/rex/blob/hegota-devnet/cli/README.md) for
+`frame build` (construct an envelope from explicit frames) and `frame inspect` (decode a
+transaction and pair its frames with their results).
 
 ## The two budgets — the thing that trips everyone up
 
