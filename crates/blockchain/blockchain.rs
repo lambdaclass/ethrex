@@ -4360,7 +4360,10 @@ impl Blockchain {
             // paymaster's head balance, summed with all other pending
             // reservations for that paymaster so concurrently pending sponsored
             // txs cannot collectively overdraw it.
-            let max_cost = outcome.max_cost;
+            // The RESERVATION ceiling, not the consensus max cost: for a blob-carrying
+            // transaction the two differ, and reserving the smaller one would let a
+            // paymaster be overdrawn by a block whose blob base fee rose after admission.
+            let max_cost = outcome.reservation_ceiling;
             if let Some((paymaster, code_is_canonical)) = outcome.accessed_paymaster {
                 // Re-derive the canonical flag from the paymaster's head code, so
                 // a target that acquired canonical code after the simulation

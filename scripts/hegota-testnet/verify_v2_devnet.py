@@ -170,6 +170,24 @@ def engine_new_payload_v6(block, inclusion_list) -> dict:
                auth=True)
 
 
+PRIORITY_FEE = 10**9
+
+
+def fees() -> tuple[int, int]:
+    """`(max_priority_fee_per_gas, max_fee_per_gas)` against the CURRENT head.
+
+    Read fresh for every transaction rather than once per run. This script fills blocks
+    with its own transactions, which raises the base fee as it goes, and a `max_fee`
+    derived from the base fee at startup eventually falls below it — the transaction is
+    then admitted and simply never mined. That reads exactly like the feature under test
+    being broken, which is how a stale fee cost an hour of looking at the wrong thing.
+    The multiple gives several slots of headroom.
+    """
+    head = rpc(RPC, "eth_getBlockByNumber", ["latest", False])
+    base = int(head.get("baseFeePerGas", "0x0"), 16)
+    return PRIORITY_FEE, base * 4 + 2 * PRIORITY_FEE
+
+
 def drain_pool(what: str) -> None:
     """Block until the mempool is empty.
 
@@ -246,7 +264,7 @@ def deploy_sender_contract(endowment: int) -> str:
     return out["contractAddress"]
 
 
-def concurrency_check(chain_id, funder, base_fee) -> None:
+def concurrency_check(chain_id) -> None:
     """EIP-8250's headline feature: two frame transactions from one sender, different keys,
     both pending at once and both mined. Only a contract sender qualifies."""
     contract = deploy_sender_contract(10**18)
@@ -267,7 +285,7 @@ def concurrency_check(chain_id, funder, base_fee) -> None:
             chain_id, contract, key, 0,
             [frame(1, 0x03, contract, 80_000, 0, 0, b""),
              frame(2, 0x00, recipient, 30_000, NEW_ACCOUNT_STATE_GAS, 100, b"")],
-            10**9, base_fee * 2 + 10**9, None,
+            *fees(), None,
             sign=False))
 
     hashes = []
@@ -281,13 +299,15 @@ def concurrency_check(chain_id, funder, base_fee) -> None:
           len(hashes) == 2, f"{len(hashes)} of 2 admitted")
 
     mined = {}
-    for _ in range(30):
+    for _ in range(60):
         mined = {h: rpc(RPC, "eth_getTransactionReceipt", [h]) for h in hashes}
         if all(mined.values()):
             break
         time.sleep(2)
+    blocks = {int(r["blockNumber"], 16) for r in mined.values() if r}
     check("both mine", bool(hashes) and all(mined.get(h) for h in hashes),
-          ",".join(f"{(mined.get(h) or {}).get('status', 'pending')}" for h in hashes))
+          ",".join(f"{(mined.get(h) or {}).get('status', 'pending')}" for h in hashes)
+          + (f" in block(s) {sorted(blocks)}" if blocks else ""))
     if hashes and all(mined.get(h) for h in hashes):
         check("both succeed",
               all(mined[h]["status"] == "0x1" for h in hashes),
@@ -299,7 +319,6 @@ def main() -> int:
     sender = cast_cmd("wallet", "address", "--private-key", KEY)
     chain_id = int(rpc(RPC, "eth_chainId", []), 16)
     head = rpc(RPC, "eth_getBlockByNumber", ["latest", False])
-    base_fee = int(head.get("baseFeePerGas", "0x0"), 16)
     seq = int(rpc(RPC, "eth_getTransactionCount", [sender, "latest"]), 16)
     # Both derived from the current sequence: the address the funded transfer creates, and
     # the address the under-budgeted frame must fail to create.
@@ -316,7 +335,7 @@ def main() -> int:
         frame(1, 0x03, sender, 80_000, 0, 0, b""),          # VERIFY, approves both scopes
         frame(2, 0x00, recipient, 30_000, NEW_ACCOUNT_STATE_GAS, 100, b""),  # SENDER, 100 wei
     ]
-    raw = build_frame_tx(chain_id, sender, 0, seq, frames, 10**9, base_fee * 2 + 10**9, KEY)
+    raw = build_frame_tx(chain_id, sender, 0, seq, frames, *fees(), KEY)
     sim = rpc(RPC, "ethrex_simulateFrameTransaction", [raw])
     check("a v2 frame transaction simulates valid", sim.get("valid") is True,
           f"shape={sim.get('prefixShape')} violation={sim.get('violation')}")
@@ -353,7 +372,7 @@ def main() -> int:
         # One gas short of the account-creation charge on an address that does not exist.
         frame(2, 0x00, unfunded, 30_000, NEW_ACCOUNT_STATE_GAS - 1, 100, b""),
     ]
-    raw = build_frame_tx(chain_id, sender, 0, seq, starved, 10**9, base_fee * 2 + 10**9, KEY)
+    raw = build_frame_tx(chain_id, sender, 0, seq, starved, *fees(), KEY)
     starved_receipt = None
     try:
         starved_hash = rpc(RPC, "eth_sendRawTransaction", [raw])
@@ -416,7 +435,7 @@ def main() -> int:
             raw = build_frame_tx(
                 chain_id, sender, 0, seq,
                 [frame(1, 0x03, sender, 80_000, 0, 0, b"")],
-                10**9, base_fee * 2 + 10**9, KEY,
+                *fees(), KEY,
                 references=[recent_root_reference(source_id, write_slot, referenced_root)])
             try:
                 rpc(RPC, "eth_sendRawTransaction", [raw])
@@ -429,7 +448,7 @@ def main() -> int:
     print("\nEIP-8250 — keyed nonces")
     drain_pool("the keyed-nonce checks")
     seq = int(rpc(RPC, "eth_getTransactionCount", [sender, "latest"]), 16)
-    gapped = build_frame_tx(chain_id, sender, 0, seq + 5, frames, 10**9, base_fee * 2 + 10**9, KEY)
+    gapped = build_frame_tx(chain_id, sender, 0, seq + 5, frames, *fees(), KEY)
     try:
         rpc(RPC, "eth_sendRawTransaction", [gapped])
         check("key 0 cannot queue a future sequence", False, "a gapped key-0 tx was admitted")
@@ -439,8 +458,7 @@ def main() -> int:
     # A key this sender has never used is at sequence 0 by definition, which is what makes
     # this check independent of every earlier run.
     fresh_key = 0x8141_0000 + seq
-    keyed = build_frame_tx(chain_id, sender, fresh_key, 0, frames, 10**9,
-                           base_fee * 2 + 10**9, KEY)
+    keyed = build_frame_tx(chain_id, sender, fresh_key, 0, frames, *fees(), KEY)
     try:
         rpc(RPC, "eth_sendRawTransaction", [keyed])
         check("a keyed frame transaction is admitted", True, f"key={hex(fresh_key)}")
@@ -451,8 +469,7 @@ def main() -> int:
     # default-code prefix authenticates against its own account nonce, which a sibling
     # key-0 transaction bumps, so `keyed_concurrency_verdict` denies it and the second
     # pending frame transaction is refused whatever key it carries.
-    second_key = build_frame_tx(chain_id, sender, fresh_key + 1, 0, frames, 10**9,
-                                base_fee * 2 + 10**9, KEY)
+    second_key = build_frame_tx(chain_id, sender, fresh_key + 1, 0, frames, *fees(), KEY)
     try:
         rpc(RPC, "eth_sendRawTransaction", [second_key])
         check("an EOA sender is denied concurrency", False,
@@ -465,7 +482,7 @@ def main() -> int:
 
     print("\nEIP-8250 — concurrency, which needs a contract sender")
     drain_pool("the contract-sender deploy")
-    sender_contract = concurrency_check(chain_id, sender, base_fee)
+    sender_contract = concurrency_check(chain_id)
 
     print("\nEIP-7805 — FOCIL")
     # An inclusion list only has something to say about a transaction that is pending, so
@@ -475,7 +492,7 @@ def main() -> int:
     pending_raw = build_frame_tx(
         chain_id, sender_contract, 0x7805_0000, 0,
         [frame(1, 0x03, sender_contract, 80_000, 0, 0, b"")],
-        10**9, base_fee * 2 + 10**9, None, sign=False)
+        *fees(), None, sign=False)
     pending_hash = rpc(RPC, "eth_sendRawTransaction", [pending_raw])
 
     head = rpc(RPC, "eth_getBlockByNumber", ["latest", False])
@@ -508,7 +525,7 @@ def main() -> int:
     unbuilt_raw = build_frame_tx(
         chain_id, sender_contract, 0x7805_0001, 0,
         [frame(1, 0x03, sender_contract, 80_000, 0, 0, b"")],
-        10**9, base_fee * 2 + 10**9, None, sign=False)
+        *fees(), None, sign=False)
     rpc(RPC, "eth_sendRawTransaction", [unbuilt_raw])
     head = rpc(RPC, "eth_getBlockByNumber", ["latest", False])
     try:

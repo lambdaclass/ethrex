@@ -200,5 +200,22 @@ above are all silent until a specific fork boundary.
 
 Checks 7, 9 to 13 and 14 need the frame-transaction submitters in `scripts/hegota-testnet/`
 and the `pk910/gated-deposit-contract-cli` container; the rest need only `curl` and `jq`.
-Checks 7, 10, 11 and 14 are automated end to end by
-`scripts/hegota-testnet/verify_v2_devnet.py`, which needs only foundry's `cast`.
+
+Checks 7, 9, 10, 11 and 14 are automated end to end by
+`scripts/hegota-testnet/verify_v2_devnet.py`, which needs only foundry's `cast` and is
+re-runnable against the same chain. Twenty-six checks, including the three that are easy to
+believe without testing and wrong to:
+
+- **EIP-8250 concurrency** with a **contract** sender — two keys admitted at once and mined
+  in the same block — plus the EOA denial as its counterpart.
+- **EIP-8272's read side**: a frame transaction declaring a reference to a written entry is
+  admitted, and one naming a root that was never written is rejected.
+- **EIP-7805 enforcement**: the head payload replayed through `engine_newPayloadV6` against
+  a list holding a frame transaction it cannot contain must answer
+  `inclusionListSatisfied: false`. A client that excused frame transactions wholesale would
+  answer `true` and pass every other check.
+
+One check remains manual: an *ineligible* frame transaction being **excused** rather than
+reported unsatisfied (item 9's third clause). It needs a transaction that is admissible to
+the mempool yet outside EIP-8369 Profile 2's budget, which the script has no way to build
+without filling an inclusion list to its limit first.

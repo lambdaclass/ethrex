@@ -416,6 +416,12 @@ pub struct FrameValidationOutcome {
     /// The transaction's max cost (TXPARAM 0x06): the largest amount the payer
     /// may be charged. Used by the paymaster reservation accounting (Phase 3).
     pub max_cost: ethrex_common::U256,
+    /// The ceiling the mempool reserves against the paymaster's balance. Equals
+    /// `max_cost` except in the blob term: this prices blobs at the transaction's
+    /// declared `max_fee_per_blob_gas` rather than at the head's `blob_base_fee`, so
+    /// it stays a ceiling for every block that can include the transaction. See
+    /// `LEVM::frame_tx_reservation_ceiling`.
+    pub reservation_ceiling: ethrex_common::U256,
     /// The paymaster accessed by the prefix and whether its code matched the
     /// canonical paymaster hash. `None` when no distinct paymaster was
     /// identified (e.g. self-funded self_verify).

@@ -3229,6 +3229,7 @@ impl LEVM {
                     passed: false,
                     violation: Some(EvmError::from(err).to_string()),
                     max_cost: Self::frame_tx_max_cost(frame_tx, blob_base_fee),
+                    reservation_ceiling: Self::frame_tx_reservation_ceiling(frame_tx),
                     accessed_paymaster: None,
                     touched_sender_slots: Vec::new(),
                     read_legacy_nonce: false,
@@ -3238,6 +3239,7 @@ impl LEVM {
         };
 
         let max_cost = Self::frame_tx_max_cost(frame_tx, blob_base_fee);
+        let reservation_ceiling = Self::frame_tx_reservation_ceiling(frame_tx);
         let touched_sender_slots = vm.validation_observer.touched_sender_slots.clone();
         let read_legacy_nonce = vm.validation_observer.read_legacy_nonce;
         // The payer established by the prefix is the paymaster (OQ2: the
@@ -3263,6 +3265,7 @@ impl LEVM {
             passed: false,
             violation: None,
             max_cost,
+            reservation_ceiling,
             accessed_paymaster,
             touched_sender_slots,
             read_legacy_nonce,
@@ -3324,6 +3327,26 @@ impl LEVM {
         blob_base_fee: U256,
     ) -> U256 {
         frame_tx.max_cost(blob_base_fee)
+    }
+
+    /// Mempool reservation ceiling for a frame transaction:
+    /// `max_gas * max_fee_per_gas + len(blob_hashes) * GAS_PER_BLOB * max_fee_per_blob_gas`,
+    /// saturating.
+    ///
+    /// The consensus `max_cost` that `APPROVE` collects prices blobs at the including
+    /// block's `blob_base_fee`. That rate is not known at admission — the simulation runs
+    /// against the current head while execution charges the base fee of whichever later
+    /// block includes the transaction — and the blob base fee moves per block, so
+    /// reserving at the head's rate can reserve less than the eventual charge.
+    /// `max_fee_per_blob_gas >= blob_base_fee` is an inclusion condition (EIP-8141 §Blob
+    /// handling), so the declared max rate bounds every block that can include the
+    /// transaction, which is what makes this a true ceiling.
+    ///
+    /// Saturating rather than checked, deliberately: the TXPARAM 0x06 consensus handler
+    /// uses checked arithmetic and halts on overflow, while saturating to `U256::MAX`
+    /// here only makes the reservation larger, never smaller.
+    fn frame_tx_reservation_ceiling(frame_tx: &ethrex_common::types::FrameTransaction) -> U256 {
+        frame_tx.max_cost(frame_tx.max_fee_per_blob_gas)
     }
 
     pub fn get_state_transitions(

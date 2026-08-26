@@ -779,6 +779,56 @@ fn sender_frame_transfers_value_to_eoa() {
     assert_eq!(balance_of(&db, eoa), value, "value not delivered to EOA");
 }
 
+/// A transaction whose data floor exceeds what it declared for execution is charged the
+/// floor, not the declaration. `max_gas` reserves the floor rather than rejecting the
+/// transaction, and settlement then charges it — otherwise a frame transaction could carry
+/// unlimited calldata for the price of its frame budgets.
+#[test]
+fn a_floor_bound_frame_transaction_is_charged_the_floor() {
+    let tx = frame_tx_with_frames(vec![Frame {
+        mode: u8::from(FrameMode::Verify),
+        flags: 0x03,
+        target: Some(FUNDED_SENDER),
+        gas_limit: 100_000,
+        state_limit: 0,
+        value: U256::zero(),
+        data: Bytes::from(vec![0x11u8; 4_096]),
+    }]);
+    let floor_total = tx.calldata_floor_total();
+    assert!(
+        floor_total > tx.standard_gas_limit(),
+        "the floor must bind for this to test the settlement"
+    );
+
+    let (result, _db) = run_frame_tx(
+        &[(
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        )],
+        tx.clone(),
+    );
+    let report = result.expect("valid: the self-verify frame approves execution and payment");
+    assert_eq!(
+        report.gas_used, floor_total,
+        "a floor-bound transaction is charged max_gas, which is the floor"
+    );
+    // EIP-8141 v2 reports `tx_unused_gas` directly — gas left in either pool at frame exit,
+    // which the floor does not consume — so the frame's unspent execution budget is
+    // reported even though the charge is the floor. It is not a discount on that charge.
+    let fr = report.frame_results.expect("per-frame results");
+    assert_eq!(
+        report.gas_refunded,
+        tx.frames[0].gas_limit - fr[0].gas_used,
+        "the reported unused gas is what the frame left in its pools"
+    );
+    assert_eq!(
+        report.gas_used, report.gas_spent,
+        "no storage refund was earned, so the block and the payer see the same figure"
+    );
+}
+
 /// EIP-8141 v2 §Behavior: "if `resolved_target` is an active precompile at the current
 /// fork, the frame dispatches it as an ordinary call would."
 ///
@@ -2881,6 +2931,68 @@ mod frame_validation_prefix_tests {
         assert_eq!(outcome.accessed_paymaster, Some((sender, false)));
     }
 
+    /// The mempool reservation bounds the blob fee at the transaction's declared
+    /// `max_fee_per_blob_gas`, not at the head block's `blob_base_fee`.
+    ///
+    /// Admission simulates against the current head while execution charges the base fee
+    /// of whichever later block includes the transaction, and the blob base fee moves per
+    /// block — so reserving at the head's rate can reserve less than the eventual charge
+    /// and let a paymaster be overdrawn. `max_fee_per_blob_gas >= blob_base_fee` is an
+    /// inclusion condition (EIP-8141 §Blob handling), so the declared rate bounds every
+    /// block that can include the transaction. The consensus `max_cost` that `APPROVE`
+    /// collects still prices blobs at the base rate; only the reservation differs.
+    #[test]
+    fn the_reservation_ceiling_prices_blobs_at_the_declared_max_rate() {
+        const GAS_PER_BLOB: u64 = 1 << 17;
+        const MAX_FEE_PER_BLOB_GAS: u64 = 1_000;
+
+        let sender = addr(0x5E_11_02);
+        let mut tx = frame_tx_prefix(sender, vec![frame(1, 0x03, sender, 50_000)]);
+        let Transaction::FrameTransaction(frame_tx) = &mut tx else {
+            unreachable!("frame_tx_prefix builds a frame transaction")
+        };
+        frame_tx.max_fee_per_gas = 0;
+        frame_tx.max_fee_per_blob_gas = U256::from(MAX_FEE_PER_BLOB_GAS);
+        frame_tx.blob_versioned_hashes = vec![H256::from_low_u64_be(1)];
+        frame_tx.inner_hash = Default::default();
+        frame_tx.cached_canonical = Default::default();
+
+        let mut db = db_with(vec![(sender, account(1_000_000, approve_code(0x03)))]);
+        let prefix = ValidationPrefix {
+            shape: PrefixShape::SelfVerify,
+            frame_indices: vec![0],
+            deploy_index: None,
+            pay_index: Some(0),
+        };
+        let outcome = LEVM::simulate_frame_validation_prefix(
+            &tx,
+            &header(),
+            &mut db,
+            VMType::L1,
+            &NativeCrypto,
+            &prefix,
+            None,
+            FRAME_TX_MAX_VERIFY_GAS,
+            None,
+        )
+        .expect("simulation runs");
+
+        // `max_fee_per_gas` is zero, so the ceiling is the blob term alone.
+        assert_eq!(
+            outcome.reservation_ceiling,
+            U256::from(GAS_PER_BLOB * MAX_FEE_PER_BLOB_GAS),
+            "the reservation must price the blob at max_fee_per_blob_gas"
+        );
+        // The header's blob base fee is lower than the declared rate, so the consensus max
+        // cost is strictly smaller — which is exactly why the reservation cannot use it.
+        assert!(
+            outcome.max_cost < outcome.reservation_ceiling,
+            "max_cost {} must price blobs below the declared ceiling {}",
+            outcome.max_cost,
+            outcome.reservation_ceiling
+        );
+    }
+
     /// A sponsored OnlyVerifyPay prefix whose pay frame targets a non-sender
     /// sponsor. EIP-8141 structural rule 3 restricts only self_verify /
     /// only_verify targets to `tx.sender`; rule 4 places no target requirement
@@ -4390,16 +4502,30 @@ fn atomic_batch_revert_drops_the_batch_writes_from_the_bal() {
         .take()
         .expect("BAL recording was enabled")
         .build();
-    let writer_entry = bal.accounts().iter().find(|acc| acc.address == writer);
-    if let Some(entry) = writer_entry {
-        assert!(
-            entry
-                .storage_changes
-                .iter()
-                .all(|change| change.slot != slot),
-            "the BAL must not record a storage change for a slot whose write was unrolled"
-        );
-    }
+    // Both halves of EIP-7928 are asserted, because the fix depends on both and a
+    // vacuous first half would hide the second: the reverted *change* goes, the
+    // reverted *access* stays. Finding the entry with `if let` would let this pass if
+    // the whole address vanished from the BAL — the same class of stall from the other
+    // side, and exactly what rolling back `touched_addresses` at this call site would
+    // produce.
+    let entry = bal
+        .accounts()
+        .iter()
+        .find(|acc| acc.address == writer)
+        .expect("a reverted batch's accesses still belong in the BAL (EIP-7928)");
+    assert!(
+        entry
+            .storage_changes
+            .iter()
+            .all(|change| change.slot != slot),
+        "the BAL must not record a storage change for a slot whose write was unrolled"
+    );
+    assert!(
+        entry.storage_reads.contains(&slot),
+        "the unrolled write must be re-filed as a read, not dropped: a slot in \
+         neither list is a slot the block accessed and the BAL omits, which \
+         re-execution rejects"
+    );
 }
 
 /// EIP-7928: a frame that reverts on its own — with no atomic batch involved —
