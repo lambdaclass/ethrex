@@ -310,8 +310,20 @@ impl LEVM {
         let mut callframe = vm.get_trace_result()?;
 
         // EIP-8037 two-dimensional gas, reported on the top-level frame only from
-        // Amsterdam onwards (execution-apis `CallFrame`).
-        if fork >= Fork::Amsterdam {
+        // Amsterdam onwards (execution-apis `CallFrame`). EIP-8141 frame
+        // transactions (`frame_results` is set) are skipped: their report's
+        // `gas_refunded` holds unused frame gas rather than the EIP-3529 refund
+        // these fields advertise, and the spec defines no aggregate attribution
+        // for them.
+        if fork >= Fork::Amsterdam && report.frame_results.is_none() {
+            // A portion cannot exceed its whole; the saturation below is a
+            // last-resort clamp, not an expected path.
+            debug_assert!(
+                report.state_gas_used <= report.gas_used,
+                "state_gas_used ({}) exceeds gas_used ({})",
+                report.state_gas_used,
+                report.gas_used
+            );
             callframe.regular_gas_used =
                 Some(report.gas_used.saturating_sub(report.state_gas_used));
             callframe.state_gas_used = Some(report.state_gas_used);
