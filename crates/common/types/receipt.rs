@@ -998,6 +998,37 @@ mod test {
         assert_eq!(r.encode_storage(), r.encode_inner());
     }
 
+    /// Golden byte vector for the EIP-8141 two-dimensional `gas_used`. Every other
+    /// test in this file builds its expectation with the same encoder, so none of
+    /// them would notice the nested `[execution, state]` list flattening back to a
+    /// scalar; only the spec-test fixtures would, through the receipts root. This
+    /// pins the layout without them.
+    #[test]
+    fn frame_receipt_gas_used_encodes_as_a_nested_pair() {
+        // [21000, 0] -> c4 82 52 08 80
+        assert_eq!(
+            GasUsed {
+                execution: 21_000,
+                state: 0,
+            }
+            .encode_to_vec(),
+            vec![0xc4, 0x82, 0x52, 0x08, 0x80]
+        );
+        // [status, [execution, state], logs] -> c7 01 c4 82 52 08 80 c0
+        assert_eq!(
+            FrameReceipt {
+                status: FRAME_RECEIPT_STATUS_SUCCESS,
+                gas_used: GasUsed {
+                    execution: 21_000,
+                    state: 0,
+                },
+                logs: Vec::new(),
+            }
+            .encode_to_vec(),
+            vec![0xc7, 0x01, 0xc4, 0x82, 0x52, 0x08, 0x80, 0xc0]
+        );
+    }
+
     #[test]
     fn frame_receipt_trie_encoding_is_eip8141_payload() {
         let receipt = Receipt {

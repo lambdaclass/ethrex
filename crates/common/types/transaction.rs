@@ -6016,10 +6016,15 @@ mod tests {
 
     #[test]
     fn golden_frame_tx_rlp_and_sig_hash() {
-        // Regression lock for the EIP-8141 signatures-list wire format. No
-        // external EEST reference vectors exist yet;
-        // these values are the current canonical output and must only change
-        // with a deliberate, reviewed format change.
+        // Regression lock for the EIP-8141 payload shape: seven top-level items
+        // with the three fees nested as one list, and each frame's gas limits
+        // nested as `[execution, state]`. Both nestings round-trip through this
+        // crate's own encoder even if a level were dropped -- encoder and decoder
+        // would simply agree on the flattened form -- so the assertions below are
+        // byte vectors rather than round-trips. They are the RLP of the spec's
+        // `FrameTransaction` and `Frame` field order, derived by hand; the hash is
+        // keccak256 over `0x06` and the same payload with the empty-msg
+        // signature's bytes elided.
         let tx = FrameTransaction {
             chain_id: 1,
             nonce: 7,
@@ -6065,10 +6070,9 @@ mod tests {
         let mut buf = Vec::new();
         tx.encode(&mut buf);
         let rlp_hex = hex::encode(&buf);
-        // GOLDEN_RLP: obtained from first run
         assert_eq!(
             rlp_hex,
-            "f8ab010794000000000000000000000000000000000000abcde8ca01038082520880821122dc0280940000000000000000000000000000000000001234829c408080f85cf85a0194000000000000000000000000000000000000abcd80b8410101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101843b9aca008506fc23ac0080c0"
+            "f8b0010794000000000000000000000000000000000000abcdeccc010380c48252088080821122de0280940000000000000000000000000000000000001234c4829c40808080f85cf85a0194000000000000000000000000000000000000abcd80b8410101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101cc843b9aca008506fc23ac0080c0"
         );
 
         // Round-trips losslessly.
@@ -6077,10 +6081,9 @@ mod tests {
         assert_eq!(decoded, tx);
 
         let sig_hash = tx.compute_sig_hash();
-        // GOLDEN_SIG_HASH: obtained from first run
         assert_eq!(
             format!("{:#x}", sig_hash),
-            "0xe7dc3f33413fc69c09f9c690be154ded294954e497aeea6ce0010ba513f2f26d",
+            "0x650c2745cb56e514d74d8b3754d9265b92131e4ec7e0b8ea50671edb7b9255a3",
         );
 
         // Elision invariant: changing empty-msg signature bytes must NOT change sig_hash.
