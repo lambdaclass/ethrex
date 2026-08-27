@@ -13,7 +13,7 @@ use crate::{
         p2p::SUPPORTED_SNAP_CAPABILITIES,
     },
     tx_broadcaster::{TxBroadcaster, TxBroadcasterError},
-    types::{NetworkConfig, Node, SharedLocalNode},
+    types::{INITIAL_ENR_SEQ, NetworkConfig, Node, NodeError, NodeRecord, SharedLocalNode},
 };
 use ethrex_blockchain::Blockchain;
 use ethrex_common::H256;
@@ -119,6 +119,26 @@ pub enum NetworkError {
     TxBroadcasterError(#[from] TxBroadcasterError),
     #[error("Failed to bind UDP socket: {0}")]
     UdpSocketError(std::io::Error),
+    #[error("Failed to build the local node record: {0}")]
+    LocalNodeRecordError(#[from] NodeError),
+}
+
+/// The ENR this node publishes: whatever `local_node` advertises, plus our own
+/// EIP-2124 fork id.
+///
+/// Built here rather than inside discovery, which has no say in what this node
+/// announces about itself.
+///
+/// A chain that cannot supply a fork id leaves the entry out instead of failing
+/// startup. The record is still usable for discovery, and a peer that requires
+/// `eth` simply passes us over until we republish with it. A record we cannot
+/// sign is different, and is reported.
+async fn build_local_node_record(context: &P2PContext) -> Result<NodeRecord, NodeError> {
+    let mut record = NodeRecord::from_node(&context.local_node, INITIAL_ENR_SEQ, &context.signer)?;
+    if let Ok(fork_id) = context.storage.get_fork_id().await {
+        record.set_fork_id(fork_id, &context.signer)?;
+    }
+    Ok(record)
 }
 
 pub async fn start_network(
@@ -133,17 +153,16 @@ pub async fn start_network(
             .map_err(NetworkError::UdpSocketError)?,
     );
 
+    let local_node_record = build_local_node_record(&context).await?;
+
     DiscoveryServer::spawn(
-        context.storage.clone(),
         context.local_node.clone(),
+        local_node_record,
         context.signer,
         udp_socket,
         context.table.clone(),
         bootnodes,
-        DiscoveryConfig {
-            initial_lookup_interval: context.initial_lookup_interval,
-            ..config
-        },
+        config,
         shared_local_node,
     )
     .await

@@ -75,13 +75,13 @@ async fn is_resume_point_stateful_noncanonical_is_false() {
 
     let orphan_header = BlockHeader {
         number: 42,
-        state_root: *EMPTY_TRIE_HASH,
+        state_root: EMPTY_TRIE_HASH,
         ..Default::default()
     };
 
     assert!(
         store
-            .has_state_root(*EMPTY_TRIE_HASH)
+            .has_state_root(EMPTY_TRIE_HASH)
             .expect("has_state_root"),
         "precondition: EMPTY_TRIE_HASH must always pass has_state_root"
     );

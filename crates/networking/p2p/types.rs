@@ -330,7 +330,30 @@ pub struct NodeRecordPairs {
     pub eth: Option<ForkId>,
     // Snap entry is being used by some tests such as `test_encode_enr_response`.
     pub snap: Option<Vec<u32>>,
-    pub other: Vec<(Bytes, Bytes)>,
+    /// Entries outside the predefined dictionary, kept verbatim.
+    ///
+    /// Values are **already RLP-encoded**, and deliberately so. A record's
+    /// signature covers its encoded bytes, so an entry only survives a
+    /// decode/re-encode cycle if it comes back out exactly as it went in.
+    /// Holding decoded payloads instead would mean committing to a shape: a
+    /// value that is an RLP list rather than a byte string, which the dictionary
+    /// has no room for and peers do emit, could not be represented at all, and a
+    /// value that merely encodes unusually would be re-emitted canonically. In
+    /// both cases the bytes we re-emit stop matching the bytes we verified.
+    ///
+    /// Keys here must be outside the dictionary. A dictionary key would be
+    /// emitted twice by [`Self::encode_pairs`], once from its typed field and
+    /// once from here, and EIP-778 requires keys to be unique. Such a record
+    /// verifies locally, because both digests come from the same encoding, and
+    /// is rejected by every remote. [`Self::set_extra`] and its siblings refuse
+    /// those keys, and `encode_pairs` skips any that were written here directly,
+    /// so no record ethrex signs can carry a duplicate.
+    ///
+    /// Prefer the setters over pushing tuples: hand-rolling the value encoding
+    /// is easy to get wrong (see [`Self::set_extra`]). Pushing directly is for
+    /// the values they cannot express, such as the RLP list EIP-7636 `client`
+    /// carries, and then keeping the key unique is the caller's job.
+    pub extra_fields: Vec<(Bytes, Bytes)>,
     // TODO implement ipv6 specific ports
 }
 
@@ -359,9 +382,10 @@ impl NodeRecordPairs {
                     decoder.finish_unchecked();
                     decoded_pairs.eth = Some(fork_id);
                 }
-                // Key is some random bytes sequence which we don't care
+                // Any other key. Kept verbatim so an entry in a shape we did
+                // not expect cannot fail the decode of the whole record.
                 _ => {
-                    decoded_pairs.other.push((key, value));
+                    decoded_pairs.extra_fields.push((key, value));
                 }
             }
         }
@@ -396,16 +420,102 @@ impl NodeRecordPairs {
         if let Some(snap) = self.snap.as_ref() {
             pairs.push(("snap".into(), snap.encode_to_vec().into()));
         }
-
         if let Some(tcp) = self.tcp_port {
             pairs.push(("tcp".into(), tcp.encode_to_vec().into()));
         }
         if let Some(udp) = self.udp_port {
             pairs.push(("udp".into(), udp.encode_to_vec().into()));
         }
-        pairs.extend(self.other.clone());
+        // Filter out any duplicate fields, keeping the first occurrence.
+        let extra_fields = self
+            .extra_fields
+            .iter()
+            .filter(|(key, _)| !Self::is_dictionary_key(key))
+            .cloned();
+        pairs.extend(extra_fields);
+        // Sort pairs by key to ensure they are in the correct order for RLP encoding.
         pairs.sort_by(|(left_key, _), (right_key, _)| left_key.cmp(right_key));
         pairs
+    }
+
+    /// Whether `key` belongs to a typed field, and so may not be used for an
+    /// extra entry.
+    ///
+    /// Exactly the keys [`Self::try_from_raw_pairs`] decodes into typed fields
+    /// and [`Self::encode_pairs`] emits from them.
+    pub fn is_dictionary_key(key: &[u8]) -> bool {
+        matches!(
+            key,
+            b"id" | b"ip" | b"ip6" | b"tcp" | b"udp" | b"secp256k1" | b"snap" | b"eth"
+        )
+    }
+
+    /// The RLP-decoded payload of an entry outside the predefined dictionary.
+    ///
+    /// Returns `None` when the key is absent *or* when its value is not an RLP
+    /// byte string, so an entry whose shape we did not expect reads as missing
+    /// rather than poisoning the record.
+    pub fn extra(&self, key: &[u8]) -> Option<Bytes> {
+        let (_, value) = self.extra_fields.iter().find(|(k, _)| k.as_ref() == key)?;
+        Bytes::decode(value.as_ref()).ok()
+    }
+
+    /// An extra entry decoded as an integer, e.g. `quic`.
+    ///
+    /// `None` on an absent key or a value that is not a valid RLP integer,
+    /// which includes the non-minimal encodings some clients emit.
+    pub fn extra_int<T: RLPDecode>(&self, key: &[u8]) -> Option<T> {
+        let (_, value) = self.extra_fields.iter().find(|(k, _)| k.as_ref() == key)?;
+        T::decode(value.as_ref()).ok()
+    }
+
+    /// Advertise `payload` under `key`, replacing any existing entry. Returns
+    /// whether it was stored, i.e. whether `key` is outside the dictionary.
+    ///
+    /// Encodes through [`Bytes`], whose `RLPEncode` delegates to `[u8]` and so
+    /// emits a byte string. This is the step worth not hand-rolling: passing a
+    /// bare `Vec<u8>` hits the blanket `Vec<T>` impl and emits a *list* of
+    /// per-byte scalars, which is a well-formed ENR entry that no other client
+    /// can read, and nothing local ever complains.
+    pub fn set_extra(&mut self, key: &[u8], payload: impl Into<Bytes>) -> bool {
+        let encoded = Bytes::from(payload.into().encode_to_vec());
+        self.set_extra_encoded(key, encoded)
+    }
+
+    /// Advertise an integer under `key`, replacing any existing entry. Returns
+    /// whether it was stored, i.e. whether `key` is outside the dictionary.
+    ///
+    /// Takes a `u64` rather than any [`RLPEncode`] so this cannot become the
+    /// footgun [`Self::set_extra`] exists to close: a `Vec<u8>` passed to a
+    /// generic bound would encode as an RLP list, under a method named for
+    /// integers. Every ENR integer entry fits, being at most a uint64.
+    pub fn set_extra_int(&mut self, key: &[u8], value: u64) -> bool {
+        let encoded = Bytes::from(value.encode_to_vec());
+        self.set_extra_encoded(key, encoded)
+    }
+
+    /// The write both setters end in, once the value is encoded: the dictionary
+    /// guard and the replace-rather-than-append rule live here so neither can
+    /// be reached without them.
+    ///
+    /// Replacing matters because EIP-778 requires keys to be unique, and
+    /// appending a second entry for the same key yields a record that verifies
+    /// locally (both digests come from the same encoding) yet is rejected by
+    /// every remote, with no local symptom.
+    ///
+    /// Private: an already-encoded value is exactly the footgun the setters
+    /// above exist to close, so the escape hatch is not offered. A value the
+    /// typed setters cannot express, such as the RLP list EIP-7636 `client`
+    /// carries, has to go onto [`Self::extra_fields`] directly; `encode_pairs`
+    /// still refuses to emit a dictionary key from there.
+    fn set_extra_encoded(&mut self, key: &[u8], encoded: Bytes) -> bool {
+        if Self::is_dictionary_key(key) {
+            return false;
+        }
+        self.extra_fields.retain(|(k, _)| k.as_ref() != key);
+        self.extra_fields
+            .push((Bytes::copy_from_slice(key), encoded));
+        true
     }
 }
 
@@ -441,10 +551,6 @@ impl NodeRecord {
 
     pub fn from_node(node: &Node, seq: u64, signer: &SecretKey) -> Result<Self, NodeError> {
         let mut pairs = NodeRecordPairs {
-            id: Some("v4".to_string()),
-            secp256k1: Some(H264::from_slice(
-                &PublicKey::from_secret_key(secp256k1::SECP256K1, signer).serialize(),
-            )),
             tcp_port: Some(node.tcp_port),
             udp_port: Some(node.udp_port),
             ..Default::default()
@@ -459,6 +565,25 @@ impl NodeRecord {
             }
         }
 
+        Self::from_pairs(seq, signer, pairs)
+    }
+
+    /// Builds a signed record from a fully specified entry set.
+    ///
+    /// `id` and `secp256k1` are always overwritten: both are fixed by the v4
+    /// identity scheme and the signer, not chosen by the caller. Every other
+    /// entry is taken verbatim, so a node with no TCP listener simply leaves
+    /// `tcp_port` unset rather than encoding that intent as a port of 0.
+    pub fn from_pairs(
+        seq: u64,
+        signer: &SecretKey,
+        mut pairs: NodeRecordPairs,
+    ) -> Result<Self, NodeError> {
+        pairs.id = Some("v4".to_string());
+        pairs.secp256k1 = Some(H264::from_slice(
+            &PublicKey::from_secret_key(secp256k1::SECP256K1, signer).serialize(),
+        ));
+
         let mut record = NodeRecord {
             seq,
             pairs,
@@ -470,17 +595,36 @@ impl NodeRecord {
     }
 
     pub fn set_fork_id(&mut self, fork_id: ForkId, signer: &SecretKey) -> Result<(), NodeError> {
-        self.pairs.eth = Some(fork_id);
-        self.update(signer)
+        self.edit(signer, |pairs| pairs.eth = Some(fork_id))
     }
 
     pub fn get_fork_id(&self) -> Option<&ForkId> {
         self.pairs.eth.as_ref()
     }
 
-    fn update(&mut self, signer: &SecretKey) -> Result<(), NodeError> {
-        self.seq += 1;
-        self.signature = self.sign_record(signer)?;
+    /// The single path for changing a local record: apply `apply_edit` to the
+    /// entry set, bump `seq` once, and re-sign.
+    ///
+    /// All or nothing. The edit lands on a copy that is committed only once the
+    /// new signature is in hand, so a failure leaves the record exactly as it
+    /// was instead of at a bumped `seq` its signature no longer covers. A
+    /// half-updated record is worse than an unchanged one: it verifies nowhere,
+    /// and the next edit bumps past the `seq` peers have already seen.
+    ///
+    /// Prefer this over rebuilding a record from a [`Node`]. A rebuild only
+    /// carries the entries [`Self::from_node`] knows how to derive, so anything
+    /// the caller added separately is silently lost, and stitching the lost
+    /// entries back on afterwards bumps `seq` a second time.
+    pub fn edit<F>(&mut self, signer: &SecretKey, apply_edit: F) -> Result<(), NodeError>
+    where
+        F: FnOnce(&mut NodeRecordPairs),
+    {
+        let mut edited = self.clone();
+        apply_edit(&mut edited.pairs);
+        edited.seq += 1;
+        edited.signature = edited.sign_record(signer)?;
+
+        *self = edited;
         Ok(())
     }
 

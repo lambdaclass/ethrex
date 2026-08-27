@@ -10,15 +10,26 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - id: vars
+    - name: Install solc
       shell: bash
+      env:
+        SOLC_VERSION: ${{ inputs.version }}
       run: |
+        set -euo pipefail
+        base="https://github.com/argotorg/solidity/releases/download/v${SOLC_VERSION}"
         if [[ "${{ runner.os }}" == "Linux" && "${{ runner.arch }}" == "X64" ]]; then
-          sudo curl -L -o /usr/local/bin/solc https://github.com/argotorg/solidity/releases/download/v${{ inputs.version }}/solc-static-linux
+          asset=solc-static-linux
         elif [[ "${{ runner.os }}" == "Linux" && "${{ runner.arch }}" == "ARM64" ]]; then
-          sudo curl -L -o /usr/local/bin/solc https://github.com/argotorg/solidity/releases/download/v${{ inputs.version }}/solc-static-linux-arm
+          asset=solc-static-linux-arm
         elif [[ "${{ runner.os }}" == "macOS" ]]; then
-          sudo curl -L -o /usr/local/bin/solc https://github.com/argotorg/solidity/releases/download/v${{ inputs.version }}/solc-macos
+          asset=solc-macos
+        else
+          echo "::error::No solc build for ${{ runner.os }}/${{ runner.arch }}"
+          exit 1
         fi
-        sudo chmod +x /usr/local/bin/solc
+        # Download via the shared helper (retries, and fails instead of writing
+        # an HTTP error page to disk: a 503 page installed as /usr/local/bin/solc
+        # only surfaces later as an unrelated-looking "cannot execute" error).
+        "$GITHUB_WORKSPACE/.github/scripts/download.sh" "$base/$asset" "$RUNNER_TEMP/solc"
+        sudo install -m 755 "$RUNNER_TEMP/solc" /usr/local/bin/solc
         solc --version

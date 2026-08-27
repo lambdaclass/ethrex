@@ -26,6 +26,43 @@ pub mod tables;
 /// Type alias for the result of a prefix iterator.
 pub type PrefixResult = Result<(Box<[u8]>, Box<[u8]>), StoreError>;
 
+/// Per-column-family on-disk statistics, for DB observability.
+#[derive(Debug, Clone, Default)]
+pub struct CfStats {
+    pub name: String,
+    /// Live SST bytes on disk for this CF.
+    pub live_sst_bytes: u64,
+    /// Total SST bytes incl. not-yet-compacted/obsolete (for space amplification).
+    pub total_sst_bytes: u64,
+    /// Estimated live (logical) data size.
+    pub live_data_bytes: u64,
+    /// Estimated number of keys.
+    pub num_keys: u64,
+    /// Live SST file count.
+    pub num_files: u64,
+    /// Live blob file bytes (only ACCOUNT_CODES uses blobs).
+    pub blob_bytes: u64,
+    /// Estimated pending compaction bytes (write-debt indicator).
+    pub pending_compaction_bytes: u64,
+    /// Current memtable bytes for this CF.
+    pub memtable_bytes: u64,
+}
+
+/// Snapshot of RocksDB observability stats: per-CF sizes plus DB-wide block-cache
+/// counters. Read from RocksDB properties (+ statistics, when enabled).
+#[derive(Debug, Clone, Default)]
+pub struct RocksDbStats {
+    pub cfs: Vec<CfStats>,
+    pub block_cache_usage_bytes: u64,
+    pub block_cache_capacity_bytes: u64,
+    pub block_cache_pinned_bytes: u64,
+    pub running_compactions: u64,
+    /// Cumulative block-cache hits (0 unless RocksDB statistics are enabled).
+    pub block_cache_hits: u64,
+    /// Cumulative block-cache misses (0 unless RocksDB statistics are enabled).
+    pub block_cache_misses: u64,
+}
+
 /// This trait provides a minimal set of operations required from a database backend.
 /// Implementations should focus on providing efficient access to the underlying storage
 /// without implementing business logic.
@@ -58,6 +95,12 @@ pub trait StorageBackend: Debug + Send + Sync {
     fn flush(&self) -> Result<(), StoreError> {
         Ok(())
     }
+
+    /// Returns per-column-family and DB-wide RocksDB observability stats, or
+    /// `None` for backends that don't expose them (e.g. in-memory).
+    fn db_stats(&self) -> Option<RocksDbStats> {
+        None
+    }
 }
 
 /// Read-only transaction interface.
@@ -87,6 +130,16 @@ pub trait StorageReadView: Send + Sync {
         table: &'static str,
         prefix: &[u8],
     ) -> Result<Box<dyn Iterator<Item = PrefixResult> + '_>, StoreError>;
+
+    /// Returns the lowest key in `table` by lexicographic order, or `None` if the table is
+    /// empty. Backends that support forward iteration (e.g. RocksDB `IteratorMode::Start`)
+    /// should implement this in O(1).
+    fn first_key(&self, table: &'static str) -> Result<Option<Vec<u8>>, StoreError>;
+
+    /// Returns the highest key in `table` by lexicographic order, or `None` if the table is
+    /// empty. Backends that support reverse iteration (e.g. RocksDB `IteratorMode::End`) should
+    /// implement this in O(1).
+    fn last_key(&self, table: &'static str) -> Result<Option<Vec<u8>>, StoreError>;
 }
 
 /// Write transaction interface.
@@ -109,6 +162,22 @@ pub trait StorageWriteBatch: Send {
 
     /// Removes a key-value pair from the specified table.
     fn delete(&mut self, table: &'static str, key: &[u8]) -> Result<(), StoreError>;
+
+    /// Removes every key in `[start, end)` from the specified table.
+    ///
+    /// Half-open range; `end` is exclusive. Equivalent to enumerating each key
+    /// in the range and calling [`delete`], but backends with native range-delete
+    /// support (e.g. RocksDB's `delete_range_cf`) can implement it more efficiently.
+    ///
+    /// Lexicographic byte order is used for the range bounds — callers using
+    /// numeric keys must encode them in a representation whose lex order matches
+    /// numeric order (e.g. `u64::to_be_bytes()`).
+    fn delete_range(
+        &mut self,
+        table: &'static str,
+        start: &[u8],
+        end: &[u8],
+    ) -> Result<(), StoreError>;
 
     /// Appends a merge operand for the given key in the specified table.
     ///

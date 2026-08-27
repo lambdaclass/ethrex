@@ -1,6 +1,6 @@
 [package]
 name = "quote-gen"
-version = "22.0.0"
+version = "24.0.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 
@@ -17,11 +17,21 @@ serde = { version = "<1.0.220", features = ["derive"] }
 # https://github.com/alloy-rs/alloy/issues/2876
 serde_json = "1.0"
 
-ethrex-common = { path = "../../../common", default-features = false }
+# `rayon` is requested explicitly: it used to arrive implicitly because
+# `ethrex-common/secp256k1` enabled it, and that implication was dropped. Without
+# it this enclave binary loses parallel sender recovery, `execute_block_parallel`
+# and the batched `point_get_*_many` paths.
+ethrex-common = { path = "../../../common", default-features = false, features = [
+  "rayon",
+] }
 ethrex-storage = { path = "../../../storage", default-features = false }
 ethrex-rlp = { path = "../../../common/rlp" }
-ethrex-vm = { path = "../../../vm", default-features = false }
-ethrex-blockchain = { path = "../../../blockchain", default-features = false }
+ethrex-vm = { path = "../../../vm", default-features = false, features = [
+  "rayon",
+] }
+ethrex-blockchain = { path = "../../../blockchain", default-features = false, features = [
+  "rayon",
+] }
 ethrex-rpc = { path = "../../../networking/rpc", default-features = false }
 ethrex-guest-program = { path = "../../../guest-program", default-features = false }
 ethrex-l2-common = { path = "../../common", default-features = false }

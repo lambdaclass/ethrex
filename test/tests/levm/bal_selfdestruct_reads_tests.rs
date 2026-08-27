@@ -161,6 +161,8 @@ fn selfdestruct_does_not_record_warm_unread_slots_as_bal_reads() {
         is_privileged: false,
         fee_token: None,
         disable_balance_check: false,
+        disable_nonce_check: false,
+        disable_gas_allowance_check: false,
         is_system_call: false,
     };
 
@@ -183,6 +185,7 @@ fn selfdestruct_does_not_record_warm_unread_slots_as_bal_reads() {
         LevmCallTracer::disabled(),
         VMType::L1,
         &NativeCrypto,
+        None,
     )
     .unwrap();
     let report = vm.execute().unwrap();
