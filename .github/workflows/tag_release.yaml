@@ -84,6 +84,8 @@ jobs:
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+        with:
+          cache-pool: l2
 
       - name: Install SP1 (only Linux)
         if: ${{ matrix.os == 'linux' }}
@@ -147,17 +149,26 @@ jobs:
           name: verification_keys
           path: verification_keys/
 
-  # There's a separate job to build the guest programs for SP1, RISC0, and ZisK
-  # since they need to be built without the l2 features.
-  build-ethrex-guest:
+  # Builds the stateless-validator guest ELFs and verification keys through the
+  # Ere toolchain, so the published artifacts are what eth-act/ere-guests can
+  # consume directly, then proves ere-guests can consume them: each ELF is run
+  # under ere-server against a generated conformance vector and its
+  # statelessOutputBytes must match byte-for-byte. That is the only check
+  # exercising the real zkVM IO path, so it is what catches a framing mismatch —
+  # and running it before the upload means an ELF that fails it is never
+  # published. Replaces the old build-ethrex-guest/package-ethrex-guest pair,
+  # which built the L1 batch guest that no longer exists. See issue #7011.
+  build-stateless-validator-guest:
     strategy:
+      fail-fast: false
       matrix:
-        # risc0 temporarily disabled: c-kzg 2.1.8 floor exceeds the highest risc0 c-kzg fork tag
-        # (v2.1.7-risczero.0), so the guest can't build. Re-add "- risc0" once a >=2.1.8 tag exists.
         zkvm:
-          - sp1
           - zisk
+          - sp1
+          - openvm
     runs-on: ubuntu-latest
+    env:
+      ERE_TAG: 0.16.2
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -168,106 +179,178 @@ jobs:
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 
-      - name: Install SP1
-        if: ${{ matrix.zkvm == 'sp1' }}
-        env:
-          SHELL: /bin/bash
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        uses: ./.github/actions/install-sp1
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
 
-      - name: Install RISC0
-        if: ${{ matrix.zkvm == 'risc0' }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        uses: ./.github/actions/install-risc0
-
-      - name: Install ZisK
-        if: ${{ matrix.zkvm == 'zisk' }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SETUP_KEY: none
-        uses: ./.github/actions/install-zisk
-
-      - name: Build ethrex elf - ${{ matrix.zkvm }}
-        env:
-          REF_NAME: ${{ github.ref_name }}
+      - name: Resolve artifact name
+        id: artifact
         run: |
-          # Sanitize ref name by replacing '/' with '-' for valid file names
-          SANITIZED_REF=$(echo "$REF_NAME" | tr '/' '-')
-          cargo build --release --package ethrex-guest-program --features "${{ matrix.zkvm }}-build-elf,ci"
-          mkdir -p ${{ matrix.zkvm }}_verification_keys
-          if [ "${{ matrix.zkvm }}" = "sp1" ]; then
-            mv crates/guest-program/bin/${{ matrix.zkvm }}/out/riscv32im-succinct-zkvm-elf ethrex-riscv32im-${{ matrix.zkvm }}-elf-$SANITIZED_REF
-            mv crates/guest-program/bin/${{ matrix.zkvm }}/out/riscv32im-succinct-zkvm-vk-bn254 ${{ matrix.zkvm }}_verification_keys/ethrex-riscv32im-${{ matrix.zkvm }}-vk-bn254-$SANITIZED_REF
-            mv crates/guest-program/bin/${{ matrix.zkvm }}/out/riscv32im-succinct-zkvm-vk-u32 ${{ matrix.zkvm }}_verification_keys/ethrex-riscv32im-${{ matrix.zkvm }}-vk-u32-$SANITIZED_REF
-            echo "ELF_ARTIFACT=ethrex-riscv32im-${{ matrix.zkvm }}-elf-$SANITIZED_REF" >> $GITHUB_ENV
-          elif [ "${{ matrix.zkvm }}" = "risc0" ]; then
-            mv crates/guest-program/bin/${{ matrix.zkvm }}/out/riscv32im-risc0-elf ethrex-riscv32im-${{ matrix.zkvm }}-elf-$SANITIZED_REF
-            mv crates/guest-program/bin/${{ matrix.zkvm }}/out/riscv32im-risc0-vk ${{ matrix.zkvm }}_verification_keys/ethrex-riscv32im-${{ matrix.zkvm }}-vk-$SANITIZED_REF
-            echo "ELF_ARTIFACT=ethrex-riscv32im-${{ matrix.zkvm }}-elf-$SANITIZED_REF" >> $GITHUB_ENV
-          elif [ "${{ matrix.zkvm }}" = "zisk" ]; then
-            mv crates/guest-program/bin/${{ matrix.zkvm }}/out/riscv64ima-zisk-elf ethrex-riscv64ima-${{ matrix.zkvm }}-elf-$SANITIZED_REF
-            echo "ELF_ARTIFACT=ethrex-riscv64ima-${{ matrix.zkvm }}-elf-$SANITIZED_REF" >> $GITHUB_ENV
+          VERSION=$(.github/scripts/zkvm-version.sh ${{ matrix.zkvm }})
+          NAME=stateless-validator-ethrex-${{ matrix.zkvm }}-${VERSION}
+          echo "name=${NAME}" >> $GITHUB_OUTPUT
+          echo "Artifact name: ${NAME}"
+
+      - name: Pull Ere images
+        run: |
+          docker pull ghcr.io/eth-act/ere/ere-compiler-${{ matrix.zkvm }}:${ERE_TAG}
+          docker pull ghcr.io/eth-act/ere/ere-server-${{ matrix.zkvm }}:${ERE_TAG}
+
+      - name: Compile guest
+        run: |
+          compiler_env=()
+          if [ "${{ matrix.zkvm }}" = "zisk" ]; then
+            compiler_env+=(-e "ERE_PROFILE=ethrex")
+            compiler_env+=(-e "ERE_RUSTFLAGS=-C target-feature=+unaligned-scalar-mem")
+          fi
+          mkdir -p output
+          docker run \
+            "${compiler_env[@]}" \
+            -e RUST_LOG=info \
+            -v $PWD:/ethrex \
+            -v $PWD/output:/output \
+            ghcr.io/eth-act/ere/ere-compiler-${{ matrix.zkvm }}:${ERE_TAG} \
+            --compiler-kind rust-customized \
+            --guest-dir /ethrex/crates/guest-program/stateless-validator/bin/${{ matrix.zkvm }} \
+            --output-dir /output \
+            --elf-name ${{ steps.artifact.outputs.name }}.elf
+
+      - name: Generate program VK
+        run: |
+          docker run \
+            -e RUST_LOG=info \
+            -v $PWD/output:/output \
+            ghcr.io/eth-act/ere/ere-server-${{ matrix.zkvm }}:${ERE_TAG} \
+            --elf-path /output/${{ steps.artifact.outputs.name }}.elf \
+            keygen \
+            --program-vk-path /output/${{ steps.artifact.outputs.name }}.vk
+
+      # `if-no-files-found: error` only fires when NOTHING matches, so a
+      # multi-line `path:` where one pattern matches and another does not
+      # uploads a subset and still reports success. That is how the verification
+      # keys went missing: `--program-vk-path` was relative, so ere-server wrote
+      # each .vk inside the container and it died with it, while the .elf still
+      # matched and the upload went green. Assert both files explicitly.
+      - name: Assert the ELF and VK both exist
+        run: |
+          set -euo pipefail
+          missing=0
+          for ext in elf vk; do
+            file="output/${{ steps.artifact.outputs.name }}.$ext"
+            if [ ! -s "$file" ]; then
+              echo "::error::$file is missing or empty"
+              missing=1
+            else
+              echo "  $file  $(wc -c < "$file" | tr -d ' ') bytes"
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "--- contents of output/ ---"
+            ls -la output/
+            exit 1
           fi
 
-      - name: Upload ethrex guest elf artifact - ${{ matrix.zkvm }}
-        uses: actions/upload-artifact@v6
-        with:
-          name: ${{ env.ELF_ARTIFACT }}
-          path: ${{ env.ELF_ARTIFACT }}
+      - name: Download conformance vectors
+        run: make -C tooling/ef_tests/blockchain zkevm-vectors
 
-      - name: Upload ethrex guest verification keys - ${{ matrix.zkvm }}
-        uses: actions/upload-artifact@v6
-        with:
-          name: ${{ matrix.zkvm }}_verification_keys
-          path: ${{ matrix.zkvm }}_verification_keys/
+      - name: Extract a true-success fixture
+        run: .github/scripts/extract-stateless-fixture.sh
 
-  # Creates ethrex-guests.tar.gz artifact including SP1, RISC0, and ZisK
-  # elf and verification keys.
-  package-ethrex-guest:
-    needs:
-      - build-ethrex-guest
-    runs-on: ubuntu-latest
-    env:
-      # Sanitize ref name by replacing '/' with '-' to match artifact names
-      SANITIZED_REF: ${{ github.ref_name }}
-    steps:
-      - name: Sanitize ref name
+      # `ere-server` has no `execute` subcommand: its only commands are the
+      # server itself and `keygen`. Execution is the Twirp RPC
+      # `/twirp/api.ZkvmService/Execute`, served while it runs in server mode.
+      - name: Start ere-server
         run: |
-          SANITIZED=$(echo "${{ github.ref_name }}" | tr '/' '-')
-          echo "SANITIZED_REF=$SANITIZED" >> $GITHUB_ENV
+          docker run -d --name ere-server \
+            -e RUST_LOG=info \
+            -p 3000:3000 \
+            -v $PWD/output:/output \
+            ghcr.io/eth-act/ere/ere-server-${{ matrix.zkvm }}:${ERE_TAG} \
+            --port 3000 \
+            --elf-path /output/${{ steps.artifact.outputs.name }}.elf \
+            cpu
 
-      - name: Download SP1 elf artifact
-        uses: actions/download-artifact@v6
-        with:
-          name: ethrex-riscv32im-sp1-elf-${{ env.SANITIZED_REF }}
-          path: ethrex_guests/sp1/
+          # `/health` flips to 200 once the server is ready. Allow a long window:
+          # openvm runs a full STARK keygen on startup before it serves, which is
+          # minutes of work, and it does so even though we only ever execute. The
+          # container-exit check below means a genuine crash still fails fast
+          # instead of burning the whole window.
+          deadline=$((SECONDS + 900))
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            if curl -sf http://localhost:3000/health > /dev/null; then
+              echo "ere-server is up after ${SECONDS}s"
+              exit 0
+            fi
+            if [ -z "$(docker ps -q -f name=ere-server)" ]; then
+              echo "::error::ere-server exited before becoming healthy"
+              docker logs ere-server
+              exit 1
+            fi
+            if [ $((SECONDS % 60)) -lt 3 ]; then
+              echo "  still waiting for ere-server (${SECONDS}s elapsed)"
+            fi
+            sleep 3
+          done
+          echo "::error::ere-server did not become healthy within 900s"
+          docker logs ere-server 2>&1 | tail -50
+          exit 1
 
-      - name: Download SP1 verification keys artifacts
-        uses: actions/download-artifact@v6
-        with:
-          name: sp1_verification_keys
-          path: ethrex_guests/sp1/
-
-      # risc0 elf/vk downloads temporarily removed: risc0 is disabled (c-kzg 2.1.8 floor exceeds
-      # the highest risc0 c-kzg fork tag), so build-ethrex-guest no longer produces these artifacts.
-
-      - name: Download ZisK elf artifact
-        uses: actions/download-artifact@v6
-        with:
-          name: ethrex-riscv64ima-zisk-elf-${{ env.SANITIZED_REF }}
-          path: ethrex_guests/zisk/
-
-      - name: Archive ethrex guests
+      - name: Execute ELF under ere-server
         run: |
-          cd ethrex_guests/
-          tar -czvf ../ethrex-guests.tar.gz .
+          .github/scripts/ere-execute.py \
+            http://localhost:3000/twirp/api.ZkvmService/Execute \
+            output/stateless-input.bin \
+            output/stateless-output.bin
 
-      - name: Upload ethrex guests artifact
+      - name: ere-server logs
+        if: always()
+        run: docker logs ere-server 2>&1 | tail -50 || true
+
+      # The committed public values must BEGIN with the spec's
+      # statelessOutputBytes, and anything after them must be zero. ZisK enforces
+      # a fixed 256-byte output at the runtime level (see ere's zisk platform.rs),
+      # so its 43 meaningful bytes always arrive zero-padded and an exact-length
+      # rule would fail every correct run. Every meaningful byte is still pinned.
+      #
+      # `head -c | cmp -` rather than `cmp -n`: BSD cmp reports EOF on the shorter
+      # file as a difference even inside the byte limit.
+      - name: Compare against the fixture
+        run: |
+          set -euo pipefail
+          expected_len=$(wc -c < output/expected-output.bin | tr -d ' ')
+          actual_len=$(wc -c < output/stateless-output.bin | tr -d ' ')
+          dump() {
+            echo "expected: $(xxd -p output/expected-output.bin | tr -d '\n')"
+            echo "actual:   $(xxd -p output/stateless-output.bin | tr -d '\n')"
+            exit 1
+          }
+
+          if [ "$actual_len" -lt "$expected_len" ]; then
+            echo "::error::output is $actual_len bytes, shorter than the expected $expected_len"
+            dump
+          fi
+          if ! head -c "$expected_len" output/stateless-output.bin \
+               | cmp -s - output/expected-output.bin; then
+            echo "::error::statelessOutputBytes mismatch in the first $expected_len bytes"
+            dump
+          fi
+          padding=$((actual_len - expected_len))
+          if [ "$padding" -gt 0 ]; then
+            nonzero=$(tail -c "+$((expected_len + 1))" output/stateless-output.bin | tr -d '\000' | wc -c | tr -d ' ')
+            if [ "$nonzero" -ne 0 ]; then
+              echo "::error::$nonzero non-zero byte(s) past the expected $expected_len"
+              dump
+            fi
+          fi
+          echo "statelessOutputBytes match ($expected_len bytes, plus $padding bytes of runtime zero padding)"
+
+      - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
-          name: ethrex-guests.tar.gz
-          path: ethrex-guests.tar.gz
+          name: ${{ steps.artifact.outputs.name }}
+          path: |
+            output/${{ steps.artifact.outputs.name }}.elf
+            output/${{ steps.artifact.outputs.name }}.vk
+          if-no-files-found: error
 
   package-contracts:
     needs:
@@ -349,6 +432,13 @@ jobs:
           dockerhub_username: ${{ vars.DOCKERHUB_USERNAME }}
           dockerhub_password: ${{ secrets.DOCKERHUB_TOKEN }}
           push: ${{ github.event_name != 'workflow_dispatch'}}
+          # A manual dispatch must not write shared state. `push` alone is not
+          # enough: buildkit's `cache-to` writes cache layers to the registry
+          # independently of it, and for any ref that is neither main nor a PR
+          # the cache scope resolves to `main` — so a dispatch from a feature
+          # branch would overwrite main's cache tags. Falling back to the GHA
+          # cache keeps the build warm without touching GHCR.
+          cache_write: ${{ github.event_name != 'workflow_dispatch' }}
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}-${{ matrix.arch }}
           platforms: linux/${{ matrix.arch }}
           variant: l1
@@ -363,6 +453,8 @@ jobs:
           dockerhub_username: ${{ vars.DOCKERHUB_USERNAME }}
           dockerhub_password: ${{ secrets.DOCKERHUB_TOKEN }}
           push: ${{ github.event_name != 'workflow_dispatch'}}
+          # See the L1 image above: a manual dispatch must not write GHCR cache.
+          cache_write: ${{ github.event_name != 'workflow_dispatch' }}
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}-l2-${{ matrix.arch }}
           build_args: BUILD_FLAGS=--features l2,l2-sql
           platforms: linux/${{ matrix.arch }}
@@ -399,16 +491,109 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-docker.outputs.tag }}-l2-arm64
 
   # Creates a release on GitHub with the binaries
+  # Everything `finalize-release` does except publishing, on `workflow_dispatch`.
+  # Download, sign, attach was the only part of the release path that could not be
+  # exercised without cutting a tag, and it is the part holding the signing key.
+  # Signs the REAL artifacts from this run with the REAL secrets, through the same
+  # composite action `finalize-release` uses, then uploads the signed set as a
+  # workflow artifact instead of creating a release.
+  dry-run-release-assets:
+    if: github.event_name == 'workflow_dispatch'
+    needs:
+      - build-stateless-validator-guest
+    runs-on: ubuntu-latest
+    env:
+      HAS_MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY != '' }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v6
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v6
+        with:
+          path: ./bin
+          pattern: "*ethrex*"
+
+      - name: Skip notice
+        if: env.HAS_MINISIGN_SECRET_KEY != 'true'
+        run: |
+          echo "::warning::MINISIGN_SECRET_KEY is not configured; nothing to rehearse."
+
+      - name: Sign stateless-validator artifacts
+        if: env.HAS_MINISIGN_SECRET_KEY == 'true'
+        uses: ./.github/actions/sign-stateless
+        with:
+          artifact-dir: ./bin
+          secret-key: ${{ secrets.MINISIGN_SECRET_KEY }}
+          password: ${{ secrets.MINISIGN_PASSWORD }}
+          public-key: ${{ secrets.MINISIGN_PUBLIC_KEY }}
+          # Marked as a rehearsal so a signature produced here can never be
+          # mistaken for one covering a released artifact.
+          trusted-comment-suffix: "ethrex DRY-RUN ${{ github.ref_name }} ${{ github.sha }}"
+
+      # Verify independently of the script, against the committed key rather
+      # than anything this run produced — the check a downloader would perform.
+      - name: Verify every signature as a consumer would
+        if: env.HAS_MINISIGN_SECRET_KEY == 'true'
+        run: |
+          set -euo pipefail
+          count=0
+          while IFS= read -r -d '' file; do
+            minisign -V -m "$file" -p .github/minisign.pub -x "$file.minisig"
+            count=$((count + 1))
+          done < <(find ./bin -type f -name 'stateless-validator-ethrex-*' \
+                     \( -name '*.elf' -o -name '*.vk' \) -print0)
+          # Both kinds must be present: an ELF-only release is what a silently
+          # partial upload produces, and the handbook requires both signed.
+          elfs=$(find ./bin -type f -name 'stateless-validator-ethrex-*.elf' | wc -l | tr -d ' ')
+          vks=$(find ./bin -type f -name 'stateless-validator-ethrex-*.vk' | wc -l | tr -d ' ')
+          echo "signed $elfs ELF(s) and $vks verification key(s)"
+          if [ "$count" -eq 0 ] || [ "$elfs" -eq 0 ] || [ "$vks" -eq 0 ]; then
+            echo "::error::expected both ELFs and verification keys; got $elfs ELF(s), $vks VK(s)"
+            find ./bin -type f | sort
+            exit 1
+          fi
+          if [ "$elfs" -ne "$vks" ]; then
+            echo "::error::$elfs ELF(s) but $vks verification key(s) — every ELF needs its VK"
+            find ./bin -type f | sort
+            exit 1
+          fi
+          echo "Verified $count signature(s) against the committed public key."
+
+      - name: Summarise
+        if: env.HAS_MINISIGN_SECRET_KEY == 'true'
+        run: |
+          {
+            echo "### Release-asset dry run"
+            echo
+            echo "Signed and verified against \`.github/minisign.pub\`; nothing was published."
+            echo
+            echo '```'
+            find ./bin -type f \( -name '*.minisig' -o -name 'minisign.pub' \) | sort
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the signed set
+        if: env.HAS_MINISIGN_SECRET_KEY == 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: dry-run-signed-release-assets
+          path: ./bin
+          if-no-files-found: error
+
   finalize-release:
     if: github.ref_type == 'tag' && github.event_name != 'workflow_dispatch'
     needs:
       - build-ethrex
-      - build-ethrex-guest
+      - build-stateless-validator-guest
       - build-docker
       - publish-docker
       - package-contracts
-      - package-ethrex-guest
     runs-on: ubuntu-latest
+    env:
+      # Signing is skipped entirely when the secret is absent, so forks and
+      # repos that have not configured a keypair still produce a release.
+      HAS_MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY != '' }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v6
@@ -419,7 +604,75 @@ jobs:
         uses: actions/download-artifact@v6
         with:
           path: ./bin
-          pattern: "ethrex*" # This includes the binaries, elf files, ethrex-verification-keys.tar.gz, and ethrex-contracts.tar.gz
+          # `*ethrex*`, not `ethrex*`: the stateless-validator artifacts are named
+          # stateless-validator-ethrex-<zkvm>-<version>, so a leading-anchor
+          # pattern would silently omit them from the release.
+          pattern: "*ethrex*"
+
+      # The zkEVM guest handbook requires the stateless-validator ELF and
+      # verification key to ship as signed release assets:
+      # https://github.com/eth-act/zkevm-standards/blob/main/handbooks/guest-handbook.md
+      #
+      # This runs here rather than in the matrix build so the signing key is
+      # exposed to one job instead of three. The build job already gates its
+      # upload on the conformance check, so an ELF that failed it never gets here.
+      - name: Sign stateless-validator artifacts
+        if: env.HAS_MINISIGN_SECRET_KEY == 'true'
+        uses: ./.github/actions/sign-stateless
+        with:
+          artifact-dir: ./bin
+          secret-key: ${{ secrets.MINISIGN_SECRET_KEY }}
+          password: ${{ secrets.MINISIGN_PASSWORD }}
+          # Not used to sign or to publish: the script derives the public key
+          # from the secret key, and cross-checks this against it so a stale
+          # secret is caught rather than trusted.
+          public-key: ${{ secrets.MINISIGN_PUBLIC_KEY }}
+          # Signed alongside the artifact, so the signature also attests which
+          # tag and commit produced it.
+          trusted-comment-suffix: "ethrex ${{ github.ref_name }} ${{ github.sha }}"
+
+      # Deliberately NOT gated on HAS_MINISIGN_SECRET_KEY: the failure this
+      # exists to catch is signing being skipped entirely, which would leave the
+      # step above green and publish an unsigned release. `dry-run-release-assets`
+      # has the same post-condition, but it is `workflow_dispatch`-only and so
+      # never runs on the tag path that actually publishes.
+      - name: Assert the release is fully signed before publishing
+        run: |
+          set -euo pipefail
+          elfs=$(find ./bin -type f -name 'stateless-validator-ethrex-*.elf' | wc -l | tr -d ' ')
+          vks=$(find ./bin -type f -name 'stateless-validator-ethrex-*.vk' | wc -l | tr -d ' ')
+
+          if [ "${HAS_MINISIGN_SECRET_KEY}" != "true" ]; then
+            # Forks without a keypair may publish unsigned. The canonical repo
+            # may not: a missing secret there means the key was removed or the
+            # environment gate failed, and shipping unsigned would be silent.
+            if [ "${{ github.repository }}" = "lambdaclass/ethrex" ]; then
+              echo "::error::MINISIGN_SECRET_KEY is absent; refusing to publish $elfs ELF(s) and $vks VK(s) unsigned"
+              exit 1
+            fi
+            echo "::warning::no signing key configured; publishing unsigned (fork)"
+            exit 0
+          fi
+
+          if [ "$elfs" -eq 0 ] || [ "$vks" -eq 0 ] || [ "$elfs" -ne "$vks" ]; then
+            echo "::error::expected matching ELFs and VKs; got $elfs ELF(s), $vks VK(s)"
+            find ./bin -type f | sort
+            exit 1
+          fi
+
+          # Every stateless artifact must carry a signature that verifies against
+          # the committed trust anchor, not merely exist alongside one.
+          count=0
+          while IFS= read -r -d '' file; do
+            if [ ! -f "$file.minisig" ]; then
+              echo "::error::unsigned artifact would be published: $file"
+              exit 1
+            fi
+            minisign -V -m "$file" -p .github/minisign.pub -x "$file.minisig" > /dev/null
+            count=$((count + 1))
+          done < <(find ./bin -type f -name 'stateless-validator-ethrex-*' \
+                     \( -name '*.elf' -o -name '*.vk' \) -print0)
+          echo "ok  $count signed artifact(s) verified against .github/minisign.pub"
 
       - name: Get previous tag
         run: |

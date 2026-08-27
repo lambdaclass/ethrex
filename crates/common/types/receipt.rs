@@ -13,10 +13,10 @@ use crate::types::TxType;
 pub type Index = u64;
 
 /// Frame receipt status codes (EIP-8141).
-/// `0x3` is reserved for frames skipped due to a failed atomic batch.
+/// `0x2` is reserved for frames skipped due to a failed atomic batch.
 pub const FRAME_RECEIPT_STATUS_FAILURE: u8 = 0;
 pub const FRAME_RECEIPT_STATUS_SUCCESS: u8 = 1;
-pub const FRAME_RECEIPT_STATUS_SKIPPED: u8 = 3;
+pub const FRAME_RECEIPT_STATUS_SKIPPED: u8 = 2;
 
 /// Per-frame execution result within a frame transaction (EIP-8141)
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -187,7 +187,7 @@ impl Receipt {
             encode_buf.push(self.tx_type as u8);
         }
         if self.tx_type == TxType::Frame {
-            // EIP-8141 ReceiptPayload (spec lines 178-185):
+            // EIP-8141 ReceiptPayload:
             // [cumulative_gas_used, payer, [frame_receipt, ...]]
             // No succeeded, no bloom, no top-level logs.
             let empty_frame_receipts = Vec::new();
@@ -602,6 +602,47 @@ mod test {
 
     fn h256_from_hex(s: &str) -> H256 {
         H256::from_slice(&hex::decode(s).unwrap())
+    }
+
+    /// Before Byzantium (EIP-658) a receipt's first field is a 32-byte post-state
+    /// root, not a status flag. `Receipt` has no field for it, so such a receipt
+    /// cannot be decoded — the `bool` decode of field 0 rejects the 32-byte
+    /// string. This is why history backfill clamps its floor at the Byzantium
+    /// block instead of descending to genesis: pre-Byzantium receipts can never be
+    /// fetched, and trying would fail every request and penalize honest peers.
+    ///
+    /// If this test ever starts passing, `Receipt` has gained a representation for
+    /// the pre-EIP-658 form and that clamp can be revisited.
+    #[test]
+    fn pre_byzantium_receipt_cannot_be_decoded() {
+        // rlp([post_state_root(32B), cumulative_gas_used, bloom(256B), logs]) —
+        // the pre-EIP-658 consensus form.
+        // Two receipts identical except for field 0: a post-Byzantium status flag
+        // versus a pre-Byzantium 32-byte post-state root. Encoding both and
+        // decoding each isolates the failure to that field, without inspecting
+        // error text.
+        fn encode_with_first_field<T: RLPEncode>(first: &T) -> Vec<u8> {
+            let mut buf = Vec::new();
+            Encoder::new(&mut buf)
+                .encode_field(first)
+                .encode_field(&21_000u64)
+                .encode_field(&Bloom::zero())
+                .encode_field(&Vec::<Log>::new())
+                .finish();
+            buf
+        }
+
+        let post_byzantium = encode_with_first_field(&true);
+        assert!(
+            Receipt::decode_inner_with_bloom(&post_byzantium).is_ok(),
+            "a status-flag (post-Byzantium) receipt must decode"
+        );
+
+        let pre_byzantium = encode_with_first_field(&H256::from([0x11u8; 32]));
+        assert!(
+            Receipt::decode_inner_with_bloom(&pre_byzantium).is_err(),
+            "a post-state-root (pre-Byzantium) receipt must not decode"
+        );
     }
 
     #[test]

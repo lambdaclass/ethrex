@@ -80,12 +80,17 @@ path = "./lib.rs"
 
 [features]
 debug = ["ethrex-vm/debug"]
-default = ["rocksdb", "c-kzg", "secp256k1", "metrics", "jemalloc", "dev"]
+default = ["rocksdb", "c-kzg", "secp256k1", "metrics", "jemalloc", "dev", "rayon"]
 dev = ["dep:ethrex-dev"]
 secp256k1 = [
   "ethrex-vm/secp256k1",
   "ethrex-common/secp256k1",
   "ethrex-blockchain/secp256k1",
+]
+rayon = [
+  "ethrex-vm/rayon",
+  "ethrex-common/rayon",
+  "ethrex-blockchain/rayon",
 ]
 c-kzg = [
   "ethrex-vm/c-kzg",
@@ -123,8 +128,6 @@ l2-sql = ["ethrex-storage-rollup/sql"]
 sp1 = ["ethrex-l2-prover/sp1", "ethrex-l2/sp1"]
 gpu = ["ethrex-l2-prover/gpu"]
 risc0 = ["ethrex-l2-prover/risc0", "ethrex-l2/risc0"]
-
-eip-8025 = ["ethrex-blockchain/eip-8025", "ethrex-rpc/eip-8025"]
 
 perf_opcode_timings = ["ethrex-vm/perf_opcode_timings"]
 cpu_profiling = ["dep:pprof"]

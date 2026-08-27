@@ -84,5 +84,25 @@ pub mod validation_observer;
 pub mod vm;
 pub use environment::*;
 pub mod account;
+pub mod execute_precompile;
 #[cfg(feature = "perf_opcode_timings")]
 pub mod timings;
+
+/// Trait for stateless block validation, used by the EXECUTE precompile.
+///
+/// Implemented in `crates/blockchain/` to break the dependency cycle:
+/// LEVM defines the trait, the blockchain crate implements it with
+/// `verify_stateless_new_payload`.
+pub trait StatelessValidator: Send + Sync {
+    /// Validate a stateless block execution.
+    ///
+    /// Input: the already-decoded `StatelessInput`. The EXECUTE precompile
+    /// decodes the SSZ calldata once up front (to charge gas and check L2
+    /// constraints) and hands the decoded value here, so the witness is not
+    /// parsed a second time.
+    /// Output: SSZ-encoded `StatelessValidationResult` bytes.
+    fn verify(
+        &self,
+        input: &ethrex_common::types::stateless_ssz::SszStatelessInput,
+    ) -> Result<Vec<u8>, errors::VMError>;
+}
