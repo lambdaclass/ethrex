@@ -535,12 +535,13 @@ fn frameparam_reads_frame_index_from_stack_top() {
             mode: u8::from(FrameMode::Default),
             flags: 0,
             target: Some(reader),
-            // EIP-8037 (active at Hegota): the new-slot SSTORE spills
-            // STATE_BYTES_PER_STORAGE_SET * cost_per_state_byte (~98k) into
-            // the frame's regular gas, so the budget must cover it.
+            // The frame's SSTORE creates a slot, and EIP-8141 makes the two gas
+            // dimensions independent: that EIP-8037 state cost is paid from the
+            // frame's own state budget and cannot draw on its execution gas, so
+            // the frame has to declare a budget that covers it.
             gas_limits: GasLimits {
                 execution: 300_000,
-                state: 0,
+                state: SSTORE_SET_STATE_GAS,
             },
             value: U256::zero(),
             data: Bytes::new(),
@@ -970,12 +971,13 @@ fn frame_tx_happy_path_sstore_and_log() {
             mode: u8::from(FrameMode::Sender),
             flags: 0,
             target: Some(worker),
-            // EIP-8037 (active at Hegota): the new-slot SSTORE spills
-            // STATE_BYTES_PER_STORAGE_SET * cost_per_state_byte (~98k) into
-            // the frame's regular gas, so the budget must cover it.
+            // The frame's SSTORE creates a slot, and EIP-8141 makes the two gas
+            // dimensions independent: that EIP-8037 state cost is paid from the
+            // frame's own state budget and cannot draw on its execution gas, so
+            // the frame has to declare a budget that covers it.
             gas_limits: GasLimits {
                 execution: 300_000,
-                state: 0,
+                state: SSTORE_SET_STATE_GAS,
             },
             value: U256::zero(),
             data: Bytes::new(),
@@ -1209,7 +1211,8 @@ fn frame_sstore_set_reports_eip8037_state_gas() {
             target: Some(writer),
             gas_limits: GasLimits {
                 execution: 2_000_000,
-                state: 0,
+                // The state-creating SSTORE is paid from this budget alone.
+                state: SSTORE_SET_STATE_GAS,
             },
             value: U256::zero(),
             data: Bytes::new(),
@@ -1262,7 +1265,9 @@ fn reverted_frame_reports_no_state_gas() {
             target: Some(writer),
             gas_limits: GasLimits {
                 execution: 2_000_000,
-                state: 0,
+                // Budgeted for the set, so the SSTORE really runs and it is the
+                // REVERT -- not an undeclared budget -- that discards the state.
+                state: SSTORE_SET_STATE_GAS,
             },
             value: U256::zero(),
             data: Bytes::new(),
@@ -1326,13 +1331,12 @@ fn frame_tx_below_base_blob_fee_is_rejected() {
 }
 
 #[test]
-fn state_gas_reservoir_does_not_leak_across_frames() {
-    // Frame A creates then clears a slot (0 -> 5 -> 0), which credits the EIP-8037
-    // state-gas reservoir. Frame B then creates a fresh slot. Because frames are
-    // gas-isolated, A's reservoir credit must NOT subsidize B's state charge: B's
-    // gas_used must include the full state-set cost (the charge spills to
-    // gas_remaining), not be silently drawn from A's leftover credit. Without the
-    // per-frame reservoir reset, B's gas_used would be ~SSTORE_SET_STATE_GAS lower.
+fn state_gas_does_not_leak_across_frames() {
+    // Frame A creates then clears a slot (0 -> 5 -> 0), so its state charge is
+    // refilled. Frame B then creates a fresh slot. Each frame meters state gas
+    // against its own declared budget, so A's refill must NOT subsidize B: B's
+    // receipt has to carry the full state-set cost. Were both frames drawing on one
+    // shared pool, B's reported state gas would come out SSTORE_SET_STATE_GAS lower.
     let a = Address::from_low_u64_be(0xAA01);
     let b = Address::from_low_u64_be(0xBB01);
     let mk = |target| Frame {
@@ -1341,7 +1345,9 @@ fn state_gas_reservoir_does_not_leak_across_frames() {
         target: Some(target),
         gas_limits: GasLimits {
             execution: 2_000_000,
-            state: 0,
+            // One state-creating set each: A's set-then-clear pair and B's single
+            // set both fit, which is the point -- neither borrows from the other.
+            state: SSTORE_SET_STATE_GAS,
         },
         value: U256::zero(),
         data: Bytes::new(),
@@ -2326,7 +2332,23 @@ mod validation_observer_tests {
         let code = Bytes::from(vec![0x42, 0x50, 0x00]);
         // 8-byte deadline data, far in the future.
         let data = Bytes::from(vec![0xff; 8]);
-        let tx = frame_tx_for_obs(sender, vec![verify_frame_obs(expiry, 50_000, 0x00, data)]);
+        // EIP-8141 statically rejects an expiry verifier frame that declares any
+        // state gas -- the protocol code it runs creates no state -- so this frame
+        // cannot use `verify_frame_obs`, which budgets both dimensions.
+        let tx = frame_tx_for_obs(
+            sender,
+            vec![Frame {
+                mode: 1, // VERIFY
+                flags: 0x00,
+                target: Some(expiry),
+                gas_limits: GasLimits {
+                    execution: 50_000,
+                    state: 0,
+                },
+                value: U256::zero(),
+                data,
+            }],
+        );
         let mut db = build_db(vec![
             (sender, account_with_code(0, Bytes::new())),
             (expiry, account_with_code(0, code)),
@@ -3486,11 +3508,11 @@ mod expiry_verifier_tests {
     }
 }
 
-// ==================== SIGPARAM (0xB4) execution ====================
+// ============== SIGPARAM (0xB4) / SIGDATACOPY (0xB5) execution ==============
 
-/// End-to-end SIGPARAM tests: a DEFAULT frame runs real `SIGPARAM` bytecode and
-/// persists the result, so the opcode's stack order, gas and halt conditions are
-/// exercised rather than reimplemented.
+/// End-to-end `SIGPARAM`/`SIGDATACOPY` tests: a DEFAULT frame runs the real
+/// bytecode and persists the result, so each opcode's stack order, gas and halt
+/// conditions are exercised rather than reimplemented.
 mod sigparam_execution_tests {
     use super::*;
     use ethrex_common::types::{
@@ -3520,23 +3542,21 @@ mod sigparam_execution_tests {
         ])
     }
 
-    /// `SIGPARAM(0x04, index)` copying `length` bytes from `dataOffset` to
-    /// `memOffset`, then `SSTORE(0, MLOAD(memOffset))`. The copy form takes
-    /// `[signatureIndex, param, memOffset, dataOffset, length]` with the index on
-    /// top, so the pushes run in reverse.
-    fn sigparam_copy_code(index: u8, length: u8, data_offset: u8, mem_offset: u8) -> Bytes {
+    /// `SIGDATACOPY` copying `length` bytes of signature `index` from
+    /// `dataOffset` to `memOffset`, then `SSTORE(0, MLOAD(memOffset))`. The
+    /// operands are `[signatureIndex, length, dataOffset, memOffset]` with
+    /// `memOffset` on top, matching `CALLDATACOPY`, so the pushes run in reverse.
+    fn sigdatacopy_code(index: u8, length: u8, data_offset: u8, mem_offset: u8) -> Bytes {
         Bytes::from(vec![
+            0x60,
+            index, // PUSH1 signatureIndex
             0x60,
             length, // PUSH1 length
             0x60,
             data_offset, // PUSH1 dataOffset
             0x60,
             mem_offset, // PUSH1 memOffset
-            0x60,
-            0x04, // PUSH1 param (copy)
-            0x60,
-            index, // PUSH1 signatureIndex
-            0xB4,  // SIGPARAM
+            0xB5,       // SIGDATACOPY
             0x60,
             mem_offset, // PUSH1 memOffset
             0x51,       // MLOAD
@@ -3566,7 +3586,10 @@ mod sigparam_execution_tests {
                 target: Some(reader),
                 gas_limits: GasLimits {
                     execution: 200_000,
-                    state: 0,
+                    // The reader persists what it read, so it needs a state
+                    // budget for that set -- without one the SSTORE runs out of
+                    // state gas and every assertion below reads back zero.
+                    state: SSTORE_SET_STATE_GAS,
                 },
                 value: U256::zero(),
                 data: Bytes::new(),
@@ -3635,11 +3658,27 @@ mod sigparam_execution_tests {
     }
 
     #[test]
-    fn sigparam_0x04_copies_arbitrary_signature_bytes() {
+    fn sigparam_0x04_is_no_longer_a_valid_parameter() {
+        // EIP-8141 made SIGPARAM static-arity over 0x00-0x03: the copy it used to
+        // perform at 0x04 is SIGDATACOPY's job now, so 0x04 is simply out of range
+        // and halts. Pinned here because a handler that still accepted it would
+        // read the wrong operand count off the stack and go unnoticed otherwise.
+        let (result, db, reader) = run_reader(
+            sigparam_metadata_code(0x04, 0),
+            vec![arbitrary_sig(vec![0xAA; 4])],
+        );
+        let report = result.expect("the tx itself stays valid; only the reader frame halts");
+        let frame_results = report.frame_results.expect("per-frame results");
+        assert_eq!(frame_results[1].0, FRAME_RECEIPT_STATUS_FAILURE);
+        assert_eq!(storage_of(&db, reader, U256::zero()), U256::zero());
+    }
+
+    #[test]
+    fn sigdatacopy_copies_arbitrary_signature_bytes() {
         // 4 payload bytes copied into memory at 0; MLOAD reads them left-aligned
         // in the word, with the rest zero-filled.
         let (result, db, reader) = run_reader(
-            sigparam_copy_code(0, 4, 0, 0),
+            sigdatacopy_code(0, 4, 0, 0),
             vec![arbitrary_sig(vec![0xDE, 0xAD, 0xBE, 0xEF])],
         );
         result.expect("valid tx");
@@ -3652,10 +3691,10 @@ mod sigparam_execution_tests {
     }
 
     #[test]
-    fn sigparam_0x04_zero_fills_past_the_end() {
+    fn sigdatacopy_zero_fills_past_the_end() {
         // Asking for 8 bytes of a 2-byte signature zero-fills the remainder.
         let (result, db, reader) = run_reader(
-            sigparam_copy_code(0, 8, 0, 0),
+            sigdatacopy_code(0, 8, 0, 0),
             vec![arbitrary_sig(vec![0x11, 0x22])],
         );
         result.expect("valid tx");
@@ -3668,13 +3707,13 @@ mod sigparam_execution_tests {
     }
 
     #[test]
-    fn sigparam_0x04_reads_operands_in_calldatacopy_order() {
-        // The copy operands follow `CALLDATACOPY`: memOffset above dataOffset
-        // above length. Distinct values for all three, and a destination past the
-        // first word, pin the order — reading them in any other order lands the
-        // bytes somewhere else (or copies a different count).
+    fn sigdatacopy_reads_operands_in_calldatacopy_order() {
+        // The operands follow `CALLDATACOPY`: memOffset above dataOffset above
+        // length. Distinct values for all three, and a destination past the first
+        // word, pin the order — reading them in any other order lands the bytes
+        // somewhere else (or copies a different count).
         let (result, db, reader) = run_reader(
-            sigparam_copy_code(0, 3, 1, 0x20),
+            sigdatacopy_code(0, 3, 1, 0x20),
             vec![arbitrary_sig(vec![0xAA, 0xBB, 0xCC, 0xDD])],
         );
         result.expect("valid tx");
@@ -3820,7 +3859,9 @@ fn storage_refund_from_a_later_frame_reduces_reported_gas() {
         target: Some(target),
         gas_limits: GasLimits {
             execution: 200_000,
-            state: 0,
+            // The setting frame creates the slot out of its own state budget; the
+            // clearing frame's refill returns that gas to the payer.
+            state: SSTORE_SET_STATE_GAS,
         },
         value: U256::zero(),
         data,
