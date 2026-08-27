@@ -11,6 +11,7 @@ use crate::{
     types::{Node, NodeRecord},
 };
 use bytes::BytesMut;
+use ethrex_common::types::ForkId;
 use ethrex_common::utils::keccak;
 use futures::StreamExt;
 use secp256k1::SecretKey;
@@ -26,8 +27,9 @@ use spawned_concurrency::{
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 use thiserror::Error;
 use tokio::net::UdpSocket;
+use tokio::sync::watch;
 use tokio_util::udp::UdpFramed;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info, trace, warn};
 
 use super::{DiscoveryConfig, codec::DiscriminatingCodec, lookup_interval_function};
 
@@ -90,6 +92,14 @@ pub struct DiscoveryServer {
     pub(crate) config: DiscoveryConfig,
     pub discv4: Option<Discv4State>,
     pub discv5: Option<Discv5State>,
+    /// Current EIP-2124 fork id, published by the network layer. `None` inside the
+    /// channel means the chain could not supply one yet.
+    ///
+    /// Discovery does not read this from storage: the network layer decides what this
+    /// node announces about itself, and discovery only republishes. Without a refresh
+    /// the `eth` ENR entry goes stale the moment the chain crosses a fork, and geth's
+    /// dial-candidate filter (`NewNodeFilter`) drops us outright.
+    pub(crate) fork_id: watch::Receiver<Option<ForkId>>,
 }
 
 impl std::fmt::Debug for DiscoveryServer {
@@ -106,6 +116,10 @@ impl std::fmt::Debug for DiscoveryServer {
 impl DiscoveryServer {
     /// Starts the discovery actor, advertising `local_node_record` as this
     /// node's ENR.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one more caller-supplied value; bundling them would only hide the call site"
+    )]
     pub async fn spawn(
         local_node: Node,
         local_node_record: NodeRecord,
@@ -114,6 +128,7 @@ impl DiscoveryServer {
         peer_table: PeerTable,
         bootnodes: Vec<Node>,
         config: DiscoveryConfig,
+        fork_id: watch::Receiver<Option<ForkId>>,
     ) -> Result<(), DiscoveryServerError> {
         debug!("Starting discovery server");
 
@@ -150,6 +165,7 @@ impl DiscoveryServer {
             config,
             discv4,
             discv5,
+            fork_id,
         };
 
         // Ping discv4 bootnodes
@@ -382,6 +398,8 @@ impl DiscoveryServer {
             .discv5
             .as_mut()
             .and_then(|discv5| discv5.cleanup_stale_entries());
+        self.refresh_fork_id();
+
         if let Some(winning_ip) = winning_ip
             && winning_ip != self.local_node.ip
         {
@@ -412,6 +430,30 @@ impl DiscoveryServer {
             ITERATIVE_LOOKUP_INITIAL_MS,
             ITERATIVE_LOOKUP_INTERVAL_MS,
         )
+    }
+    /// Republish the ENR when the network layer reports a new fork id.
+    ///
+    /// `has_changed` is only true once per send, so a steady chain costs a flag check
+    /// per tick. A closed channel means the network layer is gone, which is shutdown,
+    /// not an error worth logging every tick. A `None` in the channel is the seed for
+    /// a chain that could not supply a fork id at startup; there is nothing to
+    /// republish until the publisher replaces it.
+    fn refresh_fork_id(&mut self) {
+        if !self.fork_id.has_changed().unwrap_or(false) {
+            return;
+        }
+        let Some(fork_id) = self.fork_id.borrow_and_update().clone() else {
+            return;
+        };
+        match self.local_node_record.set_fork_id(fork_id, &self.signer) {
+            Ok(()) => info!(
+                seq = self.local_node_record.seq,
+                "Chain crossed a fork; republished the local ENR with the new fork id"
+            ),
+            // A record we cannot sign is worth surfacing: peers that require an `eth`
+            // entry keep skipping us until this succeeds.
+            Err(e) => warn!(error = ?e, "Could not set the new fork id on the local ENR"),
+        }
     }
 }
 
@@ -449,6 +491,9 @@ impl DiscoveryServer {
             },
             discv4: None,
             discv5: Some(Discv5State::default()),
+            // Tests drive the ENR directly; there is no publisher to listen to. The
+            // sender is dropped, so `has_changed` errs and the refresh is a no-op.
+            fork_id: watch::channel(None).1,
         }
     }
 }
