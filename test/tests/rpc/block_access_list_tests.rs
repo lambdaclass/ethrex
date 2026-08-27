@@ -232,6 +232,129 @@ async fn debug_get_raw_block_access_list_unknown_hash_is_resource_not_found() {
     assert_eq!(RpcErrorMetadata::from(err).code, -32001);
 }
 
+// An Amsterdam block whose body was pruned cannot be re-executed: `4444: Pruned
+// history unavailable`. This was previously `null`, so it pins the getter's
+// contract change.
+#[tokio::test]
+async fn eth_get_block_access_list_missing_body_is_pruned_history() {
+    let storage = amsterdam_store().await;
+    let header = header_committing_to(&sample_bal());
+    let block_hash = header.hash();
+    // Header only: the body was pruned, and no BAL was stored at import.
+    storage
+        .add_block_header(block_hash, header)
+        .await
+        .expect("store header");
+
+    let body = format!(
+        r#"{{
+            "jsonrpc": "2.0",
+            "method": "eth_getBlockAccessList",
+            "params": ["{block_hash:#x}"],
+            "id": 1
+        }}"#
+    );
+    let request: RpcRequest = serde_json::from_str(&body).unwrap();
+    let context = default_context_with_storage(storage).await;
+
+    let err = map_eth_requests(&request, context)
+        .await
+        .expect_err("missing body must be an error");
+    assert_eq!(RpcErrorMetadata::from(err).code, 4444);
+}
+
+// An Amsterdam block whose body survives but whose parent state was pruned
+// cannot be re-executed either; that must also be `4444`, not `-32603` from the
+// re-execution failing on the missing state root.
+#[tokio::test]
+async fn eth_get_block_access_list_missing_parent_state_is_pruned_history() {
+    let storage = amsterdam_store().await;
+    // Full block, no stored BAL: resolution has to try re-execution. Its parent
+    // (hash zero here) is absent, standing in for a pruned ancestor.
+    let block = Block {
+        header: header_committing_to(&sample_bal()),
+        body: BlockBody::default(),
+    };
+    let block_hash = block.hash();
+    storage.add_block(block).await.expect("store block");
+
+    let body = format!(
+        r#"{{
+            "jsonrpc": "2.0",
+            "method": "eth_getBlockAccessList",
+            "params": ["{block_hash:#x}"],
+            "id": 1
+        }}"#
+    );
+    let request: RpcRequest = serde_json::from_str(&body).unwrap();
+    let context = default_context_with_storage(storage).await;
+
+    let err = map_eth_requests(&request, context)
+        .await
+        .expect_err("missing parent state must be an error");
+    assert_eq!(RpcErrorMetadata::from(err).code, 4444);
+}
+
+// An Amsterdam genesis has no parent to re-execute from; its access list is
+// empty by construction. `0xc0` is the exact raw encoding execution-apis gives
+// for a block with no state accesses.
+#[tokio::test]
+async fn debug_get_raw_block_access_list_genesis_serves_empty_rlp() {
+    let storage = amsterdam_store().await;
+    let genesis_bal = BlockAccessList::default();
+    let genesis = Block {
+        header: BlockHeader {
+            number: 0,
+            base_fee_per_gas: Some(0),
+            withdrawals_root: Some(H256::zero()),
+            blob_gas_used: Some(0),
+            excess_blob_gas: Some(0),
+            parent_beacon_block_root: Some(H256::zero()),
+            requests_hash: Some(H256::zero()),
+            block_access_list_hash: Some(genesis_bal.compute_hash(&NativeCrypto)),
+            ..Default::default()
+        },
+        body: BlockBody::default(),
+    };
+    let block_hash = genesis.hash();
+    storage.add_block(genesis).await.expect("store genesis");
+
+    let body = format!(
+        r#"{{
+            "jsonrpc": "2.0",
+            "method": "debug_getRawBlockAccessList",
+            "params": ["{block_hash:#x}"],
+            "id": 1
+        }}"#
+    );
+    let request: RpcRequest = serde_json::from_str(&body).unwrap();
+    let context = default_context_with_storage(storage).await;
+
+    let got = map_debug_requests(&request, context).await.expect("rpc ok");
+    assert_eq!(got, serde_json::Value::String("0xc0".to_owned()));
+}
+
+// Both getters take exactly one parameter; extra arguments are a parse error,
+// consistent with the rest of the `debug_getRaw*` family.
+#[tokio::test]
+async fn eth_get_block_access_list_rejects_extra_params() {
+    let storage = amsterdam_store().await;
+    let context = default_context_with_storage(storage).await;
+
+    let body = r#"{
+        "jsonrpc": "2.0",
+        "method": "eth_getBlockAccessList",
+        "params": ["latest", "junk"],
+        "id": 1
+    }"#;
+    let request: RpcRequest = serde_json::from_str(body).unwrap();
+
+    let err = map_eth_requests(&request, context)
+        .await
+        .expect_err("extra params must be rejected");
+    assert_eq!(RpcErrorMetadata::from(err).code, -32000);
+}
+
 // engine_getPayloadBodiesByHashV2 must serve the persisted BAL straight from the
 // store, without re-executing the block. We store a block and its BAL but never
 // build the state trie, so a regeneration fallback would fail (or, for this

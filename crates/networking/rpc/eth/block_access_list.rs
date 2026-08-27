@@ -27,7 +27,7 @@ fn parse_block_param(params: &Option<Vec<Value>>) -> Result<BlockIdentifierOrHas
     let params = params
         .as_ref()
         .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
-    if params.is_empty() {
+    if params.len() != 1 {
         return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
     }
     BlockIdentifierOrHash::parse(params[0].clone(), 0)
@@ -127,12 +127,43 @@ async fn resolve_bal(
         return Ok(ResolvedBal::Found(bal));
     }
 
+    // An Amsterdam genesis has no parent to re-execute from, and no state
+    // accesses: its access list is empty by construction (the raw encoding the
+    // spec gives for a block with no accesses, `0xc0`).
+    if header.number == 0 {
+        let genesis_bal = BlockAccessList::default();
+        return if genesis_bal.matches_commitment(commitment, &NativeCrypto) {
+            Ok(ResolvedBal::Found(genesis_bal))
+        } else {
+            Err(RpcErr::Internal(format!(
+                "genesis header commitment is not the empty access list's hash ({commitment:?})"
+            )))
+        };
+    }
+
     // Slow path: re-execute the block.
     let Some(full_block) = context.storage.get_block_by_hash(block_hash).await? else {
         return Err(RpcErr::PrunedHistoryUnavailable(format!(
             "block body for {block_hash:#x} is unavailable"
         )));
     };
+
+    // Re-execution starts from the parent block's post-state. On a snap-synced
+    // or state-pruned node the parent header or its state is gone; that is
+    // unavailable history, not an internal fault, so it must not fall into the
+    // blanket `Internal` mapping below.
+    let parent_state_available = match context
+        .storage
+        .get_block_header_by_hash(header.parent_hash)?
+    {
+        Some(parent) => context.storage.has_state_root(parent.state_root)?,
+        None => false,
+    };
+    if !parent_state_available {
+        return Err(RpcErr::PrunedHistoryUnavailable(format!(
+            "state to rebuild the block access list for {block_hash:#x} is unavailable"
+        )));
+    }
 
     let bal = context
         .blockchain

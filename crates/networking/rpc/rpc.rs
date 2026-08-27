@@ -1440,7 +1440,7 @@ pub async fn map_testing_requests(
 /// Routes `debug_*` namespace requests to their handlers.
 ///
 /// Handles debugging and introspection methods:
-/// - Raw data: `debug_getRawHeader`, `debug_getRawBlock`, `debug_getRawTransaction`, `debug_getRawReceipts`
+/// - Raw data: `debug_getRawHeader`, `debug_getRawBlock`, `debug_getRawTransaction`, `debug_getRawReceipts`, `debug_getRawBlockAccessList`
 /// - Execution witness: `debug_executionWitness` (for stateless validation)
 /// - Tracing: `debug_traceTransaction`, `debug_traceBlockByNumber`, `debug_traceBlockByHash`, `debug_traceCall`
 pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
