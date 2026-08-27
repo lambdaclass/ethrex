@@ -1021,17 +1021,20 @@ dependencies = [
 
 [[package]]
 name = "ethrex-blockchain"
-version = "22.0.0"
+version = "24.0.0"
 dependencies = [
  "bytes",
  "crossbeam",
  "ethrex-common",
  "ethrex-crypto",
+ "ethrex-guest-program",
  "ethrex-metrics",
  "ethrex-rlp",
  "ethrex-storage",
  "ethrex-trie",
  "ethrex-vm",
+ "libssz",
+ "libssz-merkle",
  "rayon",
  "rustc-hash",
  "thiserror 2.0.18",
@@ -1042,7 +1045,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-common"
-version = "22.0.0"
+version = "24.0.0"
 dependencies = [
  "bytes",
  "crc32fast",
@@ -1056,6 +1059,10 @@ dependencies = [
  "indexmap 2.13.0",
  "lazy_static",
  "libc",
+ "libssz",
+ "libssz-derive",
+ "libssz-merkle",
+ "libssz-types",
  "lru",
  "once_cell",
  "rayon",
@@ -1071,7 +1078,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-crypto"
-version = "22.0.0"
+version = "24.0.0"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -1092,7 +1099,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-guest-program"
-version = "22.0.0"
+version = "24.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -1102,6 +1109,10 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-vm",
  "hex",
+ "libssz",
+ "libssz-derive",
+ "libssz-merkle",
+ "libssz-types",
  "rkyv",
  "serde 1.0.228",
  "serde_with",
@@ -1110,7 +1121,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2-common"
-version = "22.0.0"
+version = "24.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -1119,7 +1130,6 @@ dependencies = [
  "k256",
  "lambdaworks-crypto",
  "rkyv",
- "secp256k1",
  "serde 1.0.228",
  "serde_with",
  "thiserror 2.0.18",
@@ -1128,13 +1138,14 @@ dependencies = [
 
 [[package]]
 name = "ethrex-levm"
-version = "22.0.0"
+version = "24.0.0"
 dependencies = [
  "bytes",
  "derive_more",
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-rlp",
+ "libssz",
  "malachite",
  "rayon",
  "rustc-hash",
@@ -1145,7 +1156,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-metrics"
-version = "22.0.0"
+version = "24.0.0"
 dependencies = [
  "axum",
  "ethrex-common",
@@ -1160,7 +1171,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-p2p"
-version = "22.0.0"
+version = "24.0.0"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -1201,7 +1212,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rlp"
-version = "22.0.0"
+version = "24.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -1210,7 +1221,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rpc"
-version = "22.0.0"
+version = "24.0.0"
 dependencies = [
  "axum",
  "axum-extra",
@@ -1249,7 +1260,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-storage"
-version = "22.0.0"
+version = "24.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1270,7 +1281,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-trie"
-version = "22.0.0"
+version = "24.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1289,7 +1300,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-vm"
-version = "22.0.0"
+version = "24.0.0"
 dependencies = [
  "bytes",
  "derive_more",
@@ -2203,6 +2214,47 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
+name = "libssz"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b4bdd6d63ed811ae164966de20810be780e07de784a4834ccfe6be90480c369e"
+dependencies = [
+ "smallvec",
+]
+
+[[package]]
+name = "libssz-derive"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aeee1b9ac9200429f7e9830492765445989ea61c3fb9028ad5a96e1dd5f5e913"
+dependencies = [
+ "proc-macro2",
+ "quote 1.0.44",
+ "syn 2.0.116",
+]
+
+[[package]]
+name = "libssz-merkle"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "863eca32d1a43e5ec41106a515552efa8307768d37c68d26b7f21ff13cfee1a7"
+dependencies = [
+ "libssz",
+ "sha2",
+]
+
+[[package]]
+name = "libssz-types"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d4231ac301726840a3fe111f11bd4619d3c97ed155cb94c88dbf92b70e04e017"
+dependencies = [
+ "libssz",
+ "libssz-merkle",
+ "smallvec",
+]
+
+[[package]]
 name = "libz-sys"
 version = "1.1.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2823,7 +2875,7 @@ dependencies = [
 
 [[package]]
 name = "quote-gen"
-version = "22.0.0"
+version = "24.0.0"
 dependencies = [
  "configfs-tsm",
  "ethrex-blockchain",

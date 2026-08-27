@@ -219,6 +219,24 @@ curl -sf -X GET http://localhost:5555/committer/stop
 
 No new batches will be committed from this point on. Already-committed batches will still get proved and verified by the running prover.
 
+The sequencer keeps producing blocks while the committer is stopped, and those
+blocks are what make the rest of this test worth running: they are written by
+`$VERSION_FROM` but will be committed by `$VERSION_TO`, which is the only
+situation where a batch mixes an old body encoding with a new committer. Leave a
+few of them behind deliberately and record where they start:
+
+```bash
+FIRST_UNCOMMITTED=$(( $(rex call "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" 'lastCommittedBatch()' --rpc-url http://localhost:8545) ))
+echo "last batch committed by $VERSION_FROM: $FIRST_UNCOMMITTED"
+# Give the block producer a few more blocks, then note the L2 head.
+sleep 30
+LEGACY_HEAD=$(rex block-number --rpc-url http://localhost:1729)
+echo "L2 head left uncommitted: $LEGACY_HEAD"
+```
+
+Keep `LEGACY_HEAD` — step 4.3 checks that the batch covering it is not just
+committed but *verified*.
+
 ### 2.2 Wait until all committed batches are verified
 
 ```bash
@@ -433,6 +451,33 @@ cd "$WORK/ethrex-$VERSION_TO"
 ```
 
 ---
+
+### 4.3 Check the first `$VERSION_TO` batch over `$VERSION_FROM` blocks gets verified
+
+The blocks left uncommitted in step 2.1 are now committed by `$VERSION_TO`.
+Committing them only proves the sequencer accepted them; the encoding they end up
+with is checked by the prover, because the guest re-encodes the blocks it is
+given and KZG-checks the result against the committed blob. A body read on one
+path with the legacy `withdrawals` field omitted and on another with it present
+as an empty list differs by a single RLP byte, and that mismatch only ever
+surfaces here, as a proof failure inside the zkVM.
+
+So wait for verification, not just commitment:
+
+```bash
+while :; do
+  COMMITTED=$(rex call "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" 'lastCommittedBatch()' --rpc-url http://localhost:8545)
+  VERIFIED=$(rex call  "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" 'lastVerifiedBatch()'  --rpc-url http://localhost:8545)
+  echo "committed=$COMMITTED verified=$VERIFIED (need a verified batch covering L2 block $LEGACY_HEAD)"
+  [ "$VERIFIED" -gt "$FIRST_UNCOMMITTED" ] && break
+  sleep 10
+done
+```
+
+If the prover rejects the batch with `InvalidBlobProof`, the blob path and the
+prover-input path disagreed about the body encoding; both read stored blocks
+through `read_trusted_block` (`crates/l2/sequencer/utils.rs`) for exactly this
+reason, so start there.
 
 ## Step 5 — Acceptance check: run the integration tests against the upgraded L2
 
