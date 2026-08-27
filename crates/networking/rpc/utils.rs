@@ -73,6 +73,17 @@ pub enum RpcErr {
     InvalidPayload(String),
     #[error("Proof generation unavailable: {0}")]
     ProofGenerationUnavailable(String),
+    /// `-32001: Resource not found`, e.g. a block-access-list getter asked
+    /// about a block that predates the Amsterdam fork (execution-apis#851).
+    #[error("Resource not found: {0}")]
+    ResourceNotFound(String),
+    /// `4444: Pruned history unavailable`: the block is known but the data to
+    /// answer was pruned. The code was introduced across the eth/debug getters
+    /// by execution-apis#636 (EIP-4444 history expiry left the RPC behaviour
+    /// out of scope), and execution-apis#851 requires it for the
+    /// block-access-list getters.
+    #[error("Pruned history unavailable: {0}")]
+    PrunedHistoryUnavailable(String),
 }
 
 impl From<RpcErr> for RpcErrorMetadata {
@@ -204,6 +215,16 @@ impl From<RpcErr> for RpcErrorMetadata {
                 code: -39004,
                 data: None,
                 message: format!("Proof generation unavailable: {context}"),
+            },
+            RpcErr::ResourceNotFound(context) => RpcErrorMetadata {
+                code: -32001,
+                data: Some(context),
+                message: "Resource not found".to_string(),
+            },
+            RpcErr::PrunedHistoryUnavailable(context) => RpcErrorMetadata {
+                code: 4444,
+                data: Some(context),
+                message: "Pruned history unavailable".to_string(),
             },
         }
     }
