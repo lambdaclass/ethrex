@@ -27,19 +27,14 @@ use crate::{Nibbles, NodeHash};
 // where `NativeCrypto` is the correct provider.
 impl RLPEncode for BranchNode {
     fn encode(&self, buf: &mut Vec<u8>) {
-        // Resolve each child's hash once: the length pass and the encode pass
-        // both needed it, so a 16-choice branch was paying 32 resolutions.
-        let hashes: [&NodeHash; 16] =
-            array::from_fn(|i| self.choices[i].compute_hash_ref(&NativeCrypto));
-
         let value_len = <[u8] as RLPEncode>::length(&self.value);
-        let payload_len = hashes
-            .iter()
-            .fold(value_len, |acc, hash| acc + RLPEncode::length(*hash));
+        let payload_len = self.choices.iter().fold(value_len, |acc, child| {
+            acc + RLPEncode::length(child.compute_hash_ref(&NativeCrypto))
+        });
 
         encode_list_prefix(payload_len, buf);
-        for hash in hashes {
-            match hash {
+        for child in self.choices.iter() {
+            match child.compute_hash_ref(&NativeCrypto) {
                 NodeHash::Hashed(hash) => hash.0.encode(buf),
                 NodeHash::Inline((_, 0)) => buf.push(RLP_NULL),
                 NodeHash::Inline((encoded, len)) => {
