@@ -324,6 +324,20 @@ pub struct UpdateBatch {
     pub wait_for_flush: bool,
 }
 
+/// A block's historical chain data to backfill below the snap-sync pivot: the
+/// (already-canonical) header, its body, and its receipts.
+///
+/// `index_transactions` controls whether the transaction-lookup index is written
+/// for this block; the backfill task drives it from the `--history.transactions`
+/// horizon so old blocks can be excluded from the index while still storing their
+/// bodies and receipts.
+pub struct BackfilledBlock {
+    pub header: BlockHeader,
+    pub body: BlockBody,
+    pub receipts: Vec<Receipt>,
+    pub index_transactions: bool,
+}
+
 /// Storage trie updates grouped by account address hash.
 pub type StorageUpdates = Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>;
 
@@ -577,6 +591,74 @@ impl Store {
         self.write_async(BODIES, hash_key, body_value).await
     }
 
+    /// Backfill historical chain data for a contiguous range of already-canonical
+    /// blocks (bodies, receipts, and optionally the transaction-lookup index),
+    /// then lower `earliest_block_number` to `new_earliest` — all in one write
+    /// transaction.
+    ///
+    /// This is the storage half of `--history.chain` backfill. It does NOT touch
+    /// state, the trie layer cache, or fork choice: the headers and canonical
+    /// mapping already exist from snap-sync header backfill, so only the
+    /// body / receipt / tx-index tables are filled. Writing the data and advancing
+    /// the frontier atomically preserves the invariant that every block in
+    /// `[earliest_block_number, head]` has a stored body — a crash mid-batch
+    /// leaves both the data and the frontier unchanged, so resume never skips a
+    /// hole.
+    ///
+    /// `new_earliest` must be the lowest block number covered by `blocks` (the
+    /// bottom of the contiguous filled range); the caller fills downward without
+    /// gaps.
+    pub async fn add_backfilled_blocks(
+        &self,
+        blocks: Vec<BackfilledBlock>,
+        new_earliest: BlockNumber,
+    ) -> Result<(), StoreError> {
+        let backend = self.backend.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut txn = backend.begin_write()?;
+            for block in &blocks {
+                let hash = block.header.hash();
+                let hash_key = hash.encode_to_vec();
+                txn.put(
+                    BODIES,
+                    &hash_key,
+                    &BlockBodyRLP::from(block.body.clone()).into_vec(),
+                )?;
+                for (index, receipt) in block.receipts.iter().enumerate() {
+                    txn.put(
+                        RECEIPTS_V2,
+                        &receipt_key(&hash, index as u64),
+                        &receipt.encode_storage(),
+                    )?;
+                }
+                if block.index_transactions {
+                    for (index, transaction) in block.body.transactions.iter().enumerate() {
+                        txn.merge(
+                            TRANSACTION_LOCATIONS,
+                            transaction.hash(&NativeCrypto).as_bytes(),
+                            &encode_tx_location_operand(block.header.number, hash, index as u64),
+                        )?;
+                    }
+                }
+            }
+            txn.put(
+                CHAIN_DATA,
+                &chain_data_key(ChainDataIndex::EarliestBlockNumber),
+                &new_earliest.to_le_bytes(),
+            )?;
+            txn.commit()
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Backfill write task panicked: {e}")))?
+    }
+
+    /// RocksDB observability snapshot (per-column-family sizes/keys/files, block
+    /// cache, compaction). `None` for the in-memory backend. Read by the metrics
+    /// collector; cheap (RocksDB property reads).
+    pub fn rocksdb_stats(&self) -> Option<crate::api::RocksDbStats> {
+        self.backend.db_stats()
+    }
+
     /// Obtain canonical block body
     pub async fn get_block_body(
         &self,
@@ -763,12 +845,7 @@ impl Store {
         }
         self.read_async(BLOCK_NUMBERS, block_hash.encode_to_vec())
             .await?
-            .map(|bytes| -> Result<BlockNumber, StoreError> {
-                let array: [u8; 8] = bytes
-                    .try_into()
-                    .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
-                Ok(BlockNumber::from_le_bytes(array))
-            })
+            .map(decode_block_number)
             .transpose()
     }
 
@@ -1164,50 +1241,38 @@ impl Store {
         self.write_async(CHAIN_DATA, key, value).await
     }
 
+    /// Reads a block number stored under the given chain-data index.
+    async fn read_chain_data_block_number(
+        &self,
+        index: ChainDataIndex,
+    ) -> Result<Option<BlockNumber>, StoreError> {
+        self.read_async(CHAIN_DATA, chain_data_key(index))
+            .await?
+            .map(decode_block_number)
+            .transpose()
+    }
+
     /// Obtain earliest block number
     pub async fn get_earliest_block_number(&self) -> Result<BlockNumber, StoreError> {
-        let key = chain_data_key(ChainDataIndex::EarliestBlockNumber);
-        self.read_async(CHAIN_DATA, key)
+        self.read_chain_data_block_number(ChainDataIndex::EarliestBlockNumber)
             .await?
-            .map(|bytes| -> Result<BlockNumber, StoreError> {
-                let array: [u8; 8] = bytes
-                    .try_into()
-                    .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
-                Ok(BlockNumber::from_le_bytes(array))
-            })
-            .ok_or(StoreError::MissingEarliestBlockNumber)?
+            .ok_or(StoreError::MissingEarliestBlockNumber)
     }
 
     /// Obtain finalized block number
     pub async fn get_finalized_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        let key = chain_data_key(ChainDataIndex::FinalizedBlockNumber);
-        self.read_async(CHAIN_DATA, key)
-            .await?
-            .map(|bytes| -> Result<BlockNumber, StoreError> {
-                let array: [u8; 8] = bytes
-                    .try_into()
-                    .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
-                Ok(BlockNumber::from_le_bytes(array))
-            })
-            .transpose()
+        self.read_chain_data_block_number(ChainDataIndex::FinalizedBlockNumber)
+            .await
     }
 
     /// Obtain safe block number
     pub async fn get_safe_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        let key = chain_data_key(ChainDataIndex::SafeBlockNumber);
-        self.read_async(CHAIN_DATA, key)
-            .await?
-            .map(|bytes| -> Result<BlockNumber, StoreError> {
-                let array: [u8; 8] = bytes
-                    .try_into()
-                    .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
-                Ok(BlockNumber::from_le_bytes(array))
-            })
-            .transpose()
+        self.read_chain_data_block_number(ChainDataIndex::SafeBlockNumber)
+            .await
     }
 
     /// Obtain latest block number
-    pub async fn get_latest_block_number(&self) -> Result<BlockNumber, StoreError> {
+    pub fn get_latest_block_number(&self) -> Result<BlockNumber, StoreError> {
         Ok(self.latest_block_header.get().number)
     }
 
@@ -1223,16 +1288,8 @@ impl Store {
 
     /// Obtain pending block number
     pub async fn get_pending_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        let key = chain_data_key(ChainDataIndex::PendingBlockNumber);
-        self.read_async(CHAIN_DATA, key)
-            .await?
-            .map(|bytes| -> Result<BlockNumber, StoreError> {
-                let array: [u8; 8] = bytes
-                    .try_into()
-                    .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
-                Ok(BlockNumber::from_le_bytes(array))
-            })
-            .transpose()
+        self.read_chain_data_block_number(ChainDataIndex::PendingBlockNumber)
+            .await
     }
 
     /// DB mutation step of `forkchoice_update`.
@@ -1504,12 +1561,7 @@ impl Store {
         }
         let txn = self.backend.begin_read()?;
         txn.get(BLOCK_NUMBERS, &block_hash.encode_to_vec())?
-            .map(|bytes| -> Result<BlockNumber, StoreError> {
-                let array: [u8; 8] = bytes
-                    .try_into()
-                    .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
-                Ok(BlockNumber::from_le_bytes(array))
-            })
+            .map(decode_block_number)
             .transpose()
     }
 
@@ -4121,16 +4173,8 @@ impl Store {
 
     /// Loads the latest block number stored in the database, bypassing the latest block number cache
     async fn load_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        let key = chain_data_key(ChainDataIndex::LatestBlockNumber);
-        self.read_async(CHAIN_DATA, key)
-            .await?
-            .map(|bytes| -> Result<BlockNumber, StoreError> {
-                let array: [u8; 8] = bytes
-                    .try_into()
-                    .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
-                Ok(BlockNumber::from_le_bytes(array))
-            })
-            .transpose()
+        self.read_chain_data_block_number(ChainDataIndex::LatestBlockNumber)
+            .await
     }
 
     fn load_canonical_block_hash(
@@ -5220,6 +5264,14 @@ pub fn hash_key_fixed(key: &H256) -> [u8; 32] {
 
 fn chain_data_key(index: ChainDataIndex) -> Vec<u8> {
     (index as u8).encode_to_vec()
+}
+
+/// Decodes a block number stored as little-endian bytes.
+fn decode_block_number(bytes: Vec<u8>) -> Result<BlockNumber, StoreError> {
+    let array: [u8; 8] = bytes
+        .try_into()
+        .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
+    Ok(BlockNumber::from_le_bytes(array))
 }
 
 fn snap_state_key(index: SnapStateIndex) -> Vec<u8> {
@@ -6613,6 +6665,281 @@ mod merge_tests {
         let p3 = tx_locations_merge(None, vec![p2, op(3, h256(0x03), 0)]).unwrap();
         let out = tx_locations_merge(None, vec![p3]).unwrap();
         assert_eq!(decode(&out).len(), 3);
+    }
+}
+
+#[cfg(test)]
+mod backfill_write_tests {
+    use super::*;
+    use ethrex_common::types::{EIP1559Transaction, TxType};
+
+    fn test_header(number: BlockNumber) -> BlockHeader {
+        BlockHeader {
+            number,
+            ..Default::default()
+        }
+    }
+
+    fn test_tx(nonce: u64) -> Transaction {
+        Transaction::EIP1559Transaction(EIP1559Transaction {
+            nonce,
+            ..Default::default()
+        })
+    }
+
+    fn test_receipt() -> Receipt {
+        Receipt {
+            tx_type: TxType::EIP1559,
+            succeeded: true,
+            cumulative_gas_used: 21_000,
+            logs: vec![],
+            payer: None,
+            frame_receipts: None,
+        }
+    }
+
+    /// `add_backfilled_blocks` writes the body + receipts + transaction index and
+    /// lowers the frontier (`earliest_block_number`) in one shot; the indexed tx
+    /// is then locatable for its (canonical) block.
+    #[tokio::test]
+    async fn writes_data_indexes_txs_and_lowers_frontier() {
+        let store = Store::new("", EngineType::InMemory).expect("in-memory store");
+        store.update_earliest_block_number(100).await.unwrap();
+
+        let header = test_header(99);
+        let hash = header.hash();
+        let tx = test_tx(7);
+        let body = BlockBody {
+            transactions: vec![tx.clone()],
+            ommers: vec![],
+            withdrawals: Some(vec![]),
+        };
+        // In production the header is already stored and canonical from snap
+        // header backfill; mirror the canonical mapping so the tx-index lookup
+        // (which is canonical-filtered) can resolve.
+        store.add_block_headers(vec![header.clone()]).await.unwrap();
+        store
+            .forkchoice_update(vec![(99, hash)], 99, hash, None, None)
+            .await
+            .unwrap();
+
+        store
+            .add_backfilled_blocks(
+                vec![BackfilledBlock {
+                    header,
+                    body,
+                    receipts: vec![test_receipt()],
+                    index_transactions: true,
+                }],
+                99,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            store.get_earliest_block_number().await.unwrap(),
+            99,
+            "frontier must be lowered atomically with the data write"
+        );
+        assert!(
+            store.get_block_body_by_hash(hash).await.unwrap().is_some(),
+            "body must be stored"
+        );
+        assert_eq!(
+            store.get_receipts_for_block(&hash).await.unwrap().len(),
+            1,
+            "receipts must be stored"
+        );
+        assert_eq!(
+            store
+                .get_transaction_location(tx.hash(&NativeCrypto))
+                .await
+                .unwrap(),
+            Some((99, hash, 0)),
+            "indexed transaction must be locatable"
+        );
+    }
+
+    /// With `index_transactions = false` (a block outside the
+    /// `--history.transactions` horizon) the body and receipts are still written,
+    /// but the transaction index is skipped.
+    #[tokio::test]
+    async fn skips_tx_index_when_disabled() {
+        let store = Store::new("", EngineType::InMemory).expect("in-memory store");
+        store.update_earliest_block_number(100).await.unwrap();
+
+        let header = test_header(99);
+        let hash = header.hash();
+        let tx = test_tx(7);
+        let body = BlockBody {
+            transactions: vec![tx.clone()],
+            ommers: vec![],
+            withdrawals: Some(vec![]),
+        };
+        store.add_block_headers(vec![header.clone()]).await.unwrap();
+        store
+            .forkchoice_update(vec![(99, hash)], 99, hash, None, None)
+            .await
+            .unwrap();
+
+        store
+            .add_backfilled_blocks(
+                vec![BackfilledBlock {
+                    header,
+                    body,
+                    receipts: vec![test_receipt()],
+                    index_transactions: false,
+                }],
+                99,
+            )
+            .await
+            .unwrap();
+
+        assert!(
+            store.get_block_body_by_hash(hash).await.unwrap().is_some(),
+            "body must still be stored"
+        );
+        assert_eq!(
+            store.get_receipts_for_block(&hash).await.unwrap().len(),
+            1,
+            "receipts must still be stored"
+        );
+        assert_eq!(
+            store
+                .get_transaction_location(tx.hash(&NativeCrypto))
+                .await
+                .unwrap(),
+            None,
+            "transaction index must be skipped when index_transactions is false"
+        );
+    }
+
+    /// End-to-end at the storage/RPC boundary: the getters the RPC handlers use
+    /// (`get_block_body`, `get_transaction_by_hash`, `get_receipt`) return nothing
+    /// for a headers-only (post-snap) block and real data after backfill.
+    #[tokio::test]
+    async fn historical_getters_transition_from_null_to_present() {
+        let store = Store::new("", EngineType::InMemory).expect("in-memory store");
+        store.update_earliest_block_number(100).await.unwrap();
+
+        let header = test_header(99);
+        let hash = header.hash();
+        let tx = test_tx(7);
+        let tx_hash = tx.hash(&NativeCrypto);
+        let body = BlockBody {
+            transactions: vec![tx],
+            ommers: vec![],
+            withdrawals: Some(vec![]),
+        };
+        // Post-snap state: header stored and canonical, but no body/receipts.
+        store.add_block_headers(vec![header.clone()]).await.unwrap();
+        store
+            .forkchoice_update(vec![(99, hash)], 99, hash, None, None)
+            .await
+            .unwrap();
+
+        // Previously-null historical queries.
+        assert!(
+            store.get_block_body(99).await.unwrap().is_none(),
+            "body absent before backfill"
+        );
+        assert!(
+            store
+                .get_transaction_by_hash(tx_hash)
+                .await
+                .unwrap()
+                .is_none(),
+            "tx unlocatable before backfill"
+        );
+        assert!(
+            store.get_receipt(99, 0).await.unwrap().is_none(),
+            "receipt absent before backfill"
+        );
+
+        store
+            .add_backfilled_blocks(
+                vec![BackfilledBlock {
+                    header,
+                    body,
+                    receipts: vec![test_receipt()],
+                    index_transactions: true,
+                }],
+                99,
+            )
+            .await
+            .unwrap();
+
+        // The same queries now return real data.
+        assert!(
+            store.get_block_body(99).await.unwrap().is_some(),
+            "body present after backfill"
+        );
+        assert!(
+            store
+                .get_transaction_by_hash(tx_hash)
+                .await
+                .unwrap()
+                .is_some(),
+            "tx locatable after backfill"
+        );
+        assert!(
+            store.get_receipt(99, 0).await.unwrap().is_some(),
+            "receipt present after backfill"
+        );
+    }
+
+    /// Backfill fills downward in batches; the frontier lowers after each batch,
+    /// persists (doubling as the resume cursor), and leaves no gaps.
+    #[tokio::test]
+    async fn resume_fills_contiguously_without_gaps() {
+        let store = Store::new("", EngineType::InMemory).expect("in-memory store");
+        store.update_earliest_block_number(100).await.unwrap();
+
+        let make_batch = |range: std::ops::Range<u64>| -> Vec<BackfilledBlock> {
+            range
+                .rev()
+                .map(|n| BackfilledBlock {
+                    header: test_header(n),
+                    body: BlockBody {
+                        transactions: vec![],
+                        ommers: vec![],
+                        withdrawals: Some(vec![]),
+                    },
+                    receipts: vec![],
+                    index_transactions: false,
+                })
+                .collect()
+        };
+
+        // Batch 1: fill [90, 99], lowering the frontier to 90.
+        store
+            .add_backfilled_blocks(make_batch(90..100), 90)
+            .await
+            .unwrap();
+        assert_eq!(store.get_earliest_block_number().await.unwrap(), 90);
+
+        // Simulate a restart: the task resumes from the persisted frontier.
+        let resume_from = store.get_earliest_block_number().await.unwrap();
+        assert_eq!(resume_from, 90, "resume reads the persisted frontier");
+
+        // Batch 2: fill [80, 89], lowering the frontier to 80.
+        store
+            .add_backfilled_blocks(make_batch(80..90), 80)
+            .await
+            .unwrap();
+        assert_eq!(store.get_earliest_block_number().await.unwrap(), 80);
+
+        // No gaps: every block in [80, 99] has a stored body.
+        for n in 80..100 {
+            assert!(
+                store
+                    .get_block_body_by_hash(test_header(n).hash())
+                    .await
+                    .unwrap()
+                    .is_some(),
+                "block {n} must have a body (no gap left by resume)"
+            );
+        }
     }
 }
 
