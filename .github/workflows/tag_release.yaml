@@ -168,7 +168,7 @@ jobs:
           - openvm
     runs-on: ubuntu-latest
     env:
-      ERE_TAG: 0.14.0
+      ERE_TAG: 0.16.2
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -197,10 +197,14 @@ jobs:
 
       - name: Compile guest
         run: |
+          compiler_env=()
+          if [ "${{ matrix.zkvm }}" = "zisk" ]; then
+            compiler_env+=(-e "ERE_PROFILE=ethrex")
+            compiler_env+=(-e "ERE_RUSTFLAGS=-C target-feature=+unaligned-scalar-mem")
+          fi
           mkdir -p output
           docker run \
-            ${{ matrix.zkvm == 'zisk' && '-e ERE_PROFILE=ethrex' || '' }} \
-            -e OPENVM_RUST_TOOLCHAIN=nightly-2026-01-18 \
+            "${compiler_env[@]}" \
             -e RUST_LOG=info \
             -v $PWD:/ethrex \
             -v $PWD/output:/output \
