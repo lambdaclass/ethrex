@@ -4,6 +4,7 @@ mod client_version_tests;
 mod create_access_list_tests;
 mod estimate_gas_tests;
 mod fork_choice_tests;
+mod get_block_by_hash_tests;
 mod http_batch_tests;
 mod missing_rpc_methods_tests;
 mod raw_receipts_completeness_tests;
