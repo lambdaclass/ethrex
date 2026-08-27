@@ -26,8 +26,8 @@ use ethrex_p2p::{
     utils::public_key_from_signing_key,
 };
 use ethrex_storage::{
-    DB_COMMIT_THRESHOLD, EngineType, Store, StoreConfig, default_rocksdb_block_cache_size,
-    error::StoreError, has_valid_db, read_chain_id_from_db,
+    DB_COMMIT_THRESHOLD, EngineType, Store, StoreConfig, error::StoreError, has_valid_db,
+    read_chain_id_from_db,
 };
 use local_ip_address::{local_ip, local_ipv6};
 use rand::rngs::OsRng;
@@ -838,12 +838,12 @@ pub async fn init_l1(
     debug!("Preloading KZG trusted setup");
     ethrex_crypto::kzg::warm_up_trusted_setup();
 
-    let store_config = StoreConfig {
-        rocksdb_block_cache_size: opts
-            .rocksdb_block_cache_size
-            .unwrap_or_else(default_rocksdb_block_cache_size),
-        ..StoreConfig::default()
-    };
+    // An explicit size skips memory detection entirely; the default path runs
+    // it once and logs the derivation.
+    let store_config = opts
+        .rocksdb_block_cache_size
+        .map(StoreConfig::with_rocksdb_block_cache_size)
+        .unwrap_or_default();
     let store_result = if opts.skip_genesis_validation {
         init_store_skip_validation_with_config(&datadir, genesis, store_config).await
     } else {

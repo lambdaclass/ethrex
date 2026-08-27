@@ -107,7 +107,9 @@ pub struct Options {
         value_name = "BYTES",
         help = "RocksDB shared block cache size in bytes, the effective ceiling on RocksDB's \
                 resident memory. Defaults to 40% of the memory available to the process \
-                (physical or cgroup limit, whichever is lower), clamped to 512 MiB..=12 GiB.",
+                (physical or cgroup limit, whichever is lower), clamped to 512 MiB..=12 GiB; \
+                where no limit can be detected (no readable /proc, e.g. outside Linux) it \
+                defaults to the 12 GiB ceiling.",
         help_heading = "Storage options",
         env = "ETHREX_ROCKSDB_BLOCK_CACHE_SIZE"
     )]

@@ -259,12 +259,22 @@ pub struct StoreConfig {
     pub persist_channel_capacity: usize,
 }
 
-impl Default for StoreConfig {
-    fn default() -> Self {
+impl StoreConfig {
+    /// Every tuned default except the block cache, which the caller supplies.
+    /// An explicit cache size must come through here rather than overwriting a
+    /// [`StoreConfig::default()`], which would run (and log) the memory
+    /// detection only to discard its result.
+    pub fn with_rocksdb_block_cache_size(rocksdb_block_cache_size: usize) -> Self {
         Self {
-            rocksdb_block_cache_size: default_rocksdb_block_cache_size(),
+            rocksdb_block_cache_size,
             persist_channel_capacity: DEFAULT_PERSIST_CHANNEL_CAPACITY,
         }
+    }
+}
+
+impl Default for StoreConfig {
+    fn default() -> Self {
+        Self::with_rocksdb_block_cache_size(default_rocksdb_block_cache_size())
     }
 }
 
