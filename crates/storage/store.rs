@@ -124,12 +124,40 @@ pub const ROCKSDB_BLOCK_CACHE_MEMORY_PERCENT: usize = 40;
 ///
 /// A fixed default cannot serve both a 64 GiB validator and a 16 GiB CI runner: the
 /// ceiling alone is 71% of a 16 GiB host, which leaves no headroom for the rest of
-/// the node. Sizes to [`ROCKSDB_BLOCK_CACHE_MEMORY_PERCENT`] of the detected limit,
-/// clamped to [`MIN_ROCKSDB_BLOCK_CACHE_SIZE_BYTES`] ..=
+/// the node. Sizes to [`ROCKSDB_BLOCK_CACHE_MEMORY_PERCENT`] of the detected limit —
+/// the smaller of physical memory and the cgroup limit, so a container is sized
+/// against its own allowance rather than the machine it lands on — clamped to
+/// [`MIN_ROCKSDB_BLOCK_CACHE_SIZE_BYTES`] ..=
 /// [`MAX_ROCKSDB_BLOCK_CACHE_SIZE_BYTES`]. Falls back to the ceiling when the limit
 /// cannot be detected, preserving the previous behavior.
 pub fn default_rocksdb_block_cache_size() -> usize {
-    rocksdb_block_cache_size_for(host_memory_limit_bytes())
+    let physical = physical_memory_bytes();
+    let cgroup = cgroup_memory_limit_bytes();
+    let limit = [physical, cgroup].into_iter().flatten().min();
+    let size = rocksdb_block_cache_size_for(limit);
+    // The cache size used to be a knowable constant; now it depends on the
+    // environment, on a code path that exists because a mis-sized cache was
+    // only ever discovered via an OOM kill. Leave the whole derivation in the
+    // log: which detector won, what it read, and what that resolved to.
+    let source = match (physical, cgroup) {
+        (None, None) => "undetected, falling back to the ceiling",
+        (Some(_), None) => "physical memory",
+        (None, Some(_)) => "cgroup limit",
+        (Some(p), Some(c)) => {
+            if c <= p {
+                "cgroup limit"
+            } else {
+                "physical memory"
+            }
+        }
+    };
+    info!(
+        detected_limit_bytes = ?limit,
+        source,
+        cache_bytes = size,
+        "sized RocksDB block cache"
+    );
+    size
 }
 
 /// Pure part of [`default_rocksdb_block_cache_size`]: the clamp, with the detected
@@ -142,17 +170,6 @@ pub fn rocksdb_block_cache_size_for(memory_limit: Option<usize>) -> usize {
         MIN_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
         MAX_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
     )
-}
-
-/// Memory this process may use: the smaller of the host's physical memory and the
-/// cgroup memory limit, so a container gets sized against its own limit rather than
-/// the machine it happens to run on. `None` when nothing could be read (non-Linux,
-/// or an unreadable/absent `/proc`), which callers treat as "unknown".
-fn host_memory_limit_bytes() -> Option<usize> {
-    [physical_memory_bytes(), cgroup_memory_limit_bytes()]
-        .into_iter()
-        .flatten()
-        .min()
 }
 
 /// `MemTotal` from `/proc/meminfo`, in bytes.
