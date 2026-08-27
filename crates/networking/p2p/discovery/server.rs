@@ -12,6 +12,7 @@ use crate::{
     types::{Node, NodeRecord, SharedLocalNode},
 };
 use bytes::BytesMut;
+use ethrex_common::types::ForkId;
 use ethrex_common::utils::keccak;
 use futures::StreamExt;
 use secp256k1::SecretKey;
@@ -31,6 +32,7 @@ use std::{
 };
 use thiserror::Error;
 use tokio::net::UdpSocket;
+use tokio::sync::watch;
 use tokio_util::udp::UdpFramed;
 use tracing::{debug, error, info, trace, warn};
 
@@ -101,6 +103,14 @@ pub struct DiscoveryServer {
     pub(crate) ip_override_locked: bool,
     /// Live-updated local node identity shared with the RPC layer.
     pub shared_local_node: SharedLocalNode,
+    /// Current EIP-2124 fork id, published by the network layer. `None` inside the
+    /// channel means the chain could not supply one yet.
+    ///
+    /// Discovery does not read this from storage: the network layer decides what this
+    /// node announces about itself, and discovery only republishes. Without a refresh
+    /// the `eth` ENR entry goes stale the moment the chain crosses a fork, and geth's
+    /// dial-candidate filter (`NewNodeFilter`) drops us outright.
+    pub(crate) fork_id: watch::Receiver<Option<ForkId>>,
 }
 
 impl std::fmt::Debug for DiscoveryServer {
@@ -119,7 +129,10 @@ impl std::fmt::Debug for DiscoveryServer {
 impl DiscoveryServer {
     /// Starts the discovery actor, advertising `local_node_record` as this
     /// node's ENR.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "caller-supplied values; bundling them would only hide the call site"
+    )]
     pub async fn spawn(
         local_node: Node,
         local_node_record: NodeRecord,
@@ -129,6 +142,7 @@ impl DiscoveryServer {
         bootnodes: Vec<Node>,
         config: DiscoveryConfig,
         shared_local_node: SharedLocalNode,
+        fork_id: watch::Receiver<Option<ForkId>>,
     ) -> Result<(), DiscoveryServerError> {
         debug!("Starting discovery server");
 
@@ -169,6 +183,7 @@ impl DiscoveryServer {
             discv4,
             discv5,
             shared_local_node,
+            fork_id,
         };
 
         // Ping discv4 bootnodes
@@ -400,6 +415,7 @@ impl DiscoveryServer {
         if let Some(discv5) = &mut self.discv5 {
             discv5.cleanup_stale_entries();
         }
+        self.refresh_fork_id();
         if let Some(ip) = self.ip_predictor.check_timeout() {
             self.apply_predicted_ip(ip, "timeout");
         }
@@ -463,6 +479,40 @@ impl DiscoveryServer {
             ITERATIVE_LOOKUP_INTERVAL_MS,
         )
     }
+    /// Republish the ENR when the network layer reports a new fork id.
+    ///
+    /// `has_changed` is only true once per send, so a steady chain costs a flag check
+    /// per tick. A closed channel means the network layer is gone, which is shutdown,
+    /// not an error worth logging every tick. A `None` in the channel is the seed for
+    /// a chain that could not supply a fork id at startup; there is nothing to
+    /// republish until the publisher replaces it.
+    fn refresh_fork_id(&mut self) {
+        if !self.fork_id.has_changed().unwrap_or(false) {
+            return;
+        }
+        let Some(fork_id) = self.fork_id.borrow_and_update().clone() else {
+            return;
+        };
+        match self.local_node_record.set_fork_id(fork_id, &self.signer) {
+            Ok(()) => {
+                info!(
+                    seq = self.local_node_record.seq,
+                    "Chain crossed a fork; republished the local ENR with the new fork id"
+                );
+                // Mirror the re-signed record into the shared identity, as
+                // apply_predicted_ip does: RPC serves the record from there, and
+                // without this it would keep answering with the pre-fork ENR.
+                let mut guard = self
+                    .shared_local_node
+                    .write()
+                    .expect("shared_local_node poisoned");
+                guard.record = self.local_node_record.clone();
+            }
+            // A record we cannot sign is worth surfacing: peers that require an `eth`
+            // entry keep skipping us until this succeeds.
+            Err(e) => warn!(error = ?e, "Could not set the new fork id on the local ENR"),
+        }
+    }
 }
 
 /// Check if a packet is a discv4 packet by verifying the hash.
@@ -509,6 +559,9 @@ impl DiscoveryServer {
             ip_predictor: IpPredictor::default(),
             ip_override_locked: false,
             shared_local_node,
+            // Tests drive the ENR directly; there is no publisher to listen to. The
+            // sender is dropped, so `has_changed` errs and the refresh is a no-op.
+            fork_id: watch::channel(None).1,
         }
     }
 }
@@ -557,6 +610,8 @@ mod tests {
             discv5: None,
             ip_predictor: IpPredictor::default(),
             ip_override_locked,
+            // No publisher in these tests; the dropped sender makes refresh a no-op.
+            fork_id: tokio::sync::watch::channel(None).1,
             shared_local_node,
         }
     }
