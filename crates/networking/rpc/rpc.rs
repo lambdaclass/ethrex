@@ -32,19 +32,23 @@ use crate::eth::{
     block::{
         BlockNumberRequest, GetBlobBaseFee, GetBlockByHashRequest, GetBlockByNumberRequest,
         GetBlockReceiptsRequest, GetBlockTransactionCountRequest, GetRawBlockRequest,
-        GetRawHeaderRequest, GetRawReceipts,
+        GetRawHeaderRequest, GetRawReceipts, GetUncleCountRequest,
     },
-    block_access_list::BlockAccessListRequest,
+    block_access_list::{BlockAccessListRequest, RawBlockAccessListRequest},
     client::{ChainId, Syncing},
     fee_market::FeeHistoryRequest,
-    filter::{self, ActiveFilters, DeleteFilterRequest, FilterChangesRequest, NewFilterRequest},
+    filter::{
+        self, ActiveFilters, DeleteFilterRequest, FilterChangesRequest, NewBlockFilterRequest,
+        NewFilterRequest,
+    },
     gas_price::GasPrice,
     gas_tip_estimator::GasTipEstimator,
     logs::LogsFilter,
     transaction::{
         CallRequest, CreateAccessListRequest, EstimateGasRequest, GetRawTransaction,
-        GetTransactionByBlockHashAndIndexRequest, GetTransactionByBlockNumberAndIndexRequest,
-        GetTransactionByHashRequest, GetTransactionReceiptRequest,
+        GetRawTransactionByBlockAndIndex, GetTransactionByBlockHashAndIndexRequest,
+        GetTransactionByBlockNumberAndIndexRequest, GetTransactionByHashRequest,
+        GetTransactionReceiptRequest,
     },
 };
 use crate::subscription_manager::{SubscriptionManager, SubscriptionManagerProtocol};
@@ -420,6 +424,8 @@ fn get_error_kind(err: &RpcErr) -> &'static str {
         RpcErr::InvalidHeaderFormat(_) => "InvalidHeaderFormat",
         RpcErr::InvalidPayload(_) => "InvalidPayload",
         RpcErr::ProofGenerationUnavailable(_) => "ProofGenerationUnavailable",
+        RpcErr::ResourceNotFound(_) => "ResourceNotFound",
+        RpcErr::PrunedHistoryUnavailable(_) => "PrunedHistoryUnavailable",
     }
 }
 
@@ -1364,6 +1370,18 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
         "eth_getBlockTransactionCountByHash" => {
             GetBlockTransactionCountRequest::call(req, context).await
         }
+        "eth_getUncleCountByBlockNumber" => GetUncleCountRequest::call(req, context).await,
+        "eth_getUncleCountByBlockHash" => GetUncleCountRequest::call(req, context).await,
+        // `eth_`-namespace spellings of the raw-transaction getters. geth,
+        // nethermind, reth and erigon all serve these; only the `debug_` form
+        // existed here, so tooling probing the `eth_` names saw them as missing.
+        "eth_getRawTransactionByHash" => GetRawTransaction::call(req, context).await,
+        "eth_getRawTransactionByBlockHashAndIndex" => {
+            GetRawTransactionByBlockAndIndex::call(req, context).await
+        }
+        "eth_getRawTransactionByBlockNumberAndIndex" => {
+            GetRawTransactionByBlockAndIndex::call(req, context).await
+        }
         "eth_getTransactionByBlockNumberAndIndex" => {
             GetTransactionByBlockNumberAndIndexRequest::call(req, context).await
         }
@@ -1384,6 +1402,9 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
         "eth_getLogs" => LogsFilter::call(req, context).await,
         "eth_newFilter" => {
             NewFilterRequest::stateful_call(req, context.storage, context.active_filters).await
+        }
+        "eth_newBlockFilter" => {
+            NewBlockFilterRequest::stateful_call(req, context.storage, context.active_filters).await
         }
         "eth_uninstallFilter" => {
             DeleteFilterRequest::stateful_call(req, context.storage, context.active_filters)
@@ -1419,7 +1440,7 @@ pub async fn map_testing_requests(
 /// Routes `debug_*` namespace requests to their handlers.
 ///
 /// Handles debugging and introspection methods:
-/// - Raw data: `debug_getRawHeader`, `debug_getRawBlock`, `debug_getRawTransaction`, `debug_getRawReceipts`
+/// - Raw data: `debug_getRawHeader`, `debug_getRawBlock`, `debug_getRawTransaction`, `debug_getRawReceipts`, `debug_getRawBlockAccessList`
 /// - Execution witness: `debug_executionWitness` (for stateless validation)
 /// - Tracing: `debug_traceTransaction`, `debug_traceBlockByNumber`, `debug_traceBlockByHash`, `debug_traceCall`
 pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
@@ -1428,6 +1449,7 @@ pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Res
         "debug_getRawBlock" => GetRawBlockRequest::call(req, context).await,
         "debug_getRawTransaction" => GetRawTransaction::call(req, context).await,
         "debug_getRawReceipts" => GetRawReceipts::call(req, context).await,
+        "debug_getRawBlockAccessList" => RawBlockAccessListRequest::call(req, context).await,
         "debug_executionWitness" => ExecutionWitnessRequest::call(req, context).await,
         "debug_executionWitnessByBlockHash" => {
             ExecutionWitnessByBlockHashRequest::call(req, context).await
@@ -1534,6 +1556,7 @@ pub fn map_web3_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Val
 pub async fn map_net_requests(req: &RpcRequest, contex: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "net_version" => net::version(req, contex),
+        "net_listening" => net::listening(req, contex),
         "net_peerCount" => net::peer_count(req, contex).await,
         unknown_net_method => Err(RpcErr::MethodNotFound(unknown_net_method.to_owned())),
     }
@@ -1940,6 +1963,24 @@ mod tests {
         let expected_response_string =
             format!(r#"{{"id":67,"jsonrpc": "2.0","result": "{chain_id}"}}"#);
         let expected_response = to_rpc_response_success_value(&expected_response_string);
+        assert_eq!(response.to_string(), expected_response.to_string());
+    }
+
+    #[tokio::test]
+    async fn net_listening_test() {
+        let body = r#"{"jsonrpc":"2.0","method":"net_listening","params":[],"id":67}"#;
+        let request: RpcRequest = serde_json::from_str(body).expect("serde serialization failed");
+        let mut storage =
+            Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+        storage
+            .set_chain_config(&example_chain_config())
+            .await
+            .unwrap();
+        let context = default_context_with_storage(storage).await;
+        let result = map_http_requests(&request, context).await;
+        let response = rpc_response(request.id, result).unwrap();
+        let expected_response =
+            to_rpc_response_success_value(r#"{"id":67,"jsonrpc": "2.0","result": true}"#);
         assert_eq!(response.to_string(), expected_response.to_string());
     }
 

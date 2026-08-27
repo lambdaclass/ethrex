@@ -13,14 +13,17 @@ use tokio::{
     sync::Mutex,
     time::{Duration, sleep},
 };
-use tokio_util::sync::CancellationToken;
+use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{debug, error, info, warn};
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::{
     peer_handler::PeerHandler,
-    sync::{SyncDiagnostics, SyncMode, Syncer, sync_head_executed},
+    sync::{
+        BackfillConfig, HistoryChain, SyncDiagnostics, SyncMode, Syncer, run_history_backfill,
+        sync_head_executed,
+    },
 };
 
 /// How long to wait for a forkchoice head to arrive via `engine_newPayload` before
@@ -54,6 +57,7 @@ pub struct SyncManager {
 }
 
 impl SyncManager {
+    #[allow(clippy::too_many_arguments)]
     pub async fn new(
         peer_handler: PeerHandler,
         sync_mode: &SyncMode,
@@ -61,8 +65,16 @@ impl SyncManager {
         blockchain: Arc<Blockchain>,
         store: Store,
         datadir: PathBuf,
+        backfill_config: BackfillConfig,
+        tracker: TaskTracker,
     ) -> Self {
         let snap_enabled = Arc::new(AtomicBool::new(matches!(sync_mode, SyncMode::Snap)));
+
+        // Clone the shared handles the optional backfill task needs before
+        // `peer_handler`/`cancel_token`/`blockchain` are moved into the Syncer below.
+        let backfill_peers = peer_handler.clone();
+        let backfill_cancel = cancel_token.clone();
+        let backfill_blockchain = blockchain.clone();
 
         // Fetch checkpoint once to avoid duplicate DB reads
         let has_checkpoint = store
@@ -106,6 +118,23 @@ impl SyncManager {
             datadir,
             diagnostics.clone(),
         )));
+
+        // Spawn the optional historical-chain backfill task. It idles until
+        // initial sync finishes, then fills bodies/receipts below the pivot down
+        // to the configured floor, resuming across restarts via the persisted
+        // frontier. A no-op when `--history.chain off`.
+        if backfill_config.mode != HistoryChain::Off {
+            // Tracked like every other long-lived task, so shutdown waits for it
+            // rather than dropping it mid-batch.
+            tracker.spawn(run_history_backfill(
+                backfill_peers,
+                store.clone(),
+                backfill_blockchain,
+                backfill_config,
+                backfill_cancel,
+                diagnostics.clone(),
+            ));
+        }
         let sync_manager = Self {
             snap_enabled,
             syncer,
@@ -292,7 +321,7 @@ impl SyncManager {
 /// is a missing forkchoice head likely to be a payload that has not reached us through
 /// `engine_newPayload` yet rather than a real gap to download.
 async fn was_recently_at_tip(store: &Store) -> bool {
-    let latest = match store.get_latest_block_number().await {
+    let latest = match store.get_latest_block_number() {
         Ok(number) if number > 0 => number,
         _ => return false,
     };

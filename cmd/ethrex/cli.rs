@@ -17,8 +17,11 @@ use ethrex_blockchain::{
 };
 use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis, validate_block_body};
 use ethrex_p2p::{
-    discovery::INITIAL_LOOKUP_INTERVAL_MS, peer_table::TARGET_PEERS, sync::SyncMode,
-    tx_broadcaster::BROADCAST_INTERVAL_MS, types::Node,
+    discovery::INITIAL_LOOKUP_INTERVAL_MS,
+    peer_table::TARGET_PEERS,
+    sync::{HistoryChain, SyncMode},
+    tx_broadcaster::BROADCAST_INTERVAL_MS,
+    types::Node,
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{DB_COMMIT_THRESHOLD, error::StoreError, has_valid_db};
@@ -102,27 +105,47 @@ pub struct Options {
     #[arg(
         long = "rocksdb.block-cache-size",
         value_name = "BYTES",
-        default_value_t = ethrex_storage::DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
-        help = "RocksDB shared block cache size in bytes (default 12 GiB). \
-                Bounds RocksDB resident memory; lower only on memory-constrained hosts.",
-        long_help = "RocksDB shared block cache size in bytes. With cache_index_and_filter_blocks \
-                     enabled it holds data blocks plus the per-SST index and bloom-filter blocks, \
-                     so it is the effective ceiling on RocksDB's resident memory.\n\
-                     \n\
-                     Default 12 GiB keeps the filter/index working set resident plus hot EVM state. \
-                     A sweep on a synced mainnet node (32 GiB cap) found 8-16 GiB all keep up with \
-                     head-following (filters resident, disk near-idle, no slow blocks); larger gives \
-                     no gain because the OS page cache backstops the uncompressed state CFs, and \
-                     ~8 GiB is the floor where the filter set starts to thrash.\n\
-                     \n\
-                     Lower only on memory-constrained hosts, accepting reduced throughput. \
-                     ETHREX_ROCKSDB_BLOCK_CACHE_SIZE sets the same value.",
+        help = "RocksDB shared block cache size in bytes, the effective ceiling on RocksDB's \
+                resident memory. Defaults to 40% of the memory available to the process \
+                (physical or cgroup limit, whichever is lower), clamped to 512 MiB..=12 GiB; \
+                where no limit can be detected (no readable /proc, e.g. outside Linux) it \
+                defaults to the 12 GiB ceiling.",
         help_heading = "Storage options",
-        env = "ETHREX_ROCKSDB_BLOCK_CACHE_SIZE",
+        env = "ETHREX_ROCKSDB_BLOCK_CACHE_SIZE"
     )]
-    pub rocksdb_block_cache_size: usize,
+    pub rocksdb_block_cache_size: Option<usize>,
     #[arg(long = "syncmode", default_value = "snap", value_name = "SYNC_MODE", value_parser = utils::parse_sync_mode, help = "The way in which the node will sync its state.", long_help = "Can be either \"full\" or \"snap\" with \"snap\" as default value.", help_heading = "P2P options", env = "ETHREX_SYNCMODE")]
     pub syncmode: SyncMode,
+    #[arg(
+        long = "history.chain",
+        default_value = "off",
+        value_name = "HISTORY_CHAIN",
+        value_parser = utils::parse_history_chain,
+        help = "Backfill historical chain data (bodies + receipts) below the snap pivot.",
+        long_help = "Optionally backfill historical block bodies and receipts after snap sync so \
+                     the node can serve historical block, transaction, receipt and log queries. \
+                     One of \"off\" (default: headers-only below the pivot), \"postmerge\" \
+                     (backfill down to the merge block), \"all\" (as far back as receipts are \
+                     decodable — down to the Byzantium block, not genesis — best-effort as many \
+                     peers no longer serve pre-merge history), or an explicit BLOCK NUMBER \
+                     to backfill down to only that block — use this to keep a recent slice of \
+                     history instead of everything back to the merge. A block number below the \
+                     merge block is honoured but is best-effort like \"all\", and anything below \
+                     Byzantium is clamped up to it. Enabling this adds substantial disk usage. \
+                     It does not enable historical state queries (this is not an archive node).",
+        help_heading = "P2P options",
+        env = "ETHREX_HISTORY_CHAIN",
+    )]
+    pub history_chain: HistoryChain,
+    #[arg(
+        long = "history.transactions",
+        default_value = "0",
+        value_name = "BLOCKS",
+        help = "Blocks of backfilled history to keep the transaction index for (0 = the entire backfilled range).",
+        help_heading = "P2P options",
+        env = "ETHREX_HISTORY_TRANSACTIONS"
+    )]
+    pub history_transactions: u64,
     #[arg(
         long = "metrics.addr",
         value_name = "ADDRESS",
@@ -456,7 +479,7 @@ pub struct Options {
         long = "p2p.lookup-interval",
         default_value_t = INITIAL_LOOKUP_INTERVAL_MS,
         value_name = "INITIAL_LOOKUP_INTERVAL",
-        help = "Initial Lookup Time Interval (ms) to trigger each Discovery lookup message and RLPx connection attempt.",
+        help = "Initial time interval (ms) between RLPx connection attempts. Widens towards 600ms as the target peer count is approached.",
         help_heading = "P2P options",
         env = "ETHREX_P2P_LOOKUP_INTERVAL"
     )]
@@ -576,8 +599,10 @@ impl Default for Options {
             network: Default::default(),
             bootnodes: Default::default(),
             datadir: Default::default(),
-            rocksdb_block_cache_size: ethrex_storage::DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
+            rocksdb_block_cache_size: None,
             syncmode: Default::default(),
+            history_chain: Default::default(),
+            history_transactions: Default::default(),
             metrics_addr: "0.0.0.0".to_owned(),
             metrics_port: Default::default(),
             metrics_enabled: Default::default(),
@@ -592,7 +617,7 @@ impl Default for Options {
             mempool_max_queued_txs_per_account: DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT,
             tx_broadcasting_time_interval: Default::default(),
             target_peers: Default::default(),
-            lookup_interval: Default::default(),
+            lookup_interval: INITIAL_LOOKUP_INTERVAL_MS,
             extra_data: get_minimal_client_version(),
             gas_limit: DEFAULT_BUILDER_GAS_CEIL,
             max_blobs_per_block: None,
@@ -1443,6 +1468,43 @@ mod tests {
     fn http_api_rejects_unknown_namespace() {
         let result = CLI::try_parse_from(["ethrex", "--http.api", "eth,bogus"]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn history_chain_defaults_to_off() {
+        let cli = CLI::parse_from(["ethrex"]);
+        assert_eq!(cli.opts.history_chain, HistoryChain::Off);
+    }
+
+    #[test]
+    fn history_chain_parses_keywords() {
+        for (arg, expected) in [
+            ("off", HistoryChain::Off),
+            ("postmerge", HistoryChain::PostMerge),
+            ("all", HistoryChain::All),
+        ] {
+            let cli = CLI::parse_from(["ethrex", "--history.chain", arg]);
+            assert_eq!(
+                cli.opts.history_chain, expected,
+                "for --history.chain {arg}"
+            );
+        }
+    }
+
+    /// Operators who want only a recent slice of history pass an explicit floor
+    /// block instead of `postmerge`/`all`.
+    #[test]
+    fn history_chain_parses_a_floor_block_number() {
+        let cli = CLI::parse_from(["ethrex", "--history.chain", "22000000"]);
+        assert_eq!(cli.opts.history_chain, HistoryChain::Block(22_000_000));
+    }
+
+    #[test]
+    fn history_chain_rejects_invalid_values() {
+        for arg in ["bogus", "-1", "22_000_000", "1.5", ""] {
+            let result = CLI::try_parse_from(["ethrex", "--history.chain", arg]);
+            assert!(result.is_err(), "--history.chain {arg:?} must be rejected");
+        }
     }
 
     /// Flags hardcoded by external launchers (kurtosis ethereum-package, docker

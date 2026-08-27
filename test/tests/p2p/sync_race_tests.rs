@@ -29,12 +29,13 @@ use ethrex_common::{
     H160, H256,
     types::{Block, BlockHeader, DEFAULT_BUILDER_GAS_CEIL, ELASTICITY_MULTIPLIER, Genesis},
 };
-use ethrex_p2p::sync::{SyncMode, sync_head_executed};
+use ethrex_p2p::sync::{BackfillConfig, HistoryChain, SyncMode, sync_head_executed};
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_rpc::test_utils::dummy_peer_handler;
 use ethrex_storage::{EngineType, Store};
 use ethrex_trie::EMPTY_TRIE_HASH;
 use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 
 fn now_secs() -> u64 {
     SystemTime::now()
@@ -99,6 +100,12 @@ async fn sync_manager_for(store: &Store, blockchain: Arc<Blockchain>) -> SyncMan
         blockchain,
         store.clone(),
         ".".into(),
+        // This test exercises the FCU/newPayload heal wait, not backfill.
+        BackfillConfig {
+            mode: HistoryChain::Off,
+            tx_index_horizon: 0,
+        },
+        TaskTracker::new(),
     )
     .await
 }
