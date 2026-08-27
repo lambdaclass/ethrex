@@ -346,6 +346,18 @@ impl NodeRecordPairs {
     pub fn try_from_raw_pairs(
         pairs: Vec<(Bytes, Bytes)>,
     ) -> Result<NodeRecordPairs, RLPDecodeError> {
+        // EIP-778 requires the key/value pairs to be sorted by key and unique.
+        // `encode_pairs` already emits them that way, but decoding accepted any
+        // order, so a record carrying a duplicate key kept whichever copy came
+        // last and one carrying unordered keys re-encoded into a different byte
+        // string than the one that was signed.
+        for window in pairs.windows(2) {
+            if window[0].0 >= window[1].0 {
+                return Err(RLPDecodeError::Custom(
+                    "Invalid node record, key/value pairs must be sorted by key and unique".into(),
+                ));
+            }
+        }
         let mut decoded_pairs = NodeRecordPairs::default();
         for (key, value) in pairs {
             match key.as_ref() {
