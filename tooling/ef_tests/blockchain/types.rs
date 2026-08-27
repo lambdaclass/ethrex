@@ -613,14 +613,15 @@ impl From<Transaction> for FrameTransaction {
         // the ENTRY_POINT the caller-side fields are shaped around, and the real
         // sender is the explicit `sender` field, not a recovered signature.
         //
-        // The `u64` scalars saturate rather than panic: a fixture may carry a
-        // chain id, nonce or frame gas limit past `u64` deliberately, to assert
-        // the transaction is rejected for it, and this `From` has to stay total
-        // to get there. Saturating cannot hide such a fixture -- the block is
-        // rebuilt from these fields and validated against the header the fixture
-        // ships, so a field that changed under conversion fails the transactions
-        // root. The fee fields need no such handling: they are `U256` on both
-        // sides and pass through as they are.
+        // The scalars saturate rather than panic: a fixture may carry a chain
+        // id, nonce, frame gas limit, mode, flags or signature scheme past the
+        // width of the field ethrex holds it in -- deliberately, to assert the
+        // transaction is rejected for it -- and this `From` has to stay total to
+        // get there. Saturating cannot hide such a fixture: the block is rebuilt
+        // from these fields and validated against the header the fixture ships,
+        // so a field that changed under conversion fails the transactions root.
+        // The fee fields need no such handling: they are `U256` on both sides
+        // and pass through as they are.
         FrameTransaction {
             chain_id: val
                 .chain_id
@@ -633,8 +634,8 @@ impl From<Transaction> for FrameTransaction {
                 .unwrap_or_default()
                 .into_iter()
                 .map(|f| Frame {
-                    mode: f.mode.try_into().unwrap(),
-                    flags: f.flags.try_into().unwrap(),
+                    mode: f.mode.try_into().unwrap_or(u8::MAX),
+                    flags: f.flags.try_into().unwrap_or(u8::MAX),
                     target: f.target,
                     gas_limits: GasLimits {
                         execution: f.gas_limit.try_into().unwrap_or(u64::MAX),
@@ -649,7 +650,7 @@ impl From<Transaction> for FrameTransaction {
                 .unwrap_or_default()
                 .into_iter()
                 .map(|s| FrameSignature {
-                    scheme: s.scheme.try_into().unwrap(),
+                    scheme: s.scheme.try_into().unwrap_or(u8::MAX),
                     signer: s.signer,
                     msg: s.msg,
                     signature: s.signature,
