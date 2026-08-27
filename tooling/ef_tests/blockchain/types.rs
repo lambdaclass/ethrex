@@ -2,7 +2,8 @@ use bytes::Bytes;
 use ethrex_common::types::{
     Account as ethrexAccount, AccountInfo, Block as CoreBlock, BlockBody, Code, EIP1559Transaction,
     EIP2930Transaction, EIP4844Transaction, EIP7702Transaction, Frame, FrameSignature,
-    FrameTransaction, LegacyTransaction, Transaction as ethrexTransaction, TxKind, code_hash,
+    FrameTransaction, GasLimits, LegacyTransaction, Transaction as ethrexTransaction, TxKind,
+    code_hash,
 };
 use ethrex_common::types::{Genesis, GenesisAccount, Withdrawal};
 use ethrex_common::{Address, Bloom, H64, H256, U256, types::BlockHeader};
@@ -261,7 +262,10 @@ pub struct FrameItem {
     pub flags: U256,
     #[serde(default, deserialize_with = "deserialize_empty_as_none_address")]
     pub target: Option<Address>,
+    /// EIP-8141 exposes a frame's two gas budgets separately: `gasLimit` is the
+    /// execution dimension and `stateGasLimit` the state dimension.
     pub gas_limit: U256,
+    pub state_gas_limit: U256,
     pub value: U256,
     #[serde(with = "ethrex_common::serde_utils::bytes")]
     pub data: Bytes,
@@ -632,7 +636,10 @@ impl From<Transaction> for FrameTransaction {
                     mode: f.mode.try_into().unwrap(),
                     flags: f.flags.try_into().unwrap(),
                     target: f.target,
-                    gas_limit: f.gas_limit.try_into().unwrap_or(u64::MAX),
+                    gas_limits: GasLimits {
+                        execution: f.gas_limit.try_into().unwrap_or(u64::MAX),
+                        state: f.state_gas_limit.try_into().unwrap_or(u64::MAX),
+                    },
                     value: f.value,
                     data: f.data,
                 })

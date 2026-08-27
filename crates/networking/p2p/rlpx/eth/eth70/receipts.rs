@@ -303,7 +303,7 @@ mod tests {
     /// eth/70 and eth/71, both of which serve `Receipts70`.
     #[test]
     fn receipts70_frame_receipt_matches_the_eip8141_wire_form() {
-        use ethrex_common::types::FrameReceipt;
+        use ethrex_common::types::{FrameReceipt, GasUsed};
         use ethrex_rlp::encode::RLPEncode as _;
         use ethrex_rlp::structs::Encoder as RlpEncoder;
 
@@ -311,7 +311,10 @@ mod tests {
         let frame_receipts = vec![
             FrameReceipt {
                 status: ethrex_common::types::FRAME_RECEIPT_STATUS_SUCCESS,
-                gas_used: 21_000,
+                gas_used: GasUsed {
+                    execution: 21_000,
+                    state: 0,
+                },
                 logs: vec![Log {
                     address: Address::from_low_u64_be(0xAA),
                     topics: vec![H256::from_low_u64_be(1)],
@@ -320,7 +323,10 @@ mod tests {
             },
             FrameReceipt {
                 status: ethrex_common::types::FRAME_RECEIPT_STATUS_SKIPPED,
-                gas_used: 0,
+                gas_used: GasUsed {
+                    execution: 0,
+                    state: 0,
+                },
                 logs: vec![],
             },
         ];

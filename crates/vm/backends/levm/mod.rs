@@ -31,8 +31,8 @@ use ethrex_common::{
     Address, U256,
     types::{
         AccessList, AccountUpdate, Block, BlockHeader, EIP1559Transaction, Fork, FrameReceipt,
-        GWEI_TO_WEI, GenericTransaction, INITIAL_BASE_FEE, Log, Receipt, Transaction, TxKind,
-        Withdrawal, requests::Requests,
+        GWEI_TO_WEI, GasUsed, GenericTransaction, INITIAL_BASE_FEE, Log, Receipt, Transaction,
+        TxKind, Withdrawal, requests::Requests,
     },
 };
 #[cfg(feature = "rayon")]
@@ -115,7 +115,7 @@ pub struct LEVM;
 /// execution report's `frame_results`. Returns `None` when the report carries
 /// no frame results.
 fn frame_receipts_from(
-    frame_results: Option<Vec<(u8, u64, Vec<Log>)>>,
+    frame_results: Option<Vec<(u8, GasUsed, Vec<Log>)>>,
 ) -> Option<Vec<FrameReceipt>> {
     frame_results.map(|results| {
         results
@@ -154,7 +154,8 @@ fn check_gas_limit(
 ///
 /// The full `tx.gas` is used in both dimensions (only the regular dimension is
 /// capped at `TX_MAX_GAS_LIMIT`); intrinsic underfunding is rejected separately
-/// in transaction validation, not here. Mirrors
+/// in transaction validation, not here. A frame transaction (EIP-8141) reserves
+/// exact per-dimension budgets instead -- see the early return below. Mirrors
 /// `src/ethereum/forks/amsterdam/fork.py` `check_transaction` at the
 /// `tests-glamsterdam-devnet@v7.1.0` spec.
 ///
@@ -171,6 +172,31 @@ pub fn check_2d_gas_allowance(
     let tx_gas = tx.gas_limit();
     let regular_available = block_gas_limit.saturating_sub(block_gas_used_regular);
     let state_available = block_gas_limit.saturating_sub(block_gas_used_state);
+
+    // EIP-8141: a frame transaction declares its state budgets explicitly per
+    // frame, so its reservations are exact per dimension instead of the reservoir
+    // model's whole-gas-limit-in-both-dimensions. The execution reservation carries
+    // the calldata floor, which binds the execution dimension; the state
+    // reservation is the frames' total state budget.
+    if let Transaction::FrameTransaction(frame_tx) = tx {
+        let execution_reservation = frame_tx.execution_gas_cap_usage();
+        let state_reservation = frame_tx.total_frame_state_gas();
+        if execution_reservation > regular_available {
+            return Err(EvmError::Transaction(format!(
+                "Gas allowance exceeded: regular dim worst-case {execution_reservation} > \
+                 available {regular_available} (block_gas_used_regular={block_gas_used_regular}, \
+                 block_gas_limit={block_gas_limit})"
+            )));
+        }
+        if state_reservation > state_available {
+            return Err(EvmError::Transaction(format!(
+                "Gas allowance exceeded: state dim worst-case {state_reservation} > \
+                 available {state_available} (block_gas_used_state={block_gas_used_state}, \
+                 block_gas_limit={block_gas_limit})"
+            )));
+        }
+        return Ok(());
+    }
 
     // Regular dim: worst-case regular contribution = full tx.gas, capped at
     // TX_MAX_GAS_LIMIT. The spec uses the full tx gas with no intrinsic
