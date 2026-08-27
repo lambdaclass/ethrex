@@ -16,6 +16,10 @@
 
 - Make `eth_estimateGas`'s plain-transfer short circuit fire. Its condition tested whether the recipient account existed rather than whether it had code, so every transfer to an ordinary funded wallet ran the full binary search instead of returning `TRANSACTION_GAS` at once [#7211](https://github.com/lambdaclass/ethrex/pull/7211)
 
+### 2026-08-03
+
+- Size the default RocksDB shared block cache from the memory the process may actually use — 40% of the smaller of physical memory and the cgroup limit, clamped to 512 MiB..=12 GiB — instead of a flat 12 GiB. The flat default was 71% of a 16 GiB host, leaving no headroom for trie layers, execution and the mempool; `--rocksdb.block-cache-size` still overrides it. Detection reads `/proc`, so outside Linux the default stays at the 12 GiB ceiling; startup logs the detected limit and the resolved size
+
 ### 2026-07-22
 
 - Unify full-sync batch import onto the per-block execution pipeline, validating every block's state root and reusing the pipeline's BAL-driven parallel execution instead of the bespoke "execute all, apply once" batch path [#7008](https://github.com/lambdaclass/ethrex/pull/7008)

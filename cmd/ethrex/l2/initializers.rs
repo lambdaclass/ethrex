@@ -224,10 +224,13 @@ pub async fn init_l2(
     let network = get_network(&opts.node_opts);
 
     let genesis = network.get_genesis()?;
-    let store_config = StoreConfig {
-        rocksdb_block_cache_size: opts.node_opts.rocksdb_block_cache_size,
-        ..StoreConfig::default()
-    };
+    // An explicit size skips memory detection entirely; the default path runs
+    // it once and logs the derivation.
+    let store_config = opts
+        .node_opts
+        .rocksdb_block_cache_size
+        .map(StoreConfig::with_rocksdb_block_cache_size)
+        .unwrap_or_default();
     let store = init_store_with_config(&datadir, genesis.clone(), store_config).await?;
     let rollup_store = init_rollup_store(&rollup_store_dir).await;
 
