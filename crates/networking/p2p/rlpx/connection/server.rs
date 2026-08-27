@@ -1475,6 +1475,7 @@ async fn handle_incoming_message(
             | Message::GetStorageRanges(_)
             | Message::GetByteCodes(_)
             | Message::GetTrieNodes(_)
+            | Message::GetCells(_)
     );
     if is_data_request && !check_serve_request_rate(state) {
         debug!(
@@ -1876,7 +1877,8 @@ async fn handle_incoming_message(
                                     };
                                     // only add C_extra when this peer is a provider.
                                     let mut target = custody;
-                                    if let Some(extra_col) = pick_random_extra_column(custody, hash)
+                                    if let Some(extra_col) =
+                                        pick_random_extra_column(custody, local_node_id, hash)
                                     {
                                         target |= 1u128 << extra_col;
                                     }
@@ -1935,6 +1937,19 @@ async fn handle_incoming_message(
                     PooledTransactions72::new(response.id, response.pooled_transactions);
                 send(state, Message::PooledTransactions72(response72)).await?;
             } else {
+                // A blob tx ingested over eth/72 may sit in the pool with an
+                // empty bundle (cells fetched separately). Pre-72 responses
+                // carry blob txs with their full payload, and a wrapper whose
+                // blob count disagrees with its commitments is a protocol
+                // violation the peer disconnects us for — skip those instead,
+                // which `GetPooledTransactions` explicitly allows.
+                let mut response = response;
+                response.pooled_transactions.retain(|tx| match tx {
+                    P2PTransaction::EIP4844TransactionWithBlobs(wrapped) => {
+                        wrapped.blobs_bundle.blobs.len() == wrapped.blobs_bundle.commitments.len()
+                    }
+                    _ => true,
+                });
                 send(state, Message::PooledTransactions(response)).await?;
             }
             state.txs_sent_to_peer += batch_size;
@@ -2092,9 +2107,28 @@ async fn handle_incoming_message(
                 if state.blockchain.mempool.blob_sampling_enabled {
                     let peer_id = state.node.node_id();
                     let mempool = &state.blockchain.mempool;
-                    if let Some((_announced, requested_hashes, role, _)) = &removed_request {
-                        // The provider path already asked for the full payload; only the
-                        // sampler path still needs custody-aligned cells.
+                    let local_pubkey = public_key_from_signing_key(&state.signer);
+                    let local_node_id = node_id(&local_pubkey);
+                    if let Some((announced, requested_hashes, role, _)) = &removed_request {
+                        // Provider role: the eth/72 PooledTransactions response is
+                        // always elided, so the blobs never arrive with the body.
+                        // A provider must end up holding the full payload (EIP-8070),
+                        // and the only way to obtain it on an eth/72 connection is
+                        // GetCells — request every column from this peer, which
+                        // advertised full availability. Cells already held are
+                        // subtracted at flush time.
+                        if *role == BlobFetchRole::Provider {
+                            let blob_hashes: Vec<H256> = announced
+                                .transaction_types
+                                .iter()
+                                .zip(announced.transaction_hashes.iter())
+                                .filter(|&(&ty, hash)| ty == 3 && requested_hashes.contains(hash))
+                                .map(|(_, &hash)| hash)
+                                .collect();
+                            if !blob_hashes.is_empty() {
+                                state.pending_cell_requests.push((blob_hashes, u128::MAX));
+                            }
+                        }
                         if *role == BlobFetchRole::Sampler {
                             for &tx_hash in requested_hashes.iter() {
                                 // Providers were recorded at announce time (provider-gated);
@@ -2126,8 +2160,11 @@ async fn handle_incoming_message(
                                         .unwrap_or(u128::MAX);
                                     let mut target = custody;
                                     if peer_mask == u128::MAX
-                                        && let Some(extra_col) =
-                                            pick_random_extra_column(custody, tx_hash)
+                                        && let Some(extra_col) = pick_random_extra_column(
+                                            custody,
+                                            local_node_id,
+                                            tx_hash,
+                                        )
                                     {
                                         target |= 1u128 << extra_col;
                                     }
@@ -2555,14 +2592,24 @@ async fn flush_pending_cell_requests(state: &mut Established) -> Result<(), Peer
         return Ok(());
     }
 
-    // Merge all pending requests into a flat list of hashes with their masks.
+    // Merge all pending requests into a flat list of hashes with their masks,
+    // dropping the columns already held: requests are queued from several
+    // triggers (announce retrigger, tx-body response, custody sweep) and by
+    // every connection, so without this the same cells are re-requested after
+    // another peer already delivered them.
     let mut all_hashes: Vec<H256> = Vec::new();
     let mut all_masks: Vec<u128> = Vec::new();
     for (hashes, mask) in &pending {
         for &h in hashes {
-            all_hashes.push(h);
-            all_masks.push(*mask);
+            let missing = mask & !state.blockchain.mempool.available_cell_mask(h);
+            if missing != 0 {
+                all_hashes.push(h);
+                all_masks.push(missing);
+            }
         }
+    }
+    if all_hashes.is_empty() {
+        return Ok(());
     }
 
     // Stay under the devp2p `caps/eth.md` soft limit of 64 hashes per GetCells, and

@@ -106,7 +106,7 @@ fn extra_column_never_returns_a_custody_bit() {
     // The returned column must NOT be set in custody_mask.
     let custody = 0b1010_1010u128;
     let hash = H256::from_low_u64_be(1);
-    if let Some(col) = pick_random_extra_column(custody, hash) {
+    if let Some(col) = pick_random_extra_column(custody, H256::from_low_u64_be(42), hash) {
         assert_eq!(
             (custody >> col) & 1,
             0,
@@ -118,7 +118,10 @@ fn extra_column_never_returns_a_custody_bit() {
 #[test]
 fn extra_column_returns_none_when_all_128_set() {
     // When all columns are in custody, there is no extra column.
-    assert_eq!(pick_random_extra_column(u128::MAX, H256::zero()), None);
+    assert_eq!(
+        pick_random_extra_column(u128::MAX, H256::from_low_u64_be(42), H256::zero()),
+        None
+    );
 }
 
 #[test]
@@ -126,6 +129,22 @@ fn extra_column_returns_value_when_one_slot_free() {
     // Exactly one free column: pick_random_extra_column must return that column.
     let custody = u128::MAX ^ 1; // all set except column 0
     let hash = H256::from_low_u64_be(7);
-    let col = pick_random_extra_column(custody, hash).expect("should find free column 0");
+    let col = pick_random_extra_column(custody, H256::from_low_u64_be(42), hash)
+        .expect("should find free column 0");
     assert_eq!(col, 0);
+}
+
+#[test]
+fn extra_column_differs_across_nodes() {
+    // The extra column must carry per-node entropy: if every sampler derived it
+    // from the tx hash alone, the whole network would oversample one column and
+    // C_extra would add no diversity. With 96 free columns, at least one of 64
+    // distinct node ids picking a different column is overwhelmingly certain;
+    // equality across all of them means the node id is not in the preimage.
+    let custody = 0xFFFF_FFFFu128; // columns 0..32 in custody, 96 free
+    let hash = H256::from_low_u64_be(99);
+    let first = pick_random_extra_column(custody, H256::from_low_u64_be(0), hash);
+    let diverged = (1u64..64)
+        .any(|node| pick_random_extra_column(custody, H256::from_low_u64_be(node), hash) != first);
+    assert!(diverged, "extra column must depend on the local node id");
 }

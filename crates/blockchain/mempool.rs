@@ -1755,10 +1755,15 @@ impl Mempool {
         let mut inner = self.write()?;
         let MempoolInner {
             cells,
+            provider_announcers,
             transaction_pool,
             ..
         } = &mut *inner;
         cells.retain(|hash, _| transaction_pool.contains_key(hash));
+        // Announcer tracking follows the same lifetime as the cells: without this
+        // the map keeps a key (and a per-peer set) for every blob tx that ever
+        // passed through the pool.
+        provider_announcers.retain(|hash, _| transaction_pool.contains_key(hash));
         Ok(())
     }
 

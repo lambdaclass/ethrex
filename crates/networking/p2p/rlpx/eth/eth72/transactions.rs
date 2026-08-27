@@ -311,13 +311,17 @@ struct Elided<'a>(&'a P2PTransaction);
 
 impl RLPEncode for Elided<'_> {
     fn encode(&self, buf: &mut dyn BufMut) {
-        let canonical = match self.0 {
+        match self.0 {
             P2PTransaction::EIP4844TransactionWithBlobs(wrapped) => {
-                encode_elided_canonical(wrapped)
+                <[u8] as RLPEncode>::encode(&encode_elided_canonical(wrapped), buf)
             }
-            other => other.encode_canonical_to_vec(),
-        };
-        <[u8] as RLPEncode>::encode(&canonical, buf);
+            // A legacy transaction is emitted as its bare RLP list, never wrapped
+            // in a byte string — mirrors `P2PTransaction`'s canonical encoding.
+            // Wrapping it would double-encode and no conforming peer could decode
+            // the element.
+            P2PTransaction::LegacyTransaction(tx) => tx.encode(buf),
+            other => <[u8] as RLPEncode>::encode(&other.encode_canonical_to_vec(), buf),
+        }
     }
 }
 

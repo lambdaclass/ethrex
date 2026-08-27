@@ -42,19 +42,32 @@ pub fn is_provider_role(local_node_id: H256, tx_hash: H256, epoch_seed: u64, eag
 }
 
 /// Pick one extra column index not already in `custody_mask`, derived
-/// deterministically from `tx_hash` bytes.
+/// deterministically from the local node identity and `tx_hash`.
+///
+/// `local_node_id` is in the preimage for the same reason as in
+/// [`is_provider_role`]: derived from the tx hash alone, every sampler in the
+/// network picks the *same* extra column for a given tx, so C_extra adds no
+/// sampling diversity — one column gets oversampled and the other 126 spares
+/// get none.
 ///
 /// Returns `None` only when `custody_mask` already covers all 128 columns
 /// (which is the provider case; samplers always have spare columns).
-pub fn pick_random_extra_column(custody_mask: u128, tx_hash: H256) -> Option<u32> {
+pub fn pick_random_extra_column(
+    custody_mask: u128,
+    local_node_id: H256,
+    tx_hash: H256,
+) -> Option<u32> {
     let available = !custody_mask; // bits NOT in custody
     let count = available.count_ones();
     if count == 0 {
         return None;
     }
-    // Use 4 bytes of tx_hash for a more uniform index across up to 128 columns.
-    let b = tx_hash.as_bytes();
-    let idx = u32::from_be_bytes([b[0], b[1], b[2], b[3]]) % count;
+    // hash = keccak256(local_node_id ++ tx_hash), 4 bytes for a uniform index.
+    let mut preimage = [0u8; 64];
+    preimage[..32].copy_from_slice(local_node_id.as_bytes());
+    preimage[32..].copy_from_slice(tx_hash.as_bytes());
+    let digest = keccak_hash(preimage);
+    let idx = u32::from_be_bytes([digest[0], digest[1], digest[2], digest[3]]) % count;
     // Walk the set bits of `available` to find the idx-th one.
     let mut remaining = idx;
     for col in 0..128u32 {
