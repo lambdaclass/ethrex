@@ -27,6 +27,7 @@ use spawned_concurrency::{
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 use thiserror::Error;
 use tokio::net::UdpSocket;
+use tokio::sync::watch;
 use tokio_util::udp::UdpFramed;
 use tracing::{debug, error, info, trace, warn};
 
@@ -91,13 +92,14 @@ pub struct DiscoveryServer {
     pub(crate) config: DiscoveryConfig,
     pub discv4: Option<Discv4State>,
     pub discv5: Option<Discv5State>,
-    /// Current EIP-2124 fork id, published by the network layer.
+    /// Current EIP-2124 fork id, published by the network layer. `None` inside the
+    /// channel means the chain could not supply one yet.
     ///
     /// Discovery does not read this from storage: the network layer decides what this
     /// node announces about itself, and discovery only republishes. Without a refresh
     /// the `eth` ENR entry goes stale the moment the chain crosses a fork, and geth's
     /// dial-candidate filter (`NewNodeFilter`) drops us outright.
-    pub(crate) fork_id: Option<tokio::sync::watch::Receiver<ForkId>>,
+    pub(crate) fork_id: watch::Receiver<Option<ForkId>>,
 }
 
 impl std::fmt::Debug for DiscoveryServer {
@@ -126,7 +128,7 @@ impl DiscoveryServer {
         peer_table: PeerTable,
         bootnodes: Vec<Node>,
         config: DiscoveryConfig,
-        fork_id: Option<tokio::sync::watch::Receiver<ForkId>>,
+        fork_id: watch::Receiver<Option<ForkId>>,
     ) -> Result<(), DiscoveryServerError> {
         debug!("Starting discovery server");
 
@@ -433,15 +435,16 @@ impl DiscoveryServer {
     ///
     /// `has_changed` is only true once per send, so a steady chain costs a flag check
     /// per tick. A closed channel means the network layer is gone, which is shutdown,
-    /// not an error worth logging every tick.
+    /// not an error worth logging every tick. A `None` in the channel is the seed for
+    /// a chain that could not supply a fork id at startup; there is nothing to
+    /// republish until the publisher replaces it.
     fn refresh_fork_id(&mut self) {
-        let Some(rx) = self.fork_id.as_mut() else {
-            return;
-        };
-        if !rx.has_changed().unwrap_or(false) {
+        if !self.fork_id.has_changed().unwrap_or(false) {
             return;
         }
-        let fork_id = rx.borrow_and_update().clone();
+        let Some(fork_id) = self.fork_id.borrow_and_update().clone() else {
+            return;
+        };
         match self.local_node_record.set_fork_id(fork_id, &self.signer) {
             Ok(()) => info!(
                 seq = self.local_node_record.seq,
@@ -488,8 +491,9 @@ impl DiscoveryServer {
             },
             discv4: None,
             discv5: Some(Discv5State::default()),
-            // Tests drive the ENR directly; there is no publisher to listen to.
-            fork_id: None,
+            // Tests drive the ENR directly; there is no publisher to listen to. The
+            // sender is dropped, so `has_changed` errs and the refresh is a no-op.
+            fork_id: watch::channel(None).1,
         }
     }
 }

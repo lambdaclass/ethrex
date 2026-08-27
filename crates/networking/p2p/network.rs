@@ -17,6 +17,7 @@ use crate::{
 };
 use ethrex_blockchain::Blockchain;
 use ethrex_common::H256;
+use ethrex_common::types::ForkId;
 use ethrex_storage::Store;
 use secp256k1::SecretKey;
 use spawned_concurrency::tasks::ActorRef;
@@ -27,6 +28,7 @@ use std::{
     time::Duration,
 };
 use tokio::net::{TcpListener, TcpSocket, UdpSocket};
+use tokio::sync::watch;
 use tokio_util::task::TaskTracker;
 use tracing::{debug, error, info};
 
@@ -131,12 +133,20 @@ pub enum NetworkError {
 /// startup. The record is still usable for discovery, and a peer that requires
 /// `eth` simply passes us over until we republish with it. A record we cannot
 /// sign is different, and is reported.
-async fn build_local_node_record(context: &P2PContext) -> Result<NodeRecord, NodeError> {
+///
+/// Also returns the fork id the record was built with, so the refresh channel can
+/// be seeded with the exact value the ENR advertises: seeding from a second
+/// storage read could straddle a fork crossing, and a seed the ENR never carried
+/// is a change the refresh would never see.
+async fn build_local_node_record(
+    context: &P2PContext,
+) -> Result<(NodeRecord, Option<ForkId>), NodeError> {
     let mut record = NodeRecord::from_node(&context.local_node, INITIAL_ENR_SEQ, &context.signer)?;
-    if let Ok(fork_id) = context.storage.get_fork_id().await {
+    let fork_id = context.storage.get_fork_id().await.ok();
+    if let Some(fork_id) = fork_id.clone() {
         record.set_fork_id(fork_id, &context.signer)?;
     }
-    Ok(record)
+    Ok((record, fork_id))
 }
 
 pub async fn start_network(
@@ -150,14 +160,14 @@ pub async fn start_network(
             .map_err(NetworkError::UdpSocketError)?,
     );
 
-    let local_node_record = build_local_node_record(&context).await?;
+    let (local_node_record, initial_fork_id) = build_local_node_record(&context).await?;
 
     // The ENR's `eth` entry is only correct for the fork the chain is on. Nothing
     // recomputed it after startup, so once the chain crossed a fork we kept
     // advertising the old fork id and geth's dial-candidate filter
     // (`NewNodeFilter`) dropped us. Publish it on a channel instead: this layer
     // decides what the node announces, discovery only republishes.
-    let fork_id_rx = spawn_fork_id_publisher(&context);
+    let fork_id_rx = spawn_fork_id_publisher(&context, initial_fork_id);
 
     DiscoveryServer::spawn(
         context.local_node.clone(),
@@ -858,18 +868,22 @@ fn format_duration(duration: Duration) -> String {
 
 /// How often to re-derive the fork id. A fork boundary is a timestamp, so the ENR
 /// can lag a crossing by at most this long; cheap enough to keep tight.
-const FORK_ID_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
+const FORK_ID_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Publishes the current fork id, re-deriving it periodically.
 ///
-/// Returns `None` when the chain cannot supply one at all, which keeps the existing
-/// behaviour of announcing a record without an `eth` entry rather than failing startup.
+/// `initial` is the fork id the initial ENR was built with — the channel must be
+/// seeded with what the record actually advertises, not a fresh storage read, or a
+/// fork crossed between the two reads would never register as a change. `None`
+/// (the chain could not supply one at startup) still spawns the publisher: the
+/// first successful derivation then counts as a change and gives the ENR its
+/// `eth` entry, instead of a transient startup failure disabling refresh for good.
 fn spawn_fork_id_publisher(
     context: &P2PContext,
-) -> Option<tokio::sync::watch::Receiver<ethrex_common::types::ForkId>> {
+    initial: Option<ForkId>,
+) -> watch::Receiver<Option<ForkId>> {
     let storage = context.storage.clone();
-    let initial = futures::executor::block_on(storage.get_fork_id()).ok()?;
-    let (tx, rx) = tokio::sync::watch::channel(initial);
+    let (tx, rx) = watch::channel(initial);
     context.tracker.spawn(async move {
         let mut interval = tokio::time::interval(FORK_ID_REFRESH_INTERVAL);
         loop {
@@ -879,10 +893,10 @@ fn spawn_fork_id_publisher(
                 // chain has not moved across a fork, so discovery does no work.
                 Ok(fork_id) => {
                     tx.send_if_modified(|current| {
-                        if *current == fork_id {
+                        if current.as_ref() == Some(&fork_id) {
                             false
                         } else {
-                            *current = fork_id;
+                            *current = Some(fork_id);
                             true
                         }
                     });
@@ -892,5 +906,5 @@ fn spawn_fork_id_publisher(
             }
         }
     });
-    Some(rx)
+    rx
 }
