@@ -2119,17 +2119,21 @@ mod tests {
     #[tokio::test]
     async fn exchange_capabilities_advertises_focil_when_bogota_is_scheduled() {
         let caps = exchange_capabilities_with_hegota_time(Some(0)).await;
-        assert!(caps.contains(&"engine_forkchoiceUpdatedV5".to_string()));
-        assert!(caps.contains(&"engine_newPayloadV6".to_string()));
+        let expected: Vec<&str> = crate::engine::CAPABILITIES
+            .iter()
+            .chain(crate::engine::FOCIL_CAPABILITIES.iter())
+            .copied()
+            .collect();
+        assert_eq!(caps, expected);
     }
 
     #[tokio::test]
     async fn exchange_capabilities_omits_focil_without_bogota() {
         let caps = exchange_capabilities_with_hegota_time(None).await;
-        assert!(!caps.contains(&"engine_forkchoiceUpdatedV5".to_string()));
-        assert!(!caps.contains(&"engine_newPayloadV6".to_string()));
-        // The pre-FOCIL capability set is unaffected.
-        assert!(caps.contains(&"engine_newPayloadV5".to_string()));
+        // Exact equality, not just the absence of the two FOCIL methods: the
+        // gate must leave the pre-FOCIL set untouched, and a capability added
+        // or dropped on the wrong side of it would otherwise go unnoticed.
+        assert_eq!(caps, crate::engine::CAPABILITIES);
     }
 
     async fn exchange_capabilities_with_hegota_time(hegota_time: Option<u64>) -> Vec<String> {
