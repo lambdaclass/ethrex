@@ -7,7 +7,7 @@ What you end up with: three ethrex + Lighthouse pairs under kurtosis, a gated de
 contract, a block explorer and a faucet behind HTTPS, and a published artifact bundle
 another client can join with.
 
-Companion documents: `docs/frames-testnet-joining.md` (what joiners consume, and the
+Companion documents: `scripts/frames-testnet/USER-GUIDE.md` (what joiners consume, and the
 firewall surface), `docs/frames-testnet-permissioning.md` (validator gating),
 `docs/frames-testnet-upgrading.md` (changing it later),
 `docs/frames-testnet-verification.md` (the twelve verification checks).
@@ -388,7 +388,7 @@ image has to be rebuilt and the container recreated. Tag the outgoing image firs
 
 ## 10. Firewall
 
-The full table is in `docs/frames-testnet-joining.md`. The shape of it:
+The full table is in `scripts/frames-testnet/USER-GUIDE.md`. The shape of it:
 
 | Purpose | Ports | Proto | Exposure |
 | --- | --- | --- | --- |

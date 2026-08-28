@@ -62,7 +62,7 @@ fi
 # directory wholesale hands out the validator set's signing keys. Anything a
 # joiner needs is named here; anything not named here does not leave the host.
 #
-# This list is the artifact table in docs/frames-testnet-joining.md. Keep them
+# This list is the artifact table in scripts/frames-testnet/USER-GUIDE.md. Keep them
 # in step: a file added here without a row there is undocumented, and a row
 # there without an entry here is a broken download.
 PUBLISHED_FILES=(
@@ -182,7 +182,7 @@ done
 # Everything the generator wrote is published as it was written. Only
 # genesis.json is a supported artifact: it is the geth-style execution genesis
 # ethrex reads, and with the fork timestamp and the EIP-8141 rule set in
-# docs/frames-testnet-joining.md it is the complete definition of this chain.
+# scripts/frames-testnet/USER-GUIDE.md it is the complete definition of this chain.
 # The generator's other execution-genesis formats ship because it emits them,
 # not because this chain vouches for them.
 # ---------------------------------------------------------------------------
@@ -204,7 +204,7 @@ echo "==> published $(wc -l < "$OUT_DIR/MANIFEST.txt") file(s) to $OUT_DIR"
 echo
 cat "$OUT_DIR/MANIFEST.txt"
 echo
-echo "Joining instructions: docs/frames-testnet-joining.md"
-echo "This chain activates EIP-8141 alone. The consensus inputs that are NOT in
-genesis.json -- the frame-transaction VERIFY budgets -- are stated there and
-nowhere else.
+echo "Joining instructions: scripts/frames-testnet/USER-GUIDE.md"
+echo "This chain activates EIP-8141 alone. The consensus inputs that are NOT in"
+echo "genesis.json -- the frame-transaction VERIFY budgets -- are stated there"
+echo "and nowhere else."

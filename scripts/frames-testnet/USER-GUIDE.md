@@ -55,11 +55,13 @@ present.
 
 | Address | Contents |
 | --- | --- |
-| `0x…8141` | `EXPIRY_VERIFIER` |
-| `0x…8250` | `NONCE_MANAGER` |
-| `0x…8272` | `RECENT_ROOT_ADDRESS`, 144 bytes |
+| `0x0000000000000000000000000000000000008141` | `EXPIRY_VERIFIER`, 26 bytes |
 
-All three are installed by the client at the Hegotá boundary and need no genesis entry.
+Installed by the client at the Hegotá boundary; it needs no genesis entry.
+
+The Hegotá testnet also carries `NONCE_MANAGER` at `0x…8250` and `RECENT_ROOT_ADDRESS`
+at `0x…8272`. **Neither exists here** — `eth_getCode` returns empty at both, because
+EIP-8250 and EIP-8272 are not active on this chain.
 
 ## Connect a wallet
 
@@ -295,58 +297,31 @@ cast send --rpc-url <RPC> --private-key <WITHDRAWAL_ADDR_KEY> \
 
 ## What this network runs
 
-Five EIPs activate together at one timestamp. There is no per-EIP activation and no
-intermediate state in which some are live and others are not.
-
-| EIP | Title |
-| --- | --- |
-| 8141 | Frame Transaction |
-| 8250 | Keyed Nonces |
-| 8272 | Recent Roots |
-| 7805 | FOCIL (fork-choice enforced inclusion lists) |
-| 8369 | VOPS Profiles for FOCIL Eligibility |
-
-**Do not implement this fork from its name.** EIP-8081 (*Hardfork Meta - Hegotá*)
-schedules EIP-7805 alone under that name; this chain activates all five. A client that
-implements "Hegotá" from the meta EIP implements FOCIL only and rejects every frame
-transaction on the chain.
+**One EIP activates at the fork timestamp: EIP-8141, frame transactions.** That is the
+whole point of this chain — a failure here can only be a frame-transaction failure.
+Frames are live; see the fork schedule above for the epoch.
 
 Inherited from Amsterdam, and live: EIP-7928 block-level access lists, EIP-8037
 two-dimensional gas, EIP-8038 repricing, EIP-7843 slot numbers, EIP-8282 builder
-deposits and exits.
+deposits and exits. EIP-8037 is the one you will notice first, because it is why
+hardcoding 21,000 gas fails — see "Connect a wallet" above.
 
-Two EIPs are present in the ethrex binary but **not** part of this chain's rule set:
-EIP-8312 (UTXO frames) never activates because `utxoFramesTime` is unset, and EIP-7906
-(transaction assertions) is not in the build at all. Frame mode 3, which EIP-7906 would
-have used, is unassigned here.
-
-### Frames are not active yet
-
-The chain runs, peers, produces blocks and accepts ordinary transactions today, but
-**EIP-8141 frame transactions are not active on it yet**. `heze_fork_epoch` is parked
-far in the future.
-
-The reason is an execution-layer gap, and it is measured rather than assumed: with the
-fork at epoch 2 this deployment produced blocks to slot 63 and then stopped, with the
-consensus client reporting
-
-```
-RequiredMethodUnsupported("engine_forkchoiceUpdatedV5")
-```
-
-A consensus client that has entered Heze drives `engine_forkchoiceUpdatedV5` and
-`engine_newPayloadV6`; this ethrex branch serves up to `forkchoiceUpdatedV4` and
-`newPayloadV5`. Those two methods arrive with EIP-7805 FOCIL, which is deliberately not
-part of this chain, so they have to be served on their own before frames can activate.
-
-Until then the network exists so operators can join, be granted validator slots, and be
-in place when the fork is scheduled. Watch this page for the activation epoch.
+**Do not implement this fork from its name.** EIP-8081 (*Hardfork Meta - Hegotá*)
+schedules EIP-7805 alone under that name, and the generator's fork table calls this
+boundary `heze`/`hegota` regardless of what activates at it. On this chain the name
+means EIP-8141 and nothing else. A client that implements "Hegotá" from the meta EIP
+implements FOCIL, which this chain does not run, and still rejects every frame
+transaction on it.
 
 ### Not on this chain
 
-EIP-8250 keyed nonces, EIP-8272 recent roots, EIP-7906 assertions and EIP-7805/8369
-FOCIL are **not** active here. A transaction that depends on any of them is invalid on
-this chain. They run on the Hegotá testnet instead.
+EIP-8250 keyed nonces, EIP-8272 recent roots, EIP-7906 assertions, and EIP-7805 /
+EIP-8369 FOCIL are **not** active here. A transaction that depends on any of them is
+invalid on this chain. They run on the Hegotá testnet instead.
+
+Two more are in the ethrex binary but outside this chain's rule set: EIP-8312 (UTXO
+frames) never activates because `utxoFramesTime` is unset, and EIP-7906 is not in the
+build at all. Frame mode 3, which EIP-7906 would have used, is unassigned here.
 
 ### Frame transactions
 
@@ -384,16 +359,22 @@ nonces, so the effects are not recoverable by retrying.
 
 ### Consensus inputs that are not in the genesis file
 
-Four values decide consensus outcomes and appear in no configuration file. A client that
-guesses them will disagree about which blocks are attestable, and that disagreement
-produces no state-root mismatch to make it visible. They are stated in
-`docs/frames-testnet-joining.md` and nowhere else. The most load-bearing:
-`AA_VOPS_SLOT_COUNT = 4`, where **absent means 4, not disabled** — there is no way to
-turn Profile 2 off.
+One value on this chain is not in any configuration file and still changes what your
+node does: the **VERIFY gas budget**, which these nodes run at `500000` rather than the
+100,000 the draft specifies, via `--mempool.max-verify-gas=500000`.
+
+It is a mempool admission rule, not a consensus rule, so a node left at the default does
+not fork — it silently *drops* frame transactions whose validation prefix exceeds
+100,000 gas as they propagate, and then builds blocks without them. The symptom is a
+transaction that your node accepts and the network appears to ignore. Match the budget
+if you intend to relay or build.
+
+(The Hegotá testnet has several more such values, including `AA_VOPS_SLOT_COUNT`. None
+of them apply here, because none of those EIPs are active on this chain.)
 
 ## Divergences from the drafts
 
-Every place this implementation departs from the published drafts is recorded in
-`docs/frames-testnet-divergences.md`, with whether it is consensus-visible. The
-published specification a joining client should read first is
-`docs/frames-testnet-joining.md`.
+This chain tracks the EIP-8141 draft as implemented on ethrex's `frames-devnet-0`
+branch; `docs/eip-8141.md` in that repository records where the implementation departs
+from the published draft and whether the departure is consensus-visible. For joining a
+node, this document is the reference.
