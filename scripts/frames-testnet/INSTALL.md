@@ -7,10 +7,9 @@ What you end up with: three ethrex + Lighthouse pairs under kurtosis, a gated de
 contract, a block explorer and a faucet behind HTTPS, and a published artifact bundle
 another client can join with.
 
-Companion documents: `scripts/frames-testnet/USER-GUIDE.md` (what joiners consume, and the
-firewall surface), `docs/frames-testnet-permissioning.md` (validator gating),
-`docs/frames-testnet-upgrading.md` (changing it later),
-`docs/frames-testnet-verification.md` (the twelve verification checks).
+Companion document: `scripts/frames-testnet/USER-GUIDE.md`, which is what joiners consume.
+Validator gating is section 11 below, changing the deployment later is section 12, and the
+post-launch checks are section 6.
 
 ## 0. Before you start
 
@@ -34,7 +33,7 @@ Check the host's ephemeral port floor before anything else:
 cat /proc/sys/net/ipv4/ip_local_port_range     # expect 32768 60999
 ```
 
-Every port this chain publishes (31000-31500, 32000-32017) must stay **below** the first
+Every port this chain publishes (36000-36017, 36200-36215, 36400) must stay **below** the first
 number. Kurtosis hands dynamic host ports to unpublished services out of that range, so a
 fixed publish inside it races them and can lose with `failed to bind host port … address
 already in use`. If your floor is lower than 32768, either raise it or move
@@ -213,12 +212,33 @@ left behind, and run it again with an absolute path to the package directory.
 
 ## 6. Verify
 
-Run the twelve checks in `docs/frames-testnet-verification.md`. Do not skip them: most of the
-failure modes are silent until a specific fork boundary, and a chain that starts is not a
-chain that works.
+A chain that starts is not a chain that works, and most of these failures are silent.
 
-**Check 8 is the one this host exists to prove.** It needs an `ethrex --bootnodes` node on
-a *different* machine completing discovery and reaching the head. Reachability cannot be
+**Check 1, before anything else: the three nodes must agree.** Each node answering
+healthily on its own proves nothing — a partitioned deployment has every node reporting
+`eth_syncing: false`, a beacon head at the current slot and `is_optimistic: false`, while
+sitting on three different chains.
+
+```
+for p in 36003 36010 36017; do
+  curl -s -X POST -H 'content-type: application/json' \
+    -d '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber","params":[]}' \
+    http://127.0.0.1:$p
+done                                    # all three heights must match
+
+for p in 36201 36208 36215; do
+  curl -s http://127.0.0.1:$p/eth/v1/beacon/states/head/finality_checkpoints
+done                                    # all three finalized epochs must match, and be > 0
+```
+
+Diverging finalized epochs — one node advancing while the others sit at `0` — mean the
+beacon nodes are not peered with each other. Confirm with
+`/eth/v1/node/peer_count`: `connected` at `0` is the diagnosis. On a host behind NAT the
+cause is almost always section 10, because a node advertising an address nothing can
+reach cannot be dialled by its own siblings either.
+
+**The check this host exists to prove** needs an `ethrex --bootnodes` node on a
+*different* machine completing discovery and reaching the head. Reachability cannot be
 established from the host itself: a firewall rule that opens only TCP, or a node
 advertising an address nobody outside can route, both look perfectly healthy from inside.
 Eleven of the twelve have already been verified on a local enclave; check 8 has not been
@@ -254,23 +274,23 @@ the Caddyfile must already resolve to this host**: a name without an address rec
 its ACME challenge and spends the Let's Encrypt failed-validation budget, five per
 hostname per hour, for the whole deployment.
 
-The zone is `privacy.ethrex.xyz` and it has five names — `rpc1`, `rpc2`, `rpc3`, `dora`,
+The zone is `frames.ethrex.xyz` and it has five names — `rpc1`, `rpc2`, `rpc3`, `dora`,
 `faucet`. There is no `artifacts` name and the apex carries no address record, so the
 bundle is served from a path under the faucet host:
 
 ```
-rpc1.privacy.ethrex.xyz { reverse_proxy localhost:8645 }
-rpc2.privacy.ethrex.xyz { reverse_proxy localhost:8645 }
-rpc3.privacy.ethrex.xyz { reverse_proxy localhost:8645 }
+rpc1.frames.ethrex.xyz { reverse_proxy localhost:8645 }
+rpc2.frames.ethrex.xyz { reverse_proxy localhost:8645 }
+rpc3.frames.ethrex.xyz { reverse_proxy localhost:8645 }
 
-dora.privacy.ethrex.xyz { reverse_proxy localhost:31500 }
+dora.frames.ethrex.xyz { reverse_proxy localhost:36400 }
 
-faucet.privacy.ethrex.xyz {
+faucet.frames.ethrex.xyz {
     handle_path /artifacts/* {
         root * /srv/frames-testnet/artifacts
         file_server browse
     }
-    reverse_proxy localhost:8080
+    reverse_proxy localhost:8088
 }
 ```
 
@@ -318,7 +338,7 @@ Description=Hegota testnet JSON-RPC namespace guard
 After=network-online.target
 
 [Service]
-Environment=UPSTREAMS=rpc1.privacy.ethrex.xyz=127.0.0.1:32003,rpc2.privacy.ethrex.xyz=127.0.0.1:32010,rpc3.privacy.ethrex.xyz=127.0.0.1:32017
+Environment=UPSTREAMS=rpc1.frames.ethrex.xyz=127.0.0.1:32003,rpc2.frames.ethrex.xyz=127.0.0.1:32010,rpc3.frames.ethrex.xyz=127.0.0.1:32017
 ExecStart=/usr/bin/python3 /usr/local/bin/rpc-guard.py
 Restart=always
 DynamicUser=yes
@@ -344,7 +364,7 @@ three lists as JSON at `/bootnodes`, read from the same directory. That is delib
 redundancy — the lists are the one part of the bundle a joiner needs after it is already
 running, when a peer set has gone stale.
 
-The explorer sits at a fixed 31500 because `port_publisher.additional_services` pins it.
+The explorer sits at a fixed 36400 because `port_publisher.additional_services` pins it.
 The Hegotá devnet needed a socat unit to give the explorer a stable local port; this chain
 does not, and you should not add one.
 
@@ -392,16 +412,27 @@ The full table is in `scripts/frames-testnet/USER-GUIDE.md`. The shape of it:
 
 | Purpose | Ports | Proto | Exposure |
 | --- | --- | --- | --- |
-| EL discovery + RLPx | 32000, 32007, 32014 | TCP **and** UDP | open |
-| CL discovery + libp2p | 31000, 31007, 31014 | TCP **and** UDP | open |
-| CL QUIC | 31003, 31010, 31017 | UDP | open |
-| EL engine authrpc | 32001, 32008, 32015 | TCP | **closed** |
-| EL metrics | 32002, 32009, 32016 | TCP | **closed** |
-| EL RPC nodes 1-2 | 32010, 32017 | TCP | **closed** |
-| CL beacon REST | 31001, 31008, 31015 | TCP | **closed** |
-| CL metrics | 31002, 31009, 31016 | TCP | **closed** |
+| EL discovery + RLPx | 36000, 36007, 36014 | TCP **and** UDP | open |
+| CL libp2p | 36200, 36207, 36214 | TCP | open |
+| CL QUIC | 36200, 36207, 36214 | UDP | open |
+| CL discv5 | 36201, 36208, 36215 | UDP **only** | open |
+| EL engine authrpc | 36001, 36008, 36015 | TCP | **closed** |
+| EL metrics | 36002, 36009, 36016 | TCP | **closed** |
+| EL RPC | 36003, 36010, 36017 | TCP | **closed** |
+| CL beacon REST | 36201, 36208, 36215 | TCP | **closed** |
+| CL metrics | 36202, 36209, 36216 | TCP | **closed** |
+
+**`36201`, `36208` and `36215` appear twice, and the protocol is the whole difference:**
+open on UDP for discv5, closed on TCP because that is the beacon REST API. A rule written
+without `-p` matches both and publishes the beacon API.
 
 Everything public is reached through the reverse proxy, not opened directly.
+
+**If the host is behind NAT**, this table is what the *router* must forward, and the
+`DOCKER-USER` rules below become defence in depth rather than the boundary. Forwarding is
+not optional on such a host: the nodes advertise `nat_exit_ip`, and if nothing can reach
+them there they cannot be dialled *by each other either*, so the deployment silently
+splits into one chain per node. Section 6 is where you catch that.
 
 Discovery needs **both** TCP and UDP. A rule that opens only TCP produces a node that
 accepts inbound connections from peers who already know it and is discovered by nobody,
@@ -430,9 +461,9 @@ iptables -A DOCKER-USER -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN
 iptables -A DOCKER-USER -i tailscale0 -j RETURN
 iptables -A DOCKER-USER -i lo -j RETURN
 iptables -A DOCKER-USER ! -i "$EXT" -j RETURN
-iptables -A DOCKER-USER -i "$EXT" -p tcp -m multiport --dports 32000,32007,32014,31000,31007,31014 -j RETURN
-iptables -A DOCKER-USER -i "$EXT" -p udp -m multiport --dports 32000,32007,32014,31000,31007,31014 -j RETURN
-iptables -A DOCKER-USER -i "$EXT" -p udp -m multiport --dports 31003,31010,31017 -j RETURN
+iptables -A DOCKER-USER -i "$EXT" -p tcp -m multiport --dports 36000,36007,36014,36200,36207,36214 -j RETURN
+iptables -A DOCKER-USER -i "$EXT" -p udp -m multiport --dports 36000,36007,36014,36200,36207,36214 -j RETURN
+iptables -A DOCKER-USER -i "$EXT" -p udp -m multiport --dports 36201,36208,36215 -j RETURN
 iptables -A DOCKER-USER -i "$EXT" -j DROP
 ```
 
@@ -467,12 +498,12 @@ withdrawal address and not the validator pubkey. This is the most common mistake
 Test both directions after launch: a deposit from a token-less address must revert with
 `Not enough tokens`, and the same deposit must succeed after minting. Only proving both
 shows the gate is working rather than simply broken for everyone.
-`docs/frames-testnet-permissioning.md` has the full policy and kill switch.
+Section 12 covers changing this later, including the per-prefix kill switch.
 
 ## 12. Later changes
 
-`docs/frames-testnet-upgrading.md` covers upgrading ethrex and kurtosis, re-publishing the
-bundle, rotating the gater admin, and what forces a re-genesis.
+This section covers upgrading ethrex and kurtosis, re-publishing the bundle, rotating the
+gater admin, and what forces a re-genesis.
 
 **Decide the upgrade path now, before launch.** Before anyone else has joined, the
 cheapest correct upgrade is a re-genesis. Once joiners exist, a re-genesis is a relaunch
