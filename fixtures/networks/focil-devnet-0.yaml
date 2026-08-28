@@ -7,7 +7,10 @@
 # publishing inclusion lists every slot, finalising, zero EL errors).
 #
 # Scope is EIP-7805 on the Heze fork. EIP-8141 frame transactions are a separate
-# devnet track (frames-devnet-0), so they are deliberately absent here.
+# devnet track (frames-devnet-0) and are not merely unconfigured here: the code
+# is removed from this branch, so scheduling Heze cannot enable them. Gating the
+# two on one fork time is what wrote the 0x…8141 predeploy into the block access
+# list and forked this devnet off every client running Amsterdam rules.
 #
 # Notes on the values, since earlier local configs on this branch differed:
 #   * `preset: minimal` — an epoch is 8 slots, so heze lands ~48s in rather than

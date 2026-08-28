@@ -324,10 +324,6 @@ pub fn verify_blob_gas_usage(block: &Block, config: &ChainConfig) -> Result<(), 
                 blob_gas_used += get_total_blob_gas(tx);
                 blobs_in_block += tx.blob_versioned_hashes.len() as u32;
             }
-            crate::types::Transaction::FrameTransaction(tx) => {
-                blob_gas_used += GAS_PER_BLOB * tx.blob_versioned_hashes.len() as u32;
-                blobs_in_block += tx.blob_versioned_hashes.len() as u32;
-            }
             _ => {}
         }
     }

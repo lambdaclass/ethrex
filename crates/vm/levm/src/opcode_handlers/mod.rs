@@ -9,7 +9,6 @@ pub mod block;
 pub mod dup;
 pub mod environment;
 pub mod exchange;
-pub mod frame_tx;
 pub mod keccak;
 pub mod logging;
 pub mod push;

@@ -12,11 +12,9 @@ use crate::error::MempoolError;
 use ethrex_common::{
     Address, H160, H256, U256,
     types::{
-        BYTES_PER_CELL, BlobTuple, BlobsBundle, BlockHeader, CELLS_PER_EXT_BLOB, ChainConfig,
-        FRAME_TX_MAX_PENDING_NONCANONICAL_PAYMASTER, Fork, MempoolTransaction, Transaction, TxType,
-        kzg_commitment_to_versioned_hash,
+        BYTES_PER_CELL, BlobTuple, BlobsBundle, BlockHeader, CELLS_PER_EXT_BLOB, ChainConfig, Fork,
+        MempoolTransaction, Transaction, TxType, kzg_commitment_to_versioned_hash,
     },
-    utils::keccak,
 };
 use ethrex_crypto::NativeCrypto;
 use ethrex_storage::error::StoreError;
@@ -105,60 +103,6 @@ pub const MAX_ALTERNATES_PER_HASH: usize = 8;
 /// blobpool `datacap`) so memory is bounded regardless of blobs-per-tx.
 pub const MAX_BLOB_MEMPOOL_SIZE: usize = 512;
 
-/// Keccak-256 hash of the canonical paymaster bytecode (EIP-8141).
-///
-/// OQ1 (canonical paymaster bytecode): UNRESOLVED. The draft EIP does not pin
-/// the canonical paymaster's bytecode, and no reference implementation
-/// (execution-specs, execution-spec-tests, geth, goevmlab, hive) ships one.
-/// Until it is pinned, this is a sentinel (`H256::zero()`) that no real account
-/// code can hash to, so [`is_canonical_paymaster`] returns `false` for every
-/// paymaster. That is the conservative interim: ALL paymasters are treated as
-/// non-canonical, which only ever over-rejects (de-facto limit of one pending
-/// sponsored frame tx per paymaster), never under-rejects. When the canonical
-/// hash is pinned, replace this sentinel and the exact-match body below flips on
-/// with no other change.
-pub const FRAME_CANONICAL_PAYMASTER_CODE_HASH: H256 = H256::zero();
-
-/// Whether `code` is the canonical EIP-8141 paymaster bytecode.
-///
-/// OQ1 interim: returns `false` for all paymasters because
-/// [`FRAME_CANONICAL_PAYMASTER_CODE_HASH`] is an unresolved sentinel that no
-/// real bytecode hashes to. The exact-keccak-match body is kept so this flips on
-/// for free once the canonical hash is pinned upstream.
-pub fn is_canonical_paymaster(code: &[u8]) -> bool {
-    keccak(code) == FRAME_CANONICAL_PAYMASTER_CODE_HASH
-}
-
-/// A paymaster reservation recorded for a pending frame transaction (EIP-8141).
-///
-/// Computed during admission (`Blockchain::validate_transaction`) and threaded
-/// into the locked insert in [`Mempool::add_transaction`], so a frame tx that
-/// fails a later admission check never leaks a reservation. Decremented from all
-/// reservation maps in the single removal path
-/// ([`MempoolInner::remove_transaction_with_lock`]).
-#[derive(Debug, Clone)]
-pub struct FramePaymasterReservation {
-    /// The paymaster (payer) that covers this transaction's max cost. For a
-    /// self-funded sender this is the sender itself (OQ2).
-    pub paymaster: Address,
-    /// The max cost (TXPARAM 0x06) reserved against the paymaster's balance.
-    pub reserved_cost: U256,
-    /// Whether the paymaster's code matched the canonical paymaster hash. Always
-    /// `false` today (OQ1); non-canonical paymasters are subject to the
-    /// one-pending-tx limit.
-    pub is_canonical: bool,
-    /// The paymaster's head balance captured at admission time, so the locked
-    /// re-check in [`Mempool::add_transaction`] can re-validate availability
-    /// against the live reservation map without an async storage read while
-    /// holding the write lock.
-    pub paymaster_balance: U256,
-}
-
-/// A pending frame transaction's revalidation descriptor: `(hash, sender,
-/// paymaster)`. Returned by [`Mempool::pending_frame_txs`] for the post-block
-/// revalidation pass.
-pub type PendingFrameTx = (H256, Address, Address);
-
 /// Precomputed inputs for the per-sender admission gates, re-checked atomically
 /// inside [`Mempool::add_transaction`] under the insertion write lock so the
 /// checks and the insert share one lock scope. `Blockchain::validate_transaction`
@@ -180,8 +124,7 @@ pub struct SenderAdmission {
     /// Mempool occupancy percentage at or above which a gapped-nonce tx is
     /// rejected; `100` disables the gate (#6609).
     pub gap_threshold: u8,
-    /// Cumulative-balance inputs (#6606). `None` for frame txs, whose payer is
-    /// unknown until execution and which are therefore not balance-gated.
+    /// Cumulative-balance inputs (#6606).
     pub balance_check: Option<BalanceCheck>,
 }
 
@@ -246,27 +189,6 @@ struct MempoolInner {
     /// Last announced cell_mask per peer (peer_id -> mask).
     /// Used to check which peers can serve a given column set.
     peer_cell_availability: FxHashMap<H256, u128>,
-    /// Tracks the currently pending frame transaction hash per sender (EIP-8141).
-    /// At most one pending frame tx per sender is allowed to avoid ordering
-    /// ambiguity and DoS. Populated on insert; cleared on removal.
-    /// Must be kept consistent with `remove_transaction_with_lock`.
-    pending_frame_tx_by_sender: FxHashMap<Address, (H256, u64)>,
-    /// Sum of reserved max-cost (TXPARAM 0x06) per paymaster across all pending
-    /// frame txs that paymaster sponsors (EIP-8141). Admission checks a
-    /// paymaster's balance against this running total so concurrently-pending
-    /// sponsored txs cannot collectively overdraw it. Incremented in the locked
-    /// section of `add_transaction`; decremented in `remove_transaction_with_lock`.
-    reserved_pending_cost: FxHashMap<Address, U256>,
-    /// Count of pending frame txs sponsored by each NON-canonical paymaster
-    /// (EIP-8141). Bounded by `FRAME_TX_MAX_PENDING_NONCANONICAL_PAYMASTER`.
-    /// Incremented in the locked section of `add_transaction`; decremented in
-    /// `remove_transaction_with_lock`.
-    noncanonical_paymaster_pending: FxHashMap<Address, u8>,
-    /// Per-frame-tx reservation record, keyed by tx hash. Carries the paymaster,
-    /// reserved cost, canonical flag, and touched sender slots so the single
-    /// removal path can decrement the other maps and the post-block revalidation
-    /// can bound its affected set. Populated on insert; removed on removal.
-    frame_tx_paymaster: FxHashMap<H256, FramePaymasterReservation>,
 }
 
 impl MempoolInner {
@@ -302,41 +224,6 @@ impl MempoolInner {
         // Clear ALL frame-tx reservation state in this single removal path
         // (eviction / inclusion / reorg all funnel through here), so no outer
         // call site must decrement anything (which would risk double-decrement).
-        if matches!(tx.tx_type(), TxType::Frame) {
-            let sender = tx.sender();
-            if self
-                .pending_frame_tx_by_sender
-                .get(&sender)
-                .is_some_and(|(h, _)| h == hash)
-            {
-                self.pending_frame_tx_by_sender.remove(&sender);
-            }
-
-            // Decrement the paymaster reservation maps using the recorded
-            // reservation for this tx (if any).
-            if let Some(reservation) = self.frame_tx_paymaster.remove(hash) {
-                let paymaster = reservation.paymaster;
-                if let Entry::Occupied(mut entry) = self.reserved_pending_cost.entry(paymaster) {
-                    let remaining = entry.get().saturating_sub(reservation.reserved_cost);
-                    if remaining.is_zero() {
-                        entry.remove();
-                    } else {
-                        *entry.get_mut() = remaining;
-                    }
-                }
-                if !reservation.is_canonical
-                    && let Entry::Occupied(mut entry) =
-                        self.noncanonical_paymaster_pending.entry(paymaster)
-                {
-                    let remaining = entry.get().saturating_sub(1);
-                    if remaining == 0 {
-                        entry.remove();
-                    } else {
-                        *entry.get_mut() = remaining;
-                    }
-                }
-            }
-        }
 
         Ok(())
     }
@@ -497,7 +384,6 @@ impl MempoolInner {
         // Cumulative balance across the sender's pending txs (#6606). Runs for
         // replacements too — `replaced` (the predecessor at this nonce, still in
         // the pool) is excluded from the sum so the bump isn't double-counted.
-        // Skipped for frame txs (`None`).
         if let Some(BalanceCheck {
             tx_cost,
             sender_balance,
@@ -603,43 +489,6 @@ impl MempoolInner {
         }
 
         Ok(())
-    }
-
-    /// Check whether a new frame transaction from `sender` at `nonce` can be
-    /// admitted under the one-pending-frame-tx-per-sender policy.
-    ///
-    /// - If no frame tx from `sender` is pending: permit (return `Ok(None)`).
-    /// - If a frame tx with the **same nonce** is pending: defer to fee-bump
-    ///   replacement (`find_tx_to_replace` handles price checks); return the
-    ///   existing hash so the caller can remove it first.
-    /// - If a frame tx with a **different nonce** is pending: reject with
-    ///   `FrameTxSenderAlreadyPending`.
-    ///
-    /// Must be called under the mempool write lock so the check and the
-    /// subsequent insert are atomic (no TOCTOU race).
-    fn check_frame_tx_sender_pending(
-        &self,
-        sender: Address,
-        nonce: u64,
-        incoming_hash: H256,
-    ) -> Result<Option<H256>, MempoolError> {
-        let Some(&(existing_hash, existing_nonce)) = self.pending_frame_tx_by_sender.get(&sender)
-        else {
-            return Ok(None);
-        };
-        if existing_hash == incoming_hash {
-            // Same tx already in pool (re-announced); not a conflict.
-            return Ok(None);
-        }
-        if existing_nonce == nonce {
-            // Same nonce: the incoming tx is a fee-bump replacement; let
-            // `find_tx_to_replace` validate the price bump.
-            Ok(Some(existing_hash))
-        } else {
-            // Different nonce: a live frame tx from this sender is already
-            // pending at a different nonce, reject.
-            Err(MempoolError::FrameTxSenderAlreadyPending)
-        }
     }
 }
 
@@ -768,7 +617,7 @@ impl Mempool {
 
     /// Add transaction to the pool without doing validity checks, except for the
     /// one-pending-frame-tx-per-sender policy which must run under this lock to
-    /// avoid a TOCTOU race (EIP-8141, review fix 1.6).
+    /// avoid a TOCTOU race.
     ///
     /// The per-sender admission gates (queued cap, gapped-nonce, cumulative
     /// balance) are re-checked *here*, atomically under the write lock, when a
@@ -784,17 +633,9 @@ impl Mempool {
         hash: H256,
         sender: Address,
         transaction: MempoolTransaction,
-        frame_reservation: Option<FramePaymasterReservation>,
         sender_admission: Option<SenderAdmission>,
     ) -> Result<(), MempoolError> {
-        self.add_transaction_inner(
-            hash,
-            sender,
-            transaction,
-            frame_reservation,
-            sender_admission,
-            true,
-        )
+        self.add_transaction_inner(hash, sender, transaction, sender_admission, true)
     }
 
     /// Add transaction to the pool without queueing it for P2P broadcast.
@@ -805,17 +646,9 @@ impl Mempool {
         hash: H256,
         sender: Address,
         transaction: MempoolTransaction,
-        frame_reservation: Option<FramePaymasterReservation>,
         sender_admission: Option<SenderAdmission>,
     ) -> Result<(), MempoolError> {
-        self.add_transaction_inner(
-            hash,
-            sender,
-            transaction,
-            frame_reservation,
-            sender_admission,
-            false,
-        )
+        self.add_transaction_inner(hash, sender, transaction, sender_admission, false)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -824,12 +657,10 @@ impl Mempool {
         hash: H256,
         sender: Address,
         transaction: MempoolTransaction,
-        frame_reservation: Option<FramePaymasterReservation>,
         sender_admission: Option<SenderAdmission>,
         broadcast: bool,
     ) -> Result<(), MempoolError> {
         let mut inner = self.write()?;
-        let is_frame = matches!(transaction.tx_type(), TxType::Frame);
         let is_blob = matches!(transaction.tx_type(), TxType::EIP4844);
 
         // Per-sender admission gates (queued cap #6603, gapped-nonce #6609,
@@ -848,89 +679,11 @@ impl Mempool {
             // caller before the lock — keeps replacement detection, the gates, the
             // removal, and the insert in one atomic scope (issue #6938). Gated on
             // the admission guard, so raw index-only inserts (`None`, used by
-            // direct callers) keep their existing behavior. Frame txs defer their
-            // slot removal to the paymaster re-check below, so a rejected fee-bump
-            // leaves the old tx intact.
-            if !is_frame
-                && let Some(&old_hash) = inner
-                    .txs_by_sender_nonce
-                    .get(&(sender, transaction.nonce()))
+            // direct callers) keep their existing behavior.
+            if let Some(&old_hash) = inner
+                .txs_by_sender_nonce
+                .get(&(sender, transaction.nonce()))
             {
-                inner.remove_transaction_with_lock(&old_hash)?;
-            }
-        }
-
-        // One-pending-frame-tx-per-sender gate (EIP-8141 §Mempool, review fix 1.6).
-        // Must run under the write lock so the check and insert are atomic.
-        if is_frame {
-            let nonce = transaction.nonce();
-            // Same-nonce replacement: capture the old tx's hash WITHOUT removing
-            // it yet. Removal must be atomic with the re-check below so a
-            // rejected fee-bump never leaves the sender with neither the old nor
-            // the new tx. Price validation already ran in validate_transaction.
-            let existing_frame_hash = inner.check_frame_tx_sender_pending(sender, nonce, hash)?;
-
-            // Paymaster availability + non-canonical-limit re-check under the
-            // write lock. The check in `validate_transaction` is an unlocked
-            // pre-filter; this locked re-check against the live reservation maps
-            // is what holds the limit and the availability invariant under
-            // concurrent admissions for different senders sharing one paymaster
-            // (the same TOCTOU class review fix 1.6 closed for the per-sender
-            // gate). Runs before any insertion or removal so a rejection has no
-            // side effect.
-            if let Some(reservation) = &frame_reservation {
-                // Account for the impending removal of the old same-nonce tx: if
-                // it shares the new tx's paymaster, its reservation will be
-                // released the moment we remove it, so it must not block a
-                // same-paymaster fee-bump. Subtract the old tx's reserved cost
-                // (availability) and one pending slot (non-canonical limit).
-                let old_reservation = existing_frame_hash
-                    .as_ref()
-                    .and_then(|old_hash| inner.frame_tx_paymaster.get(old_hash))
-                    .filter(|old| old.paymaster == reservation.paymaster);
-
-                if !reservation.is_canonical {
-                    let mut pending = inner
-                        .noncanonical_paymaster_pending
-                        .get(&reservation.paymaster)
-                        .copied()
-                        .unwrap_or(0);
-                    if old_reservation.is_some_and(|old| !old.is_canonical) {
-                        pending = pending.saturating_sub(1);
-                    }
-                    if pending >= FRAME_TX_MAX_PENDING_NONCANONICAL_PAYMASTER {
-                        return Err(MempoolError::FrameTxNonCanonicalPaymasterLimit);
-                    }
-                }
-                let mut reserved = inner
-                    .reserved_pending_cost
-                    .get(&reservation.paymaster)
-                    .copied()
-                    .unwrap_or_default();
-                if let Some(old) = old_reservation {
-                    reserved = reserved.saturating_sub(old.reserved_cost);
-                }
-                if reservation.paymaster_balance.saturating_sub(reserved)
-                    < reservation.reserved_cost
-                {
-                    return Err(MempoolError::FrameTxPaymasterUnderfunded);
-                }
-            }
-
-            // Re-check passed: now remove whatever tx currently occupies this
-            // sender's nonce slot (releasing any reservation) so the new frame tx
-            // can take it. Done only after the re-check so a rejection leaves the
-            // original pending tx intact. The predecessor may be a NON-frame tx:
-            // `find_tx_to_replace` (which validated the fee bump in
-            // `validate_transaction`) matches any tx type, but
-            // `check_frame_tx_sender_pending`/`existing_frame_hash` only sees frame
-            // predecessors. Removing by the (sender, nonce) slot — instead of just
-            // `existing_frame_hash` — covers both, so a same-nonce legacy/EIP-1559
-            // tx is properly replaced rather than orphaned in the pool (its index
-            // entry is overwritten below while the tx itself leaks). When the
-            // predecessor is the same-nonce frame tx, the slot already points to it,
-            // so this is equivalent to the previous `existing_frame_hash` removal.
-            if let Some(&old_hash) = inner.txs_by_sender_nonce.get(&(sender, nonce)) {
                 inner.remove_transaction_with_lock(&old_hash)?;
             }
         }
@@ -970,36 +723,6 @@ impl Mempool {
             inner.broadcast_pool.insert(hash);
         }
         inner.alternates.remove(&hash);
-
-        // Track per-sender pending frame tx for EIP-8141 admission gating.
-        // Storing the nonce alongside the hash keeps the conflict check O(1).
-        if is_frame {
-            inner
-                .pending_frame_tx_by_sender
-                .insert(sender, (hash, tx_nonce));
-
-            // Increment the paymaster reservation maps for this frame tx. The
-            // reservation was computed during admission (validate_transaction)
-            // and is applied here, under the write lock, only once the tx has
-            // cleared every admission check and is actually being inserted (so a
-            // tx rejected after the availability check never leaks a
-            // reservation). Decremented atomically in the single removal path.
-            if let Some(reservation) = frame_reservation {
-                let paymaster = reservation.paymaster;
-                *inner
-                    .reserved_pending_cost
-                    .entry(paymaster)
-                    .or_insert(U256::zero()) += reservation.reserved_cost;
-                if !reservation.is_canonical {
-                    let count = inner
-                        .noncanonical_paymaster_pending
-                        .entry(paymaster)
-                        .or_insert(0);
-                    *count = count.saturating_add(1);
-                }
-                inner.frame_tx_paymaster.insert(hash, reservation);
-            }
-        }
 
         // Drop the write lock before notifying to avoid holding it while waking waiters
         drop(inner);
@@ -1867,66 +1590,12 @@ impl Mempool {
         Ok(Some(tx_in_pool.hash(&NativeCrypto)))
     }
 
-    /// Current reserved max-cost total for `paymaster` across pending frame txs
-    /// (EIP-8141). Returns zero when the paymaster sponsors no pending frame tx.
-    pub fn reserved_pending_cost(&self, paymaster: Address) -> Result<U256, StoreError> {
-        Ok(self
-            .read()?
-            .reserved_pending_cost
-            .get(&paymaster)
-            .copied()
-            .unwrap_or_else(U256::zero))
-    }
-
-    /// Number of pending frame txs sponsored by `paymaster` as a NON-canonical
-    /// paymaster (EIP-8141). Returns zero when none are pending.
-    pub fn noncanonical_paymaster_pending(&self, paymaster: Address) -> Result<u8, StoreError> {
-        Ok(self
-            .read()?
-            .noncanonical_paymaster_pending
-            .get(&paymaster)
-            .copied()
-            .unwrap_or(0))
-    }
-
-    /// Snapshot of every pending frame transaction's `(hash, sender, paymaster)`
-    /// for the post-block revalidation pass (EIP-8141, task 3.5). Cloned under
-    /// the read lock so revalidation can re-simulate without holding it.
-    pub fn pending_frame_txs(&self) -> Result<Vec<PendingFrameTx>, StoreError> {
-        let inner = self.read()?;
-        Ok(inner
-            .frame_tx_paymaster
-            .iter()
-            .filter_map(|(hash, reservation)| {
-                inner
-                    .transaction_pool
-                    .get(hash)
-                    .map(|tx| (*hash, tx.sender(), reservation.paymaster))
-            })
-            .collect())
-    }
-
-    /// The transaction stored under `hash`, if any. Used by revalidation to
-    /// re-simulate a pending frame tx.
+    /// The transaction stored under `hash`, if any.
     pub fn get_mempool_transaction_by_hash(
         &self,
         hash: H256,
     ) -> Result<Option<MempoolTransaction>, StoreError> {
         Ok(self.read()?.transaction_pool.get(&hash).cloned())
-    }
-
-    /// Sizes of the four frame-tx tracking maps:
-    /// `(pending_frame_tx_by_sender, reserved_pending_cost,
-    /// noncanonical_paymaster_pending, frame_tx_paymaster)`. Exposed for tests
-    /// that assert the maps return to empty after add + remove (EIP-8141).
-    pub fn frame_tracking_map_sizes(&self) -> Result<(usize, usize, usize, usize), StoreError> {
-        let inner = self.read()?;
-        Ok((
-            inner.pending_frame_tx_by_sender.len(),
-            inner.reserved_pending_cost.len(),
-            inner.noncanonical_paymaster_pending.len(),
-            inner.frame_tx_paymaster.len(),
-        ))
     }
 }
 
@@ -1952,15 +1621,6 @@ pub fn transaction_intrinsic_gas(
     header: &BlockHeader,
     config: &ChainConfig,
 ) -> Result<u64, MempoolError> {
-    // EIP-8141 frame txs: gas_limit() IS the computed total_gas_limit(), which
-    // already includes the frame-tx intrinsic overhead. The fork-general
-    // formula below misprices them (their data() is empty and the base differs),
-    // so report exactly the non-frame-gas overhead the VM charges as intrinsic.
-    if let Transaction::FrameTransaction(frame_tx) = tx {
-        let frame_gas: u64 = frame_tx.frames.iter().map(|f| f.gas_limit).sum();
-        return Ok(frame_tx.total_gas_limit().saturating_sub(frame_gas));
-    }
-
     // Mempool admission must charge the same intrinsic gas LEVM enforces at
     // execution, or we admit txs the VM later rejects (pool pollution, wasted
     // payload-builder cycles). Reuse the VM's two helpers directly rather than
@@ -2019,7 +1679,7 @@ mod tests {
             let sender = Address::from_low_u64_be(i as u64 + 1);
             let hash = H256::from_low_u64_be(i as u64 + 1);
             mempool
-                .add_transaction(hash, sender, dummy_mempool_tx(sender, 0), None, None)
+                .add_transaction(hash, sender, dummy_mempool_tx(sender, 0), None)
                 .expect("Failed to add transaction");
         }
     }
@@ -2055,7 +1715,7 @@ mod tests {
         let tx = build_tx(nonce);
         let mtx = MempoolTransaction::new(tx, sender);
         let hash = mtx.hash(&NativeCrypto);
-        pool.add_transaction(hash, sender, mtx, None, None).unwrap();
+        pool.add_transaction(hash, sender, mtx, None).unwrap();
         hash
     }
 
@@ -2157,7 +1817,6 @@ mod tests {
             hash,
             sender,
             mtx,
-            None,
             Some(SenderAdmission {
                 account_nonce,
                 queued_max: max,
@@ -2240,7 +1899,7 @@ mod tests {
     fn add_tx_cost(pool: &Mempool, sender: Address, nonce: u64, cost: u64) -> H256 {
         let mtx = MempoolTransaction::new(build_tx_cost(nonce, cost), sender);
         let hash = mtx.hash(&NativeCrypto);
-        pool.add_transaction(hash, sender, mtx, None, None).unwrap();
+        pool.add_transaction(hash, sender, mtx, None).unwrap();
         hash
     }
 
@@ -2260,7 +1919,6 @@ mod tests {
             hash,
             sender,
             mtx,
-            None,
             Some(SenderAdmission {
                 account_nonce,
                 queued_max: usize::MAX,
@@ -2289,7 +1947,6 @@ mod tests {
             hash,
             sender,
             mtx,
-            None,
             Some(SenderAdmission {
                 account_nonce,
                 queued_max: usize::MAX,

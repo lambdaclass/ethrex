@@ -246,9 +246,6 @@ impl OpcodeHandler for OpSLoadHandler {
         vm.record_storage_slot_to_bal(address, storage_slot_key);
 
         // EIP-8141 mempool validation-trace: SLOAD restricted to the sender's storage.
-        if vm.validation_observer.active {
-            vm.validation_check_sload(address, key);
-        }
 
         let value = vm.get_storage_value(address, key)?;
         vm.current_call_frame.stack.push(value)?;
@@ -316,9 +313,6 @@ impl OpcodeHandler for OpSStoreHandler {
 
         // EIP-8141 mempool validation-trace: SSTORE allowed only inside the
         // deploy frame and only against the sender's own storage.
-        if vm.validation_observer.active {
-            vm.validation_check_sstore(to, key);
-        }
 
         // EIP-8037 (Amsterdam+): check if state gas is needed for new storage slot (0 -> nonzero),
         // but charge it AFTER regular gas per EELS ordering (ethereum/EIPs#11421).

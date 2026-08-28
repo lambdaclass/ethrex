@@ -344,16 +344,6 @@ impl InclusionListSatisfactionValidator {
                 continue;
             }
 
-            // EIP-8141 frame txs are excluded from the IL satisfaction check:
-            // validity depends on executing VERIFY frames to discover `payer`,
-            // which this state-only pass cannot do. EELS has no frame
-            // transaction type, so eligibility rules for frame txs in
-            // inclusion lists remain unspecified, and an ineligible tx is
-            // excused.
-            if tx_il.tx_type() == TxType::Frame {
-                continue;
-            }
-
             // Unrecoverable signature → cannot be appended (EELS
             // `recover_sender` raises) → satisfied.
             let Ok(sender) = tx_il.sender(crypto) else {

@@ -996,7 +996,7 @@ pub async fn build_generic_tx(
         | TxType::EIP7702
         | TxType::Privileged
         | TxType::FeeToken => {}
-        TxType::EIP2930 | TxType::Legacy | TxType::Frame => {
+        TxType::EIP2930 | TxType::Legacy => {
             return Err(EthClientError::Custom(
                 "Unsupported tx type in build_generic_tx".to_owned(),
             ));

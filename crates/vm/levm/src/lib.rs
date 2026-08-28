@@ -80,7 +80,6 @@ pub mod opcodes;
 pub mod precompiles;
 pub mod tracing;
 pub mod utils;
-pub mod validation_observer;
 pub mod vm;
 pub use environment::*;
 pub mod account;

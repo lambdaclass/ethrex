@@ -69,10 +69,6 @@ The inner state, mutated only under the write lock:
 | `max_mempool_size` | `usize` | Cap on the regular (non-blob) pool. Set from `--mempool.maxsize`. |
 | `max_blob_mempool_size` | `usize` | Cap on the blob sub-pool. |
 | `mempool_prune_threshold` | `usize` | Length at which `txs_order` is compacted to drop tombstones (`max + max/2`). |
-| `pending_frame_tx_by_sender` | `FxHashMap<Address, (H256, u64)>` | EIP-8141: at most one pending frame tx per sender — `(hash, nonce)`. |
-| `reserved_pending_cost` | `FxHashMap<Address, U256>` | EIP-8141: per-paymaster sum of reserved max-cost across pending frame txs. |
-| `noncanonical_paymaster_pending` | `FxHashMap<Address, u8>` | EIP-8141: count of pending frame txs per non-canonical paymaster. |
-| `frame_tx_paymaster` | `FxHashMap<H256, FramePaymasterReservation>` | EIP-8141: per-frame-tx paymaster reservation record. |
 
 ### `MempoolTransaction`
 
@@ -80,7 +76,7 @@ Defined in `crates/common/types/transaction.rs` (in its `mempool` module), this 
 
 ## Admission Validation
 
-Every transaction entering the pool — through RPC or P2P — passes through `Blockchain::validate_transaction` (`crates/blockchain/blockchain.rs`). It returns `Ok((tx_to_replace, frame_reservation, sender_account_nonce))` — `tx_to_replace` is `Some(hash)` when the transaction replaces an existing one at the same `(sender, nonce)` — or `Err(MempoolError::*)` on rejection. Checks run in this order:
+Every transaction entering the pool — through RPC or P2P — passes through `Blockchain::validate_transaction` (`crates/blockchain/blockchain.rs`). It returns `Ok((tx_to_replace, sender_account_nonce))` — `tx_to_replace` is `Some(hash)` when the transaction replaces an existing one at the same `(sender, nonce)` — or `Err(MempoolError::*)` on rejection. Checks run in this order:
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
@@ -88,7 +84,6 @@ Every transaction entering the pool — through RPC or P2P — passes through `B
 ├──────────────────────────────────────────────────────────────────────────┤
 │  1. L2-only tx-type rejection (L1 node)              → L2OnlyTransaction… │
 │  2. PrivilegedL2 short-circuit                       → Ok (bypasses pool) │
-│  3. Frame-tx (EIP-8141) static gates                 → FrameTx…           │
 │  4. Per-tx wire-size cap (non-blob)                  → TxSizeExceeded     │
 │  5. Init code size cap (Shanghai+, Amsterdam adj.)   → TxMaxInitCodeSize  │
 │  6. Post-Osaka gas-limit cap (EIP-7825)              → TxMaxGasLimitExc…  │
@@ -105,7 +100,6 @@ Every transaction entering the pool — through RPC or P2P — passes through `B
 │ 16. Cumulative pending cost ≤ balance                → InsufficientCumul… │
 │ 17. tx.chain_id matches config.chain_id (if set)     → InvalidChainId     │
 │ 18. Gapped-nonce rejection under pool pressure       → GapAdmissionDenied │
-│ 19. Frame-tx validation-prefix sim + paymaster       → FrameTx…           │
 │ (per-sender queued cap is enforced inside add_transaction, post-validate) │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
@@ -116,19 +110,17 @@ Notes on individual checks:
 
 **Privileged short-circuit.** `Transaction::PrivilegedL2Transaction` returns early before pool admission; these are produced by the L2 sequencer.
 
-**Frame transactions (EIP-8141).** Frame txs go through an extended set of gates — fork activation (`FrameTxPreFork`), expiry (`FrameTxExpired`), static structural validity (`InvalidFrameTransaction`), a no-blobs rule (`FrameTxBlobsUnsupported`), a signature-verification gas budget (`FrameTxVerifyGasExceeded` / `FrameTxVerifyGasBudgetExceeded`), signature authenticity and low-`s` malleability (`InvalidFrameSignature` / `FrameTxMalleableSignature`), and validation-prefix shape (`FrameTxUnrecognizedPrefix` / `FrameTxInvalidPrefixStructure`). The validation-prefix simulation and paymaster accounting run last (see [Frame transactions](#frame-transactions-eip-8141)).
-
 **Per-tx wire-size cap.** Non-blob transactions are bounded by `MAX_TX_SIZE = 128 KiB` against `Transaction::encode_canonical_len()`. Blob transactions are bounded by `MAX_BLOB_TX_SIZE` in `add_blob_transaction_to_pool` against the wire wrapper, since ethrex stores the core transaction and the sidecar in separate structs.
 
 **Init code size.** Active from Shanghai. Limit is `MAX_INITCODE_SIZE = 48 KiB` (`2 × MAX_CODE_SIZE`); from Amsterdam onward (EIP-7954) it becomes `AMSTERDAM_MAX_INITCODE_SIZE = 128 KiB` (`2 × AMSTERDAM_MAX_CODE_SIZE`, i.e. 2 × 64 KiB).
 
 **Nonce lookup.** Reads `account.nonce` from storage at the latest block. Rejects with `NonceTooLow` when `nonce < account.nonce` or `nonce == u64::MAX`.
 
-**EIP-3607.** Senders with non-empty `code_hash` are rejected with `SenderIsContract`, except when their code is a valid EIP-7702 delegation designation: exactly `EIP7702_DELEGATED_CODE_LEN = 23` bytes — the 3-byte `0xef0100` prefix followed by the 20-byte delegate address. A length-based fast path consults code-metadata length first and only fetches bytecode when the length matches the delegation shape. Skipped for frame txs.
+**EIP-3607.** Senders with non-empty `code_hash` are rejected with `SenderIsContract`, except when their code is a valid EIP-7702 delegation designation: exactly `EIP7702_DELEGATED_CODE_LEN = 23` bytes — the 3-byte `0xef0100` prefix followed by the 20-byte delegate address. A length-based fast path consults code-metadata length first and only fetches bytecode when the length matches the delegation shape.
 
-**Single-tx balance.** `tx.cost_without_base_fee()` — `gas_limit × max_fee_per_gas + value`, plus `blob_gas × max_fee_per_blob_gas` for blob transactions — must not exceed the sender's balance. Senders absent from state are rejected. Skipped for frame txs (payer unknown until execution).
+**Single-tx balance.** `tx.cost_without_base_fee()` — `gas_limit × max_fee_per_gas + value`, plus `blob_gas × max_fee_per_blob_gas` for blob transactions — must not exceed the sender's balance. Senders absent from state are rejected.
 
-**Cumulative-balance check.** Beyond the single-tx balance check, the sum of the sender's already-pooled transaction costs (via `Mempool::sum_cost_for_sender`, excluding the tx being replaced and any obsoleted below-nonce entries) plus the new tx's cost must not exceed the balance; otherwise `InsufficientCumulativeBalance { required, available }`. This prevents a sender from parking many individually-fundable but collectively-unfundable transactions. Skipped for frame txs.
+**Cumulative-balance check.** Beyond the single-tx balance check, the sum of the sender's already-pooled transaction costs (via `Mempool::sum_cost_for_sender`, excluding the tx being replaced and any obsoleted below-nonce entries) plus the new tx's cost must not exceed the balance; otherwise `InsufficientCumulativeBalance { required, available }`. This prevents a sender from parking many individually-fundable but collectively-unfundable transactions.
 
 **Chain id.** Only checked when the transaction declares one; mismatch with `ChainConfig::chain_id` rejects.
 
@@ -144,7 +136,7 @@ Notes on individual checks:
 blob_fee_ok && (both_1559_fields_higher || gas_price_higher)
 ```
 
-- **`gas_price_higher`** — `Transaction::gas_price()` strictly greater. That accessor returns the `gas_price` field for legacy and **EIP-2930** transactions, and `max_fee_per_gas` for every typed-fee transaction (EIP-1559 / 4844 / 7702 / fee-token / frame).
+- **`gas_price_higher`** — `Transaction::gas_price()` strictly greater. That accessor returns the `gas_price` field for legacy and **EIP-2930** transactions, and `max_fee_per_gas` for every typed-fee transaction (EIP-1559 / 4844 / 7702 / fee-token).
 - **`both_1559_fields_higher`** — `max_fee_per_gas` *and* `max_priority_fee_per_gas` both strictly greater. Legacy and EIP-2930 transactions can never satisfy this arm: their `max_fee_per_gas()` / `max_priority_fee()` accessors return `None`, so their replacement is governed entirely by the `gas_price` comparison.
 - **`blob_fee_ok`** — when both the in-pool and incoming transaction carry `max_fee_per_blob_gas` (EIP-4844), the new one must be strictly greater; otherwise this term is vacuously true.
 
@@ -160,7 +152,7 @@ The check runs inside `Mempool::add_transaction` under the same write lock as th
 
 ## Insertion Path
 
-`Mempool::add_transaction(hash, sender, transaction, frame_reservation, queued_cap)` runs under the write lock in this order:
+`Mempool::add_transaction(hash, sender, transaction, queued_cap)` runs under the write lock in this order:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -171,7 +163,6 @@ The check runs inside `Mempool::add_transaction` under the same write lock as th
 │   ├── per-sender queued cap (only future-nonce txs; atomic w/ insert)    │
 │   │     if is_future && queued_count ≥ max → MaxQueuedTxsPerAccount…      │
 │   │                                                                      │
-│   ├── frame-tx (EIP-8141) gating: one-pending-per-sender + locked        │
 │   │     paymaster availability / non-canonical-limit re-check, then      │
 │   │     remove the tx occupying (sender, nonce) if replacing             │
 │   │                                                                      │
@@ -184,7 +175,6 @@ The check runs inside `Mempool::add_transaction` under the same write lock as th
 │   ├── insert (sender, nonce) → hash into txs_by_sender_nonce             │
 │   ├── insert hash → MempoolTransaction into transaction_pool             │
 │   ├── insert hash into broadcast_pool; drop from alternates              │
-│   └── frame-tx: record pending_frame_tx_by_sender + paymaster reserves   │
 │  drop write lock                                                         │
 │  bump tx_seq; tx_added.notify_waiters()  ── wakes the payload builder    │
 └─────────────────────────────────────────────────────────────────────────┘
@@ -201,20 +191,11 @@ Regular and blob transactions are evicted by separate policies:
 
 `txs_order` is a tombstoned queue: removing a transaction via any path (eviction, replacement, block inclusion, explicit removal) leaves a stale hash that is filtered at pop time. When its length crosses `mempool_prune_threshold` (`max + max/2`), the next `add_transaction` compacts it in place.
 
-## Frame Transactions (EIP-8141)
-
-Frame transactions carry a validation prefix and may be sponsored by a paymaster. The mempool holds extra per-sender and per-paymaster state to admit them safely:
-
-- **One pending frame tx per sender** — `pending_frame_tx_by_sender` enforces a single in-flight frame tx per sender; the check and insert are atomic under the write lock.
-- **Paymaster reservation accounting** — `reserved_pending_cost` sums each paymaster's reserved max-cost across pending frame txs so concurrent sponsored txs can't collectively overdraw it (`FrameTxPaymasterUnderfunded`); `noncanonical_paymaster_pending` bounds the number of pending frame txs a non-canonical paymaster may sponsor (`FrameTxNonCanonicalPaymasterLimit`); `frame_tx_paymaster` records each tx's reservation so removal (eviction / inclusion / reorg) releases it exactly once.
-
-The unlocked checks in `validate_transaction` (availability, non-canonical limit) are a pre-filter; the authoritative re-check runs under the write lock in `add_transaction`, matching the pattern used by the per-sender gates.
-
 ## P2P Propagation
 
 Three P2P paths interact with the mempool:
 
-**Periodic broadcast.** `TxBroadcaster` (`crates/networking/p2p/tx_broadcaster.rs`) runs an actor on a `--p2p.tx-broadcasting-interval`-millisecond tick. Each tick it snapshots `broadcast_pool` via `Mempool::get_txs_for_broadcast`, sends full transaction bodies to ~`sqrt(peers)` peers and `NewPooledTransactionHashes` announcements to the rest, then calls `Mempool::remove_broadcasted_txs` to clear the set. Blob (EIP-4844) and frame (EIP-8141) transactions are announced by hash only; privileged transactions are filtered out. Per-peer deduplication is tracked with a broadcast record keyed by hash and a peer bitset.
+**Periodic broadcast.** `TxBroadcaster` (`crates/networking/p2p/tx_broadcaster.rs`) runs an actor on a `--p2p.tx-broadcasting-interval`-millisecond tick. Each tick it snapshots `broadcast_pool` via `Mempool::get_txs_for_broadcast`, sends full transaction bodies to ~`sqrt(peers)` peers and `NewPooledTransactionHashes` announcements to the rest, then calls `Mempool::remove_broadcasted_txs` to clear the set. Blob (EIP-4844) transactions are announced by hash only; privileged transactions are filtered out. Per-peer deduplication is tracked with a broadcast record keyed by hash and a peer bitset.
 
 **New-peer hash dump.** On a fresh RLPx connection, `send_all_pooled_tx_hashes` (`crates/networking/p2p/rlpx/connection/server.rs`) sends the node's known pooled-transaction hashes to the new peer. It reads them via `Mempool::get_all_txs_by_sender`, flattens, and skips privileged transactions.
 
@@ -258,7 +239,6 @@ Mempool-related flags in `cmd/ethrex/cli.rs`:
 | `MaxQueuedTxsPerAccountExceeded { sender, count, limit }` | Per-sender queued (future-nonce) cap would be exceeded. |
 | `BlobsBundleError(_)` / `BlobTxNoBlobsBundle` | KZG/sidecar validation failed / blob tx submitted to a non-blob entry point. |
 | `InvalidPooledTxType(_)` / `InvalidPooledTxSize` / `RequestedPooledTxNotFound` | `PooledTransactions` response type/size mismatch, or an unrequested tx. |
-| `FrameTx*` (many) | EIP-8141 frame-tx admission failures (fork, expiry, signature, prefix, paymaster). |
 | `InvalidTxSender(_)` / `StoreError(_)` / `NoBlockHeaderError` | Signature recovery failed / storage error / missing latest header. |
 
 ## Known Limitations / Open Work

@@ -958,34 +958,6 @@ impl Blockchain {
                 continue;
             }
 
-            // EIP-8141 fork gating: drop frame transactions that reached the payload
-            // builder before Hegota has activated. These must never be included in a
-            // block until the fork is live.
-            if head_tx.tx_type() == TxType::Frame
-                && !chain_config.is_hegota_activated(context.payload.header.timestamp)
-            {
-                debug!("Skipping frame transaction before Hegota fork: {}", tx_hash);
-                txs.pop();
-                self.remove_transaction_from_pool(&tx_hash)?;
-                continue;
-            }
-
-            // EIP-8141 expiry: drop frame txs whose
-            // expiry deadline is behind the block being built. Deterministic
-            // for this payload timestamp, so remove from the pool as well.
-            if let Transaction::FrameTransaction(frame_tx) = &*head_tx.tx
-                && frame_tx
-                    .expiry_deadline()
-                    .is_some_and(|deadline| deadline < context.payload.header.timestamp)
-            {
-                debug!("Skipping expired frame transaction: {}", tx_hash);
-                txs.pop();
-                self.remove_transaction_from_pool(&tx_hash)?;
-                continue;
-            }
-
-            let is_frame = head_tx.tx_type() == TxType::Frame;
-
             match self.apply_tx_to_payload(head_tx, context) {
                 Ok(()) => txs.shift()?,
                 Err(e) => {
@@ -1003,16 +975,7 @@ impl Blockchain {
                     // pooled lets it re-occupy the sender's queue head on every
                     // build and starve that sender's other txs indefinitely.
                     // Evict those too.
-                    let evict = if is_frame {
-                        !is_nonce_mismatch(&e)
-                    } else {
-                        is_deterministic_invalid(&e)
-                    };
-                    if evict {
-                        // Neutral wording on purpose: the two branches evict for
-                        // different reasons (a frame tx for any non-nonce-mismatch
-                        // failure, a regular tx only for a deterministic one), so
-                        // naming either reason here would mislabel the other.
+                    if is_deterministic_invalid(&e) {
                         debug!("Evicting transaction {tx_hash} from the pool: {e}");
                         self.remove_transaction_from_pool(&tx_hash)?;
                     }
@@ -1358,8 +1321,8 @@ impl Blockchain {
 /// stringified through `EvmError::Transaction(String)` →
 /// `ChainError::InvalidBlock(InvalidBlockError::InvalidTransaction(String))`.
 /// There is no typed variant to match at the `ChainError` level, so we detect
-/// it by the stable Display substring. Used to keep gapped-nonce frame txs
-/// pooled instead of evicting them: a nonce gap is transient because the
+/// it by the stable Display substring. Used to keep gapped-nonce txs pooled
+/// instead of evicting them: a nonce gap is transient because the
 /// `TransactionQueue` feeds the lowest pooled nonce without comparing to the
 /// account nonce, so the tx becomes valid once earlier nonces are included.
 fn is_nonce_mismatch(e: &ChainError) -> bool {

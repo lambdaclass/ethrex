@@ -298,9 +298,6 @@ impl OpcodeHandler for OpExtCodeSizeHandler {
 
         // EIP-8141 mempool validation-trace: EXTCODESIZE target must exist and
         // not be EIP-7702-delegated (sender exempt).
-        if vm.validation_observer.active {
-            vm.validation_check_extcode_target(address)?;
-        }
 
         // State access AFTER gas check passes (using optimized code length lookup)
         let account_code_length = vm.db.get_code_length(address)?.into();
@@ -342,9 +339,6 @@ impl OpcodeHandler for OpExtCodeCopyHandler {
 
         // EIP-8141 mempool validation-trace: EXTCODECOPY target must exist and
         // not be EIP-7702-delegated (sender exempt).
-        if vm.validation_observer.active {
-            vm.validation_check_extcode_target(address)?;
-        }
 
         // EELS reads the account's code unconditionally (even for size=0), so
         // fetch the code — not just the account — to keep the read observable
@@ -385,9 +379,6 @@ impl OpcodeHandler for OpExtCodeHashHandler {
 
         // EIP-8141 mempool validation-trace: EXTCODEHASH target must exist and
         // not be EIP-7702-delegated (sender exempt).
-        if vm.validation_observer.active {
-            vm.validation_check_extcode_target(address)?;
-        }
 
         let account = vm.db.get_account(address)?;
         let account_is_empty = account.is_empty();
