@@ -75,7 +75,21 @@ const IN_MEMORY_COMMIT_THRESHOLD: usize = 10000;
 /// import only ever extend a single canonical chain (no competing forks to mis-commit).
 pub const BATCH_COMMIT_THRESHOLD: usize = 4;
 
-/// Default size in bytes of the RocksDB shared block cache: 12 GiB.
+/// Sorted, sharded `multi_get` tuning, shared by the account, storage, and
+/// trie-node batch read paths. A single `multi_get` runs at queue depth 1
+/// (async_io is off), so cold batches are split into contiguous sorted shards
+/// read on separate blocking threads. `KEYS_PER_SHARD` targets shard size,
+/// `MAX_SHARDS` caps concurrency; scattered keys make 64 the sweet spot (128
+/// over-fragments; coldbench).
+const KEYS_PER_SHARD: usize = 256;
+const MAX_SHARDS: usize = 64;
+
+/// Shard count for a sorted, sharded `multi_get` over `n` keys.
+fn shard_count(n: usize) -> usize {
+    n.div_ceil(KEYS_PER_SHARD).clamp(1, MAX_SHARDS)
+}
+
+/// Ceiling on the RocksDB shared block cache: 12 GiB.
 ///
 /// This cache holds both data blocks AND the index/bloom-filter blocks for every
 /// open SST file (because we enable `cache_index_and_filter_blocks`), so its size
@@ -84,7 +98,148 @@ pub const BATCH_COMMIT_THRESHOLD: usize = 4;
 /// synced mainnet node (32 GiB cap) found 8-16 GiB all keep up with head-following,
 /// with larger giving no gain (the OS page cache backstops the uncompressed state
 /// CFs) and ~8 GiB the floor where the filter set starts to thrash.
-pub const DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES: usize = 12 * 1024 * 1024 * 1024;
+pub const MAX_ROCKSDB_BLOCK_CACHE_SIZE_BYTES: usize = 12 * 1024 * 1024 * 1024;
+
+/// Floor on the RocksDB shared block cache: 512 MiB. Below this the per-SST
+/// index and filter blocks no longer stay resident and every trie read pays an
+/// extra disk seek, which is worse than the memory it saves. Applied even when
+/// it exceeds [`ROCKSDB_BLOCK_CACHE_MEMORY_PERCENT`] of a very small host, and
+/// even when it exceeds the detected limit outright: a node given less than this
+/// much memory cannot follow the chain anyway, so the floor is the more useful
+/// failure mode than a cache too small to hold the filters.
+pub const MIN_ROCKSDB_BLOCK_CACHE_SIZE_BYTES: usize = 512 * 1024 * 1024;
+
+/// Share of the host's (or cgroup's) memory the block cache may claim by default.
+///
+/// The rest has to cover the in-memory trie-layer backlog, block execution, the
+/// mempool, peer buffers and allocator slack, so the cache cannot have most of the
+/// machine. At 40% a 32 GiB host lands on the 12 GiB ceiling and a 16 GiB host gets
+/// ~6.4 GiB — under the ~8 GiB thrash floor, but that is the memory-constrained
+/// tradeoff the ceiling's docs describe, and it leaves the node room not to be
+/// OOM-killed.
+pub const ROCKSDB_BLOCK_CACHE_MEMORY_PERCENT: usize = 40;
+
+/// Default RocksDB shared block cache size, derived from the memory this process
+/// is actually allowed to use.
+///
+/// A fixed default cannot serve both a 64 GiB validator and a 16 GiB CI runner: the
+/// ceiling alone is 71% of a 16 GiB host, which leaves no headroom for the rest of
+/// the node. Sizes to [`ROCKSDB_BLOCK_CACHE_MEMORY_PERCENT`] of the detected limit —
+/// the smaller of physical memory and the cgroup limit, so a container is sized
+/// against its own allowance rather than the machine it lands on — clamped to
+/// [`MIN_ROCKSDB_BLOCK_CACHE_SIZE_BYTES`] ..=
+/// [`MAX_ROCKSDB_BLOCK_CACHE_SIZE_BYTES`]. Falls back to the ceiling when the limit
+/// cannot be detected, preserving the previous behavior.
+pub fn default_rocksdb_block_cache_size() -> usize {
+    let physical = physical_memory_bytes();
+    let cgroup = cgroup_memory_limit_bytes();
+    let limit = [physical, cgroup].into_iter().flatten().min();
+    let size = rocksdb_block_cache_size_for(limit);
+    // The cache size used to be a knowable constant; now it depends on the
+    // environment, on a code path that exists because a mis-sized cache was
+    // only ever discovered via an OOM kill. Leave the whole derivation in the
+    // log: which detector won, what it read, and what that resolved to.
+    let source = match (physical, cgroup) {
+        (None, None) => "undetected, falling back to the ceiling",
+        (Some(_), None) => "physical memory",
+        (None, Some(_)) => "cgroup limit",
+        (Some(p), Some(c)) => {
+            if c <= p {
+                "cgroup limit"
+            } else {
+                "physical memory"
+            }
+        }
+    };
+    info!(
+        detected_limit_bytes = ?limit,
+        source,
+        cache_bytes = size,
+        "sized RocksDB block cache"
+    );
+    size
+}
+
+/// Pure part of [`default_rocksdb_block_cache_size`]: the clamp, with the detected
+/// memory limit supplied by the caller. `None` means detection failed.
+pub fn rocksdb_block_cache_size_for(memory_limit: Option<usize>) -> usize {
+    let Some(limit) = memory_limit else {
+        return MAX_ROCKSDB_BLOCK_CACHE_SIZE_BYTES;
+    };
+    (limit.saturating_mul(ROCKSDB_BLOCK_CACHE_MEMORY_PERCENT) / 100).clamp(
+        MIN_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
+        MAX_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
+    )
+}
+
+/// `MemTotal` from `/proc/meminfo`, in bytes.
+fn physical_memory_bytes() -> Option<usize> {
+    let meminfo = std::fs::read_to_string("/proc/meminfo").ok()?;
+    let kib: usize = meminfo
+        .lines()
+        .find_map(|line| line.strip_prefix("MemTotal:"))?
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()?;
+    kib.checked_mul(1024)
+}
+
+/// The cgroup memory limit that applies to this process, in bytes: `memory.max`
+/// under cgroup v2, falling back to `memory.limit_in_bytes` under v1. Both report
+/// "no limit" out of band — v2 with the literal `max`, v1 with a sentinel near
+/// `u64::MAX` — which yields `None` here (v1's sentinel simply exceeds any real
+/// `MemTotal`, so the `min` above discards it).
+///
+/// The limit may sit on any cgroup between the one the process belongs to and the
+/// mount root — a systemd slice, a Kubernetes pod's parent, an outer container — and
+/// the mount root itself is usually unlimited, so reading the root alone would miss
+/// it. The process's own cgroup comes from `/proc/self/cgroup` and every level up to
+/// the root is read, with the smallest limit winning.
+fn cgroup_memory_limit_bytes() -> Option<usize> {
+    let cgroups = std::fs::read_to_string("/proc/self/cgroup").ok()?;
+    let v2 = cgroups
+        .lines()
+        .find_map(|line| line.strip_prefix("0::"))
+        .and_then(|relative| {
+            cgroup_limit_up_to_root(Path::new("/sys/fs/cgroup"), relative, "memory.max")
+        });
+    v2.or_else(|| {
+        let relative = cgroups.lines().find_map(|line| {
+            // `hierarchy-ID:controller-list:cgroup-path`
+            let mut fields = line.splitn(3, ':');
+            let controllers = fields.nth(1)?;
+            let path = fields.next()?;
+            controllers
+                .split(',')
+                .any(|controller| controller == "memory")
+                .then_some(path)
+        })?;
+        cgroup_limit_up_to_root(
+            Path::new("/sys/fs/cgroup/memory"),
+            relative,
+            "memory.limit_in_bytes",
+        )
+    })
+}
+
+/// Smallest value of `file` across `<mount>/<relative>` and each of its ancestors up
+/// to `mount`, skipping levels whose file is absent or reports no limit.
+fn cgroup_limit_up_to_root(mount: &Path, relative: &str, file: &str) -> Option<usize> {
+    let mut dir = mount.join(relative.trim_start_matches('/'));
+    let mut limit: Option<usize> = None;
+    loop {
+        if let Some(value) = std::fs::read_to_string(dir.join(file))
+            .ok()
+            .and_then(|contents| contents.trim().parse::<usize>().ok())
+        {
+            limit = Some(limit.map_or(value, |current| current.min(value)));
+        }
+        if dir == mount || !dir.pop() {
+            return limit;
+        }
+    }
+}
 
 /// Tunable configuration for [`Store::new_with_config`] and related constructors.
 ///
@@ -104,12 +259,22 @@ pub struct StoreConfig {
     pub persist_channel_capacity: usize,
 }
 
-impl Default for StoreConfig {
-    fn default() -> Self {
+impl StoreConfig {
+    /// Every tuned default except the block cache, which the caller supplies.
+    /// An explicit cache size must come through here rather than overwriting a
+    /// [`StoreConfig::default()`], which would run (and log) the memory
+    /// detection only to discard its result.
+    pub fn with_rocksdb_block_cache_size(rocksdb_block_cache_size: usize) -> Self {
         Self {
-            rocksdb_block_cache_size: DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
+            rocksdb_block_cache_size,
             persist_channel_capacity: DEFAULT_PERSIST_CHANNEL_CAPACITY,
         }
+    }
+}
+
+impl Default for StoreConfig {
+    fn default() -> Self {
+        Self::with_rocksdb_block_cache_size(default_rocksdb_block_cache_size())
     }
 }
 
@@ -308,6 +473,20 @@ pub struct UpdateBatch {
     ///   batch path, where a single message carries ~1024 blocks (~1 GB of trie diff) and two
     ///   in flight would be a real memory cost.
     pub wait_for_flush: bool,
+}
+
+/// A block's historical chain data to backfill below the snap-sync pivot: the
+/// (already-canonical) header, its body, and its receipts.
+///
+/// `index_transactions` controls whether the transaction-lookup index is written
+/// for this block; the backfill task drives it from the `--history.transactions`
+/// horizon so old blocks can be excluded from the index while still storing their
+/// bodies and receipts.
+pub struct BackfilledBlock {
+    pub header: BlockHeader,
+    pub body: BlockBody,
+    pub receipts: Vec<Receipt>,
+    pub index_transactions: bool,
 }
 
 /// Storage trie updates grouped by account address hash.
@@ -563,6 +742,74 @@ impl Store {
         self.write_async(BODIES, hash_key, body_value).await
     }
 
+    /// Backfill historical chain data for a contiguous range of already-canonical
+    /// blocks (bodies, receipts, and optionally the transaction-lookup index),
+    /// then lower `earliest_block_number` to `new_earliest` — all in one write
+    /// transaction.
+    ///
+    /// This is the storage half of `--history.chain` backfill. It does NOT touch
+    /// state, the trie layer cache, or fork choice: the headers and canonical
+    /// mapping already exist from snap-sync header backfill, so only the
+    /// body / receipt / tx-index tables are filled. Writing the data and advancing
+    /// the frontier atomically preserves the invariant that every block in
+    /// `[earliest_block_number, head]` has a stored body — a crash mid-batch
+    /// leaves both the data and the frontier unchanged, so resume never skips a
+    /// hole.
+    ///
+    /// `new_earliest` must be the lowest block number covered by `blocks` (the
+    /// bottom of the contiguous filled range); the caller fills downward without
+    /// gaps.
+    pub async fn add_backfilled_blocks(
+        &self,
+        blocks: Vec<BackfilledBlock>,
+        new_earliest: BlockNumber,
+    ) -> Result<(), StoreError> {
+        let backend = self.backend.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut txn = backend.begin_write()?;
+            for block in &blocks {
+                let hash = block.header.hash();
+                let hash_key = hash.encode_to_vec();
+                txn.put(
+                    BODIES,
+                    &hash_key,
+                    &BlockBodyRLP::from(block.body.clone()).into_vec(),
+                )?;
+                for (index, receipt) in block.receipts.iter().enumerate() {
+                    txn.put(
+                        RECEIPTS_V2,
+                        &receipt_key(&hash, index as u64),
+                        &receipt.encode_storage(),
+                    )?;
+                }
+                if block.index_transactions {
+                    for (index, transaction) in block.body.transactions.iter().enumerate() {
+                        txn.merge(
+                            TRANSACTION_LOCATIONS,
+                            transaction.hash(&NativeCrypto).as_bytes(),
+                            &encode_tx_location_operand(block.header.number, hash, index as u64),
+                        )?;
+                    }
+                }
+            }
+            txn.put(
+                CHAIN_DATA,
+                &chain_data_key(ChainDataIndex::EarliestBlockNumber),
+                &new_earliest.to_le_bytes(),
+            )?;
+            txn.commit()
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Backfill write task panicked: {e}")))?
+    }
+
+    /// RocksDB observability snapshot (per-column-family sizes/keys/files, block
+    /// cache, compaction). `None` for the in-memory backend. Read by the metrics
+    /// collector; cheap (RocksDB property reads).
+    pub fn rocksdb_stats(&self) -> Option<crate::api::RocksDbStats> {
+        self.backend.db_stats()
+    }
+
     /// Obtain canonical block body
     pub async fn get_block_body(
         &self,
@@ -749,12 +996,7 @@ impl Store {
         }
         self.read_async(BLOCK_NUMBERS, block_hash.encode_to_vec())
             .await?
-            .map(|bytes| -> Result<BlockNumber, StoreError> {
-                let array: [u8; 8] = bytes
-                    .try_into()
-                    .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
-                Ok(BlockNumber::from_le_bytes(array))
-            })
+            .map(decode_block_number)
             .transpose()
     }
 
@@ -1150,50 +1392,38 @@ impl Store {
         self.write_async(CHAIN_DATA, key, value).await
     }
 
+    /// Reads a block number stored under the given chain-data index.
+    async fn read_chain_data_block_number(
+        &self,
+        index: ChainDataIndex,
+    ) -> Result<Option<BlockNumber>, StoreError> {
+        self.read_async(CHAIN_DATA, chain_data_key(index))
+            .await?
+            .map(decode_block_number)
+            .transpose()
+    }
+
     /// Obtain earliest block number
     pub async fn get_earliest_block_number(&self) -> Result<BlockNumber, StoreError> {
-        let key = chain_data_key(ChainDataIndex::EarliestBlockNumber);
-        self.read_async(CHAIN_DATA, key)
+        self.read_chain_data_block_number(ChainDataIndex::EarliestBlockNumber)
             .await?
-            .map(|bytes| -> Result<BlockNumber, StoreError> {
-                let array: [u8; 8] = bytes
-                    .try_into()
-                    .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
-                Ok(BlockNumber::from_le_bytes(array))
-            })
-            .ok_or(StoreError::MissingEarliestBlockNumber)?
+            .ok_or(StoreError::MissingEarliestBlockNumber)
     }
 
     /// Obtain finalized block number
     pub async fn get_finalized_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        let key = chain_data_key(ChainDataIndex::FinalizedBlockNumber);
-        self.read_async(CHAIN_DATA, key)
-            .await?
-            .map(|bytes| -> Result<BlockNumber, StoreError> {
-                let array: [u8; 8] = bytes
-                    .try_into()
-                    .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
-                Ok(BlockNumber::from_le_bytes(array))
-            })
-            .transpose()
+        self.read_chain_data_block_number(ChainDataIndex::FinalizedBlockNumber)
+            .await
     }
 
     /// Obtain safe block number
     pub async fn get_safe_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        let key = chain_data_key(ChainDataIndex::SafeBlockNumber);
-        self.read_async(CHAIN_DATA, key)
-            .await?
-            .map(|bytes| -> Result<BlockNumber, StoreError> {
-                let array: [u8; 8] = bytes
-                    .try_into()
-                    .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
-                Ok(BlockNumber::from_le_bytes(array))
-            })
-            .transpose()
+        self.read_chain_data_block_number(ChainDataIndex::SafeBlockNumber)
+            .await
     }
 
     /// Obtain latest block number
-    pub async fn get_latest_block_number(&self) -> Result<BlockNumber, StoreError> {
+    pub fn get_latest_block_number(&self) -> Result<BlockNumber, StoreError> {
         Ok(self.latest_block_header.get().number)
     }
 
@@ -1209,16 +1439,8 @@ impl Store {
 
     /// Obtain pending block number
     pub async fn get_pending_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        let key = chain_data_key(ChainDataIndex::PendingBlockNumber);
-        self.read_async(CHAIN_DATA, key)
-            .await?
-            .map(|bytes| -> Result<BlockNumber, StoreError> {
-                let array: [u8; 8] = bytes
-                    .try_into()
-                    .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
-                Ok(BlockNumber::from_le_bytes(array))
-            })
-            .transpose()
+        self.read_chain_data_block_number(ChainDataIndex::PendingBlockNumber)
+            .await
     }
 
     /// DB mutation step of `forkchoice_update`.
@@ -1490,12 +1712,7 @@ impl Store {
         }
         let txn = self.backend.begin_read()?;
         txn.get(BLOCK_NUMBERS, &block_hash.encode_to_vec())?
-            .map(|bytes| -> Result<BlockNumber, StoreError> {
-                let array: [u8; 8] = bytes
-                    .try_into()
-                    .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
-                Ok(BlockNumber::from_le_bytes(array))
-            })
+            .map(decode_block_number)
             .transpose()
     }
 
@@ -3115,12 +3332,46 @@ impl Store {
         }
 
         if !fkv_indices.is_empty() {
+            // Sort by the prefixed (hashed-order) key so adjacent accounts land
+            // in the same RocksDB data blocks, then read the sorted keys in
+            // contiguous shards concurrently. A single `multi_get` runs the whole
+            // batch at queue depth 1 (async_io is off), which on a cold account-
+            // heavy block serializes thousands of random reads (coldbench: ~13x
+            // slower than this sharded path). Mirrors the storage FKV batch.
+            fkv_indices.sort_unstable_by(|&a, &b| leaf_paths[a].cmp(&leaf_paths[b]));
             let read_view = self.backend.begin_read()?;
             let keys: Vec<&[u8]> = fkv_indices
                 .iter()
                 .map(|&i| leaf_paths[i].as_slice())
                 .collect();
-            let raw = read_view.multi_get(ACCOUNT_FLATKEYVALUE, &keys);
+            let shards = shard_count(keys.len());
+            let raw: Vec<Result<Option<Vec<u8>>, StoreError>> = if shards <= 1 {
+                read_view.multi_get(ACCOUNT_FLATKEYVALUE, &keys)
+            } else {
+                let chunk = keys.len().div_ceil(shards);
+                let rv = read_view.as_ref();
+                std::thread::scope(|scope| {
+                    let handles: Vec<_> = keys
+                        .chunks(chunk)
+                        .map(|ck| scope.spawn(move || rv.multi_get(ACCOUNT_FLATKEYVALUE, ck)))
+                        .collect();
+                    handles
+                        .into_iter()
+                        // A panicked shard yields one Err element rather than
+                        // re-panicking the whole node; the consumer's `?` below
+                        // surfaces it to the caller. Every caller of this batch
+                        // treats a failed warm as best-effort, so the keys are
+                        // simply left uncached and read normally later.
+                        .flat_map(|h| {
+                            h.join().unwrap_or_else(|_| {
+                                vec![Err(StoreError::Custom(
+                                    "account prefetch shard panicked".into(),
+                                ))]
+                            })
+                        })
+                        .collect()
+                })
+            };
             for (slot, res) in fkv_indices.iter().zip(raw.into_iter()) {
                 let Some(encoded) = res? else { continue };
                 if encoded.is_empty() {
@@ -3150,6 +3401,300 @@ impl Store {
         }
 
         Ok(results)
+    }
+
+    /// Batch lookup of storage slot values against a given state root.
+    ///
+    /// Each input tuple is `(account_hash, storage_root, slot)` where
+    /// `account_hash` is the keccak hash of the account address and `slot` is
+    /// the raw (un-hashed) storage key, matching the inputs available to
+    /// [`Self::get_storage_at_root_with_known_storage_root`].
+    ///
+    /// Fast path: for slots whose prefixed FKV leaf path falls within the FKV
+    /// cursor (and which are not present in the in-memory diff-layer cache),
+    /// values are fetched in a single `multi_get` on `STORAGE_FLATKEYVALUE`.
+    /// The batch is sorted by the prefixed FKV key (hashed order) before the
+    /// `multi_get` so that adjacent slots share RocksDB data blocks, removing
+    /// the random-order read amplification of per-slot lookups. Slots not yet
+    /// swept by the FKV generator fall back to per-slot trie walks via
+    /// [`Self::get_storage_at_root_with_known_storage_root`], which preserves the
+    /// exact FKV / trie / diff-cache ordering of the single-slot path.
+    ///
+    /// Results are returned in the same order as the input slots. A missing slot
+    /// (deleted or never written) yields `None`, identical to the single-get path.
+    pub fn get_storage_values_batch_by_root(
+        &self,
+        state_root: H256,
+        slots: &[(H256, H256, H256)],
+    ) -> Result<Vec<Option<U256>>, StoreError> {
+        if slots.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let last_written = self.last_written()?;
+        let trie_cache = self
+            .trie_cache
+            .read()
+            .map_err(|_| StoreError::LockError)?
+            .clone();
+
+        let mut results: Vec<Option<U256>> = vec![None; slots.len()];
+        // Per-slot prefixed FKV leaf paths, length 131: 64 account-hash nibbles
+        // + 1 (account leaf flag) + 1 (separator) + 64 hashed-slot nibbles + 1
+        // (storage leaf flag). This is the exact key
+        // `BackendTrieDB::flatkeyvalue_computed` / `Trie::get` use for a storage
+        // leaf (see `apply_prefix`).
+        let leaf_paths: Vec<Vec<u8>> = slots
+            .iter()
+            .map(|(account_hash, _storage_root, slot)| {
+                let hashed_slot = hash_key_fixed(slot);
+                apply_prefix(Some(*account_hash), Nibbles::from_bytes(&hashed_slot)).into_vec()
+            })
+            .collect();
+
+        let mut fkv_indices: Vec<usize> = Vec::new();
+        let mut trie_indices: Vec<usize> = Vec::new();
+
+        // Same watermark check as the account batch and `BackendTrieDB`: a path
+        // is covered by FKV iff `last_written >= prefixed_path` compared as raw
+        // nibble bytes. `Nibbles` orders by its inner `data` vec, so the raw
+        // slice comparison is byte-identical to the `Nibbles >= Nibbles` check
+        // in `BackendTrieDB::flatkeyvalue_computed`.
+        //
+        // While a deep-reorg overlay serves this root, skip the FKV fast path
+        // entirely: this function never consults the overlay, and disk flat-KV may
+        // hold values the generator computed against the chain being reorged away
+        // (journal entries written during generation lack past-frontier flat-KV
+        // pre-images). The per-slot trie fallback reads through `TrieWrapper`, which
+        // routes through the overlay. Mirrors the gate in
+        // `get_storage_at_root` and `get_account_states_batch_by_root`.
+        let overlay_active = trie_cache.overlay_serves(state_root);
+        let fkv_cursor: &[u8] = last_written.as_slice();
+        for (i, path) in leaf_paths.iter().enumerate() {
+            // Diff-layer cache holds the authoritative latest value for this
+            // key at this state root, overriding both FKV and trie. Mirror the
+            // cache-first semantics of `TrieWrapper::get` / the account batch:
+            // an empty cached value means the slot was deleted -> None.
+            if let Some(value) = trie_cache.get(state_root, path.as_slice()) {
+                if !value.is_empty() {
+                    results[i] = Some(U256::decode(&value).map_err(StoreError::RLPDecode)?);
+                }
+                continue;
+            }
+            if !overlay_active && fkv_cursor >= path.as_slice() {
+                fkv_indices.push(i);
+            } else {
+                trie_indices.push(i);
+            }
+        }
+
+        if !fkv_indices.is_empty() {
+            // Sort the FKV batch by the prefixed (hashed-order) key so adjacent
+            // slots land in the same 4KB RocksDB data blocks. This is the whole
+            // point of the batch: it removes the random-order amplification of
+            // issuing one point lookup per slot in execution order.
+            fkv_indices.sort_unstable_by(|&a, &b| leaf_paths[a].cmp(&leaf_paths[b]));
+            let read_view = self.backend.begin_read()?;
+            let keys: Vec<&[u8]> = fkv_indices
+                .iter()
+                .map(|&i| leaf_paths[i].as_slice())
+                .collect();
+            // Sharded parallel multi_get. A single `multi_get` runs the whole
+            // batch serially inside RocksDB (async_io is OFF in our build, so
+            // no io_uring => queue depth ~= 1), which on a cold NVMe is purely
+            // read-latency-bound: it touches few blocks (sorted) but serializes
+            // them. Splitting the SORTED keys into contiguous shards read by
+            // separate blocking threads keeps the per-shard block sharing while
+            // issuing the shards concurrently, so effective queue depth ~= shard
+            // count. On a bloated-account cold read this is ~4.7x a single
+            // multi_get and ~4.6x the per-slot `par_iter` baseline (coldbench).
+            // Shard count scales with batch size and is capped; small batches
+            // run a single in-line multi_get (no thread spawn). All shards share
+            // one read view (one snapshot) so the reads stay consistent.
+            let shards = shard_count(keys.len());
+            let raw: Vec<Result<Option<Vec<u8>>, StoreError>> = if shards <= 1 {
+                read_view.multi_get(STORAGE_FLATKEYVALUE, &keys)
+            } else {
+                let chunk = keys.len().div_ceil(shards);
+                let rv = read_view.as_ref();
+                std::thread::scope(|scope| {
+                    let handles: Vec<_> = keys
+                        .chunks(chunk)
+                        .map(|ck| scope.spawn(move || rv.multi_get(STORAGE_FLATKEYVALUE, ck)))
+                        .collect();
+                    handles
+                        .into_iter()
+                        // A panicked shard yields one Err element rather than
+                        // re-panicking the whole node; the consumer's `?` below
+                        // surfaces it to the caller. Every caller of this batch
+                        // treats a failed warm as best-effort, so the keys are
+                        // simply left uncached and read normally later.
+                        .flat_map(|h| {
+                            h.join().unwrap_or_else(|_| {
+                                vec![Err(StoreError::Custom(
+                                    "storage prefetch shard panicked".into(),
+                                ))]
+                            })
+                        })
+                        .collect()
+                })
+            };
+            for (slot_idx, res) in fkv_indices.iter().zip(raw.into_iter()) {
+                let Some(encoded) = res? else { continue };
+                if encoded.is_empty() {
+                    continue;
+                }
+                results[*slot_idx] = Some(U256::decode(&encoded).map_err(StoreError::RLPDecode)?);
+            }
+        }
+
+        if !trie_indices.is_empty() {
+            // Fall back to the regular single-slot path for any slot whose path
+            // hasn't been swept by the FKV generator yet. Reusing
+            // `get_storage_at_root_with_known_storage_root` guarantees the
+            // trie-walk fallback is byte-identical to the unbatched read,
+            // including its own per-slot FKV / EMPTY_TRIE_HASH handling.
+            // Parallelized to recover the per-slot fan-out the pre-batch
+            // `par_iter` prefetch path had.
+            let fetched: Result<Vec<(usize, Option<U256>)>, StoreError> = trie_indices
+                .par_iter()
+                .map(|&i| {
+                    let (account_hash, storage_root, slot) = slots[i];
+                    self.get_storage_at_root_with_known_storage_root(
+                        state_root,
+                        account_hash,
+                        storage_root,
+                        slot,
+                    )
+                    .map(|v| (i, v))
+                })
+                .collect();
+            for (i, v) in fetched? {
+                results[i] = v;
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Best-effort warming of the MPT *internal* nodes the merkleizer will walk,
+    /// driven entirely by the BAL working set. The merkle phase reads trie nodes
+    /// from `STORAGE_TRIE_NODES` / `ACCOUNT_TRIE_NODES` (see `BackendTrieDB::get`)
+    /// by nibble path; the existing flat-KV prefetch warms only the leaf-value
+    /// CFs that *execution* reads, so every merkle-walk node read is otherwise
+    /// cold. This pulls those node blocks into the page/block cache up front so
+    /// the subsequent walk runs warm.
+    ///
+    /// The keys are not discovered by walking (a walk is QD1 and serial): the
+    /// internal nodes on the path to a leaf are all at *prefixes* of that leaf's
+    /// nibble path, so for every BAL leaf we speculatively probe every prefix up
+    /// to `MAX_PREFETCH_DEPTH`. Prefixes that are not real nodes are rejected by
+    /// the CF bloom filter in RAM (no disk read; measured ~free), and the shallow
+    /// prefixes collapse on dedup. This turns the cold merkle node reads into one
+    /// sorted, sharded, high-queue-depth `multi_get` per CF — the same lever that
+    /// fixed the flat-KV `sload` path, applied to the trie-node CFs.
+    ///
+    /// Results are discarded. Missing a node (e.g. one deeper than the probe
+    /// band) is harmless: the merkleizer just cold-reads it. Run this
+    /// synchronously up front (mirroring the flat-KV prefetch) so it never races
+    /// the merkleizer; it touches different CFs than execution, so it does not
+    /// contend with the executor either.
+    /// Returns the number of probed keys that hit a real stored node (warmed).
+    /// On the warm/no-op path this still reports coverage; a near-zero hit count
+    /// against a non-empty working set signals a key-encoding mismatch (the
+    /// effectiveness test asserts on this).
+    pub fn prefetch_trie_nodes(
+        &self,
+        storage_slots: &[(Address, H256)],
+        accounts: &[Address],
+    ) -> Result<usize, StoreError> {
+        // Probe band: nodes live at depth <= ~ceil(log16(trie_size)). 8 nibbles
+        // covers tries up to ~16^8 entries near-fully; any deeper node is simply
+        // cold-read by the walk, so under-covering only loses a little warming,
+        // never correctness. Tunable.
+        const MAX_PREFETCH_DEPTH: usize = 8;
+
+        // STORAGE_TRIE_NODES: prefixes of apply_prefix(hashed_addr, hashed_slot).
+        // Each input pushes MAX_PREFETCH_DEPTH+1 prefixes (depths 0..=max_d).
+        let mut storage_keys: Vec<Vec<u8>> =
+            Vec::with_capacity(storage_slots.len() * (MAX_PREFETCH_DEPTH + 1));
+        for (address, slot) in storage_slots {
+            let hashed_address = hash_address_fixed(address);
+            let hashed_slot = hash_key_fixed(slot);
+            let slot_nibbles = Nibbles::from_bytes(&hashed_slot);
+            let max_d = MAX_PREFETCH_DEPTH.min(slot_nibbles.len());
+            for d in 0..=max_d {
+                let prefix = apply_prefix(Some(hashed_address), slot_nibbles.slice(0, d));
+                storage_keys.push(prefix.into_vec());
+            }
+        }
+
+        // ACCOUNT_TRIE_NODES: prefixes of the hashed address (no account prefix).
+        let mut account_keys: Vec<Vec<u8>> =
+            Vec::with_capacity(accounts.len() * (MAX_PREFETCH_DEPTH + 1));
+        for address in accounts {
+            let hashed_address = hash_address_fixed(address);
+            let addr_nibbles = Nibbles::from_bytes(hashed_address.as_bytes());
+            let max_d = MAX_PREFETCH_DEPTH.min(addr_nibbles.len());
+            for d in 0..=max_d {
+                account_keys.push(addr_nibbles.slice(0, d).into_vec());
+            }
+        }
+
+        let hits = self.warm_trie_node_keys(STORAGE_TRIE_NODES, storage_keys)?
+            + self.warm_trie_node_keys(ACCOUNT_TRIE_NODES, account_keys)?;
+        Ok(hits)
+    }
+
+    /// Sorted, sharded, high-queue-depth `multi_get` over `keys` in `table`,
+    /// discarding results. Sorting makes adjacent keys share RocksDB data blocks;
+    /// sharding across blocking threads issues the reads at queue depth ~= shard
+    /// count (async_io is off, so a single multi_get runs at QD1). Mirrors the
+    /// storage flat-KV batch path. Dedups first so shared shallow prefixes are
+    /// read once.
+    fn warm_trie_node_keys(
+        &self,
+        table: &'static str,
+        mut keys: Vec<Vec<u8>>,
+    ) -> Result<usize, StoreError> {
+        if keys.is_empty() {
+            return Ok(0);
+        }
+        keys.sort_unstable();
+        keys.dedup();
+
+        let shards = shard_count(keys.len());
+        let read_view = self.backend.begin_read()?;
+        let count_hits = |res: Vec<Result<Option<Vec<u8>>, StoreError>>| {
+            res.into_iter().filter(|r| matches!(r, Ok(Some(_)))).count()
+        };
+        if shards <= 1 {
+            let refs: Vec<&[u8]> = keys.iter().map(|k| k.as_slice()).collect();
+            return Ok(count_hits(read_view.multi_get(table, &refs)));
+        }
+        let chunk = keys.len().div_ceil(shards);
+        let rv = read_view.as_ref();
+        let hits = std::thread::scope(|scope| {
+            let handles: Vec<_> = keys
+                .chunks(chunk)
+                .map(|ck| {
+                    scope.spawn(move || {
+                        let refs: Vec<&[u8]> = ck.iter().map(|k| k.as_slice()).collect();
+                        // Warm-only: keep cache population, just tally the hits.
+                        count_hits(rv.multi_get(table, &refs))
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                // Best-effort warming: a panicked shard contributes 0 hits rather
+                // than re-panicking. The caller treats this prefetch as best-effort
+                // (missing nodes are just cold-read by the walk), so a shard hiccup
+                // must not unwind block processing.
+                .map(|h| h.join().unwrap_or(0))
+                .sum::<usize>()
+        });
+        Ok(hits)
     }
 
     /// Constructs a merkle proof for the given account address against a given state.
@@ -3779,16 +4324,8 @@ impl Store {
 
     /// Loads the latest block number stored in the database, bypassing the latest block number cache
     async fn load_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        let key = chain_data_key(ChainDataIndex::LatestBlockNumber);
-        self.read_async(CHAIN_DATA, key)
-            .await?
-            .map(|bytes| -> Result<BlockNumber, StoreError> {
-                let array: [u8; 8] = bytes
-                    .try_into()
-                    .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
-                Ok(BlockNumber::from_le_bytes(array))
-            })
-            .transpose()
+        self.read_chain_data_block_number(ChainDataIndex::LatestBlockNumber)
+            .await
     }
 
     fn load_canonical_block_hash(
@@ -4069,9 +4606,15 @@ struct BlockPersist {
     wait_for_flush: bool,
     /// Number of the block whose layer this update represents (the last block in
     /// the batch, matching `child_state_root`). Threaded into the trie layer so
-    /// the committed-layer identity is available for the journal write path;
-    /// harmless for batch updates, since journal writes are skipped when
-    /// `wait_for_flush` (batch mode) is set.
+    /// the committed-layer identity is available for the journal write path.
+    ///
+    /// On a multi-block batch this names only the LAST block, which is NOT a usable
+    /// journal identity for the batch's layer. `wait_for_flush` does not make that
+    /// safe: it decides when THIS message acks, whereas the layer it creates is
+    /// journaled or not by whichever LATER commit sweeps it — `TrieLayerCache::commit`
+    /// takes the target layer and every ancestor, so a per-block commit can reach a
+    /// batch layer. Any journal entry must therefore be gated on the committed
+    /// layer covering exactly one block, not on this message's ack mode.
     block_number: BlockNumber,
     /// Hash of the block whose layer this update represents (see `block_number`).
     block_hash: H256,
@@ -4874,6 +5417,14 @@ fn chain_data_key(index: ChainDataIndex) -> Vec<u8> {
     (index as u8).encode_to_vec()
 }
 
+/// Decodes a block number stored as little-endian bytes.
+fn decode_block_number(bytes: Vec<u8>) -> Result<BlockNumber, StoreError> {
+    let array: [u8; 8] = bytes
+        .try_into()
+        .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
+    Ok(BlockNumber::from_le_bytes(array))
+}
+
 fn snap_state_key(index: SnapStateIndex) -> Vec<u8> {
     (index as u8).encode_to_vec()
 }
@@ -5018,8 +5569,8 @@ pub fn read_chain_id_from_db(path: &Path) -> Option<u64> {
     #[cfg(feature = "rocksdb")]
     {
         // The cache size is irrelevant for this one-shot chain-id read (the LRU
-        // is sized as a ceiling, not pre-allocated), so we use the default.
-        let backend = match RocksDBBackend::open(path, DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES) {
+        // is sized as a ceiling, not pre-allocated), so we use the ceiling.
+        let backend = match RocksDBBackend::open(path, MAX_ROCKSDB_BLOCK_CACHE_SIZE_BYTES) {
             Ok(backend) => backend,
             Err(e) => {
                 warn!("Failed to open RocksDB at {path:?} to read chain ID: {e}");
@@ -5918,6 +6469,18 @@ mod state_history_tests {
             "storage read must not serve the generator's stale flat-KV value"
         );
 
+        let batched_slots = store
+            .get_storage_values_batch_by_root(
+                pivot_root,
+                &[(hash_address_fixed(&address), EMPTY_TRIE_HASH, slot)],
+            )
+            .unwrap();
+        assert_eq!(
+            batched_slots,
+            vec![None],
+            "batch storage read must not serve the generator's stale flat-KV value"
+        );
+
         let state_trie = store.open_state_trie(pivot_root).unwrap();
         assert_eq!(
             state_trie.get(account_hash.as_bytes()).unwrap(),
@@ -5942,6 +6505,18 @@ mod state_history_tests {
         assert_eq!(
             slot_value,
             Some(generator_slot_value),
+            "unserved roots must keep the flat-KV fast path"
+        );
+
+        let batched_slots = store
+            .get_storage_values_batch_by_root(
+                unserved_root,
+                &[(hash_address_fixed(&address), EMPTY_TRIE_HASH, slot)],
+            )
+            .unwrap();
+        assert_eq!(
+            batched_slots,
+            vec![Some(generator_slot_value)],
             "unserved roots must keep the flat-KV fast path"
         );
     }
@@ -6245,6 +6820,281 @@ mod merge_tests {
 }
 
 #[cfg(test)]
+mod backfill_write_tests {
+    use super::*;
+    use ethrex_common::types::{EIP1559Transaction, TxType};
+
+    fn test_header(number: BlockNumber) -> BlockHeader {
+        BlockHeader {
+            number,
+            ..Default::default()
+        }
+    }
+
+    fn test_tx(nonce: u64) -> Transaction {
+        Transaction::EIP1559Transaction(EIP1559Transaction {
+            nonce,
+            ..Default::default()
+        })
+    }
+
+    fn test_receipt() -> Receipt {
+        Receipt {
+            tx_type: TxType::EIP1559,
+            succeeded: true,
+            cumulative_gas_used: 21_000,
+            logs: vec![],
+            payer: None,
+            frame_receipts: None,
+        }
+    }
+
+    /// `add_backfilled_blocks` writes the body + receipts + transaction index and
+    /// lowers the frontier (`earliest_block_number`) in one shot; the indexed tx
+    /// is then locatable for its (canonical) block.
+    #[tokio::test]
+    async fn writes_data_indexes_txs_and_lowers_frontier() {
+        let store = Store::new("", EngineType::InMemory).expect("in-memory store");
+        store.update_earliest_block_number(100).await.unwrap();
+
+        let header = test_header(99);
+        let hash = header.hash();
+        let tx = test_tx(7);
+        let body = BlockBody {
+            transactions: vec![tx.clone()],
+            ommers: vec![],
+            withdrawals: Some(vec![]),
+        };
+        // In production the header is already stored and canonical from snap
+        // header backfill; mirror the canonical mapping so the tx-index lookup
+        // (which is canonical-filtered) can resolve.
+        store.add_block_headers(vec![header.clone()]).await.unwrap();
+        store
+            .forkchoice_update(vec![(99, hash)], 99, hash, None, None)
+            .await
+            .unwrap();
+
+        store
+            .add_backfilled_blocks(
+                vec![BackfilledBlock {
+                    header,
+                    body,
+                    receipts: vec![test_receipt()],
+                    index_transactions: true,
+                }],
+                99,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            store.get_earliest_block_number().await.unwrap(),
+            99,
+            "frontier must be lowered atomically with the data write"
+        );
+        assert!(
+            store.get_block_body_by_hash(hash).await.unwrap().is_some(),
+            "body must be stored"
+        );
+        assert_eq!(
+            store.get_receipts_for_block(&hash).await.unwrap().len(),
+            1,
+            "receipts must be stored"
+        );
+        assert_eq!(
+            store
+                .get_transaction_location(tx.hash(&NativeCrypto))
+                .await
+                .unwrap(),
+            Some((99, hash, 0)),
+            "indexed transaction must be locatable"
+        );
+    }
+
+    /// With `index_transactions = false` (a block outside the
+    /// `--history.transactions` horizon) the body and receipts are still written,
+    /// but the transaction index is skipped.
+    #[tokio::test]
+    async fn skips_tx_index_when_disabled() {
+        let store = Store::new("", EngineType::InMemory).expect("in-memory store");
+        store.update_earliest_block_number(100).await.unwrap();
+
+        let header = test_header(99);
+        let hash = header.hash();
+        let tx = test_tx(7);
+        let body = BlockBody {
+            transactions: vec![tx.clone()],
+            ommers: vec![],
+            withdrawals: Some(vec![]),
+        };
+        store.add_block_headers(vec![header.clone()]).await.unwrap();
+        store
+            .forkchoice_update(vec![(99, hash)], 99, hash, None, None)
+            .await
+            .unwrap();
+
+        store
+            .add_backfilled_blocks(
+                vec![BackfilledBlock {
+                    header,
+                    body,
+                    receipts: vec![test_receipt()],
+                    index_transactions: false,
+                }],
+                99,
+            )
+            .await
+            .unwrap();
+
+        assert!(
+            store.get_block_body_by_hash(hash).await.unwrap().is_some(),
+            "body must still be stored"
+        );
+        assert_eq!(
+            store.get_receipts_for_block(&hash).await.unwrap().len(),
+            1,
+            "receipts must still be stored"
+        );
+        assert_eq!(
+            store
+                .get_transaction_location(tx.hash(&NativeCrypto))
+                .await
+                .unwrap(),
+            None,
+            "transaction index must be skipped when index_transactions is false"
+        );
+    }
+
+    /// End-to-end at the storage/RPC boundary: the getters the RPC handlers use
+    /// (`get_block_body`, `get_transaction_by_hash`, `get_receipt`) return nothing
+    /// for a headers-only (post-snap) block and real data after backfill.
+    #[tokio::test]
+    async fn historical_getters_transition_from_null_to_present() {
+        let store = Store::new("", EngineType::InMemory).expect("in-memory store");
+        store.update_earliest_block_number(100).await.unwrap();
+
+        let header = test_header(99);
+        let hash = header.hash();
+        let tx = test_tx(7);
+        let tx_hash = tx.hash(&NativeCrypto);
+        let body = BlockBody {
+            transactions: vec![tx],
+            ommers: vec![],
+            withdrawals: Some(vec![]),
+        };
+        // Post-snap state: header stored and canonical, but no body/receipts.
+        store.add_block_headers(vec![header.clone()]).await.unwrap();
+        store
+            .forkchoice_update(vec![(99, hash)], 99, hash, None, None)
+            .await
+            .unwrap();
+
+        // Previously-null historical queries.
+        assert!(
+            store.get_block_body(99).await.unwrap().is_none(),
+            "body absent before backfill"
+        );
+        assert!(
+            store
+                .get_transaction_by_hash(tx_hash)
+                .await
+                .unwrap()
+                .is_none(),
+            "tx unlocatable before backfill"
+        );
+        assert!(
+            store.get_receipt(99, 0).await.unwrap().is_none(),
+            "receipt absent before backfill"
+        );
+
+        store
+            .add_backfilled_blocks(
+                vec![BackfilledBlock {
+                    header,
+                    body,
+                    receipts: vec![test_receipt()],
+                    index_transactions: true,
+                }],
+                99,
+            )
+            .await
+            .unwrap();
+
+        // The same queries now return real data.
+        assert!(
+            store.get_block_body(99).await.unwrap().is_some(),
+            "body present after backfill"
+        );
+        assert!(
+            store
+                .get_transaction_by_hash(tx_hash)
+                .await
+                .unwrap()
+                .is_some(),
+            "tx locatable after backfill"
+        );
+        assert!(
+            store.get_receipt(99, 0).await.unwrap().is_some(),
+            "receipt present after backfill"
+        );
+    }
+
+    /// Backfill fills downward in batches; the frontier lowers after each batch,
+    /// persists (doubling as the resume cursor), and leaves no gaps.
+    #[tokio::test]
+    async fn resume_fills_contiguously_without_gaps() {
+        let store = Store::new("", EngineType::InMemory).expect("in-memory store");
+        store.update_earliest_block_number(100).await.unwrap();
+
+        let make_batch = |range: std::ops::Range<u64>| -> Vec<BackfilledBlock> {
+            range
+                .rev()
+                .map(|n| BackfilledBlock {
+                    header: test_header(n),
+                    body: BlockBody {
+                        transactions: vec![],
+                        ommers: vec![],
+                        withdrawals: Some(vec![]),
+                    },
+                    receipts: vec![],
+                    index_transactions: false,
+                })
+                .collect()
+        };
+
+        // Batch 1: fill [90, 99], lowering the frontier to 90.
+        store
+            .add_backfilled_blocks(make_batch(90..100), 90)
+            .await
+            .unwrap();
+        assert_eq!(store.get_earliest_block_number().await.unwrap(), 90);
+
+        // Simulate a restart: the task resumes from the persisted frontier.
+        let resume_from = store.get_earliest_block_number().await.unwrap();
+        assert_eq!(resume_from, 90, "resume reads the persisted frontier");
+
+        // Batch 2: fill [80, 89], lowering the frontier to 80.
+        store
+            .add_backfilled_blocks(make_batch(80..90), 80)
+            .await
+            .unwrap();
+        assert_eq!(store.get_earliest_block_number().await.unwrap(), 80);
+
+        // No gaps: every block in [80, 99] has a stored body.
+        for n in 80..100 {
+            assert!(
+                store
+                    .get_block_body_by_hash(test_header(n).hash())
+                    .await
+                    .unwrap()
+                    .is_some(),
+                "block {n} must have a body (no gap left by resume)"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
 mod datadir_tests {
     use super::*;
     use std::fs;
@@ -6312,5 +7162,95 @@ mod flatkeyvalue_completeness_tests {
         assert!(!Store::flatkeyvalue_generation_complete(Some(&[
             0xff, 0xff
         ])));
+    }
+}
+
+#[cfg(test)]
+mod cgroup_memory_limit_tests {
+    use super::*;
+    use std::fs;
+
+    /// Builds `<root>/<relative>` and writes `contents` into the `file` of every
+    /// directory the map names, keyed by path relative to `root` ("" is the root).
+    fn cgroup_tree(root: &Path, relative: &str, file: &str, limits: &[(&str, &str)]) {
+        fs::create_dir_all(root.join(relative)).expect("create cgroup tree");
+        for (dir, contents) in limits {
+            fs::write(root.join(dir).join(file), contents).expect("write limit");
+        }
+    }
+
+    /// A limit set on an ancestor cgroup (a systemd slice, a pod's parent) applies to
+    /// the process, so it must be found even though the process's own cgroup is
+    /// unlimited and the mount root reports `max`.
+    #[test]
+    fn ancestor_limit_applies() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        cgroup_tree(
+            root,
+            "system.slice/ethrex.service",
+            "memory.max",
+            &[("", "max"), ("system.slice", "4294967296")],
+        );
+
+        assert_eq!(
+            cgroup_limit_up_to_root(root, "/system.slice/ethrex.service", "memory.max"),
+            Some(4 * 1024 * 1024 * 1024)
+        );
+    }
+
+    /// With limits at several levels the tightest one is what the kernel enforces.
+    #[test]
+    fn smallest_limit_in_the_chain_wins() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        cgroup_tree(
+            root,
+            "kubepods/pod123/container",
+            "memory.max",
+            &[
+                ("kubepods", "8589934592"),
+                ("kubepods/pod123", "2147483648"),
+                ("kubepods/pod123/container", "4294967296"),
+            ],
+        );
+
+        assert_eq!(
+            cgroup_limit_up_to_root(root, "kubepods/pod123/container", "memory.max"),
+            Some(2 * 1024 * 1024 * 1024)
+        );
+    }
+
+    /// An unlimited chain is "unknown", not zero: v2 writes the literal `max` and v1 a
+    /// sentinel near `u64::MAX`, and absent files must not count either.
+    #[test]
+    fn unlimited_chain_yields_no_limit() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        cgroup_tree(root, "docker/abc", "memory.max", &[("", "max")]);
+
+        assert_eq!(
+            cgroup_limit_up_to_root(root, "docker/abc", "memory.max"),
+            None
+        );
+        // A cgroup path that does not exist under this mount (a v1 controller that is
+        // not mounted, a stale line in /proc/self/cgroup) reads as unknown too.
+        assert_eq!(
+            cgroup_limit_up_to_root(root, "not/here", "memory.max"),
+            None
+        );
+    }
+
+    /// The root cgroup is itself a level: a limit set there still applies.
+    #[test]
+    fn root_limit_applies_to_the_root_cgroup() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        cgroup_tree(root, "", "memory.limit_in_bytes", &[("", "536870912")]);
+
+        assert_eq!(
+            cgroup_limit_up_to_root(root, "/", "memory.limit_in_bytes"),
+            Some(512 * 1024 * 1024)
+        );
     }
 }
