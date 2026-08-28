@@ -26,6 +26,19 @@ AMSTERDAM_STAMP := $(SPECTEST_VECTORS_DIR)/.amsterdam_overlay
 # fixtures/blockchain_tests_engine/for_bogota/; the datatest harness walks
 # vectors/eest/ recursively, so they are discovered wherever they land.
 #
+# The release is filled with --generate-all-formats, so the bundle also carries
+# blockchain_tests_engine_x, blockchain_tests, state_tests, transaction_tests and
+# blockchain_tests_sync trees for the same fork. Only the engine tree is
+# extracted. The inclusion-list variants live only in the engine formats, and
+# every path under blockchain_tests/for_bogota also appears under
+# blockchain_tests_engine/for_bogota -- the same test bodies, delivered as RLP
+# blocks instead of through engine_newPayload -- so extracting them adds no
+# coverage this suite does not already have. Running them in tooling/ef_tests/
+# {blockchain,state} would additionally need a Bogota entry in those runners'
+# fork tables, and this client's post-Amsterdam slot (Fork::Hegota) carries
+# EIP-8141 on top of Amsterdam while the fixtures' Bogota does not; see the
+# fork-slot note in crates/blockchain/inclusion_list_validator.rs.
+#
 # The pinned release, tests-focil-devnet@v0.2.0, fills every fixture on the
 # "Bogota" network -- EIP-7805 on top of Amsterdam. The Amsterdam it is filled
 # on is the one $(AMSTERDAM_FIXTURES_FILE) already pins: diffed against

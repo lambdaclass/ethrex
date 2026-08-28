@@ -144,6 +144,10 @@ pub async fn block_satisfies_inclusion_list(
         .iter()
         .map(|tx| tx.hash(&crypto))
         .collect();
+    // `header.gas_used` is the maximum of EIP-8037's two gas dimensions, so this
+    // is `min(execution_available, state_available)`. See the
+    // `check_block_gas_capacity` note in `InclusionListSatisfactionValidator` for
+    // what that costs and why the second dimension is not reachable from here.
     let gas_left = header.gas_limit.saturating_sub(header.gas_used);
     let chain_config = context.storage.get_chain_config();
 

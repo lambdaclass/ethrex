@@ -28,6 +28,16 @@
 //! The satisfaction check NEVER calls into the EVM. Every classification is a
 //! state comparison against the per-sender tracker, exactly per the spec's
 //! "No re-execution of IL transactions" requirement.
+//!
+//! ## Fork slot
+//!
+//! Upstream's "Bogota" is Amsterdam plus EIP-7805 and nothing else. This client
+//! has a single slot for the fork after Amsterdam, `Fork::Hegota`, and EIP-8141
+//! is already staged in it, so a chain configured for that network activates
+//! both EIPs. Everything in this module is keyed off the inclusion list it is
+//! handed rather than off the fork, so nothing here depends on which EIPs share
+//! the slot; the coupling shows up only when spec fixtures filled for one of
+//! them are run on a chain that activates both.
 
 use std::collections::HashSet;
 
@@ -444,12 +454,30 @@ impl InclusionListSatisfactionValidator {
             }
 
             // insufficient_gas → satisfied. EELS `check_block_gas_capacity`
-            // checks the execution and state gas dimensions against their own
-            // remaining budgets; the header only records their maximum
-            // (`gas_used = max(execution, state)`), so `gas_left` is the
-            // smaller of the two remaining budgets and this check matches EELS
-            // exactly whenever `tx.gas <= TX_MAX_GAS_LIMIT` (the execution
-            // dimension counts at most that much per tx).
+            // checks two gas dimensions against their own remaining budgets:
+            // `min(TX_MAX_GAS_LIMIT, tx.gas) > execution_available` or
+            // `tx.gas > state_available`. Only their maximum reaches the header
+            // (`header.gas_used = max(block_gas_used, block_state_gas_used)`),
+            // so `gas_left` is exactly `min(execution_available,
+            // state_available)` and one scalar is all a header-driven check can
+            // see.
+            //
+            // That makes this comparison equivalent to EELS for every
+            // `tx.gas <= TX_MAX_GAS_LIMIT`, and for every larger `tx.gas` whose
+            // binding dimension is state gas. It diverges only in the window
+            // `TX_MAX_GAS_LIMIT <= execution_available < tx.gas <=
+            // state_available`, which additionally requires the block to have
+            // spent strictly more execution gas than state gas; there EELS
+            // counts the transaction as includable while this excuses it, so a
+            // block would be reported satisfied where EELS reports it
+            // unsatisfied.
+            //
+            // Closing that window needs the block's state-gas total, which is
+            // neither a header field nor part of a receipt, and is not
+            // persisted. `engine_forkchoiceUpdatedV5` re-runs this check against
+            // a head block that may have been imported long before, so the
+            // figure cannot be threaded down from execution either — recording
+            // it is a storage-schema change, not a local fix.
             if tx_il.gas_limit() > gas_left {
                 continue;
             }

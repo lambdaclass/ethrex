@@ -309,7 +309,7 @@ Local ef_tests runners (blockchain, state, engine) share one set of fixture URL 
 
 One pin is scoped to a single runner, because only that runner consumes the bundle:
 
-- `tooling/ef_tests/engine/.fixtures_url_focil` — EIP-7805 (FOCIL) fixtures, filled on the "Bogota" network. They exist only in the engine fixture formats, so the engine runner is the only consumer, and the bundle must be filled on the same Amsterdam that `.fixtures_url_amsterdam` pins.
+- `tooling/ef_tests/engine/.fixtures_url_focil` — EIP-7805 (FOCIL) fixtures, filled on the "Bogota" network. The bundle is filled with `--generate-all-formats` and ships six format trees, but only `blockchain_tests_engine/for_bogota` is extracted: the inclusion-list variants that carry the FOCIL coverage exist only in the engine formats, and every path in the plain `blockchain_tests` and `state_tests` trees is a test body the engine tree already runs. Running those additionally would need a `Bogota` fork in the blockchain and state runners, which is a question about what this client's post-Amsterdam fork contains rather than about FOCIL. The bundle must be filled on the same Amsterdam that `.fixtures_url_amsterdam` pins.
 
 Each file holds exactly one release URL; read the current values from the files rather than from this page.
 
