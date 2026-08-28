@@ -13,7 +13,7 @@ use crate::{
         p2p::SUPPORTED_SNAP_CAPABILITIES,
     },
     tx_broadcaster::{TxBroadcaster, TxBroadcasterError},
-    types::{INITIAL_ENR_SEQ, NetworkConfig, Node, NodeError, NodeRecord},
+    types::{INITIAL_ENR_SEQ, NetworkConfig, Node, NodeError, NodeRecord, SharedLocalNode},
 };
 use ethrex_blockchain::Blockchain;
 use ethrex_common::H256;
@@ -42,6 +42,8 @@ pub struct P2PContext {
     pub storage: Store,
     pub blockchain: Arc<Blockchain>,
     pub(crate) broadcast: PeerConnBroadcastSender,
+    /// Startup copy of the local node identity used only as the self-connection guard.
+    /// Not live-updated; use SharedLocalNode for the current identity.
     pub local_node: Node,
     /// Network addressing configuration: bind vs. external addresses.
     pub network_config: NetworkConfig,
@@ -153,6 +155,7 @@ pub async fn start_network(
     context: P2PContext,
     bootnodes: Vec<Node>,
     config: DiscoveryConfig,
+    shared_local_node: SharedLocalNode,
 ) -> Result<(), NetworkError> {
     let udp_socket = Arc::new(
         UdpSocket::bind(context.network_config.bind_udp_addr())
@@ -177,6 +180,7 @@ pub async fn start_network(
         context.table.clone(),
         bootnodes,
         config,
+        shared_local_node,
         fork_id_rx,
     )
     .await
