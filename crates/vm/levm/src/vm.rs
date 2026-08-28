@@ -1975,14 +1975,6 @@ impl<'a> VM<'a> {
             )?;
             let delegation_access_cost = delegation.map_or(0, |(_, cost)| cost);
 
-            // Entering a frame reads its target's account (code, and the balance the
-            // warm/cold charge below is priced against), so EIP-7928 reconstructors
-            // must see the touch. Recorded before the frame runs and kept even when it
-            // halts: the read happened regardless of what the frame did afterwards.
-            if let Some(recorder) = self.db.bal_recorder.as_mut() {
-                recorder.record_touched_address(target);
-            }
-
             // EIP-8141, Execution: a VERIFY frame whose resolved target has no code
             // runs the protocol default code *instead of* an EVM. Every other frame —
             // including a SENDER or DEFAULT frame to a codeless account, which runs an
@@ -2032,14 +2024,12 @@ impl<'a> VM<'a> {
             // read happens either way. A default-code frame therefore pays the same
             // access as any other; exempting it made a sponsor reached through the
             // default code cheaper than an identical contract sponsor.
-            let frame_entry_gas = {
-                let target_access = if self.substate.add_accessed_address(target) {
-                    crate::gas_cost::cold_account_access_cost(self.env.config.fork)
-                } else {
-                    crate::gas_cost::WARM_ADDRESS_ACCESS_COST
-                };
-                target_access.saturating_add(delegation_access_cost)
+            let target_access = if self.substate.add_accessed_address(target) {
+                crate::gas_cost::cold_account_access_cost(self.env.config.fork)
+            } else {
+                crate::gas_cost::WARM_ADDRESS_ACCESS_COST
             };
+            let frame_entry_gas = target_access.saturating_add(delegation_access_cost);
 
             // The entry charges come out of the frame's own budgets, so a frame that
             // cannot afford to be entered fails without executing, forfeiting its
@@ -2047,6 +2037,19 @@ impl<'a> VM<'a> {
             let frame_entry_unaffordable =
                 frame_entry_gas > frame.gas_limit || entry_state_gas > frame.state_gas_limit;
             let frame_gas_after_entry = frame.gas_limit.saturating_sub(frame_entry_gas);
+
+            // Entering a frame reads its target's account, so EIP-7928 reconstructors
+            // must see the touch -- but only once the frame can pay for that one read.
+            // The gate is the target's own access, not the whole entry charge: a frame
+            // that affords the target but not the delegation behind it, or not the
+            // state gas to revive a dead target, still performed the target read and
+            // still owes the block access list an entry for it. Only a frame too poor
+            // for the target access itself never touches it.
+            if frame.gas_limit >= target_access
+                && let Some(recorder) = self.db.bal_recorder.as_mut()
+            {
+                recorder.record_touched_address(target);
+            }
 
             // Now that the frame can pay for it, follow the designation: warm the
             // delegate, read its code, and record the cross-address read for EIP-7928.
