@@ -1092,9 +1092,9 @@ impl<'a> VM<'a> {
                 root_stack,
                 root_memory,
             ),
+            opcode_table: VM::build_opcode_table(fork, env.config.eip8141),
             env,
             frame_tx_context: None,
-            opcode_table: VM::build_opcode_table(fork),
             crypto,
             stateless_validator,
         };
@@ -1532,8 +1532,8 @@ impl<'a> VM<'a> {
         use crate::errors::TxResult;
 
         // EIP-8141 fork gating: reject frame transactions observed in a block or
-        // submitted to any non-mempool entry point before Hegota activates.
-        if self.env.config.fork < Fork::Hegota {
+        // submitted to any non-mempool entry point before EIP-8141 activates.
+        if !self.env.config.eip8141 {
             return Err(VMError::TxValidation(
                 crate::errors::TxValidationError::FrameTxPreFork,
             ));
@@ -2349,7 +2349,7 @@ impl<'a> VM<'a> {
     ) -> Result<PrefixSimResult, VMError> {
         use crate::validation_observer::ValidationObserver;
 
-        if self.env.config.fork < Fork::Hegota {
+        if !self.env.config.eip8141 {
             return Err(VMError::TxValidation(
                 crate::errors::TxValidationError::FrameTxPreFork,
             ));
@@ -3468,7 +3468,7 @@ impl<'a> VM<'a> {
             prep_baseline_state_gas_spill: 0,
             prep_region_backup_marker: PrepareRegionBackupMarker::default(),
             pending_prep_oog: false,
-            opcode_table: VM::build_opcode_table(fork),
+            opcode_table: VM::build_opcode_table(fork, false),
             crypto,
             stateless_validator: None,
             validation_observer: ValidationObserver::disabled(),

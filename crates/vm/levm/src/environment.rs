@@ -76,6 +76,8 @@ pub struct Environment {
 pub struct EVMConfig {
     pub fork: Fork,
     pub blob_schedule: ForkBlobSchedule,
+    /// EIP-8141 frame transactions and opcodes are enabled
+    pub eip8141: bool,
 }
 
 impl EVMConfig {
@@ -83,7 +85,13 @@ impl EVMConfig {
         EVMConfig {
             fork,
             blob_schedule,
+            eip8141: false,
         }
+    }
+
+    pub fn with_eip8141(mut self, eip8141: bool) -> EVMConfig {
+        self.eip8141 = eip8141;
+        self
     }
 
     pub fn new_from_chain_config(chain_config: &ChainConfig, block_header: &BlockHeader) -> Self {
@@ -93,7 +101,9 @@ impl EVMConfig {
             .get_fork_blob_schedule(block_header.timestamp)
             .unwrap_or_else(|| EVMConfig::canonical_values(fork));
 
-        EVMConfig::new(fork, blob_schedule)
+        let mut config = EVMConfig::new(fork, blob_schedule);
+        config.eip8141 = chain_config.is_eip8141_activated(block_header.timestamp);
+        config
     }
 
     /// This function is used for running the EF tests. If you don't
@@ -146,6 +156,7 @@ impl Default for EVMConfig {
         EVMConfig {
             fork,
             blob_schedule: Self::canonical_values(fork),
+            eip8141: false,
         }
     }
 }

@@ -421,7 +421,7 @@ impl<'a> VM<'a> {
     /// per-tx rebuild or 2 KB copy into the VM. `fork` is constant within a block, so every tx
     /// in a block resolves to the same table. This is faster than a conventional match.
     #[allow(clippy::as_conversions, clippy::indexing_slicing)]
-    pub(crate) fn build_opcode_table(fork: Fork) -> &'static [OpCodeFn; 256] {
+    pub(crate) fn build_opcode_table(fork: Fork, eip8141: bool) -> &'static [OpCodeFn; 256] {
         // Built once at compile time; immutable, so sharing across all VMs is trivially safe.
         // Instantiated with `'static` so the initializers don't reference the impl's `'a`.
         static HEGOTA: [OpCodeFn; 256] = VM::<'static>::build_opcode_table_hegota();
@@ -431,7 +431,7 @@ impl<'a> VM<'a> {
         static PRE_CANCUN: [OpCodeFn; 256] = VM::<'static>::build_opcode_table_pre_cancun();
         static PRE_SHANGHAI: [OpCodeFn; 256] = VM::<'static>::build_opcode_table_pre_shanghai();
 
-        if fork >= Fork::Hegota {
+        if eip8141 && fork >= Fork::Hegota {
             &HEGOTA
         } else if fork >= Fork::Amsterdam {
             &AMSTERDAM
@@ -686,7 +686,7 @@ mod tests {
         }
         // 0xEF is never assigned in any table -> it holds the invalid handler.
         for fork in [Fork::Osaka, Fork::Amsterdam] {
-            let table = VM::build_opcode_table(fork);
+            let table = VM::build_opcode_table(fork, false);
             for byte in [0xAAusize, 0xB0, 0xB1, 0xB2, 0xB3, 0xB4] {
                 assert!(
                     same_handler(table[byte], table[0xEF]),
@@ -694,7 +694,12 @@ mod tests {
                 );
             }
         }
-        let hegota = VM::build_opcode_table(Fork::Hegota);
+        let hegota_without_eip8141 = VM::build_opcode_table(Fork::Hegota, false);
+        assert!(same_handler(
+            hegota_without_eip8141[0xAA],
+            hegota_without_eip8141[0xEF]
+        ));
+        let hegota = VM::build_opcode_table(Fork::Hegota, true);
         assert!(!same_handler(hegota[0xAA], hegota[0xEF]));
     }
 }

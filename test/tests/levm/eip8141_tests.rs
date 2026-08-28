@@ -112,7 +112,8 @@ fn frame_tx_env(tx: &FrameTransaction) -> Environment {
         origin: tx.sender,
         gas_limit: tx.total_gas_limit(),
         block_gas_limit: (i64::MAX - 1) as u64,
-        config: EVMConfig::new(Fork::Hegota, EVMConfig::canonical_values(Fork::Hegota)),
+        config: EVMConfig::new(Fork::Hegota, EVMConfig::canonical_values(Fork::Hegota))
+            .with_eip8141(true),
         chain_id: U256::from(HARNESS_CHAIN_ID),
         base_fee_per_gas: U256::from(HARNESS_BASE_FEE),
         // NOTE: gas_price here is max_fee_per_gas, NOT the effective price.
@@ -2026,7 +2027,8 @@ mod validation_observer_tests {
     }
 
     fn hegota_env(sender: Address) -> Environment {
-        let config = EVMConfig::new(Fork::Hegota, EVMConfig::canonical_values(Fork::Hegota));
+        let config = EVMConfig::new(Fork::Hegota, EVMConfig::canonical_values(Fork::Hegota))
+            .with_eip8141(true);
         Environment {
             origin: sender,
             gas_limit: 30_000_000,
@@ -2466,6 +2468,7 @@ mod frame_validation_prefix_tests {
             osaka_time: Some(0),
             amsterdam_time: Some(0),
             hegota_time: Some(0),
+            eip8141_time: Some(0),
             ..Default::default()
         }
     }

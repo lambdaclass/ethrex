@@ -508,6 +508,7 @@ async fn setup_hegota_store() -> Store {
             chain_id: 0,
             shanghai_time: Some(0),
             hegota_time: Some(0),
+            eip8141_time: Some(0),
             ..Default::default()
         },
         gas_limit: 100_000_000,
@@ -863,6 +864,7 @@ async fn setup_hegota_store_ts1000() -> Store {
             chain_id: 0,
             shanghai_time: Some(0),
             hegota_time: Some(0),
+            eip8141_time: Some(0),
             ..Default::default()
         },
         gas_limit: 100_000_000,
@@ -1335,6 +1337,7 @@ async fn setup_hegota_store_funded() -> Store {
             chain_id: 0,
             shanghai_time: Some(0),
             hegota_time: Some(0),
+            eip8141_time: Some(0),
             ..Default::default()
         },
         gas_limit: 100_000_000,
@@ -1432,6 +1435,7 @@ async fn mempool_rejects_underfunded_paymaster() {
             chain_id: 0,
             shanghai_time: Some(0),
             hegota_time: Some(0),
+            eip8141_time: Some(0),
             ..Default::default()
         },
         gas_limit: 100_000_000,
@@ -1772,6 +1776,7 @@ async fn setup_hegota_store_with_balance(balance: U256) -> Store {
             chain_id: 0,
             shanghai_time: Some(0),
             hegota_time: Some(0),
+            eip8141_time: Some(0),
             ..Default::default()
         },
         gas_limit: 100_000_000,
@@ -1959,6 +1964,7 @@ async fn mempool_rejects_frame_tx_with_banned_opcode() {
             chain_id: 0,
             shanghai_time: Some(0),
             hegota_time: Some(0),
+            eip8141_time: Some(0),
             ..Default::default()
         },
         gas_limit: 100_000_000,
@@ -2015,6 +2021,7 @@ async fn mempool_revalidation_evicts_invalid_frame_tx() {
             chain_id: 0,
             shanghai_time: Some(0),
             hegota_time: Some(0),
+            eip8141_time: Some(0),
             ..Default::default()
         },
         gas_limit: 100_000_000,

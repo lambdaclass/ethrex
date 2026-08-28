@@ -3375,10 +3375,10 @@ impl LEVM {
     }
 
     /// Install the canonical EIP-8141 expiry verifier runtime code at
-    /// EXPIRY_VERIFIER on Hegota activation (EIP-8141: "At
+    /// EXPIRY_VERIFIER on EIP-8141 activation (EIP-8141: "At
     /// activation, clients must install..."). Idempotent: writes only when
     /// the existing code differs, so exactly one account update is produced
-    /// (at the first Hegota block) and none afterwards.
+    /// (at the first EIP-8141 block) and none afterwards.
     pub fn install_expiry_verifier_code(
         db: &mut GeneralizedDatabase,
         crypto: &dyn Crypto,
@@ -3582,10 +3582,10 @@ impl LEVM {
             return Ok(());
         }
 
-        // EIP-8141: the expiry verifier predeploy must exist from Hegota
+        // EIP-8141: the expiry verifier predeploy must exist from EIP-8141
         // activation onward. Idempotent install; also
         // hooked in apply_system_calls for the payload-build path.
-        if fork >= Fork::Hegota {
+        if chain_config.is_eip8141_activated(block_header.timestamp) {
             Self::install_expiry_verifier_code(db, crypto)?;
         }
 

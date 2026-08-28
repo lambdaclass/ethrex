@@ -3554,10 +3554,10 @@ impl Blockchain {
             .ok_or(MempoolError::NoBlockHeaderError)?;
         let config = self.storage.get_chain_config();
 
-        // EIP-8141 fork gating: reject frame transactions before Hegota activates.
+        // EIP-8141 fork gating: reject frame transactions before EIP-8141 activates.
         // Prevents FrameTransaction (type 0x06) from entering the mempool or being
         // forwarded over P2P on chains where EIP-8141 has not yet activated.
-        if is_frame_tx && !config.is_hegota_activated(header.timestamp) {
+        if is_frame_tx && !config.is_eip8141_activated(header.timestamp) {
             return Err(MempoolError::FrameTxPreFork);
         }
 

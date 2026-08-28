@@ -281,6 +281,10 @@ pub struct ChainConfig {
         alias = "bogota_time"
     )]
     pub hegota_time: Option<u64>,
+    /// EIP-8141 (frame transactions) activation. Independent of `hegota_time` so a network can
+    /// schedule Hegotá for FOCIL without enabling frame transactions.
+    #[serde(alias = "eip8141Time", alias = "framesTime", alias = "frames_time")]
+    pub eip8141_time: Option<u64>,
     pub lstar_time: Option<u64>,
 
     /// Amount of total difficulty reached by the network that triggers the consensus upgrade.
@@ -383,6 +387,11 @@ impl From<Fork> for &str {
 impl ChainConfig {
     pub fn is_hegota_activated(&self, block_timestamp: u64) -> bool {
         self.hegota_time.is_some_and(|time| time <= block_timestamp)
+    }
+
+    pub fn is_eip8141_activated(&self, block_timestamp: u64) -> bool {
+        self.eip8141_time
+            .is_some_and(|time| time <= block_timestamp)
     }
 
     pub fn is_lstar_activated(&self, block_timestamp: u64) -> bool {
