@@ -371,11 +371,27 @@ does not, and you should not add one.
 ## 9. Faucet
 
 Run the faucet with **its own key**, funded from the `FAUCET_ADDR` account, and keep that
-key in a host env file — never in the repository, never in the kurtosis config. Point it
-at `http://localhost:32003` and give it the public RPC, explorer and bundle URLs for its
-own links — `PUBLIC_RPC_URL`, `EXPLORER_URL`, `ARTIFACTS_URL`; each row is simply absent
-from the page when its variable is unset. `scripts/frames-testnet/faucet/` is a working
-reference implementation.
+key in a host env file — never in the repository, never in the kurtosis config.
+`scripts/frames-testnet/faucet/` is a working reference implementation.
+
+```
+RPC_URL=http://172.17.0.1:36003                              # how the faucet reaches a node
+PUBLIC_RPC_URL=https://rpc1.frames.ethrex.xyz                # what the page tells visitors
+EXPLORER_URL=https://dora.frames.ethrex.xyz
+ARTIFACTS_URL=https://faucet.frames.ethrex.xyz/artifacts
+BIND_ADDR=127.0.0.1
+PORT=8088
+BUNDLE_DIR=/srv/frames-testnet/artifacts
+```
+
+**`RPC_URL` and `PUBLIC_RPC_URL` are different on purpose, and the public one must be the
+proxied name.** The faucet reaches a node directly because it lives on the host; visitors
+must not. Publishing `http://<ip>:36003` hands them a port the firewall does not forward,
+so it is broken from outside — and if it ever is forwarded it bypasses the namespace
+guard, which is what withholds `admin_*` and `debug_*`. Each row is simply absent from the
+page when its variable is unset, so an unset URL is safer than a wrong one.
+
+`BIND_ADDR=127.0.0.1` keeps the faucet off the LAN; Caddy is what publishes it.
 
 Give it the artifact bundle read-only, so it can serve the bootnode lists on its landing
 page and at `GET /bootnodes`:
