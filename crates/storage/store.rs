@@ -1301,10 +1301,13 @@ impl Store {
         let decode = |hash: &H256, value: Option<Vec<u8>>| -> Result<Option<Code>, StoreError> {
             let Some(bytes) = value else { return Ok(None) };
             let (bytecode_slice, jumpdests) = decode_bytes(&bytes)?;
+            // This is the bulk prefetch warm path; a legacy row is recomputed here
+            // and self-healed later when `get_account_code` reads it on the hot path.
+            let (jumpdests, _was_legacy) = decode_jumpdests(bytecode_slice, jumpdests)?;
             Ok(Some(Code::from_parts_unchecked(
                 *hash,
                 bytecode_slice,
-                decode_jumpdests(bytecode_slice, jumpdests)?,
+                jumpdests,
             )))
         };
         let decoded: Vec<Result<Option<Code>, StoreError>> = if shards > parallelism {
