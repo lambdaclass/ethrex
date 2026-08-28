@@ -17,7 +17,7 @@ use crate::{
     block_data_buffer::BlockDataBuffer,
     error::StoreError,
     journal::{FlatDiff, JournalEntry},
-    layering::{Overlay, TrieLayerCache, TrieWrapper},
+    layering::{Overlay, OverlayCf, TrieLayerCache, TrieWrapper},
     rlp::{BlockBodyRLP, BlockHeaderRLP, BlockRLP},
     trie::{BackendTrieDB, BackendTrieDBLocked, classify_trie_key},
     utils::{ChainDataIndex, SnapStateIndex},
@@ -5266,6 +5266,15 @@ fn commit_to_disk(
             &[]
         };
 
+        // Pre-images for the reconciliation layer must be taken at the pivot, not at the
+        // old chain's edge `D`. `T`'s journal entry has to reverse disk back to the pivot
+        // state, but this batch is built while disk still holds `D`, so `read_view` yields
+        // `D`'s values for every key the old chain rewrote in `[T, D]`. The overlay *is*
+        // the pivot-vs-`D` difference, so it wins over `read_view` for any key it carries.
+        // `None` in the overlay means "absent at the pivot", which is exactly the journal's
+        // "delete on rollback" entry.
+        let pivot_overlay = overlay_for_reconciliation.as_ref();
+
         for (key, value) in layer.nodes.iter().chain(extra.iter()) {
             let (is_leaf, is_account) = classify_trie_key(key.len());
 
@@ -5288,17 +5297,23 @@ fn commit_to_disk(
                 &STORAGE_TRIE_NODES
             };
 
-            // Pre-image: the intra-batch overlay wins over disk so multi-layer commits
-            // record each block's true pre-state. Skipped for batch (full-sync) commits.
+            // Pre-image: the intra-batch overlay wins over the pivot overlay, which wins
+            // over disk, so multi-layer commits record each block's true pre-state and the
+            // reconciliation layer records the pivot's. Skipped for batch (full-sync) commits.
             let prev_value = if !is_batch {
                 match overlay.get(key) {
                     Some(v) => Some(v.clone()),
-                    None => match read_view.get(table, key) {
-                        Ok(v) => Some(v),
-                        Err(e) => {
-                            result = Err(e);
-                            break 'layers;
-                        }
+                    None => match pivot_overlay
+                        .and_then(|ov| ov.lookup(OverlayCf::classify_by_key_length(key.len()), key))
+                    {
+                        Some(v) => Some(v),
+                        None => match read_view.get(table, key) {
+                            Ok(v) => Some(v),
+                            Err(e) => {
+                                result = Err(e);
+                                break 'layers;
+                            }
+                        },
                     },
                 }
             } else {
