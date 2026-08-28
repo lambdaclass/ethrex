@@ -17,14 +17,14 @@
 
 set -euo pipefail
 
-ERE_REV=a25f1aed9664c3b63e73ef05360090a4c41da31b
+ERE_REV=8961a4e7ac5c9ca2dc6a2fc848452f23a186b1aa
 
 # SDK versions resolved by ere-catalog at ERE_REV.
 zkvm_version() {
     case "$1" in
-        zisk)   echo "v1.0.0-alpha" ;;
-        sp1)    echo "v6.3.1" ;;
-        openvm) echo "v2.0.0" ;;
+        zisk)   echo "v1.1.0-alpha" ;;
+        sp1)    echo "v6.4.0" ;;
+        openvm) echo "v2.1.0-preview" ;;
         *)      echo "unknown zkvm: $1" >&2; return 1 ;;
     esac
 }

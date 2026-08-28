@@ -159,20 +159,6 @@ impl fmt::Debug for TrieLayerCache {
     }
 }
 
-impl Default for TrieLayerCache {
-    fn default() -> Self {
-        Self {
-            bloom: Self::create_filter(BLOOM_SIZE),
-            last_id: 0,
-            layers: Default::default(),
-            // TODO (issue #6345): this is coupled with DB_COMMIT_THRESHOLD in store.rs — unify them.
-            commit_threshold: 128,
-            overlay: None,
-            safe_commit_root: Arc::new(RwLock::new(H256::zero())),
-        }
-    }
-}
-
 impl TrieLayerCache {
     /// Creates a new cache with the given commit threshold and a shared safe-commit-root cell.
     ///
