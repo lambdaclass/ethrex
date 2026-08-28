@@ -28,26 +28,23 @@ jobs:
       run_tests: ${{ steps.finish.outputs.run_tests }}
     steps:
       - uses: actions/checkout@v6
+      - uses: ./.github/actions/detect-changes
+        id: changes
       - uses: dorny/paths-filter@v4
         id: filter
         with:
           filters: |
             run_tests:
               - '!crates/l2/**'
-            non_docs:
-              - "!docs/**"
-            code_changed:
-              - "**/*.rs"
-              - "**/*.toml"
-              - "**/*.lock"
       - name: finish
         id: finish
         run: |
-          if [[ "${{ steps.filter.outputs.non_docs_count }}" == 0 ]]; then
+          if [[ "${{ steps.changes.outputs.inert_only }}" == "true" ]]; then
+            # Documentation and repository metadata only: no job here builds it.
             echo "run_tests=false" >> "$GITHUB_OUTPUT"
           elif [[ "${GITHUB_EVENT_NAME}" == "merge_group" ]]; then
               # In merge queue, only run lint if code files changed
-              echo "run_tests=${{ steps.filter.outputs.code_changed }}" >> "$GITHUB_OUTPUT"
+              echo "run_tests=${{ steps.changes.outputs.code_changed }}" >> "$GITHUB_OUTPUT"
           elif [[ "${GITHUB_EVENT_NAME}" != "pull_request" ]]; then
               echo "run_tests=true" >> "$GITHUB_OUTPUT"
           else
@@ -72,6 +69,7 @@ jobs:
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
         with:
+          cache-pool: l1
           components: rustfmt, clippy
 
       # We don't run with workspace, as members of the workspace require l2. We run it with workspace
@@ -116,6 +114,9 @@ jobs:
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+        with:
+          cache-pool: l1
+          save-cache: 'true'
 
       # `rocksdb` gates the test files that need the RocksDB backend's commit
       # cadence. It has to be `ethrex-test`'s own feature: another crate turning
@@ -156,6 +157,8 @@ jobs:
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+        with:
+          cache-pool: l1
 
       - name: Run Engine EF tests
         run: make -C tooling/ef_tests/engine test
@@ -330,7 +333,7 @@ jobs:
           # Amsterdam config is loaded from .github/config/hive/amsterdam.yaml
           - name: "Consume Engine Amsterdam"
             simulation: ethereum/eels/consume-engine
-            limit: ".*(8024|7708|7778|7843|7928|7954|8037).*"
+            limit: ".*(2780|7708|7732|7778|7843|7928|7954|7975|7976|7981|7997|8024|8037|8038|8045|8061|8070|8159|8246|8282).*"
             amsterdam: true
             artifact_prefix: consume_engine_amsterdam
           # Investigate this test
@@ -502,8 +505,14 @@ jobs:
       - name: Free Disk Space
         uses: ./.github/actions/free-disk
 
+      # Its own pool: this is the only job on main that builds the root
+      # workspace at `release-fast`, so the `l1` entry (dev profile) carries
+      # nothing it can link against.
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+        with:
+          cache-pool: l1-reorg
+          save-cache: 'true'
 
       # Built with release-grade optimization: an unoptimized ethrex overflows
       # the 2 MiB tokio worker stack while building a payload, since every

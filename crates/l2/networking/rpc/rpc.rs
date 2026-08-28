@@ -7,6 +7,7 @@ use crate::l2::fees::{
     GetOperatorFeeVaultAddress,
 };
 use crate::l2::messages::GetL1MessageProof;
+use crate::l2::native_withdrawal_proof::GetNativeWithdrawalProof;
 use crate::utils::{RpcErr, RpcNamespace, resolve_namespace};
 use axum::extract::State;
 use axum::extract::ws::WebSocketUpgrade;
@@ -17,8 +18,7 @@ use ethrex_common::types::Transaction;
 use ethrex_crypto::NativeCrypto;
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
-use ethrex_p2p::types::Node;
-use ethrex_p2p::types::NodeRecord;
+use ethrex_p2p::types::SharedLocalNode;
 use ethrex_rpc::RpcHandler as L1RpcHandler;
 use ethrex_rpc::RpcNamespace as L1RpcNamespace;
 use ethrex_rpc::debug::execution_witness::ExecutionWitnessRequest;
@@ -90,8 +90,7 @@ pub async fn bind_api(
     storage: Store,
     blockchain: Arc<Blockchain>,
     jwt_secret: Bytes,
-    local_p2p_node: Node,
-    local_node_record: NodeRecord,
+    shared_local_node: SharedLocalNode,
     syncer: Option<Arc<SyncManager>>,
     peer_handler: Option<PeerHandler>,
     client_version: ClientVersion,
@@ -123,8 +122,7 @@ pub async fn bind_api(
             peer_handler,
             node_data: NodeData {
                 jwt_secret,
-                local_p2p_node,
-                local_node_record,
+                shared_local_node,
                 client_version,
                 extra_data: Bytes::new(),
             },
@@ -250,8 +248,7 @@ pub async fn start_api(
     storage: Store,
     blockchain: Arc<Blockchain>,
     jwt_secret: Bytes,
-    local_p2p_node: Node,
-    local_node_record: NodeRecord,
+    shared_local_node: SharedLocalNode,
     syncer: Option<Arc<SyncManager>>,
     peer_handler: Option<PeerHandler>,
     client_version: ClientVersion,
@@ -272,8 +269,7 @@ pub async fn start_api(
         storage,
         blockchain,
         jwt_secret,
-        local_p2p_node,
-        local_node_record,
+        shared_local_node,
         syncer,
         peer_handler,
         client_version,
@@ -413,6 +409,7 @@ pub async fn map_l2_requests(req: &RpcRequest, context: RpcApiContext) -> Result
         "ethrex_getOperatorFee" => GetOperatorFee::call(req, context).await,
         "ethrex_getL1FeeVaultAddress" => GetL1FeeVaultAddress::call(req, context).await,
         "ethrex_getL1BlobBaseFee" => GetL1BlobBaseFeeRequest::call(req, context).await,
+        "ethrex_getNativeWithdrawalProof" => GetNativeWithdrawalProof::call(req, context).await,
         unknown_ethrex_l2_method => {
             Err(ethrex_rpc::RpcErr::MethodNotFound(unknown_ethrex_l2_method.to_owned()).into())
         }
