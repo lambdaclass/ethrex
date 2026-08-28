@@ -185,6 +185,8 @@ fn fee_token_lock_reverted_on_validation_failure() {
         is_privileged: false,
         fee_token: Some(fee_token),
         disable_balance_check: false,
+        disable_nonce_check: false,
+        disable_gas_allowance_check: false,
         is_system_call: false,
     };
 
@@ -205,6 +207,7 @@ fn fee_token_lock_reverted_on_validation_failure() {
         LevmCallTracer::disabled(),
         VMType::L2(Default::default()),
         &NativeCrypto,
+        None,
     )
     .unwrap();
 

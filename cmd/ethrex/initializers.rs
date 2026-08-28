@@ -1,8 +1,9 @@
 use crate::{
     cli::{LogColor, Options},
     utils::{
-        display_chain_initialization, get_client_version, get_client_version_string, init_datadir,
-        is_memory_datadir, parse_socket_addr, read_jwtsecret_file, read_node_config_file,
+        display_chain_initialization, get_channel, get_client_version, get_client_version_string,
+        init_datadir, is_memory_datadir, parse_socket_addr, read_jwtsecret_file,
+        read_node_config_file,
     },
 };
 use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
@@ -19,13 +20,14 @@ use ethrex_p2p::{
     network::P2PContext,
     peer_handler::PeerHandler,
     peer_table::{PeerTable, PeerTableServer},
-    sync::SyncMode,
+    sync::{BackfillConfig, HistoryChain, SyncMode},
     sync_manager::SyncManager,
-    types::{NetworkConfig, Node, NodeRecord},
+    types::{LocalNode, NetworkConfig, Node, NodeRecord, SharedLocalNode},
     utils::public_key_from_signing_key,
 };
 use ethrex_storage::{
-    EngineType, Store, StoreConfig, error::StoreError, has_valid_db, read_chain_id_from_db,
+    DB_COMMIT_THRESHOLD, EngineType, Store, StoreConfig, error::StoreError, has_valid_db,
+    read_chain_id_from_db,
 };
 use local_ip_address::{local_ip, local_ipv6};
 use rand::rngs::OsRng;
@@ -37,13 +39,11 @@ use std::{
     io::IsTerminal,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, RwLock},
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
-#[cfg(not(feature = "l2"))]
-use tracing::error;
-use tracing::{Level, debug, info, warn};
+use tracing::{Level, debug, error, info, warn};
 use tracing_subscriber::{
     EnvFilter, Layer, Registry, filter::Directive, fmt, layer::SubscriberExt, reload,
 };
@@ -84,7 +84,7 @@ pub fn init_tracing(
             std::fs::create_dir_all(log_dir).expect("Failed to create log directory");
         }
 
-        let branch = env!("VERGEN_GIT_BRANCH").replace('/', "-");
+        let branch = get_channel().replace('/', "-");
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -123,7 +123,7 @@ pub fn init_metrics(opts: &Options, network: &Network, tracker: TaskTracker) {
     ethrex_metrics::node::MetricsNode::init(
         env!("CARGO_PKG_VERSION"),
         env!("VERGEN_GIT_SHA"),
-        env!("VERGEN_GIT_BRANCH"),
+        &get_channel(),
         env!("VERGEN_RUSTC_SEMVER"),
         env!("VERGEN_RUSTC_HOST_TRIPLE"),
         &network.to_string(),
@@ -142,7 +142,77 @@ pub fn init_metrics(opts: &Options, network: &Network, tracker: TaskTracker) {
     initialize_block_processing_profile();
     initialize_rpc_metrics();
 
-    tracker.spawn(metrics_api);
+    // Metrics is a non-fatal sidecar: its failure is logged loudly but must not down the node.
+    spawn_logged(&tracker, "metrics server", metrics_api);
+}
+
+/// Interval between RocksDB observability samples. Property reads are cheap
+/// metadata lookups, so a tight-ish cadence gives responsive Grafana panels
+/// without measurable overhead.
+const DB_METRICS_SAMPLE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// Periodically exports RocksDB observability metrics: per-column-family sizes,
+/// key/file counts and compaction debt, plus DB-wide block-cache usage and the
+/// history-backfill frontier. Populates the gauges surfaced by the metrics API.
+///
+/// A no-op for non-RocksDB backends (`rocksdb_stats()` returns `None`). Spawned
+/// only when metrics are enabled.
+pub(crate) fn spawn_rocksdb_metrics_collector(
+    store: Store,
+    tracker: &TaskTracker,
+    cancel_token: CancellationToken,
+) {
+    use ethrex_metrics::db::METRICS_DB;
+
+    tracker.spawn(async move {
+        loop {
+            // Each sample reads several RocksDB properties per column family;
+            // keep that off the async runtime like the rest of the storage layer.
+            let stats = {
+                let store = store.clone();
+                match tokio::task::spawn_blocking(move || store.rocksdb_stats()).await {
+                    Ok(stats) => stats,
+                    Err(e) => {
+                        warn!("RocksDB metrics sample panicked: {e}");
+                        None
+                    }
+                }
+            };
+            if let Some(stats) = stats {
+                let mut total_live_sst = 0u64;
+                for cf in &stats.cfs {
+                    METRICS_DB.set_cf(
+                        &cf.name,
+                        cf.live_sst_bytes,
+                        cf.total_sst_bytes,
+                        cf.live_data_bytes,
+                        cf.num_keys,
+                        cf.num_files,
+                        cf.blob_bytes,
+                        cf.pending_compaction_bytes,
+                        cf.memtable_bytes,
+                    );
+                    total_live_sst += cf.live_sst_bytes;
+                }
+                METRICS_DB.set_global(
+                    total_live_sst,
+                    stats.block_cache_usage_bytes,
+                    stats.block_cache_capacity_bytes,
+                    stats.block_cache_pinned_bytes,
+                    stats.running_compactions,
+                    stats.block_cache_hits,
+                    stats.block_cache_misses,
+                );
+            }
+            if let Ok(frontier) = store.get_earliest_block_number().await {
+                METRICS_DB.set_backfill_frontier(frontier);
+            }
+            tokio::select! {
+                _ = tokio::time::sleep(DB_METRICS_SAMPLE_INTERVAL) => {}
+                _ = cancel_token.cancelled() => return,
+            }
+        }
+    });
 }
 
 /// Opens a new or pre-existing Store with default tunables and loads the initial
@@ -223,19 +293,71 @@ pub fn init_blockchain(store: Store, blockchain_opts: BlockchainOptions) -> Arc<
     Blockchain::new(store, blockchain_opts).into()
 }
 
+/// Cause of a fatal-subsystem shutdown, set by [`spawn_fatal`] before it cancels the node.
+/// `main` inspects it after the shutdown sequence to exit non-zero on a fatal-initiated
+/// shutdown (signal-triggered shutdowns leave it unset and exit zero).
+static FATAL_SHUTDOWN_CAUSE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// Returns the fatal-subsystem failure that initiated shutdown, if any.
+pub fn fatal_shutdown_cause() -> Option<&'static str> {
+    FATAL_SHUTDOWN_CAUSE.get().map(String::as_str)
+}
+
+/// Spawns a subsystem whose failure is fatal to the node. On an error raised *before*
+/// shutdown has begun it logs loudly, records the cause (so `main` exits non-zero), and
+/// cancels the node's token so the main loop tears everything down. An error surfacing
+/// *after* cancellation (e.g. a client dropping during a graceful drain) is downgraded to
+/// a debug line and does not re-cancel — this keeps the operator-facing shutdown reason
+/// honest.
+pub(crate) fn spawn_fatal<F, E>(
+    tracker: &TaskTracker,
+    cancel_token: CancellationToken,
+    name: &'static str,
+    fut: F,
+) where
+    F: std::future::Future<Output = Result<(), E>> + Send + 'static,
+    E: std::fmt::Display + Send + 'static,
+{
+    tracker.spawn(async move {
+        match fut.await {
+            Ok(()) => {}
+            Err(err) if cancel_token.is_cancelled() => {
+                debug!("{name} returned after shutdown began: {err}");
+            }
+            Err(err) => {
+                error!("{name} failed: {err}; shutting down the node");
+                let _ = FATAL_SHUTDOWN_CAUSE.set(format!("{name}: {err}"));
+                cancel_token.cancel();
+            }
+        }
+    });
+}
+
+/// Spawns a non-fatal subsystem: an error is logged loudly but the node keeps running.
+pub(crate) fn spawn_logged<F, E>(tracker: &TaskTracker, name: &'static str, fut: F)
+where
+    F: std::future::Future<Output = Result<(), E>> + Send + 'static,
+    E: std::fmt::Display + Send + 'static,
+{
+    tracker.spawn(async move {
+        if let Err(err) = fut.await {
+            error!("{name} exited with error: {err}");
+        }
+    });
+}
+
 #[expect(clippy::too_many_arguments)]
 pub async fn init_rpc_api(
     opts: &Options,
     datadir: &Path,
     peer_handler: PeerHandler,
-    local_p2p_node: Node,
-    local_node_record: NodeRecord,
+    shared_local_node: SharedLocalNode,
     store: Store,
     blockchain: Arc<Blockchain>,
     cancel_token: CancellationToken,
     tracker: TaskTracker,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
-) {
+) -> eyre::Result<()> {
     if !is_memory_datadir(datadir) {
         init_datadir(datadir);
     }
@@ -246,14 +368,33 @@ pub async fn init_rpc_api(
         &opts.syncmode
     };
 
+    // Historical-chain backfill is opt-in via `--history.chain`; it is
+    // meaningless in dev mode (single-node chain, full state from genesis), so
+    // force it off there like syncmode.
+    if !opts.dev && opts.history_chain == HistoryChain::Off && opts.history_transactions != 0 {
+        warn!(
+            "--history.transactions has no effect with --history.chain off: no backfill runs, so there is nothing to bound"
+        );
+    }
+    let backfill_config = BackfillConfig {
+        mode: if opts.dev {
+            HistoryChain::Off
+        } else {
+            opts.history_chain.clone()
+        },
+        tx_index_horizon: opts.history_transactions,
+    };
+
     // Create SyncManager
     let syncer = SyncManager::new(
         peer_handler.clone(),
         syncmode,
-        cancel_token,
+        cancel_token.clone(),
         blockchain.clone(),
         store.clone(),
         datadir.to_path_buf(),
+        backfill_config,
+        tracker.clone(),
     )
     .await;
 
@@ -266,15 +407,26 @@ pub async fn init_rpc_api(
         None
     };
 
-    let rpc_api = ethrex_rpc::start_api(
+    // Reject conflicting listener addresses at config time, before anything binds, with an
+    // error naming both flags to change.
+    validate_rpc_addrs(
+        get_http_socket_addr(opts),
+        Some(get_authrpc_socket_addr(opts)),
+        ws_config.as_ref().map(|ws| ws.addr),
+    )?;
+
+    // Bind in the foreground so a failure (e.g. a port collision) aborts node startup with
+    // an actionable error, instead of being swallowed by a detached task. Serving runs in
+    // the background once every listener is bound.
+    let bound = ethrex_rpc::bind_api(
+        cancel_token.clone(),
         get_http_socket_addr(opts),
         ws_config,
         get_authrpc_socket_addr(opts),
         store,
         blockchain,
         read_jwtsecret_file(&opts.authrpc_jwtsecret),
-        local_p2p_node,
-        local_node_record,
+        shared_local_node,
         syncer,
         peer_handler,
         get_client_version(),
@@ -282,9 +434,15 @@ pub async fn init_rpc_api(
         opts.gas_limit,
         opts.extra_data.clone(),
         opts.http_api.iter().copied().collect(),
-    );
+    )
+    .await?;
 
-    tracker.spawn(rpc_api);
+    // Defensive wiring: axum's serve loop retries accept errors internally and only returns
+    // after graceful shutdown, so today this error arm is unreachable for the RPC server. It
+    // exists so any future serve error (an axum behavior change, a refactor) aborts the node
+    // instead of being silently dropped — a node without its Engine API cannot sync.
+    spawn_fatal(&tracker, cancel_token, "RPC server", bound.serve());
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -296,6 +454,7 @@ pub async fn init_network(
     tracker: TaskTracker,
     blockchain: Arc<Blockchain>,
     context: P2PContext,
+    shared_local_node: SharedLocalNode,
 ) {
     #[cfg(not(feature = "l2"))]
     if opts.dev {
@@ -310,10 +469,10 @@ pub async fn init_network(
     let discovery_config = DiscoveryConfig {
         discv4_enabled: opts.discv4_enabled,
         discv5_enabled: opts.discv5_enabled,
-        ..Default::default()
+        nat_extip_set: opts.nat_extip.is_some(),
     };
 
-    ethrex_p2p::start_network(context, bootnodes, discovery_config)
+    ethrex_p2p::start_network(context, bootnodes, discovery_config, shared_local_node)
         .await
         .expect("Network starts");
 
@@ -324,16 +483,31 @@ pub async fn init_network(
 }
 
 #[cfg(feature = "dev")]
-pub async fn init_dev_network(opts: &Options, store: &Store, tracker: TaskTracker) {
+pub async fn init_dev_network(
+    opts: &Options,
+    store: &Store,
+    tracker: TaskTracker,
+    cancel_token: CancellationToken,
+) {
     info!("Running in DEV_MODE");
 
-    let head_block_hash = {
-        let current_block_number = store.get_latest_block_number().await.unwrap();
-        store
+    let chain_config = store.get_chain_config();
+
+    let (head_block_hash, target_gas_limit) = {
+        let current_block_number = store.get_latest_block_number().unwrap();
+        let head_block_hash = store
             .get_canonical_block_hash(current_block_number)
             .await
             .unwrap()
+            .unwrap();
+        // Use the head block's gas limit as the V4 target so the dev chain holds
+        // its configured gas limit (execution-apis#796 requires target_gas_limit).
+        let target_gas_limit = store
+            .get_block_header(current_block_number)
             .unwrap()
+            .unwrap()
+            .gas_limit;
+        (head_block_hash, target_gas_limit)
     };
 
     let max_tries = 3;
@@ -350,8 +524,16 @@ pub async fn init_dev_network(opts: &Options, store: &Store, tracker: TaskTracke
         max_tries,
         1000,
         ethrex_common::Address::default(),
+        chain_config.amsterdam_time,
+        target_gas_limit,
     );
-    tracker.spawn(block_producer_engine);
+    // The dev block producer is fatal: if it exhausts its retries, abort the dev node.
+    spawn_fatal(
+        &tracker,
+        cancel_token,
+        "block producer",
+        block_producer_engine,
+    );
 }
 
 pub fn get_network(opts: &Options) -> Network {
@@ -501,7 +683,17 @@ pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> (Node, NetworkC
         local_ipv6().ok(),
     );
 
-    let node = Node::new(external_addr, udp_port, tcp_port, local_public_key);
+    // Advertise the detected address immediately, even when it is RFC1918 private.
+    // On a flat private network (local / kurtosis devnet) the private IP is the
+    // address peers actually reach us at, and tooling such as ethereum-package
+    // snapshots `admin_nodeInfo` at startup to seed other nodes' bootnodes; an
+    // advertised `0.0.0.0` there is undiallable and breaks discovery permanently.
+    // For a genuinely NAT'd public node the IpPredictor upgrades this to the public
+    // IP once PONG votes reach quorum (see IpPredictor::finalize_ip_vote_round, which
+    // prefers a public winner and only falls back to a private one).
+    let announce_addr = external_addr;
+
+    let node = Node::new(announce_addr, udp_port, tcp_port, local_public_key);
     let network_config = NetworkConfig {
         bind_addr,
         tcp_port,
@@ -547,9 +739,75 @@ pub fn get_http_socket_addr(opts: &Options) -> SocketAddr {
         .expect("Failed to parse http address and port")
 }
 
+/// Two configured listener addresses conflict when they are equal, or when they share a
+/// port and one side is a same-family wildcard: Linux fails the second bind with
+/// EADDRINUSE, but on macOS/BSD `SO_REUSEADDR` lets the specific bind succeed and silently
+/// shadow the wildcard listener for that address.
+fn rpc_addrs_conflict(a: SocketAddr, b: SocketAddr) -> bool {
+    a == b
+        || (a.port() == b.port()
+            && a.is_ipv4() == b.is_ipv4()
+            && (a.ip().is_unspecified() || b.ip().is_unspecified()))
+}
+
+/// Validates the resolved RPC listener addresses at config time, before anything binds, so
+/// a conflict aborts startup with an error naming BOTH flags to change (an OS bind error
+/// can only ever blame the second binder). A WebSocket address exactly equal to the HTTP
+/// one is not a conflict: both protocols share that listener.
+pub(crate) fn validate_rpc_addrs(
+    http: SocketAddr,
+    authrpc: Option<SocketAddr>,
+    ws: Option<SocketAddr>,
+) -> eyre::Result<()> {
+    use ethrex_rpc::RpcRole;
+
+    // WS equal to HTTP shares the HTTP listener instead of binding its own.
+    let ws = ws.filter(|ws| *ws != http);
+
+    let http = (RpcRole::Http, http);
+    let authrpc = authrpc.map(|addr| (RpcRole::AuthRpc, addr));
+    let ws = ws.map(|addr| (RpcRole::Ws, addr));
+    let pairs = [
+        authrpc.map(|authrpc| (http, authrpc)),
+        ws.map(|ws| (http, ws)),
+        authrpc.zip(ws),
+    ];
+    for ((role_a, a), (role_b, b)) in pairs.into_iter().flatten() {
+        if !rpc_addrs_conflict(a, b) {
+            continue;
+        }
+        if a == b {
+            eyre::bail!(
+                "{a} is requested by both the {role_a} and the {role_b}; change {} or {}.",
+                role_a.flags(),
+                role_b.flags(),
+            );
+        }
+        eyre::bail!(
+            "{b} ({role_b}) overlaps {a} ({role_a}): a wildcard address covers every \
+             interface on its port; change {} or {}.",
+            role_a.flags(),
+            role_b.flags(),
+        );
+    }
+    Ok(())
+}
+
 pub fn get_ws_socket_addr(opts: &Options) -> SocketAddr {
-    parse_socket_addr(&opts.ws_addr, &opts.ws_port)
-        .expect("Failed to parse websocket address and port")
+    // When unset, WebSocket inherits the HTTP address/port, so an enabled WS shares the
+    // HTTP listener by default (a single-port setup, matching geth/reth/nethermind).
+    let addr = opts.ws_addr.as_deref().unwrap_or(&opts.http_addr);
+    let port = opts.ws_port.as_deref().unwrap_or(&opts.http_port);
+    let resolved =
+        parse_socket_addr(addr, port).expect("Failed to parse websocket address and port");
+    // Warn on the RESOLVED address (explicit or inherited) so L1 and L2 alike surface a
+    // publicly reachable WebSocket bind.
+    if !resolved.ip().is_loopback() {
+        warn!(
+            "WebSocket RPC is bound to {resolved}, reachable from all matching interfaces; bind 127.0.0.1 (the default) unless it sits behind a trusted proxy."
+        );
+    }
+    resolved
 }
 
 #[cfg(feature = "sync-test")]
@@ -573,7 +831,13 @@ async fn set_sync_block(store: &Store) {
 pub async fn init_l1(
     opts: Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
-) -> eyre::Result<(PathBuf, CancellationToken, PeerTable, NodeRecord)> {
+) -> eyre::Result<(
+    PathBuf,
+    CancellationToken,
+    PeerTable,
+    SharedLocalNode,
+    Store,
+)> {
     let network = get_network(&opts);
     let datadir = crate::cli::compute_effective_datadir(&opts.datadir, &network, opts.dev);
 
@@ -590,9 +854,12 @@ pub async fn init_l1(
     debug!("Preloading KZG trusted setup");
     ethrex_crypto::kzg::warm_up_trusted_setup();
 
-    let store_config = StoreConfig {
-        rocksdb_block_cache_size: opts.rocksdb_block_cache_size,
-    };
+    // An explicit size skips memory detection entirely; the default path runs
+    // it once and logs the derivation.
+    let store_config = opts
+        .rocksdb_block_cache_size
+        .map(StoreConfig::with_rocksdb_block_cache_size)
+        .unwrap_or_default();
     let store_result = if opts.skip_genesis_validation {
         init_store_skip_validation_with_config(&datadir, genesis, store_config).await
     } else {
@@ -629,10 +896,17 @@ pub async fn init_l1(
             r#type: BlockchainType::L1,
             max_blobs_per_block: opts.max_blobs_per_block,
             precompute_witnesses: opts.precompute_witnesses,
+            private_mempool: opts.mempool_private,
             precompile_cache_enabled: !opts.no_precompile_cache,
+            min_tip_wei: opts.mempool_min_tip,
+            price_bump_percent: opts.mempool_price_bump,
+            blob_price_bump_percent: opts.mempool_blob_price_bump,
+            max_queued_txs_per_account: opts.mempool_max_queued_txs_per_account,
             bal_parallel_exec_enabled: !opts.no_bal_parallel_exec,
             bal_prefetch_enabled: !opts.no_bal_prefetch,
             bal_parallel_trie_enabled: !opts.no_bal_parallel_trie,
+            max_reorg_depth: opts.max_reorg_depth,
+            gap_admit_occupancy_threshold: opts.mempool_gap_admit_occupancy_threshold,
         },
     );
 
@@ -643,6 +917,12 @@ pub async fn init_l1(
     let (local_p2p_node, network_config) = get_local_p2p_node(&opts, &signer);
 
     let local_node_record = get_local_node_record(&datadir, &local_p2p_node, &signer);
+
+    // Build the shared live identity Arc once; threaded into RPC, discovery, and shutdown.
+    let shared_local_node: SharedLocalNode = Arc::new(RwLock::new(LocalNode {
+        node: local_p2p_node.clone(),
+        record: local_node_record,
+    }));
 
     let peer_table =
         PeerTableServer::spawn(local_p2p_node.node_id(), opts.target_peers, store.clone());
@@ -675,23 +955,23 @@ pub async fn init_l1(
         &opts,
         &datadir,
         peer_handler.clone(),
-        local_p2p_node,
-        local_node_record.clone(),
+        shared_local_node.clone(),
         store.clone(),
         blockchain.clone(),
         cancel_token.clone(),
         tracker.clone(),
         log_filter_handler,
     )
-    .await;
+    .await?;
 
     if opts.metrics_enabled {
         init_metrics(&opts, &network, tracker.clone());
+        spawn_rocksdb_metrics_collector(store.clone(), &tracker, cancel_token.clone());
     }
 
     if opts.dev {
         #[cfg(feature = "dev")]
-        init_dev_network(&opts, &store, tracker.clone()).await;
+        init_dev_network(&opts, &store, tracker.clone(), cancel_token.clone()).await;
     } else if !opts.p2p_disabled {
         init_network(
             &opts,
@@ -701,6 +981,7 @@ pub async fn init_l1(
             tracker.clone(),
             blockchain.clone(),
             p2p_context,
+            shared_local_node.clone(),
         )
         .await;
     } else {
@@ -711,7 +992,8 @@ pub async fn init_l1(
         datadir.clone(),
         cancel_token,
         peer_handler.peer_table,
-        local_node_record,
+        shared_local_node,
+        store,
     ))
 }
 
@@ -844,25 +1126,18 @@ pub fn migrate_datadir_if_needed(
     }
 }
 
-/// Regenerates the state up to the head block by re-applying blocks from the
-/// last known state root.
-///
-/// Since the path-based feature was added, the database stores the state 128
-/// blocks behind the head block while the state of the blocks in between are
-/// kept in in-memory-diff-layers.
-///
-/// After the node is shut down, those in-memory layers are lost, and the database
-/// won't have the state for those blocks. It will have the blocks though.
-///
-/// When the node is started again, the state needs to be regenerated by
-/// re-applying the blocks from the last known state root up to the head block.
-///
-/// This function performs that regeneration.
+/// Re-apply blocks from the last on-disk state root up to the head block,
+/// rebuilding the in-memory trie diff-layers lost across a restart.
 pub async fn regenerate_head_state(
     store: &Store,
     blockchain: &Arc<Blockchain>,
 ) -> eyre::Result<()> {
-    let head_block_number = store.get_latest_block_number().await?;
+    // Precondition: the store was opened via `add_initial_state`/`load_initial_state`,
+    // which clamp `LatestBlockNumber` to `flushed_upto`. All blocks up to
+    // `head_block_number` are therefore on disk; callers that skip that clamp
+    // would break this assumption.
+    let head_block_number = store.get_latest_block_number()?;
+    debug!("regenerate_head_state head clamped to durable block {head_block_number}");
 
     let Some(last_header) = store.get_block_header(head_block_number)? else {
         unreachable!("Database is empty, genesis block should be present");
@@ -903,12 +1178,19 @@ pub async fn regenerate_head_state(
     for i in (last_state_number + 1)..=head_block_number {
         debug!("Re-applying block {i} to regenerate state");
 
-        let block = store
+        let mut block = store
             .get_block_by_number(i)
             .await?
             .ok_or_else(|| eyre::eyre!("Block {i} not found"))?;
 
-        blockchain.add_block_pipeline(block, None)?;
+        // Stored blocks produced by older ethrex versions may carry the legacy
+        // omitted-withdrawals body shape, which block validation now rejects.
+        ethrex_common::types::normalize_legacy_withdrawals(&block.header, &mut block.body);
+
+        // Single canonical chain: commit by depth so the in-memory trie-layer
+        // backlog stays bounded (~DB_COMMIT_THRESHOLD) instead of growing with the
+        // regeneration gap and OOMing on a large gap.
+        blockchain.add_block_pipeline_bounded(block, None, DB_COMMIT_THRESHOLD)?;
     }
 
     info!("Finished regenerating state");
@@ -918,11 +1200,84 @@ pub async fn regenerate_head_state(
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_p2p_endpoints;
-    use std::net::IpAddr;
+    use super::{resolve_p2p_endpoints, validate_rpc_addrs};
+    use std::net::{IpAddr, SocketAddr};
 
     fn ip(s: &str) -> IpAddr {
         s.parse().unwrap()
+    }
+
+    fn addr(s: &str) -> SocketAddr {
+        s.parse().unwrap()
+    }
+
+    /// The default layout (distinct ports) must validate.
+    #[test]
+    fn distinct_rpc_addrs_are_valid() {
+        let result = validate_rpc_addrs(
+            addr("127.0.0.1:8545"),
+            Some(addr("127.0.0.1:8551")),
+            Some(addr("127.0.0.1:8546")),
+        );
+        assert!(result.is_ok());
+    }
+
+    /// WebSocket exactly equal to HTTP shares the HTTP listener (merged single-port
+    /// setup) — it must NOT be reported as a conflict.
+    #[test]
+    fn ws_sharing_the_http_listener_is_not_a_conflict() {
+        let result = validate_rpc_addrs(
+            addr("127.0.0.1:8545"),
+            Some(addr("127.0.0.1:8551")),
+            Some(addr("127.0.0.1:8545")),
+        );
+        assert!(result.is_ok());
+    }
+
+    /// A duplicate address must fail at config time with an error naming BOTH flags,
+    /// since an OS bind error can only ever blame the second binder.
+    #[test]
+    fn duplicate_rpc_addr_names_both_flags() {
+        let err = validate_rpc_addrs(
+            addr("127.0.0.1:8545"),
+            Some(addr("127.0.0.1:8551")),
+            Some(addr("127.0.0.1:8551")),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("Auth-RPC server"), "{err}");
+        assert!(err.contains("WebSocket server"), "{err}");
+        assert!(err.contains("--authrpc.port"), "{err}");
+        assert!(err.contains("--ws.port"), "{err}");
+    }
+
+    /// A same-family wildcard on the same port covers the specific address: Linux fails
+    /// the second bind, macOS/BSD lets it shadow the wildcard. Both must be rejected up
+    /// front, uniformly.
+    #[test]
+    fn wildcard_overlap_is_rejected() {
+        let err = validate_rpc_addrs(
+            addr("0.0.0.0:8545"),
+            Some(addr("127.0.0.1:8551")),
+            Some(addr("127.0.0.1:8545")),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("overlaps"), "{err}");
+        assert!(err.contains("--http.port"), "{err}");
+        assert!(err.contains("--ws.port"), "{err}");
+    }
+
+    /// Cross-family wildcard overlap ([::] vs 0.0.0.0) depends on the platform's
+    /// dual-stack configuration; it is deliberately left to the kernel to decide at bind.
+    #[test]
+    fn cross_family_wildcards_are_left_to_the_kernel() {
+        let result = validate_rpc_addrs(
+            addr("0.0.0.0:8545"),
+            Some(addr("127.0.0.1:8551")),
+            Some(addr("[::]:8545")),
+        );
+        assert!(result.is_ok());
     }
 
     #[test]
@@ -987,5 +1342,17 @@ mod tests {
     #[should_panic(expected = "--p2p.addr and --nat.extip must use the same address family")]
     fn family_mismatch_panics() {
         let _ = resolve_p2p_endpoints(Some("0.0.0.0"), Some("::1"), None, None);
+    }
+
+    /// Regression: on a flat private network (docker / kurtosis devnet) with no
+    /// `--nat.extip` or `--p2p.addr`, the detected RFC1918 IP must be announced
+    /// as-is. Previously `get_local_p2p_node` clobbered any private IP to `0.0.0.0`,
+    /// producing an undiallable `enode://...@0.0.0.0` that broke peer discovery.
+    #[test]
+    fn no_flags_announces_detected_private_ip() {
+        let docker_ip = ip("172.16.0.10");
+        let (bind, ext) = resolve_p2p_endpoints(None, None, Some(docker_ip), None);
+        assert_eq!(bind, docker_ip);
+        assert_eq!(ext, docker_ip, "private IP must be announced, not 0.0.0.0");
     }
 }

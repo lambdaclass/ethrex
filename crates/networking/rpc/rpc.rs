@@ -1,7 +1,9 @@
 use crate::authentication::authenticate;
+use crate::debug::bad_blocks::GetBadBlocksRequest;
 use crate::debug::chain_config::ChainConfigRequest;
 use crate::debug::execution_witness::ExecutionWitnessRequest;
 use crate::debug::execution_witness_by_hash::ExecutionWitnessByBlockHashRequest;
+use crate::debug::set_head::SetHeadRequest;
 use crate::engine::blobs::{BlobsV2Request, BlobsV3Request};
 use crate::engine::client_version::GetClientVersionV1Request;
 use crate::engine::payload::{
@@ -30,23 +32,30 @@ use crate::eth::{
     block::{
         BlockNumberRequest, GetBlobBaseFee, GetBlockByHashRequest, GetBlockByNumberRequest,
         GetBlockReceiptsRequest, GetBlockTransactionCountRequest, GetRawBlockRequest,
-        GetRawHeaderRequest, GetRawReceipts,
+        GetRawHeaderRequest, GetRawReceipts, GetUncleCountRequest,
     },
-    block_access_list::BlockAccessListRequest,
+    block_access_list::{BlockAccessListRequest, RawBlockAccessListRequest},
     client::{ChainId, Syncing},
     fee_market::FeeHistoryRequest,
-    filter::{self, ActiveFilters, DeleteFilterRequest, FilterChangesRequest, NewFilterRequest},
+    filter::{
+        self, ActiveFilters, DeleteFilterRequest, FilterChangesRequest, NewBlockFilterRequest,
+        NewFilterRequest,
+    },
     gas_price::GasPrice,
     gas_tip_estimator::GasTipEstimator,
     logs::LogsFilter,
     transaction::{
         CallRequest, CreateAccessListRequest, EstimateGasRequest, GetRawTransaction,
-        GetTransactionByBlockHashAndIndexRequest, GetTransactionByBlockNumberAndIndexRequest,
-        GetTransactionByHashRequest, GetTransactionReceiptRequest,
+        GetRawTransactionByBlockAndIndex, GetTransactionByBlockHashAndIndexRequest,
+        GetTransactionByBlockNumberAndIndexRequest, GetTransactionByHashRequest,
+        GetTransactionReceiptRequest,
     },
 };
 use crate::subscription_manager::{SubscriptionManager, SubscriptionManagerProtocol};
-use crate::tracing::{TraceBlockByNumberRequest, TraceTransactionRequest};
+use crate::testing::BuildBlockV1Request;
+use crate::tracing::{
+    TraceBlockByHashRequest, TraceBlockByNumberRequest, TraceCallRequest, TraceTransactionRequest,
+};
 use crate::types::transaction::SendRawTransactionRequest;
 use crate::utils::{
     RpcErr, RpcErrorMetadata, RpcErrorResponse, RpcNamespace, RpcRequest, RpcRequestId,
@@ -70,8 +79,7 @@ use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_metrics::rpc::{RpcOutcome, record_async_duration, record_rpc_outcome};
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
-use ethrex_p2p::types::Node;
-use ethrex_p2p::types::NodeRecord;
+use ethrex_p2p::types::SharedLocalNode;
 use ethrex_storage::Store;
 use serde::Deserialize;
 use serde_json::Value;
@@ -90,8 +98,9 @@ use tokio::sync::{
     oneshot,
 };
 use tokio::time::timeout;
+use tokio_util::sync::CancellationToken;
 use tower_http::cors::CorsLayer;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 use tracing_subscriber::{EnvFilter, Registry, reload};
 
 #[cfg(all(feature = "jemalloc_profiling", target_os = "linux"))]
@@ -310,10 +319,10 @@ impl std::fmt::Display for ClientVersion {
 pub struct NodeData {
     /// JWT secret for authenticating Engine API requests from consensus clients.
     pub jwt_secret: Bytes,
-    /// Local P2P node identity (public key and address).
-    pub local_p2p_node: Node,
-    /// ENR (Ethereum Node Record) for node discovery.
-    pub local_node_record: NodeRecord,
+    /// Live-updated local node identity (public key, address, and ENR).
+    /// Guarded by a std RwLock; callers must clone values out and drop the guard
+    /// before any `.await` to avoid holding a !Send guard across await points.
+    pub shared_local_node: SharedLocalNode,
     /// Client version information.
     pub client_version: ClientVersion,
     /// Extra data included in mined blocks.
@@ -414,6 +423,8 @@ fn get_error_kind(err: &RpcErr) -> &'static str {
         RpcErr::InvalidHeaderFormat(_) => "InvalidHeaderFormat",
         RpcErr::InvalidPayload(_) => "InvalidPayload",
         RpcErr::ProofGenerationUnavailable(_) => "ProofGenerationUnavailable",
+        RpcErr::ResourceNotFound(_) => "ResourceNotFound",
+        RpcErr::PrunedHistoryUnavailable(_) => "PrunedHistoryUnavailable",
     }
 }
 
@@ -437,6 +448,11 @@ pub const FILTER_DURATION: Duration = {
 /// sequentially and prevents the async runtime from being blocked by CPU-intensive
 /// block execution.
 ///
+/// Also spawns the mempool prewarmer when enabled (see
+/// `ethrex_blockchain::prewarm`): the executor cancels any in-flight warming
+/// pass before each import and triggers a new one after each cleanly
+/// imported block, when synced and idle.
+///
 /// # Returns
 ///
 /// An unbounded channel sender for submitting blocks. Each submission includes
@@ -447,20 +463,36 @@ pub const FILTER_DURATION: Duration = {
 /// Panics if the worker thread cannot be spawned.
 pub fn start_block_executor(blockchain: Arc<Blockchain>) -> UnboundedSender<BlockWorkerMessage> {
     let (block_worker_channel, mut block_receiver) = unbounded_channel::<BlockWorkerMessage>();
+    let prewarmer = ethrex_blockchain::prewarm::MempoolPrewarmer::spawn(blockchain.clone());
     std::thread::Builder::new()
         .name("block_executor".to_string())
         .spawn(move || {
             while let Some((notify, block, bal, make_witness)) = block_receiver.blocking_recv() {
+                // Kill any in-flight warming before touching the executor's
+                // resources.
+                if let Some(handle) = &prewarmer {
+                    handle.cancel_current();
+                }
+                let imported_header = prewarmer.as_ref().map(|_| block.header.clone());
                 let result = (|| {
+                    let bal = bal.map(Arc::new);
                     if make_witness {
-                        let witness =
-                            blockchain.add_block_pipeline_with_witness(block, bal.as_ref())?;
+                        let witness = blockchain.add_block_pipeline_with_witness(block, bal)?;
                         Ok(Some(witness))
                     } else {
-                        blockchain.add_block_pipeline(block, bal.as_ref())?;
+                        blockchain.add_block_pipeline(block, bal)?;
                         Ok(None)
                     }
                 })();
+                // One pass per cleanly imported block, only when synced and
+                // idle (no queued blocks): warm the child of the new head.
+                if let (Some(handle), Some(header), true) =
+                    (&prewarmer, imported_header, result.is_ok())
+                    && blockchain.is_synced()
+                    && block_receiver.is_empty()
+                {
+                    handle.trigger(header);
+                }
                 let _ = notify
                     .send(result)
                     .inspect_err(|_| tracing::error!("failed to notify caller"));
@@ -470,23 +502,33 @@ pub fn start_block_executor(blockchain: Arc<Blockchain>) -> UnboundedSender<Bloc
     block_worker_channel
 }
 
-/// Starts the JSON-RPC API servers.
+/// Binds the JSON-RPC API listeners and returns them ready to serve.
 ///
-/// This function initializes and runs up to three server endpoints:
+/// This function only **binds** — nothing is served until the returned [`BoundRpc`] is
+/// driven with [`BoundRpc::serve`]. Binding in the foreground lets a failure (e.g. a port
+/// collision) surface as a typed [`RpcStartupError`] so callers can fail fast and abort
+/// the node, instead of silently dropping already-bound listeners from a detached task.
 ///
-/// 1. **HTTP Server** (`http_addr`): Public JSON-RPC endpoint for standard Ethereum
-///    methods (`eth_*`, `debug_*`, `net_*`, `admin_*`, `web3_*`, `txpool_*`).
+/// Up to three endpoints are bound:
 ///
-/// 2. **WebSocket Server** (`ws`): Optional endpoint that serves the same methods as
-///    HTTP plus the subscription methods `eth_subscribe` / `eth_unsubscribe` (currently
-///    only `"newHeads"` is supported). Enabled by passing a [`WebSocketConfig`]
-///    containing the listen address and the [`SubscriptionManager`] actor handle.
+/// 1. **HTTP** (`http_addr`): Public JSON-RPC endpoint for standard Ethereum methods
+///    (`eth_*`, `debug_*`, `net_*`, `admin_*`, `web3_*`, `txpool_*`).
 ///
-/// 3. **Auth RPC Server** (`authrpc_addr`): JWT-authenticated endpoint for Engine API
-///    methods (`engine_*`) used by consensus clients.
+/// 2. **WebSocket** (`ws`): Optional endpoint that serves the same methods as HTTP plus
+///    the subscription methods `eth_subscribe` / `eth_unsubscribe` (currently only
+///    `"newHeads"` is supported). Enabled by passing a [`WebSocketConfig`] containing
+///    the listen address and the [`SubscriptionManager`] actor handle. When its address
+///    equals `http_addr`, no separate listener is bound: both protocols share the HTTP
+///    listener (`POST` → JSON-RPC, `GET` + `Upgrade` → WebSocket).
+///
+/// 3. **Auth RPC** (`authrpc_addr`): JWT-authenticated endpoint for Engine API methods
+///    (`engine_*`) used by consensus clients. Never shares a listener with the public
+///    endpoints — it alone carries the 256 MB engine body limit.
 ///
 /// # Arguments
 ///
+/// * `cancel_token` - Node-wide cancellation token; captured by [`BoundRpc::serve`] for
+///   graceful shutdown of the servers and their background tasks
 /// * `http_addr` - Socket address for the HTTP server (e.g., `127.0.0.1:8545`)
 /// * `ws` - Optional [`WebSocketConfig`] with the WS listen address and the
 ///   [`SubscriptionManager`] actor handle. `None` disables the WebSocket server.
@@ -494,8 +536,7 @@ pub fn start_block_executor(blockchain: Arc<Blockchain>) -> UnboundedSender<Bloc
 /// * `storage` - Database storage instance
 /// * `blockchain` - Blockchain instance for block operations
 /// * `jwt_secret` - JWT secret for Engine API authentication
-/// * `local_p2p_node` - Local node identity for P2P networking
-/// * `local_node_record` - ENR for node discovery
+/// * `shared_local_node` - Live-updated local node identity (public key, address, and ENR)
 /// * `syncer` - Sync manager for block synchronization
 /// * `peer_handler` - Handler for P2P peer operations
 /// * `client_version` - Client version information for `web3_clientVersion` and `engine_getClientVersionV1`
@@ -505,21 +546,20 @@ pub fn start_block_executor(blockchain: Arc<Blockchain>) -> UnboundedSender<Bloc
 ///
 /// # Errors
 ///
-/// Returns an error if any server fails to bind to its address.
-///
-/// # Shutdown
-///
-/// All servers shut down gracefully on SIGINT (Ctrl+C).
+/// Returns [`RpcStartupError`] — naming the endpoint role, address, and the CLI flag to
+/// change — if any listener fails to bind. Validating the configuration for duplicate or
+/// wildcard-overlapping addresses is the caller's responsibility (the node CLI does so
+/// before calling).
 #[allow(clippy::too_many_arguments)]
-pub async fn start_api(
+pub async fn bind_api(
+    cancel_token: CancellationToken,
     http_addr: SocketAddr,
     ws: Option<WebSocketConfig>,
     authrpc_addr: SocketAddr,
     storage: Store,
     blockchain: Arc<Blockchain>,
     jwt_secret: Bytes,
-    local_p2p_node: Node,
-    local_node_record: NodeRecord,
+    shared_local_node: SharedLocalNode,
     syncer: SyncManager,
     peer_handler: PeerHandler,
     client_version: ClientVersion,
@@ -527,7 +567,7 @@ pub async fn start_api(
     gas_ceil: u64,
     extra_data: String,
     allowed_namespaces: HashSet<RpcNamespace>,
-) -> Result<(), RpcErr> {
+) -> Result<BoundRpc, RpcStartupError> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
     let active_filters = Arc::new(Mutex::new(HashMap::new()));
@@ -540,8 +580,7 @@ pub async fn start_api(
         peer_handler: Some(peer_handler),
         node_data: NodeData {
             jwt_secret,
-            local_p2p_node,
-            local_node_record,
+            shared_local_node,
             client_version,
             extra_data: extra_data.into(),
         },
@@ -554,14 +593,19 @@ pub async fn start_api(
     };
 
     // Periodically clean up the active filters for the filters endpoints.
+    let filter_cancel = cancel_token.clone();
     tokio::task::spawn(async move {
         let mut interval = tokio::time::interval(FILTER_DURATION);
         let filters = active_filters.clone();
         loop {
-            interval.tick().await;
-            tracing::debug!("Running filter clean task");
-            filter::clean_outdated_filters(filters.clone(), FILTER_DURATION);
-            tracing::debug!("Filter clean task complete");
+            tokio::select! {
+                _ = interval.tick() => {
+                    tracing::debug!("Running filter clean task");
+                    filter::clean_outdated_filters(filters.clone(), FILTER_DURATION);
+                    tracing::debug!("Filter clean task complete");
+                }
+                _ = filter_cancel.cancelled() => break,
+            }
         }
     });
 
@@ -571,93 +615,300 @@ pub async fn start_api(
     // All headers exposed.
     let cors = CorsLayer::permissive();
 
+    // Serve WebSocket on the HTTP listener when both resolve to the same address, matching
+    // geth/reth/nethermind. Merging requires exact SocketAddr equality. Conflicting
+    // configurations (duplicate or wildcard-overlapping addresses) are the caller's job to
+    // validate up front — the node CLI does so before calling — and a genuine collision
+    // still fails the corresponding bind below with a typed error.
+    let merged = ws.as_ref().is_some_and(|w| w.addr == http_addr);
+
+    // Root method-router: POST is JSON-RPC; when merged, a GET carrying the WebSocket
+    // upgrade is routed to the WS handler on the same listener.
+    let root = if merged {
+        post(handle_http_request).get(ws_upgrade_handler)
+    } else {
+        post(handle_http_request)
+    };
     let http_router = Router::new()
         .route("/debug/pprof/allocs", axum::routing::get(handle_get_heap))
         .route(
             "/debug/pprof/allocs/flamegraph",
             axum::routing::get(handle_get_heap_flamegraph),
         )
-        .route("/", post(handle_http_request))
+        .route("/", root)
         .layer(cors.clone())
         .with_state(service_context.clone());
-    let http_listener = TcpListener::bind(http_addr)
-        .await
-        .map_err(|error| RpcErr::Internal(error.to_string()))?;
-    let http_server = axum::serve(http_listener, http_router)
-        .with_graceful_shutdown(shutdown_signal())
-        .into_future();
-    info!("Starting HTTP server at {http_addr}");
 
-    let (timer_sender, mut timer_receiver) = tokio::sync::watch::channel(());
-
-    tokio::spawn(async move {
-        loop {
-            let result = timeout(Duration::from_secs(30), timer_receiver.changed()).await;
-            if result.is_err() {
-                warn!("No messages from the consensus layer. Is the consensus client running?");
-            }
-        }
-    });
-
+    // Consensus-liveness channel: the sender lives in the Auth-RPC handler state (so it
+    // drops when the servers stop); the receiver is handed to `serve` to spawn the monitor.
+    let (timer_sender, timer_receiver) = tokio::sync::watch::channel(());
     let authrpc_handler = move |ctx, auth, body| async move {
         let _ = timer_sender.send(());
         handle_authrpc_request(ctx, auth, body).await
     };
-
     let authrpc_router = Router::new()
         .route("/", post(authrpc_handler))
         .with_state(service_context.clone())
-        // Bump the body limit for the engine API to 256MB
-        // This is needed to receive payloads bigger than the default limit of 2MB
+        // Bump the body limit for the engine API to 256MB. This stays scoped to Auth-RPC:
+        // it is never applied to the public HTTP/WS endpoints (which keep axum's default).
         .layer(DefaultBodyLimit::max(256 * 1024 * 1024));
 
-    let authrpc_listener = TcpListener::bind(authrpc_addr)
-        .await
-        .map_err(|error| RpcErr::Internal(error.to_string()))?;
-    let authrpc_server = axum::serve(authrpc_listener, authrpc_router)
-        .with_graceful_shutdown(shutdown_signal())
-        .into_future();
-    info!("Starting Auth-RPC server at {authrpc_addr}");
-
-    if let Some(ref ws_config) = ws {
-        let ws_handler = |ws: WebSocketUpgrade, State(ctx): State<RpcApiContext>| async move {
-            ws.on_upgrade(|mut socket| async move {
-                handle_websocket(&mut socket, &ctx, |req| {
-                    let c = ctx.clone();
-                    async move { map_http_requests(&req, c).await }
-                })
-                .await;
-            })
-        };
-        let ws_router = Router::new()
-            .route("/", axum::routing::any(ws_handler))
-            .layer(cors)
-            .with_state(service_context);
-        let ws_listener = TcpListener::bind(ws_config.addr)
-            .await
-            .map_err(|error| RpcErr::Internal(error.to_string()))?;
-        let ws_server = axum::serve(ws_listener, ws_router)
-            .with_graceful_shutdown(shutdown_signal())
-            .into_future();
-        info!("Starting WS server at {}", ws_config.addr);
-
-        let _ = tokio::try_join!(authrpc_server, http_server, ws_server)
-            .inspect_err(|e| error!("Error shutting down servers: {e:?}"));
+    // Bind everything up front. The first failure aborts with an actionable error naming
+    // the role, address, and flag; no listener is announced unless it actually bound.
+    let http_listener = bind_listener(RpcRole::Http, http_addr).await?;
+    if merged {
+        info!("HTTP-RPC + WebSocket server listening on {http_addr}");
     } else {
-        let _ = tokio::try_join!(authrpc_server, http_server)
-            .inspect_err(|e| error!("Error shutting down servers: {e:?}"));
+        info!("HTTP-RPC server listening on {http_addr}");
     }
 
-    Ok(())
+    let authrpc_listener = bind_listener(RpcRole::AuthRpc, authrpc_addr).await?;
+    info!("Auth-RPC server listening on {authrpc_addr}");
+
+    let ws_bound = match &ws {
+        Some(ws_config) if !merged => {
+            let ws_router = Router::new()
+                .route("/", axum::routing::any(ws_upgrade_handler))
+                .layer(cors)
+                .with_state(service_context);
+            let ws_listener = bind_listener(RpcRole::Ws, ws_config.addr).await?;
+            info!("WebSocket server listening on {}", ws_config.addr);
+            Some((ws_listener, ws_router))
+        }
+        _ => None,
+    };
+
+    Ok(BoundRpc {
+        http: (http_listener, http_router),
+        authrpc: (authrpc_listener, authrpc_router),
+        ws: ws_bound,
+        consensus_receiver: timer_receiver,
+        cancel_token,
+    })
 }
 
-/// Returns a future that completes when SIGINT (Ctrl+C) is received.
+/// RPC listeners bound and ready to serve. Produced by [`bind_api`] and consumed by
+/// [`BoundRpc::serve`]. Splitting bind from serve lets a bind failure be surfaced and fail
+/// fast in the foreground, before any server task is spawned.
+pub struct BoundRpc {
+    http: (TcpListener, Router),
+    authrpc: (TcpListener, Router),
+    /// Present only when WebSocket runs on its own listener (i.e. not merged onto HTTP).
+    ws: Option<(TcpListener, Router)>,
+    /// Receiver for the consensus-liveness monitor; its sender lives in the Auth-RPC
+    /// handler state and drops when the servers stop.
+    consensus_receiver: tokio::sync::watch::Receiver<()>,
+    /// Observed by graceful shutdown and the background tasks so a node-wide cancellation
+    /// (Ctrl+C or a fatal subsystem) tears the RPC servers down cleanly.
+    cancel_token: CancellationToken,
+}
+
+impl BoundRpc {
+    /// Serves every bound listener until graceful shutdown, returning the first serve
+    /// error so the caller can treat a runtime serve failure as fatal.
+    pub async fn serve(self) -> Result<(), RpcErr> {
+        // Warn when the consensus layer goes silent; stop cleanly (no busy-loop) once the
+        // Auth-RPC handler's sender drops at shutdown.
+        let cancel_token = self.cancel_token;
+        let mut timer_receiver = self.consensus_receiver;
+        let consensus_cancel = cancel_token.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    result = timeout(Duration::from_secs(30), timer_receiver.changed()) => {
+                        match result {
+                            Err(_elapsed) => {
+                                warn!(
+                                    "No messages from the consensus layer. Is the consensus client running?"
+                                );
+                            }
+                            Ok(Ok(())) => {}
+                            Ok(Err(_)) => break,
+                        }
+                    }
+                    _ = consensus_cancel.cancelled() => break,
+                }
+            }
+        });
+
+        let (http_listener, http_router) = self.http;
+        let http_server = axum::serve(http_listener, http_router)
+            .with_graceful_shutdown(shutdown_signal(cancel_token.clone()))
+            .into_future();
+
+        let (authrpc_listener, authrpc_router) = self.authrpc;
+        let authrpc_server = axum::serve(authrpc_listener, authrpc_router)
+            .with_graceful_shutdown(shutdown_signal(cancel_token.clone()))
+            .into_future();
+
+        if let Some((ws_listener, ws_router)) = self.ws {
+            let ws_server = axum::serve(ws_listener, ws_router)
+                .with_graceful_shutdown(shutdown_signal(cancel_token.clone()))
+                .into_future();
+            tokio::try_join!(authrpc_server, http_server, ws_server)
+                .map_err(|e| RpcErr::Internal(e.to_string()))?;
+        } else {
+            tokio::try_join!(authrpc_server, http_server)
+                .map_err(|e| RpcErr::Internal(e.to_string()))?;
+        }
+        Ok(())
+    }
+}
+
+/// Binds and serves the RPC API until shutdown. Compatibility wrapper over [`bind_api`] +
+/// [`BoundRpc::serve`] for embedders; the node itself uses `bind_api` directly so a bind
+/// failure fails fast in the foreground.
 ///
-/// Used to implement graceful shutdown for all RPC servers.
-pub async fn shutdown_signal() {
-    tokio::signal::ctrl_c()
+/// # Shutdown
+///
+/// The servers shut down when `cancel_token` is cancelled or on SIGINT (Ctrl+C); see
+/// [`shutdown_signal`]. `bind_api` gives finer control (typed bind errors, deferred serve).
+#[allow(clippy::too_many_arguments)]
+pub async fn start_api(
+    http_addr: SocketAddr,
+    ws: Option<WebSocketConfig>,
+    authrpc_addr: SocketAddr,
+    storage: Store,
+    blockchain: Arc<Blockchain>,
+    jwt_secret: Bytes,
+    shared_local_node: SharedLocalNode,
+    syncer: SyncManager,
+    peer_handler: PeerHandler,
+    client_version: ClientVersion,
+    log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
+    gas_ceil: u64,
+    extra_data: String,
+    allowed_namespaces: HashSet<RpcNamespace>,
+    cancel_token: CancellationToken,
+) -> Result<(), RpcErr> {
+    bind_api(
+        cancel_token,
+        http_addr,
+        ws,
+        authrpc_addr,
+        storage,
+        blockchain,
+        jwt_secret,
+        shared_local_node,
+        syncer,
+        peer_handler,
+        client_version,
+        log_filter_handler,
+        gas_ceil,
+        extra_data,
+        allowed_namespaces,
+    )
+    .await?
+    .serve()
+    .await
+}
+
+/// Role of an RPC listener, used to produce actionable startup diagnostics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RpcRole {
+    Http,
+    Ws,
+    AuthRpc,
+}
+
+impl std::fmt::Display for RpcRole {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            RpcRole::Http => "HTTP-RPC server",
+            RpcRole::Ws => "WebSocket server",
+            RpcRole::AuthRpc => "Auth-RPC server",
+        })
+    }
+}
+
+impl RpcRole {
+    /// CLI flags an operator can change to resolve a bind conflict for this role.
+    pub fn flags(&self) -> &'static str {
+        match self {
+            RpcRole::Http => "--http.port (or --http.addr)",
+            RpcRole::Ws => "--ws.port (or --ws.addr)",
+            RpcRole::AuthRpc => "--authrpc.port (or --authrpc.addr)",
+        }
+    }
+}
+
+/// A fatal error binding an RPC listener at startup. Deliberately distinct from [`RpcErr`]:
+/// startup/bind failures are process-level and must not be rendered through the per-request
+/// JSON-RPC error machinery, nor leak an `io::Error` into a JSON-RPC response.
+#[derive(Debug, thiserror::Error)]
+#[error("failed to bind {role} to {addr}: {source}. {hint}")]
+pub struct RpcStartupError {
+    pub role: RpcRole,
+    pub addr: SocketAddr,
+    #[source]
+    pub source: std::io::Error,
+    pub hint: String,
+}
+
+impl From<RpcStartupError> for RpcErr {
+    fn from(err: RpcStartupError) -> Self {
+        // Only used by the `start_api` compatibility wrapper; the fail-fast path keeps the
+        // typed `RpcStartupError` all the way to the top-level handler.
+        RpcErr::Internal(err.to_string())
+    }
+}
+
+/// Binds a TCP listener for the given role, mapping any failure to an actionable
+/// [`RpcStartupError`] that names the role, the address, and the flag to change.
+pub async fn bind_listener(
+    role: RpcRole,
+    addr: SocketAddr,
+) -> Result<TcpListener, RpcStartupError> {
+    TcpListener::bind(addr)
         .await
-        .expect("failed to install Ctrl+C handler");
+        .map_err(|source| RpcStartupError {
+            role,
+            addr,
+            source,
+            hint: format!("Change {} to a free port.", role.flags()),
+        })
+}
+
+/// WebSocket upgrade handler. Shared by the merged HTTP listener (as the `GET` route) and
+/// the standalone WebSocket listener. A `GET` without a valid upgrade is rejected by
+/// [`WebSocketUpgrade`] with a 4xx status (`400` for missing/invalid upgrade headers).
+async fn ws_upgrade_handler(
+    ws: WebSocketUpgrade,
+    State(ctx): State<RpcApiContext>,
+) -> axum::response::Response {
+    ws.on_upgrade(|mut socket| async move {
+        handle_websocket(&mut socket, &ctx, |req| {
+            let c = ctx.clone();
+            async move { map_http_requests(&req, c).await }
+        })
+        .await;
+    })
+}
+
+/// Graceful-shutdown future for the RPC servers: completes on SIGINT (Ctrl+C) or when
+/// `cancel_token` is cancelled.
+///
+/// `server_shutdown` cancels the token on both SIGINT and SIGTERM, so keying on the token
+/// (not just Ctrl+C) is what makes the servers — the Engine API in particular — stop
+/// accepting requests on SIGTERM (e.g. `docker stop`) before the store is flushed, and lets
+/// a fatal subsystem abort the node.
+pub async fn shutdown_signal(cancel_token: CancellationToken) {
+    tokio::select! {
+        result = tokio::signal::ctrl_c() => {
+            if let Err(error) = result {
+                // Installing the Ctrl+C handler failed (rare). Do NOT panic here: a panic
+                // in a spawned server task could be misread as a serve failure. Fall back
+                // to cancellation-driven shutdown only. The select! has already resolved
+                // (its cancelled() arm was dropped), so await the token again here rather
+                // than park on a pending future.
+                warn!(
+                    "Failed to install Ctrl+C handler: {error}; relying on the cancellation token"
+                );
+                cancel_token.cancelled().await;
+            }
+        }
+        _ = cancel_token.cancelled() => {}
+    }
 }
 
 /// Maximum number of requests accepted in a single JSON-RPC batch on either
@@ -1068,6 +1319,7 @@ pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Resu
         RpcNamespace::Web3 => map_web3_requests(req, context),
         RpcNamespace::Net => map_net_requests(req, context).await,
         RpcNamespace::Mempool => map_mempool_requests(req, context),
+        RpcNamespace::Testing => map_testing_requests(req, context).await,
         // Engine is served on the authenticated port only. The CLI parser
         // already rejects `--http.api engine`, but `allowed_namespaces` can
         // also be built programmatically (e.g. in tests or future call sites),
@@ -1112,6 +1364,18 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
         "eth_getBlockTransactionCountByHash" => {
             GetBlockTransactionCountRequest::call(req, context).await
         }
+        "eth_getUncleCountByBlockNumber" => GetUncleCountRequest::call(req, context).await,
+        "eth_getUncleCountByBlockHash" => GetUncleCountRequest::call(req, context).await,
+        // `eth_`-namespace spellings of the raw-transaction getters. geth,
+        // nethermind, reth and erigon all serve these; only the `debug_` form
+        // existed here, so tooling probing the `eth_` names saw them as missing.
+        "eth_getRawTransactionByHash" => GetRawTransaction::call(req, context).await,
+        "eth_getRawTransactionByBlockHashAndIndex" => {
+            GetRawTransactionByBlockAndIndex::call(req, context).await
+        }
+        "eth_getRawTransactionByBlockNumberAndIndex" => {
+            GetRawTransactionByBlockAndIndex::call(req, context).await
+        }
         "eth_getTransactionByBlockNumberAndIndex" => {
             GetTransactionByBlockNumberAndIndexRequest::call(req, context).await
         }
@@ -1133,6 +1397,9 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
         "eth_newFilter" => {
             NewFilterRequest::stateful_call(req, context.storage, context.active_filters).await
         }
+        "eth_newBlockFilter" => {
+            NewBlockFilterRequest::stateful_call(req, context.storage, context.active_filters).await
+        }
         "eth_uninstallFilter" => {
             DeleteFilterRequest::stateful_call(req, context.storage, context.active_filters)
         }
@@ -1150,25 +1417,44 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
     }
 }
 
+/// Routes `testing_*` namespace requests to their handlers.
+///
+/// Testing-only methods for fixture generation. This namespace is disabled by
+/// default and must never be exposed on public-facing RPC APIs.
+pub async fn map_testing_requests(
+    req: &RpcRequest,
+    context: RpcApiContext,
+) -> Result<Value, RpcErr> {
+    match req.method.as_str() {
+        "testing_buildBlockV1" => BuildBlockV1Request::call(req, context).await,
+        unknown_testing_method => Err(RpcErr::MethodNotFound(unknown_testing_method.to_owned())),
+    }
+}
+
 /// Routes `debug_*` namespace requests to their handlers.
 ///
 /// Handles debugging and introspection methods:
-/// - Raw data: `debug_getRawHeader`, `debug_getRawBlock`, `debug_getRawTransaction`, `debug_getRawReceipts`
+/// - Raw data: `debug_getRawHeader`, `debug_getRawBlock`, `debug_getRawTransaction`, `debug_getRawReceipts`, `debug_getRawBlockAccessList`
 /// - Execution witness: `debug_executionWitness` (for stateless validation)
-/// - Tracing: `debug_traceTransaction`, `debug_traceBlockByNumber`
+/// - Tracing: `debug_traceTransaction`, `debug_traceBlockByNumber`, `debug_traceBlockByHash`, `debug_traceCall`
 pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "debug_getRawHeader" => GetRawHeaderRequest::call(req, context).await,
         "debug_getRawBlock" => GetRawBlockRequest::call(req, context).await,
         "debug_getRawTransaction" => GetRawTransaction::call(req, context).await,
         "debug_getRawReceipts" => GetRawReceipts::call(req, context).await,
+        "debug_getRawBlockAccessList" => RawBlockAccessListRequest::call(req, context).await,
         "debug_executionWitness" => ExecutionWitnessRequest::call(req, context).await,
         "debug_executionWitnessByBlockHash" => {
             ExecutionWitnessByBlockHashRequest::call(req, context).await
         }
         "debug_chainConfig" => ChainConfigRequest::call(req, context).await,
+        "debug_getBadBlocks" => GetBadBlocksRequest::call(req, context).await,
+        "debug_setHead" => SetHeadRequest::call(req, context).await,
         "debug_traceTransaction" => TraceTransactionRequest::call(req, context).await,
         "debug_traceBlockByNumber" => TraceBlockByNumberRequest::call(req, context).await,
+        "debug_traceBlockByHash" => TraceBlockByHashRequest::call(req, context).await,
+        "debug_traceCall" => TraceCallRequest::call(req, context).await,
         unknown_debug_method => Err(RpcErr::MethodNotFound(unknown_debug_method.to_owned())),
     }
 }
@@ -1191,10 +1477,10 @@ pub async fn map_engine_requests(
 ) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "engine_exchangeCapabilities" => ExchangeCapabilitiesRequest::call(req, context).await,
-        "engine_forkchoiceUpdatedV1" => ForkChoiceUpdatedV1::call(req, context).await,
-        "engine_forkchoiceUpdatedV2" => ForkChoiceUpdatedV2::call(req, context).await,
-        "engine_forkchoiceUpdatedV3" => ForkChoiceUpdatedV3::call(req, context).await,
-        "engine_forkchoiceUpdatedV4" => ForkChoiceUpdatedV4::call(req, context).await,
+        "engine_forkchoiceUpdatedV1" => Box::pin(ForkChoiceUpdatedV1::call(req, context)).await,
+        "engine_forkchoiceUpdatedV2" => Box::pin(ForkChoiceUpdatedV2::call(req, context)).await,
+        "engine_forkchoiceUpdatedV3" => Box::pin(ForkChoiceUpdatedV3::call(req, context)).await,
+        "engine_forkchoiceUpdatedV4" => Box::pin(ForkChoiceUpdatedV4::call(req, context)).await,
         // The newPayload handlers carry the largest futures of any engine arm
         // (block execution + optional witness collection). Because this `match`
         // awaits each arm inline, the future of `map_engine_requests` is sized to
@@ -1264,6 +1550,7 @@ pub fn map_web3_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Val
 pub async fn map_net_requests(req: &RpcRequest, contex: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "net_version" => net::version(req, contex),
+        "net_listening" => net::listening(req, contex),
         "net_peerCount" => net::peer_count(req, contex).await,
         unknown_net_method => Err(RpcErr::MethodNotFound(unknown_net_method.to_owned())),
     }
@@ -1348,6 +1635,26 @@ mod tests {
             }
             other => panic!("expected MethodNotFound, got {other:?}"),
         }
+    }
+
+    /// A bind conflict must surface as a typed `RpcStartupError` naming the role and the
+    /// exact flag to change — the diagnostic that was missing during the port-collision
+    /// incident (a swallowed `EADDRINUSE`).
+    #[tokio::test]
+    async fn bind_listener_reports_conflict_with_role_and_flag() {
+        let occupied = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind ephemeral port");
+        let addr = occupied.local_addr().unwrap();
+
+        let err = bind_listener(RpcRole::Ws, addr)
+            .await
+            .expect_err("binding an already-occupied port must fail");
+        assert_eq!(err.role, RpcRole::Ws);
+        assert_eq!(err.addr, addr);
+        let msg = err.to_string();
+        assert!(msg.contains("WebSocket server"), "names the role: {msg}");
+        assert!(msg.contains("--ws.port"), "names the flag: {msg}");
     }
 
     /// The default allowlist must keep `eth_*`, `net_*`, and `web3_*` reachable.
@@ -1464,9 +1771,12 @@ mod tests {
             .await
             .unwrap();
         let context = default_context_with_storage(storage).await;
-        let local_p2p_node = context.node_data.local_p2p_node.clone();
-
-        let enr_url = context.node_data.local_node_record.enr_url().unwrap();
+        let (local_p2p_node, enr_url) = {
+            let guard = context.node_data.shared_local_node.read().unwrap();
+            let node = guard.node.clone();
+            let enr_url = guard.record.enr_url().unwrap();
+            (node, enr_url)
+        };
         let result = map_http_requests(&request, context).await;
         let rpc_response = rpc_response(request.id, result).unwrap();
         let blob_schedule = serde_json::json!({
@@ -1525,6 +1835,8 @@ mod tests {
                             "bpo4Time": null,
                             "bpo5Time": null,
                             "amsterdamTime": null,
+                            "hegotaTime": null,
+                            "lstarTime": null,
                             "terminalTotalDifficulty": "0x0",
                             "terminalTotalDifficultyPassed": true,
                             "blobSchedule": blob_schedule,
@@ -1648,6 +1960,24 @@ mod tests {
         let expected_response_string =
             format!(r#"{{"id":67,"jsonrpc": "2.0","result": "{chain_id}"}}"#);
         let expected_response = to_rpc_response_success_value(&expected_response_string);
+        assert_eq!(response.to_string(), expected_response.to_string());
+    }
+
+    #[tokio::test]
+    async fn net_listening_test() {
+        let body = r#"{"jsonrpc":"2.0","method":"net_listening","params":[],"id":67}"#;
+        let request: RpcRequest = serde_json::from_str(body).expect("serde serialization failed");
+        let mut storage =
+            Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+        storage
+            .set_chain_config(&example_chain_config())
+            .await
+            .unwrap();
+        let context = default_context_with_storage(storage).await;
+        let result = map_http_requests(&request, context).await;
+        let response = rpc_response(request.id, result).unwrap();
+        let expected_response =
+            to_rpc_response_success_value(r#"{"id":67,"jsonrpc": "2.0","result": true}"#);
         assert_eq!(response.to_string(), expected_response.to_string());
     }
 

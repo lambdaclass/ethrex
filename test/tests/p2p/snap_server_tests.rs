@@ -14,7 +14,7 @@ use ethrex_crypto::NativeCrypto;
 use ethrex_p2p::rlpx::snap::{GetAccountRange, GetByteCodes, GetStorageRanges};
 use ethrex_p2p::snap::constants::MAX_RESPONSE_BYTES;
 use ethrex_p2p::snap::{
-    SnapError, process_account_range_request, process_byte_codes_request,
+    MAX_SERVE_LOOKUPS, SnapError, process_account_range_request, process_byte_codes_request,
     process_storage_ranges_request,
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
@@ -821,7 +821,7 @@ fn setup_initial_state() -> Result<(Store, H256), SnapError> {
 
     // Create a store and load it up with the accounts
     let store = Store::new("null", EngineType::InMemory).unwrap();
-    let mut state_trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
+    let mut state_trie = store.open_direct_state_trie(EMPTY_TRIE_HASH)?;
     for (address, account) in accounts {
         let hashed_address = H256::from_str(address).unwrap().as_bytes().to_vec();
         let AccountStateSlimCodec(account) = RLPDecode::decode(&account).unwrap();
@@ -839,7 +839,7 @@ fn setup_large_state(n: u32) -> Result<(Store, H256), SnapError> {
     let account_bytes: Vec<u8> = vec![196, 128, 1, 128, 128];
     let AccountStateSlimCodec(account) = RLPDecode::decode(&account_bytes).unwrap();
     let store = Store::new("null", EngineType::InMemory).unwrap();
-    let mut state_trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
+    let mut state_trie = store.open_direct_state_trie(EMPTY_TRIE_HASH)?;
     for i in 1..=n {
         // Put `i` in the high bytes so keys spread across the hash space (avoids a
         // pathologically deep trie) while staying distinct and ascending.
@@ -907,7 +907,7 @@ async fn account_range_clamps_response_bytes() -> Result<(), SnapError> {
 fn setup_large_storage_state(account_hash: H256, n: u32) -> Result<(Store, H256), SnapError> {
     let store = Store::new("null", EngineType::InMemory).unwrap();
 
-    let mut storage_trie = store.open_direct_storage_trie(account_hash, *EMPTY_TRIE_HASH)?;
+    let mut storage_trie = store.open_direct_storage_trie(account_hash, EMPTY_TRIE_HASH)?;
     for i in 1..=n {
         let mut slot_key = [0u8; 32];
         slot_key[..4].copy_from_slice(&i.to_be_bytes());
@@ -923,7 +923,7 @@ fn setup_large_storage_state(account_hash: H256, n: u32) -> Result<(Store, H256)
         storage_root,
         code_hash: H256::zero(),
     };
-    let mut state_trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
+    let mut state_trie = store.open_direct_state_trie(EMPTY_TRIE_HASH)?;
     state_trie
         .insert(account_hash.as_bytes().to_vec(), account.encode_to_vec())
         .unwrap();
@@ -1010,8 +1010,98 @@ async fn byte_codes_clamps_response_bytes() -> Result<(), SnapError> {
     Ok(())
 }
 
-// NOTE: `process_trie_nodes_request` receives the same `request.bytes.min(MAX_RESPONSE_BYTES)`
-// clamp (see `snap/server.rs`), but is not given a dedicated regression test here: exercising
-// it requires a committed state trie readable through `get_trie_nodes`' `open_state_trie`
-// path, which the direct-write test fixtures don't populate. The clamp is mechanically
-// identical to the three handlers covered above.
+// NOTE: `GetTrieNodes` is bounded the same way — `process_trie_nodes_request` truncates each
+// pathset to the remaining `MAX_SERVE_LOOKUPS` budget before calling `Store::get_trie_nodes`,
+// so the total sub-path descents per request are capped. It gets no dedicated regression test
+// here: exercising it requires a committed state trie readable through `get_trie_nodes`'
+// snapshot-gated `open_state_trie` path, which the direct-write test fixtures don't populate
+// (it goes through the block/layer commit machinery).
+
+// Request-side amplification guard (distinct from the response-byte clamp above): a handler
+// that walks a peer-supplied list must bound the number of *lookups*, not just the response
+// bytes. An all-miss/empty request returns almost nothing, so the byte budget alone never trips
+// and the handler probes every item — O(N) DB/trie work the message-rate limiter (which counts
+// messages, not items) doesn't catch. `MAX_SERVE_LOOKUPS` caps the items probed per request;
+// each test places a real hit *past* the cap and confirms it is never reached.
+
+/// `GetByteCodes`: at most `MAX_SERVE_LOOKUPS` codes are probed per request. A hit placed just
+/// past the cap is never served, so an all-miss walk of the `hashes` vector is bounded.
+#[tokio::test]
+async fn byte_codes_bounds_lookup_count() -> Result<(), SnapError> {
+    let store = Store::new("null", EngineType::InMemory).unwrap();
+    let code = Code::from_bytecode(Bytes::from_static(b"hit"), &NativeCrypto);
+    let hit_hash = code.hash;
+    store.add_account_code(code).await.unwrap();
+
+    // `MAX_SERVE_LOOKUPS` misses, then the hit at index `MAX_SERVE_LOOKUPS` (past the cap).
+    // A generous byte budget ensures the *count* cap — not the byte budget — is what stops it.
+    let mut hashes = vec![H256::from_low_u64_be(0xdead); MAX_SERVE_LOOKUPS];
+    hashes.push(hit_hash);
+    let request = GetByteCodes {
+        id: 0,
+        hashes,
+        bytes: MAX_RESPONSE_BYTES,
+    };
+    let res = process_byte_codes_request(request, store).await.unwrap();
+
+    assert!(
+        res.codes.is_empty(),
+        "the hit past the lookup cap must not be reached; got {} code(s)",
+        res.codes.len()
+    );
+    Ok(())
+}
+
+/// `GetByteCodes`: duplicate hits of a tiny code are bounded by the lookup-count cap, not served
+/// unboundedly — a large byte budget alone would return the whole list.
+#[tokio::test]
+async fn byte_codes_bounds_duplicate_hits_by_count() -> Result<(), SnapError> {
+    let store = Store::new("null", EngineType::InMemory).unwrap();
+    let code = Code::from_bytecode(Bytes::from_static(b"hit"), &NativeCrypto);
+    let hit_hash = code.hash;
+    store.add_account_code(code).await.unwrap();
+
+    let request = GetByteCodes {
+        id: 0,
+        hashes: vec![hit_hash; MAX_SERVE_LOOKUPS + 10],
+        bytes: MAX_RESPONSE_BYTES, // far above 3 B × cap, so the count cap is the bound
+    };
+    let res = process_byte_codes_request(request, store).await.unwrap();
+
+    assert_eq!(
+        res.codes.len(),
+        MAX_SERVE_LOOKUPS,
+        "duplicate tiny-code hits must be capped at MAX_SERVE_LOOKUPS"
+    );
+    Ok(())
+}
+
+/// `GetStorageRanges`: at most `MAX_SERVE_LOOKUPS` accounts are probed per request. A populated
+/// account placed just past the cap is never walked, so an all-miss `account_hashes` list
+/// (each opening a storage trie) is bounded.
+#[tokio::test]
+async fn storage_ranges_bounds_lookup_count() -> Result<(), SnapError> {
+    let account_hash = H256::from_low_u64_be(0xabcd);
+    let (store, root) = setup_large_storage_state(account_hash, 4)?;
+
+    let mut account_hashes = vec![H256::from_low_u64_be(0x1111); MAX_SERVE_LOOKUPS];
+    account_hashes.push(account_hash);
+    let request = GetStorageRanges {
+        id: 0,
+        root_hash: root,
+        account_hashes,
+        starting_hash: *HASH_MIN,
+        limit_hash: *HASH_MAX,
+        response_bytes: MAX_RESPONSE_BYTES,
+    };
+    let res = process_storage_ranges_request(request, store)
+        .await
+        .unwrap();
+
+    assert!(
+        res.slots.is_empty(),
+        "the populated account past the lookup cap must not be walked; got {} slot-set(s)",
+        res.slots.len()
+    );
+    Ok(())
+}

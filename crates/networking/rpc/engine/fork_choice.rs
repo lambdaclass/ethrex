@@ -1,6 +1,6 @@
 use ethrex_blockchain::{
     error::{ChainError, InvalidForkChoice},
-    fork_choice::apply_fork_choice,
+    fork_choice::apply_fork_choice_with_deep_reorg,
     payload::{BuildPayloadArgs, create_payload},
 };
 use ethrex_common::types::{BlockHeader, ELASTICITY_MULTIPLIER};
@@ -271,8 +271,8 @@ async fn handle_forkchoice(
         return Ok((None, PayloadStatus::syncing().into()));
     }
 
-    match apply_fork_choice(
-        &context.storage,
+    match apply_fork_choice_with_deep_reorg(
+        &context.blockchain,
         fork_choice_state.head_block_hash,
         fork_choice_state.safe_block_hash,
         fork_choice_state.finalized_block_hash,
@@ -295,10 +295,32 @@ async fn handle_forkchoice(
                     // Best-effort housekeeping: a state-read failure here must
                     // not fail an otherwise-successful FCU, so log and continue
                     // rather than propagating. The next FCU re-runs the sweep.
-                    if let Err(err) = context.blockchain.remove_stale_blob_txs(block.hash()) {
+                    if let Err(err) = context.blockchain.remove_stale_blob_txs(block.hash()).await {
                         warn!(
                             "Failed to prune stale blob txs from mempool after fork choice: {err}"
                         );
+                    }
+                    // Re-simulate pending frame txs (EIP-8141) whose validity may
+                    // have changed because of this block, evicting any that no
+                    // longer pass. This runs an EVM validation-prefix simulation
+                    // per pending frame tx, so it is offloaded to the blocking
+                    // pool to avoid stalling the async FCU worker. Best-effort
+                    // housekeeping (local peer policy): a failure must not fail an
+                    // otherwise-successful FCU, so log and continue. (Running it
+                    // fully outside the FCU handler is a deferred follow-up.)
+                    let blockchain = context.blockchain.clone();
+                    match tokio::task::spawn_blocking(move || {
+                        blockchain.revalidate_frame_txs_after_block(&block)
+                    })
+                    .await
+                    {
+                        Ok(Ok(())) => {}
+                        Ok(Err(err)) => warn!(
+                            "Failed to revalidate pending frame txs from mempool after fork choice: {err}"
+                        ),
+                        Err(err) => warn!(
+                            "Frame-tx revalidation task failed to join after fork choice: {err}"
+                        ),
                     }
                 }
                 Ok(None) => {

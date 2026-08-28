@@ -6,6 +6,13 @@ on:
     paths:
       - ".github/**.yaml"
       - ".github/*.yml"
+      - ".github/actions/**"
+      # Without this, editing a script under .github/scripts would not run the
+      # jobs below that exercise those scripts.
+      - ".github/scripts/**"
+      # The trust anchor: a PR that changes only the committed public key must
+      # still run the job that validates it.
+      - ".github/minisign.pub"
 
 permissions:
   contents: read
@@ -27,3 +34,182 @@ jobs:
 
       - name: Run actionlint
         run: ./actionlint -ignore SC2086 -ignore SC2006 -ignore SC2046
+
+  image-meta:
+    name: build-docker image-meta
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v6
+
+      - name: Assert image-meta derivation across ref types
+        env:
+          SCRIPT: .github/actions/build-docker/image-meta.sh
+        run: |
+          set -euo pipefail
+          # Exercises the REAL script the build-docker action runs, so a future
+          # edit that breaks the release version string fails here, not in a release.
+          derive() { # derive <ref_type> <ref_name> <head_ref> -> "channel|version"
+            local out
+            out="$(mktemp)"
+            REF_TYPE="$1" REF_NAME="$2" HEAD_REF="$3" SHA="deadbeef" GITHUB_OUTPUT="$out" bash "$SCRIPT"
+            printf '%s|%s' "$(sed -n 's/^channel=//p' "$out")" "$(sed -n 's/^version=//p' "$out")"
+          }
+          check() { # check <desc> <ref_type> <ref_name> <head_ref> <expected>
+            local got
+            got="$(derive "$2" "$3" "$4")"
+            if [ "$got" != "$5" ]; then
+              echo "::error::$1: got '$got', expected '$5'"
+              exit 1
+            fi
+            echo "ok  $1 -> $got"
+          }
+          check "rc.1 tag"      tag    v18.0.0-rc.1 ""     "rc.1|18.0.0"
+          check "rc.2 tag"      tag    v18.0.0-rc.2 ""     "rc.2|18.0.0"
+          check "alpha pre-tag" tag    v0.0.2-alpha ""     "alpha|0.0.2"
+          check "final tag"     tag    v18.0.0      ""     "release|18.0.0"
+          check "main push"     branch main         ""     "main|dev-deadbeef"
+          check "PR build"      branch main         feat/x "feat/x|dev-deadbeef"
+
+  stateless-signing:
+    name: sign-stateless-artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v6
+
+      - name: Install minisign
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y minisign
+
+      # The committed public key is the trust anchor consumers verify against,
+      # and the release hard-fails if it does not match the signing key. A
+      # corrupted or truncated commit of it must surface here, on the PR that
+      # changes it, rather than at release time. Needs no secrets.
+      - name: Assert the committed public key is well-formed
+        run: |
+          python3 - <<'EOF'
+          import base64, pathlib, sys
+          path = pathlib.Path(".github/minisign.pub")
+          if not path.is_file():
+              sys.exit("::error::.github/minisign.pub is missing")
+          lines = [l for l in path.read_text().splitlines() if l.strip()]
+          if len(lines) != 2 or not lines[0].startswith("untrusted comment:"):
+              sys.exit("::error::.github/minisign.pub is not a minisign public key file")
+          raw = base64.b64decode(lines[1], validate=True)
+          if len(raw) != 42 or raw[:2] != b"Ed":
+              sys.exit(f"::error::.github/minisign.pub is not a 42-byte Ed25519 minisign key (got {len(raw)} bytes, algo {raw[:2]!r})")
+          key_id = format(int.from_bytes(raw[2:10], "little"), "016X")
+          if key_id not in lines[0]:
+              sys.exit(f"::error::.github/minisign.pub comment does not name its key id {key_id}")
+          print(f"ok  committed public key is well-formed (key id {key_id})")
+          EOF
+
+      # Only the guards `dry-run-release-assets` in tag_release.yaml cannot
+      # reach: it runs the happy path with the real secrets and the committed
+      # key, so what is left to check here is every way the script must REFUSE.
+      # An unsigned release that still looks green is the failure it exists to
+      # prevent, so each guard is asserted to fail with its OWN diagnostic — a
+      # guard whose removal is masked by a later failure has stopped being tested.
+      - name: Assert the signing script refuses to no-op
+        env:
+          SCRIPT: .github/scripts/sign-stateless-artifacts.sh
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          minisign -G -W -p "$work/pub" -s "$work/key" > /dev/null
+          minisign -G -W -p "$work/other.pub" -s "$work/other.key" > /dev/null
+          printf 'pw\npw\n' | minisign -G -p "$work/pw.pub" -s "$work/pw.key" > /dev/null 2>&1
+          export MINISIGN_SECRET_KEY
+          MINISIGN_SECRET_KEY="$(cat "$work/key")"
+
+          # The layout download-artifact produces: one directory per artifact,
+          # including a non-stateless one that must be left alone.
+          make_tree() {
+            local root="$1"
+            rm -rf "$root"
+            for name in stateless-validator-ethrex-sp1-v6.4.0 stateless-validator-ethrex-zisk-v1.1.0-alpha; do
+              mkdir -p "$root/$name"
+              head -c 256 /dev/urandom > "$root/$name/$name.elf"
+              head -c 64 /dev/urandom > "$root/$name/$name.vk"
+            done
+            mkdir -p "$root/ethrex-linux-x86_64"
+            head -c 64 /dev/urandom > "$root/ethrex-linux-x86_64/ethrex"
+          }
+
+          expect_fail() { # expect_fail <desc> <committed-pub> <dir> <expected-msg>
+            local out
+            out="$(mktemp)"
+            if COMMITTED_PUBLIC_KEY="$2" bash "$SCRIPT" "$3" > "$out" 2>&1; then
+              echo "::error::$1: script succeeded but must fail"
+              exit 1
+            fi
+            if ! grep -qF "$4" "$out"; then
+              echo "::error::$1: failed for the wrong reason; expected '$4', got:"
+              cat "$out"
+              exit 1
+            fi
+            echo "ok  rejects: $1"
+          }
+
+          # Without a committed key the script must still sign, and must say so
+          # loudly enough that a maintainer can commit the derived key. Adding
+          # the signing secret before the public key must not break a release.
+          make_tree "$work/bin"
+          out="$(mktemp)"
+          COMMITTED_PUBLIC_KEY="$work/absent.pub" bash "$SCRIPT" "$work/bin" > "$out" 2>&1
+          for f in "$work"/bin/stateless-validator-*/*.elf "$work"/bin/stateless-validator-*/*.vk; do
+            minisign -V -m "$f" -p "$work/pub" -x "$f.minisig" > /dev/null
+          done
+          grep -qF "::warning::No committed public key" "$out" || {
+            echo "::error::expected a warning about the missing committed key"; cat "$out"; exit 1; }
+          grep -qF "$(grep -v '^untrusted' "$work/pub")" "$out" || {
+            echo "::error::the derived public key was not printed"; cat "$out"; exit 1; }
+          # Scoped to the stateless artifacts: the node binary is not signed.
+          if [ -e "$work/bin/ethrex-linux-x86_64/ethrex.minisig" ]; then
+            echo "::error::signed a non-stateless artifact"
+            exit 1
+          fi
+          echo "ok  signs with a derived key when none is committed, and says so"
+
+          # A tampered artifact must stop verifying, proving the signature binds
+          # the bytes rather than merely existing. Nothing else asserts this on a
+          # PR: `dry-run-release-assets` is `workflow_dispatch`-only, so on the
+          # pull_request path this is the only check that a .minisig is bound to
+          # its payload at all.
+          elf="$work/bin/stateless-validator-ethrex-sp1-v6.4.0/stateless-validator-ethrex-sp1-v6.4.0.elf"
+          printf 'x' >> "$elf"
+          if minisign -V -m "$elf" -p "$work/pub" -x "$elf.minisig" > /dev/null 2>&1; then
+            echo "::error::a tampered artifact still verified"
+            exit 1
+          fi
+          echo "ok  tampered artifact fails verification"
+
+          # Every refusal. A stale recorded key must fail rather than be
+          # published in place of the key that actually signed.
+          make_tree "$work/bin2"
+          expect_fail "a committed key from a different keypair" "$work/other.pub" "$work/bin2" \
+            "does not match"
+          expect_fail "an artifact set with nothing to sign" "$work/pub" "$work/empty-dir" \
+            "does not exist"
+          mkdir -p "$work/empty/ethrex-linux-x86_64"
+          head -c 8 /dev/urandom > "$work/empty/ethrex-linux-x86_64/ethrex"
+          expect_fail "an artifact directory with no stateless assets" "$work/pub" "$work/empty" \
+            "no stateless-validator .elf/.vk artifacts found"
+
+          out="$(mktemp)"
+          if MINISIGN_PUBLIC_KEY="$(cat "$work/other.pub")" COMMITTED_PUBLIC_KEY="$work/absent.pub" \
+               bash "$SCRIPT" "$work/bin2" > "$out" 2>&1; then
+            echo "::error::a stale MINISIGN_PUBLIC_KEY was accepted"
+            exit 1
+          fi
+          grep -qF "the MINISIGN_PUBLIC_KEY secret" "$out" || {
+            echo "::error::stale secret failed for the wrong reason:"; cat "$out"; exit 1; }
+          echo "ok  rejects: a stale MINISIGN_PUBLIC_KEY secret"
+
+          # A wrong password must fail loudly rather than produce a key that
+          # silently disagrees with the one used to sign.
+          MINISIGN_SECRET_KEY="$(cat "$work/pw.key")"
+          MINISIGN_PASSWORD="wrong" expect_fail "a wrong key password" "$work/pw.pub" "$work/bin2" \
+            "could not derive the public key"

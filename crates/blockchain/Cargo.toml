@@ -17,13 +17,11 @@ ethrex-crypto.workspace = true
 ethrex-storage.workspace = true
 ethrex-trie.workspace = true
 ethrex-vm.workspace = true
-ethrex-metrics = { path = "./metrics", version = "18.0.0", default-features = false }
+ethrex-metrics = { path = "./metrics", version = "25.0.0", default-features = false }
 
-serde = { workspace = true, optional = true }
-serde_json = { workspace = true, optional = true }
-url = { workspace = true, optional = true }
-reqwest = { workspace = true, optional = true }
-spawned-concurrency = { workspace = true, optional = true }
+ethrex-guest-program = { workspace = true, default-features = false }
+libssz = { workspace = true }
+libssz-merkle = { workspace = true }
 thiserror.workspace = true
 tracing.workspace = true
 bytes.workspace = true
@@ -35,17 +33,19 @@ tokio-util.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }
+ethrex-levm.workspace = true
+tempfile.workspace = true
 
 [lib]
 path = "./blockchain.rs"
 
 [features]
-default = ["secp256k1"]
+default = ["secp256k1", "rayon"]
 rayon = ["ethrex-vm/rayon"]
-secp256k1 = ["ethrex-common/secp256k1", "ethrex-vm/secp256k1", "rayon"]
+secp256k1 = ["ethrex-common/secp256k1", "ethrex-vm/secp256k1"]
 c-kzg = ["ethrex-common/c-kzg", "ethrex-vm/c-kzg"]
-metrics = ["ethrex-metrics/transactions"]
-eip-8025 = ["ethrex-common/eip-8025"]
+metrics = ["ethrex-metrics/transactions", "ethrex-metrics/metrics"]
+testing = []
 
 [lints.clippy]
 unwrap_used = "deny"

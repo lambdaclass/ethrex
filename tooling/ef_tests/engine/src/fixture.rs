@@ -52,6 +52,10 @@ pub struct FixtureHeader {
     pub parent_beacon_block_root: Option<String>,
     #[serde(default)]
     pub requests_hash: Option<String>,
+    /// EIP-7843 genesis slot number. Non-zero in fixtures that start the chain at a
+    /// slot other than 0, and part of the genesis header hash.
+    #[serde(default)]
+    pub slot_number: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -244,7 +248,7 @@ fn single_fork(s: &str) -> anyhow::Result<ethrex_common::types::Fork> {
     let f = match s {
         "Frontier" => Fork::Frontier,
         "Homestead" => Fork::Homestead,
-        "EIP150" | "Tangerine" => Fork::Tangerine,
+        "EIP150" | "Tangerine" | "TangerineWhistle" => Fork::Tangerine,
         "EIP158" | "SpuriousDragon" => Fork::SpuriousDragon,
         "Byzantium" => Fork::Byzantium,
         "Constantinople" => Fork::Constantinople,
@@ -402,6 +406,7 @@ fn build_genesis_json(header: &FixtureHeader, alloc: &Value, config: Value) -> V
     insert_opt!("excessBlobGas", header.excess_blob_gas);
     insert_opt!("parentBeaconBlockRoot", header.parent_beacon_block_root);
     insert_opt!("requestsHash", header.requests_hash);
+    insert_opt!("slotNumber", header.slot_number);
 
     genesis
 }

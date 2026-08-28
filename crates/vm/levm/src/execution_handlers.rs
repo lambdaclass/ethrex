@@ -53,6 +53,15 @@ impl<'a> VM<'a> {
                     return Err(error);
                 }
 
+                // EIP-8037 (Amsterdam+): roll back this frame's state gas in LIFO order
+                // BEFORE zeroing gas. Mirrors EELS `process_create_message`'s
+                // `refill_frame_state_gas` on the code-deposit ExceptionalHalt path.
+                // Must run before the `&mut self.current_call_frame` borrow below.
+                if self.env.config.fork >= Fork::Amsterdam {
+                    let entry = self.current_call_frame.state_gas_used_at_entry;
+                    self.refill_frame_state_gas(entry)?;
+                }
+
                 // Consume all gas because error was exceptional.
                 let callframe = &mut self.current_call_frame;
                 callframe.gas_remaining = 0;
@@ -98,6 +107,15 @@ impl<'a> VM<'a> {
             return Err(error);
         }
 
+        // EIP-8037 (Amsterdam+): roll back this frame's state gas in LIFO order BEFORE
+        // zeroing gas on exceptional halt. Covers both revert and exceptional-halt paths
+        // (mirrors EELS `process_message`'s `refill_frame_state_gas` on Revert/ExceptionalHalt).
+        // Must run before the `&mut self.current_call_frame` borrow below since refill needs `&mut self`.
+        if self.env.config.fork >= Fork::Amsterdam {
+            let entry = self.current_call_frame.state_gas_used_at_entry;
+            self.refill_frame_state_gas(entry)?;
+        }
+
         let callframe = &mut self.current_call_frame;
 
         // Unless error is caused by Revert Opcode, consume all gas left.
@@ -131,6 +149,33 @@ impl<'a> VM<'a> {
         let new_account = self.get_account_mut(new_contract_address)?;
 
         if new_account.create_would_collide() {
+            // EIP-8037: `prepare_execution`'s in-region CREATE `NEW_ACCOUNT` charge
+            // runs before this collision check and fires whenever the
+            // target's pre-state was EMPTY_ACCOUNT — which can be true even for a
+            // colliding target in the EELS-documented "highly unlikely" case of a
+            // zero-nonce/zero-code/zero-balance address that nonetheless has storage
+            // (`create_would_collide` also considers storage; `is_empty()` doesn't).
+            //
+            // Known near-unreachable divergence (code review, accepted): if the
+            // reservoir/gas cannot cover that in-region NEW_ACCOUNT charge for such a
+            // storage-only colliding target, ethrex takes the region-OOG path (burns all
+            // gas) whereas EELS — which checks `account_deployable()` before
+            // `prepare_dispatch` — never charges and preserves the reservoir. This
+            // requires deriving a CREATE address that already holds storage with zero
+            // nonce/code/balance AND under-funding it, which is not reachable via real
+            // CREATE/CREATE2 address derivation; documented rather than guarded.
+            //
+            // Roll that charge back to the frame's entry baseline: EELS never runs
+            // `prepare_dispatch` for a colliding create (`process_message_call`
+            // short-circuits on `account_deployable() == False` before calling
+            // `process_create_message`), so a collision must leave `state_gas_used`
+            // (and any state-gas spill) net zero. No opcodes have run yet, so
+            // `frame_used = state_gas_used - entry` is exactly this charge, if any.
+            if self.env.config.fork >= Fork::Amsterdam {
+                let entry = self.current_call_frame.state_gas_used_at_entry;
+                self.refill_frame_state_gas(entry)?;
+            }
+
             // Per EIP-684: a tx-level CREATE collision burns the
             // full forwarded execution gas as `regular_gas_used`. Zero `gas_remaining`
             // so `raw_consumed = gas_limit` for the downstream regular-gas formula in

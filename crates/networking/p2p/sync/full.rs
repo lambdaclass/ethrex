@@ -7,15 +7,12 @@ use std::cmp::min;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use ethrex_blockchain::{
-    BatchBlockProcessingFailure, Blockchain,
-    error::{ChainError, InvalidBlockError},
-};
+use ethrex_blockchain::{BatchBlockProcessingFailure, Blockchain, error::ChainError};
 use ethrex_common::{
     H256,
     types::{Block, BlockBody, BlockHeader, block_access_list::BlockAccessList},
 };
-use ethrex_storage::Store;
+use ethrex_storage::{DB_COMMIT_THRESHOLD, Store};
 use tokio::sync::RwLock;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
@@ -101,6 +98,21 @@ pub fn is_resume_point(store: &Store, header: &BlockHeader) -> Result<bool, Sync
     Ok(store.is_canonical_sync(header.hash())? && store.has_state_root(header.state_root)?)
 }
 
+/// Whether the forkchoice head is already executed locally: its header is known and its
+/// post-state is on disk. When true there is nothing left for a full-sync cycle to do —
+/// the block arrived through `engine_newPayload`, typically racing the FCU that triggered
+/// the cycle. Post-ePBS consensus clients move their forkchoice head to a payload hash
+/// learned from a bid before the payload itself is delivered to the EL, so this race is a
+/// steady-state occurrence, not a corner case. Canonicality is deliberately not required:
+/// right after `engine_newPayload` executes the block, the follow-up FCU that would
+/// canonicalize it has not been applied yet.
+pub fn sync_head_executed(store: &Store, sync_head: H256) -> Result<bool, SyncError> {
+    match store.get_block_header_by_hash(sync_head)? {
+        Some(header) => Ok(store.has_state_root(header.state_root)?),
+        None => Ok(false),
+    }
+}
+
 /// Index of the first resume point in a single newest->oldest header batch, or `None` if the
 /// batch contains none. The headers before that index are the missing blocks to execute; the
 /// header at that index is our executed/state head. State is retained only for a recent window
@@ -154,7 +166,7 @@ pub async fn sync_cycle_full(
     store: Store,
     diagnostics: &Arc<RwLock<SyncDiagnostics>>,
 ) -> Result<(), SyncError> {
-    let local_head = store.get_latest_block_number().await?;
+    let local_head = store.get_latest_block_number()?;
     let eth_capable_peers = peers.eth_capable_peer_count().await;
     info!(
         local_head,
@@ -162,6 +174,20 @@ pub async fn sync_cycle_full(
         ?sync_head,
         "Starting full sync cycle"
     );
+
+    // The forkchoice head this cycle was started for. `sync_head` itself is rebound as the
+    // cycle walks back through pending blocks and header batches, so keep the original for
+    // the executed-locally checks below.
+    let fcu_head_hash = sync_head;
+    // The head may have been executed between the FCU that triggered this cycle and now
+    // (`engine_newPayload` racing the FCU). If so the cycle has nothing to do.
+    if sync_head_executed(&store, fcu_head_hash)? {
+        info!(
+            ?fcu_head_hash,
+            "Sync head already executed locally; nothing to sync"
+        );
+        return Ok(());
+    }
 
     // Check if the sync_head is a pending block, if so, gather all pending blocks belonging to its chain
     let mut pending_blocks = vec![];
@@ -233,6 +259,18 @@ pub async fn sync_cycle_full(
 
     // Request and store all block headers from the advertised sync head
     loop {
+        // Re-check between peer round-trips: when the FCU raced its payload's
+        // `engine_newPayload`, peers may not have the block either (the payload has not
+        // propagated anywhere yet), and the head routinely arrives through newPayload
+        // while this loop retries. Stop instead of re-downloading and re-executing what
+        // the engine already applied.
+        if sync_head_executed(&store, fcu_head_hash)? {
+            info!(
+                ?fcu_head_hash,
+                "Sync head executed via engine_newPayload during header fetch; ending sync cycle"
+            );
+            return Ok(());
+        }
         let outcome = peers
             .request_block_headers_from_hash(sync_head, BlockRequestOrder::NewToOld)
             .await?;
@@ -283,7 +321,7 @@ pub async fn sync_cycle_full(
             sync_target_logged = true;
             let (target, target_ts) =
                 fcu_head.unwrap_or((first_header.number, first_header.timestamp));
-            let local_head = store.get_latest_block_number().await?;
+            let local_head = store.get_latest_block_number()?;
             let behind = target.saturating_sub(local_head);
             if behind > FOLLOW_DISTANCE {
                 started_behind = true;
@@ -362,7 +400,7 @@ pub async fn sync_cycle_full(
                 None => false,
             };
             if !resume_parent_has_state {
-                let local_head = store.get_latest_block_number().await?;
+                let local_head = store.get_latest_block_number()?;
                 warn!(
                     resume_parent_number,
                     local_head,
@@ -379,7 +417,7 @@ pub async fn sync_cycle_full(
             // past the executed-state head: an FCU canonicalized blocks before their state
             // was computed. Surface it explicitly; these canonical-but-stateless blocks are
             // re-executed below, and the warning flags the underlying gap for investigation.
-            let canonical_head = store.get_latest_block_number().await?;
+            let canonical_head = store.get_latest_block_number()?;
             // `start_block_number - 1` is the highest block whose post-state is on
             // disk (the executed/state head). Record it so `eth_syncing` reports real
             // progress instead of the canonical pointer, which an FCU may have advanced
@@ -406,6 +444,16 @@ pub async fn sync_cycle_full(
         }
         store.add_fullsync_batch(block_headers).await?;
         single_batch = false;
+    }
+    // Last chance before paying for body downloads and execution: the head having
+    // post-state means the whole chain below it is executed too, so the work this
+    // cycle was about to do already happened through the engine.
+    if sync_head_executed(&store, fcu_head_hash)? {
+        info!(
+            ?fcu_head_hash,
+            "Sync head executed via engine_newPayload during header fetch; ending sync cycle"
+        );
+        return Ok(());
     }
     end_block_number += 1;
     start_block_number = start_block_number.max(1);
@@ -567,7 +615,7 @@ pub async fn sync_cycle_full(
                 None => false,
             };
         if !parent_has_state {
-            let local_head = store.get_latest_block_number().await?;
+            let local_head = store.get_latest_block_number()?;
             warn!(
                 local_head,
                 "Skipping {} pending block(s): the downloaded chain they build on was not fully executed (parent state absent); will retry on the next forkchoice update",
@@ -597,7 +645,7 @@ pub async fn sync_cycle_full(
     // from a hang. Only claim we caught up if we actually executed through to the target;
     // if body downloads gave up early we say so instead of falsely reporting success.
     if started_behind {
-        let local_head = store.get_latest_block_number().await?;
+        let local_head = store.get_latest_block_number()?;
         if reached_target {
             info!(
                 "Reached consensus-provided head at block {local_head}. Waiting for the next forkchoice update from the consensus client."
@@ -712,11 +760,12 @@ async fn add_blocks_in_batch(
     Ok(())
 }
 
-/// Executes the given blocks and stores them
-/// If sync_head_found is true, they will be executed one by one
-/// If sync_head_found is false, they will be executed in a single batch,
-/// falling back to one-by-one pipeline execution if the batch fails with
-/// a post-execution error (works around batch-mode state corruption bugs).
+/// Executes the given blocks and stores them.
+///
+/// Both paths execute block-by-block through the same validated pipeline
+/// (`add_block_pipeline_bounded`), which builds fresh per-block VM state. When the sync
+/// head is found the blocks run sequentially on a blocking thread; otherwise
+/// `add_blocks_in_batch` runs them with BAL fetching, progress logging and cancellation.
 async fn add_blocks(
     blockchain: Arc<Blockchain>,
     blocks: Vec<Block>,
@@ -724,60 +773,12 @@ async fn add_blocks(
     sync_head_found: bool,
     cancel_token: CancellationToken,
 ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
-    // If we found the sync head, run the blocks sequentially to store all the blocks's state
     if sync_head_found {
         return run_blocks_pipeline(blockchain, blocks, bals).await;
     }
-
-    // Try batch execution first (faster).
-    // We clone blocks because add_blocks_in_batch takes ownership but we need
-    // them for the fallback. The clone cost is negligible (~1-5ms) vs batch
-    // execution time (median ~29s on hoodi).
-    match blockchain
-        .add_blocks_in_batch(blocks.clone(), &bals, cancel_token)
+    blockchain
+        .add_blocks_in_batch(blocks, &bals, cancel_token)
         .await
-    {
-        Ok(()) => Ok(()),
-        Err((ChainError::InvalidBlock(ref err), ref batch_failure))
-            if is_post_execution_error(err) =>
-        {
-            // Batch execution can produce incorrect results due to cross-block
-            // state cache pollution (e.g. `mark_modified` setting `exists = true`
-            // leaking across block boundaries). Fall back to single-block pipeline
-            // execution which uses fresh state per block.
-            let failed_block_info = batch_failure
-                .as_ref()
-                .and_then(|f| {
-                    blocks
-                        .iter()
-                        .find(|b| b.hash() == f.failed_block_hash)
-                        .map(|b| format!("block {} ({})", b.header.number, f.failed_block_hash))
-                })
-                .unwrap_or_else(|| "unknown block".to_string());
-            warn!(
-                "Batch execution failed at {failed_block_info} with: {err}. \
-                 Retrying batch with per-block pipeline execution."
-            );
-            run_blocks_pipeline(blockchain, blocks, bals).await
-        }
-        Err(e) => Err(e),
-    }
-}
-
-/// Returns true for errors that arise from EVM execution and could differ
-/// between batch mode (shared VM state) and single-block pipeline mode.
-/// Pre-execution validation errors (header, body, structural) would fail
-/// identically in both modes, so retrying them is pointless.
-fn is_post_execution_error(err: &InvalidBlockError) -> bool {
-    matches!(
-        err,
-        InvalidBlockError::GasUsedMismatch(_, _)
-            | InvalidBlockError::StateRootMismatch
-            | InvalidBlockError::ReceiptsRootMismatch
-            | InvalidBlockError::RequestsHashMismatch
-            | InvalidBlockError::BlockAccessListHashMismatch
-            | InvalidBlockError::BlobGasUsedMismatch
-    )
 }
 
 async fn run_blocks_pipeline(
@@ -790,7 +791,8 @@ async fn run_blocks_pipeline(
         for (block, bal) in blocks.into_iter().zip(bals.into_iter()) {
             let block_hash = block.hash();
             blockchain
-                .add_block_pipeline(block, bal.as_ref())
+                .add_block_pipeline_bounded(block, bal.map(Arc::new), DB_COMMIT_THRESHOLD)
+                .map(|_| ())
                 .map_err(|e| {
                     (
                         e,

@@ -311,6 +311,18 @@ pub struct CallFrame {
     /// EIP-8037: snapshot of VM.state_gas_used (signed) at child-frame entry.
     /// Used to restore parent's state_gas_used on child revert.
     pub state_gas_used_at_entry: i64,
+    /// EIP-8037: EELS per-frame `state_gas_spilled`; LIFO refund source;
+    /// propagated to parent on child success.
+    pub frame_state_gas_spilled: u64,
+    /// EIP-8037 (#3002): whether this CREATE/CREATE2 child's target address was
+    /// already alive (existed and non-empty) before the create mutated state.
+    /// Read in `handle_return_create` to refund the unconditional new-account
+    /// state gas on the success path (no new account leaf is created).
+    pub target_alive: bool,
+    /// EIP-8037: whether the parent charged new-account state gas for this CALL
+    /// (value transfer to an empty account). Refunded on child revert/error,
+    /// mirroring EELS `generic_call` `credit_state_gas_refund(NEW_ACCOUNT)`.
+    pub new_account_state_gas_charged: bool,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
@@ -372,6 +384,31 @@ impl CallFrameBackup {
         self.inserted_code_hashes.extend(other.inserted_code_hashes);
         // Don't extend bal_checkpoint - it's specific to each call frame
     }
+
+    /// Absorb another backup, keeping the EARLIEST original value for each
+    /// account/slot (first-seen-wins). Mirrors `merge_call_frame_backup_with_parent`.
+    /// Does NOT touch `bal_checkpoint` (set once at the tx level).
+    ///
+    /// Unlike `extend` (last-wins `HashMap::extend`), this preserves the value
+    /// that was already recorded, which is required when accumulating per-frame
+    /// backups into a tx-level rollback: the original to restore is the value
+    /// from before the FIRST frame that modified it.
+    pub fn absorb(&mut self, other: &CallFrameBackup) {
+        for (address, account) in other.original_accounts_info.iter() {
+            self.original_accounts_info
+                .entry(*address)
+                .or_insert_with(|| account.clone());
+        }
+        for (address, storage) in other.original_account_storage_slots.iter() {
+            let slot = self
+                .original_account_storage_slots
+                .entry(*address)
+                .or_default();
+            for (key, value) in storage.iter() {
+                slot.entry(*key).or_insert(*value);
+            }
+        }
+    }
 }
 
 impl CallFrame {
@@ -424,6 +461,9 @@ impl CallFrame {
             pc: 0,
             sub_return_data: Bytes::default(),
             state_gas_used_at_entry: 0,
+            frame_state_gas_spilled: 0,
+            target_alive: false,
+            new_account_state_gas_charged: false,
         }
     }
 
@@ -576,5 +616,74 @@ impl<'a> VM<'a> {
     )]
     pub fn advance_pc(&mut self) {
         self.current_call_frame.pc += 1;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethrex_common::types::AccountInfo;
+
+    #[test]
+    fn absorb_keeps_earliest_original_value() {
+        let addr = Address::from_low_u64_be(1);
+        let mut acc = CallFrameBackup::default();
+
+        let mut first = CallFrameBackup::default();
+        first
+            .original_account_storage_slots
+            .entry(addr)
+            .or_default()
+            .insert(H256::zero(), U256::from(10));
+
+        let mut second = CallFrameBackup::default();
+        second
+            .original_account_storage_slots
+            .entry(addr)
+            .or_default()
+            .insert(H256::zero(), U256::from(20));
+
+        acc.absorb(&first);
+        acc.absorb(&second);
+
+        // First-seen-wins: the earliest original (10) is preserved.
+        let value = acc
+            .original_account_storage_slots
+            .get(&addr)
+            .and_then(|slots| slots.get(&H256::zero()))
+            .copied();
+        assert_eq!(value, Some(U256::from(10)));
+    }
+
+    #[test]
+    fn absorb_keeps_earliest_account_info() {
+        let addr = Address::from_low_u64_be(2);
+        let mut acc = CallFrameBackup::default();
+
+        let first_acc = LevmAccount {
+            info: AccountInfo {
+                nonce: 1,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut first = CallFrameBackup::default();
+        first.original_accounts_info.insert(addr, first_acc);
+
+        let second_acc = LevmAccount {
+            info: AccountInfo {
+                nonce: 2,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut second = CallFrameBackup::default();
+        second.original_accounts_info.insert(addr, second_acc);
+
+        acc.absorb(&first);
+        acc.absorb(&second);
+
+        let nonce = acc.original_accounts_info.get(&addr).map(|a| a.info.nonce);
+        assert_eq!(nonce, Some(1));
     }
 }
