@@ -154,6 +154,16 @@ bundle and peering from a host outside the deployment network before
 publishing. Symptom: `net_peerCount` stays `0x0` with correct-looking
 bootnodes.
 
+The second-order cost is worse than the first. A joiner that cannot use the
+published ENRs has no *discovery*, only the handful of static peers someone
+hand-fed it, so it cannot heal: when one of those peers drops, it degrades to
+`failed to dial` and drifts off head, and no new peers arrive to replace it.
+On `frames-testnet` a joiner pinned to three static peers reached head, lost
+one peer, and fell 180 slots behind with its validator silent. Peer *counts*
+therefore need watching over time on a joiner, not just at first connection —
+though note that a correctly-addressed deployment would not have this problem,
+because discovery would keep refilling the peer set.
+
 **4. `SHARD_COMMITTEE_PERIOD` decides whether egress is testable.**
 At the mainnet preset of 256 epochs, no validator may exit for ~13.6 hours
 after activation. Exit requests before that are *ignored silently* by the CL,
