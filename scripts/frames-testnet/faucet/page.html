@@ -1,0 +1,568 @@
+<!-- Faucet landing page. Self-contained: no external fonts, scripts or images,
+     so it works behind a strict CSP and on an air-gapped devnet.
+     Placeholders substituted at render time:
+     {{CHAIN_ID}} {{AMOUNT}} {{RPC}} {{EXPLORER}} {{ARTIFACTS}} {{BOOTNODES}} -->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Frames testnet faucet</title>
+<!-- Two stacked frames, the VERIFY and SENDER pair, at 16px. Inline as a data URI
+     because the page makes no external requests and a file would be a 404 on
+     every visit: nothing serves /favicon.ico on this host. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2016%2016%22%3E%3Crect%20width%3D%2216%22%20height%3D%2216%22%20rx%3D%223%22%20fill%3D%22%23161a20%22%2F%3E%3Crect%20x%3D%223%22%20y%3D%224%22%20width%3D%2210%22%20height%3D%223%22%20rx%3D%221%22%20fill%3D%22%23d8a533%22%2F%3E%3Crect%20x%3D%223%22%20y%3D%229%22%20width%3D%2210%22%20height%3D%223%22%20rx%3D%221%22%20fill%3D%22%236fb6c1%22%2F%3E%3C%2Fsvg%3E">
+<style>
+  /* Palette drawn from Bogotá, which is what the fork is named for and what the
+     execution genesis still calls the timestamp: cool high-altitude ground,
+     brick for the one thing that acts, ochre and teal for the two frame modes a
+     minimal transaction uses. Mode colour is not decoration — the same hue means
+     the same mode in the stack, in the table and inline. */
+  :root {
+    --haze: #e8ecf1; --panel: #ffffff; --sunk: #f1f4f7;
+    --ink: #161a20; --ink-soft: #3d4550; --ink-mute: #626d7b;
+    --rule: #d3dae2; --rule-soft: #e4e9ee;
+    --brick: #a8442a; --brick-ink: #ffffff; --brick-soft: #f6ebe7;
+    --verify: #8a5e05; --verify-soft: #fbf1dc;
+    --sender: #266b76; --sender-soft: #e2f0f2;
+    --ok: #14663f; --err: #a3271c;
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", "Segoe UI Mono", "Roboto Mono", Menlo, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --s1: .4rem; --s2: .75rem; --s3: 1.25rem; --s4: 2rem; --s5: 3.25rem;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --haze: #101419; --panel: #191e25; --sunk: #141922;
+      --ink: #e7ecf2; --ink-soft: #c2cad4; --ink-mute: #909cab;
+      --rule: #2a323c; --rule-soft: #222932;
+      --brick: #d4694a; --brick-ink: #16191d; --brick-soft: #2a1e1a;
+      --verify: #d8a533; --verify-soft: #2a2517;
+      --sender: #6fb6c1; --sender-soft: #16272a;
+      --ok: #5fce9c; --err: #ff8d7c;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--haze); color: var(--ink);
+    font: 15px/1.65 var(--sans);
+  }
+  .wrap { max-width: 70rem; margin: 0 auto; padding: 0 1.5rem; }
+
+  /* Display type is the monospace stack, not the sans: every value on this
+     chain is a hex string the reader is going to paste, and the page speaks in
+     the same register. */
+  h1, .eyebrow, .rail-title, .h2, .chip, .flag, .frame-i, button {
+    font-family: var(--mono);
+  }
+  h1 {
+    margin: 0 0 var(--s2); font-size: clamp(1.9rem, 5.5vw, 3.1rem);
+    font-weight: 600; letter-spacing: -.02em; text-transform: uppercase;
+    line-height: 1.05;
+  }
+  h1 .role { color: var(--brick); }
+  .eyebrow {
+    margin: 0 0 var(--s3); font-size: 12px; letter-spacing: .18em;
+    text-transform: uppercase; color: var(--ink-mute);
+  }
+  .thesis { margin: 0 0 var(--s2); max-width: 40rem; font-size: 17px; color: var(--ink-soft); }
+  .thesis strong { color: var(--ink); font-weight: 600; }
+  .aside-line { margin: 0; max-width: 40rem; font-size: 14px; color: var(--ink-mute); }
+  a { color: var(--brick); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  code { font: 13px var(--mono); color: var(--ink-soft); }
+
+  header.masthead { padding: var(--s5) 0 var(--s4); }
+
+  /* The claim box is the one thing the page exists to do, so it is the only
+     element with a fill of its own above the fold. */
+  .claim {
+    margin-top: var(--s4); padding: var(--s3); max-width: 34rem; background: var(--panel);
+    border: 1px solid var(--rule); border-radius: 4px;
+  }
+  .claim-label {
+    display: block; margin-bottom: var(--s2); font: 12px var(--mono);
+    letter-spacing: .14em; text-transform: uppercase; color: var(--ink-mute);
+  }
+  .row { display: flex; gap: var(--s2); flex-wrap: wrap; }
+  input {
+    flex: 1 1 20rem; min-width: 0; padding: .7rem .8rem; font: 14px var(--mono);
+    color: var(--ink); background: var(--sunk);
+    border: 1px solid var(--rule); border-radius: 3px;
+  }
+  button {
+    padding: .7rem 1.4rem; font-size: 13px; font-weight: 600; letter-spacing: .08em;
+    text-transform: uppercase; cursor: pointer;
+    color: var(--brick-ink); background: var(--brick); border: 0; border-radius: 3px;
+  }
+  button:hover { filter: brightness(1.08); }
+  button:disabled { opacity: .5; cursor: default; filter: none; }
+  :focus-visible { outline: 2px solid var(--brick); outline-offset: 2px; }
+  #out {
+    margin: var(--s2) 0 0; font: 13px/1.5 var(--mono); white-space: pre-wrap;
+    word-break: break-all; color: var(--ink-mute); opacity: 1;
+    transition: opacity 120ms ease-out;
+  }
+  #out.ok { color: var(--ok); } #out.err { color: var(--err); }
+
+  /* Constants sit beside the body rather than in it: they are what the reader
+     keeps needing while reading everything else. */
+  /* minmax(0, 1fr), not 1fr: a grid column is min-width:auto by default, so a
+     wide <pre> would stretch the column instead of scrolling inside it. */
+  .body-grid {
+    display: grid; grid-template-columns: 18rem minmax(0, 1fr); gap: var(--s5);
+    padding: var(--s5) 1.5rem;
+  }
+  .rail { align-self: start; position: sticky; top: var(--s4); }
+  .rail-title {
+    margin: 0 0 var(--s2); padding-bottom: var(--s1); font-size: 12px;
+    font-weight: 600; letter-spacing: .18em; text-transform: uppercase;
+    color: var(--ink-mute); border-bottom: 1px solid var(--rule);
+  }
+  .constants { margin: 0; }
+  .constants dt {
+    margin-top: var(--s2); font: 11px var(--mono); letter-spacing: .12em;
+    text-transform: uppercase; color: var(--ink-mute);
+  }
+  .constants dd {
+    margin: 2px 0 0; font: 12px/1.45 var(--mono); word-break: break-all;
+  }
+  /* The page is a long reference, so the rail carries the way through it. */
+  .toc { margin-top: var(--s4); }
+  .toc ol { margin: 0; padding: 0; list-style: none; }
+  .toc li + li { margin-top: var(--s1); }
+  .toc a {
+    display: block; font: 12.5px/1.4 var(--mono); color: var(--ink-soft);
+    text-decoration: none; border-left: 2px solid var(--rule); padding-left: var(--s2);
+  }
+  .toc a:hover { color: var(--brick); border-left-color: var(--brick); }
+
+  /* One measure for the whole column: prose, tables, code and records share a
+     right edge, and the air to the right of it is deliberate. */
+  main { max-width: 44rem; }
+
+  /* The rail title and the first section heading share the grid's top edge, so
+     the two columns read as one sheet rather than two stacked things. */
+  section { padding-top: var(--s5); scroll-margin-top: var(--s3); }
+  main > section:first-child { padding-top: 0; }
+  section + section { border-top: 1px solid var(--rule-soft); }
+  .h2 {
+    margin: 0 0 var(--s3); font-size: 13px; font-weight: 600; letter-spacing: .16em;
+    text-transform: uppercase; color: var(--ink);
+  }
+  section > p:first-of-type { margin-top: 0; }
+
+  table { width: 100%; border-collapse: collapse; margin: 0 0 var(--s3); }
+  td { padding: .6rem .6rem .6rem 0; border-top: 1px solid var(--rule-soft); vertical-align: top; }
+  tr:first-child td { border-top: 0; }
+  td:first-child { white-space: nowrap; width: 1%; padding-right: var(--s3); font-weight: 600; }
+  td.desc { color: var(--ink-soft); }
+
+  pre {
+    margin: 0 0 var(--s3); padding: var(--s3); overflow-x: auto;
+    font: 12px/1.6 var(--mono); color: var(--ink-soft);
+    background: var(--sunk); border-left: 2px solid var(--rule); border-radius: 0 3px 3px 0;
+  }
+  .note {
+    margin: var(--s3) 0 0; padding: var(--s3); font-size: 14px;
+    background: var(--panel); border: 1px solid var(--rule); border-radius: 4px;
+  }
+  .note strong { color: var(--ink); }
+
+  /* Signature: the smallest useful frame transaction. The indices are the frame
+     indices — an APPROVE has to be in place before the frame it pays for runs,
+     so the order here is information and not a list style. */
+  .stack { margin: 0 0 var(--s4); }
+  .envelope {
+    display: flex; align-items: baseline; gap: var(--s2); flex-wrap: wrap;
+    padding: var(--s2) var(--s3); font: 12px/1.5 var(--mono);
+    letter-spacing: .12em; text-transform: uppercase; color: var(--ink-mute);
+    background: var(--ink); border-radius: 4px 4px 0 0;
+  }
+  @media (prefers-color-scheme: dark) { .envelope { background: #0b0e12; } }
+  .envelope .type {
+    font-size: 17px; letter-spacing: -.01em; text-transform: none; color: var(--haze);
+  }
+  @media (prefers-color-scheme: dark) { .envelope .type { color: var(--ink); } }
+  .frames {
+    margin: 0; padding: 0; list-style: none;
+    border: 1px solid var(--rule); border-top: 0; border-radius: 0 0 4px 4px;
+    background: var(--panel);
+  }
+  .frame { display: grid; grid-template-columns: 2.25rem 1fr; padding: var(--s3); }
+  .frame + .frame { border-top: 1px solid var(--rule-soft); }
+  /* The index column doubles as the order marker: frame 1 cannot run before the
+     APPROVE that frame 0 executes. */
+  .frame-i { font-size: 13px; font-weight: 600; color: var(--ink-mute); }
+  .frame-h { margin: 0 0 var(--s1); font-size: 14px; }
+  .frame-d { margin: 0; font-size: 13.5px; color: var(--ink-soft); }
+  .chip {
+    display: inline-block; padding: .1rem .4rem; margin-right: .35rem;
+    font-size: 11.5px; font-weight: 600; letter-spacing: .08em; border-radius: 3px;
+  }
+  .chip-verify { color: var(--verify); background: var(--verify-soft); }
+  .chip-sender { color: var(--sender); background: var(--sender-soft); }
+  .chip-plain { color: var(--ink-mute); background: var(--sunk); }
+  .verify-frame { border-left: 2px solid var(--verify); }
+  .sender-frame { border-left: 2px solid var(--sender); }
+  .stack-foot { margin: var(--s2) 0 0; font-size: 13px; color: var(--ink-mute); }
+
+  /* Bootnode records, rendered by faucet.py from the published bundle. One long
+     unbroken token each, so they wrap rather than scroll: a joiner copies a
+     line, and a scrolled line hides that there are more of them. */
+  .peers { margin: var(--s3) 0 0; }
+  .peers-lede { margin: 0 0 var(--s3); font-size: 14px; color: var(--ink-soft); }
+  .peerset + .peerset { margin-top: var(--s3); }
+  .peerset-title {
+    margin: 0 0 var(--s1); font: 12px var(--mono); font-weight: 600;
+    letter-spacing: .12em; text-transform: uppercase; color: var(--ink-mute);
+  }
+  .flag { font-size: 11.5px; letter-spacing: 0; text-transform: none; color: var(--ink-mute); }
+  .records { margin: 0; padding: 0; list-style: none; }
+  .records li {
+    padding: .55rem var(--s2); font: 12px/1.55 var(--mono); word-break: break-all;
+    background: var(--sunk); border-left: 2px solid var(--rule);
+  }
+  .records li + li { border-top: 1px solid var(--rule-soft); }
+
+  footer { padding: var(--s4) 0 var(--s5); border-top: 1px solid var(--rule-soft); }
+  footer p { margin: 0; font: 12px var(--mono); color: var(--ink-mute); }
+
+  @media (max-width: 60rem) {
+    .body-grid { grid-template-columns: minmax(0, 1fr); gap: 0; padding-top: var(--s4); }
+    .rail { position: static; }
+    /* Constants become a label/value sheet. Two explicit columns, so each pair
+       stays on its own row at any width — auto-fit tracks would interleave the
+       pairs as soon as three of them fit. */
+    .constants {
+      display: grid; grid-template-columns: max-content minmax(0, 1fr);
+      gap: var(--s2) var(--s3); align-items: baseline;
+    }
+    .constants dt { margin-top: 0; }
+    main > section:first-child { padding-top: var(--s5); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+  }
+</style>
+
+<header class="masthead">
+  <div class="wrap">
+    <p class="eyebrow">Public testnet · ethrex</p>
+    <h1>Frames testnet <span class="role">faucet</span></h1>
+    <p class="thesis">
+      A test network for the <strong>frame-transaction</strong> family of EIPs, where one
+      transaction carries a list of frames instead of a single call. The consensus is real
+      and the ETH is worthless.
+    </p>
+    <p class="aside-line">
+      New to frame transactions? Read what changes below, or see the
+      <a href="/eips">illustrated guide</a> for background on the wider stack they were designed
+      alongside — only EIP-8141 runs here. Built on
+      <a href="https://github.com/lambdaclass/ethrex">ethrex</a>.
+    </p>
+
+    <div class="claim">
+      <label class="claim-label" for="addr">Your address</label>
+      <div class="row">
+        <input id="addr" placeholder="0x…" spellcheck="false" autocomplete="off">
+        <button id="go">Request {{AMOUNT}} ETH</button>
+      </div>
+      <p id="out" aria-live="polite"></p>
+    </div>
+  </div>
+</header>
+
+<div class="wrap body-grid">
+  <aside class="rail">
+    <h2 class="rail-title">Constants</h2>
+    <dl class="constants">
+      <dt>Chain ID</dt><dd>{{CHAIN_ID}}</dd>
+      {{RPC}}
+      {{EXPLORER}}
+      {{ARTIFACTS}}
+      <dt>Bootnodes</dt><dd><a href="/bootnodes">/bootnodes</a></dd>
+    </dl>
+
+    <nav class="toc" aria-label="Contents">
+      <h2 class="rail-title">Contents</h2>
+      <ol>
+        <li><a href="#rules">What this chain changes</a></li>
+        <li><a href="#amsterdam">Inherited from Amsterdam</a></li>
+        <li><a href="#sending">Sending transactions</a></li>
+        <li><a href="#frames">Build a frame transaction</a></li>
+        <li><a href="#node">Run a node</a></li>
+        <li><a href="#validator">Become a validator</a></li>
+      </ol>
+    </nav>
+  </aside>
+
+  <main>
+    <section id="rules">
+      <h2 class="h2">What this chain changes</h2>
+      <table>
+        <tr>
+          <td><a href="https://eips.ethereum.org/EIPS/eip-8141">EIP-8141</a></td>
+          <td class="desc">Frame transactions: a new type <code>0x06</code> whose payload is a list of
+            <em>frames</em>, each executed with its own target, mode and two-dimensional gas budget
+            <code>[execution, state]</code>, with payment authorised by an <code>APPROVE</code> in a
+            validation prefix.</td>
+        </tr>
+      </table>
+      <p>
+        <strong>EIP-8141 is the only transaction-layer change here.</strong> This chain is
+        deliberately narrower than the Frames testnet: EIP-8250 (keyed nonces), EIP-8272
+        (recent roots), EIP-7906 (transaction assertions), EIP-7805 (FOCIL) and EIP-8369 are
+        <strong>not</strong> active. A transaction depending on any of them is invalid here. The
+        point of the narrowing is that a failure on this chain can only be a frame-transaction
+        failure.
+      </p>
+      </section>
+
+    <section id="amsterdam">
+      <h2 class="h2">Inherited from Amsterdam</h2>
+      <table>
+        <tr><td><a href="https://eips.ethereum.org/EIPS/eip-7928">EIP-7928</a></td>
+            <td class="desc">Block-level access lists.</td></tr>
+        <tr><td><a href="https://eips.ethereum.org/EIPS/eip-8037">EIP-8037</a></td>
+            <td class="desc">Two-dimensional gas: state growth is priced separately from execution, so a
+              transfer to a fresh account costs far more than 21,000 gas.</td></tr>
+        <tr><td><a href="https://eips.ethereum.org/EIPS/eip-8038">EIP-8038</a></td>
+            <td class="desc">Amsterdam repricing of the access, storage and access-list constants.</td></tr>
+        <tr><td><a href="https://eips.ethereum.org/EIPS/eip-7843">EIP-7843</a></td>
+            <td class="desc">A beacon slot number available to execution.</td></tr>
+        <tr><td><a href="https://eips.ethereum.org/EIPS/eip-8282">EIP-8282</a></td>
+            <td class="desc">Builder deposits and exits via predeploys.</td></tr>
+      </table>
+    </section>
+
+    <section id="sending">
+      <h2 class="h2">Sending transactions</h2>
+      <p>
+        <strong>Ordinary transactions work normally.</strong> The ETH above is plain ETH: point
+        any wallet or library at the RPC endpoint with the chain ID above and send transfers,
+        deploy contracts, call them.
+      </p>
+      <p>
+        <strong>Frame transactions are a different matter.</strong> EIP-8141 is a draft, so no
+        wallet and no released version of the common libraries can encode or sign a type
+        <code>0x06</code> envelope yet; a wallet asked to send one has no representation for it.
+        Submitting one today means building the envelope yourself and handing the signed bytes to
+        <code>eth_sendRawTransaction</code> &mdash; or using <code>rex</code>, which does it for you:
+      </p>
+<pre>git clone -b frames-testnet https://github.com/lambdaclass/rex &amp;&amp; cd rex
+cargo build --release
+
+./target/release/rex frame send \
+  --to 0x&hellip; --value 1 \
+  --frame-gas-limit 100000 --frame-state-gas-limit 250000 \
+  --private-key 0x&hellip; --rpc-url {{RPC}}</pre>
+      <p>
+        Use the <code>frames-testnet</code> branch specifically. It tracks ethrex's
+        <code>frames-devnet-0</code> so it emits the two-dimensional <code>limits</code> this chain
+        expects; a rex built from a published release sends a single flat gas limit and the node
+        rejects it while decoding. <code>rex frame inspect &lt;hash&gt;</code> prints the per-frame
+        results of a mined transaction.
+      </p>
+      <div class="note">
+        <strong>Estimate gas. Never hardcode 21,000.</strong> Under EIP-8037 state growth is
+        charged alongside execution out of the same limit an ordinary transaction carries, so
+        21,000 is never enough here. Measured on this chain: a transfer to an account that already
+        exists costs <strong>21,165</strong>, and a transfer to an address that does not exist yet
+        costs <strong>204,600</strong> — 21,000 of execution plus 183,600 charged for creating the
+        account. The failure is easy to misread: the transaction is mined, the receipt says
+        <code>status: 0</code>, and <code>gasUsed</code> equals your limit exactly. That is the
+        out-of-gas, not a revert in the recipient.
+      </div>
+    </section>
+
+    <section id="frames">
+      <h2 class="h2">Build a frame transaction</h2>
+      <p>
+        The smallest useful transaction is two frames: authorise, then execute.
+      </p>
+
+      <div class="stack">
+        <p class="envelope"><span class="type">0x06</span> envelope · two frames</p>
+        <ol class="frames">
+          <li class="frame verify-frame">
+            <span class="frame-i">0</span>
+            <div>
+              <p class="frame-h"><span class="chip chip-verify">VERIFY</span>
+                <code>flags 0x03</code> → <code>tx.sender</code></p>
+              <p class="frame-d">Static. Runs the sender's default code path, which checks the outer
+                signature and executes <code>APPROVE</code> for both execution and payment. Without
+                an <code>APPROVE</code> the transaction has no payer and is invalid.</p>
+            </div>
+          </li>
+          <li class="frame sender-frame">
+            <span class="frame-i">1</span>
+            <div>
+              <p class="frame-h"><span class="chip chip-sender">SENDER</span>
+                <code>your target</code></p>
+              <p class="frame-d">Executes with <code>tx.sender</code> as the caller: the call you
+                actually wanted to make.</p>
+            </div>
+          </li>
+        </ol>
+        <p class="stack-foot">The order is the point. An <code>APPROVE</code> has to be in place
+          before the frame it pays for runs.</p>
+      </div>
+
+      <p>The exact envelope is a type byte followed by a 7-field RLP list:</p>
+<pre>0x06 || rlp([chain_id, nonce, sender, frames, signatures, fees, blob_hashes])
+
+frame     = [mode, flags, target, limits, value, data]
+limits    = [execution, state]                    # EIP-8037: two dimensions, no borrowing
+fees      = [max_priority_fee, max_fee, max_fee_per_blob_gas]
+signature = [scheme, signer, msg, signature]      # scheme 1 = secp256k1
+sig_hash  = keccak256(0x06 || rlp(envelope))      # empty-msg signature bytes elided</pre>
+      <p>
+        Two budgets catch out a first frame transaction. <code>limits.state</code> pays for state
+        growth and is never drawn from the execution half, so a frame sending value to an account
+        that does not exist yet owes the EIP-8037 <code>NEW_ACCOUNT</code> charge
+        (<code>120 &times; 1530 = 183,600</code>) and halts if its state budget cannot cover it.
+        And the frames before the first <code>APPROVE</code>, plus signature verification, must fit
+        the node's <code>MAX_VERIFY_GAS</code> mempool budget or the transaction is refused at
+        admission rather than at execution.
+      </p>
+      <table>
+        <tr><td><span class="chip chip-plain">DEFAULT</span></td>
+            <td class="desc">Mode 0. Called by the entry point.</td></tr>
+        <tr><td><span class="chip chip-verify">VERIFY</span></td>
+            <td class="desc">Mode 1. Static; where authorisation happens.</td></tr>
+        <tr><td><span class="chip chip-sender">SENDER</span></td>
+            <td class="desc">Mode 2. Executes with <code>tx.sender</code> as the caller.</td></tr>
+        <tr><td><span class="chip chip-plain">mode 3</span></td>
+            <td class="desc">Unassigned on this chain. EIP-7906 would have put its read-only
+              <code>POST_TX</code> assertion suffix here, but that EIP is not in the build.</td></tr>
+      </table>
+      <p>
+        <code>flags</code> bits 0 and 1 are the <code>APPROVE</code> scope; bit 2 marks an atomic
+        batch, which must be terminated by a following non-batch frame.
+      </p>
+      <div class="note">
+        <strong>The signature is not in EVM form.</strong> Each entry is 65 bytes of
+        <code>v ‖ r ‖ s</code> where <code>v</code> is the bare recovery id, <code>0</code> or
+        <code>1</code>, not <code>27</code>/<code>28</code>. Anything above 1 is rejected, and it
+        is the single most common reason a hand-built frame transaction is refused.
+      </div>
+    </section>
+
+    <section id="node">
+      <h2 class="h2">Run a node</h2>
+      <p>
+        Anyone may sync, peer and transact here without permission. You need <strong>both</strong>
+        an execution client and a consensus client: an execution client alone will peer and then
+        sit at genesis, because nothing is driving fork choice.
+      </p>
+      <p>
+        Start from the published artifact bundle, which carries the genesis, the consensus config
+        and the bootnode lists. A consensus client consumes that directory as a whole, so a
+        missing file fails at startup rather than at first use.
+      </p>
+<pre>ethrex --network genesis.json \
+       --bootnodes "$(paste -sd, bootnodes.txt)" \
+       --nat.extip &lt;your public IP&gt; \
+       --syncmode full</pre>
+      <p>
+        <code>--nat.extip</code> is what your node advertises in discovery and in its ENR.
+        <code>--p2p.addr</code> is the bind address and is <strong>not</strong> a substitute: omit
+        <code>--nat.extip</code> and you advertise whatever local address was found, which no
+        external peer can dial back.
+      </p>
+      {{BOOTNODES}}
+      <div class="note">
+        <strong>The consensus client must <em>not</em> implement Heze</strong>, which is the
+        opposite of what you would guess. This chain serves <code>forkchoiceUpdated</code> V1–V4
+        and <code>newPayload</code> V1–V5; a Heze-aware client switches to
+        <code>forkchoiceUpdatedV5</code> / <code>newPayloadV6</code> at the boundary and halts the
+        node. Use <code>ethpandaops/prysm-beacon-chain:glamsterdam-devnet-8</code>, which is
+        Gloas-only and ignores <code>HEZE_FORK_EPOCH</code>, while the execution layer activates
+        frames on its own timestamp schedule. Seeing
+        <code>field HEZE_FORK_VERSION not found in type</code> in the log is the client telling
+        you it does not know Heze, which is what this chain needs.
+      </div>
+      <div class="note">
+        <strong>Sync from a checkpoint, not from genesis.</strong> Started at genesis this build
+        stalls in payload-envelope backfill (<code>beacon block root … not found in
+        forkchoice</code>) and leaves your execution client stranded a few blocks in. With
+        <code>--checkpoint-sync-url</code> pointed at a beacon endpoint on this network, the pair
+        reaches head normally. Check the execution client separately from the beacon node — a
+        beacon node can sit at head while its execution client is still at genesis. Discovery also
+        needs <strong>both</strong> TCP and UDP; opening only TCP gives you a node nobody
+        discovers, which reads as slow peering rather than as a firewall mistake.
+      </div>
+    </section>
+
+    <section id="validator">
+      <h2 class="h2">Become a validator</h2>
+      <p>
+        Validator entry is the one permissioned thing on this network. Depositing requires a token
+        held by the address that <strong>sends</strong> the deposit transaction — not the withdrawal
+        address, and not the validator public key. That is the most common mistake. Ask the
+        operators to mint one to your depositing address; without it the deposit reverts with
+        <code>Not enough tokens</code>.
+      </p>
+      <p><strong>Withdrawal credentials.</strong> BLS credentials are blocked outright, so use an
+        execution-layer form:</p>
+      <table>
+        <tr><td><code>0x00</code></td><td class="desc">BLS — <strong>blocked</strong>, the deposit reverts.</td></tr>
+        <tr><td><code>0x01</code></td><td class="desc">Execution-layer withdrawal address. The usual choice.</td></tr>
+        <tr><td><code>0x02</code></td><td class="desc">Compounding.</td></tr>
+        <tr><td><code>0x03</code></td><td class="desc">Builder, since this chain runs Gloas.</td></tr>
+        <tr><td><code>0xffff</code></td><td class="desc">Top-up to an existing validator. Never gated, no token needed.</td></tr>
+      </table>
+      <p>
+        Generate deposit data signed against this chain's genesis fork version
+        <code>0x10000038</code>, then send it to the deposit contract with 32 ETH. A successful
+        deposit burns exactly one token and emits the standard <code>DepositEvent</code>. It then
+        enters the pending-deposit queue and is processed at an epoch boundary, so activation is
+        not immediate.
+      </p>
+      <div class="note">
+        <strong>Run a validator client for it.</strong> A deposited validator with nothing signing
+        on its behalf starts accruing missed-attestation penalties the moment it activates. Exiting
+        is possible either through a consensus-layer voluntary exit or the EIP-7002 predeploy, but
+        only after the validator has been active for 256 epochs, about 14 hours here. An exit
+        request made before then is accepted and paid for by the execution layer and then silently
+        ignored, so a successful transaction is not evidence that the exit took.
+      </div>
+    </section>
+  </main>
+</div>
+
+<footer>
+  <div class="wrap">
+    <!-- The rail is at the top of the document on narrow screens, so at the end of a
+         page this long these two links are the only ones still in reach. -->
+    <p>The ETH here has no value ·
+      <a href="/eips">Guide to the stack</a> ·
+      <a href="/bootnodes">Bootnodes</a></p>
+  </div>
+</footer>
+
+<script>
+  const out = document.getElementById('out');
+  const btn = document.getElementById('go');
+  const addr = document.getElementById('addr');
+
+  async function claim() {
+    const value = addr.value.trim();
+    out.className = ''; out.textContent = 'Requesting…'; btn.disabled = true;
+    try {
+      const res = await fetch('/api/claim', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ address: value }),
+      });
+      const body = await res.json().catch(() => ({ msg: 'unreadable response' }));
+      out.className = res.ok ? 'ok' : 'err';
+      out.textContent = body.txhash ? `${body.msg}\n${body.txhash}` : body.msg;
+    } catch (err) {
+      out.className = 'err';
+      out.textContent = `request failed: ${err}`;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  btn.addEventListener('click', claim);
+  addr.addEventListener('keydown', (e) => { if (e.key === 'Enter') claim(); });
+</script>
