@@ -42,7 +42,7 @@
     color: #fff; background: var(--accent); border: 0; border-radius: 8px;
   }
   button:disabled { opacity: .55; cursor: default; }
-  #out { margin: .9rem 0 0; font: 13px/1.5 var(--mono); white-space: pre-wrap; word-break: break-all; }
+  #out { margin: .9rem 0 0; font: 13px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
   #out.ok { color: var(--ok); } #out.err { color: var(--err); }
   table { width: 100%; border-collapse: collapse; }
   td { padding: .55rem .5rem; border-top: 1px solid var(--line); vertical-align: top; }
@@ -51,19 +51,36 @@
   td.desc { color: var(--muted); font-weight: 400; }
   dl { display: grid; grid-template-columns: max-content 1fr; gap: .45rem 1rem; margin: 0; }
   dt { color: var(--muted); }
-  dd { margin: 0; font-family: var(--mono); font-size: 13px; word-break: break-all; }
+  dd { margin: 0; font-family: var(--mono); font-size: 13px; overflow-wrap: anywhere; }
   .note { margin-top: 1.5rem; padding: .9rem 1rem; border-radius: 10px;
           background: var(--accent-soft); color: var(--fg); font-size: 14px; }
   code { font: 13px var(--mono); background: var(--accent-soft); padding: .1rem .3rem; border-radius: 4px; }
   pre { margin: 0 0 1rem; overflow-x: auto; font: 12px/1.5 var(--mono);
         background: var(--accent-soft); padding: .8rem; border-radius: 8px; }
+  .err + .err { margin-top: 1.1rem; padding-top: 1.1rem; border-top: 1px solid var(--line); }
+  .err-msg { margin: 0 0 .35rem; font-weight: 600; }
+  .err-msg code { background: none; padding: 0; overflow-wrap: anywhere; }
+  .err-fix { margin: 0; color: var(--muted); font-size: 14px; }
   .peers-lede { margin: 0 0 .9rem; color: var(--muted); font-size: 14px; }
   .peerset + .peerset { margin-top: 1rem; }
   .peerset-title { font-size: .8rem; margin: 0 0 .4rem; text-transform: uppercase;
                    letter-spacing: .04em; color: var(--muted); }
   .peerset-title .flag { font: 12px var(--mono); text-transform: none; letter-spacing: 0; }
   .records { margin: 0; padding-left: 1.1rem; }
-  .records li { font: 12px/1.7 var(--mono); word-break: break-all; }
+  .records li { font: 12px/1.7 var(--mono); overflow-wrap: anywhere; }
+  .copy-host { position: relative; }
+  .copy-host pre { padding-right: 4.2rem; }
+  .copy-btn {
+    padding: .2rem .5rem; font: 600 11px system-ui; cursor: pointer;
+    color: var(--muted); background: var(--panel);
+    border: 1px solid var(--line); border-radius: 6px;
+  }
+  .copy-host > .copy-btn { position: absolute; top: .5rem; right: .5rem; }
+  .copy-btn:hover { color: var(--fg); }
+  .copy-btn.done { color: var(--ok); border-color: var(--ok); }
+  .copy-inline { margin-left: .5rem; vertical-align: 1px; }
+  dd { display: flex; gap: .25rem; align-items: baseline; flex-wrap: wrap; }
+  .records li::marker { color: var(--muted); }
   footer { margin-top: 2.5rem; color: var(--muted); font-size: 13px; }
 </style>
 
@@ -163,26 +180,34 @@ rex frame inspect &lt;TX_HASH&gt; --rpc-url {{RPC_BARE}}</pre>
 
   <h2>Common errors</h2>
   <div class="panel">
-    <table>
-      <tr><td><code>frame N uses the Scalar encoding, but this block requires Limits</code></td>
-          <td class="desc">The encoder predates two-dimensional gas and is sending slot 3 as a
-            scalar. This chain accepts only the <code>[execution, state]</code> form — you are on
-            a released rex rather than the branch above.</td></tr>
-      <tr><td>Reverts having used exactly its <code>execution</code> budget, with
-            <code>stateGasUsed: 0x0</code></td>
-          <td class="desc">Missing state budget, not execution. Raising
-            <code>--frame-gas-limit</code> will not help; raise
-            <code>--frame-state-gas-limit</code>.</td></tr>
-      <tr><td><code>Invalid frame transaction signature</code></td>
-          <td class="desc">The layout is <code>v ‖ r ‖ s</code> with <code>v</code> a bare
-            recovery id, <code>0</code> or <code>1</code> — not the <code>27</code>/<code>28</code>
-            form <code>ecrecover</code> takes. <code>r</code> and <code>s</code> must be canonical
-            and low-s.</td></tr>
-      <tr><td><code>… prefix gas budget … exceeds MAX_VERIFY_GAS</code></td>
-          <td class="desc">The validation prefix is bounded, at 500,000 here. Move work out of the
-            prefix or lower the prefix frames' <code>limits.execution</code>. The signature-cost
-            variant means the signatures alone exceed it — use fewer.</td></tr>
-    </table>
+    <div class="err">
+      <p class="err-msg"><code>frame N uses the Scalar encoding, but this block requires Limits</code></p>
+      <p class="err-fix">The encoder predates two-dimensional gas and is sending slot 3 as a scalar.
+        This chain accepts only the <code>[execution, state]</code> form — you are on a released
+        rex rather than the branch above.</p>
+    </div>
+    <div class="err">
+      <p class="err-msg">A frame reverts having used exactly its <code>execution</code> budget,
+        with <code>stateGasUsed: 0x0</code></p>
+      <p class="err-fix">Missing state budget, not execution. Raising
+        <code>--frame-gas-limit</code> will not help; raise
+        <code>--frame-state-gas-limit</code>.</p>
+    </div>
+    <div class="err">
+      <p class="err-msg"><code>Invalid frame transaction signature</code></p>
+      <p class="err-fix">The layout is <code>v ‖ r ‖ s</code> with <code>v</code> a bare recovery
+        id, <code>0</code> or <code>1</code> — not the <code>27</code>/<code>28</code> form
+        <code>ecrecover</code> takes. <code>r</code> and <code>s</code> must also be canonical
+        and low-s.</p>
+    </div>
+    <div class="err">
+      <p class="err-msg"><code>Frame transaction prefix gas budget (frames + sig cost) exceeds
+        MAX_VERIFY_GAS</code></p>
+      <p class="err-fix">The validation prefix is bounded, at 500,000 here. Move work out of the
+        prefix, or lower the prefix frames' <code>limits.execution</code>. The
+        signature-verification variant means the signatures alone already exceed it — use
+        fewer.</p>
+    </div>
   </div>
 
   <h2>Building one</h2>
@@ -287,4 +312,56 @@ sig_hash  = keccak256(0x06 || rlp(envelope))      # empty-msg signature bytes el
 
   btn.addEventListener('click', claim);
   addr.addEventListener('keydown', (e) => { if (e.key === 'Enter') claim(); });
+
+  // Copy affordances. navigator.clipboard needs a secure context, which this page
+  // has over HTTPS but not when reached by IP over plain HTTP, so fall back to a
+  // detached textarea rather than failing silently on the deployment's own address.
+  async function copyText(text) {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch (err) { /* fall through */ }
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.cssText = 'position:fixed;top:-9999px;opacity:0';
+    document.body.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (err) { ok = false; }
+    document.body.removeChild(ta);
+    return ok;
+  }
+
+  function makeCopyButton(getText, extraClass) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'copy-btn' + (extraClass ? ' ' + extraClass : '');
+    b.textContent = 'Copy';
+    b.addEventListener('click', async () => {
+      const ok = await copyText(getText());
+      b.textContent = ok ? 'Copied' : 'Press ⌘C';
+      b.classList.toggle('done', ok);
+      setTimeout(() => { b.textContent = 'Copy'; b.classList.remove('done'); }, 1600);
+    });
+    return b;
+  }
+
+  // Command blocks: the multi-line ones are the whole reason this exists.
+  document.querySelectorAll('pre').forEach((pre) => {
+    const host = document.createElement('div');
+    host.className = 'copy-host';
+    pre.parentNode.insertBefore(host, pre);
+    host.appendChild(pre);
+    host.appendChild(makeCopyButton(() => pre.textContent.trimEnd()));
+  });
+
+  // Single long values: endpoints and enodes, where selecting by hand is fiddly.
+  document.querySelectorAll('dd, .records li').forEach((el) => {
+    const text = el.textContent.trim();
+    if (!text) return;
+    el.appendChild(makeCopyButton(() => text, 'copy-inline'));
+  });
 </script>
