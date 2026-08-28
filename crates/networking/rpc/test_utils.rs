@@ -34,7 +34,7 @@ use ethrex_p2p::{
     rlpx::initiator::RLPxInitiator,
     sync::{BackfillConfig, HistoryChain, SyncMode},
     sync_manager::SyncManager,
-    types::{NetworkConfig, Node, NodeRecord},
+    types::{LocalNode, NetworkConfig, Node, NodeRecord, SharedLocalNode},
 };
 use ethrex_storage::{EngineType, Store};
 use hex_literal::hex;
@@ -42,8 +42,9 @@ use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use secp256k1::SecretKey;
 use serde_json::Value;
 use spawned_concurrency::tasks::ActorRef;
+use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
-use std::{collections::HashSet, net::SocketAddr, str::FromStr, sync::Arc};
+use std::{collections::HashSet, net::SocketAddr, str::FromStr};
 use tokio::sync::Mutex as TokioMutex;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 // Base price for each test transaction.
@@ -246,6 +247,12 @@ pub fn example_local_node_record() -> NodeRecord {
     NodeRecord::from_node(&node, 1, &signer).unwrap()
 }
 
+pub fn example_shared_local_node() -> SharedLocalNode {
+    let node = example_p2p_node();
+    let record = example_local_node_record();
+    Arc::new(RwLock::new(LocalNode { node, record }))
+}
+
 // Util to start an api for testing on ports 8500 and 8501,
 // mostly for when hive is missing some endpoints to test
 // like eth_uninstallFilter.
@@ -271,8 +278,7 @@ pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
         merkle_pool(),
     ));
     let jwt_secret = Default::default();
-    let local_p2p_node = example_p2p_node();
-    let local_node_record = example_local_node_record();
+    let shared_local_node = example_shared_local_node();
     tokio::spawn(async move {
         start_api(
             http_addr,
@@ -281,8 +287,7 @@ pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
             storage.clone(),
             blockchain.clone(),
             jwt_secret,
-            local_p2p_node,
-            local_node_record,
+            shared_local_node,
             dummy_sync_manager().await,
             dummy_peer_handler().await,
             ClientVersion::new(
@@ -322,7 +327,6 @@ pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
         storage.clone(),
         merkle_pool(),
     ));
-    let local_node_record = example_local_node_record();
     let block_worker_channel = start_block_executor(blockchain.clone());
     RpcApiContext {
         storage: storage.clone(),
@@ -332,8 +336,7 @@ pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
         peer_handler: Some(dummy_peer_handler().await),
         node_data: NodeData {
             jwt_secret: Default::default(),
-            local_p2p_node: example_p2p_node(),
-            local_node_record,
+            shared_local_node: example_shared_local_node(),
             client_version: ClientVersion::new(
                 "ethrex".to_string(),
                 "0.1.0".to_string(),

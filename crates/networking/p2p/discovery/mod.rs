@@ -14,12 +14,14 @@ pub mod codec;
 pub mod contact_table;
 mod discv4_handlers;
 mod discv5_handlers;
+pub mod ip_predictor;
 pub mod lookup;
 pub mod server;
 
 pub use contact_table::{
     Contact, ContactTable, ContactValidation, DiscoveryProtocol, PeerEvent, Session,
 };
+pub use ip_predictor::IpPredictor;
 pub use server::{
     DiscoveryHandle, DiscoveryServer, DiscoveryServerError, DiscoveryServerProtocol,
     is_discv4_packet,
@@ -35,6 +37,9 @@ pub struct DiscoveryConfig {
     /// How many connections the consumer wants. Discovery never opens one; it
     /// uses this only to pace its lookups against how far along the consumer is.
     pub target_peers: usize,
+    /// Set to true when `--nat extip:<addr>` was supplied; locks the IP predictor
+    /// from overwriting the user-specified external address.
+    pub nat_extip_set: bool,
 }
 
 /// Lookup interval bounds for the RLPx initiator's connection attempts. The

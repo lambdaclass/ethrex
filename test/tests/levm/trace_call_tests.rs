@@ -560,3 +560,306 @@ fn trace_call_reports_the_header_gas_limit_to_gaslimit() {
         "GASLIMIT under debug_traceCall must equal the header's gas limit"
     );
 }
+
+// ===========================================================================
+// EIP-8037 two-dimensional gas breakdown on the callTracer top frame
+// (execution-apis `CallFrame.regularGasUsed`/`stateGasUsed`/`gasRefund`).
+// ===========================================================================
+
+/// Wraps [`TestDatabase`] but reports an Osaka-active (pre-Amsterdam) chain config, to
+/// serve as the "just before the fork" control for the EIP-8037 field-omission tests.
+struct OsakaDb {
+    inner: TestDatabase,
+}
+
+impl Database for OsakaDb {
+    fn get_account_state(&self, address: Address) -> Result<AccountState, DatabaseError> {
+        self.inner.get_account_state(address)
+    }
+    fn get_storage_value(&self, address: Address, key: H256) -> Result<U256, DatabaseError> {
+        self.inner.get_storage_value(address, key)
+    }
+    fn get_block_hash(&self, block_number: u64) -> Result<H256, DatabaseError> {
+        self.inner.get_block_hash(block_number)
+    }
+    fn get_chain_config(&self) -> Result<ChainConfig, DatabaseError> {
+        Ok(ChainConfig {
+            osaka_time: Some(0),
+            ..ChainConfig::default()
+        })
+    }
+    fn get_account_code(&self, code_hash: H256) -> Result<Code, DatabaseError> {
+        self.inner.get_account_code(code_hash)
+    }
+    fn get_code_metadata(&self, code_hash: H256) -> Result<CodeMetadata, DatabaseError> {
+        self.inner.get_code_metadata(code_hash)
+    }
+}
+
+/// Emits a PUSH20 + 20 bytes of `addr`, for building CALL-opcode bytecode inline.
+fn push20(addr: Address) -> Vec<u8> {
+    let mut v = vec![0x73u8]; // PUSH20
+    v.extend_from_slice(addr.as_bytes());
+    v
+}
+
+/// Bytecode that exercises both EIP-8037 gas dimensions in one transaction:
+/// `SSTORE` into a fresh slot (charges state gas, since original=0/new!=0) followed by
+/// clearing a pre-existing non-zero slot to zero (grants an EIP-3529 refund). Combining
+/// both keeps the accounting-identity test (point 4) non-vacuous on either dimension.
+fn state_gas_and_refund_bytecode() -> Vec<u8> {
+    vec![
+        0x60, 0x05, // PUSH1 5   (value)
+        0x60, 0x01, // PUSH1 1   (key: fresh slot)
+        0x55, // SSTORE (0->5: charges state gas)
+        0x60, 0x00, // PUSH1 0   (value)
+        0x60, 0x02, // PUSH1 2   (key: pre-set slot)
+        0x55, // SSTORE (0x2a->0: EIP-3529 refund)
+        0x00, // STOP
+    ]
+}
+
+/// Builds an Amsterdam-configured DB with `bytecode` at `CONTRACT` (storage slot `0x02`
+/// pre-set to `0x2a`, slot `0x01` absent) and a funded EOA at `SENDER`. `extra_accounts`
+/// lets a test inject additional accounts (e.g. a callee for a CALL sub-frame).
+fn amsterdam_db_for_gas_breakdown(
+    bytecode: Vec<u8>,
+    extra_accounts: &[(Address, Account)],
+) -> GeneralizedDatabase {
+    let mut storage = FxHashMap::default();
+    storage.insert(H256::from_low_u64_be(0x02), U256::from(0x2au64));
+    let mut accounts = FxHashMap::default();
+    accounts.insert(
+        Address::from_low_u64_be(CONTRACT),
+        Account::new(
+            U256::zero(),
+            Code::from_bytecode(Bytes::from(bytecode), &NativeCrypto),
+            1,
+            storage,
+        ),
+    );
+    accounts.insert(
+        Address::from_low_u64_be(SENDER),
+        Account::new(
+            U256::from(10u64) * U256::from(10u64).pow(U256::from(18)),
+            Code::default(),
+            0,
+            FxHashMap::default(),
+        ),
+    );
+    for (addr, acc) in extra_accounts {
+        accounts.insert(*addr, acc.clone());
+    }
+    GeneralizedDatabase::new(Arc::new(AmsterdamDb {
+        inner: TestDatabase { accounts },
+    }))
+}
+
+/// Unsigned call into `CONTRACT` like [`call_tx`], but with a caller-chosen gas limit —
+/// EIP-8037 state gas (e.g. `STORAGE_SET` for a fresh `SSTORE`) is large enough that
+/// `call_tx`'s default 100_000 gas is insufficient for these tests.
+fn call_tx_with_gas(gas: u64) -> GenericTransaction {
+    GenericTransaction {
+        gas: Some(gas),
+        ..call_tx()
+    }
+}
+
+/// On an Amsterdam+ transaction the top-level frame carries `regularGasUsed`,
+/// `stateGasUsed` and `gasRefund`, and they satisfy the EIP-8037 accounting identity
+/// `regularGasUsed + stateGasUsed == gasUsed + gasRefund` (both dimensions non-zero here,
+/// so the identity isn't vacuously true and the calldata floor has no calldata to bind on).
+#[test]
+fn trace_call_calls_amsterdam_reports_eip8037_gas_breakdown() {
+    let mut db = amsterdam_db_for_gas_breakdown(state_gas_and_refund_bytecode(), &[]);
+    let header = amsterdam_header();
+    let tx = call_tx_with_gas(500_000);
+
+    let trace = LEVM::trace_call_calls(
+        &mut db,
+        &header,
+        &tx,
+        false,
+        false,
+        0,
+        VMType::L1,
+        &NativeCrypto,
+    )
+    .expect("trace_call_calls should succeed");
+
+    let frame = &trace[0];
+    assert!(
+        frame.error.is_none(),
+        "call should not error: {:?}",
+        frame.error
+    );
+
+    let regular = frame
+        .regular_gas_used
+        .expect("regularGasUsed must be set on Amsterdam+");
+    let state = frame
+        .state_gas_used
+        .expect("stateGasUsed must be set on Amsterdam+");
+    let refund = frame
+        .gas_refund
+        .expect("gasRefund must be set on Amsterdam+");
+
+    assert!(state > 0, "SSTORE into a fresh slot must charge state gas");
+    assert!(
+        refund > 0,
+        "clearing a pre-existing slot must grant an EIP-3529 refund"
+    );
+    assert_eq!(
+        regular + state,
+        frame.gas_used + refund,
+        "EIP-8037 accounting identity: regularGasUsed + stateGasUsed == gasUsed + gasRefund"
+    );
+
+    let json = serde_json::to_value(frame).expect("serialize");
+    assert_eq!(json["regularGasUsed"], format!("{regular:#x}"));
+    assert_eq!(json["stateGasUsed"], format!("{state:#x}"));
+    assert_eq!(json["gasRefund"], format!("{refund:#x}"));
+}
+
+/// Pre-Amsterdam (Osaka), the top-level frame must omit `regularGasUsed`, `stateGasUsed`
+/// and `gasRefund` entirely from the serialized JSON — the fields don't exist yet.
+#[test]
+fn trace_call_calls_pre_amsterdam_omits_eip8037_fields() {
+    let mut storage = FxHashMap::default();
+    storage.insert(H256::from_low_u64_be(0x02), U256::from(0x2au64));
+    let mut accounts = FxHashMap::default();
+    accounts.insert(
+        Address::from_low_u64_be(CONTRACT),
+        Account::new(
+            U256::zero(),
+            Code::from_bytecode(Bytes::from(state_gas_and_refund_bytecode()), &NativeCrypto),
+            1,
+            storage,
+        ),
+    );
+    accounts.insert(
+        Address::from_low_u64_be(SENDER),
+        Account::new(
+            U256::from(10u64) * U256::from(10u64).pow(U256::from(18)),
+            Code::default(),
+            0,
+            FxHashMap::default(),
+        ),
+    );
+    let mut db = GeneralizedDatabase::new(Arc::new(OsakaDb {
+        inner: TestDatabase { accounts },
+    }));
+    let header = default_header();
+    let tx = call_tx();
+
+    let trace = LEVM::trace_call_calls(
+        &mut db,
+        &header,
+        &tx,
+        false,
+        false,
+        0,
+        VMType::L1,
+        &NativeCrypto,
+    )
+    .expect("trace_call_calls should succeed");
+
+    let frame = &trace[0];
+    assert!(frame.regular_gas_used.is_none());
+    assert!(frame.state_gas_used.is_none());
+    assert!(frame.gas_refund.is_none());
+
+    let json = serde_json::to_value(frame).expect("serialize");
+    let obj = json.as_object().expect("frame is an object");
+    for absent in ["regularGasUsed", "stateGasUsed", "gasRefund"] {
+        assert!(
+            !obj.contains_key(absent),
+            "{absent} must be omitted pre-Amsterdam"
+        );
+    }
+}
+
+/// Only the top-level frame is stamped with the EIP-8037 gas breakdown; a sub-frame
+/// produced by a `CALL` into another contract must omit `regularGasUsed`/`stateGasUsed`/
+/// `gasRefund` even on an Amsterdam+ transaction.
+#[test]
+fn trace_call_calls_amsterdam_subframe_omits_eip8037_fields() {
+    let callee = Address::from_low_u64_be(0xD000);
+    let callee_account = Account::new(U256::zero(), Code::default(), 0, FxHashMap::default());
+
+    // CALL(gas=0xFFFF, addr=callee, value=0, argsOff=0, argsLen=0, retOff=0, retLen=0); POP; STOP
+    let mut caller_code = vec![
+        0x60, 0x00, // PUSH1 0  retLen
+        0x60, 0x00, // PUSH1 0  retOff
+        0x60, 0x00, // PUSH1 0  argsLen
+        0x60, 0x00, // PUSH1 0  argsOff
+        0x60, 0x00, // PUSH1 0  value
+    ];
+    caller_code.extend_from_slice(&push20(callee));
+    caller_code.extend_from_slice(&[
+        0x61, 0xFF, 0xFF, // PUSH2 0xFFFF  gas
+        0xF1, // CALL
+        0x50, // POP success flag
+        0x00, // STOP
+    ]);
+
+    let mut db = amsterdam_db_for_gas_breakdown(caller_code, &[(callee, callee_account)]);
+    let header = amsterdam_header();
+    let tx = call_tx();
+
+    let trace = LEVM::trace_call_calls(
+        &mut db,
+        &header,
+        &tx,
+        false,
+        false,
+        0,
+        VMType::L1,
+        &NativeCrypto,
+    )
+    .expect("trace_call_calls should succeed");
+
+    let top = &trace[0];
+    assert!(
+        top.error.is_none(),
+        "call should not error: {:?}",
+        top.error
+    );
+    assert!(
+        top.regular_gas_used.is_some(),
+        "top frame must carry regularGasUsed on Amsterdam+"
+    );
+    assert!(
+        top.state_gas_used.is_some(),
+        "top frame must carry stateGasUsed on Amsterdam+"
+    );
+    assert!(
+        top.gas_refund.is_some(),
+        "top frame must carry gasRefund on Amsterdam+"
+    );
+    assert_eq!(top.calls.len(), 1, "one CALL sub-frame expected");
+
+    let sub = &top.calls[0];
+    assert!(
+        sub.regular_gas_used.is_none(),
+        "sub-frame must not carry regularGasUsed"
+    );
+    assert!(
+        sub.state_gas_used.is_none(),
+        "sub-frame must not carry stateGasUsed"
+    );
+    assert!(
+        sub.gas_refund.is_none(),
+        "sub-frame must not carry gasRefund"
+    );
+
+    let json = serde_json::to_value(top).expect("serialize");
+    let sub_json = &json["calls"][0];
+    let sub_obj = sub_json.as_object().expect("sub-frame is an object");
+    for absent in ["regularGasUsed", "stateGasUsed", "gasRefund"] {
+        assert!(
+            !sub_obj.contains_key(absent),
+            "{absent} must be omitted on a sub-frame"
+        );
+    }
+}

@@ -1,13 +1,16 @@
 use crate::{
-    discovery::contact_table::{ContactValidation, DiscoveryProtocol},
-    discovery::lookup::{IterativeLookup, LOOKUP_ALPHA, LOOKUP_BUCKET_SIZE},
+    discovery::{
+        contact_table::{ContactValidation, DiscoveryProtocol},
+        ip_predictor::IpPredictor,
+        lookup::{IterativeLookup, LOOKUP_ALPHA, LOOKUP_BUCKET_SIZE},
+    },
     discv5::{
         messages::{
             DISTANCES_PER_FIND_NODE_MSG, FindNodeMessage, Handshake, HandshakeAuthdata, Message,
             NodesMessage, Ordinary, Packet, PacketTrait as _, PingMessage, PongMessage,
             TalkResMessage, WhoAreYou, decrypt_message,
         },
-        server::{Discv5Message, Discv5State, SessionSource, update_local_ip},
+        server::{Discv5Message, SessionSource},
         session::{
             build_challenge_data, create_id_signature, derive_session_keys, verify_id_signature,
         },
@@ -466,22 +469,11 @@ impl DiscoveryServer {
             self.discv5_send_ordinary(find_node, &node).await?;
         }
 
-        let discv5 = self.discv5.as_mut().expect("discv5 state must exist");
-        if let Some(winning_ip) = discv5.record_ip_vote(pong_message.recipient_addr.ip(), sender_id)
-            && winning_ip != self.local_node.ip
+        if let Some(ip) = self
+            .ip_predictor
+            .record_ip_vote(pong_message.recipient_addr.ip(), sender_id)
         {
-            tracing::info!(
-                protocol = "discv5",
-                old_ip = %self.local_node.ip,
-                new_ip = %winning_ip,
-                "External IP detected via PONG voting, updating local ENR"
-            );
-            update_local_ip(
-                &mut self.local_node,
-                &mut self.local_node_record,
-                &self.signer,
-                winning_ip,
-            );
+            self.apply_predicted_ip(ip, "discv5");
         }
 
         Ok(())
@@ -815,7 +807,7 @@ impl DiscoveryServer {
         }
 
         // Per-(IP, node) rate limit
-        if !Discv5State::is_private_ip(addr.ip())
+        if !IpPredictor::is_private_ip(addr.ip())
             && let Some(last_sent) = discv5.whoareyou_rate_limit.get(&rate_key)
             && now.duration_since(*last_sent) < WHOAREYOU_RATE_LIMIT
         {
