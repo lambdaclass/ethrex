@@ -33,11 +33,14 @@ AMSTERDAM_STAMP := $(SPECTEST_VECTORS_DIR)/.amsterdam_overlay
 # every path under blockchain_tests/for_bogota also appears under
 # blockchain_tests_engine/for_bogota -- the same test bodies, delivered as RLP
 # blocks instead of through engine_newPayload -- so extracting them adds no
-# coverage this suite does not already have. Running them in tooling/ef_tests/
-# {blockchain,state} would additionally need a Bogota entry in those runners'
-# fork tables, and this client's post-Amsterdam slot (Fork::Hegota) carries
-# EIP-8141 on top of Amsterdam while the fixtures' Bogota does not; see the
-# fork-slot note in crates/blockchain/inclusion_list_validator.rs.
+# coverage this suite does not already have. state_tests/for_bogota overlaps the
+# engine tree the same way except for seven state-test-only cases (blob fee cap,
+# BLOCKHASH recency, sender balance), none of which carries an inclusion list.
+# Running them in tooling/ef_tests/{blockchain,state} would additionally need a
+# Bogota entry in those runners' fork tables, and this client's post-Amsterdam
+# slot (Fork::Hegota) carries EIP-8141 on top of Amsterdam while the fixtures'
+# Bogota does not; see the fork-slot note in
+# crates/blockchain/inclusion_list_validator.rs.
 #
 # The pinned release, tests-focil-devnet@v0.2.0, fills every fixture on the
 # "Bogota" network -- EIP-7805 on top of Amsterdam. The Amsterdam it is filled
