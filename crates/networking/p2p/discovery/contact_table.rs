@@ -355,9 +355,11 @@ pub struct ContactTable {
     /// before the contact's ENR is known or parseable, which is why it cannot simply live
     /// on the contact.
     ///
-    /// Each entry carries when it was established, because a remote peer decides how many
+    /// Each entry carries when it was last used, because a remote peer decides how many
     /// of these we hold: every handshake inserts one, and nothing about a handshake
-    /// obliges the peer to ever come back. [`Self::prune`] evicts on [`SESSION_TTL`].
+    /// obliges the peer to ever come back. [`Self::prune`] evicts entries left idle for
+    /// [`SESSION_TTL`], so the store is bounded by the peers still talking to us rather
+    /// than by every peer that ever handshaked.
     sessions: FxHashMap<H256, (Session, Instant)>,
     /// What this consumer requires of a discovered peer. Judged as each ENR
     /// arrives, over either discovery protocol; the answer is cached on the
@@ -458,12 +460,12 @@ impl ContactTable {
         self.connected.len() as f64 / self.target_peers as f64
     }
 
-    /// Backdates every stored session by `by`, so a test can drive the TTL sweep in
-    /// [`Self::prune`] without waiting out a real hour.
+    /// Backdates the last use of every stored session by `by`, so a test can drive the
+    /// idle sweep in [`Self::prune`] without waiting out a real hour.
     #[cfg(test)]
     pub(crate) fn age_sessions_for_test(&mut self, by: Duration) {
-        for (_, established_at) in self.sessions.values_mut() {
-            *established_at -= by;
+        for (_, last_used) in self.sessions.values_mut() {
+            *last_used -= by;
         }
     }
 
@@ -481,13 +483,30 @@ impl ContactTable {
             .map(|(session, _)| session.clone())
     }
 
-    /// Store a session, stamped with the moment it was established.
+    /// Store a session, stamped as used now.
     ///
-    /// Re-handshaking restamps it, which is the only way an entry's life is extended:
-    /// merely using a session does not, so keys expire on the same schedule as the
-    /// `session_ips` entry guarding them and a still-wanted peer simply re-handshakes.
+    /// The stamp is what [`Self::prune`] ages out. A re-handshake restamps it, and so
+    /// does ordinary use through [`Self::touch_session`].
     pub fn set_session(&mut self, node_id: H256, session: Session) {
         self.sessions.insert(node_id, (session, Instant::now()));
+    }
+
+    /// Extend a session's life: it was just used to decrypt a packet that arrived from
+    /// the address the session was established from.
+    ///
+    /// Only inbound, verified use counts. A send proves only that we still want the
+    /// peer, so refreshing on one would keep alive the sessions of peers that never
+    /// answer, which is the population the TTL exists to bound.
+    ///
+    /// Callers must refresh the matching `session_ips` entry in the same breath: keys
+    /// that outlive their guard silently drop the IP-rebinding check in
+    /// `discv5_handle_ordinary`, where a missing entry reads as nothing to compare
+    /// against. Does nothing for a node with no stored session, so a packet racing
+    /// [`Self::prune`] cannot resurrect one.
+    pub fn touch_session(&mut self, node_id: &H256) {
+        if let Some((_, last_used)) = self.sessions.get_mut(node_id) {
+            *last_used = Instant::now();
+        }
     }
 
     // --- Contact flags ---
@@ -652,10 +671,10 @@ impl ContactTable {
     /// Pruned contacts remain in the connection pool so they can be retried
     /// later: the consumer will reject them on connecting if they are truly bad.
     ///
-    /// Dropping a contact drops its discv5 session too, and any session older than
+    /// Dropping a contact drops its discv5 session too, and any session left unused for
     /// [`SESSION_TTL`] goes with it.
     ///
-    /// The age sweep is what actually bounds the store. Pruning by contact is not
+    /// The idle sweep is what actually bounds the store. Pruning by contact is not
     /// enough on its own: a contact can leave the table without ever being marked
     /// disposable (evicted from a replacement queue, or simply never pruned because
     /// it was only ever marked `unwanted`), and a session can be stored for a node
@@ -693,9 +712,8 @@ impl ContactTable {
         }
 
         let now = Instant::now();
-        self.sessions.retain(|_, (_, established_at)| {
-            now.saturating_duration_since(*established_at) < SESSION_TTL
-        });
+        self.sessions
+            .retain(|_, (_, last_used)| now.saturating_duration_since(*last_used) < SESSION_TTL);
     }
 
     /// Pick the next node to hand to the RLPx dialer, or `None` when the pool
@@ -1300,6 +1318,38 @@ mod tests {
             table.session(&orphan).is_none(),
             "an aged session is reaped"
         );
+    }
+
+    #[tokio::test]
+    async fn using_a_session_keeps_it_out_of_the_idle_sweep() {
+        // Why the sweep is idle-based: a peer we are still talking to must not be
+        // made to re-handshake mid-conversation. That costs a WHOAREYOU round trip
+        // and loses the message that triggered it if the exchange is slow.
+        let mut table = table_with(FixedAnswer(true));
+        let node_id = H256::repeat_byte(0x7a);
+
+        table.set_session(node_id, session());
+        table.age_sessions_for_test(SESSION_TTL);
+        table.touch_session(&node_id);
+        table.prune();
+
+        assert!(
+            table.session(&node_id).is_some(),
+            "a session used inside the TTL survives the sweep"
+        );
+    }
+
+    #[tokio::test]
+    async fn touching_a_reaped_session_does_not_resurrect_it() {
+        // `touch_session` runs for every packet that decrypts, which includes one
+        // that raced `prune`. Inserting here would defeat the bound entirely, since
+        // the keys are gone and nothing could decrypt with the entry anyway.
+        let mut table = table_with(FixedAnswer(true));
+        let node_id = H256::repeat_byte(0x7b);
+
+        table.touch_session(&node_id);
+
+        assert!(table.session(&node_id).is_none());
     }
 
     #[tokio::test]
