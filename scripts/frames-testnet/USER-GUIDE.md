@@ -23,7 +23,7 @@ gated; see "Become a validator" below.
 | Seconds per slot | 6 |
 | Block gas limit | 200,000,000 |
 | Execution client | ethrex, `frames-devnet-0` build |
-| Consensus client | Lighthouse (`ethpandaops/lighthouse:focil`) |
+| Consensus client | prysm (`ethpandaops/prysm-beacon-chain:glamsterdam-devnet-8`) |
 | RPC | `https://rpc1.privacy.ethrex.xyz` (also `rpc2`, `rpc3`) |
 | Explorer | `https://dora.privacy.ethrex.xyz` |
 | Faucet | `https://faucet.privacy.ethrex.xyz` |
@@ -74,11 +74,19 @@ They serve `eth`, `net`, `web3`, `txpool` and `ethrex` — the last of which is
 submitting it. `debug` and `admin` are not served here; run your own node from the bundle
 if you need them, where they are yours to enable.
 
-**Budget more gas than you expect.** Under EIP-8037 a plain transfer that *creates* an
-account costs far more than the historical 21,000 — closer to 210,000 — because account
-creation is charged as state growth. Estimate gas rather than hardcoding it; tooling
-with a baked-in 21,000 fails here, and it fails specifically when paying someone new.
-A transfer to an account that already exists still costs 21,000.
+**Estimate gas. Never hardcode 21,000.** Under EIP-8037 state growth is charged
+alongside execution, out of the same limit an ordinary transaction carries, so the
+historical 21,000 is never enough here. Measured on this chain:
+
+| Transfer | Gas |
+| --- | --- |
+| to an account that already exists | 21,165 |
+| to an address that does not exist yet | 204,600 (21,000 execution + 183,600 `NEW_ACCOUNT`) |
+
+The failure is easy to misread. The transaction is mined, the receipt says `status: 0`,
+and `gasUsed` equals the limit exactly — that is the out-of-gas, not a revert in the
+recipient. The same applies to any call that writes new state: an EIP-7002 exit request
+costs about 282,000 gas on this chain, and 200,000 is not enough.
 
 ## Get test ETH
 
@@ -130,27 +138,49 @@ ethrex --network genesis.json \
 the bind address and is **not** a substitute: a node that omits `--nat.extip` advertises
 whatever local address it found, and no external peer can dial back.
 
-Consensus layer, pointed at the execution client's engine port:
+Consensus layer, pointed at the execution client's engine port. **Use checkpoint sync**
+— see below for why:
 
 ```
-lighthouse beacon_node \
-  --testnet-dir=. \
+prysm-beacon-chain \
+  --datadir=./beacon \
+  --chain-config-file=config.yaml \
+  --genesis-state=genesis.ssz \
+  --checkpoint-sync-url=<a beacon endpoint on this network> \
+  --genesis-beacon-api-url=<the same endpoint> \
   --execution-endpoint=http://127.0.0.1:8551 \
-  --jwt-secrets=<path to the jwtsecret your EL generated> \
-  --boot-nodes="$(paste -sd, bootnodes-cl.txt)"
+  --jwt-secret=<path to the jwtsecret your EL generated> \
+  --bootstrap-node="$(paste -sd, bootnodes-cl.txt)" \
+  --contract-deployment-block=0 --accept-terms-of-use
 ```
 
-The consensus client must be FOCIL-aware. ethrex rejects `engine_newPayloadV5` and
-`engine_forkchoiceUpdatedV4` from Hegotá on, because only the V6/V5 pair carries
-`inclusionListTransactions`, so a client speaking only the older pair halts at the fork
-boundary with no inert intermediate state. `ethpandaops/lighthouse:focil` works; a
-stock release generally does not.
+The image is `ethpandaops/prysm-beacon-chain:glamsterdam-devnet-8`, and the requirement
+is the opposite of what you would guess: **the consensus client must not implement
+Heze.** ethrex on this branch serves `forkchoiceUpdated` V1–V4 and `newPayload` V1–V5.
+A Heze-aware client switches to `forkchoiceUpdatedV5` / `newPayloadV6` at the boundary,
+which this branch does not serve, and halts the node with
+`RequiredMethodUnsupported`. This prysm build is Gloas-only — it ignores
+`HEZE_FORK_EPOCH` entirely — so it keeps driving the pair ethrex serves, while the
+execution layer activates frames on its own timestamp schedule.
 
-Confirm you are actually following:
+You will see `field HEZE_FORK_VERSION not found in type` in the log. That is the client
+telling you it does not know Heze, which is exactly what this chain needs.
+
+**Genesis sync does not work; checkpoint sync does.** Started from genesis, this build
+stalls in payload-envelope backfill with `beacon block root ... not found in
+forkchoice`, crawls at a few slots a minute, and leaves the execution client stranded a
+handful of blocks in. With `--checkpoint-sync-url` the same pair reaches head normally.
+Ask an operator for a beacon endpoint to sync from.
+
+Confirm you are actually following. Check the execution client independently of the
+consensus client — a beacon node can sit at head while its execution client is still at
+genesis, and only the block number tells you which:
 
 ```
-cast block-number --rpc-url http://127.0.0.1:8545     # advances
+cast block-number --rpc-url http://127.0.0.1:8545     # advances, and matches rpc1
 cast rpc net_peerCount --rpc-url http://127.0.0.1:8545
+curl -s http://127.0.0.1:3500/eth/v1/node/syncing     # want sync_distance 0,
+                                                      # is_optimistic false
 ```
 
 Compare a block hash against `rpc1` at the same height. Matching hashes, not just a
