@@ -4610,6 +4610,7 @@ fn static_constraint_failure_reports_the_format_reason() {
         flags: 0,
         target: Some(Address::from_low_u64_be(0xC0)),
         gas_limit: 100_000,
+        state_gas_limit: 0,
         value: U256::zero(),
         data: Bytes::new(),
     }]);
@@ -4655,6 +4656,7 @@ fn frame_gas_above_the_transaction_cap_reports_the_gas_cap() {
         flags: 0,
         target: Some(Address::from_low_u64_be(0xC0)),
         gas_limit: ethrex_common::constants::TX_MAX_GAS_LIMIT_AMSTERDAM,
+        state_gas_limit: 0,
         value: U256::zero(),
         data: Bytes::new(),
     }]);
@@ -4685,6 +4687,7 @@ fn frame_gas_exactly_at_the_transaction_cap_is_not_rejected_for_gas() {
         flags: 0,
         target: Some(Address::from_low_u64_be(0xC0)),
         gas_limit: 0,
+        state_gas_limit: 0,
         value: U256::zero(),
         data: Bytes::new(),
     }]);
@@ -4696,6 +4699,7 @@ fn frame_gas_exactly_at_the_transaction_cap_is_not_rejected_for_gas() {
         flags: 0,
         target: Some(Address::from_low_u64_be(0xC0)),
         gas_limit: headroom,
+        state_gas_limit: 0,
         value: U256::zero(),
         data: Bytes::new(),
     }]);
@@ -4722,6 +4726,7 @@ fn nonce_at_the_u64_ceiling_reports_nonce_is_max() {
         flags: 0,
         target: Some(Address::from_low_u64_be(0xC0)),
         gas_limit: 100_000,
+        state_gas_limit: 0,
         value: U256::zero(),
         data: Bytes::new(),
     }]);
@@ -4750,6 +4755,7 @@ fn wrong_blob_version_byte_reports_the_blob_hash_rule() {
         flags: 0,
         target: Some(Address::from_low_u64_be(0xC0)),
         gas_limit: 100_000,
+        state_gas_limit: 0,
         value: U256::zero(),
         data: Bytes::new(),
     }]);
@@ -4781,6 +4787,7 @@ fn unrepresentable_max_cost_reports_the_product_overflow() {
         flags: 0,
         target: Some(Address::from_low_u64_be(0xC0)),
         gas_limit: 100_000,
+        state_gas_limit: 0,
         value: U256::zero(),
         data: Bytes::new(),
     }]);

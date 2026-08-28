@@ -1633,16 +1633,24 @@ impl<'a> VM<'a> {
             ));
         }
 
-        // EIP-7825, as scoped by EIP-8141: the transaction's execution budget —
-        // the intrinsic cost plus the frames' gas limits, and the calldata floor
-        // measured the same way — must not exceed `TX_MAX_GAS_LIMIT`. `max_gas()`
-        // is the larger of those two anchors, so capping it covers both.
-        let max_gas = frame_tx.max_gas();
-        if max_gas > crate::constants::TX_MAX_GAS_LIMIT_AMSTERDAM {
+        // EIP-7825, as scoped by EIP-8141: "frame_tx_intrinsic_gas plus the sum of
+        // all limits.execution values must not exceed TX_MAX_GAS_LIMIT, and the
+        // calldata floor is checked against the same cap. State gas is excluded."
+        //
+        // So the cap is measured on the execution dimension alone. `max_gas()` is
+        // the wrong anchor here: it carries the frames' state budgets, which would
+        // reject a transaction whose execution half is exactly at the cap simply
+        // because it also declared state gas.
+        let capped_gas = frame_tx
+            .mandatory_gas()
+            .saturating_add(frame_tx.data_cost())
+            .saturating_add(frame_tx.total_frame_execution_gas())
+            .max(frame_tx.calldata_floor_total());
+        if capped_gas > crate::constants::TX_MAX_GAS_LIMIT_AMSTERDAM {
             return Err(VMError::TxValidation(
                 crate::errors::TxValidationError::TxMaxGasLimitExceeded {
                     tx_hash: self.tx.hash(self.crypto),
-                    tx_gas_limit: max_gas,
+                    tx_gas_limit: capped_gas,
                 },
             ));
         }
@@ -1654,9 +1662,12 @@ impl<'a> VM<'a> {
         // fails inside `APPROVE`, the frame halts, nothing approves, and the
         // transaction is reported as an unapproved payer instead of an overflow.
         // Mirrors `compute_tx_max_cost`, which this must stay in step with.
+        // `max_cost` is collected over `max_gas`, which spans BOTH dimensions -- the
+        // payer buys the whole declared budget. That is a different quantity from the
+        // EIP-7825 cap above, which is execution-only.
         let max_cost_representable = frame_tx
             .max_fee_per_gas
-            .checked_mul(U256::from(max_gas))
+            .checked_mul(U256::from(frame_tx.max_gas()))
             .and_then(|gas_cost| {
                 U256::from(frame_tx.blob_versioned_hashes.len())
                     .checked_mul(U256::from(131072u64))
@@ -1973,12 +1984,19 @@ impl<'a> VM<'a> {
             }
 
             // EIP-8141, Execution: a VERIFY frame whose resolved target has no code
-            // runs the protocol default code *instead of* an EVM. It never builds a
-            // gas meter, so it neither pays the entry charges below nor leaves its
-            // target warm for later frames. Every other frame — including a SENDER or
-            // DEFAULT frame to a codeless account, which runs an EVM over empty code —
-            // is entered normally and pays.
-            let runs_default_verify_code = frame.execution_mode() == FrameMode::Verify
+            // runs the protocol default code *instead of* an EVM. Every other frame —
+            // including a SENDER or DEFAULT frame to a codeless account, which runs an
+            // EVM over empty code — is entered normally.
+            //
+            // A precompile is not "codeless" in this sense. It has no bytecode in the
+            // account trie, but it does have behaviour, and a VERIFY frame targeting
+            // one must run that behaviour rather than the default code: the fixtures
+            // bill such a frame the precompile's own cost (IDENTITY at 15 + 3/word)
+            // on top of the target access, which is only reachable by executing it.
+            let target_is_precompile =
+                crate::precompiles::is_precompile(&target, self.env.config.fork, self.vm_type);
+            let runs_default_verify_code = !target_is_precompile
+                && frame.execution_mode() == FrameMode::Verify
                 && target_bytecode.is_empty()
                 && delegation.is_none();
 
@@ -2008,9 +2026,13 @@ impl<'a> VM<'a> {
             // the target's warm/cold access and any EIP-7702 delegation access are
             // execution gas, while reviving a dead target is EIP-8037 state gas. A
             // frame that cannot afford either half is never entered.
-            let frame_entry_gas = if runs_default_verify_code {
-                0
-            } else {
+            // EIP-8141 charges the resolved target's warm/cold access at frame entry,
+            // "whether the frame goes on to run contract code, delegated code, or the
+            // default code" -- resolving the target's code is what dispatch is, so the
+            // read happens either way. A default-code frame therefore pays the same
+            // access as any other; exempting it made a sponsor reached through the
+            // default code cheaper than an identical contract sponsor.
+            let frame_entry_gas = {
                 let target_access = if self.substate.add_accessed_address(target) {
                     crate::gas_cost::cold_account_access_cost(self.env.config.fork)
                 } else {
@@ -2145,12 +2167,13 @@ impl<'a> VM<'a> {
                 .unwrap_or_default();
 
             let (frame_success, frame_gas_used, frame_logs) = if value_transfer_reverted {
-                // A frame whose sender cannot fund its `value` never starts, so it
-                // spends nothing — not even the entry charges, which are levied on
-                // the gas meter this branch never builds.
+                // EIP-8141 orders the target's access charge before the balance check,
+                // so a frame whose sender cannot fund its `value` still "reverts,
+                // consuming the gas charged so far" -- the access was already paid for
+                // by the time the balance is looked at.
                 self.substate.revert_backup();
                 self.restore_cache_state()?;
-                (false, 0u64, Vec::new())
+                (false, frame_entry_gas, Vec::new())
             } else if frame_entry_unaffordable {
                 self.substate.revert_backup();
                 self.restore_cache_state()?;

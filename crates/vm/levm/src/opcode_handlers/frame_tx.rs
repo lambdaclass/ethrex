@@ -83,7 +83,7 @@ pub fn apply_approve(
                 .as_ref()
                 .ok_or(ExceptionalHalt::InvalidOpcode)?;
             if ctx.payer_address.is_some() {
-                return Err(ExceptionalHalt::InvalidOpcode.into());
+                return Err(VMError::RevertOpcode);
             }
             // EIP-8141: payment approval must not precede the sender's execution
             // approval. Per the spec's APPROVE_PAYMENT rules, revert the frame
@@ -132,7 +132,7 @@ pub fn apply_approve(
                 .as_ref()
                 .ok_or(ExceptionalHalt::InvalidOpcode)?;
             if ctx.sender_approved {
-                return Err(ExceptionalHalt::InvalidOpcode.into());
+                return Err(VMError::RevertOpcode);
             }
             if frame_target != ctx.tx.sender {
                 return Err(VMError::RevertOpcode);
@@ -150,7 +150,7 @@ pub fn apply_approve(
                 .as_ref()
                 .ok_or(ExceptionalHalt::InvalidOpcode)?;
             if ctx.sender_approved || ctx.payer_address.is_some() {
-                return Err(ExceptionalHalt::InvalidOpcode.into());
+                return Err(VMError::RevertOpcode);
             }
             if frame_target != ctx.tx.sender {
                 return Err(VMError::RevertOpcode);
