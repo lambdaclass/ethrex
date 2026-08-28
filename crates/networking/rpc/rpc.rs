@@ -1879,6 +1879,7 @@ mod tests {
                             "bpo5Time": null,
                             "amsterdamTime": null,
                             "hegotaTime": null,
+                            "eip8141Time": null,
                             "lstarTime": null,
                             "terminalTotalDifficulty": "0x0",
                             "terminalTotalDifficultyPassed": true,
