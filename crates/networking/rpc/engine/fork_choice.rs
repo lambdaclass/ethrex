@@ -507,6 +507,7 @@ async fn build_payload(
         version,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
         gas_ceil: context.gas_ceil,
+        inclusion_list_transactions: None,
     };
     let payload_id = args
         .id()
@@ -525,7 +526,7 @@ async fn build_payload(
     };
     context
         .blockchain
-        .initiate_payload_build(payload, payload_id)
+        .initiate_payload_build(payload, payload_id, Vec::new())
         .await;
     Ok(payload_id)
 }
@@ -614,6 +615,7 @@ async fn build_payload_v4(
         version: 4,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
         gas_ceil,
+        inclusion_list_transactions: None,
     };
     let payload_id = args
         .id()
@@ -632,7 +634,7 @@ async fn build_payload_v4(
     };
     context
         .blockchain
-        .initiate_payload_build(payload, payload_id)
+        .initiate_payload_build(payload, payload_id, Vec::new())
         .await;
     Ok(payload_id)
 }

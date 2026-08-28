@@ -96,6 +96,12 @@ pub struct BuildPayloadArgs {
     pub version: u8,
     pub elasticity_multiplier: u64,
     pub gas_ceil: u64,
+    /// EIP-7805 (FOCIL) inclusion list, RLP-decoded from
+    /// `PayloadAttributesV5::inclusion_list_transactions`. When `Some` and the
+    /// chain is Bogotá-active, the builder sequences these transactions ahead
+    /// of the priority-fee-ordered mempool fill. `None` for every non-V5
+    /// caller (V1-V4 FCU, dev-mode block production, the L2 sequencer).
+    pub inclusion_list_transactions: Option<Vec<Transaction>>,
 }
 
 #[derive(Debug, Error)]
@@ -129,6 +135,15 @@ impl BuildPayloadArgs {
                 hasher.update(slot_number.to_be_bytes());
             }
             hasher.update(self.gas_ceil.to_be_bytes());
+        }
+        // EIP-7805 (FOCIL): the inclusion list is part of the payload identity.
+        // Two FCUv5 calls for the same slot that differ only in their inclusion
+        // list must not collide, or the second would be served the first call's
+        // cached payload, built against the wrong list.
+        if let Some(il) = &self.inclusion_list_transactions {
+            for tx in il {
+                hasher.update(tx.encode_canonical_to_vec());
+            }
         }
         let res = &mut hasher.finalize()[..8];
         res[0] = self.version;
@@ -428,14 +443,24 @@ impl Blockchain {
     }
 
     /// Starts a payload build process. The built payload can be retrieved by calling `get_payload`.
-    /// The build process will run for the full block building timeslot or until `get_payload` is called
-    pub async fn initiate_payload_build(self: Arc<Blockchain>, payload: Block, payload_id: u64) {
+    /// The build process will run for the full block building timeslot or until `get_payload` is called.
+    ///
+    /// `inclusion_list` carries the EIP-7805 (FOCIL) transactions the consensus
+    /// layer supplied with the payload attributes. Every other caller passes
+    /// `Vec::new()`, which makes the inclusion-list pre-pass a zero-iteration
+    /// no-op — byte-for-byte the pre-FOCIL build path.
+    pub async fn initiate_payload_build(
+        self: Arc<Blockchain>,
+        payload: Block,
+        payload_id: u64,
+        inclusion_list: Vec<Transaction>,
+    ) {
         let self_clone = self.clone();
         let cancel_token = CancellationToken::new();
         let cancel_token_clone = cancel_token.clone();
         let payload_build_task = tokio::task::spawn(async move {
             self_clone
-                .build_payload_loop(payload, cancel_token_clone)
+                .build_payload_loop(payload, cancel_token_clone, inclusion_list)
                 .await
         });
         let mut payloads = self.payloads.lock().await;
@@ -453,11 +478,16 @@ impl Blockchain {
     }
 
     /// Build the given payload and keep on rebuilding it until either the time slot
-    /// given by `SECONDS_PER_SLOT` is up or the `cancel_token` is cancelled
+    /// given by `SECONDS_PER_SLOT` is up or the `cancel_token` is cancelled.
+    ///
+    /// `inclusion_list` carries the EIP-7805 (FOCIL) transactions sequenced ahead
+    /// of the priority-fee mempool fill on every rebuild. Empty means pre-FOCIL
+    /// behaviour.
     pub async fn build_payload_loop(
         self: Arc<Blockchain>,
         payload: Block,
         cancel_token: CancellationToken,
+        inclusion_list: Vec<Transaction>,
     ) -> Result<PayloadBuildResult, ChainError> {
         let start = Instant::now();
         const SECONDS_PER_SLOT: Duration = Duration::from_secs(12);
@@ -466,7 +496,7 @@ impl Blockchain {
         // Snapshot the mempool sequence *before* the build so any tx that lands
         // during the build is seen as newer than the current `res`.
         let mut last_built_seq = self.mempool.tx_seq();
-        let mut res = self.build_payload(payload.clone())?;
+        let mut res = self.build_payload_inner(payload.clone(), None, &inclusion_list)?;
         while start.elapsed() < SECONDS_PER_SLOT && !cancel_token.is_cancelled() {
             // Wait for new transactions, cancellation, or slot deadline before rebuilding
             let remaining = SECONDS_PER_SLOT.saturating_sub(start.elapsed());
@@ -479,8 +509,10 @@ impl Blockchain {
             let payload = payload.clone();
             let self_clone = self.clone();
             let seq_before = self.mempool.tx_seq();
-            let building_task =
-                tokio::task::spawn_blocking(move || self_clone.build_payload(payload));
+            let il_clone = inclusion_list.clone();
+            let building_task = tokio::task::spawn_blocking(move || {
+                self_clone.build_payload_inner(payload, None, &il_clone)
+            });
             // Cancel the current build process and return the previous payload if it is requested earlier
             // TODO(#5011): this doesn't stop the building task, but only keeps it running in the background,
             //   which wastes CPU resources.
@@ -527,7 +559,12 @@ impl Blockchain {
             && (!cancel_token.is_cancelled() || res.payload.body.transactions.is_empty())
         {
             let blockchain = self.clone();
-            match tokio::task::spawn_blocking(move || blockchain.build_payload(payload)).await {
+            let il_clone = inclusion_list.clone();
+            match tokio::task::spawn_blocking(move || {
+                blockchain.build_payload_inner(payload, None, &il_clone)
+            })
+            .await
+            {
                 Ok(Ok(final_res)) => res = final_res,
                 Ok(Err(err)) => {
                     warn!(%err, "Final payload rebuild failed; returning previous result")
@@ -542,7 +579,7 @@ impl Blockchain {
     /// Completes the payload building process, return the block value.
     /// Transactions are pulled from the mempool.
     pub fn build_payload(&self, payload: Block) -> Result<PayloadBuildResult, ChainError> {
-        self.build_payload_inner(payload, None)
+        self.build_payload_inner(payload, None, &[])
     }
 
     /// Builds a payload from an explicit, ordered list of transactions instead of the
@@ -554,7 +591,7 @@ impl Blockchain {
         payload: Block,
         transactions: Vec<Transaction>,
     ) -> Result<PayloadBuildResult, ChainError> {
-        self.build_payload_inner(payload, Some(transactions))
+        self.build_payload_inner(payload, Some(transactions), &[])
     }
 
     /// Builds a payload for the t8n tool from an explicit, ordered list of
@@ -712,13 +749,25 @@ impl Blockchain {
         Ok((context.into(), rejected, block_exception))
     }
 
+    /// EIP-7805 (FOCIL) variant of [`Blockchain::build_payload`]: sequences the
+    /// inclusion list ahead of the priority-fee-ordered mempool fill.
+    pub fn build_payload_with_il(
+        &self,
+        payload: Block,
+        inclusion_list: &[Transaction],
+    ) -> Result<PayloadBuildResult, ChainError> {
+        self.build_payload_inner(payload, None, inclusion_list)
+    }
+
     /// Shared block-building pipeline. When `explicit_transactions` is `None` the
     /// payload is filled from the mempool; otherwise the provided transactions are
-    /// applied verbatim.
+    /// applied verbatim. `inclusion_list` is `&[]` for every non-FOCIL caller, in
+    /// which case the inclusion-list pre-pass is skipped entirely.
     fn build_payload_inner(
         &self,
         payload: Block,
         explicit_transactions: Option<Vec<Transaction>>,
+        inclusion_list: &[Transaction],
     ) -> Result<PayloadBuildResult, ChainError> {
         let since = Instant::now();
 
@@ -731,7 +780,19 @@ impl Blockchain {
         }
         context.explicit_build = explicit_transactions.is_some();
         match explicit_transactions {
-            None => self.fill_transactions(&mut context)?,
+            None => {
+                // EIP-7805 (FOCIL): the built payload must satisfy the inclusion
+                // list constraints (execution-apis `bogota.md`, Payload
+                // building), so the list is attempted in arrival order before
+                // the priority-fee-ordered mempool fill. Each transaction is
+                // re-validated against the block state built so far; one that
+                // cannot be applied is skipped, which is exactly the case the
+                // satisfaction check excuses on the receiving side.
+                if !inclusion_list.is_empty() {
+                    self.apply_inclusion_list_transactions(&mut context, inclusion_list)?;
+                }
+                self.fill_transactions(&mut context)?
+            }
             Some(transactions) => self.fill_explicit_transactions(&mut context, transactions)?,
         }
         // EIP-7928: Post-tx phase uses index n+1 for both requests and withdrawals.
@@ -849,6 +910,115 @@ impl Blockchain {
             Some(user_max) => protocol_max.min(user_max) as usize,
             None => protocol_max as usize,
         }
+    }
+
+    /// EIP-7805 (FOCIL): sequence the inclusion list ahead of the mempool fill.
+    ///
+    /// execution-apis `bogota.md` (Payload building) requires the built payload
+    /// to satisfy the inclusion list constraints, and says nothing about
+    /// ordering the list by fee, so its transactions are attempted in the order
+    /// the consensus layer sent them and before `fill_transactions` competes for
+    /// the same gas. Each one is re-validated against the block state
+    /// accumulated so far, exactly as a mempool transaction would be.
+    ///
+    /// A transaction that cannot be applied is skipped rather than aborting the
+    /// build: the receiving side's satisfaction check excuses precisely those
+    /// transactions (`invalid_nonce`, `invalid_balance`, `insufficient_gas`,
+    /// and the stateless validity gates), so skipping one here cannot make the
+    /// resulting block unsatisfied. Unlike `fill_transactions`, nothing is
+    /// evicted from the mempool: the inclusion list is the consensus layer's
+    /// input, and a transaction that also sits in our pool must keep its own
+    /// eviction bookkeeping.
+    fn apply_inclusion_list_transactions(
+        &self,
+        context: &mut PayloadBuildContext,
+        inclusion_list: &[Transaction],
+    ) -> Result<(), ChainError> {
+        let chain_config = context.chain_config();
+        let base_fee = context.base_fee_per_gas();
+
+        for tx in inclusion_list {
+            if context.remaining_gas < TX_GAS_COST {
+                debug!("No more gas to run inclusion-list transactions");
+                break;
+            }
+
+            // Blob transactions are dropped. Client software MUST NOT put one in
+            // an inclusion list it builds (execution-apis `bogota.md`,
+            // `engine_getInclusionListV1`), so a conforming consensus layer never
+            // sends one; and were one to arrive, the engine API hands over the
+            // transaction envelope alone, without the sidecar this node would
+            // need to publish a block containing it.
+            if tx.tx_type() == TxType::EIP4844 {
+                debug!("Skipping blob transaction in inclusion list");
+                continue;
+            }
+
+            // L1 blocks must not contain L2-only transaction types, and an
+            // inclusion list is not a way in. Mirrors `fill_explicit_transactions`.
+            if let BlockchainType::L1 = self.options.r#type
+                && tx.tx_type().is_l2_only()
+            {
+                debug!("Skipping L2-only transaction type in inclusion list");
+                continue;
+            }
+
+            // EIP-8141 fork gating: frame transactions must not be included
+            // before Hegotá activates. Mirrors `fill_transactions`.
+            if tx.tx_type() == TxType::Frame
+                && !chain_config.is_hegota_activated(context.payload.header.timestamp)
+            {
+                continue;
+            }
+
+            if tx.protected() && !chain_config.is_eip155_activated(context.block_number()) {
+                continue;
+            }
+
+            // EIP-7825/EIP-8037: `remaining_gas` tracks regular gas only, so cap
+            // the reservation the same way `fill_transactions` does.
+            let tx_gas_reservation = if context.is_amsterdam {
+                tx.gas_limit().min(TX_MAX_GAS_LIMIT_AMSTERDAM)
+            } else {
+                tx.gas_limit()
+            };
+            if context.remaining_gas < tx_gas_reservation {
+                continue;
+            }
+
+            let Ok(sender) = tx.sender(&NativeCrypto) else {
+                debug!("Skipping inclusion-list transaction with unrecoverable sender");
+                continue;
+            };
+
+            let head = HeadTransaction {
+                tip: tx.effective_gas_tip(base_fee).unwrap_or_default(),
+                tx: MempoolTransaction::new(tx.clone(), sender),
+            };
+
+            // Osaka block-size cap. `fill_transactions` stops at the first
+            // transaction that would breach it, since it is walking a
+            // fee-ordered queue and anything behind is worth less. The inclusion
+            // list is an obligation rather than a revenue queue, and the
+            // satisfaction check on the receiving side has no size gate at all,
+            // so skip just this one and keep trying: leaving out an entry that
+            // would still have fit is what makes a block unsatisfied.
+            let potential_rlp_block_size =
+                context.payload_size + head.encode_canonical_len() as u64;
+            if chain_config.is_osaka_activated(context.payload.header.timestamp)
+                && potential_rlp_block_size > MAX_RLP_BLOCK_SIZE
+            {
+                continue;
+            }
+
+            match self.apply_tx_to_payload(head, context) {
+                Ok(()) => context.payload_size = potential_rlp_block_size,
+                Err(error) => {
+                    debug!(%error, "Skipping inclusion-list transaction that failed to apply");
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Fills the payload with transactions taken from the mempool
@@ -1660,6 +1830,7 @@ mod burned_fees_payload_tests {
             version: 1,
             elasticity_multiplier: ELASTICITY_MULTIPLIER,
             gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+            inclusion_list_transactions: None,
         };
         let block_template =
             create_payload(&args, &store, Bytes::new()).expect("create_payload failed");
@@ -1762,6 +1933,7 @@ mod tests {
             version: 2,
             elasticity_multiplier: 2,
             gas_ceil: 30_000_000,
+            inclusion_list_transactions: None,
         };
         let block = create_payload(&args, &store, Bytes::new()).expect("payload");
 

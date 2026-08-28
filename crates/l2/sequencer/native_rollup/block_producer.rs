@@ -177,6 +177,7 @@ impl NativeBlockProducer {
             version: 3,
             elasticity_multiplier: 2, // EIP-1559 default
             gas_ceil: self.config.block_gas_limit,
+            inclusion_list_transactions: None,
         };
         let payload = create_payload(&args, &self.store, Bytes::new())?;
         let block_number = payload.header.number;
