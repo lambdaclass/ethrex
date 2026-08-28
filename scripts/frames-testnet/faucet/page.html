@@ -122,9 +122,67 @@
       send one simply has no representation for it. Submitting one means building the envelope
       yourself and handing the signed bytes to <code>eth_sendRawTransaction</code>. The ethrex
       repository carries reference submitters that do exactly that, and
-      <a href="https://github.com/lambdaclass/rex/tree/frames-testnet">rex on the
-      <code>frames-testnet</code> branch</a> can build and send one directly.
+      <a href="https://github.com/lambdaclass/rex/tree/frames-testnet">rex</a> can build and
+      send one directly.
     </p>
+  </div>
+
+  <h2>Send one with rex</h2>
+  <div class="panel">
+    <p style="margin:0 0 .8rem">
+      Install from the <strong><code>frames-testnet</code></strong> branch:
+    </p>
+<pre>cargo install --force --locked --git https://github.com/lambdaclass/rex --branch frames-testnet</pre>
+    <p style="margin:0 0 .8rem;font-size:14px">
+      rex on <code>main</code> depends on the <em>published</em> ethrex crates, which encode a
+      frame's gas budget as a single scalar and sign in the <code>27</code>/<code>28</code> form.
+      This chain rejects both. The <code>frames-testnet</code> branch git-pins ethrex's
+      <code>frames-devnet-0</code>, so it speaks the wire format this chain actually runs.
+      Reinstall rather than reusing an older binary.
+    </p>
+<pre># Self-verified transfer: a VERIFY frame approving execution and payment,
+# then a SENDER frame that moves the value.
+rex frame send \
+  --to 0xRecipientAddress \
+  --value 1gwei \
+  --private-key &lt;YOUR_PRIVATE_KEY_HEX&gt; \
+  --rpc-url {{RPC_BARE}}
+
+# Preview the raw 0x06 bytes without submitting:
+rex frame send --to 0x… --value 1gwei --private-key &lt;KEY&gt; --dry-run
+
+# Decode a mined one, frame by frame:
+rex frame inspect &lt;TX_HASH&gt; --rpc-url {{RPC_BARE}}</pre>
+    <p style="margin:0;font-size:14px">
+      <code>--frame-gas-limit</code> and <code>--frame-state-gas-limit</code> set the SENDER
+      frame's two budgets. The state one defaults to 250,000, which covers a transfer to an
+      address that does not exist yet; <code>rex frame build --frames '[…]'</code> reaches the
+      modes and flags <code>send</code> does not expose.
+    </p>
+  </div>
+
+  <h2>Common errors</h2>
+  <div class="panel">
+    <table>
+      <tr><td><code>frame N uses the Scalar encoding, but this block requires Limits</code></td>
+          <td class="desc">The encoder predates two-dimensional gas and is sending slot 3 as a
+            scalar. This chain accepts only the <code>[execution, state]</code> form — you are on
+            a released rex rather than the branch above.</td></tr>
+      <tr><td>Reverts having used exactly its <code>execution</code> budget, with
+            <code>stateGasUsed: 0x0</code></td>
+          <td class="desc">Missing state budget, not execution. Raising
+            <code>--frame-gas-limit</code> will not help; raise
+            <code>--frame-state-gas-limit</code>.</td></tr>
+      <tr><td><code>Invalid frame transaction signature</code></td>
+          <td class="desc">The layout is <code>v ‖ r ‖ s</code> with <code>v</code> a bare
+            recovery id, <code>0</code> or <code>1</code> — not the <code>27</code>/<code>28</code>
+            form <code>ecrecover</code> takes. <code>r</code> and <code>s</code> must be canonical
+            and low-s.</td></tr>
+      <tr><td><code>… prefix gas budget … exceeds MAX_VERIFY_GAS</code></td>
+          <td class="desc">The validation prefix is bounded, at 500,000 here. Move work out of the
+            prefix or lower the prefix frames' <code>limits.execution</code>. The signature-cost
+            variant means the signatures alone exceed it — use fewer.</td></tr>
+    </table>
   </div>
 
   <h2>Building one</h2>
