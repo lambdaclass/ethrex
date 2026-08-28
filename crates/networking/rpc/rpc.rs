@@ -32,24 +32,30 @@ use crate::eth::{
     block::{
         BlockNumberRequest, GetBlobBaseFee, GetBlockByHashRequest, GetBlockByNumberRequest,
         GetBlockReceiptsRequest, GetBlockTransactionCountRequest, GetRawBlockRequest,
-        GetRawHeaderRequest, GetRawReceipts,
+        GetRawHeaderRequest, GetRawReceipts, GetUncleCountRequest,
     },
-    block_access_list::BlockAccessListRequest,
+    block_access_list::{BlockAccessListRequest, RawBlockAccessListRequest},
     client::{ChainId, Syncing},
     fee_market::FeeHistoryRequest,
-    filter::{self, ActiveFilters, DeleteFilterRequest, FilterChangesRequest, NewFilterRequest},
+    filter::{
+        self, ActiveFilters, DeleteFilterRequest, FilterChangesRequest, NewBlockFilterRequest,
+        NewFilterRequest,
+    },
     gas_price::GasPrice,
     gas_tip_estimator::GasTipEstimator,
     logs::LogsFilter,
     transaction::{
         CallRequest, CreateAccessListRequest, EstimateGasRequest, GetRawTransaction,
-        GetTransactionByBlockHashAndIndexRequest, GetTransactionByBlockNumberAndIndexRequest,
-        GetTransactionByHashRequest, GetTransactionReceiptRequest,
+        GetRawTransactionByBlockAndIndex, GetTransactionByBlockHashAndIndexRequest,
+        GetTransactionByBlockNumberAndIndexRequest, GetTransactionByHashRequest,
+        GetTransactionReceiptRequest,
     },
 };
 use crate::subscription_manager::{SubscriptionManager, SubscriptionManagerProtocol};
 use crate::testing::BuildBlockV1Request;
-use crate::tracing::{TraceBlockByNumberRequest, TraceTransactionRequest};
+use crate::tracing::{
+    TraceBlockByHashRequest, TraceBlockByNumberRequest, TraceCallRequest, TraceTransactionRequest,
+};
 use crate::types::transaction::SendRawTransactionRequest;
 use crate::utils::{
     RpcErr, RpcErrorMetadata, RpcErrorResponse, RpcNamespace, RpcRequest, RpcRequestId,
@@ -73,8 +79,7 @@ use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_metrics::rpc::{RpcOutcome, record_async_duration, record_rpc_outcome};
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
-use ethrex_p2p::types::Node;
-use ethrex_p2p::types::NodeRecord;
+use ethrex_p2p::types::SharedLocalNode;
 use ethrex_storage::Store;
 use serde::Deserialize;
 use serde_json::Value;
@@ -95,7 +100,7 @@ use tokio::sync::{
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 use tower_http::cors::CorsLayer;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 use tracing_subscriber::{EnvFilter, Registry, reload};
 
 #[cfg(all(feature = "jemalloc_profiling", target_os = "linux"))]
@@ -314,10 +319,10 @@ impl std::fmt::Display for ClientVersion {
 pub struct NodeData {
     /// JWT secret for authenticating Engine API requests from consensus clients.
     pub jwt_secret: Bytes,
-    /// Local P2P node identity (public key and address).
-    pub local_p2p_node: Node,
-    /// ENR (Ethereum Node Record) for node discovery.
-    pub local_node_record: NodeRecord,
+    /// Live-updated local node identity (public key, address, and ENR).
+    /// Guarded by a std RwLock; callers must clone values out and drop the guard
+    /// before any `.await` to avoid holding a !Send guard across await points.
+    pub shared_local_node: SharedLocalNode,
     /// Client version information.
     pub client_version: ClientVersion,
     /// Extra data included in mined blocks.
@@ -418,6 +423,8 @@ fn get_error_kind(err: &RpcErr) -> &'static str {
         RpcErr::InvalidHeaderFormat(_) => "InvalidHeaderFormat",
         RpcErr::InvalidPayload(_) => "InvalidPayload",
         RpcErr::ProofGenerationUnavailable(_) => "ProofGenerationUnavailable",
+        RpcErr::ResourceNotFound(_) => "ResourceNotFound",
+        RpcErr::PrunedHistoryUnavailable(_) => "PrunedHistoryUnavailable",
     }
 }
 
@@ -529,8 +536,7 @@ pub fn start_block_executor(blockchain: Arc<Blockchain>) -> UnboundedSender<Bloc
 /// * `storage` - Database storage instance
 /// * `blockchain` - Blockchain instance for block operations
 /// * `jwt_secret` - JWT secret for Engine API authentication
-/// * `local_p2p_node` - Local node identity for P2P networking
-/// * `local_node_record` - ENR for node discovery
+/// * `shared_local_node` - Live-updated local node identity (public key, address, and ENR)
 /// * `syncer` - Sync manager for block synchronization
 /// * `peer_handler` - Handler for P2P peer operations
 /// * `client_version` - Client version information for `web3_clientVersion` and `engine_getClientVersionV1`
@@ -553,8 +559,7 @@ pub async fn bind_api(
     storage: Store,
     blockchain: Arc<Blockchain>,
     jwt_secret: Bytes,
-    local_p2p_node: Node,
-    local_node_record: NodeRecord,
+    shared_local_node: SharedLocalNode,
     syncer: SyncManager,
     peer_handler: PeerHandler,
     client_version: ClientVersion,
@@ -575,8 +580,7 @@ pub async fn bind_api(
         peer_handler: Some(peer_handler),
         node_data: NodeData {
             jwt_secret,
-            local_p2p_node,
-            local_node_record,
+            shared_local_node,
             client_version,
             extra_data: extra_data.into(),
         },
@@ -767,8 +771,7 @@ pub async fn start_api(
     storage: Store,
     blockchain: Arc<Blockchain>,
     jwt_secret: Bytes,
-    local_p2p_node: Node,
-    local_node_record: NodeRecord,
+    shared_local_node: SharedLocalNode,
     syncer: SyncManager,
     peer_handler: PeerHandler,
     client_version: ClientVersion,
@@ -786,8 +789,7 @@ pub async fn start_api(
         storage,
         blockchain,
         jwt_secret,
-        local_p2p_node,
-        local_node_record,
+        shared_local_node,
         syncer,
         peer_handler,
         client_version,
@@ -1362,6 +1364,18 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
         "eth_getBlockTransactionCountByHash" => {
             GetBlockTransactionCountRequest::call(req, context).await
         }
+        "eth_getUncleCountByBlockNumber" => GetUncleCountRequest::call(req, context).await,
+        "eth_getUncleCountByBlockHash" => GetUncleCountRequest::call(req, context).await,
+        // `eth_`-namespace spellings of the raw-transaction getters. geth,
+        // nethermind, reth and erigon all serve these; only the `debug_` form
+        // existed here, so tooling probing the `eth_` names saw them as missing.
+        "eth_getRawTransactionByHash" => GetRawTransaction::call(req, context).await,
+        "eth_getRawTransactionByBlockHashAndIndex" => {
+            GetRawTransactionByBlockAndIndex::call(req, context).await
+        }
+        "eth_getRawTransactionByBlockNumberAndIndex" => {
+            GetRawTransactionByBlockAndIndex::call(req, context).await
+        }
         "eth_getTransactionByBlockNumberAndIndex" => {
             GetTransactionByBlockNumberAndIndexRequest::call(req, context).await
         }
@@ -1382,6 +1396,9 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
         "eth_getLogs" => LogsFilter::call(req, context).await,
         "eth_newFilter" => {
             NewFilterRequest::stateful_call(req, context.storage, context.active_filters).await
+        }
+        "eth_newBlockFilter" => {
+            NewBlockFilterRequest::stateful_call(req, context.storage, context.active_filters).await
         }
         "eth_uninstallFilter" => {
             DeleteFilterRequest::stateful_call(req, context.storage, context.active_filters)
@@ -1417,15 +1434,16 @@ pub async fn map_testing_requests(
 /// Routes `debug_*` namespace requests to their handlers.
 ///
 /// Handles debugging and introspection methods:
-/// - Raw data: `debug_getRawHeader`, `debug_getRawBlock`, `debug_getRawTransaction`, `debug_getRawReceipts`
+/// - Raw data: `debug_getRawHeader`, `debug_getRawBlock`, `debug_getRawTransaction`, `debug_getRawReceipts`, `debug_getRawBlockAccessList`
 /// - Execution witness: `debug_executionWitness` (for stateless validation)
-/// - Tracing: `debug_traceTransaction`, `debug_traceBlockByNumber`
+/// - Tracing: `debug_traceTransaction`, `debug_traceBlockByNumber`, `debug_traceBlockByHash`, `debug_traceCall`
 pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "debug_getRawHeader" => GetRawHeaderRequest::call(req, context).await,
         "debug_getRawBlock" => GetRawBlockRequest::call(req, context).await,
         "debug_getRawTransaction" => GetRawTransaction::call(req, context).await,
         "debug_getRawReceipts" => GetRawReceipts::call(req, context).await,
+        "debug_getRawBlockAccessList" => RawBlockAccessListRequest::call(req, context).await,
         "debug_executionWitness" => ExecutionWitnessRequest::call(req, context).await,
         "debug_executionWitnessByBlockHash" => {
             ExecutionWitnessByBlockHashRequest::call(req, context).await
@@ -1435,6 +1453,8 @@ pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Res
         "debug_setHead" => SetHeadRequest::call(req, context).await,
         "debug_traceTransaction" => TraceTransactionRequest::call(req, context).await,
         "debug_traceBlockByNumber" => TraceBlockByNumberRequest::call(req, context).await,
+        "debug_traceBlockByHash" => TraceBlockByHashRequest::call(req, context).await,
+        "debug_traceCall" => TraceCallRequest::call(req, context).await,
         unknown_debug_method => Err(RpcErr::MethodNotFound(unknown_debug_method.to_owned())),
     }
 }
@@ -1530,6 +1550,7 @@ pub fn map_web3_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Val
 pub async fn map_net_requests(req: &RpcRequest, contex: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "net_version" => net::version(req, contex),
+        "net_listening" => net::listening(req, contex),
         "net_peerCount" => net::peer_count(req, contex).await,
         unknown_net_method => Err(RpcErr::MethodNotFound(unknown_net_method.to_owned())),
     }
@@ -1750,9 +1771,12 @@ mod tests {
             .await
             .unwrap();
         let context = default_context_with_storage(storage).await;
-        let local_p2p_node = context.node_data.local_p2p_node.clone();
-
-        let enr_url = context.node_data.local_node_record.enr_url().unwrap();
+        let (local_p2p_node, enr_url) = {
+            let guard = context.node_data.shared_local_node.read().unwrap();
+            let node = guard.node.clone();
+            let enr_url = guard.record.enr_url().unwrap();
+            (node, enr_url)
+        };
         let result = map_http_requests(&request, context).await;
         let rpc_response = rpc_response(request.id, result).unwrap();
         let blob_schedule = serde_json::json!({
@@ -1936,6 +1960,24 @@ mod tests {
         let expected_response_string =
             format!(r#"{{"id":67,"jsonrpc": "2.0","result": "{chain_id}"}}"#);
         let expected_response = to_rpc_response_success_value(&expected_response_string);
+        assert_eq!(response.to_string(), expected_response.to_string());
+    }
+
+    #[tokio::test]
+    async fn net_listening_test() {
+        let body = r#"{"jsonrpc":"2.0","method":"net_listening","params":[],"id":67}"#;
+        let request: RpcRequest = serde_json::from_str(body).expect("serde serialization failed");
+        let mut storage =
+            Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+        storage
+            .set_chain_config(&example_chain_config())
+            .await
+            .unwrap();
+        let context = default_context_with_storage(storage).await;
+        let result = map_http_requests(&request, context).await;
+        let response = rpc_response(request.id, result).unwrap();
+        let expected_response =
+            to_rpc_response_success_value(r#"{"id":67,"jsonrpc": "2.0","result": true}"#);
         assert_eq!(response.to_string(), expected_response.to_string());
     }
 

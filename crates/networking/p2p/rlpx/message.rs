@@ -496,8 +496,73 @@ impl Display for Message {
 #[cfg(test)]
 mod tests {
     use super::{EthCapVersion, Message, RLPxMessage};
-    use crate::rlpx::eth::receipts::{GetReceipts70, Receipts70};
+    use crate::rlpx::eth::receipts::{GetReceipts, GetReceipts70, Receipts70};
     use ethrex_common::types::BlockHash;
+
+    /// Which `GetReceipts` wire form each eth version expects. eth/70 (EIP-7975)
+    /// introduced the paginated form and eth/71 (EIP-8159, `requires: [7928,
+    /// 7975]`) builds on it, so only eth/68 and eth/69 take the simple form.
+    /// Sending the wrong form to a peer is undetectable locally — it just fails to
+    /// decode on their side — so pin the mapping here.
+    #[test]
+    fn get_receipts_wire_form_per_version() {
+        for version in [EthCapVersion::V68, EthCapVersion::V69] {
+            let request = GetReceipts::new(7, vec![BlockHash::from([1; 32])]);
+            let mut encoded = Vec::new();
+            request.encode(&mut encoded).unwrap();
+            let decoded = Message::decode(
+                version.eth_capability_offset() + GetReceipts::CODE,
+                &encoded,
+                version,
+            )
+            .unwrap_or_else(|e| panic!("{version:?} must decode the simple form: {e:?}"));
+            assert!(
+                matches!(
+                    decoded,
+                    Message::GetReceipts68(_) | Message::GetReceipts69(_)
+                ),
+                "{version:?} must use the simple GetReceipts form, got {decoded:?}"
+            );
+        }
+
+        for version in [EthCapVersion::V70, EthCapVersion::V71] {
+            let request = GetReceipts70::new(7, 0, vec![BlockHash::from([1; 32])]);
+            let mut encoded = Vec::new();
+            request.encode(&mut encoded).unwrap();
+            let decoded = Message::decode(
+                version.eth_capability_offset() + GetReceipts70::CODE,
+                &encoded,
+                version,
+            )
+            .unwrap_or_else(|e| panic!("{version:?} must decode the paginated form: {e:?}"));
+            assert!(
+                matches!(decoded, Message::GetReceipts70(_)),
+                "{version:?} must use the paginated GetReceipts form, got {decoded:?}"
+            );
+        }
+    }
+
+    /// The mirror of the above for responses: an eth/70+ peer answers with
+    /// `Receipts70`, which a client that only matches `Receipts68`/`Receipts69`
+    /// would drop as unexpected.
+    #[test]
+    fn receipts_wire_form_per_version() {
+        for version in [EthCapVersion::V70, EthCapVersion::V71] {
+            let response = Receipts70::new(7, false, vec![]);
+            let mut encoded = Vec::new();
+            response.encode(&mut encoded).unwrap();
+            let decoded = Message::decode(
+                version.eth_capability_offset() + Receipts70::CODE,
+                &encoded,
+                version,
+            )
+            .unwrap_or_else(|e| panic!("{version:?} must decode Receipts70: {e:?}"));
+            assert!(
+                matches!(decoded, Message::Receipts70(_)),
+                "{version:?} must answer with the paginated Receipts form, got {decoded:?}"
+            );
+        }
+    }
 
     #[test]
     fn decodes_eth71_get_receipts_with_eth70_format() {

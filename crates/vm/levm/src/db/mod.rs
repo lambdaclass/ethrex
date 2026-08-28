@@ -157,7 +157,7 @@ impl CachingDatabase {
     /// Per-slot parallel point-gets, in `missing` order. Warm-optimal fan-out
     /// for normal-sized prefetch batches; bloated batches use the sorted batch
     /// multi_get instead (see `prefetch_storage`).
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     fn point_get_storage_many(
         &self,
         missing: &[(Address, H256)],
@@ -169,7 +169,7 @@ impl CachingDatabase {
             .collect()
     }
 
-    #[cfg(not(all(feature = "rayon", not(feature = "eip-8025"))))]
+    #[cfg(not(feature = "rayon"))]
     fn point_get_storage_many(
         &self,
         missing: &[(Address, H256)],
@@ -214,7 +214,7 @@ impl CachingDatabase {
     /// Per-account parallel point-gets, in `missing` order. Warm-optimal fan-out
     /// for normal-sized prefetch batches; large batches use the sorted sharded
     /// multi_get instead (see `prefetch_accounts`).
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     fn point_get_accounts_many(
         &self,
         missing: &[Address],
@@ -226,7 +226,7 @@ impl CachingDatabase {
             .collect()
     }
 
-    #[cfg(not(all(feature = "rayon", not(feature = "eip-8025"))))]
+    #[cfg(not(feature = "rayon"))]
     fn point_get_accounts_many(
         &self,
         missing: &[Address],
