@@ -84,6 +84,11 @@ pub async fn engine_only_context(storage: Store) -> RpcApiContext {
         gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
         log_filter_handler: None,
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+        // EIP-7805 (FOCIL): `engine_newPayloadV6` stashes each payload's
+        // inclusion list here so a later `engine_forkchoiceUpdatedV5` can report
+        // the same verdict. The fixture runner sends the list with every V6 call,
+        // so it never reads back from this cache; a default is enough.
+        retained_inclusion_lists: Default::default(),
         block_worker_channel,
         ws: None,
         allowed_namespaces: Arc::new(all_namespaces_for_tests()),

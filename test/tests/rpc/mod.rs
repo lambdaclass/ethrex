@@ -5,6 +5,7 @@ mod create_access_list_tests;
 mod estimate_gas_tests;
 mod fork_choice_tests;
 mod http_batch_tests;
+mod inclusion_list_engine_tests;
 mod missing_rpc_methods_tests;
 mod raw_receipts_completeness_tests;
 mod send_raw_transaction_tests;

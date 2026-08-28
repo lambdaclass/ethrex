@@ -15,7 +15,7 @@ use ethrex_rpc::engine::payload::GetPayloadV5Request;
 use ethrex_rpc::rpc::RpcApiContext;
 use ethrex_rpc::rpc::RpcHandler;
 use ethrex_rpc::test_utils::default_context_with_storage;
-use ethrex_rpc::types::fork_choice::PayloadAttributesV4;
+use ethrex_rpc::types::fork_choice::{PayloadAttributesV4, PayloadAttributesV5};
 use ethrex_rpc::types::payload::ExecutionPayloadResponse;
 use ethrex_rpc::utils::{RpcErr, RpcRequest};
 use ethrex_storage::{EngineType, Store};
@@ -391,4 +391,84 @@ async fn forkchoice_updated_v3_rejects_amsterdam_payload_attributes() {
         .unwrap_err();
 
     assert!(matches!(err, ethrex_rpc::utils::RpcErr::UnsupportedFork(_)));
+}
+
+// EIP-7805 (FOCIL): `PayloadAttributesV5` is `PayloadAttributesV4` plus the
+// inclusion list the consensus layer wants the built block to honour.
+
+#[test]
+fn payload_attributes_v5_round_trips_with_inclusion_list() {
+    let json = r#"{
+        "timestamp": "0x6846fb2",
+        "prevRandao": "0x2971eefd1f71f3548728cad87c16cc91b979ef035054828c59a02e49ae300a84",
+        "suggestedFeeRecipient": "0x8943545177806ed17b9f23f0a21ee5948ecaa776",
+        "withdrawals": [],
+        "parentBeaconBlockRoot": "0x4029a2342bb6d54db91457bc8e442be22b3481df8edea24cc721f9d0649f65be",
+        "slotNumber": "0x10",
+        "inclusionListTransactions": ["0xdeadbeef", "0x01020304"],
+        "targetGasLimit": "0x2faf080"
+    }"#;
+
+    let attrs: PayloadAttributesV5 = serde_json::from_str(json).expect("V5 attributes deserialize");
+
+    assert_eq!(attrs.timestamp, 0x6846fb2);
+    assert_eq!(attrs.slot_number, 0x10);
+    assert_eq!(attrs.target_gas_limit, 50_000_000);
+    assert!(attrs.withdrawals.is_some());
+    assert!(attrs.parent_beacon_block_root.is_some());
+    assert_eq!(
+        attrs.inclusion_list_transactions,
+        vec![
+            Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]),
+            Bytes::from_static(&[0x01, 0x02, 0x03, 0x04]),
+        ]
+    );
+
+    let serialized = serde_json::to_string(&attrs).expect("V5 attributes serialize");
+    assert!(serialized.contains(r#""inclusionListTransactions":["0xdeadbeef","0x01020304"]"#));
+
+    let reparsed: PayloadAttributesV5 =
+        serde_json::from_str(&serialized).expect("V5 attributes round-trip");
+    assert_eq!(
+        reparsed.inclusion_list_transactions,
+        attrs.inclusion_list_transactions
+    );
+    assert_eq!(reparsed.timestamp, attrs.timestamp);
+    assert_eq!(reparsed.slot_number, attrs.slot_number);
+}
+
+#[test]
+fn payload_attributes_v5_accepts_empty_inclusion_list() {
+    let json = r#"{
+        "timestamp": "0x6846fb2",
+        "prevRandao": "0x2971eefd1f71f3548728cad87c16cc91b979ef035054828c59a02e49ae300a84",
+        "suggestedFeeRecipient": "0x8943545177806ed17b9f23f0a21ee5948ecaa776",
+        "withdrawals": [],
+        "parentBeaconBlockRoot": "0x4029a2342bb6d54db91457bc8e442be22b3481df8edea24cc721f9d0649f65be",
+        "slotNumber": "0x10",
+        "inclusionListTransactions": [],
+        "targetGasLimit": "0x2faf080"
+    }"#;
+
+    let attrs: PayloadAttributesV5 = serde_json::from_str(json).expect("V5 attributes deserialize");
+    assert!(attrs.inclusion_list_transactions.is_empty());
+
+    let serialized = serde_json::to_string(&attrs).expect("V5 attributes serialize");
+    assert!(serialized.contains(r#""inclusionListTransactions":[]"#));
+}
+
+/// execution-apis#796: `targetGasLimit` is required on V5 exactly as on V4, so
+/// an absent field must fail deserialization and take the FCUv5 request with it.
+#[test]
+fn payload_attributes_v5_requires_target_gas_limit() {
+    let without_gas_limit = r#"{
+        "timestamp": "0x65",
+        "prevRandao": "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "suggestedFeeRecipient": "0x0000000000000000000000000000000000000002",
+        "withdrawals": [],
+        "parentBeaconBlockRoot": "0x0000000000000000000000000000000000000000000000000000000000000003",
+        "slotNumber": "0x10",
+        "inclusionListTransactions": []
+    }"#;
+    assert!(serde_json::from_str::<PayloadAttributesV5>(without_gas_limit).is_err());
 }

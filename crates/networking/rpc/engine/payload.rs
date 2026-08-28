@@ -16,10 +16,11 @@ use serde_json::Value;
 use tokio::sync::oneshot;
 use tracing::{debug, error, info, warn};
 
+use crate::engine::inclusion_list::{block_satisfies_inclusion_list, decode_inclusion_list};
 use crate::rpc::{RpcApiContext, RpcHandler};
 use crate::types::payload::{
     ExecutionPayload, ExecutionPayloadBody, ExecutionPayloadBodyV2, ExecutionPayloadResponse,
-    PayloadStatus,
+    PayloadStatus, PayloadValidationStatus,
 };
 use crate::utils::RpcErr;
 use crate::utils::{RpcRequest, parse_json_hex};
@@ -342,12 +343,53 @@ impl RpcHandler for NewPayloadV5Request {
     }
 }
 
+/// The fork window a `newPayload` version serves. Both versions take the same
+/// payload shape, so the window is the only thing that separates them: per
+/// engine-API, a payload whose timestamp falls outside its method's fork is
+/// answered with `-38005: Unsupported fork` rather than executed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PayloadForkWindow {
+    /// `engine_newPayloadV5` / `engine_newPayloadWithWitnessV5`: Amsterdam, up
+    /// to but not including Bogotá.
+    Amsterdam,
+    /// `engine_newPayloadV6`: Bogotá onwards (EIP-7805).
+    Bogota,
+}
+
+/// Outcome of the shared V5/V6 `newPayload` body.
+struct NewPayloadOutcome {
+    /// Hash of the block the payload decoded to; `None` when it did not decode
+    /// into one, in which case `status` is already `INVALID`.
+    block_hash: Option<H256>,
+    status: PayloadStatus,
+}
+
 impl NewPayloadV5Request {
     async fn handle_with_witness(
         &self,
         context: RpcApiContext,
         make_witness: bool,
     ) -> Result<Value, RpcErr> {
+        let outcome = self
+            .execute(context, make_witness, PayloadForkWindow::Amsterdam)
+            .await?;
+        serde_json::to_value(outcome.status).map_err(|error| RpcErr::Internal(error.to_string()))
+    }
+
+    /// Shared body of `engine_newPayloadV5`, `engine_newPayloadWithWitnessV5`
+    /// and `engine_newPayloadV6`. `window` selects the fork guard; everything
+    /// else — payload validation, the EIP-7928 fork-boundary detector, and
+    /// execution — is identical across the three.
+    async fn execute(
+        &self,
+        context: RpcApiContext,
+        make_witness: bool,
+        window: PayloadForkWindow,
+    ) -> Result<NewPayloadOutcome, RpcErr> {
+        let method = match window {
+            PayloadForkWindow::Amsterdam => "engine_newPayloadV5",
+            PayloadForkWindow::Bogota => "engine_newPayloadV6",
+        };
         validate_execution_payload_v5(&self.payload)?;
 
         // validate the received requests
@@ -367,29 +409,38 @@ impl NewPayloadV5Request {
         ) {
             Ok(block) => block,
             Err(err) => {
-                return Ok(serde_json::to_value(PayloadStatus::invalid_with_err(
-                    &err.to_string(),
-                ))?);
+                return Ok(NewPayloadOutcome {
+                    block_hash: None,
+                    status: PayloadStatus::invalid_with_err(&err.to_string()),
+                });
             }
         };
 
         let chain_config = context.storage.get_chain_config();
 
-        // Pre-Amsterdam timestamps must use V4, not V5. Per engine-API spec
-        // (amsterdam.md): "Client software MUST return -38005: Unsupported fork
-        // if the timestamp of the payload does not fall within the time frame of
-        // the Amsterdam activation." Symmetric with the V4+Amsterdam case above.
-        if !chain_config.is_amsterdam_activated(block.header.timestamp) {
+        // Per engine-API (amsterdam.md, bogota.md): "Client software MUST return
+        // -38005: Unsupported fork if the timestamp of the payload does not fall
+        // within the time frame of the <fork> activation." V5 owns the Amsterdam
+        // window and V6 the Bogotá one, so each rejects the other's payloads.
+        let in_window = match window {
+            PayloadForkWindow::Amsterdam => {
+                chain_config.is_amsterdam_activated(block.header.timestamp)
+                    && !chain_config.is_hegota_activated(block.header.timestamp)
+            }
+            PayloadForkWindow::Bogota => chain_config.is_hegota_activated(block.header.timestamp),
+        };
+        if !in_window {
             return Err(RpcErr::UnsupportedFork(format!(
                 "{:?}",
                 chain_config.get_fork(block.header.timestamp)
             )));
         }
 
-        // EIP-7928 fork-boundary detector: V5 requires block_access_list_hash in
-        // the header. If the payload's block_hash matches what a V4-style header
-        // (without the field) would produce, the sender used the wrong API
-        // version; reject with -32602 (InvalidParams) to match the EELS fixture
+        // EIP-7928 fork-boundary detector: V5 and later require
+        // block_access_list_hash in the header. If the payload's block_hash
+        // matches what a V4-style header (without the field) would produce, the
+        // sender used the wrong API version; reject with -32602 (InvalidParams)
+        // to match the EELS fixture
         // test_invalid_post_fork_block_without_bal_hash_field
         // [fork_BPO2ToAmsterdamAtTime15k-blockchain_test_engine]. Real
         // value-mismatch tests don't match this alternate and fall through to
@@ -399,15 +450,15 @@ impl NewPayloadV5Request {
             alt_header.block_access_list_hash = None;
             let alt_hash = alt_header.compute_block_hash(&ethrex_crypto::NativeCrypto);
             if alt_hash == self.payload.block_hash {
-                return Err(RpcErr::WrongParam(
-                    "engine_newPayloadV5 received header missing block_access_list_hash field"
-                        .to_string(),
-                ));
+                return Err(RpcErr::WrongParam(format!(
+                    "{method} received header missing block_access_list_hash field"
+                )));
             }
         }
 
         let bal = self.payload.block_access_list.clone();
-        let payload_status = handle_new_payload_v4(
+        let block_hash = block.hash();
+        let status = handle_new_payload_v4(
             &self.payload,
             context,
             block,
@@ -416,7 +467,10 @@ impl NewPayloadV5Request {
             make_witness,
         )
         .await?;
-        serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
+        Ok(NewPayloadOutcome {
+            block_hash: Some(block_hash),
+            status,
+        })
     }
 }
 
@@ -445,6 +499,125 @@ impl RpcHandler for NewPayloadWithWitnessV5Request {
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         self.0.handle_with_witness(context, true).await
     }
+}
+
+/// `engine_newPayloadV6` — `engine_newPayloadV5` plus an
+/// `inclusionListTransactions` parameter, answering with `PayloadStatusV2`
+/// (EIP-7805).
+///
+/// A payload that leaves out a validly-includable inclusion-list transaction is
+/// still `VALID`; the verdict is reported through
+/// `PayloadStatusV2.inclusionListSatisfied` so the consensus layer knows not to
+/// attest to it. The list is retained under the payload's block hash so
+/// `engine_forkchoiceUpdatedV5` can report the same verdict for a head it is
+/// later told to adopt.
+pub struct NewPayloadV6Request {
+    /// The first four parameters, which V6 shares verbatim with V5.
+    pub payload_v5: NewPayloadV5Request,
+    pub inclusion_list_transactions: Vec<Bytes>,
+}
+
+impl From<NewPayloadV6Request> for RpcRequest {
+    fn from(val: NewPayloadV6Request) -> Self {
+        RpcRequest {
+            method: "engine_newPayloadV6".to_string(),
+            params: Some(vec![
+                serde_json::json!(val.payload_v5.payload),
+                serde_json::json!(val.payload_v5.expected_blob_versioned_hashes),
+                serde_json::json!(val.payload_v5.parent_beacon_block_root),
+                serde_json::json!(val.payload_v5.execution_requests),
+                serde_json::json!(val.inclusion_list_transactions),
+            ]),
+            ..Default::default()
+        }
+    }
+}
+
+impl RpcHandler for NewPayloadV6Request {
+    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let all = params
+            .as_ref()
+            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+        if all.len() != 5 {
+            return Err(RpcErr::BadParams("Expected 5 params".to_owned()));
+        }
+        Ok(Self {
+            payload_v5: NewPayloadV5Request::parse(&Some(all[..4].to_vec()))?,
+            inclusion_list_transactions: parse_il_transactions(&all[4])?,
+        })
+    }
+
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        let inclusion_list =
+            decode_inclusion_list(&self.inclusion_list_transactions, "engine_newPayloadV6");
+
+        let outcome = self
+            .payload_v5
+            .execute(context.clone(), false, PayloadForkWindow::Bogota)
+            .await?;
+
+        // Retain the inclusion list so `engine_forkchoiceUpdatedV5` can report
+        // `inclusionListSatisfied` for this block if the consensus layer later
+        // names it as head. Required for `ACCEPTED` payloads, whose execution —
+        // and so whose verdict — is deferred; also done for `VALID` ones so the
+        // forkchoice call need not be given the list again.
+        if let Some(block_hash) = outcome.block_hash
+            && matches!(
+                outcome.status.status,
+                PayloadValidationStatus::Valid | PayloadValidationStatus::Accepted
+            )
+        {
+            match context.retained_inclusion_lists.lock() {
+                Ok(mut retained) => retained.insert(block_hash, inclusion_list.clone()),
+                Err(e) => {
+                    return Err(RpcErr::Internal(format!(
+                        "retained inclusion list lock poisoned: {e}"
+                    )));
+                }
+            }
+        }
+
+        // execution-apis `bogota.md`: "If the payload is deemed VALID,
+        // inclusionListSatisfied MUST be set to whether the payload satisfied
+        // the inclusion list constraints. Otherwise, inclusionListSatisfied
+        // MUST be null." An unsatisfied list does not make the payload invalid.
+        let mut status = outcome.status;
+        if status.status == PayloadValidationStatus::Valid
+            && let Some(block_hash) = outcome.block_hash
+        {
+            let satisfied =
+                block_satisfies_inclusion_list(&context, block_hash, &inclusion_list).await?;
+            status = status.with_inclusion_list_satisfied(satisfied);
+        }
+        serde_json::to_value(status).map_err(|error| RpcErr::Internal(error.to_string()))
+    }
+}
+
+/// Parse the `inclusionListTransactions` parameter: an array of 0x-prefixed
+/// hex byte strings.
+///
+/// The bytes are not decoded here. EIP-7805 puts no upper bound on what an
+/// execution layer must ACCEPT — `MAX_BYTES_PER_INCLUSION_LIST` (8 KiB) bounds
+/// what `engine_getInclusionListV1` BUILDS — and an entry that is not a valid
+/// transaction is tolerated rather than rejected (see `decode_inclusion_list`).
+/// Only the JSON shape is enforced.
+fn parse_il_transactions(value: &Value) -> Result<Vec<Bytes>, RpcErr> {
+    let array = value.as_array().ok_or_else(|| {
+        RpcErr::WrongParam("inclusionListTransactions: expected array".to_string())
+    })?;
+    let mut out = Vec::with_capacity(array.len());
+    for (i, entry) in array.iter().enumerate() {
+        let s = entry.as_str().ok_or_else(|| {
+            RpcErr::WrongParam(format!(
+                "inclusionListTransactions[{i}]: expected hex string"
+            ))
+        })?;
+        let bytes = hex::decode(s.trim_start_matches("0x")).map_err(|_| {
+            RpcErr::WrongParam(format!("inclusionListTransactions[{i}]: invalid hex"))
+        })?;
+        out.push(Bytes::from(bytes));
+    }
+    Ok(out)
 }
 
 // GetPayload V1-V2-V3 implementations
@@ -1766,5 +1939,73 @@ mod tests {
         };
         let result = request.handle(test_context().await).await;
         assert!(matches!(result, Err(RpcErr::TooLargeRequest)));
+    }
+}
+
+#[cfg(test)]
+mod v6_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn parse_il_transactions_accepts_empty_array() {
+        assert!(
+            parse_il_transactions(&json!([]))
+                .expect("empty inclusion list parses")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn parse_il_transactions_accepts_hex_strings() {
+        let parsed =
+            parse_il_transactions(&json!(["0xdeadbeef", "0xcafe"])).expect("valid hex parses");
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].as_ref(), &[0xde, 0xad, 0xbe, 0xef]);
+        assert_eq!(parsed[1].as_ref(), &[0xca, 0xfe]);
+    }
+
+    #[test]
+    fn parse_il_transactions_rejects_malformed_shapes() {
+        assert!(matches!(
+            parse_il_transactions(&json!("0xdeadbeef")),
+            Err(RpcErr::WrongParam(_))
+        ));
+        assert!(matches!(
+            parse_il_transactions(&json!([123])),
+            Err(RpcErr::WrongParam(_))
+        ));
+        assert!(matches!(
+            parse_il_transactions(&json!(["0xZZ"])),
+            Err(RpcErr::WrongParam(_))
+        ));
+    }
+
+    /// `MAX_BYTES_PER_INCLUSION_LIST` (8 KiB) caps what
+    /// `engine_getInclusionListV1` BUILDS, not what V6 accepts, so an oversized
+    /// list must round-trip through the parser.
+    #[test]
+    fn parse_il_transactions_accepts_oversized_inputs() {
+        let big_hex = format!("0x{}", "42".repeat(10 * 1024));
+        let parsed = parse_il_transactions(&json!([big_hex])).expect("oversized parses");
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].len(), 10 * 1024);
+    }
+
+    /// Bytes that are not valid transactions are accepted by the parser and
+    /// dropped later by `decode_inclusion_list`; V6 is never rejected over them.
+    #[test]
+    fn garbage_entries_parse_and_then_decode_to_nothing() {
+        let parsed = parse_il_transactions(&json!(["0xdeadbeef", "", "0x02c0"]))
+            .expect("garbage bytes parse");
+        assert_eq!(parsed.len(), 3);
+        assert!(decode_inclusion_list(&parsed, "engine_newPayloadV6").is_empty());
+    }
+
+    #[test]
+    fn newpayload_v6_parse_rejects_wrong_param_count() {
+        let four_only =
+            NewPayloadV6Request::parse(&Some(vec![json!({}), json!([]), json!("0x"), json!([])]));
+        assert!(matches!(four_only, Err(RpcErr::BadParams(_))));
     }
 }

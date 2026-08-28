@@ -2,6 +2,7 @@ pub mod blobs;
 pub mod client_version;
 pub mod exchange_transition_config;
 pub mod fork_choice;
+pub mod inclusion_list;
 pub mod payload;
 
 use crate::{
@@ -43,6 +44,11 @@ pub const CAPABILITIES: [&str; 25] = [
     "engine_getClientVersionV1",
 ];
 
+/// Engine API methods added by EIP-7805 (FOCIL). Advertised only when the
+/// running chain schedules Bogotá (`hegota_time` in ethrex's config), since a
+/// chain without it can never serve a V5/V6 payload.
+pub const FOCIL_CAPABILITIES: [&str; 2] = ["engine_forkchoiceUpdatedV5", "engine_newPayloadV6"];
+
 impl From<ExchangeCapabilitiesRequest> for RpcRequest {
     fn from(val: ExchangeCapabilitiesRequest) -> Self {
         RpcRequest {
@@ -66,8 +72,12 @@ impl RpcHandler for ExchangeCapabilitiesRequest {
             })
     }
 
-    async fn handle(&self, _context: RpcApiContext) -> Result<Value, RpcErr> {
-        Ok(json!(CAPABILITIES))
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        let mut caps: Vec<&str> = CAPABILITIES.to_vec();
+        if context.storage.get_chain_config().hegota_time.is_some() {
+            caps.extend_from_slice(&FOCIL_CAPABILITIES);
+        }
+        Ok(json!(caps))
     }
 }
 

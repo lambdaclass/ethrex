@@ -6,6 +6,9 @@ use crate::debug::execution_witness_by_hash::ExecutionWitnessByBlockHashRequest;
 use crate::debug::set_head::SetHeadRequest;
 use crate::engine::blobs::{BlobsV2Request, BlobsV3Request};
 use crate::engine::client_version::GetClientVersionV1Request;
+use crate::engine::fork_choice::ForkChoiceUpdatedV5;
+use crate::engine::inclusion_list::RetainedInclusionListsHandle;
+use crate::engine::payload::NewPayloadV6Request;
 use crate::engine::payload::{
     GetPayloadV5Request, GetPayloadV6Request, NewPayloadV5Request, NewPayloadWithWitnessV5Request,
 };
@@ -232,6 +235,10 @@ pub struct RpcApiContext {
     /// The `engine` namespace is always served via the authenticated RPC port
     /// and is not gated here.
     pub allowed_namespaces: Arc<HashSet<RpcNamespace>>,
+    /// EIP-7805 (FOCIL) inclusion lists retained from `engine_newPayloadV6`,
+    /// keyed by block hash, so `engine_forkchoiceUpdatedV5` can report
+    /// `inclusionListSatisfied` for the head it is told to adopt.
+    pub retained_inclusion_lists: RetainedInclusionListsHandle,
 }
 
 /// Configuration for the WebSocket RPC server.
@@ -590,6 +597,7 @@ pub async fn bind_api(
         block_worker_channel,
         ws: ws.clone(),
         allowed_namespaces: Arc::new(allowed_namespaces),
+        retained_inclusion_lists: Default::default(),
     };
 
     // Periodically clean up the active filters for the filters endpoints.
@@ -1491,7 +1499,9 @@ pub async fn map_engine_requests(
         "engine_newPayloadWithWitnessV5" => {
             Box::pin(NewPayloadWithWitnessV5Request::call(req, context)).await
         }
+        "engine_forkchoiceUpdatedV5" => Box::pin(ForkChoiceUpdatedV5::call(req, context)).await,
         "engine_newPayloadV5" => Box::pin(NewPayloadV5Request::call(req, context)).await,
+        "engine_newPayloadV6" => Box::pin(NewPayloadV6Request::call(req, context)).await,
         "engine_newPayloadV4" => Box::pin(NewPayloadV4Request::call(req, context)).await,
         "engine_newPayloadV3" => Box::pin(NewPayloadV3Request::call(req, context)).await,
         "engine_newPayloadV2" => NewPayloadV2Request::call(req, context).await,
@@ -2101,5 +2111,38 @@ mod tests {
         });
         let expected_response = to_rpc_response_success_value(&json.to_string());
         assert_eq!(rpc_response.to_string(), expected_response.to_string())
+    }
+
+    /// EIP-7805: the FOCIL methods are advertised only on a chain that schedules
+    /// Bogotá, so a consensus layer never drives V5/V6 against a node that
+    /// cannot serve them.
+    #[tokio::test]
+    async fn exchange_capabilities_advertises_focil_when_bogota_is_scheduled() {
+        let caps = exchange_capabilities_with_hegota_time(Some(0)).await;
+        assert!(caps.contains(&"engine_forkchoiceUpdatedV5".to_string()));
+        assert!(caps.contains(&"engine_newPayloadV6".to_string()));
+    }
+
+    #[tokio::test]
+    async fn exchange_capabilities_omits_focil_without_bogota() {
+        let caps = exchange_capabilities_with_hegota_time(None).await;
+        assert!(!caps.contains(&"engine_forkchoiceUpdatedV5".to_string()));
+        assert!(!caps.contains(&"engine_newPayloadV6".to_string()));
+        // The pre-FOCIL capability set is unaffected.
+        assert!(caps.contains(&"engine_newPayloadV5".to_string()));
+    }
+
+    async fn exchange_capabilities_with_hegota_time(hegota_time: Option<u64>) -> Vec<String> {
+        let body =
+            r#"{"jsonrpc":"2.0", "method":"engine_exchangeCapabilities", "params":[[]], "id":1}"#;
+        let request: RpcRequest = serde_json::from_str(body).unwrap();
+        let mut storage = Store::new("", EngineType::InMemory).expect("Failed to create test DB");
+        let mut config = example_chain_config();
+        config.hegota_time = hegota_time;
+        storage.set_chain_config(&config).await.unwrap();
+        let context = default_context_with_storage(storage).await;
+
+        let result = map_engine_requests(&request, context).await.unwrap();
+        serde_json::from_value(result).expect("capabilities array")
     }
 }
