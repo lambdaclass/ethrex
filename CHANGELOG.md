@@ -12,6 +12,26 @@
 
 ## Perf
 
+### 2026-08-24
+
+- Make `eth_estimateGas`'s plain-transfer short circuit fire. Its condition tested whether the recipient account existed rather than whether it had code, so every transfer to an ordinary funded wallet ran the full binary search instead of returning `TRANSACTION_GAS` at once [#7211](https://github.com/lambdaclass/ethrex/pull/7211)
+
+### 2026-08-03
+
+- Size the default RocksDB shared block cache from the memory the process may actually use — 40% of the smaller of physical memory and the cgroup limit, clamped to 512 MiB..=12 GiB — instead of a flat 12 GiB. The flat default was 71% of a 16 GiB host, leaving no headroom for trie layers, execution and the mempool; `--rocksdb.block-cache-size` still overrides it. Detection reads `/proc`, so outside Linux the default stays at the 12 GiB ceiling; startup logs the detected limit and the resolved size
+
+### 2026-07-22
+
+- Unify full-sync batch import onto the per-block execution pipeline, validating every block's state root and reusing the pipeline's BAL-driven parallel execution instead of the bespoke "execute all, apply once" batch path [#7008](https://github.com/lambdaclass/ethrex/pull/7008)
+
+### 2026-07-16
+
+- Prewarm each sender's ready transaction prefix so successor txs warm against their predecessors' state [#6999](https://github.com/lambdaclass/ethrex/pull/6999)
+
+### 2026-07-08
+
+- Batch BAL prefetch for storage-heavy blocks via sorted, sharded parallel rocksdb `multi_get` reads. The keys are sorted so adjacent entries share data blocks, then split into contiguous shards read concurrently, recovering the cold-read throughput a single serial `multi_get` loses (it runs at queue depth 1 since `async_io` is off). Applied to storage-slot prefetch (flat key-value table), account-state prefetch, and a complementary trie-node prefetch that warms the merkle node CFs concurrently with execution. Each path is gated on the count of missing (cold) slots/accounts (>= 16384, ~34M gas of cold reads), so warm and normal blocks keep the per-slot parallel point-gets while genuinely storage-heavy blocks take the sharded path, which also hardens against storage-bloat DoS [#6980](https://github.com/lambdaclass/ethrex/pull/6980)
+
 ### 2026-07-06
 
 - Lower the RocksDB data-block size from 16KB to 4KB on the execution-read-path column families (`ACCOUNT_TRIE_NODES`/`STORAGE_TRIE_NODES`, `ACCOUNT_FLATKEYVALUE`/`STORAGE_FLATKEYVALUE`). These CFs serve exact-key point lookups, so a page-sized block cuts per-get read+search amplification vs the prior scan-tuned 16KB. ~+18% Mgas/s and ~-36% disk read on a cold, larger-than-RAM bloated-state benchmark [#6940](https://github.com/lambdaclass/ethrex/pull/6940)

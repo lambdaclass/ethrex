@@ -1,14 +1,32 @@
-use ethereum_types::H256;
 use ethrex_rlp::encode::RLPEncode;
 
-use crate::{Nibbles, Node, Trie, error::TrieError};
-use std::{
-    collections::BTreeMap,
-    sync::{Arc, Mutex},
-};
+use crate::{Nibbles, Node, error::TrieError};
+use alloc::collections::BTreeMap;
+use alloc::sync::Arc;
+#[cfg(not(feature = "std"))]
+use alloc::vec::Vec;
+
+// `InMemoryTrieDB` is available in both builds. On `std` its map is guarded by
+// `std::sync::Mutex`; on `no_std` (the zkVM guest) by `spin::Mutex`, which never
+// contends because the guest is single-threaded. Only `from_nodes` stays host-only,
+// by design rather than necessity: the guest never builds a trie from a node dump.
+#[cfg(feature = "std")]
+use crate::Trie;
+#[cfg(feature = "std")]
+use ethereum_types::H256;
+#[cfg(not(feature = "std"))]
+use spin::Mutex;
+#[cfg(feature = "std")]
+use std::sync::Mutex;
 
 // Nibbles -> encoded node
 pub type NodeMap = Arc<Mutex<BTreeMap<Vec<u8>, Vec<u8>>>>;
+
+// Guard returned by locking a `NodeMap`; the backend mutex differs per build.
+#[cfg(feature = "std")]
+type NodeMapGuard<'a> = std::sync::MutexGuard<'a, BTreeMap<Vec<u8>, Vec<u8>>>;
+#[cfg(not(feature = "std"))]
+type NodeMapGuard<'a> = spin::MutexGuard<'a, BTreeMap<Vec<u8>, Vec<u8>>>;
 
 pub trait TrieDB: Send + Sync {
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError>;
@@ -66,6 +84,33 @@ impl InMemoryTrieDB {
         }
     }
 
+    fn apply_prefix(&self, path: Nibbles) -> Nibbles {
+        match &self.prefix {
+            Some(prefix) => prefix.concat(&path),
+            None => path,
+        }
+    }
+
+    // Locks the inner map, bridging the std (`Result`, poisonable) and spin
+    // (infallible, single-threaded guest) `Mutex::lock` APIs.
+    fn lock_inner(&self) -> Result<NodeMapGuard<'_>, TrieError> {
+        #[cfg(feature = "std")]
+        let guard = self.inner.lock().map_err(|_| TrieError::LockError)?;
+        #[cfg(not(feature = "std"))]
+        let guard = self.inner.lock();
+        Ok(guard)
+    }
+
+    // Do not remove or make private as we use this in ethrex-replay
+    pub fn inner(&self) -> NodeMap {
+        Arc::clone(&self.inner)
+    }
+}
+
+// `from_nodes` is host-only by design: nothing in it requires `std`, but the guest
+// never builds a trie from a node dump, so gating it keeps the no_std surface small.
+#[cfg(feature = "std")]
+impl InMemoryTrieDB {
     // Do not remove or make private as we use this in ethrex-replay
     pub fn from_nodes(
         root_hash: H256,
@@ -87,32 +132,18 @@ impl InMemoryTrieDB {
         let in_memory_trie = Arc::new(Mutex::new(hashed_nodes));
         Ok(Self::new(in_memory_trie))
     }
-
-    fn apply_prefix(&self, path: Nibbles) -> Nibbles {
-        match &self.prefix {
-            Some(prefix) => prefix.concat(&path),
-            None => path,
-        }
-    }
-
-    // Do not remove or make private as we use this in ethrex-replay
-    pub fn inner(&self) -> NodeMap {
-        Arc::clone(&self.inner)
-    }
 }
 
 impl TrieDB for InMemoryTrieDB {
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         Ok(self
-            .inner
-            .lock()
-            .map_err(|_| TrieError::LockError)?
+            .lock_inner()?
             .get(self.apply_prefix(key).as_ref())
             .cloned())
     }
 
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
-        let mut db = self.inner.lock().map_err(|_| TrieError::LockError)?;
+        let mut db = self.lock_inner()?;
 
         for (key, value) in key_values {
             let prefixed_key = self.apply_prefix(key);

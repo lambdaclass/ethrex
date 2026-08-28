@@ -1,0 +1,28 @@
+[package]
+name = "ethrex-evm"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "EVM tool for ethrex: geth-compatible t8n state transition CLI"
+
+[[bin]]
+name = "ethrex-evm"
+path = "src/main.rs"
+
+[dependencies]
+ethrex-blockchain = { workspace = true, features = ["secp256k1", "rayon", "c-kzg"] }
+ethrex-common = { workspace = true, features = ["secp256k1", "rayon", "c-kzg"] }
+ethrex-crypto = { workspace = true, default-features = true }
+ethrex-levm.workspace = true
+ethrex-rlp.workspace = true
+ethrex-storage.workspace = true
+ethrex-vm = { workspace = true, features = ["secp256k1", "rayon", "c-kzg"] }
+
+bytes.workspace = true
+clap.workspace = true
+hex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt", "macros"] }

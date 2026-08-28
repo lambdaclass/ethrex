@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use bytes::Bytes;
-use rustc_hash::FxHashMap;
 
 use crate::rkyv_utils::H256Wrapper;
 use crate::serde_utils;
@@ -15,7 +14,7 @@ use ethrex_crypto::Crypto;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_rlp::structs::{Decoder, Encoder};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeRef, Trie, TrieError};
+use ethrex_trie::{EMPTY_TRIE_HASH, FxHashMap, Nibbles, Node, NodeRef, Trie, TrieError};
 use rkyv::with::{Identity, MapKV};
 use serde::{Deserialize, Serialize};
 
@@ -251,7 +250,7 @@ impl RpcExecutionWitness {
             );
 
             for (hashed_address, storage_root_hash) in accounts {
-                if storage_root_hash == *EMPTY_TRIE_HASH {
+                if storage_root_hash == EMPTY_TRIE_HASH {
                     continue;
                 }
                 if !nodes.contains_key(&storage_root_hash) {
@@ -276,6 +275,122 @@ impl RpcExecutionWitness {
             storage_trie_roots,
         })
     }
+}
+
+impl ExecutionWitness {
+    /// Build an `ExecutionWitness` from an SSZ stateless input. Used by the
+    /// stateless validator (EXECUTE precompile and zkVM guest program).
+    ///
+    /// `first_block_number` is taken from the payload's block number, and
+    /// `initial_state_root` is recovered by finding the parent header
+    /// (`number == first_block_number - 1`) among the witness headers — same
+    /// convention as `RpcExecutionWitness::into_execution_witness`.
+    ///
+    /// The `ChainConfig` is derived from the input's `chain_id` alone via
+    /// [`amsterdam_chain_config`]; #3278 removed chain configuration from the
+    /// wire, so the fork comes from the schema-id prefix instead.
+    pub fn from_ssz(
+        input: &crate::types::stateless_ssz::SszStatelessInput,
+        crypto: &dyn Crypto,
+    ) -> Result<Self, GuestProgramStateError> {
+        let first_block_number = input.new_payload_request.execution_payload.block_number;
+
+        // In wire order, before any sort or dedup: reordering hides violations.
+        // Without this a witness whose headers do not form a chain is accepted,
+        // and a guest that accepts a payload the spec rejects can prove an
+        // invalid state transition (`test_validation_headers_non_contiguous_chain`).
+        // Extracted once and reused: `headers_as_vecs` copies every header out of
+        // the SSZ list (up to `MAX_WITNESS_HEADERS`), and the same bytes are also
+        // what `block_headers_bytes` below is built from.
+        let block_headers_bytes = input.witness.headers_as_vecs();
+        let headers = decode_witness_headers(&block_headers_bytes)?;
+        validate_witness_headers_chain(&headers, crypto)?;
+
+        let initial_state_root = find_parent_state_root(&headers, first_block_number)?;
+
+        let (state_trie_root, storage_trie_roots) = rebuild_state_and_storage_tries(
+            input.witness.state_as_vecs(),
+            initial_state_root,
+            crypto,
+        )?;
+
+        Ok(Self {
+            codes: input.witness.codes_as_vecs(),
+            block_headers_bytes,
+            first_block_number,
+            chain_config: amsterdam_chain_config(input.chain_id),
+            state_trie_root,
+            storage_trie_roots,
+        })
+    }
+}
+
+/// Rebuild the embedded state trie and per-account storage tries from a flat
+/// list of trie-node preimages (same format as `debug_executionWitness.state`
+/// and SSZ `ExecutionWitness.state`).
+fn rebuild_state_and_storage_tries<I, B>(
+    state_bytes: I,
+    initial_state_root: H256,
+    crypto: &dyn Crypto,
+) -> Result<(Option<Node>, BTreeMap<H256, Node>), GuestProgramStateError>
+where
+    I: IntoIterator<Item = B>,
+    B: AsRef<[u8]>,
+{
+    // `crypto`, not the free `keccak`: on RISC-V the latter falls through to the
+    // software `tiny_keccak` (see `ethrex_crypto::keccak`), so hashing every witness
+    // node here would bypass the zkVM's accelerated keccak in the guest.
+    let nodes: FxHashMap<H256, Node> = state_bytes
+        .into_iter()
+        .filter_map(|b| {
+            let bytes = b.as_ref();
+            // An entry that does not decode as a trie node is skipped rather
+            // than rejected. Witnesses legitimately carry such entries: the
+            // `Null` node (single byte 0x80) some `debug_executionWitness`
+            // implementations emit, and unused nodes the spec explicitly
+            // tolerates (`test_validation_state_extra_unused_trie_node`).
+            //
+            // Skipping is safe because it only makes a node unavailable. If the
+            // trie walk actually needs it, `get_embedded_root` fails there — the
+            // correct place to reject — and the post-execution state-root check
+            // still binds the result either way. Hard-failing here rejected
+            // witnesses the spec accepts.
+            Some((H256(crypto.keccak256(bytes)), Node::decode(bytes).ok()?))
+        })
+        .collect();
+
+    // `_committed` pre-seeds each node's hash slot, so later hashing of the subtree
+    // reuses the known value instead of re-encoding and re-hashing the whole trie.
+    // Sound here because `nodes` is keyed by the hash of the very bytes it decodes.
+    let state_trie_root = if let NodeRef::Node(state_trie_root, _) =
+        Trie::get_embedded_root_committed(&nodes, initial_state_root, crypto)?
+    {
+        Some((*state_trie_root).clone())
+    } else {
+        None
+    };
+
+    // Walk the state trie to discover accounts and their storage roots,
+    // instead of relying on the keys field which is being removed from the
+    // RPC spec.
+    let mut storage_trie_roots = BTreeMap::new();
+    if let Some(root) = &state_trie_root {
+        let accounts = collect_accounts_from_embedded_trie(root, &nodes, crypto);
+        for (hashed_address, storage_root_hash) in accounts {
+            if storage_root_hash == EMPTY_TRIE_HASH || !nodes.contains_key(&storage_root_hash) {
+                continue;
+            }
+            let node = Trie::get_embedded_root_committed(&nodes, storage_root_hash, crypto)?;
+            let NodeRef::Node(node, _) = node else {
+                return Err(GuestProgramStateError::Custom(
+                    "execution witness does not contain non-empty storage trie".to_string(),
+                ));
+            };
+            storage_trie_roots.insert(hashed_address, (*node).clone());
+        }
+    }
+
+    Ok((state_trie_root, storage_trie_roots))
 }
 
 /// RLP-decode the raw header byte slices into a `Vec<BlockHeader>`.
@@ -523,7 +638,7 @@ impl GuestProgramState {
                     None => AccountState::default(),
                 };
                 if update.removed_storage {
-                    account_state.storage_root = *EMPTY_TRIE_HASH;
+                    account_state.storage_root = EMPTY_TRIE_HASH;
                 }
                 if let Some(info) = &update.info {
                     account_state.nonce = info.nonce;
@@ -791,7 +906,7 @@ impl GuestProgramState {
                 return Ok(None);
             };
             let storage_trie = match self.storage_tries.get(&hashed_address) {
-                None if storage_root == *EMPTY_TRIE_HASH => return Ok(None),
+                None if storage_root == EMPTY_TRIE_HASH => return Ok(None),
                 Some(trie) if trie.hash_no_commit(crypto) == storage_root => trie,
                 _ => {
                     return Err(GuestProgramStateError::Custom(format!(
@@ -801,6 +916,92 @@ impl GuestProgramState {
             };
             self.verified_storage_roots.insert(hashed_address, true);
             Ok(Some(storage_trie))
+        }
+    }
+}
+
+/// Walk an embedded state trie and collect `(hashed_address, storage_root)` pairs
+/// from leaf nodes. Resolves `NodeRef::Hash` references using the flat `nodes` map.
+///
+/// BTreeMap-based counterpart of the `FxHashMap`-based `collect_accounts_from_trie`
+/// used by `into_execution_witness`; this one backs the SSZ `from_ssz` path.
+pub fn collect_accounts_from_embedded_trie(
+    root: &Node,
+    nodes: &FxHashMap<H256, Node>,
+    crypto: &dyn Crypto,
+) -> Vec<(H256, H256)> {
+    let mut accounts = Vec::new();
+    collect_accounts_from_node(root, Nibbles::default(), &mut accounts, nodes, crypto);
+    accounts
+}
+
+fn collect_accounts_from_node(
+    node: &Node,
+    path: ethrex_trie::Nibbles,
+    accounts: &mut Vec<(H256, H256)>,
+    nodes: &FxHashMap<H256, Node>,
+    crypto: &dyn Crypto,
+) {
+    use ethrex_trie::NodeRef;
+
+    match node {
+        Node::Branch(branch) => {
+            for (i, child) in branch.choices.iter().enumerate() {
+                let child_node: Option<&Node> = match child {
+                    NodeRef::Node(n, _) => Some(n),
+                    NodeRef::Hash(hash) if hash.is_valid() => nodes.get(&hash.finalize(crypto)),
+                    _ => None,
+                };
+                if let Some(child_node) = child_node {
+                    collect_accounts_from_node(
+                        child_node,
+                        path.append_new(i as u8),
+                        accounts,
+                        nodes,
+                        crypto,
+                    );
+                }
+            }
+        }
+        Node::Extension(ext) => {
+            let child_node: Option<&Node> = match &ext.child {
+                NodeRef::Node(n, _) => Some(n),
+                NodeRef::Hash(hash) if hash.is_valid() => nodes.get(&hash.finalize(crypto)),
+                _ => None,
+            };
+            if let Some(child_node) = child_node {
+                collect_accounts_from_node(
+                    child_node,
+                    path.concat(&ext.prefix),
+                    accounts,
+                    nodes,
+                    crypto,
+                );
+            }
+        }
+        Node::Leaf(leaf) => {
+            let full_path = path.concat(&leaf.partial);
+            let path_bytes = full_path.to_bytes();
+            if path_bytes.len() == 32 {
+                let hashed_address = H256::from_slice(&path_bytes);
+                match AccountState::decode(&leaf.value) {
+                    Ok(account_state) => {
+                        accounts.push((hashed_address, account_state.storage_root));
+                    }
+                    Err(e) => {
+                        tracing::debug!(
+                            ?hashed_address,
+                            error = %e,
+                            "Skipping leaf with un-decodable account state"
+                        );
+                    }
+                }
+            } else {
+                tracing::debug!(
+                    path_len = path_bytes.len(),
+                    "Skipping leaf with unexpected path length (expected 32)"
+                );
+            }
         }
     }
 }
@@ -826,4 +1027,153 @@ fn set_hash_or_validate(header: &BlockHeader, hash: H256) -> Result<(), GuestPro
         )));
     }
     Ok(())
+}
+
+/// Build the `ChainConfig` for a stateless input, from its `chain_id` alone.
+///
+/// execution-specs #3278 removed `ChainConfig` from the wire: activation info and
+/// blob schedules are guest-internal knowledge, keyed by `(chain_id, fork)`, with
+/// the fork fixed by the schema-id prefix — always Amsterdam (`0x1501`) at that
+/// pin, since `deserialize_stateless_input` rejects every other id.
+///
+/// Every fork up to and including Amsterdam is activated at 0 and no
+/// payload-timestamp-versus-activation check is performed. That mirrors EEST,
+/// which ships one implementation per fork and therefore skips the check — and
+/// matching it is what keeps ethrex byte-identical to the conformance vectors
+/// generated from the reference.
+///
+/// TODO(upstream): `verify_stateless_new_payload` in `stateless.py` comments that
+/// "a real implementation MUST do these checks", but #3278 leaves no activation
+/// data on the wire to check against. Revisit if upstream reintroduces one, or
+/// specifies where a real client should source it. See
+/// https://github.com/ethereum/execution-specs/pull/3278
+pub fn amsterdam_chain_config(chain_id: u64) -> ChainConfig {
+    ChainConfig {
+        chain_id,
+        homestead_block: Some(0),
+        eip150_block: Some(0),
+        eip155_block: Some(0),
+        eip158_block: Some(0),
+        byzantium_block: Some(0),
+        constantinople_block: Some(0),
+        petersburg_block: Some(0),
+        istanbul_block: Some(0),
+        berlin_block: Some(0),
+        london_block: Some(0),
+        terminal_total_difficulty: Some(0),
+        terminal_total_difficulty_passed: true,
+        shanghai_time: Some(0),
+        cancun_time: Some(0),
+        prague_time: Some(0),
+        osaka_time: Some(0),
+        // The BPO forks must be activated too, not just the named ones. EIP-7892
+        // gives named forks no blob params of their own: `get_fork_blob_schedule`
+        // walks the BPO chain and Amsterdam inherits the highest activated entry.
+        // Leaving these `None` made that walk fall through to Osaka's schedule
+        // (target 6 / max 9 / fraction 5007716) instead of BPO2's (14 / 21 /
+        // 11684671), so the guest recomputed a different `excess_blob_gas` than
+        // the header carried and rejected valid blob-bearing blocks with
+        // `ExcessBlobGasIncorrect`.
+        //
+        // Only BPO1 and BPO2, matching the `AMSTERDAM_CONFIG` these fixtures are
+        // filled against. BPO3-5 have no default `blob_schedule` entry, and a BPO
+        // time set without one is rejected as invalid genesis config
+        // (`genesis.rs`), so activating them would be both wrong and unresolvable.
+        // `hegota`/`lstar` stay unset: they are later than Amsterdam.
+        bpo1_time: Some(0),
+        bpo2_time: Some(0),
+        amsterdam_time: Some(0),
+        // NOT `Default` (which is `Address::zero()`). `Requests::from_deposit_receipts`
+        // selects deposit logs by `log.address == deposit_contract_address`, so a zero
+        // address matches nothing: every deposit in the block is dropped, the recomputed
+        // `requests_hash` disagrees with the header's, and a valid block is committed as
+        // `successful_validation = false`. The conformance set is
+        // `eip8025_optional_proofs`, which carries no deposit case, so no fixture covers
+        // this — see `amsterdam_chain_config_sets_deposit_contract` below.
+        //
+        // #3278 leaves only `chain_id` on the wire, so this cannot be chain-specific.
+        // Mainnet's address is used, which is also what EEST fills against
+        // (`tooling/ef_tests/blockchain/fork.rs`).
+        deposit_contract_address: crate::constants::MAINNET_DEPOSIT_CONTRACT_ADDRESS,
+        ..Default::default()
+    }
+}
+
+#[cfg(test)]
+mod amsterdam_chain_config_tests {
+    use super::*;
+
+    #[test]
+    fn activates_every_fork_through_amsterdam_at_zero() {
+        let cfg = amsterdam_chain_config(1);
+        assert_eq!(cfg.chain_id, 1);
+        for (name, v) in [
+            ("shanghai", cfg.shanghai_time),
+            ("cancun", cfg.cancun_time),
+            ("prague", cfg.prague_time),
+            ("osaka", cfg.osaka_time),
+            ("amsterdam", cfg.amsterdam_time),
+        ] {
+            assert_eq!(v, Some(0), "{name} must be active from 0");
+        }
+        assert!(cfg.terminal_total_difficulty_passed);
+    }
+
+    /// Forks past Amsterdam must stay unscheduled: the schema id pins Amsterdam,
+    /// so activating a later fork would apply rules the input never asked for.
+    #[test]
+    fn leaves_post_amsterdam_forks_unscheduled() {
+        let cfg = amsterdam_chain_config(1);
+        assert_eq!(cfg.hegota_time, None);
+        assert_eq!(cfg.lstar_time, None);
+    }
+
+    /// Amsterdam must resolve to BPO2's blob schedule, not Osaka's.
+    ///
+    /// EIP-7892 gives named forks no blob params of their own, so
+    /// `get_fork_blob_schedule` walks the BPO chain and Amsterdam inherits the
+    /// highest activated entry. When `bpo1_time`/`bpo2_time` were left `None`
+    /// here that walk fell through to Osaka, and the guest recomputed
+    /// `excess_blob_gas` against target 6 instead of 14 — rejecting valid
+    /// blob-bearing blocks with `ExcessBlobGasIncorrect` while the stateful path,
+    /// which gets a config with the BPO times set, accepted them. It cost 18
+    /// fixture files in the stateless EF run.
+    #[test]
+    fn resolves_the_bpo2_blob_schedule_at_amsterdam() {
+        let cfg = amsterdam_chain_config(1);
+        let schedule = cfg
+            .get_fork_blob_schedule(0)
+            .expect("Amsterdam must resolve a blob schedule");
+        let bpo2 = crate::types::BlobSchedule::default().bpo2;
+        assert_eq!(
+            schedule, bpo2,
+            "Amsterdam must inherit BPO2's blob schedule; falling through to \
+             Osaka's changes target/max and the base-fee update fraction"
+        );
+    }
+
+    #[test]
+    fn carries_the_chain_id_through() {
+        assert_eq!(amsterdam_chain_config(u64::MAX).chain_id, u64::MAX);
+    }
+
+    /// A zero `deposit_contract_address` silently drops every deposit in a block:
+    /// `Requests::from_deposit_receipts` filters logs by that address, so the
+    /// recomputed `requests_hash` disagrees with the header's and the guest commits
+    /// `successful_validation = false` for a valid block. The
+    /// `eip8025_optional_proofs` conformance set has no deposit case, so this test
+    /// is the only thing standing between that and a silent regression.
+    #[test]
+    fn amsterdam_chain_config_sets_deposit_contract() {
+        let config = amsterdam_chain_config(1);
+        assert_ne!(
+            config.deposit_contract_address,
+            crate::Address::zero(),
+            "a zero deposit contract address makes every deposit-bearing block invalid"
+        );
+        assert_eq!(
+            config.deposit_contract_address,
+            crate::constants::MAINNET_DEPOSIT_CONTRACT_ADDRESS
+        );
+    }
 }

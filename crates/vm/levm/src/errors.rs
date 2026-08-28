@@ -103,6 +103,16 @@ pub enum TxValidationError {
     IntrinsicGasTooLow,
     #[error("Transaction gas limit lower than the gas cost floor for calldata tokens")]
     IntrinsicGasBelowFloorGasCost,
+    /// L2-only. Raised by the L2 hook's `reserve_l1_gas` when the gas limit cannot
+    /// cover the L1 data-availability gas reserved on top of the intrinsic cost or
+    /// the calldata floor. Distinct from [`TxValidationError::IntrinsicGasTooLow`]
+    /// on purpose: the reserved amount is derived from the L1 fee config and the
+    /// block's gas price, so this failure is TRANSIENT — the same transaction can
+    /// succeed in a later block once L1 fees drop. Consumers that classify errors
+    /// as permanent-vs-transient (the payload builders' `is_deterministic_invalid`)
+    /// rely on the two not being conflated.
+    #[error("Transaction gas limit cannot cover the reserved L1 data availability gas")]
+    L1GasReservationTooLow,
     #[error(
         "Gas allowance exceeded. Block gas limit: {block_gas_limit}, transaction gas limit: {tx_gas_limit}"
     )]
@@ -215,6 +225,14 @@ pub enum PrecompileError {
     ModExpModulusTooLarge,
     #[error("Coordinate Exceeds Field Modulus")]
     CoordinateExceedsFieldModulus,
+    /// EXECUTE precompile: the L1-submitted block failed stateless validation.
+    /// Attacker-controllable: tx continues, forwarded gas is consumed, tx is includable.
+    #[error("EXECUTE: stateless validation failed")]
+    ExecuteValidationFailed,
+    /// EXECUTE precompile: the calldata is malformed or violates L2 constraints.
+    /// Attacker-controllable input: treat as CALL-level failure, not an internal invariant.
+    #[error("EXECUTE: invalid input for native-rollup execution")]
+    ExecuteInvalidInput,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
