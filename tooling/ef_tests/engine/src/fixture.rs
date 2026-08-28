@@ -76,6 +76,15 @@ pub struct FixturePayload {
     /// and compares the returned witness against it.
     #[serde(default, rename = "executionWitness")]
     pub execution_witness: Option<Value>,
+    /// EIP-7805 (FOCIL): expected `PayloadStatusV2.inclusionListSatisfied`
+    /// value, present on every payload from Bogota on
+    /// (tests-focil-devnet@v0.2.0+; the fifth positional `params` entry
+    /// carries the inclusion list itself). Orthogonal to `validationError`:
+    /// a payload can be `VALID` while not satisfying its inclusion list.
+    /// The earlier `status: "INCLUSION_LIST_UNSATISFIED"` sixth-status shape
+    /// was removed by that release.
+    #[serde(default, rename = "inclusionListSatisfied")]
+    pub inclusion_list_satisfied: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -86,9 +95,27 @@ pub enum ValidationError {
 }
 
 impl FixturePayload {
-    /// Returns `true` when neither `validationError` nor `errorCode` is set.
+    /// The expected engine payload `status` string, derived from the
+    /// VALID/INVALID model: `INVALID` when a `validationError` is set, else
+    /// `VALID`. `errorCode` (a JSON-RPC error) is handled separately by the
+    /// response checker. Since tests-focil-devnet@v0.2.0 this is exactly the
+    /// `PayloadStatusV1` set again — an unsatisfied inclusion list is reported
+    /// through `inclusionListSatisfied`, never through `status`.
+    pub fn expected_status(&self) -> &str {
+        if self.validation_error.is_some() {
+            "INVALID"
+        } else {
+            "VALID"
+        }
+    }
+
+    /// Returns `true` when the payload is expected to be accepted as the new
+    /// canonical head (status `VALID`, no JSON-RPC error). A `VALID` payload
+    /// that does not satisfy its inclusion list still advances the head — the
+    /// consensus layer merely will not attest to it — so the follow-up FCU
+    /// applies to it too, mirroring EEST's `test_via_engine.py`.
     pub fn valid(&self) -> bool {
-        self.validation_error.is_none() && self.error_code.is_none()
+        self.error_code.is_none() && self.expected_status() == "VALID"
     }
 
     /// Extract `blockHash` from `params[0]` (the ExecutionPayload object).
@@ -270,6 +297,12 @@ fn single_fork(s: &str) -> anyhow::Result<ethrex_common::types::Fork> {
         "BPO4" => Fork::BPO4,
         "BPO5" => Fork::BPO5,
         "Amsterdam" => Fork::Amsterdam,
+        // EIP-7805 (FOCIL) ships as the "Bogota" fork in execution-apis /
+        // execution-specs (every tests-focil-devnet@v0.2.0 fixture fills on
+        // it); ethrex names it "Hegota" internally, tracking the upstream
+        // rename Bogotá → Hegotá → Hezé (genesis already aliases bogotaTime →
+        // hegota_time).
+        "Bogota" | "Hegota" => Fork::Hegota,
         other => anyhow::bail!("Unknown network: {other}"),
     };
     Ok(f)
@@ -323,6 +356,9 @@ fn build_chain_config_json(
         (Fork::BPO4, "bpo4Time"),
         (Fork::BPO5, "bpo5Time"),
         (Fork::Amsterdam, "amsterdamTime"),
+        // EEST's "Bogota" (EIP-7805 FOCIL) — Hegotá in ethrex. Hegotá adds no
+        // genesis-header fields, so activating it never changes a genesis hash.
+        (Fork::Hegota, "hegotaTime"),
     ];
 
     for &(fork, field) in TIME_FORKS {

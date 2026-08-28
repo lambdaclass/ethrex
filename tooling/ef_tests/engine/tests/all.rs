@@ -2,12 +2,14 @@
 // hundreds). We iterate fixtures serially within the test fn; datatest-stable
 // parallelises across files using libtest. Tune concurrency with RUST_TEST_THREADS.
 
+use std::fmt::Write as _;
 use std::path::Path;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use ef_tests_engine::{
-    EngineFixtureFile, FixtureFailure, RunOptions, render_failures, render_summary, run_fixture,
+    EngineFixtureFile, RunOptions, is_documented_upstream_breakage, render_failures,
+    render_summary, run_fixture, upstream_broken,
 };
 use regex::Regex;
 
@@ -18,6 +20,7 @@ static F_PASSED: AtomicUsize = AtomicUsize::new(0);
 static F_FAILED: AtomicUsize = AtomicUsize::new(0);
 static F_SKIPPED: AtomicUsize = AtomicUsize::new(0);
 static F_FILTERED: AtomicUsize = AtomicUsize::new(0);
+static F_XFAIL_UPSTREAM: AtomicUsize = AtomicUsize::new(0);
 
 #[ctor::dtor]
 fn print_fixture_summary() {
@@ -25,7 +28,8 @@ fn print_fixture_summary() {
     let f = F_FAILED.load(Ordering::Relaxed);
     let s = F_SKIPPED.load(Ordering::Relaxed);
     let fi = F_FILTERED.load(Ordering::Relaxed);
-    let total = p + f + s + fi;
+    let x = F_XFAIL_UPSTREAM.load(Ordering::Relaxed);
+    let total = p + f + s + fi + x;
     if total == 0 {
         return;
     }
@@ -54,7 +58,8 @@ fn print_fixture_summary() {
     };
     eprintln!(
         "\nfixture result: {verdict}. {p} {g}passed{z}; {f} {r}failed{z}; \
-         {s} {y}skipped{z}; {fi} {c}filtered{z}; {total} total",
+         {s} {y}skipped{z}; {fi} {c}filtered{z}; {x} {y}expected-fail (upstream-broken){z}; \
+         {total} total",
     );
 }
 
@@ -107,7 +112,8 @@ fn engine_runner(path: &Path) -> datatest_stable::Result<()> {
     let mut passed = 0usize;
     let mut skipped = 0usize;
     let mut filtered = 0usize;
-    let mut failures: Vec<(String, FixtureFailure)> = Vec::new();
+    let mut xfail_upstream = 0usize;
+    let mut failures: Vec<(String, String)> = Vec::new();
 
     for (name, fixture) in &fixtures {
         if let Some(re) = limit
@@ -118,16 +124,30 @@ fn engine_runner(path: &Path) -> datatest_stable::Result<()> {
         }
         total += 1;
         let result = runtime().block_on(run_fixture(name, fixture, &opts));
+        let listed_broken = upstream_broken().contains(name.as_str());
         match result {
+            Ok(()) if listed_broken => failures.push((
+                name.clone(),
+                "listed in upstream_broken_fixtures.txt but passed; stale entry, remove it"
+                    .to_string(),
+            )),
             Ok(()) => passed += 1,
+            Err(e) if listed_broken && is_documented_upstream_breakage(&e) => xfail_upstream += 1,
+            Err(e) if listed_broken => failures.push((
+                name.clone(),
+                format!(
+                    "listed in upstream_broken_fixtures.txt but failed outside the documented signature: {e}"
+                ),
+            )),
             Err(e) if e.is_skip() => skipped += 1,
-            Err(e) => failures.push((name.clone(), e)),
+            Err(e) => failures.push((name.clone(), e.to_string())),
         }
     }
 
     F_PASSED.fetch_add(passed, Ordering::Relaxed);
     F_SKIPPED.fetch_add(skipped, Ordering::Relaxed);
     F_FILTERED.fetch_add(filtered, Ordering::Relaxed);
+    F_XFAIL_UPSTREAM.fetch_add(xfail_upstream, Ordering::Relaxed);
     F_FAILED.fetch_add(failures.len(), Ordering::Relaxed);
 
     if failures.is_empty() {
@@ -137,6 +157,9 @@ fn engine_runner(path: &Path) -> datatest_stable::Result<()> {
     let mut report = render_failures(&failures);
     report.push('\n');
     report.push_str(&render_summary(total, passed, skipped, failures.len()));
+    if xfail_upstream > 0 {
+        let _ = write!(report, " ({xfail_upstream} expected-fail upstream-broken)");
+    }
     Err(report.into())
 }
 

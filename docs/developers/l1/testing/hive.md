@@ -307,15 +307,11 @@ Local ef_tests runners (blockchain, state, engine) share one set of fixture URL 
 - `tooling/ef_tests/.fixtures_url_amsterdam` — Amsterdam (glamsterdam-devnet) fixtures with BAL support
 - `tooling/ef_tests/.fixtures_url_zkevm` — zkEVM (EIP-8025 stateless) fixtures
 
-Contents:
+One pin is scoped to a single runner, because only that runner consumes the bundle:
 
-```
-# .fixtures_url
-https://github.com/ethereum/execution-specs/releases/download/tests%40v20.0.1/fixtures.tar.gz
+- `tooling/ef_tests/engine/.fixtures_url_focil` — EIP-7805 (FOCIL) fixtures, filled on the "Bogota" network. They exist only in the engine fixture formats, so the engine runner is the only consumer, and the bundle must be filled on the same Amsterdam that `.fixtures_url_amsterdam` pins.
 
-# .fixtures_url_amsterdam
-https://github.com/ethereum/execution-specs/releases/download/tests-glamsterdam-devnet%40v8.0.0/fixtures_glamsterdam-devnet.tar.gz
-```
+Each file holds exactly one release URL; read the current values from the files rather than from this page.
 
 The CI hive config lives in `.github/config/hive/{mainnet,amsterdam}.yaml`, each pinning a `fixtures` URL and an `eels_commit` (the execution-specs commit used to build the hive consumer).
 

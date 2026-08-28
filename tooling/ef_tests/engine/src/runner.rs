@@ -67,6 +67,11 @@ pub enum FixtureFailure {
         got: String,
         validation_error: Option<String>,
     },
+    IlSatisfiedMismatch {
+        index: usize,
+        expected: bool,
+        got: Option<bool>,
+    },
     WrongErrorCode {
         index: usize,
         want: i32,
@@ -141,6 +146,14 @@ impl fmt::Display for FixtureFailure {
                 ),
                 None => write!(f, "wrong_status[{index}]  expected={expected}  got={got}"),
             },
+            FixtureFailure::IlSatisfiedMismatch {
+                index,
+                expected,
+                got,
+            } => write!(
+                f,
+                "il_satisfied_mismatch[{index}]  expected={expected}  got={got:?}"
+            ),
             FixtureFailure::WrongErrorCode {
                 index,
                 want,
@@ -237,10 +250,15 @@ pub async fn run_fixture(
 
     // 5. Per-payload loop (mirrors test_via_engine.py:124–240)
     for (i, payload) in fix.engine_new_payloads.iter().enumerate() {
+        // `params` is the full positional argument list for
+        // `engine_newPayloadV{newPayloadVersion}`; V6 fixtures carry the
+        // EIP-7805 inclusion list as the fifth entry.
+        //
         // zkevm fixtures carry an expected witness per payload: route those
         // through `engine_newPayloadWithWitnessV5` (same params, same status
         // semantics) so the engine-side witness generation is exercised and
-        // its output verified against the fixture.
+        // its output verified against the fixture. FOCIL fixtures (V6) never
+        // carry a witness, so the two paths don't overlap.
         let with_witness = payload.new_payload_version == 5 && payload.execution_witness.is_some();
         let resp = if with_witness {
             Box::pin(harness.new_payload_with_witness(&payload.params)).await
@@ -457,7 +475,8 @@ fn check_payload_response(
         })?
         .to_string();
 
-    let expected = if payload.valid() { "VALID" } else { "INVALID" };
+    // Expected status: VALID / INVALID, derived from `validationError`.
+    let expected = payload.expected_status();
     if status != expected {
         let validation_error = result
             .get("validationError")
@@ -469,6 +488,30 @@ fn check_payload_response(
             got: status,
             validation_error,
         });
+    }
+
+    // EIP-7805: the fixture's `inclusionListSatisfied` must be matched exactly
+    // by the `PayloadStatusV2` field of the same name (tests-focil-devnet@v0.2.0
+    // release notes). Checked only when the payload is deemed `VALID`:
+    // execution-apis `bogota.md` mandates `inclusionListSatisfied` MUST be
+    // `null` for any other status, yet the fill records the transition tool's
+    // internal verdict (trivially `true`: every such fixture carries an empty
+    // list) on `INVALID` payloads too. Matching those would force a client to
+    // violate the API spec the release notes themselves cite as the field's
+    // definition, so on `INVALID` payloads the artifact is ignored.
+    if status == "VALID"
+        && let Some(expected_sat) = payload.inclusion_list_satisfied
+    {
+        let got = result
+            .get("inclusionListSatisfied")
+            .and_then(|v| v.as_bool());
+        if got != Some(expected_sat) {
+            return Err(FixtureFailure::IlSatisfiedMismatch {
+                index,
+                expected: expected_sat,
+                got,
+            });
+        }
     }
 
     // Expected error code but got success response
