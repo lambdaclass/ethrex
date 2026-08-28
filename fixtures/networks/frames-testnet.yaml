@@ -72,16 +72,13 @@ participants:
     cl_image: ethpandaops/lighthouse:focil
     el_extra_params:
       - --mempool.max-verify-gas=500000
-      - --http.api=ethrex
-    validator_count: 32
-    supernode: true
+    validator_count: 128
   - el_type: ethrex
     el_image: ethrex:frames-testnet
     cl_type: lighthouse
     cl_image: ethpandaops/lighthouse:focil
     el_extra_params:
       - --mempool.max-verify-gas=500000
-      - --http.api=ethrex
     validator_count: 32
   - el_type: ethrex
     el_image: ethrex:frames-testnet
@@ -89,7 +86,6 @@ participants:
     cl_image: ethpandaops/lighthouse:focil
     el_extra_params:
       - --mempool.max-verify-gas=500000
-      - --http.api=ethrex
     validator_count: 32
 
 # The consensus client must speak the FOCIL engine surface from the fork
@@ -132,7 +128,18 @@ network_params:
   # the genesis state Fulu.
   fulu_fork_epoch: 0
   gloas_fork_epoch: 1
-  heze_fork_epoch: 2
+  # Frames activation is DEFERRED until frames-devnet-0 serves the engine surface
+  # a Heze consensus client drives. Proven on this deployment: the chain produced
+  # blocks to slot 63 and then halted at epoch 2 with
+  #   RequiredMethodUnsupported("engine_forkchoiceUpdatedV5")
+  # because a CL running Heze switches to forkchoiceUpdatedV5/newPayloadV6, which
+  # this branch does not serve (it tops out at V4/V5). Those methods arrive with
+  # EIP-7805 FOCIL on hegota-testnet, and FOCIL is deliberately not on this chain.
+  #
+  # So the chain runs on Gloas/Amsterdam rules, which ethrex does serve, and stays
+  # live and joinable. GO-LIVE STEP: once the branch serves V6/V5, lower this to 2
+  # and re-launch; nothing else in this file changes.
+  heze_fork_epoch: 100000
 
   # Validator keys. The package default mnemonic is public and identical on every
   # kurtosis deployment, so its derived accounts are prefunded and spendable by

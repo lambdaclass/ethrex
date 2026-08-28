@@ -155,6 +155,37 @@ which is how it reaches the EL's `--nat.extip`, the CL's advertised address, and
 enode and ENR you publish. Do not add `--nat.extip` to `el_extra_params` — the launcher
 already emits it, and a second copy is a value nothing checks against the first.
 
+## 4a. Two things this deployment proved
+
+Both were found by launching, not by reading, and both are already in the committed
+config. They are recorded here because each one fails in a way that points somewhere
+else.
+
+**Hand kurtosis the package without its metadata directories.** `kurtosis run` against
+a plain `git clone` reports `No 'kurtosis.yml' file was found in the package root` while
+the file is plainly there. Copy the tree first:
+
+```
+mkdir -p /tmp/ep-clean
+(cd ethereum-package && tar cf - --exclude=.git --exclude=.claude --exclude=.agents .) \
+  | (cd /tmp/ep-clean && tar xf -)
+kurtosis run --enclave frames-testnet /tmp/ep-clean --args-file ~/frames-testnet.yaml
+```
+
+**A client that exits at startup surfaces as a gRPC error, not as its own message.**
+When a service crashes, kurtosis fails to marshal the crash report and prints
+`rpc error: code = Internal desc = grpc: error while marshaling: string field contains
+invalid UTF-8`. That string says nothing about the cause. Read the exited container
+instead:
+
+```
+docker ps -a --format '{{.Names}}\t{{.Status}}' | grep el-1-ethrex   # find the Exited one
+docker logs <that container>
+```
+
+On this deployment it was `unknown RPC namespace "ethrex"` — the `--http.api=ethrex`
+flag carried over from the Hegotá config, whose namespace this branch does not serve.
+
 ## 5. Launch
 
 Install the firewall **before** this, not after. See section 10: the moment the enclave

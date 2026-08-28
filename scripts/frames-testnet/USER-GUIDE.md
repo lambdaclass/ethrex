@@ -290,6 +290,28 @@ EIP-8312 (UTXO frames) never activates because `utxoFramesTime` is unset, and EI
 (transaction assertions) is not in the build at all. Frame mode 3, which EIP-7906 would
 have used, is unassigned here.
 
+### Frames are not active yet
+
+The chain runs, peers, produces blocks and accepts ordinary transactions today, but
+**EIP-8141 frame transactions are not active on it yet**. `heze_fork_epoch` is parked
+far in the future.
+
+The reason is an execution-layer gap, and it is measured rather than assumed: with the
+fork at epoch 2 this deployment produced blocks to slot 63 and then stopped, with the
+consensus client reporting
+
+```
+RequiredMethodUnsupported("engine_forkchoiceUpdatedV5")
+```
+
+A consensus client that has entered Heze drives `engine_forkchoiceUpdatedV5` and
+`engine_newPayloadV6`; this ethrex branch serves up to `forkchoiceUpdatedV4` and
+`newPayloadV5`. Those two methods arrive with EIP-7805 FOCIL, which is deliberately not
+part of this chain, so they have to be served on their own before frames can activate.
+
+Until then the network exists so operators can join, be granted validator slots, and be
+in place when the fork is scheduled. Watch this page for the activation epoch.
+
 ### Not on this chain
 
 EIP-8250 keyed nonces, EIP-8272 recent roots, EIP-7906 assertions and EIP-7805/8369
