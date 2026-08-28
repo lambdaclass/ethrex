@@ -434,6 +434,34 @@ not optional on such a host: the nodes advertise `nat_exit_ip`, and if nothing c
 them there they cannot be dialled *by each other either*, so the deployment silently
 splits into one chain per node. Section 6 is where you catch that.
 
+### Peering the beacon nodes on a NAT'd host
+
+Forwarding the ports is necessary but may not be sufficient, because sibling nodes on the
+same host still reach each other *via the advertised address*, which means the router has
+to hairpin. Many do not. Peer them over the docker network instead:
+
+```
+sudo install -m 0755 scripts/frames-testnet/frames-cl-peers.sh /usr/local/bin/
+sudo systemctl enable --now frames-cl-peers.timer
+```
+
+The script resolves each beacon container's address and peer id and posts the others to
+its `/prysm/node/trusted_peers` endpoint. That list is in-memory, so a container restart
+drops it and the node re-partitions; running it on a one-minute timer is what makes a
+restart self-healing. It is idempotent, so re-running costs nothing.
+
+**Recovering a node that has already split** takes more than peering it, because a beacon
+node that believes it is at the head of its own chain never re-enters sync. Restart it,
+and re-post its peers during the startup window while it waits for them:
+
+```
+docker restart <cl-N container>
+for i in $(seq 1 20); do sleep 6; sudo /usr/local/bin/frames-cl-peers.sh; done
+```
+
+It then discards its fork and syncs the real chain. Watch its finalized epoch climb from
+zero; that is the signal it is following the majority chain rather than its own.
+
 Discovery needs **both** TCP and UDP. A rule that opens only TCP produces a node that
 accepts inbound connections from peers who already know it and is discovered by nobody,
 which reads as slow peering rather than as a firewall mistake.
