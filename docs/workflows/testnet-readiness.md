@@ -70,6 +70,10 @@ looked fine from the deploying host.
       downstream. Confirm the EL reaches head, not just the CL: compare
       `eth_blockNumber` against the remote node, and require the CL to report
       `sync_distance: 0` **and** `is_optimistic: false`. See gotcha 5.
+- [ ] **The joiner *holds* head for at least an hour**, sampled every minute.
+      Reaching head once is not the same as staying there, and a node that
+      drifts is worse than one that never synced, because it looks healthy at
+      the moment you check it.
 
 ## D. Public endpoints
 
@@ -184,6 +188,15 @@ to say `--checkpoint-sync-url` and point at a beacon endpoint, or newcomers
 will follow the obvious route and conclude the chain is broken. Check the EL
 independently of the CL: a CL can be at head while the EL is still at genesis,
 and only `eth_blockNumber` tells you which.
+
+Reaching head is also not the same as holding it. The same joiner repeatedly
+caught up to `sync_distance: 0`, ran correctly for a few minutes, then fell
+back into envelope backfill and drifted tens of slots behind. Its validator
+went silent each time, and resumed immediately when pointed at a beacon node
+that had been in the chain since genesis — which is how we know the validator
+and its keys were never the problem. Sample sync distance over time, and if a
+deposited validator is part of the test, watch that it keeps signing rather
+than that it signed once.
 
 **6. Verify from off-site, not from the deployment host.**
 Gotchas 1, 2, 3 and 5 are all invisible from the machine that deployed the
