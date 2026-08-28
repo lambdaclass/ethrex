@@ -219,10 +219,18 @@ impl Code {
 /// bytecode, so carrying them would put a derived value in the wire format of everything
 /// that embeds a `Code` (notably `AccountUpdate`, which the L2 rollup store persists with
 /// bincode) and couple that format to how they happen to be represented.
+/// Wire form of [`Code`]. Jump destinations are recomputed from `code` on
+/// deserialize, never read from here — but the `jump_targets` field is kept so
+/// the layout stays byte-identical to the pre-bitmap `Code` serialization.
+/// `Code` is embedded in `AccountUpdate`, which is persisted with bincode (a
+/// non-self-describing, positional codec) in the L2 rollup store; dropping the
+/// field would shift every following field and make existing rows undecodable.
+/// It is always serialized empty and ignored on read.
 #[derive(Serialize, Deserialize)]
 struct CodeSerde {
     hash: H256,
     code: Bytes,
+    jump_targets: Arc<[u32]>,
 }
 
 impl Serialize for Code {
@@ -230,6 +238,7 @@ impl Serialize for Code {
         CodeSerde {
             hash: self.hash,
             code: self.code_bytes(),
+            jump_targets: Arc::from([]),
         }
         .serialize(serializer)
     }
@@ -237,7 +246,13 @@ impl Serialize for Code {
 
 impl<'de> Deserialize<'de> for Code {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let CodeSerde { hash, code } = CodeSerde::deserialize(deserializer)?;
+        // `jump_targets` is read only to consume its bytes (layout compatibility);
+        // the bitmap is always recomputed from `code`.
+        let CodeSerde {
+            hash,
+            code,
+            jump_targets: _,
+        } = CodeSerde::deserialize(deserializer)?;
         Ok(Self::from_parts_unchecked(
             hash,
             &code,
@@ -545,6 +560,65 @@ mod test {
     use std::str::FromStr;
 
     use super::*;
+
+    // Pre-bitmap on-wire layout of `Code`: `{hash, code, jump_targets}`. `AccountUpdate`
+    // embeds `Code` and is persisted with bincode (positional) in the L2 rollup store,
+    // so a row written before the bitmap change carries a non-empty `jump_targets`.
+    #[derive(serde::Serialize)]
+    struct OldCodeSerde {
+        hash: H256,
+        code: Bytes,
+        jump_targets: Vec<u32>,
+    }
+
+    // `Code` is never persisted alone — it sits inside `AccountUpdate`, which has fields
+    // AFTER `code`. These wrappers mirror that: a field following the code. A standalone
+    // `Code` would tolerate trailing bytes, hiding the bug; only an embedded field
+    // exposes the positional shift.
+    #[derive(serde::Serialize)]
+    struct OldWrap {
+        code: OldCodeSerde,
+        tail: u64,
+    }
+    #[derive(serde::Deserialize)]
+    struct NewWrap {
+        code: Code,
+        tail: u64,
+    }
+
+    // A row serialized under the old three-field layout must still decode with the field
+    // following `code` intact: the current `Code` deserializer reads and discards
+    // `jump_targets`, keeping the layout aligned. Without the retained field, bincode
+    // reads `tail` from the `jump_targets` bytes and every following field is corrupt —
+    // exactly the `store_account_updates_by_block_number` break.
+    #[test]
+    fn embedded_code_decodes_an_old_layout_bincode_row() {
+        // PUSH1 0x00 JUMPDEST STOP — offset 2 is a real JUMPDEST, offset 1 a PUSH immediate.
+        let bytecode = Bytes::from(vec![0x60, 0x00, 0x5b, 0x00]);
+        let hash = H256::from_low_u64_be(0xabc);
+        const SENTINEL: u64 = 0x0123_4567_89ab_cdef;
+        let old = OldWrap {
+            code: OldCodeSerde {
+                hash,
+                code: bytecode.clone(),
+                jump_targets: vec![2], // non-empty, as an old row would hold
+            },
+            tail: SENTINEL,
+        };
+        let bytes = bincode::serialize(&old).expect("serialize old layout");
+
+        let decoded: NewWrap = bincode::deserialize(&bytes).expect("decode old row under new Code");
+        assert_eq!(decoded.code.hash, hash);
+        assert_eq!(decoded.code.code_bytes(), bytecode);
+        // The field after `code` must survive — this is what breaks if the layout shifts.
+        assert_eq!(
+            decoded.tail, SENTINEL,
+            "field after Code corrupted by layout shift"
+        );
+        // Jump destinations recomputed from code, not read from the row.
+        assert!(decoded.code.is_valid_jumpdest(2));
+        assert!(!decoded.code.is_valid_jumpdest(1));
+    }
 
     #[test]
     fn test_code_hash() {

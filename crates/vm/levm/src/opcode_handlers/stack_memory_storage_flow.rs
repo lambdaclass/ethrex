@@ -284,9 +284,9 @@ impl OpcodeHandler for OpSStoreHandler {
         };
 
         if fork >= Fork::Amsterdam {
-            // EIP-8038 (review CRITICAL #2) raises COLD_STORAGE_ACCESS to 3000,
-            // above the 2300 stipend, so the flat pre-Amsterdam gate above no
-            // longer suffices as the EIP-2200 sentry. Peek warmth WITHOUT
+            // EIP-8038 prices the cold storage access independently of the 2300
+            // stipend, so the flat pre-Amsterdam gate above no longer suffices
+            // as the EIP-2200 sentry. Peek warmth WITHOUT
             // marking the slot accessed, gate on
             // `max(access_cost, SSTORE_STIPEND + 1)` per EELS `check_gas`
             // (amsterdam/vm/instructions/storage.py::sstore), and only mark the
@@ -358,7 +358,7 @@ impl OpcodeHandler for OpSStoreHandler {
             // state gas is handled via the reservoir, not these regular deltas.
             let (remove_slot_cost, restore_empty_slot_cost, restore_slot_cost): (i64, i64, i64) =
                 if fork >= Fork::Amsterdam {
-                    // Amsterdam: clear refund 12480; both restore deltas are the full STORAGE_WRITE.
+                    // Amsterdam: both restore deltas are the full STORAGE_WRITE.
                     (STORAGE_CLEAR_REFUND_AMSTERDAM, 10000, 10000)
                 } else {
                     // EIP-2929

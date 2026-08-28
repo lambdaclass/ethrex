@@ -11,13 +11,13 @@ use crate::system_contracts::{
 use crate::{EvmError, ExecutionResult};
 use bytes::Bytes;
 use ethrex_common::H256;
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 use ethrex_common::constants::EMPTY_KECCAK_HASH;
 use ethrex_common::types::Code;
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 use ethrex_common::types::TxType;
 use ethrex_common::types::block_access_list::BlockAccessList;
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 use ethrex_common::types::block_access_list::{
     BalAddressIndex, find_exact_change_balance, find_exact_change_code, find_exact_change_nonce,
     find_exact_change_storage, has_exact_change_balance, has_exact_change_code,
@@ -25,7 +25,7 @@ use ethrex_common::types::block_access_list::{
 };
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{AuthorizationTuple, EIP7702Transaction};
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 use ethrex_common::utils::u256_from_big_endian_const;
 use ethrex_common::{
     Address, U256,
@@ -35,23 +35,23 @@ use ethrex_common::{
         Withdrawal, requests::Requests,
     },
 };
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 use ethrex_common::{BigEndianHash, validate_block_access_list_size, validate_header_bal_indices};
 use ethrex_crypto::Crypto;
 use ethrex_levm::EVMConfig;
 use ethrex_levm::StatelessValidator;
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 use ethrex_levm::account::{AccountStatus, LevmAccount};
 use ethrex_levm::call_frame::Stack;
 use ethrex_levm::constants::{
     POST_OSAKA_GAS_LIMIT_CAP, STACK_LIMIT, SYS_CALL_GAS_LIMIT, TX_MAX_GAS_LIMIT_AMSTERDAM,
 };
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 use ethrex_levm::db::gen_db::{
     LazyBalCursor, code_from_bal, post_value_at_or_before, seed_one_address_info_from_bal,
 };
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 use ethrex_levm::db::{Database, gen_db::CacheDB};
 use ethrex_levm::errors::{InternalError, TxValidationError};
 use ethrex_levm::memory::Memory;
@@ -66,13 +66,13 @@ use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},
     vm::VM,
 };
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
+use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
+#[cfg(feature = "rayon")]
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cmp::min;
 use std::sync::Arc;
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
@@ -203,7 +203,7 @@ pub fn check_2d_gas_allowance(
 ///
 /// Public so [`LEVM::validate_tx_execution`] is directly callable (and its
 /// error variants inspectable) from unit tests outside this crate.
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 #[derive(Debug, thiserror::Error)]
 pub enum BalValidationError {
     #[error("{0}")]
@@ -478,11 +478,11 @@ impl LEVM {
                     EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
                 })?;
 
-        #[cfg(any(feature = "eip-8025", not(feature = "rayon")))]
-        // `eip-8025` does not call `execute_block_pipeline` it uses
-        // `execute_block` instead. Adding dummy let to avoid unused warnings.
+        #[cfg(not(feature = "rayon"))]
+        // Without rayon there is no parallel BAL path, so these are unused.
+        // Adding dummy let to avoid unused warnings.
         let _ = (header_bal, bal_parallel_exec_enabled);
-        #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+        #[cfg(feature = "rayon")]
         // When BAL is provided (Amsterdam+ validation path): use parallel execution.
         // The `is_amsterdam` gate is required: `execute_block_parallel` (and the
         // optimistic merkleization it feeds) is only correct on Amsterdam+; a
@@ -896,7 +896,7 @@ impl LEVM {
     /// For each account in the BAL, extracts the **final** post-block state
     /// (highest `block_access_index` entry per field) and builds an AccountUpdate.
     /// State comes entirely from the BAL — no execution needed.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     fn bal_to_account_updates(
         bal: &BlockAccessList,
         store: &dyn Database,
@@ -1040,7 +1040,7 @@ impl LEVM {
     /// `max_idx` is the BAL block_access_index of the last tx whose effects
     /// should be visible. BAL indexing: 0 = system calls, 1 = tx 0, 2 = tx 1, ...
     /// For tx at index `i`, pass `max_idx = i` (diffs with index <= i = system + txs 0..i-1).
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     fn seed_db_from_bal(
         db: &mut GeneralizedDatabase,
         bal: &BlockAccessList,
@@ -1089,7 +1089,7 @@ impl LEVM {
     /// Each tx runs independently on its own database pre-seeded with BAL
     /// intermediate state (geth-style). State for the merkleizer comes from
     /// `bal_to_account_updates`, not from tx execution.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     #[allow(clippy::too_many_arguments, clippy::type_complexity)]
     fn execute_block_parallel(
         block: &Block,
@@ -1557,7 +1557,7 @@ impl LEVM {
 
     /// Gets the seeded balance for an account at `seed_idx` from BAL, falling
     /// back to system_seed/store if no BAL entry exists before that index.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     fn seeded_balance(
         seed_idx: u32,
         acct: &ethrex_common::types::block_access_list::AccountChanges,
@@ -1586,7 +1586,7 @@ impl LEVM {
 
     /// Gets the seeded code hash for an account at `seed_idx` from BAL, falling
     /// back to system_seed/store if no BAL entry exists before that index.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     fn seeded_code_hash(
         seed_idx: u32,
         acct: &ethrex_common::types::block_access_list::AccountChanges,
@@ -1620,7 +1620,7 @@ impl LEVM {
 
     /// Gets the seeded nonce for an account at `seed_idx` from BAL, falling
     /// back to system_seed/store if no BAL entry exists before that index.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     fn seeded_nonce(
         seed_idx: u32,
         acct: &ethrex_common::types::block_access_list::AccountChanges,
@@ -1654,7 +1654,7 @@ impl LEVM {
     /// `seeded_nonce` + `seeded_code_hash`, but reads the store at most once — the
     /// PART A no-op checks need all three for the same account, and an account
     /// with no BAL history before this tx would otherwise read it three times.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     fn seeded_account_triple(
         seed_idx: u32,
         acct: &ethrex_common::types::block_access_list::AccountChanges,
@@ -1713,7 +1713,7 @@ impl LEVM {
     /// the recorder's `tx_initial` fast-path (a slot the EVM genuinely wrote this
     /// tx), else the pre-tx state (system_seed, then store). Used by the
     /// execution->BAL check for a slot absent from `storage_changes`.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     fn seeded_storage_pre_value(
         addr: Address,
         key: H256,
@@ -1730,7 +1730,7 @@ impl LEVM {
 
     /// Pre-tx value for a slot from the in-memory snapshot, falling back to the
     /// store. Shared tail of the two `seeded_storage*` helpers.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     fn storage_from_seed_or_store(
         addr: Address,
         key: H256,
@@ -1759,7 +1759,7 @@ impl LEVM {
     /// Fast path: for a slot the EVM genuinely wrote this tx, `tx_initial` already
     /// holds the start-of-tx value it captured during execution — identical to what
     /// this function would otherwise recompute — so return it and skip the lookup.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     fn seeded_storage(
         seed_idx: u32,
         sc: &ethrex_common::types::block_access_list::SlotChange,
@@ -1809,7 +1809,7 @@ impl LEVM {
     /// Exposed as `pub` (rather than crate-private) solely so the direct
     /// `validate_tx_execution` unit tests in the `ethrex-test` crate
     /// (`test/tests/blockchain/bal_validate_tx_execution_tests.rs`) can call it.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     #[allow(clippy::too_many_arguments)]
     pub fn validate_tx_execution(
         bal_idx: u32,
@@ -2266,7 +2266,7 @@ impl LEVM {
     ///         malicious builder could omit a withdrawal recipient from the BAL,
     ///         causing the BAL-derived state root to exclude the withdrawal balance
     ///         change.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     fn validate_bal_withdrawal_index(
         db: &GeneralizedDatabase,
         bal: &BlockAccessList,
@@ -2572,7 +2572,7 @@ impl LEVM {
     /// state, or whose value equals the pre-block value (a no-op), is rejected.
     /// Omissions and genuine divergences change the state root and are already
     /// caught by `validate_state_root`; the no-op case is the one this closes.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     fn validate_bal_pre_exec_index(
         db: &GeneralizedDatabase,
         bal: &BlockAccessList,
@@ -2727,7 +2727,7 @@ impl LEVM {
     /// The `store` parameter should be a `CachingDatabase`-wrapped store so that
     /// parallel workers can benefit from shared caching. The same cache should
     /// be used by the sequential execution phase.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     pub fn warm_block(
         block: &Block,
         store: Arc<dyn Database>,
@@ -2781,7 +2781,7 @@ impl LEVM {
     /// transaction, so cancellation latency is bounded by one transaction's
     /// execution. Execution results are discarded — only cache population
     /// matters.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     pub fn warm_txs(
         txs_with_sender: &[(&Transaction, Address)],
         header: &BlockHeader,
@@ -2848,7 +2848,7 @@ impl LEVM {
 
     /// Flattened (address, slot) storage worklist for a BAL, in natural account
     /// order (slots grouped per account for storage-trie locality).
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     pub fn bal_storage_slots(bal: &BlockAccessList) -> Vec<(Address, H256)> {
         bal.accounts()
             .iter()
@@ -2867,7 +2867,7 @@ impl LEVM {
     /// call site in `blockchain.rs`); warming them concurrently here let the
     /// executor race the warmer to the trie for SSTORE original values and cost
     /// ~22% of CPU. Keep storage warming synchronous and up front.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     pub fn warm_block_from_bal(
         bal: &BlockAccessList,
         store: Arc<dyn Database>,
@@ -2878,79 +2878,36 @@ impl LEVM {
             return Ok(());
         }
 
-        // Accounts and their code are warmed in chunks rather than as two whole-block
-        // phases. Code hashes come from account states, so a phase that reads every
-        // address before the first code read leaves the executor faulting in code itself
-        // for the whole of that phase, however early the warmer finishes in aggregate.
-        // Chunking starts the code reads after the first slice of addresses instead.
-        //
-        // Storage slots are prefetched synchronously before the executor starts (see
-        // `bal_storage_slots` at the call site), so this warmer covers only account
-        // states and contract code, which overlap execution.
-        //
-        let parallelism = std::thread::available_parallelism().map_or(8, |p| p.get());
-        let warm_chunk_accounts = warm_chunk_accounts(parallelism);
+        // Phase 1: Prefetch all account states — parallel inner fetch + single write-lock.
+        // This warms the CachingDatabase account cache and the TrieLayerCache with
+        // state trie nodes. Storage slots are prefetched synchronously before the
+        // executor starts (see `bal_storage_slots` at the call site), so this warmer
+        // only needs to cover account states and contract code, which overlap exec.
+        let account_addresses: Vec<Address> = accounts.iter().map(|ac| ac.address).collect();
+        store
+            .prefetch_accounts(&account_addresses)
+            .map_err(|e| EvmError::Custom(format!("prefetch_accounts: {e}")))?;
 
-        // A BAL carries every accessed address, and it does not say which of them were
-        // accessed for their bytecode: an opcode reading only account state (BALANCE,
-        // EXTCODEHASH) leaves the whole of a block's bytecode unread. So an unbounded warm
-        // can spend the block's entire read bandwidth on bytes nothing consumes, competing
-        // with the account reads the executor is waiting on, and hold all of it in the
-        // per-block cache besides.
-        //
-        // The bound is the bytecode cache's capacity, which is the one dial already sized
-        // against host memory. Normal blocks sit orders of magnitude under it and warm
-        // exactly as they did before; it binds only where a block's distinct bytecode
-        // outgrows what the node was configured to keep resident at all.
-        let code_budget_bytes = store.code_cache_budget_bytes();
-        let mut code_warmed_bytes = 0u64;
-
-        for chunk in accounts.chunks(warm_chunk_accounts) {
-            if cancelled.load(Ordering::Relaxed) {
-                return Ok(());
-            }
-
-            let addresses: Vec<Address> = chunk.iter().map(|ac| ac.address).collect();
-            // Returns the states as well as caching them, so the code hashes come out
-            // of this read instead of costing a second lookup per account.
-            let states = store
-                .get_account_states_batch(&addresses)
-                .map_err(|e| EvmError::Custom(format!("get_account_states_batch: {e}")))?;
-
-            // Accounts stay warmed for the rest of the block once the code budget is
-            // spent: they are a fraction of the bytes, and every opcode reaching an
-            // address needs its state whether or not it reads the bytecode.
-            if code_warmed_bytes >= code_budget_bytes {
-                continue;
-            }
-
-            // Distinct hashes only: accounts sharing one bytecode are common, and
-            // without this the same code would be requested once per account holding it.
-            let mut code_hashes: Vec<ethrex_common::H256> = states
-                .iter()
-                .map(|s| s.code_hash)
-                .filter(|h| *h != *EMPTY_KECCAK_HASH)
-                .collect();
-            code_hashes.sort_unstable();
-            code_hashes.dedup();
-
-            for slice in code_hashes.chunks(CODE_SLICE_HASHES) {
-                if code_warmed_bytes >= code_budget_bytes {
-                    break;
-                }
-
-                // Re-checked between the two reads, not only per chunk: a cancelled
-                // warmer should not still issue a slice's worth of code reads.
-                if cancelled.load(Ordering::Relaxed) {
-                    return Ok(());
-                }
-
-                // Best-effort: a code hash present in a BAL but absent from the database
-                // must not fail the warmer, since the executor reports that itself.
-                code_warmed_bytes =
-                    code_warmed_bytes.saturating_add(store.prefetch_codes(slice).unwrap_or(0));
-            }
+        if cancelled.load(Ordering::Relaxed) {
+            return Ok(());
         }
+
+        // Phase 2: Code prefetch — collect code hashes from Phase 1 account states
+        // (already cached after Phase 1 prefetch), then batch-fetch codes in parallel.
+        // Uses par_iter for collection since blocks can have thousands of accounts.
+        let code_hashes: Vec<ethrex_common::H256> = accounts
+            .par_iter()
+            .filter_map(|ac| {
+                store
+                    .get_account_state(ac.address)
+                    .ok()
+                    .filter(|s| s.code_hash != *EMPTY_KECCAK_HASH)
+                    .map(|s| s.code_hash)
+            })
+            .collect();
+        code_hashes.par_iter().for_each(|&h| {
+            let _ = store.get_account_code(h);
+        });
 
         Ok(())
     }
@@ -3041,6 +2998,7 @@ impl LEVM {
             fee_token: tx.fee_token(),
             disable_balance_check: false,
             disable_nonce_check: false,
+            disable_gas_allowance_check: false,
             is_system_call: false,
         };
 
@@ -3141,7 +3099,10 @@ impl LEVM {
     ) -> Result<ExecutionResult, EvmError> {
         let mut env = env_from_generic(tx, block_header, db, vm_type)?;
 
-        env.block_gas_limit = i64::MAX as u64; // disable block gas limit
+        // Let the call run with a `gas` above the block's limit, but leave
+        // `block_gas_limit` at the block's real value: the GASLIMIT opcode reads it, so
+        // overwriting it makes 0x45 return a number that appears nowhere on chain.
+        env.disable_gas_allowance_check = true;
 
         adjust_disabled_base_fee(&mut env);
 
@@ -3217,14 +3178,14 @@ impl LEVM {
                 return Ok(FrameValidationOutcome {
                     passed: false,
                     violation: Some(EvmError::from(err).to_string()),
-                    max_cost: Self::frame_tx_max_cost(frame_tx),
+                    reservation_ceiling: Self::frame_tx_reservation_ceiling(frame_tx),
                     accessed_paymaster: None,
                     touched_sender_slots: Vec::new(),
                 });
             }
         };
 
-        let max_cost = Self::frame_tx_max_cost(frame_tx);
+        let reservation_ceiling = Self::frame_tx_reservation_ceiling(frame_tx);
         let touched_sender_slots = vm.validation_observer.touched_sender_slots.clone();
         // The payer established by the prefix is the paymaster (OQ2: the
         // APPROVE-payment address is treated uniformly as "paymaster", including
@@ -3239,7 +3200,7 @@ impl LEVM {
             return Ok(FrameValidationOutcome {
                 passed: false,
                 violation: Some(format!("{violation:?}")),
-                max_cost,
+                reservation_ceiling,
                 accessed_paymaster,
                 touched_sender_slots,
             });
@@ -3250,7 +3211,7 @@ impl LEVM {
             return Ok(FrameValidationOutcome {
                 passed: false,
                 violation: Some("validation prefix frame reverted".to_string()),
-                max_cost,
+                reservation_ceiling,
                 accessed_paymaster,
                 touched_sender_slots,
             });
@@ -3262,7 +3223,7 @@ impl LEVM {
             return Ok(FrameValidationOutcome {
                 passed: false,
                 violation: Some("validation prefix did not establish a payer".to_string()),
-                max_cost,
+                reservation_ceiling,
                 accessed_paymaster,
                 touched_sender_slots,
             });
@@ -3275,7 +3236,7 @@ impl LEVM {
                 return Ok(FrameValidationOutcome {
                     passed: false,
                     violation: Some(format!("{:?}", FrameSimViolation::DeployInstalledNoCode)),
-                    max_cost,
+                    reservation_ceiling,
                     accessed_paymaster,
                     touched_sender_slots,
                 });
@@ -3290,7 +3251,7 @@ impl LEVM {
                     "validation prefix gas {} exceeds MAX_VERIFY_GAS {}",
                     sim.total_gas_used, FRAME_TX_MAX_VERIFY_GAS
                 )),
-                max_cost,
+                reservation_ceiling,
                 accessed_paymaster,
                 touched_sender_slots,
             });
@@ -3299,22 +3260,33 @@ impl LEVM {
         Ok(FrameValidationOutcome {
             passed: true,
             violation: None,
-            max_cost,
+            reservation_ceiling,
             accessed_paymaster,
             touched_sender_slots,
         })
     }
 
-    /// TXPARAM 0x06 max cost for a frame transaction:
-    /// `max_fee_per_gas * total_gas_limit + len(blob_hashes) * 131072 * max_fee_per_blob_gas`
-    /// (mirrors `load_tx_param` 0x06 in `opcode_handlers/frame_tx.rs`), saturating.
-    fn frame_tx_max_cost(frame_tx: &ethrex_common::types::FrameTransaction) -> U256 {
-        // Intentionally saturating (not checked): the TXPARAM 0x06 consensus handler
-        // uses checked_mul/checked_add and halts on overflow (frame_tx.rs:499-509). Here
-        // we compute a reservation ceiling for the mempool, so saturating to U256::MAX
-        // on overflow is conservative — it just makes the reservation larger, not smaller.
-        let gas_cost = U256::from(frame_tx.max_fee_per_gas)
-            .saturating_mul(U256::from(frame_tx.total_gas_limit()));
+    /// Mempool reservation ceiling for a frame transaction:
+    /// `max_gas * max_fee_per_gas + len(blob_hashes) * 131072 * max_fee_per_blob_gas`,
+    /// saturating.
+    ///
+    /// The consensus `max_cost` that APPROVE collects prices blobs at the
+    /// including block's `blob_base_fee` (EIP-8141 §Gas Accounting, TXPARAM 0x06;
+    /// `load_tx_param` 0x06 in `opcode_handlers/frame_tx.rs`). That rate is not
+    /// known at admission — the simulation runs against the current head, while
+    /// execution charges the base fee of whichever later block includes the
+    /// transaction — and the blob base fee moves per block, so pricing the
+    /// reservation at the head's rate could reserve less than the eventual charge.
+    /// `max_fee_per_blob_gas >= blob_base_fee` is an inclusion condition
+    /// (EIP-8141 §Blob handling), so the declared max rate bounds every block that
+    /// can include the transaction and keeps this a true ceiling.
+    ///
+    /// Intentionally saturating (not checked): the TXPARAM 0x06 consensus handler
+    /// uses checked_mul/checked_add and halts on overflow. Saturating to
+    /// `U256::MAX` here only makes the reservation larger, never smaller.
+    fn frame_tx_reservation_ceiling(frame_tx: &ethrex_common::types::FrameTransaction) -> U256 {
+        let gas_cost =
+            U256::from(frame_tx.max_fee_per_gas).saturating_mul(U256::from(frame_tx.max_gas()));
         let blob_cost = U256::from(frame_tx.blob_versioned_hashes.len())
             .saturating_mul(U256::from(131072u64))
             .saturating_mul(frame_tx.max_fee_per_blob_gas);
@@ -3935,11 +3907,14 @@ fn env_from_generic(
         fee_token: tx.fee_token,
         disable_balance_check: false,
         // Every `env_from_generic` caller is a simulation RPC (eth_call,
-        // eth_estimateGas, eth_createAccessList). Those run relaxed messages
-        // with no nonce enforcement: a call object without `nonce` defaults
-        // `tx_nonce` to 0 above, which the hook would otherwise reject for
-        // any sender whose nonce is nonzero.
+        // eth_estimateGas, eth_createAccessList, debug_traceCall). Those run
+        // relaxed messages with no nonce enforcement: a call object without
+        // `nonce` defaults `tx_nonce` to 0 above, which the hook would otherwise
+        // reject for any sender whose nonce is nonzero.
         disable_nonce_check: true,
+        // Opt-in per caller: `simulate_tx_from_generic` and `debug_traceCall` relax it so
+        // an over-limit `gas` still runs, while `create_access_list` keeps enforcing it.
+        disable_gas_allowance_check: false,
         is_system_call: false,
     })
 }
@@ -3948,7 +3923,26 @@ fn env_from_generic(
 ///
 /// Split out from `vm_from_generic` so the caller owns the resulting `Transaction` for at least
 /// the VM's lifetime — `VM` now borrows its tx (`&'a Transaction`) instead of cloning it.
+///
+/// The envelope fields are carried over even though execution reads almost none of them,
+/// because the L2 prices its L1 data fee from `Transaction::length()` — the RLP-encoded byte
+/// count — and reserves that as gas before execution. Leaving them at their defaults made a
+/// simulated transaction encode up to ~104 bytes shorter than the signed one it stands for
+/// (a zero `U256` is one RLP byte, a real signature component is 33), so `eth_estimateGas`
+/// under-reserved the L1 fee and the transaction it was estimating ran out of gas. The
+/// signature is stamped at full width for the same reason, and deliberately at the maximum:
+/// a real component can be shorter after leading-zero trimming, and over-reserving the L1
+/// fee is safe where under-reserving is not.
 fn generic_tx_to_transaction(tx: &GenericTransaction) -> Result<Transaction, VMError> {
+    // Not read during execution — the sender comes from `env.origin` — so this only has to
+    // encode to the same width as a real signature.
+    let (signature_r, signature_s) = (U256::MAX, U256::MAX);
+    let nonce = tx.nonce.unwrap_or_default();
+    let gas_limit = tx.gas.unwrap_or_default();
+    let max_fee_per_gas = tx.max_fee_per_gas.unwrap_or_default();
+    let max_priority_fee_per_gas = tx.max_priority_fee_per_gas.unwrap_or_default();
+    let chain_id = tx.chain_id.unwrap_or_default();
+
     Ok(match &tx.authorization_list {
         Some(authorization_list) => Transaction::EIP7702Transaction(EIP7702Transaction {
             to: match tx.to {
@@ -3968,6 +3962,13 @@ fn generic_tx_to_transaction(tx: &GenericTransaction) -> Result<Transaction, VME
                 .iter()
                 .map(|auth| Into::<AuthorizationTuple>::into(auth.clone()))
                 .collect(),
+            nonce,
+            gas_limit,
+            max_fee_per_gas,
+            max_priority_fee_per_gas,
+            chain_id,
+            signature_r,
+            signature_s,
             ..Default::default()
         }),
         None => Transaction::EIP1559Transaction(EIP1559Transaction {
@@ -3979,6 +3980,13 @@ fn generic_tx_to_transaction(tx: &GenericTransaction) -> Result<Transaction, VME
                 .iter()
                 .map(|list| (list.address, list.storage_keys.clone()))
                 .collect(),
+            nonce,
+            gas_limit,
+            max_fee_per_gas,
+            max_priority_fee_per_gas,
+            chain_id,
+            signature_r,
+            signature_s,
             ..Default::default()
         }),
     })
@@ -4069,199 +4077,9 @@ fn describe_balance_diff(expected: U256, actual: U256) -> String {
     format!("{sign}{mag_u128} wei")
 }
 
-/// Addresses per chunk in [`LEVM::warm_block_from_bal`].
-///
-/// Sized to saturate the read depth of the batched code fetch, because on the blocks the
-/// warmer targets it is throughput-bound rather than latency-bound: it occupies the whole
-/// execution window, so total read concurrency matters more than how soon the first code
-/// lands. That fetch shards at 256 keys and caps its shard count at `max(64, 2 * cores)`,
-/// and its depth is bounded by the distinct uncached hashes a chunk carries, so a chunk
-/// narrower than the cap's worth of keys buys an earlier start by giving up depth for the
-/// whole block.
-///
-/// The width also routes the account read, which is why it must not shrink:
-/// `prefetch_accounts` sends a chunk to the sorted sharded batch only once its cold
-/// addresses reach [`BLOATED_BATCH_THRESHOLD`] and to parallel point-gets below that, and
-/// on a cold account-heavy block the sharded batch is worth several times the point-gets.
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
-fn warm_chunk_accounts(parallelism: usize) -> usize {
-    256_usize.saturating_mul(parallelism.saturating_mul(2).max(64))
-}
-
-/// Code hashes per batched fetch in [`LEVM::warm_block_from_bal`].
-///
-/// A chunk's code hashes are fetched in slices rather than in one call, because the chunk
-/// has to stay wide for the account batch (see [`warm_chunk_accounts`]) while the byte
-/// budget and the cancellation flag are only observed between calls. The slice is
-/// therefore what bounds how far a warm can overshoot its budget and how much I/O a
-/// cancelled warmer still commits to; a whole chunk of max-size bytecode is an order of
-/// magnitude past the budget itself.
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
-const CODE_SLICE_HASHES: usize = 4096;
-
-#[cfg(all(test, feature = "rayon", not(feature = "eip-8025")))]
-mod warm_budget_tests {
-    use super::{warm_chunk_accounts, *};
-    use ethrex_common::H256;
-    use ethrex_common::types::{AccountState, CodeMetadata, block_access_list::AccountChanges};
-    use ethrex_levm::db::BLOATED_BATCH_THRESHOLD;
-    use ethrex_levm::errors::DatabaseError;
-    use std::sync::atomic::AtomicUsize;
-
-    /// A chunk narrower than the threshold would route every account read to the
-    /// point-gets path and leave the sharded batch permanently unreachable.
-    #[test]
-    fn chunk_reaches_the_sharded_account_batch_at_every_core_count() {
-        for parallelism in [1, 2, 4, 8, 16, 32, 64, 128, 256] {
-            assert!(
-                warm_chunk_accounts(parallelism) >= BLOATED_BATCH_THRESHOLD,
-                "chunk of {} accounts is below the batch threshold {BLOATED_BATCH_THRESHOLD} \
-                 at {parallelism} cores",
-                warm_chunk_accounts(parallelism),
-            );
-        }
-    }
-
-    const CODE_LEN: usize = 1024;
-
-    /// Every account holds a distinct bytecode of [`CODE_LEN`], and both read paths are
-    /// counted so a test can tell warmed code from warmed account state.
-    struct CountingStore {
-        budget: u64,
-        states_read: AtomicUsize,
-        codes_read: AtomicUsize,
-    }
-
-    impl CountingStore {
-        fn with_budget(budget: u64) -> Self {
-            Self {
-                budget,
-                states_read: AtomicUsize::new(0),
-                codes_read: AtomicUsize::new(0),
-            }
-        }
-    }
-
-    impl Database for CountingStore {
-        fn code_cache_budget_bytes(&self) -> u64 {
-            self.budget
-        }
-        fn get_account_state(&self, address: Address) -> Result<AccountState, DatabaseError> {
-            self.states_read.fetch_add(1, Ordering::Relaxed);
-            Ok(AccountState {
-                // A distinct hash per address, so no dedup collapses the batch.
-                code_hash: H256::from_low_u64_be(address.to_low_u64_be() + 1),
-                ..Default::default()
-            })
-        }
-        fn get_account_code(&self, hash: H256) -> Result<Code, DatabaseError> {
-            self.codes_read.fetch_add(1, Ordering::Relaxed);
-            Ok(Code::from_bytecode_unchecked(
-                Bytes::from(vec![0u8; CODE_LEN]),
-                hash,
-            ))
-        }
-        fn get_storage_value(&self, _: Address, _: H256) -> Result<U256, DatabaseError> {
-            Ok(U256::zero())
-        }
-        fn get_block_hash(&self, _: u64) -> Result<H256, DatabaseError> {
-            Ok(H256::zero())
-        }
-        fn get_chain_config(&self) -> Result<ethrex_common::types::ChainConfig, DatabaseError> {
-            Err(DatabaseError::Custom("not implemented".into()))
-        }
-        fn get_code_metadata(&self, _: H256) -> Result<CodeMetadata, DatabaseError> {
-            Ok(CodeMetadata {
-                length: CODE_LEN as u64,
-            })
-        }
-    }
-
-    fn bal_with_accounts(n: u64) -> BlockAccessList {
-        BlockAccessList::from_accounts(
-            (0..n)
-                .map(|i| AccountChanges::new(Address::from_low_u64_be(i)))
-                .collect(),
-        )
-    }
-
-    /// Two slices' worth of distinct bytecodes against a budget the first slice already
-    /// exceeds: the second slice must not be read.
-    #[test]
-    fn code_warming_stops_once_the_budget_is_spent() {
-        let accounts = 2 * super::CODE_SLICE_HASHES;
-        let bal = bal_with_accounts(accounts as u64);
-        let store = Arc::new(CountingStore::with_budget(1024 * 1024));
-        let counter = store.clone();
-
-        LEVM::warm_block_from_bal(&bal, store, &AtomicBool::new(false)).expect("warm");
-
-        assert_eq!(
-            counter.states_read.load(Ordering::Relaxed),
-            accounts,
-            "every account state should still be warmed"
-        );
-        assert_eq!(
-            counter.codes_read.load(Ordering::Relaxed),
-            super::CODE_SLICE_HASHES,
-            "the warm should stop after the slice that spends the budget"
-        );
-    }
-
-    /// The budget must not touch ordinary blocks. A block whose distinct bytecode fits the
-    /// smallest budget any backend reports warms every code exactly once, in one batch,
-    /// which is what the warm did before there was a budget at all.
-    ///
-    /// A 60M-gas block reaches at most ~23k cold account accesses at 2600 gas each, and a
-    /// real one spreads those over a few hundred distinct contracts of a few KB: single
-    /// digit MB against a 64 MiB floor. Only the adversarial shape, every access landing on
-    /// its own max-size contract, reaches ~567 MB and outgrows the budget, which is the
-    /// case it exists for and the one where warming all of it was measured to buy nothing.
-    #[test]
-    fn a_normal_block_warms_every_bytecode() {
-        const MIN_BUDGET: u64 = 64 * 1024 * 1024;
-        let accounts = 2048;
-        assert!(
-            accounts < super::CODE_SLICE_HASHES,
-            "a normal block must fit one batch"
-        );
-        assert!(
-            (accounts as u64).saturating_mul(CODE_LEN as u64) < MIN_BUDGET,
-            "a normal block must fit the smallest budget"
-        );
-
-        let bal = bal_with_accounts(accounts as u64);
-        let store = Arc::new(CountingStore::with_budget(MIN_BUDGET));
-        let counter = store.clone();
-
-        LEVM::warm_block_from_bal(&bal, store, &AtomicBool::new(false)).expect("warm");
-
-        assert_eq!(counter.states_read.load(Ordering::Relaxed), accounts);
-        assert_eq!(
-            counter.codes_read.load(Ordering::Relaxed),
-            accounts,
-            "every bytecode should still be warmed, once each"
-        );
-    }
-
-    /// A backend reporting no bytecode cache gets no bytecode warming, while its account
-    /// states are still warmed.
-    #[test]
-    fn a_zero_budget_warms_accounts_and_no_code() {
-        let bal = bal_with_accounts(64);
-        let store = Arc::new(CountingStore::with_budget(0));
-        let counter = store.clone();
-
-        LEVM::warm_block_from_bal(&bal, store, &AtomicBool::new(false)).expect("warm");
-
-        assert_eq!(counter.states_read.load(Ordering::Relaxed), 64);
-        assert_eq!(counter.codes_read.load(Ordering::Relaxed), 0);
-    }
-}
-
 // Exercises the rayon-parallel-BAL execution path (and shares its
-// `not(eip-8025)`-gated imports), so it only builds in the non-guest test profile.
-#[cfg(all(test, not(feature = "eip-8025")))]
+// `rayon`-gated imports), so it only builds when that feature is on.
+#[cfg(all(test, feature = "rayon"))]
 mod bal_tests {
     use super::*;
     use ethrex_common::H256;
@@ -4621,9 +4439,9 @@ mod system_call_coinbase_tests {
 
 /// Tests for EIP-8079 burned_fees computation in execute_block (LStar-gated).
 ///
-/// Shares the non-guest execution path's `not(eip-8025)`-gated imports
-/// (`EMPTY_KECCAK_HASH`, `FxHashMap`, `Database`), so it only builds in that profile.
-#[cfg(all(test, not(feature = "eip-8025")))]
+/// Shares the non-guest execution path's `rayon`-gated imports
+/// (`EMPTY_KECCAK_HASH`, `FxHashMap`, `Database`), so it only builds with rayon.
+#[cfg(all(test, feature = "rayon"))]
 mod burned_fees_tests {
     use super::*;
     use ethrex_common::{
@@ -5170,5 +4988,76 @@ mod burned_fees_tests {
             result_d.burned_fees, None,
             "pre-LStar: burned_fees must be None"
         );
+    }
+}
+
+#[cfg(test)]
+mod simulated_tx_encoding_tests {
+    //! The L2 prices its L1 data fee from `Transaction::length()` and reserves that
+    //! as gas before execution, so a simulated transaction must never encode shorter
+    //! than the signed one it stands for — otherwise `eth_estimateGas` reserves less
+    //! L1 fee gas than the transaction it is estimating will need, and that
+    //! transaction runs out of gas at exactly the estimate.
+    //!
+    //! This was reached through the L2 fee-token integration test, which submits the
+    //! estimate verbatim. It only surfaced once the estimate became exact; the search's
+    //! former 1.5% tolerance had been absorbing the shortfall.
+    use super::*;
+    use ethrex_common::types::GenericTransaction;
+    use ethrex_rlp::encode::RLPEncode;
+
+    /// The transaction the SDK signs and sends after estimating, with signature
+    /// components at the width secp256k1 actually produces.
+    fn signed_equivalent(gas_limit: u64, data: Bytes) -> Transaction {
+        Transaction::EIP1559Transaction(EIP1559Transaction {
+            chain_id: 9_999,
+            nonce: 42,
+            max_priority_fee_per_gas: 1_000_000_000,
+            max_fee_per_gas: 2_000_000_000,
+            gas_limit,
+            to: TxKind::Create,
+            value: U256::from(1u64),
+            data,
+            access_list: vec![],
+            signature_y_parity: true,
+            signature_r: U256::MAX,
+            signature_s: U256::MAX,
+            ..Default::default()
+        })
+    }
+
+    fn generic(gas_limit: u64, data: Bytes) -> GenericTransaction {
+        GenericTransaction {
+            to: TxKind::Create,
+            value: U256::from(1u64),
+            input: data,
+            nonce: Some(42),
+            gas: Some(gas_limit),
+            max_fee_per_gas: Some(2_000_000_000),
+            max_priority_fee_per_gas: Some(1_000_000_000),
+            chain_id: Some(9_999),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn simulated_tx_never_encodes_shorter_than_the_signed_one() {
+        for (gas_limit, data) in [
+            (21_000u64, Bytes::new()),
+            (150_000, Bytes::from_static(&[0x60, 0x00, 0x60, 0x00])),
+            (5_000_000, Bytes::from(vec![0xab; 4_096])),
+        ] {
+            let simulated = generic_tx_to_transaction(&generic(gas_limit, data.clone()))
+                .expect("conversion should succeed");
+            let signed = signed_equivalent(gas_limit, data.clone());
+            assert!(
+                simulated.length() >= signed.length(),
+                "simulated tx encodes {} bytes, signed one {} — the L2 would under-reserve \
+                 the L1 fee by the difference (gas_limit {gas_limit}, {} data bytes)",
+                simulated.length(),
+                signed.length(),
+                data.len(),
+            );
+        }
     }
 }
