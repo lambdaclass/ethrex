@@ -10,7 +10,7 @@ which is what makes the chain useful for implementers.
 Anyone may sync, peer and transact without permission. Only **validator entry** is
 gated; see "Become a validator" below.
 
-> The zone is `privacy.ethrex.xyz`. Five names exist: `rpc1`, `rpc2`, `rpc3`, `dora` and
+> The zone is `frames.ethrex.xyz`. Five names exist: `rpc1`, `rpc2`, `rpc3`, `dora` and
 > `faucet`. There is no `artifacts` name and the apex has no address record, so the
 > artifact bundle is served from a path under the faucet host rather than a host of its
 > own. Add an `artifacts` record and it can move, with the path left as a redirect.
@@ -24,11 +24,11 @@ gated; see "Become a validator" below.
 | Block gas limit | 200,000,000 |
 | Execution client | ethrex, `frames-devnet-0` build |
 | Consensus client | prysm (`ethpandaops/prysm-beacon-chain:glamsterdam-devnet-8`) |
-| RPC | `https://rpc1.privacy.ethrex.xyz` (also `rpc2`, `rpc3`) |
-| Explorer | `https://dora.privacy.ethrex.xyz` |
-| Faucet | `https://faucet.privacy.ethrex.xyz` |
-| Artifact bundle | `https://faucet.privacy.ethrex.xyz/artifacts` |
-| Bootnodes | `https://faucet.privacy.ethrex.xyz/bootnodes` |
+| RPC | `https://rpc1.frames.ethrex.xyz` (also `rpc2`, `rpc3`) |
+| Explorer | `https://dora.frames.ethrex.xyz` |
+| Faucet | `https://faucet.frames.ethrex.xyz` |
+| Artifact bundle | `https://faucet.frames.ethrex.xyz/artifacts` |
+| Bootnodes | `https://faucet.frames.ethrex.xyz/bootnodes` |
 | Deposit contract | `0x00000000219ab540356cBB839Cbe05303d7705Fa` |
 | Deposit gater | `0x00000000a11acc355c0de0000a11acc355c0de00` |
 
@@ -71,10 +71,14 @@ and it is worthless.
 The three RPC hostnames are three different nodes, so comparing a block *hash* between
 `rpc1` and `rpc2` is a real agreement check and not the same node answering twice.
 
-They serve `eth`, `net`, `web3`, `txpool` and `ethrex` — the last of which is
-`ethrex_simulateFrameTransaction`, the one way to dry-run a type-`0x06` envelope without
-submitting it. `debug` and `admin` are not served here; run your own node from the bundle
-if you need them, where they are yours to enable.
+They serve `eth`, `net`, `web3` and `txpool`. `debug` and `admin` are not served here —
+the nodes themselves answer both, and the guard in front of them is what withholds them,
+so run your own node from the bundle if you need them, where they are yours to enable.
+
+There is **no `ethrex` namespace on this deployment**, so there is no way to dry-run a
+frame transaction against a public node: this build rejects `--http.api=ethrex` as an
+unknown namespace, and `ethrex_simulateFrameTransaction` returns *Method not found*.
+Simulate against a local node instead.
 
 **Estimate gas. Never hardcode 21,000.** Under EIP-8037 state growth is charged
 alongside execution, out of the same limit an ordinary transaction carries, so the
@@ -110,7 +114,7 @@ for f in genesis.json genesis.ssz config.yaml \
          bootnodes.txt bootnodes-enr.txt bootnodes-cl.txt \
          deposit_contract.txt deposit_contract_block.txt \
          deposit_contract_block_hash.txt genesis_validators_root.txt; do
-  curl -fsSLO "https://faucet.privacy.ethrex.xyz/artifacts/$f"
+  curl -fsSLO "https://faucet.frames.ethrex.xyz/artifacts/$f"
 done
 ```
 
@@ -118,7 +122,7 @@ The three bootnode files are also served live as JSON, so peers can be checked o
 re-fetched without pulling the whole bundle:
 
 ```
-curl -s https://faucet.privacy.ethrex.xyz/bootnodes
+curl -s https://faucet.frames.ethrex.xyz/bootnodes
 {"el": ["enode://…"], "el_enr": ["enr:…"], "cl": ["enr:…"]}
 ```
 
@@ -245,7 +249,7 @@ ethdo validator depositdata \
 ### 4. Deposit
 
 ```
-cast send --rpc-url https://rpc1.privacy.ethrex.xyz \
+cast send --rpc-url https://rpc1.frames.ethrex.xyz \
   --private-key <DEPOSITOR_KEY> --value 32ether \
   0x00000000219ab540356cBB839Cbe05303d7705Fa <CALLDATA>
 ```
@@ -342,12 +346,13 @@ transaction has no payer and is invalid.
 Submitters live in this directory: `frametx.py`, `frametx_submit.py` and
 `frametx_sponsor_submit.py`, with `contracts/OpenSponsor.yul` for the sponsored form.
 
-Dry-run before sending:
+Dry-run before sending — **against your own node, not the public RPC**, which does not
+serve this namespace:
 
 ```
 curl -s -X POST -H 'content-type: application/json' \
   -d '{"jsonrpc":"2.0","method":"ethrex_simulateFrameTransaction","params":["<RAW_TX>"],"id":1}' \
-  https://rpc1.privacy.ethrex.xyz
+  http://127.0.0.1:8545
 ```
 
 This reports validity, the resolved payer, the prefix shape and per-frame gas before

@@ -298,17 +298,17 @@ dora_params:
 # A literal keeps the published bootnodes reproducible from the config alone.
 # Port bases chosen against what the host already runs. ethrex-office-4 carries
 # four other enclaves occupying 30100-30117, 30300-30316, 30500, 31000-31016,
-# 31500, 32000-32017, 33000-33017, 34000-34016 and 34500. The 35000 band is
+# 31500, 32000-32017, 33000-33017, 34000-34016, 34500 and the 35000 band. The 36000 band is
 # clear, and every base stays below the ephemeral floor (49152 here), so a fixed
 # publish cannot race a dynamically assigned host port.
 port_publisher:
   nat_exit_ip: "REPLACE_WITH_HOST_PUBLIC_IP"
   el:
     enabled: true
-    public_port_start: 35000
+    public_port_start: 36000
   cl:
     enabled: true
-    public_port_start: 35200
+    public_port_start: 36200
   additional_services:
     enabled: true
-    public_port_start: 35400
+    public_port_start: 36400

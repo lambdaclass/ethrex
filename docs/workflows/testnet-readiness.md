@@ -70,6 +70,12 @@ looked fine from the deploying host.
       downstream. Confirm the EL reaches head, not just the CL: compare
       `eth_blockNumber` against the remote node, and require the CL to report
       `sync_distance: 0` **and** `is_optimistic: false`. See gotcha 5.
+- [ ] **All nodes in the deployment agree with each other.** Compare
+      `eth_blockNumber` across every execution node and the finalized epoch
+      across every beacon node. Per-node health checks cannot see a partition:
+      every node reports `eth_syncing: false`, a beacon head at the current
+      slot and `is_optimistic: false` while sitting on its own chain. See
+      gotcha 8 — this is the check that would have caught it.
 - [ ] **The joiner *holds* head for at least an hour**, sampled every minute.
       Reaching head once is not the same as staying there, and a node that
       drifts is worse than one that never synced, because it looks healthy at
@@ -198,6 +204,13 @@ and its keys were never the problem. Sample sync distance over time, and if a
 deposited validator is part of the test, watch that it keeps signing rather
 than that it signed once.
 
+*Attribution caveat:* gotcha 8 was found later, and the deployment this joiner
+was syncing from turned out to be partitioned into three chains. Being fed
+conflicting heads by three static peers is sufficient on its own to explain
+the drift, so do not read the above as a proven client defect. The backfill
+errors were real; the cause of the drift was not isolated. Rule out a
+partition first.
+
 **6. Verify from off-site, not from the deployment host.**
 Gotchas 1, 2, 3 and 5 are all invisible from the machine that deployed the
 testnet, because that machine has funded accounts, local network access, and
@@ -219,3 +232,24 @@ restart did not clear it. The execution client was not at fault — it answered
 `latest`, `safe` and `finalized` correctly (1257 / 1135 / 1018) while the
 indexer claimed it could not find the finalized block. Check a post-genesis
 validator explicitly; "the explorer is up and at head" does not cover it.
+
+**8. Every node healthy, three separate chains.**
+The frames deployment passed every per-node check while being three networks.
+Node 1 was at execution block 1846 with finality at epoch 81; nodes 2 and 3
+were at blocks 462 and 464 with finality still at epoch 0 — and all three
+reported `eth_syncing: false`, `sync_distance: 0` and `is_optimistic: false`.
+Node 2 was not stalled, it was *building its own blocks*.
+
+The cause was that the beacon nodes had no peers at all (`connected: 0`) and
+discovery was failing with `find peers with subnets: context deadline
+exceeded`. The host sits behind NAT, the nodes advertise `nat_exit_ip`, and
+the router forwarded only 80 and 443 — so nothing could reach them at the
+address they published, *including each other on the same host*. Only node 1
+finalized because it happened to hold 128 of the 192 validators.
+
+Two lessons. Compare nodes against each other, never just against their own
+health endpoints. And on a NAT'd host, the P2P port-forwards are not a
+nice-to-have for external joiners — without them the deployment silently
+splits into one chain per node. The healthy reference on a directly-addressed
+host had all three execution nodes at an identical block and all three beacon
+nodes finalized at the same epoch.

@@ -2,10 +2,10 @@
 """Append ethrex flags to a running kurtosis EL container, preserving its identity.
 
 A container's command line cannot be edited, and every route kurtosis offers for
-changing one either does nothing or destroys the node's data (see
-`docs/frames-testnet-upgrading.md` §"Changing a node's flags in place"). This
+changing one either does nothing or destroys the node's data (see INSTALL.md
+§12, "Later changes"). This
 recreates the container from a `docker commit` snapshot of itself instead, so the
-writable layer survives: the chain database, and `chain-8141/node.key` — and with
+writable layer survives: the chain database, and `chain-81410/node.key` — and with
 the node key the enode, which is published in `bootnodes.txt`.
 
 Everything else is read back from `docker inspect` rather than hand-transcribed:
