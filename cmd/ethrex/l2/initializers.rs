@@ -510,6 +510,7 @@ pub async fn init_native_rollup_l2(
         price_bump_percent: opts.node_opts.mempool_price_bump,
         blob_price_bump_percent: opts.node_opts.mempool_blob_price_bump,
         min_tip_wei: opts.node_opts.mempool_min_tip,
+        max_verify_gas: opts.node_opts.mempool_max_verify_gas,
         blob_sampling_enabled: false, // L2 rejects blob txs; no eth/72 sampling
         blob_eager_provider: false,
     };

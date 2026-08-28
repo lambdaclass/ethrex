@@ -238,9 +238,14 @@ impl OpcodeHandler for OpApproveHandler {
         // in this frame at all (consistent with execute_default_verify).
         let allowed_scope = current_frame.scope_restriction();
         let scope_val = u64::try_from(scope).unwrap_or(u64::MAX);
-        // requested scope must be a non-zero subset of a (necessarily non-zero) allowed_scope
+        // requested scope must be a non-zero subset of a (necessarily non-zero)
+        // allowed_scope. EIP-8141: "Ensure that `scope` is one of the caller's
+        // allowed scopes in `frame.flags`, otherwise revert." A refused approval
+        // reverts its own call frame and nothing more -- halting the whole frame
+        // would forfeit its gas and discard work the frame legitimately did after
+        // the refusal, which is what the frame's caller is entitled to keep.
         if scope_val == 0 || scope_val > 3 || (scope_val & u64::from(allowed_scope)) != scope_val {
-            return Err(ExceptionalHalt::InvalidOpcode.into());
+            return Err(VMError::RevertOpcode);
         }
 
         // Charge gas (memory expansion, same as RETURN)
