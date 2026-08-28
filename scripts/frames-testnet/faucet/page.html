@@ -109,34 +109,6 @@
     </dl>
   </div>
 
-  <h2>Gas: two budgets</h2>
-  <div class="panel">
-    <p style="margin:0 0 .8rem">
-      Amsterdam prices state growth separately from execution, and it applies to
-      <strong>every</strong> transaction, not just frame ones.
-    </p>
-    <table>
-      <tr><td>21,165</td><td class="desc">Transfer to an address that already exists.</td></tr>
-      <tr><td>204,600</td><td class="desc">Transfer to an address that does not exist yet:
-        21,000 of execution plus 183,600 charged for creating the account.</td></tr>
-      <tr><td>97,920</td><td class="desc">Each new storage slot.</td></tr>
-    </table>
-    <div class="note">
-      <strong>Estimate gas; never hardcode 21,000.</strong> It is not enough here even for the
-      simplest transfer. The failure is easy to misread: the transaction is mined, the receipt
-      says <code>status: 0</code>, and <code>gasUsed</code> equals your limit exactly. That is
-      the out-of-gas, not a revert in the recipient.
-    </div>
-    <p style="margin:1rem 0 0;font-size:14px">
-      Inside a frame the two budgets are explicit and independent, so execution gas cannot cover
-      state growth. A frame that writes new state with <code>state: 0</code> halts on that write
-      and consumes its whole execution budget, which looks exactly like an execution limit set
-      too low. Check <code>stateGasUsed</code> on the receipt first: if it is <code>0x0</code>,
-      the missing budget is the state one. Unused state gas is refunded, so an over-generous
-      bound costs only the reservation.
-    </p>
-  </div>
-
   <h2>Sending transactions here</h2>
   <div class="panel">
     <p style="margin:0 0 .8rem">
@@ -179,6 +151,14 @@ sig_hash  = keccak256(0x06 || rlp(envelope))      # empty-msg signature bytes el
       targeting the sender with <code>flags = 0x03</code>, then a <code>SENDER</code> frame
       carrying the actual call. <code>flags</code> bits 0 and 1 are the <code>APPROVE</code>
       scope; bit 2 marks an atomic batch, which must be terminated by a following non-batch frame.
+    </p>
+    <p style="margin:1rem 0 0;font-size:14px">
+      A frame's two budgets are independent: <code>execution</code> pays for running code,
+      <code>state</code> pays for state growth. Execution gas cannot cover state growth, so a
+      frame that writes new state with <code>state: 0</code> halts on that write and burns its
+      whole execution budget — which looks exactly like an execution limit set too low. Check
+      <code>stateGasUsed</code> on the receipt: if it is <code>0x0</code>, the missing budget is
+      the state one. Unused state gas is refunded.
     </p>
     <div class="note">
       <strong>The signature is not in EVM form.</strong> Each entry is 65 bytes of
