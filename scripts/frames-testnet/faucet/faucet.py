@@ -310,7 +310,7 @@ def render_bootnodes(lists):
     """
     shown = (
         ("Execution", "--bootnodes", lists.get("el", [])),
-        ("Consensus", "--boot-nodes", lists.get("cl", [])),
+        ("Consensus", "--bootstrap-node", lists.get("cl", [])),
     )
     blocks = []
     for title, flag, records in shown:
@@ -401,21 +401,6 @@ def bundle_view():
             lists = read_bootnodes()
             BUNDLE_VIEW = (stamp, lists, render_page(lists))
         return BUNDLE_VIEW[1], BUNDLE_VIEW[2]
-
-
-def load_guide():
-    """The EIP guide, served as a static page. Read once at startup like PAGE.
-
-    Returns None when the file is absent so an older image, or a build that
-    omitted it, keeps serving the faucet instead of failing to boot.
-    """
-    try:
-        return pathlib.Path(__file__).with_name("eips.html").read_bytes()
-    except OSError:
-        return None
-
-
-GUIDE = load_guide()
 
 
 def client_bucket(handler):
@@ -514,12 +499,6 @@ class Handler(BaseHTTPRequestHandler):
                 # peers": a joiner acting on an empty list would conclude the
                 # latter and stop looking.
                 self._reply(503, {"msg": "bootnode lists not published"})
-        elif path in ("/eips", "/eips.html") and GUIDE is not None:
-            self.send_response(200)
-            self.send_header("content-type", "text/html; charset=utf-8")
-            self.send_header("content-length", str(len(GUIDE)))
-            self.end_headers()
-            self.wfile.write(GUIDE)
         elif path == "/healthz":
             self._reply(200, {"ok": True, "faucet": ACCT.address})
         else:
