@@ -45,6 +45,11 @@ pub struct PeerData {
     pub node: Node,
     pub record: Option<NodeRecord>,
     pub supported_capabilities: Vec<Capability>,
+    /// The eth version in force for this session: the highest version both sides
+    /// advertised. Message shapes on the wire must be chosen from this and never
+    /// from `supported_capabilities`, which is only what the peer offered and may
+    /// name versions we did not advertise back.
+    pub negotiated_eth: Option<Capability>,
     /// Set to true if the connection is inbound (aka the connection was started by the peer and not by this node)
     /// It is only valid as long as is_connected is true
     pub is_connection_inbound: bool,
@@ -64,11 +69,13 @@ impl PeerData {
         record: Option<NodeRecord>,
         connection: Option<PeerConnection>,
         capabilities: Vec<Capability>,
+        negotiated_eth: Option<Capability>,
     ) -> Self {
         Self {
             node,
             record,
             supported_capabilities: capabilities,
+            negotiated_eth,
             is_connection_inbound: false,
             connection,
             score: Default::default(),
@@ -164,6 +171,7 @@ pub trait PeerTableServerProtocol: Send + Sync {
         node: Node,
         connection: PeerConnection,
         capabilities: Vec<Capability>,
+        negotiated_eth: Option<Capability>,
         is_inbound: bool,
     ) -> Response<bool>;
     fn peer_count(&self) -> Response<usize>;
@@ -189,8 +197,8 @@ pub trait PeerTableServerProtocol: Send + Sync {
     fn has_eligible_peer(&self, capabilities: Vec<Capability>) -> Response<bool>;
     fn get_score(&self, node_id: H256) -> Response<i64>;
     fn get_connected_nodes(&self) -> Response<Vec<Node>>;
-    fn get_peers_with_capabilities(&self)
-    -> Response<Vec<(H256, PeerConnection, Vec<Capability>)>>;
+    /// Every connected peer with the eth version negotiated for its session.
+    fn get_connected_peers(&self) -> Response<Vec<(H256, PeerConnection, Option<Capability>)>>;
     fn get_peers_data(&self) -> Response<Vec<PeerData>>;
     fn get_random_peer(&self, capabilities: Vec<Capability>) -> Response<Option<SelectedPeer>>;
     fn get_peer_diagnostics(&self) -> Response<Vec<PeerDiagnostics>>;
@@ -247,6 +255,7 @@ impl PeerTableServer {
             msg.node,
             Some(msg.connection),
             msg.capabilities,
+            msg.negotiated_eth,
             msg.is_inbound,
         )
     }
@@ -456,21 +465,18 @@ impl PeerTableServer {
     }
 
     #[request_handler]
-    async fn handle_get_peers_with_capabilities(
+    async fn handle_get_connected_peers(
         &mut self,
-        _msg: peer_table_server_protocol::GetPeersWithCapabilities,
+        _msg: peer_table_server_protocol::GetConnectedPeers,
         _ctx: &Context<Self>,
-    ) -> Vec<(H256, PeerConnection, Vec<Capability>)> {
+    ) -> Vec<(H256, PeerConnection, Option<Capability>)> {
         self.peers
             .iter()
             .filter_map(|(peer_id, peer_data)| {
-                peer_data.connection.clone().map(|connection| {
-                    (
-                        *peer_id,
-                        connection,
-                        peer_data.supported_capabilities.clone(),
-                    )
-                })
+                peer_data
+                    .connection
+                    .clone()
+                    .map(|connection| (*peer_id, connection, peer_data.negotiated_eth.clone()))
             })
             .collect()
     }
@@ -561,13 +567,14 @@ impl PeerTableServer {
         node: Node,
         connection: Option<PeerConnection>,
         capabilities: Vec<Capability>,
+        negotiated_eth: Option<Capability>,
         is_inbound: bool,
     ) -> bool {
         let new_peer_id = node.node_id();
         if self.peers.contains_key(&new_peer_id) {
             return false;
         }
-        let mut new_peer = PeerData::new(node, None, connection, capabilities);
+        let mut new_peer = PeerData::new(node, None, connection, capabilities, negotiated_eth);
         new_peer.is_connection_inbound = is_inbound;
         self.peers.insert(new_peer_id, new_peer);
         true
@@ -720,10 +727,10 @@ mod tests {
         )
     }
 
-    /// Registration with no live connection behind it: enough to exercise the
-    /// claim, which only ever looks at the node id.
+    /// Registration with no live connection behind it, and no negotiated `eth`
+    /// version: enough to exercise the claim, which only ever looks at the node id.
     fn claim(table: &mut PeerTableServer, node: Node) -> bool {
-        table.do_new_connected_peer(node, None, vec![], false)
+        table.do_new_connected_peer(node, None, vec![], None, false)
     }
 
     #[test]
