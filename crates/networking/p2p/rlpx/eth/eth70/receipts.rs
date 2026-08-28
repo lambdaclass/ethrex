@@ -299,8 +299,8 @@ mod tests {
     /// EIP-8141 §Networking: in the `Receipts` message of the protocol version
     /// carrying the fork, a frame receipt is encoded mirroring its consensus
     /// `ReceiptPayload`, i.e. `[tx-type, cumulative-gas, payer, [[status,
-    /// gas-used, logs], ...]]` with the type INSIDE the list. Hegota rides
-    /// eth/70 and eth/71, both of which serve `Receipts70`.
+    /// [execution-gas, state-gas], logs], ...]]` with the type INSIDE the
+    /// list. Hegota rides eth/70 and eth/71, both of which serve `Receipts70`.
     #[test]
     fn receipts70_frame_receipt_matches_the_eip8141_wire_form() {
         use ethrex_common::types::{FrameReceipt, GasUsed};
