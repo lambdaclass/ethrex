@@ -235,14 +235,9 @@ P2P options:
 
 Storage options:
       --rocksdb.block-cache-size <BYTES>
-          RocksDB shared block cache size in bytes. With cache_index_and_filter_blocks enabled it holds data blocks plus the per-SST index and bloom-filter blocks, so it is the effective ceiling on RocksDB's resident memory.
-          
-          Default 12 GiB keeps the filter/index working set resident plus hot EVM state. A sweep on a synced mainnet node (32 GiB cap) found 8-16 GiB all keep up with head-following (filters resident, disk near-idle, no slow blocks); larger gives no gain because the OS page cache backstops the uncompressed state CFs, and ~8 GiB is the floor where the filter set starts to thrash.
-          
-          Lower only on memory-constrained hosts, accepting reduced throughput. ETHREX_ROCKSDB_BLOCK_CACHE_SIZE sets the same value.
+          RocksDB shared block cache size in bytes, the effective ceiling on RocksDB's resident memory. Defaults to 40% of the memory available to the process (physical or cgroup limit, whichever is lower), clamped to 512 MiB..=12 GiB; where no limit can be detected (no readable /proc, e.g. outside Linux) it defaults to the 12 GiB ceiling.
           
           [env: ETHREX_ROCKSDB_BLOCK_CACHE_SIZE=]
-          [default: 12884901888]
 
 RPC options:
       --http.addr <ADDRESS>
@@ -301,7 +296,7 @@ Block building options:
           Block extra data message.
           
           [env: ETHREX_BUILDER_EXTRA_DATA=]
-          [default: "ethrex 24.0.0"]
+          [default: "ethrex 25.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.
@@ -515,7 +510,7 @@ Block building options:
           Block extra data message.
 
           [env: ETHREX_BUILDER_EXTRA_DATA=]
-          [default: "ethrex 24.0.0"]
+          [default: "ethrex 25.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.
