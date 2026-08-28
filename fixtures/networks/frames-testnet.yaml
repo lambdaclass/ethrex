@@ -68,42 +68,52 @@ participants:
   # Both must be repeated per participant. Kurtosis has no global `el_extra_params`.
   - el_type: ethrex
     el_image: ethrex:frames-testnet
-    cl_type: lighthouse
-    cl_image: ethpandaops/lighthouse:focil
+    cl_type: prysm
+    cl_image: ethpandaops/prysm-beacon-chain:glamsterdam-devnet-8
+    vc_image: ethpandaops/prysm-validator:glamsterdam-devnet-8
     el_extra_params:
       - --mempool.max-verify-gas=500000
     validator_count: 128
   - el_type: ethrex
     el_image: ethrex:frames-testnet
-    cl_type: lighthouse
-    cl_image: ethpandaops/lighthouse:focil
+    cl_type: prysm
+    cl_image: ethpandaops/prysm-beacon-chain:glamsterdam-devnet-8
+    vc_image: ethpandaops/prysm-validator:glamsterdam-devnet-8
     el_extra_params:
       - --mempool.max-verify-gas=500000
     validator_count: 32
   - el_type: ethrex
     el_image: ethrex:frames-testnet
-    cl_type: lighthouse
-    cl_image: ethpandaops/lighthouse:focil
+    cl_type: prysm
+    cl_image: ethpandaops/prysm-beacon-chain:glamsterdam-devnet-8
+    vc_image: ethpandaops/prysm-validator:glamsterdam-devnet-8
     el_extra_params:
       - --mempool.max-verify-gas=500000
     validator_count: 32
 
-# The consensus client must speak the FOCIL engine surface from the fork
-# boundary on, because ethrex rejects `newPayloadV5` and `forkchoiceUpdatedV4`
-# once Hegotá is active — only the V6/V5 pair carries `inclusionListTransactions`.
-# Required: `engine_getInclusionListV1`, `engine_newPayloadV6`,
-# `engine_forkchoiceUpdatedV5`, and EIP-7843 `slotNumber` on the payload
-# attributes. Verify all four through `engine_exchangeCapabilities` before the
-# boundary, not after: there is no inert intermediate state, so a client that
-# speaks only V5/V4 halts the node at the fork.
+# The consensus client must NOT implement Heze. That reads backwards, so it is
+# worth stating plainly: ethrex on this branch serves forkchoiceUpdated V1-V4 and
+# newPayload V1-V5, and a Heze-aware CL switches to `forkchoiceUpdatedV5` /
+# `newPayloadV6` at the Heze boundary, which this branch does not serve. Such a
+# client halts the chain at epoch 2 with
+# `RequiredMethodUnsupported("engine_forkchoiceUpdatedV5")` — there is no inert
+# intermediate state.
 #
-# The client is Lighthouse, and `ethpandaops/lighthouse:focil` is the image. This
-# is not inferred from the tag name: the running Hegotá devnet uses it, reports
-# `Lighthouse/v8.1.3-52e5197`, and its `/eth/v1/config/spec` carries the FOCIL
-# preset — `INCLUSION_LIST_COMMITTEE_SIZE` 16, `MAX_BYTES_PER_INCLUSION_LIST` 8192,
-# `DOMAIN_INCLUSION_LIST_COMMITTEE`, `INCLUSION_LIST_DUE_BPS` and
-# `MAX_REQUEST_INCLUSION_LIST` — alongside `HEZE_FORK_EPOCH`. A stock build is not a
-# substitute: it rejects a Heze payload outright with `UnsupportedForkVariant`.
+# `ethpandaops/prysm-beacon-chain:glamsterdam-devnet-8` is Gloas-only. It does not
+# recognise `HEZE_FORK_EPOCH` at all (the validator binary logs
+# `field HEZE_FORK_VERSION not found in type` and carries on), so it stays on Gloas
+# indefinitely and keeps driving the V5/V4 pair ethrex does serve.
+#
+# Meanwhile the execution layer activates Hegotá by *timestamp*, which the genesis
+# generator derives from `heze_fork_epoch` below. So frames go live on the EL while
+# the CL never leaves Gloas. That asymmetry is the whole trick, and it is what makes
+# frames testable before a Heze-capable CL exists.
+#
+# Verified on this deployment: frame transactions execute on-chain, and a validator
+# deposited from a second host activated and proposed blocks.
+#
+# FOCIL is deliberately not on this chain, so no inclusion-list engine surface is
+# required.
 
 network_params:
   # Chain ID 81410. The Hegotá testnet already runs on 8141, and both chains are
@@ -128,18 +138,15 @@ network_params:
   # the genesis state Fulu.
   fulu_fork_epoch: 0
   gloas_fork_epoch: 1
-  # Frames activation is DEFERRED until frames-devnet-0 serves the engine surface
-  # a Heze consensus client drives. Proven on this deployment: the chain produced
-  # blocks to slot 63 and then halted at epoch 2 with
-  #   RequiredMethodUnsupported("engine_forkchoiceUpdatedV5")
-  # because a CL running Heze switches to forkchoiceUpdatedV5/newPayloadV6, which
-  # this branch does not serve (it tops out at V4/V5). Those methods arrive with
-  # EIP-7805 FOCIL on hegota-testnet, and FOCIL is deliberately not on this chain.
+  # Frames are ACTIVE. This drives the execution layer's Hegotá timestamp; the
+  # Gloas-only CL above ignores it, so the chain never demands the V6/V5 engine
+  # pair this branch lacks. See the consensus-client note above for why that
+  # combination is the one that works.
   #
-  # So the chain runs on Gloas/Amsterdam rules, which ethrex does serve, and stays
-  # live and joinable. GO-LIVE STEP: once the branch serves V6/V5, lower this to 2
-  # and re-launch; nothing else in this file changes.
-  heze_fork_epoch: 100000
+  # An earlier revision of this file deferred activation to epoch 100000 because a
+  # Heze-aware Lighthouse halted the chain at the boundary. The fix was to change
+  # the consensus client, not the fork epoch.
+  heze_fork_epoch: 2
 
   # Validator keys. The package default mnemonic is public and identical on every
   # kurtosis deployment, so its derived accounts are prefunded and spendable by
