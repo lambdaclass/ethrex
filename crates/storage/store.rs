@@ -1179,11 +1179,31 @@ impl Store {
             return Ok(None);
         };
         let (bytecode_slice, jumpdests) = decode_bytes(&bytes)?;
-        let code = Code::from_parts_unchecked(
-            code_hash,
-            bytecode_slice,
-            decode_jumpdests(bytecode_slice, jumpdests)?,
-        );
+        let (jumpdests, was_legacy) = decode_jumpdests(bytecode_slice, jumpdests)?;
+        let code = Code::from_parts_unchecked(code_hash, bytecode_slice, jumpdests);
+
+        // Self-heal a legacy (pre-bitmap) row so the jumpdest recompute above is
+        // paid at most once. Fire-and-forget, and only when a Tokio runtime is
+        // reachable: this read runs on rayon execution-path workers, where
+        // `spawn` would panic. Skipping just leaves the next read to recompute
+        // again; there is no correctness dependency (matches the code-metadata
+        // backfill in `get_code_metadata`).
+        if was_legacy && let Ok(handle) = tokio::runtime::Handle::try_current() {
+            let buf = encode_code(&code);
+            let hash_key = code_hash.0.to_vec();
+            let backend = self.backend.clone();
+            handle.spawn(async move {
+                if let Err(e) = async {
+                    let mut tx = backend.begin_write()?;
+                    tx.put(ACCOUNT_CODES, &hash_key, &buf)?;
+                    tx.commit()
+                }
+                .await
+                {
+                    tracing::warn!("Failed to rewrite legacy jumpdests during backfill: {e}");
+                }
+            });
+        }
 
         // insert into cache and evict if needed
         self.account_code_cache
@@ -5486,12 +5506,16 @@ fn encode_code(code: &Code) -> Vec<u8> {
 /// there instead. The RLP item header distinguishes a list from a byte string, so both
 /// forms are readable: for the older one the bitmap is rebuilt from the bytecode, which
 /// is cheaper than decoding the list.
-fn decode_jumpdests(code: &[u8], encoded: &[u8]) -> Result<Arc<[u8]>, StoreError> {
+/// Decodes the stored jump-destination bitmap. The bool is `true` when the value
+/// was in the legacy RLP-list-of-`u32` format and had to be recomputed from
+/// `code` — the caller uses it to self-heal the row to the bitmap format so the
+/// recompute is paid at most once per entry rather than on every cold read.
+fn decode_jumpdests(code: &[u8], encoded: &[u8]) -> Result<(Arc<[u8]>, bool), StoreError> {
     let (is_list, payload, _) = decode_rlp_item(encoded)?;
     if is_list {
-        return Ok(Code::compute_jumpdests(code));
+        return Ok((Code::compute_jumpdests(code), true));
     }
-    Ok(Arc::from(payload))
+    Ok((Arc::from(payload), false))
 }
 
 #[derive(Debug, Default, Clone)]
@@ -5744,10 +5768,9 @@ mod account_code_tests {
 
         let (bytecode, jumpdests) = decode_bytes(&encoded).unwrap();
         assert_eq!(bytecode, code.code());
-        assert_eq!(
-            decode_jumpdests(bytecode, jumpdests).unwrap().as_ref(),
-            code.jumpdests()
-        );
+        let (rebuilt, was_legacy) = decode_jumpdests(bytecode, jumpdests).unwrap();
+        assert_eq!(rebuilt.as_ref(), code.jumpdests());
+        assert!(!was_legacy, "bitmap format must not be flagged legacy");
     }
 
     /// Values written before the bitmap SHALL still decode, with the bitmap rebuilt from
@@ -5779,12 +5802,15 @@ mod account_code_tests {
 
             let (decoded_bytecode, jumpdests) = decode_bytes(&legacy).unwrap();
             assert_eq!(decoded_bytecode, code.code());
+            let (rebuilt, was_legacy) = decode_jumpdests(decoded_bytecode, jumpdests).unwrap();
             assert_eq!(
-                decode_jumpdests(decoded_bytecode, jumpdests)
-                    .unwrap()
-                    .as_ref(),
+                rebuilt.as_ref(),
                 expected.as_slice(),
                 "rebuilt bitmap disagrees with the legacy offsets for {bytecode:?}"
+            );
+            assert!(
+                was_legacy,
+                "legacy RLP-list format must be flagged for self-heal"
             );
         }
     }
