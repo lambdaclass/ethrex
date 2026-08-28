@@ -44,9 +44,13 @@ fn default_code_is_padded() {
 }
 
 /// The wire format SHALL carry only the hash and the bytecode. Jump destinations are a
-/// pure function of the bytecode, and every type embedding a `Code` inherits this format
-/// (`AccountUpdate`, which the L2 rollup store persists with bincode), so a derived field
-/// here would couple that stored format to how jump destinations are represented.
+/// pure function of the bytecode. The wire format carries `hash`, `code`, and a
+/// `jump_targets` field that is ALWAYS empty: the field exists only to keep the
+/// bincode layout byte-identical to the pre-bitmap `Code`, so existing rows in the
+/// L2 rollup store (`AccountUpdate`, persisted with bincode) still decode. Because
+/// it is always empty regardless of the bytecode's jump destinations, the stored
+/// format stays decoupled from how jump destinations are represented — which is the
+/// property this test protects.
 #[test]
 fn code_serde_does_not_persist_derived_jumpdests() {
     let bytecode = vec![0x5b /* JUMPDEST */; 512];
@@ -57,17 +61,20 @@ fn code_serde_does_not_persist_derived_jumpdests() {
     );
 
     let json = serde_json::to_value(&code).expect("serialize");
+    let obj = json.as_object().expect("Code serializes as a struct");
     // `serde_json` orders its map keys, so compare against a sorted expectation.
-    let fields: Vec<&str> = json
-        .as_object()
-        .expect("Code serializes as a struct")
-        .keys()
-        .map(String::as_str)
-        .collect();
+    let fields: Vec<&str> = obj.keys().map(String::as_str).collect();
     assert_eq!(
         fields,
-        vec!["code", "hash"],
-        "unexpected field in the Code wire format"
+        vec!["code", "hash", "jump_targets"],
+        "unexpected field set in the Code wire format"
+    );
+    // The retained field must be empty even for jumpdest-dense bytecode — that is
+    // what keeps the stored format independent of jumpdest representation.
+    assert_eq!(
+        obj["jump_targets"].as_array().map(Vec::len),
+        Some(0),
+        "jump_targets must be persisted empty, never the derived destinations"
     );
 
     // Recomputed on the way back in, so the round trip is still lossless.
