@@ -175,6 +175,10 @@ pub trait PeerTableServerProtocol: Send + Sync {
         is_inbound: bool,
     ) -> Response<bool>;
     fn peer_count(&self) -> Response<usize>;
+    /// The node ids this table currently holds a connection for. Cheap on
+    /// purpose: discovery mirrors this set and needs it often, and cloning the
+    /// connections to answer would be wasted work.
+    fn connected_peer_ids(&self) -> Response<Vec<H256>>;
     fn peer_count_by_capabilities(&self, capabilities: Vec<Capability>) -> Response<usize>;
     fn target_peers_reached(&self) -> Response<bool>;
     fn target_peers_completion(&self) -> Response<f64>;
@@ -462,6 +466,15 @@ impl PeerTableServer {
             .values()
             .map(|peer_data| peer_data.node.clone())
             .collect()
+    }
+
+    #[request_handler]
+    async fn handle_connected_peer_ids(
+        &mut self,
+        _msg: peer_table_server_protocol::ConnectedPeerIds,
+        _ctx: &Context<Self>,
+    ) -> Vec<H256> {
+        self.peers.keys().copied().collect()
     }
 
     #[request_handler]

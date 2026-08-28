@@ -22,9 +22,15 @@ pub enum RLPxInitiatorError {
 #[protocol]
 pub trait RlpxInitiatorProtocol: Send + Sync {
     fn look_for_peer(&self) -> Result<(), ActorError>;
+    fn reconcile_discovery_peers(&self) -> Result<(), ActorError>;
     fn initiate(&self, node: Node) -> Result<(), ActorError>;
     fn shutdown(&self) -> Result<(), ActorError>;
 }
+
+/// How often the peer table's connected set is pushed to discovery. Slow on
+/// purpose: this is a correction for a mirror that is right almost all the time,
+/// not the mechanism that keeps it current.
+const CONNECTED_RECONCILE_INTERVAL: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone)]
 pub struct RLPxInitiator {
@@ -56,6 +62,7 @@ impl RLPxInitiator {
             None => state.start(),
         };
         let _ = actor_ref.send(rlpx_initiator_protocol::LookForPeer);
+        let _ = actor_ref.send(rlpx_initiator_protocol::ReconcileDiscoveryPeers);
         actor_ref
     }
 
@@ -83,6 +90,28 @@ impl RLPxInitiator {
             self.get_lookup_interval().await,
             ctx.clone(),
             rlpx_initiator_protocol::LookForPeer,
+        );
+    }
+
+    /// Push the peer table's connected set to discovery, which mirrors it but
+    /// cannot read it back: every message across that boundary travels inward.
+    /// The mirror is event-fed and a connection actor that dies before its
+    /// teardown hook leaves an id stranded in it, so this is what bounds the
+    /// damage to one interval.
+    #[send_handler]
+    async fn handle_reconcile_discovery_peers(
+        &mut self,
+        _msg: rlpx_initiator_protocol::ReconcileDiscoveryPeers,
+        ctx: &Context<Self>,
+    ) {
+        match self.context.table.connected_peer_ids().await {
+            Ok(peer_ids) => self.context.discovery.sync_connected_peers(peer_ids),
+            Err(e) => debug!(err=?e, "Failed to read connected peers for discovery"),
+        }
+        send_after(
+            CONNECTED_RECONCILE_INTERVAL,
+            ctx.clone(),
+            rlpx_initiator_protocol::ReconcileDiscoveryPeers,
         );
     }
 

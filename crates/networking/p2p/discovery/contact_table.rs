@@ -450,6 +450,28 @@ impl ContactTable {
         self.connected.remove(node_id);
     }
 
+    /// Replace the mirror of the consumer's connections with the authoritative
+    /// set it just reported.
+    ///
+    /// [`Self::record_peer_event`] keeps this set current in the normal case, but
+    /// it is fed by casts from per-connection actors, and an actor that dies
+    /// before its teardown hook runs reports `Connected` with no matching
+    /// `Disconnected`. A stranded id is not cosmetic: it inflates
+    /// [`Self::peer_completion`], which stretches the lookup interval, and it
+    /// makes [`Self::next_dial_candidate`] skip that node for the life of the
+    /// process. Nothing here can be recovered by discovery on its own, so the
+    /// consumer pushes the truth periodically.
+    pub fn reconcile_connected(&mut self, connected: FxHashSet<H256>) {
+        if self.connected != connected {
+            tracing::debug!(
+                mirrored = self.connected.len(),
+                actual = connected.len(),
+                "Correcting discovery's view of connected peers"
+            );
+            self.connected = connected;
+        }
+    }
+
     /// How far along the consumer is towards the connection count it wants.
     /// Feeds the lookup interval: a node with no peers looks hard, a full one
     /// coasts.
@@ -1336,6 +1358,53 @@ mod tests {
         assert!(
             table.session(&node_id).is_some(),
             "a session used inside the TTL survives the sweep"
+        );
+    }
+
+    #[tokio::test]
+    async fn reconciling_releases_a_peer_the_consumer_never_reported_leaving() {
+        // A connection actor that dies before its teardown hook runs reports
+        // `Connected` and never `Disconnected`. The stranded id is not cosmetic:
+        // it inflates `peer_completion`, which stretches the lookup interval, and
+        // it hides the node from the dialer for the life of the process.
+        let mut table = table_with(FixedAnswer(true));
+        let (node_id, record) = record_for(21, 1);
+        table.new_contact_records(vec![record]).await;
+
+        table.mark_connected(node_id);
+        assert_eq!(
+            table.peer_completion(),
+            0.1,
+            "`table_with` targets 10 peers"
+        );
+        assert!(
+            table.next_dial_candidate().is_none(),
+            "a connected peer is not offered to the dialer"
+        );
+
+        table.reconcile_connected(FxHashSet::default());
+
+        assert_eq!(table.peer_completion(), 0.0);
+        assert_eq!(
+            table.next_dial_candidate().map(|node| node.node_id()),
+            Some(node_id),
+            "the released peer is dialable again"
+        );
+    }
+
+    #[tokio::test]
+    async fn reconciling_keeps_a_peer_the_consumer_still_holds() {
+        let mut table = table_with(FixedAnswer(true));
+        let (node_id, record) = record_for(22, 1);
+        table.new_contact_records(vec![record]).await;
+        table.mark_connected(node_id);
+
+        table.reconcile_connected(FxHashSet::from_iter([node_id]));
+
+        assert_eq!(table.peer_completion(), 0.1);
+        assert!(
+            table.next_dial_candidate().is_none(),
+            "a peer the consumer still holds stays out of the dialer's pool"
         );
     }
 
