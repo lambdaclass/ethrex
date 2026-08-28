@@ -370,6 +370,10 @@ def render_page(lists):
     # pages, so they link and show the host — a wrapped URL in a 17rem rail
     # breaks mid-token and reads as damage.
     rpc_row = f"<dt>RPC</dt><dd>{PUBLIC_RPC_URL}</dd>" if PUBLIC_RPC_URL else ""
+    # The same URL bare, for the copy-pasteable command blocks. Falls back to a
+    # placeholder so an unconfigured deployment prints something a reader will
+    # obviously replace rather than a broken URL they might not notice.
+    rpc_bare = PUBLIC_RPC_URL or "<RPC_URL>"
     explorer_row = (f'<dt>Explorer</dt><dd><a href="{EXPLORER_URL}">'
                     f"{host_of(EXPLORER_URL)}</a></dd>" if EXPLORER_URL else "")
     artifacts_row = (f'<dt>Bundle</dt><dd><a href="{ARTIFACTS_URL}">'
@@ -379,6 +383,7 @@ def render_page(lists):
             .replace("{{CHAIN_ID}}", chain_id_text())
             .replace("{{AMOUNT}}", amount)
             .replace("{{RPC}}", rpc_row)
+            .replace("{{RPC_BARE}}", rpc_bare)
             .replace("{{EXPLORER}}", explorer_row)
             .replace("{{ARTIFACTS}}", artifacts_row)
             .replace("{{BOOTNODES}}", render_bootnodes(lists))).encode()
