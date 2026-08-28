@@ -501,9 +501,9 @@
              max_priority_fee_per_gas, max_fee_per_gas,
              max_fee_per_blob_gas, blob_versioned_hashes])
 
-each frame = [mode, flags, target, gas_limit, value, data]</code></pre>
+each frame = [mode, flags, target, [execution, state], value, data]</code></pre>
 
-<p>A frame is one execution step. It has its own gas limit and its own target, and the <code>mode</code> byte says what role it plays:</p>
+<p>A frame is one execution step. It has its own target and <strong>two</strong> gas budgets — <code>execution</code> for running code and <code>state</code> for growing the state (EIP-8037), which never mix — and the <code>mode</code> byte says what role it plays:</p>
 
 <div class="scroll">
 <table>
