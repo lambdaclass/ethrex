@@ -99,11 +99,15 @@ pub async fn apply_fork_choice(
     let head_res = store.get_block_header_by_hash(head_hash)?;
 
     if !safe_hash.is_zero() {
-        check_order(&safe_res, &head_res)?;
+        check_order(&safe_res, &head_res, error::ForkChoiceElement::Safe)?;
     }
 
     if !finalized_hash.is_zero() && !safe_hash.is_zero() {
-        check_order(&finalized_res, &safe_res)?;
+        check_order(
+            &finalized_res,
+            &safe_res,
+            error::ForkChoiceElement::Finalized,
+        )?;
     }
 
     let Some(head) = head_res else {
@@ -261,15 +265,17 @@ pub async fn apply_fork_choice(
 }
 
 // Checks that block 1 is prior to block 2 and that if the second is present, the first one is too.
+// `missing` names the element `block_1` was looked up as, so an absent block is reported as the
+// element the caller actually asked for. Hardcoding one element here mislabels every other call
+// site, which sends whoever reads the log looking at the wrong forkchoice field.
 fn check_order(
     block_1: &Option<BlockHeader>,
     block_2: &Option<BlockHeader>,
+    missing: error::ForkChoiceElement,
 ) -> Result<(), InvalidForkChoice> {
     // We don't need to perform the check if the hashes are null
     match (block_1, block_2) {
-        (None, Some(_)) => Err(InvalidForkChoice::ElementNotFound(
-            error::ForkChoiceElement::Finalized,
-        )),
+        (None, Some(_)) => Err(InvalidForkChoice::ElementNotFound(missing)),
         (Some(b1), Some(b2)) => {
             if b1.number > b2.number {
                 Err(InvalidForkChoice::Unordered)
@@ -501,8 +507,12 @@ async fn reorg_apply_deep(
         .ok_or(InvalidForkChoice::StateNotReachable)?;
     let to_block = pivot_number.saturating_add(1);
     if edge < to_block {
-        // Pivot is above the cache edge ; `apply_fork_choice` should have
-        // succeeded as a shallow reorg. Bail.
+        // The overlay range [pivot+1, edge] is empty: no committed block sits above the
+        // pivot, so no overlay can make the head's state readable again. We only reach here
+        // after the shallow path already failed with an unreachable head state, so that
+        // state is genuinely absent locally — never committed, and its in-memory layers
+        // dropped — rather than merely shadowed by newer commits. Nothing local recovers
+        // it, so report it and let the caller sync.
         warn!(
             edge,
             to_block, "deep-reorg path entered but pivot is above cache edge"
@@ -770,5 +780,59 @@ fn map_chain_error_for_fcu(err: ChainError, last_valid_hash: H256) -> InvalidFor
         // any case: only `engine_newPayloadV6` supplies an inclusion list, and
         // the fork-choice replay path imports blocks without one.
         | ChainError::IlUnsatisfied { .. } => InvalidForkChoice::StateNotReachable,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn header(number: u64) -> BlockHeader {
+        BlockHeader {
+            number,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn missing_element_is_reported_as_the_element_looked_up() {
+        let present = Some(header(10));
+
+        let err = check_order(&None, &present, error::ForkChoiceElement::Safe).unwrap_err();
+        assert!(matches!(
+            err,
+            InvalidForkChoice::ElementNotFound(error::ForkChoiceElement::Safe)
+        ));
+
+        let err = check_order(&None, &present, error::ForkChoiceElement::Finalized).unwrap_err();
+        assert!(matches!(
+            err,
+            InvalidForkChoice::ElementNotFound(error::ForkChoiceElement::Finalized)
+        ));
+    }
+
+    #[test]
+    fn known_blocks_in_the_wrong_order_are_unordered_not_missing() {
+        let err = check_order(
+            &Some(header(20)),
+            &Some(header(10)),
+            error::ForkChoiceElement::Safe,
+        )
+        .unwrap_err();
+        assert!(matches!(err, InvalidForkChoice::Unordered));
+    }
+
+    #[test]
+    fn known_blocks_in_order_pass() {
+        for (lower, upper) in [(10, 20), (10, 10)] {
+            assert!(
+                check_order(
+                    &Some(header(lower)),
+                    &Some(header(upper)),
+                    error::ForkChoiceElement::Safe,
+                )
+                .is_ok()
+            );
+        }
     }
 }

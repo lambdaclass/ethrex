@@ -964,10 +964,16 @@ fn bump_gas_generic_tx(tx: &mut GenericTransaction, bump_percentage: u64) {
         *max_priority_fee_per_gas = (*max_priority_fee_per_gas * (100 + bump_percentage)) / 100;
     }
     if let Some(max_fee_per_blob_gas) = &mut tx.max_fee_per_blob_gas {
-        let factor = 1 + (bump_percentage / 100) * 10;
+        // Same proportional bump as the fields above. The previous expression,
+        // `1 + (bump_percentage / 100) * 10`, truncated to 1 for every bump below 100%
+        // and then divided by 10 — so the retry loop's 30% bump *divided the blob fee by
+        // ten*. `find_tx_to_replace` requires `new_blob_fee > old_blob_fee`, so a blob
+        // transaction could never be replaced: every attempt was rejected as underpriced
+        // and the sender retried until it ran out of attempts. That is how a batch
+        // commitment stopped landing.
         *max_fee_per_blob_gas = max_fee_per_blob_gas
-            .saturating_mul(U256::from(factor))
-            .div(10);
+            .saturating_mul(U256::from(100 + bump_percentage))
+            .div(100);
     }
 }
 
@@ -1039,10 +1045,35 @@ pub async fn build_generic_tx(
     }
     tx.gas = Some(match overrides.gas_limit {
         Some(gas) => gas,
-        None => client.estimate_gas(tx.clone()).await?,
+        // `eth_estimateGas` answers what the transaction needs against the state it was
+        // asked about. By the time this transaction is mined that state has moved, so the
+        // estimate is a floor, not a safe limit: a cross-chain commitment in particular is
+        // built against one head and included against another. Headroom belongs here, in
+        // the sender, rather than in the estimator — an estimator that pads cannot be asked
+        // for the minimum, while a sender that pads costs nothing extra, since unused gas is
+        // not charged. This mirrors what wallets do (geth's estimator comments cite a 20-25%
+        // bump) and restores the slack every caller here previously got for free from the
+        // estimator's own 1.5% tolerance.
+        None => estimate_gas_with_headroom(client, tx.clone()).await?,
     });
 
     Ok(tx)
+}
+
+/// Fraction of the estimate added as headroom before submission. Unused gas is refunded,
+/// so the only cost is a larger up-front balance requirement.
+const GAS_LIMIT_HEADROOM_PERCENT: u64 = 20;
+
+async fn estimate_gas_with_headroom(
+    client: &EthClient,
+    tx: GenericTransaction,
+) -> Result<u64, EthClientError> {
+    let estimate = client.estimate_gas(tx).await?;
+    Ok(estimate.saturating_add(
+        estimate
+            .saturating_mul(GAS_LIMIT_HEADROOM_PERCENT)
+            .saturating_div(100),
+    ))
 }
 
 pub fn add_blobs_to_generic_tx(tx: &mut GenericTransaction, bundle: &BlobsBundle) {
@@ -1487,4 +1518,56 @@ pub async fn wait_for_l2_deposit_receipt(
         .ok_or_else(|| EthClientError::Custom("Empty transaction hash".to_owned()))?;
 
     wait_for_transaction_receipt(l2_deposit_tx_hash, l2_client, 10000).await
+}
+
+#[cfg(test)]
+mod bump_gas_tests {
+    //! A fee bump has to raise every fee the mempool compares, blob included.
+    //!
+    //! `find_tx_to_replace` accepts a replacement only when the new blob fee is
+    //! strictly greater than the pooled one, so a "bump" that lowers it makes a blob
+    //! transaction unreplaceable — the sender retries, is rejected as underpriced each
+    //! time, and gives up. For the L2 committer that means a batch commitment that
+    //! never lands.
+    //!
+    //! `unwrap`/`expect`/`panic` are denied in this crate, so the assertions read the
+    //! fees through `unwrap_or_default`: a zero would fail the comparisons anyway.
+    use super::*;
+
+    fn blob_tx() -> GenericTransaction {
+        GenericTransaction {
+            max_fee_per_gas: Some(1_000),
+            max_priority_fee_per_gas: Some(100),
+            max_fee_per_blob_gas: Some(U256::from(1_000u64)),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn bump_raises_every_fee_including_the_blob_fee() {
+        for bump in [10u64, 30, 50, 100, 200] {
+            let mut tx = blob_tx();
+            let before = tx.max_fee_per_blob_gas.unwrap_or_default();
+            bump_gas_generic_tx(&mut tx, bump);
+
+            let after = tx.max_fee_per_blob_gas.unwrap_or_default();
+            assert!(
+                after > before,
+                "a {bump}% bump must raise the blob fee, went {before} -> {after}"
+            );
+            assert_eq!(
+                after,
+                before * U256::from(100 + bump) / U256::from(100u64),
+                "the blob fee should scale by the same percentage as the others"
+            );
+            assert!(
+                tx.max_fee_per_gas.unwrap_or_default() > 1_000,
+                "a {bump}% bump must raise maxFeePerGas"
+            );
+            assert!(
+                tx.max_priority_fee_per_gas.unwrap_or_default() > 100,
+                "a {bump}% bump must raise maxPriorityFeePerGas"
+            );
+        }
+    }
 }

@@ -1,3 +1,4 @@
+mod bal_auth_oog_recipient_tests;
 mod bal_content_validation_tests;
 mod bal_hash_parallel_skip;
 mod bal_validate_tx_execution_tests;

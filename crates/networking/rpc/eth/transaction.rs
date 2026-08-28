@@ -24,7 +24,13 @@ use serde::Serialize;
 use serde_json::Value;
 use tracing::debug;
 
+/// Allowed upward overestimation before the estimate's binary search stops, matching
+/// geth's `estimateGasErrorRatio` (`internal/ethapi/api.go`). geth's rationale is that a
+/// perfect estimate is not worth extra execution when callers bump by 20-25% anyway, and
+/// that for a transaction which inspects its own remaining gas the true minimum is not
+/// even the useful answer. Only reached when the fast path below cannot answer.
 pub const ESTIMATE_ERROR_RATIO: f64 = 0.015;
+
 pub const CALL_STIPEND: u64 = 2_300; // Free gas given at beginning of call.
 pub const TRANSACTION_GAS: u64 = 21_000; // Per transaction not creating a contract. NOTE: Not payable on data of calls between transactions.
 
@@ -35,6 +41,13 @@ pub struct CallRequest {
 
 pub struct GetTransactionByBlockNumberAndIndexRequest {
     pub block: BlockIdentifier,
+    pub transaction_index: usize,
+}
+
+/// `eth_getRawTransactionByBlockHashAndIndex` / `...ByBlockNumberAndIndex`.
+/// `BlockIdentifierOrHash` covers both spellings with one handler.
+pub struct GetRawTransactionByBlockAndIndex {
+    pub block: BlockIdentifierOrHash,
     pub transaction_index: usize,
 }
 
@@ -168,6 +181,7 @@ impl RpcHandler for GetTransactionByBlockNumberAndIndexRequest {
             Some(block_number),
             Some(block_header.hash()),
             Some(self.transaction_index),
+            Some(block_header.timestamp),
         )?;
         serde_json::to_value(tx).map_err(|error| RpcErr::Internal(error.to_string()))
     }
@@ -206,6 +220,10 @@ impl RpcHandler for GetTransactionByBlockHashAndIndexRequest {
             Some(block_body) => block_body,
             _ => return Ok(Value::Null),
         };
+        let block_header = match context.storage.get_block_header(block_number)? {
+            Some(block_header) => block_header,
+            _ => return Ok(Value::Null),
+        };
         let tx = match block_body.transactions.get(self.transaction_index) {
             Some(tx) => tx,
             None => return Ok(Value::Null),
@@ -215,6 +233,7 @@ impl RpcHandler for GetTransactionByBlockHashAndIndexRequest {
             Some(block_number),
             Some(self.block),
             Some(self.transaction_index),
+            Some(block_header.timestamp),
         )?;
         serde_json::to_value(tx).map_err(|error| RpcErr::Internal(error.to_string()))
     }
@@ -251,11 +270,15 @@ impl RpcHandler for GetTransactionByHashRequest {
             else {
                 return Ok(Value::Null);
             };
+            let block_timestamp = storage
+                .get_block_header_by_hash(block_hash)?
+                .map(|header| header.timestamp);
             RpcTransaction::build(
                 tx,
                 Some(block_number),
                 Some(block_hash),
                 Some(index as usize),
+                block_timestamp,
             )?
         } else {
             let Some(tx) = context
@@ -265,7 +288,7 @@ impl RpcHandler for GetTransactionByHashRequest {
             else {
                 return Ok(Value::Null);
             };
-            RpcTransaction::build(tx, None, None, None)?
+            RpcTransaction::build(tx, None, None, None, None)?
         };
         serde_json::to_value(transaction).map_err(|error| RpcErr::Internal(error.to_string()))
     }
@@ -367,6 +390,46 @@ impl RpcHandler for CreateAccessListRequest {
         };
 
         serde_json::to_value(result).map_err(|error| RpcErr::Internal(error.to_string()))
+    }
+}
+
+impl RpcHandler for GetRawTransactionByBlockAndIndex {
+    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let params = params
+            .as_ref()
+            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+        if params.len() != 2 {
+            return Err(RpcErr::BadParams(format!(
+                "Expected two params and {} were provided",
+                params.len()
+            )));
+        };
+        let index_as_string: String = serde_json::from_value(params[1].clone())?;
+        Ok(GetRawTransactionByBlockAndIndex {
+            block: BlockIdentifierOrHash::parse(params[0].clone(), 0)?,
+            transaction_index: usize::from_str_radix(index_as_string.trim_start_matches("0x"), 16)
+                .map_err(|error| RpcErr::BadParams(error.to_string()))?,
+        })
+    }
+
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        debug!(
+            "Requested raw transaction at index {} of block {}",
+            self.transaction_index, self.block
+        );
+        // An unknown block, or an index past the end of a known one, both yield
+        // `null` rather than an error — same as the decoded by-index getters.
+        let Some(block_number) = self.block.resolve_block_number(&context.storage).await? else {
+            return Ok(Value::Null);
+        };
+        let Some(block_body) = context.storage.get_block_body(block_number).await? else {
+            return Ok(Value::Null);
+        };
+        let Some(tx) = block_body.transactions.get(self.transaction_index) else {
+            return Ok(Value::Null);
+        };
+        serde_json::to_value(format!("0x{}", &hex::encode(tx.encode_to_vec())))
+            .map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
 
@@ -516,11 +579,33 @@ impl RpcHandler for EstimateGasRequest {
         let gas_used = result.gas_used();
         let gas_refunded = result.gas_refunded();
 
+        // Most transactions execute identically at their own `gas_used` as they do with
+        // the whole block's gas available, and nothing can succeed below what an
+        // unconstrained run consumed — so if that one re-run succeeds it *is* the minimum,
+        // and the search can be skipped entirely. Two simulations, exact. Only gas-observing
+        // callers (an explicit `GAS` check, or a subcall needing 63/64 headroom the
+        // consumed total does not imply) fall through to the search below.
+        transaction.gas = Some(gas_used);
+        if let Ok(ExecutionResult::Success { .. }) = simulate_tx(
+            &transaction,
+            &block_header,
+            storage.clone(),
+            blockchain.clone(),
+        ) {
+            return serde_json::to_value(format!("{gas_used:#x}"))
+                .map_err(|error| RpcErr::Internal(error.to_string()));
+        }
+
         // Choose an optimistic start limit. See https://github.com/ethereum/go-ethereum/blob/a5a4fa7032bb248f5a7c40f4e8df2b131c4186a4/eth/gasestimator/gasestimator.go#L135
         let optimistic_limit = (gas_used + gas_refunded + CALL_STIPEND) * 64 / 63;
         let mut lowest_gas_limit = gas_used.saturating_sub(1);
         let mut middle_gas_limit = (optimistic_limit + lowest_gas_limit) / 2;
 
+        // Reached only by a transaction whose result depends on the gas it is given: an
+        // explicit `GAS` check, or a subcall needing 63/64 headroom the consumed total does
+        // not imply. Bisect as geth does, stopping within `ESTIMATE_ERROR_RATIO` of the
+        // upper bound rather than converging exactly — the same transactions geth's comment
+        // says do not want their true minimum returned.
         while lowest_gas_limit + 1 < highest_gas_limit {
             if (highest_gas_limit - lowest_gas_limit) as f64 / (highest_gas_limit as f64)
                 < ESTIMATE_ERROR_RATIO

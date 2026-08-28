@@ -255,33 +255,58 @@ impl Syncer {
                 )
                 .await;
             }
-            METRICS.enable().await;
-            // We validate that we have the folders that are being used empty, as we currently assume
-            // they are. If they are not empty we empty the folder
-            delete_leaves_folder(&self.datadir);
-            let sync_cycle_result = snap_sync::sync_cycle_snap(
-                &mut self.peers,
-                self.blockchain.clone(),
-                &self.snap_enabled,
-                sync_head,
-                store,
-                &self.datadir,
-                &self.diagnostics,
-            )
-            .await;
-            METRICS.disable().await;
-            sync_cycle_result
+            self.run_snap_cycle(sync_head, store).await
         } else {
-            full::sync_cycle_full(
+            let result = full::sync_cycle_full(
                 &mut self.peers,
                 self.blockchain.clone(),
                 self.cancel_token.clone(),
                 sync_head,
-                store,
+                store.clone(),
                 &self.diagnostics,
             )
-            .await
+            .await;
+            if !matches!(result, Err(SyncError::StateUnrecoverable)) {
+                return result;
+            }
+            // Full sync walked all the way to genesis without finding a single block whose
+            // post-state we can still read, so it has no base to execute from. This happens
+            // when the layered store drops the state of every canonical block we hold —
+            // typically after a deep reorg unwinds past the retained window, leaving the
+            // canonical chain and the state history pointing at different branches.
+            //
+            // Full sync cannot dig itself out: it needs a stateful parent and there is none,
+            // so every later cycle repeats the same walk and pauses again while the chain
+            // moves on — the node goes quiet indefinitely. Snap sync is the only in-protocol
+            // way to obtain state we do not have, so escalate rather than stall until an
+            // operator notices and runs `ethrex removedb`.
+            warn!(
+                %sync_head,
+                "Full sync has no reachable state to resume from; escalating to snap sync"
+            );
+            self.snap_enabled.store(true, Ordering::Relaxed);
+            self.run_snap_cycle(sync_head, store).await
         }
+    }
+
+    /// Runs one snap-sync cycle, enabling snap metrics for its duration.
+    async fn run_snap_cycle(&mut self, sync_head: H256, store: Store) -> Result<(), SyncError> {
+        METRICS.enable().await;
+        // We validate that we have the folders that are being used empty, as we currently assume
+        // they are. If they are not empty we empty the folder
+        delete_leaves_folder(&self.datadir);
+        let sync_cycle_result = snap_sync::sync_cycle_snap(
+            &mut self.peers,
+            self.blockchain.clone(),
+            &self.snap_enabled,
+            sync_head,
+            store,
+            &self.datadir,
+            &self.diagnostics,
+        )
+        .await;
+        METRICS.disable().await;
+        sync_cycle_result
     }
 }
 
@@ -360,6 +385,8 @@ pub enum SyncError {
     CorruptDB,
     #[error("Failed to fetch latest canonical block, unable to sync")]
     NoLatestCanonical,
+    #[error("No block with a reachable post-state to resume full sync from, down to genesis")]
+    StateUnrecoverable,
     #[error("Range received is invalid")]
     InvalidRangeReceived,
     #[error("Failed to fetch block number for head {0}")]
@@ -455,6 +482,11 @@ impl SyncError {
             | SyncError::BlockNumber(_)
             | SyncError::NoBlocks
             | SyncError::NoBlockHeaders => true,
+            // `sync_cycle` escalates this to snap sync before it can reach the
+            // classifier, so reaching here means the escalation itself failed to run.
+            // Retry rather than exit: killing the process does not restore the missing
+            // state, and the restart path refuses to boot without it.
+            SyncError::StateUnrecoverable => true,
             // PeerHandler handled above by delegation
             SyncError::PeerHandler(_) => unreachable!(),
         }

@@ -36,19 +36,23 @@ use crate::eth::{
     block::{
         BlockNumberRequest, GetBlobBaseFee, GetBlockByHashRequest, GetBlockByNumberRequest,
         GetBlockReceiptsRequest, GetBlockTransactionCountRequest, GetRawBlockRequest,
-        GetRawHeaderRequest, GetRawReceipts,
+        GetRawHeaderRequest, GetRawReceipts, GetUncleCountRequest,
     },
     block_access_list::{BlockAccessListRequest, RawBlockAccessListRequest},
     client::{ChainId, Syncing},
     fee_market::FeeHistoryRequest,
-    filter::{self, ActiveFilters, DeleteFilterRequest, FilterChangesRequest, NewFilterRequest},
+    filter::{
+        self, ActiveFilters, DeleteFilterRequest, FilterChangesRequest, NewBlockFilterRequest,
+        NewFilterRequest,
+    },
     gas_price::GasPrice,
     gas_tip_estimator::GasTipEstimator,
     logs::LogsFilter,
     transaction::{
         CallRequest, CreateAccessListRequest, EstimateGasRequest, GetRawTransaction,
-        GetTransactionByBlockHashAndIndexRequest, GetTransactionByBlockNumberAndIndexRequest,
-        GetTransactionByHashRequest, GetTransactionReceiptRequest,
+        GetRawTransactionByBlockAndIndex, GetTransactionByBlockHashAndIndexRequest,
+        GetTransactionByBlockNumberAndIndexRequest, GetTransactionByHashRequest,
+        GetTransactionReceiptRequest,
     },
 };
 use crate::subscription_manager::{SubscriptionManager, SubscriptionManagerProtocol};
@@ -1400,6 +1404,18 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
         "eth_getBlockTransactionCountByHash" => {
             GetBlockTransactionCountRequest::call(req, context).await
         }
+        "eth_getUncleCountByBlockNumber" => GetUncleCountRequest::call(req, context).await,
+        "eth_getUncleCountByBlockHash" => GetUncleCountRequest::call(req, context).await,
+        // `eth_`-namespace spellings of the raw-transaction getters. geth,
+        // nethermind, reth and erigon all serve these; only the `debug_` form
+        // existed here, so tooling probing the `eth_` names saw them as missing.
+        "eth_getRawTransactionByHash" => GetRawTransaction::call(req, context).await,
+        "eth_getRawTransactionByBlockHashAndIndex" => {
+            GetRawTransactionByBlockAndIndex::call(req, context).await
+        }
+        "eth_getRawTransactionByBlockNumberAndIndex" => {
+            GetRawTransactionByBlockAndIndex::call(req, context).await
+        }
         "eth_getTransactionByBlockNumberAndIndex" => {
             GetTransactionByBlockNumberAndIndexRequest::call(req, context).await
         }
@@ -1420,6 +1436,9 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
         "eth_getLogs" => LogsFilter::call(req, context).await,
         "eth_newFilter" => {
             NewFilterRequest::stateful_call(req, context.storage, context.active_filters).await
+        }
+        "eth_newBlockFilter" => {
+            NewBlockFilterRequest::stateful_call(req, context.storage, context.active_filters).await
         }
         "eth_uninstallFilter" => {
             DeleteFilterRequest::stateful_call(req, context.storage, context.active_filters)

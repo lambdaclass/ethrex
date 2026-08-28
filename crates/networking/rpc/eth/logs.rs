@@ -82,15 +82,18 @@ impl RpcHandler for LogsFilter {
                     })
                     .transpose()?
                     .flatten();
+                // Every field of the filter object is optional in the spec, so an
+                // absent `topics` means "match any topic" rather than an error.
                 let topics_filters = param
                     .get("topics")
-                    .ok_or_else(|| RpcErr::MissingParam("topics".to_string()))
-                    .and_then(|topics| {
+                    .map(|topics| {
                         match serde_json::from_value::<Option<Vec<TopicFilter>>>(topics.clone()) {
                             Ok(filters) => Ok(filters),
                             _ => Err(RpcErr::WrongParam("topics".to_string())),
                         }
-                    })?;
+                    })
+                    .transpose()?
+                    .flatten();
                 Ok(LogsFilter {
                     from_block,
                     to_block,

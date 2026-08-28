@@ -10,7 +10,7 @@ use ethrex_blockchain::{
 use ethrex_common::NativeCrypto;
 use ethrex_common::{
     U256,
-    types::{Block, EIP1559_DEFAULT_SERIALIZED_LENGTH, SAFE_BYTES_PER_BLOB, Transaction, TxKind},
+    types::{Block, EIP1559_DEFAULT_SERIALIZED_LENGTH, SAFE_BYTES_PER_BLOB, Transaction},
 };
 use ethrex_l2_common::{
     messages::get_block_l2_out_messages, privileged_transactions::PRIVILEGED_TX_BUDGET,
@@ -262,12 +262,14 @@ pub async fn fill_transactions(
             .as_ref()
             .map(|r| r.tx_checkpoint());
 
-        // Record tx sender and recipient for BAL
+        // Record the tx sender for BAL. The recipient is NOT recorded here:
+        // it is recorded when the prepare region loads it (default_hook), per
+        // the EIP-7928 v7.1.0 update — an EIP-7702 auth halt before the
+        // recipient load must exclude it. Pre-recording it here produced a BAL
+        // this sequencer's own validation rejects, discarding its own payloads.
+        // Mirrors the L1 block builder in `crates/blockchain/payload.rs`.
         if let Some(recorder) = context.vm.db.bal_recorder_mut() {
             recorder.record_touched_address(head_tx.tx.sender());
-            if let TxKind::Call(to) = head_tx.to() {
-                recorder.record_touched_address(to);
-            }
         }
 
         // Execute tx. Snapshot every PayloadBuildContext counter that
