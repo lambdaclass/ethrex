@@ -179,6 +179,20 @@ At the mainnet preset of 256 epochs, no validator may exit for ~13.6 hours
 after activation. Exit requests before that are *ignored silently* by the CL,
 which is easy to misread as a broken exit path.
 
+Confirmed from both sides on the same validator, with the same request. It
+activated at epoch 51, so it became eligible at 307:
+
+| Submitted | Execution layer | Consensus layer |
+|---|---|---|
+| epoch 53 | accepted, `status 1`, 281,785 gas | ignored; `exit_epoch` stayed `FAR_FUTURE` |
+| epoch 419 | accepted, `status 1`, 251,785 gas | `active_exiting`, `exit_epoch 424`, `withdrawable_epoch 680` |
+
+A successful execution transaction is therefore not evidence the exit took, and
+the failure mode leaves nothing to find — no revert, no log, no error. Only the
+validator's own `exit_epoch` answers the question. Note also `withdrawable_epoch`
+lands a further `MIN_VALIDATOR_WITHDRAWABILITY_DELAY` beyond the exit, so the
+balance is not recoverable when the exit is.
+
 **5. One sync path working does not mean the other does — document the one you
 tested.**
 On `frames-testnet`, a clean joiner on a separate host behaved very
