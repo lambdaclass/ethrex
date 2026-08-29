@@ -97,6 +97,13 @@ looked fine from the deploying host.
 - [ ] **Explorer is live, follows head, and renders the feature correctly** —
       the new transaction type is decoded, not shown as raw bytes or an
       "unknown type". Cite a block.
+      Send one *now* rather than citing an old one, and check the explorer's
+      decode against the client's own view of the same hash: two independent
+      decoders agreeing is the evidence, and a stale citation proves only that
+      it worked once. On `frames-testnet` a freshly sent type-`0x06` rendered
+      as `Frame (EIP-8141) (6)`, `2 frames · 1 signature`, with
+      `VERIFY / APPROVE execution+payment` and `SENDER / APPROVE none`,
+      matching `rex frame send`'s report field for field.
 - [ ] **Explorer indexes validator lifecycle, not just blocks.** Look up a
       validator that was *deposited after genesis* and a deposit transaction.
       Following head proves the beacon indexer works and says nothing about
