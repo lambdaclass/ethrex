@@ -188,6 +188,42 @@ fn run_frame_tx(
     (result, db)
 }
 
+/// Like `run_frame_tx`, but with `callTracer` active, returning the trace the
+/// `debug_traceTransaction` handler would serve alongside the report.
+fn trace_frame_tx(
+    accounts: &[SeededAccount],
+    tx: FrameTransaction,
+) -> (ExecutionReport, ethrex_common::tracing::CallTraceFrame) {
+    let mut seeded: Vec<SeededAccount> = accounts.to_vec();
+    if !seeded.iter().any(|(addr, ..)| *addr == tx.sender) {
+        seeded.push((
+            tx.sender,
+            AUTO_SEED_SENDER_BALANCE,
+            tx.nonce_seq,
+            Bytes::new(),
+        ));
+    }
+
+    let mut db = seeded_db(&seeded);
+    let env = frame_tx_env(&tx);
+    let transaction = Transaction::FrameTransaction(tx);
+
+    let mut vm = VM::new(
+        env,
+        &mut db,
+        &transaction,
+        LevmCallTracer::new(false, true),
+        VMType::L1,
+        &NativeCrypto,
+        None,
+    )
+    .expect("VM::new should succeed for a frame tx");
+    let report = vm.execute().expect("frame tx must execute");
+    let trace = vm.get_trace_result().expect("trace must be available");
+
+    (report, trace)
+}
+
 /// Like `run_frame_tx`, but builds the env with the given block `base_fee`
 /// instead of `HARNESS_BASE_FEE`. The env's effective `gas_price` is derived
 /// from the tx the same way production does (`calculate_gas_price_for_tx`):
@@ -971,6 +1007,65 @@ fn frame_tx_happy_path_sstore_and_log() {
         nonce_of(&db, FUNDED_SENDER),
         1,
         "sender nonce must be 1 after APPROVE (scope 3 increments nonce once)"
+    );
+}
+
+/// `callTracer` must report the transaction's gas and one subcall per executed
+/// frame. Regression: the frame loop opened no tracer context per frame and never
+/// closed the transaction's own, so the top call came back with `gas_used` 0 and
+/// only the first frame's callees under it.
+#[test]
+fn call_tracer_records_every_frame() {
+    let worker = Address::from_low_u64_be(0xC0FFEE);
+    let codeless = Address::from_low_u64_be(0xDECAF);
+
+    let tx = frame_tx_with_frames(vec![
+        verify_frame(FUNDED_SENDER),
+        Frame {
+            mode: u8::from(FrameMode::Sender),
+            flags: 0,
+            target: Some(worker),
+            gas_limit: 300_000,
+            value: U256::zero(),
+            data: Bytes::new(),
+        },
+        Frame {
+            mode: u8::from(FrameMode::Sender),
+            flags: 0,
+            target: Some(codeless),
+            gas_limit: 100_000,
+            value: U256::zero(),
+            data: Bytes::new(),
+        },
+    ]);
+
+    let accounts = [
+        (
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        ),
+        (
+            worker,
+            U256::zero(),
+            0,
+            Bytes::from(SSTORE_AND_LOG_CODE.to_vec()),
+        ),
+    ];
+
+    let (report, trace) = trace_frame_tx(&accounts, tx);
+
+    assert_eq!(
+        trace.gas_used, report.gas_used,
+        "top call must report the transaction's gas"
+    );
+    assert_eq!(trace.calls.len(), 3, "one subcall per executed frame");
+    assert_eq!(trace.calls[0].to, FUNDED_SENDER);
+    assert_eq!(trace.calls[1].to, worker);
+    assert_eq!(
+        trace.calls[2].to, codeless,
+        "a frame served by default code never reaches the interpreter and is traced all the same"
     );
 }
 
