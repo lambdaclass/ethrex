@@ -6,6 +6,9 @@ RUN pip install --no-cache-dir "eth-account>=0.13,<0.14" && useradd -m faucet
 COPY faucet.py page.html /app/
 USER faucet
 EXPOSE 8080
+# PORT is read at runtime, so the probe has to read it too. Hardcoding 8080 here
+# made the container report unhealthy forever on any deployment that moved the
+# port, while it went on serving perfectly well.
 HEALTHCHECK --interval=30s --timeout=5s CMD python -c \
-  "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=4)"
+  "import os,urllib.request;urllib.request.urlopen('http://127.0.0.1:'+os.environ.get('PORT','8080')+'/healthz',timeout=4)"
 ENTRYPOINT ["python", "/app/faucet.py"]
