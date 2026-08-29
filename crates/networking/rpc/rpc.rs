@@ -412,6 +412,7 @@ fn get_error_kind(err: &RpcErr) -> &'static str {
         RpcErr::UnsupportedFork(_) => "UnsupportedFork",
         RpcErr::Internal(_) => "Internal",
         RpcErr::Vm(_) => "Vm",
+        RpcErr::StateNotAvailable(_) => "StateNotAvailable",
         RpcErr::Revert { .. } => "Revert",
         RpcErr::Halt { .. } => "Halt",
         RpcErr::AuthenticationError(_) => "AuthenticationError",
