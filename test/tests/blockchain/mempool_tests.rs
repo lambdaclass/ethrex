@@ -10,7 +10,9 @@ use ethrex_blockchain::error::MempoolError;
 use ethrex_blockchain::mempool::{
     FramePaymasterReservation, Mempool, is_canonical_paymaster, transaction_intrinsic_gas,
 };
-use ethrex_blockchain::{Blockchain, BlockchainOptions};
+use ethrex_blockchain::{
+    Blockchain, BlockchainOptions, DEFAULT_BLOB_PRICE_BUMP_PERCENT, DEFAULT_PRICE_BUMP_PERCENT,
+};
 use ethrex_crypto::NativeCrypto;
 use rustc_hash::FxHashMap;
 
@@ -3255,6 +3257,181 @@ mod cumulative_balance_tests {
         let total = mempool.sum_cost_for_sender(sender, 2, None).expect("sum");
         assert_eq!(total, expected);
     }
+}
+
+// ---------------------------------------------------------------------------
+// EIP-8141 §Replacement and Eviction
+// ---------------------------------------------------------------------------
+
+/// A frame tx from `sender` at `nonce` bidding `max_fee` / `priority_fee`, with
+/// an optional expiry deadline carried by a leading expiry verifier frame.
+fn priced_frame_tx(
+    sender: Address,
+    nonce: u64,
+    max_fee: u64,
+    priority_fee: u64,
+    deadline: Option<u64>,
+) -> Transaction {
+    let mut frame_tx = match deadline {
+        Some(deadline) => {
+            let mut tx = frame_tx_with_expiry(deadline);
+            tx.sender = sender;
+            tx.frames[1].target = Some(sender);
+            tx
+        }
+        None => {
+            let mut tx = minimal_valid_frame_tx();
+            tx.sender = sender;
+            tx.frames[0].target = Some(sender);
+            tx
+        }
+    };
+    frame_tx.nonce = nonce;
+    frame_tx.max_fee_per_gas = max_fee;
+    frame_tx.max_priority_fee_per_gas = priority_fee;
+    Transaction::FrameTransaction(frame_tx)
+}
+
+fn insert_frame_tx(mempool: &Mempool, sender: Address, tx: Transaction) -> H256 {
+    let hash = tx.hash(&NativeCrypto);
+    mempool
+        .add_transaction(
+            hash,
+            sender,
+            MempoolTransaction::new(tx, sender),
+            None,
+            None,
+        )
+        .expect("direct frame tx insert");
+    hash
+}
+
+#[test]
+fn frame_tx_replacement_requires_a_minimum_bump_on_both_fees() {
+    // EIP-8141 §Replacement and Eviction: a replacement is accepted only if it
+    // raises BOTH max_fee_per_gas and max_priority_fee_per_gas by at least the
+    // node's minimum increment. Each frame-tx replacement re-runs the
+    // validation-prefix simulation, so one-wei bumps would be free EVM work.
+    let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
+    let sender = Address::from_low_u64_be(0xF00D);
+    let pooled = priced_frame_tx(sender, 0, 100, 10, None);
+    insert_frame_tx(&mempool, sender, pooled);
+
+    let cases: [(u64, u64, bool, &str); 5] = [
+        (101, 11, false, "a one-percent bump is under the increment"),
+        (
+            109,
+            11,
+            false,
+            "max_fee just below the increment is rejected",
+        ),
+        (110, 10, false, "an unbumped priority fee is rejected"),
+        (200, 5, false, "a lowered priority fee is rejected"),
+        (
+            110,
+            11,
+            true,
+            "both fees bumped by the increment is accepted",
+        ),
+    ];
+    for (max_fee, priority_fee, accepted, note) in cases {
+        let replacement = priced_frame_tx(sender, 0, max_fee, priority_fee, None);
+        let result = mempool.find_tx_to_replace(
+            sender,
+            0,
+            &replacement,
+            DEFAULT_PRICE_BUMP_PERCENT,
+            DEFAULT_BLOB_PRICE_BUMP_PERCENT,
+        );
+        if accepted {
+            assert!(
+                matches!(result, Ok(Some(_))),
+                "{note}: expected a replacement, got {result:?}"
+            );
+        } else {
+            assert!(
+                matches!(result, Err(MempoolError::UnderpricedReplacement)),
+                "{note}: expected UnderpricedReplacement, got {result:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn frame_tx_eviction_drops_the_nearest_expiry_first() {
+    // Under pool pressure the spec order sacrifices the frame tx closest to
+    // expiring, not the one that arrived first.
+    let mempool = Mempool::new(3);
+    let far = insert_frame_tx(
+        &mempool,
+        Address::from_low_u64_be(0xA1),
+        priced_frame_tx(Address::from_low_u64_be(0xA1), 0, 100, 100, Some(5_000)),
+    );
+    let near = insert_frame_tx(
+        &mempool,
+        Address::from_low_u64_be(0xA2),
+        priced_frame_tx(Address::from_low_u64_be(0xA2), 0, 100, 100, Some(2_000)),
+    );
+    let undated = insert_frame_tx(
+        &mempool,
+        Address::from_low_u64_be(0xA3),
+        priced_frame_tx(Address::from_low_u64_be(0xA3), 0, 100, 100, None),
+    );
+
+    // A fourth insert forces one eviction.
+    insert_frame_tx(
+        &mempool,
+        Address::from_low_u64_be(0xA4),
+        priced_frame_tx(Address::from_low_u64_be(0xA4), 0, 100, 100, Some(9_000)),
+    );
+
+    assert!(
+        !mempool.contains_tx(near).unwrap(),
+        "the nearest-expiry frame tx must be evicted first"
+    );
+    assert!(
+        mempool.contains_tx(far).unwrap(),
+        "a later-expiring frame tx must survive"
+    );
+    assert!(
+        mempool.contains_tx(undated).unwrap(),
+        "a frame tx with no deadline must outlive one that is about to expire"
+    );
+}
+
+#[test]
+fn frame_tx_eviction_falls_back_to_the_lowest_priority_fee() {
+    // With no deadlines to compare, the spec order sacrifices the lowest
+    // effective priority fee rather than the oldest arrival.
+    let mempool = Mempool::new(3);
+    let richest = insert_frame_tx(
+        &mempool,
+        Address::from_low_u64_be(0xB1),
+        priced_frame_tx(Address::from_low_u64_be(0xB1), 0, 100, 90, None),
+    );
+    let cheapest = insert_frame_tx(
+        &mempool,
+        Address::from_low_u64_be(0xB2),
+        priced_frame_tx(Address::from_low_u64_be(0xB2), 0, 100, 1, None),
+    );
+    let middle = insert_frame_tx(
+        &mempool,
+        Address::from_low_u64_be(0xB3),
+        priced_frame_tx(Address::from_low_u64_be(0xB3), 0, 100, 50, None),
+    );
+
+    insert_frame_tx(
+        &mempool,
+        Address::from_low_u64_be(0xB4),
+        priced_frame_tx(Address::from_low_u64_be(0xB4), 0, 100, 70, None),
+    );
+
+    assert!(
+        !mempool.contains_tx(cheapest).unwrap(),
+        "the lowest-priority-fee frame tx must be evicted first"
+    );
+    assert!(mempool.contains_tx(richest).unwrap());
+    assert!(mempool.contains_tx(middle).unwrap());
 }
 
 /// `add_transaction` queues the tx for P2P broadcast (the default path).
