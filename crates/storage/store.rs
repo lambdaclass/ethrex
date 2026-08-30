@@ -2396,18 +2396,13 @@ impl Store {
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
-        let hashed_address = hash_address_fixed(&address);
-
-        let Some(encoded_state) = state_trie.get(hashed_address.as_bytes())? else {
-            return Ok(None);
-        };
-
-        let account_state = AccountState::decode(&encoded_state)?;
-        Ok(Some(AccountInfo {
-            code_hash: account_state.code_hash,
-            balance: account_state.balance,
-            nonce: account_state.nonce,
-        }))
+        Ok(self
+            .get_account_state_from_trie(&state_trie, address)?
+            .map(|account_state| AccountInfo {
+                code_hash: account_state.code_hash,
+                balance: account_state.balance,
+                nonce: account_state.nonce,
+            }))
     }
 
     pub fn get_account_state_by_acc_hash(
@@ -2445,18 +2440,10 @@ impl Store {
         block_number: BlockNumber,
         address: Address,
     ) -> Result<Option<Code>, StoreError> {
-        let Some(block_hash) = self.get_canonical_block_hash(block_number).await? else {
-            return Ok(None);
-        };
-        let Some(state_trie) = self.state_trie(block_hash)? else {
-            return Ok(None);
-        };
-        let hashed_address = hash_address_fixed(&address);
-        let Some(encoded_state) = state_trie.get(hashed_address.as_bytes())? else {
-            return Ok(None);
-        };
-        let account_state = AccountState::decode(&encoded_state)?;
-        self.get_account_code(account_state.code_hash)
+        match self.get_account_state(block_number, address).await? {
+            Some(account_state) => self.get_account_code(account_state.code_hash),
+            None => Ok(None),
+        }
     }
 
     pub async fn get_nonce_by_account_address(
@@ -2464,18 +2451,10 @@ impl Store {
         block_number: BlockNumber,
         address: Address,
     ) -> Result<Option<u64>, StoreError> {
-        let Some(block_hash) = self.get_canonical_block_hash(block_number).await? else {
-            return Ok(None);
-        };
-        let Some(state_trie) = self.state_trie(block_hash)? else {
-            return Ok(None);
-        };
-        let hashed_address = hash_address_fixed(&address);
-        let Some(encoded_state) = state_trie.get(hashed_address.as_bytes())? else {
-            return Ok(None);
-        };
-        let account_state = AccountState::decode(&encoded_state)?;
-        Ok(Some(account_state.nonce))
+        Ok(self
+            .get_account_state(block_number, address)
+            .await?
+            .map(|account_state| account_state.nonce))
     }
 
     /// Applies account updates based on the block's latest storage state
