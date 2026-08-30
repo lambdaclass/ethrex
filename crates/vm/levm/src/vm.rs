@@ -1633,11 +1633,6 @@ impl<'a> VM<'a> {
         Ok(report)
     }
 
-    /// EIP-8272 native RECENT_ROOT_CODE write core (docs/eip-8272.md
-    /// divergence #4: the spec leaves the predeploy bytecode TBD, so ethrex
-    /// executes the 64-byte `salt ‖ root` write natively). The committed entry
-    /// is keyed by `source_id = keccak256(caller ‖ salt)` over the 20-byte
-    /// address and the 32-byte salt (EIP-8272 §Root sources, with the
     /// EIP-8312: allocate the next global UTXO index from the vault's counter.
     ///
     /// Settlement-created UTXOs draw from the SAME counter the deposit bytecode
@@ -1723,58 +1718,6 @@ impl<'a> VM<'a> {
     pub fn discard_durable_vault_writes(&mut self) {
         self.durable_vault_writes.clear();
         self.durable_state_gas = 0;
-    }
-
-    /// fixed-length encodings its Specification preamble sets out) — a
-    /// caller-authenticated namespace (nobody can write into another caller's
-    /// source_id), with the salt giving each caller as many namespaces as it
-    /// needs; a referencing transaction declares the same source_id in its
-    /// envelope. The entry commits to the CURRENT slot (EIP-7843
-    /// `env.slot_number`); last-write-wins within a block follows from plain
-    /// storage-write ordering. Callers enforce the static/value/calldata-shape
-    /// rules and gas; this core performs the storage write through the
-    /// standard backed-up path (journaled and BAL-recorded like any storage
-    /// write, and rolled back by an enclosing revert exactly as a real
-    /// bytecode SSTORE would be).
-    pub(crate) fn recent_root_native_write(
-        &mut self,
-        caller: Address,
-        salt: &[u8],
-        root: &[u8],
-    ) -> Result<(), VMError> {
-        let current_slot = self.env.slot_number;
-        // Beacon slots are u64; a larger env value can only come from a
-        // crafted header. Refuse to write rather than truncate.
-        if current_slot > U256::from(u64::MAX) {
-            return Err(ExceptionalHalt::InvalidOpcode.into());
-        }
-        let mut preimage = [0u8; 52];
-        preimage[..20].copy_from_slice(caller.as_bytes());
-        preimage[20..52].copy_from_slice(salt);
-        let source_id = H256(ethrex_crypto::keccak::keccak_hash(preimage));
-        let entry = ethrex_common::types::RecentRootReference {
-            source_id,
-            slot: current_slot.low_u64(),
-            root: H256::from_slice(root),
-        };
-        // entry_hash/storage_key come from the shared ethrex-common helpers —
-        // the same code the read-side validity check runs, so a root written
-        // here always validates its own reference.
-        let storage_key = entry.storage_key();
-        let entry_hash = entry.entry_hash();
-        let recent_root_addr = ethrex_common::types::frame_tx_recent_root();
-        // Ensure the predeploy account is cached before touching its storage.
-        let _ = self.db.get_account(recent_root_addr)?;
-        let current = self.get_storage_value(recent_root_addr, storage_key)?;
-        let key_u256 = U256::from_big_endian(&storage_key.0);
-        self.update_account_storage(
-            recent_root_addr,
-            storage_key,
-            key_u256,
-            U256::from_big_endian(entry_hash.as_bytes()),
-            current,
-        )?;
-        Ok(())
     }
 
     /// Execute a frame transaction (EIP-8141).
@@ -2098,6 +2041,7 @@ impl<'a> VM<'a> {
         // depth-driven rather than a single revert/commit.
         let mut body_substate_depth: Option<usize> = None;
         let mut body_logs_start: usize = 0;
+        let mut body_frame_start: usize = 0;
         let mut state_gas_used_at_body_entry: i64 = 0;
         let mut post_tx_reverted = false;
 
@@ -2219,6 +2163,7 @@ impl<'a> VM<'a> {
                 body_substate_depth = Some(self.substate.backup_depth());
                 body_backup.bal_checkpoint = self.db.bal_recorder.as_ref().map(|r| r.checkpoint());
                 body_logs_start = all_logs.len();
+                body_frame_start = frame_idx;
                 state_gas_used_at_body_entry = self.state_gas_used;
             }
             absorbing_body = is_body_frame;
@@ -2812,8 +2757,16 @@ impl<'a> VM<'a> {
                 }
                 crate::utils::restore_cache_state(self.db, mem::take(&mut body_backup))?;
                 // Logs the body emitted are gone with its state. The prefix's logs
-                // (an APPROVE-side EIP-7708 transfer log, say) survive.
+                // (an APPROVE-side EIP-7708 transfer log, say) survive. The per-frame
+                // receipts keep their status and gas but lose those logs too — the
+                // consensus receipt carries only them, so the header bloom is built from
+                // them and would otherwise commit to logs that no longer happened.
                 all_logs.truncate(body_logs_start);
+                if let Some(ctx) = self.frame_tx_context.as_mut() {
+                    for (_, _, logs, _) in ctx.frame_results.iter_mut().skip(body_frame_start) {
+                        logs.clear();
+                    }
+                }
                 // EIP-8037: the body was unrolled, so it created no state and owes no
                 // state gas. Mirrors the atomic-batch unroll, which drops the state
                 // gas accumulated since batch entry for the same reason. EIP-7906 does

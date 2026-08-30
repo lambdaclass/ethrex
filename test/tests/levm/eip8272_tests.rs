@@ -11,6 +11,7 @@ use ethrex_common::types::{
 };
 use ethrex_common::{Address, H256, U256, constants::EMPTY_TRIE_HASH};
 use ethrex_crypto::NativeCrypto;
+use ethrex_vm::system_contracts::RECENT_ROOT_RUNTIME_BYTECODE;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::environment::{EVMConfig, Environment};
 use ethrex_levm::errors::{ExecutionReport, VMError};
@@ -135,8 +136,15 @@ fn run_at_slot_bal(
     (result, db)
 }
 
+/// The predeploy carries `RECENT_ROOT_CODE`, so a frame targeting it runs that bytecode. Seeding it
+/// codeless would instead take the EIP-8141 default-code path, which returns success without writing.
 fn recent_root_predeploy() -> SeededAccount {
-    (frame_tx_recent_root(), U256::zero(), 1, Bytes::new())
+    (
+        frame_tx_recent_root(),
+        U256::zero(),
+        1,
+        Bytes::from_static(&RECENT_ROOT_RUNTIME_BYTECODE),
+    )
 }
 
 /// Run `tx` at `slot` against a predeploy pre-seeded with `committed`, so the
@@ -242,7 +250,7 @@ fn recent_root_native_write_commits_the_entry() {
             FrameMode::Sender,
             0x00,
             frame_tx_recent_root(),
-            100_000,
+            300_000,
             &[salt.as_slice(), root.as_bytes()].concat(),
         ),
     ]);
@@ -289,7 +297,7 @@ fn recent_root_native_write_with_bal_recording() {
             FrameMode::Sender,
             0x00,
             frame_tx_recent_root(),
-            100_000,
+            300_000,
             &[salt.as_slice(), root.as_bytes()].concat(),
         ),
     ]);
@@ -329,7 +337,7 @@ fn committed_reference_validates_and_executes() {
     );
     let db_accounts = [
         (SENDER, big(), 0, Bytes::from(APPROVE_BOTH_CODE.to_vec())),
-        (frame_tx_recent_root(), U256::zero(), 1, Bytes::new()),
+        recent_root_predeploy(),
     ];
     // Manually seed the predeploy storage (seeded_db uses empty storage), so
     // build the db and inject the committed slot.
