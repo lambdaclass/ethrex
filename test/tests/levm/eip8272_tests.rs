@@ -337,7 +337,7 @@ fn committed_reference_validates_and_executes() {
     );
     let db_accounts = [
         (SENDER, big(), 0, Bytes::from(APPROVE_BOTH_CODE.to_vec())),
-        (frame_tx_recent_root(), U256::zero(), 1, Bytes::new()),
+        recent_root_predeploy(),
     ];
     // Manually seed the predeploy storage (seeded_db uses empty storage), so
     // build the db and inject the committed slot.

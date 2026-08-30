@@ -2763,7 +2763,7 @@ impl<'a> VM<'a> {
                 // them and would otherwise commit to logs that no longer happened.
                 all_logs.truncate(body_logs_start);
                 if let Some(ctx) = self.frame_tx_context.as_mut() {
-                    for (_, _, logs) in ctx.frame_results.iter_mut().skip(body_frame_start) {
+                    for (_, _, logs, _) in ctx.frame_results.iter_mut().skip(body_frame_start) {
                         logs.clear();
                     }
                 }
