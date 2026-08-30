@@ -382,6 +382,12 @@ fn decrypt_message(
     let (iv, rest) = rest
         .split_at_checked(16)
         .ok_or_else(|| PeerConnectionError::InvalidMessageLength)?;
+    // Explicit bound: after the public key and IV, the message must still hold
+    // at least the 32-byte MAC. `rest.len() - 32` underflows for 81..112-byte
+    // messages (debug panic / release wrap) without this check.
+    if rest.len() < 32 {
+        return Err(PeerConnectionError::InvalidMessageLength);
+    }
     let (c, d) = rest
         .split_at_checked(rest.len() - 32)
         .ok_or_else(|| PeerConnectionError::InvalidMessageLength)?;
@@ -616,5 +622,28 @@ impl RLPDecode for AckMessage {
             version,
         };
         Ok((this, rest))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decrypt_message_rejects_short_mac_section_without_panic() {
+        // Regression: 81..112-byte handshake messages (valid pubkey + IV but
+        // fewer than 32 bytes of ciphertext+MAC) underflowed `rest.len() - 32`
+        // — a panic in debug builds. They must be rejected with
+        // InvalidMessageLength instead.
+        let secret_key = SecretKey::new(&mut rand::thread_rng());
+        let public_key = secret_key.public_key(secp256k1::SECP256K1);
+
+        let mut msg = public_key.serialize_uncompressed().to_vec(); // 65-byte pubkey
+        msg.extend_from_slice(&[0u8; 16]); // IV
+        msg.extend_from_slice(&[0u8; 5]); // ciphertext+MAC: too short (< 32)
+
+        let err = decrypt_message(&secret_key, &msg, &[0u8; 2])
+            .expect_err("short MAC section must be rejected");
+        assert!(matches!(err, PeerConnectionError::InvalidMessageLength));
     }
 }
