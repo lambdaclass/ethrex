@@ -62,7 +62,11 @@ fn invalid_issued_at_claim(token_data: TokenData<Claims>) -> Result<bool, Authen
         .duration_since(UNIX_EPOCH)
         .map_err(|_| AuthenticationError::InvalidIssuedAtClaim)?
         .as_secs();
-    Ok((now as i64 - token_data.claims.iat as i64).abs() > 60)
+    // `abs_diff` is panic-free for any `iat` (including adversarial values near
+    // usize::MAX): the previous `now as i64 - iat as i64` subtraction could
+    // overflow for `iat > 2^63 + now`, panicking in debug builds.
+    let iat = u64::try_from(token_data.claims.iat).unwrap_or(u64::MAX);
+    Ok(now.abs_diff(iat) > 60)
 }
 
 #[cfg(test)]
@@ -205,5 +209,32 @@ mod tests {
         .unwrap();
         let res_future = validate_jwt_authentication(&token_future, &secret);
         assert!(res_future.is_ok());
+    }
+
+    #[test]
+    fn test_iat_extreme_values_rejected_without_panic() {
+        // Regression test: `iat` values above 2^63 + now overflowed the old
+        // i64 subtraction (debug panic / release wrap). They must now be
+        // rejected cleanly as InvalidIssuedAtClaim.
+        let secret = Bytes::from("my_secret_key");
+        for iat in [usize::MAX, (1usize << 63) + 1000] {
+            let claims = Claims {
+                iat,
+                id: None,
+                clv: None,
+            };
+            let token = encode(
+                &Header::default(),
+                &claims,
+                &EncodingKey::from_secret(&secret),
+            )
+            .unwrap();
+            let res = validate_jwt_authentication(&token, &secret);
+            assert_eq!(
+                res.unwrap_err(),
+                AuthenticationError::InvalidIssuedAtClaim,
+                "iat {iat} must be rejected"
+            );
+        }
     }
 }
