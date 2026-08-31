@@ -69,14 +69,16 @@ mod net;
 pub mod rpc;
 pub mod subscription_manager;
 pub mod testing;
-mod tracing;
+pub mod tracing;
 
 pub mod clients;
 pub mod types;
 pub mod utils;
 pub use clients::{EngineClient, EthClient};
 
-pub use rpc::{start_api, start_block_executor};
+pub use rpc::{
+    BoundRpc, RpcRole, RpcStartupError, bind_api, bind_listener, start_api, start_block_executor,
+};
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;

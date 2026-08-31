@@ -1,4 +1,6 @@
-use std::mem;
+#[cfg(not(feature = "std"))]
+use alloc::{boxed::Box, string::ToString, vec::Vec};
+use core::mem;
 
 use ethrex_crypto::{Crypto, NativeCrypto};
 use ethrex_rlp::encode::RLPEncode;
@@ -279,7 +281,7 @@ impl BranchNode {
     /// Computes the node's hash, using the provided buffer
     pub fn compute_hash_no_alloc(&self, buf: &mut Vec<u8>, crypto: &dyn Crypto) -> NodeHash {
         buf.clear();
-        self.encode(buf);
+        self.encode_into_vec(buf);
         let hash = NodeHash::from_encoded(buf, crypto);
         buf.clear();
         hash

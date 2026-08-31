@@ -1,16 +1,15 @@
-//! EIP-2780 (PRELIMINARY EIPs#11645) resource-based intrinsic transaction gas.
+//! EIP-2780 resource-based intrinsic transaction gas.
 //!
 //! At Amsterdam the flat 21000 intrinsic base is decomposed into resource-based
 //! charges:
 //!   - sender base: TX_BASE_COST_AMSTERDAM = 12000
 //!   - recipient access:
 //!       * self-transfer (sender == to): 0
-//!       * contract-creation: CREATE_ACCESS_AMSTERDAM = 11000 regular + new-account state gas
+//!       * contract-creation: CREATE_ACCESS_AMSTERDAM = 12000 regular + new-account state gas
 //!       * else: cold_account_access_cost = 3000
 //!   - value transfer:
-//!       * zero value or self-transfer: 0
-//!       * non-zero value contract-creation: TRANSFER_LOG_COST_AMSTERDAM = 1756
-//!       * else: TRANSFER_LOG_COST_AMSTERDAM + TX_VALUE_COST_AMSTERDAM = 1756 + 4244 = 6000
+//!       * zero value, self-transfer, or contract-creation: 0
+//!       * else: TX_VALUE_COST_AMSTERDAM = 6000
 //!
 //! These tests assert the intrinsic regular-gas decomposition at Amsterdam, the
 //! pre-Amsterdam (Osaka) control (byte-identical 21000-base), parity between
@@ -24,7 +23,7 @@ use ethrex_common::{
     constants::EMPTY_TRIE_HASH,
     types::{
         Account, AccountState, BlockHeader, ChainConfig, Code, CodeMetadata, EIP1559Transaction,
-        Fork, LegacyTransaction, Transaction, TxKind,
+        EIP2930Transaction, Fork, LegacyTransaction, Transaction, TxKind,
     },
 };
 use ethrex_crypto::NativeCrypto;
@@ -43,12 +42,11 @@ use once_cell::sync::OnceCell;
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
-// Resource-based constants under test (PRELIMINARY EIPs#11645).
+// Resource-based constants under test.
 const TX_BASE_COST_AMSTERDAM: u64 = 12000;
-const CREATE_ACCESS_AMSTERDAM: u64 = 11000;
+const CREATE_ACCESS_AMSTERDAM: u64 = 12000;
 const COLD_ACCOUNT_ACCESS_AMSTERDAM: u64 = 3000;
-const TRANSFER_LOG_COST_AMSTERDAM: u64 = 1756;
-const TX_VALUE_COST_AMSTERDAM: u64 = 4244;
+const TX_VALUE_COST_AMSTERDAM: u64 = 6000;
 // Pre-Amsterdam base for the Osaka control.
 const TX_BASE_COST: u64 = 21000;
 const CREATE_BASE_COST: u64 = 32000;
@@ -123,6 +121,8 @@ fn intrinsic_env(fork: Fork) -> Environment {
         is_privileged: false,
         fee_token: None,
         disable_balance_check: true,
+        disable_nonce_check: false,
+        disable_gas_allowance_check: false,
         is_system_call: false,
     }
 }
@@ -145,6 +145,7 @@ fn intrinsic_with_parity(fork: Fork, tx: &Transaction) -> (u64, u64) {
         LevmCallTracer::disabled(),
         VMType::L1,
         &NativeCrypto,
+        None,
     )
     .expect("VM::new");
     let intrinsic = vm.get_intrinsic_gas().expect("get_intrinsic_gas");
@@ -205,7 +206,7 @@ fn test_intrinsic_zero_value_to_account_amsterdam() {
 
 #[test]
 fn test_intrinsic_eth_transfer_to_existing_eoa_amsterdam() {
-    // non-zero value to a distinct account: base + cold access + transfer log + value.
+    // non-zero value to a distinct account: base + cold access + value cost.
     let tx = call_tx(
         TxKind::Call(Address::from_low_u64_be(0xBEEF)),
         U256::from(1u64),
@@ -213,11 +214,8 @@ fn test_intrinsic_eth_transfer_to_existing_eoa_amsterdam() {
     let (regular, state) = intrinsic_with_parity(Fork::Amsterdam, &tx);
     assert_eq!(
         regular,
-        TX_BASE_COST_AMSTERDAM
-            + COLD_ACCOUNT_ACCESS_AMSTERDAM
-            + TRANSFER_LOG_COST_AMSTERDAM
-            + TX_VALUE_COST_AMSTERDAM,
-        "ETH transfer regular gas (12000 + 3000 + 1756 + 4244 = 21000)"
+        TX_BASE_COST_AMSTERDAM + COLD_ACCOUNT_ACCESS_AMSTERDAM + TX_VALUE_COST_AMSTERDAM,
+        "ETH transfer regular gas (12000 + 3000 + 6000 = 21000)"
     );
     assert_eq!(
         regular, 21000,
@@ -228,30 +226,42 @@ fn test_intrinsic_eth_transfer_to_existing_eoa_amsterdam() {
 
 #[test]
 fn test_intrinsic_create_zero_value_amsterdam() {
-    // contract-creation, value=0: base + CREATE_ACCESS + new-account state gas.
+    // contract-creation, value=0: base + CREATE_ACCESS. The NEW_ACCOUNT state gas is
+    // no longer part of the intrinsic (Task 4.1): it is charged IN-REGION by
+    // `prepare_execution` (EELS `prepare_dispatch` create branch), conditioned on
+    // `get_pre_state_account(created_addr) == EMPTY_ACCOUNT`, not unconditionally at
+    // intrinsic time.
     let tx = call_tx(TxKind::Create, U256::zero());
     let (regular, state) = intrinsic_with_parity(Fork::Amsterdam, &tx);
     assert_eq!(
         regular,
         TX_BASE_COST_AMSTERDAM + CREATE_ACCESS_AMSTERDAM,
-        "create value=0 regular gas (12000 + 11000 = 23000)"
+        "create value=0 regular gas (12000 + 12000 = 24000)"
     );
-    assert_eq!(regular, 23000, "create value=0 regular gas must be 23000");
-    assert!(state > 0, "create must charge new-account state gas");
+    assert_eq!(regular, 24000, "create value=0 regular gas must be 24000");
+    assert_eq!(
+        state, 0,
+        "create intrinsic state gas is 0 (NEW_ACCOUNT moved in-region)"
+    );
 }
 
 #[test]
 fn test_intrinsic_create_nonzero_value_amsterdam() {
-    // contract-creation, value>0: base + CREATE_ACCESS + transfer log (no value cost).
+    // contract-creation, value>0: base + CREATE_ACCESS. No value charge — the recipient
+    // balance write is already covered by CREATE_ACCESS.
+    // As above, the NEW_ACCOUNT state gas is charged in-region, not at intrinsic time.
     let tx = call_tx(TxKind::Create, U256::from(1u64));
     let (regular, state) = intrinsic_with_parity(Fork::Amsterdam, &tx);
     assert_eq!(
         regular,
-        TX_BASE_COST_AMSTERDAM + CREATE_ACCESS_AMSTERDAM + TRANSFER_LOG_COST_AMSTERDAM,
-        "create value>0 regular gas (23000 + 1756 = 24756)"
+        TX_BASE_COST_AMSTERDAM + CREATE_ACCESS_AMSTERDAM,
+        "create value>0 regular gas (12000 + 12000 = 24000)"
     );
-    assert_eq!(regular, 24756, "create value>0 regular gas must be 24756");
-    assert!(state > 0, "create must charge new-account state gas");
+    assert_eq!(regular, 24000, "create value>0 regular gas must be 24000");
+    assert_eq!(
+        state, 0,
+        "create intrinsic state gas is 0 (NEW_ACCOUNT moved in-region)"
+    );
 }
 
 // ===========================================================================
@@ -377,6 +387,7 @@ fn run_amsterdam_call(recipient: Address, accounts: FxHashMap<Address, Account>)
         LevmCallTracer::disabled(),
         VMType::L1,
         &NativeCrypto,
+        None,
     )
     .expect("VM::new");
 
@@ -417,9 +428,11 @@ fn test_no_transfer_to_7702_delegated_amsterdam() {
     //   intrinsic: 12000 base + 3000 cold access (distinct, value=0) = 15000
     //   top-level: + 3000 cold access for the delegation = 18000 total regular.
     //
-    // The EIP-7623 calldata floor (21000 with empty calldata) masks the raw
-    // 18000 at the receipt level, so we isolate the +3000 top-level delegation
-    // charge by differencing two executions that run IDENTICAL target code:
+    // The EIP-7976 calldata floor (`12000 + recipient_regular_gas + tokens*16`;
+    // here: no calldata, distinct cold recipient, value=0 -> 12000 + 3000 =
+    // 15000) masks the raw 18000 at the receipt level, so we isolate the +3000
+    // top-level delegation charge by differencing two executions that run
+    // IDENTICAL target code:
     //   * recipient A: 7702-delegated to target B (runs B's code via delegation)
     //   * recipient C: a plain contract carrying the same code as B
     // The gas-burning target pushes raw consumption above the floor in both, so
@@ -447,7 +460,11 @@ fn test_no_transfer_to_7702_delegated_amsterdam() {
     plain_accounts.insert(plain_contract, code_account(gas_burn_code()));
     let plain_gas = run_amsterdam_call(plain_contract, plain_accounts);
 
-    // Both clear the EIP-7623 floor, so the receipt reflects raw consumption.
+    // Both clear the EIP-7976 floor (15000, see above), so the receipt
+    // reflects raw consumption. The >21000 bound below is a conservative
+    // margin (the legacy pre-Amsterdam flat base), well above the actual
+    // 15000 floor, chosen so this assertion stays robust to floor-formula
+    // changes.
     assert!(
         delegated_gas > 21000 && plain_gas > 21000,
         "both executions must clear the 21000 floor (delegated={delegated_gas}, plain={plain_gas})"
@@ -469,5 +486,95 @@ fn test_no_transfer_to_7702_delegated_amsterdam() {
         delegated_gas,
         18000 + exec_gas,
         "delegated regular gas must be 12000 + 2x3000 + exec_gas"
+    );
+}
+
+/// Access-list-bearing (EIP-2930) call, so a warmed delegation target can be tested.
+fn access_list_call(
+    nonce: u64,
+    gas: u64,
+    to: Address,
+    value: U256,
+    access_list: Vec<(Address, Vec<H256>)>,
+) -> Transaction {
+    Transaction::EIP2930Transaction(EIP2930Transaction {
+        chain_id: 1,
+        nonce,
+        gas_price: U256::from(1),
+        gas_limit: gas,
+        to: TxKind::Call(to),
+        value,
+        data: Bytes::new(),
+        access_list,
+        ..Default::default()
+    })
+}
+
+fn run_amsterdam_call_al(
+    recipient: Address,
+    accounts: FxHashMap<Address, Account>,
+    access_list: Vec<(Address, Vec<H256>)>,
+) -> u64 {
+    let sender = Address::from_low_u64_be(0x100);
+    let mut db = store_db(accounts);
+    let gas_limit = 1_000_000u64;
+    let env = amsterdam_env(sender, gas_limit);
+    let tx = access_list_call(0, gas_limit, recipient, U256::zero(), access_list);
+
+    let mut vm = VM::new(
+        env,
+        &mut db,
+        &tx,
+        LevmCallTracer::disabled(),
+        VMType::L1,
+        &NativeCrypto,
+        None,
+    )
+    .expect("VM::new");
+
+    let result = vm.execute().expect("execution");
+    assert!(result.is_success(), "call should succeed");
+    result.gas_used
+}
+
+#[test]
+fn test_no_transfer_to_7702_delegated_warm_amsterdam() {
+    // Same as `test_no_transfer_to_7702_delegated_amsterdam`, but the delegation
+    // TARGET is pre-warmed via the tx access list, so the in-region
+    // `prepare_dispatch` delegation-resolve charges WARM_ACCESS (100) instead of
+    // COLD (3000) — EELS `prepare_dispatch` delegation branch. Differencing against a
+    // plain-contract control that carries the IDENTICAL access list cancels the
+    // access-list intrinsic cost, isolating the +100 warm delegation-resolve charge.
+    const WARM_ACCESS: u64 = 100;
+    let delegated_account = Address::from_low_u64_be(0x200);
+    let target_account = Address::from_low_u64_be(0x300);
+    let plain_contract = Address::from_low_u64_be(0x400);
+    // Warm the delegation target at tx start.
+    let access_list = vec![(target_account, Vec::<H256>::new())];
+
+    // Delegated path (target warmed by the access list).
+    let mut delegated_accounts = FxHashMap::default();
+    let (sender_addr, sender_acc) = sender_account();
+    delegated_accounts.insert(sender_addr, sender_acc);
+    delegated_accounts.insert(
+        delegated_account,
+        code_account(create_delegation_code(target_account)),
+    );
+    delegated_accounts.insert(target_account, code_account(gas_burn_code()));
+    let delegated_gas =
+        run_amsterdam_call_al(delegated_account, delegated_accounts, access_list.clone());
+
+    // Plain-contract control (same executed bytecode + same access list, no delegation).
+    let mut plain_accounts = FxHashMap::default();
+    let (sender_addr, sender_acc) = sender_account();
+    plain_accounts.insert(sender_addr, sender_acc);
+    plain_accounts.insert(plain_contract, code_account(gas_burn_code()));
+    let plain_gas = run_amsterdam_call_al(plain_contract, plain_accounts, access_list);
+
+    // Delta is the warm delegation-resolve charge only (access-list cost cancels).
+    assert_eq!(
+        delegated_gas - plain_gas,
+        WARM_ACCESS,
+        "7702-delegated recipient with a warmed target must pay only +100 warm access"
     );
 }
