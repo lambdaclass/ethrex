@@ -246,6 +246,48 @@ in its slot's transaction list and on its own page. `docker logs` should carry n
 `cannot decode transaction` warnings; those are a decoder defect, and they are now
 logged at warning level precisely so this class of bug cannot hide again.
 
+## Updating the faucet's pages
+
+`faucet.privacy.ethrex.xyz` serves two static pages baked into the `hegota-faucet` image —
+the landing page and the EIP guide at `/eips` — from `scripts/hegota-testnet/faucet/`. Both
+are read **once at process start** (`GUIDE = load_guide()`), so editing the file is not
+enough; the process has to come back.
+
+The container is worth preserving rather than recreating: its faucet key arrives as an
+environment variable at `docker run`, so a recreate needs that value again. `docker commit`
+is the wrong tool for the same reason — it would bake that key into an image layer.
+
+```bash
+# 1. Prove the live page is the branch source, so the deploy applies your change and
+#    nothing else. If it differs, stop and find out why.
+docker cp hegota-faucet:/app/eips.html ~/faucet-page-backups/eips.html.pre-change
+diff ~/faucet-page-backups/eips.html.pre-change <branch-copy>
+
+# 2. Copy in, restart, wait for healthy (~30s).
+docker cp eips.html hegota-faucet:/app/eips.html
+docker restart hegota-faucet
+docker ps --filter name=hegota-faucet --format '{{.Status}}'
+
+# 3. Verify what is SERVED, not what you copied.
+curl -s https://faucet.privacy.ethrex.xyz/eips | diff - eips.html && echo identical
+curl -s -o /dev/null -w '%{http_code}\n' https://faucet.privacy.ethrex.xyz/bootnodes
+```
+
+That leaves the change in the container's writable layer, which survives a restart but not a
+recreate. Make it durable by rebuilding the image from the same sources. The Dockerfile takes
+no secrets, and the running container keeps its own image ID until someone recreates it, so
+this is safe to do while it serves:
+
+```bash
+scp Dockerfile faucet.py page.html eips.html <host>:~/faucet-build/
+ssh <host> 'cd ~/faucet-build && docker build -t hegota-faucet:latest .'
+docker run --rm --entrypoint sh hegota-faucet:latest -c 'grep -c "<a string you added>" /app/eips.html'
+```
+
+Hash-check `faucet.py` and `page.html` against the branch before rebuilding. If they have
+drifted, the image was built from something other than the branch, and a rebuild would change
+faucet behaviour as well as the page.
+
 ## Re-publishing the artifact bundle
 
 Re-run after anything that changes a node's identity or the genesis:
