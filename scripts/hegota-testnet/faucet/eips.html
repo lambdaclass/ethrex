@@ -592,6 +592,47 @@ nonce_seq  : u64                                 // the value they must all be a
 </table>
 </div>
 
+<div class="note ours">
+  <span class="tag">Read this before you write code</span>
+  <p>This chain launched against EIP-8250 at revision <code>81b976ac0</code>. Upstream has
+  since shifted its <code>TXPARAM</code> indices up by one, because EIP-8141 took
+  <code>0x0C</code> for its own use. <strong>Three of the four indices in today&rsquo;s spec
+  are wrong here</strong> &mdash; the table below is what this chain answers.</p>
+  <p><code>0x0F</code> is the one that will hurt. Here it is EIP-8272&rsquo;s
+  <code>len(recent_root_references)</code>, so asking for the digest at the spec&rsquo;s index
+  <strong>returns a number instead of failing</strong> &mdash; almost always <code>0</code>. A
+  comparison against it fails closed, but anything that uses the value as a nullifier or a
+  domain tag silently collapses every transaction onto the same one.</p>
+  <p><code>nonce_keys_hash</code> is
+  <code>keccak256(be32(len) &#8214; be32(k&#8320;) &#8214; &hellip;)</code> over the whole key
+  set. There is deliberately no per-index accessor: pass the key you care about in
+  <code>frame.data</code> and check it against the digest, which commits to the entire set.</p>
+</div>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Value</th><th>Today&rsquo;s EIP-8250</th><th>This chain</th></tr></thead>
+  <tbody>
+    <tr><td>pre-state legacy sender nonce</td><td><code>0x0D</code></td><td><code>0x0C</code></td></tr>
+    <tr><td><code>len(nonce_keys)</code></td><td><code>0x0E</code></td><td><code>0x0D</code></td></tr>
+    <tr><td><code>nonce_keys_hash</code></td><td><code>0x0F</code></td><td><code>0x0E</code></td></tr>
+    <tr><td><code>nonce_keys[0]</code></td><td><code>0x10</code></td><td><code>0x10</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="note">
+  <span class="tag">Testing these</span>
+  <p>Every frame opcode halts with <code>reason=Invalid Opcode</code> when it runs outside a
+  type-<code>0x06</code> transaction &mdash; the same message an unassigned byte gives. An
+  <code>eth_call</code> of <code>0x600eb0</code> (<code>TXPARAM</code>, a working opcode)
+  proves it. Test frame opcodes inside a real frame transaction, or through
+  <code>ethrex_simulateFrameTransaction</code>; a bare <code>eth_call</code> cannot tell
+  &ldquo;not implemented&rdquo; from &ldquo;wrong context&rdquo;. To ask only whether a byte
+  exists, send it with no operands: an implemented opcode reaches its stack check and answers
+  <code>Stack Underflow</code>, an unassigned one answers <code>Invalid Opcode</code>.</p>
+</div>
+
 <p>Note the address convention, which recurs: a predeploy for EIP-<var>N</var> lives at <code>0x…N</code>. It makes the constants self-documenting.</p>
 
 <!-- ============================================ -->

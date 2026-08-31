@@ -182,7 +182,6 @@ pub enum Opcode {
     // EIP-8272 (spec Constants table says 0xB4, which collides with SIGPARAM;
     // ethrex uses the next free byte 0xB5 — see docs/eip-8272.md).
     RECENTROOTREFLOAD = 0xB5,
-    // EIP-8250 keyed nonces — ethrex-only extension: indexed nonce_keys[i] read.
     // EIP-8024
     DUPN = 0xE6,
     SWAPN = 0xE7,
