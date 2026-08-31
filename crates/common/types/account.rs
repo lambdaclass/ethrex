@@ -78,8 +78,8 @@ impl Code {
     /// build this `Code`), and under the guest's non-freeing bump allocator that
     /// per-CREATE ~48 KiB copy dominated peak RAM.
     pub fn from_slice_unchecked(code: &[u8], hash: H256) -> Self {
-        let jump_targets = Self::compute_jump_targets(code);
-        Self::from_parts_unchecked(hash, code, jump_targets)
+        let jumpdests = Self::compute_jumpdests(code);
+        Self::from_parts_unchecked(hash, code, jumpdests)
     }
 
     /// `code` is the logical, unpadded bytecode; `BYTECODE_PADDING` STOP bytes are
