@@ -487,6 +487,13 @@ async fn handle_forkchoice(
                     syncer.sync_to_head(fork_choice_state.head_block_hash);
                     ForkChoiceResponse::from(PayloadStatus::syncing())
                 }
+                // A missing safe/finalized element only reaches this arm when the block it
+                // is compared against (the head, or the safe block) IS present — the checks
+                // run before the head-absent syncing path. So the node is not behind on that
+                // block; an unknown safe/finalized hash against a known head is exactly the
+                // `-38002` case the engine spec mandates (execution-apis, "Unknown
+                // SafeBlockHash"/"Unknown FinalizedBlockHash"). The genuine fell-behind wedge
+                // surfaces as the head-absent `Syncing` path or `StateNotReachable`, not here.
                 InvalidForkChoice::Disconnected(_, _) | InvalidForkChoice::ElementNotFound(_) => {
                     warn!("Invalid fork choice state. Reason: {:?}", forkchoice_error);
                     return Err(RpcErr::InvalidForkChoiceState(forkchoice_error.to_string()));
