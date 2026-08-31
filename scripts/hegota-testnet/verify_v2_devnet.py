@@ -329,11 +329,13 @@ def txparam_id_check(chain_id, sender_contract) -> None:
         return
     check("the TXPARAM probe frame runs", True, f"block={int(receipt['blockNumber'], 16)}")
 
-    # The contract sender's legacy nonce is its account nonce, which a contract only bumps by
-    # deploying; it has deployed nothing, so this is 0 whatever else the run did.
+    # The legacy nonce is the sender's ACCOUNT nonce, read from the chain rather than assumed:
+    # a contract account starts at 1 (EIP-161) and only bumps by deploying, so hardcoding 0
+    # here would fail for a reason that has nothing to do with the index being right.
+    legacy_nonce = int(rpc(RPC, "eth_getTransactionCount", [sender_contract, "latest"]), 16)
     digest = cast_cmd("keccak", "0x" + (1).to_bytes(32, "big").hex() + key.to_bytes(32, "big").hex())
     expected = {
-        0x0D: 0,
+        0x0D: legacy_nonce,
         0x0E: 1,
         0x0F: int(digest, 16),
         0x10: key,
