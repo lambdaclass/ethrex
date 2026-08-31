@@ -50,6 +50,8 @@ RECENT_ROOT_CODE_LEN = 144
 # EIP-8037 STATE_BYTES_PER_NEW_ACCOUNT * CPSB: what a value-bearing frame is charged for
 # funding an address that does not exist yet, drawn from that frame's own `limits.state`.
 NEW_ACCOUNT_STATE_GAS = 120 * 1530
+# EIP-8037 STATE_BYTES_PER_STORAGE_SET * CPSB: one new storage slot.
+SSTORE_SET_STATE_GAS = 64 * 1530
 
 RPC, AUTH, JWT = sys.argv[1:4]
 KEY = os.environ.get("HEGOTA_SENDER_KEY")
@@ -256,18 +258,19 @@ def build_frame_tx(chain_id, sender, key, seq, frames, priority, max_fee, sender
 SENDER_CONTRACT_RUNTIME = bytes([0x60, 0x03, 0x60, 0x00, 0x60, 0x00, 0xAA, 0x00])
 
 
-def deploy_sender_contract(endowment: int) -> str:
-    """Deploy `SENDER_CONTRACT_RUNTIME` with `endowment` wei, and return its address.
+def deploy(runtime: bytes, endowment: int = 0) -> str:
+    """Deploy `runtime` with `endowment` wei and return its address.
 
     The init code copies the runtime into memory and returns it:
       PUSH1 len; PUSH1 offset; PUSH1 0; CODECOPY; PUSH1 len; PUSH1 0; RETURN
     with `offset` being the length of the init code itself.
 
-    The endowment goes in with the creation rather than as a later transfer: a transfer
-    would execute the runtime, and `APPROVE` outside a frame transaction halts, so the
-    contract cannot be funded after the fact.
+    Any endowment goes in with the creation rather than as a later transfer: a transfer
+    executes the runtime, and a runtime built out of frame opcodes halts outside a frame
+    transaction, so such a contract cannot be funded after the fact.
     """
-    body = SENDER_CONTRACT_RUNTIME
+    body = runtime
+    assert len(body) < 0x100, "single-byte PUSH1 length only"
     init = bytes([0x60, len(body), 0x60, 0x0C, 0x60, 0x00, 0x39,
                   0x60, len(body), 0x60, 0x00, 0xF3]) + body
     assert init[3] == 0x0C and len(init) - len(body) == 12, "init-code offset must match its length"
@@ -279,10 +282,73 @@ def deploy_sender_contract(endowment: int) -> str:
     return out["contractAddress"]
 
 
+# The TXPARAM index map this chain must answer to, as settled upstream on 2026-08-31 after
+# EIP-8141 v2 claimed 0x0C. Each entry is (index, storage slot, label).
+#
+# This is the check that catches a renumbering, and it has to be made ON CHAIN: a wrong index
+# does not halt, it answers with whatever the neighbouring EIP put there. Reading the digest
+# at the wrong index returns a reference count — a number, usually zero — and nothing tells
+# the caller. Compiling against the right constants proves nothing here; only the chain does.
+TXPARAM_IDS = [
+    (0x0D, 0, "legacy sender nonce (8250)"),
+    (0x0E, 1, "len(nonce_keys) (8250)"),
+    (0x0F, 2, "nonce_keys_hash (8250)"),
+    (0x10, 3, "nonce_keys[0] (8250)"),
+    (0x11, 4, "len(recent_root_references) (8272)"),
+]
+
+
+def txparam_id_check(chain_id, sender_contract) -> None:
+    """Read every renumbered TXPARAM index inside a real frame transaction and check it
+    against the value only that index can hold."""
+    # PUSH1 <id>; TXPARAM; PUSH1 <slot>; SSTORE  per index, then STOP.
+    runtime = b"".join(bytes([0x60, idx, 0xB0, 0x60, slot, 0x55]) for idx, slot, _ in TXPARAM_IDS)
+    runtime += b"\x00"
+    probe = deploy(runtime)
+    check("the TXPARAM probe deploys",
+          bytes.fromhex(rpc(RPC, "eth_getCode", [probe, "latest"])[2:]) == runtime)
+
+    # One fresh key, so nonce_keys is [key] and every expected value is known up front.
+    key = 0x8250_2000 + int(rpc(RPC, "eth_getTransactionCount", [sender_contract, "latest"]), 16)
+    raw = build_frame_tx(
+        chain_id, sender_contract, key, 0,
+        [frame(1, 0x03, sender_contract, 80_000, 0, 0, b""),
+         # Five slot creations, so five slots' worth of state gas.
+         frame(0, 0x00, probe, 400_000, 5 * SSTORE_SET_STATE_GAS, 0, b"")],
+        *fees(), None, sign=False)
+    tx_hash = rpc(RPC, "eth_sendRawTransaction", [raw])
+    receipt = None
+    for _ in range(60):
+        receipt = rpc(RPC, "eth_getTransactionReceipt", [tx_hash])
+        if receipt:
+            break
+        time.sleep(2)
+    if not receipt or receipt.get("status") != "0x1":
+        check("the TXPARAM probe frame runs", False,
+              f"status={(receipt or {}).get('status', 'never mined')}")
+        return
+    check("the TXPARAM probe frame runs", True, f"block={int(receipt['blockNumber'], 16)}")
+
+    # The contract sender's legacy nonce is its account nonce, which a contract only bumps by
+    # deploying; it has deployed nothing, so this is 0 whatever else the run did.
+    digest = cast_cmd("keccak", "0x" + (1).to_bytes(32, "big").hex() + key.to_bytes(32, "big").hex())
+    expected = {
+        0x0D: 0,
+        0x0E: 1,
+        0x0F: int(digest, 16),
+        0x10: key,
+        0x11: 0,
+    }
+    for idx, slot, label in TXPARAM_IDS:
+        got = int(rpc(RPC, "eth_getStorageAt", [probe, hex(slot), "latest"]), 16)
+        check(f"TXPARAM {hex(idx)} is {label}", got == expected[idx],
+              f"read {hex(got)}, expected {hex(expected[idx])}")
+
+
 def concurrency_check(chain_id) -> None:
     """EIP-8250's headline feature: two frame transactions from one sender, different keys,
     both pending at once and both mined. Only a contract sender qualifies."""
-    contract = deploy_sender_contract(10**18)
+    contract = deploy(SENDER_CONTRACT_RUNTIME, 10**18)
     code = rpc(RPC, "eth_getCode", [contract, "latest"])
     check("the sender contract deploys with its approve-both runtime",
           bytes.fromhex(code[2:]) == SENDER_CONTRACT_RUNTIME, f"{len(code[2:]) // 2} bytes")
@@ -498,6 +564,10 @@ def main() -> int:
     print("\nEIP-8250 — concurrency, which needs a contract sender")
     drain_pool("the contract-sender deploy")
     sender_contract = concurrency_check(chain_id)
+
+    print("\nEIP-8141/8250/8272 — the TXPARAM index map, read on chain")
+    drain_pool("the TXPARAM probe")
+    txparam_id_check(chain_id, sender_contract)
 
     print("\nEIP-7805 — FOCIL")
     # An inclusion list only has something to say about a transaction that is pending, so

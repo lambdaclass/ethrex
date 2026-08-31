@@ -293,6 +293,33 @@ const TXPARAM_LEGACY_SENDER_NONCE: u64 = 0x0D;
 /// carries transaction fields.
 const TXPARAM_STATE_GAS_LEFT: u64 = 0x0C;
 
+// The TXPARAM index map, pinned. These ids have moved seven times across three EIPs, twice
+// in a single day, and a wrong one does not fail loudly: it returns whatever the
+// neighbouring EIP assigned — a reference count where a digest was asked for, and no error.
+// The published values are asserted here so a renumbering is a compile error rather than a
+// silent wrong answer, the same guard the opcode bytes carry in `opcodes.rs`.
+//
+// EIP-8141 v2 `state_gas_left`; EIP-8250 `e5cf246ff1`; EIP-8272 `0231fb05f5`. `0x12` is
+// ethrex's own resolved-payer read, which yields to any spec id that lands on it.
+const _: () = assert!(TXPARAM_STATE_GAS_LEFT == 0x0C);
+const _: () = assert!(TXPARAM_LEGACY_SENDER_NONCE == 0x0D);
+const _: () = assert!(TXPARAM_NONCE_KEY_COUNT == 0x0E);
+const _: () = assert!(TXPARAM_NONCE_KEYS_HASH == 0x0F);
+const _: () = assert!(TXPARAM_NONCE_KEY_0 == 0x10);
+const _: () = assert!(TXPARAM_RECENT_ROOT_REFERENCE_COUNT == 0x11);
+const _: () = assert!(TXPARAM_RESOLVED_PAYER == 0x12);
+
+/// EIP-8250 `TXPARAM_NONCE_KEY_COUNT`.
+const TXPARAM_NONCE_KEY_COUNT: u64 = 0x0E;
+/// EIP-8250 `TXPARAM_NONCE_KEYS_HASH`.
+const TXPARAM_NONCE_KEYS_HASH: u64 = 0x0F;
+/// EIP-8250 `TXPARAM_NONCE_KEY_0`.
+const TXPARAM_NONCE_KEY_0: u64 = 0x10;
+/// EIP-8272 `TXPARAM_RECENT_ROOT_REFERENCE_COUNT`.
+const TXPARAM_RECENT_ROOT_REFERENCE_COUNT: u64 = 0x11;
+/// ethrex-only resolved-payer read, knob-gated on `payerTxparamTime`.
+const TXPARAM_RESOLVED_PAYER: u64 = 0x12;
+
 /// Gas cost: 2
 pub struct OpTxParamHandler;
 impl OpcodeHandler for OpTxParamHandler {
@@ -721,12 +748,12 @@ pub fn load_tx_param(
         // `0x0C` for `state_gas_left` (upstream `e5cf246ff1`, 2026-08-31). `0x0C` itself is
         // handled by the TXPARAM opcode rather than here: it reads the live frame pool,
         // which this transaction-only view has no access to.
-        0x0D => Ok(U256::from(ctx.legacy_sender_nonce)),
-        0x0E => Ok(U256::from(ctx.tx.nonce_keys.len())),
-        0x0F => Ok(U256::from_big_endian(ctx.tx.nonce_keys_hash().as_bytes())),
+        TXPARAM_LEGACY_SENDER_NONCE => Ok(U256::from(ctx.legacy_sender_nonce)),
+        TXPARAM_NONCE_KEY_COUNT => Ok(U256::from(ctx.tx.nonce_keys.len())),
+        TXPARAM_NONCE_KEYS_HASH => Ok(U256::from_big_endian(ctx.tx.nonce_keys_hash().as_bytes())),
         // 0x10 = nonce_keys[0], which the spec pins here (ethrex keeps the EIP-8141
         // allocation `0x0B` for len(signatures); see docs/eip-8250.md).
-        0x10 => ctx
+        TXPARAM_NONCE_KEY_0 => ctx
             .tx
             .nonce_keys
             .first()
@@ -734,7 +761,7 @@ pub fn load_tx_param(
             .ok_or(ExceptionalHalt::InvalidOpcode.into()),
         // EIP-8272: count of recent-root references, moved off `0x0F` by upstream
         // `0231fb05f5` (2026-08-31) when EIP-8250's three indices shifted up onto it.
-        0x11 => Ok(U256::from(ctx.tx.recent_root_references.len())),
+        TXPARAM_RECENT_ROOT_REFERENCE_COUNT => Ok(U256::from(ctx.tx.recent_root_references.len())),
         // Resolved payer address (ethrex extension, not in the EIP-8141 draft).
         // Gated on the payer_txparam knob: before it (and on chains without it)
         // this index falls through to the exceptional halt below, so already-
@@ -745,7 +772,7 @@ pub fn load_tx_param(
         // matching the receipt's payer encoding; a committed tx always has a
         // resolved payer (post-execution invariant), so the frames that run
         // after the validation prefix always observe the real payer.
-        0x12 if payer_txparam_active => Ok(ctx
+        TXPARAM_RESOLVED_PAYER if payer_txparam_active => Ok(ctx
             .payer_address
             .map(address_to_u256)
             .unwrap_or_else(U256::zero)),
