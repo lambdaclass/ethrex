@@ -405,6 +405,7 @@ fn get_error_kind(err: &RpcErr) -> &'static str {
         RpcErr::MethodNotFound(_) => "MethodNotFound",
         RpcErr::WrongParam(_) => "WrongParam",
         RpcErr::BadParams(_) => "BadParams",
+        RpcErr::InvalidParams(_) => "InvalidParams",
         RpcErr::InvalidRequest(_) => "InvalidRequest",
         RpcErr::MissingParam(_) => "MissingParam",
         RpcErr::TooLargeRequest => "TooLargeRequest",

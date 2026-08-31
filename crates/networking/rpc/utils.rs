@@ -32,6 +32,8 @@ pub enum RpcErr {
     WrongParam(String),
     #[error("Invalid params: {0}")]
     BadParams(String),
+    #[error("{0}")]
+    InvalidParams(String),
     #[error("Missing parameter: {0}")]
     MissingParam(String),
     #[error("Too large request")]
@@ -103,6 +105,11 @@ impl From<RpcErr> for RpcErrorMetadata {
                 code: -32000,
                 data: None,
                 message: format!("Invalid params: {context}"),
+            },
+            RpcErr::InvalidParams(context) => RpcErrorMetadata {
+                code: -32602,
+                data: None,
+                message: context,
             },
             RpcErr::InvalidRequest(context) => RpcErrorMetadata {
                 code: -32600,
