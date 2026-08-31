@@ -361,9 +361,10 @@ def concurrency_check(chain_id) -> None:
     # the contract's code is the authorization. A recipient per key, so neither frame's
     # account-creation charge depends on the other having run.
     raws = []
+    base = int(rpc(RPC, "eth_getTransactionCount", [contract, "latest"]), 16)
     for index in (0, 1):
         key = 0x8250_0000 + index
-        recipient = derived_address("beef", index)
+        recipient = derived_address("beef", base * 2 + index)
         raws.append(build_frame_tx(
             chain_id, contract, key, 0,
             [frame(1, 0x03, contract, 80_000, 0, 0, b""),
@@ -381,16 +382,31 @@ def concurrency_check(chain_id) -> None:
     check("both keys are admitted at once — concurrency the linear nonce forbids",
           len(hashes) == 2, f"{len(hashes)} of 2 admitted")
 
+    # Wait on the POOL, not just a poll count. A transaction with no receipt means one of two
+    # very different things — still queued, or dropped — and only the pool can tell them
+    # apart. Reporting them as one failure is how a busy devnet looks like a broken feature.
     mined = {}
-    for _ in range(60):
+    for _ in range(120):
         mined = {h: rpc(RPC, "eth_getTransactionReceipt", [h]) for h in hashes}
         if all(mined.values()):
             break
+        status = rpc(RPC, "txpool_status", [])
+        if int(status["pending"], 16) + int(status["queued"], 16) == 0:
+            # The pool is empty and something is still missing: it was dropped, not delayed.
+            break
         time.sleep(2)
+
     blocks = {int(r["blockNumber"], 16) for r in mined.values() if r}
-    check("both mine", bool(hashes) and all(mined.get(h) for h in hashes),
-          ",".join(f"{(mined.get(h) or {}).get('status', 'pending')}" for h in hashes)
-          + (f" in block(s) {sorted(blocks)}" if blocks else ""))
+    missing = [h for h in hashes if not mined.get(h)]
+    if missing:
+        still_pooled = [h for h in missing if rpc(RPC, "eth_getTransactionByHash", [h])]
+        check("both mine", False,
+              f"{len(missing)} of {len(hashes)} not included; "
+              + ("still pooled — the builder had not got to them yet"
+                 if still_pooled else "GONE FROM THE POOL — dropped, not delayed"))
+    else:
+        check("both mine", True,
+              ",".join(mined[h]["status"] for h in hashes) + f" in block(s) {sorted(blocks)}")
     if hashes and all(mined.get(h) for h in hashes):
         check("both succeed",
               all(mined[h]["status"] == "0x1" for h in hashes),
