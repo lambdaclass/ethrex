@@ -84,7 +84,7 @@ impl OpcodeHandler for OpCallHandler {
 
         // EIP-8141 mempool validation-trace: the CALL target must be an existing
         // account or precompile and not EIP-7702-delegated (sender exempt).
-        if vm.validation_observer.active {
+        if vm.validation_observer.is_active() {
             vm.validation_check_call_target(callee, is_delegation_7702)?;
         }
 
@@ -179,7 +179,7 @@ impl OpcodeHandler for OpCallHandler {
         // WITHOUT stipend). LEVM's `gas_cost` already equals `call_gas_costs + gas_forwarded`,
         // i.e. `intrinsic + callGasTemp`. Stipend is added later inside the child frame, after
         // the tracer fires, so it is NOT part of the reported gasCost.
-        if vm.opcode_tracer.active {
+        if vm.opcode_tracer.is_active() {
             let geth_cost = gas_cost.saturating_add(eip7702_gas_consumed);
             vm.opcode_tracer.last_opcode_gas_cost = Some(geth_cost);
         }
@@ -266,7 +266,7 @@ impl OpcodeHandler for OpCallCodeHandler {
         // EIP-8141 mempool validation-trace: CALLCODE target check (CALLCODE
         // itself is banned in non-deploy prefix frames; this also guards the
         // deploy-frame case).
-        if vm.validation_observer.active {
+        if vm.validation_observer.is_active() {
             vm.validation_check_call_target(address, is_delegation_7702)?;
         }
 
@@ -315,7 +315,7 @@ impl OpcodeHandler for OpCallCodeHandler {
         )?;
 
         // Struct-log: geth-compatible CALLCODE gasCost (intrinsic + forwarded, no stipend).
-        if vm.opcode_tracer.active {
+        if vm.opcode_tracer.is_active() {
             let geth_cost = gas_cost.saturating_add(eip7702_gas_consumed);
             vm.opcode_tracer.last_opcode_gas_cost = Some(geth_cost);
         }
@@ -389,7 +389,7 @@ impl OpcodeHandler for OpDelegateCallHandler {
 
         // EIP-8141 mempool validation-trace: the call target must be an existing
         // account or precompile and not EIP-7702-delegated (sender exempt).
-        if vm.validation_observer.active {
+        if vm.validation_observer.is_active() {
             vm.validation_check_call_target(address, is_delegation_7702)?;
         }
 
@@ -437,7 +437,7 @@ impl OpcodeHandler for OpDelegateCallHandler {
         )?;
 
         // Struct-log: geth-compatible DELEGATECALL gasCost (intrinsic + forwarded).
-        if vm.opcode_tracer.active {
+        if vm.opcode_tracer.is_active() {
             let geth_cost = gas_cost.saturating_add(eip7702_gas_consumed);
             vm.opcode_tracer.last_opcode_gas_cost = Some(geth_cost);
         }
@@ -513,7 +513,7 @@ impl OpcodeHandler for OpStaticCallHandler {
 
         // EIP-8141 mempool validation-trace: the call target must be an existing
         // account or precompile and not EIP-7702-delegated (sender exempt).
-        if vm.validation_observer.active {
+        if vm.validation_observer.is_active() {
             vm.validation_check_call_target(address, is_delegation_7702)?;
         }
 
@@ -561,7 +561,7 @@ impl OpcodeHandler for OpStaticCallHandler {
         )?;
 
         // Struct-log: geth-compatible STATICCALL gasCost (intrinsic + forwarded).
-        if vm.opcode_tracer.active {
+        if vm.opcode_tracer.is_active() {
             let geth_cost = gas_cost.saturating_add(eip7702_gas_consumed);
             vm.opcode_tracer.last_opcode_gas_cost = Some(geth_cost);
         }
@@ -645,13 +645,13 @@ impl OpcodeHandler for OpCreateHandler {
         vm.current_call_frame.increase_consumed_gas(create_gas)?;
 
         // Struct-log: record the opcode-level gas before generic_create charges forwarded gas.
-        if vm.opcode_tracer.active {
+        if vm.opcode_tracer.is_active() {
             vm.opcode_tracer.last_opcode_gas_cost = Some(create_gas);
         }
 
         // EIP-8141 mempool validation-trace: contract creation is a state write
         // permitted only inside the deploy frame.
-        if vm.validation_observer.active {
+        if vm.validation_observer.is_active() {
             vm.validation_check_create();
         }
 
@@ -681,13 +681,13 @@ impl OpcodeHandler for OpCreate2Handler {
         vm.current_call_frame.increase_consumed_gas(create2_gas)?;
 
         // Struct-log: record the opcode-level gas before generic_create charges forwarded gas.
-        if vm.opcode_tracer.active {
+        if vm.opcode_tracer.is_active() {
             vm.opcode_tracer.last_opcode_gas_cost = Some(create2_gas);
         }
 
         // EIP-8141 mempool validation-trace: contract creation is a state write
         // permitted only inside the deploy frame.
-        if vm.validation_observer.active {
+        if vm.validation_observer.is_active() {
             vm.validation_check_create();
         }
 

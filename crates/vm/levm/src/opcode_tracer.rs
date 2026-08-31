@@ -1,3 +1,4 @@
+use crate::constants::IS_ZKVM_GUEST;
 use bytes::Bytes;
 use ethrex_common::{
     H256, U256,
@@ -65,6 +66,15 @@ pub struct LevmOpcodeTracer {
 }
 
 impl LevmOpcodeTracer {
+    /// Whether tracing should run. Struct-log tracing is host-only (debug RPC), so
+    /// in the zkVM guest this is a compile-time `false` and every caller's branch —
+    /// plus the capture work behind it — folds away. Read this instead of the
+    /// `active` field on any execution path.
+    #[inline(always)]
+    pub fn is_active(&self) -> bool {
+        !IS_ZKVM_GUEST && self.active
+    }
+
     /// Returns an inactive tracer.  No allocations; zero overhead on the hot path.
     pub fn disabled() -> Self {
         Self {
