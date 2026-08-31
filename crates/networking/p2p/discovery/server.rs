@@ -85,10 +85,6 @@ pub trait DiscoveryServerProtocol: Send + Sync {
     /// Report something that happened to the consumer's relationship with a
     /// peer. See [`PeerEvent`] for what each variant does.
     fn record_peer_event(&self, node_id: H256, event: PeerEvent) -> Result<(), ActorError>;
-    /// Hand discovery the full set of node ids the consumer is connected to, so
-    /// it can correct a mirror that drifted. See
-    /// [`ContactTable::reconcile_connected`].
-    fn sync_connected_peers(&self, peer_ids: Vec<H256>) -> Result<(), ActorError>;
     fn revalidate_v4(&self) -> Result<(), ActorError>;
     fn revalidate_v5(&self) -> Result<(), ActorError>;
     fn lookup_v4(&self) -> Result<(), ActorError>;
@@ -138,14 +134,6 @@ impl DiscoveryHandle {
     pub fn record_peer_event(&self, node_id: H256, event: PeerEvent) {
         if let Some(server) = self.server() {
             let _ = server.record_peer_event(node_id, event);
-        }
-    }
-
-    /// Tell discovery which peers the consumer is actually connected to. A cast
-    /// like the rest: discovery corrects itself from it and answers nothing.
-    pub fn sync_connected_peers(&self, peer_ids: Vec<H256>) {
-        if let Some(server) = self.server() {
-            let _ = server.sync_connected_peers(peer_ids);
         }
     }
 
@@ -444,16 +432,6 @@ impl DiscoveryServer {
         _ctx: &Context<Self>,
     ) {
         self.contacts.record_peer_event(msg.node_id, msg.event);
-    }
-
-    #[send_handler]
-    async fn handle_sync_connected_peers(
-        &mut self,
-        msg: discovery_server_protocol::SyncConnectedPeers,
-        _ctx: &Context<Self>,
-    ) {
-        self.contacts
-            .reconcile_connected(msg.peer_ids.into_iter().collect());
     }
 
     #[request_handler]
