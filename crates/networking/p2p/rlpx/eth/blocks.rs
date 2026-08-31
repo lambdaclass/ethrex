@@ -156,11 +156,16 @@ impl GetBlockHeaders {
             };
             // Compute the next block to fetch before moving `block_header`.
             let next_block = match current_block {
-                // By hash we can only walk descending (reverse) with no skip, by
+                // By hash we only walk descending (reverse) with no skip, by
                 // following parent hashes. This serves a non-canonical chain
                 // (e.g. a syncing peer's fork/sync head) that cannot be addressed
-                // by number. Ascending or skipping by hash isn't representable,
-                // so we stop after the single requested header.
+                // by number. Ascending is not addressable from a hash without
+                // knowing the child; skipping (`skip > 0`) reverse-by-hash could
+                // be served by walking `skip + 1` parent links per emitted header
+                // (as geth's GetAncestor does) but is not implemented here — the
+                // syncing peers that use reverse-by-hash all request `skip == 0`.
+                // Per spec, serving fewer headers than requested is allowed, so we
+                // stop after the single header rather than returning wrong ones.
                 HashOrNumber::Hash(_) => (self.reverse && self.skip == 0)
                     .then_some(HashOrNumber::Hash(block_header.parent_hash)),
                 HashOrNumber::Number(number) => (number as i64 + block_skip)
