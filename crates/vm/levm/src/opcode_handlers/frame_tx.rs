@@ -279,7 +279,46 @@ impl OpcodeHandler for OpApproveHandler {
 
 /// TXPARAM (0xB0) -- Load a transaction parameter as a 32-byte word.
 /// TXPARAM index of the sender's legacy account nonce (EIP-8250).
-const TXPARAM_LEGACY_SENDER_NONCE: u64 = 0x0C;
+/// EIP-8250's legacy account-nonce read, at `0x0D`.
+///
+/// It sat at `0x0C` until EIP-8141 v2 claimed that index for `state_gas_left`. ethrex moved
+/// it to `0x12` ahead of the EIP; upstream then settled the collision differently, shifting
+/// all three of EIP-8250's own indices up by one (`e5cf246ff1`, 2026-08-31), so this is
+/// `0x0D` and the guess is retired. The spec's numbering wins over ours every time — the
+/// same rule that moved `nonce_keys[0]` off `0x0B`, recorded in `docs/eip-8250.md`.
+const TXPARAM_LEGACY_SENDER_NONCE: u64 = 0x0D;
+
+/// EIP-8141 v2 TXPARAM `0x0C`: "`state_gas_left` remaining in the currently executing
+/// frame". Served from the live VM pool rather than from `FrameTxContext`, which only
+/// carries transaction fields.
+const TXPARAM_STATE_GAS_LEFT: u64 = 0x0C;
+
+// The TXPARAM index map, pinned. These ids have moved seven times across three EIPs, twice
+// in a single day, and a wrong one does not fail loudly: it returns whatever the
+// neighbouring EIP assigned — a reference count where a digest was asked for, and no error.
+// The published values are asserted here so a renumbering is a compile error rather than a
+// silent wrong answer, the same guard the opcode bytes carry in `opcodes.rs`.
+//
+// EIP-8141 v2 `state_gas_left`; EIP-8250 `e5cf246ff1`; EIP-8272 `0231fb05f5`. `0x12` is
+// ethrex's own resolved-payer read, which yields to any spec id that lands on it.
+const _: () = assert!(TXPARAM_STATE_GAS_LEFT == 0x0C);
+const _: () = assert!(TXPARAM_LEGACY_SENDER_NONCE == 0x0D);
+const _: () = assert!(TXPARAM_NONCE_KEY_COUNT == 0x0E);
+const _: () = assert!(TXPARAM_NONCE_KEYS_HASH == 0x0F);
+const _: () = assert!(TXPARAM_NONCE_KEY_0 == 0x10);
+const _: () = assert!(TXPARAM_RECENT_ROOT_REFERENCE_COUNT == 0x11);
+const _: () = assert!(TXPARAM_RESOLVED_PAYER == 0x12);
+
+/// EIP-8250 `TXPARAM_NONCE_KEY_COUNT`.
+const TXPARAM_NONCE_KEY_COUNT: u64 = 0x0E;
+/// EIP-8250 `TXPARAM_NONCE_KEYS_HASH`.
+const TXPARAM_NONCE_KEYS_HASH: u64 = 0x0F;
+/// EIP-8250 `TXPARAM_NONCE_KEY_0`.
+const TXPARAM_NONCE_KEY_0: u64 = 0x10;
+/// EIP-8272 `TXPARAM_RECENT_ROOT_REFERENCE_COUNT`.
+const TXPARAM_RECENT_ROOT_REFERENCE_COUNT: u64 = 0x11;
+/// ethrex-only resolved-payer read, knob-gated on `payerTxparamTime`.
+const TXPARAM_RESOLVED_PAYER: u64 = 0x12;
 
 /// Gas cost: 2
 pub struct OpTxParamHandler;
@@ -292,7 +331,7 @@ impl OpcodeHandler for OpTxParamHandler {
             .increase_consumed_gas(gas_cost::TXPARAM)?;
 
         // Block-invariant knob flag (mirrors env.slot_number): gates the
-        // resolved-payer index 0x11 so pre-knob blocks preserve its historical
+        // resolved-payer index 0x12 so pre-knob blocks preserve its historical
         // exceptional-halt and re-execute identically.
         let payer_txparam_active = vm.env.config.payer_txparam_active;
 
@@ -302,6 +341,18 @@ impl OpcodeHandler for OpTxParamHandler {
             .ok_or(ExceptionalHalt::InvalidOpcode)?;
 
         let param_id = u64::try_from(param_id).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
+        // `state_gas_left` is live execution state, not a transaction field, so it is
+        // read here instead of in the `FrameTxContext`-only `load_tx_param`. The pool is
+        // set for the whole of a frame's execution, so a `None` means TXPARAM was reached
+        // outside frame execution, which halts as any undefined parameter does.
+        if param_id == TXPARAM_STATE_GAS_LEFT {
+            let left = vm
+                .frame_state_pool
+                .map(|pool| pool.left)
+                .ok_or(ExceptionalHalt::InvalidOpcode)?;
+            vm.current_call_frame.stack.push(U256::from(left))?;
+            return Ok(OpcodeResult::Continue);
+        }
         let result = load_tx_param(ctx, param_id, payer_txparam_active)?;
         // EIP-8250 §Mempool: a validation prefix that reads the sender's legacy
         // account nonce depends on it, so the mempool must revalidate when that
@@ -481,11 +532,11 @@ impl OpcodeHandler for OpFrameParamHandler {
                 if idx >= ctx.current_frame_index {
                     return Err(ExceptionalHalt::InvalidOpcode.into());
                 }
-                let (status, _, _) = ctx
+                let result = ctx
                     .frame_results
                     .get(idx)
                     .ok_or(ExceptionalHalt::InvalidOpcode)?;
-                U256::from(*status)
+                U256::from(result.status)
             }
             0x06 => {
                 // allowed_scope (flags & 0x03)
@@ -499,6 +550,30 @@ impl OpcodeHandler for OpFrameParamHandler {
                 // value -- EIP-8141 FRAMEPARAM table
                 frame.value
             }
+            0x09 => {
+                // limits.state -- v2's second declared budget. The counterpart of 0x01,
+                // and the one a sponsor checks before agreeing to pay for a frame whose
+                // state growth it cannot otherwise bound.
+                U256::from(frame.state_limit)
+            }
+            0x0A | 0x0B => {
+                // gas_used.execution / gas_used.state of a COMPLETED frame. Same rule as
+                // `status` (0x05): a frame's usage is only defined once it has exited, so
+                // reading the current or a future frame halts rather than reporting a
+                // figure that is still moving.
+                if idx >= ctx.current_frame_index {
+                    return Err(ExceptionalHalt::InvalidOpcode.into());
+                }
+                let result = ctx
+                    .frame_results
+                    .get(idx)
+                    .ok_or(ExceptionalHalt::InvalidOpcode)?;
+                if param_id == 0x0A {
+                    U256::from(result.gas_used)
+                } else {
+                    U256::from(result.state_gas_used)
+                }
+            }
             _ => return Err(ExceptionalHalt::InvalidOpcode.into()),
         };
 
@@ -508,14 +583,12 @@ impl OpcodeHandler for OpFrameParamHandler {
     }
 }
 
-/// SIGPARAM (0xB4) -- signature-scoped metadata and data copy (EIP-8141).
-/// Metadata (params 0x00-0x03): stack `[param, signatureIndex]` with
-/// `signatureIndex` on top; gas 2; returns one word (0x00 effective signer,
-/// 0x01 scheme, 0x02 msg, 0x03 len(signature)). Copy (param 0x04): takes
-/// `[signatureIndex, param, memOffset, dataOffset, length]` from the stack,
-/// matching `CALLDATACOPY`'s operand order; CALLDATACOPY gas; copies an ARBITRARY
-/// signature's raw bytes into memory (zero-filled past the end) and pushes
-/// nothing — any other scheme halts.
+/// SIGPARAM (0xB4) -- signature-scoped metadata (EIP-8141).
+/// Stack `[param, signatureIndex]` with `signatureIndex` on top; gas 2; returns one
+/// word (0x00 effective signer, 0x01 scheme, 0x02 msg, 0x03 len(signature)).
+///
+/// EIP-8141 v2 moved the copy operation out of here into [`OpSigDataCopyHandler`],
+/// so `param` 0x04 is no longer defined and halts like any other unknown param.
 pub struct OpSigParamHandler;
 impl OpcodeHandler for OpSigParamHandler {
     #[inline(always)]
@@ -526,57 +599,7 @@ impl OpcodeHandler for OpSigParamHandler {
             u64::try_from(signature_index).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
         let idx = index_to_usize(signature_index)?;
 
-        // 0x04: copy the referenced ARBITRARY signature's raw bytes into memory,
-        // CALLDATACOPY-style (see FRAMEDATACOPY). Pops three more operands.
-        if param == 0x04 {
-            let [mem_offset, data_offset, length] = *vm.current_call_frame.stack.pop()?;
-            let (length, mem_offset) = size_offset_to_usize(length, mem_offset)?;
-            let data_offset_opt = u256_to_offset(data_offset);
-
-            let new_memory_size = calculate_memory_size(mem_offset, length)?;
-            let current_memory_size = vm.current_call_frame.memory.len();
-            // Charge memory-expansion gas before the context/scheme guards: the
-            // caller pays for the growth it requested even if the opcode halts.
-            vm.current_call_frame
-                .increase_consumed_gas(gas_cost::framedatacopy(
-                    new_memory_size,
-                    current_memory_size,
-                    length,
-                )?)?;
-
-            let ctx = vm
-                .frame_tx_context
-                .as_ref()
-                .ok_or(ExceptionalHalt::InvalidOpcode)?;
-            let sig = ctx
-                .tx
-                .signatures
-                .get(idx)
-                .ok_or(ExceptionalHalt::InvalidOpcode)?;
-            // 0x04 is only defined for ARBITRARY signatures.
-            if sig.scheme != ethrex_common::types::FRAME_SIG_SCHEME_ARBITRARY {
-                return Err(ExceptionalHalt::InvalidOpcode.into());
-            }
-            if length == 0 {
-                return Ok(OpcodeResult::Continue);
-            }
-            let data = &sig.signature;
-            let mut buf = vec![0u8; length];
-            if let Some(data_offset) = data_offset_opt {
-                let available = data.len().saturating_sub(data_offset);
-                let copy_len = length.min(available);
-                if let (Some(dst), Some(src)) = (
-                    buf.get_mut(..copy_len),
-                    data.get(data_offset..data_offset.saturating_add(copy_len)),
-                ) {
-                    dst.copy_from_slice(src);
-                }
-            }
-            vm.current_call_frame.memory.store_data(mem_offset, &buf)?;
-            return Ok(OpcodeResult::Continue);
-        }
-
-        // Metadata (0x00-0x03): fixed gas, returns one word.
+        // Fixed gas, returns one word.
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::SIGPARAM)?;
         let ctx = vm
@@ -621,6 +644,72 @@ impl OpcodeHandler for OpSigParamHandler {
 /// 2 => root. Gas: 3. Reads only the envelope, never contract storage; allowed
 /// in any frame mode (incl. VERIFY). Exceptional-halt if
 /// `index >= len(recent_root_references)` or `field > 2`.
+/// SIGDATACOPY (0xB5) -- copy an ARBITRARY signature's raw bytes into memory (EIP-8141 v2).
+///
+/// v2 split this out of `SIGPARAM(0x04)` and gave it its own byte. Stack, top first:
+/// `memOffset`, `dataOffset`, `length`, `signatureIndex` -- CALLDATACOPY's operand order
+/// with the signature index beneath it, and note that the index moved from the *top* of
+/// the stack (where SIGPARAM took it) to the *bottom* of the four operands.
+///
+/// Gas is CALLDATACOPY's: the fixed 3, the per-word copy cost, and memory expansion.
+/// Raw signature bytes of protocol-validated schemes stay un-introspectable so future
+/// aggregation remains possible, so an out-of-range index or any scheme other than
+/// ARBITRARY is an exceptional halt. Bytes past the end of the signature read as zero.
+pub struct OpSigDataCopyHandler;
+impl OpcodeHandler for OpSigDataCopyHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        let [mem_offset, data_offset, length, signature_index] =
+            *vm.current_call_frame.stack.pop()?;
+        let signature_index =
+            u64::try_from(signature_index).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
+        let idx = index_to_usize(signature_index)?;
+        let (length, mem_offset) = size_offset_to_usize(length, mem_offset)?;
+        let data_offset_opt = u256_to_offset(data_offset);
+
+        let new_memory_size = calculate_memory_size(mem_offset, length)?;
+        let current_memory_size = vm.current_call_frame.memory.len();
+        // Charge memory-expansion gas before the context and scheme guards: the caller
+        // pays for the growth it asked for even when the opcode goes on to halt.
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::framedatacopy(
+                new_memory_size,
+                current_memory_size,
+                length,
+            )?)?;
+
+        let ctx = vm
+            .frame_tx_context
+            .as_ref()
+            .ok_or(ExceptionalHalt::InvalidOpcode)?;
+        let sig = ctx
+            .tx
+            .signatures
+            .get(idx)
+            .ok_or(ExceptionalHalt::InvalidOpcode)?;
+        if sig.scheme != ethrex_common::types::FRAME_SIG_SCHEME_ARBITRARY {
+            return Err(ExceptionalHalt::InvalidOpcode.into());
+        }
+        if length == 0 {
+            return Ok(OpcodeResult::Continue);
+        }
+        let data = &sig.signature;
+        let mut buf = vec![0u8; length];
+        if let Some(data_offset) = data_offset_opt {
+            let available = data.len().saturating_sub(data_offset);
+            let copy_len = length.min(available);
+            if let (Some(dst), Some(src)) = (
+                buf.get_mut(..copy_len),
+                data.get(data_offset..data_offset.saturating_add(copy_len)),
+            ) {
+                dst.copy_from_slice(src);
+            }
+        }
+        vm.current_call_frame.memory.store_data(mem_offset, &buf)?;
+        Ok(OpcodeResult::Continue)
+    }
+}
+
 pub struct OpRecentRootRefLoadHandler;
 impl OpcodeHandler for OpRecentRootRefLoadHandler {
     #[inline(always)]
@@ -679,20 +768,24 @@ pub fn load_tx_param(
         0x09 => Ok(U256::from(ctx.tx.frames.len())),
         0x0A => Ok(U256::from(ctx.current_frame_index)),
         0x0B => Ok(U256::from(ctx.tx.signatures.len())),
-        // EIP-8250 keyed nonces.
-        0x0C => Ok(U256::from(ctx.legacy_sender_nonce)),
-        0x0D => Ok(U256::from(ctx.tx.nonce_keys.len())),
-        0x0E => Ok(U256::from_big_endian(ctx.tx.nonce_keys_hash().as_bytes())),
-        // EIP-8272: count of recent-root references.
-        0x0F => Ok(U256::from(ctx.tx.recent_root_references.len())),
-        // 0x10 = nonce_keys[0], relocated from the spec's 0x0B (ethrex keeps 0x0B
-        // for len(signatures); divergence documented in docs/eip-8250.md).
-        0x10 => ctx
+        // EIP-8250 keyed nonces, at the indices the EIP settled on once EIP-8141 v2 took
+        // `0x0C` for `state_gas_left` (upstream `e5cf246ff1`, 2026-08-31). `0x0C` itself is
+        // handled by the TXPARAM opcode rather than here: it reads the live frame pool,
+        // which this transaction-only view has no access to.
+        TXPARAM_LEGACY_SENDER_NONCE => Ok(U256::from(ctx.legacy_sender_nonce)),
+        TXPARAM_NONCE_KEY_COUNT => Ok(U256::from(ctx.tx.nonce_keys.len())),
+        TXPARAM_NONCE_KEYS_HASH => Ok(U256::from_big_endian(ctx.tx.nonce_keys_hash().as_bytes())),
+        // 0x10 = nonce_keys[0], which the spec pins here (ethrex keeps the EIP-8141
+        // allocation `0x0B` for len(signatures); see docs/eip-8250.md).
+        TXPARAM_NONCE_KEY_0 => ctx
             .tx
             .nonce_keys
             .first()
             .copied()
             .ok_or(ExceptionalHalt::InvalidOpcode.into()),
+        // EIP-8272: count of recent-root references, moved off `0x0F` by upstream
+        // `0231fb05f5` (2026-08-31) when EIP-8250's three indices shifted up onto it.
+        TXPARAM_RECENT_ROOT_REFERENCE_COUNT => Ok(U256::from(ctx.tx.recent_root_references.len())),
         // Resolved payer address (ethrex extension, not in the EIP-8141 draft).
         // Gated on the payer_txparam knob: before it (and on chains without it)
         // this index falls through to the exceptional halt below, so already-
@@ -703,7 +796,7 @@ pub fn load_tx_param(
         // matching the receipt's payer encoding; a committed tx always has a
         // resolved payer (post-execution invariant), so the frames that run
         // after the validation prefix always observe the real payer.
-        0x11 if payer_txparam_active => Ok(ctx
+        TXPARAM_RESOLVED_PAYER if payer_txparam_active => Ok(ctx
             .payer_address
             .map(address_to_u256)
             .unwrap_or_else(U256::zero)),
@@ -848,47 +941,49 @@ mod max_cost_tests {
     }
 
     #[test]
-    fn txparam_0x11_reads_resolved_payer_when_knob_active() {
+    fn txparam_0x12_reads_resolved_payer_when_knob_active() {
         let payer = Address::from_low_u64_be(0xABCD);
         let mut c = ctx(10, 0, 0, 21_000);
         c.payer_address = Some(payer);
         assert_eq!(
-            load_tx_param(&c, 0x11, true).unwrap(),
+            load_tx_param(&c, 0x12, true).unwrap(),
             address_to_u256(payer),
-            "0x11 must report the resolved payer when the knob is active"
+            "0x12 must report the resolved payer when the knob is active"
         );
     }
 
     #[test]
-    fn txparam_0x11_reads_zero_before_payer_resolved() {
+    fn txparam_0x12_reads_zero_before_payer_resolved() {
         // A validation-prefix VERIFY frame runs before payment is approved.
         let c = ctx(10, 0, 0, 21_000);
         assert!(c.payer_address.is_none());
         assert_eq!(
-            load_tx_param(&c, 0x11, true).unwrap(),
+            load_tx_param(&c, 0x12, true).unwrap(),
             U256::zero(),
-            "0x11 must read the zero address before the payer is resolved"
+            "0x12 must read the zero address before the payer is resolved"
         );
     }
 
     #[test]
-    fn txparam_0x11_halts_when_knob_inactive() {
-        // History preservation: before the payer_txparam knob, 0x11 keeps its
+    fn txparam_0x12_halts_when_knob_inactive() {
+        // History preservation: before the payer_txparam knob, 0x12 keeps its
         // exceptional halt so already-produced blocks re-execute identically —
         // even when a payer is present.
         let mut c = ctx(10, 0, 0, 21_000);
         c.payer_address = Some(Address::from_low_u64_be(0xABCD));
         assert!(matches!(
-            load_tx_param(&c, 0x11, false),
+            load_tx_param(&c, 0x12, false),
             Err(VMError::ExceptionalHalt(ExceptionalHalt::InvalidOpcode))
         ));
     }
 
     #[test]
     fn txparam_unknown_index_halts_even_when_knob_active() {
+        // 0x13: the first index above every assignment in this rule set. The knob only ever
+        // opens 0x12, so everything past the table still halts.
         let c = ctx(10, 0, 0, 21_000);
         assert!(matches!(
-            load_tx_param(&c, 0x12, true),
+            load_tx_param(&c, 0x13, true),
             Err(VMError::ExceptionalHalt(ExceptionalHalt::InvalidOpcode))
         ));
     }

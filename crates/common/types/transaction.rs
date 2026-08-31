@@ -1961,10 +1961,16 @@ pub struct Frame {
     pub flags: u8,
     #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::H160Wrapper>)]
     pub target: Option<Address>,
+    /// The frame's EIP-8037 execution-gas budget: `limits.execution` on the wire.
     pub gas_limit: u64,
-    // Per EIP-8141 the frame is a 6-tuple [mode, flags, target, gas_limit, value, data].
-    // Only SENDER frames may carry a non-zero value; see
-    // `validate_static_constraints`.
+    /// The frame's EIP-8037 state-gas budget: `limits.state` on the wire. The two
+    /// pools never mix, so a frame can halt for want of state gas with execution
+    /// gas to spare, and a paymaster can check via `FRAMEPARAM` that a frame it
+    /// depends on carries the state budget it needs.
+    pub state_limit: u64,
+    // Per EIP-8141 the frame is a 6-tuple [mode, flags, target, limits, value, data]
+    // where limits = [execution, state]. Only SENDER frames may carry a non-zero
+    // value; see `validate_static_constraints`.
     #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub value: U256,
     #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
@@ -2010,7 +2016,7 @@ impl RLPEncode for Frame {
             .encode_field(&(self.mode as u64))
             .encode_field(&(self.flags as u64))
             .encode_field(&target_kind)
-            .encode_field(&self.gas_limit)
+            .encode_field(&(self.gas_limit, self.state_limit))
             .encode_field(&self.value)
             .encode_field(&self.data)
             .finish();
@@ -2031,7 +2037,8 @@ impl RLPDecode for Frame {
             TxKind::Call(addr) => Some(addr),
             TxKind::Create => None,
         };
-        let (gas_limit, decoder) = decoder.decode_field("gas_limit")?;
+        let ((gas_limit, state_limit), decoder): ((u64, u64), _) =
+            decoder.decode_field("limits")?;
         let (value, decoder): (U256, _) = decoder.decode_field("value")?;
         let (data, decoder) = decoder.decode_field("data")?;
         let frame = Frame {
@@ -2039,6 +2046,7 @@ impl RLPDecode for Frame {
             flags,
             target,
             gas_limit,
+            state_limit,
             value,
             data,
         };
@@ -2179,9 +2187,22 @@ pub struct FrameTransaction {
 }
 
 /// Intrinsic gas cost for frame transactions (EIP-8141)
-pub const FRAME_TX_INTRINSIC_COST: u64 = 15000;
+/// EIP-8141 v2 prices the intrinsic at 12000, down from v1's 15000. It is EIP-2780's
+/// `TX_BASE_COST`, and where a standard transaction spends that on one ECDSA recovery,
+/// a frame transaction prices recovery per `tx.signatures` entry instead, so the
+/// component covers payer settlement -- the escrow and refund writes -- which standard
+/// transactions do not price separately.
+pub const FRAME_TX_INTRINSIC_COST: u64 = 12000;
 /// Per-frame cost (EIP-8141): CALL context overhead (100) + G_log (375)
 pub const FRAME_TX_PER_FRAME_COST: u64 = 475;
+/// EIP-8141 v2 `TX_VALUE_COST`: charged once per value-carrying frame, covering the
+/// recipient balance write and the EIP-7708 transfer log, exactly as EIP-2780 prices a
+/// top-level transfer. Static, because `value` and `target` are transaction fields.
+///
+/// A value-carrying frame does NOT additionally pay EIP-2780's unconditional cold-rate
+/// recipient touch: frames behave like internal calls, which stay on EIP-2929 warm/cold,
+/// and a transaction targeting one account repeatedly would otherwise overpay.
+pub const FRAME_TX_VALUE_COST: u64 = 6000;
 /// ENTRY_POINT address used as caller for DEFAULT/VERIFY frames per EIP-8141.
 pub const FRAME_TX_ENTRY_POINT_U64: u64 = 0xaa;
 /// Maximum number of frames allowed per EIP-8141 frame transaction.
@@ -2190,6 +2211,20 @@ pub const FRAME_TX_MAX_FRAMES: usize = 64;
 pub const FRAME_TX_MAX_NONCE_KEYS: usize = 16;
 /// EIP-8272: maximum number of recent-root references per frame transaction.
 pub const FRAME_TX_MAX_RECENT_ROOT_REFERENCES: usize = 16;
+
+// EIP-8141 publishes these in its Constants table; assert the constants reproduce them
+// exactly, so a repricing or a re-spelling upstream is a compile error here rather than a
+// silent consensus change. Same guard the EIP-8272 and EIP-8312 constants carry in
+// `crates/vm/levm/src/gas_cost.rs`, and the reason the v1 -> v2 intrinsic drop from 15000
+// to 12000 was invisible to 1372 tests: the suite derives its expected intrinsic from this
+// constant, so it can check the formula's composition but never the published figure.
+const _: () = assert!(FRAME_TX_INTRINSIC_COST == 12_000);
+const _: () = assert!(FRAME_TX_PER_FRAME_COST == 475);
+const _: () = assert!(FRAME_TX_VALUE_COST == 6_000);
+const _: () = assert!(FRAME_TX_MAX_FRAMES == 64);
+const _: () = assert!(FRAME_TX_EXPIRY_DATA_LENGTH == 8);
+const _: () = assert!(FRAME_TX_STANDARD_TOKEN_COST == 4);
+const _: () = assert!(FRAME_TX_TOTAL_COST_FLOOR_PER_TOKEN == 16);
 /// EIP-7623 `STANDARD_TOKEN_COST`, and the EIP-7976 floor per token. Frame
 /// transactions exist only from Hegota onward, which is after Amsterdam, so the
 /// raised EIP-7976 floor always applies and neither needs a fork parameter.
@@ -2216,6 +2251,8 @@ pub const FRAME_TX_MAX_VERIFY_GAS: u64 = 100_000;
 /// Used by VERIFY and PAY frames to declare which capabilities they grant.
 pub const APPROVE_PAYMENT: u8 = 0x1;
 pub const APPROVE_EXECUTION: u8 = 0x2;
+/// EIP-8141 `APPROVE_SCOPE_MASK`: the two scope bits of a frame's `flags`.
+pub const APPROVE_SCOPE_MASK: u8 = APPROVE_PAYMENT | APPROVE_EXECUTION;
 pub const APPROVE_EXECUTION_AND_PAYMENT: u8 = 0x3;
 /// Maximum number of pending frame txs using a non-canonical paymaster per
 /// paymaster address. A `pay` frame whose target's runtime code hash equals
@@ -2265,8 +2302,8 @@ pub fn frame_tx_recent_root() -> Address {
 /// raised values always apply and neither needs a fork parameter. Defined here
 /// rather than in levm's `gas_cost` because ethrex-common cannot depend on it;
 /// `gas_cost` asserts at compile time that the two agree.
-pub const FRAME_TX_RECENT_ROOT_REFERENCE_ADDRESS_GAS: u64 = 3000;
-pub const FRAME_TX_RECENT_ROOT_REFERENCE_GAS: u64 = 3000 + 2 * 30 + 7 * 6;
+pub const FRAME_TX_RECENT_ROOT_REFERENCE_ADDRESS_GAS: u64 = 2400;
+pub const FRAME_TX_RECENT_ROOT_REFERENCE_GAS: u64 = 1900 + 2 * 30 + 7 * 6;
 
 /// EIP-8272 recent-root ring-buffer length: the RECENT_ROOT_ADDRESS predeploy
 /// keeps one entry per source per slot for the last `RECENT_ROOT_LENGTH` slots;
@@ -2363,9 +2400,11 @@ impl FrameTransaction {
             .encode_field(&self.sender)
             .encode_field(&self.frames)
             .encode_field(&elided_signatures)
-            .encode_field(&self.max_priority_fee_per_gas)
-            .encode_field(&self.max_fee_per_gas)
-            .encode_field(&self.max_fee_per_blob_gas)
+            .encode_field(&(
+                self.max_priority_fee_per_gas,
+                self.max_fee_per_gas,
+                self.max_fee_per_blob_gas,
+            ))
             .encode_field(&self.blob_versioned_hashes)
             .encode_field(&self.recent_root_references)
             .finish();
@@ -2466,11 +2505,25 @@ impl FrameTransaction {
     }
 
     /// The mandatory costs, always charged in full: the intrinsic cost, the
-    /// per-frame cost, and signature verification.
+    /// per-frame cost, signature verification, and the value-transfer cost.
+    ///
+    /// These are the terms `frame_tx_intrinsic_gas` and `calldata_floor_gas` share, which
+    /// is why they live in one function: the floor replaces only the data term, so a cost
+    /// that belongs on both sides of the `max_gas` comparison must be added here or it is
+    /// silently dropped whenever the floor binds.
     pub fn mandatory_gas(&self) -> u64 {
         FRAME_TX_INTRINSIC_COST
             .saturating_add((self.frames.len() as u64).saturating_mul(FRAME_TX_PER_FRAME_COST))
             .saturating_add(self.signature_verification_cost())
+            .saturating_add(self.value_transfer_cost())
+    }
+
+    /// EIP-8141 v2 `value_transfer_cost`: `TX_VALUE_COST` per frame carrying value.
+    pub fn value_transfer_cost(&self) -> u64 {
+        self.frames
+            .iter()
+            .filter(|frame| !frame.value.is_zero())
+            .fold(0u64, |acc, _| acc.saturating_add(FRAME_TX_VALUE_COST))
     }
 
     /// EIP-8272 `recent_root_calldata`: `rlp(recent_root_references)`. The bytes
@@ -2501,18 +2554,48 @@ impl FrameTransaction {
         )
     }
 
-    /// EIP-8141 `standard_gas_limit`: mandatory costs + data cost + EIP-8272
-    /// reference intrinsic gas + sum of frame gas limits.
-    pub fn standard_gas_limit(&self) -> u64 {
+    /// EIP-8141 `frame_tx_intrinsic_gas`: the transaction's intrinsic cost in the
+    /// EIP-2780 sense — derivable from the transaction fields alone, with no state
+    /// access — charged entirely in the execution dimension. This is
+    /// `standard_gas_limit` less both declared frame budgets, and must be computed
+    /// directly rather than by subtracting the frame budgets from `total_gas_limit`:
+    /// the latter is `max_gas`, which can be the calldata-floor branch.
+    pub fn frame_tx_intrinsic_gas(&self) -> u64 {
         self.mandatory_gas()
             .saturating_add(self.data_cost())
             .saturating_add(self.recent_root_reference_intrinsic_gas())
+    }
+
+    /// EIP-8141 `standard_gas_limit`: mandatory costs + data cost + EIP-8272
+    /// reference intrinsic gas + the sum of both declared frame budgets.
+    ///
+    /// Both dimensions are included because this is the quantity settlement
+    /// subtracts `tx_unused_gas` from, and unused gas is summed over both pools.
+    /// The EIP-7825 cap is a *different* quantity — `frame_tx_intrinsic_gas +
+    /// total_frame_execution_gas`, state excluded — and is checked separately in
+    /// `validate_frame_tx_static`.
+    pub fn standard_gas_limit(&self) -> u64 {
+        self.frame_tx_intrinsic_gas()
             .saturating_add(
                 self.frames
                     .iter()
                     .map(|f| f.gas_limit)
                     .fold(0u64, |acc, g| acc.saturating_add(g)),
             )
+            .saturating_add(self.state_gas_limit())
+    }
+
+    /// Sum of the frames' EIP-8037 state budgets (`limits.state`). Kept separate
+    /// because state gas is excluded from the EIP-7825 transaction cap and is never
+    /// absorbed by the EIP-7623 calldata floor: both bound an execution-dimension
+    /// resource, so the floor branch of `max_gas` adds the state sum on top rather
+    /// than covering it. The state dimension is bounded by the encoding limit and by
+    /// the block's state-gas capacity instead.
+    pub fn state_gas_limit(&self) -> u64 {
+        self.frames
+            .iter()
+            .map(|f| f.state_limit)
+            .fold(0u64, |acc, g| acc.saturating_add(g))
     }
 
     /// EIP-8141 `calldata_floor_gas`: the mandatory costs plus the EIP-7623
@@ -2524,12 +2607,16 @@ impl FrameTransaction {
             .saturating_add(self.calldata_floor_gas())
     }
 
-    /// EIP-8141 `max_gas = max(standard_gas_limit, calldata_floor_gas)`: the gas
-    /// reserved from the block pool before execution and the quantity `max_cost`
-    /// is charged over. A transaction whose data floor exceeds what it declared
-    /// for execution reserves the floor rather than being rejected.
+    /// EIP-8141 `max_gas = max(standard_gas_limit, calldata_floor_gas + sum(limits.state))`:
+    /// the gas reserved from the block pool before execution and the quantity
+    /// `max_cost` is charged over. A transaction whose data floor exceeds what it
+    /// declared for execution reserves the floor rather than being rejected — and
+    /// pays its state dimension on top of that floor, never inside it.
     pub fn total_gas_limit(&self) -> u64 {
-        self.standard_gas_limit().max(self.calldata_floor_total())
+        self.standard_gas_limit().max(
+            self.calldata_floor_total()
+                .saturating_add(self.state_gas_limit()),
+        )
     }
 
     /// TXPARAM `0x06` max cost: the largest amount the payer may be charged,
@@ -2695,6 +2782,10 @@ impl FrameTransaction {
         // Tracked as u128 so the running addition itself cannot overflow; the
         // bound below rejects tx-level totals that don't fit in signed i64.
         let mut total_frame_gas: u128 = 0;
+        // Tracked apart from the combined total: EIP-8141 caps
+        // `frame_tx_intrinsic_gas + sum(limits.execution)` against
+        // TX_MAX_GAS_LIMIT and leaves the state dimension out of it.
+        let mut total_frame_execution_gas: u128 = 0;
         let mut expiry_frame_count: usize = 0;
         let mut utxo_frame_count: usize = 0;
 
@@ -2736,6 +2827,20 @@ impl FrameTransaction {
                 if frame.data.len() != FRAME_TX_EXPIRY_DATA_LENGTH {
                     return Err(format!(
                         "Frame {i}: expiry verifier frame data must be {FRAME_TX_EXPIRY_DATA_LENGTH} bytes"
+                    ));
+                }
+                // EIP-8141 v2 pins the whole shape of this frame, not just its flags and
+                // data length. Clients are allowed to evaluate the expiry frame directly
+                // instead of running the predeploy, so every field it carries has to be
+                // fixed or the two evaluation paths could disagree.
+                if !frame.value.is_zero() {
+                    return Err(format!(
+                        "Frame {i}: expiry verifier frame must have value == 0"
+                    ));
+                }
+                if frame.state_limit != 0 {
+                    return Err(format!(
+                        "Frame {i}: expiry verifier frame must have limits.state == 0"
                     ));
                 }
             }
@@ -2835,9 +2940,15 @@ impl FrameTransaction {
                     frame.gas_limit
                 ));
             }
+            total_frame_execution_gas = total_frame_execution_gas
+                .checked_add(frame.gas_limit as u128)
+                .ok_or_else(|| format!("Frame {i}: cumulative execution limit overflow"))?;
+            // `limits.state <= 2**64 - 1` is a type invariant here; the spec states it
+            // because its pseudocode is untyped.
             total_frame_gas = total_frame_gas
                 .checked_add(frame.gas_limit as u128)
-                .ok_or_else(|| format!("Frame {i}: cumulative gas_limit overflow"))?;
+                .and_then(|acc| acc.checked_add(frame.state_limit as u128))
+                .ok_or_else(|| format!("Frame {i}: cumulative frame gas overflow"))?;
             if total_frame_gas > i64::MAX as u128 {
                 return Err(format!(
                     "Frame {i}: cumulative frame gas_limit {} exceeds 2**63-1",
@@ -2870,6 +2981,22 @@ impl FrameTransaction {
                     }
                     Some(_) => {}
                 }
+            }
+            // EIP-8141 v2: a frame belonging to an atomic batch approves no scope. A
+            // batch unrolls as a unit, so an approval granted inside one could be relied
+            // on by code the unroll then reverses. Membership is either end of the pair:
+            // the frame carrying the flag, or the frame after it. Checked after the
+            // VERIFY-frame rules above so their more specific error keeps precedence.
+            let in_atomic_batch = frame.is_atomic_batch()
+                || (i > 0
+                    && self
+                        .frames
+                        .get(i.saturating_sub(1))
+                        .is_some_and(|prev| prev.is_atomic_batch()));
+            if in_atomic_batch && frame.flags & APPROVE_SCOPE_MASK != 0 {
+                return Err(format!(
+                    "Frame {i}: a frame in an atomic batch must not approve a scope"
+                ));
             }
         }
 
@@ -3231,9 +3358,11 @@ impl RLPEncode for FrameTransaction {
             .encode_field(&self.sender)
             .encode_field(&self.frames)
             .encode_field(&self.signatures)
-            .encode_field(&self.max_priority_fee_per_gas)
-            .encode_field(&self.max_fee_per_gas)
-            .encode_field(&self.max_fee_per_blob_gas)
+            .encode_field(&(
+                self.max_priority_fee_per_gas,
+                self.max_fee_per_gas,
+                self.max_fee_per_blob_gas,
+            ))
             .encode_field(&self.blob_versioned_hashes)
             .encode_field(&self.recent_root_references)
             .finish();
@@ -3252,10 +3381,11 @@ impl RLPDecode for FrameTransaction {
         let (sender, decoder) = decoder.decode_field("sender")?;
         let (frames, decoder) = decoder.decode_field("frames")?;
         let (signatures, decoder) = decoder.decode_field("signatures")?;
-        let (max_priority_fee_per_gas, decoder) =
-            decoder.decode_field("max_priority_fee_per_gas")?;
-        let (max_fee_per_gas, decoder) = decoder.decode_field("max_fee_per_gas")?;
-        let (max_fee_per_blob_gas, decoder) = decoder.decode_field("max_fee_per_blob_gas")?;
+        // The three fee parameters arrive as one nested `fees` list.
+        let ((max_priority_fee_per_gas, max_fee_per_gas, max_fee_per_blob_gas), decoder): (
+            (u64, u64, U256),
+            _,
+        ) = decoder.decode_field("fees")?;
         let (blob_versioned_hashes, decoder) = decoder.decode_field("blob_versioned_hashes")?;
         let (recent_root_references, decoder) = decoder.decode_field("recent_root_references")?;
         let tx = FrameTransaction {
@@ -3619,8 +3749,12 @@ mod serde_impl {
         #[serde(with = "crate::serde_utils::u64::hex_str")]
         pub flags: u64,
         pub to: Option<Address>,
+        /// `limits.execution` on the wire.
         #[serde(with = "crate::serde_utils::u64::hex_str")]
         pub gas_limit: u64,
+        /// `limits.state` on the wire (EIP-8037 state gas).
+        #[serde(default, with = "crate::serde_utils::u64::hex_str")]
+        pub state_limit: u64,
         #[serde(
             default,
             serialize_with = "serialize_u256_hex",
@@ -3686,6 +3820,7 @@ mod serde_impl {
                 flags: value.flags as u64,
                 to: value.target,
                 gas_limit: value.gas_limit,
+                state_limit: value.state_limit,
                 value: value.value,
                 data: value.data.clone(),
             }
@@ -3699,6 +3834,7 @@ mod serde_impl {
                 flags: entry.flags as u8,
                 target: entry.to,
                 gas_limit: entry.gas_limit,
+                state_limit: entry.state_limit,
                 value: entry.value,
                 data: entry.data,
             }
@@ -5714,6 +5850,7 @@ mod tests {
                     flags: 0x03, // APPROVE_PAYMENT_AND_EXECUTION
                     target: Some(Address::from_low_u64_be(0xABCD)),
                     gas_limit: 100_000,
+                    state_limit: 0,
                     value: U256::zero(),
                     data: Bytes::from_static(b"verify_data"),
                 },
@@ -5722,6 +5859,7 @@ mod tests {
                     flags: 0x00,
                     target: Some(Address::from_low_u64_be(0x1234)),
                     gas_limit: 200_000,
+                    state_limit: 0,
                     value: U256::zero(),
                     data: Bytes::from_static(b"call_data"),
                 },
@@ -5753,6 +5891,7 @@ mod tests {
                 flags: 0x04, // atomic batch
                 target: Some(Address::from_low_u64_be(0xB0B)),
                 gas_limit: 21_000,
+                state_limit: 0,
                 value: U256::zero(),
                 data: Bytes::new(),
             },
@@ -5761,6 +5900,7 @@ mod tests {
                 flags: 0x04, // atomic batch
                 target: Some(Address::from_low_u64_be(0xB0B)),
                 gas_limit: 21_000,
+                state_limit: 0,
                 value: U256::zero(),
                 data: Bytes::new(),
             },
@@ -5769,6 +5909,7 @@ mod tests {
                 flags: 0x00, // terminator: no flag
                 target: Some(Address::from_low_u64_be(0xCAFE)),
                 gas_limit: 21_000,
+                state_limit: 0,
                 value: U256::zero(),
                 data: Bytes::new(),
             },
@@ -5784,6 +5925,7 @@ mod tests {
             flags: 0x04,
             target: Some(Address::from_low_u64_be(0xCAFE)),
             gas_limit: 21_000,
+            state_limit: 0,
             value: U256::zero(),
             data: Bytes::new(),
         }];
@@ -5798,6 +5940,7 @@ mod tests {
             flags: 0x03,
             target: Some(Address::from_low_u64_be(0x1234)),
             gas_limit: 50_000,
+            state_limit: 0,
             value: U256::zero(),
             data: Bytes::from_static(b"hello"),
         };
@@ -5813,6 +5956,7 @@ mod tests {
             flags: 0x00,
             target: None,
             gas_limit: 10_000,
+            state_limit: 0,
             value: U256::zero(),
             data: Bytes::from_static(b"deploy"),
         };
@@ -5830,6 +5974,7 @@ mod tests {
                 flags: if mode_val == 1 { 0x03 } else { 0x00 },
                 target: Some(Address::from_low_u64_be(0x1234)),
                 gas_limit: 50_000,
+                state_limit: 0,
                 value: U256::zero(),
                 data: Bytes::new(),
             };
@@ -5843,6 +5988,7 @@ mod tests {
             flags: 0x01 | 0x04, // scope=1 + atomic_batch
             target: Some(Address::from_low_u64_be(0x1234)),
             gas_limit: 50_000,
+            state_limit: 0,
             value: U256::zero(),
             data: Bytes::new(),
         };
@@ -5861,6 +6007,7 @@ mod tests {
             flags: 0x00,
             target: Some(Address::from_low_u64_be(0xCAFE)),
             gas_limit: 100_000,
+            state_limit: 0,
             value: U256::from(1_000_000_000_000_000u64), // 0.001 ETH
             data: Bytes::from_static(b"hello"),
         };
@@ -6104,6 +6251,7 @@ mod tests {
                 flags: 0x00,
                 target: Some(Address::from_low_u64_be(0x1234)),
                 gas_limit: gl,
+                state_limit: 0,
                 value: U256::zero(),
                 data: Bytes::new(),
             })
@@ -6204,6 +6352,7 @@ mod tests {
                 flags: 0x01,
                 target: None,
                 gas_limit: 50_000,
+                state_limit: 0,
                 value: U256::from(1u64),
                 data: Bytes::new(),
             }],
@@ -6229,6 +6378,7 @@ mod tests {
                 flags: 0x00,
                 target: Some(Address::from_low_u64_be(0x1234)),
                 gas_limit: 50_000,
+                state_limit: 0,
                 value: U256::from(1u64),
                 data: Bytes::new(),
             }],
@@ -6247,6 +6397,7 @@ mod tests {
                 flags: 0x00,
                 target: Some(Address::from_low_u64_be(0x1234)),
                 gas_limit: 50_000,
+                state_limit: 0,
                 value: U256::from(1u64),
                 data: Bytes::new(),
             }],
@@ -6318,6 +6469,7 @@ mod tests {
             flags: 0x00,
             target: Some(frame_tx_expiry_verifier()),
             gas_limit: 30_000,
+            state_limit: 0,
             value: U256::zero(),
             data: Bytes::copy_from_slice(&deadline.to_be_bytes()),
         }
@@ -6565,6 +6717,7 @@ mod tests {
                     flags: 3,
                     target: None,
                     gas_limit: 0x5208,
+                    state_limit: 0,
                     value: U256::zero(),
                     data: Bytes::from_static(&[0x11, 0x22]),
                 },
@@ -6573,6 +6726,7 @@ mod tests {
                     flags: 0,
                     target: Some(Address::from_low_u64_be(0x1234)),
                     gas_limit: 0x9c40,
+                    state_limit: 0,
                     value: U256::zero(),
                     data: Bytes::new(),
                 },

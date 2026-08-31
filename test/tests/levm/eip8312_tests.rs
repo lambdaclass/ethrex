@@ -124,6 +124,7 @@ fn call_vault(
 
     let fork = Fork::Hegota;
     let env = Environment {
+        disable_gas_allowance_check: false,
         origin: depositor(),
         gas_limit: GAS_LIMIT,
         config: EVMConfig::new(fork, EVMConfig::canonical_values(fork)),
@@ -565,6 +566,7 @@ where
 
     let fork = Fork::Hegota;
     let env = Environment {
+        disable_gas_allowance_check: false,
         origin: depositor(),
         gas_limit: GAS_LIMIT,
         config: EVMConfig::new(fork, EVMConfig::canonical_values(fork)),
@@ -898,6 +900,7 @@ fn self_funded_fixture(
             flags: 0,
             target: None,
             gas_limit: 3_000_000,
+            state_limit: 0,
             value: U256::zero(),
             data: Bytes::from(spend.encode_to_vec()),
         }],
@@ -950,6 +953,7 @@ fn run_spend_at(
     );
     let fork = Fork::Hegota;
     let env = Environment {
+        disable_gas_allowance_check: false,
         origin: fixture.tx.sender,
         gas_limit: fixture.tx.frames.iter().map(|f| f.gas_limit).sum::<u64>() + 1_000_000,
         config: {
@@ -1184,6 +1188,7 @@ fn a_spend_by_a_non_actor_is_rejected() {
             flags: 0,
             target: None,
             gas_limit: 3_000_000,
+            state_limit: 0,
             value: U256::zero(),
             data: Bytes::from(spend.encode_to_vec()),
         }],
@@ -1484,6 +1489,7 @@ fn a_batch_proof_spends_a_utxo_whose_ring_entry_aged_out() {
             flags: 0,
             target: None,
             gas_limit: 3_000_000,
+            state_limit: 0,
             value: U256::zero(),
             data: Bytes::from(spend.encode_to_vec()),
         }],
@@ -1521,6 +1527,7 @@ fn a_batch_proof_spends_a_utxo_whose_ring_entry_aged_out() {
 
     let fork = Fork::Hegota;
     let env = Environment {
+        disable_gas_allowance_check: false,
         origin: tx.sender,
         gas_limit: 4_000_000,
         config: {
@@ -1641,6 +1648,7 @@ fn sponsored_fixture_paying(
             flags: 0x01, // APPROVE_PAYMENT scope
             target: Some(sponsor),
             gas_limit: 100_000,
+            state_limit: 0,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -1649,6 +1657,7 @@ fn sponsored_fixture_paying(
             flags: 0,
             target: None,
             gas_limit: 3_000_000,
+            state_limit: 0,
             value: U256::zero(),
             data: Bytes::from(spend.encode_to_vec()),
         },
@@ -1725,6 +1734,7 @@ fn a_spent_bit_survives_a_sibling_frames_failure() {
         flags: 0,
         target: Some(Address::from_low_u64_be(0xFA11)),
         gas_limit: 100_000,
+        state_limit: 0,
         value: U256::zero(),
         data: Bytes::new(),
     };
@@ -1771,6 +1781,7 @@ fn an_invalid_transaction_leaves_no_spent_bit() {
         flags: 0,
         target: Some(Address::from_low_u64_be(0xFA12)),
         gas_limit: 100_000,
+        state_limit: 0,
         value: U256::zero(),
         data: Bytes::new(),
     };
@@ -2381,6 +2392,7 @@ fn consolidation_fixture(n: usize, payout: U256) -> (SpendFixture, Vec<Address>,
             flags: 0,
             target: None,
             gas_limit: 3_000_000,
+            state_limit: 0,
             value: U256::zero(),
             data: Bytes::from(spend.encode_to_vec()),
         }],

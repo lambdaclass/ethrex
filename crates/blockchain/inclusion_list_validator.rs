@@ -398,7 +398,12 @@ impl InclusionListSatisfactionValidator {
     ) -> IlCheckReport {
         let utxo_frames_active = config.is_utxo_frames_activated(header.timestamp);
         let base_fee = header.base_fee_per_gas.unwrap_or_default();
-        let fill_outcomes = fill_il_budget(il, utxo_frames_active);
+        let fill_outcomes = fill_il_budget(
+            il,
+            utxo_frames_active,
+            config.fork(header.timestamp),
+            crypto,
+        );
 
         let mut report = IlCheckReport::default();
 

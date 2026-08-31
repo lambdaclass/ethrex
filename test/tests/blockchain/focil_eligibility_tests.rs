@@ -1,5 +1,9 @@
 //! EIP-8369 VOPS profile classification and the per-inclusion-list budget fill.
 
+use ethrex_common::types::Fork;
+use ethrex_crypto::NativeCrypto;
+use k256::ecdsa::SigningKey;
+
 use ethrex_blockchain::focil_eligibility::{
     FillOutcome, MAX_VERIFY_GAS_PER_IL, MAX_VERIFY_GAS_PER_TX, SenderCode, VopsProfile, classify,
     classify_sender_code, default_evaluation_index, evaluation_index, fee_valid, fill_il_budget,
@@ -12,8 +16,34 @@ use ethrex_common::types::{
 };
 use ethrex_common::{Address, U256};
 
+/// EIP-8369's budget fill checks protocol signatures (it debits the signature half
+/// first, then verifies), so these fixtures must be genuinely signed or every
+/// occurrence lands in `SignatureFailed` and the budget arithmetic under test is
+/// never reached. The sender is therefore the address of a fixed key.
+fn key_and_sender() -> (SigningKey, Address) {
+    let signing_key = SigningKey::from_bytes(&[0x11u8; 32].into()).unwrap();
+    let uncompressed = signing_key.verifying_key().to_encoded_point(false);
+    let pub_hash = ethrex_crypto::keccak::keccak_hash(&uncompressed.as_bytes()[1..]);
+    (signing_key, Address::from_slice(&pub_hash[12..]))
+}
+
 fn sender() -> Address {
-    Address::repeat_byte(0x11)
+    key_and_sender().1
+}
+
+/// A canonical SECP256K1 entry over `sig_hash`: `v` is the bare recovery id.
+fn sign(key: &SigningKey, sig_hash: ethrex_common::H256, signer: Address) -> FrameSignature {
+    let (raw_sig, recovery_id) = key.sign_prehash_recoverable(sig_hash.as_bytes()).unwrap();
+    let mut bytes = vec![0u8; 65];
+    bytes[0] = recovery_id.to_byte();
+    bytes[1..33].copy_from_slice(&raw_sig.to_bytes()[..32]);
+    bytes[33..65].copy_from_slice(&raw_sig.to_bytes()[32..]);
+    FrameSignature {
+        scheme: FRAME_SIG_SCHEME_SECP256K1,
+        signer: Some(signer),
+        msg: Default::default(),
+        signature: bytes.into(),
+    }
 }
 
 fn verify_frame(target: Option<Address>, scope: u8, gas_limit: u64) -> Frame {
@@ -22,6 +52,7 @@ fn verify_frame(target: Option<Address>, scope: u8, gas_limit: u64) -> Frame {
         flags: scope,
         target,
         gas_limit,
+        state_limit: 0,
         value: U256::zero(),
         data: Default::default(),
     }
@@ -31,7 +62,7 @@ fn verify_frame(target: Option<Address>, scope: u8, gas_limit: u64) -> Frame {
 /// carry 1..=16 entries for a non-vault sender, which the shorter helpers in the
 /// inclusion-list tests do not bother with because they never validate.
 fn frame_tx(frames: Vec<Frame>) -> FrameTransaction {
-    FrameTransaction {
+    let mut tx = FrameTransaction {
         chain_id: 1,
         nonce_keys: vec![U256::zero()],
         nonce_seq: 0,
@@ -48,7 +79,26 @@ fn frame_tx(frames: Vec<Frame>) -> FrameTransaction {
         max_fee_per_blob_gas: U256::zero(),
         blob_versioned_hashes: vec![],
         ..Default::default()
-    }
+    };
+    let (key, signer) = key_and_sender();
+    let sig_hash = tx.compute_sig_hash();
+    tx.signatures = vec![sign(&key, sig_hash, signer)];
+    tx.inner_hash = Default::default();
+    tx.cached_canonical = Default::default();
+    tx
+}
+
+/// Re-sign after mutating an envelope. The signature covers the envelope, so a fixture
+/// that edits a field post-construction must sign again or the fill now stops at
+/// `SignatureFailed` before reaching the check under test.
+fn resign(tx: &mut FrameTransaction) {
+    let (key, signer) = key_and_sender();
+    tx.inner_hash = Default::default();
+    tx.cached_canonical = Default::default();
+    let sig_hash = tx.compute_sig_hash();
+    tx.signatures = vec![sign(&key, sig_hash, signer)];
+    tx.inner_hash = Default::default();
+    tx.cached_canonical = Default::default();
 }
 
 /// `SelfVerify`: one VERIFY frame targeting the sender with scope
@@ -132,6 +182,7 @@ fn an_unrecognized_prefix_is_not_a_candidate() {
         flags: 0,
         target: Some(Address::repeat_byte(0xaa)),
         gas_limit: 1_000,
+        state_limit: 0,
         value: U256::zero(),
         data: Default::default(),
     }]);
@@ -159,6 +210,7 @@ fn an_expiry_verifier_frames_gas_counts_toward_the_budget() {
             flags: 0,
             target: Some(frame_tx_expiry_verifier()),
             gas_limit: 7_000,
+            state_limit: 0,
             value: U256::zero(),
             data: 0u64.to_be_bytes().to_vec().into(),
         },
@@ -210,7 +262,7 @@ fn fee_valid_rejects_below_base_fee_and_inverted_priority() {
 #[test]
 fn profile_1_transactions_are_not_metered() {
     let il = vec![legacy_tx(), eip1559_tx(1_000, 1)];
-    let outcomes = fill_il_budget(&il, false);
+    let outcomes = fill_il_budget(&il, false, Fork::Hegota, &NativeCrypto);
     assert!(outcomes.iter().all(|o| *o == FillOutcome::NotMetered));
 }
 
@@ -224,13 +276,46 @@ fn the_fill_is_ordered_and_stops_at_the_list_budget() {
         Transaction::FrameTransaction(self_verify_tx(big)),
         Transaction::FrameTransaction(self_verify_tx(big)),
     ];
-    let outcomes = fill_il_budget(&il, false);
+    let outcomes = fill_il_budget(&il, false, Fork::Hegota, &NativeCrypto);
 
     assert!(outcomes[0].is_admitted());
     assert_eq!(
         outcomes[2],
         FillOutcome::Ignored,
         "third occurrence cannot fit and must consume nothing"
+    );
+}
+
+/// EIP-8369's two-stage debit: "Deduct the signature cost before checking protocol
+/// signatures. If a signature fails, keep only that debit. Deduct the validation prefix
+/// cost only after the signatures pass."
+///
+/// The two occurrences here are half the list budget each, so under the earlier
+/// single-debit rule the first would have consumed enough that the second no longer fit.
+/// Because the first one's signature fails, only its signature half is spent and the
+/// second is still admitted -- which is the behavioural difference the rule change makes.
+#[test]
+fn an_invalid_signature_debits_only_the_signature_half() {
+    let mut bad = self_verify_tx(MAX_VERIFY_GAS_PER_IL / 2);
+    // Structurally well-formed (65 bytes, canonical v) but not a signature over this
+    // envelope, so it is rejected by the protocol check rather than by shape pricing.
+    bad.signatures[0].signature = vec![0u8; 65].into();
+
+    let il = vec![
+        Transaction::FrameTransaction(bad),
+        Transaction::FrameTransaction(self_verify_tx(MAX_VERIFY_GAS_PER_IL / 2)),
+    ];
+    let outcomes = fill_il_budget(&il, false, Fork::Hegota, &NativeCrypto);
+
+    assert_eq!(
+        outcomes[0],
+        FillOutcome::SignatureFailed { cost: 2_800 },
+        "only the SECP256K1 signature half is charged"
+    );
+    assert!(
+        outcomes[1].is_admitted(),
+        "the prefix budget the first occurrence never spent must still be available, got {:?}",
+        outcomes[1]
     );
 }
 
@@ -243,12 +328,15 @@ fn a_failed_candidate_keeps_its_budget_debit() {
     // which EIP-8250 forbids for a non-vault sender.
     let mut invalid = self_verify_tx(MAX_VERIFY_GAS_PER_IL / 2);
     invalid.nonce_keys = vec![];
+    // The signature must still pass: EIP-8369 debits the prefix half only after
+    // signatures check out, and this test is about the candidate check that runs later.
+    resign(&mut invalid);
 
     let il = vec![
         Transaction::FrameTransaction(invalid),
         Transaction::FrameTransaction(self_verify_tx(MAX_VERIFY_GAS_PER_IL / 2 + 1)),
     ];
-    let outcomes = fill_il_budget(&il, false);
+    let outcomes = fill_il_budget(&il, false, Fork::Hegota, &NativeCrypto);
 
     assert!(
         matches!(outcomes[0], FillOutcome::ChargedNotAdmitted { .. }),
@@ -270,7 +358,7 @@ fn an_over_cap_occurrence_consumes_nothing() {
         Transaction::FrameTransaction(self_verify_tx(MAX_VERIFY_GAS_PER_TX + 1)),
         Transaction::FrameTransaction(self_verify_tx(1_000)),
     ];
-    let outcomes = fill_il_budget(&il, false);
+    let outcomes = fill_il_budget(&il, false, Fork::Hegota, &NativeCrypto);
 
     assert_eq!(outcomes[0], FillOutcome::Ignored);
     assert!(

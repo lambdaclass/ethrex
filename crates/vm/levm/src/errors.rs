@@ -290,10 +290,29 @@ pub struct ExecutionReport {
     pub logs: Vec<Log>,
     /// For frame transactions: the address that paid for gas
     pub payer_address: Option<Address>,
-    /// For frame transactions: per-frame results (status, gas_used, logs).
-    /// `status` is a `FRAME_RECEIPT_STATUS_*` code (0 = failure, 1 = success,
-    /// 3 = skipped due to failed atomic batch, per EIP-8141 receipt encoding).
-    pub frame_results: Option<Vec<(u8, u64, Vec<Log>)>>,
+    /// For frame transactions: one entry per frame, in frame order.
+    pub frame_results: Option<Vec<FrameResult>>,
+}
+
+/// One frame's outcome inside an EIP-8141 frame transaction, as reported in the
+/// transaction's receipt.
+///
+/// `gas_used` and `state_gas_used` are the two halves of v2's two-dimensional
+/// `gas_used = [execution, state]`. They are separate budgets that never mix, so
+/// they are named rather than positional: both are `u64`, and swapping them would
+/// misreport every frame without failing to compile.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FrameResult {
+    /// A `FRAME_RECEIPT_STATUS_*` code (0 = failure, 1 = success, 3 = skipped
+    /// due to a failed atomic batch, per the EIP-8141 receipt encoding).
+    pub status: u8,
+    /// Execution gas drawn from the frame's `limits.execution`.
+    pub gas_used: u64,
+    /// State gas drawn from the frame's `limits.state`. Zero for a frame that
+    /// reverted or halted exceptionally, and subject to reduction by a later
+    /// frame's cross-frame refill.
+    pub state_gas_used: u64,
+    pub logs: Vec<Log>,
 }
 
 impl ExecutionReport {

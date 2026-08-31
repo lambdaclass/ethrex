@@ -75,12 +75,19 @@ fn frame_tx(frames: Vec<Frame>) -> FrameTransaction {
     }
 }
 
+/// A state budget covering one `RECENT_ROOT_CODE` entry write (a new storage slot in
+/// the predeploy, ~126k of EIP-8037 state gas) with room to spare. EIP-8141 v2 frames
+/// declare `limits.state` and a charge past it halts the frame, so a write frame that
+/// declared nothing would revert; read-only frames spend none of it and it is refunded.
+const STATE_BUDGET: u64 = 1_000_000;
+
 fn frame(mode: FrameMode, flags: u8, target: Address, gas_limit: u64, data: &[u8]) -> Frame {
     Frame {
         mode: u8::from(mode),
         flags,
         target: Some(target),
         gas_limit,
+        state_limit: STATE_BUDGET,
         value: U256::zero(),
         data: Bytes::from(data.to_vec()),
     }
@@ -249,10 +256,10 @@ fn a_frame_targeting_the_predeploy_commits_the_entry() {
     let report = result.expect("write frame tx must execute (this is where the RPC path failed)");
     let fr = report.frame_results.expect("frame results");
     assert_eq!(
-        fr[1].0,
+        fr[1].status,
         1,
         "the recent-root write frame must succeed; statuses={:?}",
-        fr.iter().map(|f| f.0).collect::<Vec<_>>()
+        fr.iter().map(|f| f.status).collect::<Vec<_>>()
     );
     // The predeploy must now hold entry_hash at storage_key for (source_id, write_slot).
     let sid = source_id(SENDER, &salt);
@@ -295,7 +302,7 @@ fn a_frame_write_is_recorded_in_the_block_access_list() {
     let (result, mut db) = run_at_slot_bal(&accounts, tx, write_slot, true);
     let report = result.expect("write frame tx must execute even with BAL recording active");
     let fr = report.frame_results.expect("frame results");
-    assert_eq!(fr[1].0, 1, "write frame must succeed with BAL on");
+    assert_eq!(fr[1].status, 1, "write frame must succeed with BAL on");
     // The BAL must build without panicking and include the 0x8272 storage write.
     let bal = db.take_bal().expect("BAL recorder was active");
     let touched = bal
@@ -305,6 +312,56 @@ fn a_frame_write_is_recorded_in_the_block_access_list() {
     assert!(
         touched,
         "RECENT_ROOT_ADDRESS must appear in the BlockAccessList"
+    );
+}
+
+/// EIP-8141 v2: "since the signature validation does not happen in EVM execution, the
+/// related precompiles `ecrecover` and `P256VERIFY` must not be added to the block-level
+/// access list."
+///
+/// ethrex satisfies this by construction — outer signatures are checked by a direct call
+/// to `validate_frame_signatures`, never through EVM dispatch, so the BAL recorder never
+/// sees the precompile addresses. That is exactly the kind of property that holds until
+/// someone routes the check through the EVM for convenience, and an extra BAL entry
+/// changes the list's hash and invalidates the block. Pinned here, alongside the positive
+/// case above, so the two are read together: 0x8272 *must* appear, 0x01 and 0x100 must
+/// not.
+#[test]
+fn signature_precompiles_stay_out_of_the_block_access_list() {
+    let salt = [0x77u8; 32];
+    let root = H256::repeat_byte(0x88);
+    let accounts = [
+        (SENDER, big(), 0, Bytes::from(APPROVE_BOTH_CODE.to_vec())),
+        recent_root_predeploy(),
+    ];
+    let tx = frame_tx(vec![
+        frame(FrameMode::Verify, 0x03, SENDER, 100_000, &[]),
+        frame(
+            FrameMode::Sender,
+            0x00,
+            frame_tx_recent_root(),
+            300_000,
+            &[salt.as_slice(), root.as_bytes()].concat(),
+        ),
+    ]);
+    let (result, mut db) = run_at_slot_bal(&accounts, tx, 400u64, true);
+    result.expect("the transaction executes with BAL recording active");
+    let bal = db.take_bal().expect("BAL recorder was active");
+
+    let ecrecover = Address::from_low_u64_be(0x01);
+    let p256verify = Address::from_low_u64_be(0x100);
+    for (address, name) in [(ecrecover, "ecrecover"), (p256verify, "P256VERIFY")] {
+        assert!(
+            !bal.accounts().iter().any(|a| a.address == address),
+            "{name} must not appear in the BlockAccessList: outer signature validation \
+             happens outside EVM execution"
+        );
+    }
+    assert!(
+        bal.accounts()
+            .iter()
+            .any(|a| a.address == frame_tx_recent_root()),
+        "the EIP-8272 predeploy is a deliberate BAL entry and must still be recorded"
     );
 }
 
@@ -805,7 +862,12 @@ fn plain_eoa_call_writes_the_entry() {
     // one token against a non-zero byte's four), and execution is far above the
     // calldata floor, so the floor never binds. Pinned so a repricing that moves
     // the write shows up here rather than at bring-up.
-    assert_eq!(report.gas_used, 127_256, "measured write gas");
+    //
+    // 126_356 on the glamsterdam-devnet-8 base, 127_256 before it: the EIP-8038 v8.1.0
+    // schedule prices a cold storage access at 2100 where the earlier draft charged 3000,
+    // and the write touches one cold slot. This pin caught that reprice, which is exactly
+    // what it exists for -- see the divergence ledger for the consensus consequence.
+    assert_eq!(report.gas_used, 126_356, "measured write gas");
 }
 
 #[test]

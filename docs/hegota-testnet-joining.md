@@ -39,14 +39,19 @@ this network runs is the list below, pinned to exact revisions.
 
 | EIP | Title | Pin | Source |
 | --- | --- | --- | --- |
-| 8141 | Frame Transaction | `4093c21847` | `ethereum/EIPs` |
-| 8250 | Keyed Nonces | `4093c21847` | `ethereum/EIPs` |
-| 8272 | Recent Roots | `4093c21847` | `ethereum/EIPs` |
-| 7805 | Fork-choice enforced Inclusion Lists (FOCIL) | `4093c21847` | `ethereum/EIPs` |
-| 8369 | VOPS Profiles for FOCIL Eligibility | `6f818e27dd` | `soispoke/EIPs@codex/vops-profiles-focil` (PR #12110, unmerged) |
+| 8141 | Frame Transaction | `7d1c8bfb94` | `ethereum/EIPs` |
+| 8250 | Keyed Nonces | `e5cf246ff1` | `ethereum/EIPs` |
+| 8272 | Recent Roots | `0231fb05f5` | `ethereum/EIPs` |
+| 7805 | Fork-choice enforced Inclusion Lists (FOCIL) | `9a345f96c2` | `ethereum/EIPs` |
+| 8369 | VOPS Profiles for FOCIL Eligibility | `33724bd7da` | `soispoke/EIPs@codex/vops-profiles-focil` (PR #12110, unmerged) |
 
 All five activate together at one timestamp. There is no per-EIP activation and no
 intermediate state in which some are live and others are not.
+
+Each pin is the last commit that touched **that EIP's file**, not a repository-wide sha, so
+`git show <pin>:EIPS/eip-<n>.md` gives exactly the text this chain implements. Verified
+against upstream on 2026-08-31: 8141, 8250 and 8272 are at their file HEADs, and 7805's text
+has not changed since 2026-02-20.
 
 EIP-8369 is in the set because EIP-7805 enforcement over frame transactions is
 undefined without an eligibility rule, and EIP-8369 is that rule. It activates with

@@ -312,6 +312,11 @@ impl PayloadBuildContext {
         }
 
         let is_amsterdam = config.is_amsterdam_activated(payload.header.timestamp);
+        let blobs_bundle_version = if config.is_osaka_activated(payload.header.timestamp) {
+            1
+        } else {
+            0
+        };
         let payload_size = payload.length() as u64;
         Ok(PayloadBuildContext {
             remaining_gas: payload.header.gas_limit,
@@ -326,7 +331,10 @@ impl PayloadBuildContext {
             block_value: U256::zero(),
             base_fee_per_blob_gas,
             payload,
-            blobs_bundle: BlobsBundle::default(),
+            blobs_bundle: BlobsBundle {
+                version: blobs_bundle_version,
+                ..BlobsBundle::default()
+            },
             store: storage.clone(),
             vm,
             account_updates: Vec::new(),
@@ -433,6 +441,10 @@ impl Blockchain {
         payload_id: u64,
         inclusion_list: Vec<ethrex_common::types::Transaction>,
     ) {
+        // EIP-8070: a node that builds payloads SHOULD permanently act as an eager
+        // provider, so it holds complete blob data for every blob tx it may include.
+        // Inert unless blob sampling is enabled.
+        self.mempool.latch_eager_provider();
         let self_clone = self.clone();
         let cancel_token = CancellationToken::new();
         let cancel_token_clone = cancel_token.clone();
@@ -922,7 +934,8 @@ impl Blockchain {
                 debug!("No more gas to run transactions");
                 break;
             };
-            if !blob_txs.is_empty() && context.blobs_bundle.blobs.len() >= max_blob_number_per_block
+            if !blob_txs.is_empty()
+                && context.blobs_bundle.commitments.len() >= max_blob_number_per_block
             {
                 debug!("No more blob gas to run blob transactions");
                 blob_txs.clear();
@@ -1018,12 +1031,21 @@ impl Blockchain {
             match self.apply_tx_to_payload(head_tx, context) {
                 Ok(()) => txs.shift()?,
                 Err(e) => {
-                    // Frame-tx failures are deterministic (signatures bind the
-                    // whole tx) EXCEPT nonce mismatches, which are transient
-                    // queue-ordering artifacts, and EIP-8272 references that are
-                    // not yet referenceable, which the next slot resolves — keep
-                    // those pooled for a later block, mirroring how regular txs
-                    // are treated.
+                    // A frame tx's CONTENTS are fixed by its signature; its
+                    // INCLUSION is not. It can be turned away by things that have
+                    // nothing to do with its bytes — a nonce mismatch from queue
+                    // ordering, an EIP-8272 reference the next slot makes
+                    // referenceable, a UTXO input not yet spendable, or simply a
+                    // block with no room left in one of EIP-8037's two gas
+                    // dimensions. None of those recur once the cause moves on, so
+                    // the transaction stays pooled, mirroring how regular txs are
+                    // treated.
+                    //
+                    // Conflating the two cost real transactions: a frame tx that
+                    // declared `limits.state` and met a block whose state
+                    // dimension was full was deleted from the pool rather than
+                    // retried, which is why two concurrent keyed transactions
+                    // would arrive and one would vanish.
                     //
                     // Regular txs are likewise kept pooled on failure, since the
                     // usual cause is a transient queue-ordering/nonce/balance
@@ -1038,6 +1060,7 @@ impl Blockchain {
                         !is_nonce_mismatch(&e)
                             && !is_recent_root_not_referenceable(&e)
                             && !is_utxo_not_yet_spendable(&e)
+                            && !is_block_capacity(&e)
                     } else {
                         is_deterministic_invalid(&e)
                     };
@@ -1207,7 +1230,31 @@ impl Blockchain {
         // no sidecar, so derive it from the tx's versioned hashes and leave the
         // blobs bundle empty (the EVM only needs the hashes, which are in the tx).
         let (blob_count, bundle) = match self.mempool.get_blobs_bundle(tx_hash)? {
-            Some(blobs_bundle) => (blobs_bundle.blobs.len(), Some(blobs_bundle)),
+            Some(stored_bundle) => {
+                // Resolve the bundle: if blobs are elided (eth/72 path), reconstruct
+                // them from the held cells. If reconstruction is impossible (< 64
+                // columns held), drop the tx non-fatally so the builder continues
+                // with other transactions.
+                let blobs_bundle = if stored_bundle.blobs.is_empty() {
+                    match self.mempool.reconstruct_blobs_bundle(tx_hash)? {
+                        Some(full) => {
+                            // Cache the reconstructed bundle so future build ticks reuse it.
+                            self.mempool.add_blobs_bundle(tx_hash, full.clone())?;
+                            full
+                        }
+                        None => {
+                            // Not enough cells to reconstruct; skip this tx non-fatally.
+                            return Err(EvmError::Custom(format!(
+                                "insufficient cells to reconstruct blobs for tx {tx_hash}"
+                            ))
+                            .into());
+                        }
+                    }
+                } else {
+                    stored_bundle
+                };
+                (blobs_bundle.blobs.len(), Some(blobs_bundle))
+            }
             None if context.explicit_build => ((**head).blob_versioned_hashes_ref().len(), None),
             None => {
                 // No blob tx should enter the mempool without its blobs bundle so this is an internal error
@@ -1396,6 +1443,19 @@ fn is_recent_root_not_referenceable(e: &ChainError) -> bool {
 /// build-fail-repool stall this branch has already fought once.
 fn is_utxo_not_yet_spendable(e: &ChainError) -> bool {
     e.to_string().contains("UTXO input is not yet spendable")
+}
+
+/// Whether a build failure means "this block had no room", which says nothing about the
+/// transaction and everything about the block being built.
+///
+/// EIP-8037 accounts two dimensions, so a transaction can be turned away because the
+/// *state* dimension is full while the execution one has room to spare — and a frame
+/// transaction declaring `limits.state` is exactly the kind that fills it. The next block
+/// starts both counters at zero, so a transaction rejected here is not invalid, it is
+/// early.
+fn is_block_capacity(e: &ChainError) -> bool {
+    let msg = e.to_string();
+    msg.contains("block gas limit exceeded") || msg.contains("Gas allowance exceeded")
 }
 
 /// Whether a tx failed with an error that recurs at the same nonce for as long as

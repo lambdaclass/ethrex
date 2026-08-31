@@ -32,7 +32,7 @@ use ethrex_common::{
     Address, U256,
     types::{
         AccessList, AccountUpdate, Block, BlockHeader, EIP1559Transaction, Fork, FrameReceipt,
-        GWEI_TO_WEI, GenericTransaction, INITIAL_BASE_FEE, Log, Receipt, Transaction, TxKind,
+        GWEI_TO_WEI, GenericTransaction, INITIAL_BASE_FEE, Receipt, Transaction, TxKind,
         Withdrawal, requests::Requests,
     },
 };
@@ -54,7 +54,7 @@ use ethrex_levm::db::gen_db::{
 };
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_levm::db::{Database, gen_db::CacheDB};
-use ethrex_levm::errors::{InternalError, TxValidationError};
+use ethrex_levm::errors::{FrameResult, InternalError, TxValidationError};
 use ethrex_levm::memory::Memory;
 #[cfg(feature = "perf_opcode_timings")]
 use ethrex_levm::timings::{OPCODE_TIMINGS, PRECOMPILES_TIMINGS};
@@ -115,16 +115,15 @@ pub struct LEVM;
 /// Build the per-frame receipts (EIP-8141) for a frame transaction from an
 /// execution report's `frame_results`. Returns `None` when the report carries
 /// no frame results.
-fn frame_receipts_from(
-    frame_results: Option<Vec<(u8, u64, Vec<Log>)>>,
-) -> Option<Vec<FrameReceipt>> {
+fn frame_receipts_from(frame_results: Option<Vec<FrameResult>>) -> Option<Vec<FrameReceipt>> {
     frame_results.map(|results| {
         results
             .into_iter()
-            .map(|(status, gas_used, logs)| FrameReceipt {
-                status,
-                gas_used,
-                logs,
+            .map(|result| FrameReceipt {
+                status: result.status,
+                gas_used: result.gas_used,
+                state_gas_used: result.state_gas_used,
+                logs: result.logs,
             })
             .collect()
     })
@@ -3024,6 +3023,7 @@ impl LEVM {
             fee_token: tx.fee_token(),
             disable_balance_check: false,
             disable_nonce_check: false,
+            disable_gas_allowance_check: false,
             is_system_call: false,
         };
 
@@ -3124,7 +3124,10 @@ impl LEVM {
     ) -> Result<ExecutionResult, EvmError> {
         let mut env = env_from_generic(tx, block_header, db)?;
 
-        env.block_gas_limit = i64::MAX as u64; // disable block gas limit
+        // Let the call run with a `gas` above the block's limit, but leave
+        // `block_gas_limit` at the block's real value: the GASLIMIT opcode reads it, so
+        // overwriting it makes 0x45 return a number that appears nowhere on chain.
+        env.disable_gas_allowance_check = true;
 
         adjust_disabled_base_fee(&mut env);
 
@@ -3226,6 +3229,7 @@ impl LEVM {
                     passed: false,
                     violation: Some(EvmError::from(err).to_string()),
                     max_cost: Self::frame_tx_max_cost(frame_tx, blob_base_fee),
+                    reservation_ceiling: Self::frame_tx_reservation_ceiling(frame_tx),
                     accessed_paymaster: None,
                     touched_sender_slots: Vec::new(),
                     read_legacy_nonce: false,
@@ -3235,6 +3239,7 @@ impl LEVM {
         };
 
         let max_cost = Self::frame_tx_max_cost(frame_tx, blob_base_fee);
+        let reservation_ceiling = Self::frame_tx_reservation_ceiling(frame_tx);
         let touched_sender_slots = vm.validation_observer.touched_sender_slots.clone();
         let read_legacy_nonce = vm.validation_observer.read_legacy_nonce;
         // The payer established by the prefix is the paymaster (OQ2: the
@@ -3260,6 +3265,7 @@ impl LEVM {
             passed: false,
             violation: None,
             max_cost,
+            reservation_ceiling,
             accessed_paymaster,
             touched_sender_slots,
             read_legacy_nonce,
@@ -3321,6 +3327,26 @@ impl LEVM {
         blob_base_fee: U256,
     ) -> U256 {
         frame_tx.max_cost(blob_base_fee)
+    }
+
+    /// Mempool reservation ceiling for a frame transaction:
+    /// `max_gas * max_fee_per_gas + len(blob_hashes) * GAS_PER_BLOB * max_fee_per_blob_gas`,
+    /// saturating.
+    ///
+    /// The consensus `max_cost` that `APPROVE` collects prices blobs at the including
+    /// block's `blob_base_fee`. That rate is not known at admission — the simulation runs
+    /// against the current head while execution charges the base fee of whichever later
+    /// block includes the transaction — and the blob base fee moves per block, so
+    /// reserving at the head's rate can reserve less than the eventual charge.
+    /// `max_fee_per_blob_gas >= blob_base_fee` is an inclusion condition (EIP-8141 §Blob
+    /// handling), so the declared max rate bounds every block that can include the
+    /// transaction, which is what makes this a true ceiling.
+    ///
+    /// Saturating rather than checked, deliberately: the TXPARAM 0x06 consensus handler
+    /// uses checked arithmetic and halts on overflow, while saturating to `U256::MAX`
+    /// here only makes the reservation larger, never smaller.
+    fn frame_tx_reservation_ceiling(frame_tx: &ethrex_common::types::FrameTransaction) -> U256 {
+        frame_tx.max_cost(frame_tx.max_fee_per_blob_gas)
     }
 
     pub fn get_state_transitions(
@@ -4232,6 +4258,9 @@ fn env_from_generic(
         // `tx_nonce` to 0 above, which the hook would otherwise reject for
         // any sender whose nonce is nonzero.
         disable_nonce_check: true,
+        // Opt-in per caller: `simulate_tx_from_generic` and `debug_traceCall` relax it so
+        // an over-limit `gas` still runs, while `create_access_list` keeps enforcing it.
+        disable_gas_allowance_check: false,
         is_system_call: false,
     })
 }

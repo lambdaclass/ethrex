@@ -284,9 +284,9 @@ impl OpcodeHandler for OpSStoreHandler {
         };
 
         if fork >= Fork::Amsterdam {
-            // EIP-8038 (review CRITICAL #2) raises COLD_STORAGE_ACCESS to 3000,
-            // above the 2300 stipend, so the flat pre-Amsterdam gate above no
-            // longer suffices as the EIP-2200 sentry. Peek warmth WITHOUT
+            // EIP-8038 prices the cold storage access independently of the 2300
+            // stipend, so the flat pre-Amsterdam gate above no longer suffices
+            // as the EIP-2200 sentry. Peek warmth WITHOUT
             // marking the slot accessed, gate on
             // `max(access_cost, SSTORE_STIPEND + 1)` per EELS `check_gas`
             // (amsterdam/vm/instructions/storage.py::sstore), and only mark the
@@ -339,7 +339,7 @@ impl OpcodeHandler for OpSStoreHandler {
             )?)?;
 
         if needs_state_gas {
-            vm.increase_state_gas(vm.state_gas_storage_set)?;
+            vm.increase_state_gas_for_slot(vm.state_gas_storage_set, to, key)?;
         }
         // EIP-8037 (Amsterdam+) 0→N→0: the slot was created in this tx (original == 0),
         // dirtied to N (current_value != 0), and now being reset to 0 (value == original == 0).
@@ -358,7 +358,7 @@ impl OpcodeHandler for OpSStoreHandler {
             // state gas is handled via the reservoir, not these regular deltas.
             let (remove_slot_cost, restore_empty_slot_cost, restore_slot_cost): (i64, i64, i64) =
                 if fork >= Fork::Amsterdam {
-                    // Amsterdam: clear refund 12480; both restore deltas are the full STORAGE_WRITE.
+                    // Amsterdam: both restore deltas are the full STORAGE_WRITE.
                     (STORAGE_CLEAR_REFUND_AMSTERDAM, 10000, 10000)
                 } else {
                     // EIP-2929
@@ -403,7 +403,7 @@ impl OpcodeHandler for OpSStoreHandler {
 
         // EIP-8037: credit the state gas refund via clamp-and-spill (after regular gas processing).
         if is_zero_to_n_to_zero_amsterdam {
-            vm.credit_state_gas_refund(vm.state_gas_storage_set)?;
+            vm.credit_state_gas_refund_for_slot(vm.state_gas_storage_set, to, key)?;
         }
 
         if value != current_value {
@@ -467,25 +467,10 @@ impl OpcodeHandler for OpJumpIHandler {
 /// JUMPDEST charge), and the JUMPDEST step is pushed directly via
 /// `synthesize_step` after the gas is charged.
 fn jump(vm: &mut VM<'_>, target: usize, parent_gas_cost: u64) -> Result<(), VMError> {
-    // Check target address validity.
-    //   - Target bytecode has to be a JUMPDEST.
-    //   - Target address must not be blacklisted (aka. the JUMPDEST must not be part of a literal).
-    #[expect(clippy::as_conversions, reason = "safe")]
-    if vm
-        .current_call_frame
-        .bytecode
-        .dispatch_buf()
-        .get(target)
-        .is_some_and(|&value| {
-            value == Opcode::JUMPDEST as u8
-                && vm
-                    .current_call_frame
-                    .bytecode
-                    .jump_targets
-                    .binary_search(&(target as u32))
-                    .is_ok()
-        })
-    {
+    // Check target address validity: the target has to be a JUMPDEST that is not part
+    // of a literal (aka. a PUSH immediate). Both are answered by the bitmap, which only
+    // has bits set for JUMPDESTs reached by the opcode walk.
+    if vm.current_call_frame.bytecode.is_valid_jumpdest(target) {
         if vm.opcode_tracer.active {
             // Override the parent JUMP/JUMPI's gasCost so the dispatch loop
             // doesn't roll the upcoming JUMPDEST charge into it.

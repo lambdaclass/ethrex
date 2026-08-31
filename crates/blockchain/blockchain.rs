@@ -52,6 +52,7 @@ pub mod inclusion_list_validator;
 pub mod mempool;
 pub mod payload;
 pub mod prewarm;
+pub mod sampling;
 pub mod stateless;
 pub mod tracing;
 pub mod vm;
@@ -359,6 +360,15 @@ pub struct BlockchainOptions {
     /// `--no-bal-parallel-trie`) to fall back to streaming `AccountUpdate`s from
     /// the executor and merkleizing post-execution.
     pub bal_parallel_trie_enabled: bool,
+    /// EIP-8070: when true, activate the sampler/provider state machine.
+    /// When false (default), the node always acts as provider (p=1.0).
+    pub blob_sampling_enabled: bool,
+    /// EIP-8070: when true, always act as provider (p=1.0) regardless of role
+    /// randomization, as block builders SHOULD (EIP-8070, "Execution clients ::
+    /// Local block builders"). Enabled via `--blob-eager-provider`; a node that
+    /// builds payloads latches it at runtime regardless. Only meaningful when
+    /// `blob_sampling_enabled` is also true.
+    pub blob_eager_provider: bool,
     /// Optional operator override for the maximum reorg depth. `None` ; cap is purely
     /// physical (layer-cache retention plus journal reach; bounded indirectly by finality
     /// because finality advances prune the journal). `Some(d)` ; reject reorgs of
@@ -396,6 +406,8 @@ impl Default for BlockchainOptions {
             bal_parallel_exec_enabled: true,
             bal_prefetch_enabled: true,
             bal_parallel_trie_enabled: true,
+            blob_sampling_enabled: false,
+            blob_eager_provider: false,
             max_reorg_depth: None,
             gap_admit_occupancy_threshold: DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD,
             max_verify_gas: DEFAULT_MAX_VERIFY_GAS,
@@ -516,9 +528,16 @@ impl Blockchain {
     }
 
     pub fn new(store: Store, blockchain_opts: BlockchainOptions) -> Self {
+        let mempool = if blockchain_opts.blob_eager_provider {
+            Mempool::new_with_eager_provider(blockchain_opts.max_mempool_size)
+        } else if blockchain_opts.blob_sampling_enabled {
+            Mempool::new_with_sampling(blockchain_opts.max_mempool_size)
+        } else {
+            Mempool::new(blockchain_opts.max_mempool_size)
+        };
         Self {
             storage: store,
-            mempool: Mempool::new(blockchain_opts.max_mempool_size),
+            mempool,
             is_synced: AtomicBool::new(false),
             reorg_in_progress: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
@@ -3201,7 +3220,18 @@ impl Blockchain {
         }
 
         // Validate blobs bundle after checking if it's already added.
-        blobs_bundle.validate(transaction.blob_versioned_hashes_ref(), fork)?;
+        // eth/72 elided bundles carry commitments and cell proofs but no blobs, and
+        // full KZG verification is deferred until the cells arrive via GetCells. Only
+        // the 4844 envelope can be elided -- `validate_elided` is typed to it -- so any
+        // other blob-carrying transaction takes the full check against its hashes.
+        let bundle_is_elided =
+            blobs_bundle.blobs.is_empty() && !blobs_bundle.commitments.is_empty();
+        match (&transaction, bundle_is_elided) {
+            (Transaction::EIP4844Transaction(blob_tx), true) => {
+                blobs_bundle.validate_elided(blob_tx, fork)?
+            }
+            _ => blobs_bundle.validate(transaction.blob_versioned_hashes_ref(), fork)?,
+        }
 
         let sender = transaction.sender(&NativeCrypto)?;
 
@@ -3758,17 +3788,44 @@ impl Blockchain {
                             // newcomer passed its own locked availability check).
                             balance < self.mempool.reserved_pending_cost(paymaster)?
                         }
-                        // Simulation passed flag is false: evict.
+                        // Simulation passed flag is false: the prefix was replayed
+                        // against the new head and rejected it. That is a verdict, so
+                        // evict.
                         Ok(_) => true,
-                        // A simulation error means the prefix can no longer be
-                        // validated against the new state: evict (conservative).
-                        Err(_) => true,
+                        // A simulation ERROR is not a verdict. It says the prefix could
+                        // not be replayed — a state read that failed, a head whose state
+                        // is not yet readable — not that the transaction became invalid.
+                        // Evicting on it silently destroys transactions the node already
+                        // told the sender it had accepted, and it does so intermittently,
+                        // because whether the read fails is a matter of timing. Keep the
+                        // transaction, exactly as the three transient-failure branches
+                        // above do (`StoreError`, absent `vm_db`, failed balance read).
+                        // A genuinely invalid transaction is caught by the `passed` flag
+                        // here, by the next block's pass, or at block building.
+                        Err(error) => {
+                            debug!(
+                                %hash, %error,
+                                "frame tx prefix could not be re-simulated after a block;                                  keeping it pending rather than evicting on a non-verdict"
+                            );
+                            false
+                        }
                     }
                 }
-                Err(_) => true,
+                // Same reasoning: failing to build an EVM says nothing about the
+                // transaction.
+                Err(error) => {
+                    debug!(
+                        %hash, %error,
+                        "could not build an EVM to re-simulate a pending frame tx; keeping it"
+                    );
+                    false
+                }
             };
 
             if evict {
+                // Evictions were silent, which is how an intermittent drop went unnoticed
+                // until a devnet run happened to look for the transaction afterwards.
+                debug!(%hash, "evicting pending frame tx: it no longer validates at the new head");
                 self.mempool.remove_transaction(&hash)?;
             }
         }
@@ -4304,7 +4361,7 @@ impl Blockchain {
             //   2. no deploy frame, which would install that code mid-flight,
             //   3. the prefix read no sender storage, so no sibling transaction's
             //      SSTORE can invalidate it,
-            //   4. the prefix did not read TXPARAM(0x0C), the legacy account nonce
+            //   4. the prefix did not read TXPARAM(0x0D), the legacy account nonce
             //      that a key-0 transaction bumps on inclusion.
             // Anything else stays under EIP-8141's one-pending-per-sender rule.
             if is_keyed_frame_tx {
@@ -4330,7 +4387,10 @@ impl Blockchain {
             // paymaster's head balance, summed with all other pending
             // reservations for that paymaster so concurrently pending sponsored
             // txs cannot collectively overdraw it.
-            let max_cost = outcome.max_cost;
+            // The RESERVATION ceiling, not the consensus max cost: for a blob-carrying
+            // transaction the two differ, and reserving the smaller one would let a
+            // paymaster be overdrawn by a block whose blob base fee rose after admission.
+            let max_cost = outcome.reservation_ceiling;
             if let Some((paymaster, code_is_canonical)) = outcome.accessed_paymaster {
                 // Re-derive the canonical flag from the paymaster's head code, so
                 // a target that acquired canonical code after the simulation

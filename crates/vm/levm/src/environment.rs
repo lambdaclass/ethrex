@@ -49,6 +49,13 @@ pub struct Environment {
     /// the nonce, and no client enforces it there. The account nonce still increments
     /// during execution.
     pub disable_nonce_check: bool,
+    /// When true, skip the block-level gas-allowance check. Used by the simulation RPCs
+    /// (eth_call, eth_estimateGas, eth_createAccessList, debug_traceCall), whose callers
+    /// may pass a `gas` above the block's limit and expect the call to run anyway.
+    /// This exists so `block_gas_limit` can keep the block's real value: that field is
+    /// observable through the GASLIMIT opcode and feeds the EIP-8037 cost-per-state-byte
+    /// formula, so raising it to bypass this check corrupts both.
+    pub disable_gas_allowance_check: bool,
     /// When true, the tx is a pre-execution system contract call (EIP-2935, EIP-4788,
     /// EIP-7002, EIP-7251 etc.). Skips the block-level gas-allowance check since system
     /// calls are allowed to exceed `block_gas_limit` (their 30M cap is a separate rule).
@@ -74,7 +81,7 @@ pub struct EVMConfig {
     /// active, else 0 — see [`ChainConfig::effective_slot_number`].
     pub slot_number: U256,
     /// Whether the resolved-payer TXPARAM knob is active for this block, gating
-    /// the EIP-8141 frame-tx opcode `TXPARAM(0x11)`. Block-invariant; derived
+    /// the EIP-8141 frame-tx opcode `TXPARAM(0x12)`. Block-invariant; derived
     /// from [`ChainConfig::payer_txparam_time`] vs the block timestamp.
     pub payer_txparam_active: bool,
     /// Whether EIP-8312 (UTXO frames) is active for this block. Block-invariant;

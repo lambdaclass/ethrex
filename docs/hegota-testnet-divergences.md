@@ -14,13 +14,26 @@ Spec lookups go through `eipmcp`; PR state through `gh`. Audited against
 `diff_eip(n, since=<pin>)` for each core EIP, against the pinned revisions in the rule-set
 table of `docs/hegota-testnet-joining.md`.
 
+Re-audited 2026-08-25 against `ethereum/EIPs@master`, 70 commits past the pin. The four
+core EIPs were pinned at `4093c21847`; 8250, 8272 and 7805 are byte-identical to it still,
+8141 is not, and EIP-8369's PR head has moved.
+
+EIP-8141 is pinned at `7d1c8bfb94` (2026-08-24, "account block execution gas before refund
+(EIP-7778)"), verified byte-identical to the copy this implementation was written against.
+That revision is the reason the frame path reports a pre-refund `gas_used` for the block and
+a post-refund `gas_spent` for the payer.
+
+**Re-audited 2026-08-31.** EIP-8141 and EIP-7805 have not moved. EIP-8250 and EIP-8272 both
+moved that day, and both moves are consensus-visible renumberings caused by v2's `0x0C` and
+`0xB5` claims — see §5.1. Implemented and re-pinned to `e5cf246ff1` and `0231fb05f5`.
+
 | EIP | Pin | Drift to head | Consensus-visible | Action | Owner |
 | --- | --- | --- | --- | --- | --- |
-| 8141 | `4a9ad32cf2` | none — byte-identical | no | closed | — |
-| 7805 | `9a345f96c2` | none — byte-identical | no | closed | — |
-| 8250 | `81b976ac01` | one Abstract sentence: privacy applications sharing one sender | no | bump pin to `4093c2184` | Edgar |
-| 8272 | `d8636a330d` | one Abstract sentence: proofs against recent commitment roots | no | bump pin to `4093c2184` | Edgar |
-| 8369 | `ad8571028a` | two commits on PR #12110 (2026-08-10), extension-requirements paragraph expanded | no (prose about a future extension) | bump pin to `6f818e27d`; the prose is already reflected in `docs/hegota-testnet.md` §"Profile 2 enforcement judges two fixed endpoints" | Edgar |
+| 8141 | `4093c21847` → **`7d1c8bfb94`** | **+326/−96 — a new envelope, see §6** | **yes** | **v2 adopted and implemented**, pin bumped; re-genesis required | — |
+| 7805 | `4093c21847` | none — byte-identical | no | closed | — |
+| 8250 | `81b976ac01` → **`e5cf246ff1`** | **TXPARAM ids shifted up by one** (2026-08-31), plus an Abstract sentence | **yes** — every prefix reading a keyed-nonce id | **implemented**, pin bumped | — |
+| 8272 | `d8636a330d` → **`0231fb05f5`** | **reference count `0x0F`→`0x11`, `RECENTROOTREFLOAD` `0xB5`→`0xB6`** (2026-08-31), plus an Abstract sentence | **yes** | **implemented**, pin bumped; the opcode byte already matched | — |
+| 8369 | `6f818e27dd` → **`33724bd7da`** | three commits, +17/−13: Profile 1 candidacy stated by transaction type, `MAX_VERIFY_GAS_PER_TX` demoted to "up to `MAX_VERIFY_GAS_PER_IL`", and **budget fill split into a two-stage debit** | **yes** — it decides Profile 2 admission | **implemented**, see §7; pin bumped | — |
 | 8312 | `a5da3f608c` | not diffable — author's fork only, no upstream `EIPS/eip-8312.md` | n/a while `utxoFramesTime` is unset | inert; re-check if the EIP is upstreamed | Edgar |
 
 The core EIPs have not moved normatively since the branch reconciled against them.
@@ -154,19 +167,288 @@ file does not contain. **Owner:** Edgar.
 | | |
 | --- | --- |
 | ethrex | `SLOTNUM` (`0x4B`) is in the banned set (`crates/vm/levm/src/vm.rs:3474`) |
-| EIP-8141 | banned list does not include it; the ban is open PR #12066 |
-| Consensus-visible | **yes** |
+| EIP-8141 | banned list now includes it: PR #12066 **merged 2026-08-11** |
+| Consensus-visible | was yes; now **conformant** |
 
 ethrex adopted the proposed ban ahead of merge (`#7108`, commits `d43ebdda2`,
 `fc018b526`). A validation prefix branching on `SLOTNUM` is admitted by a spec-literal
 client and rejected here. The ban is right — EIP-8272 makes the beacon slot load-bearing,
 which gives `SLOTNUM` exactly the admission-time/inclusion-time divergence the banned
-list exists to prevent — but it is a divergence until #12066 merges.
+list exists to prevent — and #12066 merged on 2026-08-11, so the early adoption is now
+plain conformance rather than a divergence.
 
 **Note:** `docs/eip-8272.md` still claims ethrex "keeps following the list as written
 until it merges", which the code contradicts. Corrected in this pass.
 
-**Action:** carry; track #12066. **Owner:** Edgar.
+**Action:** closed — #12066 merged; nothing to carry.
+
+## 5.1 Opcode and TXPARAM ids v2 collides with — relocated
+
+Adopting EIP-8141 v2 forced two id moves, both consensus-visible, both because v2 claims
+an id this chain had already assigned to another EIP in the same set. **Both were then
+settled upstream on 2026-08-31, and the upstream resolution is not the one ethrex guessed.**
+
+| id | v2 assigns | ethrex had | Upstream resolution (2026-08-31) |
+| --- | --- | --- | --- |
+| `0xB5` | `SIGDATACOPY` | EIP-8272 `RECENTROOTREFLOAD` | `RECENTROOTREFLOAD` → `0xB6` (`0231fb05f5`) — matches what ethrex shipped |
+| `0x0C` (TXPARAM) | `state_gas_left` | EIP-8250 `legacy_sender_nonce` | EIP-8250 shifts **all three** of its indices up by one (`e5cf246ff1`) — ethrex had moved only the nonce read, to `0x12` |
+
+ethrex guessed one of the two. The nonce read went to `0x12` here because `0x11` was taken
+by the resolved-payer param; upstream instead moved EIP-8250's whole block, so
+`legacy_nonce` is `0x0D`, `len(nonce_keys)` is `0x0E` and `nonce_keys_hash` is `0x0F`.
+EIP-8272's reference count, which ethrex had at `0x0F`, moved to `0x11` to make room — and
+that displaced ethrex's resolved-payer param, which is ours and therefore yields, to `0x12`.
+
+The current map, matching upstream:
+
+| id | Value | EIP |
+| --- | --- | --- |
+| `0x0C` | `state_gas_left` | 8141 v2 |
+| `0x0D` | pre-state legacy sender nonce | 8250 |
+| `0x0E` | `len(nonce_keys)` | 8250 |
+| `0x0F` | `nonce_keys_hash` | 8250 |
+| `0x10` | `nonce_keys[0]` | 8250 |
+| `0x11` | `len(recent_root_references)` | 8272 |
+| `0x12` | resolved payer | ethrex only, knob-gated |
+
+EIP-8141 gets the disputed id in every case: it is the EIP the rest of the set extends, and
+each *other* EIP had already been relocated once for the same reason — `RECENTROOTREFLOAD`
+moved off `0xB4` when it collided with `SIGPARAM`, and `nonce_keys[0]` moved off `0x0B` to
+`0x10`. That is now **seven** relocations across three EIPs, which is the real finding:
+**EIP-8141 needs a shared registry for the frame-surface ids its extensions claim.** Raised
+with the authors; recorded here because a second client that picks different bytes diverges
+on every validation prefix touching any of them.
+
+The lesson for this branch is narrower and worth stating: **do not invent an id to resolve a
+collision upstream has not resolved yet.** `0x12` was a reasonable guess and it was wrong,
+and because the chain had not launched on v2 it cost only a rename. On a live chain it would
+have cost a re-genesis.
+
+Four compile-time asserts in `crates/vm/levm/src/opcodes.rs` now pin the opcode bytes and
+forbid sharing, so a fifth relocation is a compile error rather than a chain split.
+
+**Action:** closed for this chain; upstream registry request open.
+
+## 6. EIP-8141 v2: a new envelope, and therefore a re-genesis
+
+EIP-8141 moved +326/−96 since the pin. Six of the new sections are Rationale and one is
+Security Considerations, so they need no code; what is normative is:
+
+- the envelope nests the fee fields: `[chain_id, nonce, sender, frames, signatures, fees,
+  blob_versioned_hashes]`;
+- each frame carries `limits = [execution, state]` in place of one `gas_limit`, giving
+  per-frame two-dimensional budgets that never mix;
+- `FRAME_TX_INTRINSIC_COST` drops from 15 000 to 12 000;
+- `SIGPARAM`'s copy operation becomes a new `SIGDATACOPY` opcode at `0xb5`;
+- receipts carry `gas_used = [execution, state]`, and a cross-frame state-gas refill
+  retroactively reduces an *earlier* frame's `gas_used.state`;
+- EIP-2929 warm/cold is charged at frame entry, before the balance check and dispatch;
+- the EIP-7825 cap applies to `intrinsic + Σ limits.execution`, state gas excluded;
+- `ecrecover` and `P256VERIFY` must not appear in the block access list;
+- extra expiry-frame constraints, and an atomic-batch `APPROVE_SCOPE_MASK` assert.
+
+**The envelope change means this cannot be an in-place upgrade of a running chain.**
+Adopting it is a re-genesis, and it also invalidates the published tooling: the Python
+frame-tx encoder, the go-ethereum fork the explorer decodes with, and every joiner's
+transaction builder.
+
+Cherry-picking is the one option to avoid: taking `12 000` without the two-dimensional
+model produces a rule set that matches no published revision, which is exactly what this
+ledger exists to prevent.
+
+**Action:** adopted, and implemented. The two-dimensional model is enforced, not merely
+encoded — see §6.1 for what a joiner has to change because of it.
+
+### 6.1 What the second dimension costs a transaction builder
+
+Enforcement is the part with user-visible consequences. Three of them:
+
+**Every frame that creates state must declare `limits.state` for it.** A charge past the
+declared budget halts that frame — a `VERIFY` frame halting invalidates the whole
+transaction — and no frame can borrow state gas from its own execution budget, from
+another frame, or from a reservoir. The charges a plain transaction meets:
+
+| what the frame does | state gas |
+| --- | --- |
+| funds an address that does not exist yet | `120 * 1530` = 183 600 |
+| creates a storage slot (`0 → non-zero`) | `64 * 1530` = 97 920 |
+| installs a 7702 delegation | `23 * 1530` = 35 190 |
+
+**Every frame's execution budget must cover one account access.** The resolved target's
+EIP-2929 warm/cold access is charged at frame entry from `limits.execution`, so the
+minimum viable per-frame budget rises by 3 000 (cold, this base's Amsterdam rate) or 100
+where an earlier frame already touched the address. This applies to the expiry-verifier
+frame too: protocol-defined evaluation is an optimization, never a discount, so a frame
+that declared 1 000 gas because a client evaluates its deadline directly now halts.
+
+**Over-declaring is nearly free, under-declaring is fatal.** Unused budget in either pool
+is refunded at settlement; it only raises the `max_cost` collected from the payer up
+front. So a builder that cannot predict a frame's state growth should over-declare.
+
+Two changes a joiner will see rather than cause: receipts report `stateGasUsed` per frame
+(net of refills, and zero for a frame that reverted), and `TXPARAM 0x0C` returns the
+executing frame's remaining state budget — the read a paymaster needs to check that a
+frame it is about to sponsor can afford what it intends to do.
+
+### 6.2 Cross-checked against the other v2 implementation line
+
+`frames-devnet-0` (131 commits, not merged anywhere) is a second implementation of the same
+rule set, developed against the frame-transaction fixtures added to execution-specs#3047.
+Diffing its frame-entry work against this branch's found one bug here and confirmed one
+divergence that is only apparent:
+
+- **Found:** the EIP-7702 delegate of a frame's target was resolved *before* the frame was
+  known to afford its entry access charge, so an unaffordable frame still warmed the
+  delegatee and filed it as touched in the EIP-7928 access list. Nothing in the receipts can
+  contradict that — an unaffordable frame forfeits its whole gas limit either way — so the
+  access list is the only place it shows, and a builder that files a stray touch writes a
+  list its own block contradicts. Fixed by peeking at the delegation to pick the dispatch
+  branch and following it only once the charge is paid, with
+  `an_unaffordable_frame_files_no_delegatee_in_the_block_access_list` covering both halves.
+- **Not a divergence:** that branch runs the default code only for a *codeless VERIFY*
+  target and sends every other frame through the EVM. EIP-8141 v2 orders the branches
+  differently — precompile first, then empty code hash for any mode, then EIP-7702 — so on
+  v2 the observable difference between the two readings is precompiles alone, which this
+  branch dispatches (§6.1). Its account-creation charge likewise spills into execution gas,
+  which is correct for v1's derived split and wrong for v2's declared one.
+
+Its remaining value is the fixture harness: it runs the released frame-transaction suite (44
+frame fixtures, 14 908 blockchain fixtures) which this branch does not. Worth taking on its
+own, separately from the rule set.
+
+## 6.3 Frame transactions accepted by RPC and silently dropped — two causes, both fixed
+
+Found while verifying EIP-8250 concurrency on a devnet. **Not an EIP-implementation defect —
+a mempool admission one — and it should be fixed before the live relaunch, because it loses
+user transactions without telling anyone.**
+
+Two shapes, one symptom. In both, `ethrex_simulateFrameTransaction` reports the transaction
+valid, `eth_sendRawTransaction` returns its hash with no error, and the transaction then
+never enters the pool: `eth_getTransactionByHash` reports it unknown within the same second,
+`txpool_status` stays empty, and the sender's balance is untouched, so it did not execute
+under a different hash. No log line marks the drop. The returned hash is the correct
+`keccak(raw)` — verified against `cast keccak` — so this is not a hash-computation mismatch.
+
+| Shape | Behaviour | Reproducer |
+| --- | --- | --- |
+| Prefix-only: a frame tx whose sole frame is its `VERIFY` prefix | **Always** dropped — and still dropped after the fix below, so it is a *separate*, still-open issue. A body-less transaction may well be un-buildable by design; what is not defensible is accepting it and saying nothing | `scripts/hegota-testnet/probe_prefix_only_tx.py` |
+| Contract sender, two frames (`VERIFY` + `SENDER`), disjoint nonce keys | **Intermittently** dropped — roughly one run in three | `scripts/hegota-testnet/probe_contract_sender_tx.py` |
+
+The second one is the one that matters, because it is the shape EIP-8250 concurrency depends
+on and it usually works: both transactions are admitted and mine in the *same block*, which
+is the feature's whole claim. It was verified working standalone (block 74 of a fresh chain)
+and in a full verifier run that passed 35/35, then failed in the very next run on that same
+chain. So the feature is implemented correctly and the admission path drops it at random.
+
+Ruled out along the way: chain age (a chain seconds old reproduces it), base fee (flat 7 wei
+throughout), the mempool size cap (10 000, pool empty), hash mismatch (hashes match), and
+EOA senders (an EOA frame transaction submitted in the same run mined normally).
+
+**Root cause: `revalidate_frame_txs_after_block` evicted on a non-verdict.** It replays every
+pending frame transaction's prefix against each new head, and three outcomes are possible —
+the prefix ran and rejected the transaction, the prefix ran and accepted it, or the replay
+could not be performed. Only the first is evidence about the transaction. The function
+already handled the third case correctly in three places (a `StoreError` from the
+recent-root check, an unopenable head state, a failed balance read all keep the transaction)
+and then evicted on any error from the simulation itself, under a comment calling that
+conservative.
+
+It is the opposite. A read that fails, or a head whose state is not yet readable, says
+something about the node, not the transaction — and evicting on it destroys a transaction the
+node has already acknowledged, silently, and intermittently, because whether the read fails
+is timing. That is the whole shape of the symptom: all pending frame transactions at once,
+about one run in three, no log.
+
+Both error branches now keep the transaction and log why, and eviction logs its reason. A
+genuinely invalid transaction is still caught by the `passed` flag, by the next block's pass,
+or at block building.
+
+That fix is real but it was not the whole cause: on a build carrying it, three consecutive
+runs gave 35/35, 33/35, 30/35.
+
+**Second and principal cause: the payload builder evicted a frame transaction it merely had
+no room for.** Found by instrumenting `remove_transaction_with_lock` — the single funnel every
+removal passes through — with a backtrace, and running the reproducer until it fired. The
+caller was `fill_transactions`.
+
+On an apply failure the builder evicts a frame transaction unless the error is one of three
+named transient cases, while a regular transaction is evicted only when *deterministically*
+invalid. The comment justified the asymmetry with "frame-tx failures are deterministic
+(signatures bind the whole tx)", which conflates the transaction being fixed with its
+inclusion being fixed. A signature fixes the bytes; it does not reserve space in a block.
+
+EIP-8037 accounts two gas dimensions, and a frame transaction declaring `limits.state` is
+exactly the kind that fills the state one. When it did, the builder got "block gas limit
+exceeded" — a fact about the block — and deleted the transaction instead of retrying it in the
+next block, which starts both counters at zero. That is the whole symptom, including why it
+was intermittent (it depends what else is in the block) and why it hit 1 of 2 as often as
+2 of 2. `is_block_capacity` now names the class and joins the transient exemptions.
+
+Ruled out by reading the code and by in-process tests (`an_admitted_frame_tx_is_actually_in_the_pool`,
+`both_concurrent_keyed_txs_are_actually_in_the_pool`, `a_pending_frame_tx_survives_an_unrelated_block`,
+all passing):
+
+| Suspect | Why it is not the cause |
+| --- | --- |
+| `remove_block_transactions_from_pool` | removes strictly by transaction hash, no collateral |
+| `keyed_frame_key_holder` | looks up `(sender, key)` per key; disjoint keys never collide |
+| the linear `(sender, nonce)` slot | keyed frame txs deliberately do not claim it (`if keyed_keys.is_none()`) |
+| `remove_oldest_regular_transaction` | cap is 10 000 and the pool holds single digits |
+| `contains_tx` pre-filter | the hash is fresh; the returned hash is `keccak(raw)`, checked against `cast` |
+| chain age, base fee, EOA senders | a chain seconds old reproduces it; base fee flat at 7 wei; an EOA frame tx in the same run mines normally |
+
+The technique is worth keeping: every removal funnels through
+`Mempool::remove_transaction_with_lock`, so a temporary backtrace there plus
+`probe_contract_sender_tx.py` names the caller in one run. That is what found this after six
+suspects had been ruled out by reading.
+
+## 7. The glamsterdam-devnet-8 base reprices Amsterdam
+
+The testnet is now built on `origin/glamsterdam-devnet-8`, whose commit `fe6b15abb`
+updates the EIP-8038 vectors to the v8.1.0 schedule:
+
+| primitive | before | on this base |
+| --- | --- | --- |
+| cold storage access (Amsterdam) | 3000 | 2100 |
+| `ACCESS_LIST_ADDRESS_COST` | 3000 | 2400 |
+| `ACCESS_LIST_STORAGE_KEY_COST` | 3000 | 1900 |
+| `TX_VALUE_COST` (Amsterdam) | 4244 + 1756 transfer log | 6000 combined |
+
+EIP-8272 defines its charges by formula over the access-list costs, so the spec-faithful
+values follow the schedule: the reference-address charge goes 3000 → 2400 and the
+reference charge 3102 → 2002. **Recent roots are live on the running chain**, so this
+reprices a rule already in force; a node on this base disagrees with that chain's history.
+The pinned EIP-8272 write measurement moved by exactly the cold-access delta,
+127 256 → 126 356.
+
+EIP-8312 instead publishes absolute totals, and its Rationale decomposes them over the
+old schedule (13 000 = 3000 + 10 000). Under v8.1.0 the same decomposition yields 12 100.
+The published totals are what a second client implements, so `GAS_UTXO_FRAME` and
+`GAS_UTXO_INPUT` stay pinned at 13 000 and 16 048 and the stale decomposition is recorded
+in `crates/vm/levm/src/gas_cost.rs`. `GAS_UTXO_ACCOUNT_OUT` still reproduces its published
+9000, because the new `TX_VALUE_COST` absorbs the transfer log exactly. Worth raising with
+the EIP-8312 author.
+
+**Action:** this is the second independent reason the live chain needs a re-genesis rather
+than an upgrade. Owner: unassigned.
+
+## 8. EIP-8369's two-stage budget debit — implemented
+
+The re-pin from `6f818e27dd` to `33724bd7da` changed budget fill normatively. Fill used to
+price an occurrence from its shape, then debit the whole cost before any signature check.
+It now computes the signature and validation-prefix costs, ignores the occurrence outright
+if their sum does not fit, debits the **signature half** before checking protocol
+signatures, keeps only that debit when a signature fails, and debits the prefix half only
+once the signatures pass.
+
+`fill_il_budget` therefore verifies protocol signatures (it takes the fork and a crypto
+backend), and a new `FillOutcome::SignatureFailed` records the signature-only debit. The
+behavioural difference is pinned by
+`an_invalid_signature_debits_only_the_signature_half`: two occurrences at half the list
+budget each, where the old single debit would have starved the second and the new rule
+admits it.
+
+**Action:** closed.
 
 ## 4. Items upstream has closed in ethrex's favour
 
@@ -207,28 +489,31 @@ Still open, from the PR review and not yet addressed upstream or here:
 | PR's broader test matrix (calldata 0/63/64/65, value, `CALL`/top-level/`STATICCALL`/`DELEGATECALL`/`CALLCODE`/7702, cold/warm/overwrite, enclosing revert, repeated same-slot writes, slots `0`/`1`/`8191`/`8192`/`8195`/`2**64-1`, reference ages `0`/`1`/`8191`/`8192`) | yes | fill the gaps against `test/tests/levm/eip8272_tests.rs` | Edgar |
 | `RECENT_ROOT_CODE` is still an unmerged PR | yes — a byte change moves the code hash and the write's gas, a fork for a running chain | track #12131 to merge | Edgar |
 
-## 6. Open upstream PRs (Task 6.3)
+## 6. Upstream PRs this rule set depends on (Task 6.3)
 
-All confirmed **open** on 2026-08-10 via `pending_prs_for_eip`.
+Re-audited **2026-08-26**. Six of the eleven have merged since the 2026-08-10 pass, and
+every merged one is implemented here — several were adopted ahead of merge, which is why
+this table exists: an early adoption is a divergence until the text lands, and then it
+silently stops being one.
 
-| Upstream PR | Subject | ethrex | Ships meanwhile |
+| Upstream PR | Subject | State | ethrex |
 | --- | --- | --- | --- |
-| EIPs#12066 | ban `SLOTNUM` in validation prefix | `#7108`, transplanted | the ban (see §3.6) |
-| EIPs#12041 | canonical paymaster reference bytecode | implemented ahead of merge | the pinned 355-byte runtime's hash; see §8 — **Task 6.4 closed** |
-| EIPs#12039 | keyed mempool concurrency | none | `keyed_concurrency_verdict` |
-| EIPs#12109 | atomic-batch approval scope | none | `docs/eip-8250.md` divergence #4 |
-| EIPs#12091 | block inclusion gating and payer solvency | none | — |
-| EIPs#12113 | initial `accessed_addresses` set | none | **Task 6.5, open** |
-| EIPs#12026 | floor repricing, signature validation, `frame.value` gas | none | **Task 6.5, open** |
-| EIPs#12061 | frame receipt has no transaction-level status | none | — |
-| EIPs#12110 | VOPS profiles for FOCIL eligibility (EIP-8369 itself) | implemented ahead of merge | §3.2–3.5 |
-| EIPs#12131 | specify `RECENT_ROOT_CODE` | `#7120` | §5 — bytes verified identical |
+| EIPs#12066 | ban `SLOTNUM` in validation prefix | **merged 2026-08-11** | conformant; adopted ahead in `#7108` (§3.6) |
+| EIPs#12109 | atomic-batch approval scope | **merged 2026-08-14** | conformant — `APPROVE_SCOPE_MASK` asserted statically |
+| EIPs#12026 | floor repricing, signature validation, `frame.value` gas | **merged 2026-08-14** | conformant — uniform floor tokens, no precompile in the BAL (§9.2), and the value-frame account-creation charge (§9.2) |
+| EIPs#12061 | frame receipt has no transaction-level status | **merged 2026-08-14** | conformant — the receipt is `[tx_type, cumulative_gas_used, payer, [frame_receipt…]]` with no top-level `succeeded` |
+| EIPs#12062 | explicit second dimension for state gas on frames | **merged 2026-08-13** | implemented — this is v2's two-pool model (§6, §6.1). It was a *draft to watch* at the last pass |
+| EIPs#12113 | initial `accessed_addresses` set | **merged 2026-08-17** | conformant — five clauses, one test each (§9.1) |
+| EIPs#12091 | block inclusion gating and payer solvency | **closed unmerged** | nothing owed; drop from the watch list |
+| EIPs#12041 | canonical paymaster reference bytecode | open | implemented ahead of merge; the pinned 355-byte runtime's hash (§8 — Task 6.4 closed) |
+| EIPs#12039 | keyed mempool concurrency | open | ships `keyed_concurrency_verdict`; devnet-verified for a contract sender |
+| EIPs#12110 | VOPS profiles for FOCIL eligibility (EIP-8369 itself) | open | implemented ahead of merge, pinned at `33724bd7da` (§3.2–3.5, §8) |
+| EIPs#12131 | specify `RECENT_ROOT_CODE` | open | `#7120`; bytes verified identical (§5) — a byte change would move the code hash and the write's gas, so this one is still a fork risk for a running chain |
 
-Not in the plan's list, found this pass:
+Editorial or idle, tracked so a later pass need not rediscover them:
 
 | Upstream PR | Subject | Bearing |
 | --- | --- | --- |
-| EIPs#12062 (draft) | explicit second dimension for state gas on frames | would change frame gas accounting; watch |
 | EIPs#12121 | link first reference to each cited proposal | editorial |
 | EIPs#11681, #11555, #11580, #11482 | guarantors, payer-approves-first, precompiles in VERIFY frames | long-idle drafts, no ethrex surface |
 
@@ -290,9 +575,9 @@ survives a repricing of the warm/cold spread itself.
 | --- | --- |
 | `accessed_addresses` starts as EIP-2929/EIP-3651 (`tx.sender`, coinbase, precompiles) | conformant — `env.origin` is `tx.sender` for a frame tx |
 | `accessed_storage_keys` starts empty | conformant — `FrameTransaction` returns `EMPTY_ACCESS_LIST` |
-| being a frame target does not warm an address | conformant |
+| being a frame target does not warm an address | conformant — appearing in `tx.frames` warms nothing; the target is warmed when its own frame runs and is charged for it (v2 §Behavior), and stays warm for later frames because the journal is shared across them |
 | `ENTRY_POINT` is not pre-warmed | conformant — it is only ever the frame *caller*, never inserted |
-| the payer is added when a payment-scope `APPROVE` collects `max_cost` | **was divergent, now fixed** |
+| the payer is added when a payment-scope `APPROVE` collects `max_cost` | **was divergent, now fixed** — and v2 makes it structural: the payer is always its frame's resolved target, so the frame-entry access charge warms it and no separate rule is needed |
 
 The payer clause was a real gap: `APPROVE` scopes `0x1` and `0x3` debited the payer's
 balance via `decrease_account_balance` without adding it to `accessed_addresses`, so a
@@ -315,7 +600,7 @@ asserts no address at or below `0x100` appears.
 | Clause | Bearing |
 | --- | --- |
 | `floor_cost` is the calldata floor function *of the fork in force* — EIP-7623's 10/40 per token, or EIP-7976's flat 64 gas per byte where scheduled | consensus-visible through the frame-tx calldata floor; re-check when EIP-7976 lands on this chain's fork schedule |
-| `frame.value` follows ordinary `CALL` value-transfer semantics, charged inside the frame's `gas_limit` including the fork's account-creation cost; a frame that cannot cover it reverts without transferring, so no EIP-7708 log | not yet asserted by a test |
+| `frame.value` follows ordinary `CALL` value-transfer semantics, charged inside the frame's budgets including the fork's account-creation cost; a frame that cannot cover it halts without transferring, so no EIP-7708 log | **implemented and asserted** — v2 puts the account-creation charge in `limits.state`, after the balance check and before the frame's code; `a_value_bearing_frame_pays_account_creation_from_its_state_budget` covers both the charge and the one-gas-short halt |
 
 ### 9.3 EIP-8272 reference reads in the BAL — keep the record
 
@@ -375,7 +660,7 @@ Task 6.7's bar: zero rows may end the phase as "yes / unresolved / no fallback".
 | §3.3 attester state reconstruction | no | closed |
 | §3.4 per-IL code-byte budget | yes | **carried** — published in the artifact set and the extension draft |
 | §3.5 `AA_VOPS_SLOT_COUNT = 4`, absent means 4 not off | yes | **carried** — published; a joining client MUST NOT read the missing key as "off" |
-| §3.6 `SLOTNUM` banned in the validation prefix | yes | **carried** — one-way (ethrex stricter); track EIPs#12066 |
+| §3.6 `SLOTNUM` banned in the validation prefix | yes | **closed** — EIPs#12066 merged 2026-08-11 |
 | §5 `RECENT_ROOT_CODE` bytes | yes | **carried** — byte-identical to EIPs#12131; unmerged, so track it |
 | §5 static-context gas not pinned by a test | yes | **open test gap**, behaviour is spec-conformant; see §10.2 |
 | §8 canonical paymaster hash | yes | **carried** — matches EIPs#12041; unmerged, so track it |

@@ -112,6 +112,7 @@ fn verify_frame(target: Option<Address>, scope: u8, gas_limit: u64) -> Frame {
         flags: scope,
         target,
         gas_limit,
+        state_limit: 0,
         value: U256::zero(),
         data: Default::default(),
     }
@@ -589,6 +590,7 @@ async fn frame_tx_with_a_utxo_frame_is_undecided() {
         flags: 0,
         target: None,
         gas_limit: 0,
+        state_limit: 0,
         value: U256::zero(),
         data: Default::default(),
     });

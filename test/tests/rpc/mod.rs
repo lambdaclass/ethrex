@@ -1,10 +1,13 @@
 mod authrpc_batch_tests;
 mod block_access_list_tests;
 mod client_version_tests;
+mod eth72_engine_tests;
 mod fork_choice_tests;
 mod http_batch_tests;
 mod inclusion_list_engine_tests;
 mod namespace_tests;
+mod raw_transaction_tests;
 mod send_raw_transaction_tests;
 mod simulate_frame_transaction_tests;
 mod subscription_manager_tests;
+mod trace_call_tests;

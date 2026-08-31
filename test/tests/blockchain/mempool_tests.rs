@@ -117,9 +117,9 @@ fn create_transaction_intrinsic_gas() {
 /// EIP-2780 (PRELIMINARY EIPs#11645): Amsterdam CREATE tx intrinsic must match
 /// the VM charge, not the legacy `TX_CREATE_GAS_COST = 53000`. The regular
 /// portion is the resource-based decomposition
-/// `TX_BASE_COST_AMSTERDAM (12000) + CREATE_ACCESS_AMSTERDAM (11000) = 23000`
+/// `TX_BASE_COST_AMSTERDAM (12000) + CREATE_ACCESS_AMSTERDAM (12000) = 24000`
 /// (no value transfer here). The state portion is 0: the `NEW_ACCOUNT` charge
-/// is no longer part of the intrinsic (v7 Task 4.1) — it is charged IN-REGION
+/// is not part of the intrinsic — it is charged IN-REGION
 /// by `prepare_execution` (EELS `prepare_dispatch` create branch), conditioned
 /// on `get_pre_state_account(created_addr) == EMPTY_ACCOUNT`, so mempool
 /// admission cannot know it upfront without simulating the tx. Mempool
@@ -708,6 +708,7 @@ fn minimal_valid_frame_tx() -> FrameTransaction {
             // EIP-7623 floor, which EIP-8250's nonce calldata makes non-zero even
             // for a frame tx carrying no frame or signature data.
             gas_limit: 200,
+            state_limit: 0,
             value: U256::zero(),
             data: Bytes::new(),
         }],
@@ -912,6 +913,7 @@ fn canonical_paymaster_is_exempt_from_the_noncanonical_pending_cap() {
                 flags: APPROVE_EXECUTION_AND_PAYMENT,
                 target: Some(sender),
                 gas_limit: 200,
+                state_limit: 0,
                 value: U256::zero(),
                 data: Bytes::new(),
             }],
@@ -1015,6 +1017,7 @@ async fn mempool_rejects_oversized_frame_data() {
         flags: 0x00,
         target: Some(Address::from_low_u64_be(0xCAFE)),
         gas_limit: 0,
+        state_limit: 0,
         value: U256::zero(),
         data: payload,
     });
@@ -1262,8 +1265,13 @@ fn frame_tx_with_expiry(deadline: u64) -> FrameTransaction {
                 mode: FrameMode::Verify as u8,
                 flags: 0x00,
                 target: Some(frame_tx_expiry_verifier()),
-                // Enough to reserve the EIP-7623 floor of the 8-byte deadline.
-                gas_limit: 1_000,
+                // Enough to reserve the EIP-7623 floor of the 8-byte deadline, and to
+                // cover the EIP-8141 v2 frame-entry access charge on the verifier
+                // address — the expiry frame is priced by normal EVM rules even where a
+                // client evaluates it directly, so protocol evaluation stays an
+                // optimization rather than a discount.
+                gas_limit: 5_000,
+                state_limit: 0,
                 value: U256::zero(),
                 data: Bytes::from(data.to_vec()),
             },
@@ -1271,7 +1279,9 @@ fn frame_tx_with_expiry(deadline: u64) -> FrameTransaction {
                 mode: FrameMode::Verify as u8,
                 flags: APPROVE_EXECUTION_AND_PAYMENT,
                 target: Some(sender),
-                gas_limit: 200,
+                // Covers the v2 frame-entry access charge on the sender.
+                gas_limit: 5_000,
+                state_limit: 0,
                 value: U256::zero(),
                 data: Bytes::new(),
             },
@@ -1930,6 +1940,7 @@ fn funded_frame_tx(max_fee_per_gas: u64, max_priority_fee_per_gas: u64) -> Frame
             flags: APPROVE_EXECUTION_AND_PAYMENT,
             target: Some(sender),
             gas_limit: 200,
+            state_limit: 0,
             value: U256::zero(),
             data: Bytes::new(),
         }],
@@ -2032,6 +2043,7 @@ async fn mempool_rejects_underfunded_paymaster() {
             flags: APPROVE_EXECUTION_AND_PAYMENT,
             target: Some(phantom_sender),
             gas_limit: 200,
+            state_limit: 0,
             value: U256::zero(),
             data: Bytes::new(),
         }],
@@ -2117,6 +2129,7 @@ async fn mempool_enforces_noncanonical_paymaster_limit() {
                 flags: APPROVE_EXECUTION_AND_PAYMENT,
                 target: Some(sender),
                 gas_limit: 200,
+                state_limit: 0,
                 value: U256::zero(),
                 data: Bytes::new(),
             }],
@@ -2215,6 +2228,7 @@ fn self_pay_frame_tx_exempt_from_noncanonical_paymaster_limit() {
                 flags: APPROVE_EXECUTION_AND_PAYMENT,
                 target: Some(sender),
                 gas_limit: 200,
+                state_limit: 0,
                 value: U256::zero(),
                 data: Bytes::new(),
             }],
@@ -2300,6 +2314,7 @@ async fn mempool_rejects_second_frame_tx_same_sender_new_nonce() {
             flags: APPROVE_EXECUTION_AND_PAYMENT,
             target: Some(sender),
             gas_limit: 200,
+            state_limit: 0,
             value: U256::zero(),
             data: Bytes::new(),
         }],
@@ -2548,6 +2563,7 @@ async fn mempool_fee_bump_rejected_leaves_original_intact() {
             flags: APPROVE_EXECUTION_AND_PAYMENT,
             target: Some(phantom_sender),
             gas_limit: 200,
+            state_limit: 0,
             value: U256::zero(),
             data: Bytes::new(),
         }],
@@ -3894,6 +3910,7 @@ mod p2p_serve_tests {
                 flags: 0x00,
                 target: Some(Address::from_low_u64_be(0x1234)),
                 gas_limit: 100_000,
+                state_limit: 0,
                 value: U256::zero(),
                 data: bytes::Bytes::from_static(b"call_data"),
             }],
@@ -4086,6 +4103,7 @@ fn self_pay_removal_does_not_release_a_noncanonical_paymaster_slot() {
                 flags: APPROVE_EXECUTION_AND_PAYMENT,
                 target: Some(sender),
                 gas_limit: 200,
+                state_limit: 0,
                 value: U256::zero(),
                 data: Bytes::new(),
             }],
@@ -4483,7 +4501,7 @@ fn keyed_concurrency_needs_every_eligibility_condition() {
     assert_eq!(
         keyed_concurrency_verdict(true, false, false, true),
         KeyedConcurrency::Denied,
-        "a prefix reading TXPARAM(0x0C) depends on the legacy account nonce"
+        "a prefix reading TXPARAM(0x0D) depends on the legacy account nonce"
     );
 }
 
@@ -4639,7 +4657,7 @@ async fn setup_hegota_store_with_sender_code(name: &str, code: Bytes) -> Store {
 #[tokio::test]
 async fn admission_grants_keyed_concurrency_to_an_independent_prefix() {
     // The sender is a contract whose prefix only calls APPROVE: no deploy frame,
-    // no sender storage read, no TXPARAM(0x0C). Disjoint keyed txs may coexist.
+    // no sender storage read, no TXPARAM(0x0D). Disjoint keyed txs may coexist.
     let store = setup_hegota_store_funded().await;
     let blockchain = Blockchain::default_with_store(store);
 
@@ -4655,15 +4673,167 @@ async fn admission_grants_keyed_concurrency_to_an_independent_prefix() {
         .expect("a disjoint keyed tx from an eligible sender must be admitted too");
 }
 
+/// Admission returning `Ok(hash)` must mean the pool HOLDS the transaction.
+///
+/// `eth_sendRawTransaction` hands the caller that hash as a receipt of acceptance. If the
+/// transaction is not in the pool afterwards it will never be built, never mine, and never
+/// produce an error — the caller waits forever on a hash the node has already forgotten.
+/// Every other admission test here asserts only that `add_transaction_to_pool` returned
+/// `Ok`, which is exactly the assertion a silent drop satisfies.
+#[tokio::test]
+async fn an_admitted_frame_tx_is_actually_in_the_pool() {
+    let store = setup_hegota_store_funded().await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    let tx = keyed_frame_tx(vec![U256::one()], 0, 1_000_000_000);
+    let hash = blockchain
+        .add_transaction_to_pool(tx)
+        .await
+        .expect("keyed frame tx admitted");
+
+    assert!(
+        blockchain.mempool.contains_tx(hash).expect("pool readable"),
+        "admission returned {hash:#x} but the pool does not hold it: the caller has a hash \
+         for a transaction that will never mine and never error"
+    );
+}
+
+/// Revalidation must not evict when it cannot open the new head's state.
+///
+/// `revalidate_frame_txs_after_block` replays each pending frame transaction's prefix
+/// against the new head. Only one of the three possible outcomes is evidence about the
+/// transaction: the prefix ran and rejected it (evict). If the prefix ran and accepted it,
+/// or if the replay could not be performed at all, the transaction stays — an error says
+/// something about the node, not the transaction.
+///
+/// This covers the reachable half of that rule: a head whose state the store cannot open.
+/// The other half — the replay itself erroring — needs a seam this crate does not expose;
+/// it is covered on a devnet by `scripts/hegota-testnet/probe_prefix_only_tx.py`.
+#[tokio::test]
+async fn revalidation_keeps_a_tx_when_the_head_state_is_unavailable() {
+    let store = setup_hegota_store_funded().await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    let tx = keyed_frame_tx(vec![U256::one()], 0, 1_000_000_000);
+    let hash = blockchain
+        .add_transaction_to_pool(tx)
+        .await
+        .expect("keyed frame tx admitted");
+
+    // A head referencing a parent and state root the store does not have.
+    let unknown_state = Block::new(
+        BlockHeader {
+            number: 1,
+            timestamp: 1_001,
+            gas_limit: 100_000_000,
+            parent_hash: H256::repeat_byte(0xAB),
+            state_root: H256::repeat_byte(0xCD),
+            ..Default::default()
+        },
+        BlockBody::empty(),
+    );
+    blockchain
+        .revalidate_frame_txs_after_block(&unknown_state)
+        .expect("revalidation must not error");
+
+    assert!(
+        blockchain.mempool.contains_tx(hash).expect("pool readable"),
+        "a transaction was evicted because the node could not read the new head, not \
+         because anything was wrong with it; the sender was already told {hash:#x} was \
+         accepted"
+    );
+}
+
+/// A pending frame transaction must survive an ordinary block.
+///
+/// `revalidate_frame_txs_after_block` re-simulates every pending frame transaction against
+/// each new head and evicts the ones that fail. A transaction that was valid at admission
+/// and is untouched by the block must still be valid, so surviving is the whole contract:
+/// if an unrelated block can evict it, a node accepts transactions it will never mine and
+/// reports nothing.
+#[tokio::test]
+async fn a_pending_frame_tx_survives_an_unrelated_block() {
+    let store = setup_hegota_store_funded().await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    let tx = keyed_frame_tx(vec![U256::one()], 0, 1_000_000_000);
+    let hash = blockchain
+        .add_transaction_to_pool(tx)
+        .await
+        .expect("keyed frame tx admitted");
+    assert!(
+        blockchain.mempool.contains_tx(hash).expect("pool readable"),
+        "precondition: the tx is pooled before the block"
+    );
+
+    // An ordinary empty block at the next height — nothing in it touches the sender.
+    let next = Block::new(
+        BlockHeader {
+            number: 1,
+            timestamp: 1_001,
+            gas_limit: 100_000_000,
+            parent_hash: H256::zero(),
+            ..Default::default()
+        },
+        BlockBody::empty(),
+    );
+    blockchain
+        .revalidate_frame_txs_after_block(&next)
+        .expect("revalidation must not error");
+
+    assert!(
+        blockchain.mempool.contains_tx(hash).expect("pool readable"),
+        "an unrelated block evicted a valid pending frame transaction: the sender was told \
+         {hash:#x} was accepted and it will now never mine and never error"
+    );
+}
+
+/// The same guarantee for the two-transaction case EIP-8250 concurrency depends on.
+#[tokio::test]
+async fn both_concurrent_keyed_txs_are_actually_in_the_pool() {
+    let store = setup_hegota_store_funded().await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    let first = keyed_frame_tx(vec![U256::one()], 0, 1_000_000_000);
+    let first_hash = blockchain
+        .add_transaction_to_pool(first)
+        .await
+        .expect("first keyed tx admitted");
+    let second = keyed_frame_tx(vec![U256::from(2)], 0, 1_000_000_000);
+    let second_hash = blockchain
+        .add_transaction_to_pool(second)
+        .await
+        .expect("a disjoint keyed tx from an eligible sender must be admitted too");
+
+    assert_ne!(first_hash, second_hash, "the two transactions must differ");
+    assert!(
+        blockchain
+            .mempool
+            .contains_tx(first_hash)
+            .expect("pool readable"),
+        "the first keyed tx was admitted and then dropped: concurrency means both are \
+         pending at once, so losing one silently defeats the whole feature"
+    );
+    assert!(
+        blockchain
+            .mempool
+            .contains_tx(second_hash)
+            .expect("pool readable"),
+        "the second keyed tx was admitted and then dropped"
+    );
+}
+
 #[tokio::test]
 async fn admission_denies_keyed_concurrency_when_the_prefix_reads_the_legacy_nonce() {
-    // Sender code: PUSH1 0x0C, TXPARAM, POP, then APPROVE(3), STOP. Reading the
+    // Sender code: PUSH1 0x0D, TXPARAM, POP, then APPROVE(3), STOP. Reading the
     // legacy account nonce makes the prefix depend on it, so the sender falls
-    // back to one pending frame transaction.
+    // back to one pending frame transaction. The id is 0x0D rather than 0x0C
+    // because EIP-8141 v2 claims 0x0C for `state_gas_left`, and EIP-8250 shifted
+    // its three indices up by one in response.
     let code = Bytes::from(vec![
-        0x60, 0x0C, 0xB0, 0x50, 0x60, 0x03, 0x60, 0x00, 0x60, 0x00, 0xAA, 0x00,
+        0x60, 0x0D, 0xB0, 0x50, 0x60, 0x03, 0x60, 0x00, 0x60, 0x00, 0xAA, 0x00,
     ]);
-    let store = setup_hegota_store_with_sender_code("hegota-txparam-0c", code).await;
+    let store = setup_hegota_store_with_sender_code("hegota-txparam-0d", code).await;
     let blockchain = Blockchain::default_with_store(store);
 
     let first = keyed_frame_tx(vec![U256::one()], 0, 1_000_000_000);
@@ -4675,7 +4845,7 @@ async fn admission_denies_keyed_concurrency_when_the_prefix_reads_the_legacy_non
     let result = blockchain.add_transaction_to_pool(second).await;
     assert!(
         matches!(result, Err(MempoolError::FrameTxSenderAlreadyPending)),
-        "a prefix reading TXPARAM(0x0C) must not get concurrency; got {result:?}"
+        "a prefix reading TXPARAM(0x0D) must not get concurrency; got {result:?}"
     );
 }
 
@@ -4752,6 +4922,7 @@ fn utxo_input_indices_reads_every_utxo_frames_inputs() {
         flags: 0,
         target: None,
         gas_limit: 100_000,
+        state_limit: 0,
         value: U256::zero(),
         data: Bytes::from(spend.encode_to_vec()),
     };
@@ -4776,6 +4947,7 @@ fn utxo_input_indices_reads_every_utxo_frames_inputs() {
         flags: 0,
         target: None,
         gas_limit: 1,
+        state_limit: 0,
         value: U256::zero(),
         data: Bytes::from(a.encode_to_vec()), // spend-shaped, but not a UTXO frame
     });
@@ -4800,6 +4972,7 @@ fn utxo_input_indices_reads_every_utxo_frames_inputs() {
             flags: 0,
             target: None,
             gas_limit: 1,
+            state_limit: 0,
             value: U256::zero(),
             data: Bytes::from_static(&[0xFF, 0xFF]),
         }],

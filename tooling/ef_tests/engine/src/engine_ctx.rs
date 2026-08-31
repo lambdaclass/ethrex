@@ -14,9 +14,7 @@ use ethrex_common::types::DEFAULT_BUILDER_GAS_CEIL;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_rpc::{
     ClientVersion, GasTipEstimator, NodeData, RpcApiContext, start_block_executor,
-    test_utils::{
-        all_namespaces_for_tests, dummy_sync_manager, example_local_node_record, example_p2p_node,
-    },
+    test_utils::{all_namespaces_for_tests, dummy_sync_manager, example_shared_local_node},
 };
 use ethrex_storage::Store;
 use tokio::sync::{Mutex as TokioMutex, OnceCell};
@@ -63,7 +61,6 @@ pub async fn engine_only_context(storage: Store) -> RpcApiContext {
         storage.clone(),
         thread_local_merkle_pool(),
     ));
-    let local_node_record = example_local_node_record();
     let block_worker_channel = start_block_executor(blockchain.clone());
     RpcApiContext {
         storage,
@@ -73,8 +70,7 @@ pub async fn engine_only_context(storage: Store) -> RpcApiContext {
         peer_handler: None,
         node_data: NodeData {
             jwt_secret: Default::default(),
-            local_p2p_node: example_p2p_node(),
-            local_node_record,
+            shared_local_node: example_shared_local_node(),
             client_version: ClientVersion::new(
                 "ethrex".to_string(),
                 "0.1.0".to_string(),

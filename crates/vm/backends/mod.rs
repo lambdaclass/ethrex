@@ -177,13 +177,12 @@ impl Evm {
             receipt.frame_receipts = execution_report.frame_results.take().map(|results| {
                 results
                     .into_iter()
-                    .map(
-                        |(status, gas_used, logs)| ethrex_common::types::FrameReceipt {
-                            status,
-                            gas_used,
-                            logs,
-                        },
-                    )
+                    .map(|result| ethrex_common::types::FrameReceipt {
+                        status: result.status,
+                        gas_used: result.gas_used,
+                        state_gas_used: result.state_gas_used,
+                        logs: result.logs,
+                    })
                     .collect()
             });
         }
@@ -417,6 +416,12 @@ pub struct FrameValidationOutcome {
     /// The transaction's max cost (TXPARAM 0x06): the largest amount the payer
     /// may be charged. Used by the paymaster reservation accounting (Phase 3).
     pub max_cost: ethrex_common::U256,
+    /// The ceiling the mempool reserves against the paymaster's balance. Equals
+    /// `max_cost` except in the blob term: this prices blobs at the transaction's
+    /// declared `max_fee_per_blob_gas` rather than at the head's `blob_base_fee`, so
+    /// it stays a ceiling for every block that can include the transaction. See
+    /// `LEVM::frame_tx_reservation_ceiling`.
+    pub reservation_ceiling: ethrex_common::U256,
     /// The paymaster accessed by the prefix and whether its code matched the
     /// canonical paymaster hash. `None` when no distinct paymaster was
     /// identified (e.g. self-funded self_verify).
@@ -424,7 +429,7 @@ pub struct FrameValidationOutcome {
     /// Sender storage slots touched during the prefix, recorded for the
     /// admission-time revalidation affected-set.
     pub touched_sender_slots: Vec<ethrex_common::H256>,
-    /// Whether the prefix read `TXPARAM(0x0C)`, the sender's legacy account nonce
+    /// Whether the prefix read `TXPARAM(0x12)`, the sender's legacy account nonce
     /// (EIP-8250 §Mempool).
     pub read_legacy_nonce: bool,
     /// EIP-8369 Profile 2: the per-inclusion-list code-body allowance as this

@@ -97,7 +97,7 @@ must be patched into `/network-configs/genesis.json` if wanted.
   `ChainConfig::effective_slot_number` returns it verbatim without consulting the
   derivation. Leave unset. Its two companion fields, `genesisTimestamp` and
   `secondsPerSlot`, exist only to feed this derivation.
-- `payerTxparamTime` — activates the resolved-payer `TXPARAM(0x11)` index. Unset means
+- `payerTxparamTime` — activates the resolved-payer `TXPARAM(0x12)` index. Unset means
   the index keeps its `InvalidOpcode` halt, so the extension is silently off on a fresh
   chain.
 
@@ -158,16 +158,81 @@ above are all silent until a specific fork boundary.
     emergent from the EVM rather than a constant, so it is a measurement, not an
     assertion. Both rejection paths are part of the check — EIP-8272 requires a call to
     revert unless calldata is exactly 64 bytes *and* call value is zero.
-11. A deposit from an address holding no gater token reverts with "Not enough tokens",
+11. **EIP-8250 keyed nonces admit concurrency the linear nonce forbids.** Two frame
+    transactions from **a contract sender** carrying *different* `nonce_keys`, each at the
+    sequence its own key is at, are both admitted and both mine — the whole point of keyed
+    nonces, and the one EIP in the rule set that nothing else on this list exercises.
+
+    **The sender must be a contract, and this is the trap.** `keyed_concurrency_verdict`
+    grants concurrency only when the prefix is provably independent of everything the
+    sender's other transactions can change: the sender runs real (non-EIP-7702-delegated)
+    contract code, no deploy frame installs code mid-flight, the prefix reads no sender
+    storage, and it does not read `TXPARAM(0x0D)`. An EOA sender fails the first condition,
+    because its default-code prefix authenticates against its own nonce, which a sibling
+    key-0 transaction bumps. So the obvious version of this test — a funded EOA sending two
+    keyed transactions — correctly gets `A pending frame transaction from this sender is
+    already in the pool` on the second, and proves nothing about keyed nonces. Verified on
+    a devnet: an EOA sender is denied concurrency by design.
+
+    Then the negative halves, which are what prove the gate is real rather than absent: a
+    transaction reusing a key at a sequence already consumed is rejected, and key `0` is
+    the account's linear nonce domain, so a key-`0` transaction still obeys ordinary nonce
+    ordering — a future sequence there is rejected outright rather than queued, because a
+    frame transaction is simulated against head state at admission.
+
+12. A deposit from an address holding no gater token reverts with "Not enough tokens",
     and the same deposit succeeds after `gating-cli mint`. Both halves are required:
     only the second proves the gate is not simply broken for everyone.
-12. That deposit produces a standard `DepositEvent` that appears in the block's
+13. That deposit produces a standard `DepositEvent` that appears in the block's
     `requestsHash`, and the consensus client activates the validator. `eth_getLogs` on
     the deposit address shows `DEPOSIT_TOPIC`
     `0x649bbc62d0e31342afea4e5cd82d4049e7e1ee912fc0889aa790803be39038c5` and **no
     additional event** — an extra event would mean the gated contract is not transparent
     to the execution layer after all.
 
-Checks 7 and 9 to 12 need the frame-transaction submitters in `scripts/hegota-testnet/`
-and the `pk910/gated-deposit-contract-cli` container; the rest need only `curl` and
-`jq`.
+14. **EIP-8141 v2's second gas dimension is enforced, not merely reported.** Both halves:
+    a frame transaction whose value-bearing frame declares the account-creation state gas
+    mines with a non-zero `stateGasUsed` on that frame and zero on the `VERIFY` frame; the
+    same transaction one gas short of the charge mines too, but with that frame's status
+    `0x0`, its `stateGasUsed` zero, and the recipient's balance still zero. A chain that
+    only encodes `limits.state` passes the first half and fails the second, which is the
+    difference between shipping the v2 envelope and shipping v2.
+
+Checks 7, 9 to 13 and 14 need the frame-transaction submitters in `scripts/hegota-testnet/`
+and the `pk910/gated-deposit-contract-cli` container; the rest need only `curl` and `jq`.
+
+Checks 7, 9, 10, 11 and 14 are automated end to end by
+`scripts/hegota-testnet/verify_v2_devnet.py`, which needs only foundry's `cast` and is
+re-runnable against the same chain — one run at a time, since concurrent runs share the
+sender and would race each other for its nonce. Its sender key comes from
+`HEGOTA_SENDER_KEY` in the environment rather than from argv, because an argument is
+world-readable through `/proc/<pid>/cmdline` while the script runs:
+
+    set -a; . ~/hegota-keys.env; set +a
+    HEGOTA_SENDER_KEY=$FAUCET_KEY verify_v2_devnet.py <rpc> <authrpc> <jwt>
+ Twenty-six checks, including the three that are easy to
+believe without testing and wrong to:
+
+- **EIP-8250 concurrency** with a **contract** sender — two keys admitted at once and mined
+  in the same block — plus the EOA denial as its counterpart.
+- **EIP-8272's read side**: a frame transaction declaring a reference to a written entry is
+  admitted, and one naming a root that was never written is rejected.
+- **EIP-7805 enforcement**: the head payload replayed through `engine_newPayloadV6` against
+  a list holding a frame transaction it cannot contain must answer
+  `inclusionListSatisfied: false`. A client that excused frame transactions wholesale would
+  answer `true` and pass every other check.
+
+One clause of item 9 is not automated: an *ineligible* frame transaction being **excused**
+rather than reported unsatisfied. It is covered by unit tests — see
+`an_omitted_tx_from_a_contract_sender_is_excused` and the Profile 2 suite in
+`test/tests/blockchain/` — but not on a live chain, because the fixture is awkward to build:
+`MAX_VERIFY_GAS_PER_TX` (1 048 576) is larger than any mempool-admissible prefix
+(`--mempool.max-verify-gas`, 500 000 here), so no single admitted transaction is ineligible
+on budget alone. Demonstrating it needs a transaction that becomes ineligible *after*
+admission — a contract payer drained by a sibling transaction on another key while the first
+is still pending — which is a race, not a check.
+
+Note which direction that leaves untested. A client that wrongly **excused** frame
+transactions would be caught by check 14's `newPayloadV6` replay; the missing clause is a
+client that is wrongly **strict**, whose failure mode is refusing to attest to good blocks
+rather than splitting consensus.

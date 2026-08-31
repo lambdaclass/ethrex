@@ -109,6 +109,7 @@ fn self_verify_tx() -> FrameTransaction {
             flags: APPROVE_EXECUTION_AND_PAYMENT,
             target: Some(sender()),
             gas_limit: 21_000,
+            state_limit: 0,
             value: U256::zero(),
             data: Default::default(),
         }],
