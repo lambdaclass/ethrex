@@ -132,10 +132,30 @@ fn field_decode_error<T>(field_name: &str, err: RLPDecodeError) -> RLPDecodeErro
 
 /// # Struct encoding helper
 ///
-/// Used to encode a struct into RLP format.
-/// The struct's fields must implement [`RLPEncode`].
-/// The struct is encoded as a list, with its values being the fields
-/// in the order they are passed to [`Encoder::encode_field`].
+/// Encodes a struct as an RLP list. The fields must implement [`RLPEncode`] and
+/// are written in the order they are passed to [`Encoder::encode_field`].
+///
+/// ## How it writes
+///
+/// Fields go straight into the caller's buffer as they are encoded. The list
+/// prefix cannot be written first because its size depends on the payload
+/// length, which is only known once every field is in, so the encoder records
+/// where the payload starts and inserts the prefix in front of it at the end.
+/// Backpatching that way costs one memmove; measuring the payload up front
+/// instead would mean encoding every field twice.
+///
+/// ## Finishing the list
+///
+/// The prefix is written when the encoder is dropped, so a list is always
+/// terminated even on an early return. Prefer calling [`Encoder::finish`]
+/// anyway: it fixes the point at which the list closes rather than leaving it
+/// to wherever the value happens to die, which matters when several encoders
+/// are nested and their order decides the byte layout.
+///
+/// Nesting needs no special handling. An inner encoder records a later start
+/// and finishes first, so its prefix lands inside the outer payload. The buffer
+/// stays mutably borrowed for as long as an encoder is alive, so the
+/// half-written payload cannot be read in the meantime.
 ///
 /// # Examples
 ///
@@ -161,55 +181,70 @@ fn field_decode_error<T>(field_name: &str, err: RLPDecodeError) -> RLPDecodeErro
 /// let mut buf = vec![];
 /// Simple { a: 61, b: 75 }.encode(&mut buf);
 ///
+/// // 0xc2 = list, 2 bytes of payload.
 /// assert_eq!(&buf, &[0xc2, 61, 75]);
 /// ```
+///
+/// Appending to a buffer that already holds bytes leaves them alone; only the
+/// bytes this encoder wrote are wrapped:
+///
+/// ```
+/// # use ethrex_rlp::structs::Encoder;
+/// # use ethrex_rlp::encode::RLPEncode;
+/// let mut buf = vec![0xff];
+/// Encoder::new(&mut buf).encode_field(&61u8).finish();
+///
+/// assert_eq!(&buf, &[0xff, 0xc1, 61]);
+/// ```
 #[derive(Debug)]
-#[must_use = "`Encoder` must be consumed with `finish` to write the list prefix"]
+#[must_use = "`Encoder` closes its list when dropped; call `finish` to close it explicitly"]
 pub struct Encoder<'a> {
     buf: &'a mut Vec<u8>,
     /// Where this list's payload starts in `buf`; the prefix is inserted here
-    /// by `finish`.
+    /// when the list is closed.
     start: usize,
 }
 
-/// Catches an `Encoder` that is dropped without `finish`.
+/// Closes the list, so an encoder that is dropped without an explicit
+/// [`Encoder::finish`] still leaves well-formed RLP behind.
 ///
-/// Fields are written straight into the output buffer, so a missed `finish`
-/// leaves a payload with no list prefix in front of it. If that happens inside
-/// an outer list, the outer `finish` prefixes the lot and produces a
-/// well-formed but structurally wrong encoding, which decodes cleanly and is
-/// therefore very hard to trace back. `#[must_use]` catches the common shape
-/// (an unused `Encoder` as a statement) but not an encoder bound to a variable
-/// and then abandoned on an early return, so debug builds assert too.
-#[cfg(debug_assertions)]
+/// Fields are written straight into the output buffer, so without this a missed
+/// `finish` would leave a payload with no prefix in front of it. Inside an outer
+/// list that decodes cleanly but means something different, which is very hard
+/// to trace back to its cause, so closing the list here rather than reporting
+/// the mistake keeps a dropped encoder from corrupting the encoding at all.
 impl Drop for Encoder<'_> {
     fn drop(&mut self) {
-        panic!(
-            "`Encoder` dropped without `finish()`: {} bytes of RLP payload are in \
-             the output buffer with no list prefix in front of them",
-            self.buf.len() - self.start
-        );
+        backpatch_list_prefix(self.buf, self.start);
     }
 }
 
 impl<'a> Encoder<'a> {
-    /// Creates a new encoder appending to the given buffer.
+    /// Starts a list that will be appended to `buf`.
     ///
-    /// Records the buffer's current length as the start of this list's payload.
-    /// Fields are written through to `buf` immediately, so the caller must
-    /// reach [`Encoder::finish`] for the result to be valid RLP.
+    /// Records the buffer's current length as the start of the payload, so
+    /// whatever `buf` already holds is left untouched and the prefix ends up in
+    /// front of this list only.
     pub fn new(buf: &'a mut Vec<u8>) -> Self {
         let start = buf.len();
         Self { buf, start }
     }
 
-    /// Encodes a field straight into the output buffer.
+    /// Encodes `value` as the next field of the list.
     pub fn encode_field<T: RLPEncode>(self, value: &T) -> Self {
         <T as RLPEncode>::encode(value, self.buf);
         self
     }
 
-    /// If `Some`, encodes a field, else does nothing.
+    /// Encodes `value` as the next field if it is `Some`, and writes nothing at
+    /// all if it is `None`.
+    ///
+    /// A `None` is omitted rather than encoded as empty, so the list simply
+    /// comes out shorter. That is how optional *trailing* fields are
+    /// represented (a `BlockHeader`'s `base_fee_per_gas` and the fork fields
+    /// after it, say). Skipping a `None` in the middle of a list would shift
+    /// every field after it into the wrong position, so this is only correct
+    /// for a suffix of the fields.
     pub fn encode_optional_field<T: RLPEncode>(self, opt_value: &Option<T>) -> Self {
         if let Some(value) = opt_value {
             <T as RLPEncode>::encode(value, self.buf);
@@ -217,8 +252,12 @@ impl<'a> Encoder<'a> {
         self
     }
 
-    /// Encodes a (key, value) list where the values are already encoded (i.e. value = RLP prefix || payload)
-    /// but the keys are not encoded
+    /// Encodes a list of `(key, value)` pairs whose values are already encoded,
+    /// i.e. each value is a complete `RLP prefix || payload`.
+    ///
+    /// Keys are encoded as byte strings; values are copied in verbatim. This is
+    /// for pair lists that arrive with their values pre-encoded, such as an
+    /// ENR's key/value pairs.
     pub fn encode_key_value_list<T: RLPEncode>(self, list: &Vec<(Bytes, Bytes)>) -> Self {
         for (key, value) in list {
             <Bytes>::encode(key, self.buf);
@@ -228,26 +267,32 @@ impl<'a> Encoder<'a> {
         self
     }
 
-    /// Finishes encoding the struct by inserting the list prefix in front of
-    /// the payload that has been accumulating in the output buffer.
+    /// Closes the list by inserting its prefix in front of the payload.
+    ///
+    /// This is the same work the [`Drop`] impl does; calling it decides *when*
+    /// the list closes instead of leaving that to the end of the enclosing
+    /// scope. Taking `self` also ends the borrow on the output buffer, so the
+    /// finished bytes become readable again at this point.
     pub fn finish(self) {
-        // The list is complete, so defuse the unfinished-encoder assertion.
-        // `ManuallyDrop` rather than `mem::forget` because the `Drop` impl only
-        // exists in debug builds and forgetting a non-`Drop` type is a clippy
-        // error; this reborrows either way instead of moving out of `self`.
-        let mut this = core::mem::ManuallyDrop::new(self);
-        let start = this.start;
-        backpatch_list_prefix(this.buf, start);
+        // Dropping `self` here runs the `Drop` impl, which writes the prefix.
     }
 
-    /// Adds a raw value to the buffer without rlp-encoding it
+    /// Appends `value` to the payload exactly as given, without encoding it.
+    ///
+    /// The caller is asserting that `value` is already well-formed RLP; passing
+    /// anything else produces a list that is malformed from this point on. Use
+    /// [`Encoder::encode_field`] unless the bytes are known to be encoded
+    /// already.
     pub fn encode_raw(self, value: &[u8]) -> Self {
         self.buf.extend_from_slice(value);
         self
     }
 
-    /// Encodes a field as bytes
-    /// This method is used to bypass the conflicting implementations between Vec<T> and Vec<u8>
+    /// Encodes `value` as the next field, as a single RLP byte string.
+    ///
+    /// [`Encoder::encode_field`] cannot express this: for a slice of bytes it
+    /// would select the generic `Vec<T>`/slice impl and emit a *list* of
+    /// one-byte items. This forces the `[u8]` byte-string impl instead.
     pub fn encode_bytes(self, value: &[u8]) -> Self {
         <[u8] as RLPEncode>::encode(value, self.buf);
         self

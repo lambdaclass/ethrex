@@ -127,3 +127,52 @@ fn nested_encoders_backpatch_correctly() {
     assert_eq!(&twice[..encoded.len()], &encoded[..]);
     assert_eq!(&twice[encoded.len()..], &encoded[..]);
 }
+
+/// Dropping an `Encoder` without calling `finish` closes the list anyway, so
+/// an early return leaves well-formed RLP rather than a payload with no prefix
+/// in front of it. The two paths must agree byte for byte, and `finish` must
+/// not write the prefix twice.
+#[test]
+fn dropped_encoder_closes_its_list() {
+    let input = Simple { a: 61, b: 75 };
+
+    let mut finished = Vec::new();
+    Encoder::new(&mut finished)
+        .encode_field(&input.a)
+        .encode_field(&input.b)
+        .finish();
+
+    let mut dropped = Vec::new();
+    {
+        let encoder = Encoder::new(&mut dropped)
+            .encode_field(&input.a)
+            .encode_field(&input.b);
+        drop(encoder);
+    }
+
+    assert_eq!(finished, vec![0xc2, 61, 75]);
+    assert_eq!(dropped, finished);
+}
+
+/// The prefix must wrap only what the encoder itself wrote, whichever way the
+/// list is closed, and a dropped inner encoder must nest correctly inside an
+/// outer one.
+#[test]
+fn dropped_encoder_nests_and_preserves_existing_bytes() {
+    let mut buf = vec![0xff];
+    {
+        let outer = Encoder::new(&mut buf);
+        let outer = outer.encode_field(&61u8);
+        // Inner list closed by drop, not by an explicit `finish`.
+        drop(outer);
+    }
+    assert_eq!(buf, vec![0xff, 0xc1, 61]);
+
+    let mut nested = Vec::new();
+    {
+        let outer = Encoder::new(&mut nested);
+        drop(outer);
+    }
+    // An encoder that wrote nothing still closes as the empty list.
+    assert_eq!(nested, vec![0xc0]);
+}
