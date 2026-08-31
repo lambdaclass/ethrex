@@ -22,7 +22,7 @@ use ethrex_p2p::{
     rlpx::{initiator::RLPxInitiator, l2::l2_connection::P2PBasedContext},
     sync::{BackfillConfig, HistoryChain},
     sync_manager::SyncManager,
-    types::{Node, NodeRecord},
+    types::{LocalNode, SharedLocalNode},
 };
 use ethrex_rpc::{SubscriptionManager, WebSocketConfig};
 use ethrex_storage::{Store, StoreConfig};
@@ -31,7 +31,12 @@ use eyre::OptionExt;
 use secp256k1::SecretKey;
 
 use spawned_concurrency::tasks::ActorRef;
-use std::{fs::read_to_string, path::Path, sync::Arc, time::Duration};
+use std::{
+    fs::read_to_string,
+    path::Path,
+    sync::{Arc, RwLock},
+    time::Duration,
+};
 use tokio::task::JoinSet;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{info, warn};
@@ -44,8 +49,7 @@ async fn init_rpc_api(
     opts: &L1Options,
     l2_opts: &L2Options,
     peer_handler: Option<PeerHandler>,
-    local_p2p_node: Node,
-    local_node_record: NodeRecord,
+    shared_local_node: SharedLocalNode,
     store: Store,
     blockchain: Arc<Blockchain>,
     syncer: Option<Arc<SyncManager>>,
@@ -79,8 +83,7 @@ async fn init_rpc_api(
         store,
         blockchain,
         read_jwtsecret_file(&opts.authrpc_jwtsecret),
-        local_p2p_node,
-        local_node_record,
+        shared_local_node,
         syncer,
         peer_handler,
         get_client_version(),
@@ -221,10 +224,13 @@ pub async fn init_l2(
     let network = get_network(&opts.node_opts);
 
     let genesis = network.get_genesis()?;
-    let store_config = StoreConfig {
-        rocksdb_block_cache_size: opts.node_opts.rocksdb_block_cache_size,
-        ..StoreConfig::default()
-    };
+    // An explicit size skips memory detection entirely; the default path runs
+    // it once and logs the derivation.
+    let store_config = opts
+        .node_opts
+        .rocksdb_block_cache_size
+        .map(StoreConfig::with_rocksdb_block_cache_size)
+        .unwrap_or_default();
     let store = init_store_with_config(&datadir, genesis.clone(), store_config).await?;
     let rollup_store = init_rollup_store(&rollup_store_dir).await;
 
@@ -251,6 +257,8 @@ pub async fn init_l2(
         r#type: BlockchainType::L2(l2_config),
         perf_logs_enabled: true,
         max_blobs_per_block: None, // L2 doesn't support blob transactions
+        blob_sampling_enabled: false, // L2 rejects blob txs; no eth/72 sampling
+        blob_eager_provider: false,
         precompute_witnesses: opts.node_opts.precompute_witnesses,
         private_mempool: opts.node_opts.mempool_private,
         precompile_cache_enabled: true,
@@ -274,6 +282,12 @@ pub async fn init_l2(
     let (local_p2p_node, network_config) = get_local_p2p_node(&opts.node_opts, &signer);
 
     let local_node_record = get_local_node_record(&datadir, &local_p2p_node, &signer);
+
+    // Build the shared live identity Arc once; threaded into RPC, discovery, and shutdown.
+    let shared_local_node: SharedLocalNode = Arc::new(RwLock::new(LocalNode {
+        node: local_p2p_node.clone(),
+        record: local_node_record,
+    }));
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
@@ -352,6 +366,7 @@ pub async fn init_l2(
             tracker.clone(),
             blockchain.clone(),
             p2p_context,
+            shared_local_node.clone(),
         )
         .await;
         (Some(peer_handler), Some(Arc::new(syncer)))
@@ -386,8 +401,7 @@ pub async fn init_l2(
         &opts.node_opts,
         &opts,
         peer_handler.clone(),
-        local_p2p_node.clone(),
-        local_node_record.clone(),
+        shared_local_node.clone(),
         store.clone(),
         blockchain.clone(),
         syncer,
@@ -448,7 +462,14 @@ pub async fn init_l2(
     cancel_token.cancel();
     if !opts.node_opts.p2p_disabled {
         let peer_handler = peer_handler.ok_or_eyre("Peer handler not initialized")?;
-        let node_config = NodeConfigFile::new(peer_handler.peer_table, local_node_record).await;
+        // Clone the current (possibly updated) record out and drop the guard.
+        let record = {
+            let guard = shared_local_node
+                .read()
+                .expect("shared_local_node poisoned");
+            guard.record.clone()
+        };
+        let node_config = NodeConfigFile::new(peer_handler.peer_table, record).await;
         store_node_config_file(node_config, node_config_path);
     }
     tokio::time::sleep(Duration::from_secs(1)).await;
@@ -488,6 +509,8 @@ pub async fn init_native_rollup_l2(
         r#type: BlockchainType::L1,
         perf_logs_enabled: true,
         max_blobs_per_block: None,
+        blob_sampling_enabled: false, // L2 rejects blob txs; no eth/72 sampling
+        blob_eager_provider: false,
         precompute_witnesses: opts.node_opts.precompute_witnesses,
         precompile_cache_enabled: true,
         max_queued_txs_per_account: opts.node_opts.mempool_max_queued_txs_per_account,
@@ -508,6 +531,12 @@ pub async fn init_native_rollup_l2(
     let signer = get_signer(&datadir);
     let (local_p2p_node, _network_config) = get_local_p2p_node(&opts.node_opts, &signer);
     let local_node_record = get_local_node_record(&datadir, &local_p2p_node, &signer);
+    // No discovery runs on this devnet path, so the shared identity never changes
+    // after construction; RPC still reads it through the same Arc as the full node.
+    let shared_local_node: SharedLocalNode = Arc::new(RwLock::new(LocalNode {
+        node: local_p2p_node,
+        record: local_node_record,
+    }));
 
     let tracker = TaskTracker::new();
 
@@ -533,8 +562,7 @@ pub async fn init_native_rollup_l2(
         &opts.node_opts,
         &opts,
         None, // no p2p peer handler
-        local_p2p_node,
-        local_node_record,
+        shared_local_node,
         store.clone(),
         blockchain.clone(),
         None, // no syncer

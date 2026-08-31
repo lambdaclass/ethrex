@@ -68,6 +68,7 @@ redundant_clone = "warn"
 
 [features]
 jemalloc_profiling = ["dep:jemalloc_pprof"]
+c-kzg = ["ethrex-common/c-kzg"]
 # Exposes the `test_utils` module (test scaffolding) to other crates' test
 # builds. Off by default so it is excluded from the published library.
 test-utils = []
