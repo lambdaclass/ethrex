@@ -17,7 +17,7 @@ use crate::{
     block_data_buffer::BlockDataBuffer,
     error::StoreError,
     journal::{FlatDiff, JournalEntry},
-    layering::{Overlay, TrieLayerCache, TrieWrapper},
+    layering::{Overlay, OverlayCf, TrieLayerCache, TrieWrapper},
     rlp::{BlockBodyRLP, BlockHeaderRLP, BlockRLP},
     trie::{BackendTrieDB, BackendTrieDBLocked, classify_trie_key},
     utils::{ChainDataIndex, SnapStateIndex},
@@ -36,7 +36,7 @@ use ethrex_common::{
 };
 use ethrex_crypto::{NativeCrypto, keccak::keccak_hash};
 use ethrex_rlp::{
-    decode::{RLPDecode, decode_bytes},
+    decode::{RLPDecode, decode_bytes, decode_rlp_item},
     encode::RLPEncode,
 };
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Trie, TrieLogger, TrieNode, TrieWitness};
@@ -49,6 +49,7 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet, hash_map::Entry},
     fmt::Debug,
     io::Write,
+    num::NonZeroUsize,
     path::{Path, PathBuf},
     sync::{
         Arc, Condvar, Mutex, RwLock,
@@ -285,8 +286,20 @@ enum FKVGeneratorControlMessage {
     Continue,
 }
 
-// 64mb
-const CODE_CACHE_MAX_SIZE: u64 = 64 * 1024 * 1024;
+/// Byte budget for the in-memory bytecode cache.
+///
+/// Bytecode is a small fraction of the working set next to trie nodes and flat
+/// key-values (which the RocksDB block cache serves), but a cold code read costs a
+/// blob-file fetch, so caching contracts pays for itself: 256 MiB holds ~10k max-size
+/// (24 KiB) contracts, or ~100k of typical size.
+const CODE_CACHE_MAX_SIZE: u64 = 256 * 1024 * 1024;
+
+/// Entry bound for [`Store::code_metadata_cache`], derived from a 16 MiB ceiling at the
+/// ~64 B an `LruCache` entry costs (32 B key + 8 B value + list/table overhead). Sized
+/// against the code cache it shadows: at 256 MiB that holds ~10k max-size or ~100k
+/// typical contracts, so this keeps a length for every code that could be resident and
+/// then some, while bounding what an `EXTCODESIZE` sweep over unique contracts can pin.
+const CODE_METADATA_CACHE_MAX_ENTRIES: usize = (16 * 1024 * 1024) / 64;
 
 /// Key used to persist the `flushed_upto` block number in `MISC_VALUES`.
 const FLUSHED_UPTO_KEY: &[u8] = b"bodies_flushed_upto";
@@ -301,6 +314,7 @@ const MAX_BAD_BLOCKS: usize = 16;
 struct CodeCache {
     inner_cache: LruCache<H256, Code, FxBuildHasher>,
     cache_size: u64,
+    max_size: u64,
 }
 
 impl Default for CodeCache {
@@ -308,6 +322,7 @@ impl Default for CodeCache {
         Self {
             inner_cache: LruCache::unbounded_with_hasher(FxBuildHasher),
             cache_size: 0,
+            max_size: CODE_CACHE_MAX_SIZE,
         }
     }
 }
@@ -318,15 +333,17 @@ impl CodeCache {
     }
 
     fn insert(&mut self, code: &Code) -> Result<(), StoreError> {
-        let code_size = code.size();
-        let cache_len = self.inner_cache.len() + 1;
-        self.cache_size += code_size as u64;
-        let current_size = self.cache_size;
-        debug!(
-            "[ACCOUNT CODE CACHE] cache elements (): {cache_len}, total size: {current_size} bytes"
-        );
+        // A hash already cached must not be added to `cache_size` again, or the counter
+        // drifts up permanently and evicts entries that fit. `get` also refreshes
+        // recency, which is what a repeated read should do.
+        if self.inner_cache.get(&code.hash).is_some() {
+            return Ok(());
+        }
 
-        while self.cache_size > CODE_CACHE_MAX_SIZE {
+        self.cache_size += code.size() as u64;
+        self.inner_cache.put(code.hash, code.clone());
+
+        while self.cache_size > self.max_size {
             if let Some((_, code)) = self.inner_cache.pop_lru() {
                 self.cache_size -= code.size() as u64;
             } else {
@@ -334,7 +351,11 @@ impl CodeCache {
             }
         }
 
-        self.inner_cache.get_or_insert(code.hash, || code.clone());
+        let cache_len = self.inner_cache.len();
+        let current_size = self.cache_size;
+        debug!(
+            "[ACCOUNT CODE CACHE] cache elements (): {cache_len}, total size: {current_size} bytes"
+        );
         Ok(())
     }
 }
@@ -379,8 +400,11 @@ pub struct Store {
     account_code_cache: Arc<Mutex<CodeCache>>,
 
     /// Cache for code metadata (code length), keyed by the bytecode hash.
-    /// Uses FxHashMap for efficient lookups, much smaller than code cache.
-    code_metadata_cache: Arc<Mutex<rustc_hash::FxHashMap<H256, CodeMetadata>>>,
+    ///
+    /// Bounded: `EXTCODESIZE` reads this on the execution path, so an unbounded map
+    /// would grow by one entry per distinct contract ever asked for a length and never
+    /// give the memory back. See [`CODE_METADATA_CACHE_MAX_ENTRIES`].
+    code_metadata_cache: Arc<Mutex<LruCache<H256, CodeMetadata, FxBuildHasher>>>,
 
     /// Serializes concurrent `forkchoice_update` callers so that the cache
     /// update and the DB write transaction remain mutually ordered.
@@ -1127,6 +1151,19 @@ impl Store {
             .map_err(StoreError::from)
     }
 
+    /// Capacity of the bytecode cache, in [`Code::size`] bytes, which is how much
+    /// bytecode this node is configured to keep resident and so bounds what a block warm
+    /// reads speculatively.
+    ///
+    /// A poisoned cache reports zero, which stops warming rather than warming into a
+    /// cache no reader can reach.
+    pub fn code_cache_budget_bytes(&self) -> u64 {
+        self.account_code_cache
+            .lock()
+            .map(|cache| cache.max_size)
+            .unwrap_or(0)
+    }
+
     /// Get account code by its hash.
     ///
     /// Checks the in-memory block-data buffer first, then the LRU cache
@@ -1154,12 +1191,32 @@ impl Store {
         else {
             return Ok(None);
         };
-        let (bytecode_slice, targets) = decode_bytes(&bytes)?;
-        let code = Code::from_parts_unchecked(
-            code_hash,
-            bytecode_slice,
-            <Vec<u32>>::decode(targets)?.into(),
-        );
+        let (bytecode_slice, jumpdests) = decode_bytes(&bytes)?;
+        let (jumpdests, was_legacy) = decode_jumpdests(bytecode_slice, jumpdests)?;
+        let code = Code::from_parts_unchecked(code_hash, bytecode_slice, jumpdests);
+
+        // Self-heal a legacy (pre-bitmap) row so the jumpdest recompute above is
+        // paid at most once. Fire-and-forget, and only when a Tokio runtime is
+        // reachable: this read runs on rayon execution-path workers, where
+        // `spawn` would panic. Skipping just leaves the next read to recompute
+        // again; there is no correctness dependency (matches the code-metadata
+        // backfill in `get_code_metadata`).
+        if was_legacy && let Ok(handle) = tokio::runtime::Handle::try_current() {
+            let buf = encode_code(&code);
+            let hash_key = code_hash.0.to_vec();
+            let backend = self.backend.clone();
+            handle.spawn(async move {
+                if let Err(e) = async {
+                    let mut tx = backend.begin_write()?;
+                    tx.put(ACCOUNT_CODES, &hash_key, &buf)?;
+                    tx.commit()
+                }
+                .await
+                {
+                    tracing::warn!("Failed to rewrite legacy jumpdests during backfill: {e}");
+                }
+            });
+        }
 
         // insert into cache and evict if needed
         self.account_code_cache
@@ -1170,9 +1227,160 @@ impl Store {
         Ok(Some(code))
     }
 
+    /// Batched [`Self::get_account_code`].
+    ///
+    /// Resolves the buffer and the LRU first, then reads whatever is left by whichever
+    /// of two strategies gets more of those reads in flight for a batch this size: a
+    /// parallel fan-out of point gets, or sorted keys split into contiguous shards read
+    /// concurrently. See the comment on the read below for how the choice is made. The
+    /// LRU is locked once for the whole batch rather than twice per code.
+    ///
+    /// Results are returned in the order of `code_hashes`. Duplicate hashes are read
+    /// once. `None` means the hash is absent from the database.
+    pub fn get_account_codes_batch(
+        &self,
+        code_hashes: &[H256],
+    ) -> Result<Vec<Option<Code>>, StoreError> {
+        let mut out: Vec<Option<Code>> = vec![None; code_hashes.len()];
+        // Positions to fill per distinct hash, so a repeated hash costs one read.
+        let mut pending: HashMap<H256, Vec<usize>> = HashMap::new();
+
+        {
+            let buffer = self.buffer()?;
+            let mut cache = self
+                .account_code_cache
+                .lock()
+                .map_err(|_| StoreError::LockError)?;
+            for (i, hash) in code_hashes.iter().enumerate() {
+                if let Some(code) = buffer.get_code(hash) {
+                    out[i] = Some(code);
+                } else if let Some(code) = cache.get(hash)? {
+                    out[i] = Some(code);
+                } else {
+                    pending.entry(*hash).or_default().push(i);
+                }
+            }
+        }
+
+        if pending.is_empty() {
+            return Ok(out);
+        }
+
+        let mut missing: Vec<H256> = pending.keys().copied().collect();
+        missing.sort_unstable();
+
+        // Cold blob reads here are latency-bound, so what matters is how many are in
+        // flight. Two ways to get there, and which one wins depends on the batch size:
+        //
+        // * A parallel fan-out of point gets reaches queue depth ~= core count. Cheap
+        //   for any batch: rayon's pool is already warm.
+        // * Contiguous shards of the SORTED keys, one blocking thread each, reach queue
+        //   depth ~= shard count and share RocksDB blocks within a shard. This is the
+        //   only way past core count (async_io is OFF in this build, so a single
+        //   `multi_get` runs the whole batch at queue depth 1), but it pays a thread
+        //   spawn per shard.
+        //
+        // So shard only once sharding can actually beat the fan-out, i.e. once the batch
+        // is wide enough to form more shards than there are cores. Below that the
+        // fan-out is both deeper and cheaper, and a single serial `multi_get` would be
+        // far worse than either.
+        //
+        // The shard cap has to sit above the core count, or on a host with at least that
+        // many cores the fan-out would always win and this path would be unreachable.
+        // Twice the cores guarantees that, with a floor so a small host keeps the depth
+        // it can already reach: these threads block on I/O rather than compute, so more
+        // of them than cores is the point.
+        const KEYS_PER_SHARD: usize = 256;
+        const MIN_SHARD_CAP: usize = 64;
+        let parallelism = std::thread::available_parallelism().map_or(8, |p| p.get());
+        let max_shards = parallelism.saturating_mul(2).max(MIN_SHARD_CAP);
+        let shards = missing.len().div_ceil(KEYS_PER_SHARD).min(max_shards);
+        let read_view = self.backend.begin_read()?;
+        // Both paths decode in whatever thread did the read, so rebuilding the jumpdest
+        // bitmap for a legacy entry stays off the caller's thread and stays parallel.
+        let decode = |hash: &H256, value: Option<Vec<u8>>| -> Result<Option<Code>, StoreError> {
+            let Some(bytes) = value else { return Ok(None) };
+            let (bytecode_slice, jumpdests) = decode_bytes(&bytes)?;
+            // This is the bulk prefetch warm path; a legacy row is recomputed here
+            // and self-healed later when `get_account_code` reads it on the hot path.
+            let (jumpdests, _was_legacy) = decode_jumpdests(bytecode_slice, jumpdests)?;
+            Ok(Some(Code::from_parts_unchecked(
+                *hash,
+                bytecode_slice,
+                jumpdests,
+            )))
+        };
+        let decoded: Vec<Result<Option<Code>, StoreError>> = if shards > parallelism {
+            let chunk = missing.len().div_ceil(shards);
+            let rv = read_view.as_ref();
+            let read_shard = |hashes: &[H256]| -> Vec<Result<Option<Code>, StoreError>> {
+                let keys: Vec<&[u8]> = hashes.iter().map(|h| h.as_bytes()).collect();
+                rv.multi_get(ACCOUNT_CODES, &keys)
+                    .into_iter()
+                    .zip(hashes.iter())
+                    .map(|(value, hash)| decode(hash, value?))
+                    .collect()
+            };
+            std::thread::scope(|scope| {
+                let handles: Vec<_> = missing
+                    .chunks(chunk)
+                    .map(|ck| (ck, scope.spawn(move || read_shard(ck))))
+                    .collect();
+                handles
+                    .into_iter()
+                    .flat_map(|(shard, handle)| {
+                        // A panicked shard becomes an `Err` per key it covered, keeping
+                        // the results aligned with `missing` and leaving the caller's
+                        // best-effort handling to decide. Re-panicking here would
+                        // escalate a warm into taking down whatever runs it.
+                        handle.join().unwrap_or_else(|_| {
+                            shard
+                                .iter()
+                                .map(|_| {
+                                    Err(StoreError::Custom(
+                                        "account code shard panicked".to_string(),
+                                    ))
+                                })
+                                .collect()
+                        })
+                    })
+                    .collect()
+            })
+        } else {
+            // One key per read, so `get` rather than a single-key `multi_get`: the
+            // batched call sets up its own result buffers, which is pure overhead here.
+            let rv = read_view.as_ref();
+            missing
+                .par_iter()
+                .map(|hash| decode(hash, rv.get(ACCOUNT_CODES, hash.as_bytes())?))
+                .collect()
+        };
+
+        let mut fetched: Vec<Code> = Vec::new();
+        for (hash, code) in missing.iter().zip(decoded.into_iter()) {
+            let Some(code) = code? else { continue };
+            for &i in pending.get(hash).into_iter().flatten() {
+                out[i] = Some(code.clone());
+            }
+            fetched.push(code);
+        }
+
+        if !fetched.is_empty() {
+            let mut cache = self
+                .account_code_cache
+                .lock()
+                .map_err(|_| StoreError::LockError)?;
+            for code in &fetched {
+                cache.insert(code)?;
+            }
+        }
+
+        Ok(out)
+    }
+
     /// Check if account code exists by its hash, without constructing the full `Code` struct.
     /// More efficient than `get_account_code` for existence checks since it skips
-    /// RLP decoding and `Code` struct construction (no `jump_targets` deserialization).
+    /// RLP decoding and `Code` struct construction (no jumpdest-bitmap decoding).
     /// Note: The underlying `get()` still reads the value from RocksDB (including blob files).
     pub fn code_exists(&self, code_hash: H256) -> Result<bool, StoreError> {
         // Code introduced by a not-yet-flushed block lives only in the buffer; check
@@ -1242,21 +1450,29 @@ impl Store {
                 length: code.len() as u64,
             };
 
-            // Write metadata for future use (async, fire and forget)
-            let metadata_buf = metadata.length.to_be_bytes().to_vec();
-            let hash_key = code_hash.0.to_vec();
-            let backend = self.backend.clone();
-            tokio::task::spawn(async move {
-                if let Err(e) = async {
-                    let mut tx = backend.begin_write()?;
-                    tx.put(ACCOUNT_CODE_METADATA, &hash_key, &metadata_buf)?;
-                    tx.commit()
-                }
-                .await
-                {
-                    tracing::warn!("Failed to write code metadata during auto-migration: {}", e);
-                }
-            });
+            // Backfill the row for future reads, fire and forget.
+            //
+            // Only when a Tokio runtime is reachable: this read is on the execution
+            // path (`EXTCODESIZE`), which runs on rayon workers, and
+            // `tokio::task::spawn` panics outside a runtime. Skipping the backfill
+            // costs one code read the next time that hash is asked for; panicking
+            // would take the node down.
+            if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                let metadata_buf = metadata.length.to_be_bytes().to_vec();
+                let hash_key = code_hash.0.to_vec();
+                let backend = self.backend.clone();
+                handle.spawn(async move {
+                    if let Err(e) = async {
+                        let mut tx = backend.begin_write()?;
+                        tx.put(ACCOUNT_CODE_METADATA, &hash_key, &metadata_buf)?;
+                        tx.commit()
+                    }
+                    .await
+                    {
+                        tracing::warn!("Failed to write code metadata during backfill: {}", e);
+                    }
+                });
+            }
 
             metadata
         };
@@ -1265,7 +1481,7 @@ impl Store {
         self.code_metadata_cache
             .lock()
             .map_err(|_| StoreError::LockError)?
-            .insert(code_hash, metadata);
+            .put(code_hash, metadata);
 
         Ok(Some(metadata))
     }
@@ -2184,7 +2400,10 @@ impl Store {
             pending_trie_roots: Arc::new(PendingTrieRoots::default()),
             last_computed_flatkeyvalue: Arc::new(RwLock::new(last_written)),
             account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
-            code_metadata_cache: Arc::new(Mutex::new(rustc_hash::FxHashMap::default())),
+            code_metadata_cache: Arc::new(Mutex::new(LruCache::with_hasher(
+                NonZeroUsize::new(CODE_METADATA_CACHE_MAX_ENTRIES).unwrap_or(NonZeroUsize::MIN),
+                FxBuildHasher,
+            ))),
             fcu_lock: Arc::new(tokio::sync::Mutex::new(())),
             safe_commit_root,
             journal_pruning_paused: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -5047,6 +5266,15 @@ fn commit_to_disk(
             &[]
         };
 
+        // Pre-images for the reconciliation layer must be taken at the pivot, not at the
+        // old chain's edge `D`. `T`'s journal entry has to reverse disk back to the pivot
+        // state, but this batch is built while disk still holds `D`, so `read_view` yields
+        // `D`'s values for every key the old chain rewrote in `[T, D]`. The overlay *is*
+        // the pivot-vs-`D` difference, so it wins over `read_view` for any key it carries.
+        // `None` in the overlay means "absent at the pivot", which is exactly the journal's
+        // "delete on rollback" entry.
+        let pivot_overlay = overlay_for_reconciliation.as_ref();
+
         for (key, value) in layer.nodes.iter().chain(extra.iter()) {
             let (is_leaf, is_account) = classify_trie_key(key.len());
 
@@ -5069,17 +5297,23 @@ fn commit_to_disk(
                 &STORAGE_TRIE_NODES
             };
 
-            // Pre-image: the intra-batch overlay wins over disk so multi-layer commits
-            // record each block's true pre-state. Skipped for batch (full-sync) commits.
+            // Pre-image: the intra-batch overlay wins over the pivot overlay, which wins
+            // over disk, so multi-layer commits record each block's true pre-state and the
+            // reconciliation layer records the pivot's. Skipped for batch (full-sync) commits.
             let prev_value = if !is_batch {
                 match overlay.get(key) {
                     Some(v) => Some(v.clone()),
-                    None => match read_view.get(table, key) {
-                        Ok(v) => Some(v),
-                        Err(e) => {
-                            result = Err(e);
-                            break 'layers;
-                        }
+                    None => match pivot_overlay
+                        .and_then(|ov| ov.lookup(OverlayCf::classify_by_key_length(key.len()), key))
+                    {
+                        Some(v) => Some(v),
+                        None => match read_view.get(table, key) {
+                            Ok(v) => Some(v),
+                            Err(e) => {
+                                result = Err(e);
+                                break 'layers;
+                            }
+                        },
                     },
                 }
             } else {
@@ -5438,13 +5672,29 @@ pub fn receipt_key(block_hash: &BlockHash, index: u64) -> Vec<u8> {
 }
 
 fn encode_code(code: &Code) -> Vec<u8> {
-    let mut buf =
-        Vec::with_capacity(6 + code.len() + std::mem::size_of_val::<[u32]>(&code.jump_targets));
+    let jumpdests = code.jumpdests();
+    let mut buf = Vec::with_capacity(6 + code.len() + jumpdests.len());
     code.code().encode(&mut buf);
-    // `Arc<[u32]>` (the in-memory share) has no `RLPEncode` impl; encode through an
-    // owned `Vec` on this cold DB-write path (code is persisted once per hash).
-    code.jump_targets.to_vec().encode(&mut buf);
+    jumpdests.encode(&mut buf);
     buf
+}
+
+/// Decodes the JUMPDEST bitmap stored after the bytecode in an [`ACCOUNT_CODES`] value.
+///
+/// Values written before the bitmap representation hold an RLP *list* of `u32` offsets
+/// there instead. The RLP item header distinguishes a list from a byte string, so both
+/// forms are readable: for the older one the bitmap is rebuilt from the bytecode, which
+/// is cheaper than decoding the list.
+/// Decodes the stored jump-destination bitmap. The bool is `true` when the value
+/// was in the legacy RLP-list-of-`u32` format and had to be recomputed from
+/// `code` — the caller uses it to self-heal the row to the bitmap format so the
+/// recompute is paid at most once per entry rather than on every cold read.
+fn decode_jumpdests(code: &[u8], encoded: &[u8]) -> Result<(Arc<[u8]>, bool), StoreError> {
+    let (is_list, payload, _) = decode_rlp_item(encoded)?;
+    if is_list {
+        return Ok((Code::compute_jumpdests(code), true));
+    }
+    Ok((Arc::from(payload), false))
 }
 
 #[derive(Debug, Default, Clone)]
@@ -5617,6 +5867,188 @@ pub fn read_chain_id_from_db(path: &Path) -> Option<u64> {
     {
         let _ = path;
         None
+    }
+}
+
+#[cfg(test)]
+mod account_code_tests {
+    use super::*;
+
+    const JUMPDEST: u8 = 0x5b;
+    const PUSH1: u8 = 0x60;
+
+    /// `EXTCODESIZE` resolves a length through [`Store::get_code_metadata`], and
+    /// execution runs on rayon workers, which are not inside a Tokio runtime. A hash
+    /// with no metadata row SHALL still answer from the bytecode there rather than
+    /// panicking on the backfill spawn. This test is deliberately NOT `#[tokio::test]`:
+    /// the absence of a runtime is the condition under test.
+    #[test]
+    fn metadata_falls_back_to_the_bytecode_without_a_tokio_runtime() {
+        use crate::backend::in_memory::InMemoryBackend;
+
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(
+            backend.clone(),
+            dir.path().to_path_buf(),
+            1,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
+
+        // Code present, metadata row absent: the shape of any database written before
+        // ACCOUNT_CODE_METADATA existed, which no migration backfills.
+        let code = jumpdest_dense_code();
+        let mut tx = backend.begin_write().unwrap();
+        tx.put(ACCOUNT_CODES, code.hash.as_bytes(), &encode_code(&code))
+            .unwrap();
+        tx.commit().unwrap();
+
+        let metadata = store
+            .get_code_metadata(code.hash)
+            .expect("metadata read must not fail off-runtime");
+        assert_eq!(metadata.map(|m| m.length), Some(code.len() as u64));
+    }
+
+    /// A max-size contract that is almost entirely JUMPDESTs, the shape that makes the
+    /// jump-destination representation matter: as a list of offsets it is ~4x the size
+    /// of the bytecode it describes.
+    fn jumpdest_dense_code() -> Code {
+        let mut bytecode = vec![JUMPDEST; 24576];
+        bytecode[0] = 0x00;
+        Code::from_bytecode_unchecked(bytecode.into(), H256::zero())
+    }
+
+    /// Encodes an `ACCOUNT_CODES` value the way it was written before the bitmap: the
+    /// bytecode followed by an RLP list of `u32` JUMPDEST offsets.
+    fn encode_code_legacy(code: &Code) -> Vec<u8> {
+        let offsets: Vec<u32> = (0..code.len())
+            .filter(|offset| code.is_valid_jumpdest(*offset))
+            .map(|offset| offset as u32)
+            .collect();
+        let mut buf = Vec::new();
+        code.code().encode(&mut buf);
+        offsets.encode(&mut buf);
+        buf
+    }
+
+    #[test]
+    fn encoded_value_carries_one_bitmap_bit_per_code_byte() {
+        let code = jumpdest_dense_code();
+        let encoded = encode_code(&code);
+
+        assert_eq!(encoded.len(), 6 + code.len() + code.len().div_ceil(8));
+    }
+
+    #[test]
+    fn round_trip_preserves_the_bitmap() {
+        let code = jumpdest_dense_code();
+        let encoded = encode_code(&code);
+
+        let (bytecode, jumpdests) = decode_bytes(&encoded).unwrap();
+        assert_eq!(bytecode, code.code());
+        let (rebuilt, was_legacy) = decode_jumpdests(bytecode, jumpdests).unwrap();
+        assert_eq!(rebuilt.as_ref(), code.jumpdests());
+        assert!(!was_legacy, "bitmap format must not be flagged legacy");
+    }
+
+    /// Values written before the bitmap SHALL still decode, with the bitmap rebuilt from
+    /// the bytecode, so an existing database needs no rewriting.
+    ///
+    /// The expectation is built from the offsets the legacy value itself names, not from
+    /// `Code::compute_jumpdests`, so this pins the rebuilt bitmap against the old format
+    /// rather than against the implementation that produces it.
+    #[test]
+    fn legacy_offset_list_values_decode_to_the_same_bitmap() {
+        for (bytecode, offsets) in [
+            (vec![0x00, JUMPDEST, 0x00, JUMPDEST], vec![1u32, 3]),
+            // The byte after PUSH1 is its immediate, so only offset 2 is a destination.
+            (vec![PUSH1, JUMPDEST, JUMPDEST], vec![2u32]),
+            (vec![0x00; 32], vec![]),
+        ] {
+            let code = Code::from_bytecode_unchecked(bytecode.clone().into(), H256::zero());
+            let legacy = encode_code_legacy(&code);
+
+            let mut expected = vec![0u8; bytecode.len().div_ceil(8)];
+            for offset in &offsets {
+                let index = usize::try_from(*offset).expect("offset fits usize");
+                expected[index / 8] |= 1 << (index % 8);
+            }
+            // A jumpless contract stores no bitmap at all rather than an all-zero one.
+            if offsets.is_empty() {
+                expected.clear();
+            }
+
+            let (decoded_bytecode, jumpdests) = decode_bytes(&legacy).unwrap();
+            assert_eq!(decoded_bytecode, code.code());
+            let (rebuilt, was_legacy) = decode_jumpdests(decoded_bytecode, jumpdests).unwrap();
+            assert_eq!(
+                rebuilt.as_ref(),
+                expected.as_slice(),
+                "rebuilt bitmap disagrees with the legacy offsets for {bytecode:?}"
+            );
+            assert!(
+                was_legacy,
+                "legacy RLP-list format must be flagged for self-heal"
+            );
+        }
+    }
+
+    /// Re-inserting a cached hash SHALL NOT grow the accounted size, or the counter
+    /// drifts up until the cache evicts entries that fit.
+    #[test]
+    fn repeated_inserts_do_not_inflate_the_accounted_size() {
+        let code = jumpdest_dense_code();
+        let mut cache = CodeCache::default();
+
+        cache.insert(&code).unwrap();
+        let after_first = cache.cache_size;
+        for _ in 0..8 {
+            cache.insert(&code).unwrap();
+        }
+
+        assert_eq!(cache.cache_size, after_first);
+        assert_eq!(cache.inner_cache.len(), 1);
+    }
+
+    /// The accounted size SHALL include the bytecode itself, so the cache honors its
+    /// memory budget instead of holding orders of magnitude more than it accounts for.
+    #[test]
+    fn accounted_size_covers_the_bytecode_and_bitmap() {
+        let code = jumpdest_dense_code();
+        let mut cache = CodeCache::default();
+        cache.insert(&code).unwrap();
+
+        assert!(cache.cache_size >= (code.len() + code.jumpdests().len()) as u64);
+    }
+
+    #[test]
+    fn cache_evicts_down_to_its_budget() {
+        let mut cache = CodeCache {
+            max_size: 128 * 1024,
+            ..Default::default()
+        };
+
+        for i in 0..16u8 {
+            let mut bytecode = vec![JUMPDEST; 24576];
+            bytecode[0] = i;
+            cache
+                .insert(&Code::from_bytecode_unchecked(
+                    bytecode.into(),
+                    H256::from_low_u64_be(i.into()),
+                ))
+                .unwrap();
+        }
+
+        assert!(cache.cache_size <= cache.max_size);
+        assert!(cache.inner_cache.len() < 16);
+    }
+
+    /// The default budget SHALL be the one the cache actually enforces, so a change to
+    /// the constant cannot silently leave the cache unbounded.
+    #[test]
+    fn default_cache_uses_the_configured_budget() {
+        assert_eq!(CodeCache::default().max_size, CODE_CACHE_MAX_SIZE);
     }
 }
 

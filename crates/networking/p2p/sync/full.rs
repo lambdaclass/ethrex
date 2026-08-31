@@ -406,12 +406,16 @@ pub async fn sync_cycle_full(
                     local_head,
                     "Full sync cannot resume: post-state for block {resume_parent_number} is absent \
                      (pruned from the layered store, or never executed). The consensus sync head does \
-                     not reconcile to a block whose state we retain; pausing until a reconcilable \
-                     forkchoice head arrives. If this persists with no state above genesis, the datadir \
-                     needs a fresh resync (ethrex removedb)."
+                     not reconcile to a block whose state we retain, so there is nothing to execute \
+                     on top of; handing over to snap sync to rebuild state from a recent pivot."
                 );
                 store.clear_fullsync_headers().await?;
-                return Ok(());
+                // Returning Ok here would pause the cycle and wait for a forkchoice head that
+                // reconciles to state we retain. When the walk has already bottomed out at
+                // genesis no such head exists — the state is gone, not merely unreferenced —
+                // so the wait never ends and the node stops following the chain entirely.
+                // Report it so the caller can escalate to snap sync.
+                return Err(SyncError::StateUnrecoverable);
             }
             // If we are resuming at or below the canonical head, the canonical chain extends
             // past the executed-state head: an FCU canonicalized blocks before their state
