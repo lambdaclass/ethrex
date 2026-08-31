@@ -16,7 +16,8 @@ use serde_json::json;
 
 #[test]
 fn unsatisfied_inclusion_list_keeps_payload_valid() {
-    let status = PayloadStatus::valid_with_hash(H256::zero()).with_inclusion_list_satisfied(false);
+    let status =
+        PayloadStatus::valid_with_hash(H256::zero()).with_inclusion_list_satisfied(Some(false));
 
     assert_eq!(status.status, PayloadValidationStatus::Valid);
 
@@ -27,7 +28,7 @@ fn unsatisfied_inclusion_list_keeps_payload_valid() {
 
 #[test]
 fn satisfied_inclusion_list_serializes_true() {
-    let status = PayloadStatus::valid().with_inclusion_list_satisfied(true);
+    let status = PayloadStatus::valid().with_inclusion_list_satisfied(Some(true));
 
     let json = serde_json::to_value(status).unwrap();
     assert_eq!(json["inclusionListSatisfied"], true);
@@ -81,4 +82,66 @@ fn get_inclusion_list_rejects_malformed_or_extra_params() {
 
     let two_params = GetInclusionListV1Request::parse(&Some(vec![json!("0x00"), json!("0x01")]));
     assert!(matches!(two_params, Err(RpcErr::BadParams(_))));
+}
+
+// The distinction bogota.md draws between an ABSENT `inclusionListSatisfied`
+// and a `null` one. Getting it wrong is invisible to every in-repo suite: the
+// fixture runner never inspects the key, so omitting it kept 26,562 fixtures
+// green here while EEST's `consume-engine` failed 5,489 of the same fixtures
+// with "expected `inclusion_list_satisfied` in response".
+
+/// execution-apis `bogota.md` (739f9e008), `engine_newPayloadV6` point 2.2:
+/// "Otherwise, `inclusionListSatisfied` **MUST** be `null`." Null, not absent —
+/// a `PayloadStatusV2` always carries the key.
+#[test]
+fn non_valid_status_reports_null_inclusion_list_satisfied() {
+    for status in [
+        PayloadStatus::invalid_with_err("boom"),
+        PayloadStatus::syncing(),
+        PayloadStatus::accepted(),
+    ] {
+        let expected = format!("{:?}", status.status);
+        let json = serde_json::to_value(status.with_inclusion_list_satisfied(None)).unwrap();
+        assert!(
+            json.get("inclusionListSatisfied").is_some(),
+            "{expected}: the key must be present, not dropped"
+        );
+        assert!(
+            json["inclusionListSatisfied"].is_null(),
+            "{expected}: the key must be null when there is no verdict"
+        );
+    }
+}
+
+/// The other half: a `PayloadStatusV1` response (every pre-Bogotá method) has
+/// no such field at all, so the key must be absent rather than `null`.
+#[test]
+fn payload_status_v1_omits_inclusion_list_satisfied_entirely() {
+    for status in [
+        PayloadStatus::valid(),
+        PayloadStatus::valid_with_hash(H256::zero()),
+        PayloadStatus::invalid_with_err("boom"),
+        PayloadStatus::syncing(),
+        PayloadStatus::accepted(),
+    ] {
+        let expected = format!("{:?}", status.status);
+        let json = serde_json::to_value(status).unwrap();
+        assert!(
+            json.get("inclusionListSatisfied").is_none(),
+            "{expected}: a V1 status must not carry the V2 field"
+        );
+    }
+}
+
+/// A `VALID` payload still serializes the verdict as a bare boolean, not as a
+/// nested option.
+#[test]
+fn valid_status_reports_a_bare_boolean_verdict() {
+    for verdict in [true, false] {
+        let json = serde_json::to_value(
+            PayloadStatus::valid().with_inclusion_list_satisfied(Some(verdict)),
+        )
+        .unwrap();
+        assert_eq!(json["inclusionListSatisfied"], verdict);
+    }
 }

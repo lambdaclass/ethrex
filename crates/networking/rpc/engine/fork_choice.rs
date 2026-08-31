@@ -330,6 +330,7 @@ impl RpcHandler for ForkChoiceUpdatedV5 {
         // `VALID` head carries a verdict; the field stays absent otherwise. A
         // head whose list was never retained (evicted, or delivered before this
         // node started) also reports nothing rather than guessing `true`.
+        let mut verdict = None;
         if response.payload_status.status == PayloadValidationStatus::Valid {
             let head_hash = self.fork_choice_state.head_block_hash;
             let retained = match context.retained_inclusion_lists.lock() {
@@ -341,11 +342,14 @@ impl RpcHandler for ForkChoiceUpdatedV5 {
                 }
             };
             if let Some(inclusion_list) = retained {
-                let satisfied =
-                    block_satisfies_inclusion_list(&context, head_hash, &inclusion_list).await?;
-                response.payload_status.inclusion_list_satisfied = Some(satisfied);
+                verdict = Some(
+                    block_satisfies_inclusion_list(&context, head_hash, &inclusion_list).await?,
+                );
             }
         }
+        // Always present on the V5 path: this is a `PayloadStatusV2`, so the
+        // key is emitted as `null` when there is no verdict rather than dropped.
+        response.payload_status.inclusion_list_satisfied = Some(verdict);
 
         if let (Some(head_block), Some(attributes)) = (head_block_opt, &self.payload_attributes) {
             let chain_config = context.storage.get_chain_config();

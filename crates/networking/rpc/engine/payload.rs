@@ -550,9 +550,12 @@ impl RpcHandler for NewPayloadV6Request {
         ) {
             Ok(block) => block,
             Err(err) => {
-                return Ok(serde_json::to_value(PayloadStatus::invalid_with_err(
-                    &err.to_string(),
-                ))?);
+                // Still a `PayloadStatusV2`, so the key is emitted as `null`
+                // rather than dropped even on this early bail-out.
+                return Ok(serde_json::to_value(
+                    PayloadStatus::invalid_with_err(&err.to_string())
+                        .with_inclusion_list_satisfied(None),
+                )?);
             }
         };
 
@@ -618,17 +621,17 @@ impl RpcHandler for NewPayloadV6Request {
             }
         }
 
-        // `inclusionListSatisfied` is reported only for a `VALID` payload; for
-        // every other status it stays absent. An unsatisfied list does not make
-        // the payload invalid — the consensus layer simply will not attest to
-        // it.
-        if payload_status.status != PayloadValidationStatus::Valid {
-            return serde_json::to_value(payload_status)
-                .map_err(|error| RpcErr::Internal(error.to_string()));
-        }
-
-        let satisfied =
-            block_satisfies_inclusion_list(&context, block_hash_for_il, &decoded_il).await?;
+        // A verdict is computed only for a `VALID` payload; every other status
+        // reports `null`. The key is present either way — this is a
+        // `PayloadStatusV2` response, and bogota.md requires
+        // `inclusionListSatisfied` to be `null` rather than absent when there is
+        // no verdict. An unsatisfied list does not make the payload invalid —
+        // the consensus layer simply will not attest to it.
+        let satisfied = if payload_status.status == PayloadValidationStatus::Valid {
+            Some(block_satisfies_inclusion_list(&context, block_hash_for_il, &decoded_il).await?)
+        } else {
+            None
+        };
         serde_json::to_value(payload_status.with_inclusion_list_satisfied(satisfied))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }

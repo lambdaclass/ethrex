@@ -213,13 +213,27 @@ pub struct PayloadStatus {
         with = "optional_hex_bytes"
     )]
     pub witness: Option<Bytes>,
-    /// EIP-7805 (FOCIL) `PayloadStatusV2.inclusionListSatisfied`: whether the
-    /// payload satisfied the inclusion list constraints. Carries a value only
-    /// when the payload is `VALID`; an unsatisfied inclusion list leaves the
-    /// payload `VALID` with `Some(false)`. Absent for every pre-Hegotá method,
-    /// whose responses are `PayloadStatusV1`.
+    /// EIP-7805 (FOCIL) `PayloadStatusV2.inclusionListSatisfied`.
+    ///
+    /// Three-state on purpose, because the spec distinguishes an ABSENT field
+    /// from a `null` one and serde alone cannot express both with a plain
+    /// `Option<bool>`:
+    ///
+    /// - `None` — omit the key. `PayloadStatusV1` has no such field, so every
+    ///   pre-Bogotá method (`engine_newPayloadV1`..`V5`,
+    ///   `engine_forkchoiceUpdatedV1`..`V4`) must not emit it at all.
+    /// - `Some(None)` — emit `null`. execution-apis `bogota.md`: "Otherwise,
+    ///   `inclusionListSatisfied` **MUST** be `null`", i.e. every V2 response
+    ///   whose status is not `VALID` still carries the key.
+    /// - `Some(Some(v))` — emit the verdict. An unsatisfied list does not make
+    ///   the payload invalid; it stays `VALID` and reports `false` so the
+    ///   consensus layer knows not to attest to it.
+    ///
+    /// Omitting the key where the spec wants `null` is not cosmetic: EEST's
+    /// `consume-engine` asserts the key is present, and dropping it failed
+    /// 5,489 Bogotá engine fixtures while every in-repo suite stayed green.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub inclusion_list_satisfied: Option<bool>,
+    pub inclusion_list_satisfied: Option<Option<bool>>,
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -312,12 +326,12 @@ impl PayloadStatus {
         }
     }
 
-    /// Records the EIP-7805 (FOCIL) inclusion-list verdict on a `VALID`
-    /// payload status. Per execution-apis `PayloadStatusV2`, an unsatisfied
-    /// inclusion list does not change the status — the payload stays `VALID`
-    /// and only `inclusionListSatisfied` reports the verdict, so the consensus
-    /// layer knows not to attest to it.
-    pub fn with_inclusion_list_satisfied(mut self, satisfied: bool) -> Self {
+    /// Marks this status as a `PayloadStatusV2`, carrying the EIP-7805 (FOCIL)
+    /// inclusion-list verdict. `Some(v)` reports the verdict for a `VALID`
+    /// payload; `None` emits the spec-mandated `null` for every other status.
+    /// Either way the key is present, which is what distinguishes a V2 response
+    /// from a V1 one.
+    pub fn with_inclusion_list_satisfied(mut self, satisfied: Option<bool>) -> Self {
         self.inclusion_list_satisfied = Some(satisfied);
         self
     }
