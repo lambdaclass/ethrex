@@ -331,7 +331,7 @@ under a different hash. No log line marks the drop. The returned hash is the cor
 
 | Shape | Behaviour | Reproducer |
 | --- | --- | --- |
-| Prefix-only: a frame tx whose sole frame is its `VERIFY` prefix | **Always** dropped | `scripts/hegota-testnet/probe_prefix_only_tx.py` |
+| Prefix-only: a frame tx whose sole frame is its `VERIFY` prefix | **Always** dropped — and still dropped after the fix below, so it is a *separate*, still-open issue. A body-less transaction may well be un-buildable by design; what is not defensible is accepting it and saying nothing | `scripts/hegota-testnet/probe_prefix_only_tx.py` |
 | Contract sender, two frames (`VERIFY` + `SENDER`), disjoint nonce keys | **Intermittently** dropped — roughly one run in three | `scripts/hegota-testnet/probe_contract_sender_tx.py` |
 
 The second one is the one that matters, because it is the shape EIP-8250 concurrency depends
