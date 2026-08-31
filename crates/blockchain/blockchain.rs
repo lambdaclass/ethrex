@@ -3788,17 +3788,44 @@ impl Blockchain {
                             // newcomer passed its own locked availability check).
                             balance < self.mempool.reserved_pending_cost(paymaster)?
                         }
-                        // Simulation passed flag is false: evict.
+                        // Simulation passed flag is false: the prefix was replayed
+                        // against the new head and rejected it. That is a verdict, so
+                        // evict.
                         Ok(_) => true,
-                        // A simulation error means the prefix can no longer be
-                        // validated against the new state: evict (conservative).
-                        Err(_) => true,
+                        // A simulation ERROR is not a verdict. It says the prefix could
+                        // not be replayed — a state read that failed, a head whose state
+                        // is not yet readable — not that the transaction became invalid.
+                        // Evicting on it silently destroys transactions the node already
+                        // told the sender it had accepted, and it does so intermittently,
+                        // because whether the read fails is a matter of timing. Keep the
+                        // transaction, exactly as the three transient-failure branches
+                        // above do (`StoreError`, absent `vm_db`, failed balance read).
+                        // A genuinely invalid transaction is caught by the `passed` flag
+                        // here, by the next block's pass, or at block building.
+                        Err(error) => {
+                            debug!(
+                                %hash, %error,
+                                "frame tx prefix could not be re-simulated after a block;                                  keeping it pending rather than evicting on a non-verdict"
+                            );
+                            false
+                        }
                     }
                 }
-                Err(_) => true,
+                // Same reasoning: failing to build an EVM says nothing about the
+                // transaction.
+                Err(error) => {
+                    debug!(
+                        %hash, %error,
+                        "could not build an EVM to re-simulate a pending frame tx; keeping it"
+                    );
+                    false
+                }
             };
 
             if evict {
+                // Evictions were silent, which is how an intermittent drop went unnoticed
+                // until a devnet run happened to look for the transaction afterwards.
+                debug!(%hash, "evicting pending frame tx: it no longer validates at the new head");
                 self.mempool.remove_transaction(&hash)?;
             }
         }

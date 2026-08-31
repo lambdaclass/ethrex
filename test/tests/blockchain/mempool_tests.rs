@@ -4673,6 +4673,156 @@ async fn admission_grants_keyed_concurrency_to_an_independent_prefix() {
         .expect("a disjoint keyed tx from an eligible sender must be admitted too");
 }
 
+/// Admission returning `Ok(hash)` must mean the pool HOLDS the transaction.
+///
+/// `eth_sendRawTransaction` hands the caller that hash as a receipt of acceptance. If the
+/// transaction is not in the pool afterwards it will never be built, never mine, and never
+/// produce an error — the caller waits forever on a hash the node has already forgotten.
+/// Every other admission test here asserts only that `add_transaction_to_pool` returned
+/// `Ok`, which is exactly the assertion a silent drop satisfies.
+#[tokio::test]
+async fn an_admitted_frame_tx_is_actually_in_the_pool() {
+    let store = setup_hegota_store_funded().await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    let tx = keyed_frame_tx(vec![U256::one()], 0, 1_000_000_000);
+    let hash = blockchain
+        .add_transaction_to_pool(tx)
+        .await
+        .expect("keyed frame tx admitted");
+
+    assert!(
+        blockchain.mempool.contains_tx(hash).expect("pool readable"),
+        "admission returned {hash:#x} but the pool does not hold it: the caller has a hash \
+         for a transaction that will never mine and never error"
+    );
+}
+
+/// Revalidation must not evict when it cannot open the new head's state.
+///
+/// `revalidate_frame_txs_after_block` replays each pending frame transaction's prefix
+/// against the new head. Only one of the three possible outcomes is evidence about the
+/// transaction: the prefix ran and rejected it (evict). If the prefix ran and accepted it,
+/// or if the replay could not be performed at all, the transaction stays — an error says
+/// something about the node, not the transaction.
+///
+/// This covers the reachable half of that rule: a head whose state the store cannot open.
+/// The other half — the replay itself erroring — needs a seam this crate does not expose;
+/// it is covered on a devnet by `scripts/hegota-testnet/probe_prefix_only_tx.py`.
+#[tokio::test]
+async fn revalidation_keeps_a_tx_when_the_head_state_is_unavailable() {
+    let store = setup_hegota_store_funded().await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    let tx = keyed_frame_tx(vec![U256::one()], 0, 1_000_000_000);
+    let hash = blockchain
+        .add_transaction_to_pool(tx)
+        .await
+        .expect("keyed frame tx admitted");
+
+    // A head referencing a parent and state root the store does not have.
+    let unknown_state = Block::new(
+        BlockHeader {
+            number: 1,
+            timestamp: 1_001,
+            gas_limit: 100_000_000,
+            parent_hash: H256::repeat_byte(0xAB),
+            state_root: H256::repeat_byte(0xCD),
+            ..Default::default()
+        },
+        BlockBody::empty(),
+    );
+    blockchain
+        .revalidate_frame_txs_after_block(&unknown_state)
+        .expect("revalidation must not error");
+
+    assert!(
+        blockchain.mempool.contains_tx(hash).expect("pool readable"),
+        "a transaction was evicted because the node could not read the new head, not \
+         because anything was wrong with it; the sender was already told {hash:#x} was \
+         accepted"
+    );
+}
+
+/// A pending frame transaction must survive an ordinary block.
+///
+/// `revalidate_frame_txs_after_block` re-simulates every pending frame transaction against
+/// each new head and evicts the ones that fail. A transaction that was valid at admission
+/// and is untouched by the block must still be valid, so surviving is the whole contract:
+/// if an unrelated block can evict it, a node accepts transactions it will never mine and
+/// reports nothing.
+#[tokio::test]
+async fn a_pending_frame_tx_survives_an_unrelated_block() {
+    let store = setup_hegota_store_funded().await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    let tx = keyed_frame_tx(vec![U256::one()], 0, 1_000_000_000);
+    let hash = blockchain
+        .add_transaction_to_pool(tx)
+        .await
+        .expect("keyed frame tx admitted");
+    assert!(
+        blockchain.mempool.contains_tx(hash).expect("pool readable"),
+        "precondition: the tx is pooled before the block"
+    );
+
+    // An ordinary empty block at the next height — nothing in it touches the sender.
+    let next = Block::new(
+        BlockHeader {
+            number: 1,
+            timestamp: 1_001,
+            gas_limit: 100_000_000,
+            parent_hash: H256::zero(),
+            ..Default::default()
+        },
+        BlockBody::empty(),
+    );
+    blockchain
+        .revalidate_frame_txs_after_block(&next)
+        .expect("revalidation must not error");
+
+    assert!(
+        blockchain.mempool.contains_tx(hash).expect("pool readable"),
+        "an unrelated block evicted a valid pending frame transaction: the sender was told \
+         {hash:#x} was accepted and it will now never mine and never error"
+    );
+}
+
+/// The same guarantee for the two-transaction case EIP-8250 concurrency depends on.
+#[tokio::test]
+async fn both_concurrent_keyed_txs_are_actually_in_the_pool() {
+    let store = setup_hegota_store_funded().await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    let first = keyed_frame_tx(vec![U256::one()], 0, 1_000_000_000);
+    let first_hash = blockchain
+        .add_transaction_to_pool(first)
+        .await
+        .expect("first keyed tx admitted");
+    let second = keyed_frame_tx(vec![U256::from(2)], 0, 1_000_000_000);
+    let second_hash = blockchain
+        .add_transaction_to_pool(second)
+        .await
+        .expect("a disjoint keyed tx from an eligible sender must be admitted too");
+
+    assert_ne!(first_hash, second_hash, "the two transactions must differ");
+    assert!(
+        blockchain
+            .mempool
+            .contains_tx(first_hash)
+            .expect("pool readable"),
+        "the first keyed tx was admitted and then dropped: concurrency means both are \
+         pending at once, so losing one silently defeats the whole feature"
+    );
+    assert!(
+        blockchain
+            .mempool
+            .contains_tx(second_hash)
+            .expect("pool readable"),
+        "the second keyed tx was admitted and then dropped"
+    );
+}
+
 #[tokio::test]
 async fn admission_denies_keyed_concurrency_when_the_prefix_reads_the_legacy_nonce() {
     // Sender code: PUSH1 0x0D, TXPARAM, POP, then APPROVE(3), STOP. Reading the
