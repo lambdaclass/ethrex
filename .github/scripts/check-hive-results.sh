@@ -78,19 +78,10 @@ KNOWN_EXCLUDED_TESTS=(
   "eth_getTransactionReceipt/get-dynamic-fee"
 )
 
-# Verdicts hive writes when it could not build the fixture a case needs. Such a
-# case is abandoned before the client under test is asked anything, so counting
-# it makes CI red for a defect in the simulator's own setup. Matched against the
-# verdict hive logged for that case, never against the test name, so a genuine
-# failure of the same test still counts. See docs/known_issues.md.
-KNOWN_FIXTURE_FAILURE_SIGNATURES=(
-  "Unable to customize payload: no transactions available for modification"
-)
-
 # Build a jq filter that excludes the known-excluded tests.
-base_exclude_filter='true'
+exclude_filter='true'
 for pattern in "${KNOWN_EXCLUDED_TESTS[@]}"; do
-  base_exclude_filter="${base_exclude_filter} and (.name | contains(\"${pattern}\") | not)"
+  exclude_filter="${exclude_filter} and (.name | contains(\"${pattern}\") | not)"
 done
 
 for json_file in "${json_files[@]}"; do
@@ -99,34 +90,11 @@ for json_file in "${json_files[@]}"; do
   fi
 
   suite_name="$(jq -r '.name // empty' "${json_file}")"
-
-  # Per suite, because the fixture failures have to be read out of that suite's
-  # simulation log: a case records only byte offsets into it, and the verdict
-  # line sits outside the range they cover.
-  exclude_filter="${base_exclude_filter}"
-  while IFS= read -r ignored_name; do
-    [ -z "${ignored_name}" ] && continue
-    exclude_filter="${exclude_filter} and (.name != $(jq -Rn --arg name "${ignored_name}" '$name'))"
-  done < <(
-    HIVE_JSON="${json_file}" \
-    HIVE_WORKSPACE_LOGS="${workspace_logs_dir}" \
-    HIVE_SIGNATURES="$(printf '%s\n' "${KNOWN_FIXTURE_FAILURE_SIGNATURES[@]}")" \
-    python3 "$(dirname "$0")/hive_fixture_failures.py"
-  )
-
   failed_cases="$(jq '[.testCases[]? | select(.summaryResult.pass != true) | select('"${exclude_filter}"')] | length' "${json_file}")"
 
   skipped_excluded="$(jq '[.testCases[]? | select(.summaryResult.pass != true) | select(('"${exclude_filter}"') | not)] | length' "${json_file}")"
   if [ "${skipped_excluded}" -gt 0 ]; then
     echo "Ignoring ${skipped_excluded} known-excluded test(s) in ${suite_name:-$(basename "${json_file}")}"
-    # Named, not just counted. One of these turning up in every run has stopped
-    # being a flake, and a bare number would bury that.
-    jq -r '
-      .testCases[]?
-      | select(.summaryResult.pass != true)
-      | select(('"${exclude_filter}"') | not)
-      | "  - ignored: " + (.name // "unknown test")
-    ' "${json_file}"
   fi
 
   if [ "${failed_cases}" -gt 0 ]; then
