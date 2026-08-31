@@ -2354,6 +2354,14 @@ impl FrameTransaction {
                         "Frame {i}: expiry verifier frame data must be {FRAME_TX_EXPIRY_DATA_LENGTH} bytes"
                     ));
                 }
+                // The expiry verifier creates no state, so its frame must declare
+                // no state-gas budget.
+                if frame.state_gas_limit != 0 {
+                    return Err(format!(
+                        "Frame {i}: expiry verifier frame must have state_gas_limit == 0 (got {})",
+                        frame.state_gas_limit
+                    ));
+                }
             }
             // Per EIP-8141, only SENDER frames may carry a
             // non-zero value. DEFAULT and VERIFY frames with a non-zero
@@ -2377,13 +2385,24 @@ impl FrameTransaction {
                     frame.gas_limit
                 ));
             }
+            if frame.state_gas_limit > i64::MAX as u64 {
+                return Err(format!(
+                    "Frame {i}: state_gas_limit {} exceeds 2**63-1",
+                    frame.state_gas_limit
+                ));
+            }
+            // The cumulative bound sums *both* dimensions. A state budget drives the
+            // same overflow an execution budget does, and either alone can fit in 64
+            // bits while their sum does not, so accumulating only execution gas lets a
+            // statically invalid transaction through to execution -- where it surfaces
+            // as a block gas-allowance failure instead of a format one.
             total_frame_gas = total_frame_gas
                 .checked_add(frame.gas_limit as u128)
-                .ok_or_else(|| format!("Frame {i}: cumulative gas_limit overflow"))?;
+                .and_then(|t| t.checked_add(frame.state_gas_limit as u128))
+                .ok_or_else(|| format!("Frame {i}: cumulative frame gas overflow"))?;
             if total_frame_gas > i64::MAX as u128 {
                 return Err(format!(
-                    "Frame {i}: cumulative frame gas_limit {} exceeds 2**63-1",
-                    total_frame_gas
+                    "Frame {i}: cumulative frame gas {total_frame_gas} exceeds 2**63-1"
                 ));
             }
             // Per EIP-8141, approval of execution is only allowed when the
@@ -2779,10 +2798,20 @@ impl RLPDecode for FrameTransaction {
         let (sender, decoder) = decoder.decode_field("sender")?;
         let (frames, decoder) = decoder.decode_field("frames")?;
         let (signatures, decoder) = decoder.decode_field("signatures")?;
-        let ((max_priority_fee_per_gas, max_fee_per_gas, max_fee_per_blob_gas), decoder): (
-            (U256, U256, U256),
-            _,
-        ) = decoder.decode_field("fees")?;
+        // Decode the nested `fees` list field by field rather than as one tuple.
+        // A fee wider than 256 bits is rejected here, during decoding, and the
+        // field name is the only thing that says *which* fee was malformed --
+        // decoding the triple as a unit reports `fees ... InvalidLength`, which
+        // cannot distinguish a max-fee overflow from a priority-fee one.
+        let (fees_encoded, decoder) = decoder.get_encoded_item()?;
+        let fees_decoder = Decoder::new(&fees_encoded)?;
+        let (max_priority_fee_per_gas, fees_decoder): (U256, _) =
+            fees_decoder.decode_field("max_priority_fee_per_gas")?;
+        let (max_fee_per_gas, fees_decoder): (U256, _) =
+            fees_decoder.decode_field("max_fee_per_gas")?;
+        let (max_fee_per_blob_gas, fees_decoder): (U256, _) =
+            fees_decoder.decode_field("max_fee_per_blob_gas")?;
+        fees_decoder.finish()?;
         let (blob_versioned_hashes, decoder) = decoder.decode_field("blob_versioned_hashes")?;
         let tx = FrameTransaction {
             chain_id,
@@ -5572,6 +5601,108 @@ mod tests {
             baseline,
             with_verify_data.compute_sig_hash(),
             "VERIFY.data is now covered by sig_hash (no longer elided)"
+        );
+    }
+
+    /// Helper: a minimal frame transaction carrying `frames`, valid in every
+    /// respect the test in question is not exercising.
+    fn frame_tx_with(frames: Vec<Frame>) -> FrameTransaction {
+        FrameTransaction {
+            chain_id: 1,
+            nonce: 0,
+            sender: Address::from_low_u64_be(0xABCD),
+            frames,
+            signatures: vec![],
+            max_priority_fee_per_gas: U256::from(1_000_000_000u64),
+            max_fee_per_gas: U256::from(30_000_000_000u64),
+            max_fee_per_blob_gas: U256::zero(),
+            blob_versioned_hashes: vec![],
+            inner_hash: OnceCell::new(),
+            cached_canonical: OnceCell::new(),
+        }
+    }
+
+    #[test]
+    fn validate_static_constraints_rejects_expiry_verifier_frame_with_state_gas() {
+        // The expiry verifier creates no state, so its frame must declare no
+        // state-gas budget. Everything else about this frame is well formed, so a
+        // failure here can only come from the state budget.
+        let tx = frame_tx_with(vec![Frame {
+            mode: FrameMode::Verify as u8,
+            flags: 0,
+            target: Some(frame_tx_expiry_verifier()),
+            gas_limit: 100_000,
+            state_gas_limit: 1,
+            value: U256::zero(),
+            data: Bytes::from(vec![0u8; FRAME_TX_EXPIRY_DATA_LENGTH]),
+        }]);
+        let err = tx.validate_static_constraints().unwrap_err();
+        assert!(
+            err.contains("expiry verifier frame must have state_gas_limit == 0"),
+            "unexpected error: {err}"
+        );
+
+        // The same frame with a zero state budget passes this rule.
+        let ok = frame_tx_with(vec![Frame {
+            mode: FrameMode::Verify as u8,
+            flags: 0,
+            target: Some(frame_tx_expiry_verifier()),
+            gas_limit: 100_000,
+            state_gas_limit: 0,
+            value: U256::zero(),
+            data: Bytes::from(vec![0u8; FRAME_TX_EXPIRY_DATA_LENGTH]),
+        }]);
+        assert!(ok.validate_static_constraints().is_ok());
+    }
+
+    #[test]
+    fn validate_static_constraints_sums_both_gas_dimensions() {
+        // A state budget drives the cumulative overflow exactly as an execution
+        // budget does. Accumulating only execution gas would let this through to
+        // execution, where it surfaces as a block gas-allowance failure rather
+        // than the format violation it is.
+        let state_heavy = frame_tx_with(vec![Frame {
+            mode: FrameMode::Default as u8,
+            flags: 0,
+            target: None,
+            gas_limit: 100_000,
+            state_gas_limit: u64::MAX,
+            value: U256::zero(),
+            data: Bytes::new(),
+        }]);
+        let err = state_heavy.validate_static_constraints().unwrap_err();
+        assert!(
+            err.contains("state_gas_limit") && err.contains("exceeds 2**63-1"),
+            "unexpected error: {err}"
+        );
+
+        // Neither dimension exceeds the per-frame bound on its own, but together
+        // across frames they cross it, so only a cross-dimension sum catches this.
+        let half = (i64::MAX as u64) / 2 + 1;
+        let cross = frame_tx_with(vec![
+            Frame {
+                mode: FrameMode::Default as u8,
+                flags: 0,
+                target: None,
+                gas_limit: half,
+                state_gas_limit: 0,
+                value: U256::zero(),
+                data: Bytes::new(),
+            },
+            Frame {
+                mode: FrameMode::Default as u8,
+                flags: 0,
+                target: None,
+                gas_limit: 0,
+                state_gas_limit: half,
+                value: U256::zero(),
+                data: Bytes::new(),
+            },
+        ]);
+        let err = cross.validate_static_constraints().unwrap_err();
+        assert!(
+            err.contains("cumulative frame gas") && err.contains("exceeds 2**63-1"),
+            "unexpected error: {err}"
         );
     }
 
