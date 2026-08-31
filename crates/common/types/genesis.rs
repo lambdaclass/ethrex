@@ -323,7 +323,7 @@ pub struct ChainConfig {
 
     /// Resolved-payer TXPARAM knob (ethrex devnet extension, new-fork
     /// decoupling). When set and `block.timestamp >= payer_txparam_time`, the
-    /// EIP-8141 frame-tx opcode `TXPARAM(0x11)` resolves to the transaction's
+    /// EIP-8141 frame-tx opcode `TXPARAM(0x12)` resolves to the transaction's
     /// resolved payer — the account a payment-scoped APPROVE charged — zero-
     /// padded like `TXPARAM(0x02)` sender; before the payer is resolved it reads
     /// the zero address. Before the knob (and on chains without it) the index
@@ -331,7 +331,7 @@ pub struct ChainConfig {
     /// produced blocks re-execute identically. Gated on a FUTURE timestamp for a
     /// state-preserving rollout. `None` = unchanged behaviour.
     ///
-    /// The Hegotá testnet leaves this UNSET: `TXPARAM(0x11)` is an ethrex
+    /// The Hegotá testnet leaves this UNSET: `TXPARAM(0x12)` is an ethrex
     /// extension with no EIP behind it, so a second client would halt where
     /// ethrex returns a payer.
     #[serde(default)]

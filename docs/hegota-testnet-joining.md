@@ -40,8 +40,8 @@ this network runs is the list below, pinned to exact revisions.
 | EIP | Title | Pin | Source |
 | --- | --- | --- | --- |
 | 8141 | Frame Transaction | `7d1c8bfb94` | `ethereum/EIPs` |
-| 8250 | Keyed Nonces | `4093c21847` | `ethereum/EIPs` |
-| 8272 | Recent Roots | `4093c21847` | `ethereum/EIPs` |
+| 8250 | Keyed Nonces | `e5cf246ff1` | `ethereum/EIPs` |
+| 8272 | Recent Roots | `0231fb05f5` | `ethereum/EIPs` |
 | 7805 | Fork-choice enforced Inclusion Lists (FOCIL) | `4093c21847` | `ethereum/EIPs` |
 | 8369 | VOPS Profiles for FOCIL Eligibility | `33724bd7da` | `soispoke/EIPs@codex/vops-profiles-focil` (PR #12110, unmerged) |
 

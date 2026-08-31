@@ -279,13 +279,14 @@ impl OpcodeHandler for OpApproveHandler {
 
 /// TXPARAM (0xB0) -- Load a transaction parameter as a 32-byte word.
 /// TXPARAM index of the sender's legacy account nonce (EIP-8250).
-/// EIP-8250's legacy account-nonce read, relocated from `0x0C` to `0x12`.
+/// EIP-8250's legacy account-nonce read, at `0x0D`.
 ///
-/// EIP-8141 v2 assigns `0x0C` to `state_gas_left`, and the spec's id wins. `0x11` was not
-/// available either -- it is the resolved-payer read -- so this lands on the next free id.
-/// Precedent for relocating an EIP-8250 id is in `docs/eip-8250.md`, which records the
-/// earlier `0x0B -> 0x10` move for `nonce_keys[0]` after `0x0B` collided.
-const TXPARAM_LEGACY_SENDER_NONCE: u64 = 0x12;
+/// It sat at `0x0C` until EIP-8141 v2 claimed that index for `state_gas_left`. ethrex moved
+/// it to `0x12` ahead of the EIP; upstream then settled the collision differently, shifting
+/// all three of EIP-8250's own indices up by one (`e5cf246ff1`, 2026-08-31), so this is
+/// `0x0D` and the guess is retired. The spec's numbering wins over ours every time — the
+/// same rule that moved `nonce_keys[0]` off `0x0B`, recorded in `docs/eip-8250.md`.
+const TXPARAM_LEGACY_SENDER_NONCE: u64 = 0x0D;
 
 /// EIP-8141 v2 TXPARAM `0x0C`: "`state_gas_left` remaining in the currently executing
 /// frame". Served from the live VM pool rather than from `FrameTxContext`, which only
@@ -303,7 +304,7 @@ impl OpcodeHandler for OpTxParamHandler {
             .increase_consumed_gas(gas_cost::TXPARAM)?;
 
         // Block-invariant knob flag (mirrors env.slot_number): gates the
-        // resolved-payer index 0x11 so pre-knob blocks preserve its historical
+        // resolved-payer index 0x12 so pre-knob blocks preserve its historical
         // exceptional-halt and re-execute identically.
         let payer_txparam_active = vm.env.config.payer_txparam_active;
 
@@ -716,22 +717,24 @@ pub fn load_tx_param(
         0x09 => Ok(U256::from(ctx.tx.frames.len())),
         0x0A => Ok(U256::from(ctx.current_frame_index)),
         0x0B => Ok(U256::from(ctx.tx.signatures.len())),
-        // EIP-8250 keyed nonces. (`0x0C` is EIP-8141 v2's `state_gas_left`, handled by
-        // the TXPARAM opcode itself: it reads the live frame pool, which this
-        // transaction-only view has no access to.)
-        0x12 => Ok(U256::from(ctx.legacy_sender_nonce)),
-        0x0D => Ok(U256::from(ctx.tx.nonce_keys.len())),
-        0x0E => Ok(U256::from_big_endian(ctx.tx.nonce_keys_hash().as_bytes())),
-        // EIP-8272: count of recent-root references.
-        0x0F => Ok(U256::from(ctx.tx.recent_root_references.len())),
-        // 0x10 = nonce_keys[0], relocated from the spec's 0x0B (ethrex keeps 0x0B
-        // for len(signatures); divergence documented in docs/eip-8250.md).
+        // EIP-8250 keyed nonces, at the indices the EIP settled on once EIP-8141 v2 took
+        // `0x0C` for `state_gas_left` (upstream `e5cf246ff1`, 2026-08-31). `0x0C` itself is
+        // handled by the TXPARAM opcode rather than here: it reads the live frame pool,
+        // which this transaction-only view has no access to.
+        0x0D => Ok(U256::from(ctx.legacy_sender_nonce)),
+        0x0E => Ok(U256::from(ctx.tx.nonce_keys.len())),
+        0x0F => Ok(U256::from_big_endian(ctx.tx.nonce_keys_hash().as_bytes())),
+        // 0x10 = nonce_keys[0], which the spec pins here (ethrex keeps the EIP-8141
+        // allocation `0x0B` for len(signatures); see docs/eip-8250.md).
         0x10 => ctx
             .tx
             .nonce_keys
             .first()
             .copied()
             .ok_or(ExceptionalHalt::InvalidOpcode.into()),
+        // EIP-8272: count of recent-root references, moved off `0x0F` by upstream
+        // `0231fb05f5` (2026-08-31) when EIP-8250's three indices shifted up onto it.
+        0x11 => Ok(U256::from(ctx.tx.recent_root_references.len())),
         // Resolved payer address (ethrex extension, not in the EIP-8141 draft).
         // Gated on the payer_txparam knob: before it (and on chains without it)
         // this index falls through to the exceptional halt below, so already-
@@ -742,7 +745,7 @@ pub fn load_tx_param(
         // matching the receipt's payer encoding; a committed tx always has a
         // resolved payer (post-execution invariant), so the frames that run
         // after the validation prefix always observe the real payer.
-        0x11 if payer_txparam_active => Ok(ctx
+        0x12 if payer_txparam_active => Ok(ctx
             .payer_address
             .map(address_to_u256)
             .unwrap_or_else(U256::zero)),
@@ -887,47 +890,49 @@ mod max_cost_tests {
     }
 
     #[test]
-    fn txparam_0x11_reads_resolved_payer_when_knob_active() {
+    fn txparam_0x12_reads_resolved_payer_when_knob_active() {
         let payer = Address::from_low_u64_be(0xABCD);
         let mut c = ctx(10, 0, 0, 21_000);
         c.payer_address = Some(payer);
         assert_eq!(
-            load_tx_param(&c, 0x11, true).unwrap(),
+            load_tx_param(&c, 0x12, true).unwrap(),
             address_to_u256(payer),
-            "0x11 must report the resolved payer when the knob is active"
+            "0x12 must report the resolved payer when the knob is active"
         );
     }
 
     #[test]
-    fn txparam_0x11_reads_zero_before_payer_resolved() {
+    fn txparam_0x12_reads_zero_before_payer_resolved() {
         // A validation-prefix VERIFY frame runs before payment is approved.
         let c = ctx(10, 0, 0, 21_000);
         assert!(c.payer_address.is_none());
         assert_eq!(
-            load_tx_param(&c, 0x11, true).unwrap(),
+            load_tx_param(&c, 0x12, true).unwrap(),
             U256::zero(),
-            "0x11 must read the zero address before the payer is resolved"
+            "0x12 must read the zero address before the payer is resolved"
         );
     }
 
     #[test]
-    fn txparam_0x11_halts_when_knob_inactive() {
-        // History preservation: before the payer_txparam knob, 0x11 keeps its
+    fn txparam_0x12_halts_when_knob_inactive() {
+        // History preservation: before the payer_txparam knob, 0x12 keeps its
         // exceptional halt so already-produced blocks re-execute identically —
         // even when a payer is present.
         let mut c = ctx(10, 0, 0, 21_000);
         c.payer_address = Some(Address::from_low_u64_be(0xABCD));
         assert!(matches!(
-            load_tx_param(&c, 0x11, false),
+            load_tx_param(&c, 0x12, false),
             Err(VMError::ExceptionalHalt(ExceptionalHalt::InvalidOpcode))
         ));
     }
 
     #[test]
     fn txparam_unknown_index_halts_even_when_knob_active() {
+        // 0x13: the first index above every assignment in this rule set. The knob only ever
+        // opens 0x12, so everything past the table still halts.
         let c = ctx(10, 0, 0, 21_000);
         assert!(matches!(
-            load_tx_param(&c, 0x12, true),
+            load_tx_param(&c, 0x13, true),
             Err(VMError::ExceptionalHalt(ExceptionalHalt::InvalidOpcode))
         ));
     }

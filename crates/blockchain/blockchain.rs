@@ -4334,7 +4334,7 @@ impl Blockchain {
             //   2. no deploy frame, which would install that code mid-flight,
             //   3. the prefix read no sender storage, so no sibling transaction's
             //      SSTORE can invalidate it,
-            //   4. the prefix did not read TXPARAM(0x12), the legacy account nonce
+            //   4. the prefix did not read TXPARAM(0x0D), the legacy account nonce
             //      that a key-0 transaction bumps on inclusion.
             // Anything else stays under EIP-8141's one-pending-per-sender rule.
             if is_keyed_frame_tx {

@@ -112,8 +112,8 @@ fn a_utxo_frame_is_rejected_while_utxo_frames_time_is_unset() {
 }
 
 #[test]
-fn txparam_0x11_is_inactive_while_payer_txparam_time_is_unset() {
-    // `TXPARAM(0x11)` (resolved payer) is an ethrex extension, not in the
+fn txparam_0x12_is_inactive_while_payer_txparam_time_is_unset() {
+    // `TXPARAM(0x12)` (resolved payer) is an ethrex extension, not in the
     // EIP-8141 draft. With the knob absent the index falls through to the
     // exceptional halt, so a chain reading this genesis sees the draft's
     // TXPARAM set and nothing more.
@@ -121,7 +121,7 @@ fn txparam_0x11_is_inactive_while_payer_txparam_time_is_unset() {
     let evm_config = EVMConfig::new_from_chain_config(&config, &header_at(0, None));
     assert!(
         !evm_config.payer_txparam_active,
-        "TXPARAM(0x11) must stay an invalid index without the knob"
+        "TXPARAM(0x12) must stay an invalid index without the knob"
     );
     assert!(
         !evm_config.utxo_frames_active,

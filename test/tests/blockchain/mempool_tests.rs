@@ -4501,7 +4501,7 @@ fn keyed_concurrency_needs_every_eligibility_condition() {
     assert_eq!(
         keyed_concurrency_verdict(true, false, false, true),
         KeyedConcurrency::Denied,
-        "a prefix reading TXPARAM(0x12) depends on the legacy account nonce"
+        "a prefix reading TXPARAM(0x0D) depends on the legacy account nonce"
     );
 }
 
@@ -4657,7 +4657,7 @@ async fn setup_hegota_store_with_sender_code(name: &str, code: Bytes) -> Store {
 #[tokio::test]
 async fn admission_grants_keyed_concurrency_to_an_independent_prefix() {
     // The sender is a contract whose prefix only calls APPROVE: no deploy frame,
-    // no sender storage read, no TXPARAM(0x12). Disjoint keyed txs may coexist.
+    // no sender storage read, no TXPARAM(0x0D). Disjoint keyed txs may coexist.
     let store = setup_hegota_store_funded().await;
     let blockchain = Blockchain::default_with_store(store);
 
@@ -4675,14 +4675,15 @@ async fn admission_grants_keyed_concurrency_to_an_independent_prefix() {
 
 #[tokio::test]
 async fn admission_denies_keyed_concurrency_when_the_prefix_reads_the_legacy_nonce() {
-    // Sender code: PUSH1 0x12, TXPARAM, POP, then APPROVE(3), STOP. Reading the
+    // Sender code: PUSH1 0x0D, TXPARAM, POP, then APPROVE(3), STOP. Reading the
     // legacy account nonce makes the prefix depend on it, so the sender falls
-    // back to one pending frame transaction. The id is 0x12 rather than 0x0C
-    // because EIP-8141 v2 claims 0x0C for `state_gas_left`.
+    // back to one pending frame transaction. The id is 0x0D rather than 0x0C
+    // because EIP-8141 v2 claims 0x0C for `state_gas_left`, and EIP-8250 shifted
+    // its three indices up by one in response.
     let code = Bytes::from(vec![
-        0x60, 0x12, 0xB0, 0x50, 0x60, 0x03, 0x60, 0x00, 0x60, 0x00, 0xAA, 0x00,
+        0x60, 0x0D, 0xB0, 0x50, 0x60, 0x03, 0x60, 0x00, 0x60, 0x00, 0xAA, 0x00,
     ]);
-    let store = setup_hegota_store_with_sender_code("hegota-txparam-12", code).await;
+    let store = setup_hegota_store_with_sender_code("hegota-txparam-0d", code).await;
     let blockchain = Blockchain::default_with_store(store);
 
     let first = keyed_frame_tx(vec![U256::one()], 0, 1_000_000_000);
@@ -4694,7 +4695,7 @@ async fn admission_denies_keyed_concurrency_when_the_prefix_reads_the_legacy_non
     let result = blockchain.add_transaction_to_pool(second).await;
     assert!(
         matches!(result, Err(MempoolError::FrameTxSenderAlreadyPending)),
-        "a prefix reading TXPARAM(0x12) must not get concurrency; got {result:?}"
+        "a prefix reading TXPARAM(0x0D) must not get concurrency; got {result:?}"
     );
 }
 

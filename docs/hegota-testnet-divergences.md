@@ -18,17 +18,21 @@ Re-audited 2026-08-25 against `ethereum/EIPs@master`, 70 commits past the pin. T
 core EIPs were pinned at `4093c21847`; 8250, 8272 and 7805 are byte-identical to it still,
 8141 is not, and EIP-8369's PR head has moved.
 
-EIP-8141 is now pinned at `7d1c8bfb94` (2026-08-24, "account block execution gas before
-refund (EIP-7778)"), verified byte-identical to the copy this implementation was written
-against. That revision is the reason the frame path reports a pre-refund `gas_used` for
-the block and a post-refund `gas_spent` for the payer.
+EIP-8141 is pinned at `7d1c8bfb94` (2026-08-24, "account block execution gas before refund
+(EIP-7778)"), verified byte-identical to the copy this implementation was written against.
+That revision is the reason the frame path reports a pre-refund `gas_used` for the block and
+a post-refund `gas_spent` for the payer.
+
+**Re-audited 2026-08-31.** EIP-8141 and EIP-7805 have not moved. EIP-8250 and EIP-8272 both
+moved that day, and both moves are consensus-visible renumberings caused by v2's `0x0C` and
+`0xB5` claims — see §5.1. Implemented and re-pinned to `e5cf246ff1` and `0231fb05f5`.
 
 | EIP | Pin | Drift to head | Consensus-visible | Action | Owner |
 | --- | --- | --- | --- | --- | --- |
 | 8141 | `4093c21847` → **`7d1c8bfb94`** | **+326/−96 — a new envelope, see §6** | **yes** | **v2 adopted and implemented**, pin bumped; re-genesis required | — |
 | 7805 | `4093c21847` | none — byte-identical | no | closed | — |
-| 8250 | `81b976ac01` | one Abstract sentence: privacy applications sharing one sender | no | bump pin to `4093c2184` | Edgar |
-| 8272 | `d8636a330d` | one Abstract sentence: proofs against recent commitment roots | no | bump pin to `4093c2184` | Edgar |
+| 8250 | `81b976ac01` → **`e5cf246ff1`** | **TXPARAM ids shifted up by one** (2026-08-31), plus an Abstract sentence | **yes** — every prefix reading a keyed-nonce id | **implemented**, pin bumped | — |
+| 8272 | `d8636a330d` → **`0231fb05f5`** | **reference count `0x0F`→`0x11`, `RECENTROOTREFLOAD` `0xB5`→`0xB6`** (2026-08-31), plus an Abstract sentence | **yes** | **implemented**, pin bumped; the opcode byte already matched | — |
 | 8369 | `6f818e27dd` → **`33724bd7da`** | three commits, +17/−13: Profile 1 candidacy stated by transaction type, `MAX_VERIFY_GAS_PER_TX` demoted to "up to `MAX_VERIFY_GAS_PER_IL`", and **budget fill split into a two-stage debit** | **yes** — it decides Profile 2 admission | **implemented**, see §7; pin bumped | — |
 | 8312 | `a5da3f608c` | not diffable — author's fork only, no upstream `EIPS/eip-8312.md` | n/a while `utxoFramesTime` is unset | inert; re-check if the EIP is upstreamed | Edgar |
 
@@ -181,24 +185,44 @@ until it merges", which the code contradicts. Corrected in this pass.
 ## 5.1 Opcode and TXPARAM ids v2 collides with — relocated
 
 Adopting EIP-8141 v2 forced two id moves, both consensus-visible, both because v2 claims
-an id this chain had already assigned to another EIP in the same set.
+an id this chain had already assigned to another EIP in the same set. **Both were then
+settled upstream on 2026-08-31, and the upstream resolution is not the one ethrex guessed.**
 
-| id | v2 assigns | ethrex had | Resolution |
+| id | v2 assigns | ethrex had | Upstream resolution (2026-08-31) |
 | --- | --- | --- | --- |
-| `0xB5` | `SIGDATACOPY` | EIP-8272 `RECENTROOTREFLOAD` | v2 takes `0xB5`; `RECENTROOTREFLOAD` moves to `0xB6` |
-| `0x0C` (TXPARAM) | `state_gas_left` | EIP-8250 `legacy_sender_nonce` | v2 reserves `0x0C`; the nonce read moves to `0x12` |
+| `0xB5` | `SIGDATACOPY` | EIP-8272 `RECENTROOTREFLOAD` | `RECENTROOTREFLOAD` → `0xB6` (`0231fb05f5`) — matches what ethrex shipped |
+| `0x0C` (TXPARAM) | `state_gas_left` | EIP-8250 `legacy_sender_nonce` | EIP-8250 shifts **all three** of its indices up by one (`e5cf246ff1`) — ethrex had moved only the nonce read, to `0x12` |
 
-EIP-8141 gets the disputed id in both cases: it is the EIP the rest of the set extends, and
-in both cases the *other* EIP had already been relocated once for the same reason —
-`RECENTROOTREFLOAD` moved off `0xB4` when it collided with `SIGPARAM`, and `nonce_keys[0]`
-moved off `0x0B` to `0x10`. That is four relocations across three EIPs, which is the real
-finding: **EIP-8141 needs a shared registry for the frame-surface ids its extensions
-claim.** Raised with the authors; recorded here because a second client that picks
-different bytes diverges on every validation prefix touching either.
+ethrex guessed one of the two. The nonce read went to `0x12` here because `0x11` was taken
+by the resolved-payer param; upstream instead moved EIP-8250's whole block, so
+`legacy_nonce` is `0x0D`, `len(nonce_keys)` is `0x0E` and `nonce_keys_hash` is `0x0F`.
+EIP-8272's reference count, which ethrex had at `0x0F`, moved to `0x11` to make room — and
+that displaced ethrex's resolved-payer param, which is ours and therefore yields, to `0x12`.
 
-`0x11` was not available as a destination for the nonce read — it is the resolved-payer
-param — so it went to `0x12`. `0x0C` reports the executing frame's `state_gas_left`, read
-from the live frame pool rather than from the transaction view the other ids come from.
+The current map, matching upstream:
+
+| id | Value | EIP |
+| --- | --- | --- |
+| `0x0C` | `state_gas_left` | 8141 v2 |
+| `0x0D` | pre-state legacy sender nonce | 8250 |
+| `0x0E` | `len(nonce_keys)` | 8250 |
+| `0x0F` | `nonce_keys_hash` | 8250 |
+| `0x10` | `nonce_keys[0]` | 8250 |
+| `0x11` | `len(recent_root_references)` | 8272 |
+| `0x12` | resolved payer | ethrex only, knob-gated |
+
+EIP-8141 gets the disputed id in every case: it is the EIP the rest of the set extends, and
+each *other* EIP had already been relocated once for the same reason — `RECENTROOTREFLOAD`
+moved off `0xB4` when it collided with `SIGPARAM`, and `nonce_keys[0]` moved off `0x0B` to
+`0x10`. That is now **seven** relocations across three EIPs, which is the real finding:
+**EIP-8141 needs a shared registry for the frame-surface ids its extensions claim.** Raised
+with the authors; recorded here because a second client that picks different bytes diverges
+on every validation prefix touching any of them.
+
+The lesson for this branch is narrower and worth stating: **do not invent an id to resolve a
+collision upstream has not resolved yet.** `0x12` was a reasonable guess and it was wrong,
+and because the chain had not launched on v2 it cost only a rename. On a live chain it would
+have cost a re-genesis.
 
 Four compile-time asserts in `crates/vm/levm/src/opcodes.rs` now pin the opcode bytes and
 forbid sharing, so a fifth relocation is a compile error rather than a chain split.

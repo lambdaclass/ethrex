@@ -81,7 +81,7 @@ pub struct EVMConfig {
     /// active, else 0 — see [`ChainConfig::effective_slot_number`].
     pub slot_number: U256,
     /// Whether the resolved-payer TXPARAM knob is active for this block, gating
-    /// the EIP-8141 frame-tx opcode `TXPARAM(0x11)`. Block-invariant; derived
+    /// the EIP-8141 frame-tx opcode `TXPARAM(0x12)`. Block-invariant; derived
     /// from [`ChainConfig::payer_txparam_time`] vs the block timestamp.
     pub payer_txparam_active: bool,
     /// Whether EIP-8312 (UTXO frames) is active for this block. Block-invariant;

@@ -97,7 +97,7 @@ must be patched into `/network-configs/genesis.json` if wanted.
   `ChainConfig::effective_slot_number` returns it verbatim without consulting the
   derivation. Leave unset. Its two companion fields, `genesisTimestamp` and
   `secondsPerSlot`, exist only to feed this derivation.
-- `payerTxparamTime` — activates the resolved-payer `TXPARAM(0x11)` index. Unset means
+- `payerTxparamTime` — activates the resolved-payer `TXPARAM(0x12)` index. Unset means
   the index keeps its `InvalidOpcode` halt, so the extension is silently off on a fresh
   chain.
 
@@ -167,7 +167,7 @@ above are all silent until a specific fork boundary.
     grants concurrency only when the prefix is provably independent of everything the
     sender's other transactions can change: the sender runs real (non-EIP-7702-delegated)
     contract code, no deploy frame installs code mid-flight, the prefix reads no sender
-    storage, and it does not read `TXPARAM(0x12)`. An EOA sender fails the first condition,
+    storage, and it does not read `TXPARAM(0x0D)`. An EOA sender fails the first condition,
     because its default-code prefix authenticates against its own nonce, which a sibling
     key-0 transaction bumps. So the obvious version of this test — a funded EOA sending two
     keyed transactions — correctly gets `A pending frame transaction from this sender is
