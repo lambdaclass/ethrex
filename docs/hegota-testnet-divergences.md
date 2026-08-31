@@ -316,7 +316,7 @@ Its remaining value is the fixture harness: it runs the released frame-transacti
 frame fixtures, 14 908 blockchain fixtures) which this branch does not. Worth taking on its
 own, separately from the rule set.
 
-## 6.3 Fixed: frame transactions accepted by RPC and silently dropped
+## 6.3 OPEN: frame transactions accepted by RPC and silently dropped
 
 Found while verifying EIP-8250 concurrency on a devnet. **Not an EIP-implementation defect —
 a mempool admission one — and it should be fixed before the live relaunch, because it loses
@@ -362,6 +362,30 @@ about one run in three, no log.
 Both error branches now keep the transaction and log why, and eviction logs its reason. A
 genuinely invalid transaction is still caught by the `passed` flag, by the next block's pass,
 or at block building.
+
+**That fix is real but it is NOT the whole cause.** Measured on a build carrying it: three
+consecutive verifier runs gave 35/35, 33/35, 30/35 — the concurrency check still fails about
+two runs in three. One observed drop did change shape from "2 of 2 gone" to "1 of 2 gone",
+which is the sharpest clue available: the survivor disappears around the time its sibling is
+*included*, so the remaining path is something that runs on block application and removes
+more than the block's own transactions.
+
+Ruled out by reading the code and by in-process tests (`an_admitted_frame_tx_is_actually_in_the_pool`,
+`both_concurrent_keyed_txs_are_actually_in_the_pool`, `a_pending_frame_tx_survives_an_unrelated_block`,
+all passing):
+
+| Suspect | Why it is not the cause |
+| --- | --- |
+| `remove_block_transactions_from_pool` | removes strictly by transaction hash, no collateral |
+| `keyed_frame_key_holder` | looks up `(sender, key)` per key; disjoint keys never collide |
+| the linear `(sender, nonce)` slot | keyed frame txs deliberately do not claim it (`if keyed_keys.is_none()`) |
+| `remove_oldest_regular_transaction` | cap is 10 000 and the pool holds single digits |
+| `contains_tx` pre-filter | the hash is fresh; the returned hash is `keccak(raw)`, checked against `cast` |
+| chain age, base fee, EOA senders | a chain seconds old reproduces it; base fee flat at 7 wei; an EOA frame tx in the same run mines normally |
+
+Next step for whoever picks this up: instrument `Mempool::remove_transaction_with_lock` with a
+backtrace or a caller tag and run `probe_contract_sender_tx.py` until it fires. Every removal
+path is funnelled through that one function, so the caller identifies the bug in one run.
 
 ## 7. The glamsterdam-devnet-8 base reprices Amsterdam
 
