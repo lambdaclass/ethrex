@@ -68,7 +68,11 @@ impl SyncManager {
         backfill_config: BackfillConfig,
         tracker: TaskTracker,
     ) -> Self {
-        let snap_enabled = Arc::new(AtomicBool::new(matches!(sync_mode, SyncMode::Snap)));
+        // Whether snap sync is permitted at all, captured from the configured mode before
+        // the auto-switch below can flip `snap_enabled` to full. The unreachable-state
+        // recovery uses this to avoid escalating a `--syncmode full` node into snap.
+        let snap_permitted = matches!(sync_mode, SyncMode::Snap);
+        let snap_enabled = Arc::new(AtomicBool::new(snap_permitted));
 
         // Clone the shared handles the optional backfill task needs before
         // `peer_handler`/`cancel_token`/`blockchain` are moved into the Syncer below.
@@ -113,6 +117,7 @@ impl SyncManager {
         let syncer = Arc::new(Mutex::new(Syncer::new(
             peer_handler,
             snap_enabled.clone(),
+            snap_permitted,
             cancel_token,
             blockchain,
             datadir,

@@ -168,6 +168,13 @@ pub struct Syncer {
     /// This is also held by the SyncManager allowing it to track the latest syncmode, without modifying it
     /// No outside process should modify this value, only being modified by the sync cycle
     snap_enabled: Arc<AtomicBool>,
+    /// Whether the node was configured to allow snap sync (`--syncmode snap`, the default).
+    /// A snap-default node flips `snap_enabled` to full once it has synced state, so at
+    /// recovery time `snap_enabled` alone cannot tell an explicitly full-sync node from a
+    /// snap-default one that switched. This records the configured intent so the
+    /// unreachable-state recovery only escalates to snap when the operator did not opt out
+    /// of it — escalating a `--syncmode full` node would wipe state it was told to keep.
+    snap_permitted: bool,
     peers: PeerHandler,
     // Used for cancelling long-living tasks upon shutdown
     cancel_token: CancellationToken,
@@ -182,6 +189,7 @@ impl Syncer {
     pub fn new(
         peers: PeerHandler,
         snap_enabled: Arc<AtomicBool>,
+        snap_permitted: bool,
         cancel_token: CancellationToken,
         blockchain: Arc<Blockchain>,
         datadir: PathBuf,
@@ -189,6 +197,7 @@ impl Syncer {
     ) -> Self {
         Self {
             snap_enabled,
+            snap_permitted,
             peers,
             cancel_token,
             blockchain,
@@ -319,11 +328,26 @@ impl Syncer {
             // Full sync cannot dig itself out: it needs a stateful parent and there is none,
             // so every later cycle repeats the same walk and pauses again while the chain
             // moves on — the node goes quiet indefinitely. Snap sync is the only in-protocol
-            // way to obtain state we do not have, so escalate rather than stall until an
-            // operator notices and runs `ethrex removedb`.
+            // way to obtain state we do not have.
+            //
+            // Only escalate when snap sync is permitted (`--syncmode snap`, the default). A
+            // node explicitly run with `--syncmode full` opted out of snap, and the snap
+            // cycle wipes the leaves folder to re-heal state from a pivot — silently doing
+            // that would discard data the operator chose to keep. For those nodes, surface
+            // the unrecoverable state so the operator can act (e.g. `ethrex removedb`)
+            // rather than trading a stall for data loss.
+            if !self.snap_permitted {
+                warn!(
+                    %sync_head,
+                    "Full sync has no reachable state to resume from, and snap sync is disabled \
+                     (--syncmode full). Cannot recover in-protocol without discarding retained \
+                     state; operator intervention required (e.g. `ethrex removedb`)."
+                );
+                return result;
+            }
             warn!(
                 %sync_head,
-                "Full sync has no reachable state to resume from; escalating to snap sync"
+                "Full sync has no reachable state to resume from; switching to snap sync"
             );
             self.snap_enabled.store(true, Ordering::Relaxed);
             self.run_snap_cycle(sync_head, store).await
