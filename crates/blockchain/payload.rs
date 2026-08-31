@@ -1065,11 +1065,24 @@ impl Blockchain {
                         is_deterministic_invalid(&e)
                     };
                     if evict {
-                        // Neutral wording on purpose: the two branches evict for
-                        // different reasons (a frame tx for any non-nonce-mismatch
-                        // failure, a regular tx only for a deterministic one), so
-                        // naming either reason here would mislabel the other.
-                        debug!("Evicting transaction {tx_hash} from the pool: {e}");
+                        if is_frame {
+                            // Every pooled frame tx was admitted by
+                            // `simulate_validation_prefix`, so the builder refusing
+                            // it means the mempool and consensus disagree about the
+                            // same bytes against the same head. That is a client bug
+                            // whichever way it points, and it costs the user a
+                            // transaction the node already acknowledged, so it is
+                            // worth a line at default verbosity. Debugging the drops
+                            // this file's eviction rules were written for was blind
+                            // work without it.
+                            warn!(
+                                "Frame transaction {tx_hash} was admitted to the pool \
+                                 but rejected by the builder, and is being evicted: {e}"
+                            );
+                        } else {
+                            // A deterministically-invalid regular tx is routine.
+                            debug!("Evicting transaction {tx_hash} from the pool: {e}");
+                        }
                         self.remove_transaction_from_pool(&tx_hash)?;
                     }
                     txs.pop()?

@@ -364,7 +364,7 @@ fn invalid_frame_tx_leaves_db_cache_clean() {
         matches!(
             result,
             Err(VMError::TxValidation(
-                ethrex_levm::errors::TxValidationError::InvalidFrameTransaction
+                ethrex_levm::errors::TxValidationError::InvalidFrameTransaction(_)
             ))
         ),
         "expected InvalidFrameTransaction, got {result:?}",
@@ -741,7 +741,7 @@ fn approve_halts_when_frame_scope_is_none() {
         matches!(
             result,
             Err(VMError::TxValidation(
-                ethrex_levm::errors::TxValidationError::InvalidFrameTransaction
+                ethrex_levm::errors::TxValidationError::InvalidFrameTransaction(_)
             ))
         ),
         "APPROVE with allowed_scope==0 must halt, leaving the tx invalid; got {result:?}"
@@ -799,7 +799,7 @@ fn batched_verify_revert_invalidates_tx() {
         matches!(
             result,
             Err(VMError::TxValidation(
-                ethrex_levm::errors::TxValidationError::InvalidFrameTransaction
+                ethrex_levm::errors::TxValidationError::InvalidFrameTransaction(_)
             ))
         ),
         "a batched VERIFY revert must invalidate the tx; got {result:?}"
@@ -853,7 +853,7 @@ fn payment_approval_before_execution_approval_reverts() {
         matches!(
             result,
             Err(VMError::TxValidation(
-                ethrex_levm::errors::TxValidationError::InvalidFrameTransaction
+                ethrex_levm::errors::TxValidationError::InvalidFrameTransaction(_)
             ))
         ),
         "APPROVE_PAYMENT before the sender's execution approval must revert the \
@@ -5056,7 +5056,7 @@ fn frame_tx_over_the_per_tx_blob_limit_is_rejected() {
         matches!(
             result,
             Err(VMError::TxValidation(
-                ethrex_levm::errors::TxValidationError::InvalidFrameTransaction
+                ethrex_levm::errors::TxValidationError::InvalidFrameTransaction(_)
             ))
         ),
         "a frame tx carrying more than {MAX_BLOBS_PER_TX} blobs must be rejected; got {result:?}"

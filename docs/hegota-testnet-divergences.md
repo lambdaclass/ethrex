@@ -397,6 +397,31 @@ all passing):
 | `contains_tx` pre-filter | the hash is fresh; the returned hash is `keccak(raw)`, checked against `cast` |
 | chain age, base fee, EOA senders | a chain seconds old reproduces it; base fee flat at 7 wei; an EOA frame tx in the same run mines normally |
 
+**Third cause, OPEN and the one that matters most: the mempool and consensus disagree.**
+Instrumenting the builder's eviction reason (the same funnel technique, one level up) caught
+it verbatim, eight times out of eight:
+
+```
+Invalid frame transaction: VERIFY frame did not call APPROVE or payer not approved
+```
+
+The same transaction is reported **valid** by `ethrex_simulateFrameTransaction` at admission
+— the probe prints `valid: True, prefixShape: SelfVerify` immediately before submitting it —
+and then fails consensus validity when the builder executes it. Admission runs
+`simulate_validation_prefix`; the builder runs the whole transaction through
+`execute_frame_tx`. Those two paths must agree about whether a prefix approves, and here they
+do not.
+
+That is worse than a dropped transaction, because the disagreement is the bug: a node that
+admits what it will not build advertises transactions that can never mine, and a second
+client implementing only one of the two paths would fork. Both loops were changed by the v2
+work (frame-entry access charge, per-frame state pool, account-creation charge), and the
+account-creation charge in particular was added to the consensus loop only — that asymmetry
+is the first thing to check, even though the failing frame carries no value.
+
+Reproduce with `probe_contract_sender_tx.py`; the eviction reason needs a one-line change of
+the builder's `debug!` to `error!` since the devnet does not run at debug level.
+
 The technique is worth keeping: every removal funnels through
 `Mempool::remove_transaction_with_lock`, so a temporary backtrace there plus
 `probe_contract_sender_tx.py` names the caller in one run. That is what found this after six

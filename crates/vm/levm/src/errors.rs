@@ -158,8 +158,12 @@ pub enum TxValidationError {
         "Transaction gas limit exceeds maximum. Transaction hash: {tx_hash}, transaction gas limit: {tx_gas_limit}"
     )]
     TxMaxGasLimitExceeded { tx_hash: H256, tx_gas_limit: u64 },
-    #[error("Invalid frame transaction: VERIFY frame did not call APPROVE or payer not approved")]
-    InvalidFrameTransaction,
+    /// EIP-8141: the transaction is not includable. Six distinct rules produce this
+    /// verdict, and a node operator reading a log cannot act on "invalid" alone, so the
+    /// reason travels with the error. The payload is chosen from a fixed set of literals
+    /// at the raise site, never user data, so it is safe to log and to return over RPC.
+    #[error("Invalid frame transaction: {0}")]
+    InvalidFrameTransaction(String),
     /// EIP-8272: a reference whose slot is not yet referenceable. A root written
     /// in slot `S` becomes referenceable in slot `S + 1`, so this resolves on its
     /// own as the chain advances and must not be treated as intrinsic invalidity.

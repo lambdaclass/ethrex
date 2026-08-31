@@ -1931,7 +1931,7 @@ impl<'a> VM<'a> {
         // Validate static constraints (frame count, reserved modes, atomic batch flags)
         if let Err(_e) = frame_tx.validate_static_constraints(self.env.config.utxo_frames_active) {
             return Err(VMError::TxValidation(
-                crate::errors::TxValidationError::InvalidFrameTransaction,
+                crate::errors::TxValidationError::InvalidFrameTransaction("static constraints".into()),
             ));
         }
 
@@ -2087,7 +2087,7 @@ impl<'a> VM<'a> {
             self.crypto,
         ) {
             return Err(VMError::TxValidation(
-                crate::errors::TxValidationError::InvalidFrameTransaction,
+                crate::errors::TxValidationError::InvalidFrameTransaction("signature does not recover to the sender".into()),
             ));
         }
 
@@ -2115,7 +2115,7 @@ impl<'a> VM<'a> {
         // applied once, at settlement.
         let intrinsic_gas = frame_tx.frame_tx_intrinsic_gas();
         let mut total_gas_used: u64 = intrinsic_gas;
-        let mut tx_invalid = false;
+        let mut tx_invalid: Option<&'static str> = None;
 
         // Atomic batching state: track whether we're inside a batch and
         // which frames belong to it so we can revert them all on failure.
@@ -2258,7 +2258,7 @@ impl<'a> VM<'a> {
                     None => {
                         // Any failed check invalidates the transaction, as with a
                         // reverting VERIFY frame.
-                        tx_invalid = true;
+                        tx_invalid = Some("EIP-8312 UTXO frame check failed");
                         break;
                     }
                 }
@@ -2277,7 +2277,7 @@ impl<'a> VM<'a> {
                         InternalError::Custom("missing frame tx context".to_string()),
                     ))?;
                     if !ctx.sender_approved {
-                        tx_invalid = true;
+                        tx_invalid = Some("SENDER frame reached without execution approval");
                         break;
                     }
                     (sender, false)
@@ -2288,7 +2288,7 @@ impl<'a> VM<'a> {
                 // `None` here is unreachable; treat it as tx-invalid defensively
                 // rather than falling through to an EVM call.
                 Some(FrameMode::Utxo) | None => {
-                    tx_invalid = true;
+                    tx_invalid = Some("frame declares a reserved execution mode");
                     break;
                 }
             };
@@ -2775,7 +2775,7 @@ impl<'a> VM<'a> {
                 // back state/approvals; validity is a tx-level decision. (The
                 // failing `frame` here is the one that triggered the revert.)
                 if frame.execution_mode() == Some(FrameMode::Verify) {
-                    tx_invalid = true;
+                    tx_invalid = Some("VERIFY frame reverted inside an atomic batch");
                     break;
                 }
 
@@ -2805,7 +2805,7 @@ impl<'a> VM<'a> {
             // batched VERIFY reverts are handled in the atomic-batch-revert
             // branch above (which also sets tx_invalid).
             if frame.execution_mode() == Some(FrameMode::Verify) && !frame_success {
-                tx_invalid = true;
+                tx_invalid = Some("VERIFY frame reverted");
                 break;
             }
 
@@ -2822,11 +2822,15 @@ impl<'a> VM<'a> {
                 .ok_or(VMError::Internal(InternalError::Custom(
                     "missing frame tx context".to_string(),
                 )))?;
-        if ctx.payer_address.is_none() {
-            tx_invalid = true;
+        if ctx.payer_address.is_none() && tx_invalid.is_none() {
+            // Only when nothing more specific already failed: a frame that broke out
+            // of the loop above also leaves the payer unset, and reporting that
+            // instead of the reason it broke out for is how this error came to
+            // describe six causes as one.
+            tx_invalid = Some("no frame approved payment (payer is unset)");
         }
 
-        if tx_invalid {
+        if let Some(reason) = tx_invalid {
             // TX is invalid — Err must leave `db.current_accounts_state`
             // unchanged from before the tx (same contract as non-frame
             // `execute()`). Absorb the last live frame's backup (it has not
@@ -2840,7 +2844,7 @@ impl<'a> VM<'a> {
             // the cache), so dropping the staging area is the whole rollback.
             self.discard_durable_vault_writes();
             return Err(VMError::TxValidation(
-                crate::errors::TxValidationError::InvalidFrameTransaction,
+                crate::errors::TxValidationError::InvalidFrameTransaction(reason.into()),
             ));
         }
 
@@ -3258,7 +3262,7 @@ impl<'a> VM<'a> {
             .is_err()
         {
             return Err(VMError::TxValidation(
-                crate::errors::TxValidationError::InvalidFrameTransaction,
+                crate::errors::TxValidationError::InvalidFrameTransaction("static constraints".into()),
             ));
         }
 
@@ -3315,7 +3319,7 @@ impl<'a> VM<'a> {
             self.crypto,
         ) {
             return Err(VMError::TxValidation(
-                crate::errors::TxValidationError::InvalidFrameTransaction,
+                crate::errors::TxValidationError::InvalidFrameTransaction("signature does not recover to the sender".into()),
             ));
         }
 

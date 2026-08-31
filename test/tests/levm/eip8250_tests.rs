@@ -45,6 +45,9 @@ const SSTORE_THEN_REVERT_CODE: &[u8] =
     &[0x60, 0x01, 0x60, 0x00, 0x55, 0x60, 0x00, 0x60, 0x00, 0xFD];
 /// SSTORE 1@0; STOP.
 const SSTORE_THEN_STOP_CODE: &[u8] = &[0x60, 0x01, 0x60, 0x00, 0x55, 0x00];
+/// EIP-8037 STATE_BYTES_PER_NEW_ACCOUNT * CPSB: the state gas a value-bearing frame
+/// pays to bring a fresh account into existence.
+const NEW_ACCOUNT_STATE_GAS: u64 = 120 * 1530;
 /// NONCE_MANAGER predeploy runtime code: PUSH1 0; PUSH1 0; REVERT.
 const NONCE_MANAGER_STUB_CODE: &[u8] = &[0x60, 0x00, 0x60, 0x00, 0xFD];
 
@@ -410,5 +413,73 @@ fn a_keyed_nonce_is_not_priced_as_an_sstore() {
         (surcharge..surcharge + ENVELOPE_SLACK).contains(&keyed_delta),
         "the legacy nonce key must carry no keyed-nonce surcharge, so one keyed \
          key should cost one surcharge ({surcharge}) more, not {keyed_delta}"
+    );
+}
+
+// ==================== Contract sender on a keyed nonce ====================
+
+/// The exact shape the devnet probe submits: a contract sender whose runtime is
+/// nothing but `APPROVE(3)`, a VERIFY frame on itself, and a SENDER frame paying a
+/// fresh address — all on a keyed nonce rather than the legacy one.
+///
+/// This is the transaction that `eth_sendRawTransaction` admits and the builder then
+/// evicts, so it is worth pinning as a unit: the two paths must agree, and the tighter
+/// budgets are the probe's, not round numbers. The VERIFY frame declares
+/// `limits.state = 0`, which is correct only as long as consuming a keyed nonce for the
+/// first time charges no state gas — a first-use charge routed to the frame pool would
+/// halt the frame, revert the approval, and invalidate the transaction.
+#[test]
+fn a_contract_sender_can_approve_on_a_first_use_keyed_nonce() {
+    let contract = Address::repeat_byte(0xC5);
+    let recipient = Address::from_low_u64_be(0xF00D);
+    let mut tx = frame_tx_with_keys(
+        vec![
+        Frame {
+            mode: u8::from(FrameMode::Verify),
+            flags: 0x03,
+            target: Some(contract),
+            gas_limit: 80_000,
+            state_limit: 0,
+            value: U256::zero(),
+            data: Bytes::new(),
+        },
+        Frame {
+            mode: u8::from(FrameMode::Sender),
+            flags: 0,
+            target: Some(recipient),
+            gas_limit: 30_000,
+            state_limit: NEW_ACCOUNT_STATE_GAS,
+            value: U256::from(100u64),
+            data: Bytes::new(),
+        },
+        ],
+        vec![U256::from(0x9999_0000u64)],
+    );
+    tx.sender = contract;
+
+    let accounts = [(
+        contract,
+        U256::from(10u64).pow(U256::from(18u64)), // 1 ETH, as the probe funds it
+        0,
+        Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+    )];
+    let (result, db) = run_frame_tx(&accounts, tx);
+    let report = result.expect(
+        "a contract sender approving on a first-use keyed nonce must be a VALID tx: \
+         this is the transaction the devnet admits and then drops",
+    );
+    let frame_results = report.frame_results.expect("frame results present");
+    assert_eq!(
+        frame_results[1].status,
+        ethrex_common::types::FRAME_RECEIPT_STATUS_SUCCESS,
+        "the SENDER frame must deliver its value; got {frame_results:?}"
+    );
+    assert_eq!(
+        db.current_accounts_state
+            .get(&recipient)
+            .map(|a| a.info.balance)
+            .unwrap_or_default(),
+        U256::from(100u64),
+        "the recipient must actually be funded"
     );
 }
