@@ -281,14 +281,14 @@ impl OpcodeHandler for OpApproveHandler {
 /// TXPARAM index of the sender's legacy account nonce (EIP-8250).
 /// EIP-8250's legacy account-nonce read, at `0x0D`.
 ///
-/// It sat at `0x0C` until EIP-8141 v2 claimed that index for `state_gas_left`. ethrex moved
+/// It sat at `0x0C` until EIP-8141 claimed that index for `state_gas_left`. ethrex moved
 /// it to `0x12` ahead of the EIP; upstream then settled the collision differently, shifting
 /// all three of EIP-8250's own indices up by one (`e5cf246ff1`, 2026-08-31), so this is
 /// `0x0D` and the guess is retired. The spec's numbering wins over ours every time — the
 /// same rule that moved `nonce_keys[0]` off `0x0B`, recorded in `docs/eip-8250.md`.
 const TXPARAM_LEGACY_SENDER_NONCE: u64 = 0x0D;
 
-/// EIP-8141 v2 TXPARAM `0x0C`: "`state_gas_left` remaining in the currently executing
+/// EIP-8141 TXPARAM `0x0C`: "`state_gas_left` remaining in the currently executing
 /// frame". Served from the live VM pool rather than from `FrameTxContext`, which only
 /// carries transaction fields.
 const TXPARAM_STATE_GAS_LEFT: u64 = 0x0C;
@@ -299,7 +299,7 @@ const TXPARAM_STATE_GAS_LEFT: u64 = 0x0C;
 // The published values are asserted here so a renumbering is a compile error rather than a
 // silent wrong answer, the same guard the opcode bytes carry in `opcodes.rs`.
 //
-// EIP-8141 v2 `state_gas_left`; EIP-8250 `e5cf246ff1`; EIP-8272 `0231fb05f5`. `0x12` is
+// EIP-8141 `state_gas_left`; EIP-8250 `e5cf246ff1`; EIP-8272 `0231fb05f5`. `0x12` is
 // ethrex's own resolved-payer read, which yields to any spec id that lands on it.
 const _: () = assert!(TXPARAM_STATE_GAS_LEFT == 0x0C);
 const _: () = assert!(TXPARAM_LEGACY_SENDER_NONCE == 0x0D);
@@ -551,7 +551,7 @@ impl OpcodeHandler for OpFrameParamHandler {
                 frame.value
             }
             0x09 => {
-                // limits.state -- v2's second declared budget. The counterpart of 0x01,
+                // limits.state -- EIP-8141's second declared budget. The counterpart of 0x01,
                 // and the one a sponsor checks before agreeing to pay for a frame whose
                 // state growth it cannot otherwise bound.
                 U256::from(frame.state_limit)
@@ -587,7 +587,7 @@ impl OpcodeHandler for OpFrameParamHandler {
 /// Stack `[param, signatureIndex]` with `signatureIndex` on top; gas 2; returns one
 /// word (0x00 effective signer, 0x01 scheme, 0x02 msg, 0x03 len(signature)).
 ///
-/// EIP-8141 v2 moved the copy operation out of here into [`OpSigDataCopyHandler`],
+/// EIP-8141 moved the copy operation out of here into [`OpSigDataCopyHandler`],
 /// so `param` 0x04 is no longer defined and halts like any other unknown param.
 pub struct OpSigParamHandler;
 impl OpcodeHandler for OpSigParamHandler {
@@ -644,9 +644,9 @@ impl OpcodeHandler for OpSigParamHandler {
 /// 2 => root. Gas: 3. Reads only the envelope, never contract storage; allowed
 /// in any frame mode (incl. VERIFY). Exceptional-halt if
 /// `index >= len(recent_root_references)` or `field > 2`.
-/// SIGDATACOPY (0xB5) -- copy an ARBITRARY signature's raw bytes into memory (EIP-8141 v2).
+/// SIGDATACOPY (0xB5) -- copy an ARBITRARY signature's raw bytes into memory (EIP-8141).
 ///
-/// v2 split this out of `SIGPARAM(0x04)` and gave it its own byte. Stack, top first:
+/// EIP-8141 split this out of `SIGPARAM(0x04)` and gave it its own byte. Stack, top first:
 /// `memOffset`, `dataOffset`, `length`, `signatureIndex` -- CALLDATACOPY's operand order
 /// with the signature index beneath it, and note that the index moved from the *top* of
 /// the stack (where SIGPARAM took it) to the *bottom* of the four operands.
@@ -768,7 +768,7 @@ pub fn load_tx_param(
         0x09 => Ok(U256::from(ctx.tx.frames.len())),
         0x0A => Ok(U256::from(ctx.current_frame_index)),
         0x0B => Ok(U256::from(ctx.tx.signatures.len())),
-        // EIP-8250 keyed nonces, at the indices the EIP settled on once EIP-8141 v2 took
+        // EIP-8250 keyed nonces, at the indices the EIP settled on once EIP-8141 took
         // `0x0C` for `state_gas_left` (upstream `e5cf246ff1`, 2026-08-31). `0x0C` itself is
         // handled by the TXPARAM opcode rather than here: it reads the live frame pool,
         // which this transaction-only view has no access to.

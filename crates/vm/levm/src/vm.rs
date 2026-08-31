@@ -493,7 +493,7 @@ pub fn frame_value_exceeds_balance(sender_balance: U256, frame_value: U256) -> b
     sender_balance < frame_value
 }
 
-/// EIP-8141 v2 §Frame gas pools: the state half of one frame's two budgets.
+/// EIP-8141 §Frame gas pools: the state half of one frame's two budgets.
 ///
 /// `limit` is kept alongside `left` because a state-gas refill credited back to the
 /// frame that paid the charge must not raise the pool above what the frame declared.
@@ -658,16 +658,16 @@ pub struct VM<'a> {
     pub state_gas_used: i64,
     /// EIP-8037: State gas reservoir pre-funded from excess gas_limit (Amsterdam+).
     pub state_gas_reservoir: u64,
-    /// EIP-8141 v2: the executing frame's state-gas pool.
+    /// EIP-8141: the executing frame's state-gas pool.
     ///
     /// `Some` only while a frame transaction's frame is running, and it changes how state
-    /// gas is charged entirely: v2 declares the split in the transaction instead of
+    /// gas is charged entirely: EIP-8141 declares the split in the transaction instead of
     /// deriving it, so the frame spends from this pool alone. No reservoir, and no spill
     /// into the execution pool -- the two never mix, which is what lets a frame halt for
     /// want of state gas with execution gas to spare, and lets a paymaster verify through
     /// `FRAMEPARAM` that a frame it depends on carries the state budget it needs.
     pub frame_state_pool: Option<FrameStatePool>,
-    /// EIP-8141 v2 outstanding state-charge owners: which frame paid the state gas for
+    /// EIP-8141 outstanding state-charge owners: which frame paid the state gas for
     /// the storage slot a later refill might reverse. Only populated inside a frame
     /// transaction.
     ///
@@ -678,7 +678,7 @@ pub struct VM<'a> {
     /// can consult it. A stale entry is therefore unreachable rather than merely
     /// unlikely.
     pub frame_state_charge_owners: FxHashMap<(Address, H256), usize>,
-    /// EIP-8141 v2 refills this transaction applied to frames that had already exited,
+    /// EIP-8141 refills this transaction applied to frames that had already exited,
     /// as `(refilling frame index, owner frame index, amount)`. Kept so an atomic-batch
     /// unroll can undo the refills its own frames caused ("refills of charges attributed
     /// to frames before the batch are undone"), which no other rollback path can
@@ -1219,7 +1219,7 @@ impl<'a> VM<'a> {
             self.env.config.fork >= Fork::Amsterdam,
             "increase_state_gas called pre-Amsterdam"
         );
-        // EIP-8141 v2: inside a frame transaction the split is declared, not derived, so
+        // EIP-8141: inside a frame transaction the split is declared, not derived, so
         // the frame's own state budget is the only source. Exhausting it halts the frame
         // even with execution gas remaining, and nothing spills across the boundary.
         if let Some(pool) = self.frame_state_pool {
@@ -1316,7 +1316,7 @@ impl<'a> VM<'a> {
     /// [`VM::increase_state_gas`] for a storage-slot creation, recording which frame
     /// paid so a later refill can be credited back to it.
     ///
-    /// EIP-8141 v2 §State-gas attribution and refills: "For an `SSTORE` charge, also
+    /// EIP-8141 §State-gas attribution and refills: "For an `SSTORE` charge, also
     /// journal the charging frame's index as the outstanding charge owner for that
     /// `(address, storage_key)`." Outside a frame transaction there is no owner to
     /// record and this is exactly `increase_state_gas`.
@@ -1339,7 +1339,7 @@ impl<'a> VM<'a> {
     /// [`VM::credit_state_gas_refund`] for a storage-slot refill, attributed to the
     /// frame that paid the charge being reversed.
     ///
-    /// EIP-8141 v2 §State-gas attribution and refills. The refill always comes off the
+    /// EIP-8141 §State-gas attribution and refills. The refill always comes off the
     /// owning frame's receipt; where it becomes *spendable* depends on who owns it:
     ///
     /// - `owner == current frame`: the amount is credited back to the frame's own pool,
@@ -1440,7 +1440,7 @@ impl<'a> VM<'a> {
             self.env.config.fork >= Fork::Amsterdam,
             "refill_frame_state_gas called pre-Amsterdam"
         );
-        // EIP-8141 v2 §State-gas attribution and refills: "When an EVM call frame
+        // EIP-8141 §State-gas attribution and refills: "When an EVM call frame
         // reverts or halts exceptionally, restore the state-gas journal and the active
         // frame's `state_gas_left` to the checkpoint covering that call." Inside a frame
         // transaction the charges came from the frame's pool, never from the reservoir
@@ -2132,7 +2132,7 @@ impl<'a> VM<'a> {
         // revert (which unrolls every in-batch frame's state) also drops the state
         // gas those frames accumulated.
         let mut state_gas_used_at_batch_entry: i64 = 0;
-        // EIP-8141 v2: how many cross-frame state-gas refills had been recorded when the
+        // EIP-8141: how many cross-frame state-gas refills had been recorded when the
         // batch opened. Everything after that index is a refill the batch caused, and an
         // unroll owes those back to the frames they were taken from.
         let mut state_refills_at_batch_entry: usize = 0;
@@ -2320,7 +2320,7 @@ impl<'a> VM<'a> {
             // `eip7702_get_code` runs once the charge is paid.
             //
             // The delegatee's own access cost stays discarded, as at top-level tx entry
-            // (`default_hook::set_bytecode_and_code_address`): EIP-8141 v2 charges "the
+            // (`default_hook::set_bytecode_and_code_address`): EIP-8141 charges "the
             // resolved target's warm or cold account access", and `resolved_target` is the
             // delegator.
             let (target_code, delegation) = crate::utils::eip7702_peek_delegation(
@@ -2341,14 +2341,15 @@ impl<'a> VM<'a> {
             // Push substate backup for per-frame state isolation
             self.substate.push_backup();
 
-            // EIP-8141 v2: charge the resolved target's EIP-2929 warm/cold account access
+            // EIP-8141: charge the resolved target's EIP-2929 warm/cold account access
             // from the frame's execution budget, before the balance check and before
             // dispatch. Resolving the target's code is what dispatch *is*, so charging at
             // entry makes the cost uniform across outcomes: a frame pays the same access
             // whether its target carries contract code, a 7702 delegation, or no code at
             // all, which is what keeps sponsorship neutral between a code-less payer
             // approving through the default code and a contract payer approving through
-            // its own. v1 discarded this cost because the spec was then silent on it; v2
+            // its own. An earlier revision discarded this cost because the spec was then
+            // silent on it; EIP-8141
             // is not. The intrinsic's payer-settlement component covers the settlement
             // balance writes, not this first account touch.
             let target_was_cold = self.substate.add_accessed_address(target);
@@ -2426,7 +2427,7 @@ impl<'a> VM<'a> {
                 };
             }
 
-            // EIP-8141 v2 §Frame gas pools: `state_gas_left = frame.limits.state`,
+            // EIP-8141 §Frame gas pools: `state_gas_left = frame.limits.state`,
             // frame-scoped. Every EVM call frame at any depth inside this frame draws
             // from it directly — it is not forwarded or split per callframe the way
             // execution gas is — and `increase_state_gas` routes to it exclusively
@@ -2458,7 +2459,7 @@ impl<'a> VM<'a> {
             // every slot, a single such frame halts block production.
             let mut frame_bal_checkpoint = self.db.bal_recorder.as_ref().map(|r| r.checkpoint());
 
-            // EIP-8141 v2 §Behavior: "If `frame.value > 0` and `resolved_target` does not
+            // EIP-8141 §Behavior: "If `frame.value > 0` and `resolved_target` does not
             // exist, `STATE_BYTES_PER_NEW_ACCOUNT * CPSB` state gas is charged after the
             // balance check and before the frame's code executes, as in EIP-2780. If
             // `state_gas_left` cannot cover the charge, the frame halts exceptionally."
@@ -2492,7 +2493,7 @@ impl<'a> VM<'a> {
                 // success without executing anything — NOT into the default-code path.
                 //
                 // A precompile is excluded for the same reason in reverse: its code is
-                // empty, but EIP-8141 v2 §Behavior says "if `resolved_target` is an active
+                // empty, but EIP-8141 §Behavior says "if `resolved_target` is an active
                 // precompile at the current fork, the frame dispatches it as an ordinary
                 // call would". It therefore has to reach the CallFrame branch, where
                 // `run_execution` dispatches it against the frame's data and budget.
@@ -2629,7 +2630,7 @@ impl<'a> VM<'a> {
                 result
             };
 
-            // EIP-8141 v2 §Transaction settlement: "At frame exit,
+            // EIP-8141 §Transaction settlement: "At frame exit,
             // `frame_receipt.gas_used.state` equals `frame.limits.state -
             // state_gas_left`." A frame that reverted or halted exceptionally reports
             // zero, since its state changes — and with them its charges — are gone.
@@ -2743,7 +2744,7 @@ impl<'a> VM<'a> {
                     .flatten()
                 {
                     result.logs = Vec::new();
-                    // EIP-8141 v2: "Charges attributed to frames in the batch are
+                    // EIP-8141: "Charges attributed to frames in the batch are
                     // removed from their receipts."
                     result.state_gas_used = 0;
                 }
@@ -2930,7 +2931,7 @@ impl<'a> VM<'a> {
             .mandatory_gas()
             .saturating_add(frame_tx.recent_root_reference_intrinsic_gas());
 
-        // EIP-8141 v2 §Transaction settlement. The dimensions are declared, so state
+        // EIP-8141 §Transaction settlement. The dimensions are declared, so state
         // gas drawn from a frame's `limits.state` never spilled into any execution
         // pool: `total_gas_used` here is the execution dimension alone (intrinsic plus
         // each frame's execution spend), and the state dimension must be added
@@ -2955,7 +2956,7 @@ impl<'a> VM<'a> {
 
         // The EIP-3529 refund and the EIP-7623 floor both belong to the execution
         // dimension: the floor bounds what the transaction's data costs to include,
-        // and state growth is never absorbed into that headroom (v2 §Calldata floor
+        // and state growth is never absorbed into that headroom (EIP-8141 §Calldata floor
         // and payment). So both apply to `total_gas_used`, and the state dimension is
         // added afterwards, untouched by either.
         let floored_execution = |execution: u64| {
@@ -2965,7 +2966,7 @@ impl<'a> VM<'a> {
                     .max(frame_tx.calldata_floor_gas()),
             )
         };
-        // EIP-7778 via v2 §Block-level gas accounting: the block counts the execution
+        // EIP-7778 via EIP-8141 §Block-level gas accounting: the block counts the execution
         // dimension BEFORE the refund, so a refund lowers what the payer pays without
         // freeing the block capacity the transaction actually occupied. The state
         // dimension is counted net in both, since a state-gas refill reverses a charge
@@ -3192,7 +3193,7 @@ impl<'a> VM<'a> {
         let state_gas_used =
             u64::try_from(self.state_gas_used.max(0)).map_err(|_| InternalError::Overflow)?;
 
-        // EIP-8141 v2 `tx_unused_gas` in GAS UNITS for the report — distinct from the
+        // EIP-8141 `tx_unused_gas` in GAS UNITS for the report — distinct from the
         // wei refund above (which also returns the max-vs-effective fee delta). Both
         // pools count: gas left in a frame's execution pool at exit, gas left in its
         // state pool, a skipped frame's whole budget, and state gas a later refill took
@@ -3461,7 +3462,7 @@ impl<'a> VM<'a> {
 
             self.substate.push_backup();
 
-            // EIP-8141 v2: the same frame-entry EIP-2929 charge and the same per-frame
+            // EIP-8141: the same frame-entry EIP-2929 charge and the same per-frame
             // state pool as consensus execution (`execute_frame_tx`). The mempool must
             // agree with the chain about whether a prefix frame fits its declared
             // budgets: charging here and not there (or vice versa) would reject

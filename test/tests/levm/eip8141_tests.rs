@@ -528,7 +528,7 @@ fn storage_slot(db: &GeneralizedDatabase, addr: Address, key: ethrex_common::H25
         .unwrap_or_default()
 }
 
-/// EIP-8141 v2 adds three FRAMEPARAM indices for the second gas dimension: `0x09` is a
+/// EIP-8141 adds three FRAMEPARAM indices for the second gas dimension: `0x09` is a
 /// frame's declared `limits.state`, and `0x0A`/`0x0B` are a completed frame's
 /// `gas_used.execution` and `gas_used.state`.
 ///
@@ -665,7 +665,7 @@ fn frameparam_reads_frame_index_from_stack_top() {
             target: Some(reader),
             // The new-slot SSTORE draws STATE_BYTES_PER_STORAGE_SET *
             // cost_per_state_byte (~98k) from the frame's state pool, which under
-            // EIP-8141 v2 is the frame's own declared `limits.state` and never
+            // EIP-8141 is the frame's own declared `limits.state` and never
             // borrows from `limits.execution`.
             gas_limit: 300_000,
             state_limit: STATE_BUDGET,
@@ -1043,7 +1043,7 @@ fn a_floor_bound_frame_transaction_is_charged_the_floor() {
         report.gas_used, floor_total,
         "a floor-bound transaction is charged max_gas, which is the floor"
     );
-    // EIP-8141 v2 reports `tx_unused_gas` directly — gas left in either pool at frame exit,
+    // EIP-8141 reports `tx_unused_gas` directly — gas left in either pool at frame exit,
     // which the floor does not consume — so the frame's unspent execution budget is
     // reported even though the charge is the floor. It is not a discount on that charge.
     let fr = report.frame_results.expect("per-frame results");
@@ -1058,7 +1058,7 @@ fn a_floor_bound_frame_transaction_is_charged_the_floor() {
     );
 }
 
-/// EIP-8141 v2 §Behavior: "if `resolved_target` is an active precompile at the current
+/// EIP-8141 §Behavior: "if `resolved_target` is an active precompile at the current
 /// fork, the frame dispatches it as an ordinary call would."
 ///
 /// A precompile's code is empty, which is also the condition for running the default
@@ -1116,10 +1116,10 @@ fn a_frame_targeting_a_precompile_dispatches_it() {
     );
 }
 
-/// EIP-8141 v2 §Behavior: a value-bearing frame whose resolved target does not exist
+/// EIP-8141 §Behavior: a value-bearing frame whose resolved target does not exist
 /// pays EIP-2780's account-creation state gas from its own `limits.state`, and halts
 /// exceptionally if it declared too little. Funding a fresh account grows the state, and
-/// v2 makes the frame that does it declare the budget for it.
+/// EIP-8141 makes the frame that does it declare the budget for it.
 #[test]
 fn a_value_bearing_frame_pays_account_creation_from_its_state_budget() {
     let value = U256::from(5_000_000u64);
@@ -1263,7 +1263,7 @@ fn frame_tx_happy_path_sstore_and_log() {
             target: Some(worker),
             // The new-slot SSTORE draws STATE_BYTES_PER_STORAGE_SET *
             // cost_per_state_byte (~98k) from the frame's state pool, which under
-            // EIP-8141 v2 is the frame's own declared `limits.state` and never
+            // EIP-8141 is the frame's own declared `limits.state` and never
             // borrows from `limits.execution`.
             gas_limit: 300_000,
             state_limit: STATE_BUDGET,
@@ -1472,7 +1472,7 @@ const SSTORE_SET_STATE_GAS: u64 = 64 * 1530;
 /// account that does not exist yet.
 const NEW_ACCOUNT_STATE_GAS: u64 = 120 * 1530;
 
-/// A state budget generous enough for a handful of new storage slots. EIP-8141 v2
+/// A state budget generous enough for a handful of new storage slots. EIP-8141
 /// frames declare `limits.state` explicitly and a charge past it halts the frame, so
 /// every test frame that creates state has to carry one. Over-declaring costs only a
 /// larger up-front `max_cost`, refunded at settlement, so tests that are not about
@@ -1524,7 +1524,7 @@ fn frame_sstore_set_reports_eip8037_state_gas() {
         report.gas_used,
         report.state_gas_used,
     );
-    // EIP-8141 v2: the charge is attributed to the frame that made it, and shows up
+    // EIP-8141: the charge is attributed to the frame that made it, and shows up
     // in that frame's receipt as `gas_used.state`. The VERIFY frame created nothing.
     let fr = report.frame_results.expect("per-frame results");
     assert_eq!(
@@ -1540,7 +1540,7 @@ fn frame_sstore_set_reports_eip8037_state_gas() {
     assert!(
         fr[1].gas_used < SSTORE_SET_STATE_GAS,
         "the writing frame's execution gas ({}) must not include the state charge — \
-         v2 pools never mix",
+         the two pools never mix",
         fr[1].gas_used,
     );
 }
@@ -1587,7 +1587,7 @@ fn reverted_frame_reports_no_state_gas() {
         "a reverted frame creates no state and must report zero state gas, got {}",
         report.state_gas_used,
     );
-    // EIP-8141 v2 §State-gas attribution: "When a frame reverts, restore the journal
+    // EIP-8141 §State-gas attribution: "When a frame reverts, restore the journal
     // and `state_gas_left` to frame entry. Its final `gas_used.state` is therefore
     // zero." The charge was made — the frame declared a budget and the SSTORE drew on
     // it — and then unwound with the state it paid for.
@@ -4078,7 +4078,7 @@ mod sigparam_execution_tests {
     }
 
     /// `SIGDATACOPY` copying `length` bytes from `dataOffset` to `memOffset`, then
-    /// `SSTORE(0, MLOAD(memOffset))`. EIP-8141 v2's stack is `memOffset`, `dataOffset`,
+    /// `SSTORE(0, MLOAD(memOffset))`. EIP-8141's stack is `memOffset`, `dataOffset`,
     /// `length`, `signatureIndex` from the top down, so the pushes run in reverse and the
     /// index sits *beneath* the three copy operands -- where SIGPARAM(0x04) had it on top.
     fn sigdatacopy_code(index: u8, length: u8, data_offset: u8, mem_offset: u8) -> Bytes {
@@ -4102,7 +4102,7 @@ mod sigparam_execution_tests {
         ])
     }
 
-    /// `SIGPARAM(0x04, index)`, which v2 no longer defines: the copy operation moved to
+    /// `SIGPARAM(0x04, index)`, which EIP-8141 no longer defines: the copy operation moved to
     /// its own instruction, so this param must halt.
     fn sigparam_retired_copy_code(index: u8) -> Bytes {
         Bytes::from(vec![
@@ -4255,7 +4255,7 @@ mod sigparam_execution_tests {
         );
     }
 
-    /// v2 retires `SIGPARAM(0x04)`. If it still copied, the operation would exist at two
+    /// EIP-8141 retires `SIGPARAM(0x04)`. If it still copied, the operation would exist at two
     /// bytes at once and a contract written against either would work — which is exactly
     /// how a chain ends up with two encodings of the same behaviour.
     #[test]
@@ -4485,7 +4485,7 @@ fn storage_refund_from_a_later_frame_reduces_reported_gas() {
         "the applied refund {applied} must respect the EIP-3529 one-fifth cap"
     );
 
-    // EIP-8141 v2 §State-gas attribution and refills. Frame 1 created the slot and was
+    // EIP-8141 §State-gas attribution and refills. Frame 1 created the slot and was
     // charged for it; frame 2 cleared it in the same transaction, so the creation was
     // never durable and the charge is reversed. The reversal is attributed to the frame
     // that PAID it — "subtract the amount from the receipt of the frame that paid the
@@ -4511,7 +4511,7 @@ fn storage_refund_from_a_later_frame_reduces_reported_gas() {
 
 #[test]
 fn txparam_0x0c_returns_the_frames_remaining_state_gas() {
-    // EIP-8141 v2 TXPARAM 0x0C: "`state_gas_left` remaining in the currently executing
+    // EIP-8141 TXPARAM 0x0C: "`state_gas_left` remaining in the currently executing
     // frame". Read before any state charge, it is the frame's whole declared
     // `limits.state`; read after creating a slot, it is that less the slot's cost.
     //
@@ -5155,7 +5155,7 @@ mod intrinsic_gas_accounting_tests {
         // byte charge, so pin the fixture properties that keep the list closed:
         // no frame data, and exactly one signature with no signer or explicit msg.
         assert_eq!(tx.frames.len(), 2);
-        // And one value-carrying frame, which EIP-8141 v2 charges `TX_VALUE_COST` for.
+        // And one value-carrying frame, which EIP-8141 charges `TX_VALUE_COST` for.
         let value_frames = tx.frames.iter().filter(|f| !f.value.is_zero()).count() as u64;
         assert_eq!(value_frames, 1);
         assert!(tx.frames.iter().all(|frame| frame.data.is_empty()));
@@ -5195,7 +5195,7 @@ mod intrinsic_gas_accounting_tests {
         );
     }
 
-    /// EIP-8141 v2 `value_transfer_cost`: `TX_VALUE_COST` per value-carrying frame, in
+    /// EIP-8141 `value_transfer_cost`: `TX_VALUE_COST` per value-carrying frame, in
     /// the intrinsic AND in the calldata floor. It is charged per frame rather than per
     /// distinct recipient, and adding value to a frame is the only thing that moves it.
     #[test]

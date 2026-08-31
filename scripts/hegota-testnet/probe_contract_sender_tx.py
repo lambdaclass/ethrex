@@ -15,7 +15,7 @@ Usage: HEGOTA_SENDER_KEY=<hex> probe_contract_sender_tx.py <rpc> <authrpc> <jwt>
 """
 import json, pathlib, sys, time
 
-spec_path = str(pathlib.Path(__file__).with_name("verify_v2_devnet.py"))
+spec_path = str(pathlib.Path(__file__).with_name("verify_devnet.py"))
 src = open(spec_path).read().replace("sys.exit(main())", "pass")
 mod = {}
 sys.argv = ["v", sys.argv[1], sys.argv[2], sys.argv[3]]

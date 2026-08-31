@@ -16,7 +16,7 @@ wrong either way: a caller has no way to learn it was dropped.
 Usage: HEGOTA_SENDER_KEY=<hex> probe_prefix_only_tx.py <rpc> <authrpc> <jwt>
 """
 import pathlib, sys, time
-src = open(str(pathlib.Path(__file__).with_name("verify_v2_devnet.py"))).read()
+src = open(str(pathlib.Path(__file__).with_name("verify_devnet.py"))).read()
 src = src.replace("sys.exit(main())", "pass")
 sys.argv = ["v", sys.argv[1], sys.argv[2], sys.argv[3]]
 m = {}

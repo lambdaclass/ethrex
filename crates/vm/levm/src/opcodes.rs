@@ -179,10 +179,10 @@ pub enum Opcode {
     FRAMEDATACOPY = 0xB2,
     FRAMEPARAM = 0xB3,
     SIGPARAM = 0xB4,
-    // EIP-8141 v2 moves SIGPARAM's copy operation out into its own instruction and
+    // EIP-8141 moves SIGPARAM's copy operation out into its own instruction and
     // assigns it 0xB5 — the byte EIP-8272's RECENTROOTREFLOAD had been using, because
     // EIP-8272's own Constants table asked for 0xB4 and that collided with SIGPARAM.
-    // v2's assignment wins and RECENTROOTREFLOAD moves along to the next free byte:
+    // EIP-8141's assignment wins and RECENTROOTREFLOAD moves along to the next free byte:
     // EIP-8141 is the EIP everything else in this set builds on, and EIP-8272 has
     // already been relocated once. Recorded in the divergence ledger; raised upstream,
     // since a shared frame-opcode registry is what would have prevented both moves.
@@ -206,7 +206,7 @@ pub enum Opcode {
 }
 
 // The frame-opcode bytes have now collided twice across this EIP set, so pin them:
-// EIP-8141 v2 publishes SIGDATACOPY at 0xB5, EIP-8272's RECENTROOTREFLOAD moved to 0xB6
+// EIP-8141 publishes SIGDATACOPY at 0xB5, EIP-8272's RECENTROOTREFLOAD moved to 0xB6
 // after already having moved off 0xB4, and nothing in the set may share a byte. A future
 // relocation is then a compile error instead of two clients disagreeing about an opcode.
 // A discriminant read is the only way to assert an opcode's byte at compile time; the

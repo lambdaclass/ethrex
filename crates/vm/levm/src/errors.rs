@@ -301,7 +301,7 @@ pub struct ExecutionReport {
 /// One frame's outcome inside an EIP-8141 frame transaction, as reported in the
 /// transaction's receipt.
 ///
-/// `gas_used` and `state_gas_used` are the two halves of v2's two-dimensional
+/// `gas_used` and `state_gas_used` are the two halves of EIP-8141's two-dimensional
 /// `gas_used = [execution, state]`. They are separate budgets that never mix, so
 /// they are named rather than positional: both are `u64`, and swapping them would
 /// misreport every frame without failing to compile.

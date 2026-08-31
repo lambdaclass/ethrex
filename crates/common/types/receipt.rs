@@ -35,7 +35,7 @@ pub struct FrameReceipt {
 
 impl RLPEncode for FrameReceipt {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        // `gas_used = [execution, state]` per EIP-8141 v2.
+        // `gas_used = [execution, state]` per EIP-8141.
         Encoder::new(buf)
             .encode_field(&self.status)
             .encode_field(&(self.gas_used, self.state_gas_used))

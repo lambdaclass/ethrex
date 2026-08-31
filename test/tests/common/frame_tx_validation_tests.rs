@@ -1903,9 +1903,9 @@ fn p2p_blobless_frame_transaction_must_not_be_wrapped() {
     );
 }
 
-// ==================== EIP-8141 v2 additions ====================
+// ==================== EIP-8141 additions ====================
 
-/// v2 pins the expiry-verifier frame's whole shape, not just its flags and data length.
+/// EIP-8141 pins the expiry-verifier frame's whole shape, not just its flags and data length.
 /// Clients may evaluate this frame directly instead of running the predeploy, so any field
 /// left free is a field on which the two evaluation paths could disagree.
 #[test]
@@ -1934,7 +1934,7 @@ fn an_expiry_verifier_frame_carrying_a_state_budget_is_invalid() {
     );
 }
 
-/// v2: a frame belonging to an atomic batch approves no scope. The batch unrolls as a
+/// EIP-8141: a frame belonging to an atomic batch approves no scope. The batch unrolls as a
 /// unit, so an approval granted inside one could be relied on by code the unroll reverses.
 /// Both ends of the pair are in the batch, so both are checked: the frame carrying the
 /// flag, and the frame after it.

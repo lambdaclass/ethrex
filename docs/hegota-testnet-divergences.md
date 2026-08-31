@@ -24,12 +24,12 @@ That revision is the reason the frame path reports a pre-refund `gas_used` for t
 a post-refund `gas_spent` for the payer.
 
 **Re-audited 2026-08-31.** EIP-8141 and EIP-7805 have not moved. EIP-8250 and EIP-8272 both
-moved that day, and both moves are consensus-visible renumberings caused by v2's `0x0C` and
+moved that day, and both moves are consensus-visible renumberings caused by EIP-8141's `0x0C` and
 `0xB5` claims — see §5.1. Implemented and re-pinned to `e5cf246ff1` and `0231fb05f5`.
 
 | EIP | Pin | Drift to head | Consensus-visible | Action | Owner |
 | --- | --- | --- | --- | --- | --- |
-| 8141 | `4093c21847` → **`7d1c8bfb94`** | **+326/−96 — a new envelope, see §6** | **yes** | **v2 adopted and implemented**, pin bumped; re-genesis required | — |
+| 8141 | `4093c21847` → **`7d1c8bfb94`** | **+326/−96 — a new envelope, see §6** | **yes** | **the updated spec adopted and implemented**, pin bumped; re-genesis required | — |
 | 7805 | `4093c21847` | none — byte-identical | no | closed | — |
 | 8250 | `81b976ac01` → **`e5cf246ff1`** | **TXPARAM ids shifted up by one** (2026-08-31), plus an Abstract sentence | **yes** — every prefix reading a keyed-nonce id | **implemented**, pin bumped | — |
 | 8272 | `d8636a330d` → **`0231fb05f5`** | **reference count `0x0F`→`0x11`, `RECENTROOTREFLOAD` `0xB5`→`0xB6`** (2026-08-31), plus an Abstract sentence | **yes** | **implemented**, pin bumped; the opcode byte already matched | — |
@@ -182,13 +182,13 @@ until it merges", which the code contradicts. Corrected in this pass.
 
 **Action:** closed — #12066 merged; nothing to carry.
 
-## 5.1 Opcode and TXPARAM ids v2 collides with — relocated
+## 5.1 Opcode and TXPARAM ids EIP-8141 collides with — relocated
 
-Adopting EIP-8141 v2 forced two id moves, both consensus-visible, both because v2 claims
+Adopting EIP-8141 forced two id moves, both consensus-visible, both because EIP-8141 claims
 an id this chain had already assigned to another EIP in the same set. **Both were then
 settled upstream on 2026-08-31, and the upstream resolution is not the one ethrex guessed.**
 
-| id | v2 assigns | ethrex had | Upstream resolution (2026-08-31) |
+| id | EIP-8141 assigns | ethrex had | Upstream resolution (2026-08-31) |
 | --- | --- | --- | --- |
 | `0xB5` | `SIGDATACOPY` | EIP-8272 `RECENTROOTREFLOAD` | `RECENTROOTREFLOAD` → `0xB6` (`0231fb05f5`) — matches what ethrex shipped |
 | `0x0C` (TXPARAM) | `state_gas_left` | EIP-8250 `legacy_sender_nonce` | EIP-8250 shifts **all three** of its indices up by one (`e5cf246ff1`) — ethrex had moved only the nonce read, to `0x12` |
@@ -203,7 +203,7 @@ The current map, matching upstream:
 
 | id | Value | EIP |
 | --- | --- | --- |
-| `0x0C` | `state_gas_left` | 8141 v2 |
+| `0x0C` | `state_gas_left` | 8141 |
 | `0x0D` | pre-state legacy sender nonce | 8250 |
 | `0x0E` | `len(nonce_keys)` | 8250 |
 | `0x0F` | `nonce_keys_hash` | 8250 |
@@ -221,7 +221,7 @@ on every validation prefix touching any of them.
 
 The lesson for this branch is narrower and worth stating: **do not invent an id to resolve a
 collision upstream has not resolved yet.** `0x12` was a reasonable guess and it was wrong,
-and because the chain had not launched on v2 it cost only a rename. On a live chain it would
+and because the chain had not launched on the updated rules it cost only a rename. On a live chain it would
 have cost a re-genesis.
 
 Four compile-time asserts in `crates/vm/levm/src/opcodes.rs` now pin the opcode bytes and
@@ -229,7 +229,7 @@ forbid sharing, so a fifth relocation is a compile error rather than a chain spl
 
 **Action:** closed for this chain; upstream registry request open.
 
-## 6. EIP-8141 v2: a new envelope, and therefore a re-genesis
+## 6. EIP-8141: a new envelope, and therefore a re-genesis
 
 EIP-8141 moved +326/−96 since the pin. Six of the new sections are Rationale and one is
 Security Considerations, so they need no code; what is normative is:
@@ -290,7 +290,7 @@ Two changes a joiner will see rather than cause: receipts report `stateGasUsed` 
 executing frame's remaining state budget — the read a paymaster needs to check that a
 frame it is about to sponsor can afford what it intends to do.
 
-### 6.2 Cross-checked against the other v2 implementation line
+### 6.2 Cross-checked against the other implementation line
 
 `frames-devnet-0` (131 commits, not merged anywhere) is a second implementation of the same
 rule set, developed against the frame-transaction fixtures added to execution-specs#3047.
@@ -306,11 +306,11 @@ divergence that is only apparent:
   branch and following it only once the charge is paid, with
   `an_unaffordable_frame_files_no_delegatee_in_the_block_access_list` covering both halves.
 - **Not a divergence:** that branch runs the default code only for a *codeless VERIFY*
-  target and sends every other frame through the EVM. EIP-8141 v2 orders the branches
+  target and sends every other frame through the EVM. EIP-8141 orders the branches
   differently — precompile first, then empty code hash for any mode, then EIP-7702 — so on
-  v2 the observable difference between the two readings is precompiles alone, which this
+  the observable difference between the two readings is precompiles alone, which this
   branch dispatches (§6.1). Its account-creation charge likewise spills into execution gas,
-  which is correct for v1's derived split and wrong for v2's declared one.
+  which is correct for the old derived split and wrong for the declared one.
 
 Its remaining value is the fixture harness: it runs the released frame-transaction suite (44
 frame fixtures, 14 908 blockchain fixtures) which this branch does not. Worth taking on its
@@ -530,7 +530,7 @@ silently stops being one.
 | EIPs#12109 | atomic-batch approval scope | **merged 2026-08-14** | conformant — `APPROVE_SCOPE_MASK` asserted statically |
 | EIPs#12026 | floor repricing, signature validation, `frame.value` gas | **merged 2026-08-14** | conformant — uniform floor tokens, no precompile in the BAL (§9.2), and the value-frame account-creation charge (§9.2) |
 | EIPs#12061 | frame receipt has no transaction-level status | **merged 2026-08-14** | conformant — the receipt is `[tx_type, cumulative_gas_used, payer, [frame_receipt…]]` with no top-level `succeeded` |
-| EIPs#12062 | explicit second dimension for state gas on frames | **merged 2026-08-13** | implemented — this is v2's two-pool model (§6, §6.1). It was a *draft to watch* at the last pass |
+| EIPs#12062 | explicit second dimension for state gas on frames | **merged 2026-08-13** | implemented — this is EIP-8141's two-pool model (§6, §6.1). It was a *draft to watch* at the last pass |
 | EIPs#12113 | initial `accessed_addresses` set | **merged 2026-08-17** | conformant — five clauses, one test each (§9.1) |
 | EIPs#12091 | block inclusion gating and payer solvency | **closed unmerged** | nothing owed; drop from the watch list |
 | EIPs#12041 | canonical paymaster reference bytecode | open | implemented ahead of merge; the pinned 355-byte runtime's hash (§8 — Task 6.4 closed) |
@@ -603,9 +603,9 @@ survives a repricing of the warm/cold spread itself.
 | --- | --- |
 | `accessed_addresses` starts as EIP-2929/EIP-3651 (`tx.sender`, coinbase, precompiles) | conformant — `env.origin` is `tx.sender` for a frame tx |
 | `accessed_storage_keys` starts empty | conformant — `FrameTransaction` returns `EMPTY_ACCESS_LIST` |
-| being a frame target does not warm an address | conformant — appearing in `tx.frames` warms nothing; the target is warmed when its own frame runs and is charged for it (v2 §Behavior), and stays warm for later frames because the journal is shared across them |
+| being a frame target does not warm an address | conformant — appearing in `tx.frames` warms nothing; the target is warmed when its own frame runs and is charged for it (EIP-8141 §Behavior), and stays warm for later frames because the journal is shared across them |
 | `ENTRY_POINT` is not pre-warmed | conformant — it is only ever the frame *caller*, never inserted |
-| the payer is added when a payment-scope `APPROVE` collects `max_cost` | **was divergent, now fixed** — and v2 makes it structural: the payer is always its frame's resolved target, so the frame-entry access charge warms it and no separate rule is needed |
+| the payer is added when a payment-scope `APPROVE` collects `max_cost` | **was divergent, now fixed** — and EIP-8141 makes it structural: the payer is always its frame's resolved target, so the frame-entry access charge warms it and no separate rule is needed |
 
 The payer clause was a real gap: `APPROVE` scopes `0x1` and `0x3` debited the payer's
 balance via `decrease_account_balance` without adding it to `accessed_addresses`, so a
@@ -628,7 +628,7 @@ asserts no address at or below `0x100` appears.
 | Clause | Bearing |
 | --- | --- |
 | `floor_cost` is the calldata floor function *of the fork in force* — EIP-7623's 10/40 per token, or EIP-7976's flat 64 gas per byte where scheduled | consensus-visible through the frame-tx calldata floor; re-check when EIP-7976 lands on this chain's fork schedule |
-| `frame.value` follows ordinary `CALL` value-transfer semantics, charged inside the frame's budgets including the fork's account-creation cost; a frame that cannot cover it halts without transferring, so no EIP-7708 log | **implemented and asserted** — v2 puts the account-creation charge in `limits.state`, after the balance check and before the frame's code; `a_value_bearing_frame_pays_account_creation_from_its_state_budget` covers both the charge and the one-gas-short halt |
+| `frame.value` follows ordinary `CALL` value-transfer semantics, charged inside the frame's budgets including the fork's account-creation cost; a frame that cannot cover it halts without transferring, so no EIP-7708 log | **implemented and asserted** — EIP-8141 puts the account-creation charge in `limits.state`, after the balance check and before the frame's code; `a_value_bearing_frame_pays_account_creation_from_its_state_budget` covers both the charge and the one-gas-short halt |
 
 ### 9.3 EIP-8272 reference reads in the BAL — keep the record
 

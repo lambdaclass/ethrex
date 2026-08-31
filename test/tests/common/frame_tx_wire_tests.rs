@@ -1,4 +1,4 @@
-//! EIP-8141 v2 wire-format pin, cross-checked against the Python encoder.
+//! EIP-8141 wire-format pin, cross-checked against the Python encoder.
 //!
 //! Nothing in this suite pinned the frame-transaction encoding before: every frame-tx test
 //! either round-trips (so a changed layout stays symmetric and invisible) or asserts
@@ -63,7 +63,7 @@ fn golden() -> FrameTransaction {
 /// Byte-for-byte what `scripts/hegota-testnet/frametx.py` produces for `golden()`.
 ///
 /// **These two strings must not move again.** The encoding is settled; every later step of
-/// the v2 adoption is semantics. If a gas, receipt or opcode change moves the golden
+/// adopting the updated spec is semantics. If a gas, receipt or opcode change moves the golden
 /// vector, an encoding change leaked into a step that had no business touching the wire,
 /// and the right response is to find it rather than to re-pin these constants.
 const GOLDEN_RLP: &str = "f8b301c1800794000000000000000000000000000000000000abcdeccc010380c48252088080821122de0280940000000000000000000000000000000000001234c4829c40808080f85cf85a0194000000000000000000000000000000000000abcd80b8410101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101cc843b9aca008506fc23ac0080c0c0";
@@ -77,7 +77,7 @@ fn the_v2_envelope_encodes_to_the_golden_vector() {
     assert_eq!(
         hex::encode(&encoded),
         GOLDEN_RLP,
-        "the v2 envelope must match the vector frametx.py asserts"
+        "the envelope must match the vector frametx.py asserts"
     );
 }
 
@@ -140,7 +140,7 @@ fn rlp_children(payload: &[u8]) -> Vec<(&[u8], bool)> {
     out
 }
 
-/// The nesting is the whole point of v2's envelope change, so assert the *shape* and not
+/// The nesting is the whole point of EIP-8141's envelope change, so assert the *shape* and not
 /// only the bytes: nine top-level fields, a two-element `limits` list inside each frame
 /// where a scalar gas limit used to sit, and a three-element `fees` list. A pin on bytes
 /// alone would still pass if the layout were right by accident.
@@ -200,7 +200,7 @@ fn the_v2_envelope_round_trips_through_the_canonical_decoder() {
 }
 
 /// A frame carrying a state budget must survive the round trip, since `limits.state` is
-/// the field v2 adds and the one an old decoder cannot see.
+/// the field EIP-8141 adds and the one an old decoder cannot see.
 #[test]
 fn a_state_budget_round_trips() {
     let mut tx = golden();

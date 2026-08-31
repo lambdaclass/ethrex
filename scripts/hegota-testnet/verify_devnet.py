@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify the EIP-8141 v2 rule set against a running devnet.
+"""Verify the EIP-8141 rule set against a running devnet.
 
 Checks the four EIPs the chain's identity rests on, against a live node:
 
@@ -29,10 +29,10 @@ script runs, and it survives in shell history. Export it instead, ideally from a
 is already the key's home:
 
   set -a; . ~/hegota-keys.env; set +a
-  HEGOTA_SENDER_KEY=$FAUCET_KEY verify_v2_devnet.py <rpc> <authrpc> <jwt>
+  HEGOTA_SENDER_KEY=$FAUCET_KEY verify_devnet.py <rpc> <authrpc> <jwt>
 
 Usage:
-  HEGOTA_SENDER_KEY=<hex> verify_v2_devnet.py <rpc_url> <authrpc_url> <jwt_path>
+  HEGOTA_SENDER_KEY=<hex> verify_devnet.py <rpc_url> <authrpc_url> <jwt_path>
 """
 import base64
 import hashlib
@@ -283,7 +283,7 @@ def deploy(runtime: bytes, endowment: int = 0) -> str:
 
 
 # The TXPARAM index map this chain must answer to, as settled upstream on 2026-08-31 after
-# EIP-8141 v2 claimed 0x0C. Each entry is (index, storage slot, label).
+# EIP-8141 claimed 0x0C. Each entry is (index, storage slot, label).
 #
 # This is the check that catches a renumbering, and it has to be made ON CHAIN: a wrong index
 # does not halt, it answers with whatever the neighbouring EIP put there. Reading the digest

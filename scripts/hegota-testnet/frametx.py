@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Current-format EIP-8141/8250/8272 frame-transaction (type 0x06) encoder.
 
-EIP-8141 v2 wire layout, verified against the repo golden vector:
+EIP-8141 wire layout, verified against the repo golden vector:
   raw = 0x06 || rlp([chain_id, nonce_keys, nonce_seq, sender, frames, signatures,
                      fees, blob_hashes, recent_root_references])
   fees      = rlp([max_priority_fee, max_fee, max_blob_fee])
@@ -10,7 +10,7 @@ EIP-8141 v2 wire layout, verified against the repo golden vector:
 
 The composition of the three EIPs is this chain's choice, because none of them specifies
 it: EIP-8250 replaces the canonical scalar `nonce` with `nonce_keys, nonce_seq` in place,
-EIP-8272 appends `recent_root_references` last, and EIP-8141 v2's `fees` list sits where
+EIP-8272 appends `recent_root_references` last, and EIP-8141's `fees` list sits where
 its three flat fee fields used to be.
   signature = rlp([scheme, signer, msg, signature_bytes])  # scheme: 0=ARBITRARY, 1=SECP256K1, 2=P256
   sig_hash  = keccak256(0x06 || rlp(envelope with empty-msg signatures' bytes elided))

@@ -76,7 +76,7 @@ fn frame_tx(frames: Vec<Frame>) -> FrameTransaction {
 }
 
 /// A state budget covering one `RECENT_ROOT_CODE` entry write (a new storage slot in
-/// the predeploy, ~126k of EIP-8037 state gas) with room to spare. EIP-8141 v2 frames
+/// the predeploy, ~126k of EIP-8037 state gas) with room to spare. EIP-8141 frames
 /// declare `limits.state` and a charge past it halts the frame, so a write frame that
 /// declared nothing would revert; read-only frames spend none of it and it is refunded.
 const STATE_BUDGET: u64 = 1_000_000;
@@ -315,7 +315,7 @@ fn a_frame_write_is_recorded_in_the_block_access_list() {
     );
 }
 
-/// EIP-8141 v2: "since the signature validation does not happen in EVM execution, the
+/// EIP-8141: "since the signature validation does not happen in EVM execution, the
 /// related precompiles `ecrecover` and `P256VERIFY` must not be added to the block-level
 /// access list."
 ///

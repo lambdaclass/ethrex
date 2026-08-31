@@ -2187,7 +2187,7 @@ pub struct FrameTransaction {
 }
 
 /// Intrinsic gas cost for frame transactions (EIP-8141)
-/// EIP-8141 v2 prices the intrinsic at 12000, down from v1's 15000. It is EIP-2780's
+/// EIP-8141 prices the intrinsic at 12000, down from the earlier 15000. It is EIP-2780's
 /// `TX_BASE_COST`, and where a standard transaction spends that on one ECDSA recovery,
 /// a frame transaction prices recovery per `tx.signatures` entry instead, so the
 /// component covers payer settlement -- the escrow and refund writes -- which standard
@@ -2195,7 +2195,7 @@ pub struct FrameTransaction {
 pub const FRAME_TX_INTRINSIC_COST: u64 = 12000;
 /// Per-frame cost (EIP-8141): CALL context overhead (100) + G_log (375)
 pub const FRAME_TX_PER_FRAME_COST: u64 = 475;
-/// EIP-8141 v2 `TX_VALUE_COST`: charged once per value-carrying frame, covering the
+/// EIP-8141 `TX_VALUE_COST`: charged once per value-carrying frame, covering the
 /// recipient balance write and the EIP-7708 transfer log, exactly as EIP-2780 prices a
 /// top-level transfer. Static, because `value` and `target` are transaction fields.
 ///
@@ -2215,7 +2215,7 @@ pub const FRAME_TX_MAX_RECENT_ROOT_REFERENCES: usize = 16;
 // EIP-8141 publishes these in its Constants table; assert the constants reproduce them
 // exactly, so a repricing or a re-spelling upstream is a compile error here rather than a
 // silent consensus change. Same guard the EIP-8272 and EIP-8312 constants carry in
-// `crates/vm/levm/src/gas_cost.rs`, and the reason the v1 -> v2 intrinsic drop from 15000
+// `crates/vm/levm/src/gas_cost.rs`, and the reason the intrinsic drop from 15000
 // to 12000 was invisible to 1372 tests: the suite derives its expected intrinsic from this
 // constant, so it can check the formula's composition but never the published figure.
 const _: () = assert!(FRAME_TX_INTRINSIC_COST == 12_000);
@@ -2518,7 +2518,7 @@ impl FrameTransaction {
             .saturating_add(self.value_transfer_cost())
     }
 
-    /// EIP-8141 v2 `value_transfer_cost`: `TX_VALUE_COST` per frame carrying value.
+    /// EIP-8141 `value_transfer_cost`: `TX_VALUE_COST` per frame carrying value.
     pub fn value_transfer_cost(&self) -> u64 {
         self.frames
             .iter()
@@ -2829,7 +2829,7 @@ impl FrameTransaction {
                         "Frame {i}: expiry verifier frame data must be {FRAME_TX_EXPIRY_DATA_LENGTH} bytes"
                     ));
                 }
-                // EIP-8141 v2 pins the whole shape of this frame, not just its flags and
+                // EIP-8141 pins the whole shape of this frame, not just its flags and
                 // data length. Clients are allowed to evaluate the expiry frame directly
                 // instead of running the predeploy, so every field it carries has to be
                 // fixed or the two evaluation paths could disagree.
@@ -2982,7 +2982,7 @@ impl FrameTransaction {
                     Some(_) => {}
                 }
             }
-            // EIP-8141 v2: a frame belonging to an atomic batch approves no scope. A
+            // EIP-8141: a frame belonging to an atomic batch approves no scope. A
             // batch unrolls as a unit, so an approval granted inside one could be relied
             // on by code the unroll then reverses. Membership is either end of the pair:
             // the frame carrying the flag, or the frame after it. Checked after the

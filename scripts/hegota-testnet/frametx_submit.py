@@ -13,7 +13,7 @@ import sys, json, time, urllib.request
 from eth_keys import keys
 from frametx import Frame, FrameSig, FrameTx, addr20
 
-# EIP-8141 v2 state budgets. Each frame declares `limits = [execution, state]`, the two
+# EIP-8141 state budgets. Each frame declares `limits = [execution, state]`, the two
 # never mix, and a state charge past `limits.state` halts the frame. One charge reaches a
 # plain transfer: funding an address that does not exist yet costs
 # STATE_BYTES_PER_NEW_ACCOUNT * CPSB = 120 * 1530, and the frame pays it from its own

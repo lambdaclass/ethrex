@@ -1266,7 +1266,7 @@ fn frame_tx_with_expiry(deadline: u64) -> FrameTransaction {
                 flags: 0x00,
                 target: Some(frame_tx_expiry_verifier()),
                 // Enough to reserve the EIP-7623 floor of the 8-byte deadline, and to
-                // cover the EIP-8141 v2 frame-entry access charge on the verifier
+                // cover the EIP-8141 frame-entry access charge on the verifier
                 // address — the expiry frame is priced by normal EVM rules even where a
                 // client evaluates it directly, so protocol evaluation stays an
                 // optimization rather than a discount.
@@ -1279,7 +1279,7 @@ fn frame_tx_with_expiry(deadline: u64) -> FrameTransaction {
                 mode: FrameMode::Verify as u8,
                 flags: APPROVE_EXECUTION_AND_PAYMENT,
                 target: Some(sender),
-                // Covers the v2 frame-entry access charge on the sender.
+                // Covers the frame-entry access charge on the sender.
                 gas_limit: 5_000,
                 state_limit: 0,
                 value: U256::zero(),
@@ -4828,7 +4828,7 @@ async fn admission_denies_keyed_concurrency_when_the_prefix_reads_the_legacy_non
     // Sender code: PUSH1 0x0D, TXPARAM, POP, then APPROVE(3), STOP. Reading the
     // legacy account nonce makes the prefix depend on it, so the sender falls
     // back to one pending frame transaction. The id is 0x0D rather than 0x0C
-    // because EIP-8141 v2 claims 0x0C for `state_gas_left`, and EIP-8250 shifted
+    // because EIP-8141 claims 0x0C for `state_gas_left`, and EIP-8250 shifted
     // its three indices up by one in response.
     let code = Bytes::from(vec![
         0x60, 0x0D, 0xB0, 0x50, 0x60, 0x03, 0x60, 0x00, 0x60, 0x00, 0xAA, 0x00,
