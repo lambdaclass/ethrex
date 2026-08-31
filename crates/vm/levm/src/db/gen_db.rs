@@ -19,7 +19,7 @@ use crate::account::LevmAccount;
 use crate::call_frame::CallFrameBackup;
 use crate::errors::InternalError;
 use crate::errors::VMError;
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 use crate::hashers::SlotMap;
 use crate::utils::account_to_levm_account;
 use crate::utils::restore_cache_state;
