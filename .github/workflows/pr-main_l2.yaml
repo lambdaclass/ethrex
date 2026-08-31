@@ -976,8 +976,13 @@ jobs:
     # skipped one. GitHub counts a skipped check run as satisfying a required
     # status check, so a gate that skips is a gate that always passes: inside the
     # merge queue, where none of these suites run, that let a pull request whose
-    # suites were red merge on a vacuous green.
-    if: ${{ always() && (needs.detect-changes.result != 'success' || needs.detect-changes.outputs.run_tests == 'true') }}
+    # suites were red merge on a vacuous green. In the queue it therefore runs
+    # unconditionally, because `run_tests` there tracks only Rust changes and a
+    # pull request touching just workflows, scripts or fixtures would keep
+    # skipping the gate. `!cancelled()` rather than `always()` so a
+    # concurrency-cancelled run does not stamp a red required check on a
+    # superseded commit.
+    if: ${{ !cancelled() && (github.event_name == 'merge_group' || needs.detect-changes.result != 'success' || needs.detect-changes.outputs.run_tests == 'true') }}
     permissions:
       contents: read
       actions: read
