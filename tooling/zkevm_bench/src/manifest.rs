@@ -17,7 +17,14 @@ pub struct WorkloadSpec {
     pub source: String,
     #[serde(default)]
     pub gas: Option<u64>,
-    /// Run-tier ceiling ("quick"|"medium"); `None` is treated as "medium".
+    /// For `micro` workloads: substring of the pytest id to measure. EEST
+    /// fixture files hold up to 18 parametrisations, so leaving the choice to
+    /// map ordering means an upstream rename can silently change what a
+    /// workload measures while its name — the only thing `compare` matches
+    /// on — stays put.
+    #[serde(default)]
+    pub case: Option<String>,
+    /// Run-tier ceiling ("quick"|"medium"|"slow"); `None` is treated as "medium".
     /// Kept as a raw string here (rather than `Option<Tier>`) so
     /// `load_manifest` can validate it itself and produce an error that
     /// names both the offending workload and the bad value; see
@@ -38,17 +45,19 @@ pub struct Manifest {
 pub enum Tier {
     Quick,
     Medium,
+    Slow,
 }
 
 impl Tier {
     /// Parses a manifest `tier` string. Returns `None` for anything other
-    /// than `"quick"`/`"medium"` — callers turn that into a hard manifest
-    /// load error rather than silently falling back to a default, so a
+    /// than `"quick"`/`"medium"`/`"slow"` — callers turn that into a hard
+    /// manifest load error rather than silently falling back to a default, so a
     /// typo (e.g. `"quik"`) can't be silently dropped from quick/medium.
     fn parse(s: &str) -> Option<Self> {
         match s {
             "quick" => Some(Self::Quick),
             "medium" => Some(Self::Medium),
+            "slow" => Some(Self::Slow),
             _ => None,
         }
     }
@@ -62,7 +71,7 @@ pub fn load_manifest(path: &str) -> eyre::Result<Manifest> {
             && Tier::parse(tier).is_none()
         {
             eyre::bail!(
-                "workload {:?} has unknown tier {:?} (expected \"quick\" or \"medium\")",
+                "workload {:?} has unknown tier {:?} (expected \"quick\", \"medium\" or \"slow\")",
                 w.name,
                 tier
             );

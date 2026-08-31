@@ -415,8 +415,10 @@ const PUBLIC_KEY_BYTES: usize = 65;
 /// does **not** identify the encoding. Three dialects have shipped under it:
 /// `tests-zkevm@v0.6.2`, then #3248 + #3278, then #3356 (which moved `state`,
 /// `codes` and `public_keys` to `ProgressiveList`). ethrex speaks the last one,
-/// matching `tests-zkevm@v0.8.0`. A bundle from an older dialect will not be
-/// caught by this prefix — it fails later, in decode or on a mismatched root.
+/// matching `tests-zkevm@v0.8.0` and unchanged in `v0.8.2` (upstream #3372 only
+/// renamed the Python classes; SSZ encoding is positional, so the wire is
+/// identical). A bundle from an older dialect will not be caught by this
+/// prefix — it fails later, in decode or on a mismatched root.
 pub const STATELESS_INPUT_SCHEMA_ID: u16 = 0x1501;
 
 /// Byte length of the big-endian [`STATELESS_INPUT_SCHEMA_ID`] prefix.

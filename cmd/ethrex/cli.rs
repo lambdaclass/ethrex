@@ -76,7 +76,7 @@ pub struct Options {
         long = "network",
         value_name = "GENESIS_FILE_PATH",
         help = "Receives a `Genesis` struct in json format. You can look at some example genesis files at `fixtures/genesis/*`.",
-        long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include sepolia, hoodi and mainnet. If not specified, defaults to mainnet.",
+        long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include sepolia, hoodi, plataberget and mainnet. If not specified, defaults to mainnet.",
         help_heading = "Node options",
         env = "ETHREX_NETWORK",
         value_parser = clap::value_parser!(Network),
@@ -105,25 +105,15 @@ pub struct Options {
     #[arg(
         long = "rocksdb.block-cache-size",
         value_name = "BYTES",
-        default_value_t = ethrex_storage::DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
-        help = "RocksDB shared block cache size in bytes (default 12 GiB). \
-                Bounds RocksDB resident memory; lower only on memory-constrained hosts.",
-        long_help = "RocksDB shared block cache size in bytes. With cache_index_and_filter_blocks \
-                     enabled it holds data blocks plus the per-SST index and bloom-filter blocks, \
-                     so it is the effective ceiling on RocksDB's resident memory.\n\
-                     \n\
-                     Default 12 GiB keeps the filter/index working set resident plus hot EVM state. \
-                     A sweep on a synced mainnet node (32 GiB cap) found 8-16 GiB all keep up with \
-                     head-following (filters resident, disk near-idle, no slow blocks); larger gives \
-                     no gain because the OS page cache backstops the uncompressed state CFs, and \
-                     ~8 GiB is the floor where the filter set starts to thrash.\n\
-                     \n\
-                     Lower only on memory-constrained hosts, accepting reduced throughput. \
-                     ETHREX_ROCKSDB_BLOCK_CACHE_SIZE sets the same value.",
+        help = "RocksDB shared block cache size in bytes, the effective ceiling on RocksDB's \
+                resident memory. Defaults to 40% of the memory available to the process \
+                (physical or cgroup limit, whichever is lower), clamped to 512 MiB..=12 GiB; \
+                where no limit can be detected (no readable /proc, e.g. outside Linux) it \
+                defaults to the 12 GiB ceiling.",
         help_heading = "Storage options",
-        env = "ETHREX_ROCKSDB_BLOCK_CACHE_SIZE",
+        env = "ETHREX_ROCKSDB_BLOCK_CACHE_SIZE"
     )]
-    pub rocksdb_block_cache_size: usize,
+    pub rocksdb_block_cache_size: Option<usize>,
     #[arg(long = "syncmode", default_value = "snap", value_name = "SYNC_MODE", value_parser = utils::parse_sync_mode, help = "The way in which the node will sync its state.", long_help = "Can be either \"full\" or \"snap\" with \"snap\" as default value.", help_heading = "P2P options", env = "ETHREX_SYNCMODE")]
     pub syncmode: SyncMode,
     #[arg(
@@ -489,7 +479,7 @@ pub struct Options {
         long = "p2p.lookup-interval",
         default_value_t = INITIAL_LOOKUP_INTERVAL_MS,
         value_name = "INITIAL_LOOKUP_INTERVAL",
-        help = "Initial Lookup Time Interval (ms) to trigger each Discovery lookup message and RLPx connection attempt.",
+        help = "Initial time interval (ms) between RLPx connection attempts. Widens towards 600ms as the target peer count is approached.",
         help_heading = "P2P options",
         env = "ETHREX_P2P_LOOKUP_INTERVAL"
     )]
@@ -530,6 +520,24 @@ pub struct Options {
         env = "ETHREX_PRECOMPUTE_WITNESSES"
     )]
     pub precompute_witnesses: bool,
+    #[arg(
+        long = "blob-sampling",
+        action = ArgAction::SetTrue,
+        default_value = "false",
+        help = "Enable EIP-8070 PeerDAS blob sampling (sampler/provider state machine). Disabled by default; when off the node always acts as provider (p=1.0).",
+        help_heading = "P2P options",
+        env = "ETHREX_BLOB_SAMPLING"
+    )]
+    pub blob_sampling: bool,
+    #[arg(
+        long = "blob-eager-provider",
+        action = ArgAction::SetTrue,
+        default_value = "false",
+        help = "EIP-8070: always act as provider (p=1.0) for every blob tx, bypassing the pseudo-random role decision. Implies --blob-sampling. Not needed for validators: eager mode latches on permanently the first time the CL requests a payload build.",
+        help_heading = "P2P options",
+        env = "ETHREX_BLOB_EAGER_PROVIDER"
+    )]
+    pub blob_eager_provider: bool,
     #[arg(
         long = "max-reorg-depth",
         value_name = "MAX_REORG_DEPTH",
@@ -609,7 +617,7 @@ impl Default for Options {
             network: Default::default(),
             bootnodes: Default::default(),
             datadir: Default::default(),
-            rocksdb_block_cache_size: ethrex_storage::DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
+            rocksdb_block_cache_size: None,
             syncmode: Default::default(),
             history_chain: Default::default(),
             history_transactions: Default::default(),
@@ -627,7 +635,7 @@ impl Default for Options {
             mempool_max_queued_txs_per_account: DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT,
             tx_broadcasting_time_interval: Default::default(),
             target_peers: Default::default(),
-            lookup_interval: Default::default(),
+            lookup_interval: INITIAL_LOOKUP_INTERVAL_MS,
             extra_data: get_minimal_client_version(),
             gas_limit: DEFAULT_BUILDER_GAS_CEIL,
             max_blobs_per_block: None,
@@ -638,6 +646,8 @@ impl Default for Options {
             no_bal_parallel_exec: false,
             no_bal_prefetch: false,
             no_bal_parallel_trie: false,
+            blob_sampling: false,
+            blob_eager_provider: false,
             max_reorg_depth: None,
         }
     }
