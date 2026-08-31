@@ -208,6 +208,7 @@ pub fn create_payload(
         withdrawals: chain_config
             .is_shanghai_activated(args.timestamp)
             .then(|| args.withdrawals.clone().unwrap_or_default()),
+        ..Default::default()
     };
 
     // Delay applying withdrawals until the payload is requested and built
