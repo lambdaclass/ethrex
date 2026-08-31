@@ -2990,12 +2990,29 @@ impl Blockchain {
     ///   the failed block hash and the last successfully-imported block hash.
     ///
     /// `bals` holds the per-block Block Access Lists fetched during sync, aligned by index with
-    /// `blocks`. Pass an empty slice when no BALs are available (e.g. block import from RLP); the
+    /// `blocks`. Pass an empty vec when no BALs are available (e.g. block import from RLP); the
     /// pipeline then rebuilds each BAL. Only a BAL matching its block's header commitment is used.
+    ///
+    /// The per-block pipeline is CPU/DB-bound, so the loop runs on Tokio's blocking pool and
+    /// does not hold an async worker for the duration of each block.
     pub async fn add_blocks_in_batch(
+        self: Arc<Self>,
+        blocks: Vec<Block>,
+        bals: Vec<Option<BlockAccessList>>,
+        cancellation_token: CancellationToken,
+    ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
+        tokio::task::spawn_blocking(move || {
+            self.add_blocks_in_batch_sync(blocks, bals, cancellation_token)
+        })
+        .await
+        .map_err(|e| (ChainError::Custom(e.to_string()), None))?
+    }
+
+    /// Blocking loop for [`Self::add_blocks_in_batch`].
+    fn add_blocks_in_batch_sync(
         &self,
         blocks: Vec<Block>,
-        bals: &[Option<BlockAccessList>],
+        bals: Vec<Option<BlockAccessList>>,
         cancellation_token: CancellationToken,
     ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
         debug_assert!(
@@ -3058,7 +3075,6 @@ impl Blockchain {
             transactions_count += block_tx_count;
 
             log_batch_progress(blocks_len as u32, i as u32);
-            tokio::task::yield_now().await;
         }
 
         let elapsed_seconds = interval.elapsed().as_secs_f64();
