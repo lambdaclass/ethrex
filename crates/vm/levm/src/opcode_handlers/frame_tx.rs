@@ -550,6 +550,30 @@ impl OpcodeHandler for OpFrameParamHandler {
                 // value -- EIP-8141 FRAMEPARAM table
                 frame.value
             }
+            0x09 => {
+                // limits.state -- v2's second declared budget. The counterpart of 0x01,
+                // and the one a sponsor checks before agreeing to pay for a frame whose
+                // state growth it cannot otherwise bound.
+                U256::from(frame.state_limit)
+            }
+            0x0A | 0x0B => {
+                // gas_used.execution / gas_used.state of a COMPLETED frame. Same rule as
+                // `status` (0x05): a frame's usage is only defined once it has exited, so
+                // reading the current or a future frame halts rather than reporting a
+                // figure that is still moving.
+                if idx >= ctx.current_frame_index {
+                    return Err(ExceptionalHalt::InvalidOpcode.into());
+                }
+                let result = ctx
+                    .frame_results
+                    .get(idx)
+                    .ok_or(ExceptionalHalt::InvalidOpcode)?;
+                if param_id == 0x0A {
+                    U256::from(result.gas_used)
+                } else {
+                    U256::from(result.state_gas_used)
+                }
+            }
             _ => return Err(ExceptionalHalt::InvalidOpcode.into()),
         };
 

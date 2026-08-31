@@ -528,6 +528,130 @@ fn storage_slot(db: &GeneralizedDatabase, addr: Address, key: ethrex_common::H25
         .unwrap_or_default()
 }
 
+/// EIP-8141 v2 adds three FRAMEPARAM indices for the second gas dimension: `0x09` is a
+/// frame's declared `limits.state`, and `0x0A`/`0x0B` are a completed frame's
+/// `gas_used.execution` and `gas_used.state`.
+///
+/// The two usage reads follow `status` (`0x05`): a frame's usage is only defined once it has
+/// exited, so reading the current or a future frame halts rather than reporting a figure
+/// that is still moving. Without them a sponsor can see what a frame *declared* but never
+/// what it *spent*, which is the pair the second dimension exists to expose.
+#[test]
+fn frameparam_reports_the_state_dimension() {
+    // Frame 1 creates a slot (drawing state gas); frame 2 reads frame 1's figures back:
+    //   slot 0 = FRAMEPARAM(frame 1, 0x09) -- its declared limits.state
+    //   slot 1 = FRAMEPARAM(frame 1, 0x0A) -- its execution gas used
+    //   slot 2 = FRAMEPARAM(frame 1, 0x0B) -- its state gas used
+    // FRAMEPARAM pops [frameIndex, param] with frameIndex on top.
+    let reader_code: &[u8] = &[
+        0x60, 0x09, 0x60, 0x01, 0xB3, 0x60, 0x00, 0x55, // slot 0
+        0x60, 0x0A, 0x60, 0x01, 0xB3, 0x60, 0x01, 0x55, // slot 1
+        0x60, 0x0B, 0x60, 0x01, 0xB3, 0x60, 0x02, 0x55, // slot 2
+        0x00,
+    ];
+    let writer = Address::from_low_u64_be(0x0DDD_1);
+    let reader = Address::from_low_u64_be(0x0DDD_2);
+    let accounts = [
+        (
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        ),
+        // PUSH1 1; PUSH1 0; SSTORE; STOP
+        (
+            writer,
+            U256::zero(),
+            0,
+            Bytes::from(vec![0x60, 0x01, 0x60, 0x00, 0x55, 0x00]),
+        ),
+        (reader, U256::zero(), 0, Bytes::from(reader_code.to_vec())),
+    ];
+    let writer_state_limit = 2 * SSTORE_SET_STATE_GAS;
+    let tx = frame_tx_with_frames(vec![
+        verify_frame(FUNDED_SENDER),
+        Frame {
+            mode: u8::from(FrameMode::Default),
+            flags: 0,
+            target: Some(writer),
+            gas_limit: 300_000,
+            state_limit: writer_state_limit,
+            value: U256::zero(),
+            data: Bytes::new(),
+        },
+        Frame {
+            mode: u8::from(FrameMode::Default),
+            flags: 0,
+            target: Some(reader),
+            gas_limit: 300_000,
+            state_limit: STATE_BUDGET,
+            value: U256::zero(),
+            data: Bytes::new(),
+        },
+    ]);
+    let (result, db) = run_frame_tx(&accounts, tx);
+    let report = result.expect("valid tx");
+    let fr = report.frame_results.expect("per-frame results");
+
+    assert_eq!(
+        storage_slot(&db, reader, ethrex_common::H256::zero()),
+        U256::from(writer_state_limit),
+        "0x09 must report the frame's declared limits.state"
+    );
+    assert_eq!(
+        storage_slot(&db, reader, H256::from_low_u64_be(1)),
+        U256::from(fr[1].gas_used),
+        "0x0A must report the completed frame's execution gas, matching its receipt"
+    );
+    assert_eq!(
+        storage_slot(&db, reader, H256::from_low_u64_be(2)),
+        U256::from(fr[1].state_gas_used),
+        "0x0B must report the completed frame's state gas, matching its receipt"
+    );
+    assert_eq!(
+        fr[1].state_gas_used, SSTORE_SET_STATE_GAS,
+        "the writing frame created one slot, so its receipt reports one slot's state gas"
+    );
+}
+
+/// The two usage reads must halt for the CURRENT frame, like `status` does: a frame cannot
+/// observe its own final gas figures while it is still spending them.
+#[test]
+fn frameparam_usage_reads_halt_for_the_current_frame() {
+    let reader = Address::from_low_u64_be(0x0DDD_3);
+    // PUSH1 0x0A; PUSH1 1; FRAMEPARAM  -- frame 1 reading ITSELF
+    let code: &[u8] = &[0x60, 0x0A, 0x60, 0x01, 0xB3, 0x00];
+    let accounts = [
+        (
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        ),
+        (reader, U256::zero(), 0, Bytes::from(code.to_vec())),
+    ];
+    let tx = frame_tx_with_frames(vec![
+        verify_frame(FUNDED_SENDER),
+        Frame {
+            mode: u8::from(FrameMode::Default),
+            flags: 0,
+            target: Some(reader),
+            gas_limit: 200_000,
+            state_limit: 0,
+            value: U256::zero(),
+            data: Bytes::new(),
+        },
+    ]);
+    let (result, _db) = run_frame_tx(&accounts, tx);
+    let report = result.expect("the tx stays valid; only the reading frame halts");
+    let fr = report.frame_results.expect("per-frame results");
+    assert_eq!(
+        fr[1].status,
+        ethrex_common::types::FRAME_RECEIPT_STATUS_FAILURE,
+        "a frame reading its own gas_used must halt, as it does for its own status"
+    );
+}
+
 #[test]
 fn frameparam_reads_frame_index_from_stack_top() {
     let wallet = Address::from_low_u64_be(0xE2);
