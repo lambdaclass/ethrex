@@ -385,29 +385,52 @@ impl CallFrameBackup {
         // Don't extend bal_checkpoint - it's specific to each call frame
     }
 
-    /// Absorb another backup, keeping the EARLIEST original value for each
-    /// account/slot (first-seen-wins). Mirrors `merge_call_frame_backup_with_parent`.
-    /// Does NOT touch `bal_checkpoint` (set once at the tx level).
+    /// Folds entries into `self` keeping the EARLIEST original for each account/slot.
     ///
-    /// Unlike `extend` (last-wins `HashMap::extend`), this preserves the value
-    /// that was already recorded, which is required when accumulating per-frame
-    /// backups into a tx-level rollback: the original to restore is the value
-    /// from before the FIRST frame that modified it.
-    pub fn absorb(&mut self, other: &CallFrameBackup) {
-        for (address, account) in other.original_accounts_info.iter() {
+    /// Unlike `extend` (last-wins `HashMap::extend`), this preserves the value already
+    /// recorded, which is required when accumulating per-frame backups into a tx-level
+    /// rollback: the original to restore is the one from before the FIRST frame that
+    /// modified it.
+    fn absorb_entries(
+        &mut self,
+        accounts: impl IntoIterator<Item = (Address, LevmAccount)>,
+        storage: impl IntoIterator<Item = (Address, FxHashMap<H256, U256>)>,
+    ) {
+        for (address, account) in accounts {
             self.original_accounts_info
-                .entry(*address)
-                .or_insert_with(|| account.clone());
+                .entry(address)
+                .or_insert(account);
         }
-        for (address, storage) in other.original_account_storage_slots.iter() {
+        for (address, slots) in storage {
             let slot = self
                 .original_account_storage_slots
-                .entry(*address)
+                .entry(address)
                 .or_default();
-            for (key, value) in storage.iter() {
-                slot.entry(*key).or_insert(*value);
+            for (key, value) in slots {
+                slot.entry(key).or_insert(value);
             }
         }
+    }
+
+    /// Drains `other` into `self`, first-seen-wins. `drain` (not `mem::take`) so
+    /// `other` keeps its capacity for the frames that go on accumulating into it.
+    /// Leaves `bal_checkpoint` and `inserted_code_hashes` untouched.
+    pub fn absorb_drain(&mut self, other: &mut CallFrameBackup) {
+        self.absorb_entries(
+            other.original_accounts_info.drain(),
+            other.original_account_storage_slots.drain(),
+        );
+    }
+
+    /// Consuming counterpart of [`absorb_drain`](Self::absorb_drain). Also folds
+    /// `inserted_code_hashes`, which the parent needs to un-cache code the child
+    /// deployed if it later reverts; `bal_checkpoint` stays per-frame.
+    pub fn absorb_owned(&mut self, other: CallFrameBackup) {
+        self.absorb_entries(
+            other.original_accounts_info,
+            other.original_account_storage_slots,
+        );
+        self.inserted_code_hashes.extend(other.inserted_code_hashes);
     }
 }
 
@@ -569,42 +592,15 @@ impl<'a> VM<'a> {
     //   - For every account that's present in the parent backup, do nothing (i.e. keep the one that's already there).
     //   - For every account that's NOT present in the parent backup but is on the child backup, add the child backup to it.
     //   - Do the same for every individual storage slot.
+    //
+    // Taken by value: every call site owns the child backup and drops it after.
     pub fn merge_call_frame_backup_with_parent(
         &mut self,
-        child_call_frame_backup: &CallFrameBackup,
+        child_call_frame_backup: CallFrameBackup,
     ) -> Result<(), VMError> {
-        let parent_backup_accounts = &mut self
-            .current_call_frame
-            .call_frame_backup
-            .original_accounts_info;
-        for (address, account) in child_call_frame_backup.original_accounts_info.iter() {
-            if parent_backup_accounts.get(address).is_none() {
-                parent_backup_accounts.insert(*address, account.clone());
-            }
-        }
-
-        let parent_backup_storage = &mut self
-            .current_call_frame
-            .call_frame_backup
-            .original_account_storage_slots;
-        for (address, storage) in child_call_frame_backup
-            .original_account_storage_slots
-            .iter()
-        {
-            let parent_storage = parent_backup_storage.entry(*address).or_default();
-            for (key, value) in storage {
-                if parent_storage.get(key).is_none() {
-                    parent_storage.insert(*key, *value);
-                }
-            }
-        }
-
-        // Propagate code-cache insertions so a revert of the parent also
-        // evicts codes deployed by the (committed) child frame.
         self.current_call_frame
             .call_frame_backup
-            .inserted_code_hashes
-            .extend(child_call_frame_backup.inserted_code_hashes.iter().copied());
+            .absorb_owned(child_call_frame_backup);
 
         Ok(())
     }
@@ -643,8 +639,8 @@ mod tests {
             .or_default()
             .insert(H256::zero(), U256::from(20));
 
-        acc.absorb(&first);
-        acc.absorb(&second);
+        acc.absorb_drain(&mut first);
+        acc.absorb_drain(&mut second);
 
         // First-seen-wins: the earliest original (10) is preserved.
         let value = acc
@@ -680,8 +676,8 @@ mod tests {
         let mut second = CallFrameBackup::default();
         second.original_accounts_info.insert(addr, second_acc);
 
-        acc.absorb(&first);
-        acc.absorb(&second);
+        acc.absorb_drain(&mut first);
+        acc.absorb_drain(&mut second);
 
         let nonce = acc.original_accounts_info.get(&addr).map(|a| a.info.nonce);
         assert_eq!(nonce, Some(1));
