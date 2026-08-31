@@ -15,7 +15,10 @@ use ethrex_blockchain::{
 };
 use ethrex_common::{
     Address, U256,
-    types::{BYTES_PER_BLOB, Block, blobs_bundle, bytes_from_blob, fee_config::FeeConfig},
+    types::{
+        BYTES_PER_BLOB, Block, blobs_bundle, bytes_from_blob, fee_config::FeeConfig,
+        normalize_legacy_withdrawals,
+    },
 };
 use ethrex_common::{types::BlobsBundle, utils::keccak};
 use ethrex_config::networks::Network;
@@ -440,10 +443,7 @@ impl Command {
                         // legacy omitted-withdrawals body shape, which block
                         // validation now rejects. The published history is
                         // immutable, so normalize on read.
-                        ethrex_common::types::normalize_legacy_withdrawals(
-                            &item.header,
-                            &mut item.body,
-                        );
+                        normalize_legacy_withdrawals(&item.header, &mut item.body);
                         blocks.push(item);
                         buf = rest;
                     }

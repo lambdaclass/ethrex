@@ -37,6 +37,13 @@ pub trait TrieDB: Send + Sync {
     /// visited node. Writes (`put*`) legitimately own their keys and still take
     /// `Nibbles`.
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, TrieError>;
+    /// Retrieves multiple values by key.
+    /// Returns results in the same order as the input keys.
+    /// Backends that support batched reads should override this for better
+    /// throughput. Default impl is equivalent to N independent `get` calls.
+    fn multi_get(&self, keys: &[Nibbles]) -> Vec<Result<Option<Vec<u8>>, TrieError>> {
+        keys.iter().map(|k| self.get(k.as_ref())).collect()
+    }
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError>;
     // TODO: replace putbatch with this function.
     fn put_batch_no_alloc(&self, key_values: &[(Nibbles, Node)]) -> Result<(), TrieError> {

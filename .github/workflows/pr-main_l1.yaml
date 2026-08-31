@@ -28,26 +28,23 @@ jobs:
       run_tests: ${{ steps.finish.outputs.run_tests }}
     steps:
       - uses: actions/checkout@v6
+      - uses: ./.github/actions/detect-changes
+        id: changes
       - uses: dorny/paths-filter@v4
         id: filter
         with:
           filters: |
             run_tests:
               - '!crates/l2/**'
-            non_docs:
-              - "!docs/**"
-            code_changed:
-              - "**/*.rs"
-              - "**/*.toml"
-              - "**/*.lock"
       - name: finish
         id: finish
         run: |
-          if [[ "${{ steps.filter.outputs.non_docs_count }}" == 0 ]]; then
+          if [[ "${{ steps.changes.outputs.inert_only }}" == "true" ]]; then
+            # Documentation and repository metadata only: no job here builds it.
             echo "run_tests=false" >> "$GITHUB_OUTPUT"
           elif [[ "${GITHUB_EVENT_NAME}" == "merge_group" ]]; then
               # In merge queue, only run lint if code files changed
-              echo "run_tests=${{ steps.filter.outputs.code_changed }}" >> "$GITHUB_OUTPUT"
+              echo "run_tests=${{ steps.changes.outputs.code_changed }}" >> "$GITHUB_OUTPUT"
           elif [[ "${GITHUB_EVENT_NAME}" != "pull_request" ]]; then
               echo "run_tests=true" >> "$GITHUB_OUTPUT"
           else
@@ -121,9 +118,13 @@ jobs:
           cache-pool: l1
           save-cache: 'true'
 
+      # `rocksdb` gates the test files that need the RocksDB backend's commit
+      # cadence. It has to be `ethrex-test`'s own feature: another crate turning
+      # on `ethrex-storage/rocksdb` does not satisfy that cfg, so without it here
+      # those files compile to nothing.
       - name: Run unit tests
         run: |
-          cargo test --workspace --exclude 'ethrex-l2*' --exclude ethrex-prover --exclude ethrex-guest-program
+          cargo test --workspace --features rocksdb --exclude 'ethrex-l2*' --exclude ethrex-prover --exclude ethrex-guest-program
 
       - name: Run Blockchain EF tests
         if: ${{ github.event_name != 'merge_group' }}
@@ -444,7 +445,7 @@ jobs:
       - name: Check if any job failed
         run: |
           if [ "${{ needs.test.result }}" != "success" ]; then
-            echo "Job Assertoor Tx Check failed"
+            echo "Job Test failed"
             exit 1
           fi
 
@@ -516,13 +517,10 @@ jobs:
       # Built with release-grade optimization: an unoptimized ethrex overflows
       # the 2 MiB tokio worker stack while building a payload, since every
       # `.await` in the block-building chain keeps its locals live in a future
-      # that no inlining collapses. The profile keys re-enable the checks that
-      # `release-fast` inherits as off from `release`, so reorg invariants
-      # guarded by `debug_assert!` still panic instead of being skipped.
+      # that no inlining collapses. `release-fast` carries debug-assertions and
+      # overflow checks, so reorg invariants guarded by `debug_assert!` still
+      # panic here instead of being skipped.
       - name: Compile ethrex binary
-        env:
-          CARGO_PROFILE_RELEASE_FAST_DEBUG_ASSERTIONS: "true"
-          CARGO_PROFILE_RELEASE_FAST_OVERFLOW_CHECKS: "true"
         run: cargo build --profile release-fast --bin ethrex
 
       - name: Run reorg tests

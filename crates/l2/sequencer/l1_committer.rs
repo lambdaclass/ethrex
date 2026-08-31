@@ -4,7 +4,7 @@ use crate::{
         errors::CommitterError,
         utils::{
             self, batch_checkpoint_name, fetch_blocks_with_respective_fee_configs,
-            get_git_commit_hash, system_now_ms,
+            get_git_commit_hash, read_trusted_block, system_now_ms,
         },
     },
 };
@@ -646,18 +646,12 @@ impl L1Committer {
         info!("Generating missing checkpoint for batch {}", batch.number);
 
         // Fetch the blocks in the batch along with their respective fee configs
-        let (mut blocks, fee_configs) = fetch_blocks_with_respective_fee_configs::<CommitterError>(
+        let (blocks, fee_configs) = fetch_blocks_with_respective_fee_configs::<CommitterError>(
             batch,
             &self.store,
             &self.rollup_store,
         )
         .await?;
-
-        // Stored blocks produced by older ethrex versions may carry the legacy
-        // omitted-withdrawals body shape, which block validation now rejects.
-        for block in blocks.iter_mut() {
-            normalize_legacy_withdrawals(&block.header, &mut block.body);
-        }
 
         // Re-execute the blocks in the batch to recreate the checkpoint
         for (i, block) in blocks.iter().enumerate() {
@@ -853,30 +847,17 @@ impl L1Committer {
             // the checkpoint for re-execution, this is during witness generation
             // in generate_and_store_batch_prover_input and for later in this
             // function.
-            let potential_batch_block = {
-                let Some(block_to_commit_body) = self
-                    .store
-                    .get_block_body(block_to_commit_number)
+            // Read through `read_trusted_block`, not directly from the store:
+            // the blocks encoded into the blob here have to stay byte-identical
+            // to the ones the prover input is built from, and that helper is the
+            // single place the legacy body shape is normalized.
+            let Some(potential_batch_block) =
+                read_trusted_block(&self.store, block_to_commit_number)
                     .await
                     .map_err(CommitterError::from)?
-                else {
-                    debug!("No new block to commit, skipping..");
-                    break;
-                };
-                let block_to_commit_header = self
-                    .store
-                    .get_block_header(block_to_commit_number)
-                    .map_err(CommitterError::from)?
-                    .ok_or(CommitterError::FailedToGetInformationFromStorage(
-                        "Failed to get_block_header() after get_block_body()".to_owned(),
-                    ))?;
-
-                let mut block = Block::new(block_to_commit_header, block_to_commit_body);
-                // Stored blocks produced by older ethrex versions may carry the
-                // legacy omitted-withdrawals body shape, which block validation
-                // (and thus the fallback re-execution below) now rejects.
-                normalize_legacy_withdrawals(&block.header, &mut block.body);
-                block
+            else {
+                debug!("No new block to commit, skipping..");
+                break;
             };
 
             let current_block_gas_used = potential_batch_block.header.gas_used;
