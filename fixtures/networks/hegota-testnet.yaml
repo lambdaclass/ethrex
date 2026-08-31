@@ -43,10 +43,22 @@ participants:
   #     against the receiving node's own budget when it propagates, so a node
   #     left at the default drops it and builds blocks without it.
   #
-  #   --http.api ethrex
-  #     Adds the `ethrex` namespace, which is where `ethrex_simulateFrameTransaction`
-  #     lives — the only way to dry-run a frame transaction's validation prefix.
-  #     Additive: the launcher's own `--http.api` still supplies eth/net/web3/txpool.
+  #   --http.api ethrex --http.api txpool --http.api debug
+  #     The launcher emits `--http.api=admin,eth,net,web3` and nothing else, so all
+  #     three of these are missing unless asked for. The flag is additive — each
+  #     occurrence adds a namespace — which is why they are separate entries.
+  #
+  #     `ethrex` carries `ethrex_simulateFrameTransaction`, the only way to dry-run a
+  #     frame transaction's validation prefix. `txpool` carries `txpool_status`, which
+  #     is how anything distinguishes "the builder has not got to it yet" from "the
+  #     node dropped it" — without it a dropped frame transaction is invisible. `debug`
+  #     carries `debug_getRawTransaction` and `debug_getRawBlockAccessList`, which
+  #     `engine_newPayloadV6` replay needs to rebuild a mined block as a payload, and
+  #     so is what EIP-7805 enforcement is checked with.
+  #
+  #     An earlier revision of this comment claimed the launcher already supplied
+  #     txpool. It does not, and the verification script fails on its first pool read
+  #     against a devnet built from this file.
   #
   # Both must be repeated per participant. Kurtosis has no global `el_extra_params`.
   - el_type: ethrex
@@ -56,6 +68,8 @@ participants:
     el_extra_params:
       - --mempool.max-verify-gas=500000
       - --http.api=ethrex
+      - --http.api=txpool
+      - --http.api=debug
     validator_count: 32
     supernode: true
   - el_type: ethrex
@@ -65,6 +79,8 @@ participants:
     el_extra_params:
       - --mempool.max-verify-gas=500000
       - --http.api=ethrex
+      - --http.api=txpool
+      - --http.api=debug
     validator_count: 32
   - el_type: ethrex
     el_image: ethrex:hegota-testnet
@@ -73,6 +89,8 @@ participants:
     el_extra_params:
       - --mempool.max-verify-gas=500000
       - --http.api=ethrex
+      - --http.api=txpool
+      - --http.api=debug
     validator_count: 32
 
 # The consensus client must speak the FOCIL engine surface from the fork
