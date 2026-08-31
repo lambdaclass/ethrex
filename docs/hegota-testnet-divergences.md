@@ -316,6 +316,40 @@ Its remaining value is the fixture harness: it runs the released frame-transacti
 frame fixtures, 14 908 blockchain fixtures) which this branch does not. Worth taking on its
 own, separately from the rule set.
 
+## 6.3 Open: frame transactions accepted by RPC and silently dropped
+
+Found while verifying EIP-8250 concurrency on a devnet. **Not an EIP-implementation defect —
+a mempool admission one — and it should be fixed before the live relaunch, because it loses
+user transactions without telling anyone.**
+
+Two shapes, one symptom. In both, `ethrex_simulateFrameTransaction` reports the transaction
+valid, `eth_sendRawTransaction` returns its hash with no error, and the transaction then
+never enters the pool: `eth_getTransactionByHash` reports it unknown within the same second,
+`txpool_status` stays empty, and the sender's balance is untouched, so it did not execute
+under a different hash. No log line marks the drop. The returned hash is the correct
+`keccak(raw)` — verified against `cast keccak` — so this is not a hash-computation mismatch.
+
+| Shape | Behaviour | Reproducer |
+| --- | --- | --- |
+| Prefix-only: a frame tx whose sole frame is its `VERIFY` prefix | **Always** dropped | `scripts/hegota-testnet/probe_prefix_only_tx.py` |
+| Contract sender, two frames (`VERIFY` + `SENDER`), disjoint nonce keys | **Intermittently** dropped — roughly one run in three | `scripts/hegota-testnet/probe_contract_sender_tx.py` |
+
+The second one is the one that matters, because it is the shape EIP-8250 concurrency depends
+on and it usually works: both transactions are admitted and mine in the *same block*, which
+is the feature's whole claim. It was verified working standalone (block 74 of a fresh chain)
+and in a full verifier run that passed 35/35, then failed in the very next run on that same
+chain. So the feature is implemented correctly and the admission path drops it at random.
+
+Ruled out along the way: chain age (a chain seconds old reproduces it), base fee (flat 7 wei
+throughout), the mempool size cap (10 000, pool empty), hash mismatch (hashes match), and
+EOA senders (an EOA frame transaction submitted in the same run mined normally).
+
+Not yet root-caused. The locked section of `Mempool::add_transaction_inner` removes whatever
+holds the incoming transaction's slot before inserting — by key set for a keyed frame tx, by
+`(sender, nonce)` otherwise — and that removal is the first place to look, along with the
+`contains_tx` pre-filter in `Blockchain::add_transaction_to_pool_inner`, which returns
+`Ok(hash)` for a transaction it does not add.
+
 ## 7. The glamsterdam-devnet-8 base reprices Amsterdam
 
 The testnet is now built on `origin/glamsterdam-devnet-8`, whose commit `fe6b15abb`
