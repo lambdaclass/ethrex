@@ -120,9 +120,7 @@ impl NewPooledTransactionHashes {
         let mut transaction_hashes = Vec::with_capacity(transactions_len);
         for transaction in transactions {
             let transaction_type = transaction.tx_type();
-            transaction_types.push(transaction_type as u8);
             let transaction_hash = transaction.hash(&NativeCrypto);
-            transaction_hashes.push(transaction_hash);
             // size is defined as the len of the canonical encoding of the transaction
             // as it would appear in a PooledTransactions response.
             // https://eips.ethereum.org/EIPS/eip-2718
@@ -131,10 +129,20 @@ impl NewPooledTransactionHashes {
                 // which includes the blobs bundle.
                 // https://eips.ethereum.org/EIPS/eip-4844#networking
                 Transaction::EIP4844Transaction(eip4844_tx) => {
-                    let tx_blobs_bundle = blockchain
-                        .mempool
-                        .get_blobs_bundle(transaction_hash)?
-                        .unwrap_or_default();
+                    // If the bundle is gone (the tx was evicted or pulled into a payload
+                    // between the broadcaster's snapshot and now) we cannot serve this tx
+                    // either: `Blockchain::get_p2p_transaction_by_hash` errors out on a
+                    // blob tx with no bundle, so `GetPooledTransactions` skips it. Skip it
+                    // here too. Substituting an empty bundle would announce ~162 bytes for
+                    // a ~137 KB transaction, and peers that check the announced size
+                    // against the delivered one (geth's tx fetcher, and our own
+                    // `validate_requested` below, both with an 8-byte tolerance) will
+                    // disconnect us for the mismatch.
+                    let Some(tx_blobs_bundle) =
+                        blockchain.mempool.get_blobs_bundle(transaction_hash)?
+                    else {
+                        continue;
+                    };
                     let p2p_tx =
                         P2PTransaction::EIP4844TransactionWithBlobs(WrappedEIP4844Transaction {
                             tx: eip4844_tx,
@@ -146,6 +154,8 @@ impl NewPooledTransactionHashes {
                 }
                 _ => transaction.encode_canonical_len(),
             };
+            transaction_types.push(transaction_type as u8);
+            transaction_hashes.push(transaction_hash);
             transaction_sizes.push(transaction_size);
         }
         Ok(Self {
