@@ -98,6 +98,21 @@ pub fn is_resume_point(store: &Store, header: &BlockHeader) -> Result<bool, Sync
     Ok(store.is_canonical_sync(header.hash())? && store.has_state_root(header.state_root)?)
 }
 
+/// Whether the forkchoice head is already executed locally: its header is known and its
+/// post-state is on disk. When true there is nothing left for a full-sync cycle to do —
+/// the block arrived through `engine_newPayload`, typically racing the FCU that triggered
+/// the cycle. Post-ePBS consensus clients move their forkchoice head to a payload hash
+/// learned from a bid before the payload itself is delivered to the EL, so this race is a
+/// steady-state occurrence, not a corner case. Canonicality is deliberately not required:
+/// right after `engine_newPayload` executes the block, the follow-up FCU that would
+/// canonicalize it has not been applied yet.
+pub fn sync_head_executed(store: &Store, sync_head: H256) -> Result<bool, SyncError> {
+    match store.get_block_header_by_hash(sync_head)? {
+        Some(header) => Ok(store.has_state_root(header.state_root)?),
+        None => Ok(false),
+    }
+}
+
 /// Index of the first resume point in a single newest->oldest header batch, or `None` if the
 /// batch contains none. The headers before that index are the missing blocks to execute; the
 /// header at that index is our executed/state head. State is retained only for a recent window
@@ -151,7 +166,7 @@ pub async fn sync_cycle_full(
     store: Store,
     diagnostics: &Arc<RwLock<SyncDiagnostics>>,
 ) -> Result<(), SyncError> {
-    let local_head = store.get_latest_block_number().await?;
+    let local_head = store.get_latest_block_number()?;
     let eth_capable_peers = peers.eth_capable_peer_count().await;
     info!(
         local_head,
@@ -159,6 +174,20 @@ pub async fn sync_cycle_full(
         ?sync_head,
         "Starting full sync cycle"
     );
+
+    // The forkchoice head this cycle was started for. `sync_head` itself is rebound as the
+    // cycle walks back through pending blocks and header batches, so keep the original for
+    // the executed-locally checks below.
+    let fcu_head_hash = sync_head;
+    // The head may have been executed between the FCU that triggered this cycle and now
+    // (`engine_newPayload` racing the FCU). If so the cycle has nothing to do.
+    if sync_head_executed(&store, fcu_head_hash)? {
+        info!(
+            ?fcu_head_hash,
+            "Sync head already executed locally; nothing to sync"
+        );
+        return Ok(());
+    }
 
     // Check if the sync_head is a pending block, if so, gather all pending blocks belonging to its chain
     let mut pending_blocks = vec![];
@@ -230,6 +259,18 @@ pub async fn sync_cycle_full(
 
     // Request and store all block headers from the advertised sync head
     loop {
+        // Re-check between peer round-trips: when the FCU raced its payload's
+        // `engine_newPayload`, peers may not have the block either (the payload has not
+        // propagated anywhere yet), and the head routinely arrives through newPayload
+        // while this loop retries. Stop instead of re-downloading and re-executing what
+        // the engine already applied.
+        if sync_head_executed(&store, fcu_head_hash)? {
+            info!(
+                ?fcu_head_hash,
+                "Sync head executed via engine_newPayload during header fetch; ending sync cycle"
+            );
+            return Ok(());
+        }
         let outcome = peers
             .request_block_headers_from_hash(sync_head, BlockRequestOrder::NewToOld)
             .await?;
@@ -280,7 +321,7 @@ pub async fn sync_cycle_full(
             sync_target_logged = true;
             let (target, target_ts) =
                 fcu_head.unwrap_or((first_header.number, first_header.timestamp));
-            let local_head = store.get_latest_block_number().await?;
+            let local_head = store.get_latest_block_number()?;
             let behind = target.saturating_sub(local_head);
             if behind > FOLLOW_DISTANCE {
                 started_behind = true;
@@ -359,24 +400,28 @@ pub async fn sync_cycle_full(
                 None => false,
             };
             if !resume_parent_has_state {
-                let local_head = store.get_latest_block_number().await?;
+                let local_head = store.get_latest_block_number()?;
                 warn!(
                     resume_parent_number,
                     local_head,
                     "Full sync cannot resume: post-state for block {resume_parent_number} is absent \
                      (pruned from the layered store, or never executed). The consensus sync head does \
-                     not reconcile to a block whose state we retain; pausing until a reconcilable \
-                     forkchoice head arrives. If this persists with no state above genesis, the datadir \
-                     needs a fresh resync (ethrex removedb)."
+                     not reconcile to a block whose state we retain, so there is nothing to execute \
+                     on top of; handing over to snap sync to rebuild state from a recent pivot."
                 );
                 store.clear_fullsync_headers().await?;
-                return Ok(());
+                // Returning Ok here would pause the cycle and wait for a forkchoice head that
+                // reconciles to state we retain. When the walk has already bottomed out at
+                // genesis no such head exists — the state is gone, not merely unreferenced —
+                // so the wait never ends and the node stops following the chain entirely.
+                // Report it so the caller can escalate to snap sync.
+                return Err(SyncError::StateUnrecoverable);
             }
             // If we are resuming at or below the canonical head, the canonical chain extends
             // past the executed-state head: an FCU canonicalized blocks before their state
             // was computed. Surface it explicitly; these canonical-but-stateless blocks are
             // re-executed below, and the warning flags the underlying gap for investigation.
-            let canonical_head = store.get_latest_block_number().await?;
+            let canonical_head = store.get_latest_block_number()?;
             // `start_block_number - 1` is the highest block whose post-state is on
             // disk (the executed/state head). Record it so `eth_syncing` reports real
             // progress instead of the canonical pointer, which an FCU may have advanced
@@ -403,6 +448,16 @@ pub async fn sync_cycle_full(
         }
         store.add_fullsync_batch(block_headers).await?;
         single_batch = false;
+    }
+    // Last chance before paying for body downloads and execution: the head having
+    // post-state means the whole chain below it is executed too, so the work this
+    // cycle was about to do already happened through the engine.
+    if sync_head_executed(&store, fcu_head_hash)? {
+        info!(
+            ?fcu_head_hash,
+            "Sync head executed via engine_newPayload during header fetch; ending sync cycle"
+        );
+        return Ok(());
     }
     end_block_number += 1;
     start_block_number = start_block_number.max(1);
@@ -564,7 +619,7 @@ pub async fn sync_cycle_full(
                 None => false,
             };
         if !parent_has_state {
-            let local_head = store.get_latest_block_number().await?;
+            let local_head = store.get_latest_block_number()?;
             warn!(
                 local_head,
                 "Skipping {} pending block(s): the downloaded chain they build on was not fully executed (parent state absent); will retry on the next forkchoice update",
@@ -594,7 +649,7 @@ pub async fn sync_cycle_full(
     // from a hang. Only claim we caught up if we actually executed through to the target;
     // if body downloads gave up early we say so instead of falsely reporting success.
     if started_behind {
-        let local_head = store.get_latest_block_number().await?;
+        let local_head = store.get_latest_block_number()?;
         if reached_target {
             info!(
                 "Reached consensus-provided head at block {local_head}. Waiting for the next forkchoice update from the consensus client."
