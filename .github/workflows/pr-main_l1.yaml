@@ -325,7 +325,7 @@ jobs:
           # The engine suites build fixtures on a fixed one-second deadline in
           # hive's own in-process geth, which a loaded runner misses. Run them
           # one test at a time so that deadline is not contended.
-          - parallelism: 1
+          - parallelism: 2
             name: "Paris Engine tests"
             simulation: ethereum/engine
             limit: "engine-api"
