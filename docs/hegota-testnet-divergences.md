@@ -316,7 +316,7 @@ Its remaining value is the fixture harness: it runs the released frame-transacti
 frame fixtures, 14 908 blockchain fixtures) which this branch does not. Worth taking on its
 own, separately from the rule set.
 
-## 6.3 OPEN: frame transactions accepted by RPC and silently dropped
+## 6.3 Frame transactions accepted by RPC and silently dropped — two causes, both fixed
 
 Found while verifying EIP-8250 concurrency on a devnet. **Not an EIP-implementation defect —
 a mempool admission one — and it should be fixed before the live relaunch, because it loses
@@ -363,12 +363,26 @@ Both error branches now keep the transaction and log why, and eviction logs its 
 genuinely invalid transaction is still caught by the `passed` flag, by the next block's pass,
 or at block building.
 
-**That fix is real but it is NOT the whole cause.** Measured on a build carrying it: three
-consecutive verifier runs gave 35/35, 33/35, 30/35 — the concurrency check still fails about
-two runs in three. One observed drop did change shape from "2 of 2 gone" to "1 of 2 gone",
-which is the sharpest clue available: the survivor disappears around the time its sibling is
-*included*, so the remaining path is something that runs on block application and removes
-more than the block's own transactions.
+That fix is real but it was not the whole cause: on a build carrying it, three consecutive
+runs gave 35/35, 33/35, 30/35.
+
+**Second and principal cause: the payload builder evicted a frame transaction it merely had
+no room for.** Found by instrumenting `remove_transaction_with_lock` — the single funnel every
+removal passes through — with a backtrace, and running the reproducer until it fired. The
+caller was `fill_transactions`.
+
+On an apply failure the builder evicts a frame transaction unless the error is one of three
+named transient cases, while a regular transaction is evicted only when *deterministically*
+invalid. The comment justified the asymmetry with "frame-tx failures are deterministic
+(signatures bind the whole tx)", which conflates the transaction being fixed with its
+inclusion being fixed. A signature fixes the bytes; it does not reserve space in a block.
+
+EIP-8037 accounts two gas dimensions, and a frame transaction declaring `limits.state` is
+exactly the kind that fills the state one. When it did, the builder got "block gas limit
+exceeded" — a fact about the block — and deleted the transaction instead of retrying it in the
+next block, which starts both counters at zero. That is the whole symptom, including why it
+was intermittent (it depends what else is in the block) and why it hit 1 of 2 as often as
+2 of 2. `is_block_capacity` now names the class and joins the transient exemptions.
 
 Ruled out by reading the code and by in-process tests (`an_admitted_frame_tx_is_actually_in_the_pool`,
 `both_concurrent_keyed_txs_are_actually_in_the_pool`, `a_pending_frame_tx_survives_an_unrelated_block`,
@@ -383,9 +397,10 @@ all passing):
 | `contains_tx` pre-filter | the hash is fresh; the returned hash is `keccak(raw)`, checked against `cast` |
 | chain age, base fee, EOA senders | a chain seconds old reproduces it; base fee flat at 7 wei; an EOA frame tx in the same run mines normally |
 
-Next step for whoever picks this up: instrument `Mempool::remove_transaction_with_lock` with a
-backtrace or a caller tag and run `probe_contract_sender_tx.py` until it fires. Every removal
-path is funnelled through that one function, so the caller identifies the bug in one run.
+The technique is worth keeping: every removal funnels through
+`Mempool::remove_transaction_with_lock`, so a temporary backtrace there plus
+`probe_contract_sender_tx.py` names the caller in one run. That is what found this after six
+suspects had been ruled out by reading.
 
 ## 7. The glamsterdam-devnet-8 base reprices Amsterdam
 
