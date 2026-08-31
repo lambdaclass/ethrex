@@ -147,7 +147,7 @@ Host port mapping:
 
 [Platåberget](https://plataberget.dev/) is the public Glamsterdam testnet, run on the glamsterdam-devnet-8 spec. Its services differ from the named networks in two ways:
 
-- The consensus client is `ethpandaops/prysm-beacon-chain:glamsterdam-devnet-8` — stock Lighthouse cannot load the gloas fork config, and Lodestar intermittently wedges in `verifyPayloadsDataAvailability` on some custody-column draws (each cycle redraws them with a fresh node identity), which would fail cycles as ethrex block stalls. Prysm is also the pairing the EF runs with ethrex on this network.
+- The consensus client is `ethpandaops/prysm-beacon-chain:glamsterdam-devnet-8` — stock Lighthouse cannot load the gloas fork config, and Lodestar range sync wedges whenever its first finalized batch contains an ePBS empty-payload slot ([ChainSafe/lodestar#9937](https://github.com/ChainSafe/lodestar/pull/9937)), which would fail cycles as ethrex block stalls. Prysm is also the pairing the EF runs with ethrex on this network; revisit once the fix ships in the glamsterdam image.
 - The network is addressed by config files, not a `--network` name on the CL side: a `setup-config-plataberget` service downloads `config.yaml`, `genesis.ssz`, bootstrap ENRs, and the deposit-contract metadata from [ethpandaops/glamsterdam-devnets](https://github.com/ethpandaops/glamsterdam-devnets/tree/master/network-configs/devnet-8/metadata) into a shared volume once (re-fetched after `multisync-clean`).
 
 The instance snap-syncs like the rest of the matrix (multisync validates snap sync; full-sync coverage belongs to the fullsync-bench tooling). It is not in the default network set; opt in explicitly:

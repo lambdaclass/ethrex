@@ -275,12 +275,13 @@ services:
 
   consensus-plataberget:
     # Prysm rather than Lighthouse (which cannot load the gloas fork config) or
-    # Lodestar: each cycle wipes volumes, giving the CL a fresh node identity —
-    # a fresh PeerDAS custody-column draw — and Lodestar intermittently wedges
-    # in verifyPayloadsDataAvailability on some draws, looping the first
-    # finalized batch forever. A wedged CL fails the cycle as a block stall
-    # blamed on ethrex. Prysm is also the pairing the EF runs with ethrex on
-    # this network.
+    # Lodestar: Lodestar range sync wedges whenever its first finalized batch
+    # contains an ePBS empty-payload slot — DA verification waits on payload
+    # envelopes that never exist and loops the batch forever
+    # (ChainSafe/lodestar#9937; unreleased at the time of writing). A wedged
+    # CL fails the cycle as a block stall blamed on ethrex. Prysm is also the
+    # pairing the EF runs with ethrex on this network. Revisit once #9937
+    # ships in the glamsterdam image.
     image: ethpandaops/prysm-beacon-chain:glamsterdam-devnet-8
     restart: unless-stopped
     container_name: consensus-plataberget
