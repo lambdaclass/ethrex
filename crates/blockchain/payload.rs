@@ -1031,12 +1031,21 @@ impl Blockchain {
             match self.apply_tx_to_payload(head_tx, context) {
                 Ok(()) => txs.shift()?,
                 Err(e) => {
-                    // Frame-tx failures are deterministic (signatures bind the
-                    // whole tx) EXCEPT nonce mismatches, which are transient
-                    // queue-ordering artifacts, and EIP-8272 references that are
-                    // not yet referenceable, which the next slot resolves — keep
-                    // those pooled for a later block, mirroring how regular txs
-                    // are treated.
+                    // A frame tx's CONTENTS are fixed by its signature; its
+                    // INCLUSION is not. It can be turned away by things that have
+                    // nothing to do with its bytes — a nonce mismatch from queue
+                    // ordering, an EIP-8272 reference the next slot makes
+                    // referenceable, a UTXO input not yet spendable, or simply a
+                    // block with no room left in one of EIP-8037's two gas
+                    // dimensions. None of those recur once the cause moves on, so
+                    // the transaction stays pooled, mirroring how regular txs are
+                    // treated.
+                    //
+                    // Conflating the two cost real transactions: a frame tx that
+                    // declared `limits.state` and met a block whose state
+                    // dimension was full was deleted from the pool rather than
+                    // retried, which is why two concurrent keyed transactions
+                    // would arrive and one would vanish.
                     //
                     // Regular txs are likewise kept pooled on failure, since the
                     // usual cause is a transient queue-ordering/nonce/balance
@@ -1051,6 +1060,7 @@ impl Blockchain {
                         !is_nonce_mismatch(&e)
                             && !is_recent_root_not_referenceable(&e)
                             && !is_utxo_not_yet_spendable(&e)
+                            && !is_block_capacity(&e)
                     } else {
                         is_deterministic_invalid(&e)
                     };
@@ -1433,6 +1443,19 @@ fn is_recent_root_not_referenceable(e: &ChainError) -> bool {
 /// build-fail-repool stall this branch has already fought once.
 fn is_utxo_not_yet_spendable(e: &ChainError) -> bool {
     e.to_string().contains("UTXO input is not yet spendable")
+}
+
+/// Whether a build failure means "this block had no room", which says nothing about the
+/// transaction and everything about the block being built.
+///
+/// EIP-8037 accounts two dimensions, so a transaction can be turned away because the
+/// *state* dimension is full while the execution one has room to spare — and a frame
+/// transaction declaring `limits.state` is exactly the kind that fills it. The next block
+/// starts both counters at zero, so a transaction rejected here is not invalid, it is
+/// early.
+fn is_block_capacity(e: &ChainError) -> bool {
+    let msg = e.to_string();
+    msg.contains("block gas limit exceeded") || msg.contains("Gas allowance exceeded")
 }
 
 /// Whether a tx failed with an error that recurs at the same nonce for as long as
