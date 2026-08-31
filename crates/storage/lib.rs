@@ -80,8 +80,10 @@ pub use api::{CfStats, RocksDbStats};
 pub use layering::apply_prefix;
 pub use store::{
     AccountUpdatesList, BATCH_COMMIT_THRESHOLD, BackfilledBlock, DB_COMMIT_THRESHOLD,
-    DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES, DEPTH_GATED_COMMIT_STRIDE, EngineType, Store,
-    StoreConfig, UpdateBatch, has_valid_db, hash_address, hash_key, read_chain_id_from_db,
+    DEPTH_GATED_COMMIT_STRIDE, EngineType, MAX_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
+    MIN_ROCKSDB_BLOCK_CACHE_SIZE_BYTES, ROCKSDB_BLOCK_CACHE_MEMORY_PERCENT, Store, StoreConfig,
+    UpdateBatch, default_rocksdb_block_cache_size, has_valid_db, hash_address, hash_key,
+    read_chain_id_from_db, rocksdb_block_cache_size_for,
 };
 
 /// Store Schema Version, must be updated on any breaking change.
@@ -89,7 +91,7 @@ pub use store::{
 /// When bumping this version, add a corresponding migration function to
 /// `migrations::MIGRATIONS`. The migration framework will automatically
 /// upgrade existing databases instead of requiring a full resync.
-pub const STORE_SCHEMA_VERSION: u64 = 3;
+pub const STORE_SCHEMA_VERSION: u64 = 4;
 
 /// Name of the file storing the metadata about the database.
 ///

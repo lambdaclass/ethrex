@@ -105,19 +105,10 @@ impl RpcHandler for GetBlockByHashRequest {
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let storage = &context.storage;
         debug!("Requested block with hash: {:#x}", self.block);
-        let block_number = match storage.get_block_number(self.block).await? {
-            Some(number) => number,
-            _ => return Ok(Value::Null),
+        let Some(block) = storage.get_block_by_hash(self.block).await? else {
+            return Ok(Value::Null);
         };
-        let header = storage.get_block_header(block_number)?;
-        let body = storage.get_block_body(block_number).await?;
-        let (header, body) = match (header, body) {
-            (Some(header), Some(body)) => (header, body),
-            // Block not found
-            _ => return Ok(Value::Null),
-        };
-        let hash = header.hash();
-        let block = RpcBlock::build(header, body, hash, self.hydrated)?;
+        let block = RpcBlock::build(block.header, block.body, self.block, self.hydrated)?;
         serde_json::to_value(&block).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }

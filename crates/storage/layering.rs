@@ -635,6 +635,50 @@ impl TrieDB for TrieWrapper {
         self.db.get(key)
     }
 
+    fn multi_get(&self, keys: &[Nibbles]) -> Vec<Result<Option<Vec<u8>>, TrieError>> {
+        // Walk the same cascade `get` does, per key: layer cache -> overlay ->
+        // disk. Only the keys that miss both in-memory stages are batched into a
+        // single `db.multi_get` call. Skipping the overlay stage here would serve
+        // the OLD chain's disk nodes (and resurrect keys the overlay reports as
+        // absent at the pivot) for every batched reader.
+        let mut results: Vec<Option<Result<Option<Vec<u8>>, TrieError>>> =
+            (0..keys.len()).map(|_| None).collect();
+        let mut miss_indices = Vec::new();
+        let mut miss_keys = Vec::new();
+        let overlay_serves = self.inner.overlay_serves(self.state_root);
+
+        for (idx, key) in keys.iter().enumerate() {
+            let key = match &self.prefix_nibbles {
+                Some(prefix) => prefix.concat(key),
+                None => key.clone(),
+            };
+            if let Some(value) = self.inner.get(self.state_root, key.as_ref()) {
+                results[idx] = Some(Ok(Some(value)));
+            } else if overlay_serves
+                && let Some(overlay_result) = self.inner.lookup_overlay(key.as_ref())
+            {
+                // `Some(None)` means absent at the pivot: disk still holds the old
+                // chain's value for this key, so it must not be consulted.
+                results[idx] = Some(Ok(overlay_result));
+            } else {
+                miss_indices.push(idx);
+                miss_keys.push(key);
+            }
+        }
+
+        if !miss_keys.is_empty() {
+            let db_results = self.db.multi_get(&miss_keys);
+            for (idx, res) in miss_indices.into_iter().zip(db_results) {
+                results[idx] = Some(res);
+            }
+        }
+
+        results
+            .into_iter()
+            .map(|r| r.expect("every key is resolved in-memory or batched as a db miss"))
+            .collect()
+    }
+
     fn put_batch(&self, _key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
         // TODO: Get rid of this.
         unimplemented!("This function should not be called");
@@ -1245,6 +1289,98 @@ mod overlay_tests {
         assert!(
             !served_storage.flatkeyvalue_computed(key),
             "served storage root must not trust disk flat-KV"
+        );
+    }
+
+    /// `multi_get` must resolve every key through the same cascade as `get`: layer
+    /// cache -> overlay -> disk.
+    ///
+    /// While an overlay serves the read's state root, disk still holds the old chain's
+    /// edge `D`, so a batched read that skips the overlay answers with nodes from the
+    /// chain that was reorged away, and reports keys the overlay knows were absent at
+    /// the pivot as present. `Trie::prefetch_sorted` installs whatever it reads into
+    /// the trie arena under the hash the reference already carried, so those nodes are
+    /// merkleized without complaint and the block's state root comes out wrong.
+    #[test]
+    fn multi_get_walks_the_same_cascade_as_get() {
+        struct DiskDb;
+        impl TrieDB for DiskDb {
+            fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
+                Ok(Some([b"disk-".as_slice(), key.as_ref()].concat()))
+            }
+            fn put_batch(&self, _key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
+                unimplemented!()
+            }
+        }
+
+        let pivot = h(0xaa);
+        let unrelated = h(0xcc);
+        // 4-nibble paths land in the account-trie CF (see `classify_by_key_length`).
+        let overlay_hit = Nibbles::from_raw(&[0xab, 0xcd], false);
+        let absent_at_pivot = Nibbles::from_raw(&[0x12, 0x34], false);
+        let overlay_miss = Nibbles::from_raw(&[0x56, 0x78], false);
+
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        seed(
+            &backend,
+            &[(
+                1,
+                h(0x01),
+                vec![
+                    (overlay_hit.as_ref().to_vec(), Some(b"pivot-value".to_vec())),
+                    (absent_at_pivot.as_ref().to_vec(), None),
+                ],
+            )],
+        );
+        let mut overlay = Overlay::from_journal(backend.as_ref(), 1, 1, |_| None).unwrap();
+        overlay.serves_root = pivot;
+
+        let mut cache =
+            TrieLayerCache::new_with_safe_commit(128, Arc::new(RwLock::new(H256::zero())));
+        cache.set_overlay(Arc::new(overlay));
+        let cache = Arc::new(cache);
+
+        let keys = [overlay_hit, absent_at_pivot, overlay_miss.clone()];
+
+        let served = TrieWrapper::new(pivot, cache.clone(), Box::new(DiskDb), None);
+        let batched: Vec<_> = served
+            .multi_get(&keys)
+            .into_iter()
+            .map(|r| r.unwrap())
+            .collect();
+        let serial: Vec<_> = keys
+            .iter()
+            .map(|k| served.get(k.clone()).unwrap())
+            .collect();
+        assert_eq!(batched, serial, "batched reads must match serial reads");
+        assert_eq!(batched[0], Some(b"pivot-value".to_vec()));
+        assert_eq!(
+            batched[1], None,
+            "absent at pivot must not fall through to the old chain's disk node"
+        );
+        assert_eq!(
+            batched[2],
+            Some([b"disk-".as_slice(), overlay_miss.as_ref()].concat()),
+            "overlay miss falls through to disk"
+        );
+
+        // A root the overlay does not serve reads disk for every key, batched or not.
+        let unserved = TrieWrapper::new(unrelated, cache, Box::new(DiskDb), None);
+        let batched: Vec<_> = unserved
+            .multi_get(&keys)
+            .into_iter()
+            .map(|r| r.unwrap())
+            .collect();
+        let serial: Vec<_> = keys
+            .iter()
+            .map(|k| unserved.get(k.clone()).unwrap())
+            .collect();
+        assert_eq!(batched, serial);
+        assert!(
+            batched
+                .iter()
+                .all(|v| v.as_ref().is_some_and(|b| b.starts_with(b"disk-"))),
+            "unserved root must not see overlay values"
         );
     }
 

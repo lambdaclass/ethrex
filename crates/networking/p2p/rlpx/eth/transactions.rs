@@ -26,7 +26,7 @@ use tracing::debug;
 /// between clients (e.g. geth's `Transaction.Size()` omits the v1 blob-sidecar wrapper
 /// version byte), so we tolerate a few bytes before treating it as a protocol violation.
 /// Matches go-ethereum's tx fetcher (`eth/fetcher/tx_fetcher.go`).
-const POOLED_TX_SIZE_TOLERANCE: usize = 8;
+pub(crate) const POOLED_TX_SIZE_TOLERANCE: usize = 8;
 
 /// Upper bound on the decompressed size of a `PooledTransactions` response, enforced before
 /// decompression so an oversized reply is rejected without materializing it. Tighter than the
@@ -34,7 +34,7 @@ const POOLED_TX_SIZE_TOLERANCE: usize = 8;
 /// response to `softResponseLimit` (2 MiB) and stops after the first tx that crosses it, so a
 /// well-behaved reply is at most ~2 MiB plus one max-size tx (~1 MiB blob wrapper). 4 MiB clears
 /// that with margin while staying 4× below the frame cap.
-const MAX_POOLED_TRANSACTIONS_BYTES: usize = 4 * 1024 * 1024;
+pub(crate) const MAX_POOLED_TRANSACTIONS_BYTES: usize = 4 * 1024 * 1024;
 
 /// Target maximum size of a `PooledTransactions` response we *serve*, matching go-ethereum's
 /// `softResponseLimit` (2 MiB). We stop before a transaction would push the response over this,
@@ -91,8 +91,8 @@ impl RLPxMessage for Transactions {
 // Broadcast message
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct NewPooledTransactionHashes {
-    pub(crate) transaction_types: Bytes,
-    pub(crate) transaction_sizes: Vec<usize>,
+    pub transaction_types: Bytes,
+    pub transaction_sizes: Vec<usize>,
     pub transaction_hashes: Vec<H256>,
 }
 
@@ -120,9 +120,7 @@ impl NewPooledTransactionHashes {
         let mut transaction_hashes = Vec::with_capacity(transactions_len);
         for transaction in transactions {
             let transaction_type = transaction.tx_type();
-            transaction_types.push(transaction_type as u8);
             let transaction_hash = transaction.hash(&NativeCrypto);
-            transaction_hashes.push(transaction_hash);
             // size is defined as the len of the canonical encoding of the transaction
             // as it would appear in a PooledTransactions response.
             // https://eips.ethereum.org/EIPS/eip-2718
@@ -131,10 +129,32 @@ impl NewPooledTransactionHashes {
                 // which includes the blobs bundle.
                 // https://eips.ethereum.org/EIPS/eip-4844#networking
                 Transaction::EIP4844Transaction(eip4844_tx) => {
-                    let tx_blobs_bundle = blockchain
-                        .mempool
-                        .get_blobs_bundle(transaction_hash)?
-                        .unwrap_or_default();
+                    // If the bundle is gone (the tx was evicted or pulled into a payload
+                    // between the broadcaster's snapshot and now) we cannot serve this tx
+                    // either: `Blockchain::get_p2p_transaction_by_hash` errors out on a
+                    // blob tx with no bundle, so `GetPooledTransactions` skips it. Skip it
+                    // here too. Substituting an empty bundle would announce ~162 bytes for
+                    // a ~137 KB transaction, and peers that check the announced size
+                    // against the delivered one (geth's tx fetcher, and our own
+                    // `validate_requested` below, both with an 8-byte tolerance) will
+                    // disconnect us for the mismatch.
+                    let Some(tx_blobs_bundle) =
+                        blockchain.mempool.get_blobs_bundle(transaction_hash)?
+                    else {
+                        continue;
+                    };
+                    // A tx ingested over eth/72 may hold an elided bundle (commitments
+                    // and proofs, no blobs; cells travel separately). This pre-72
+                    // announcement promises a full-blob delivery, but the serve path
+                    // drops elided txs from pre-72 responses (`GetPooledTransactions`
+                    // arm in `connection/server.rs`), so we would announce a hash we
+                    // never deliver — and with a size no full-blob delivery can match.
+                    // geth's tx fetcher checks a delivered tx against every peer that
+                    // announced its hash, so when another peer delivers the full tx the
+                    // mismatch is charged to us. Skip it, mirroring the serve path.
+                    if tx_blobs_bundle.blobs.len() != tx_blobs_bundle.commitments.len() {
+                        continue;
+                    }
                     let p2p_tx =
                         P2PTransaction::EIP4844TransactionWithBlobs(WrappedEIP4844Transaction {
                             tx: eip4844_tx,
@@ -146,6 +166,8 @@ impl NewPooledTransactionHashes {
                 }
                 _ => transaction.encode_canonical_len(),
             };
+            transaction_types.push(transaction_type as u8);
+            transaction_hashes.push(transaction_hash);
             transaction_sizes.push(transaction_size);
         }
         Ok(Self {
@@ -210,7 +232,12 @@ impl RLPxMessage for NewPooledTransactionHashes {
         let (transaction_types, decoder): (Bytes, _) = decoder.decode_field("transactionTypes")?;
         let (transaction_sizes, decoder): (Vec<usize>, _) =
             decoder.decode_field("transactionSizes")?;
-        let (transaction_hashes, _): (Vec<H256>, _) = decoder.decode_field("transactionHashes")?;
+        let (transaction_hashes, decoder): (Vec<H256>, _) =
+            decoder.decode_field("transactionHashes")?;
+        // The announcement is exactly three fields until eth/72 adds `cell_mask`
+        // (EIP-8070). Reject a longer list instead of ignoring the extra fields,
+        // so a peer encoding a newer shape on this session is caught here.
+        decoder.finish()?;
 
         if transaction_hashes.len() == transaction_sizes.len()
             && transaction_sizes.len() == transaction_types.len()

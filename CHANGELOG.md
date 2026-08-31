@@ -20,6 +20,17 @@
 
 - Make `eth_estimateGas`'s plain-transfer short circuit fire. Its condition tested whether the recipient account existed rather than whether it had code, so every transfer to an ordinary funded wallet ran the full binary search instead of returning `TRANSACTION_GAS` at once [#7211](https://github.com/lambdaclass/ethrex/pull/7211)
 
+### 2026-08-03
+
+- Size the default RocksDB shared block cache from the memory the process may actually use — 40% of the smaller of physical memory and the cgroup limit, clamped to 512 MiB..=12 GiB — instead of a flat 12 GiB. The flat default was 71% of a 16 GiB host, leaving no headroom for trie layers, execution and the mempool; `--rocksdb.block-cache-size` still overrides it. Detection reads `/proc`, so outside Linux the default stays at the 12 GiB ceiling; startup logs the detected limit and the resolved size
+### 2026-07-29
+
+- Breadth-first batched trie-node prefetch on the merkle storage-root path: one sorted RocksDB `multi_get` per trie level warms the touched nodes into the arena before the serial inserts, on the parallel BAL merkleizer (storage-root recomputation and the Stage C state-trie update) and the streaming (BAL-less / pre-Amsterdam) merkleizer. Warming-only, so the computed roots are byte-identical; large speedup on cold storage-heavy blocks [#6986](https://github.com/lambdaclass/ethrex/pull/6986)
+### 2026-08-04
+
+- Cut the cost of a cold contract-code access: store jump destinations as a 1-bit-per-byte bitmap instead of a persisted RLP list of `u32` offsets, count the bytecode in the code cache's byte budget, answer `EXTCODESIZE` from the code-length table instead of materializing the bytecode, and give the account-code column families a bloom filter (4KB data blocks on the blob-backed bytecode CF). Raises the code cache's byte budget from an effective 64 MiB of jump tables to 256 MiB of bytecode, and bumps the store schema version so an older binary warns rather than failing on the new value format. `COLD_ACCOUNT_CODE_ACCESS` drops from 7736 to 4652 gas in the EIP-8038 repricing fit, and `COLD_ACCOUNT_CODE_WRITE` from 10415 to 6355 [#7095](https://github.com/lambdaclass/ethrex/pull/7095)
+- Batch and stream the BAL contract-code prefetch: warm accounts and their code in chunks instead of reading every access-list account before the first bytecode, take code hashes from the account read rather than a second lookup per account, and add a batched bytecode read that resolves the buffer and code cache first, then either fans out parallel point gets or shards the remainder across concurrent `multi_get`s, whichever reaches the greater read queue depth for the batch size on this host [#7099](https://github.com/lambdaclass/ethrex/pull/7099)
+
 ### 2026-07-22
 
 - Unify full-sync batch import onto the per-block execution pipeline, validating every block's state root and reusing the pipeline's BAL-driven parallel execution instead of the bespoke "execute all, apply once" batch path [#7008](https://github.com/lambdaclass/ethrex/pull/7008)
