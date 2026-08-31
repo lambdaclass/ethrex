@@ -2,34 +2,43 @@
 
 A per-release acceptance test for the configuration a real rollup runs: an `OnChainProposer` that requires **both** an SP1 proof and a TDX proof before it will verify a batch.
 
-The other L2 checks each exercise one prover. This one is the only place where a batch has to satisfy two independent provers, running on two machines, before `lastVerifiedBatch` moves.
+The other L2 checks each exercise one prover. This one is the only place where a batch has to satisfy two independent provers, running on two machines, before `lastVerifiedBatch` moves — and the only place a TDX quote is verified on chain, against real TDX hardware, rather than trusted.
 
-## Attestation runs in dev mode, and the TDX guest is a plain VM
+## Real attestation, and what it needs
 
-Deploy with `ETHREX_TDX_DEV_MODE=true`, and boot the prover VM as an **ordinary QEMU guest** — no `confidential-guest-support=tdx`, no `tdx-guest` object. This is CI's configuration, and the two settings go together.
+Deploy with `ETHREX_TDX_DEV_MODE=false` and boot the prover VM as a **real TDX guest**. `TDXVerifier.register()` then calls `verifyAndAttestOnChain`, so the quote is checked against the on-chain PCCS collateral and its measurements compared to the ones the verifier was deployed with.
 
-In dev mode `TDXVerifier.register()` sets
+Dev mode (`ETHREX_TDX_DEV_MODE=true`) is what CI uses, and it is not equivalent: `register()` short-circuits, taking the signing address from the quote's first 20 bytes and skipping verification entirely. That only works with a *plain* QEMU guest, whose dev quote begins with that address. Booting a real TDX guest in dev mode registers quote-header bytes as the signer and every `verifyBatch` then reverts with `InvalidTdxProof()` (`0x62013a95`) while registration appears to have succeeded. Dev mode is the fallback when no TDX host is available; it does not exercise the verifier.
 
-```solidity
-authorizedSignature = _getAddress(quote, 0);   // first 20 bytes of the quote
-```
+Three things must be on chain before a real quote will verify. The deploy handles none of them, and `ethrex` normally loads the collateral by shelling out to `automata-dcap-qpl-tool` — which cannot work here, because it resolves contract addresses from a registry keyed by chain id and rejects the dev L1 with `Unsupported chain_id: 9`. Its failure is silent: `prepare_quote_prerequisites` discards the tool's exit status, so the first symptom is an unrelated revert later. Load the collateral directly instead, as [step 3](#3-load-this-platforms-tdx-collateral) does.
 
-and returns, skipping `verifyAndAttestOnChain`. A plain guest emits a dev quote whose leading bytes *are* the prover's address, so that assignment is correct. Boot the same image as a real TDX guest and `quote-gen` produces a genuine quote beginning `0400 0200 81…` — a quote header, not an address — so the contract registers nonsense as the authorized signer, and every `verifyBatch` reverts with `InvalidTdxProof()` (`0x62013a95`) while registration itself appears to succeed.
+### The verifier's expected measurements
 
-Running the real TDX path instead would need `ETHREX_TDX_DEV_MODE=false`, which requires the quote's collateral (PCK certs, TCB info) in the PCCS contracts. The sequencer loads it by shelling out to `automata-dcap-qpl-tool`, which resolves addresses from a registry keyed by chain id and knows only public networks: on the dev L1 (chain id 9) it exits `Unsupported chain_id: 9`. That failure is silent, because `prepare_quote_prerequisites` discards the tool's exit status, so the first symptom is a later revert.
+`_validateReport` requires MRTD and RTMR0-2 in the quote to equal the values compiled into `TDXVerifier.sol`. Those constants pin one specific image build, so they will not match the image of the release under test — a mismatch reverts with `MRTD mismatch`. Since the contracts are compiled at deploy time, pin them to the image being released, which is what this test should be asserting.
 
-**So this test covers the two-prover verification path with a real SP1 GPU proof, and does not exercise TDX hardware or on-chain DCAP verification** — the same coverage CI has. Because the guest is plain, the test needs no TDX-capable CPU; it needs a GPU. Extending it to real attestation is future work and needs a chain the DCAP registry recognises.
+### The TCB Signing CA
+
+The deploy upserts the root CA (`CA.ROOT`) and platform CA (`CA.PLATFORM`), but not `CA.SIGNING` — the Intel SGX TCB Signing certificate that signs the TCB info and QE identity. Without it the DAO has nothing to validate signatures against and rejects the upsert with `TCB_Cert_Expired` (`0xea8cd522`), which is misleading: nothing has expired.
+
+### This platform's TCB info and QE identity
+
+Fetched from the host's PCCS service and upserted into `AutomataFmspcTcbDao` and `AutomataEnclaveIdentityDao`.
 
 ## Where to run it
 
 Two hosts, with the SP1 prover reaching the proof coordinator over the tailnet:
 
-| Host | Runs |
-| --- | --- |
-| `ethrex-tdx-baremetal` | L1, contract deploy, sequencer + proof coordinator, TDX prover VM |
-| `l2-gpu` | SP1 prover |
+| Host | Runs | Requires |
+| --- | --- | --- |
+| `ethrex-tdx-baremetal` | L1, contract deploy, sequencer + proof coordinator, TDX prover VM | TDX-capable CPU, `qgsd` and `pccs` services, the nix-built TDX QEMU |
+| `l2-gpu` | SP1 prover | CUDA GPU |
 
-`ethrex-tdx-baremetal` is the designated host for the TDX side, and is where extending this test to real attestation would happen — though as described above, the dev-mode configuration this test uses does not depend on its TDX hardware.
+The TDX host really is required: a quote signed by real hardware is what `verifyAndAttestOnChain` checks. Confirm it before starting, because the VM boots on a non-TDX machine and only fails later, at quote generation:
+
+```bash
+cat /sys/module/kvm_intel/parameters/tdx     # must print Y
+systemctl is-active qgsd pccs                # both active; pccs serves the collateral
+```
 
 Both are shared machines running other people's work, so keep the footprint small: check that ports 8545, 1729 and 3900 are free before starting, and tear the stack down afterwards. On `l2-gpu`, this test and the [SP1 GPU integration test](sp1-gpu-integration-test.md) contend for the same GPU, ports and datadirs — run them one after the other, never concurrently.
 
@@ -73,14 +82,44 @@ chmod +x bin/solc && export PATH=$PWD/bin:$PATH
 
 The TDX deploy also needs `automata-dcap-qpl-tool` built from `crates/l2/tee/contracts`. If the host has no Rust toolchain, build it elsewhere and copy the binary into `src/crates/l2/tee/contracts/automata-dcap-qpl/automata-dcap-qpl-tool/target/release/`.
 
-### 2. Start L1 and deploy with both provers required
+### 2. Measure the image and pin the verifier to it
+
+Boot the real TDX guest once, take a quote, and write its measurements into `TDXVerifier.sol` before the contracts are compiled. `run-qemu` from `hypervisor.nix` hardcodes `-serial mon:stdio`, so it dies when detached; the invocation below is the same TDX configuration with a file sink.
+
+```bash
+QEMU=$(nix-build --no-out-link crates/l2/tee/quote-gen/hypervisor.nix)/bin/run-qemu   # for reference
+# daemonized equivalent:
+qemu-system-x86_64 -daemonize -serial file:$PWD/tdx.log -name guest=ethrex_tdx_prover \
+  -machine q35,kernel_irqchip=split,confidential-guest-support=tdx,hpet=off -smp 2 -m 2G \
+  -accel kvm -cpu host -nographic -nodefaults -bios <OVMF from the nix store> -no-user-config \
+  -netdev user,id=net0,net=192.168.76.0/24 -device e1000,netdev=net0 \
+  -device ide-hd,bus=ide.0,drive=main,bootindex=0 \
+  -drive "if=none,media=disk,id=main,file.filename=$PWD/image.raw,discard=unmap,detect-zeroes=unmap" \
+  -object '{"qom-type":"tdx-guest","id":"tdx","quote-generation-socket":{"type":"vsock","cid":"2","port":"4050"}}'
+```
+
+The VM cannot reach a coordinator yet, so it logs `Error sending quote` — that is expected, and the quote it prints is what we need. Take it from the serial log and read the measurements out of it. In a v4 TDX quote the report body starts at byte 48; MRTD is at body offset 136 and RTMR0-2 follow at 328, 376 and 424, 48 bytes each.
+
+```bash
+QUOTE=$(grep -ao 'Sending quote [0-9a-f]*' tdx.log | head -1 | sed 's/Sending quote //')
+python3 - "$QUOTE" <<'PYEOF'
+import sys
+b = bytes.fromhex(sys.argv[1])[48:]
+for name, off in (("MRTD",136), ("RTMR0",328), ("RTMR1",376), ("RTMR2",424)):
+    print(name, b[off:off+48].hex())
+PYEOF
+```
+
+Replace the four `bytes public MRTD/RTMR0/RTMR1/RTMR2` initialisers in `crates/l2/tee/contracts/src/TDXVerifier.sol` with those values, then shut the VM down (`pkill -f 'guest=ethrex_tdx_prover'`) — it is started again in step 5, once the coordinator exists.
+
+### 3. Start L1 and deploy with both provers required
 
 ```bash
 ./ethrex-linux-x86_64 --network src/fixtures/genesis/l1.json \
   --http.addr 0.0.0.0 --http.port 8545 --authrpc.port 8551 --dev --datadir dev_l1 &
 
 cd src/crates/l2          # the deployer resolves tee/contracts relative to cwd
-COMPILE_CONTRACTS=true ETHREX_TDX_DEV_MODE=true \
+COMPILE_CONTRACTS=true ETHREX_TDX_DEV_MODE=false \
   ~/multiprover/$TAG/ethrex-l2-linux-x86_64 l2 deploy \
     --eth-rpc-url http://localhost:8545 \
     --private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
@@ -98,7 +137,27 @@ COMPILE_CONTRACTS=true ETHREX_TDX_DEV_MODE=true \
 
 `--sp1 true --tdx true` together are what make this a multiprover test: the `OnChainProposer` then requires a proof of each kind per batch.
 
-### 3. Start the sequencer
+### 4. Load this platform's TDX collateral
+
+The DAOs take `(string json, bytes signature)`. `cast` cannot pass these on the command line — its tuple parser splits on the commas inside the JSON — so encode the calldata and send it raw. Addresses come from `crates/l2/tee/contracts/deploydeps/automata-on-chain-pccs/deployment/`.
+
+First the TCB Signing CA, which the deploy does not load. It is the leaf of the issuer chain the PCCS returns alongside the TCB info (`TCB-Info-Issuer-Chain` header, URL-encoded PEM):
+
+```bash
+cast send "$PCS_DAO" 'upsertPcsCertificates(uint8,bytes)' 3 "0x<signing cert DER>" \
+  --private-key "$PK" --rpc-url http://localhost:8545
+```
+
+Then the TCB info and QE identity for this platform. The FMSPC is in the PCK certificate embedded in the quote, under OID `1.2.840.113741.1.13.1.4`:
+
+```bash
+curl -sk "https://localhost:8081/tdx/certification/v4/tcb?fmspc=$FMSPC" -o tcb.json
+curl -sk "https://localhost:8081/tdx/certification/v4/qe/identity"      -o qeid.json
+```
+
+Each response is `{"<object>": {...}, "signature": "<hex>"}`; the DAO wants the inner object as a compact JSON string and the signature as bytes. Encode `upsertFmspcTcb((string,bytes))` and `upsertEnclaveIdentity(uint256,uint256,(string,bytes))` and send the calldata directly. For the identity, pass id `2` (`EnclaveId.TD_QE`) and version **4** — the DAO requires 4 or 5 for TD_QE and rejects the `version: 2` carried inside the JSON with `Incorrect_Enclave_Id_Version` (`0x4e0f5696`).
+
+### 5. Start the sequencer
 
 The proof coordinator must bind `0.0.0.0` so the SP1 prover on the other host can reach it, and the qpl tool path must be passed even in dev mode.
 
@@ -120,24 +179,13 @@ set -a; . ~/multiprover/$TAG/.env; set +a
   --proof-coordinator.qpl-tool-path <path to automata-dcap-qpl-tool> &
 ```
 
-### 4. Start the TDX prover VM
+### 6. Start the TDX prover VM
 
-A plain guest — see [above](#attestation-runs-in-dev-mode-and-the-tdx-guest-is-a-plain-vm) for why this must not be the real-TDX launcher in `hypervisor.nix`:
+Boot the real TDX guest again, exactly as in [step 2](#2-measure-the-image-and-pin-the-verifier-to-it) — the coordinator now exists, so the quote it sends is registered instead of erroring.
 
-```bash
-qemu-system-x86_64 -daemonize \
-  -serial file:$PWD/tdx_prover.log -name guest=ethrex_tdx_prover \
-  -machine q35,kernel_irqchip=split,hpet=off -smp 2 -m 2G \
-  -accel kvm -cpu host -nographic -nodefaults \
-  -bios /usr/share/ovmf/OVMF.fd -no-user-config \
-  -netdev user,id=net0,net=192.168.76.0/24 -device e1000,netdev=net0 \
-  -device ide-hd,bus=ide.0,drive=main,bootindex=0 \
-  -drive "if=none,media=disk,id=main,file.filename=$PWD/image.raw,discard=unmap,detect-zeroes=unmap"
-```
+Registration has succeeded when the sequencer logs `ProverSetup received for TDX` followed by `ProverSetupACK sent`, with no `Failed to handle ProverSetup` between them. That ACK is the real result: with dev mode off, it means the quote passed `verifyAndAttestOnChain` against the collateral loaded in step 4 and its measurements matched the ones pinned in step 2.
 
-The VM has registered once the sequencer logs `ProverSetup received for TDX` without a following error, and the VM's serial console moves from `Error sending quote` to `No blocks to prove`.
-
-### 5. Start the SP1 prover on `l2-gpu`
+### 7. Start the SP1 prover on `l2-gpu`
 
 ```bash
 ssh l2-gpu
@@ -145,7 +193,7 @@ ssh l2-gpu
   --proof-coordinators tcp://<tdx-host-tailscale-ip>:3900 --log.level info
 ```
 
-### 6. Wait for a batch verified by both proofs
+### 8. Wait for a batch verified by both proofs
 
 This is the assertion the test exists for. `lastVerifiedBatch` only advances once both an SP1 and a TDX proof have been submitted for the same batch.
 
@@ -159,7 +207,7 @@ while :; do
 done
 ```
 
-### 7. Run the integration suite
+### 9. Run the integration suite
 
 ```bash
 cd src
@@ -178,6 +226,10 @@ cargo test -p ethrex-test l2_integration_test --release --features l2 -- --nocap
 | `execution reverted` in `deploy-p256` | deploying onto a chain that already has the CREATE2 contracts; start from a fresh L1 datadir |
 | `Source file requires different compiler version` | solc is not exactly 0.8.31 |
 | VM loops on `Error sending quote: Failed to get ProverSetupAck` | the coordinator rejected registration; check the sequencer log for the error behind `Failed to handle ProverSetup` |
-| `verifyBatch` reverts `0x62013a95` | `InvalidTdxProof()` — the VM was booted as a real TDX guest, so dev-mode `register()` stored quote-header bytes as the signer; use the plain-guest invocation |
+| `MRTD mismatch` on registration | the verifier was deployed with the committed measurements; pin them to the image under test (step 2) |
+| `TCB_Cert_Expired` (`0xea8cd522`) on upsert | nothing has expired: `CA.SIGNING` was never loaded, so signatures cannot be checked (step 4) |
+| `Incorrect_Enclave_Id_Version` (`0x4e0f5696`) | TD_QE needs version 4 or 5, not the `version` inside the JSON |
+| `Unsupported chain_id: 9` | `automata-dcap-qpl-tool` cannot serve a dev chain; load the collateral directly (step 4) |
+| `verifyBatch` reverts `0x62013a95` | `InvalidTdxProof()` — a real quote was registered while dev mode was on, so the signer is quote-header bytes; deploy with `ETHREX_TDX_DEV_MODE=false` |
 | VM sits on `No blocks to prove` while batches are committed | the prover is asking for a batch whose input was pruned; restart from a fresh L1 **and** L2 with both provers attached before the first batch |
 | VM sits on `No blocks to prove` with nothing committed | normal; if it persists, the committer is failing — check the sequencer log |

@@ -177,7 +177,9 @@ rex call "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" 'REQUIRE_SP1_PROOF()' "$L
 rex call "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" 'REQUIRE_TDX_PROOF()' "$L1_RPC"   # 0x..01
 ```
 
-The check passes when `lastVerifiedBatch` advances past zero with both flags set. Note the TDX side runs in dev mode against a plain QEMU guest, as it does in CI, so it does not exercise TDX hardware or on-chain DCAP verification.
+The check passes when `lastVerifiedBatch` advances past zero with both flags set.
+
+Run it with `ETHREX_TDX_DEV_MODE=false`, so the TDX quote is verified on chain by `verifyAndAttestOnChain` rather than trusted. That is the point of running on TDX hardware, and it is what CI cannot do — CI uses dev mode, where registration skips verification entirely. It needs two extra steps the runbook covers: pinning the verifier's expected measurements to the image being released, and loading this platform's TCB collateral, since the tool `ethrex` normally shells out to cannot serve a dev chain.
 
 ### Publish
 
