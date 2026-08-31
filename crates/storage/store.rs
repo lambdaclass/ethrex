@@ -1156,21 +1156,29 @@ impl Store {
                 length: code.len() as u64,
             };
 
-            // Write metadata for future use (async, fire and forget)
-            let metadata_buf = metadata.length.to_be_bytes().to_vec();
-            let hash_key = code_hash.0.to_vec();
-            let backend = self.backend.clone();
-            tokio::task::spawn(async move {
-                if let Err(e) = async {
-                    let mut tx = backend.begin_write()?;
-                    tx.put(ACCOUNT_CODE_METADATA, &hash_key, &metadata_buf)?;
-                    tx.commit()
-                }
-                .await
-                {
-                    tracing::warn!("Failed to write code metadata during auto-migration: {}", e);
-                }
-            });
+            // Backfill the row for future reads, fire and forget.
+            //
+            // Only when a Tokio runtime is reachable: this read is on the execution
+            // path (`EXTCODESIZE`), which runs on rayon workers, and
+            // `tokio::task::spawn` panics outside a runtime. Skipping the backfill
+            // costs one code read the next time that hash is asked for; panicking
+            // would take the node down.
+            if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                let metadata_buf = metadata.length.to_be_bytes().to_vec();
+                let hash_key = code_hash.0.to_vec();
+                let backend = self.backend.clone();
+                handle.spawn(async move {
+                    if let Err(e) = async {
+                        let mut tx = backend.begin_write()?;
+                        tx.put(ACCOUNT_CODE_METADATA, &hash_key, &metadata_buf)?;
+                        tx.commit()
+                    }
+                    .await
+                    {
+                        tracing::warn!("Failed to write code metadata during backfill: {}", e);
+                    }
+                });
+            }
 
             metadata
         };
