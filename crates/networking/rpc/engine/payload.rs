@@ -376,8 +376,14 @@ impl NewPayloadV5Request {
         // newPayloadV5 spec 3). The field was dropped from `self.payload` at parse
         // time, so falling through would misreport it as missing (-32602).
         if self.undecodable_bal {
+            // Wording matters: EEST's ethrex exception mapper resolves
+            // BlockException.INVALID_BLOCK_ACCESS_LIST by matching the substring
+            // "Failed to RLP decode BAL" (the serde-layer message this path
+            // predates). Keep it as the prefix so consume-engine attributes the
+            // INVALID status to the right exception.
             return Ok(serde_json::to_value(PayloadStatus::invalid_with_err(
-                "blockAccessList is not a valid RLP encoding of the block access list",
+                "Failed to RLP decode BAL: blockAccessList is not a valid RLP \
+                 encoding of the block access list",
             ))?);
         }
         validate_execution_payload_v5(&self.payload)?;
