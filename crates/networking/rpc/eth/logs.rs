@@ -202,14 +202,14 @@ pub(crate) async fn fetch_logs_with_filter(
                 .await?
                 .ok_or(RpcErr::WrongParam("toBlock".to_string()))?;
             let latest = storage.get_latest_block_number()?;
-            if to > latest {
-                return Err(RpcErr::InvalidParams(
-                    "block range extends beyond current head block".to_string(),
-                ));
-            }
             if from > to {
                 return Err(RpcErr::InvalidParams(
                     "invalid block range params".to_string(),
+                ));
+            }
+            if to > latest {
+                return Err(RpcErr::InvalidParams(
+                    "block range extends beyond current head block".to_string(),
                 ));
             }
             // The idea here is to fetch every log and filter by address, if given.
