@@ -1,4 +1,6 @@
-use ethrex_blockchain::Blockchain;
+use std::collections::BTreeMap;
+use std::{fs::File, io::BufReader, path::PathBuf};
+
 use ethrex_blockchain::constants::MAX_INITCODE_SIZE;
 use ethrex_blockchain::constants::{
     TX_ACCESS_LIST_ADDRESS_GAS, TX_ACCESS_LIST_STORAGE_KEY_GAS, TX_CREATE_GAS_COST,
@@ -8,6 +10,7 @@ use ethrex_blockchain::error::MempoolError;
 use ethrex_blockchain::mempool::{
     FramePaymasterReservation, Mempool, is_canonical_paymaster, transaction_intrinsic_gas,
 };
+use ethrex_blockchain::{Blockchain, BlockchainOptions};
 use ethrex_crypto::NativeCrypto;
 use rustc_hash::FxHashMap;
 
@@ -15,14 +18,14 @@ use ethrex_common::types::{
     APPROVE_EXECUTION_AND_PAYMENT, AuthorizationTuple, BYTES_PER_BLOB, BlobsBundle, Block,
     BlockBody, BlockHeader, ChainConfig, EIP1559Transaction, EIP4844Transaction,
     EIP7702Transaction, FRAME_SIG_SCHEME_P256, FRAME_SIG_SCHEME_SECP256K1,
-    FRAME_TX_EXPIRY_DATA_LENGTH, FRAME_TX_MAX_VERIFY_GAS, Frame, FrameMode, FrameSignature,
-    FrameTransaction, Genesis, GenesisAccount, MAX_TX_SIZE, MempoolTransaction, Transaction,
-    TxKind, frame_tx_expiry_verifier, kzg_commitment_to_versioned_hash,
+    FRAME_TX_EXPIRY_DATA_LENGTH, FRAME_TX_MAX_VERIFY_GAS, FeeTokenTransaction, Frame, FrameMode,
+    FrameSignature, FrameTransaction, Genesis, GenesisAccount, MAX_TX_SIZE, MempoolTransaction,
+    PrivilegedL2Transaction, Transaction, TxKind, frame_tx_expiry_verifier,
+    kzg_commitment_to_versioned_hash,
 };
 use ethrex_common::{Address, Bytes, H160, H256, U256};
 use ethrex_storage::error::StoreError;
 use ethrex_storage::{EngineType, Store};
-use std::collections::BTreeMap;
 
 const MEMPOOL_MAX_SIZE_TEST: usize = 10_000;
 
@@ -108,16 +111,18 @@ fn create_transaction_intrinsic_gas() {
 /// EIP-2780 (PRELIMINARY EIPs#11645): Amsterdam CREATE tx intrinsic must match
 /// the VM charge, not the legacy `TX_CREATE_GAS_COST = 53000`. The regular
 /// portion is the resource-based decomposition
-/// `TX_BASE_COST_AMSTERDAM (12000) + CREATE_ACCESS_AMSTERDAM (11000) = 23000`
-/// (no value transfer here), plus a state portion
-/// (`STATE_BYTES_PER_NEW_ACCOUNT * cpsb`). Mempool admission must return the
-/// total so txs whose `gas_limit` is below the VM intrinsic are rejected before
-/// they enter the pool, and txs above it aren't spuriously rejected.
+/// `TX_BASE_COST_AMSTERDAM (12000) + CREATE_ACCESS_AMSTERDAM (12000) = 24000`
+/// (no value transfer here). The state portion is 0: the `NEW_ACCOUNT` charge
+/// is not part of the intrinsic — it is charged IN-REGION
+/// by `prepare_execution` (EELS `prepare_dispatch` create branch), conditioned
+/// on `get_pre_state_account(created_addr) == EMPTY_ACCOUNT`, so mempool
+/// admission cannot know it upfront without simulating the tx. Mempool
+/// admission must return the (now purely regular) intrinsic so txs whose
+/// `gas_limit` is below the VM intrinsic are rejected before they enter the
+/// pool, and txs above it aren't spuriously rejected.
 #[test]
 fn amsterdam_create_intrinsic_matches_vm_dimensions() {
-    use ethrex_levm::gas_cost::{
-        CREATE_ACCESS_AMSTERDAM, STATE_BYTES_PER_NEW_ACCOUNT, cost_per_state_byte,
-    };
+    use ethrex_levm::gas_cost::CREATE_ACCESS_AMSTERDAM;
     const TX_BASE_COST_AMSTERDAM: u64 = 12000;
 
     let (mut config, header) = build_basic_config_and_header(true, true);
@@ -142,16 +147,14 @@ fn amsterdam_create_intrinsic_matches_vm_dimensions() {
         ..Default::default()
     });
 
-    let cpsb = cost_per_state_byte(header.gas_limit);
-    let expected =
-        TX_BASE_COST_AMSTERDAM + CREATE_ACCESS_AMSTERDAM + STATE_BYTES_PER_NEW_ACCOUNT * cpsb;
+    let expected = TX_BASE_COST_AMSTERDAM + CREATE_ACCESS_AMSTERDAM;
 
     let intrinsic_gas = transaction_intrinsic_gas(&tx, Address::default(), &header, &config)
         .expect("intrinsic gas");
     assert_eq!(
         intrinsic_gas, expected,
         "Amsterdam CREATE intrinsic must be TX_BASE_COST_AMSTERDAM + \
-         CREATE_ACCESS_AMSTERDAM + STATE_BYTES_PER_NEW_ACCOUNT * cpsb, not the legacy 53000"
+         CREATE_ACCESS_AMSTERDAM (state portion moved in-region), not the legacy 53000"
     );
     // Guard against regression to the legacy 53000 constant.
     assert_ne!(
@@ -446,10 +449,10 @@ fn test_filter_mempool_transactions() {
     let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
     let filter = |tx: &Transaction| -> bool { matches!(tx, Transaction::EIP4844Transaction(_)) };
     mempool
-        .add_transaction(blob_tx_hash, blob_tx_sender, blob_tx.clone(), None)
+        .add_transaction(blob_tx_hash, blob_tx_sender, blob_tx.clone(), None, None)
         .unwrap();
     mempool
-        .add_transaction(plain_tx_hash, plain_tx_sender, plain_tx, None)
+        .add_transaction(plain_tx_hash, plain_tx_sender, plain_tx, None, None)
         .unwrap();
     let txs = mempool.filter_transactions_with_filter_fn(&filter).unwrap();
     assert_eq!(
@@ -544,7 +547,7 @@ fn minimal_valid_frame_tx() -> FrameTransaction {
             mode: FrameMode::Verify as u8,
             flags: APPROVE_EXECUTION_AND_PAYMENT,
             target: Some(sender),
-            // Small per-frame gas so total_gas_limit() stays below the legacy
+            // Small per-frame gas so max_gas() stays below the legacy
             // 21000 intrinsic floor: this tx is only admitted once the frame-tx
             // intrinsic-gas fix prices it correctly.
             gas_limit: 100,
@@ -560,6 +563,16 @@ fn minimal_valid_frame_tx() -> FrameTransaction {
     }
 }
 
+/// Raise the first frame's gas limit so the transaction reserves its EIP-7623
+/// calldata floor. The minimal fixture carries no data, so tests that add frame
+/// data or signatures need the extra headroom to stay otherwise-valid.
+fn reserve_calldata_floor(tx: &mut FrameTransaction) {
+    let floor = tx.calldata_floor_gas();
+    if let Some(frame) = tx.frames.first_mut() {
+        frame.gas_limit = frame.gas_limit.max(floor);
+    }
+}
+
 #[tokio::test]
 async fn mempool_rejects_frame_tx_with_invalid_signature() {
     let store = setup_hegota_store().await;
@@ -570,10 +583,12 @@ async fn mempool_rejects_frame_tx_with_invalid_signature() {
     // ecrecover will not recover the claimed signer, so admission must reject it.
     frame_tx.signatures = vec![FrameSignature {
         scheme: FRAME_SIG_SCHEME_SECP256K1,
-        signer: Address::from_low_u64_be(0xABCD),
+        signer: Some(Address::from_low_u64_be(0xABCD)),
         msg: Bytes::new(),
         signature: Bytes::from(vec![0xAB; 65]),
     }];
+
+    reserve_calldata_floor(&mut frame_tx);
 
     let tx = Transaction::FrameTransaction(frame_tx);
     let validation = blockchain.validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap());
@@ -648,6 +663,7 @@ fn frame_tx_reservation_maps_clear_after_add_and_remove() {
             sender,
             MempoolTransaction::new(tx, sender),
             Some(reservation),
+            None,
         )
         .expect("add frame tx with reservation");
 
@@ -701,15 +717,28 @@ async fn mempool_rejects_oversized_frame_data() {
     let mut frame_tx = minimal_valid_frame_tx();
     // Frame data whose length reaches the 128KB wire cap; tx.data() is empty
     // for frame txs, but the frames' payloads count toward the canonical
-    // encoding that MAX_TX_SIZE bounds.
-    frame_tx.frames[0].data = Bytes::from(vec![0u8; MAX_TX_SIZE]);
+    // encoding that MAX_TX_SIZE bounds. The payload rides a trailing SENDER
+    // frame, as a real transaction's would: the validation prefix stays inside
+    // MAX_VERIFY_GAS while that frame reserves the EIP-7623 calldata floor.
+    let payload = Bytes::from(vec![0u8; MAX_TX_SIZE]);
+    frame_tx.frames.push(Frame {
+        mode: FrameMode::Sender as u8,
+        flags: 0x00,
+        target: Some(Address::from_low_u64_be(0xCAFE)),
+        gas_limit: 0,
+        value: U256::zero(),
+        data: payload,
+    });
+    let floor = frame_tx.calldata_floor_gas();
+    frame_tx.frames[1].gas_limit = floor;
 
     let tx = Transaction::FrameTransaction(frame_tx);
     let validation = blockchain.validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap());
-    assert!(matches!(
-        validation.await,
-        Err(MempoolError::TxSizeExceeded { .. })
-    ));
+    let result = validation.await;
+    assert!(
+        matches!(result, Err(MempoolError::TxSizeExceeded { .. })),
+        "got {result:?}"
+    );
 }
 
 #[tokio::test]
@@ -720,7 +749,11 @@ async fn mempool_rejects_frame_tx_with_blobs() {
     let mut frame_tx = minimal_valid_frame_tx();
     // Add a blob versioned hash; no sidecar transport exists for frame-tx
     // blobs yet, so admission must reject such txs as unsupported.
-    frame_tx.blob_versioned_hashes = vec![H256::from([0xAB; 32])];
+    let mut hash = [0xAB; 32];
+    hash[0] = 0x01; // valid KZG version byte, so the unsupported-blobs check is what fires
+    frame_tx.blob_versioned_hashes = vec![H256::from(hash)];
+
+    reserve_calldata_floor(&mut frame_tx);
 
     let tx = Transaction::FrameTransaction(frame_tx);
     let validation = blockchain.validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap());
@@ -746,12 +779,14 @@ async fn mempool_rejects_frame_tx_exceeding_max_verify_gas() {
     frame_tx.signatures = (0..n_sigs)
         .map(|_| FrameSignature {
             scheme: FRAME_SIG_SCHEME_P256,
-            signer: Address::from_low_u64_be(0xABCD),
+            signer: Some(Address::from_low_u64_be(0xABCD)),
             msg: Bytes::new(),
             signature: Bytes::from(vec![0u8; 128]),
         })
         .collect();
     assert!(frame_tx.signature_verification_cost() > FRAME_TX_MAX_VERIFY_GAS);
+
+    reserve_calldata_floor(&mut frame_tx);
 
     let tx = Transaction::FrameTransaction(frame_tx);
     let validation = blockchain.validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap());
@@ -845,9 +880,9 @@ async fn setup_hegota_store_ts1000() -> Store {
             (
                 frame_tx_expiry_verifier(),
                 GenesisAccount {
-                    // Canonical EIP-8141 expiry verifier runtime bytecode (spec
-                    // commit 0b197156): reverts unless calldata is exactly 8
-                    // bytes and the 8-byte BE deadline is >= block.timestamp.
+                    // Canonical EIP-8141 expiry verifier runtime bytecode:
+                    // reverts unless calldata is exactly 8 bytes and the 8-byte
+                    // BE deadline is >= block.timestamp.
                     // Seeded so the interleaved expiry-verifier frame executes
                     // (instead of hitting codeless default code) during the
                     // admission simulation.
@@ -892,7 +927,8 @@ fn frame_tx_with_expiry(deadline: u64) -> FrameTransaction {
                 mode: FrameMode::Verify as u8,
                 flags: 0x00,
                 target: Some(frame_tx_expiry_verifier()),
-                gas_limit: 100,
+                // Enough to reserve the EIP-7623 floor of the 8-byte deadline.
+                gas_limit: 1_000,
                 value: U256::zero(),
                 data: Bytes::from(data.to_vec()),
             },
@@ -1007,7 +1043,13 @@ fn blobs_bundle_insert_and_remove() {
             .unwrap();
 
         mempool
-            .add_transaction(hash, sender, MempoolTransaction::new(tx, sender), None)
+            .add_transaction(
+                hash,
+                sender,
+                MempoolTransaction::new(tx, sender),
+                None,
+                None,
+            )
             .expect("Failed to add blob transaction");
     }
 
@@ -1033,6 +1075,304 @@ fn blobs_bundle_insert_and_remove() {
             .expect("should return empty"),
         vec![None]
     );
+}
+
+// --- min-tip floor admission tests ----------------------------------------
+
+/// Builds a blockchain configured with `min_tip_wei` as the admission floor
+/// (everything else permissive for tests).
+fn blockchain_with_min_tip(store: Store, min_tip_wei: u64) -> Blockchain {
+    let mut bc = Blockchain::default_with_store(store);
+    let mut opts = bc.options.clone();
+    opts.min_tip_wei = min_tip_wei;
+    bc.options = opts;
+    bc
+}
+
+#[tokio::test]
+async fn zero_tip_eip1559_rejected_under_default_floor() {
+    let (config, header) = build_basic_config_and_header(false, false);
+    let store = setup_storage(config, header).await.expect("Storage setup");
+    let blockchain = blockchain_with_min_tip(store, 1_000_000);
+
+    let tx = EIP1559Transaction {
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 1_000_000,
+        gas_limit: 50_000_000,
+        to: TxKind::Call(Address::from_low_u64_be(1)),
+        ..Default::default()
+    };
+    let tx = Transaction::EIP1559Transaction(tx);
+
+    let res = blockchain
+        .validate_transaction(&tx, Address::random())
+        .await;
+    assert!(matches!(
+        res,
+        Err(MempoolError::TipBelowMinimum {
+            actual: 0,
+            limit: 1_000_000,
+        }),
+    ));
+}
+
+#[tokio::test]
+async fn at_floor_eip1559_passes_tip_check() {
+    // Tip at the floor passes the min-tip check. The random sender has no
+    // funds, so the tx fails later with `NotEnoughBalance`; that's the only
+    // accepted post-tip-check outcome. Asserting the specific downstream
+    // error guards against a future refactor that accidentally skips the
+    // tip check (where a different error would still satisfy a `!matches!`
+    // negative assertion).
+    let (config, header) = build_basic_config_and_header(false, false);
+    let store = setup_storage(config, header).await.expect("Storage setup");
+    let blockchain = blockchain_with_min_tip(store, 1_000_000);
+
+    let tx = EIP1559Transaction {
+        max_priority_fee_per_gas: 1_000_000,
+        max_fee_per_gas: 1_000_000,
+        gas_limit: 50_000_000,
+        to: TxKind::Call(Address::from_low_u64_be(1)),
+        ..Default::default()
+    };
+    let tx = Transaction::EIP1559Transaction(tx);
+
+    let res = blockchain
+        .validate_transaction(&tx, Address::random())
+        .await;
+    // The tip check itself must not fire; the downstream account-lookup
+    // (state root or balance) is what should fail in this minimal setup.
+    // Asserting on the concrete next-stage error keeps the test honest if
+    // a future refactor accidentally skips the tip check.
+    assert!(
+        matches!(
+            res,
+            Err(MempoolError::NotEnoughBalance) | Err(MempoolError::StoreError(_))
+        ),
+        "expected the tip check to pass and an account-lookup error to fire next, got {res:?}",
+    );
+}
+
+#[tokio::test]
+async fn floor_uses_raw_tip_cap_not_base_fee_adjusted_effective_tip() {
+    // Pins the deliberate semantic: the floor is compared against the RAW tip
+    // cap, not the base-fee-dependent effective tip
+    // `min(max_priority_fee_per_gas, max_fee_per_gas - base_fee_per_gas)`.
+    //
+    // Here `max_fee_per_gas == base_fee_per_gas`, so the actually-payable tip
+    // is 0 — under an "effective tip" reading this tx would be rejected. It
+    // must NOT be: geth's `PriceLimit` compares `tx.GasTipCap()` (raw), and
+    // keying on the effective tip would make admission depend on the current
+    // base fee, so the same tx could be admitted at block N and rejected at
+    // N+1 as the base fee drifts. Admission decisions must be stable.
+    let (config, mut header) = build_basic_config_and_header(false, false);
+    header.base_fee_per_gas = Some(1_000_000);
+    let store = setup_storage(config, header).await.expect("Storage setup");
+    let blockchain = blockchain_with_min_tip(store, 1_000_000);
+
+    let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+        // Raw tip cap is exactly at the floor …
+        max_priority_fee_per_gas: 1_000_000,
+        // … but the fee cap leaves no room above base fee, so the effective
+        // tip is 0.
+        max_fee_per_gas: 1_000_000,
+        gas_limit: 50_000_000,
+        to: TxKind::Call(Address::from_low_u64_be(1)),
+        ..Default::default()
+    });
+
+    let res = blockchain
+        .validate_transaction(&tx, Address::random())
+        .await;
+    assert!(
+        !matches!(res, Err(MempoolError::TipBelowMinimum { .. })),
+        "min-tip floor must compare the raw tip cap, not the base-fee-adjusted \
+         effective tip; got {res:?}",
+    );
+    // As with the other floor tests, the unfunded random sender means the
+    // account-lookup stage is the expected next failure.
+    assert!(
+        matches!(
+            res,
+            Err(MempoolError::NotEnoughBalance) | Err(MempoolError::StoreError(_))
+        ),
+        "expected an account-lookup error after the tip check passed, got {res:?}",
+    );
+}
+
+#[tokio::test]
+async fn floor_of_zero_admits_zero_tip() {
+    // Operators can disable the floor with --mempool.min-tip 0. Same
+    // structure as `at_floor_eip1559_passes_tip_check`: we want a specific
+    // downstream error (the balance check) to fire, NOT just "any error
+    // other than TipBelowMinimum".
+    let (config, header) = build_basic_config_and_header(false, false);
+    let store = setup_storage(config, header).await.expect("Storage setup");
+    let blockchain = blockchain_with_min_tip(store, 0);
+
+    let tx = EIP1559Transaction {
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 0,
+        gas_limit: 50_000_000,
+        to: TxKind::Call(Address::from_low_u64_be(1)),
+        ..Default::default()
+    };
+    let tx = Transaction::EIP1559Transaction(tx);
+
+    let res = blockchain
+        .validate_transaction(&tx, Address::random())
+        .await;
+    assert!(
+        matches!(
+            res,
+            Err(MempoolError::NotEnoughBalance) | Err(MempoolError::StoreError(_))
+        ),
+        "expected the tip check to skip (floor=0) and an account-lookup error to fire next, got {res:?}",
+    );
+}
+
+#[tokio::test]
+async fn legacy_gas_price_below_floor_rejected() {
+    // Legacy tx: `gas_tip_cap()` returns `gas_price` so the floor applies to
+    // the raw gas price for legacy txs (geth applies `PriceLimit` to
+    // `tx.GasTipCap()` which is `gas_price` for legacy).
+    let (config, header) = build_basic_config_and_header(false, false);
+    let store = setup_storage(config, header).await.expect("Storage setup");
+    let blockchain = blockchain_with_min_tip(store, 1_000_000);
+
+    let tx = ethrex_common::types::LegacyTransaction {
+        gas_price: U256::from(999_999u64), // 1 wei below floor
+        gas: 50_000_000,
+        to: TxKind::Call(Address::from_low_u64_be(1)),
+        ..Default::default()
+    };
+    let tx = Transaction::LegacyTransaction(tx);
+
+    let res = blockchain
+        .validate_transaction(&tx, Address::random())
+        .await;
+    assert!(matches!(
+        res,
+        Err(MempoolError::TipBelowMinimum {
+            actual: 999_999,
+            limit: 1_000_000,
+        }),
+    ));
+}
+
+#[tokio::test]
+async fn options_field_is_used_in_validate_transaction() {
+    // Smoke test that BlockchainOptions::min_tip_wei is consulted (not
+    // accidentally ignored if the option-plumbing breaks).
+    let (config, header) = build_basic_config_and_header(false, false);
+    let store = setup_storage(config, header).await.expect("Storage setup");
+
+    let mut bc = Blockchain::default_with_store(store);
+    bc.options = BlockchainOptions {
+        min_tip_wei: 5_000_000_000, // 5 gwei
+        ..BlockchainOptions::default()
+    };
+
+    let tx = EIP1559Transaction {
+        max_priority_fee_per_gas: 1_000_000_000, // 1 gwei (below 5 gwei)
+        max_fee_per_gas: 5_000_000_000,
+        gas_limit: 50_000_000,
+        to: TxKind::Call(Address::from_low_u64_be(1)),
+        ..Default::default()
+    };
+    let tx = Transaction::EIP1559Transaction(tx);
+
+    let res = bc.validate_transaction(&tx, Address::random()).await;
+    assert!(matches!(
+        res,
+        Err(MempoolError::TipBelowMinimum {
+            actual: 1_000_000_000,
+            limit: 5_000_000_000,
+        }),
+    ));
+}
+
+#[tokio::test]
+async fn shipped_default_floor_rejects_zero_tip_admits_one() {
+    // Pin the actual shipped default (`DEFAULT_MIN_TIP_WEI = 1`, matching
+    // geth's `PriceLimit = 1 wei`). Without this test the default could
+    // silently regress to 0 (admit-everything) or to the old 1 Mwei value.
+    let (config, header) = build_basic_config_and_header(false, false);
+    let store = setup_storage(config, header).await.expect("Storage setup");
+    let blockchain = blockchain_with_min_tip(store, ethrex_blockchain::DEFAULT_MIN_TIP_WEI);
+
+    // tip = 0 → rejected
+    let zero = Transaction::EIP1559Transaction(EIP1559Transaction {
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 1,
+        gas_limit: 50_000_000,
+        to: TxKind::Call(Address::from_low_u64_be(1)),
+        ..Default::default()
+    });
+    assert!(matches!(
+        blockchain
+            .validate_transaction(&zero, Address::random())
+            .await,
+        Err(MempoolError::TipBelowMinimum {
+            actual: 0,
+            limit: 1
+        }),
+    ));
+
+    // tip = 1 → passes the tip check; sender has no funds so the next
+    // failure is `NotEnoughBalance`. Assert that specifically rather than
+    // "not TipBelowMinimum" so the test catches accidental skip of the
+    // tip check in future refactors.
+    let one = Transaction::EIP1559Transaction(EIP1559Transaction {
+        max_priority_fee_per_gas: 1,
+        max_fee_per_gas: 1,
+        gas_limit: 50_000_000,
+        to: TxKind::Call(Address::from_low_u64_be(1)),
+        ..Default::default()
+    });
+    let res = blockchain
+        .validate_transaction(&one, Address::random())
+        .await;
+    // The tip check itself must not fire; the downstream account-lookup
+    // (state root or balance) is what should fail in this minimal setup.
+    // Asserting on the concrete next-stage error keeps the test honest if
+    // a future refactor accidentally skips the tip check.
+    assert!(
+        matches!(
+            res,
+            Err(MempoolError::NotEnoughBalance) | Err(MempoolError::StoreError(_))
+        ),
+        "expected the tip check to pass and an account-lookup error to fire next, got {res:?}",
+    );
+}
+
+#[tokio::test]
+async fn blob_tx_under_floor_rejected() {
+    // EIP-4844 path uses the same `gas_tip_cap()` accessor. Confirm an
+    // under-floor blob tx is also rejected so a regression in the per-type
+    // dispatch wouldn't slip through.
+    let (config, header) = build_basic_config_and_header(false, false);
+    let store = setup_storage(config, header).await.expect("Storage setup");
+    let blockchain = blockchain_with_min_tip(store, 1_000_000);
+
+    let tx = Transaction::EIP4844Transaction(EIP4844Transaction {
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 1_000_000,
+        max_fee_per_blob_gas: 1.into(),
+        gas: 50_000_000,
+        to: Address::from_low_u64_be(1),
+        ..Default::default()
+    });
+
+    assert!(matches!(
+        blockchain
+            .validate_transaction(&tx, Address::random())
+            .await,
+        Err(MempoolError::TipBelowMinimum {
+            actual: 0,
+            limit: 1_000_000,
+        }),
+    ));
 }
 
 #[test]
@@ -1070,6 +1410,7 @@ fn blob_txs_are_not_evicted_by_regular_tx_flood() {
                 blob_sender,
                 MempoolTransaction::new(blob_tx, blob_sender),
                 None,
+                None,
             )
             .expect("Failed to add blob transaction");
         blob_hashes.push(blob_hash);
@@ -1090,7 +1431,13 @@ fn blob_txs_are_not_evicted_by_regular_tx_flood() {
             H256::random()
         };
         mempool
-            .add_transaction(hash, sender, MempoolTransaction::new(tx, sender), None)
+            .add_transaction(
+                hash,
+                sender,
+                MempoolTransaction::new(tx, sender),
+                None,
+                None,
+            )
             .expect("Failed to add regular transaction");
     }
 
@@ -1135,7 +1482,13 @@ fn add_blob_tx(mempool: &Mempool, nonce: u64, blob_fee: u64) -> H256 {
     let sender = H160::random();
     mempool.add_blobs_bundle(hash, bundle).unwrap();
     mempool
-        .add_transaction(hash, sender, MempoolTransaction::new(tx, sender), None)
+        .add_transaction(
+            hash,
+            sender,
+            MempoolTransaction::new(tx, sender),
+            None,
+            None,
+        )
         .expect("Failed to add blob transaction");
     hash
 }
@@ -1158,7 +1511,13 @@ fn add_blob_tx_with_sender(mempool: &Mempool, sender: Address, nonce: u64) -> H2
     let hash = H256::random();
     mempool.add_blobs_bundle(hash, bundle).unwrap();
     mempool
-        .add_transaction(hash, sender, MempoolTransaction::new(tx, sender), None)
+        .add_transaction(
+            hash,
+            sender,
+            MempoolTransaction::new(tx, sender),
+            None,
+            None,
+        )
         .expect("Failed to add blob transaction");
     hash
 }
@@ -1183,6 +1542,7 @@ fn blob_txs_lists_only_blob_txs_with_sender_and_nonce() {
             plain_hash,
             sender,
             MempoolTransaction::new(plain, sender),
+            None,
             None,
         )
         .unwrap();
@@ -1346,7 +1706,7 @@ async fn mempool_rejects_underfunded_paymaster() {
     // frame tx with FrameTxPaymasterUnderfunded.
     //
     // Note: since APPROVE now collects the tx's MAXIMUM cost during the
-    // validation-prefix simulation (max_fee_per_gas * total_gas_limit), a payer
+    // validation-prefix simulation (max_fee_per_gas * max_gas), a payer
     // that cannot cover max_cost reverts *inside* the simulation
     // (FrameTxValidationFailed), never reaching this check. The availability
     // check is therefore only reachable when the payer covers a single tx's
@@ -1361,7 +1721,7 @@ async fn mempool_rejects_underfunded_paymaster() {
     let max_fee_per_gas = 2_000_000_000u64;
     let max_priority_fee_per_gas = 1_000_000_000u64;
     let frame_tx = funded_frame_tx(max_fee_per_gas, max_priority_fee_per_gas);
-    let total_gas = frame_tx.total_gas_limit();
+    let total_gas = frame_tx.max_gas();
     let max_cost = U256::from(max_fee_per_gas) * U256::from(total_gas);
 
     let paymaster = Address::from_low_u64_be(FRAME_TX_SELF_SENDER);
@@ -1435,6 +1795,7 @@ async fn mempool_rejects_underfunded_paymaster() {
                 is_canonical: false,
                 paymaster_balance: max_cost,
             }),
+            None,
         )
         .expect("phantom reservation must be directly inserted");
 
@@ -1512,6 +1873,7 @@ async fn mempool_enforces_noncanonical_paymaster_limit() {
                 is_canonical: false,
                 paymaster_balance: funded_balance,
             }),
+            None,
         )
         .expect("phantom frame tx must be directly inserted to fill paymaster slot");
 
@@ -1581,6 +1943,7 @@ async fn mempool_rejects_second_frame_tx_same_sender_new_nonce() {
             nonce1_hash,
             sender,
             MempoolTransaction::new(nonce1_tx, sender),
+            None,
             None,
         )
         .expect("direct insert of nonce=1 frame tx must succeed");
@@ -1670,6 +2033,7 @@ async fn mempool_frame_tx_replaces_same_nonce_non_frame_tx() {
             sender,
             MempoolTransaction::new(regular_tx, sender),
             None,
+            None,
         )
         .expect("direct insert of non-frame tx must succeed");
 
@@ -1739,7 +2103,7 @@ async fn mempool_fee_bump_not_blocked_by_own_stale_reservation() {
     // old reservation before re-validating availability.
     let low_fee = 100_000_000u64;
     let high_fee = 200_000_000u64;
-    let gas = funded_frame_tx(high_fee, high_fee).total_gas_limit();
+    let gas = funded_frame_tx(high_fee, high_fee).max_gas();
     // Exactly covers the bumped tx (high_fee * gas), but not old + new together.
     let balance = U256::from(high_fee) * U256::from(gas);
     let store = setup_hegota_store_with_balance(balance).await;
@@ -1775,7 +2139,7 @@ async fn mempool_fee_bump_rejected_leaves_original_intact() {
     // non-canonical slot, isolating the AVAILABILITY rejection from the limit.
     let low_fee = 100_000_000u64;
     let high_fee = 200_000_000u64;
-    let gas = funded_frame_tx(high_fee, high_fee).total_gas_limit();
+    let gas = funded_frame_tx(high_fee, high_fee).max_gas();
     // Exactly covers one high-fee tx (high_fee * gas).
     let balance = U256::from(high_fee) * U256::from(gas);
     let store = setup_hegota_store_with_balance(balance).await;
@@ -1829,6 +2193,7 @@ async fn mempool_fee_bump_rejected_leaves_original_intact() {
                 is_canonical: true,
                 paymaster_balance: balance,
             }),
+            None,
         )
         .expect("phantom reservation must be directly inserted");
 
@@ -2445,6 +2810,261 @@ async fn validate_transaction_rejects_pre_prague_eip7702() {
     );
 }
 
+// ----------------------------------------------------------------------------
+// Gap-admission tests
+// ----------------------------------------------------------------------------
+//
+// These tests exercise the rule that, when the mempool is heavily occupied,
+// incoming transactions with a nonce gap relative to the sender's on-chain
+// nonce are rejected. Replacements (same nonce as a tx already in the pool)
+// must bypass this rule, since they are not gapped.
+
+const GAP_TEST_MEMPOOL_MAX: usize = 10;
+const GAP_TEST_THRESHOLD_PCT: u8 = 90;
+
+fn workspace_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
+}
+
+async fn setup_funded_store(sender: Address) -> (Store, u64) {
+    let file = File::open(workspace_root().join("fixtures/genesis/execution-api.json"))
+        .expect("Failed to open genesis file");
+    let reader = BufReader::new(file);
+    let mut genesis: ethrex_common::types::Genesis =
+        serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
+
+    let chain_id = genesis.config.chain_id;
+
+    genesis.alloc.insert(
+        sender,
+        GenesisAccount {
+            balance: U256::from(10).pow(U256::from(20)),
+            code: Bytes::new(),
+            storage: Default::default(),
+            nonce: 0,
+        },
+    );
+
+    let mut store =
+        Store::new("store.db", EngineType::InMemory).expect("Failed to build DB for testing");
+
+    store
+        .add_initial_state(genesis)
+        .await
+        .expect("Failed to add genesis state");
+
+    (store, chain_id)
+}
+
+/// Build a non-blob tx with the given nonce. The signature is dummy — the tests
+/// here exercise `validate_transaction`, which never inspects the signature.
+fn build_tx(chain_id: u64, nonce: u64) -> Transaction {
+    Transaction::EIP1559Transaction(EIP1559Transaction {
+        chain_id,
+        nonce,
+        max_priority_fee_per_gas: 1,
+        max_fee_per_gas: 1_000_000_000,
+        gas_limit: 100_000,
+        to: TxKind::Call(Address::from_low_u64_be(0xABBA)),
+        value: U256::zero(),
+        data: Bytes::default(),
+        access_list: Default::default(),
+        ..Default::default()
+    })
+}
+
+/// Inject `count` dummy transactions from random senders directly into the
+/// mempool, bypassing validation. Used to push occupancy above a threshold.
+fn fill_mempool(mempool: &Mempool, count: usize) {
+    for i in 0..count {
+        let sender = Address::from_low_u64_be(0x1000 + i as u64);
+        let hash = H256::from_low_u64_be(0x1000 + i as u64);
+        let tx = build_tx(1, 0);
+        mempool
+            .add_transaction(
+                hash,
+                sender,
+                MempoolTransaction::new(tx, sender),
+                None,
+                None,
+            )
+            .expect("Failed to add transaction");
+    }
+}
+
+fn blockchain_with_threshold(store: Store, threshold_pct: u8) -> Blockchain {
+    Blockchain::new(
+        store,
+        BlockchainOptions {
+            max_mempool_size: GAP_TEST_MEMPOOL_MAX,
+            gap_admit_occupancy_threshold: threshold_pct,
+            ..Default::default()
+        },
+    )
+}
+
+#[tokio::test]
+async fn gap_admission_rejected_when_pool_above_threshold() {
+    let sender = Address::from_low_u64_be(0xAAA);
+    let (store, chain_id) = setup_funded_store(sender).await;
+    let blockchain = blockchain_with_threshold(store, GAP_TEST_THRESHOLD_PCT);
+
+    // Push occupancy to 100% (10/10) — well above 90%.
+    fill_mempool(&blockchain.mempool, GAP_TEST_MEMPOOL_MAX);
+
+    // On-chain nonce is 0; submitting nonce=5 introduces a gap.
+    let gapped_tx = build_tx(chain_id, 5);
+    let result = blockchain.validate_transaction(&gapped_tx, sender).await;
+    assert!(
+        matches!(
+            result,
+            Err(MempoolError::GapAdmissionDeniedUnderPressure { .. })
+        ),
+        "expected GapAdmissionDeniedUnderPressure, got {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn gap_admission_accepted_when_pool_below_threshold() {
+    let sender = Address::from_low_u64_be(0xAAB);
+    let (store, chain_id) = setup_funded_store(sender).await;
+    let blockchain = blockchain_with_threshold(store, GAP_TEST_THRESHOLD_PCT);
+
+    // Push occupancy to 50% — below 90%.
+    fill_mempool(&blockchain.mempool, GAP_TEST_MEMPOOL_MAX / 2);
+
+    let gapped_tx = build_tx(chain_id, 5);
+    let result = blockchain.validate_transaction(&gapped_tx, sender).await;
+    assert!(
+        result.is_ok(),
+        "expected gapped tx to be accepted under low pressure, got {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn gap_admission_disabled_at_threshold_100() {
+    let sender = Address::from_low_u64_be(0xAAC);
+    let (store, chain_id) = setup_funded_store(sender).await;
+    // Threshold of 100 disables the check entirely.
+    let blockchain = blockchain_with_threshold(store, 100);
+
+    // Fill to 100% to make the pool maximally occupied.
+    fill_mempool(&blockchain.mempool, GAP_TEST_MEMPOOL_MAX);
+
+    let gapped_tx = build_tx(chain_id, 5);
+    let result = blockchain.validate_transaction(&gapped_tx, sender).await;
+    assert!(
+        result.is_ok(),
+        "expected gapped tx to be accepted when threshold is 100, got {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn contiguous_nonce_tx_accepted_under_high_occupancy() {
+    let sender = Address::from_low_u64_be(0xAAD);
+    let (store, chain_id) = setup_funded_store(sender).await;
+    let blockchain = blockchain_with_threshold(store, GAP_TEST_THRESHOLD_PCT);
+
+    fill_mempool(&blockchain.mempool, GAP_TEST_MEMPOOL_MAX);
+
+    // On-chain nonce is 0; submitting nonce=0 is contiguous.
+    let contiguous_tx = build_tx(chain_id, 0);
+    let result = blockchain
+        .validate_transaction(&contiguous_tx, sender)
+        .await;
+    assert!(
+        result.is_ok(),
+        "expected contiguous tx to be accepted under high pressure, got {result:?}"
+    );
+}
+
+// `fee-token-l1-tx` (mempool-ingress side): an L1 node must reject L2-only tx
+// types (FeeToken 0x7d, PrivilegedL2 0x7e) at admission — they are valid only on
+// L2 and unknown to other L1 clients. `Blockchain::default_with_store` is an L1
+// node (`BlockchainType::L1`). The L2 acceptance path is covered by the L2
+// integration tests.
+
+#[tokio::test]
+async fn l1_validate_transaction_rejects_fee_token() {
+    let (config, header) = build_basic_config_and_header(false, false);
+    let store = setup_storage(config, header).await.expect("Storage setup");
+    let blockchain = Blockchain::default_with_store(store);
+
+    let tx = Transaction::FeeTokenTransaction(FeeTokenTransaction::default());
+    let res = blockchain
+        .validate_transaction(&tx, Address::random())
+        .await;
+    assert!(
+        matches!(res, Err(MempoolError::L2OnlyTransactionType)),
+        "an L1 node must reject FeeToken (0x7d) at admission (got {res:?})"
+    );
+}
+
+#[tokio::test]
+async fn replacement_at_existing_nonce_bypasses_gap_admission() {
+    let sender = Address::from_low_u64_be(0xAAE);
+    let (store, chain_id) = setup_funded_store(sender).await;
+    let blockchain = blockchain_with_threshold(store, GAP_TEST_THRESHOLD_PCT);
+
+    // First, add a gapped tx while the pool has plenty of room.
+    let original_tx = build_tx(chain_id, 5);
+    let original_hash = original_tx.hash(&NativeCrypto);
+    blockchain
+        .mempool
+        .add_transaction(
+            original_hash,
+            sender,
+            MempoolTransaction::new(original_tx, sender),
+            None,
+            None,
+        )
+        .expect("Failed to seed the pool with a tx at nonce 5");
+
+    // Now push the pool above the threshold.
+    fill_mempool(&blockchain.mempool, GAP_TEST_MEMPOOL_MAX.saturating_sub(1));
+
+    // Build a replacement at the same nonce with strictly higher fees so that
+    // `find_tx_to_replace` returns Some(_), bypassing the gap-admission rule.
+    let replacement_tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+        chain_id,
+        nonce: 5,
+        max_priority_fee_per_gas: 2,
+        max_fee_per_gas: 2_000_000_000,
+        gas_limit: 100_000,
+        to: TxKind::Call(Address::from_low_u64_be(0xABBA)),
+        value: U256::zero(),
+        data: Bytes::default(),
+        access_list: Default::default(),
+        ..Default::default()
+    });
+
+    let result = blockchain
+        .validate_transaction(&replacement_tx, sender)
+        .await;
+    // A fresh gapped tx here would hit `GapAdmissionDeniedUnderPressure`; the
+    // replacement is exempt, so validation passes.
+    assert!(
+        result.is_ok(),
+        "expected replacement to bypass gap-admission rule, got {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn l1_validate_transaction_rejects_privileged_l2() {
+    let (config, header) = build_basic_config_and_header(false, false);
+    let store = setup_storage(config, header).await.expect("Storage setup");
+    let blockchain = Blockchain::default_with_store(store);
+
+    let tx = Transaction::PrivilegedL2Transaction(PrivilegedL2Transaction::default());
+    let res = blockchain
+        .validate_transaction(&tx, Address::random())
+        .await;
+    assert!(
+        matches!(res, Err(MempoolError::L2OnlyTransactionType)),
+        "an L1 node must reject PrivilegedL2 (0x7e) at admission (got {res:?})"
+    );
+}
+
 // ==================== Relocated from crates/blockchain/blockchain.rs ====================
 // A pooled frame transaction (EIP-8141) must be served over P2P as a
 // `P2PTransaction::FrameTransaction` instead of being rejected.
@@ -2473,7 +3093,7 @@ mod p2p_serve_tests {
             }],
             signatures: vec![FrameSignature {
                 scheme: FRAME_SIG_SCHEME_SECP256K1,
-                signer: Address::from_low_u64_be(0xABCD),
+                signer: Some(Address::from_low_u64_be(0xABCD)),
                 msg: bytes::Bytes::new(),
                 signature: bytes::Bytes::from(vec![0u8; 65]),
             }],
@@ -2499,7 +3119,13 @@ mod p2p_serve_tests {
         // exercise only the P2P serve path.
         blockchain
             .mempool
-            .add_transaction(hash, sender, MempoolTransaction::new(tx, sender), None)
+            .add_transaction(
+                hash,
+                sender,
+                MempoolTransaction::new(tx, sender),
+                None,
+                None,
+            )
             .expect("failed to add frame tx to mempool");
 
         let served = blockchain
@@ -2508,4 +3134,243 @@ mod p2p_serve_tests {
         assert!(matches!(served, P2PTransaction::FrameTransaction(_)));
         assert_eq!(served.compute_hash(), hash);
     }
+}
+
+// Cumulative per-sender balance check: `Mempool::sum_cost_for_sender`. Relocated
+// here from an inline `#[cfg(test)]` module in `crates/blockchain/mempool.rs`.
+mod cumulative_balance_tests {
+    use super::*;
+
+    fn build_tx(nonce: u64, max_fee_per_gas: u64, gas_limit: u64, value: U256) -> Transaction {
+        Transaction::EIP1559Transaction(EIP1559Transaction {
+            nonce,
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas,
+            gas_limit,
+            to: TxKind::Call(Address::from_low_u64_be(1)),
+            value,
+            ..Default::default()
+        })
+    }
+
+    fn insert_tx(mempool: &Mempool, sender: Address, tx: Transaction) -> H256 {
+        let hash = H256::random();
+        mempool
+            .add_transaction(
+                hash,
+                sender,
+                MempoolTransaction::new(tx, sender),
+                None,
+                None,
+            )
+            .expect("add_transaction");
+        hash
+    }
+
+    #[test]
+    fn sum_cost_for_sender_empty_pool_is_zero() {
+        let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
+        let sender = Address::random();
+
+        let total = mempool.sum_cost_for_sender(sender, 0, None).expect("sum");
+        assert_eq!(total, U256::zero());
+    }
+
+    #[test]
+    fn sum_cost_for_sender_sums_multiple_nonces() {
+        let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
+        let sender = Address::random();
+
+        let tx0 = build_tx(0, 10, 21_000, U256::from(100u64));
+        let tx1 = build_tx(1, 20, 21_000, U256::from(200u64));
+        let tx2 = build_tx(2, 30, 21_000, U256::from(300u64));
+
+        let expected = tx0.cost_without_base_fee().unwrap()
+            + tx1.cost_without_base_fee().unwrap()
+            + tx2.cost_without_base_fee().unwrap();
+
+        insert_tx(&mempool, sender, tx0);
+        insert_tx(&mempool, sender, tx1);
+        insert_tx(&mempool, sender, tx2);
+
+        let total = mempool.sum_cost_for_sender(sender, 0, None).expect("sum");
+        assert_eq!(total, expected);
+    }
+
+    #[test]
+    fn sum_cost_for_sender_ignores_other_senders() {
+        let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
+        let sender_a = Address::random();
+        let sender_b = Address::random();
+
+        let tx_a = build_tx(0, 10, 21_000, U256::from(100u64));
+        let tx_b = build_tx(0, 50, 21_000, U256::from(999u64));
+
+        let expected_a = tx_a.cost_without_base_fee().unwrap();
+
+        insert_tx(&mempool, sender_a, tx_a);
+        insert_tx(&mempool, sender_b, tx_b);
+
+        let total_a = mempool
+            .sum_cost_for_sender(sender_a, 0, None)
+            .expect("sum a");
+        assert_eq!(total_a, expected_a);
+    }
+
+    #[test]
+    fn sum_cost_for_sender_after_remove_drops_that_tx() {
+        let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
+        let sender = Address::random();
+
+        let tx0 = build_tx(0, 10, 21_000, U256::from(100u64));
+        let tx1 = build_tx(1, 10, 21_000, U256::from(200u64));
+        let expected_after = tx1.cost_without_base_fee().unwrap();
+
+        let hash0 = insert_tx(&mempool, sender, tx0);
+        insert_tx(&mempool, sender, tx1);
+
+        mempool.remove_transaction(&hash0).expect("remove");
+
+        let total = mempool.sum_cost_for_sender(sender, 0, None).expect("sum");
+        assert_eq!(total, expected_after);
+    }
+
+    // Obsoleted txs (nonce below the sender's on-chain nonce — already mined but
+    // not yet pruned) must NOT count toward the cumulative-balance sum.
+    #[test]
+    fn sum_cost_for_sender_excludes_obsoleted_nonces() {
+        let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
+        let sender = Address::random();
+
+        let tx0 = build_tx(0, 10, 21_000, U256::from(100u64));
+        let tx1 = build_tx(1, 20, 21_000, U256::from(200u64));
+        let tx2 = build_tx(2, 30, 21_000, U256::from(300u64));
+        let expected = tx2.cost_without_base_fee().unwrap();
+
+        insert_tx(&mempool, sender, tx0);
+        insert_tx(&mempool, sender, tx1);
+        insert_tx(&mempool, sender, tx2);
+
+        // On-chain nonce advanced to 2: nonces 0 and 1 are obsoleted and excluded.
+        let total = mempool.sum_cost_for_sender(sender, 2, None).expect("sum");
+        assert_eq!(total, expected);
+    }
+}
+
+/// `add_transaction` queues the tx for P2P broadcast (the default path).
+/// `add_transaction_no_broadcast` does not, modeling the private-mempool
+/// flag's effect on RPC-submitted transactions: they're available locally
+/// but never appear in `get_txs_for_broadcast`.
+#[test]
+fn add_transaction_no_broadcast_keeps_tx_out_of_broadcast_pool() {
+    let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
+
+    // Public tx — goes through the standard path, ends up in broadcast pool.
+    let public_decoded = Transaction::decode_canonical(&hex::decode(
+        "f86d80843baa0c4082f618946177843db3138ae69679a54b95cf345ed759450d870aa87bee538000808360306ba0151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65da064c5dd5aae2fbb535830ebbdad0234975cd7ece3562013b63ea18cc0df6c97d4",
+    ).unwrap()).unwrap();
+    let public_sender = public_decoded.sender(&NativeCrypto).unwrap();
+    let public_tx = MempoolTransaction::new(public_decoded, public_sender);
+    let public_hash = public_tx.hash(&NativeCrypto);
+
+    // Private tx — goes through `add_transaction_no_broadcast`, only
+    // distinguishable from `public_tx` by sender (so the per-sender-nonce
+    // index doesn't collide).
+    let private_decoded = Transaction::EIP1559Transaction(EIP1559Transaction {
+        chain_id: 1,
+        nonce: 0,
+        max_priority_fee_per_gas: 1,
+        max_fee_per_gas: 1_000_000_000,
+        gas_limit: 21_000,
+        to: TxKind::Call(H160::from_low_u64_be(0xBEEF)),
+        value: U256::zero(),
+        ..Default::default()
+    });
+    // Using a synthetic sender so we don't need a signed tx for this test.
+    let private_sender = Address::from_low_u64_be(0xCAFE);
+    let private_hash = private_decoded.hash(&NativeCrypto);
+    let private_tx = MempoolTransaction::new(private_decoded, private_sender);
+
+    mempool
+        .add_transaction(public_hash, public_sender, public_tx, None, None)
+        .expect("public tx should land in broadcast pool");
+    mempool
+        .add_transaction_no_broadcast(private_hash, private_sender, private_tx, None, None)
+        .expect("private tx should land in mempool but not broadcast pool");
+
+    // Both txs are queryable from the mempool itself.
+    assert!(mempool.contains_tx(public_hash).unwrap());
+    assert!(mempool.contains_tx(private_hash).unwrap());
+
+    // Only the public one is returned for broadcast.
+    let broadcast: Vec<H256> = mempool
+        .get_txs_for_broadcast()
+        .unwrap()
+        .iter()
+        .map(|tx| tx.hash(&NativeCrypto))
+        .collect();
+    assert!(broadcast.contains(&public_hash));
+    assert!(
+        !broadcast.contains(&private_hash),
+        "private tx must not appear in get_txs_for_broadcast"
+    );
+
+    // After remove_broadcasted_txs clears the public hash, the private tx
+    // remains absent (proving the broadcast pool never contained it).
+    mempool.remove_broadcasted_txs(&[public_hash]).unwrap();
+    let broadcast_after: Vec<H256> = mempool
+        .get_txs_for_broadcast()
+        .unwrap()
+        .iter()
+        .map(|tx| tx.hash(&NativeCrypto))
+        .collect();
+    assert!(broadcast_after.is_empty());
+}
+
+/// Private-mempool leak guard: a tx admitted via
+/// `add_transaction_no_broadcast` MUST be flagged via `is_private()` so the
+/// P2P paths (new-peer pooled-hashes dump in `send_all_pooled_tx_hashes`,
+/// and `GetPooledTransactions` responses via
+/// `Blockchain::get_p2p_transaction_by_hash`) can refuse to disclose it.
+#[test]
+fn add_transaction_no_broadcast_marks_tx_as_private_for_p2p_filters() {
+    let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
+    let public_decoded = Transaction::decode_canonical(&hex::decode(
+        "f86d80843baa0c4082f618946177843db3138ae69679a54b95cf345ed759450d870aa87bee538000808360306ba0151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65da064c5dd5aae2fbb535830ebbdad0234975cd7ece3562013b63ea18cc0df6c97d4",
+    ).unwrap()).unwrap();
+    let public_sender = public_decoded.sender(&NativeCrypto).unwrap();
+    let public_tx = MempoolTransaction::new(public_decoded, public_sender);
+    let public_hash = public_tx.hash(&NativeCrypto);
+
+    let private_decoded = Transaction::EIP1559Transaction(EIP1559Transaction {
+        chain_id: 1,
+        nonce: 0,
+        max_priority_fee_per_gas: 1,
+        max_fee_per_gas: 1_000_000_000,
+        gas_limit: 21_000,
+        to: TxKind::Call(H160::from_low_u64_be(0xBEEF)),
+        value: U256::zero(),
+        ..Default::default()
+    });
+    let private_sender = Address::from_low_u64_be(0xCAFE);
+    let private_hash = private_decoded.hash(&NativeCrypto);
+    let private_tx = MempoolTransaction::new(private_decoded, private_sender);
+
+    mempool
+        .add_transaction(public_hash, public_sender, public_tx, None, None)
+        .unwrap();
+    mempool
+        .add_transaction_no_broadcast(private_hash, private_sender, private_tx, None, None)
+        .unwrap();
+
+    // Public tx is not private; private tx is.
+    assert!(!mempool.is_private(public_hash).unwrap());
+    assert!(mempool.is_private(private_hash).unwrap());
+
+    // Removal clears the private flag (so a re-added hash isn't misclassified).
+    mempool.remove_transaction(&private_hash).unwrap();
+    assert!(!mempool.is_private(private_hash).unwrap());
+
+    // Hashes that were never in the pool are also not private.
+    assert!(!mempool.is_private(H256::random()).unwrap());
 }

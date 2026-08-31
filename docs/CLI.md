@@ -27,7 +27,7 @@ Options:
 
 Node options:
       --network <GENESIS_FILE_PATH>
-          Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include sepolia, hoodi and mainnet. If not specified, defaults to mainnet.
+          Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include sepolia, hoodi, plataberget and mainnet. If not specified, defaults to mainnet.
           
           [env: ETHREX_NETWORK=]
 
@@ -82,22 +82,22 @@ Node options:
 
       --no-precompile-cache
           Disable the per-block precompile result cache (benchmarking only).
-          
+
           [env: ETHREX_NO_PRECOMPILE_CACHE=]
 
       --no-bal-parallel-exec
           Disable BAL-driven parallel transaction execution on Amsterdam+ blocks (falls back to sequential).
-          
+
           [env: ETHREX_NO_BAL_PARALLEL_EXEC=]
 
       --no-bal-prefetch
           Disable the BAL-driven state prefetch warmer thread on Amsterdam+ blocks.
-          
+
           [env: ETHREX_NO_BAL_PREFETCH=]
 
       --no-bal-parallel-trie
           Disable BAL-driven optimistic trie merkleization on Amsterdam+ blocks (falls back to streaming AccountUpdates from the executor).
-          
+
           [env: ETHREX_NO_BAL_PARALLEL_TRIE=]
 
       --log.dir <LOG_DIR>
@@ -111,10 +111,48 @@ Node options:
           [env: ETHREX_MEMPOOL_MAX_SIZE=]
           [default: 10000]
 
+      --mempool.min-tip <MIN_TIP_WEI>
+          Minimum priority-fee cap (in wei) required for a transaction to be admitted into the mempool. Compared against the raw tip cap: `max_priority_fee_per_gas` for typed transactions, `gas_price` for legacy transactions (independent of current base fee, so admission stays stable as base fee oscillates). Set to 0 to disable the floor.
+
+          [env: ETHREX_MEMPOOL_MIN_TIP=]
+          [default: 1]
+      --mempool.private
+          Node-level config (not a protocol/EIP behavior): keep RPC-submitted transactions private. They enter the mempool and may be included in blocks built locally, but are not propagated to peers. P2P-received transactions are unaffected.
+
+          [env: ETHREX_MEMPOOL_PRIVATE=]
+      --mempool.price-bump <PERCENT>
+          Minimum fee bump (in percent) required to replace a non-blob pooled transaction at the same (sender, nonce).
+
+          [env: ETHREX_MEMPOOL_PRICE_BUMP=]
+          [default: 10]
+
+      --mempool.blob-price-bump <PERCENT>
+          Minimum fee bump (in percent) required to replace an EIP-4844 blob pooled transaction.
+
+          [env: ETHREX_MEMPOOL_BLOB_PRICE_BUMP=]
+          [default: 100]
+
+      --mempool.gap-admit-occupancy-threshold <PERCENTAGE>
+          Mempool occupancy percentage (0-100) at or above which incoming transactions with a nonce gap relative to the sender's on-chain nonce are rejected. Setting to 100 disables the check.
+
+          [env: ETHREX_MEMPOOL_GAP_ADMIT_OCCUPANCY_THRESHOLD=]
+          [default: 90]
+
+      --mempool.max-queued-txs-per-account <MAX_QUEUED_TXS_PER_ACCOUNT>
+          Maximum number of queued (future/nonce-gapped) transactions a single sender may hold in the mempool. Executable (contiguous-nonce) txs are not capped (geth AccountQueue-style).
+
+          [env: ETHREX_MEMPOOL_MAX_QUEUED_TXS_PER_ACCOUNT=]
+          [default: 64]
+
       --precompute-witnesses
           Once synced, computes execution witnesses upon receiving newPayload messages and stores them in local storage
           
           [env: ETHREX_PRECOMPUTE_WITNESSES=]
+
+      --max-reorg-depth <MAX_REORG_DEPTH>
+          Optional operator override for the maximum reorg depth. Omit for finality-bounded cap. Set to 0 to disable deep reorgs entirely. Set to d to reject reorgs of depth > d.
+          
+          [env: ETHREX_MAX_REORG_DEPTH=]
 
 P2P options:
       --bootnodes <BOOTNODE_LIST>...
@@ -127,6 +165,18 @@ P2P options:
           
           [env: ETHREX_SYNCMODE=]
           [default: snap]
+
+      --history.chain <HISTORY_CHAIN>
+          Optionally backfill historical block bodies and receipts after snap sync so the node can serve historical block, transaction, receipt and log queries. One of "off" (default: headers-only below the pivot), "postmerge" (backfill down to the merge block), "all" (as far back as receipts are decodable — down to the Byzantium block, not genesis — best-effort as many peers no longer serve pre-merge history), or an explicit BLOCK NUMBER to backfill down to only that block — use this to keep a recent slice of history instead of everything back to the merge. A block number below the merge block is honoured but is best-effort like "all", and anything below Byzantium is clamped up to it. Enabling this adds substantial disk usage. It does not enable historical state queries (this is not an archive node).
+          
+          [env: ETHREX_HISTORY_CHAIN=]
+          [default: off]
+
+      --history.transactions <BLOCKS>
+          Blocks of backfilled history to keep the transaction index for (0 = the entire backfilled range).
+          
+          [env: ETHREX_HISTORY_TRANSACTIONS=]
+          [default: 0]
 
       --p2p.disabled
           [env: ETHREX_P2P_DISABLED=]
@@ -178,21 +228,26 @@ P2P options:
           [default: 100]
 
       --p2p.lookup-interval <INITIAL_LOOKUP_INTERVAL>
-          Initial Lookup Time Interval (ms) to trigger each Discovery lookup message and RLPx connection attempt.
+          Initial time interval (ms) between RLPx connection attempts. Widens towards 600ms as the target peer count is approached.
           
           [env: ETHREX_P2P_LOOKUP_INTERVAL=]
           [default: 100]
 
+      --blob-sampling
+          Enable EIP-8070 PeerDAS blob sampling (sampler/provider state machine). Disabled by default; when off the node always acts as provider (p=1.0).
+
+          [env: ETHREX_BLOB_SAMPLING=]
+
+      --blob-eager-provider
+          EIP-8070: always act as provider (p=1.0) for every blob tx, bypassing the pseudo-random role decision. Implies --blob-sampling. Not needed for validators: eager mode latches on permanently the first time the CL requests a payload build.
+
+          [env: ETHREX_BLOB_EAGER_PROVIDER=]
+
 Storage options:
       --rocksdb.block-cache-size <BYTES>
-          RocksDB shared block cache size in bytes. With cache_index_and_filter_blocks enabled it holds data blocks plus the per-SST index and bloom-filter blocks, so it is the effective ceiling on RocksDB's resident memory.
-          
-          Default 12 GiB keeps the filter/index working set resident plus hot EVM state. A sweep on a synced mainnet node (32 GiB cap) found 8-16 GiB all keep up with head-following (filters resident, disk near-idle, no slow blocks); larger gives no gain because the OS page cache backstops the uncompressed state CFs, and ~8 GiB is the floor where the filter set starts to thrash.
-          
-          Lower only on memory-constrained hosts, accepting reduced throughput. ETHREX_ROCKSDB_BLOCK_CACHE_SIZE sets the same value.
+          RocksDB shared block cache size in bytes, the effective ceiling on RocksDB's resident memory. Defaults to 40% of the memory available to the process (physical or cgroup limit, whichever is lower), clamped to 512 MiB..=12 GiB; where no limit can be detected (no readable /proc, e.g. outside Linux) it defaults to the 12 GiB ceiling.
           
           [env: ETHREX_ROCKSDB_BLOCK_CACHE_SIZE=]
-          [default: 12884901888]
 
 RPC options:
       --http.addr <ADDRESS>
@@ -208,7 +263,7 @@ RPC options:
           [default: 8545]
 
       --http.api <NAMESPACES>
-          Comma-separated list of JSON-RPC namespaces exposed on the public HTTP and WebSocket endpoints. Defaults to `eth,net,web3`. Enable `admin`, `debug` or `txpool` only when needed; the `engine` namespace is served on the authenticated RPC port and cannot be toggled here.
+          Comma-separated list of JSON-RPC namespaces exposed on the public HTTP and WebSocket endpoints. Defaults to `eth,net,web3`. Enable `admin`, `debug`, `txpool` or `testing` only when needed; the `engine` namespace is served on the authenticated RPC port and cannot be toggled here.
           
           [env: ETHREX_HTTP_API=]
           [default: eth,net,web3]
@@ -219,16 +274,14 @@ RPC options:
           [env: ETHREX_ENABLE_WS=]
 
       --ws.addr <ADDRESS>
-          Listening address for the websocket rpc server.
+          Listening address for the WebSocket JSON-RPC server. When unset it inherits `--http.addr` (loopback by default). Set it equal to the HTTP address to serve HTTP and WebSocket on a single listener.
           
           [env: ETHREX_WS_ADDR=]
-          [default: 0.0.0.0]
 
       --ws.port <PORT>
-          Listening port for the websocket rpc server.
+          Listening port for the WebSocket JSON-RPC server. When unset it inherits `--http.port`, so an enabled WebSocket shares the HTTP listener unless a different port is given.
           
           [env: ETHREX_WS_PORT=]
-          [default: 8546]
 
       --authrpc.addr <ADDRESS>
           Listening address for the authenticated rpc server.
@@ -253,7 +306,7 @@ Block building options:
           Block extra data message.
           
           [env: ETHREX_BUILDER_EXTRA_DATA=]
-          [default: "ethrex 19.0.0"]
+          [default: "ethrex 25.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.
@@ -305,7 +358,7 @@ Options:
 
 Node options:
       --network <GENESIS_FILE_PATH>
-          Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia, hoodi and mainnet. If not specified, defaults to mainnet.
+          Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include sepolia, hoodi, plataberget and mainnet. If not specified, defaults to mainnet.
 
           [env: ETHREX_NETWORK=]
 
@@ -353,6 +406,12 @@ Node options:
 
           [env: ETHREX_MEMPOOL_MAX_SIZE=]
           [default: 10000]
+
+      --mempool.gap-admit-occupancy-threshold <PERCENTAGE>
+          Mempool occupancy percentage (0-100) at or above which incoming transactions with a nonce gap relative to the sender's on-chain nonce are rejected. Setting to 100 disables the check.
+
+          [env: ETHREX_MEMPOOL_GAP_ADMIT_OCCUPANCY_THRESHOLD=]
+          [default: 90]
 
 P2P options:
       --bootnodes <BOOTNODE_LIST>...
@@ -418,7 +477,7 @@ RPC options:
           [default: 8545]
 
       --http.api <NAMESPACES>
-          Comma-separated list of JSON-RPC namespaces exposed on the public HTTP and WebSocket endpoints. Defaults to `eth,net,web3`. Enable `admin`, `debug` or `txpool` only when needed; the `engine` namespace is served on the authenticated RPC port and cannot be toggled here.
+          Comma-separated list of JSON-RPC namespaces exposed on the public HTTP and WebSocket endpoints. Defaults to `eth,net,web3`. Enable `admin`, `debug`, `txpool` or `testing` only when needed; the `engine` namespace is served on the authenticated RPC port and cannot be toggled here.
 
           [env: ETHREX_HTTP_API=]
           [default: eth,net,web3]
@@ -429,16 +488,14 @@ RPC options:
           [env: ETHREX_ENABLE_WS=]
 
       --ws.addr <ADDRESS>
-          Listening address for the websocket rpc server.
+          Listening address for the WebSocket JSON-RPC server. When unset it inherits `--http.addr` (loopback by default). Set it equal to the HTTP address to serve HTTP and WebSocket on a single listener.
 
           [env: ETHREX_WS_ADDR=]
-          [default: 0.0.0.0]
 
       --ws.port <PORT>
-          Listening port for the websocket rpc server.
+          Listening port for the WebSocket JSON-RPC server. When unset it inherits `--http.port`, so an enabled WebSocket shares the HTTP listener unless a different port is given.
 
           [env: ETHREX_WS_PORT=]
-          [default: 8546]
 
       --authrpc.addr <ADDRESS>
           Listening address for the authenticated rpc server.
@@ -463,7 +520,7 @@ Block building options:
           Block extra data message.
 
           [env: ETHREX_BUILDER_EXTRA_DATA=]
-          [default: "ethrex 19.0.0"]
+          [default: "ethrex 25.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.

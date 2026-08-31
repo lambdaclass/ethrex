@@ -69,8 +69,15 @@ impl ProverBackend for OpenVmBackend {
     }
 
     fn serialize_input(&self, input: &ProgramInput) -> Result<Self::SerializedInput, BackendError> {
-        let mut stdin = StdIn::default();
+        // On the L1 path `ProgramInput` IS the spec's `statelessInputBytes`, so it
+        // must reach the guest byte-for-byte — rkyv-wrapping it would make the
+        // guest's schema-prefix check fail. Only the L2 batch input is rkyv.
+        #[cfg(feature = "l2")]
         let bytes = rkyv::to_bytes::<Error>(input).map_err(BackendError::serialization)?;
+        #[cfg(not(feature = "l2"))]
+        let bytes = input;
+
+        let mut stdin = StdIn::default();
         stdin.write_bytes(bytes.as_slice());
         Ok(stdin)
     }

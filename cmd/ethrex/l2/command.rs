@@ -15,7 +15,10 @@ use ethrex_blockchain::{
 };
 use ethrex_common::{
     Address, U256,
-    types::{BYTES_PER_BLOB, Block, blobs_bundle, bytes_from_blob, fee_config::FeeConfig},
+    types::{
+        BYTES_PER_BLOB, Block, blobs_bundle, bytes_from_blob, fee_config::FeeConfig,
+        normalize_legacy_withdrawals,
+    },
 };
 use ethrex_common::{types::BlobsBundle, utils::keccak};
 use ethrex_config::networks::Network;
@@ -100,6 +103,10 @@ impl L2Command {
             l2_options.sequencer_opts.watcher_opts.bridge_address =
                 Some(contract_addresses.bridge_address);
             println!("Initializing L2");
+        }
+        if l2_options.sequencer_opts.native_rollups {
+            l2::init_native_rollup_l2(l2_options, log_filter_handler).await?;
+            return Ok(());
         }
         l2::init_l2(l2_options, log_filter_handler).await?;
         Ok(())
@@ -431,7 +438,12 @@ impl Command {
                     let mut buf = &blob[8..];
                     let mut blocks = Vec::new();
                     for _ in 0..blocks_count {
-                        let (item, rest) = Block::decode_unfinished(buf)?;
+                        let (mut item, rest) = Block::decode_unfinished(buf)?;
+                        // Batch blobs published by older ethrex versions carry the
+                        // legacy omitted-withdrawals body shape, which block
+                        // validation now rejects. The published history is
+                        // immutable, so normalize on read.
+                        normalize_legacy_withdrawals(&item.header, &mut item.body);
                         blocks.push(item);
                         buf = rest;
                     }
@@ -494,6 +506,7 @@ impl Command {
                         latest_hash_on_batch,
                         latest_hash_on_batch,
                         latest_hash_on_batch,
+                        None,
                     )
                     .await?;
 
@@ -619,6 +632,10 @@ impl Command {
                     .inspect(|_| info!("Succesfully unpaused contract"))?;
             }
             Command::Deploy { options } => {
+                if options.native_rollups {
+                    l2::deployer::deploy_native_rollup_contracts(options).await?;
+                    return Ok(());
+                }
                 deploy_l1_contracts(options).await?;
             }
         }
@@ -676,7 +693,7 @@ impl ContractCallOptions {
 
 async fn delete_batch_from_rollup_store(batch: u64, rollup_store_dir: &Path) -> eyre::Result<u64> {
     info!("Deleting batch from rollup store...");
-    let rollup_store = l2::initializers::init_rollup_store(rollup_store_dir).await;
+    let rollup_store = l2::init_rollup_store(rollup_store_dir).await;
     let last_kept_block = rollup_store
         .get_block_numbers_by_batch(batch)
         .await?

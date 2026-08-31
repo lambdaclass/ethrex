@@ -11,6 +11,7 @@ use ethrex_blockchain::{
 };
 #[cfg(not(feature = "stateless"))]
 use ethrex_common::types::block_access_list::BlockAccessList;
+use ethrex_common::types::block_execution_witness::ExecutionWitness;
 #[cfg(feature = "stateless")]
 use ethrex_common::types::block_execution_witness::RpcExecutionWitness;
 use ethrex_common::{
@@ -20,10 +21,6 @@ use ethrex_common::{
         InvalidBlockHeaderError,
     },
 };
-use ethrex_guest_program::input::ProgramInput;
-#[cfg(feature = "sp1")]
-use ethrex_prover::Sp1Backend;
-use ethrex_prover::{BackendType, ExecBackend, ProverBackend};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::EvmError;
@@ -48,29 +45,50 @@ fn merkle_pool() -> Arc<rayon::ThreadPool> {
 pub fn parse_and_execute(
     path: &Path,
     skipped_tests: Option<&[&str]>,
-    stateless_backend: Option<BackendType>,
+    run_stateless: bool,
 ) -> datatest_stable::Result<()> {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let tests = parse_tests(path);
 
     let mut failures = Vec::new();
+    let mut executed = 0usize;
+    let mut skipped_by_name = 0usize;
+    let parsed = tests.len();
 
     for (test_key, test) in tests {
-        let should_skip_test = test.network < Fork::Merge
-            || skipped_tests
-                .map(|skipped| skipped.iter().any(|s| test_key.contains(s)))
-                .unwrap_or(false);
-
-        if should_skip_test {
+        let named = skipped_tests
+            .map(|skipped| skipped.iter().any(|s| test_key.contains(s)))
+            .unwrap_or(false);
+        if named {
+            skipped_by_name += 1;
             continue;
         }
+        if test.network < Fork::Merge {
+            continue;
+        }
+        executed += 1;
 
-        let result = rt.block_on(run_ef_test(&test_key, &test, stateless_backend));
+        let result = rt.block_on(run_ef_test(&test_key, &test, run_stateless));
 
         if let Err(e) = result {
             eprintln!("Test {test_key} failed: {e:?}");
             failures.push(format!("{test_key}: {e:?}"));
         }
+    }
+
+    // A stateless fixture file that runs nothing, and was not deliberately named
+    // in the skip list, is a failure rather than a pass. A blanket fork-based skip
+    // once silenced the entire stateless run — 23,946 fixtures, all of them
+    // `network: Amsterdam` — and it stayed green the whole time. Named skips are
+    // exempt because they are a recorded decision; a structural skip is not. Not
+    // applied to the levm run, where `vectors/legacy/` is legitimately pre-Merge.
+    if run_stateless && parsed > 0 && executed == 0 && skipped_by_name == 0 {
+        return Err(format!(
+            "{}: all {parsed} stateless fixture(s) were skipped structurally, so this file \
+             tested nothing",
+            path.display()
+        )
+        .into());
     }
 
     if failures.is_empty() {
@@ -84,7 +102,7 @@ pub fn parse_and_execute(
 pub async fn run_ef_test(
     test_key: &str,
     test: &TestUnit,
-    stateless_backend: Option<BackendType>,
+    run_stateless: bool,
 ) -> Result<(), String> {
     // check that the decoded genesis block header matches the deserialized one
     let genesis_rlp = test.genesis_rlp.clone();
@@ -129,7 +147,11 @@ pub async fn run_ef_test(
 
     // Run stateless if backend was specified for this.
     // TODO: See if we can run stateless without needing a previous run. We can't easily do it for now. #4142
-    if let Some(backend) = stateless_backend {
+    // The `stateless_backend` option now only selects *whether* to run stateless
+    // validation, not which backend: the in-memory paths go through
+    // `validate_blocks_statelessly` and the wire path through the guest
+    // entrypoint, neither of which is backend-dispatched.
+    if run_stateless {
         // Use the fixture's witness when present (either `executionWitness` or
         // `statelessInputBytes`); otherwise regenerate by re-running execution.
         #[cfg(feature = "stateless")]
@@ -140,13 +162,12 @@ pub async fn run_ef_test(
                 })
             });
             if has_fixture_witness {
-                run_stateless_from_fixture(test, test_key, backend).await?;
-                check_witness_generation_against_fixture(&blockchain, test, test_key, backend)
-                    .await?;
+                run_stateless_from_fixture(test, test_key).await?;
+                check_witness_generation_against_fixture(&blockchain, test, test_key).await?;
                 return Ok(());
             }
         }
-        re_run_stateless(blockchain, test, test_key, backend).await?;
+        re_run_stateless(blockchain, test, test_key).await?;
     };
 
     Ok(())
@@ -198,7 +219,9 @@ async fn run(
                     ));
                 }
                 // Advance fork choice to the new head
-                apply_fork_choice(store, hash, hash, hash).await.unwrap();
+                apply_fork_choice(store, hash, hash, hash, None)
+                    .await
+                    .unwrap();
             }
         }
     }
@@ -235,7 +258,7 @@ async fn run_two_pass_parallel(test_key: &str, test: &TestUnit) -> Result<(), St
             .add_block_pipeline_bal(block, None)
             .map_err(|e| format!("Two-pass pass-1 failed for test {test_key}: {e:?}"))?;
 
-        apply_fork_choice(&store1, hash, hash, hash)
+        apply_fork_choice(&store1, hash, hash, hash, None)
             .await
             .map_err(|e| {
                 format!("Two-pass pass-1 fork choice failed for test {test_key}: {e:?}")
@@ -260,7 +283,7 @@ async fn run_two_pass_parallel(test_key: &str, test: &TestUnit) -> Result<(), St
             .add_block_pipeline(block, Some(Arc::clone(bal)))
             .map_err(|e| format!("Two-pass pass-2 (parallel) failed for test {test_key}: {e:?}"))?;
 
-        apply_fork_choice(&store2, hash, hash, hash)
+        apply_fork_choice(&store2, hash, hash, hash, None)
             .await
             .map_err(|e| {
                 format!("Two-pass pass-2 fork choice failed for test {test_key}: {e:?}")
@@ -386,13 +409,26 @@ fn exception_in_rlp_decoding(block_fixture: &BlockWithRLP) -> bool {
         .iter()
         .any(|case| matches!(case, BlockChainExpectedException::InvalidSignature));
 
+    // A transaction nonce of 2^64 or greater does not fit ethrex's `u64` nonce field
+    // (the nonce is a `u64` per the yellow paper / EIP-2681), so it is rejected at RLP
+    // decoding with an `InvalidLength` error rather than at validation. EEST's
+    // `NONCE_IS_MAX` fixtures (e.g. `tx_max_nonce`, nonce = 2^64) therefore fail decoding
+    // here — a legitimate reason for the block to be rejected. (`create_transaction_high_nonce`
+    // uses nonce = 2^64-1, which fits `u64`, decodes fine, and is caught later at validation.)
+    let expects_nonce_too_high = block_fixture
+        .expect_exception
+        .as_ref()
+        .unwrap_or(&Vec::new())
+        .iter()
+        .any(|case| matches!(case, BlockChainExpectedException::TxtException(msg) if msg == "Nonce is max"));
+
     match CoreBlock::decode(block_fixture.rlp.as_ref()) {
         Ok(_) => {
             assert!(!expects_rlp_exception);
             false
         }
         Err(_) => {
-            assert!(expects_rlp_exception || expects_invalid_signature);
+            assert!(expects_rlp_exception || expects_invalid_signature || expects_nonce_too_high);
             true
         }
     }
@@ -440,6 +476,79 @@ pub async fn build_store_for_test(test: &TestUnit) -> Store {
     store
 }
 
+/// Builds the blocks and a self-generated execution witness for a blockchain
+/// test, using ethrex's own execution machinery instead of any witness the
+/// fixture might carry. This is the ethrex-native counterpart to the
+/// external eth-act `witness-generator-cli` path: it turns a plain EEST
+/// `blockchain_test` (genesis/`pre` state + blocks, no embedded witness)
+/// into a `(blocks, ExecutionWitness)` pair usable for stateless-execution
+/// benchmarking.
+///
+/// Every block is first driven through `add_block_pipeline` (mirroring
+/// `run()`), so that for multi-block tests the parent state of block
+/// `i > 0` is already committed to the store before
+/// `generate_witness_for_blocks` re-executes every block with a
+/// `TrieLogger`. `generate_witness_for_blocks` only has the state at the
+/// *first* block's parent available for free (from `build_store_for_test`);
+/// its own doc comment notes it otherwise fails on the second block of a
+/// batch.
+///
+/// A test whose blocks include an expected exception (invalid-block test) or
+/// that decodes to zero blocks is rejected with an `Err` rather than
+/// silently producing a partial/incorrect fixture, so batch callers (e.g.
+/// `generate-stress`) can skip it and continue.
+pub async fn blocks_and_witness_for_test(
+    test: &TestUnit,
+) -> Result<(Vec<CoreBlock>, ExecutionWitness), String> {
+    let store = build_store_for_test(test).await;
+    let blockchain = Blockchain::default_with_store_and_pool(store.clone(), merkle_pool());
+
+    let mut blocks: Vec<CoreBlock> = Vec::with_capacity(test.blocks.len());
+    for block_fixture in test.blocks.iter() {
+        if block_fixture.expect_exception.is_some() {
+            return Err(
+                "test has a block expecting an exception; not a witness-generation target"
+                    .to_string(),
+            );
+        }
+        let block_data = block_fixture
+            .block()
+            .ok_or_else(|| "block fixture has no decodable block (RLP-only test)".to_string())?;
+        let block: CoreBlock = block_data.clone().into();
+        let hash = block.hash();
+
+        blockchain
+            .add_block_pipeline(block.clone(), None)
+            .map_err(|e| {
+                format!(
+                    "add_block_pipeline failed for block {}: {e:?}",
+                    block.header.number
+                )
+            })?;
+        apply_fork_choice(&store, hash, hash, hash, None)
+            .await
+            .map_err(|e| {
+                format!(
+                    "apply_fork_choice failed for block {}: {e:?}",
+                    block.header.number
+                )
+            })?;
+
+        blocks.push(block);
+    }
+
+    if blocks.is_empty() {
+        return Err("no blocks".to_string());
+    }
+
+    let witness = blockchain
+        .generate_witness_for_blocks(&blocks)
+        .await
+        .map_err(|e| format!("witness gen: {e}"))?;
+
+    Ok((blocks, witness))
+}
+
 /// Checks db is correct after setting up initial state
 /// Panics if any comparison fails
 fn check_prestate_against_db(test_key: &str, test: &TestUnit, db: &Store) {
@@ -461,7 +570,7 @@ fn check_prestate_against_db(test_key: &str, test: &TestUnit, db: &Store) {
 /// Panics if any comparison fails
 /// Tests that previously failed the validation stage shouldn't be executed with this function.
 async fn check_poststate_against_db(test_key: &str, test: &TestUnit, db: &Store) {
-    let latest_block_number = db.get_latest_block_number().await.unwrap();
+    let latest_block_number = db.get_latest_block_number().unwrap();
     if let Some(post_state) = &test.post_state {
         for (addr, account) in post_state {
             let expected_account: CoreAccount = account.clone().into();
@@ -510,7 +619,7 @@ async fn check_poststate_against_db(test_key: &str, test: &TestUnit, db: &Store)
         }
     }
     // Check lastblockhash is in store
-    let last_block_number = db.get_latest_block_number().await.unwrap();
+    let last_block_number = db.get_latest_block_number().unwrap();
     let last_block_header = db.get_block_header(last_block_number).unwrap().unwrap();
     let last_block_hash = last_block_header.hash();
     assert_eq!(
@@ -525,7 +634,6 @@ async fn re_run_stateless(
     blockchain: Blockchain,
     test: &TestUnit,
     test_key: &str,
-    backend_type: BackendType,
 ) -> Result<(), String> {
     let blocks = test
         .blocks
@@ -548,13 +656,14 @@ async fn re_run_stateless(
     // At this point witness is guaranteed to be Ok
     let execution_witness = witness.unwrap();
 
-    let program_input = ProgramInput::new(blocks, execution_witness);
-
-    let execute_result = match backend_type {
-        BackendType::Exec => ExecBackend::new().execute(program_input),
-        #[cfg(feature = "sp1")]
-        BackendType::SP1 => Sp1Backend::new().execute(program_input),
-    };
+    // A generated witness has no spec wire bytes, so this cannot go through the
+    // byte entrypoint; `ExecBackend` was also the only backend able to run an
+    // in-memory witness, so the dispatch is gone with it.
+    let execute_result = ethrex_guest_program::l1::validate_blocks_statelessly(
+        &blocks,
+        execution_witness,
+        std::sync::Arc::new(ethrex_crypto::NativeCrypto),
+    );
 
     if let Err(e) = execute_result {
         if !test_should_fail {
@@ -576,11 +685,7 @@ async fn re_run_stateless(
 /// Following the spec, we execute each block
 /// independently with its own witness.
 #[cfg(feature = "stateless")]
-async fn run_stateless_from_fixture(
-    test: &TestUnit,
-    test_key: &str,
-    backend_type: BackendType,
-) -> Result<(), String> {
+async fn run_stateless_from_fixture(test: &TestUnit, test_key: &str) -> Result<(), String> {
     let chain_config = test.network.chain_config();
 
     for block_fixture in test.blocks.iter() {
@@ -604,17 +709,16 @@ async fn run_stateless_from_fixture(
             })?,
         };
 
-        // Prefer the canonical EIP-8025 wire path (production guest binary entry
-        // point) which exercises the public_keys / hash_tree_root checks the
-        // legacy `ProgramInput` route bypasses.
-        if let Some(input_hex) = block_data.stateless_input_bytes.as_deref() {
-            run_stateless_from_input_bytes(
-                test_key,
-                &test.network,
-                block_number,
-                input_hex,
-                expected_valid,
-            )?;
+        // Prefer the spec wire path — the same entrypoint the released guest ELF
+        // runs — and compare the whole 43-byte result rather than peeking at the
+        // validity byte. Only blocks that carry BOTH the input and the expected
+        // output can go this way; the rest fall through to the witness route
+        // below, which is why `parse_expected_valid_flag` is still needed.
+        if let (Some(input_hex), Some(output_hex)) = (
+            block_data.stateless_input_bytes.as_deref(),
+            block_data.stateless_output_bytes.as_deref(),
+        ) {
+            run_stateless_from_input_bytes(test_key, block_number, input_hex, output_hex)?;
             continue;
         }
 
@@ -647,12 +751,11 @@ async fn run_stateless_from_fixture(
                 format!("witness conversion failed for {test_key} block {block_number}: {e}")
             })?;
 
-        let program_input = ProgramInput::new(vec![block], execution_witness);
-        let exec_result = match backend_type {
-            BackendType::Exec => ExecBackend::new().execute(program_input),
-            #[cfg(feature = "sp1")]
-            BackendType::SP1 => Sp1Backend::new().execute(program_input),
-        };
+        let exec_result = ethrex_guest_program::l1::validate_blocks_statelessly(
+            std::slice::from_ref(&block),
+            execution_witness,
+            std::sync::Arc::new(ethrex_crypto::NativeCrypto),
+        );
 
         match (expected_valid, exec_result) {
             (true, Ok(_)) | (false, Err(_)) => {}
@@ -688,21 +791,15 @@ async fn check_witness_generation_against_fixture(
     blockchain: &Blockchain,
     test: &TestUnit,
     test_key: &str,
-    backend_type: BackendType,
 ) -> Result<(), String> {
     use std::collections::BTreeSet;
 
     const MAX_REPORTED_ITEMS: usize = 8;
 
-    // EEST leniency fixtures (`*_extra_unused_*`) deliberately pad the witness
-    // with unused items (ancestor headers, bytecodes, trie nodes) to prove
-    // consumers accept them. Their `executionWitness` is intentionally NOT the
-    // canonical generation target, so the comparison is skipped.
-    if test_key.contains("extra_unused") {
-        return Ok(());
-    }
-
+    // `errors` fail the test; `differences` are reported only. See the note at
+    // the comparison below for why a witness need not equal the fixture's.
     let mut errors: Vec<String> = Vec::new();
+    let mut differences: Vec<String> = Vec::new();
     for block_fixture in test.blocks.iter() {
         if block_fixture.expect_exception.is_some() {
             continue;
@@ -735,12 +832,11 @@ async fn check_witness_generation_against_fixture(
 
         // Sufficiency: the generated witness must support stateless re-execution
         // of the block on its own, independent of how close it is to canonical.
-        let program_input = ProgramInput::new(vec![block], generated_witness.clone());
-        let exec_result = match backend_type {
-            BackendType::Exec => ExecBackend::new().execute(program_input),
-            #[cfg(feature = "sp1")]
-            BackendType::SP1 => Sp1Backend::new().execute(program_input),
-        };
+        let exec_result = ethrex_guest_program::l1::validate_blocks_statelessly(
+            std::slice::from_ref(&block),
+            generated_witness.clone(),
+            std::sync::Arc::new(ethrex_crypto::NativeCrypto),
+        );
         if let Err(e) = exec_result {
             errors.push(format!(
                 "{test_key} block {block_number}: generated witness INSUFFICIENT for \
@@ -773,7 +869,7 @@ async fn check_witness_generation_against_fixture(
             let missing: Vec<&&[u8]> = exp_set.difference(&got_set).collect();
             let extra: Vec<&&[u8]> = got_set.difference(&exp_set).collect();
             if missing.is_empty() && extra.is_empty() {
-                errors.push(format!(
+                differences.push(format!(
                     "{test_key} block {block_number} {section}: same item set but \
                      different multiplicity (generated {}, fixture {})",
                     got.len(),
@@ -808,15 +904,32 @@ async fn check_witness_generation_against_fixture(
             if !extra.is_empty() {
                 msg.push_str(&format!(" extra in generated: [{}]", fmt_items(&extra)));
             }
-            errors.push(msg);
+            // Reported, not failed. A witness only has to be *sufficient*, which
+            // is asserted above by re-executing with it; it does not have to
+            // equal the fixture's. EEST ships `validation_codes_extra_unused_bytecode`
+            // (and the `state`/`headers` equivalents) precisely to pin that a
+            // witness carrying extra unused items is valid, so neither direction
+            // of this difference is a defect. Upstream bundles differ in policy
+            // too: the zkevm conformance set excludes bytecode created inside the
+            // block, while the zkevm-benchmark set includes it, so requiring
+            // equality fails whichever one the client does not happen to mirror.
+            differences.push(msg);
         }
+    }
+
+    if !differences.is_empty() {
+        eprintln!(
+            "note: {test_key} witness differs from the fixture's (both valid; the \
+             generated one is proven sufficient above):\n{}",
+            differences.join("\n")
+        );
     }
 
     if errors.is_empty() {
         Ok(())
     } else {
         Err(format!(
-            "witness generation mismatch:\n{}",
+            "generated witness is not usable for stateless execution:\n{}",
             errors.join("\n")
         ))
     }
@@ -841,42 +954,33 @@ fn describe_witness_item(section: &str, bytes: &[u8]) -> String {
 #[cfg(feature = "stateless")]
 fn run_stateless_from_input_bytes(
     test_key: &str,
-    test_network: &Fork,
     block_number: u64,
     input_hex: &str,
-    expected_valid: bool,
+    expected_output_hex: &str,
 ) -> Result<(), String> {
-    use ethrex_guest_program::l1::{DecodedEip8025, decode_canonical_stateless_input_bytes};
+    use ethrex_guest_program::l1::run_stateless_guest;
 
-    let trimmed = input_hex.strip_prefix("0x").unwrap_or(input_hex);
-    let bytes = hex::decode(trimmed).map_err(|e| {
-        format!("statelessInputBytes hex decode failed for {test_key} block {block_number}: {e}")
-    })?;
-
-    // Decode failures count as the canonical-input rejection path: a negative
-    // fixture with malformed top-level SSZ should still match `expected_valid=false`.
-    let exec_result = match decode_canonical_stateless_input_bytes(&bytes) {
-        Ok(stateless_input) => {
-            let chain_config = *test_network.chain_config();
-            let program_input = ProgramInput::wire(DecodedEip8025::Canonical {
-                stateless_input,
-                chain_config,
-            });
-            ExecBackend::new().execute(program_input)
-        }
-        Err(e) => Err(ethrex_prover::BackendError::execution(format!(
-            "statelessInputBytes decode failed: {e}"
-        ))),
+    let decode = |label: &str, hex_str: &str| {
+        let trimmed = hex_str.strip_prefix("0x").unwrap_or(hex_str);
+        hex::decode(trimmed).map_err(|e| {
+            format!("{label} hex decode failed for {test_key} block {block_number}: {e}")
+        })
     };
-    match (expected_valid, exec_result) {
-        (true, Ok(_)) | (false, Err(_)) => Ok(()),
-        (true, Err(e)) => Err(format!(
-            "Stateless execution failed for {test_key} block {block_number} but fixture expected it to succeed: {e}"
-        )),
-        (false, Ok(_)) => Err(format!(
-            "Stateless execution succeeded for {test_key} block {block_number} but fixture expected it to fail (invalid statelessInputBytes)"
-        )),
+
+    let input = decode("statelessInputBytes", input_hex)?;
+    let expected = decode("statelessOutputBytes", expected_output_hex)?;
+
+    let actual = run_stateless_guest(&input, std::sync::Arc::new(ethrex_crypto::NativeCrypto));
+
+    if actual != expected {
+        return Err(format!(
+            "statelessOutputBytes mismatch for {test_key} block {block_number}:\n  \
+             expected 0x{}\n  actual   0x{}",
+            hex::encode(&expected),
+            hex::encode(&actual),
+        ));
     }
+    Ok(())
 }
 
 /// Decode the `valid` byte (index 32) from a zkevm-fixture `statelessOutputBytes` hex
