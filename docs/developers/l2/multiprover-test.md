@@ -22,14 +22,16 @@ Running the real TDX path instead would need `ETHREX_TDX_DEV_MODE=false`, which 
 
 ## Where to run it
 
-Everything except SP1 proving is host-agnostic. The simplest layout is to run the whole thing on the GPU host; the split below is what was used first and still works, with the proof coordinator reached over the tailnet.
+Two hosts, with the SP1 prover reaching the proof coordinator over the tailnet:
 
 | Host | Runs |
 | --- | --- |
-| any Linux host with QEMU/KVM | L1, contract deploy, sequencer + proof coordinator, TDX prover VM |
+| `ethrex-tdx-baremetal` | L1, contract deploy, sequencer + proof coordinator, TDX prover VM |
 | `l2-gpu` | SP1 prover |
 
-If you do use a shared box, keep the footprint small and check ports 8545, 1729 and 3900 are free first.
+`ethrex-tdx-baremetal` is the designated host for the TDX side, and is where extending this test to real attestation would happen — though as described above, the dev-mode configuration this test uses does not depend on its TDX hardware.
+
+Both are shared machines running other people's work, so keep the footprint small: check that ports 8545, 1729 and 3900 are free before starting, and tear the stack down afterwards. On `l2-gpu`, this test and the [SP1 GPU integration test](sp1-gpu-integration-test.md) contend for the same GPU, ports and datadirs — run them one after the other, never concurrently.
 
 ## Environment pins
 
@@ -50,7 +52,7 @@ Set the release under test once:
 export TAG=vX.Y.Z-rc.W
 ```
 
-### 1. Prepare the host
+### 1. Prepare `ethrex-tdx-baremetal`
 
 ```bash
 # release binaries and contracts (the vk the deployer registers)
@@ -135,7 +137,7 @@ qemu-system-x86_64 -daemonize \
 
 The VM has registered once the sequencer logs `ProverSetup received for TDX` without a following error, and the VM's serial console moves from `Error sending quote` to `No blocks to prove`.
 
-### 5. Start the SP1 prover on the GPU host
+### 5. Start the SP1 prover on `l2-gpu`
 
 ```bash
 ssh l2-gpu
@@ -179,5 +181,3 @@ cargo test -p ethrex-test l2_integration_test --release --features l2 -- --nocap
 | `verifyBatch` reverts `0x62013a95` | `InvalidTdxProof()` — the VM was booted as a real TDX guest, so dev-mode `register()` stored quote-header bytes as the signer; use the plain-guest invocation |
 | VM sits on `No blocks to prove` while batches are committed | the prover is asking for a batch whose input was pruned; restart from a fresh L1 **and** L2 with both provers attached before the first batch |
 | VM sits on `No blocks to prove` with nothing committed | normal; if it persists, the committer is failing — check the sequencer log |
-
-Both L2 GPU checks share ports and datadirs on their hosts, so run this and the [SP1 GPU integration test](sp1-gpu-integration-test.md) one after the other, not concurrently.
