@@ -141,8 +141,7 @@ Host port mapping:
 - **sepolia**: `localhost:8546`
 - **mainnet**: `localhost:8547`
 - **hoodi-2**: `localhost:8548` (for additional testing)
-- **plataberget**: `localhost:8549` (snap sync)
-- **plataberget-full**: `localhost:8550` (full sync)
+- **plataberget**: `localhost:8549`
 
 #### Platåberget
 
@@ -151,10 +150,10 @@ Host port mapping:
 - The consensus client is `ethpandaops/lodestar:glamsterdam-devnet-8` — stock Lighthouse cannot load the gloas fork config.
 - The network is addressed by config files, not a `--network` name on the CL side: a `setup-config-plataberget` service downloads `config.yaml`, `genesis.ssz`, bootstrap ENRs, and the deposit-contract metadata from [ethpandaops/glamsterdam-devnets](https://github.com/ethpandaops/glamsterdam-devnets/tree/master/network-configs/devnet-8/metadata) into a shared volume once (re-fetched after `multisync-clean`).
 
-Two instances are defined: `plataberget` snap-syncs like the rest of the matrix, and `plataberget-full` full-syncs — executing every block including the Amsterdam fork transition, which is the strongest Glamsterdam regression signal this testnet offers. Neither is in the default network set; opt in explicitly:
+The instance snap-syncs like the rest of the matrix (multisync validates snap sync; full-sync coverage belongs to the fullsync-bench tooling). It is not in the default network set; opt in explicitly:
 
 ```bash
-make multisync-loop MULTISYNC_NETWORKS=plataberget,plataberget-full
+make multisync-loop MULTISYNC_NETWORKS=plataberget
 ```
 
 Note the CL image tag is rebuilt by ethPandaOps as the devnet spec evolves; a failing plataberget matrix entry can mean the image moved, not that ethrex regressed.

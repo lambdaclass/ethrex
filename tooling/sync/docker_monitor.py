@@ -38,7 +38,6 @@ NETWORK_PORTS = {
     "mainnet": 8547,
     "hoodi-2": 8548,
     "plataberget": 8549,
-    "plataberget-full": 8550,
 }
 
 # Logging configuration

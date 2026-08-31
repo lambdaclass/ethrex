@@ -2,9 +2,8 @@
 #
 # For full documentation, see: tooling/sync/README.md (section "Multi-Network Parallel Snapsync")
 #
-# This file defines 6 networks: hoodi, sepolia, mainnet, hoodi-2, plataberget,
-# and plataberget-full (same testnet, full sync instead of snap).
-# By default, the Makefile starts only hoodi, sepolia, and mainnet.
+# This file defines 5 networks: hoodi, sepolia, mainnet, hoodi-2, and
+# plataberget. By default, the Makefile starts only hoodi, sepolia, and mainnet.
 #
 # Usage via Makefile (recommended):
 #   make multisync-loop                    # Start default networks and monitor continuously
@@ -21,12 +20,11 @@
 #
 # Each network runs in isolation with its own volumes.
 # Host ports are mapped for external RPC access:
-#   hoodi:            localhost:8545
-#   sepolia:          localhost:8546
-#   mainnet:          localhost:8547
-#   hoodi-2:          localhost:8548
-#   plataberget:      localhost:8549
-#   plataberget-full: localhost:8550
+#   hoodi:       localhost:8545
+#   sepolia:     localhost:8546
+#   mainnet:     localhost:8547
+#   hoodi-2:     localhost:8548
+#   plataberget: localhost:8549
 
 x-ethrex-common: &ethrex-common
   image: "${ETHREX_IMAGE:-ghcr.io/lambdaclass/ethrex:main}"
@@ -255,10 +253,6 @@ services:
   # ethpandaops/glamsterdam-devnets, the source plataberget.dev names as the
   # network's configuration.
   #
-  # Two instances: `plataberget` snap-syncs (matrix parity with the other
-  # networks); `plataberget-full` full-syncs, executing every block including
-  # the Amsterdam fork transition — the strongest regression signal this
-  # testnet offers.
   # =============================================================================
   setup-config-plataberget:
     image: alpine
@@ -324,60 +318,6 @@ services:
       setup-jwt-plataberget:
         condition: service_completed_successfully
 
-  # =============================================================================
-  # PLATABERGET-FULL (same network, --syncmode full)
-  # =============================================================================
-  setup-jwt-plataberget-full:
-    image: alpine
-    volumes:
-      - secrets-plataberget-full:/secrets
-    command: sh -c 'apk add openssl && openssl rand -hex 32 | tr -d "\n" | tee /secrets/jwt.hex'
-
-  consensus-plataberget-full:
-    image: ethpandaops/lodestar:glamsterdam-devnet-8
-    restart: unless-stopped
-    container_name: consensus-plataberget-full
-    volumes:
-      - secrets-plataberget-full:/secrets
-      - config-plataberget:/config:ro
-      - consensus-plataberget-full:/data
-    command: >
-      beacon
-      --dataDir /data
-      --paramsFile /config/config.yaml
-      --genesisStateFile /config/genesis.ssz
-      --bootnodesFile /config/bootstrap_nodes.yaml
-      --checkpointSyncUrl https://checkpoint-sync.plataberget.ethpandaops.io
-      --execution.urls http://ethrex-plataberget-full:8551
-      --jwtSecret /secrets/jwt.hex
-      --rest --rest.address 0.0.0.0
-    depends_on:
-      setup-jwt-plataberget-full:
-        condition: service_completed_successfully
-      setup-config-plataberget:
-        condition: service_completed_successfully
-
-  ethrex-plataberget-full:
-    <<: *ethrex-common
-    container_name: ethrex-plataberget-full
-    ports:
-      - "8550:8545"  # RPC
-    volumes:
-      - secrets-plataberget-full:/secrets
-      - ethrex-plataberget-full:/data
-    command: >
-      --http.addr 0.0.0.0
-      --http.api eth,net,web3,admin
-      --network plataberget
-      --authrpc.addr 0.0.0.0
-      --authrpc.jwtsecret /secrets/jwt.hex
-      --syncmode full
-      --datadir /data
-      --metrics --metrics.addr 0.0.0.0 --metrics.port 3701
-    depends_on:
-      setup-jwt-plataberget-full:
-        condition: service_completed_successfully
-
 volumes:
   secrets-hoodi:
   secrets-sepolia:
@@ -395,6 +335,3 @@ volumes:
   secrets-plataberget:
   consensus-plataberget:
   ethrex-plataberget:
-  secrets-plataberget-full:
-  consensus-plataberget-full:
-  ethrex-plataberget-full:
