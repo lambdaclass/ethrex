@@ -274,7 +274,14 @@ services:
     command: sh -c 'apk add openssl && openssl rand -hex 32 | tr -d "\n" | tee /secrets/jwt.hex'
 
   consensus-plataberget:
-    image: ethpandaops/lodestar:glamsterdam-devnet-8
+    # Prysm rather than Lighthouse (which cannot load the gloas fork config) or
+    # Lodestar: each cycle wipes volumes, giving the CL a fresh node identity —
+    # a fresh PeerDAS custody-column draw — and Lodestar intermittently wedges
+    # in verifyPayloadsDataAvailability on some draws, looping the first
+    # finalized batch forever. A wedged CL fails the cycle as a block stall
+    # blamed on ethrex. Prysm is also the pairing the EF runs with ethrex on
+    # this network.
+    image: ethpandaops/prysm-beacon-chain:glamsterdam-devnet-8
     restart: unless-stopped
     container_name: consensus-plataberget
     volumes:
@@ -282,15 +289,15 @@ services:
       - config-plataberget:/config:ro
       - consensus-plataberget:/data
     command: >
-      beacon
-      --dataDir /data
-      --paramsFile /config/config.yaml
-      --genesisStateFile /config/genesis.ssz
-      --bootnodesFile /config/bootstrap_nodes.yaml
-      --checkpointSyncUrl https://checkpoint-sync.plataberget.ethpandaops.io
-      --execution.urls http://ethrex-plataberget:8551
-      --jwtSecret /secrets/jwt.hex
-      --rest --rest.address 0.0.0.0
+      --accept-terms-of-use
+      --datadir=/data
+      --chain-config-file=/config/config.yaml
+      --genesis-state=/config/genesis.ssz
+      --bootstrap-node=/config/bootstrap_nodes.yaml
+      --checkpoint-sync-url=https://checkpoint-sync.plataberget.ethpandaops.io
+      --genesis-beacon-api-url=https://checkpoint-sync.plataberget.ethpandaops.io
+      --execution-endpoint=http://ethrex-plataberget:8551
+      --jwt-secret=/secrets/jwt.hex
     depends_on:
       setup-jwt-plataberget:
         condition: service_completed_successfully
