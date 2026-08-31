@@ -2119,7 +2119,10 @@ impl<'a> VM<'a> {
         // applied once, at settlement.
         let intrinsic_gas = frame_tx.frame_tx_intrinsic_gas();
         let mut total_gas_used: u64 = intrinsic_gas;
-        let mut tx_invalid: Option<&'static str> = None;
+        let mut tx_invalid: Option<String> = None;
+        // How the frame under `frame_idx` ended, when it did not succeed. Reset per
+        // frame by the loop below; read only on the invalidating paths.
+        let mut frame_failure: Option<String> = None;
 
         // Atomic batching state: track whether we're inside a batch and
         // which frames belong to it so we can revert them all on failure.
@@ -2143,6 +2146,9 @@ impl<'a> VM<'a> {
 
         // Execute frames sequentially
         for (frame_idx, frame) in frame_tx.frames.iter().enumerate() {
+            // Belongs to this frame only: a later frame's verdict must never quote an
+            // earlier frame's failure.
+            frame_failure = None;
             // If we're skipping frames due to an atomic batch revert, record
             // the frame with status SKIPPED. Per EIP-8141, the
             // gas allotted to skipped frames is refunded at the end of the
@@ -2262,7 +2268,7 @@ impl<'a> VM<'a> {
                     None => {
                         // Any failed check invalidates the transaction, as with a
                         // reverting VERIFY frame.
-                        tx_invalid = Some("EIP-8312 UTXO frame check failed");
+                        tx_invalid = Some("EIP-8312 UTXO frame check failed".to_string());
                         break;
                     }
                 }
@@ -2281,7 +2287,9 @@ impl<'a> VM<'a> {
                         InternalError::Custom("missing frame tx context".to_string()),
                     ))?;
                     if !ctx.sender_approved {
-                        tx_invalid = Some("SENDER frame reached without execution approval");
+                        tx_invalid = Some(format!(
+                            "frame {frame_idx} is a SENDER frame but no frame approved execution"
+                        ));
                         break;
                     }
                     (sender, false)
@@ -2292,7 +2300,9 @@ impl<'a> VM<'a> {
                 // `None` here is unreachable; treat it as tx-invalid defensively
                 // rather than falling through to an EVM call.
                 Some(FrameMode::Utxo) | None => {
-                    tx_invalid = Some("frame declares a reserved execution mode");
+                    tx_invalid = Some(format!(
+                        "frame {frame_idx} declares a reserved execution mode"
+                    ));
                     break;
                 }
             };
@@ -2569,6 +2579,16 @@ impl<'a> VM<'a> {
                     Ok(ctx_result) => {
                         let gas_used = ctx_result.gas_used;
                         let success = ctx_result.is_success();
+                        // Keep how the frame ended, not just that it did. A VERIFY frame
+                        // failing invalidates the whole transaction, and "reverted" alone
+                        // covers a REVERT, an out-of-gas, and every exceptional halt —
+                        // three different bugs that read identically in a log.
+                        if !success {
+                            frame_failure = match &ctx_result.result {
+                                crate::errors::TxResult::Revert(e) => Some(format!("{e}")),
+                                crate::errors::TxResult::Success => None,
+                            };
+                        }
 
                         if success {
                             // The inner frame is the initial call frame (call_frames
@@ -2596,6 +2616,7 @@ impl<'a> VM<'a> {
                         // A `VMError` propagates out of `run_execution` before it reaches
                         // `handle_state_backup`, so this frame's backup is still live and
                         // must be reverted (and the cache restored) here.
+                        frame_failure = Some(format!("{_e}"));
                         self.substate.revert_backup();
                         self.restore_cache_state()?;
                         (false, frame.gas_limit, Vec::new())
@@ -2780,7 +2801,10 @@ impl<'a> VM<'a> {
                 // back state/approvals; validity is a tx-level decision. (The
                 // failing `frame` here is the one that triggered the revert.)
                 if frame.execution_mode() == Some(FrameMode::Verify) {
-                    tx_invalid = Some("VERIFY frame reverted inside an atomic batch");
+                    tx_invalid = Some(format!(
+                        "VERIFY frame {frame_idx} failed inside an atomic batch: {}",
+                        frame_failure.as_deref().unwrap_or("no reason recorded")
+                    ));
                     break;
                 }
 
@@ -2810,7 +2834,10 @@ impl<'a> VM<'a> {
             // batched VERIFY reverts are handled in the atomic-batch-revert
             // branch above (which also sets tx_invalid).
             if frame.execution_mode() == Some(FrameMode::Verify) && !frame_success {
-                tx_invalid = Some("VERIFY frame reverted");
+                tx_invalid = Some(format!(
+                    "VERIFY frame {frame_idx} failed: {}",
+                    frame_failure.as_deref().unwrap_or("no reason recorded")
+                ));
                 break;
             }
 
@@ -2832,7 +2859,7 @@ impl<'a> VM<'a> {
             // of the loop above also leaves the payer unset, and reporting that
             // instead of the reason it broke out for is how this error came to
             // describe six causes as one.
-            tx_invalid = Some("no frame approved payment (payer is unset)");
+            tx_invalid = Some("no frame approved payment (payer is unset)".to_string());
         }
 
         if let Some(reason) = tx_invalid {
@@ -2849,7 +2876,7 @@ impl<'a> VM<'a> {
             // the cache), so dropping the staging area is the whole rollback.
             self.discard_durable_vault_writes();
             return Err(VMError::TxValidation(
-                crate::errors::TxValidationError::InvalidFrameTransaction(reason.into()),
+                crate::errors::TxValidationError::InvalidFrameTransaction(reason),
             ));
         }
 

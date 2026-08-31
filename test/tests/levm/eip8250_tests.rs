@@ -483,3 +483,84 @@ fn a_contract_sender_can_approve_on_a_first_use_keyed_nonce() {
         "the recipient must actually be funded"
     );
 }
+
+/// EIP-8250's headline feature, executed the way a block executes it: two frame
+/// transactions from one contract sender on disjoint keys, run in sequence against a
+/// single database so the second sees everything the first committed.
+///
+/// This is the case the devnet verification calls "both mine", and the one that
+/// intermittently loses both transactions to the builder with `VERIFY frame reverted`.
+/// A single transaction of this shape passes
+/// (`a_contract_sender_can_approve_on_a_first_use_keyed_nonce`), so if the pair fails
+/// here the cause is something the first transaction leaves behind for the second.
+#[test]
+fn two_keyed_transactions_from_one_contract_sender_both_execute() {
+    let contract = Address::repeat_byte(0xC5);
+    let mut db = seeded_db(&[(
+        contract,
+        U256::from(10u64).pow(U256::from(18u64)),
+        0,
+        Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+    )]);
+
+    for index in 0u64..2 {
+        let recipient = Address::from_low_u64_be(0xBEEF_0000 + index);
+        let mut tx = frame_tx_with_keys(
+            vec![
+                Frame {
+                    mode: u8::from(FrameMode::Verify),
+                    flags: 0x03,
+                    target: Some(contract),
+                    gas_limit: 80_000,
+                    state_limit: 0,
+                    value: U256::zero(),
+                    data: Bytes::new(),
+                },
+                Frame {
+                    mode: u8::from(FrameMode::Sender),
+                    flags: 0,
+                    target: Some(recipient),
+                    gas_limit: 30_000,
+                    state_limit: NEW_ACCOUNT_STATE_GAS,
+                    value: U256::from(100u64),
+                    data: Bytes::new(),
+                },
+            ],
+            vec![U256::from(0x8250_0000u64 + index)],
+        );
+        tx.sender = contract;
+
+        let env = frame_tx_env(&tx);
+        let transaction = Transaction::FrameTransaction(tx);
+        let result = {
+            let mut vm = VM::new(
+                env,
+                &mut db,
+                &transaction,
+                LevmCallTracer::disabled(),
+                VMType::L1,
+                &NativeCrypto,
+                None,
+            )
+            .expect("VM::new should succeed for a frame tx");
+            vm.execute()
+        };
+        let report = result.unwrap_or_else(|e| {
+            panic!("transaction {index} on key {index} must be valid, got {e:?}")
+        });
+        let frames = report.frame_results.expect("frame results present");
+        assert_eq!(
+            frames[1].status,
+            ethrex_common::types::FRAME_RECEIPT_STATUS_SUCCESS,
+            "transaction {index}'s SENDER frame must deliver its value; got {frames:?}"
+        );
+        assert_eq!(
+            db.current_accounts_state
+                .get(&recipient)
+                .map(|a| a.info.balance)
+                .unwrap_or_default(),
+            U256::from(100u64),
+            "transaction {index}'s recipient must be funded"
+        );
+    }
+}

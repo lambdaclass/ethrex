@@ -8,6 +8,7 @@ mod eip7702_revert_authority_tests;
 mod eip7702_zero_transfer_tests;
 mod eip8037_block_gate_tests;
 mod eip8070_kzg_tests;
+mod eip8250_concurrency_tests;
 mod eip8272_bal_tests;
 mod eip8312_cross_path_tests;
 mod eip8312_mempool_tests;
