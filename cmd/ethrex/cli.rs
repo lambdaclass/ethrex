@@ -11,14 +11,17 @@ use std::{
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_blockchain::{
     BlockchainOptions, BlockchainType, DEFAULT_BLOB_PRICE_BUMP_PERCENT,
-    DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD, DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT,
+    DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD, DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT, DEFAULT_MIN_TIP_WEI,
     DEFAULT_PRICE_BUMP_PERCENT, L2Config,
     error::{ChainError, InvalidBlockError},
 };
 use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis, validate_block_body};
 use ethrex_p2p::{
-    discovery::INITIAL_LOOKUP_INTERVAL_MS, peer_table::TARGET_PEERS, sync::SyncMode,
-    tx_broadcaster::BROADCAST_INTERVAL_MS, types::Node,
+    discovery::INITIAL_LOOKUP_INTERVAL_MS,
+    peer_table::TARGET_PEERS,
+    sync::{HistoryChain, SyncMode},
+    tx_broadcaster::BROADCAST_INTERVAL_MS,
+    types::Node,
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{DB_COMMIT_THRESHOLD, error::StoreError, has_valid_db};
@@ -73,7 +76,7 @@ pub struct Options {
         long = "network",
         value_name = "GENESIS_FILE_PATH",
         help = "Receives a `Genesis` struct in json format. You can look at some example genesis files at `fixtures/genesis/*`.",
-        long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include sepolia, hoodi and mainnet. If not specified, defaults to mainnet.",
+        long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include sepolia, hoodi, plataberget and mainnet. If not specified, defaults to mainnet.",
         help_heading = "Node options",
         env = "ETHREX_NETWORK",
         value_parser = clap::value_parser!(Network),
@@ -102,27 +105,47 @@ pub struct Options {
     #[arg(
         long = "rocksdb.block-cache-size",
         value_name = "BYTES",
-        default_value_t = ethrex_storage::DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
-        help = "RocksDB shared block cache size in bytes (default 12 GiB). \
-                Bounds RocksDB resident memory; lower only on memory-constrained hosts.",
-        long_help = "RocksDB shared block cache size in bytes. With cache_index_and_filter_blocks \
-                     enabled it holds data blocks plus the per-SST index and bloom-filter blocks, \
-                     so it is the effective ceiling on RocksDB's resident memory.\n\
-                     \n\
-                     Default 12 GiB keeps the filter/index working set resident plus hot EVM state. \
-                     A sweep on a synced mainnet node (32 GiB cap) found 8-16 GiB all keep up with \
-                     head-following (filters resident, disk near-idle, no slow blocks); larger gives \
-                     no gain because the OS page cache backstops the uncompressed state CFs, and \
-                     ~8 GiB is the floor where the filter set starts to thrash.\n\
-                     \n\
-                     Lower only on memory-constrained hosts, accepting reduced throughput. \
-                     ETHREX_ROCKSDB_BLOCK_CACHE_SIZE sets the same value.",
+        help = "RocksDB shared block cache size in bytes, the effective ceiling on RocksDB's \
+                resident memory. Defaults to 40% of the memory available to the process \
+                (physical or cgroup limit, whichever is lower), clamped to 512 MiB..=12 GiB; \
+                where no limit can be detected (no readable /proc, e.g. outside Linux) it \
+                defaults to the 12 GiB ceiling.",
         help_heading = "Storage options",
-        env = "ETHREX_ROCKSDB_BLOCK_CACHE_SIZE",
+        env = "ETHREX_ROCKSDB_BLOCK_CACHE_SIZE"
     )]
-    pub rocksdb_block_cache_size: usize,
+    pub rocksdb_block_cache_size: Option<usize>,
     #[arg(long = "syncmode", default_value = "snap", value_name = "SYNC_MODE", value_parser = utils::parse_sync_mode, help = "The way in which the node will sync its state.", long_help = "Can be either \"full\" or \"snap\" with \"snap\" as default value.", help_heading = "P2P options", env = "ETHREX_SYNCMODE")]
     pub syncmode: SyncMode,
+    #[arg(
+        long = "history.chain",
+        default_value = "off",
+        value_name = "HISTORY_CHAIN",
+        value_parser = utils::parse_history_chain,
+        help = "Backfill historical chain data (bodies + receipts) below the snap pivot.",
+        long_help = "Optionally backfill historical block bodies and receipts after snap sync so \
+                     the node can serve historical block, transaction, receipt and log queries. \
+                     One of \"off\" (default: headers-only below the pivot), \"postmerge\" \
+                     (backfill down to the merge block), \"all\" (as far back as receipts are \
+                     decodable — down to the Byzantium block, not genesis — best-effort as many \
+                     peers no longer serve pre-merge history), or an explicit BLOCK NUMBER \
+                     to backfill down to only that block — use this to keep a recent slice of \
+                     history instead of everything back to the merge. A block number below the \
+                     merge block is honoured but is best-effort like \"all\", and anything below \
+                     Byzantium is clamped up to it. Enabling this adds substantial disk usage. \
+                     It does not enable historical state queries (this is not an archive node).",
+        help_heading = "P2P options",
+        env = "ETHREX_HISTORY_CHAIN",
+    )]
+    pub history_chain: HistoryChain,
+    #[arg(
+        long = "history.transactions",
+        default_value = "0",
+        value_name = "BLOCKS",
+        help = "Blocks of backfilled history to keep the transaction index for (0 = the entire backfilled range).",
+        help_heading = "P2P options",
+        env = "ETHREX_HISTORY_TRANSACTIONS"
+    )]
+    pub history_transactions: u64,
     #[arg(
         long = "metrics.addr",
         value_name = "ADDRESS",
@@ -239,6 +262,15 @@ pub struct Options {
         env = "ETHREX_MEMPOOL_MAX_SIZE"
     )]
     pub mempool_max_size: usize,
+    #[arg(
+        help = "Minimum priority-fee cap (in wei) required for a transaction to be admitted into the mempool. Compared against the raw tip cap: `max_priority_fee_per_gas` for typed transactions, `gas_price` for legacy transactions (independent of current base fee, so admission stays stable as base fee oscillates). Set to 0 to disable the floor.",
+        long = "mempool.min-tip",
+        default_value_t = DEFAULT_MIN_TIP_WEI,
+        value_name = "MIN_TIP_WEI",
+        help_heading = "Node options",
+        env = "ETHREX_MEMPOOL_MIN_TIP"
+    )]
+    pub mempool_min_tip: u64,
     #[arg(
         long = "mempool.private",
         default_value_t = false,
@@ -447,7 +479,7 @@ pub struct Options {
         long = "p2p.lookup-interval",
         default_value_t = INITIAL_LOOKUP_INTERVAL_MS,
         value_name = "INITIAL_LOOKUP_INTERVAL",
-        help = "Initial Lookup Time Interval (ms) to trigger each Discovery lookup message and RLPx connection attempt.",
+        help = "Initial time interval (ms) between RLPx connection attempts. Widens towards 600ms as the target peer count is approached.",
         help_heading = "P2P options",
         env = "ETHREX_P2P_LOOKUP_INTERVAL"
     )]
@@ -488,6 +520,24 @@ pub struct Options {
         env = "ETHREX_PRECOMPUTE_WITNESSES"
     )]
     pub precompute_witnesses: bool,
+    #[arg(
+        long = "blob-sampling",
+        action = ArgAction::SetTrue,
+        default_value = "false",
+        help = "Enable EIP-8070 PeerDAS blob sampling (sampler/provider state machine). Disabled by default; when off the node always acts as provider (p=1.0).",
+        help_heading = "P2P options",
+        env = "ETHREX_BLOB_SAMPLING"
+    )]
+    pub blob_sampling: bool,
+    #[arg(
+        long = "blob-eager-provider",
+        action = ArgAction::SetTrue,
+        default_value = "false",
+        help = "EIP-8070: always act as provider (p=1.0) for every blob tx, bypassing the pseudo-random role decision. Implies --blob-sampling. Not needed for validators: eager mode latches on permanently the first time the CL requests a payload build.",
+        help_heading = "P2P options",
+        env = "ETHREX_BLOB_EAGER_PROVIDER"
+    )]
+    pub blob_eager_provider: bool,
     #[arg(
         long = "max-reorg-depth",
         value_name = "MAX_REORG_DEPTH",
@@ -567,14 +617,17 @@ impl Default for Options {
             network: Default::default(),
             bootnodes: Default::default(),
             datadir: Default::default(),
-            rocksdb_block_cache_size: ethrex_storage::DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
+            rocksdb_block_cache_size: None,
             syncmode: Default::default(),
+            history_chain: Default::default(),
+            history_transactions: Default::default(),
             metrics_addr: "0.0.0.0".to_owned(),
             metrics_port: Default::default(),
             metrics_enabled: Default::default(),
             dev: Default::default(),
             force: false,
             mempool_max_size: Default::default(),
+            mempool_min_tip: DEFAULT_MIN_TIP_WEI,
             mempool_private: false,
             mempool_price_bump: DEFAULT_PRICE_BUMP_PERCENT,
             mempool_blob_price_bump: DEFAULT_BLOB_PRICE_BUMP_PERCENT,
@@ -582,7 +635,7 @@ impl Default for Options {
             mempool_max_queued_txs_per_account: DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT,
             tx_broadcasting_time_interval: Default::default(),
             target_peers: Default::default(),
-            lookup_interval: Default::default(),
+            lookup_interval: INITIAL_LOOKUP_INTERVAL_MS,
             extra_data: get_minimal_client_version(),
             gas_limit: DEFAULT_BUILDER_GAS_CEIL,
             max_blobs_per_block: None,
@@ -593,6 +646,8 @@ impl Default for Options {
             no_bal_parallel_exec: false,
             no_bal_prefetch: false,
             no_bal_parallel_trie: false,
+            blob_sampling: false,
+            blob_eager_provider: false,
             max_reorg_depth: None,
         }
     }
@@ -1260,7 +1315,7 @@ pub async fn export_blocks(
     let start = first_number.unwrap_or_default();
 
     // If we have no latest block then we don't have any blocks to export
-    let latest_number = match store.get_latest_block_number().await {
+    let latest_number = match store.get_latest_block_number() {
         Ok(number) => number,
         Err(StoreError::MissingLatestBlockNumber) => {
             warn!("No blocks in the current chain, nothing to export!");
@@ -1434,6 +1489,43 @@ mod tests {
     fn http_api_rejects_unknown_namespace() {
         let result = CLI::try_parse_from(["ethrex", "--http.api", "eth,bogus"]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn history_chain_defaults_to_off() {
+        let cli = CLI::parse_from(["ethrex"]);
+        assert_eq!(cli.opts.history_chain, HistoryChain::Off);
+    }
+
+    #[test]
+    fn history_chain_parses_keywords() {
+        for (arg, expected) in [
+            ("off", HistoryChain::Off),
+            ("postmerge", HistoryChain::PostMerge),
+            ("all", HistoryChain::All),
+        ] {
+            let cli = CLI::parse_from(["ethrex", "--history.chain", arg]);
+            assert_eq!(
+                cli.opts.history_chain, expected,
+                "for --history.chain {arg}"
+            );
+        }
+    }
+
+    /// Operators who want only a recent slice of history pass an explicit floor
+    /// block instead of `postmerge`/`all`.
+    #[test]
+    fn history_chain_parses_a_floor_block_number() {
+        let cli = CLI::parse_from(["ethrex", "--history.chain", "22000000"]);
+        assert_eq!(cli.opts.history_chain, HistoryChain::Block(22_000_000));
+    }
+
+    #[test]
+    fn history_chain_rejects_invalid_values() {
+        for arg in ["bogus", "-1", "22_000_000", "1.5", ""] {
+            let result = CLI::try_parse_from(["ethrex", "--history.chain", arg]);
+            assert!(result.is_err(), "--history.chain {arg:?} must be rejected");
+        }
     }
 
     /// Flags hardcoded by external launchers (kurtosis ethereum-package, docker

@@ -1,0 +1,15 @@
+[package]
+name = "history-validator"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ethrex-common.workspace = true
+ethrex-crypto.workspace = true
+ethrex-storage = { workspace = true, features = ["rocksdb"] }
+clap.workspace = true
+tokio = { workspace = true, features = ["full"] }
+
+[lints]
+workspace = true

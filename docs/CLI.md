@@ -27,7 +27,7 @@ Options:
 
 Node options:
       --network <GENESIS_FILE_PATH>
-          Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include sepolia, hoodi and mainnet. If not specified, defaults to mainnet.
+          Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include sepolia, hoodi, plataberget and mainnet. If not specified, defaults to mainnet.
           
           [env: ETHREX_NETWORK=]
 
@@ -82,22 +82,22 @@ Node options:
 
       --no-precompile-cache
           Disable the per-block precompile result cache (benchmarking only).
-          
+
           [env: ETHREX_NO_PRECOMPILE_CACHE=]
 
       --no-bal-parallel-exec
           Disable BAL-driven parallel transaction execution on Amsterdam+ blocks (falls back to sequential).
-          
+
           [env: ETHREX_NO_BAL_PARALLEL_EXEC=]
 
       --no-bal-prefetch
           Disable the BAL-driven state prefetch warmer thread on Amsterdam+ blocks.
-          
+
           [env: ETHREX_NO_BAL_PREFETCH=]
 
       --no-bal-parallel-trie
           Disable BAL-driven optimistic trie merkleization on Amsterdam+ blocks (falls back to streaming AccountUpdates from the executor).
-          
+
           [env: ETHREX_NO_BAL_PARALLEL_TRIE=]
 
       --log.dir <LOG_DIR>
@@ -111,6 +111,11 @@ Node options:
           [env: ETHREX_MEMPOOL_MAX_SIZE=]
           [default: 10000]
 
+      --mempool.min-tip <MIN_TIP_WEI>
+          Minimum priority-fee cap (in wei) required for a transaction to be admitted into the mempool. Compared against the raw tip cap: `max_priority_fee_per_gas` for typed transactions, `gas_price` for legacy transactions (independent of current base fee, so admission stays stable as base fee oscillates). Set to 0 to disable the floor.
+
+          [env: ETHREX_MEMPOOL_MIN_TIP=]
+          [default: 1]
       --mempool.private
           Node-level config (not a protocol/EIP behavior): keep RPC-submitted transactions private. They enter the mempool and may be included in blocks built locally, but are not propagated to peers. P2P-received transactions are unaffected.
 
@@ -160,6 +165,18 @@ P2P options:
           
           [env: ETHREX_SYNCMODE=]
           [default: snap]
+
+      --history.chain <HISTORY_CHAIN>
+          Optionally backfill historical block bodies and receipts after snap sync so the node can serve historical block, transaction, receipt and log queries. One of "off" (default: headers-only below the pivot), "postmerge" (backfill down to the merge block), "all" (as far back as receipts are decodable — down to the Byzantium block, not genesis — best-effort as many peers no longer serve pre-merge history), or an explicit BLOCK NUMBER to backfill down to only that block — use this to keep a recent slice of history instead of everything back to the merge. A block number below the merge block is honoured but is best-effort like "all", and anything below Byzantium is clamped up to it. Enabling this adds substantial disk usage. It does not enable historical state queries (this is not an archive node).
+          
+          [env: ETHREX_HISTORY_CHAIN=]
+          [default: off]
+
+      --history.transactions <BLOCKS>
+          Blocks of backfilled history to keep the transaction index for (0 = the entire backfilled range).
+          
+          [env: ETHREX_HISTORY_TRANSACTIONS=]
+          [default: 0]
 
       --p2p.disabled
           [env: ETHREX_P2P_DISABLED=]
@@ -211,21 +228,26 @@ P2P options:
           [default: 100]
 
       --p2p.lookup-interval <INITIAL_LOOKUP_INTERVAL>
-          Initial Lookup Time Interval (ms) to trigger each Discovery lookup message and RLPx connection attempt.
+          Initial time interval (ms) between RLPx connection attempts. Widens towards 600ms as the target peer count is approached.
           
           [env: ETHREX_P2P_LOOKUP_INTERVAL=]
           [default: 100]
 
+      --blob-sampling
+          Enable EIP-8070 PeerDAS blob sampling (sampler/provider state machine). Disabled by default; when off the node always acts as provider (p=1.0).
+
+          [env: ETHREX_BLOB_SAMPLING=]
+
+      --blob-eager-provider
+          EIP-8070: always act as provider (p=1.0) for every blob tx, bypassing the pseudo-random role decision. Implies --blob-sampling. Not needed for validators: eager mode latches on permanently the first time the CL requests a payload build.
+
+          [env: ETHREX_BLOB_EAGER_PROVIDER=]
+
 Storage options:
       --rocksdb.block-cache-size <BYTES>
-          RocksDB shared block cache size in bytes. With cache_index_and_filter_blocks enabled it holds data blocks plus the per-SST index and bloom-filter blocks, so it is the effective ceiling on RocksDB's resident memory.
-          
-          Default 12 GiB keeps the filter/index working set resident plus hot EVM state. A sweep on a synced mainnet node (32 GiB cap) found 8-16 GiB all keep up with head-following (filters resident, disk near-idle, no slow blocks); larger gives no gain because the OS page cache backstops the uncompressed state CFs, and ~8 GiB is the floor where the filter set starts to thrash.
-          
-          Lower only on memory-constrained hosts, accepting reduced throughput. ETHREX_ROCKSDB_BLOCK_CACHE_SIZE sets the same value.
+          RocksDB shared block cache size in bytes, the effective ceiling on RocksDB's resident memory. Defaults to 40% of the memory available to the process (physical or cgroup limit, whichever is lower), clamped to 512 MiB..=12 GiB; where no limit can be detected (no readable /proc, e.g. outside Linux) it defaults to the 12 GiB ceiling.
           
           [env: ETHREX_ROCKSDB_BLOCK_CACHE_SIZE=]
-          [default: 12884901888]
 
 RPC options:
       --http.addr <ADDRESS>
@@ -284,7 +306,7 @@ Block building options:
           Block extra data message.
           
           [env: ETHREX_BUILDER_EXTRA_DATA=]
-          [default: "ethrex 23.0.0"]
+          [default: "ethrex 25.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.
@@ -336,7 +358,7 @@ Options:
 
 Node options:
       --network <GENESIS_FILE_PATH>
-          Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include sepolia, hoodi and mainnet. If not specified, defaults to mainnet.
+          Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include sepolia, hoodi, plataberget and mainnet. If not specified, defaults to mainnet.
 
           [env: ETHREX_NETWORK=]
 
@@ -498,7 +520,7 @@ Block building options:
           Block extra data message.
 
           [env: ETHREX_BUILDER_EXTRA_DATA=]
-          [default: "ethrex 23.0.0"]
+          [default: "ethrex 25.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.
