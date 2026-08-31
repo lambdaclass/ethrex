@@ -3,7 +3,7 @@
 
 Checks the four EIPs the chain's identity rests on, against a live node:
 
-  8141  a v2-envelope frame transaction is admitted, mines, and returns per-frame
+  8141  a frame transaction is admitted, mines, and returns per-frame
         receipts carrying the two-dimensional gas_used
   8272  the recent-root predeploy is exactly RECENT_ROOT_CODE, a 64-byte write
         succeeds, and both rejection paths revert
@@ -78,7 +78,7 @@ def check(name: str, ok: bool, detail: str = "") -> None:
         FAILURES.append(name)
 
 
-# ---------- RLP (v2 envelope) ----------
+# ---------- RLP (frame-tx envelope) ----------
 def rb(b: bytes) -> bytes:
     if len(b) == 1 and b[0] < 0x80:
         return b
@@ -138,7 +138,7 @@ def rpc(url: str, method: str, params, auth: bool = False):
 
 
 def frame(mode: int, flags: int, target, execution: int, state: int, value: int, data: bytes) -> bytes:
-    """v2 frame: [mode, flags, target_or_empty, [execution, state], value, data]."""
+    """A frame: [mode, flags, target_or_empty, [execution, state], value, data]."""
     target_field = rb(addr(target)) if target is not None else rb(b"")
     limits = rl([ri(execution), ri(state)])
     return rl([ri(mode), ri(flags), target_field, limits, ri(value), rb(data)])
@@ -229,7 +229,7 @@ def recent_root_reference(source_id: bytes, slot: int, root: bytes) -> bytes:
 
 def build_frame_tx(chain_id, sender, key, seq, frames, priority, max_fee, sender_key,
                    references=(), sign=True):
-    """v2 envelope; fees are one nested list and the signature covers the whole thing.
+    """The envelope; fees are one nested list and the signature covers the whole thing.
 
     `sign=False` builds a zero-signature envelope, which is what a contract sender uses:
     its own code decides whether to `APPROVE`, so the transaction carries no signature for
@@ -426,17 +426,17 @@ def main() -> int:
     print(f"devnet chain={chain_id} head={int(head['number'], 16)} sender={sender} seq={seq}")
     print(f"funding {recipient}, and expecting {unfunded} to stay empty\n")
 
-    print("EIP-8141 — v2 envelope end to end")
+    print("EIP-8141 — envelope end to end")
     # The SENDER frame funds a never-seen address, so it declares the account-creation
     # state gas. A frame that declared none would halt on the charge — which is the point
-    # of v2's second dimension, and is checked directly below.
+    # of the second dimension, and is checked directly below.
     frames = [
         frame(1, 0x03, sender, 80_000, 0, 0, b""),          # VERIFY, approves both scopes
         frame(2, 0x00, recipient, 30_000, NEW_ACCOUNT_STATE_GAS, 100, b""),  # SENDER, 100 wei
     ]
     raw = build_frame_tx(chain_id, sender, 0, seq, frames, *fees(), KEY)
     sim = rpc(RPC, "ethrex_simulateFrameTransaction", [raw])
-    check("a v2 frame transaction simulates valid", sim.get("valid") is True,
+    check("a frame transaction simulates valid", sim.get("valid") is True,
           f"shape={sim.get('prefixShape')} violation={sim.get('violation')}")
     tx_hash = rpc(RPC, "eth_sendRawTransaction", [raw])
     receipt = None
