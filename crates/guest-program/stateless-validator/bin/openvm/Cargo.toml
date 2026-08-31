@@ -1,0 +1,29 @@
+[workspace]
+
+[package]
+version = "23.0.0"
+name = "stateless-validator-ethrex-openvm"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+# openvm
+openvm = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.1.0-preview", features = [
+    "std",
+] }
+openvm-algebra-guest = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.1.0-preview" }
+openvm-ecc-guest = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.1.0-preview" }
+
+# ere
+# Keep Ethrex's first-party accelerator, including its assert_reduced serialization
+# guard. ERE's accelerator is disabled to avoid installing both providers.
+ere-platform-openvm = { git = "https://github.com/eth-act/ere", rev = "8961a4e7ac5c9ca2dc6a2fc848452f23a186b1aa", default-features = false, features = [
+    "std",
+    "getrandom-unsupported",
+] }
+
+ethrex-stateless-validator = { path = "../..", features = ["ere", "openvm"] }
+
+[profile.release]
+codegen-units = 1
+lto = "fat"
