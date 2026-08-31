@@ -12,6 +12,10 @@
 
 ## Perf
 
+### 2026-08-31
+
+- Decode `engine_newPayload` transactions in parallel [#6965](https://github.com/lambdaclass/ethrex/pull/6965)
+
 ### 2026-08-24
 
 - Make `eth_estimateGas`'s plain-transfer short circuit fire. Its condition tested whether the recipient account existed rather than whether it had code, so every transfer to an ordinary funded wallet ran the full binary search instead of returning `TRANSACTION_GAS` at once [#7211](https://github.com/lambdaclass/ethrex/pull/7211)
