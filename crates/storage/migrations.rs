@@ -30,7 +30,7 @@ pub type MigrationFn = fn(backend: &dyn StorageBackend) -> Result<(), StoreError
 ///
 /// **Invariant**: `MIGRATIONS.len() == (STORE_SCHEMA_VERSION - 1) as usize`
 /// (empty when `STORE_SCHEMA_VERSION == 1`, one entry when it's 2, etc.)
-pub const MIGRATIONS: &[MigrationFn] = &[migrate_1_to_2, migrate_2_to_3];
+pub const MIGRATIONS: &[MigrationFn] = &[migrate_1_to_2, migrate_2_to_3, migrate_3_to_4];
 
 // Compile-time check: the number of migration functions must match the number
 // of version gaps (i.e. STORE_SCHEMA_VERSION - 1).
@@ -42,6 +42,19 @@ const _: () = assert!(
 /// Returns the migration function that upgrades from `version` to `version + 1`.
 fn migration_for_version(version: u64) -> MigrationFn {
     MIGRATIONS[(version - 1) as usize]
+}
+
+/// v3 → v4: no data change.
+///
+/// `ACCOUNT_CODES` values carry their JUMPDEST positions as a bitmap rather than an RLP
+/// list of `u32` offsets. Both forms are readable, so a v3 database needs no rewriting
+/// and this migration only moves the version marker.
+///
+/// The bump exists for the other direction: a v3 binary cannot decode a bitmap, and
+/// `run_pending_migrations` warns that the database is ahead of the binary instead of
+/// letting it fail on the first code read.
+fn migrate_3_to_4(_backend: &dyn StorageBackend) -> Result<(), StoreError> {
+    Ok(())
 }
 
 /// Minimum interval between migration progress log lines.
