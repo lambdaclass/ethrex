@@ -621,9 +621,18 @@ nonce_seq  : u64                                 // the value they must all be a
 <!-- ============================================ -->
 <div class="eip" id="eip7906">
   <span class="num">EIP-7906</span>
-  <span class="layer">Extends 8141 · activates at Hegotá</span>
+  <span class="layer">Extends 8141 &middot; NOT on this chain</span>
 </div>
 <h2>Transaction Assertions</h2>
+
+<div class="note ours">
+  <span class="tag">Not on this chain</span>
+  <p style="margin:0">EIP-7906 is described here for context only. It is <strong>not</strong> part of
+  this network&rsquo;s rule set and is absent from the binary the nodes run, so
+  <code>POST_TX</code> frames (mode <code>3</code>) are rejected and <code>0xB6</code>,
+  <code>0xB7</code> and <code>0xB8</code> are unassigned bytes that halt with an invalid-opcode
+  error. The four EIPs this chain does run are 8141, 8250, 8272 and 7805.</p>
+</div>
 
 <p class="oneline"><b>The problem:</b> you cannot tell what a transaction actually did until it is already mined. <b>The fix:</b> attach a check that runs afterwards and can undo the work.</p>
 
@@ -801,8 +810,13 @@ nonce_seq  : u64                                 // the value they must all be a
       <td>The mempool rule and the FOCIL rule overlap without either containing the other. Raised upstream as an open question.</td>
     </tr>
     <tr>
-      <td><code>NONCEKEYLOAD</code> at <code>0xB9</code></td><td>no such opcode</td><td>added</td>
-      <td>EIP-8250 defines no way to read an individual nonce key. This is an ethrex-only convenience.</td>
+      <td><code>NONCEKEYLOAD</code> at <code>0xB9</code></td><td>no such opcode</td><td>no such opcode</td>
+      <td>Was an ethrex-only convenience for reading an individual nonce key; removed before this
+      chain launched, so <code>0xB9</code> is unassigned and using it halts with an invalid-opcode
+      error. An opcode no other client implements is consensus-visible in its byte, its gas and its
+      out-of-range behaviour, so a transaction using it would split this chain. Read keyed-nonce
+      state through <code>TXPARAM</code> instead: <code>0x0D</code> for <code>len(nonce_keys)</code>,
+      <code>0x0E</code> for the key-set digest, <code>0x10</code> for <code>nonce_keys[0]</code>.</td>
     </tr>
   </tbody>
 </table>
