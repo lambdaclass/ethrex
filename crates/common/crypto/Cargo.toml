@@ -64,7 +64,7 @@ kzg-rs = ["dep:kzg-rs"]
 risc0 = ["c-kzg/std", "c-kzg/ethereum_kzg_settings", "c-kzg/portable", "std"]
 
 [dev-dependencies]
-criterion = { version = "0.5.1", features = ["html_reports"] }
+criterion = { version = "0.7.0", features = ["html_reports"] }
 blst = "0.3.16"
 
 [[bench]]
