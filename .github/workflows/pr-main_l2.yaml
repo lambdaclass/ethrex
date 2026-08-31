@@ -996,7 +996,10 @@ jobs:
           echo "detect-changes concluded '${{ needs.detect-changes.result }}'"
           exit 1
 
+      # Only the merge_group step below needs the tree; the pull_request and push
+      # paths read the `needs` context and nothing else.
       - name: Checkout sources
+        if: ${{ github.event_name == 'merge_group' }}
         uses: actions/checkout@v6
 
       # These suites are skipped in the merge queue to keep it cheap, so there is
