@@ -316,7 +316,7 @@ Its remaining value is the fixture harness: it runs the released frame-transacti
 frame fixtures, 14 908 blockchain fixtures) which this branch does not. Worth taking on its
 own, separately from the rule set.
 
-## 6.3 Open: frame transactions accepted by RPC and silently dropped
+## 6.3 Fixed: frame transactions accepted by RPC and silently dropped
 
 Found while verifying EIP-8250 concurrency on a devnet. **Not an EIP-implementation defect —
 a mempool admission one — and it should be fixed before the live relaunch, because it loses
@@ -344,11 +344,24 @@ Ruled out along the way: chain age (a chain seconds old reproduces it), base fee
 throughout), the mempool size cap (10 000, pool empty), hash mismatch (hashes match), and
 EOA senders (an EOA frame transaction submitted in the same run mined normally).
 
-Not yet root-caused. The locked section of `Mempool::add_transaction_inner` removes whatever
-holds the incoming transaction's slot before inserting — by key set for a keyed frame tx, by
-`(sender, nonce)` otherwise — and that removal is the first place to look, along with the
-`contains_tx` pre-filter in `Blockchain::add_transaction_to_pool_inner`, which returns
-`Ok(hash)` for a transaction it does not add.
+**Root cause: `revalidate_frame_txs_after_block` evicted on a non-verdict.** It replays every
+pending frame transaction's prefix against each new head, and three outcomes are possible —
+the prefix ran and rejected the transaction, the prefix ran and accepted it, or the replay
+could not be performed. Only the first is evidence about the transaction. The function
+already handled the third case correctly in three places (a `StoreError` from the
+recent-root check, an unopenable head state, a failed balance read all keep the transaction)
+and then evicted on any error from the simulation itself, under a comment calling that
+conservative.
+
+It is the opposite. A read that fails, or a head whose state is not yet readable, says
+something about the node, not the transaction — and evicting on it destroys a transaction the
+node has already acknowledged, silently, and intermittently, because whether the read fails
+is timing. That is the whole shape of the symptom: all pending frame transactions at once,
+about one run in three, no log.
+
+Both error branches now keep the transaction and log why, and eviction logs its reason. A
+genuinely invalid transaction is still caught by the `passed` flag, by the next block's pass,
+or at block building.
 
 ## 7. The glamsterdam-devnet-8 base reprices Amsterdam
 
