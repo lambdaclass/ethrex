@@ -6,7 +6,7 @@ use ethrex_common::U256;
 use ethrex_common::types::Account;
 use ethrex_common::types::Code;
 use ethrex_common::types::CodeMetadata;
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 use ethrex_common::types::block_access_list::SlotChange;
 use ethrex_common::types::block_access_list::{
     BalAddressIndex, BlockAccessList, BlockAccessListRecorder,
@@ -45,7 +45,7 @@ pub struct LazyBalCursor {
 /// Returns `true` if any info field was applied; `false` if all field positions
 /// were 0 (no info changes for this account at indices <= max_idx).
 /// Does NOT touch `account.storage`.
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 pub fn seed_one_address_info_from_bal(
     db: &mut GeneralizedDatabase,
     bal: &BlockAccessList,
@@ -161,7 +161,7 @@ pub fn seed_one_address_info_from_bal(
 ///
 /// Pure read; returns `Some(value)` if any `slot_changes` entry has
 /// `block_access_index <= max_idx`, `None` otherwise.
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 pub fn post_value_at_or_before(sc: &SlotChange, max_idx: u32) -> Option<U256> {
     let pos = sc
         .slot_changes
@@ -176,7 +176,7 @@ pub fn post_value_at_or_before(sc: &SlotChange, max_idx: u32) -> Option<U256> {
 ///
 /// O(1) slot resolution via the precomputed `slot_idx_by_account` map in
 /// `BalAddressIndex`. Pure read; does not touch `db`.
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 pub fn seed_one_storage_slot_from_bal(
     bal: &BlockAccessList,
     index: &BalAddressIndex,
@@ -192,7 +192,7 @@ pub fn seed_one_storage_slot_from_bal(
 }
 
 /// Compute code hash and optional `Code` object from raw bytecode in a BAL entry.
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 pub fn code_from_bal(new_code: &bytes::Bytes) -> (H256, Option<Code>) {
     use ethrex_common::constants::EMPTY_KECCAK_HASH;
     if new_code.is_empty() {
@@ -398,7 +398,7 @@ impl GeneralizedDatabase {
         // recurse infinitely. Taking the cursor out breaks the cycle: the inner call sees
         // `lazy_bal = None` and falls through to `shared_base`/store. We restore the cursor
         // unconditionally afterward (even on error) so the outer caller still sees it.
-        #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+        #[cfg(feature = "rayon")]
         {
             let cursor_opt = self.lazy_bal.take();
             let helper_result = if let Some(cursor) = cursor_opt.as_ref() {
@@ -494,29 +494,18 @@ impl GeneralizedDatabase {
         match self.code_metadata.entry(code_hash) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
             Entry::Vacant(entry) => {
-                // First ensure code is loaded into cache by calling get_code
-                // This handles witness fallbacks and other code loading logic correctly
+                // Answer from the size-only store lookup rather than the bytecode: a
+                // contract's code is up to 24KB and lives out-of-line, so materializing it
+                // to return a length is the dominant cost of EXTCODESIZE. Code already
+                // loaded for another reason answers for free.
                 #[expect(clippy::as_conversions, reason = "same sized types (on 64bit)")]
-                let code_length = {
-                    // Note: `self.get_code(code_hash)` has been inlined due to mutability borrow issues.
-                    //   To avoid this inlinement, self.get_code has to be moved into `self.codes` so that it's called
-                    //   like this: `self.codes.get(code_hash)`.
-                    let code = match self.codes.entry(code_hash) {
-                        Entry::Occupied(entry) => entry.into_mut(),
-                        Entry::Vacant(entry) => {
-                            entry.insert(self.store.get_account_code(code_hash)?)
-                        }
-                    };
-
-                    code.len() as u64
-                };
-
-                let metadata = CodeMetadata {
-                    length: code_length,
+                let length = match self.codes.get(&code_hash) {
+                    Some(code) => code.len() as u64,
+                    None => self.store.get_code_metadata(code_hash)?.length,
                 };
 
                 // Insert into cache and return reference
-                Ok(entry.insert(metadata))
+                Ok(entry.insert(CodeMetadata { length }))
             }
         }
     }
@@ -1044,7 +1033,7 @@ impl<'a> VM<'a> {
 
         // Lazy-BAL hook: copy result out BEFORE taking &mut on current_accounts_state
         // so the immutable borrow of lazy_bal is released before the mutable reborrow.
-        #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+        #[cfg(feature = "rayon")]
         let bal_hit: Option<U256> = self.db.lazy_bal.as_ref().and_then(|cursor| {
             debug_assert!(
                 cursor.bal_index >= 1,
@@ -1054,7 +1043,7 @@ impl<'a> VM<'a> {
             let &acct_idx = cursor.index.addr_to_idx.get(&address)?;
             seed_one_storage_slot_from_bal(&cursor.bal, &cursor.index, acct_idx, key, max_idx)
         });
-        #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+        #[cfg(feature = "rayon")]
         if let Some(value) = bal_hit {
             let account = self
                 .db
