@@ -311,7 +311,10 @@ integration-test-gpu: rm-db-l2 rm-db-l1
 	killall ethrex -s SIGINT # if sent a SIGTERM, SP1 does not shuts down the sp1-gpu container
 
 # State reconstruction tests
-# If this fails due to stale blobs, regenerate them following:
+# Blobs go stale when the genesis changes OR when the block header/body
+# schema or validation rules change. The blob_fixtures conformance test in
+# crates/common catches this on every PR. To fix stale blobs, regenerate
+# (or migrate encoding-only changes in place) following:
 # - docs/workflows/regenerate-blobs.md (agent workflow)
 # - docs/developers/l2/state-reconstruction-blobs.md (step-by-step guide)
 state-diff-test:
@@ -329,6 +332,7 @@ state-diff-test:
 
 # Fast validation to check if blobs match genesis
 # Use this before state-diff-test to catch stale blobs early
+# (stale = genesis change or block schema/validation change)
 # If this fails, regenerate blobs following:
 # - docs/workflows/regenerate-blobs.md (agent workflow)
 # - docs/developers/l2/state-reconstruction-blobs.md (step-by-step guide)
