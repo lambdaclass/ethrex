@@ -364,3 +364,89 @@ fn an_all_zero_mask_on_a_non_blob_announcement_is_not_an_availability_claim() {
     let with_blob = npth(Some(0xFF));
     assert!(with_blob.announces_blob_tx());
 }
+
+// ── NewPooledTransactionHashes72::new pool-state tests ───────────────────────
+
+fn test_blockchain() -> ethrex_blockchain::Blockchain {
+    let store = ethrex_storage::Store::new("", ethrex_storage::EngineType::InMemory)
+        .expect("in-memory store");
+    ethrex_blockchain::Blockchain::default_with_store(store)
+}
+
+/// Adds a 1-blob EIP-4844 tx to the mempool with the given bundle (or none, mimicking the
+/// state after the bundle was dropped by eviction or payload building) and returns the tx.
+fn add_blob_tx_with_bundle(
+    bc: &ethrex_blockchain::Blockchain,
+    nonce: u64,
+    bundle: Option<BlobsBundle>,
+) -> Transaction {
+    let tx = Transaction::EIP4844Transaction(EIP4844Transaction {
+        nonce,
+        gas: 21_000,
+        to: Address::from_low_u64_be(2),
+        ..Default::default()
+    });
+    let sender = Address::from_low_u64_be(3);
+    let mtx = MempoolTransaction::new(tx.clone(), sender);
+    let hash = mtx.hash(&ethrex_crypto::NativeCrypto);
+    if let Some(bundle) = bundle {
+        bc.mempool
+            .add_blobs_bundle(hash, bundle)
+            .expect("add bundle");
+    }
+    bc.mempool
+        .add_transaction(hash, sender, mtx, None, None)
+        .expect("add to mempool");
+    tx
+}
+
+/// eth/72 serves blob txs elided (cells travel separately), so a sparse-held tx —
+/// elided bundle stored, blobs absent — is announceable on eth/72. The skip that
+/// protects pre-72 links from elided bundles must not leak into this variant.
+#[test]
+fn eth72_announcement_keeps_a_sparse_held_blob_tx() {
+    let bc = test_blockchain();
+    let elided = BlobsBundle {
+        blobs: vec![],
+        commitments: vec![[0u8; 48]],
+        proofs: vec![[0u8; 48]; CELLS_PER_EXT_BLOB],
+        version: 1,
+    };
+    let tx = add_blob_tx_with_bundle(&bc, 0, Some(elided));
+    let hash = tx.hash(&ethrex_crypto::NativeCrypto);
+
+    let announcement = NewPooledTransactionHashes72::new(vec![tx], &bc).expect("announce");
+
+    assert_eq!(
+        announcement.transaction_hashes,
+        vec![hash],
+        "a sparse-held blob tx must still be announced on eth/72"
+    );
+    assert_eq!(announcement.transaction_types.as_ref(), &[3u8]);
+    assert!(
+        announcement.cell_mask.is_some(),
+        "a type-3 announcement must carry a cell mask"
+    );
+}
+
+/// A blob tx whose bundle left the pool entirely can't be served on any protocol
+/// version, so eth/72 must skip it too — and when the skip removes the only type-3
+/// tx, the announcement must carry a nil cell mask (EIP-8070: cell_mask MUST be nil
+/// when no type-3 tx is announced).
+#[test]
+fn eth72_announcement_skips_a_gone_bundle_blob_tx_and_keeps_cell_mask_nil() {
+    let bc = test_blockchain();
+    let gone_blob_tx = add_blob_tx_with_bundle(&bc, 0, None);
+
+    let announcement =
+        NewPooledTransactionHashes72::new(vec![gone_blob_tx], &bc).expect("announce");
+
+    assert!(
+        announcement.transaction_hashes.is_empty(),
+        "a bundle-less blob tx must not be announced"
+    );
+    assert_eq!(
+        announcement.cell_mask, None,
+        "cell_mask must be nil when no type-3 tx is announced"
+    );
+}
