@@ -304,6 +304,7 @@ lazy_static::lazy_static! {
             (1, "mainnet"),
             (11155111, "sepolia"),
             (560048, "hoodi"),
+            (7091047534, "plataberget"),
             (9, "L1 local devnet"),
             (65536999, "L2 local devnet"),
         ])
