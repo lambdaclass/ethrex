@@ -4,7 +4,10 @@ use super::{
 };
 use crate::{
     Address, H256, U256,
-    constants::{BLOB_BASE_COST, DEFAULT_OMMERS_HASH, GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS},
+    constants::{
+        BLOB_BASE_COST, DEFAULT_OMMERS_HASH, EMPTY_WITHDRAWALS_HASH, GAS_PER_BLOB,
+        MIN_BASE_FEE_PER_BLOB_GAS,
+    },
     types::{Receipt, Transaction},
 };
 use bytes::Bytes;
@@ -17,7 +20,7 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 use ethrex_trie::Trie;
-#[cfg(all(not(feature = "eip-8025"), feature = "rayon"))]
+#[cfg(feature = "rayon")]
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
@@ -27,9 +30,9 @@ use std::cmp::{Ordering, max};
 pub type BlockNumber = u64;
 pub type BlockHash = H256;
 
-#[cfg(all(feature = "eip-8025", target_arch = "riscv64"))]
-use super::eip8025_cell::OnceCell;
-#[cfg(not(all(feature = "eip-8025", target_arch = "riscv64")))]
+#[cfg(all(feature = "zisk", target_arch = "riscv64"))]
+use super::unsync_cell::OnceCell;
+#[cfg(not(all(feature = "zisk", target_arch = "riscv64")))]
 use once_cell::sync::OnceCell;
 
 #[derive(
@@ -356,15 +359,15 @@ impl BlockBody {
     ) -> Result<Vec<(&Transaction, Address)>, CryptoError> {
         // Recovering addresses is computationally expensive.
         // Computing them in parallel greatly reduces execution time.
-        // In eip-8025 builds, use sequential iteration
-        #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+        // Without rayon, use sequential iteration
+        #[cfg(feature = "rayon")]
         return self
             .transactions
             .par_iter()
             .map(|tx| Ok((tx, tx.sender(crypto)?)))
             .collect::<Result<Vec<(&Transaction, Address)>, CryptoError>>();
 
-        #[cfg(any(feature = "eip-8025", not(feature = "rayon")))]
+        #[cfg(not(feature = "rayon"))]
         self.transactions
             .iter()
             .map(|tx| Ok((tx, tx.sender(crypto)?)))
@@ -820,6 +823,27 @@ pub fn validate_block_body(
     Ok(())
 }
 
+/// Normalizes a legacy post-Shanghai body shape produced by older ethrex versions,
+/// which omitted the `withdrawals` field while the header committed to the
+/// empty-withdrawals root. `validate_block_body` rejects that shape (reference
+/// clients treat it as malformed on the wire), but blocks already sitting in a
+/// node's store or in batch blobs published to L1 are immutable history. When the
+/// header's withdrawals_root is exactly the empty-list root, `Some(vec![])` is the
+/// provably-equivalent canonical body; any other root leaves the body untouched, and
+/// validation rejects it exactly as before.
+///
+/// Only call this on bodies read from trusted local history (store re-execution,
+/// blob reconstruction) — never on bodies received from the network.
+pub fn normalize_legacy_withdrawals(header: &BlockHeader, body: &mut BlockBody) {
+    if body.withdrawals.is_none() && header.withdrawals_root == Some(*EMPTY_WITHDRAWALS_HASH) {
+        tracing::debug!(
+            block = header.number,
+            "Normalizing legacy omitted-withdrawals block body from trusted history"
+        );
+        body.withdrawals = Some(Vec::new());
+    }
+}
+
 /// Validates that only the required field are present for a Prague block
 /// Also validates excess_blob_gas value against parent's header
 pub fn validate_prague_header_fields(
@@ -968,7 +992,7 @@ pub fn calc_excess_blob_gas(parent: &BlockHeader, schedule: ForkBlobSchedule, fo
 mod test {
     use super::*;
     use crate::constants::EMPTY_KECCAK_HASH;
-    use crate::types::{BLOB_BASE_FEE_UPDATE_FRACTION, ELASTICITY_MULTIPLIER};
+    use crate::types::{BLOB_BASE_FEE_UPDATE_FRACTION, ELASTICITY_MULTIPLIER, INITIAL_BASE_FEE};
     use ethereum_types::H160;
     use hex_literal::hex;
     use std::str::FromStr;
@@ -1190,6 +1214,37 @@ mod test {
 
         let res = calc_excess_blob_gas(&parent, schedule, fork);
         assert_eq!(res, 3538944)
+    }
+
+    #[test]
+    fn test_calc_excess_blob_gas_at_amsterdam_inherits_bpo1_target() {
+        // Amsterdam carries no blob params of its own, so a chain that scheduled BPO1
+        // and never scheduled BPO2 keeps BPO1's target of 10 and max of 15 across the
+        // Amsterdam boundary. A parent that spent 12 blobs is above that target, so the
+        // EIP-7918 reserve-price branch raises the excess by `used * (max - target) / max`.
+        // Resolving the schedule from an unscheduled BPO2 (target 14) instead would put
+        // the parent below target and wrongly return 0.
+        let parent = BlockHeader {
+            excess_blob_gas: Some(0),
+            blob_gas_used: Some(12 * GAS_PER_BLOB as u64),
+            base_fee_per_gas: Some(INITIAL_BASE_FEE),
+            ..Default::default()
+        };
+        let config = ChainConfig {
+            osaka_time: Some(0),
+            bpo1_time: Some(0),
+            amsterdam_time: Some(100),
+            ..Default::default()
+        };
+
+        let schedule = config
+            .get_fork_blob_schedule(100)
+            .expect("Amsterdam must resolve a blob schedule");
+        assert_eq!(schedule.target, 10);
+        assert_eq!(schedule.max, 15);
+
+        let res = calc_excess_blob_gas(&parent, schedule, config.fork(100));
+        assert_eq!(res, 4 * GAS_PER_BLOB as u64);
     }
 
     #[test]
@@ -1445,5 +1500,61 @@ mod test {
         assert!(a.cached_transactions_root.get().is_some());
         assert!(b.cached_transactions_root.get().is_none());
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn test_normalize_legacy_withdrawals() {
+        use crate::constants::EMPTY_WITHDRAWALS_HASH;
+
+        let crypto = NativeCrypto;
+
+        // Legacy shape from trusted history: omitted field + empty-withdrawals
+        // header root normalizes to the canonical Some(vec![]), and the
+        // normalized body passes validation.
+        let header = BlockHeader {
+            transactions_root: compute_transactions_root(&[], &crypto),
+            withdrawals_root: Some(*EMPTY_WITHDRAWALS_HASH),
+            ..Default::default()
+        };
+        let mut body = BlockBody {
+            withdrawals: None,
+            ..BlockBody::empty()
+        };
+        normalize_legacy_withdrawals(&header, &mut body);
+        assert_eq!(body.withdrawals, Some(Vec::new()));
+        assert!(validate_block_body(&header, &body, &crypto).is_ok());
+
+        // An omitted field under a NON-empty withdrawals root is not the legacy
+        // shape: the body stays untouched and validation still rejects it.
+        let bad_header = BlockHeader {
+            transactions_root: compute_transactions_root(&[], &crypto),
+            withdrawals_root: Some(H256::repeat_byte(0xAB)),
+            ..Default::default()
+        };
+        let mut bad_body = BlockBody {
+            withdrawals: None,
+            ..BlockBody::empty()
+        };
+        normalize_legacy_withdrawals(&bad_header, &mut bad_body);
+        assert_eq!(bad_body.withdrawals, None);
+        assert!(validate_block_body(&bad_header, &bad_body, &crypto).is_err());
+
+        // Pre-Shanghai shape (no header root, no field) stays untouched.
+        let pre_shanghai_header = BlockHeader {
+            transactions_root: compute_transactions_root(&[], &crypto),
+            ..Default::default()
+        };
+        let mut pre_shanghai_body = BlockBody {
+            withdrawals: None,
+            ..BlockBody::empty()
+        };
+        normalize_legacy_withdrawals(&pre_shanghai_header, &mut pre_shanghai_body);
+        assert_eq!(pre_shanghai_body.withdrawals, None);
+
+        // An already-canonical body is left as-is.
+        let mut canonical = BlockBody::empty();
+        let before = canonical.withdrawals.clone();
+        normalize_legacy_withdrawals(&header, &mut canonical);
+        assert_eq!(canonical.withdrawals, before);
     }
 }

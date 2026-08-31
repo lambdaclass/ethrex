@@ -192,6 +192,13 @@ fn parallel_blockchain(store: Store) -> Blockchain {
         store,
         BlockchainOptions {
             bal_parallel_exec_enabled: true,
+            // These tests exercise BAL content validation, not mempool
+            // admission policy, and their fixtures submit zero-tip txs
+            // (`eip1559_tx` sets `max_priority_fee_per_gas: 0`). Opt out of the
+            // min-tip floor so they stay decoupled from admission defaults —
+            // raising the fixture's tip instead would change gas payment and
+            // perturb the exact balance deltas these tests assert on.
+            min_tip_wei: 0,
             ..Default::default()
         },
     )

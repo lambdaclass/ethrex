@@ -431,7 +431,7 @@ async fn test_store_block_tags(store: Store) {
 
     let stored_earliest_block_number = store.get_earliest_block_number().await.unwrap();
     let stored_finalized_block_number = store.get_finalized_block_number().await.unwrap().unwrap();
-    let stored_latest_block_number = store.get_latest_block_number().await.unwrap();
+    let stored_latest_block_number = store.get_latest_block_number().unwrap();
     let stored_safe_block_number = store.get_safe_block_number().await.unwrap().unwrap();
     let stored_pending_block_number = store.get_pending_block_number().await.unwrap().unwrap();
 

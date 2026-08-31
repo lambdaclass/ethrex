@@ -31,9 +31,9 @@ use ethrex_p2p::{
     peer_handler::PeerHandler,
     peer_table::{PeerTable, PeerTableServer, TARGET_PEERS},
     rlpx::initiator::RLPxInitiator,
-    sync::SyncMode,
+    sync::{BackfillConfig, HistoryChain, SyncMode},
     sync_manager::SyncManager,
-    types::{NetworkConfig, Node, NodeRecord},
+    types::{LocalNode, NetworkConfig, Node, NodeRecord, SharedLocalNode},
 };
 use ethrex_storage::{EngineType, Store};
 use hex_literal::hex;
@@ -41,8 +41,9 @@ use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use secp256k1::SecretKey;
 use serde_json::Value;
 use spawned_concurrency::tasks::ActorRef;
+use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
-use std::{collections::HashSet, net::SocketAddr, str::FromStr, sync::Arc};
+use std::{collections::HashSet, net::SocketAddr, str::FromStr};
 use tokio::sync::Mutex as TokioMutex;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 // Base price for each test transaction.
@@ -246,6 +247,12 @@ pub fn example_local_node_record() -> NodeRecord {
     NodeRecord::from_node(&node, 1, &signer).unwrap()
 }
 
+pub fn example_shared_local_node() -> SharedLocalNode {
+    let node = example_p2p_node();
+    let record = example_local_node_record();
+    Arc::new(RwLock::new(LocalNode { node, record }))
+}
+
 // Util to start an api for testing on ports 8500 and 8501,
 // mostly for when hive is missing some endpoints to test
 // like eth_uninstallFilter.
@@ -271,8 +278,7 @@ pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
         merkle_pool(),
     ));
     let jwt_secret = Default::default();
-    let local_p2p_node = example_p2p_node();
-    let local_node_record = example_local_node_record();
+    let shared_local_node = example_shared_local_node();
     tokio::spawn(async move {
         start_api(
             http_addr,
@@ -281,8 +287,7 @@ pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
             storage.clone(),
             blockchain.clone(),
             jwt_secret,
-            local_p2p_node,
-            local_node_record,
+            shared_local_node,
             dummy_sync_manager().await,
             dummy_peer_handler(storage).await,
             ClientVersion::new(
@@ -322,7 +327,6 @@ pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
         storage.clone(),
         merkle_pool(),
     ));
-    let local_node_record = example_local_node_record();
     let block_worker_channel = start_block_executor(blockchain.clone());
     RpcApiContext {
         storage: storage.clone(),
@@ -332,8 +336,7 @@ pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
         peer_handler: Some(dummy_peer_handler(storage).await),
         node_data: NodeData {
             jwt_secret: Default::default(),
-            local_p2p_node: example_p2p_node(),
-            local_node_record,
+            shared_local_node: example_shared_local_node(),
             client_version: ClientVersion::new(
                 "ethrex".to_string(),
                 "0.1.0".to_string(),
@@ -369,6 +372,11 @@ pub async fn dummy_sync_manager() -> SyncManager {
         Store::new("temp.db", ethrex_storage::EngineType::InMemory)
             .expect("Failed to start Storage Engine"),
         ".".into(),
+        BackfillConfig {
+            mode: HistoryChain::Off,
+            tx_index_horizon: 0,
+        },
+        TaskTracker::new(),
     )
     .await
 }
@@ -450,4 +458,51 @@ pub async fn call_http(context: RpcApiContext, body: String) -> Value {
         .await
         .expect("handle_http_request should not return a status code error")
         .0
+}
+
+// ── eth/72 (EIP-8070) internal-fn shims ─────────────────────────────────────
+//
+// These re-expose crate-private parsing/handling internals to the integration
+// test crate WITHOUT widening the production public API: the whole `test_utils`
+// module is compiled only under `#[cfg(any(test, feature = "test-utils"))]`, so
+// these shims do not exist in a normal build.
+use crate::engine::blobs::BlobsV4Request;
+use crate::types::fork_choice::{ForkChoiceState, PayloadAttributesV4};
+use crate::utils::RpcErr;
+
+/// Max blob hashes per `engine_getBlobs*` request (mirror of the crate-private const).
+pub const GET_BLOBS_V1_REQUEST_MAX_SIZE: usize =
+    crate::engine::blobs::GET_BLOBS_V1_REQUEST_MAX_SIZE;
+
+/// Shim over the crate-private `engine::fork_choice::parse_v4`.
+pub fn parse_v4(
+    params: &Option<Vec<Value>>,
+) -> Result<(ForkChoiceState, Option<PayloadAttributesV4>, Option<u128>), RpcErr> {
+    crate::engine::fork_choice::parse_v4(params)
+}
+
+/// Shim over the crate-private `engine::fork_choice::parse_custody_columns`.
+pub fn parse_custody_columns(value: &Value) -> Result<Option<u128>, RpcErr> {
+    crate::engine::fork_choice::parse_custody_columns(value)
+}
+
+/// Shim over the crate-private `engine::fork_choice::apply_custody_update`.
+pub fn apply_custody_update(context: &RpcApiContext, custody_columns: Option<u128>) {
+    crate::engine::fork_choice::apply_custody_update(context, custody_columns)
+}
+
+/// Shim over the crate-private `engine::blobs::parse_indices_bitarray`.
+pub fn parse_indices_bitarray(value: &Value) -> Result<u128, RpcErr> {
+    crate::engine::blobs::parse_indices_bitarray(value)
+}
+
+/// Construct a `BlobsV4Request` from its parts (the struct fields are crate-private).
+pub fn blobs_v4_request(
+    versioned_blob_hashes: Vec<H256>,
+    indices_bitarray: u128,
+) -> BlobsV4Request {
+    BlobsV4Request {
+        versioned_blob_hashes,
+        indices_bitarray,
+    }
 }
