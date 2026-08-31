@@ -77,8 +77,8 @@ jobs:
 
           # openvm is absent from THIS loop only because its crates need a newer
           # rustc than the pinned toolchain; it is checked in the step below on a
-          # newer one. The crate now carries the same `[patch]` as `bin/openvm`,
-          # so it resolves the versions the real build uses.
+          # newer one. Its dependencies match the OpenVM 2.1 preview release used
+          # by the real ERE guest build.
 
       # `crypto/openvm.rs` is the largest provider and used to be compiled first by
       # the tag-time Ere docker build, which meant a break in it was found at release

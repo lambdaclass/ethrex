@@ -69,6 +69,32 @@ pub struct CallTraceFrame {
     /// Gas used by the call
     #[serde(with = "crate::serde_utils::u64::hex_str")]
     pub gas_used: u64,
+    /// EIP-8037 gross (pre-refund) regular gas used by the transaction — its contribution
+    /// to `block_regular_gas_used` (EIP-7778). Set only on the top-level frame of an
+    /// Amsterdam+ transaction; sub-frame attribution is unspecified.
+    #[serde(
+        default,
+        with = "crate::serde_utils::u64::hex_str_opt",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub regular_gas_used: Option<u64>,
+    /// EIP-8037 gross (pre-refund) state gas used by the transaction, net of source-based
+    /// state-gas refunds — its contribution to `block_state_gas_used`. Set only on the
+    /// top-level frame of an Amsterdam+ transaction.
+    #[serde(
+        default,
+        with = "crate::serde_utils::u64::hex_str_opt",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub state_gas_used: Option<u64>,
+    /// EIP-3529 gas refund applied to the transaction. Set only on the top-level frame of
+    /// an Amsterdam+ transaction.
+    #[serde(
+        default,
+        with = "crate::serde_utils::u64::hex_str_opt",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub gas_refund: Option<u64>,
     /// Call data (always present, matching geth's non-optional `input`)
     #[serde(with = "crate::serde_utils::bytes")]
     pub input: Bytes,

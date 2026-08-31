@@ -31,6 +31,10 @@ pub const FIELD_ELEMENTS_PER_EXT_BLOB: usize = 2 * FIELD_ELEMENTS_PER_BLOB;
 pub const FIELD_ELEMENTS_PER_CELL: usize = 64;
 pub const BYTES_PER_CELL: usize = FIELD_ELEMENTS_PER_CELL * BYTES_PER_FIELD_ELEMENT;
 pub const CELLS_PER_EXT_BLOB: usize = FIELD_ELEMENTS_PER_EXT_BLOB / FIELD_ELEMENTS_PER_CELL;
+/// Maximum blobs a single transaction may carry from Osaka onwards.
+pub const MAX_BLOB_COUNT: usize = 6;
+/// Maximum blobs a single transaction may carry before Osaka.
+pub const MAX_BLOB_COUNT_ELECTRA: usize = 9;
 
 // Mempool admission size caps — peer-policy defaults, not consensus.
 // Matches geth `txMaxSize` (legacypool) and `txMaxSize` (blobpool), reth

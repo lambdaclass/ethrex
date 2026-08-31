@@ -1,12 +1,15 @@
 use crate::{
-    discovery::lookup::{IterativeLookup, LOOKUP_ALPHA, LOOKUP_BUCKET_SIZE},
+    discovery::{
+        ip_predictor::IpPredictor,
+        lookup::{IterativeLookup, LOOKUP_ALPHA, LOOKUP_BUCKET_SIZE},
+    },
     discv5::{
         messages::{
             DISTANCES_PER_FIND_NODE_MSG, FindNodeMessage, Handshake, HandshakeAuthdata, Message,
             NodesMessage, Ordinary, Packet, PacketTrait as _, PingMessage, PongMessage,
             TalkResMessage, WhoAreYou, decrypt_message,
         },
-        server::{Discv5Message, Discv5State, SessionSource, update_local_ip},
+        server::{Discv5Message, SessionSource},
         session::{
             build_challenge_data, create_id_signature, derive_session_keys, verify_id_signature,
         },
@@ -450,22 +453,11 @@ impl DiscoveryServer {
             }
         }
 
-        let discv5 = self.discv5.as_mut().expect("discv5 state must exist");
-        if let Some(winning_ip) = discv5.record_ip_vote(pong_message.recipient_addr.ip(), sender_id)
-            && winning_ip != self.local_node.ip
+        if let Some(ip) = self
+            .ip_predictor
+            .record_ip_vote(pong_message.recipient_addr.ip(), sender_id)
         {
-            tracing::info!(
-                protocol = "discv5",
-                old_ip = %self.local_node.ip,
-                new_ip = %winning_ip,
-                "External IP detected via PONG voting, updating local ENR"
-            );
-            update_local_ip(
-                &mut self.local_node,
-                &mut self.local_node_record,
-                &self.signer,
-                winning_ip,
-            );
+            self.apply_predicted_ip(ip, "discv5");
         }
 
         Ok(())
@@ -540,7 +532,26 @@ impl DiscoveryServer {
     async fn discv5_handle_nodes_message(
         &mut self,
         nodes_message: NodesMessage,
+        sender_id: H256,
     ) -> Result<(), DiscoveryServerError> {
+        // Only accept a NODES that answers a FINDNODE we actually sent to this
+        // peer. Without the check, any peer that has completed a handshake can
+        // push ENRs of its choosing into our peer table with an unsolicited
+        // NODES, and we then hand them back out in our own FINDNODE responses.
+        let solicited = self.discv5.as_ref().is_some_and(|discv5| {
+            discv5
+                .pending_findnodes
+                .contains_key(&(sender_id, nodes_message.req_id.clone()))
+        });
+        if !solicited {
+            trace!(
+                protocol = "discv5",
+                from = %sender_id,
+                "Dropping unsolicited NODES response"
+            );
+            return Ok(());
+        }
+
         self.peer_table
             .new_contact_records(nodes_message.nodes.clone())?;
 
@@ -604,6 +615,13 @@ impl DiscoveryServer {
         };
 
         let discv5 = self.discv5.as_mut().expect("discv5 state must exist");
+        // Remember the request id so the matching NODES response is accepted.
+        // Done in every send path so none can issue a FINDNODE unregistered.
+        if let Message::FindNode(find_node) = &message {
+            discv5
+                .pending_findnodes
+                .insert((node.node_id(), find_node.req_id.clone()), Instant::now());
+        }
         let mut rng = OsRng;
         let masking_iv: u128 = rng.r#gen();
         let nonce = discv5.next_nonce(&mut rng);
@@ -652,12 +670,19 @@ impl DiscoveryServer {
             use ethrex_metrics::p2p::METRICS_P2P;
             METRICS_P2P.inc_discv5_outgoing(message.metric_label());
         }
+        let discv5 = self.discv5.as_mut().expect("discv5 state must exist");
+        // Remember the request id so the matching NODES response is accepted.
+        // Done in every send path so none can issue a FINDNODE unregistered.
+        if let Message::FindNode(find_node) = &message {
+            discv5
+                .pending_findnodes
+                .insert((*dest_id, find_node.req_id.clone()), Instant::now());
+        }
         let ordinary = Ordinary {
             src_id: self.local_node.node_id(),
             message,
         };
 
-        let discv5 = self.discv5.as_mut().expect("discv5 state must exist");
         let mut rng = OsRng;
         let masking_iv: u128 = rng.r#gen();
         let nonce = discv5.next_nonce(&mut rng);
@@ -701,6 +726,13 @@ impl DiscoveryServer {
         };
 
         let discv5 = self.discv5.as_mut().expect("discv5 state must exist");
+        // Remember the request id so the matching NODES response is accepted.
+        // Done in every send path so none can issue a FINDNODE unregistered.
+        if let Message::FindNode(find_node) = &message {
+            discv5
+                .pending_findnodes
+                .insert((node.node_id(), find_node.req_id.clone()), Instant::now());
+        }
         let mut rng = OsRng;
         let masking_iv: u128 = rng.r#gen();
         let nonce = discv5.next_nonce(&mut rng);
@@ -763,7 +795,7 @@ impl DiscoveryServer {
         }
 
         // Per-(IP, node) rate limit
-        if !Discv5State::is_private_ip(addr.ip())
+        if !IpPredictor::is_private_ip(addr.ip())
             && let Some(last_sent) = discv5.whoareyou_rate_limit.get(&rate_key)
             && now.duration_since(*last_sent) < WHOAREYOU_RATE_LIMIT
         {
@@ -868,7 +900,8 @@ impl DiscoveryServer {
                 .await?;
             }
             Message::Nodes(nodes_message) => {
-                self.discv5_handle_nodes_message(nodes_message).await?;
+                self.discv5_handle_nodes_message(nodes_message, sender_id)
+                    .await?;
             }
             Message::TalkReq(talk_req_message) => {
                 if talk_req_message.req_id.len() > 8 {

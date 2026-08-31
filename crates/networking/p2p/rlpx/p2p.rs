@@ -14,11 +14,12 @@ use ethrex_rlp::{
 use secp256k1::PublicKey;
 use serde::Serialize;
 
-pub const SUPPORTED_ETH_CAPABILITIES: [Capability; 4] = [
+pub const SUPPORTED_ETH_CAPABILITIES: [Capability; 5] = [
     Capability::eth(68),
     Capability::eth(69),
     Capability::eth(70),
     Capability::eth(71),
+    Capability::eth(72),
 ];
 pub const SUPPORTED_SNAP_CAPABILITIES: [Capability; 1] = [Capability::snap(1)];
 

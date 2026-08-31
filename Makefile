@@ -266,6 +266,10 @@ update-cargo-lock: ## 📦 Update Cargo.lock files
 	# (v2.1.7-risczero.0), so its lockfile can't resolve. Re-add once a >=2.1.8 tag exists.
 	cargo tree --manifest-path crates/guest-program/bin/zisk/Cargo.toml
 	cargo tree --manifest-path crates/guest-program/bin/openvm/Cargo.toml
+	cargo tree --manifest-path crates/guest-program/stateless-validator/Cargo.toml
+	cargo tree --manifest-path crates/guest-program/stateless-validator/bin/sp1/Cargo.toml
+	cargo tree --manifest-path crates/guest-program/stateless-validator/bin/zisk/Cargo.toml
+	cargo tree --manifest-path crates/guest-program/stateless-validator/bin/openvm/Cargo.toml
 	cargo tree --manifest-path crates/l2/tee/quote-gen/Cargo.toml
 	cargo tree --manifest-path crates/vm/levm/bench/revm_comparison/Cargo.toml
 	cargo tree --manifest-path tooling/zkevm_bench/Cargo.toml
@@ -281,11 +285,12 @@ check-cargo-lock: ## 🔍 Check Cargo.lock files are up to date
 	# if changes made to the source code CI will run with the toolchain
 	cargo metadata --locked --manifest-path crates/guest-program/bin/zisk/Cargo.toml > /dev/null
 	cargo metadata --locked --manifest-path crates/guest-program/bin/openvm/Cargo.toml > /dev/null
-	# The stateless-validator guest bins are each their own workspace, and
+	# The stateless-validator crate and guest bins are each their own workspace, and
 	# tag_release builds + signs them with `--guest-dir`. Without a committed
 	# lock the published ELF/VK bytes are not pinned. openvm is checked too:
 	# `cargo metadata` only resolves, so the newer-rustc requirement that keeps
 	# it out of the pr_nostd build matrix does not apply here.
+	cargo metadata --locked --manifest-path crates/guest-program/stateless-validator/Cargo.toml > /dev/null
 	cargo metadata --locked --manifest-path crates/guest-program/stateless-validator/bin/sp1/Cargo.toml > /dev/null
 	cargo metadata --locked --manifest-path crates/guest-program/stateless-validator/bin/zisk/Cargo.toml > /dev/null
 	cargo metadata --locked --manifest-path crates/guest-program/stateless-validator/bin/openvm/Cargo.toml > /dev/null

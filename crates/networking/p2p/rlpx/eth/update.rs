@@ -19,7 +19,10 @@ pub struct BlockRangeUpdate {
 }
 
 impl BlockRangeUpdate {
-    pub fn new(storage: &Store) -> Result<Self, PeerConnectionError> {
+    pub async fn new(storage: &Store) -> Result<Self, PeerConnectionError> {
+        // See StatusDataPost68::new — this is the ongoing half of the same
+        // advertisement, so it must track the earliest block as it moves.
+        let earliest_block = storage.get_earliest_block_number().await?;
         let latest_block = storage.get_latest_block_number()?;
         let block_header =
             storage
@@ -30,7 +33,7 @@ impl BlockRangeUpdate {
         let latest_block_hash = block_header.hash();
 
         Ok(Self {
-            earliest_block: 0,
+            earliest_block,
             latest_block,
             latest_block_hash,
         })

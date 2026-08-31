@@ -8,40 +8,21 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 # openvm
-openvm = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.0", features = [
+openvm = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.1.0-preview", features = [
     "std",
 ] }
-openvm-algebra-guest = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.0" }
-openvm-ecc-guest = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.0" }
+openvm-algebra-guest = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.1.0-preview" }
+openvm-ecc-guest = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.1.0-preview" }
 
 # ere
-ere-platform-openvm = { git = "https://github.com/eth-act/ere", rev = "a25f1aed9664c3b63e73ef05360090a4c41da31b", features = [
+# Keep Ethrex's first-party accelerator, including its assert_reduced serialization
+# guard. ERE's accelerator is disabled to avoid installing both providers.
+ere-platform-openvm = { git = "https://github.com/eth-act/ere", rev = "8961a4e7ac5c9ca2dc6a2fc848452f23a186b1aa", default-features = false, features = [
     "std",
+    "getrandom-unsupported",
 ] }
 
 ethrex-stateless-validator = { path = "../..", features = ["ere", "openvm"] }
-
-# Mirrors the ere-guests openvm bin: unifies the openvm source id across the
-# bin, the crypto provider, and ere-platform-openvm.
-[patch."https://github.com/openvm-org/openvm.git"]
-openvm = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
-openvm-algebra-complex-macros = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
-openvm-algebra-guest = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
-openvm-algebra-moduli-macros = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
-openvm-custom-insn = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
-openvm-ecc-guest = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
-openvm-ecc-sw-macros = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
-openvm-k256 = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0", package = "k256" }
-openvm-keccak256 = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
-openvm-keccak256-guest = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
-openvm-macros-common = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
-openvm-p256 = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0", package = "p256" }
-openvm-pairing = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
-openvm-pairing-guest = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
-openvm-platform = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
-openvm-rv32im-guest = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
-openvm-sha2 = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
-openvm-sha2-guest = { git = "https://github.com/openvm-org//openvm.git", tag = "v2.0.0" }
 
 [profile.release]
 codegen-units = 1

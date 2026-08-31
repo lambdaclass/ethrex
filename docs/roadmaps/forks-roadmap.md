@@ -41,7 +41,7 @@ matched, since `calc_excess_blob_gas` reads the parent unconditionally.
 | Item | Why it matters |
 |------|----------------|
 | **EIP-8070 (eth/72)** | Mandatory for all ELs on devnet-8. In review at [#6776]. Ships no fixtures and hive covers it execute-only ([hive#1365]), so the bundle gives it zero coverage either way — needs an `execute` sim wired up. |
-| **`debug_getRawBlockAccessList`** | Protocol-side requirement per [execution-apis#794](https://github.com/ethereum/execution-apis/pull/794), along with `-32001` for the BAL getters. In review at [#7069]. |
+| **`debug_getRawBlockAccessList`** | Protocol-side requirement per [execution-apis#851](https://github.com/ethereum/execution-apis/pull/851) (merged), along with `-32001`/`4444` for the BAL getters. Implemented by [#7069]. |
 | **EIP-8038 spec text** | The v8.0.0 access-list repricing landed in the tests ahead of its EIPs PR. Confirm the EIP matches once that merges. |
 | **`eth_simulateV1`** | Still unimplemented. Tracked at [#6212]. |
 | **EIP-8189 (snap/2)** | BAL-based state healing, newly listed in [EIP-7773]. Not evaluated. |

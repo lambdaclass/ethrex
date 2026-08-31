@@ -33,7 +33,7 @@ mod tests {
     use super::*;
     use crate::test_utils::{
         BASE_PRICE_IN_WEI, add_eip1559_tx_blocks, add_legacy_tx_blocks, add_mixed_tx_blocks,
-        default_context_with_storage, example_p2p_node, setup_store,
+        default_context_with_storage, setup_store,
     };
     use crate::{
         rpc::{RpcApiContext, RpcHandler, map_http_requests},
@@ -115,8 +115,7 @@ mod tests {
         });
         let expected_response = json!("0x3b9aca00");
         let request: RpcRequest = serde_json::from_value(raw_json).expect("Test json is not valid");
-        let mut context = default_context().await;
-        context.node_data.local_p2p_node = example_p2p_node();
+        let context = default_context().await;
 
         add_eip1559_tx_blocks(&context.storage, 100, 3).await;
 

@@ -121,6 +121,16 @@ automata-dcap-qpl:
 	cd automata-dcap-qpl/automata-dcap-qpl-tool; git clone https://github.com/automata-network/pccs-reader-rs
 	git -C automata-dcap-qpl/automata-dcap-qpl-tool/pccs-reader-rs checkout --detach $(PCCS_READER_REV)
 	rm automata-dcap-qpl/Cargo.toml
+# Removing the workspace manifest above orphans the repo's root Cargo.lock, so
+# the build below would re-resolve every crates.io dependency at its latest
+# version — the git revs are pinned but the resolution floats. Carry the lock
+# into the tool's new workspace so the versions the repo built against are kept
+# (cargo prunes entries for the members that are gone, and only re-resolves on a
+# requirement mismatch). alloy-sol-types 1.7.0 is the incident this guards
+# against: it added required trait methods that the pinned attestation rev's
+# generated bindings do not implement, breaking this build for anyone resolving
+# fresh after its release.
+	cp automata-dcap-qpl/Cargo.lock automata-dcap-qpl/automata-dcap-qpl-tool/Cargo.lock
 	echo "" >> automata-dcap-qpl/automata-dcap-qpl-tool/Cargo.toml
 	echo "[workspace]" >> automata-dcap-qpl/automata-dcap-qpl-tool/Cargo.toml
 	cd automata-dcap-qpl/automata-dcap-qpl-tool; cargo build --release
