@@ -397,30 +397,33 @@ all passing):
 | `contains_tx` pre-filter | the hash is fresh; the returned hash is `keccak(raw)`, checked against `cast` |
 | chain age, base fee, EOA senders | a chain seconds old reproduces it; base fee flat at 7 wei; an EOA frame tx in the same run mines normally |
 
-**Third cause, OPEN and the one that matters most: the mempool and consensus disagree.**
-Instrumenting the builder's eviction reason (the same funnel technique, one level up) caught
-it verbatim, eight times out of eight:
+**Third cause, OPEN.** Instrumenting the builder's eviction reason (the same funnel
+technique, one level up) caught it verbatim, eight times out of eight:
 
 ```
 Invalid frame transaction: VERIFY frame did not call APPROVE or payer not approved
 ```
 
-The same transaction is reported **valid** by `ethrex_simulateFrameTransaction` at admission
-— the probe prints `valid: True, prefixShape: SelfVerify` immediately before submitting it —
-and then fails consensus validity when the builder executes it. Admission runs
-`simulate_validation_prefix`; the builder runs the whole transaction through
-`execute_frame_tx`. Those two paths must agree about whether a prefix approves, and here they
-do not.
+That message turned out to be six rules wearing one string: every `tx_invalid` verdict in
+`execute_frame_tx` printed it, and five of them are not the payer check. The error now
+carries the rule that produced it, so the next capture names the actual cause. The reading
+below is therefore *not yet confirmed* — it is what the evidence supports so far.
 
-That is worse than a dropped transaction, because the disagreement is the bug: a node that
-admits what it will not build advertises transactions that can never mine, and a second
-client implementing only one of the two paths would fork. Both loops were changed by the v2
-work (frame-entry access charge, per-frame state pool, account-creation charge), and the
-account-creation charge in particular was added to the consensus loop only — that asymmetry
-is the first thing to check, even though the failing frame carries no value.
+A first draft of this entry claimed the mempool and consensus disagree, on the grounds that
+`ethrex_simulateFrameTransaction` reports the same transaction valid. That was wrong, and
+worth recording as its own lesson: EIP-8141 admits a frame transaction on its **validation
+prefix alone**, which is exactly what bounds the work the pool does per transaction. The
+simulate RPC dry-runs that prefix and nothing else. A transaction whose later frames
+invalidate it is therefore admitted and then correctly refused — by design, not by
+disagreement.
 
-Reproduce with `probe_contract_sender_tx.py`; the eviction reason needs a one-line change of
-the builder's `debug!` to `error!` since the devnet does not run at debug level.
+What is still unexplained is narrower, and still a bug: the probe's transaction is valid as
+a whole. `a_contract_sender_can_approve_on_a_first_use_keyed_nonce` executes the probe's
+exact shape — contract sender, VERIFY frame declaring no state budget, SENDER frame paying a
+fresh address, first-use keyed nonce — straight through `execute_frame_tx`, and it passes.
+So the transaction shape is exonerated and the cause lies in block context: the block's own
+two gas dimensions, the base fee, or the second probe transaction sharing the payload. That
+is where the next capture should look.
 
 The technique is worth keeping: every removal funnels through
 `Mempool::remove_transaction_with_lock`, so a temporary backtrace there plus

@@ -1066,18 +1066,20 @@ impl Blockchain {
                     };
                     if evict {
                         if is_frame {
-                            // Every pooled frame tx was admitted by
-                            // `simulate_validation_prefix`, so the builder refusing
-                            // it means the mempool and consensus disagree about the
-                            // same bytes against the same head. That is a client bug
-                            // whichever way it points, and it costs the user a
-                            // transaction the node already acknowledged, so it is
-                            // worth a line at default verbosity. Debugging the drops
-                            // this file's eviction rules were written for was blind
-                            // work without it.
+                            // A frame tx is admitted on its VALIDATION PREFIX alone
+                            // (EIP-8141 §Mempool) — that is what bounds the work the
+                            // pool does per transaction — so a later frame can make it
+                            // invalid without anything having gone wrong. What is not
+                            // routine is that the node accepted the transaction, told
+                            // the sender its hash, and is now discarding it: from the
+                            // outside that is indistinguishable from a silent drop, and
+                            // it was in fact hiding two eviction bugs this file now
+                            // guards against. Log it at default verbosity so the reason
+                            // is visible without a debug build.
                             warn!(
-                                "Frame transaction {tx_hash} was admitted to the pool \
-                                 but rejected by the builder, and is being evicted: {e}"
+                                "Frame transaction {tx_hash} was admitted on its \
+                                 validation prefix but is invalid as a whole; evicting \
+                                 it from the pool: {e}"
                             );
                         } else {
                             // A deterministically-invalid regular tx is routine.
