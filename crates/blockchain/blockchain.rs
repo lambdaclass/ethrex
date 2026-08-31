@@ -48,10 +48,16 @@ pub mod fork_choice;
 pub mod mempool;
 pub mod payload;
 pub mod prewarm;
+pub mod sampling;
+pub mod stateless;
 pub mod tracing;
 pub mod vm;
 
-use ::tracing::{debug, error, info, instrument, warn};
+use ::tracing::{error, info, instrument, warn};
+// Every `debug!` call site lives in the rayon warmer path, so the import is
+// unused in any configuration that compiles that path out.
+#[cfg(feature = "rayon")]
+use ::tracing::debug;
 use constants::{AMSTERDAM_MAX_INITCODE_SIZE, MAX_INITCODE_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
@@ -69,14 +75,14 @@ use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{
     AccountInfo, AccountState, AccountUpdate, BalSynthesisItem, Block, BlockHash, BlockHeader,
-    BlockNumber, ChainConfig, Code, Receipt, Transaction, WrappedEIP4844Transaction,
-    synthesize_bal_updates, validate_block_body,
+    BlockNumber, Code, Transaction, WrappedEIP4844Transaction, synthesize_bal_updates,
+    validate_block_body,
 };
 use ethrex_common::types::{EIP7702_DELEGATED_CODE_LEN, is_eip7702_delegation};
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
 use ethrex_common::utils::keccak;
-use ethrex_common::{Address, H256, TrieLogger, U256};
+use ethrex_common::{Address, H256, U256};
 pub use ethrex_common::{
     get_total_blob_gas, validate_block_access_list_hash, validate_block_pre_execution,
     validate_gas_used, validate_receipts_root_and_logs_bloom, validate_requests_hash,
@@ -87,18 +93,21 @@ use ethrex_rlp::constants::RLP_NULL;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{
-    AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
+    AccountUpdatesList, DB_COMMIT_THRESHOLD, Store, UpdateBatch, error::StoreError, hash_address,
+    hash_key,
 };
 use ethrex_trie::node::{BranchNode, ExtensionNode, LeafNode};
-use ethrex_trie::{Nibbles, Node, NodeRef, Trie, TrieError, TrieNode};
+use ethrex_trie::{Nibbles, Node, NodeRef, Trie, TrieError, TrieLogger, TrieNode};
+#[cfg(feature = "rayon")]
+use ethrex_vm::backends::BLOATED_BATCH_THRESHOLD;
 use ethrex_vm::backends::CachingDatabase;
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 use ethrex_vm::backends::levm::LEVM;
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError, VmDatabase};
 use mempool::{
-    FRAME_CANONICAL_PAYMASTER_CODE_HASH, FramePaymasterReservation, Mempool, QueuedCap,
-    is_canonical_paymaster,
+    BalanceCheck, FRAME_CANONICAL_PAYMASTER_CODE_HASH, FramePaymasterReservation, Mempool,
+    SenderAdmission, is_canonical_paymaster,
 };
 use payload::PayloadOrTask;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -127,9 +136,35 @@ use ethrex_common::types::BlobsBundle;
 
 const MAX_PAYLOADS: usize = 10;
 const MAX_MEMPOOL_SIZE_DEFAULT: usize = 10_000;
+// Below this many touched storage slots the BFS prefetch's own overhead (one
+// `multi_get` per trie level) isn't worth it; the serial insert loop's
+// per-slot lazy resolution is cheap enough on its own. Shared by the Stage B
+// worker, `serial_storage_root`, and `compute_sharded_storage_root`'s
+// serial fallbacks.
+const STORAGE_PREFETCH_THRESHOLD: usize = 64;
+// Per-shard gate for the Stage C state-trie update. Each of the 16 shards holds
+// ~1/16 of the block's touched accounts, so the threshold is scaled down like
+// the storage shard path.
+const STATE_SHARD_PREFETCH_THRESHOLD: usize = 4;
+// Streaming merkleizer (`handle_subtrie`): a single storage trie's touched slots
+// are sharded across the 16 workers by key nibble, so each worker holds only
+// ~1/16 of them. The prefetch gate is therefore scaled down from
+// `STORAGE_PREFETCH_THRESHOLD` by 16 (same reasoning as
+// `STATE_SHARD_PREFETCH_THRESHOLD`): a trie with ~64 total touched slots then
+// clears the gate on each of its shards. Used only on the BAL-less / pre-Amsterdam
+// streaming path.
+const STREAM_STORAGE_PREFETCH_THRESHOLD: usize = 4;
+// Cap on the per-worker, per-trie slot buffer before an opportunistic mid-routing
+// flush (one sorted `prefetch_sorted` + the inserts). Bounds transient memory for
+// very heavy single-account blocks; smaller buffers just flush once at RoutingDone.
+const STREAM_STORAGE_FLUSH_BATCH: usize = 1024;
 /// Default mempool occupancy percentage (0-100) at which gapped-nonce
 /// transaction admission is denied. Set to 100 to disable the check.
 pub const DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD: u8 = 90;
+
+/// Merkle write set for the trie-node prefetch: written storage slots and changed accounts.
+#[cfg(feature = "rayon")]
+type TriePrefetchInput = (Vec<(Address, H256)>, Vec<Address>);
 
 /// Background thread for dropping large tree structures off the critical path.
 /// Accepts any `Send` value and drops it on a dedicated thread, avoiding
@@ -219,6 +254,12 @@ pub struct Blockchain {
     /// Set to true after initial sync completes, never reset to false.
     /// Does not reflect whether an ongoing sync is in progress.
     is_synced: AtomicBool,
+    /// Set while a deep-reorg apply pass is in flight. Concurrent
+    /// FCUs from the engine API short-circuit to SYNCING while this is set,
+    /// and journal pruning in `forkchoice_update_inner` defers until the apply
+    /// pass clears it. Managed via [`enter_reorg`](Self::enter_reorg) which
+    /// returns a [`ReorgGuard`] RAII that clears the flag on drop.
+    reorg_in_progress: AtomicBool,
     /// Configuration options for blockchain behavior.
     pub options: BlockchainOptions,
     /// Cache of recently built payloads.
@@ -268,6 +309,26 @@ impl std::fmt::Debug for PrewarmedCache {
     }
 }
 
+/// RAII guard that clears [`Blockchain::reorg_in_progress`] on drop. Returned by
+/// [`Blockchain::enter_reorg`]. Ensures the flag is reset on every exit path of
+/// the apply pass, including panics that unwind through the guard.
+pub struct ReorgGuard<'a> {
+    blockchain: &'a Blockchain,
+}
+
+impl Drop for ReorgGuard<'_> {
+    fn drop(&mut self) {
+        self.blockchain.storage.set_journal_pruning_paused(false);
+        self.blockchain
+            .reorg_in_progress
+            .store(false, Ordering::Release);
+    }
+}
+
+/// Default min-tip floor (wei). Matches geth's mempool `PriceLimit = 1 wei`.
+/// Effectively just rejects zero-tip transactions at admission.
+pub const DEFAULT_MIN_TIP_WEI: u64 = 1;
+
 /// Configuration options for the blockchain.
 #[derive(Debug, Clone)]
 pub struct BlockchainOptions {
@@ -282,10 +343,32 @@ pub struct BlockchainOptions {
     pub max_blobs_per_block: Option<u32>,
     /// If true, computes execution witnesses upon receiving newPayload messages and stores them in local storage
     pub precompute_witnesses: bool,
+    /// If true, transactions submitted via this node's RPC (e.g.
+    /// `eth_sendRawTransaction`) are kept private: they enter the mempool and
+    /// can be included in blocks built locally, but are not propagated to
+    /// peers via `Transactions` / `NewPooledTransactionHashes`. Equivalent to
+    /// reth's `--txpool.no-local-transactions-propagation`.
+    /// P2P-received transactions are unaffected.
+    pub private_mempool: bool,
     /// If true (default), per-block execution caches precompile results between the
     /// warmer thread and the executor. Set to false (via `--no-precompile-cache`) to
     /// disable the cache for benchmarking purposes.
     pub precompile_cache_enabled: bool,
+    /// Minimum priority-fee *cap* (in wei) required for a transaction to be
+    /// admitted into the mempool. Compared against the raw tip cap
+    /// (`max_priority_fee_per_gas` for typed txs, `gas_price` for legacy), NOT
+    /// the base-fee-dependent effective tip — matching geth's `PriceLimit`
+    /// check on `tx.GasTipCap()`. Set to 0 to disable the floor.
+    pub min_tip_wei: u64,
+    /// Minimum fee-field bump (in percent) required to replace a non-blob
+    /// transaction at the same `(sender, nonce)`. Matches the 10%
+    /// default of every peer EL client.
+    pub price_bump_percent: u64,
+    /// Minimum fee-field bump (in percent) required to replace an EIP-4844
+    /// blob transaction at the same `(sender, nonce)`. Matches the 100%
+    /// default of every peer EL client. Blob replacements are deliberately
+    /// expensive because blob sidecars are large to re-propagate.
+    pub blob_price_bump_percent: u64,
     /// Maximum number of *queued* (future/nonce-gapped) transactions a single
     /// sender may hold in the mempool. Executable (contiguous-nonce) txs are NOT
     /// capped — mirroring geth's `AccountQueue` (a hard cap on the future/queued
@@ -306,6 +389,22 @@ pub struct BlockchainOptions {
     /// `--no-bal-parallel-trie`) to fall back to streaming `AccountUpdate`s from
     /// the executor and merkleizing post-execution.
     pub bal_parallel_trie_enabled: bool,
+    /// EIP-8070: when true, activate the sampler/provider state machine.
+    /// When false (default), the node always acts as provider (p=1.0).
+    pub blob_sampling_enabled: bool,
+    /// EIP-8070: when true, always act as provider (p=1.0) regardless of role
+    /// randomization, as block builders SHOULD (EIP-8070, "Execution clients ::
+    /// Local block builders"). Enabled via `--blob-eager-provider`; a node that
+    /// builds payloads latches it at runtime regardless. Only meaningful when
+    /// `blob_sampling_enabled` is also true.
+    pub blob_eager_provider: bool,
+    /// Optional operator override for the maximum reorg depth. `None` ; cap is purely
+    /// physical (layer-cache retention plus journal reach; bounded indirectly by finality
+    /// because finality advances prune the journal). `Some(d)` ; reject reorgs of
+    /// depth `> d` with `-38006 TooDeepReorg`. WARNING: `Some(0)` rejects EVERY reorg,
+    /// including routine 1-2 block reorgs on a healthy network — it is NOT the old
+    /// 128-block cap. Use a small positive value to approximate the pre-stack behavior.
+    pub max_reorg_depth: Option<u64>,
     /// Mempool occupancy percentage (0-100) at or above which incoming
     /// transactions with a nonce gap relative to the sender's on-chain nonce
     /// are rejected. Setting to 100 disables the check.
@@ -320,15 +419,31 @@ impl Default for BlockchainOptions {
             r#type: BlockchainType::default(),
             max_blobs_per_block: None,
             precompute_witnesses: false,
+            private_mempool: false,
             precompile_cache_enabled: true,
+            min_tip_wei: DEFAULT_MIN_TIP_WEI,
+            price_bump_percent: DEFAULT_PRICE_BUMP_PERCENT,
+            blob_price_bump_percent: DEFAULT_BLOB_PRICE_BUMP_PERCENT,
             max_queued_txs_per_account: DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT,
             bal_parallel_exec_enabled: true,
             bal_prefetch_enabled: true,
             bal_parallel_trie_enabled: true,
+            blob_sampling_enabled: false,
+            blob_eager_provider: false,
+            max_reorg_depth: None,
             gap_admit_occupancy_threshold: DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD,
         }
     }
 }
+
+/// Default 10% bump required for non-blob RBF replacements (matches geth
+/// `PriceBump`, reth `default_price_bump`, nethermind `PriceBump`,
+/// erigon `PriceBump`, besu `DEFAULT_PRICE_BUMP`).
+pub const DEFAULT_PRICE_BUMP_PERCENT: u64 = 10;
+/// Default 100% bump required for blob RBF replacements (matches geth
+/// `blobpool.PriceBump`, reth `replace_blob_tx_price_bump`, nethermind
+/// blob comparison, erigon `BlobPriceBump`, besu `DEFAULT_BLOB_PRICE_BUMP`).
+pub const DEFAULT_BLOB_PRICE_BUMP_PERCENT: u64 = 100;
 
 /// Default per-account *queued* (future-nonce) tx cap. Matches geth's
 /// `AccountQueue` default (64) — a hard cap on the future/queued subpool only;
@@ -429,10 +544,18 @@ impl Blockchain {
     }
 
     pub fn new(store: Store, blockchain_opts: BlockchainOptions) -> Self {
+        let mempool = if blockchain_opts.blob_eager_provider {
+            Mempool::new_with_eager_provider(blockchain_opts.max_mempool_size)
+        } else if blockchain_opts.blob_sampling_enabled {
+            Mempool::new_with_sampling(blockchain_opts.max_mempool_size)
+        } else {
+            Mempool::new(blockchain_opts.max_mempool_size)
+        };
         Self {
             storage: store,
-            mempool: Mempool::new(blockchain_opts.max_mempool_size),
+            mempool,
             is_synced: AtomicBool::new(false),
+            reorg_in_progress: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: blockchain_opts,
             merkle_pool: Self::build_merkle_pool(),
@@ -454,6 +577,7 @@ impl Blockchain {
             storage: store,
             mempool: Mempool::new(MAX_MEMPOOL_SIZE_DEFAULT),
             is_synced: AtomicBool::new(false),
+            reorg_in_progress: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: BlockchainOptions::default(),
             merkle_pool: pool,
@@ -461,13 +585,26 @@ impl Blockchain {
         }
     }
 
+    /// Test-permissive `Blockchain` constructor. Mirrors `BlockchainOptions::default`
+    /// but disables admission-policy gates (e.g. the min-tip floor) so that
+    /// unrelated tests don't need to set every mempool option explicitly.
+    ///
+    /// **Do not use in production.** Despite the name, this is not a "sensible
+    /// default" constructor: it deliberately weakens mempool admission. Node
+    /// startup builds its `BlockchainOptions` from the CLI instead (see
+    /// `cmd/ethrex/initializers.rs`). Every current caller is a test harness.
     pub fn default_with_store(store: Store) -> Self {
+        let options = BlockchainOptions {
+            min_tip_wei: 0,
+            ..BlockchainOptions::default()
+        };
         Self {
             storage: store,
             mempool: Mempool::new(MAX_MEMPOOL_SIZE_DEFAULT),
             is_synced: AtomicBool::new(false),
+            reorg_in_progress: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
-            options: BlockchainOptions::default(),
+            options,
             merkle_pool: Self::build_merkle_pool(),
             prewarmed: PrewarmedCache::default(),
         }
@@ -491,6 +628,41 @@ impl Blockchain {
             }
         }
         Ok(())
+    }
+
+    /// Returns a reference to the underlying [`Store`]. Used by the deep-reorg
+    /// orchestrator to drive the storage-side primitives.
+    pub fn store(&self) -> &Store {
+        &self.storage
+    }
+
+    /// Returns `true` while a deep-reorg apply pass is in flight. Set by
+    /// [`enter_reorg`](Self::enter_reorg); the engine API's FCU handler should
+    /// short-circuit to SYNCING when this is `true`.
+    pub fn is_reorg_in_progress(&self) -> bool {
+        self.reorg_in_progress.load(Ordering::Acquire)
+    }
+
+    /// Attempts to mark the start of a deep-reorg apply pass. Returns a RAII
+    /// guard that clears the flag on drop (success, error, or panic) if no other
+    /// pass is in flight, or `None` if one already is. This is a test-and-set:
+    /// the flag transition `false -> true` is atomic, so two concurrent FCUs
+    /// that both reach the deep path can never both acquire the guard. The loser
+    /// short-circuits to SYNCING and the CL retries. At most one apply pass runs
+    /// at a time.
+    pub fn enter_reorg(&self) -> Option<ReorgGuard<'_>> {
+        self.reorg_in_progress
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+            .then(|| {
+                // Also pause STATE_HISTORY pruning for the whole pass:
+                // `Overlay::from_journal` reads entries with no snapshot
+                // isolation, and syncer-driven forkchoice updates bypass this
+                // mutex, so a concurrent finality advance could otherwise prune
+                // the journal out from under overlay construction.
+                self.storage.set_journal_pruning_paused(true);
+                ReorgGuard { blockchain: self }
+            })
     }
 
     /// Executes a block withing a new vm instance and state
@@ -688,12 +860,15 @@ impl Blockchain {
         // Gated by `--no-bal-prefetch`: when the operator disables BAL-driven
         // prefetching, skip the synchronous storage warm too. The warmer thread
         // below already honors the same toggle.
+        // Flat-KV warm for execution (SLOAD and SSTORE original values). Uses the
+        // full BAL access set, since execution genuinely reads every accessed slot.
+        //
         // Witness collection records every read that reaches the store-backed
         // logger beneath the shared cache. The warmer's speculative reads would
         // be recorded as state accesses the canonical execution never makes,
         // polluting the witness (e.g. `engine_newPayloadWithWitnessV5`), so
         // warming is skipped entirely when a witness is being collected.
-        #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+        #[cfg(feature = "rayon")]
         if self.options.bal_prefetch_enabled
             && !collect_witness
             && let Some(bal_ref) = bal.as_ref()
@@ -704,18 +879,54 @@ impl Blockchain {
             }
         }
 
+        // Prepare the trie-node prefetch input: the MERKLE WRITE SET (changed
+        // accounts + written slots), which is exactly what the merkleizer walks.
+        // `optimistic_updates` (synthesize_bal_updates) already drops read-only
+        // accesses and read-only slots, so warming is scoped to nodes the merkleizer
+        // will actually read; using the access set instead regressed read-heavy
+        // blocks (value-0 CALLs to existing accounts, bloated SLOADs). The prefetch
+        // runs on its own thread inside the scope below (`trie_prefetch_handle`),
+        // overlapping execution rather than preceding it. Gated so ordinary
+        // merkle-light blocks skip the probe cost; the payoff is on blocks that WRITE
+        // many distinct slots or modify many accounts, where merkle walks a large set
+        // of scattered, cold nodes. See `BLOATED_BATCH_THRESHOLD`.
+        //
+        // Unlike the flat-KV warm above, this needs no `!collect_witness` guard:
+        // `prefetch_trie_nodes` reads the trie-node CFs directly via
+        // `backend.begin_read()`, bypassing the witness-recording caching layer, so
+        // it cannot pollute the witness.
+        #[cfg(feature = "rayon")]
+        let trie_prefetch_input: Option<TriePrefetchInput> = if self.options.bal_prefetch_enabled
+            && let Some(updates) = optimistic_updates.as_ref()
+        {
+            let mut write_slots: Vec<(Address, H256)> = Vec::new();
+            for (addr, item) in updates {
+                for slot in item.added_storage.keys() {
+                    write_slots.push((*addr, *slot));
+                }
+            }
+            let write_accounts: Vec<Address> = updates.keys().copied().collect();
+            if write_slots.len() + write_accounts.len() >= BLOATED_BATCH_THRESHOLD {
+                Some((write_slots, write_accounts))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         // Each thread that captures `bal` needs its own Arc clone (cheap pointer bump).
-        #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+        #[cfg(feature = "rayon")]
         let bal_warmer = bal.clone();
 
         let (execution_result, merkleization_result, warmer_duration) = std::thread::scope(
             |s| -> Result<_, ChainError> {
-                #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+                #[cfg(feature = "rayon")]
                 let vm_type = vm.vm_type;
                 let cancelled_ref = &cancelled;
-                #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+                #[cfg(feature = "rayon")]
                 let bal_prefetch_enabled = self.options.bal_prefetch_enabled;
-                #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+                #[cfg(feature = "rayon")]
                 let warm_handle = (!collect_witness)
                     .then(|| {
                         std::thread::Builder::new()
@@ -740,6 +951,9 @@ impl Blockchain {
                                         // warmer races ahead of the serial executor. With parallel
                                         // exec still on, we skip warming instead — two parallel passes
                                         // over the same txs would just fight for cores.
+                                        // Warming is best-effort (non-fatal): a warm tx hitting the
+                                        // EXECUTE precompile without a validator just fails and is
+                                        // logged; the real execution path carries the validator.
                                         if let Err(e) = LEVM::warm_block(
                                             block,
                                             caching_store,
@@ -769,6 +983,35 @@ impl Blockchain {
                             })
                     })
                     .transpose()?;
+
+                // Warm the merkleizer's trie-node reads concurrently with execution
+                // instead of up front. Touches different CFs than execution, so no
+                // exec contention; as a high-queue-depth batch it races ahead of the
+                // merkleizer's per-account walk so those reads land warm. Best-effort:
+                // any node it misses is just cold-read by the walk. The scope joins it
+                // before the block returns, but it shares the trie-node cold reads with
+                // the merkleizer at higher aggregate queue depth, so it completes
+                // within the exec/merkle window rather than extending it.
+                #[cfg(feature = "rayon")]
+                let trie_prefetch_handle = match trie_prefetch_input {
+                    Some((slots, accounts)) => {
+                        let storage = &self.storage;
+                        std::thread::Builder::new()
+                            .name("block_executor_trie_prefetch".to_string())
+                            .spawn_scoped(s, move || {
+                                // Result deliberately discarded: this is best-effort
+                                // cache warming. A read error (or any node it fails to
+                                // warm) just means the merkleizer cold-reads that node;
+                                // it never affects block output, so a failure must not
+                                // propagate into block processing.
+                                let _ = storage.prefetch_trie_nodes(&slots, &accounts);
+                            })
+                            .inspect_err(|e| debug!("trie-node prefetch spawn failed: {e}"))
+                            .ok()
+                    }
+                    None => None,
+                };
+
                 let max_queue_length_ref = &mut max_queue_length;
                 // Channel is needed whenever the merkleizer takes the streaming
                 // branch OR LEVM falls into the sequential path:
@@ -946,7 +1189,7 @@ impl Blockchain {
                         "merkleization thread panicked".to_string(),
                     ))
                 });
-                #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+                #[cfg(feature = "rayon")]
                 let warmer_duration = warm_handle
                     .map(|handle| {
                         handle
@@ -956,8 +1199,17 @@ impl Blockchain {
                             .unwrap_or(Duration::ZERO)
                     })
                     .unwrap_or(Duration::ZERO);
-                #[cfg(any(not(feature = "rayon"), feature = "eip-8025"))]
+                #[cfg(not(feature = "rayon"))]
                 let warmer_duration = Duration::ZERO;
+                // Best-effort prefetch: join so the scope's borrows end cleanly.
+                // The warming result is discarded, but surface a panic so a failing
+                // prefetch (e.g. a RocksDB error) is observable rather than silent.
+                #[cfg(feature = "rayon")]
+                if let Some(h) = trie_prefetch_handle
+                    && let Err(e) = h.join()
+                {
+                    warn!("trie-node prefetch thread panicked (best-effort, ignored): {e:?}");
+                }
                 Ok((execution_result, merkleization_result, warmer_duration))
             },
         )?;
@@ -1353,6 +1605,20 @@ impl Blockchain {
                                             .map(|(k, v)| (keccak(k), *v))
                                             .collect();
                                         hashed_storage.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+
+                                        // Warm the touched subtrie breadth-first before the
+                                        // serial insert/remove loop below, using the same
+                                        // sorted key set/order the loop iterates. Hash-preserving
+                                        // (see `Trie::prefetch_sorted`); does not affect the
+                                        // resulting root or persisted node set.
+                                        if hashed_storage.len() >= STORAGE_PREFETCH_THRESHOLD {
+                                            let paths: Vec<Nibbles> = hashed_storage
+                                                .iter()
+                                                .map(|(k, _)| Nibbles::from_bytes(k.as_bytes()))
+                                                .collect();
+                                            trie.prefetch_sorted(&paths)?;
+                                        }
+
                                         for (hashed_key, value) in &hashed_storage {
                                             if value.is_zero() {
                                                 trie.remove(hashed_key.as_bytes())?;
@@ -1456,6 +1722,22 @@ impl Blockchain {
                                 let mut state_trie =
                                     self.storage.open_state_trie(parent_state_root)?;
 
+                                // Breadth-first batch-prefetch the account-trie nodes for
+                                // this shard's accounts before the serial get/insert loop,
+                                // so cold state-trie reads are issued per level instead of
+                                // one dependent read at a time. Sorted so adjacent paths
+                                // share fetched nodes; warming only, root is unchanged.
+                                if shard_items.len() >= STATE_SHARD_PREFETCH_THRESHOLD {
+                                    let mut addrs: Vec<H256> =
+                                        shard_items.iter().map(|i| i.hashed_address).collect();
+                                    addrs.sort_unstable();
+                                    let paths: Vec<Nibbles> = addrs
+                                        .iter()
+                                        .map(|a| Nibbles::from_bytes(a.as_bytes()))
+                                        .collect();
+                                    state_trie.prefetch_sorted(&paths)?;
+                                }
+
                                 for item in &shard_items {
                                     let path = item.hashed_address.as_bytes();
 
@@ -1543,47 +1825,6 @@ impl Blockchain {
         collapse_root_node(&self.storage, parent_header.state_root, prefix, root)
     }
 
-    /// Executes a block from a given vm instance an does not clear its state
-    fn execute_block_from_state(
-        &self,
-        parent_header: &BlockHeader,
-        block: &Block,
-        chain_config: &ChainConfig,
-        vm: &mut Evm,
-    ) -> Result<BlockExecutionResult, ChainError> {
-        // Validate the block pre-execution
-        validate_block_pre_execution(block, parent_header, chain_config, ELASTICITY_MULTIPLIER)?;
-        self.validate_l1_transaction_types(block)?;
-        let (execution_result, bal) = vm.execute_block(block)?;
-        // Validate execution went alright
-        if let Err(e) = validate_gas_used(execution_result.block_gas_used, &block.header) {
-            ethrex_vm::log_gas_used_mismatch(
-                &execution_result.tx_gas_breakdowns,
-                block.header.number,
-                execution_result.block_gas_used,
-                block.header.gas_used,
-            );
-            return Err(e.into());
-        }
-        validate_receipts_root_and_logs_bloom(
-            &block.header,
-            &execution_result.receipts,
-            &NativeCrypto,
-        )?;
-        validate_requests_hash(&block.header, chain_config, &execution_result.requests)?;
-        if let Some(bal) = &bal {
-            validate_block_access_list_hash(
-                &block.header,
-                chain_config,
-                bal,
-                block.body.transactions.len(),
-                &NativeCrypto,
-            )?;
-        }
-
-        Ok(execution_result)
-    }
-
     pub async fn generate_witness_for_blocks(
         &self,
         blocks: &[Block],
@@ -1597,6 +1838,17 @@ impl Blockchain {
         blocks: &[Block],
         fee_configs: Option<&[FeeConfig]>,
     ) -> Result<ExecutionWitness, ChainError> {
+        let (witness, _bals) = self
+            .generate_witness_and_bal_for_blocks_with_fee_configs(blocks, fee_configs)
+            .await?;
+        Ok(witness)
+    }
+
+    pub async fn generate_witness_and_bal_for_blocks_with_fee_configs(
+        &self,
+        blocks: &[Block],
+        fee_configs: Option<&[FeeConfig]>,
+    ) -> Result<(ExecutionWitness, Vec<Option<BlockAccessList>>), ChainError> {
         let first_block_header = &blocks
             .first()
             .ok_or(ChainError::WitnessGeneration(
@@ -1635,6 +1887,7 @@ impl Blockchain {
 
         let mut blockhash_opcode_references = HashMap::new();
         let mut codes = Vec::new();
+        let mut block_access_lists: Vec<Option<BlockAccessList>> = Vec::with_capacity(blocks.len());
 
         for (i, block) in blocks.iter().enumerate() {
             let parent_hash = block.header.parent_hash;
@@ -1672,9 +1925,16 @@ impl Blockchain {
                     Evm::new_from_db_for_l2(logger.clone(), *l2_config, Arc::new(NativeCrypto))
                 }
             };
+            // I2: witness-gen must attach the stateless validator too, so
+            // re-executing an L1 block that itself contains an EXECUTE call
+            // (native-rollup advance) does not fail with "requires a
+            // StatelessValidator". Mirrors the sibling paths at the other
+            // `new_from_db_for_l1` sites (block import + witness gen).
+            attach_stateless_validator(&mut vm);
 
             // Re-execute block with logger
-            let (execution_result, _bal) = vm.execute_block(block)?;
+            let (execution_result, bal) = vm.execute_block(block)?;
+            block_access_lists.push(bal);
 
             // Gather account updates
             let account_updates = vm.get_state_transitions()?;
@@ -1747,15 +2007,23 @@ impl Blockchain {
                 }
             }
 
-            // Store all the accessed evm bytecodes
-            for code_hash in logger
-                .code_accessed
-                .lock()
-                .map_err(|_e| {
+            // Store all the accessed evm bytecodes. `code_accessed` records one entry
+            // per read, and a contract read for both its bytecode and its length is
+            // recorded twice, so dedup before embedding: a repeated hash would put the
+            // same (up to 24KB) bytecode in the witness more than once.
+            let accessed_codes: Vec<H256> = {
+                let accessed = logger.code_accessed.lock().map_err(|_e| {
                     ChainError::WitnessGeneration("Failed to gather used bytecodes".to_string())
-                })?
-                .iter()
-            {
+                })?;
+                let mut seen =
+                    FxHashSet::with_capacity_and_hasher(accessed.len(), Default::default());
+                accessed
+                    .iter()
+                    .copied()
+                    .filter(|h| seen.insert(*h))
+                    .collect()
+            };
+            for code_hash in &accessed_codes {
                 let code = self
                     .storage
                     .get_account_code(*code_hash)
@@ -1910,14 +2178,17 @@ impl Blockchain {
             storage_trie_roots.insert(hashed_address_h256, (*node).clone());
         }
 
-        Ok(ExecutionWitness {
-            codes,
-            block_headers_bytes,
-            first_block_number: first_block_header.number,
-            chain_config: self.storage.get_chain_config(),
-            state_trie_root,
-            storage_trie_roots,
-        })
+        Ok((
+            ExecutionWitness {
+                codes,
+                block_headers_bytes,
+                first_block_number: first_block_header.number,
+                chain_config: self.storage.get_chain_config(),
+                state_trie_root,
+                storage_trie_roots,
+            },
+            block_access_lists,
+        ))
     }
 
     pub fn generate_witness_from_account_updates(
@@ -2009,15 +2280,22 @@ impl Blockchain {
             }
         }
 
-        // Store all the accessed evm bytecodes
-        for code_hash in logger
-            .code_accessed
-            .lock()
-            .map_err(|_e| {
+        // Store all the accessed evm bytecodes. `code_accessed` records one entry
+        // per read, and a contract read for both its bytecode and its length is
+        // recorded twice, so dedup before embedding: a repeated hash would put the
+        // same (up to 24KB) bytecode in the witness more than once.
+        let accessed_codes: Vec<H256> = {
+            let accessed = logger.code_accessed.lock().map_err(|_e| {
                 ChainError::WitnessGeneration("Failed to gather used bytecodes".to_string())
-            })?
-            .iter()
-        {
+            })?;
+            let mut seen = FxHashSet::with_capacity_and_hasher(accessed.len(), Default::default());
+            accessed
+                .iter()
+                .copied()
+                .filter(|h| seen.insert(*h))
+                .collect()
+        };
+        for code_hash in &accessed_codes {
             let code = self
                 .storage
                 .get_account_code(*code_hash)
@@ -2166,6 +2444,24 @@ impl Blockchain {
         account_updates_list: AccountUpdatesList,
         execution_result: BlockExecutionResult,
     ) -> Result<(), ChainError> {
+        // Live path: commit by the canonical safe-commit gate (see `commit_depth`).
+        self.store_block_with_depth(block, account_updates_list, execution_result, None)
+    }
+
+    /// Like [`Self::store_block`] but with an explicit trie-layer commit strategy.
+    ///
+    /// `commit_depth`:
+    /// - `None`: live block-by-block execution (`newPayload`); commit by the canonical
+    ///   `head - DB_COMMIT_THRESHOLD` safe-commit root so non-canonical state is never persisted.
+    /// - `Some(depth)`: single-canonical-chain execution (batch import, full sync, startup
+    ///   state regeneration); commit every layer deeper than `depth`, bounding in-memory layers.
+    pub fn store_block_with_depth(
+        &self,
+        block: Block,
+        account_updates_list: AccountUpdatesList,
+        execution_result: BlockExecutionResult,
+        commit_depth: Option<usize>,
+    ) -> Result<(), ChainError> {
         // Check state root matches the one in block header
         validate_state_root(&block.header, account_updates_list.state_trie_hash)?;
 
@@ -2175,7 +2471,10 @@ impl Blockchain {
             receipts: vec![(block.hash(), execution_result.receipts)],
             blocks: vec![block],
             code_updates: account_updates_list.code_updates,
-            batch_mode: false,
+            commit_depth,
+            // Per-block path: ack after staging so the next block's execution overlaps this
+            // block's flush. Memory is bounded by `commit_depth` and the persist channel.
+            wait_for_flush: false,
         };
 
         self.storage
@@ -2225,8 +2524,27 @@ impl Blockchain {
         block: Block,
         bal: Option<Arc<BlockAccessList>>,
     ) -> Result<(), ChainError> {
-        let (_, _, result) = self.add_block_pipeline_inner(block, bal, false)?;
+        let (_, _, result) = self.add_block_pipeline_inner(block, bal, false, None)?;
         result
+    }
+
+    /// Same as [`add_block_pipeline`] but for single-canonical-chain re-execution
+    /// (startup state regeneration, full-sync block-by-block, block import): commits
+    /// trie layers by depth (`commit_depth`) instead of the canonical safe-commit gate,
+    /// bounding in-memory layers to ~`commit_depth`. Only sound because these paths extend
+    /// a single canonical chain with no competing forks. Must NOT be used for live
+    /// `newPayload`. Returns the BAL produced during execution (see
+    /// [`add_block_pipeline_bal`]).
+    pub fn add_block_pipeline_bounded(
+        &self,
+        block: Block,
+        bal: Option<Arc<BlockAccessList>>,
+        commit_depth: usize,
+    ) -> Result<Option<BlockAccessList>, ChainError> {
+        let (produced_bal, _, result) =
+            self.add_block_pipeline_inner(block, bal, false, Some(commit_depth))?;
+        result?;
+        Ok(produced_bal)
     }
 
     /// Same as [`add_block_pipeline`] but also returns the BAL produced during execution.
@@ -2240,7 +2558,7 @@ impl Blockchain {
         block: Block,
         bal: Option<Arc<BlockAccessList>>,
     ) -> Result<Option<BlockAccessList>, ChainError> {
-        let (produced_bal, _, result) = self.add_block_pipeline_inner(block, bal, false)?;
+        let (produced_bal, _, result) = self.add_block_pipeline_inner(block, bal, false, None)?;
         result?;
         Ok(produced_bal)
     }
@@ -2252,7 +2570,7 @@ impl Blockchain {
         block: Block,
         bal: Option<Arc<BlockAccessList>>,
     ) -> Result<ExecutionWitness, ChainError> {
-        let (_, witness, result) = self.add_block_pipeline_inner(block, bal, true)?;
+        let (_, witness, result) = self.add_block_pipeline_inner(block, bal, true, None)?;
         result?;
         witness.ok_or_else(|| {
             ChainError::WitnessGeneration(
@@ -2274,6 +2592,7 @@ impl Blockchain {
         block: Block,
         bal: Option<Arc<BlockAccessList>>,
         force_witness: bool,
+        commit_depth: Option<usize>,
     ) -> Result<AddBlockPipelineInnerResult, ChainError> {
         // Validate if it can be the new head and find the parent
         let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
@@ -2296,7 +2615,7 @@ impl Blockchain {
 
             let logger = Arc::new(DatabaseLogger::new(Arc::new(vm_db)));
 
-            let vm = match self.options.r#type.clone() {
+            let mut vm = match self.options.r#type.clone() {
                 BlockchainType::L1 => {
                     Evm::new_from_db_for_l1(logger.clone(), Arc::new(NativeCrypto))
                 }
@@ -2308,6 +2627,7 @@ impl Blockchain {
                     Arc::new(NativeCrypto),
                 ),
             };
+            attach_stateless_validator(&mut vm);
             (vm, Some(logger))
         } else {
             let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header.clone())?;
@@ -2374,7 +2694,7 @@ impl Blockchain {
             warn!("Failed to store block access list for block {block_hash}: {err}");
         }
 
-        let result = self.store_block(block, account_updates_list, res);
+        let result = self.store_block_with_depth(block, account_updates_list, res, commit_depth);
 
         let stored = Instant::now();
 
@@ -2648,28 +2968,36 @@ impl Blockchain {
         );
     }
 
-    /// Adds multiple blocks in a batch.
+    /// Adds multiple consecutive blocks in a batch during full sync.
+    ///
+    /// Each block is routed through the same per-block-validated pipeline that live blocks use
+    /// (via [`add_block_pipeline_bounded`], the depth-gated entry point) instead of the bespoke
+    /// "execute all, apply once, validate only the last state root" path. This:
+    ///
+    /// - closes the intermediate-state-root gap (every block's state root is validated),
+    /// - reuses the pipeline's BAL-driven parallel execution + precompile cache and its per-block
+    ///   BAL persistence for eth/71 serving, and
+    /// - deletes the duplicated `execute_block_from_state`, manual VM/BLOCKHASH cache, and
+    ///   peer-BAL-persistence code.
+    ///
+    /// This trades the single-trie-materialization amortization (one root for the whole batch) for
+    /// per-block roots; trie layers commit by depth (`DB_COMMIT_THRESHOLD`) so the in-memory layer
+    /// backlog stays bounded during bulk sync.
     ///
     /// If an error occurs, returns a tuple containing:
     /// - The error type ([`ChainError`]).
-    /// - [`BatchProcessingFailure`] (if the error was caused by block processing).
+    /// - [`BatchBlockProcessingFailure`] (if the error was caused by block processing), carrying
+    ///   the failed block hash and the last successfully-imported block hash.
     ///
-    /// Note: only the last block's state trie is stored in the db
-    /// `bals` holds the per-block Block Access Lists fetched during sync, aligned
-    /// by index with `blocks`. Pass an empty slice when no BALs are available
-    /// (e.g. block import from RLP); the persistence step then stores none. Only
-    /// BALs matching their block's header commitment are persisted.
+    /// `bals` holds the per-block Block Access Lists fetched during sync, aligned by index with
+    /// `blocks`. Pass an empty slice when no BALs are available (e.g. block import from RLP); the
+    /// pipeline then rebuilds each BAL. Only a BAL matching its block's header commitment is used.
     pub async fn add_blocks_in_batch(
         &self,
         blocks: Vec<Block>,
         bals: &[Option<BlockAccessList>],
         cancellation_token: CancellationToken,
     ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
-        let mut last_valid_hash = H256::default();
-
-        // `bals` is either empty (no BALs available) or index-aligned with `blocks`.
-        // Guard the contract so a wrong-length slice can't silently drop/ignore BALs
-        // via the `zip` in the persistence step below.
         debug_assert!(
             bals.is_empty() || bals.len() == blocks.len(),
             "bals must be empty or aligned with blocks (bals={}, blocks={})",
@@ -2677,170 +3005,65 @@ impl Blockchain {
             blocks.len(),
         );
 
-        let Some(first_block_header) = blocks.first().map(|e| e.header.clone()) else {
-            return Err((ChainError::Custom("First block not found".into()), None));
-        };
-
-        let chain_config: ChainConfig = self.storage.get_chain_config();
-
-        // Cache block hashes for the full batch so we can access them during
-        // execution without having to store the blocks beforehand.
-        let mut block_hash_cache: BTreeMap<BlockNumber, BlockHash> =
-            blocks.iter().map(|b| (b.header.number, b.hash())).collect();
-
-        let parent_header = self
-            .storage
-            .get_block_header_by_hash(first_block_header.parent_hash)
-            .map_err(|e| (ChainError::StoreError(e), None))?
-            .ok_or((ChainError::ParentNotFound, None))?;
-
-        // Walk the parent chain to cache the last 256 block hashes so that
-        // BLOCKHASH can resolve references to blocks from previous batches
-        // (they may not be canonical yet during import).
-        block_hash_cache
-            .entry(parent_header.number)
-            .or_insert_with(|| parent_header.hash());
-        let mut hash = parent_header.parent_hash;
-        let mut number = parent_header.number.saturating_sub(1);
-        let lookback = first_block_header.number.saturating_sub(256);
-        while number > lookback {
-            block_hash_cache.entry(number).or_insert(hash);
-            match self.storage.get_block_header_by_hash(hash) {
-                Ok(Some(header)) => {
-                    hash = header.parent_hash;
-                    number = number.saturating_sub(1);
-                }
-                Ok(None) => break,
-                Err(e) => {
-                    warn!("Failed to fetch block header by hash during BLOCKHASH cache walk: {e}");
-                    break;
-                }
-            }
-        }
-        let vm_db = StoreVmDatabase::new_with_block_hash_cache(
-            self.storage.clone(),
-            parent_header,
-            block_hash_cache,
-        )
-        .map_err(|e| (ChainError::EvmError(e), None))?;
-        let mut vm = self.new_evm(vm_db).map_err(|e| (e.into(), None))?;
-
+        let mut last_valid_hash = H256::default();
         let blocks_len = blocks.len();
-        let mut all_receipts: Vec<(BlockHash, Vec<Receipt>)> = Vec::with_capacity(blocks_len);
-        let mut total_gas_used = 0;
-        let mut transactions_count = 0;
-
+        let mut total_gas_used = 0u64;
+        let mut transactions_count = 0usize;
+        let mut last_block_number = 0u64;
+        let mut last_block_gas_limit = 0u64;
         let interval = Instant::now();
-        for (i, block) in blocks.iter().enumerate() {
+
+        for (i, block) in blocks.into_iter().enumerate() {
             if cancellation_token.is_cancelled() {
                 info!("Received shutdown signal, aborting");
                 return Err((ChainError::Custom(String::from("shutdown signal")), None));
             }
-            // for the first block, we need to query the store
-            let parent_header = if i == 0 {
-                find_parent_header(&block.header, &self.storage).map_err(|err| {
-                    (
-                        err,
-                        Some(BatchBlockProcessingFailure {
-                            failed_block_hash: block.hash(),
-                            last_valid_hash,
-                        }),
-                    )
-                })?
-            } else {
-                // for the subsequent ones, the parent is the previous block
-                blocks[i - 1].header.clone()
-            };
 
-            let BlockExecutionResult { receipts, .. } = self
-                .execute_block_from_state(&parent_header, block, &chain_config, &mut vm)
-                .map_err(|err| {
-                    (
-                        err,
-                        Some(BatchBlockProcessingFailure {
-                            failed_block_hash: block.hash(),
-                            last_valid_hash,
-                        }),
-                    )
-                })?;
-            debug!("Executed block with hash {}", block.hash());
-            last_valid_hash = block.hash();
-            total_gas_used += block.header.gas_used;
-            transactions_count += block.body.transactions.len();
-            all_receipts.push((block.hash(), receipts));
+            let block_hash = block.hash();
+            let block_number = block.header.number;
+            let block_gas_limit = block.header.gas_limit;
+            let block_gas_used = block.header.gas_used;
+            let block_tx_count = block.body.transactions.len();
 
-            // Conversion is safe because EXECUTE_BATCH_SIZE=1024
+            // Pass the peer-provided BAL only if it matches the header commitment: on the pipeline
+            // path a matching BAL drives parallel execution and is persisted for eth/71 serving.
+            // A missing/mismatched BAL yields `None`, and the pipeline rebuilds it.
+            let bal = bals
+                .get(i)
+                .and_then(|bal| bal.as_ref())
+                .filter(|bal| {
+                    bal.matches_commitment(block.header.block_access_list_hash, &NativeCrypto)
+                })
+                .cloned()
+                .map(Arc::new);
+
+            // Single canonical chain: commit trie layers by depth so the in-memory backlog
+            // stays bounded (~DB_COMMIT_THRESHOLD) instead of growing with the sync range.
+            // The now per-block granularity is why this uses DB_COMMIT_THRESHOLD (128), not
+            // the batch-layer threshold.
+            if let Err(err) = self.add_block_pipeline_bounded(block, bal, DB_COMMIT_THRESHOLD) {
+                return Err((
+                    err,
+                    Some(BatchBlockProcessingFailure {
+                        failed_block_hash: block_hash,
+                        last_valid_hash,
+                    }),
+                ));
+            }
+
+            last_valid_hash = block_hash;
+            last_block_number = block_number;
+            last_block_gas_limit = block_gas_limit;
+            total_gas_used += block_gas_used;
+            transactions_count += block_tx_count;
+
             log_batch_progress(blocks_len as u32, i as u32);
             tokio::task::yield_now().await;
         }
 
-        let account_updates = vm
-            .get_state_transitions()
-            .map_err(|err| (ChainError::EvmError(err), None))?;
-
-        let last_block = blocks
-            .last()
-            .ok_or_else(|| (ChainError::Custom("Last block not found".into()), None))?;
-
-        let last_block_number = last_block.header.number;
-        let last_block_gas_limit = last_block.header.gas_limit;
-
-        // Apply the account updates over all blocks and compute the new state root
-        let account_updates_list = self
-            .storage
-            .apply_account_updates_batch(first_block_header.parent_hash, &account_updates)
-            .map_err(|e| (e.into(), None))?
-            .ok_or((ChainError::ParentStateNotFound, None))?;
-
-        let new_state_root = account_updates_list.state_trie_hash;
-        let state_updates = account_updates_list.state_updates;
-        let accounts_updates = account_updates_list.storage_updates;
-        let code_updates = account_updates_list.code_updates;
-
-        // Check state root matches the one in block header
-        validate_state_root(&last_block.header, new_state_root).map_err(|e| (e, None))?;
-
-        // EIP-8159: persist the per-block BAL fetched during sync so peers can
-        // later request it over eth/71 without re-execution (the batch path
-        // doesn't record BALs, so without this they'd fall back to regenerating
-        // against possibly-pruned parent state). Only persist a BAL that matches
-        // its header commitment; a wrong/empty peer BAL is dropped here, and the
-        // serve path guards again. Captured before `blocks` is moved below.
-        let bals_to_store: Vec<(BlockHash, BlockAccessList)> = blocks
-            .iter()
-            .zip(bals.iter())
-            .filter_map(|(block, bal)| {
-                let bal = bal.as_ref()?;
-                bal.matches_commitment(block.header.block_access_list_hash, &NativeCrypto)
-                    .then(|| (block.hash(), bal.clone()))
-            })
-            .collect();
-
-        let update_batch = UpdateBatch {
-            account_updates: state_updates,
-            storage_updates: accounts_updates,
-            blocks,
-            receipts: all_receipts,
-            code_updates,
-            batch_mode: true,
-        };
-
-        self.storage
-            .store_block_updates(update_batch)
-            .map_err(|e| (e.into(), None))?;
-
-        for (block_hash, bal) in &bals_to_store {
-            if let Err(err) = self.storage.store_block_access_list(*block_hash, bal) {
-                warn!(
-                    "Failed to persist block access list for {block_hash} during batch sync: {err}"
-                );
-            }
-        }
-
         let elapsed_seconds = interval.elapsed().as_secs_f64();
         let throughput = if elapsed_seconds > 0.0 && total_gas_used != 0 {
-            let as_gigas = (total_gas_used as f64) / 1e9;
-            as_gigas / elapsed_seconds
+            (total_gas_used as f64 / 1e9) / elapsed_seconds
         } else {
             0.0
         };
@@ -2848,14 +3071,17 @@ impl Blockchain {
         metrics!(
             METRICS_BLOCKS.set_block_number(last_block_number);
             METRICS_BLOCKS.set_latest_block_gas_limit(last_block_gas_limit as f64);
-            // Set the latest gas used as the average gas used per block in the batch
-            METRICS_BLOCKS.set_latest_gas_used(total_gas_used as f64 / blocks_len as f64);
+            METRICS_BLOCKS.set_latest_gas_used(if blocks_len > 0 {
+                total_gas_used as f64 / blocks_len as f64
+            } else {
+                0.0
+            });
             METRICS_BLOCKS.set_latest_gigagas(throughput);
         );
 
         if self.options.perf_logs_enabled {
             info!(
-                "[METRICS] Executed and stored: Range: {}, Last block num: {}, Last block gas limit: {}, Total transactions: {}, Total Gas: {}, Throughput: {} Gigagas/s",
+                "[METRICS] Executed and stored (unified pipeline): Range: {}, Last block num: {}, Last block gas limit: {}, Total transactions: {}, Total Gas: {}, Throughput: {} Gigagas/s",
                 blocks_len,
                 last_block_number,
                 last_block_gas_limit,
@@ -2868,18 +3094,52 @@ impl Blockchain {
         Ok(())
     }
 
-    /// Add a blob transaction and its blobs bundle to the mempool checking that the transaction is valid
+    /// Add a blob transaction and its blobs bundle to the mempool checking that the transaction is valid.
+    ///
+    /// This is the P2P entry point: the transaction's hash is queued for
+    /// broadcast to peers regardless of `BlockchainOptions::private_mempool`.
+    /// For the local-RPC path that honors `private_mempool`, use
+    /// [`Self::add_local_blob_transaction_to_pool`].
     #[cfg(feature = "c-kzg")]
     pub async fn add_blob_transaction_to_pool(
         &self,
         transaction: EIP4844Transaction,
         blobs_bundle: BlobsBundle,
     ) -> Result<H256, MempoolError> {
-        let fork = self.current_fork().await?;
+        self.add_blob_transaction_to_pool_inner(transaction, blobs_bundle, true)
+            .await
+    }
+
+    /// Local-RPC counterpart of [`Self::add_blob_transaction_to_pool`].
+    /// When `BlockchainOptions::private_mempool` is `true`, the transaction
+    /// is added to the mempool but is NOT queued for P2P broadcast — it
+    /// stays available only for blocks built locally.
+    #[cfg(feature = "c-kzg")]
+    pub async fn add_local_blob_transaction_to_pool(
+        &self,
+        transaction: EIP4844Transaction,
+        blobs_bundle: BlobsBundle,
+    ) -> Result<H256, MempoolError> {
+        let broadcast = !self.options.private_mempool;
+        self.add_blob_transaction_to_pool_inner(transaction, blobs_bundle, broadcast)
+            .await
+    }
+
+    #[cfg(feature = "c-kzg")]
+    async fn add_blob_transaction_to_pool_inner(
+        &self,
+        transaction: EIP4844Transaction,
+        blobs_bundle: BlobsBundle,
+        broadcast: bool,
+    ) -> Result<H256, MempoolError> {
+        let fork = self.current_fork()?;
 
         let transaction = Transaction::EIP4844Transaction(transaction);
         let hash = transaction.hash(&NativeCrypto);
         if self.mempool.contains_tx(hash)? {
+            if !broadcast {
+                warn!(%hash, "tx already public; --mempool.private cannot retroactively un-broadcast");
+            }
             return Ok(hash);
         }
 
@@ -2899,27 +3159,23 @@ impl Blockchain {
 
         // Validate blobs bundle after checking if it's already added.
         if let Transaction::EIP4844Transaction(transaction) = &transaction {
-            blobs_bundle.validate(transaction, fork)?;
+            // eth/72 elided bundles carry commitments + cell proofs but no blobs;
+            // full KZG verification is deferred until cells are fetched via GetCells.
+            if blobs_bundle.blobs.is_empty() && !blobs_bundle.commitments.is_empty() {
+                blobs_bundle.validate_elided(transaction, fork)?;
+            } else {
+                blobs_bundle.validate(transaction, fork)?;
+            }
         }
 
         let sender = transaction.sender(&NativeCrypto)?;
 
-        // Validate transaction
-        let (tx_to_replace, frame_reservation, sender_account_nonce) =
+        // Validate transaction. The returned `sender_admission` carries the
+        // per-sender gate inputs, re-checked atomically inside `add_transaction`,
+        // which also removes any same-nonce tx being replaced under the same lock
+        // (#6938) — so no separate pre-removal here.
+        let (frame_reservation, sender_admission) =
             self.validate_transaction(&transaction, sender).await?;
-        // A replacement (same `(sender, nonce)`) doesn't grow the queue, so it's
-        // exempt from the queued cap (check find_tx_to_replace first, review fix).
-        let queued_cap = if tx_to_replace.is_some() {
-            None
-        } else {
-            sender_account_nonce.map(|account_nonce| QueuedCap {
-                account_nonce,
-                max: self.options.max_queued_txs_per_account,
-            })
-        };
-        if let Some(tx_to_replace) = tx_to_replace {
-            self.remove_transaction_from_pool(&tx_to_replace)?;
-        }
 
         // Add blobs bundle before the transaction so that when add_transaction
         // notifies payload builders the blob data is already available.
@@ -2928,23 +3184,61 @@ impl Blockchain {
         // orphaned bundle so it isn't leaked in the pool. Best-effort: keep the
         // original error (a failing insert means the write lock is poisoned or
         // eviction failed, in which case the cleanup can't do better anyway).
-        if let Err(e) = self.mempool.add_transaction(
-            hash,
-            sender,
-            MempoolTransaction::new(transaction, sender),
-            frame_reservation,
-            queued_cap,
-        ) {
+        let mempool_tx = MempoolTransaction::new(transaction, sender);
+        let inserted = if broadcast {
+            self.mempool.add_transaction(
+                hash,
+                sender,
+                mempool_tx,
+                frame_reservation,
+                sender_admission,
+            )
+        } else {
+            self.mempool.add_transaction_no_broadcast(
+                hash,
+                sender,
+                mempool_tx,
+                frame_reservation,
+                sender_admission,
+            )
+        };
+        if let Err(e) = inserted {
             let _ = self.mempool.remove_blobs_bundle(&hash);
             return Err(e);
         }
         Ok(hash)
     }
 
-    /// Add a transaction to the mempool checking that the transaction is valid
+    /// Add a transaction to the mempool checking that the transaction is valid.
+    ///
+    /// This is the P2P entry point: the transaction's hash is queued for
+    /// broadcast to peers regardless of `BlockchainOptions::private_mempool`.
+    /// For the local-RPC path that honors `private_mempool`, use
+    /// [`Self::add_local_transaction_to_pool`].
     pub async fn add_transaction_to_pool(
         &self,
         transaction: Transaction,
+    ) -> Result<H256, MempoolError> {
+        self.add_transaction_to_pool_inner(transaction, true).await
+    }
+
+    /// Equivalent of `add_transaction_to_pool` for transactions submitted via
+    /// this node's local RPC. When `BlockchainOptions::private_mempool` is
+    /// `true`, the transaction is added to the mempool but is NOT queued for
+    /// P2P broadcast — it stays available only for blocks built locally.
+    pub async fn add_local_transaction_to_pool(
+        &self,
+        transaction: Transaction,
+    ) -> Result<H256, MempoolError> {
+        let broadcast = !self.options.private_mempool;
+        self.add_transaction_to_pool_inner(transaction, broadcast)
+            .await
+    }
+
+    async fn add_transaction_to_pool_inner(
+        &self,
+        transaction: Transaction,
+        broadcast: bool,
     ) -> Result<H256, MempoolError> {
         // Blob transactions should be submitted via add_blob_transaction along with the corresponding blobs bundle
         if matches!(transaction, Transaction::EIP4844Transaction(_)) {
@@ -2964,44 +3258,41 @@ impl Blockchain {
         }
         let hash = transaction.hash(&NativeCrypto);
         if self.mempool.contains_tx(hash)? {
+            if !broadcast {
+                warn!(%hash, "tx already public; --mempool.private cannot retroactively un-broadcast");
+            }
             return Ok(hash);
         }
         let sender = transaction.sender(&NativeCrypto)?;
-        // Validate transaction
-        let (tx_to_replace, frame_reservation, sender_account_nonce) =
+        // Validate transaction. The returned `sender_admission` carries the
+        // per-sender gate inputs, re-checked atomically inside `add_transaction`,
+        // which also removes whatever occupies the sender's nonce slot (any tx
+        // type) under the same lock, so replacement detection, the gates, the
+        // removal, and the insert are one atomic scope (#6938). For a frame tx
+        // the removal happens only after the locked paymaster re-check, so a
+        // rejected fee-bump leaves the original pending tx intact.
+        let (frame_reservation, sender_admission) =
             self.validate_transaction(&transaction, sender).await?;
-        // For a frame tx, the same-nonce predecessor must NOT be removed here:
-        // `add_transaction` removes it only AFTER the locked paymaster re-check
-        // passes, so a rejected fee-bump leaves the original pending tx intact
-        // (atomic replacement, review fix 2). `add_transaction` removes whatever
-        // occupies the sender's nonce slot (any tx type), which is the same
-        // same-nonce hash `find_tx_to_replace` returns, so the success path is
-        // unchanged — including when the predecessor is a non-frame tx.
-        let is_frame = matches!(transaction, Transaction::FrameTransaction(_));
-        // A replacement (same `(sender, nonce)`) doesn't grow the queue, so it's
-        // exempt from the queued cap (check find_tx_to_replace first, review fix).
-        let queued_cap = if tx_to_replace.is_some() {
-            None
-        } else {
-            sender_account_nonce.map(|account_nonce| QueuedCap {
-                account_nonce,
-                max: self.options.max_queued_txs_per_account,
-            })
-        };
-        if let Some(tx_to_replace) = tx_to_replace
-            && !is_frame
-        {
-            self.remove_transaction_from_pool(&tx_to_replace)?;
-        }
 
         // Add transaction to storage
-        self.mempool.add_transaction(
-            hash,
-            sender,
-            MempoolTransaction::new(transaction, sender),
-            frame_reservation,
-            queued_cap,
-        )?;
+        let mempool_tx = MempoolTransaction::new(transaction, sender);
+        if broadcast {
+            self.mempool.add_transaction(
+                hash,
+                sender,
+                mempool_tx,
+                frame_reservation,
+                sender_admission,
+            )?;
+        } else {
+            self.mempool.add_transaction_no_broadcast(
+                hash,
+                sender,
+                mempool_tx,
+                frame_reservation,
+                sender_admission,
+            )?;
+        }
 
         Ok(hash)
     }
@@ -3231,16 +3522,18 @@ impl Blockchain {
     5. Ensure the transactor is able to add a new transaction. The number of transactions sent by an account may be limited by a certain configured value
 
     */
-    /// Returns the hash of the transaction to replace in case the nonce already
-    /// exists, plus the paymaster reservation to apply on insert for frame
-    /// transactions (EIP-8141). The reservation is computed here but applied in
-    /// the locked section of `add_transaction`, so a frame tx that fails any
-    /// later admission check never leaks a reservation.
+    /// Returns the paymaster reservation to apply on insert for frame
+    /// transactions (EIP-8141), plus the per-sender admission guard re-checked
+    /// atomically inside `add_transaction`. The reservation is computed here but
+    /// applied in the locked section of `add_transaction`, so a frame tx that
+    /// fails any later admission check never leaks a reservation. Any same-nonce
+    /// tx being replaced is detected and removed live under that write lock, so
+    /// its hash is not returned here.
     pub async fn validate_transaction(
         &self,
         tx: &Transaction,
         sender: Address,
-    ) -> Result<(Option<H256>, Option<FramePaymasterReservation>, Option<u64>), MempoolError> {
+    ) -> Result<(Option<FramePaymasterReservation>, Option<SenderAdmission>), MempoolError> {
         let nonce = tx.nonce();
 
         // On an L1 node, reject L2-only transaction types (FeeToken 0x7d,
@@ -3253,13 +3546,13 @@ impl Blockchain {
         }
 
         if matches!(tx, &Transaction::PrivilegedL2Transaction(_)) {
-            return Ok((None, None, None));
+            return Ok((None, None));
         }
 
         // Frame transactions: skip balance/EOA checks (payer unknown until execution)
         let is_frame_tx = matches!(tx, Transaction::FrameTransaction(_));
 
-        let header_no = self.storage.get_latest_block_number().await?;
+        let header_no = self.storage.get_latest_block_number()?;
         let header = self
             .storage
             .get_block_header(header_no)?
@@ -3273,7 +3566,7 @@ impl Blockchain {
             return Err(MempoolError::FrameTxPreFork);
         }
 
-        // EIP-8141 expiry (spec commit 0b197156): drop frame txs whose expiry
+        // EIP-8141 expiry: drop frame txs whose expiry
         // verifier deadline is already behind the current head timestamp.
         // Boundary: deadline == timestamp is still valid (the verifier only
         // reverts when block.timestamp > deadline).
@@ -3333,20 +3626,11 @@ impl Blockchain {
             if !ethrex_vm::validate_frame_signatures(
                 &frame_tx.signatures,
                 sig_hash,
+                frame_tx.sender,
                 config.fork(header.timestamp),
                 &NativeCrypto,
             ) {
                 return Err(MempoolError::InvalidFrameSignature);
-            }
-
-            // Local anti-malleability policy (NOT consensus): reject high-s
-            // signatures at admission. EIP-8141 accepts high-s at block execution
-            // (`signer == ecrecover`), but the raw signature bytes are committed to
-            // the tx identity hash while elided from the sig hash, so a malleated
-            // `(v,r,s) -> (v^1, r, n-s)` form would produce a second valid tx hash
-            // for the same logical tx and bypass pool dedup.
-            if !ethrex_vm::frame_signatures_are_low_s(&frame_tx.signatures) {
-                return Err(MempoolError::FrameTxMalleableSignature);
             }
 
             // EIP-8141 §Mempool: validate the prefix shape and structural rules.
@@ -3410,6 +3694,28 @@ impl Blockchain {
             return Err(MempoolError::TxTipAboveFeeCapError);
         }
 
+        // Admission-time minimum tip floor. Compares the raw tip cap
+        // (`max_priority_fee_per_gas` for typed txs, `gas_price` for legacy)
+        // against `min_tip_wei`, matching geth's `PriceLimit` check on
+        // `tx.GasTipCap()` and reth's check on `max_priority_fee_per_gas`.
+        // Using the raw tip cap keeps the admission decision independent of
+        // the current base fee, so a tx that paid the floor at admission
+        // doesn't get reclassified as under-floor when base fee oscillates.
+        // A floor of 0 disables the check.
+        if self.options.min_tip_wei > 0 {
+            // Saturate to u64::MAX on overflow: a U256 tip cap above u64::MAX
+            // wei is astronomically larger than any sane floor, so clamping
+            // (and therefore admitting) is the correct direction here. Do not
+            // reuse this pattern where truncation would flip a comparison.
+            let tip_cap = u64::try_from(tx.gas_tip_cap()).unwrap_or(u64::MAX);
+            if tip_cap < self.options.min_tip_wei {
+                return Err(MempoolError::TipBelowMinimum {
+                    actual: tip_cap,
+                    limit: self.options.min_tip_wei,
+                });
+            }
+        }
+
         // EIP-7702 type-4 structural validation, mirroring LEVM's
         // `validate_type_4_tx` and ordered before the gas checks so the returned
         // error names the structural fault, not a downstream gas symptom. Reject
@@ -3445,13 +3751,12 @@ impl Blockchain {
             .ok_or(MempoolError::InvalidTxGasvalues)?;
 
         let maybe_sender_acc_info = self.storage.get_account_info(header_no, sender).await?;
-        // Sender's on-chain nonce, used for two things below: (1) threaded out to
-        // `add_transaction` so the per-account queued (future/nonce-gapped) cap is
-        // enforced *atomically* under the insertion write lock (see `QueuedCap`)
-        // instead of via a separate, racy pre-check — geth `AccountQueue` style:
-        // only future (nonce-gapped) txs count, executable/contiguous txs are never
-        // capped, and replacements pass because the caller removes the old tx first;
-        // and (2) excluding obsoleted (already-mined but not-yet-pruned) txs from the
+        // Sender's on-chain nonce, used for three things below: (1) folded into
+        // the `SenderAdmission` guard so the per-account queued cap, gapped-nonce,
+        // and cumulative-balance gates are re-checked *atomically* under the
+        // insertion write lock (see `SenderAdmission`) rather than only via the
+        // racy pre-filters here; (2) telling executable txs from future ones; and
+        // (3) excluding obsoleted (already-mined but not-yet-pruned) txs from the
         // cumulative-balance sum.
         let sender_account_nonce = maybe_sender_acc_info.as_ref().map(|info| info.nonce);
 
@@ -3536,7 +3841,13 @@ impl Blockchain {
 
         // Check the nonce of pendings TXs in the mempool from the same sender
         // If it exists check if the new tx has higher fees
-        let tx_to_replace_hash = self.mempool.find_tx_to_replace(sender, nonce, tx)?;
+        let tx_to_replace_hash = self.mempool.find_tx_to_replace(
+            sender,
+            nonce,
+            tx,
+            self.options.price_bump_percent,
+            self.options.blob_price_bump_percent,
+        )?;
 
         // Cumulative balance check across this sender's pending transactions.
         // Without this, a sender at the per-sender slot cap can have only one
@@ -3637,11 +3948,11 @@ impl Blockchain {
 
             // Paymaster availability accounting (EIP-8141). The simulation
             // identified the payer (paymaster) and whether its code matched the
-            // canonical paymaster hash (always false today, OQ1). Reserve the
-            // tx's max cost against the paymaster's head balance, summed with all
-            // other pending reservations for that paymaster so concurrently
-            // pending sponsored txs cannot collectively overdraw it.
-            let max_cost = outcome.max_cost;
+            // canonical paymaster hash (always false today, OQ1). Reserve an upper
+            // bound on the tx's cost against the paymaster's head balance, summed
+            // with all other pending reservations for that paymaster so
+            // concurrently pending sponsored txs cannot collectively overdraw it.
+            let max_cost = outcome.reservation_ceiling;
             if let Some((paymaster, code_is_canonical)) = outcome.accessed_paymaster {
                 // OQ1: re-derive the canonical flag from the paymaster's head
                 // code so the (currently always-false) determination lives in
@@ -3721,7 +4032,24 @@ impl Blockchain {
             }
         }
 
-        Ok((tx_to_replace_hash, frame_reservation, sender_account_nonce))
+        // Build the per-sender admission guard so `add_transaction` can re-run
+        // the queued-cap (#6603), gapped-nonce (#6609), and cumulative-balance
+        // (#6606) gates atomically under the insertion write lock — the checks
+        // above are an unlocked pre-filter (issue #6938). `None` when the sender
+        // has no account (only frame txs reach here in that case, and they are
+        // not per-sender rate-limited on nonce/balance).
+        let sender_admission = sender_account_nonce.map(|account_nonce| SenderAdmission {
+            account_nonce,
+            queued_max: self.options.max_queued_txs_per_account,
+            gap_threshold: self.options.gap_admit_occupancy_threshold,
+            // Frame txs are not balance-gated (payer unknown until execution).
+            balance_check: (!is_frame_tx).then_some(BalanceCheck {
+                tx_cost,
+                sender_balance,
+            }),
+        });
+
+        Ok((frame_reservation, sender_admission))
     }
 
     /// Marks the node's chain as up to date with the current chain
@@ -3744,6 +4072,15 @@ impl Blockchain {
     }
 
     pub fn get_p2p_transaction_by_hash(&self, hash: &H256) -> Result<P2PTransaction, StoreError> {
+        // --mempool.private: never serve private txs over P2P, even if a peer
+        // somehow learned the hash. The spec for `GetPooledTransactions`
+        // explicitly allows skipping unavailable transactions, so we mirror
+        // the "not found" path the caller already handles.
+        if self.mempool.is_private(*hash)? {
+            return Err(StoreError::Custom(format!(
+                "Hash {hash} is private and must not propagate",
+            )));
+        }
         let Some(tx) = self.mempool.get_transaction_by_hash(*hash)? else {
             return Err(StoreError::Custom(format!(
                 "Hash {hash} not found in the mempool",
@@ -3789,9 +4126,9 @@ impl Blockchain {
     }
 
     /// Get the current fork of the chain, based on the latest block's timestamp
-    pub async fn current_fork(&self) -> Result<Fork, StoreError> {
+    pub fn current_fork(&self) -> Result<Fork, StoreError> {
         let chain_config = self.storage.get_chain_config();
-        let latest_block_number = self.storage.get_latest_block_number().await?;
+        let latest_block_number = self.storage.get_latest_block_number()?;
         let latest_block = self
             .storage
             .get_block_header(latest_block_number)?
@@ -3906,6 +4243,52 @@ fn get_or_open_storage_trie<'a>(
     }
 }
 
+/// Flush one storage trie's buffered slots (streaming merkleizer path). Opens the
+/// trie if needed, breadth-first prefetches the touched nodes in one batch when
+/// the slice clears the threshold, then applies the inserts/removes. Warming-only:
+/// `prefetch_sorted` installs decoded nodes hash-preservingly, so the resulting
+/// storage root is byte-identical to the per-slot path.
+fn flush_storage_buffer(
+    storage_tries: &mut FxHashMap<H256, Trie>,
+    storage: &Store,
+    parent_state_root: H256,
+    prefix: H256,
+    storage_root: H256,
+    mut slots: Vec<(H256, U256)>,
+) -> Result<(), StoreError> {
+    let trie = get_or_open_storage_trie(
+        storage_tries,
+        storage,
+        parent_state_root,
+        prefix,
+        storage_root,
+    )?;
+    // `prefetch_sorted` requires ascending paths; slots arrive in routing order.
+    // H256 sorts bytewise, matching nibble order, so sorting by key gives the
+    // order `Nibbles::from_bytes` needs. The sort MUST be stable: the streaming
+    // path buffers per-tx updates, so the same slot can appear more than once
+    // (written by successive txs in the block) and the last write must win, as it
+    // does in the per-slot insert path. A stable sort keeps equal keys in arrival
+    // (tx) order so the final insert below applies the latest value last. Use
+    // `sort_by` (stable), NOT `sort_unstable_by`, or duplicate slots regress.
+    if slots.len() >= STREAM_STORAGE_PREFETCH_THRESHOLD {
+        slots.sort_by(|a, b| a.0.cmp(&b.0));
+        let paths: Vec<Nibbles> = slots
+            .iter()
+            .map(|(k, _)| Nibbles::from_bytes(k.as_bytes()))
+            .collect();
+        trie.prefetch_sorted(&paths)?;
+    }
+    for (hashed_key, value) in slots {
+        if value.is_zero() {
+            trie.remove(hashed_key.as_bytes())?;
+        } else {
+            trie.insert(hashed_key.as_bytes().to_vec(), value.encode_to_vec())?;
+        }
+    }
+    Ok(())
+}
+
 fn handle_subtrie(
     storage: Store,
     rx: cb::Receiver<WorkerRequest>,
@@ -3925,6 +4308,10 @@ fn handle_subtrie(
     let mut pre_collected_state: Vec<TrieNode> = vec![];
     let mut storage_tries: FxHashMap<H256, Trie> = Default::default();
     let mut pre_collected_storage: FxHashMap<H256, Vec<TrieNode>> = Default::default();
+    // Per storage trie, slots buffered until they can be flushed as a prefetched
+    // batch (see `flush_storage_buffer`). Value is (storage_root, pending slots).
+    // Cleared on delete; fully drained before storage collection begins.
+    let mut storage_buffer: FxHashMap<H256, (H256, Vec<(H256, U256)>)> = Default::default();
 
     // Held until collection finishes to keep cross-worker channels open.
     let mut worker_senders: Option<Vec<cb::Sender<WorkerRequest>>> = Some(worker_senders);
@@ -4069,8 +4456,11 @@ fn handle_subtrie(
                 }
 
                 if removed || removed_storage {
-                    // Delete locally + send DeleteStorage to other 15 workers
+                    // Delete locally + send DeleteStorage to other 15 workers.
+                    // Drop any slots buffered for this trie: the reset wipes them,
+                    // exactly as the per-slot path's inserts would have been.
                     pre_collected_storage.remove(&prefix);
+                    storage_buffer.remove(&prefix);
                     storage_tries.insert(prefix, Trie::new_temp());
                     for (i, tx) in senders.iter().enumerate() {
                         if i as u8 != index {
@@ -4100,18 +4490,23 @@ fn handle_subtrie(
                         let bucket = hashed_key.as_fixed_bytes()[0] >> 4;
                         *expected_shards.entry(prefix).or_insert(0u16) |= 1 << bucket;
                         if bucket == index {
-                            // Local storage: insert directly
-                            let trie = get_or_open_storage_trie(
-                                &mut storage_tries,
-                                &storage,
-                                parent_state_root,
-                                prefix,
-                                storage_root,
-                            )?;
-                            if value.is_zero() {
-                                trie.remove(hashed_key.as_bytes())?;
-                            } else {
-                                trie.insert(hashed_key.as_bytes().to_vec(), value.encode_to_vec())?;
+                            // Local storage: buffer for a prefetched batch flush.
+                            let buf = storage_buffer
+                                .entry(prefix)
+                                .or_insert_with(|| (storage_root, Vec::new()));
+                            buf.1.push((hashed_key, value));
+                            if buf.1.len() >= STREAM_STORAGE_FLUSH_BATCH {
+                                let (root, slots) = storage_buffer
+                                    .remove(&prefix)
+                                    .expect("buffer just inserted");
+                                flush_storage_buffer(
+                                    &mut storage_tries,
+                                    &storage,
+                                    parent_state_root,
+                                    prefix,
+                                    root,
+                                    slots,
+                                )?;
                             }
                         } else {
                             senders[bucket as usize]
@@ -4136,22 +4531,30 @@ fn handle_subtrie(
                 value,
                 storage_root,
             } => {
-                let trie = get_or_open_storage_trie(
-                    &mut storage_tries,
-                    &storage,
-                    parent_state_root,
-                    prefix,
-                    storage_root,
-                )?;
-                if value.is_zero() {
-                    trie.remove(key.as_bytes())?;
-                } else {
-                    trie.insert(key.as_bytes().to_vec(), value.encode_to_vec())?;
+                // Buffer for a prefetched batch flush (see local-storage path).
+                let buf = storage_buffer
+                    .entry(prefix)
+                    .or_insert_with(|| (storage_root, Vec::new()));
+                buf.1.push((key, value));
+                if buf.1.len() >= STREAM_STORAGE_FLUSH_BATCH {
+                    let (root, slots) = storage_buffer
+                        .remove(&prefix)
+                        .expect("buffer just inserted");
+                    flush_storage_buffer(
+                        &mut storage_tries,
+                        &storage,
+                        parent_state_root,
+                        prefix,
+                        root,
+                        slots,
+                    )?;
                 }
                 dirty = true;
             }
             WorkerRequest::DeleteStorage(prefix) => {
+                // Reset wipes any buffered slots for this trie (see ProcessAccount).
                 pre_collected_storage.remove(&prefix);
+                storage_buffer.remove(&prefix);
                 storage_tries.insert(prefix, Trie::new_temp());
                 dirty = true;
             }
@@ -4169,6 +4572,19 @@ fn handle_subtrie(
             WorkerRequest::RoutingDone { from } => {
                 routing_done_mask |= 1u16 << from;
                 if routing_done_mask == 0xFFFF && !collecting_storages && !routing_complete {
+                    // Routing is done: no more slots will arrive, so flush every
+                    // remaining buffer into its storage trie before draining for
+                    // collection. Missing this would silently drop buffered slots.
+                    for (prefix, (root, slots)) in storage_buffer.drain() {
+                        flush_storage_buffer(
+                            &mut storage_tries,
+                            &storage,
+                            parent_state_root,
+                            prefix,
+                            root,
+                            slots,
+                        )?;
+                    }
                     collecting_storages = true;
                     routing_complete = true;
                     storage_to_collect = storage_tries.drain().collect();
@@ -4271,7 +4687,7 @@ fn handle_subtrie(
 }
 
 pub fn new_evm(blockchain_type: &BlockchainType, vm_db: StoreVmDatabase) -> Result<Evm, EvmError> {
-    let evm = match blockchain_type {
+    let mut evm = match blockchain_type {
         BlockchainType::L1 => Evm::new_for_l1(vm_db, Arc::new(NativeCrypto)),
         BlockchainType::L2(l2_config) => {
             let fee_config = *l2_config
@@ -4282,7 +4698,25 @@ pub fn new_evm(blockchain_type: &BlockchainType, vm_db: StoreVmDatabase) -> Resu
             Evm::new_for_l2(vm_db, fee_config, Arc::new(NativeCrypto))?
         }
     };
+    attach_stateless_validator(&mut evm);
     Ok(evm)
+}
+
+/// Attach the stateless validator to an `Evm` so its `EXECUTE` precompile
+/// can delegate to `verify_stateless_new_payload` when processing native-rollup
+/// `advance()` calls.
+///
+/// Lives here (not in `Evm`'s constructor) because `StatelessExecutor` is
+/// implemented by the blockchain crate and calls back into `Evm::new_for_l1`
+/// when verifying — an auto-inject in the constructor would recurse. Other
+/// callers that build `Evm::new_for_l1` without blockchain access (the
+/// guest-program crate, the stateless verifier itself, witness generation,
+/// the prover backend) also rely on the constructor staying validator-less.
+///
+fn attach_stateless_validator(evm: &mut Evm) {
+    evm.stateless_validator = Some(Arc::new(stateless::StatelessExecutor {
+        crypto: Arc::new(NativeCrypto),
+    }));
 }
 
 /// Performs post-execution checks
@@ -4301,8 +4735,8 @@ pub fn validate_state_root(
 }
 
 // Returns the hash of the head of the canonical chain (the latest valid hash).
-pub async fn latest_canonical_block_hash(storage: &Store) -> Result<H256, ChainError> {
-    let latest_block_number = storage.get_latest_block_number().await?;
+pub fn latest_canonical_block_hash(storage: &Store) -> Result<H256, ChainError> {
+    let latest_block_number = storage.get_latest_block_number()?;
     if let Some(latest_valid_header) = storage.get_block_header(latest_block_number)? {
         let latest_valid_hash = latest_valid_header.hash();
         return Ok(latest_valid_hash);
@@ -4391,6 +4825,18 @@ fn serial_storage_root(
     hashed_storage: &[(H256, U256)],
 ) -> Result<(H256, Vec<TrieNode>), StoreError> {
     let mut trie = storage.open_storage_trie(hashed_address, parent_state_root, storage_root)?;
+
+    // Both call sites (`compute_sharded_storage_root`'s `occupied <= 1` and
+    // "storage emptied" fallbacks) pass an already key-sorted slice, so it is
+    // safe to reuse that order directly for prefetch.
+    if hashed_storage.len() >= STORAGE_PREFETCH_THRESHOLD {
+        let paths: Vec<Nibbles> = hashed_storage
+            .iter()
+            .map(|(k, _)| Nibbles::from_bytes(k.as_bytes()))
+            .collect();
+        trie.prefetch_sorted(&paths)?;
+    }
+
     for (hashed_key, value) in hashed_storage {
         if value.is_zero() {
             trie.remove(hashed_key.as_bytes())?;
@@ -4499,6 +4945,22 @@ pub fn compute_sharded_storage_root(
                                 parent_state_root,
                                 storage_root,
                             )?;
+
+                            // `bucket` is a nibble-filtered split of `hashed_storage`,
+                            // which is sorted by the caller, so per-shard order is
+                            // already ascending: reuse it directly for prefetch.
+                            // Shard-scaled gate: each shard holds ~1/16 of the
+                            // account's slots, so the whole-account 64 threshold
+                            // would almost never fire here.
+                            const SHARD_PREFETCH_THRESHOLD: usize = 4;
+                            if bucket.len() >= SHARD_PREFETCH_THRESHOLD {
+                                let paths: Vec<Nibbles> = bucket
+                                    .iter()
+                                    .map(|(k, _)| Nibbles::from_bytes(k.as_bytes()))
+                                    .collect();
+                                trie.prefetch_sorted(&paths)?;
+                            }
+
                             for (hashed_key, value) in &bucket {
                                 if value.is_zero() {
                                     trie.remove(hashed_key.as_bytes())?;
@@ -4549,4 +5011,118 @@ pub fn compute_sharded_storage_root(
     let _ = DROP_SENDER.send(Box::new(root_ref));
 
     Ok((root_hash.finalize(&NativeCrypto), nodes))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::payload::{BuildPayloadArgs, create_payload};
+    use bytes::Bytes;
+    use ethrex_common::{
+        H160, H256,
+        types::{DEFAULT_BUILDER_GAS_CEIL, ELASTICITY_MULTIPLIER, Genesis},
+    };
+    use ethrex_storage::EngineType;
+    use std::path::Path;
+
+    async fn build_test_blockchain_with_one_block() -> (Blockchain, Vec<Block>) {
+        let genesis_path = Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/genesis/execution-api.json"
+        ));
+        let genesis = Genesis::try_from(genesis_path).expect("Failed to load genesis");
+        let mut store =
+            Store::new("store.db", EngineType::InMemory).expect("Failed to build store");
+        store
+            .add_initial_state(genesis)
+            .await
+            .expect("Failed to add genesis");
+        let blockchain = Blockchain::default_with_store(store.clone());
+        let genesis_header = store.get_block_header(0).unwrap().unwrap();
+        let args = BuildPayloadArgs {
+            parent: genesis_header.hash(),
+            timestamp: genesis_header.timestamp + 12,
+            fee_recipient: H160::zero(),
+            random: H256::zero(),
+            withdrawals: Some(Vec::new()),
+            beacon_root: Some(H256::zero()),
+            slot_number: None,
+            version: 1,
+            elasticity_multiplier: ELASTICITY_MULTIPLIER,
+            gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+        };
+        let block_template = create_payload(&args, &store, Bytes::new()).unwrap();
+        let result = blockchain.build_payload(block_template).unwrap();
+        (blockchain, vec![result.payload])
+    }
+
+    #[tokio::test]
+    async fn generate_witness_and_bal_returns_none_at_prague() {
+        let (blockchain, blocks) = build_test_blockchain_with_one_block().await;
+
+        let (_witness, bals) = blockchain
+            .generate_witness_and_bal_for_blocks_with_fee_configs(&blocks, None)
+            .await
+            .expect("witness+bal generation");
+
+        // One BAL slot per input block, aligned by index.
+        assert_eq!(bals.len(), blocks.len());
+        // Pre-Amsterdam: no BAL is produced.
+        assert!(bals.iter().all(|b| b.is_none()));
+    }
+}
+
+#[cfg(test)]
+mod reorg_guard_tests {
+    use super::*;
+    use ethrex_storage::{EngineType, Store};
+
+    fn make_blockchain() -> Blockchain {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path(), EngineType::InMemory).unwrap();
+        Blockchain::default_with_store(store)
+    }
+
+    /// `enter_reorg` SHALL set the flag; the returned guard SHALL clear it on drop.
+    #[test]
+    fn reorg_guard_sets_and_clears_flag() {
+        let blockchain = make_blockchain();
+        assert!(!blockchain.is_reorg_in_progress(), "flag starts false");
+
+        {
+            let guard = blockchain.enter_reorg();
+            assert!(guard.is_some(), "first enter_reorg must acquire the guard");
+            assert!(
+                blockchain.is_reorg_in_progress(),
+                "flag must be set while guard is alive"
+            );
+            // A second attempt while the first guard is alive must fail the
+            // test-and-set and return None.
+            assert!(
+                blockchain.enter_reorg().is_none(),
+                "concurrent enter_reorg must not acquire a second guard"
+            );
+        }
+        assert!(
+            !blockchain.is_reorg_in_progress(),
+            "flag must clear when guard drops"
+        );
+    }
+
+    /// The guard SHALL clear the flag even when its scope ends via panic unwinding.
+    #[test]
+    fn reorg_guard_clears_flag_on_panic() {
+        let blockchain = make_blockchain();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = blockchain.enter_reorg();
+            assert!(blockchain.is_reorg_in_progress());
+            panic!("simulated apply failure");
+        }));
+        // guard is dropped by the unwind; flag must be clear below.
+        assert!(result.is_err(), "panic must propagate out of the scope");
+        assert!(
+            !blockchain.is_reorg_in_progress(),
+            "flag must be cleared after a panicking guard scope"
+        );
+    }
 }

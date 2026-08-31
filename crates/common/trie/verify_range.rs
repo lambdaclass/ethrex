@@ -1,4 +1,9 @@
-use std::collections::{BTreeMap, VecDeque};
+use alloc::collections::{BTreeMap, VecDeque};
+#[cfg(not(feature = "std"))]
+use alloc::{
+    string::{String, ToString},
+    vec::Vec,
+};
 
 use ethereum_types::H256;
 use ethrex_crypto::{NativeCrypto, keccak::keccak_hash};

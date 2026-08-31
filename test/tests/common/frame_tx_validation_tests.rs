@@ -9,10 +9,14 @@ use bytes::Bytes;
 use ethrex_common::constants::GAS_PER_BLOB;
 use ethrex_common::types::{
     APPROVE_EXECUTION, APPROVE_EXECUTION_AND_PAYMENT, APPROVE_PAYMENT, Block, BlockBody,
-    BlockHeader, ChainConfig, EIP4844Transaction, FRAME_SIG_SCHEME_SECP256K1,
-    FRAME_TX_MAX_VERIFY_GAS, Frame, FrameMode, FrameSignature, FrameTransaction,
-    FrameValidationError, PrefixShape, Transaction, frame_tx_expiry_verifier,
+    BlockHeader, ChainConfig, EIP4844Transaction, FRAME_SIG_SCHEME_ARBITRARY,
+    FRAME_SIG_SCHEME_SECP256K1, FRAME_TX_MAX_VERIFY_GAS, Frame, FrameMode, FrameSignature,
+    FrameTransaction, FrameValidationError, PrefixShape, Transaction, frame_tx_expiry_verifier,
 };
+
+/// EIP-4844 `VERSIONED_HASH_VERSION_KZG`. The constant itself lives in a private
+/// module of `ethrex-common`, so it is restated here.
+const VERSIONED_HASH_VERSION_KZG: u8 = 0x01;
 use ethrex_common::validation::verify_blob_gas_usage;
 use ethrex_common::{Address, H256, U256};
 
@@ -444,7 +448,7 @@ fn prefix_rejection_gas_budget_exceeded() {
     // Ensure exactly one SECP256K1 sig so sig cost = 2800.
     tx.signatures = vec![FrameSignature {
         scheme: FRAME_SIG_SCHEME_SECP256K1,
-        signer: sender_addr(),
+        signer: Some(sender_addr()),
         msg: Bytes::new(),
         signature: Bytes::from(vec![0u8; 65]),
     }];
@@ -454,4 +458,189 @@ fn prefix_rejection_gas_budget_exceeded() {
         tx.validate_prefix_structure(&prefix).unwrap_err(),
         FrameValidationError::VerifyGasBudgetExceeded { .. }
     ));
+}
+
+// ---------------------------------------------------------------------------
+// Static constraints and gas accounting
+// ---------------------------------------------------------------------------
+
+/// A frame transaction that satisfies every static constraint, for tests that
+/// then violate exactly one of them.
+fn make_test_frame_tx() -> FrameTransaction {
+    FrameTransaction {
+        chain_id: 1,
+        nonce: 42,
+        sender: Address::from_low_u64_be(0xABCD),
+        frames: vec![
+            Frame {
+                mode: FrameMode::Verify as u8,
+                flags: 0x03, // APPROVE_EXECUTION_AND_PAYMENT
+                target: Some(Address::from_low_u64_be(0xABCD)),
+                gas_limit: 100_000,
+                value: U256::zero(),
+                data: Bytes::from_static(b"verify_data"),
+            },
+            Frame {
+                mode: FrameMode::Sender as u8,
+                flags: 0x00,
+                target: Some(Address::from_low_u64_be(0x1234)),
+                gas_limit: 200_000,
+                value: U256::zero(),
+                data: Bytes::from_static(b"call_data"),
+            },
+        ],
+        signatures: vec![FrameSignature {
+            scheme: FRAME_SIG_SCHEME_SECP256K1,
+            signer: Some(Address::from_low_u64_be(0xABCD)),
+            msg: Bytes::new(),
+            signature: Bytes::from(vec![0u8; 65]),
+        }],
+        max_priority_fee_per_gas: 1_000_000_000,
+        max_fee_per_gas: 30_000_000_000,
+        max_fee_per_blob_gas: U256::zero(),
+        blob_versioned_hashes: vec![],
+        ..Default::default()
+    }
+}
+
+#[test]
+fn atomic_batch_flag_on_verify_frame_is_invalid() {
+    let mut tx = make_test_frame_tx();
+    tx.frames = vec![
+        Frame {
+            mode: FrameMode::Verify as u8,
+            flags: 0x04 | 0x03, // atomic batch + scope bits
+            target: None,
+            gas_limit: 21_000,
+            value: U256::zero(),
+            data: Bytes::new(),
+        },
+        Frame {
+            mode: FrameMode::Sender as u8,
+            flags: 0x00,
+            target: Some(Address::from_low_u64_be(0xCAFE)),
+            gas_limit: 21_000,
+            value: U256::zero(),
+            data: Bytes::new(),
+        },
+    ];
+    assert!(
+        tx.validate_static_constraints()
+            .unwrap_err()
+            .contains("atomic batch flag on a VERIFY frame")
+    );
+}
+
+#[test]
+fn atomic_batch_followed_by_verify_frame_is_invalid() {
+    // Batches never contain VERIFY frames, so the frame a batch member
+    // batches with must be non-VERIFY too.
+    let mut tx = make_test_frame_tx();
+    tx.frames = vec![
+        Frame {
+            mode: FrameMode::Sender as u8,
+            flags: 0x04, // atomic batch
+            target: Some(Address::from_low_u64_be(0xB0B)),
+            gas_limit: 21_000,
+            value: U256::zero(),
+            data: Bytes::new(),
+        },
+        Frame {
+            mode: FrameMode::Verify as u8,
+            flags: 0x03,
+            target: None,
+            gas_limit: 21_000,
+            value: U256::zero(),
+            data: Bytes::new(),
+        },
+    ];
+    assert!(
+        tx.validate_static_constraints()
+            .unwrap_err()
+            .contains("atomic batch flag followed by a VERIFY frame")
+    );
+}
+
+#[test]
+fn static_validation_rejects_approve_execution_with_third_party_target() {
+    // Approval of execution is only allowed when the target is empty or tx.sender.
+    let mut tx = make_test_frame_tx();
+    tx.frames[0].target = Some(Address::from_low_u64_be(0xBEEF));
+    assert!(
+        tx.validate_static_constraints()
+            .unwrap_err()
+            .contains("APPROVE_EXECUTION requires an empty target or tx.sender"),
+    );
+    // An empty target resolves to tx.sender, so it is allowed.
+    tx.frames[0].target = None;
+    assert!(tx.validate_static_constraints().is_ok());
+}
+
+#[test]
+fn static_validation_rejects_wrong_blob_hash_version() {
+    let mut tx = make_test_frame_tx();
+    tx.blob_versioned_hashes = vec![H256([0xABu8; 32])];
+    tx.max_fee_per_blob_gas = U256::from(1u64);
+    assert!(
+        tx.validate_static_constraints()
+            .unwrap_err()
+            .contains("wrong version byte"),
+    );
+    let mut hash = [0xABu8; 32];
+    hash[0] = VERSIONED_HASH_VERSION_KZG;
+    tx.blob_versioned_hashes = vec![H256(hash)];
+    assert!(tx.validate_static_constraints().is_ok());
+}
+
+#[test]
+fn static_validation_rejects_blob_fee_without_blobs() {
+    let mut tx = make_test_frame_tx();
+    assert!(tx.blob_versioned_hashes.is_empty());
+    tx.max_fee_per_blob_gas = U256::from(1u64);
+    assert!(
+        tx.validate_static_constraints()
+            .unwrap_err()
+            .contains("max_fee_per_blob_gas must be zero"),
+    );
+}
+
+#[test]
+fn data_cost_covers_only_frame_and_signature_data() {
+    // 4 gas per zero byte, 16 per non-zero, over frame.data and each
+    // signature's signer/msg/signature — no RLP framing, no scalar fields.
+    let mut tx = make_test_frame_tx();
+    tx.frames[0].data = Bytes::from(vec![0u8; 3]); // 3 zero bytes -> 12
+    tx.frames[1].data = Bytes::from(vec![0xAAu8; 2]); // 2 non-zero -> 32
+    tx.signatures = vec![FrameSignature {
+        scheme: FRAME_SIG_SCHEME_ARBITRARY,
+        signer: None, // empty signer contributes nothing
+        msg: Bytes::new(),
+        signature: Bytes::from(vec![0xAAu8, 0x00]), // 16 + 4
+    }];
+    assert_eq!(tx.data_cost(), 12 + 32 + 16 + 4);
+    // Floor tokens are unweighted: 7 bytes * 4 tokens * 16 gas = 448.
+    assert_eq!(tx.calldata_tokens(), 7 * 4);
+    assert_eq!(tx.calldata_floor_gas(), 7 * 64);
+}
+
+#[test]
+fn max_gas_takes_the_calldata_floor_when_it_exceeds_the_standard_limit() {
+    // EIP-8141 `max_gas = max(standard_gas_limit, calldata_floor_gas)`. A
+    // transaction whose data floor exceeds what it declared for execution
+    // reserves the floor; it is valid, not rejected.
+    let mut tx = make_test_frame_tx();
+    tx.signatures.clear();
+    tx.frames[0].data = Bytes::from(vec![0xAAu8; 64]);
+    tx.frames[1].data = Bytes::new();
+    tx.frames[0].gas_limit = 100;
+    tx.frames[1].gas_limit = 100;
+    assert!(tx.calldata_floor_total() > tx.standard_gas_limit());
+    assert_eq!(tx.max_gas(), tx.calldata_floor_total());
+    assert!(tx.validate_static_constraints().is_ok());
+
+    // With enough frame gas to outweigh the floor, `max_gas` is the standard limit.
+    tx.frames[1].gas_limit = 100_000;
+    assert!(tx.standard_gas_limit() > tx.calldata_floor_total());
+    assert_eq!(tx.max_gas(), tx.standard_gas_limit());
+    assert!(tx.validate_static_constraints().is_ok());
 }

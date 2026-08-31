@@ -9,10 +9,7 @@ pub struct SystemContract {
 }
 
 pub const DEPOSIT_CONTRACT_ADDRESS: SystemContract = SystemContract {
-    address: H160([
-        0x00, 0x00, 0x00, 0x00, 0x21, 0x9A, 0xB5, 0x40, 0x35, 0x6C, 0xBB, 0x83, 0x9C, 0xBE, 0x05,
-        0x30, 0x3D, 0x77, 0x05, 0xFA,
-    ]),
+    address: ethrex_common::constants::MAINNET_DEPOSIT_CONTRACT_ADDRESS,
     name: "DEPOSIT_CONTRACT_ADDRESS",
     active_since_fork: Prague,
 };
@@ -113,9 +110,8 @@ pub const EXPIRY_VERIFIER_PREDEPLOY: SystemContract = SystemContract {
     active_since_fork: Hegota,
 };
 
-/// Canonical runtime bytecode of the EIP-8141 expiry verifier (spec commit
-/// 0b197156): reverts unless calldata is exactly 8 bytes and the 8-byte BE
-/// deadline is >= block.timestamp.
+/// Canonical runtime bytecode of the EIP-8141 expiry verifier: reverts unless
+/// calldata is exactly 8 bytes and the 8-byte BE deadline is >= block.timestamp.
 pub const EXPIRY_VERIFIER_RUNTIME_BYTECODE: [u8; 26] = [
     0x60, 0x08, 0x36, 0x14, 0x60, 0x0a, 0x57, 0x5f, 0x5f, 0xfd, 0x5b, 0x5f, 0x35, 0x60, 0xc0, 0x1c,
     0x42, 0x11, 0x60, 0x16, 0x57, 0x00, 0x5b, 0x5f, 0x5f, 0xfd,

@@ -3,12 +3,18 @@ use ethrex_common::{
     Address, H256, U256,
     types::{AccountState, ChainConfig, Code, CodeMetadata},
 };
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
-use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::{Arc, OnceLock, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 pub mod gen_db;
+
+/// Distinct-cold-key count above which a prefetch routes to the sorted, sharded
+/// batch read instead of per-key parallel point-gets. Shared by the account and
+/// storage prefetch gates here and by the merkle trie-node prefetch gate in
+/// `ethrex-blockchain`, so tuning it moves all three together. ~16384 cold
+/// accesses is ~34M gas of cold reads: above ordinary cold blocks, below the
+/// large-state blocks these paths target. Tunable.
+pub const BLOATED_BATCH_THRESHOLD: usize = 16_384;
 
 // Type aliases for cache storage maps
 type AccountCache = FxHashMap<Address, AccountState>;
@@ -44,6 +50,55 @@ pub trait Database: Send + Sync {
             .iter()
             .map(|a| self.get_account_state(*a))
             .collect()
+    }
+    /// Batch bytecode lookup, aligned to `code_hashes`. `None` means the hash is absent
+    /// from the database. Default: loop. Backends with a batched read path (e.g. rocksdb
+    /// `multi_get_cf` on the account-codes table) should override this; the caching layer
+    /// above dispatches to it from [`Self::prefetch_codes`].
+    fn get_account_codes_batch(
+        &self,
+        code_hashes: &[H256],
+    ) -> Result<Vec<Option<Code>>, DatabaseError> {
+        code_hashes
+            .iter()
+            .map(|h| self.get_account_code(*h).map(Some))
+            .collect()
+    }
+    /// Batch storage-slot lookup. Default: loop. Backends with a batched read
+    /// path (e.g. rocksdb `multi_get_cf` on the storage flat key-value table)
+    /// should override this and the caching layer above will dispatch to it.
+    fn get_storage_values_batch(
+        &self,
+        keys: &[(Address, H256)],
+    ) -> Result<Vec<U256>, DatabaseError> {
+        keys.iter()
+            .map(|&(addr, key)| self.get_storage_value(addr, key))
+            .collect()
+    }
+
+    /// Byte budget for warming bytecode ahead of execution, as measured by [`Code::size`].
+    ///
+    /// Bounds the bytecode a block warm reads speculatively, since a block access list
+    /// does not say which of its addresses were accessed for their code. Backends holding
+    /// a bytecode cache report its capacity, which is how much the node was configured to
+    /// keep resident; the default is the floor for a backend without one.
+    fn code_cache_budget_bytes(&self) -> u64 {
+        64 * 1024 * 1024
+    }
+
+    /// Prefetch a batch of bytecodes into the cache. Default: sequential fallback.
+    ///
+    /// Returns the total [`Code::size`] warmed, so a caller warming a whole block can
+    /// hold itself to [`Self::code_cache_budget_bytes`]. An absent hash is not an error:
+    /// warming has nothing to do for it and the executor reports it if reached.
+    fn prefetch_codes(&self, code_hashes: &[H256]) -> Result<u64, DatabaseError> {
+        let mut warmed = 0u64;
+        for &hash in code_hashes {
+            if let Ok(code) = self.get_account_code(hash) {
+                warmed = warmed.saturating_add(u64::try_from(code.size()).unwrap_or(u64::MAX));
+            }
+        }
+        Ok(warmed)
     }
     /// Prefetch a batch of accounts into the cache. Default: sequential fallback.
     fn prefetch_accounts(&self, addresses: &[Address]) -> Result<(), DatabaseError> {
@@ -137,6 +192,32 @@ impl CachingDatabase {
         self.code.write().map_err(poison_error_to_db_error)
     }
 
+    /// Per-slot parallel point-gets, in `missing` order. Warm-optimal fan-out
+    /// for normal-sized prefetch batches; bloated batches use the sorted batch
+    /// multi_get instead (see `prefetch_storage`).
+    #[cfg(feature = "rayon")]
+    fn point_get_storage_many(
+        &self,
+        missing: &[(Address, H256)],
+    ) -> Result<Vec<U256>, DatabaseError> {
+        use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+        missing
+            .par_iter()
+            .map(|&(addr, key)| self.inner.get_storage_value(addr, key))
+            .collect()
+    }
+
+    #[cfg(not(feature = "rayon"))]
+    fn point_get_storage_many(
+        &self,
+        missing: &[(Address, H256)],
+    ) -> Result<Vec<U256>, DatabaseError> {
+        missing
+            .iter()
+            .map(|&(addr, key)| self.inner.get_storage_value(addr, key))
+            .collect()
+    }
+
     /// Snapshot of the touched key sets matching the given filters: cached
     /// accounts (with their storage roots) and cached storage slot keys. The
     /// filters let a caller that tracks already-processed keys collect only
@@ -166,6 +247,32 @@ impl CachingDatabase {
             accounts,
             slots: storage,
         }
+    }
+
+    /// Per-account parallel point-gets, in `missing` order. Warm-optimal fan-out
+    /// for normal-sized prefetch batches; large batches use the sorted sharded
+    /// multi_get instead (see `prefetch_accounts`).
+    #[cfg(feature = "rayon")]
+    fn point_get_accounts_many(
+        &self,
+        missing: &[Address],
+    ) -> Result<Vec<AccountState>, DatabaseError> {
+        use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+        missing
+            .par_iter()
+            .map(|&addr| self.inner.get_account_state(addr))
+            .collect()
+    }
+
+    #[cfg(not(feature = "rayon"))]
+    fn point_get_accounts_many(
+        &self,
+        missing: &[Address],
+    ) -> Result<Vec<AccountState>, DatabaseError> {
+        missing
+            .iter()
+            .map(|&addr| self.inner.get_account_state(addr))
+            .collect()
     }
 }
 
@@ -236,14 +343,83 @@ impl Database for CachingDatabase {
     }
 
     fn get_code_metadata(&self, code_hash: H256) -> Result<CodeMetadata, DatabaseError> {
-        // Delegate directly to the underlying database.
-        // The underlying Store already has its own code_metadata_cache,
-        // so we don't need to duplicate caching here.
+        // Answer from resident code when there is any. The BAL warmer loads the block's
+        // bytecode into this cache, so a length read usually has the answer here under a
+        // shared read lock. Falling straight through would instead take the store's
+        // single mutex-guarded metadata cache, serializing every `EXTCODESIZE` across
+        // the parallel executor's threads.
+        if let Some(code) = self.read_code()?.get(&code_hash) {
+            return Ok(CodeMetadata {
+                length: u64::try_from(code.len()).unwrap_or(u64::MAX),
+            });
+        }
         self.inner.get_code_metadata(code_hash)
     }
 
     fn precompile_cache(&self) -> Option<&PrecompileCache> {
         self.precompile_cache.as_ref()
+    }
+
+    /// Warms every address through [`Self::prefetch_accounts`], then answers from the
+    /// cache under one read lock. Repeated addresses cost a single database read, and a
+    /// caller that wants the states pays one map lookup each rather than a full
+    /// `get_account_state` round trip per address.
+    ///
+    /// The read lock spans the whole assembly, so callers should keep `addresses` to a
+    /// bounded slice: a writer (an executor filling the same cache) waits on it.
+    fn get_account_states_batch(
+        &self,
+        addresses: &[Address],
+    ) -> Result<Vec<AccountState>, DatabaseError> {
+        self.prefetch_accounts(addresses)?;
+        let cache = self.read_accounts()?;
+        addresses
+            .iter()
+            .map(|addr| {
+                cache.get(addr).copied().ok_or_else(|| {
+                    DatabaseError::Custom(format!("account {addr:?} missing after prefetch"))
+                })
+            })
+            .collect()
+    }
+
+    fn code_cache_budget_bytes(&self) -> u64 {
+        self.inner.code_cache_budget_bytes()
+    }
+
+    /// Fetches the uncached bytecodes in one batch and inserts them, reading each
+    /// distinct hash once however many entries share it.
+    ///
+    /// Returns only the warmed byte count, not the bytecodes: the executor reads code
+    /// through [`Self::get_account_code`], which this turns into a cache hit. Assembling
+    /// a result vector here would hold the write lock that guards every executor code
+    /// read for the length of the batch, to build something a warming caller discards.
+    fn prefetch_codes(&self, code_hashes: &[H256]) -> Result<u64, DatabaseError> {
+        let missing: Vec<H256> = {
+            let cache = self.read_code()?;
+            let mut seen: FxHashSet<H256> = FxHashSet::default();
+            code_hashes
+                .iter()
+                .copied()
+                .filter(|h| !cache.contains_key(h) && seen.insert(*h))
+                .collect()
+        };
+
+        if missing.is_empty() {
+            return Ok(0);
+        }
+
+        let codes = self.inner.get_account_codes_batch(&missing)?;
+        let mut warmed = 0u64;
+        let mut cache = self.write_code()?;
+        for (hash, code) in missing.into_iter().zip(codes.into_iter()) {
+            // An absent hash has nothing to warm; the executor reports it if reached.
+            if let Some(code) = code {
+                warmed = warmed.saturating_add(u64::try_from(code.size()).unwrap_or(u64::MAX));
+                cache.entry(hash).or_insert(code);
+            }
+        }
+        Ok(warmed)
     }
 
     fn prefetch_accounts(&self, addresses: &[Address]) -> Result<(), DatabaseError> {
@@ -259,10 +435,19 @@ impl Database for CachingDatabase {
         if missing.is_empty() {
             return Ok(());
         }
-        // Dispatch to inner's batch path. For the rocksdb-backed StoreVmDatabase
-        // this collapses into a single multi_get on ACCOUNT_FLATKEYVALUE for the
-        // FKV-covered subset; default impl loops for other backends.
-        let states = self.inner.get_account_states_batch(&missing)?;
+        // Same gate as `prefetch_storage`: a large set of distinct COLD accounts is
+        // queue-depth bound. The inner batch path on the rocksdb-backed
+        // StoreVmDatabase used a single multi_get (queue depth 1, async_io off),
+        // which collapses on cold account-heavy blocks (coldbench: ~13x slower than
+        // the sharded batch). Route large/cold sets to the (now sharded) batch and
+        // small/warm sets to parallel point-gets. The gate counts MISSING (cold)
+        // accounts, so warm blocks stay on the point-get path however many accounts
+        // they touch. See `BLOATED_BATCH_THRESHOLD`.
+        let states = if missing.len() >= BLOATED_BATCH_THRESHOLD {
+            self.inner.get_account_states_batch(&missing)?
+        } else {
+            self.point_get_accounts_many(&missing)?
+        };
         let mut cache = self.write_accounts()?;
         for (addr, state) in missing.into_iter().zip(states.into_iter()) {
             cache.entry(addr).or_insert(state);
@@ -270,19 +455,45 @@ impl Database for CachingDatabase {
         Ok(())
     }
 
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
     fn prefetch_storage(&self, keys: &[(Address, H256)]) -> Result<(), DatabaseError> {
-        // Fetch from inner in parallel (no lock contention), then single write-lock to populate cache.
-        let fetched: Vec<((Address, H256), U256)> = keys
-            .par_iter()
-            .map(|&(addr, key)| {
-                self.inner
-                    .get_storage_value(addr, key)
-                    .map(|v| ((addr, key), v))
-            })
-            .collect::<Result<_, _>>()?;
+        // Filter out already-cached slots before issuing the batch read.
+        let missing: Vec<(Address, H256)> = {
+            let cache = self.read_storage()?;
+            keys.iter()
+                .copied()
+                .filter(|k| !cache.contains_key(k))
+                .collect()
+        };
+        if missing.is_empty() {
+            return Ok(());
+        }
+        // Warm is the common case: a normal block touches relatively few storage
+        // slots and they are usually cache-resident, where per-slot point-gets
+        // (parallel fan-out) are warm-optimal. A block that instead reads a large
+        // number of distinct COLD slots is queue-depth bound: a per-slot fan-out
+        // is capped at ncpu reads in flight, and a single serial multi_get runs
+        // at queue depth 1 (async_io is off in our build), so cold throughput
+        // collapses (a sorted serial multi_get regressed bloated SLOAD ~4.5x).
+        // The sharded batch path restores it (sorted shards share RocksDB data
+        // blocks and run at high queue depth) and hardens validation against
+        // storage-bloat DoS. The gate counts MISSING (uncached, i.e. cold) slots,
+        // not total accesses, so a warm block never reaches it however many slots
+        // it touches; that is what keeps the path off normal traffic. The sharded
+        // win is already present once a block has this many cold slots (a cold
+        // benchmark shows ~1.4x at 16k and growing with size), while the warm cost
+        // it trades against is a few ms and effectively cannot fire, since warm
+        // slots are not counted here. See `BLOATED_BATCH_THRESHOLD`.
+        let values = if missing.len() >= BLOATED_BATCH_THRESHOLD {
+            // Dispatch to inner's batch path. For the rocksdb-backed
+            // StoreVmDatabase this is a sharded parallel multi_get on
+            // STORAGE_FLATKEYVALUE for the FKV-covered subset; the default impl
+            // loops for other backends.
+            self.inner.get_storage_values_batch(&missing)?
+        } else {
+            self.point_get_storage_many(&missing)?
+        };
         let mut cache = self.write_storage()?;
-        for (key, value) in fetched {
+        for (key, value) in missing.into_iter().zip(values.into_iter()) {
             cache.entry(key).or_insert(value);
         }
         Ok(())

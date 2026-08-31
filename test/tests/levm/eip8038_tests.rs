@@ -4,8 +4,8 @@
 //! repricing through the public `gas_cost` selectors and the standalone
 //! `intrinsic_gas_dimensions` helper. Pre-Amsterdam behavior must be
 //! byte-identical to before, so each case pins an Osaka control to the exact
-//! legacy literal (2600 / 2100 / 2400 / 1900) alongside the Amsterdam value
-//! (3000).
+//! legacy literal (2600 / 2100 / 2400 / 1900) alongside the Amsterdam values
+//! (3000 account access, 2100 storage access).
 //!
 //! Phase 2 verifies the SSTORE regular-gas + refund reformulation by EXECUTING
 //! SSTORE sequences through a full VM and asserting the observable pre-refund
@@ -14,7 +14,7 @@
 //! accounting is byte-identical.
 //!
 //! Expected values follow the EELS Amsterdam reference at the fixture tag
-//! `tests-glamsterdam-devnet@v7.1.0`
+//! `tests-glamsterdam-devnet@v8.1.0`
 //! (ethereum/execution-specs `amsterdam/vm/instructions/storage.py::sstore`):
 //! the first change to a slot charges the access cost (cold XOR warm) plus a
 //! flat `STORAGE_WRITE` (= 10000) surcharge, and a restore-to-original refunds
@@ -43,15 +43,15 @@ use crate::levm::test_db::TestDatabase;
 // ===== Cold SLOAD =====
 
 #[test]
-fn test_cold_sload_amsterdam_is_3000() {
-    // Cold storage access cost is 3000 at Amsterdam (EIP-8038).
+fn test_cold_sload_amsterdam_is_2100() {
+    // EIP-8038 leaves COLD_STORAGE_ACCESS at 2100; only account access is raised.
     let cost = gas_cost::sload(true, Fork::Amsterdam).expect("sload");
-    assert_eq!(cost, 3000, "cold SLOAD at Amsterdam must be 3000");
+    assert_eq!(cost, 2100, "cold SLOAD at Amsterdam must be 2100");
 }
 
 #[test]
 fn test_cold_sload_osaka_control_is_2100() {
-    // Byte-identical pre-Amsterdam: cold SLOAD remains 2100.
+    // Same value pre-Amsterdam, from the unrepriced constant.
     let cost = gas_cost::sload(true, Fork::Osaka).expect("sload");
     assert_eq!(cost, 2100, "cold SLOAD at Osaka must stay 2100");
 }
@@ -110,10 +110,11 @@ fn test_warm_account_access_unchanged_across_forks() {
 #[test]
 fn test_access_list_selectors() {
     // The fork selectors expose the repriced per-entry constants directly.
-    assert_eq!(gas_cost::access_list_address_cost(Fork::Amsterdam), 3000);
+    // Each is the cold access minus WARM_ACCESS, so prepaying is gas neutral.
+    assert_eq!(gas_cost::access_list_address_cost(Fork::Amsterdam), 2900);
     assert_eq!(
         gas_cost::access_list_storage_key_cost(Fork::Amsterdam),
-        3000
+        2000
     );
     // Osaka controls: legacy literals.
     assert_eq!(gas_cost::access_list_address_cost(Fork::Osaka), 2400);
@@ -161,8 +162,8 @@ fn test_access_list_intrinsic_per_address_amsterdam() {
     let eip7981_addr_data = 20 * 4 * 16; // bytes * STANDARD_TOKEN_COST * floor(16)
     assert_eq!(
         with_addr - base - eip7981_addr_data,
-        3000,
-        "per-address access-list constant at Amsterdam must be 3000"
+        2900,
+        "per-address access-list constant at Amsterdam must be 2900"
     );
 }
 
@@ -192,8 +193,8 @@ fn test_access_list_intrinsic_per_key_amsterdam() {
     let eip7981_key_data = 32 * 4 * 16;
     assert_eq!(
         one_key - zero_keys - eip7981_key_data,
-        3000,
-        "per-key access-list constant at Amsterdam must be 3000"
+        2000,
+        "per-key access-list constant at Amsterdam must be 2000"
     );
 }
 
@@ -278,6 +279,8 @@ fn sstore_env(fork: Fork) -> Environment {
         is_privileged: false,
         fee_token: None,
         disable_balance_check: true,
+        disable_nonce_check: false,
+        disable_gas_allowance_check: false,
         is_system_call: false,
     }
 }
@@ -406,6 +409,7 @@ fn run_sstore(fork: Fork, body: Vec<u8>, body_pushes: u64, slot_original: U256) 
             LevmCallTracer::disabled(),
             VMType::L1,
             &NativeCrypto,
+            None,
         )
         .expect("VM::new (probe)");
         let report = vm.execute().expect("probe execute");
@@ -426,6 +430,7 @@ fn run_sstore(fork: Fork, body: Vec<u8>, body_pushes: u64, slot_original: U256) 
         LevmCallTracer::disabled(),
         VMType::L1,
         &NativeCrypto,
+        None,
     )
     .expect("VM::new");
     let report = vm.execute().expect("execute");
@@ -436,8 +441,8 @@ fn run_sstore(fork: Fork, body: Vec<u8>, body_pushes: u64, slot_original: U256) 
 
     // The burn prefix must dominate so the refund cap never binds.
     assert!(
-        report.gas_used / 5 >= 12480,
-        "burn prefix too small: gas_used={} cannot uncap a 12480 refund",
+        report.gas_used / 5 >= 11616,
+        "burn prefix too small: gas_used={} cannot uncap a 11616 refund",
         report.gas_used
     );
 
@@ -455,13 +460,13 @@ fn sstore_seq(value: u8) -> Vec<u8> {
     vec![0x60, value, 0x60, SLOT_KEY, 0x55]
 }
 
-// ----- Table row: (0, 0, x) new slot, cold -> 3000 + 10000, no refund -----
+// ----- Table row: (0, 0, x) new slot, cold -> 2100 + 10000, no refund -----
 
 #[test]
 fn test_sstore_new_slot_cold_amsterdam() {
-    // O=0, C=0, N=5, slot cold: COLD_STORAGE_ACCESS(3000) + STORAGE_WRITE(10000).
+    // O=0, C=0, N=5, slot cold: COLD_STORAGE_ACCESS(2100) + STORAGE_WRITE(10000).
     let (regular, refund) = run_sstore(Fork::Amsterdam, sstore_seq(5), 2, U256::zero());
-    assert_eq!(regular, 3000 + 10000, "cold new-slot regular at Amsterdam");
+    assert_eq!(regular, 2100 + 10000, "cold new-slot regular at Amsterdam");
     assert_eq!(refund, 0, "no refund for a plain new-slot write");
 }
 
@@ -473,25 +478,23 @@ fn test_sstore_new_slot_cold_osaka_control() {
     assert_eq!(refund, 0, "no refund for a plain new-slot write");
 }
 
-// ----- Table row: (0, 0, x) new slot, warm -> 10000, no refund -----
+// ----- Table row: (0, 0, x) new slot, warm -> 100 + 10000, no refund -----
 //
-// EELS (amsterdam storage.py::sstore) charges a warm first change
-// `COLD_STORAGE_WRITE - COLD_STORAGE_ACCESS = 13000 - 3000 = 10000`, NOT
-// `WARM_ACCESS + STORAGE_WRITE`. The first-change surcharge already stands in
-// for the warm baseline, so a warm new-slot write is 10000 (not 10100).
+// The access component is always charged, so a warm first change pays
+// `WARM_ACCESS + STORAGE_WRITE` (EIP-8038 SSTORE table, warm new-slot row).
 
 #[test]
 fn test_sstore_new_slot_warm_amsterdam() {
     // Warm the slot first via SLOAD (PUSH1 key; SLOAD; POP), then SSTORE 0->5.
-    // PUSH1 key(3) + SLOAD(cold 3000) + POP(2) + PUSH1 v + PUSH1 key + SSTORE(warm).
+    // PUSH1 key(3) + SLOAD(cold 2100) + POP(2) + PUSH1 v + PUSH1 key + SSTORE(warm).
     // The SSTORE itself sees a warm slot: warm access (100) + STORAGE_WRITE (10000)
-    // = 10100. EELS always charges the access component; here it is the warm cost.
+    // = 10100.
     let mut code = vec![0x60, SLOT_KEY, 0x54, 0x50]; // PUSH1 key; SLOAD; POP
     code.extend_from_slice(&sstore_seq(5));
-    // 3 PUSH1 total; SLOAD cold (3000) and POP (2) are not PUSHes, so subtract
+    // 3 PUSH1 total; SLOAD cold (2100) and POP (2) are not PUSHes, so subtract
     // them from the SSTORE-attributable figure explicitly here.
     let (regular_incl_sload, refund) = run_sstore(Fork::Amsterdam, code, 3, U256::zero());
-    let sstore_regular = regular_incl_sload - 3000 /* cold SLOAD */ - 2 /* POP */;
+    let sstore_regular = regular_incl_sload - 2100 /* cold SLOAD */ - 2 /* POP */;
     assert_eq!(
         sstore_regular,
         100 + 10000,
@@ -504,8 +507,8 @@ fn test_sstore_new_slot_warm_amsterdam() {
 
 #[test]
 fn test_sstore_set_then_clear_in_tx_amsterdam() {
-    // O=0; write 0->5 (cold first change: 3000+10000); write 5->0 (warm: 100).
-    // Net regular charged = 3000 + 10000 + 100 = 13100.
+    // O=0; write 0->5 (cold first change: 2100+10000); write 5->0 (warm: 100).
+    // Net regular charged = 2100 + 10000 + 100 = 12200.
     // Net refund = STORAGE_WRITE = 10000 (restore-to-original refunds the full
     // STORAGE_WRITE per EELS; the state-gas STORAGE_SET is credited separately).
     let mut code = sstore_seq(5);
@@ -513,7 +516,7 @@ fn test_sstore_set_then_clear_in_tx_amsterdam() {
     let (regular, refund) = run_sstore(Fork::Amsterdam, code, 4, U256::zero());
     assert_eq!(
         regular,
-        3000 + 10000 + 100,
+        2100 + 10000 + 100,
         "set-then-clear regular at Amsterdam"
     );
     assert_eq!(
@@ -540,17 +543,17 @@ fn test_sstore_set_then_clear_in_tx_osaka_control() {
     );
 }
 
-// ----- Table row: (x, x, 0) clear a slot non-zero at tx start, refund 12480 ---
+// ----- Table row: (x, x, 0) clear a slot non-zero at tx start, refund 11616 ---
 
 #[test]
 fn test_sstore_clear_original_nonzero_amsterdam() {
-    // O=7, C=7, N=0, cold first change: COLD(3000) + STORAGE_WRITE(10000).
-    // Refund = STORAGE_CLEAR_REFUND(12480).
+    // O=7, C=7, N=0, cold first change: COLD(2100) + STORAGE_WRITE(10000).
+    // Refund = STORAGE_CLEAR_REFUND(11616).
     let (regular, refund) = run_sstore(Fork::Amsterdam, sstore_seq(0), 2, U256::from(7u64));
-    assert_eq!(regular, 3000 + 10000, "clear-original regular at Amsterdam");
+    assert_eq!(regular, 2100 + 10000, "clear-original regular at Amsterdam");
     assert_eq!(
-        refund, 12480,
-        "clear of tx-start-nonzero slot must refund 12480"
+        refund, 11616,
+        "clear of tx-start-nonzero slot must refund 11616"
     );
 }
 
@@ -569,8 +572,8 @@ fn test_sstore_clear_original_nonzero_osaka_control() {
 
 #[test]
 fn test_sstore_reset_to_original_amsterdam() {
-    // O=7; write 7->9 (cold first change: 3000+10000); write 9->7 (warm: 100).
-    // Net regular = 3000 + 10000 + 100 = 13100.
+    // O=7; write 7->9 (cold first change: 2100+10000); write 9->7 (warm: 100).
+    // Net regular = 2100 + 10000 + 100 = 12200.
     // Net refund = STORAGE_WRITE = 10000. Per EELS Amsterdam storage.py, restoring a
     // slot to its original value refunds the full STORAGE_WRITE charged on the
     // first-time change; the access component (cold/warm) is charged separately.
@@ -579,7 +582,7 @@ fn test_sstore_reset_to_original_amsterdam() {
     let (regular, refund) = run_sstore(Fork::Amsterdam, code, 4, U256::from(7u64));
     assert_eq!(
         regular,
-        3000 + 10000 + 100,
+        2100 + 10000 + 100,
         "reset-to-original regular at Amsterdam"
     );
     assert_eq!(
@@ -610,14 +613,14 @@ fn test_sstore_reset_to_original_osaka_control() {
 
 #[test]
 fn test_sstore_dirty_write_again_amsterdam() {
-    // O=7; write 7->9 (cold first change: 3000+10000); write 9->4 (warm: 100, no surcharge).
+    // O=7; write 7->9 (cold first change: 2100+10000); write 9->4 (warm: 100, no surcharge).
     // The second write is "written again" (C != O) so only the warm access is charged.
     let mut code = sstore_seq(9);
     code.extend_from_slice(&sstore_seq(4));
     let (regular, refund) = run_sstore(Fork::Amsterdam, code, 4, U256::from(7u64));
     assert_eq!(
         regular,
-        3000 + 10000 + 100,
+        2100 + 10000 + 100,
         "dirty-write-again regular at Amsterdam"
     );
     assert_eq!(refund, 0, "dirty write to a new value yields no refund");
@@ -641,14 +644,14 @@ fn test_sstore_dirty_write_again_osaka_control() {
 
 #[test]
 fn test_sstore_clear_then_restore_amsterdam() {
-    // O=7; write 7->0 (cold first change clear: 3000 + 10000, +12480 clear refund);
-    // write 0->7 (warm: 100, -12480 reverse clear, +10000 restore). Net refund = 10000.
+    // O=7; write 7->0 (cold first change clear: 2100 + 10000, +11616 clear refund);
+    // write 0->7 (warm: 100, -11616 reverse clear, +10000 restore). Net refund = 10000.
     let mut code = sstore_seq(0);
     code.extend_from_slice(&sstore_seq(7));
     let (regular, refund) = run_sstore(Fork::Amsterdam, code, 4, U256::from(7u64));
     assert_eq!(
         regular,
-        3000 + 10000 + 100,
+        2100 + 10000 + 100,
         "clear-then-restore regular at Amsterdam"
     );
     assert_eq!(
@@ -675,17 +678,16 @@ fn test_sstore_clear_then_restore_osaka_control() {
     );
 }
 
-// ----- Cold-access-boundary regression (Task 1.4, review CRITICAL #2) ------
+// ----- Stipend-sentry boundary -------------------------------------------
 //
-// EIP-8038 raises COLD_STORAGE_ACCESS to 3000, above the 2300 EIP-2200
-// stipend, so the flat pre-Amsterdam stipend gate is no longer a sufficient
-// sentry on its own at Amsterdam+. A cold slot with `2301 <= gas_remaining <
-// 3000` must OOG on the access-cost gate itself, before the slot is ever
-// marked accessed or recorded to the BAL (EIP-7928: "If pre-state validation
-// fails, the target is never accessed and must not appear in BAL").
+// EIP-8038 leaves COLD_STORAGE_ACCESS at 2100, below the 2300 EIP-2200
+// stipend, so the stipend remains the binding pre-state gate at Amsterdam. An
+// SSTORE that trips it must OOG before the slot is marked accessed or recorded
+// to the BAL (EIP-7928: "If pre-state validation fails, the target is never
+// accessed and must not appear in BAL").
 
 #[test]
-fn test_sstore_cold_access_boundary_amsterdam_no_bal_read_on_oog() {
+fn test_sstore_stipend_sentry_amsterdam_no_bal_read_on_oog() {
     let fork = Fork::Amsterdam;
 
     // Probe: STOP-only code measures the exact intrinsic gas for this tx shape
@@ -701,6 +703,7 @@ fn test_sstore_cold_access_boundary_amsterdam_no_bal_read_on_oog() {
             LevmCallTracer::disabled(),
             VMType::L1,
             &NativeCrypto,
+            None,
         )
         .expect("VM::new (intrinsic probe)");
         let report = vm.execute().expect("probe execute");
@@ -710,10 +713,9 @@ fn test_sstore_cold_access_boundary_amsterdam_no_bal_read_on_oog() {
     };
 
     // PUSH1 value (3) + PUSH1 SLOT_KEY (3) + SSTORE. Size `gas_limit` so exactly
-    // 2500 gas remains when the SSTORE gate runs: inside 2301..3000, i.e. above
-    // the flat 2300 stipend (which the pre-fix code gated on for every fork) but
-    // below the Amsterdam cold access cost (3000).
-    const REMAINING_AT_SSTORE_GATE: u64 = 2500;
+    // 2000 gas remains when the SSTORE gate runs: below both the 2300 stipend
+    // and the Amsterdam cold access cost (2100).
+    const REMAINING_AT_SSTORE_GATE: u64 = 2000;
     const PUSH_GAS: u64 = 6;
     let code = sstore_seq(5);
     let gas_limit = intrinsic_gas
@@ -747,6 +749,7 @@ fn test_sstore_cold_access_boundary_amsterdam_no_bal_read_on_oog() {
         LevmCallTracer::disabled(),
         VMType::L1,
         &NativeCrypto,
+        None,
     )
     .expect("VM::new");
     let report = vm.execute().expect("execute");
@@ -754,8 +757,8 @@ fn test_sstore_cold_access_boundary_amsterdam_no_bal_read_on_oog() {
     assert_eq!(
         report.result,
         TxResult::Revert(VMError::ExceptionalHalt(ExceptionalHalt::OutOfGas)),
-        "cold Amsterdam SSTORE with 2301..3000 gas remaining must OOG on the \
-         access-cost gate: {report:?}"
+        "cold Amsterdam SSTORE below the stipend must OOG on the pre-state \
+         gate: {report:?}"
     );
 
     let bal = db.take_bal().expect("BAL recording was enabled");
@@ -763,12 +766,12 @@ fn test_sstore_cold_access_boundary_amsterdam_no_bal_read_on_oog() {
         assert!(
             changes.storage_reads.is_empty(),
             "slot must not appear as a BAL read when the op OOGs on the \
-             access-cost gate: {changes:?}"
+             pre-state gate: {changes:?}"
         );
         assert!(
             changes.storage_changes.is_empty(),
             "slot must not appear as a BAL write when the op OOGs on the \
-             access-cost gate: {changes:?}"
+             pre-state gate: {changes:?}"
         );
     }
 }
@@ -776,37 +779,31 @@ fn test_sstore_cold_access_boundary_amsterdam_no_bal_read_on_oog() {
 // ===========================================================================
 // Phase 3: EIP-8038 behavioral opcode changes
 //
-//   1. CALL / CALLCODE positive-value upfront cost: 9000 -> 10300 at Amsterdam
+//   1. CALL / CALLCODE positive-value upfront cost: 9000 -> 11300 at Amsterdam
 //      (`CALL_VALUE_AMSTERDAM`). The 2300 stipend forwarded to the callee
 //      (`CALL_POSITIVE_VALUE_STIPEND`) is a SEPARATE code path and is UNCHANGED.
 //   2. EXTCODESIZE / EXTCODECOPY: charged an ADDITIONAL WARM_ACCESS (100) on top
 //      of their existing access cost at Amsterdam (two DB reads). EXTCODEHASH and
 //      BALANCE do NOT get this surcharge.
-//   3. SELFDESTRUCT: an additional ACCOUNT_WRITE (8000) of REGULAR gas when a
+//   3. SELFDESTRUCT: an additional ACCOUNT_WRITE (9000) of REGULAR gas when a
 //      positive balance is sent to an EIP-161-empty account at Amsterdam, in
 //      addition to the EIP-8037 state-gas new-account charge.
 //
-// EELS-STRUCTURE DISCREPANCY (flagged per task): the local execution-specs
-// checkout at /home/edgar/dev/execution-specs is on an OLD Amsterdam commit
-// (gas.py still has CALL_VALUE=9000, COLD_ACCOUNT_ACCESS=2600, no ACCOUNT_WRITE
-// constant). That EELS does NOT show the extra WARM_ACCESS on extcodesize/copy
-// nor the regular ACCOUNT_WRITE surcharge on selfdestruct; its selfdestruct only
-// adds StateGasCosts.NEW_ACCOUNT as state gas. Per task instructions the NUMERIC
-// VALUES come from EIP-8038 PR EIPs#11802 and are implemented as written
-// (10300 / +100 / +8000); the EELS checkout is used only to confirm code
-// STRUCTURE/placement (gas charged inside the per-opcode gas fns behind the
-// fork gate).
+// The numeric values are EIP-8038's own parameter table: CALL_VALUE is
+// ACCOUNT_WRITE + CALL_STIPEND = 11300, EXTCODESIZE / EXTCODECOPY pay one extra
+// WARM_ACCESS for their second database read, and SELFDESTRUCT pays
+// ACCOUNT_WRITE = 9000 in regular gas when it funds an EIP-161-empty account.
 // ===========================================================================
 
 // ----- 1. CALL / CALLCODE upfront positive-value cost ----------------------
 
 #[test]
-fn test_call_positive_value_selector_amsterdam_is_10300() {
-    // EIP-8038: upfront positive-value cost becomes CALL_VALUE_AMSTERDAM (10300).
+fn test_call_positive_value_selector_amsterdam_is_11300() {
+    // EIP-8038: upfront positive-value cost becomes CALL_VALUE_AMSTERDAM (11300).
     assert_eq!(
         gas_cost::call_positive_value_cost(Fork::Amsterdam),
-        10300,
-        "CALL/CALLCODE upfront positive-value cost at Amsterdam must be 10300"
+        11300,
+        "CALL/CALLCODE upfront positive-value cost at Amsterdam must be 11300"
     );
 }
 
@@ -861,16 +858,16 @@ fn callcode_upfront_value_component(fork: Fork) -> u64 {
 }
 
 #[test]
-fn test_call_upfront_value_amsterdam_is_10300() {
+fn test_call_upfront_value_amsterdam_is_11300() {
     assert_eq!(
         call_upfront_value_component(Fork::Amsterdam),
-        10300,
-        "CALL upfront value charge at Amsterdam must be 10300"
+        11300,
+        "CALL upfront value charge at Amsterdam must be 11300"
     );
     assert_eq!(
         callcode_upfront_value_component(Fork::Amsterdam),
-        10300,
-        "CALLCODE upfront value charge at Amsterdam must be 10300"
+        11300,
+        "CALLCODE upfront value charge at Amsterdam must be 11300"
     );
 }
 
@@ -978,6 +975,7 @@ fn run_call(
         LevmCallTracer::disabled(),
         VMType::L1,
         &NativeCrypto,
+        None,
     )
     .expect("VM::new");
     vm.execute().expect("execute")
@@ -1040,6 +1038,7 @@ fn test_call_with_value_forwards_stipend_full_vm() {
             LevmCallTracer::disabled(),
             VMType::L1,
             &NativeCrypto,
+            None,
         )
         .expect("VM::new");
         let report = vm.execute().expect("execute");
@@ -1207,11 +1206,11 @@ fn test_extcodesize_full_vm_warm_charges_extra_100() {
 #[test]
 fn test_selfdestruct_amsterdam_adds_account_write_regular() {
     // Positive balance to an EIP-161-empty account at Amsterdam: base(5000) +
-    // ACCOUNT_WRITE(8000) of REGULAR gas. (Beneficiary warm -> no cold access.)
+    // ACCOUNT_WRITE(9000) of REGULAR gas. (Beneficiary warm -> no cold access.)
     assert_eq!(
         gas_cost::selfdestruct(false, true, U256::one(), Fork::Amsterdam).expect("selfdestruct"),
-        5000 + 8000,
-        "SELFDESTRUCT to empty w/ value at Amsterdam = base(5000) + ACCOUNT_WRITE(8000)"
+        5000 + 9000,
+        "SELFDESTRUCT to empty w/ value at Amsterdam = base(5000) + ACCOUNT_WRITE(9000)"
     );
     // Zero balance: no surcharge even if target empty.
     assert_eq!(
@@ -1247,7 +1246,7 @@ fn test_selfdestruct_osaka_control_no_account_write() {
 fn test_selfdestruct_full_vm_positive_balance_to_empty() {
     // A contract with a positive balance SELFDESTRUCTs to a cold, EIP-161-empty
     // beneficiary. At Amsterdam this charges base(5000) + cold access(3000, EIP-8038
-    // repriced via `cold_account_access_cost`) + ACCOUNT_WRITE(8000) of REGULAR gas,
+    // repriced via `cold_account_access_cost`) + ACCOUNT_WRITE(9000) of REGULAR gas,
     // AND a separate state-gas new-account charge (> 0). At Osaka it charges
     // base(5000) + cold access(2600) + 25000 of regular gas, with NO state gas.
     //
@@ -1266,7 +1265,7 @@ fn test_selfdestruct_full_vm_positive_balance_to_empty() {
     code.extend_from_slice(EMPTY_BENEFICIARY.as_bytes());
     code.push(0xff); // SELFDESTRUCT
 
-    // Amsterdam: regular = 5000 + 3000 (cold, EIP-8038) + 8000 = 16000; state gas > 0.
+    // Amsterdam: regular = 5000 + 3000 (cold, EIP-8038) + 9000 = 17000; state gas > 0.
     let report_a = run_call(Fork::Amsterdam, code.clone(), None);
     assert!(report_a.is_success(), "amsterdam: {report_a:?}");
     let regular_a = pre_refund_regular(Fork::Amsterdam, &report_a);
@@ -1284,7 +1283,7 @@ fn test_selfdestruct_full_vm_positive_balance_to_empty() {
     let selfdestruct_regular_a = regular_a - probe_a;
     assert_eq!(
         selfdestruct_regular_a,
-        5000 + 3000 + 8000,
+        5000 + 3000 + 9000,
         "amsterdam SELFDESTRUCT regular = base + cold(3000) + ACCOUNT_WRITE"
     );
     assert!(

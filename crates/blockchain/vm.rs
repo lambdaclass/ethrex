@@ -130,6 +130,10 @@ impl StoreVmDatabase {
 }
 
 impl VmDatabase for StoreVmDatabase {
+    fn code_cache_budget_bytes(&self) -> u64 {
+        self.store.code_cache_budget_bytes()
+    }
+
     #[instrument(
         level = "trace",
         name = "Account read",
@@ -230,6 +234,59 @@ impl VmDatabase for StoreVmDatabase {
 
     #[instrument(
         level = "trace",
+        name = "Storage read batch",
+        skip_all,
+        fields(namespace = "block_execution", n = keys.len())
+    )]
+    fn get_storage_slots_batch(
+        &self,
+        keys: &[(Address, H256)],
+    ) -> Result<Vec<Option<U256>>, EvmError> {
+        if keys.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Resolve the account state (hashed address + storage root) for each
+        // distinct address. This mirrors the per-slot `get_storage_slot` path,
+        // which opens the storage trie from the cached account entry. Slots for
+        // a non-existent account resolve to `None`, exactly as the single-get
+        // path returns `None` when the account entry is missing.
+        let mut entries: FxHashMap<Address, Option<AccountStateCacheEntry>> = FxHashMap::default();
+        for &(addr, _) in keys {
+            if let std::collections::hash_map::Entry::Vacant(slot) = entries.entry(addr) {
+                slot.insert(self.get_cached_account_state_entry(addr)?);
+            }
+        }
+
+        // Build the store-batch input for slots whose account exists, remembering
+        // the original index so results can be scattered back in input order.
+        let mut results: Vec<Option<U256>> = vec![None; keys.len()];
+        let mut batch_idx: Vec<usize> = Vec::with_capacity(keys.len());
+        let mut batch: Vec<(H256, H256, H256)> = Vec::with_capacity(keys.len());
+        for (i, &(addr, key)) in keys.iter().enumerate() {
+            if let Some(Some(entry)) = entries.get(&addr) {
+                batch_idx.push(i);
+                batch.push((entry.hashed_address, entry.state.storage_root, key));
+            }
+        }
+
+        if batch.is_empty() {
+            return Ok(results);
+        }
+
+        let fetched = self
+            .store
+            .get_storage_values_batch_by_root(self.state_root, &batch)
+            .map_err(|e| EvmError::DB(e.to_string()))?;
+        for (i, value) in batch_idx.into_iter().zip(fetched.into_iter()) {
+            results[i] = value;
+        }
+
+        Ok(results)
+    }
+
+    #[instrument(
+        level = "trace",
         name = "Block hash read",
         skip_all,
         fields(namespace = "block_execution")
@@ -306,6 +363,44 @@ impl VmDatabase for StoreVmDatabase {
             ))),
             Err(e) => Err(EvmError::DB(e.to_string())),
         }
+    }
+
+    #[instrument(
+        level = "trace",
+        name = "Account codes batch read",
+        skip_all,
+        fields(namespace = "block_execution")
+    )]
+    fn get_account_codes_batch(&self, code_hashes: &[H256]) -> Result<Vec<Option<Code>>, EvmError> {
+        // The empty hash is answered here rather than sent to the store, matching
+        // `get_account_code`, so a batch containing EOAs does not fault on it.
+        let to_read: Vec<H256> = code_hashes
+            .iter()
+            .copied()
+            .filter(|h| *h != *EMPTY_KECCAK_HASH)
+            .collect();
+        let read = self
+            .store
+            .get_account_codes_batch(&to_read)
+            .map_err(|e| EvmError::DB(e.to_string()))?;
+
+        let mut by_hash: FxHashMap<H256, Code> = FxHashMap::default();
+        for (hash, code) in to_read.iter().zip(read.into_iter()) {
+            if let Some(code) = code {
+                by_hash.insert(*hash, code);
+            }
+        }
+
+        Ok(code_hashes
+            .iter()
+            .map(|h| {
+                if *h == *EMPTY_KECCAK_HASH {
+                    Some(Code::default())
+                } else {
+                    by_hash.get(h).cloned()
+                }
+            })
+            .collect())
     }
 
     #[instrument(

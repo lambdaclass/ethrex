@@ -1,7 +1,8 @@
 //! Maps EEST canonical exception names (e.g. `TransactionException.NONCE_MISMATCH_TOO_LOW`)
 //! to ethrex's actual error wording.
 //!
-//! Ported from `execution-specs/packages/testing/src/execution_testing/client_clis/clis/ethrex.py`.
+//! Ported from `execution-specs/packages/testing/src/execution_testing/client_clis/clis/ethrex.py`,
+//! verified against `tests-glamsterdam-devnet@v8.0.0`.
 //! When the Python mapper is updated (new exceptions or reworded ethrex messages), this file
 //! must be updated in lock-step. The tests-vs-mapper drift is the main source of
 //! `validation_error` mismatch noise; keep this honest.
