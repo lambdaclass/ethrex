@@ -413,8 +413,8 @@ Assumptions, each stated so it can be falsified:
 ## Out of Scope
 
 - **EIP-7906.** Deleted from this branch, not merely disabled: `TXTRACE`,
-  `EVENTDATACOPY`, `TXDIFF` and POST_TX frames all gate on `Fork::Hegota` with no
-  separate switch, so leaving the code in would make them live on the published
+  `EVENTDATACOPY`, `TXDIFF` and POST_TX frames all gated on `Fork::Hegota` with no
+  separate switch, so leaving the code in would have made them live on the published
   chain and split against any client that does not implement them.
 - **`NONCEKEYLOAD` (`0xB9`).** Same reason: an ethrex-only opcode registered at
   `Fork::Hegota` that no other client implements. EIP-8250 exposes `len(nonce_keys)`

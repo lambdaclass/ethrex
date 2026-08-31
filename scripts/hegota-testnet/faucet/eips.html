@@ -355,7 +355,7 @@
     <li class="core"><a href="#eip8141"><span class="n">8141</span> Frame Transactions</a></li>
     <li class="core depth-1"><a href="#eip8250"><span class="n">8250</span> Keyed Nonces</a></li>
     <li class="core depth-1"><a href="#eip8272"><span class="n">8272</span> Recent Roots</a></li>
-    <li class="core depth-1"><a href="#eip7906"><span class="n">7906</span> Tx Assertions</a></li>
+    <li class="core depth-1"><a href="#eip7906"><span class="n">7906</span> Tx Assertions (not on this chain)</a></li>
     <li class="core depth-1"><a href="#eip8312"><span class="n">8312</span> UTXO Frames</a></li>
   </ol>
 
@@ -415,7 +415,7 @@
 <figure>
 <svg viewBox="0 0 720 430" role="img" aria-labelledby="maptitle mapdesc">
   <title id="maptitle">Dependency map of the Hegotá EIP stack</title>
-  <desc id="mapdesc">EIP-8141 sits at the centre. EIP-8250, EIP-8272, EIP-7906 and EIP-8312 each extend it. EIP-7805 and EIP-8369 form a separate consensus axis that constrains it. EIP-7928, EIP-8037 and EIP-7843 sit underneath as existing machinery.</desc>
+  <desc id="mapdesc">EIP-8141 sits at the centre. EIP-8250, EIP-8272, EIP-7906 and EIP-8312 each extend it, though only 8250 and 8272 run on this chain. EIP-7805 and EIP-8369 form a separate consensus axis that constrains it. EIP-7928, EIP-8037 and EIP-7843 sit underneath as existing machinery.</desc>
 
   <g font-family="ui-sans-serif, system-ui, sans-serif">
 
@@ -479,7 +479,7 @@
 
 <ul>
   <li><strong>The base.</strong> EIP-8141 defines the new transaction type. Nothing else in the stack means anything without it.</li>
-  <li><strong>The extensions.</strong> 8250, 8272 and 7906 each add a field or a frame kind to that base. 8312 does too, but on its own schedule.</li>
+  <li><strong>The extensions.</strong> 8250 and 8272 each add a field to that base, and are live here. 8312 adds a frame kind on its own schedule, and 7906 would have added another &mdash; neither runs on this chain.</li>
   <li><strong>The other axis.</strong> 7805 and 8369 are about censorship, not authentication. They say what a builder must include and what happens when it does not.</li>
   <li><strong>The ground.</strong> 7928, 8037 and 7843 already shipped in the previous fork. The stack borrows their machinery rather than reinventing it.</li>
 </ul>
@@ -512,8 +512,9 @@ each frame = [mode, flags, target, gas_limit, value, data]</code></pre>
     <tr><td><code>0</code></td><td>DEFAULT</td><td>Ordinary execution. Also used for a &ldquo;deploy&rdquo; frame that installs code at the sender.</td></tr>
     <tr><td><code>1</code></td><td>VERIFY</td><td>Authentication. Runs before anything else and must call <code>APPROVE</code>.</td></tr>
     <tr><td><code>2</code></td><td>SENDER</td><td>The actual work, run as the sender.</td></tr>
-    <tr><td><code>3</code></td><td>POST_TX</td><td>Added by EIP-7906. Checks the result afterwards.</td></tr>
-    <tr><td><code>5</code></td><td>UTXO</td><td>Added by EIP-8312 on this branch. Spends a payment object.</td></tr>
+    <tr><td><code>3</code></td><td>&mdash;</td><td><strong>Unassigned on this chain.</strong> EIP-7906 would have put its <code>POST_TX</code> result check here; that EIP is not in the build, and a frame declaring mode <code>3</code> is rejected.</td></tr>
+    <tr><td><code>4</code></td><td>&mdash;</td><td>Reserved for EIP-8288&rsquo;s <code>DEP_VERIFY</code>, which is deferred. Also rejected.</td></tr>
+    <tr><td><code>5</code></td><td>UTXO</td><td>EIP-8312. Spends a payment object. Present in the build but never activates here, because <code>utxoFramesTime</code> is unset.</td></tr>
   </tbody>
 </table>
 </div>

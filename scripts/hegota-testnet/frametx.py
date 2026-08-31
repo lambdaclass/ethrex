@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Current-format EIP-8141/8250/8272/7906 frame-transaction (type 0x06) encoder.
+"""Current-format EIP-8141/8250/8272 frame-transaction (type 0x06) encoder.
 
 Wire layout (ethrex hegota-devnet), verified against the repo golden vector:
   raw = 0x06 || rlp([chain_id, nonce_keys, nonce_seq, sender, frames, signatures,
