@@ -203,7 +203,14 @@ and the `pk910/gated-deposit-contract-cli` container; the rest need only `curl` 
 
 Checks 7, 9, 10, 11 and 14 are automated end to end by
 `scripts/hegota-testnet/verify_v2_devnet.py`, which needs only foundry's `cast` and is
-re-runnable against the same chain. Twenty-six checks, including the three that are easy to
+re-runnable against the same chain — one run at a time, since concurrent runs share the
+sender and would race each other for its nonce. Its sender key comes from
+`HEGOTA_SENDER_KEY` in the environment rather than from argv, because an argument is
+world-readable through `/proc/<pid>/cmdline` while the script runs:
+
+    set -a; . ~/hegota-keys.env; set +a
+    HEGOTA_SENDER_KEY=$FAUCET_KEY verify_v2_devnet.py <rpc> <authrpc> <jwt>
+ Twenty-six checks, including the three that are easy to
 believe without testing and wrong to:
 
 - **EIP-8250 concurrency** with a **contract** sender — two keys admitted at once and mined

@@ -18,12 +18,21 @@ verification script is not a trade worth making.
 
 Re-runnable against the same devnet: every address it funds and every nonce key it uses
 are derived from the sender's current sequence, so a second run does not collide with the
-state the first one left. That matters for the state-gas checks in particular — a frame
+state the first one left. Sequentially, though — two runs at once share the sender and race
+for its nonce, which surfaces as transactions admitted and never mined. That matters for the state-gas checks in particular — a frame
 funding an address that already exists creates nothing and is charged nothing, so a fixed
 recipient would make the strongest check pass once and then fail forever.
 
+The sender key comes from the environment, NOT from the command line: an argument is
+visible to every user on the box through `ps` and `/proc/<pid>/cmdline` for as long as the
+script runs, and it survives in shell history. Export it instead, ideally from a file that
+is already the key's home:
+
+  set -a; . ~/hegota-keys.env; set +a
+  HEGOTA_SENDER_KEY=$FAUCET_KEY verify_v2_devnet.py <rpc> <authrpc> <jwt>
+
 Usage:
-  verify_v2_devnet.py <rpc_url> <authrpc_url> <jwt_path> <sender_key_hex>
+  HEGOTA_SENDER_KEY=<hex> verify_v2_devnet.py <rpc_url> <authrpc_url> <jwt_path>
 """
 import base64
 import hashlib
@@ -42,7 +51,13 @@ RECENT_ROOT_CODE_LEN = 144
 # funding an address that does not exist yet, drawn from that frame's own `limits.state`.
 NEW_ACCOUNT_STATE_GAS = 120 * 1530
 
-RPC, AUTH, JWT, KEY = sys.argv[1:5]
+RPC, AUTH, JWT = sys.argv[1:4]
+KEY = os.environ.get("HEGOTA_SENDER_KEY")
+if not KEY:
+    sys.exit(
+        "set HEGOTA_SENDER_KEY in the environment (it is deliberately not a command-line\n"
+        "argument: argv is world-readable through /proc for the life of the process)"
+    )
 
 
 def derived_address(tag: str, seq: int) -> str:
