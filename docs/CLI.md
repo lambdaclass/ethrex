@@ -27,7 +27,7 @@ Options:
 
 Node options:
       --network <GENESIS_FILE_PATH>
-          Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include sepolia, hoodi and mainnet. If not specified, defaults to mainnet.
+          Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include sepolia, hoodi, plataberget and mainnet. If not specified, defaults to mainnet.
           
           [env: ETHREX_NETWORK=]
 
@@ -358,7 +358,7 @@ Options:
 
 Node options:
       --network <GENESIS_FILE_PATH>
-          Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include sepolia, hoodi and mainnet. If not specified, defaults to mainnet.
+          Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include sepolia, hoodi, plataberget and mainnet. If not specified, defaults to mainnet.
 
           [env: ETHREX_NETWORK=]
 
