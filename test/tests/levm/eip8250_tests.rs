@@ -434,24 +434,24 @@ fn a_contract_sender_can_approve_on_a_first_use_keyed_nonce() {
     let recipient = Address::from_low_u64_be(0xF00D);
     let mut tx = frame_tx_with_keys(
         vec![
-        Frame {
-            mode: u8::from(FrameMode::Verify),
-            flags: 0x03,
-            target: Some(contract),
-            gas_limit: 80_000,
-            state_limit: 0,
-            value: U256::zero(),
-            data: Bytes::new(),
-        },
-        Frame {
-            mode: u8::from(FrameMode::Sender),
-            flags: 0,
-            target: Some(recipient),
-            gas_limit: 30_000,
-            state_limit: NEW_ACCOUNT_STATE_GAS,
-            value: U256::from(100u64),
-            data: Bytes::new(),
-        },
+            Frame {
+                mode: u8::from(FrameMode::Verify),
+                flags: 0x03,
+                target: Some(contract),
+                gas_limit: 80_000,
+                state_limit: 0,
+                value: U256::zero(),
+                data: Bytes::new(),
+            },
+            Frame {
+                mode: u8::from(FrameMode::Sender),
+                flags: 0,
+                target: Some(recipient),
+                gas_limit: 30_000,
+                state_limit: NEW_ACCOUNT_STATE_GAS,
+                value: U256::from(100u64),
+                data: Bytes::new(),
+            },
         ],
         vec![U256::from(0x9999_0000u64)],
     );

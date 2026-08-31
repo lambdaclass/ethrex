@@ -1931,7 +1931,9 @@ impl<'a> VM<'a> {
         // Validate static constraints (frame count, reserved modes, atomic batch flags)
         if let Err(_e) = frame_tx.validate_static_constraints(self.env.config.utxo_frames_active) {
             return Err(VMError::TxValidation(
-                crate::errors::TxValidationError::InvalidFrameTransaction("static constraints".into()),
+                crate::errors::TxValidationError::InvalidFrameTransaction(
+                    "static constraints".into(),
+                ),
             ));
         }
 
@@ -2087,7 +2089,9 @@ impl<'a> VM<'a> {
             self.crypto,
         ) {
             return Err(VMError::TxValidation(
-                crate::errors::TxValidationError::InvalidFrameTransaction("signature does not recover to the sender".into()),
+                crate::errors::TxValidationError::InvalidFrameTransaction(
+                    "signature does not recover to the sender".into(),
+                ),
             ));
         }
 
@@ -3262,7 +3266,9 @@ impl<'a> VM<'a> {
             .is_err()
         {
             return Err(VMError::TxValidation(
-                crate::errors::TxValidationError::InvalidFrameTransaction("static constraints".into()),
+                crate::errors::TxValidationError::InvalidFrameTransaction(
+                    "static constraints".into(),
+                ),
             ));
         }
 
@@ -3319,7 +3325,9 @@ impl<'a> VM<'a> {
             self.crypto,
         ) {
             return Err(VMError::TxValidation(
-                crate::errors::TxValidationError::InvalidFrameTransaction("signature does not recover to the sender".into()),
+                crate::errors::TxValidationError::InvalidFrameTransaction(
+                    "signature does not recover to the sender".into(),
+                ),
             ));
         }
 
