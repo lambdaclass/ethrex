@@ -282,9 +282,7 @@ impl BranchNode {
     pub fn compute_hash_no_alloc(&self, buf: &mut Vec<u8>, crypto: &dyn Crypto) -> NodeHash {
         buf.clear();
         self.encode_into_vec(buf);
-        let hash = NodeHash::from_encoded(buf, crypto);
-        buf.clear();
-        hash
+        NodeHash::from_encoded(buf, crypto)
     }
 
     /// Traverses own subtrie until reaching the node containing `path`
