@@ -168,23 +168,16 @@ See [L2 integration tests with a SP1 GPU prover](l2/sp1-gpu-integration-test.md)
 
 See [Multiprover test](l2/multiprover-test.md) for the full procedure.
 
-The single-prover checks above each exercise one prover against an
-`OnChainProposer` that requires only that one. This is the only check where a
-batch must satisfy **two** provers before `lastVerifiedBatch` moves, which is
-the configuration a production rollup runs.
+The single-prover checks above each exercise one prover against an `OnChainProposer` that requires only that one. This is the only check where a batch must satisfy **two** provers before `lastVerifiedBatch` moves, which is the configuration a production rollup runs.
 
-Confirm on-chain that the deployment really requires both, rather than trusting
-the deploy flags — a batch verifying under a single-prover deployment would
-prove nothing:
+Confirm on-chain that the deployment really requires both, rather than trusting the deploy flags — a batch verifying under a single-prover deployment would prove nothing:
 
 ```bash
 rex call "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" 'REQUIRE_SP1_PROOF()' "$L1_RPC"   # 0x..01
 rex call "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" 'REQUIRE_TDX_PROOF()' "$L1_RPC"   # 0x..01
 ```
 
-The check passes when `lastVerifiedBatch` advances past zero with both flags
-set. Note the TDX side runs in dev mode against a plain QEMU guest, as it does
-in CI, so it does not exercise TDX hardware or on-chain DCAP verification.
+The check passes when `lastVerifiedBatch` advances past zero with both flags set. Note the TDX side runs in dev mode against a plain QEMU guest, as it does in CI, so it does not exercise TDX hardware or on-chain DCAP verification.
 
 ### Publish
 

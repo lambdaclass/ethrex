@@ -1,18 +1,12 @@
 # Multiprover test (SP1 GPU + TDX)
 
-A per-release acceptance test for the configuration a real rollup runs: an
-`OnChainProposer` that requires **both** an SP1 proof and a TDX proof before it
-will verify a batch.
+A per-release acceptance test for the configuration a real rollup runs: an `OnChainProposer` that requires **both** an SP1 proof and a TDX proof before it will verify a batch.
 
-The other L2 checks each exercise one prover. This one is the only place where
-a batch has to satisfy two independent provers, running on two machines, before
-`lastVerifiedBatch` moves.
+The other L2 checks each exercise one prover. This one is the only place where a batch has to satisfy two independent provers, running on two machines, before `lastVerifiedBatch` moves.
 
 ## Attestation runs in dev mode, and the TDX guest is a plain VM
 
-Deploy with `ETHREX_TDX_DEV_MODE=true`, and boot the prover VM as an **ordinary
-QEMU guest** — no `confidential-guest-support=tdx`, no `tdx-guest` object. This
-is CI's configuration, and the two settings go together.
+Deploy with `ETHREX_TDX_DEV_MODE=true`, and boot the prover VM as an **ordinary QEMU guest** — no `confidential-guest-support=tdx`, no `tdx-guest` object. This is CI's configuration, and the two settings go together.
 
 In dev mode `TDXVerifier.register()` sets
 
@@ -20,73 +14,33 @@ In dev mode `TDXVerifier.register()` sets
 authorizedSignature = _getAddress(quote, 0);   // first 20 bytes of the quote
 ```
 
-and returns, skipping `verifyAndAttestOnChain`. A plain guest emits a dev quote
-whose leading bytes *are* the prover's address, so that assignment is correct.
-Boot the same image as a real TDX guest and `quote-gen` produces a genuine
-quote beginning `0400 0200 81…` — a quote header, not an address — so the
-contract registers nonsense as the authorized signer, and every `verifyBatch`
-reverts with `InvalidTdxProof()` (`0x62013a95`) while registration itself
-appears to succeed.
+and returns, skipping `verifyAndAttestOnChain`. A plain guest emits a dev quote whose leading bytes *are* the prover's address, so that assignment is correct. Boot the same image as a real TDX guest and `quote-gen` produces a genuine quote beginning `0400 0200 81…` — a quote header, not an address — so the contract registers nonsense as the authorized signer, and every `verifyBatch` reverts with `InvalidTdxProof()` (`0x62013a95`) while registration itself appears to succeed.
 
-Running the real TDX path instead would need `ETHREX_TDX_DEV_MODE=false`, which
-requires the quote's collateral (PCK certs, TCB info) in the PCCS contracts.
-The sequencer loads it by shelling out to `automata-dcap-qpl-tool`, which
-resolves addresses from a registry keyed by chain id and knows only public
-networks: on the dev L1 (chain id 9) it exits `Unsupported chain_id: 9`. That
-failure is silent, because `prepare_quote_prerequisites` discards the tool's
-exit status, so the first symptom is a later revert.
+Running the real TDX path instead would need `ETHREX_TDX_DEV_MODE=false`, which requires the quote's collateral (PCK certs, TCB info) in the PCCS contracts. The sequencer loads it by shelling out to `automata-dcap-qpl-tool`, which resolves addresses from a registry keyed by chain id and knows only public networks: on the dev L1 (chain id 9) it exits `Unsupported chain_id: 9`. That failure is silent, because `prepare_quote_prerequisites` discards the tool's exit status, so the first symptom is a later revert.
 
-**So this test covers the two-prover verification path with a real SP1 GPU
-proof, and does not exercise TDX hardware or on-chain DCAP verification** — the
-same coverage CI has. Because the guest is plain, the test needs no TDX-capable
-CPU; it needs a GPU. Extending it to real attestation is future work and needs
-a chain the DCAP registry recognises.
+**So this test covers the two-prover verification path with a real SP1 GPU proof, and does not exercise TDX hardware or on-chain DCAP verification** — the same coverage CI has. Because the guest is plain, the test needs no TDX-capable CPU; it needs a GPU. Extending it to real attestation is future work and needs a chain the DCAP registry recognises.
 
 ## Where to run it
 
-Everything except SP1 proving is host-agnostic. The simplest layout is to run
-the whole thing on the GPU host; the split below is what was used first and
-still works, with the proof coordinator reached over the tailnet.
+Everything except SP1 proving is host-agnostic. The simplest layout is to run the whole thing on the GPU host; the split below is what was used first and still works, with the proof coordinator reached over the tailnet.
 
 | Host | Runs |
 | --- | --- |
 | any Linux host with QEMU/KVM | L1, contract deploy, sequencer + proof coordinator, TDX prover VM |
 | `l2-gpu` | SP1 prover |
 
-If you do use a shared box, keep the footprint small and check ports 8545,
-1729 and 3900 are free first.
+If you do use a shared box, keep the footprint small and check ports 8545, 1729 and 3900 are free first.
 
 ## Environment pins
 
-Three things must be right or the deploy fails in ways that do not point at
-their cause:
+Four things must be right, and each fails in a way that does not point at its cause:
 
-- **solc must be exactly 0.8.31.** `TDXVerifier.sol` declares
-  `pragma solidity =0.8.31`, so 0.8.30 fails with "Source file requires
-  different compiler version". Install it locally rather than changing the
-  system compiler on a shared host.
-- **Deploy onto a fresh chain.** The deploy is not idempotent: CREATE2 puts the
-  dependency contracts at fixed addresses, so re-running against a chain that
-  already has them reverts in `deploy-p256` with no reason string. Wipe the L1
-  datadir between attempts.
-- **Set `--watcher.watch-interval 1000`.** At the 12000 ms default, on a `--dev`
-  L1 that mines instantly, the deposits the sequencer has processed drift out of
-  step with the bridge's pending queue, and every commit reverts with
-  `InvalidPrivilegedTransactionLogs()` (`0x9e6e5638`). CI sets 1000 ms for the
-  same reason.
-- **Attach both provers before the first batch is committed, and reset the L1
-  and L2 datadirs together.** The coordinator hands out work starting at
-  `1 + lastVerifiedBatch`, and prover inputs for old batches are eventually
-  pruned. A prover that joins after batches have accumulated — or a sequencer
-  restarted against an L1 that already has committed batches — asks forever for
-  a batch whose input no longer exists, reports `No blocks to prove`, and
-  nothing advances: verification needs both proofs, so `lastVerifiedBatch`
-  never moves and the request never changes. Wiping only one of the two
-  datadirs reproduces this reliably.
+- **solc must be exactly 0.8.31.** `TDXVerifier.sol` declares `pragma solidity =0.8.31`, so 0.8.30 fails with "Source file requires different compiler version". Install it locally rather than changing the system compiler on a shared host.
+- **Deploy onto a fresh chain.** The deploy is not idempotent: CREATE2 puts the dependency contracts at fixed addresses, so re-running against a chain that already has them reverts in `deploy-p256` with no reason string. Wipe the L1 datadir between attempts.
+- **Set `--watcher.watch-interval 1000`.** At the 12000 ms default, on a `--dev` L1 that mines instantly, the deposits the sequencer has processed drift out of step with the bridge's pending queue, and every commit reverts with `InvalidPrivilegedTransactionLogs()` (`0x9e6e5638`). CI sets 1000 ms for the same reason.
+- **Attach both provers before the first batch is committed, and reset the L1 and L2 datadirs together.** The coordinator hands out work starting at `1 + lastVerifiedBatch`, and prover inputs for old batches are eventually pruned. A prover that joins after batches have accumulated — or a sequencer restarted against an L1 that already has committed batches — asks forever for a batch whose input no longer exists, reports `No blocks to prove`, and nothing advances: verification needs both proofs, so `lastVerifiedBatch` never moves and the request never changes. Wiping only one of the two datadirs reproduces this reliably.
 
-The TDX prover image (`image.raw`) is built with nix from
-`crates/l2/tee/quote-gen`. If the host has no nix, build it on another host and
-copy it over — it is ~700 MB and depends only on the release, not the host.
+The TDX prover image (`image.raw`) is built with nix from `crates/l2/tee/quote-gen`. If the host has no nix, build it on another host and copy it over — it is ~700 MB and depends only on the release, not the host.
 
 ## Procedure
 
@@ -96,7 +50,7 @@ Set the release under test once:
 export TAG=vX.Y.Z-rc.W
 ```
 
-### 1. Prepare the TDX host
+### 1. Prepare the host
 
 ```bash
 # release binaries and contracts (the vk the deployer registers)
@@ -115,10 +69,7 @@ curl -fsSL -o bin/solc https://github.com/ethereum/solidity/releases/download/v0
 chmod +x bin/solc && export PATH=$PWD/bin:$PATH
 ```
 
-The TDX deploy also needs `automata-dcap-qpl-tool` built from
-`crates/l2/tee/contracts`. If the host has no Rust toolchain, build it elsewhere
-and copy the binary into
-`src/crates/l2/tee/contracts/automata-dcap-qpl/automata-dcap-qpl-tool/target/release/`.
+The TDX deploy also needs `automata-dcap-qpl-tool` built from `crates/l2/tee/contracts`. If the host has no Rust toolchain, build it elsewhere and copy the binary into `src/crates/l2/tee/contracts/automata-dcap-qpl/automata-dcap-qpl-tool/target/release/`.
 
 ### 2. Start L1 and deploy with both provers required
 
@@ -143,13 +94,11 @@ COMPILE_CONTRACTS=true ETHREX_TDX_DEV_MODE=true \
     --env-file-path ~/multiprover/$TAG/.env
 ```
 
-`--sp1 true --tdx true` together are what make this a multiprover test: the
-`OnChainProposer` then requires a proof of each kind per batch.
+`--sp1 true --tdx true` together are what make this a multiprover test: the `OnChainProposer` then requires a proof of each kind per batch.
 
 ### 3. Start the sequencer
 
-The proof coordinator must bind `0.0.0.0` so the SP1 prover on the other host
-can reach it, and the qpl tool path must be passed even in dev mode.
+The proof coordinator must bind `0.0.0.0` so the SP1 prover on the other host can reach it, and the qpl tool path must be passed even in dev mode.
 
 ```bash
 set -a; . ~/multiprover/$TAG/.env; set +a
@@ -171,8 +120,7 @@ set -a; . ~/multiprover/$TAG/.env; set +a
 
 ### 4. Start the TDX prover VM
 
-A plain guest — see [above](#attestation-runs-in-dev-mode-and-the-tdx-guest-is-a-plain-vm)
-for why this must not be the real-TDX launcher in `hypervisor.nix`:
+A plain guest — see [above](#attestation-runs-in-dev-mode-and-the-tdx-guest-is-a-plain-vm) for why this must not be the real-TDX launcher in `hypervisor.nix`:
 
 ```bash
 qemu-system-x86_64 -daemonize \
@@ -185,9 +133,7 @@ qemu-system-x86_64 -daemonize \
   -drive "if=none,media=disk,id=main,file.filename=$PWD/image.raw,discard=unmap,detect-zeroes=unmap"
 ```
 
-The VM has registered once the sequencer logs `ProverSetup received for TDX`
-without a following error, and the VM's serial console moves from
-`Error sending quote` to `No blocks to prove`.
+The VM has registered once the sequencer logs `ProverSetup received for TDX` without a following error, and the VM's serial console moves from `Error sending quote` to `No blocks to prove`.
 
 ### 5. Start the SP1 prover on the GPU host
 
@@ -199,8 +145,7 @@ ssh l2-gpu
 
 ### 6. Wait for a batch verified by both proofs
 
-This is the assertion the test exists for. `lastVerifiedBatch` only advances
-once both an SP1 and a TDX proof have been submitted for the same batch.
+This is the assertion the test exists for. `lastVerifiedBatch` only advances once both an SP1 and a TDX proof have been submitted for the same batch.
 
 ```bash
 while :; do
@@ -235,6 +180,4 @@ cargo test -p ethrex-test l2_integration_test --release --features l2 -- --nocap
 | VM sits on `No blocks to prove` while batches are committed | the prover is asking for a batch whose input was pruned; restart from a fresh L1 **and** L2 with both provers attached before the first batch |
 | VM sits on `No blocks to prove` with nothing committed | normal; if it persists, the committer is failing — check the sequencer log |
 
-Both L2 GPU checks share ports and datadirs on their hosts, so run this and the
-[SP1 GPU integration test](sp1-gpu-integration-test.md) one after the other,
-not concurrently.
+Both L2 GPU checks share ports and datadirs on their hosts, so run this and the [SP1 GPU integration test](sp1-gpu-integration-test.md) one after the other, not concurrently.
