@@ -397,33 +397,51 @@ all passing):
 | `contains_tx` pre-filter | the hash is fresh; the returned hash is `keccak(raw)`, checked against `cast` |
 | chain age, base fee, EOA senders | a chain seconds old reproduces it; base fee flat at 7 wei; an EOA frame tx in the same run mines normally |
 
-**Third cause, OPEN.** Instrumenting the builder's eviction reason (the same funnel
-technique, one level up) caught it verbatim, eight times out of eight:
+**Third cause, FIXED: the builder runs a transaction against a parent older than the one
+that admitted it.**
+
+The builder does not execute against the chain head. It executes against the parent of the
+payload it is building, and it keeps rebuilding that payload as transactions arrive. A
+transaction admitted after that parent was fixed is therefore executed against a state
+older than the one it was admitted against.
+
+Captured on a local devnet, with the eviction reason instrumented to name the frame and
+its resolved target:
 
 ```
-Invalid frame transaction: VERIFY frame did not call APPROVE or payer not approved
+VERIFY frame 0 (target 0xf5642333…, 0 bytes of code) failed: the default code for this
+frame mode failed
 ```
 
-That message turned out to be six rules wearing one string: every `tx_invalid` verdict in
-`execute_frame_tx` printed it, and five of them are not the payer check. The error now
-carries the rule that produced it, so the next capture names the actual cause. The reading
-below is therefore *not yet confirmed* — it is what the evidence supports so far.
+That address holds 8 bytes of code at the head and 0 at the block being built on: the
+contract sender had been deployed after the payload's parent. The frame resolved its target
+to a codeless account, took the default-code path instead of calling the contract, the
+VERIFY frame failed, and the builder deleted the transaction from the pool. It was valid
+against the head and against every later block, which is why it recurred roughly one run in
+three and why nothing about the transaction itself ever looked wrong.
 
-A first draft of this entry claimed the mempool and consensus disagree, on the grounds that
-`ethrex_simulateFrameTransaction` reports the same transaction valid. That was wrong, and
-worth recording as its own lesson: EIP-8141 admits a frame transaction on its **validation
-prefix alone**, which is exactly what bounds the work the pool does per transaction. The
-simulate RPC dry-runs that prefix and nothing else. A transaction whose later frames
-invalidate it is therefore admitted and then correctly refused — by design, not by
-disagreement.
+**The rule was the wrong shape, not missing an entry.** It enumerated the *transient*
+failures — nonce mismatch, unreferenceable recent root, unspendable UTXO input, block
+capacity — and evicted everything else. Under that shape every state-dependent failure mode
+is a transaction-losing bug until somebody adds it to the list, and three had been added
+that way, one at a time; this would have been the fourth. A frame transaction reads the
+chain throughout its execution — targets, code, balances, storage — so almost nothing it can
+fail on is intrinsic to the transaction.
 
-What is still unexplained is narrower, and still a bug: the probe's transaction is valid as
-a whole. `a_contract_sender_can_approve_on_a_first_use_keyed_nonce` executes the probe's
-exact shape — contract sender, VERIFY frame declaring no state budget, SENDER frame paying a
-fresh address, first-use keyed nonce — straight through `execute_frame_tx`, and it passes.
-So the transaction shape is exonerated and the cause lies in block context: the block's own
-two gas dimensions, the base fee, or the second probe transaction sharing the payload. That
-is where the next capture should look.
+The rule now enumerates the intrinsic failures instead: a malformed frame list, a signature
+that does not authenticate the sender, and submission before the fork. Everything else keeps
+the transaction pooled. That is the safe direction to be incomplete in — wrongly keeping a
+transaction costs a pool slot until it expires, and wrongly evicting one loses a transaction
+the node already told the sender it had accepted.
+
+Two things are worth taking from the hunt itself. The first message the builder printed,
+`VERIFY frame did not call APPROVE or payer not approved`, was one string standing in for
+six distinct rules, five of which are not that; it sent the investigation to the APPROVE
+paths, which the balance arithmetic rules out. The second, after that was fixed, was
+`VERIFY frame 0 failed: no reason recorded` — which was itself the clue, because it proved
+the frame had failed on a branch nobody had instrumented, and only one such branch exists
+for a zero-value frame. A diagnostic that admits what it does not know is worth more than
+one that guesses.
 
 The technique is worth keeping: every removal funnels through
 `Mempool::remove_transaction_with_lock`, so a temporary backtrace there plus
