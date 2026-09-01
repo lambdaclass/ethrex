@@ -985,10 +985,10 @@ fn compute_storage_roots(
     account_hash: H256,
     key_value_pairs: &[(H256, U256)],
 ) -> Result<StorageRoots, SyncError> {
-    use ethrex_trie::{Nibbles, Node};
+    use ethrex_trie::Node;
 
     let storage_trie = store.open_direct_storage_trie(account_hash, *EMPTY_TRIE_HASH)?;
-    let trie_hash = match storage_trie.db().get(Nibbles::default())? {
+    let trie_hash = match storage_trie.db().get(&[])? {
         Some(noderlp) => Node::decode(&noderlp)?
             .compute_hash(&ethrex_crypto::NativeCrypto)
             .finalize(&ethrex_crypto::NativeCrypto),

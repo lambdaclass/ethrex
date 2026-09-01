@@ -4290,7 +4290,7 @@ impl Store {
         }
         let trie = self.open_state_trie(state_root)?;
         // NOTE: here we hash the root because the trie doesn't check the state root is correct
-        let Some(root) = trie.db().get(Nibbles::default())? else {
+        let Some(root) = trie.db().get(&[])? else {
             return Ok(false);
         };
         let root_hash = ethrex_trie::Node::decode(&root)?

@@ -4181,8 +4181,7 @@ fn collapse_root_node(
         NodeRef::Node(node, _) => node.clone(),
         noderef @ NodeRef::Hash(_) => {
             let trie = load_trie(storage, parent_state_root, prefix)?;
-            let Some(node) = noderef.get_node(trie.db(), Nibbles::from_hex(vec![*choice as u8]))?
-            else {
+            let Some(node) = noderef.get_node(trie.db(), &[*choice as u8])? else {
                 return Ok(None);
             };
             node

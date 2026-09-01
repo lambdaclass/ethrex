@@ -169,7 +169,7 @@ fn assert_multi_get_matches_single_get(db: &dyn TrieDB, keys: &[Nibbles]) {
             panic!("multi_get returned an error at index {i} (key {key:?}): {e}")
         });
         let single_value = db
-            .get(key.clone())
+            .get(key.as_ref())
             .unwrap_or_else(|e| panic!("get returned an error for key {key:?}: {e}"));
         assert_eq!(
             batched_value, single_value,
