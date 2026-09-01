@@ -7,19 +7,19 @@
 # `stateless-validator-<guest>-<zkvm>-v<version>.{elf,vk}` and republishes guest
 # ELFs verbatim, so dropping it makes our assets not drop-in for that pipeline.
 #
-# The guests reach their SDK through `ere-platform-{zisk,sp1,openvm}`, so their
-# manifests carry no `tag = "vX.Y.Z"` to read. The table below instead mirrors
-# what `ere-catalog` resolves at the pinned ere rev, and the check further down
-# fails if the manifests have moved off that rev — a silent bump cannot mislabel
+# The guests reach their SDK through `ere-platform-{zisk,sp1,openvm}`, so the ere
+# tag in their manifests is not the SDK version. The table below instead mirrors
+# what `ere-catalog` resolves at the pinned ere tag, and the check further down
+# fails if the manifests have moved off that tag — a silent bump cannot mislabel
 # an artifact.
 #
 # Usage: zkvm-version.sh <zisk|sp1|openvm>
 
 set -euo pipefail
 
-ERE_REV=5023513851c69ab9c4871e3899608e450e6960b6
+ERE_TAG=v0.17.0
 
-# SDK versions resolved by ere-catalog at ERE_REV.
+# SDK versions resolved by ere-catalog at ERE_TAG.
 zkvm_version() {
     case "$1" in
         zisk)   echo "v1.1.0-alpha" ;;
@@ -35,12 +35,12 @@ MANIFEST="$ROOT/crates/guest-program/stateless-validator/bin/$ZKVM/Cargo.toml"
 
 [[ -f $MANIFEST ]] || { echo "no manifest at $MANIFEST" >&2; exit 1; }
 
-# The table above is only valid for ERE_REV; refuse to guess if it has moved.
-if ! grep -q "rev = \"$ERE_REV\"" "$MANIFEST"; then
+# The table above is only valid for ERE_TAG; refuse to guess if it has moved.
+if ! grep -q "tag = \"$ERE_TAG\"" "$MANIFEST"; then
     {
-        echo "ere rev in $MANIFEST does not match ERE_REV ($ERE_REV)."
+        echo "ere tag in $MANIFEST does not match ERE_TAG ($ERE_TAG)."
         echo "Update the zkvm_version table in this script to the SDK versions"
-        echo "that ere-catalog resolves at the new rev, then update ERE_REV."
+        echo "that ere-catalog resolves at the new tag, then update ERE_TAG."
     } >&2
     exit 1
 fi

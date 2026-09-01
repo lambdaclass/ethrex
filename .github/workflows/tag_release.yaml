@@ -167,11 +167,17 @@ jobs:
           - sp1
           - openvm
     runs-on: ubuntu-latest
-    env:
-      ERE_TAG: 0.17.0
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
+
+      # Derived rather than hardcoded: the guests are compiled by ere's compiler
+      # image and then executed under ere's server image, so both have to be the
+      # ere release the manifests pin. Stating the version here as well means two
+      # places to update and nothing comparing them. ere-tag.sh reads it from the
+      # manifests and fails if they disagree.
+      - name: Resolve ere tag from the guest manifests
+        run: echo "ERE_TAG=$(.github/scripts/ere-tag.sh --docker)" >> "$GITHUB_ENV"
 
       - name: Free Disk Space
         uses: ./.github/actions/free-disk

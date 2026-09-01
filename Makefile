@@ -276,6 +276,12 @@ update-cargo-lock: ## 📦 Update Cargo.lock files
 	cargo tree --manifest-path tooling/Cargo.toml
 	cargo tree --manifest-path tooling/ef_tests/state/Cargo.toml
 
+check-ere-pins: ## 🔍 Check the stateless-validator guests agree on one ere release
+	# Prints the tag on success. Fails if the manifests disagree, or if any of
+	# them pins ere by bare rev -- a rev cannot be matched against the ere
+	# compiler/server image tags the release workflow pulls.
+	@tag=$$(.github/scripts/ere-tag.sh) && echo "ere pins agree: $$tag"
+
 check-cargo-lock: ## 🔍 Check Cargo.lock files are up to date
 	cargo metadata --locked > /dev/null
 	cargo metadata --locked --manifest-path crates/guest-program/bin/sp1/Cargo.toml > /dev/null
