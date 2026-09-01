@@ -17,7 +17,7 @@ openvm-ecc-guest = { git = "https://github.com/openvm-org/openvm.git", tag = "v2
 # ere
 # Keep Ethrex's first-party accelerator, including its assert_reduced serialization
 # guard. ERE's accelerator is disabled to avoid installing both providers.
-ere-platform-openvm = { git = "https://github.com/eth-act/ere", rev = "8961a4e7ac5c9ca2dc6a2fc848452f23a186b1aa", default-features = false, features = [
+ere-platform-openvm = { git = "https://github.com/eth-act/ere", rev = "5023513851c69ab9c4871e3899608e450e6960b6", default-features = false, features = [
     "std",
     "getrandom-unsupported",
 ] }

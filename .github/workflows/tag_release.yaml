@@ -168,7 +168,7 @@ jobs:
           - openvm
     runs-on: ubuntu-latest
     env:
-      ERE_TAG: 0.16.2
+      ERE_TAG: 0.17.0
     steps:
       - name: Checkout code
         uses: actions/checkout@v6

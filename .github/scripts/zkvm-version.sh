@@ -17,7 +17,7 @@
 
 set -euo pipefail
 
-ERE_REV=8961a4e7ac5c9ca2dc6a2fc848452f23a186b1aa
+ERE_REV=5023513851c69ab9c4871e3899608e450e6960b6
 
 # SDK versions resolved by ere-catalog at ERE_REV.
 zkvm_version() {
