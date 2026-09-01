@@ -31,8 +31,9 @@ use crate::eth::{
     },
     block::{
         BlockNumberRequest, GetBlobBaseFee, GetBlockByHashRequest, GetBlockByNumberRequest,
-        GetBlockReceiptsRequest, GetBlockTransactionCountRequest, GetRawBlockRequest,
-        GetRawHeaderRequest, GetRawReceipts, GetUncleCountRequest,
+        GetBlockReceiptsRequest, GetBlockTransactionCountRequest, GetHeaderByHashRequest,
+        GetHeaderByNumberRequest, GetRawBlockRequest, GetRawHeaderRequest, GetRawReceipts,
+        GetUncleCountRequest,
     },
     block_access_list::{BlockAccessListRequest, RawBlockAccessListRequest},
     client::{ChainId, Syncing},
@@ -1356,6 +1357,8 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
         "eth_syncing" => Syncing::call(req, context).await,
         "eth_getBlockByNumber" => GetBlockByNumberRequest::call(req, context).await,
         "eth_getBlockByHash" => GetBlockByHashRequest::call(req, context).await,
+        "eth_getHeaderByNumber" => GetHeaderByNumberRequest::call(req, context).await,
+        "eth_getHeaderByHash" => GetHeaderByHashRequest::call(req, context).await,
         "eth_getBalance" => GetBalanceRequest::call(req, context).await,
         "eth_getCode" => GetCodeRequest::call(req, context).await,
         "eth_getStorageAt" => GetStorageAtRequest::call(req, context).await,
@@ -1679,6 +1682,50 @@ mod tests {
                 !matches!(result, Err(RpcErr::MethodNotFound(_))),
                 "default allowlist should route {method}, got {result:?}"
             );
+        }
+    }
+
+    /// eth_getHeaderBy* returns the header with its hash and no size or body
+    /// fields, and null for unknown blocks and the pending tag.
+    #[tokio::test]
+    async fn eth_get_header_by_number_and_hash() {
+        let storage = crate::test_utils::setup_store().await;
+        crate::test_utils::add_empty_blocks(&storage, 2).await;
+        let context = default_context_with_storage(storage).await;
+
+        let request: RpcRequest = serde_json::from_str(
+            r#"{"jsonrpc":"2.0","method":"eth_getHeaderByNumber","params":["latest"],"id":1}"#,
+        )
+        .unwrap();
+        let header = map_http_requests(&request, context.clone()).await.unwrap();
+        assert_eq!(header["number"], "0x2");
+        assert!(header.get("hash").is_some());
+        assert!(header.get("size").is_none());
+        assert!(header.get("transactions").is_none());
+        assert!(header.get("uncles").is_none());
+
+        let hash = header["hash"].as_str().unwrap().to_owned();
+        let request: RpcRequest = serde_json::from_str(&format!(
+            r#"{{"jsonrpc":"2.0","method":"eth_getHeaderByHash","params":["{hash}"],"id":1}}"#
+        ))
+        .unwrap();
+        let by_hash = map_http_requests(&request, context.clone()).await.unwrap();
+        assert_eq!(by_hash, header);
+
+        for (method, param) in [
+            ("eth_getHeaderByNumber", r#""0x3e8""#),
+            ("eth_getHeaderByNumber", r#""pending""#),
+            (
+                "eth_getHeaderByHash",
+                r#""0x0000000000000000000000000000000000000000000000000000000000000000""#,
+            ),
+        ] {
+            let request: RpcRequest = serde_json::from_str(&format!(
+                r#"{{"jsonrpc":"2.0","method":"{method}","params":[{param}],"id":1}}"#
+            ))
+            .unwrap();
+            let result = map_http_requests(&request, context.clone()).await.unwrap();
+            assert_eq!(result, Value::Null, "{method} {param}");
         }
     }
 
