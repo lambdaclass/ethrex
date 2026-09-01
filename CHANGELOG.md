@@ -12,6 +12,10 @@
 
 ## Perf
 
+### 2026-09-01
+
+- Batch keccak256 hashing with AVX2 in the trie commit path [#6950](https://github.com/lambdaclass/ethrex/pull/6950)
+
 ### 2026-08-24
 
 - Make `eth_estimateGas`'s plain-transfer short circuit fire. Its condition tested whether the recipient account existed rather than whether it had code, so every transfer to an ordinary funded wallet ran the full binary search instead of returning `TRANSACTION_GAS` at once [#7211](https://github.com/lambdaclass/ethrex/pull/7211)

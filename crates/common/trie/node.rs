@@ -575,7 +575,7 @@ fn collect_unhashed_by_depth<'a>(
 ) {
     let children: &[NodeRef] = match node {
         Node::Branch(n) => &n.choices,
-        Node::Extension(n) => std::slice::from_ref(&n.child),
+        Node::Extension(n) => core::slice::from_ref(&n.child),
         Node::Leaf(_) => return,
     };
     if by_depth.len() <= depth {
@@ -837,7 +837,7 @@ fn batch_commit_subtrie(
                 if let Node::Leaf(leaf) = node.as_ref() {
                     acc.push((node_path.concat(&leaf.partial), leaf.value.clone()));
                 }
-                acc.push((std::mem::take(node_path), encoding.to_vec()));
+                acc.push((core::mem::take(node_path), encoding.to_vec()));
             }
         }
     }
