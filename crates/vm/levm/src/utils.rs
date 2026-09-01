@@ -1054,7 +1054,10 @@ pub fn account_to_levm_account(account: Account) -> (LevmAccount, Code) {
 /// This is generally used for memory offsets and sizes, 32 bits is more than enough for this purpose.
 #[expect(clippy::as_conversions)]
 pub fn u256_to_usize(val: U256) -> Result<usize, VMError> {
-    if val.0[0] > u32::MAX as u64 || val.0[1] != 0 || val.0[2] != 0 || val.0[3] != 0 {
+    // OR the three high limbs into one branch instead of a 4-way `||` chain,
+    // then a single magnitude check — fewer branches on this hot conversion
+    // (MLOAD/MSTORE/MCOPY/CALLDATACOPY/RETURN/... offsets all pass through here).
+    if (val.0[1] | val.0[2] | val.0[3]) != 0 || val.0[0] > u32::MAX as u64 {
         return Err(VMError::ExceptionalHalt(ExceptionalHalt::VeryLargeNumber));
     }
     Ok(val.0[0] as usize)
