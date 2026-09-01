@@ -294,13 +294,14 @@ faucet.frames.ethrex.xyz {
 }
 
 # Checkpoint-sync endpoint: a read-only proxy of one beacon node's /eth/* API.
-# It gets its own PORT, not a path, because prysm's checkpoint and genesis
-# providers strip the path from the base URL they are given. Restricting to
-# GET/HEAD on /eth/* is load-bearing: the same upstream port serves prysm's
-# admin endpoints (/prysm/node/trusted_peers accepts POSTs that alter peering).
-# route{} pins written order — Caddy's default directive order runs `respond`
-# before `reverse_proxy`, which would shadow the proxy with 403s.
-faucet.frames.ethrex.xyz:8443 {
+# It gets a HOSTNAME of its own, not a path under another one, because prysm's
+# checkpoint and genesis providers strip the path from the base URL they are
+# given. Restricting to GET/HEAD on /eth/* is load-bearing: the same upstream
+# port serves prysm's admin endpoints (/prysm/node/trusted_peers accepts POSTs
+# that alter peering). route{} pins written order — Caddy's default directive
+# order runs `respond` before `reverse_proxy`, which would shadow the proxy
+# with 403s.
+checkpoint-sync.frames.ethrex.xyz {
     @ok {
         method GET HEAD
         path /eth/*
@@ -450,7 +451,6 @@ The full table is in `scripts/frames-testnet/USER-GUIDE.md`. The shape of it:
 | CL libp2p | 36200, 36207, 36214 | TCP | open |
 | CL QUIC | 36200, 36207, 36214 | UDP | open |
 | CL discv5 | 36201, 36208, 36215 | UDP **only** | open |
-| Checkpoint sync (Caddy) | 8443 | TCP | open |
 | EL engine authrpc | 36001, 36008, 36015 | TCP | **closed** |
 | EL metrics | 36002, 36009, 36016 | TCP | **closed** |
 | EL RPC | 36003, 36010, 36017 | TCP | **closed** |

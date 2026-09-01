@@ -256,13 +256,14 @@ sig_hash  = keccak256(0x06 || rlp(envelope))      # empty-msg signature bytes el
     {{BOOTNODES}}
     <div class="note">
       <strong>Sync from a checkpoint, not from genesis.</strong> Pass
-      <code>--checkpoint-sync-url=https://faucet.frames.ethrex.xyz:8443</code> and
+      <code>--checkpoint-sync-url=https://checkpoint-sync.frames.ethrex.xyz</code> and
       <code>--genesis-state=genesis.ssz</code> from the bundle. Started at genesis the consensus
       client stalls in payload-envelope backfill and leaves your execution client stranded a few
-      blocks in; from the checkpoint the pair reaches head normally. The endpoint is on its own
-      port because prysm strips the path from a base URL; it serves read-only
-      <code>/eth/*</code> only. Check the execution client separately from the beacon node — a
-      beacon node can sit at head while its execution client is still at genesis.
+      blocks in; from the checkpoint the pair reaches head normally. The endpoint has its own
+      hostname rather than a path under this one because prysm strips the path from a base URL;
+      it serves read-only <code>/eth/*</code> only. Check the execution client separately from
+      the beacon node — a beacon node can sit at head while its execution client is still at
+      genesis.
     </div>
   </div>
 
