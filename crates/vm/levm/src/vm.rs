@@ -2120,9 +2120,10 @@ impl<'a> VM<'a> {
         let intrinsic_gas = frame_tx.frame_tx_intrinsic_gas();
         let mut total_gas_used: u64 = intrinsic_gas;
         let mut tx_invalid: Option<String> = None;
-        // How the frame under `frame_idx` ended, when it did not succeed. Reset per
-        // frame by the loop below; read only on the invalidating paths.
-        let mut frame_failure: Option<String> = None;
+        // How the frame under `frame_idx` ended, when it did not succeed. Set by whichever
+        // failure branch runs, reset per frame by the loop below, and read only on the
+        // paths that invalidate the transaction.
+        let mut frame_failure: Option<String>;
 
         // Atomic batching state: track whether we're inside a batch and
         // which frames belong to it so we can revert them all on failure.

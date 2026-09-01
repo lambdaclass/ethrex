@@ -1057,10 +1057,7 @@ impl Blockchain {
                     // build and starve that sender's other txs indefinitely.
                     // Evict those too.
                     let evict = if is_frame {
-                        !is_nonce_mismatch(&e)
-                            && !is_recent_root_not_referenceable(&e)
-                            && !is_utxo_not_yet_spendable(&e)
-                            && !is_block_capacity(&e)
+                        is_frame_tx_intrinsically_invalid(&e)
                     } else {
                         is_deterministic_invalid(&e)
                     };
@@ -1422,55 +1419,42 @@ impl Blockchain {
 
 /// Returns true if `e` represents a transaction nonce mismatch.
 ///
-/// The VM surfaces this as `TxValidationError::NonceMismatch` which gets
-/// stringified through `EvmError::Transaction(String)` →
-/// `ChainError::InvalidBlock(InvalidBlockError::InvalidTransaction(String))`.
-/// There is no typed variant to match at the `ChainError` level, so we detect
-/// it by the stable Display substring. Used to keep gapped-nonce frame txs
-/// pooled instead of evicting them: a nonce gap is transient because the
-/// `TransactionQueue` feeds the lowest pooled nonce without comparing to the
-/// account nonce, so the tx becomes valid once earlier nonces are included.
-fn is_nonce_mismatch(e: &ChainError) -> bool {
-    e.to_string().contains("Nonce mismatch")
-}
-
-/// Whether a frame tx failed only because an EIP-8272 recent-root reference is
-/// not yet referenceable. A root written in slot `S` becomes referenceable in
-/// slot `S + 1`, so a build landing in the same slot the tx was admitted against
-/// resolves on the next one. Expired and uncommitted references are permanent and
-/// are deliberately not covered here.
-fn is_recent_root_not_referenceable(e: &ChainError) -> bool {
-    e.to_string()
-        .contains("recent-root reference is not yet referenceable")
-}
-
-/// EIP-8312: whether a build failure means "this spend's input is not spendable
-/// YET" rather than "never".
+/// Whether a frame transaction is invalid because of what it *is*, rather than because of
+/// the state it met.
 ///
-/// A UTXO created in the block currently being built, or whose batch is not sealed
-/// yet, becomes spendable in a later block — evicting such a transaction would
-/// drop a valid spend. Every other UTXO failure (spent bit set, proof mismatch,
-/// conservation shortfall, fee-cap violation) is permanent and must evict.
+/// This is deliberately a very short list, and the reason is the failure that produced it.
+/// A frame transaction's execution reads the chain: its frames resolve targets, read code,
+/// check balances and storage. The builder does not execute against the chain head — it
+/// executes against the parent of the payload it is building, and it keeps rebuilding that
+/// payload as new transactions arrive. So a transaction can enter the pool after the
+/// payload's parent was fixed and then be executed against a state older than the one it
+/// was admitted against.
 ///
-/// Classified on a dedicated marker rather than on a nonce-mismatch string: the
-/// nonce-mismatch class keeps a transaction pooled AND, combined with per-sender
-/// queueing, re-selects it as the sender's head on every rebuild — the eternal
-/// build-fail-repool stall this branch has already fought once.
-fn is_utxo_not_yet_spendable(e: &ChainError) -> bool {
-    e.to_string().contains("UTXO input is not yet spendable")
-}
-
-/// Whether a build failure means "this block had no room", which says nothing about the
-/// transaction and everything about the block being built.
+/// That is exactly how this was found: a contract sender was deployed, its transactions
+/// were admitted, and the builder ran them against a parent from before the deployment.
+/// The frame resolved its target to an account with no code, took the default-code path
+/// instead of calling the contract, failed, and the transaction was deleted from the pool
+/// as invalid — while being perfectly valid against the chain head, and against every
+/// later block. The user saw `eth_sendRawTransaction` return a hash for a transaction that
+/// then vanished, roughly one run in three.
 ///
-/// EIP-8037 accounts two dimensions, so a transaction can be turned away because the
-/// *state* dimension is full while the execution one has room to spare — and a frame
-/// transaction declaring `limits.state` is exactly the kind that fills it. The next block
-/// starts both counters at zero, so a transaction rejected here is not invalid, it is
-/// early.
-fn is_block_capacity(e: &ChainError) -> bool {
-    let msg = e.to_string();
-    msg.contains("block gas limit exceeded") || msg.contains("Gas allowance exceeded")
+/// The previous rule enumerated the transient failures and evicted everything else, which
+/// meant every new state-dependent failure mode was silently a transaction-losing bug
+/// until someone thought to add it to the list. Three were found that way and added one at
+/// a time. Enumerating the *intrinsic* failures instead is the safe direction to be
+/// incomplete in: the cost of wrongly keeping a transaction is that it occupies a pool slot
+/// until it expires, and the cost of wrongly evicting one is losing a transaction the node
+/// already told the sender it had accepted.
+fn is_frame_tx_intrinsically_invalid(e: &ChainError) -> bool {
+    let message = e.to_string();
+    // Structural: the frame list itself is malformed (frame count, reserved modes, batch
+    // flags). No state can make it well-formed.
+    message.contains("Invalid frame transaction: static constraints")
+        // The signature list does not authenticate the sender. Fixed by the bytes.
+        || message.contains("Invalid frame transaction: signature does not recover")
+        // Submitted against a chain where EIP-8141 is not active. A frame transaction is
+        // not includable before the fork and the pool should not hold it.
+        || message.contains("not supported before the Hegota fork")
 }
 
 /// Whether a tx failed with an error that recurs at the same nonce for as long as
@@ -1963,32 +1947,55 @@ mod tests {
     }
 
     #[test]
-    fn nonce_mismatch_detected_from_chain_error() {
-        // Build the ChainError through the REAL production conversion path so a
-        // change to the TxValidationError/VMError Display strings breaks this
-        // test instead of silently breaking `is_nonce_mismatch` (which keys off
-        // the "Nonce mismatch" substring). Path:
-        // TxValidationError::NonceMismatch -> VMError -> EvmError::Transaction
+    fn frame_tx_intrinsic_invalidity_detected_from_chain_error() {
+        // Pin the substrings through the REAL production conversion path, so a reworded
+        // levm error breaks this test rather than silently changing which transactions the
+        // builder throws away. Path: TxValidationError -> VMError -> EvmError::Transaction
         // (via From, which stringifies) -> ChainError::InvalidBlock.
         use ethrex_levm::errors::{TxValidationError, VMError};
-        let nonce_err: ChainError =
+        let intrinsic: ChainError = EvmError::from(VMError::TxValidation(
+            TxValidationError::InvalidFrameTransaction("static constraints".to_string()),
+        ))
+        .into();
+        assert!(
+            is_frame_tx_intrinsically_invalid(&intrinsic),
+            "a malformed frame list is intrinsic and must be evicted; got: {intrinsic}"
+        );
+
+        let pre_fork: ChainError =
+            EvmError::from(VMError::TxValidation(TxValidationError::FrameTxPreFork)).into();
+        assert!(
+            is_frame_tx_intrinsically_invalid(&pre_fork),
+            "a pre-fork frame transaction is intrinsic; got: {pre_fork}"
+        );
+
+        // The one that cost a devnet its transactions: a frame that failed because of the
+        // state it met must NOT be treated as intrinsic. The builder can be on a parent
+        // older than the transaction, and the same bytes are valid one block later.
+        let state_dependent: ChainError = EvmError::from(VMError::TxValidation(
+            TxValidationError::InvalidFrameTransaction(
+                "VERIFY frame 0 (target 0xabc, 0 bytes of code) failed: the default code \
+                 for this frame mode failed"
+                    .to_string(),
+            ),
+        ))
+        .into();
+        assert!(
+            !is_frame_tx_intrinsically_invalid(&state_dependent),
+            "a frame that failed against this parent's state must stay pooled; got: \
+             {state_dependent}"
+        );
+
+        // So must an ordinary nonce mismatch, which is transient by queue ordering.
+        let nonce: ChainError =
             EvmError::from(VMError::TxValidation(TxValidationError::NonceMismatch {
                 expected: 5,
                 actual: 7,
             }))
             .into();
         assert!(
-            is_nonce_mismatch(&nonce_err),
-            "is_nonce_mismatch must match the real NonceMismatch Display; got: {nonce_err}"
-        );
-        // A different validation error must NOT match, also via the real path.
-        let other: ChainError = EvmError::from(VMError::TxValidation(
-            TxValidationError::InsufficientAccountFunds,
-        ))
-        .into();
-        assert!(
-            !is_nonce_mismatch(&other),
-            "is_nonce_mismatch must not match unrelated errors; got: {other}"
+            !is_frame_tx_intrinsically_invalid(&nonce),
+            "a nonce mismatch is transient; got: {nonce}"
         );
     }
 
