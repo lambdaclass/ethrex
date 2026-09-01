@@ -1,5 +1,5 @@
 use anyhow::Result;
-use ethrex_storage_rollup::SQLStore;
+use ethrex_storage_rollup::{EngineTypeRollup, SQLStore, StoreRollup};
 
 #[tokio::test]
 async fn test_schema_tables() -> Result<()> {
@@ -72,5 +72,26 @@ async fn test_schema_tables() -> Result<()> {
         };
         assert_eq!(given_type, expected_type);
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_in_memory_operations_count_accumulates() -> Result<()> {
+    let tmpdir = tempfile::tempdir()?;
+    let store = StoreRollup::new(tmpdir.path(), EngineTypeRollup::InMemory)?;
+
+    store.init().await?;
+
+    let initial = store.get_operations_count().await?;
+    assert_eq!(initial, [0, 0, 0]);
+
+    store.update_operations_count(1, 2, 3).await?;
+    let after_first = store.get_operations_count().await?;
+    assert_eq!(after_first, [1, 2, 3]);
+
+    store.update_operations_count(4, 5, 6).await?;
+    let after_second = store.get_operations_count().await?;
+    assert_eq!(after_second, [5, 7, 9]);
+
     Ok(())
 }
