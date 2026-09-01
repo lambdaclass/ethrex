@@ -6702,10 +6702,16 @@ mod tests {
 
     #[test]
     fn golden_frame_tx_rlp_and_sig_hash() {
-        // Regression lock for the EIP-8141 signatures-list wire format. No
-        // external EEST reference vectors exist yet;
-        // these values are the current canonical output and must only change
-        // with a deliberate, reviewed format change.
+        // Regression lock for the EIP-8141 envelope. No external EEST reference vectors
+        // exist yet, so the corroborating implementation is `frametx.py`, which builds this
+        // same transaction and asserts the same bytes and sig hash.
+        //
+        // These values must only change with a deliberate, reviewed format change — and
+        // when one happens, this vector has to move with it. It did not: the envelope
+        // gained nested fees and per-frame `limits = [execution, state]`, frametx.py was
+        // updated, and this assertion was left on the old bytes. CI would have caught it
+        // (`cargo test --workspace`), but this branch has never been pushed, so it sat
+        // failing locally behind the narrower `-p ethrex-test` runs.
         let tx = FrameTransaction {
             chain_id: 1,
             nonce_keys: vec![U256::zero()],
@@ -6749,10 +6755,13 @@ mod tests {
         let mut buf = Vec::new();
         tx.encode(&mut buf);
         let rlp_hex = hex::encode(&buf);
-        // GOLDEN_RLP: obtained from first run
+        // Cross-checked against `scripts/hegota-testnet/frametx.py`, which encodes this
+        // exact transaction from an independent implementation and asserts the same bytes.
+        // A value produced only by the code under test locks in whatever that code does,
+        // including a mistake; two implementations agreeing is what makes it a vector.
         assert_eq!(
             rlp_hex,
-            "f8ae01c1800794000000000000000000000000000000000000abcde8ca01038082520880821122dc0280940000000000000000000000000000000000001234829c408080f85cf85a0194000000000000000000000000000000000000abcd80b8410101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101843b9aca008506fc23ac0080c0c0"
+            "f8b301c1800794000000000000000000000000000000000000abcdeccc010380c48252088080821122de0280940000000000000000000000000000000000001234c4829c40808080f85cf85a0194000000000000000000000000000000000000abcd80b8410101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101cc843b9aca008506fc23ac0080c0c0"
         );
 
         // Round-trips losslessly.
@@ -6761,10 +6770,10 @@ mod tests {
         assert_eq!(decoded, tx);
 
         let sig_hash = tx.compute_sig_hash();
-        // GOLDEN_SIG_HASH: obtained from first run
+        // Also cross-checked against frametx.py's EXPECT_SIGHASH.
         assert_eq!(
             format!("{:#x}", sig_hash),
-            "0x989e6ce4dc87b2afd5cfa6c780ff60f01fc3b40c77057cf872410145d69f715c",
+            "0xd4df51143828c0338882dbd10c3308f3569972fe1928a7b5040ee18057920510",
         );
 
         // Elision invariant: changing empty-msg signature bytes must NOT change sig_hash.
