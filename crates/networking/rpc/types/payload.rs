@@ -125,24 +125,14 @@ impl ExecutionPayload {
     ) -> Result<Block, RLPDecodeError> {
         // Decode the payload's transactions in parallel — they are independent RLP
         // blobs and this runs on the engine_newPayload critical path (before execution,
-        // outside the pipeline's `total_ms`). eip-8025 (stateless/zkVM guest) builds
-        // keep the deterministic sequential path, mirroring `get_transactions_with_sender`.
+        // outside the pipeline's `total_ms`). The stateless guest no longer builds this
+        // crate, so the path needs no sequential variant.
         let transactions = {
-            #[cfg(not(feature = "eip-8025"))]
-            {
-                use rayon::prelude::*;
-                self.transactions
-                    .par_iter()
-                    .map(|encoded_tx| encoded_tx.decode())
-                    .collect::<Result<Vec<_>, RLPDecodeError>>()?
-            }
-            #[cfg(feature = "eip-8025")]
-            {
-                self.transactions
-                    .iter()
-                    .map(|encoded_tx| encoded_tx.decode())
-                    .collect::<Result<Vec<_>, RLPDecodeError>>()?
-            }
+            use rayon::prelude::*;
+            self.transactions
+                .par_iter()
+                .map(|encoded_tx| encoded_tx.decode())
+                .collect::<Result<Vec<_>, RLPDecodeError>>()?
         };
         let body = BlockBody {
             transactions,
@@ -428,7 +418,6 @@ mod test {
             .map(|e| e.decode().unwrap().encode_canonical_to_vec())
             .collect();
         let block = payload
-            .clone()
             .into_block(Some(H256::zero()), None, None)
             .unwrap();
         // into_block decodes in parallel; result must match the sequential decode
