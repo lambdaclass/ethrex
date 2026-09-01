@@ -267,19 +267,73 @@ sig_hash  = keccak256(0x06 || rlp(envelope))      # empty-msg signature bytes el
   <div class="panel">
     <p style="margin:0 0 .8rem">
       <strong>Validator entry is permissioned; everything else on this chain is not.</strong>
-      Anyone may sync, peer and transact without asking.
+      <strong>Contact us</strong> with the address you will deposit <em>from</em> — not the
+      withdrawal address, not the validator pubkey. We grant that address a deposit slot and
+      fund it: the 32&nbsp;ETH stake is beyond the faucet's drip, so we send the stake along
+      with the slot. Without the slot the deposit reverts with <code>Not enough tokens</code>;
+      with it, the deposit burns the slot and works. Every step below was run against this
+      chain as written.
     </p>
-    <p style="margin:0 0 .8rem">
-      To run one, <strong>contact us</strong> with the address you will deposit <em>from</em> and
-      we will grant it a slot. Without that grant the deposit reverts with
-      <code>Not enough tokens</code>.
+
+    <p style="margin:0 0 .35rem"><strong>1. Generate a key and deposit data.</strong> The fork
+      version must be this chain's genesis <code>0x10000038</code>, and the credentials must be
+      <code>0x01</code> — BLS <code>0x00</code> deposits are rejected by the gate:</p>
+<pre>docker run --rm protolambda/eth2-val-tools:latest mnemonic > mnemonic.txt
+
+docker run --rm protolambda/eth2-val-tools:latest deposit-data \
+  --fork-version 0x10000038 --amount 32000000000 \
+  --withdrawal-credentials-type 0x01 --withdrawal-address &lt;YOUR_ADDRESS&gt; \
+  --source-min 0 --source-max 1 \
+  --validators-mnemonic "$(cat mnemonic.txt)" > deposit-data.json</pre>
+
+    <p style="margin:0 0 .35rem"><strong>2. Deposit 32 ETH</strong> from the granted address,
+      passing the four fields of <code>deposit-data.json</code>. Let the tool estimate gas — a
+      hardcoded limit fails here (see above):</p>
+<pre>cast send --rpc-url {{RPC_BARE}} \
+  --private-key &lt;DEPOSITOR_KEY&gt; --value 32ether \
+  0x00000000219ab540356cBB839Cbe05303d7705Fa \
+  "deposit(bytes,bytes,bytes,bytes32)" \
+  0x&lt;pubkey&gt; 0x&lt;withdrawal_credentials&gt; 0x&lt;signature&gt; 0x&lt;deposit_data_root&gt;</pre>
+
+    <p style="margin:0 0 .35rem"><strong>3. Wait for activation — about an hour.</strong> The
+      deposit sits in a queue until the epoch containing it finalizes, then joins the activation
+      queue; that is protocol behaviour, not a stuck deposit. Watch it from your own node
+      (statuses run <code>pending_initialized → pending_queued → active_ongoing</code>), or look
+      the pubkey up in <a href="https://dora.frames.ethrex.xyz">dora</a>:</p>
+<pre>curl -s http://&lt;your-beacon&gt;:3500/eth/v1/beacon/states/head/validators/&lt;PUBKEY&gt;</pre>
+
+    <p style="margin:0 0 .35rem"><strong>4. Run a validator client before it activates</strong>,
+      or it accrues missed-attestation penalties from the first active epoch. It needs your own
+      synced node from "Run a node" above; use the REST flag, because this prysm build's gRPC
+      port does not serve:</p>
+<pre>docker run --rm -v $PWD:/work protolambda/eth2-val-tools:latest keystores \
+  --insecure --prysm-pass &lt;PASSWORD&gt; --out-loc /work/keys \
+  --source-min 0 --source-max 1 --source-mnemonic "$(cat mnemonic.txt)"
+
+docker run -d --name frames-vc -v $PWD:/data \
+  ethpandaops/prysm-validator:glamsterdam-devnet-8 \
+  --accept-terms-of-use --chain-config-file=/data/config.yaml \
+  --wallet-dir=/data/keys/prysm --wallet-password-file=/data/pass.txt \
+  --beacon-rest-api-provider=http://&lt;your-beacon&gt;:3500 \
+  --suggested-fee-recipient=&lt;YOUR_ADDRESS&gt;</pre>
+    <p style="margin:0 0 .8rem;font-size:14px;color:var(--muted)">
+      <code>config.yaml</code> is the one from the artifact bundle; <code>pass.txt</code> holds
+      the password you gave <code>--prysm-pass</code>. <code>--insecure</code> keystores are for
+      throwaway testnet keys, which these are.
     </p>
-    <p style="margin:0;font-size:14px;color:var(--muted)">
-      Then: deposit 32 ETH with <code>0x01</code> withdrawal credentials, signed against genesis
-      fork version <code>0x10000038</code>. BLS <code>0x00</code> credentials are rejected. Have a
-      validator client running before it activates, or it starts accruing missed-attestation
-      penalties. Exiting is possible 256 epochs after activation, about 14 hours.
-    </p>
+
+    <div class="note">
+      <strong>Exiting.</strong> Send 56 bytes — the 48-byte pubkey then an 8-byte amount,
+      <code>0</code> for a full exit — to the EIP-7002 predeploy
+      <code>0x00000961Ef480Eb55e80D19ad83579A64c007002</code> from your <code>0x01</code>
+      withdrawal address, with the current fee as value (read it:
+      <code>cast call &lt;predeploy&gt;</code>). Exits are only honoured
+      <strong>256&nbsp;epochs after activation</strong>, about 14 hours; before that the
+      transaction succeeds and the consensus layer silently ignores it, so a successful
+      transaction is not evidence the exit took — only the validator's own
+      <code>exit_epoch</code> is. The stake returns to the withdrawal address 256 epochs
+      after the exit.
+    </div>
   </div>
 
   <footer>Test ETH has no value. The chain may be reset without notice.</footer>
