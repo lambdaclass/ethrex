@@ -21,6 +21,14 @@ pub struct RpcBlock {
     pub body: BlockBodyWrapper,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RpcHeader {
+    pub hash: H256,
+    #[serde(flatten)]
+    pub header: BlockHeader,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum BlockBodyWrapper {
