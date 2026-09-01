@@ -220,11 +220,7 @@ impl Trie {
 
         // Resolve the root itself first, exactly like the first `insert`
         // would (a single `db.get`).
-        if self
-            .root
-            .get_node_mut(self.db.as_ref(), &[])?
-            .is_none()
-        {
+        if self.root.get_node_mut(self.db.as_ref(), &[])?.is_none() {
             // Root hash points to a node that isn't in the DB. Let the real
             // insert/remove loop hit (and report) this inconsistency;
             // prefetching can't fix it and shouldn't hide it.
