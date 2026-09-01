@@ -87,6 +87,20 @@ impl Stack {
             .ok_or(ExceptionalHalt::StackUnderflow)
     }
 
+    /// Overwrites the top value without a bounds check.
+    ///
+    /// # Safety
+    /// The caller must have already validated that a top element exists (e.g. a
+    /// prior `top_mut()?`/`pop1()?` in the same stack-neutral opcode) and must
+    /// not have changed the stack depth since, so `self.offset` is in bounds.
+    #[expect(unsafe_code, reason = "top validated by caller; depth unchanged")]
+    #[inline]
+    pub unsafe fn set_top_unchecked(&mut self, value: U256) {
+        unsafe {
+            *self.values.get_unchecked_mut(self.offset) = value;
+        }
+    }
+
     /// Pop the top value and return it together with a mutable reference to the new top.
     /// For binary ops: `let (a, b) = pop1_and_top_mut()?; *b = f(a, *b)` writes the result
     /// in place (one `offset` write instead of `pop::<2>` + `push`'s two), where `a` is the

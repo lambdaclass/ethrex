@@ -40,7 +40,7 @@ impl Memory {
     /// consensus bug). Capacity is kept so the grown allocation is reused.
     #[inline]
     pub fn reset_for_reuse(&mut self) {
-        self.buffer.borrow_mut().clear();
+        self.buf_mut().clear();
         self.len = 0;
         self.current_base = 0;
     }
@@ -74,7 +74,27 @@ impl Memory {
     #[cfg(target_arch = "riscv64")]
     #[inline]
     pub fn truncate_to_base(&self) {
-        self.buffer.borrow_mut().truncate(self.current_base);
+        self.buf_mut().truncate(self.current_base);
+    }
+
+    /// Unchecked shared access to the backing buffer, skipping `RefCell`'s runtime
+    /// borrow-flag read/branch/inc/dec. Sound because the guest is single-threaded
+    /// and only the current call frame ever mutates its own memory region, so
+    /// these borrows never overlap or alias — the same invariant `clean_from_base`
+    /// and the `get_unchecked` reads already rely on. Used only on the hot
+    /// MLOAD/MSTORE paths where the borrow is taken, used locally, and dropped.
+    #[expect(unsafe_code, reason = "single active frame; no overlapping borrows")]
+    #[inline]
+    fn buf(&self) -> &Vec<u8> {
+        unsafe { &*self.buffer.as_ptr() }
+    }
+
+    /// Unchecked mutable counterpart of [`Memory::buf`]; same invariant.
+    #[expect(unsafe_code, reason = "single active frame; no overlapping borrows")]
+    #[expect(clippy::mut_from_ref, reason = "single active frame; see buf()")]
+    #[inline]
+    fn buf_mut(&self) -> &mut Vec<u8> {
+        unsafe { &mut *self.buffer.as_ptr() }
     }
 
     /// Returns the len of the current memory, from the current base.
@@ -94,7 +114,7 @@ impl Memory {
         if self.len == 0 {
             return Vec::new();
         }
-        let buf = self.buffer.borrow();
+        let buf = self.buf();
         let end = self.current_base.saturating_add(self.len);
         buf.get(self.current_base..end)
             .map(<[u8]>::to_vec)
@@ -122,7 +142,7 @@ impl Memory {
 
         self.len = new_memory_size;
 
-        let mut buffer = self.buffer.borrow_mut();
+        let buffer = self.buf_mut();
 
         #[allow(clippy::arithmetic_side_effects)]
         let real_new_memory_size = new_memory_size + self.current_base;
@@ -136,11 +156,20 @@ impl Memory {
         Ok(())
     }
 
-    /// Load `size` bytes from the given offset. Returning a Bytes.
+    /// Borrows `size` bytes from the given offset, growing (and zero-filling) memory
+    /// first, exactly like [`load_range`](Self::load_range) — reads past the current
+    /// length see the zeros `resize` wrote. The slice is valid until the next
+    /// `&mut self` access, so callers must consume it (copy it out, hash it, hand it
+    /// to `Code`) before mutating memory again.
+    ///
+    /// This is the one range read: [`load_range`](Self::load_range) and
+    /// [`with_range`](Self::with_range) are thin wrappers. The CREATE init-code path
+    /// calls it directly to avoid a per-CREATE ~48 KiB owned copy that only ever gets
+    /// read once (see [`Code::from_slice_unchecked`]).
     #[inline]
-    pub fn load_range(&mut self, offset: usize, size: usize) -> Result<Bytes, VMError> {
+    pub fn load_range_ref(&mut self, offset: usize, size: usize) -> Result<&[u8], VMError> {
         if size == 0 {
-            return Ok(Bytes::new());
+            return Ok(&[]);
         }
 
         let new_size = offset.checked_add(size).ok_or(OutOfBounds)?;
@@ -148,25 +177,24 @@ impl Memory {
 
         let true_offset = offset.wrapping_add(self.current_base);
 
-        let buf = self.buffer.borrow();
+        let buf = self.buf();
 
         // SAFETY: resize already makes sure bounds are correct.
         #[allow(unsafe_code)]
         unsafe {
-            Ok(Bytes::copy_from_slice(buf.get_unchecked(
-                true_offset..(true_offset.wrapping_add(size)),
-            )))
+            Ok(buf.get_unchecked(true_offset..(true_offset.wrapping_add(size))))
         }
     }
 
+    /// Load `size` bytes from the given offset. Returning a Bytes.
+    #[inline]
+    pub fn load_range(&mut self, offset: usize, size: usize) -> Result<Bytes, VMError> {
+        Ok(Bytes::copy_from_slice(self.load_range_ref(offset, size)?))
+    }
+
     /// Borrow `size` bytes from the given offset and pass them to `f`, without
-    /// allocating a `Bytes` copy of the range.
-    ///
-    /// `load_range` reads through `self.buffer.borrow()`, whose `Ref` guard cannot
-    /// outlive this call — so a `-> &[u8]` accessor can't be written. Callers that
-    /// only need to read the range (e.g. hashing) take the borrow via this closure
-    /// instead. Semantics match `load_range` exactly, including zero-padding reads
-    /// past the current length (handled by `resize`).
+    /// allocating a `Bytes` copy of the range. For callers that only need to read
+    /// the range (e.g. hashing) and would rather not hold the borrow themselves.
     #[inline]
     pub fn with_range<R>(
         &mut self,
@@ -174,21 +202,7 @@ impl Memory {
         size: usize,
         f: impl FnOnce(&[u8]) -> R,
     ) -> Result<R, VMError> {
-        if size == 0 {
-            return Ok(f(&[]));
-        }
-
-        let new_size = offset.checked_add(size).ok_or(OutOfBounds)?;
-        self.resize(new_size)?;
-
-        let true_offset = offset.wrapping_add(self.current_base);
-
-        let buf = self.buffer.borrow();
-
-        // SAFETY: resize already makes sure bounds are correct.
-        #[allow(unsafe_code)]
-        let range = unsafe { buf.get_unchecked(true_offset..(true_offset.wrapping_add(size))) };
-        Ok(f(range))
+        Ok(f(self.load_range_ref(offset, size)?))
     }
 
     /// Load N bytes from the given offset.
@@ -199,7 +213,7 @@ impl Memory {
 
         let true_offset = offset.checked_add(self.current_base).ok_or(OutOfBounds)?;
 
-        let buf = self.buffer.borrow();
+        let buf = self.buf();
         // SAFETY: resize already makes sure bounds are correct.
         #[allow(unsafe_code)]
         unsafe {
@@ -228,7 +242,7 @@ impl Memory {
 
         let real_offset = self.current_base.wrapping_add(at_offset);
 
-        let mut buffer = self.buffer.borrow_mut();
+        let buffer = self.buf_mut();
 
         let real_data_size = data_size.min(data.len());
 
@@ -286,7 +300,7 @@ impl Memory {
             let zero_offset = offset.wrapping_add(copy_size);
             let zero_size = total_size - copy_size;
             let real_offset = self.current_base.wrapping_add(zero_offset);
-            let mut buffer = self.buffer.borrow_mut();
+            let buffer = self.buf_mut();
 
             // resize ensures bounds are correct
             #[expect(unsafe_code)]
@@ -310,6 +324,66 @@ impl Memory {
         self.resize(new_size)?;
         self.store(&u256_to_big_endian(word), offset, WORD_SIZE_IN_BYTES_USIZE)?;
         Ok(())
+    }
+
+    /// Like [`resize`], but `new_memory_size` MUST already be rounded up to a
+    /// multiple of `WORD_SIZE_IN_BYTES_USIZE` (e.g. the value returned by
+    /// `calculate_memory_size`). Skips the internal re-rounding the caller has
+    /// already performed for the gas charge.
+    #[inline]
+    pub fn resize_prerounded(&mut self, new_memory_size: usize) -> Result<(), VMError> {
+        debug_assert_eq!(new_memory_size % WORD_SIZE_IN_BYTES_USIZE, 0);
+        if new_memory_size == 0 {
+            return Ok(());
+        }
+        let current_len = self.len();
+        if new_memory_size <= current_len {
+            return Ok(());
+        }
+        self.len = new_memory_size;
+        let buffer = self.buf_mut();
+        #[allow(clippy::arithmetic_side_effects)]
+        let real_new_memory_size = new_memory_size + self.current_base;
+        if real_new_memory_size > buffer.len() {
+            let new_size = real_new_memory_size.next_multiple_of(64);
+            buffer.resize(new_size, 0);
+        }
+        Ok(())
+    }
+
+    /// [`store_word`] variant taking the pre-rounded memory size (see
+    /// [`resize_prerounded`]) so the word-rounding is computed once by the
+    /// caller instead of twice per MSTORE.
+    pub fn store_word_prerounded(
+        &mut self,
+        offset: usize,
+        word: U256,
+        new_memory_size: usize,
+    ) -> Result<(), VMError> {
+        self.resize_prerounded(new_memory_size)?;
+        self.store(&u256_to_big_endian(word), offset, WORD_SIZE_IN_BYTES_USIZE)?;
+        Ok(())
+    }
+
+    /// [`load_word`] variant taking the pre-rounded memory size (see
+    /// [`resize_prerounded`]) so MLOAD computes the word-rounding once (for its
+    /// gas charge) instead of twice.
+    pub fn load_word_prerounded(
+        &mut self,
+        offset: usize,
+        new_memory_size: usize,
+    ) -> Result<U256, VMError> {
+        self.resize_prerounded(new_memory_size)?;
+        let true_offset = offset.checked_add(self.current_base).ok_or(OutOfBounds)?;
+        let buf = self.buf();
+        // SAFETY: resize_prerounded above guarantees `true_offset + 32` is in bounds.
+        #[allow(unsafe_code)]
+        let value: [u8; WORD_SIZE_IN_BYTES_USIZE] = unsafe {
+            *buf.get_unchecked(true_offset..(true_offset.wrapping_add(WORD_SIZE_IN_BYTES_USIZE)))
+                .as_ptr()
+                .cast::<[u8; WORD_SIZE_IN_BYTES_USIZE]>()
+        };
+        Ok(u256_from_big_endian_const(value))
     }
 
     /// Copies memory within 2 offsets. Like a memmove.
@@ -339,7 +413,7 @@ impl Memory {
         let true_to_offset = to_offset
             .checked_add(self.current_base)
             .ok_or(OutOfBounds)?;
-        let mut buffer = self.buffer.borrow_mut();
+        let buffer = self.buf_mut();
 
         buffer.copy_within(
             true_from_offset
@@ -362,7 +436,7 @@ impl Memory {
         self.resize(new_size)?;
 
         let real_offset = self.current_base.wrapping_add(offset);
-        let mut buffer = self.buffer.borrow_mut();
+        let buffer = self.buf_mut();
 
         // resize ensures bounds are correct
         #[expect(unsafe_code)]
