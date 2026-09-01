@@ -288,8 +288,7 @@ sig_hash  = keccak256(0x06 || rlp(envelope))      # empty-msg signature bytes el
       withdrawal address, not the validator pubkey. We grant that address a deposit slot and
       fund it: the 32&nbsp;ETH stake is beyond the faucet's drip, so we send the stake along
       with the slot. Without the slot the deposit reverts with <code>Not enough tokens</code>;
-      with it, the deposit burns the slot and works. Every step below was run against this
-      chain as written.
+      with it, the deposit burns the slot and works.
     </p>
 
     <p style="margin:0 0 .35rem"><strong>1. Generate a key and deposit data.</strong> The fork
