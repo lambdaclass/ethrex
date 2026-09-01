@@ -1,3 +1,6 @@
+#[cfg(not(feature = "std"))]
+use alloc::vec::Vec;
+
 use crate::provider::Crypto;
 
 /// Native crypto implementation using system libraries.
@@ -17,11 +20,19 @@ use crate::provider::Crypto;
 pub struct NativeCrypto;
 
 #[cfg(not(feature = "aws-lc-rs"))]
-impl Crypto for NativeCrypto {}
+impl Crypto for NativeCrypto {
+    fn keccak256_batch(&self, inputs: &[&[u8]]) -> Vec<[u8; 32]> {
+        crate::keccak::keccak256_batch(inputs)
+    }
+}
 
 #[cfg(feature = "aws-lc-rs")]
 impl Crypto for NativeCrypto {
     fn secp256r1_verify(&self, msg: &[u8; 32], sig: &[u8; 64], pk: &[u8; 64]) -> bool {
         crate::p256_awslc::secp256r1_verify(msg, sig, pk)
+    }
+
+    fn keccak256_batch(&self, inputs: &[&[u8]]) -> Vec<[u8; 32]> {
+        crate::keccak::keccak256_batch(inputs)
     }
 }
