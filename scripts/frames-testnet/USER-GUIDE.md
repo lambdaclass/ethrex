@@ -152,7 +152,7 @@ prysm-beacon-chain \
   --datadir=./beacon \
   --chain-config-file=config.yaml \
   --genesis-state=genesis.ssz \
-  --checkpoint-sync-url=https://faucet.frames.ethrex.xyz:8443 \
+  --checkpoint-sync-url=https://checkpoint-sync.frames.ethrex.xyz \
   --execution-endpoint=http://127.0.0.1:8551 \
   --jwt-secret=<path to the jwtsecret your EL generated> \
   --bootstrap-node="$(paste -sd, bootnodes-cl.txt)" \
@@ -176,11 +176,11 @@ stalls in payload-envelope backfill with `beacon block root ... not found in
 forkchoice`, crawls at a few slots a minute, and leaves the execution client stranded a
 handful of blocks in. With `--checkpoint-sync-url` the same pair reaches head normally.
 
-The public checkpoint endpoint is `https://faucet.frames.ethrex.xyz:8443` — a read-only
-proxy of a beacon node's `/eth/*` API. It lives on its own **port** rather than a path
-because prysm's checkpoint and genesis providers strip the path from the base URL they
-are given; for the same reason, pass `--genesis-state=genesis.ssz` from the bundle
-instead of `--genesis-beacon-api-url`.
+The public checkpoint endpoint is `https://checkpoint-sync.frames.ethrex.xyz` — a
+read-only proxy of a beacon node's `/eth/*` API. It is a **hostname of its own** rather
+than a path under another one because prysm's checkpoint and genesis providers strip the
+path from the base URL they are given; for the same reason, pass
+`--genesis-state=genesis.ssz` from the bundle instead of `--genesis-beacon-api-url`.
 
 Confirm you are actually following. Check the execution client independently of the
 consensus client — a beacon node can sit at head while its execution client is still at
