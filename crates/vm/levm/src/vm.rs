@@ -2404,6 +2404,10 @@ impl<'a> VM<'a> {
                 }
                 None => (target, target_code),
             };
+            // Recorded before `bytecode` is moved into the call frame. Which dispatch
+            // branch a frame takes is decided by whether its resolved target has code, and
+            // that is not recoverable from the receipt afterwards.
+            let resolved_code_len = bytecode.len();
 
             // EIP-8141 top-level value transfer: the outer
             // frame call owns CALLVALUE delivery. We only CHECK affordability
@@ -2485,10 +2489,15 @@ impl<'a> VM<'a> {
             let (frame_success, frame_gas_used, frame_logs) = if new_account_charge_failed {
                 // The frame declared too little state gas to fund a new account, so it
                 // halts before its code runs and forfeits its execution budget.
+                frame_failure = Some(format!(
+                    "declared limits.state {} cannot cover the {} account-creation charge",
+                    frame.state_limit, self.state_gas_new_account
+                ));
                 self.substate.revert_backup();
                 self.restore_cache_state()?;
                 (false, frame.gas_limit, Vec::new())
             } else if value_transfer_reverted {
+                frame_failure = Some("frame value exceeds the sender's balance".to_string());
                 self.substate.revert_backup();
                 self.restore_cache_state()?;
                 (false, frame.gas_limit, Vec::new())
@@ -2528,12 +2537,15 @@ impl<'a> VM<'a> {
                             self.substate.commit_backup();
                             (true, gas_used, this_frame_logs)
                         } else {
+                            frame_failure =
+                                Some("the default code for this frame mode failed".to_string());
                             self.substate.revert_backup();
                             self.restore_cache_state()?;
                             (false, gas_used, Vec::new())
                         }
                     }
-                    Err(_) => {
+                    Err(e) => {
+                        frame_failure = Some(format!("default code halted: {e}"));
                         self.substate.revert_backup();
                         self.restore_cache_state()?;
                         (false, frame.gas_limit, Vec::new())
@@ -2834,8 +2846,12 @@ impl<'a> VM<'a> {
             // batched VERIFY reverts are handled in the atomic-batch-revert
             // branch above (which also sets tx_invalid).
             if frame.execution_mode() == Some(FrameMode::Verify) && !frame_success {
+                // Target and code length travel with the verdict: which dispatch branch a
+                // frame took is decided by whether its resolved target has code, and that
+                // is not recoverable from the receipt afterwards.
                 tx_invalid = Some(format!(
-                    "VERIFY frame {frame_idx} failed: {}",
+                    "VERIFY frame {frame_idx} (target {target:#x}, {resolved_code_len} bytes \
+                     of code) failed: {}",
                     frame_failure.as_deref().unwrap_or("no reason recorded")
                 ));
                 break;
