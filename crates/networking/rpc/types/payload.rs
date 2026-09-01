@@ -417,9 +417,7 @@ mod test {
             .iter()
             .map(|e| e.decode().unwrap().encode_canonical_to_vec())
             .collect();
-        let block = payload
-            .into_block(Some(H256::zero()), None, None)
-            .unwrap();
+        let block = payload.into_block(Some(H256::zero()), None, None).unwrap();
         // into_block decodes in parallel; result must match the sequential decode
         // exactly (same order, same content).
         let parallel: Vec<Vec<u8>> = block
