@@ -4917,7 +4917,7 @@ fn flush_block_data(
             tx.put(
                 RECEIPTS_V2,
                 &receipt_key(&hash, index as u64),
-                &receipt.encode_to_vec(),
+                &receipt.encode_storage(),
             )?;
         }
         max_number = max_number.max(b.number);
