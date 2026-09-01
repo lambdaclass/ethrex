@@ -255,6 +255,19 @@ sig_hash  = keccak256(0x06 || rlp(envelope))      # empty-msg signature bytes el
   <div class="panel">
     {{BOOTNODES}}
     <div class="note">
+      <strong>The consensus client must <em>not</em> implement Heze</strong> — the opposite of
+      the usual requirement. Use
+      <code>docker.io/ethpandaops/prysm-beacon-chain:glamsterdam-devnet-8</code>, which is
+      Gloas-only. This chain's config schedules <code>HEZE_FORK_EPOCH</code> so the execution
+      layer activates frames by timestamp, but the network's consensus nodes never leave Gloas.
+      A Heze-aware build computes the Heze fork digest and is <strong>dropped on STATUS with
+      zero peers</strong> (the network's digest is <code>0x20AED5CC</code>); even if it peered,
+      it would drive <code>forkchoiceUpdatedV5</code>/<code>newPayloadV6</code>, which this
+      chain's execution client does not serve. A stock release fails the other way: it cannot
+      decode Gloas states. Seeing <code>field HEZE_FORK_VERSION not found in type</code> in the
+      prysm log is expected — it is the client not knowing Heze, which is what this chain needs.
+    </div>
+    <div class="note">
       <strong>Sync from a checkpoint, not from genesis.</strong> Pass
       <code>--checkpoint-sync-url=https://checkpoint-sync.frames.ethrex.xyz</code> and
       <code>--genesis-state=genesis.ssz</code> from the bundle. Started at genesis the consensus

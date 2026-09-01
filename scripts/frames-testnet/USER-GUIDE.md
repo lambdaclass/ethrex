@@ -162,8 +162,12 @@ prysm-beacon-chain \
 The image is `ethpandaops/prysm-beacon-chain:glamsterdam-devnet-8`, and the requirement
 is the opposite of what you would guess: **the consensus client must not implement
 Heze.** ethrex on this branch serves `forkchoiceUpdated` V1–V4 and `newPayload` V1–V5.
-A Heze-aware client switches to `forkchoiceUpdatedV5` / `newPayloadV6` at the boundary,
-which this branch does not serve, and halts the node with
+A Heze-aware client fails before it ever reaches the engine API: it computes the Heze
+fork digest from the config's `HEZE_FORK_VERSION` while the network's peers are still on
+the Gloas digest (`0x20AED5CC`), so it is dropped at the STATUS handshake and sits at
+**zero peers** — the symptom reads as a networking problem, not a fork-choice one. If it
+did peer, it would switch to `forkchoiceUpdatedV5` / `newPayloadV6` at the boundary,
+which this branch does not serve, and halt the node with
 `RequiredMethodUnsupported`. This prysm build is Gloas-only — it ignores
 `HEZE_FORK_EPOCH` entirely — so it keeps driving the pair ethrex serves, while the
 execution layer activates frames on its own timestamp schedule.
