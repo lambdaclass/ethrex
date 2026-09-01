@@ -167,11 +167,17 @@ jobs:
           - sp1
           - openvm
     runs-on: ubuntu-latest
-    env:
-      ERE_TAG: 0.16.2
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
+
+      # Derived rather than hardcoded: the guests are compiled by ere's compiler
+      # image and then executed under ere's server image, so both have to be the
+      # ere release the manifests pin. Stating the version here as well means two
+      # places to update and nothing comparing them. The script owns that version
+      # and refuses to print it if any guest manifest has moved off it.
+      - name: Resolve ere tag
+        run: echo "ERE_TAG=$(.github/scripts/zkvm-version.sh --ere-tag --docker)" >> "$GITHUB_ENV"
 
       - name: Free Disk Space
         uses: ./.github/actions/free-disk
