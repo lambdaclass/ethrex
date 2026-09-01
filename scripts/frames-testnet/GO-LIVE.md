@@ -37,6 +37,7 @@ directly — the nodes answer `admin_*` and `debug_*`, and the guard is what wit
 | CL libp2p | 36200, 36207, 36214 | TCP |
 | CL QUIC | 36200, 36207, 36214 | UDP |
 | CL discv5 | 36201, 36208, 36215 | **UDP only** |
+| Checkpoint sync (Caddy) | 8443 | TCP |
 
 `36201`, `36208`, `36215` are UDP-only on purpose. The same numbers on TCP are the
 beacon REST APIs and must stay closed; a rule written without `-p` matches both and
