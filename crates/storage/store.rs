@@ -69,12 +69,37 @@ pub const MAX_WITNESSES: u64 = 128;
 pub const DB_COMMIT_THRESHOLD: usize = 128;
 const IN_MEMORY_COMMIT_THRESHOLD: usize = 10000;
 
+/// Layers flushed per depth-gated `commit_to_disk` once `commit_depth >= DB_COMMIT_THRESHOLD`.
+///
+/// The persist worker waits until `depth + DEPTH_GATED_COMMIT_STRIDE - 1` parent-chain layers
+/// exist, then commits the layer at `depth` (pulling ~stride ancestors). That amortizes
+/// `rebuild_bloom`, FKV Stop/Continue, and the trie write batch. Peak resident layers are
+/// ~`depth + DEPTH_GATED_COMMIT_STRIDE` (including the tip).
+///
+/// Applies to any `depth >= DB_COMMIT_THRESHOLD`, not only exactly 128. Stride is 1 when
+/// `depth < DB_COMMIT_THRESHOLD` or a reorg overlay is installed (overlay commits are
+/// single-layer). The live path (`commit_depth: None`) uses the canonical gate and never
+/// consults this constant.
+pub const DEPTH_GATED_COMMIT_STRIDE: usize = 32;
+
 /// Depth-only commit threshold for batch execution (full sync / block import). Each batch
 /// layer holds ~1024 blocks of trie diffs (~1 GB), so we flush after a few layers to bound
 /// memory. The canonical `head - DB_COMMIT_THRESHOLD` safe-commit root never lands on a batch
 /// layer boundary, so batch mode commits by depth instead; this is sound because full sync and
 /// import only ever extend a single canonical chain (no competing forks to mis-commit).
 pub const BATCH_COMMIT_THRESHOLD: usize = 4;
+
+fn depth_gated_commit_stride(depth: usize, overlay_installed: bool) -> usize {
+    if overlay_installed || depth < DB_COMMIT_THRESHOLD {
+        1
+    } else {
+        DEPTH_GATED_COMMIT_STRIDE
+    }
+}
+
+fn depth_gated_commit_needed(depth: usize, stride: usize) -> usize {
+    depth.saturating_add(stride.saturating_sub(1))
+}
 
 /// Sorted, sharded `multi_get` tuning, shared by the account, storage, and
 /// trie-node batch read paths. A single `multi_get` runs at queue depth 1
@@ -483,8 +508,10 @@ pub struct UpdateBatch {
     /// - `None`: live path (`newPayload`). The persist worker commits by the canonical
     ///   `head - DB_COMMIT_THRESHOLD` safe-commit root.
     /// - `Some(depth)`: single-canonical-chain execution (batch import, full sync, startup
-    ///   state regeneration). The persist worker commits every layer deeper than `depth`
-    ///   (see [`Trie::get_commitable_by_depth`]), which bounds resident trie layers to ~`depth`.
+    ///   state regeneration). The persist worker commits layers deeper than `depth`
+    ///   (see [`TrieLayerCache::get_commitable_by_depth`]), bounding the retain window to
+    ///   ~`depth`. Any `depth >= DB_COMMIT_THRESHOLD` without a reorg overlay is further
+    ///   strided by [`DEPTH_GATED_COMMIT_STRIDE`] (peak ~`depth + stride`).
     pub commit_depth: Option<usize>,
     /// When the persist worker acks (independent of `commit_depth`).
     ///
@@ -5045,8 +5072,11 @@ fn apply_trie_phase1(
 /// `commit_depth` selects the gate. `Some(depth)`: single-canonical-chain execution (batch
 /// import, full sync, startup regeneration) commits by depth, because the canonical `head - 128`
 /// safe-commit root never lands on a batch layer boundary; sound because these paths only ever
-/// extend a single canonical chain (no competing forks to mis-commit). `None`: live block-by-block
-/// execution uses the canonical safe-commit gate (`TrieLayerCache::get_commitable`) so non-canonical
+/// extend a single canonical chain (no competing forks to mis-commit). Any
+/// `depth >= DB_COMMIT_THRESHOLD` without a reorg overlay waits until
+/// `depth + DEPTH_GATED_COMMIT_STRIDE - 1` layers exist from `parent_state_root`, then commits
+/// at `depth` (see [`DEPTH_GATED_COMMIT_STRIDE`]). `None`: live block-by-block execution uses
+/// the canonical safe-commit gate (`TrieLayerCache::get_commitable`) so non-canonical
 /// `newPayload` state is never persisted.
 ///
 /// `is_batch` is independent of the gate and only selects journaling (see
@@ -5077,7 +5107,15 @@ fn commit_trie_if_due(
         .clone();
     // Phase 2 + 3: flush and prune the committable backlog.
     let commitable = match commit_depth {
-        Some(depth) => trie.get_commitable_by_depth(parent_state_root, depth),
+        Some(depth) => {
+            let stride = depth_gated_commit_stride(depth, trie.overlay().is_some());
+            let needed = depth_gated_commit_needed(depth, stride);
+            if stride == 1 {
+                trie.get_commitable_by_depth(parent_state_root, depth)
+            } else {
+                trie.get_commitable_by_depth_if_at_least(parent_state_root, depth, needed)
+            }
+        }
         None => trie.get_commitable(parent_state_root),
     };
     let Some(root) = commitable else {
@@ -5871,6 +5909,54 @@ pub fn read_chain_id_from_db(path: &Path) -> Option<u64> {
 }
 
 #[cfg(test)]
+mod depth_gated_commit_stride_tests {
+    use super::{
+        DB_COMMIT_THRESHOLD, DEPTH_GATED_COMMIT_STRIDE, depth_gated_commit_needed,
+        depth_gated_commit_stride,
+    };
+
+    #[test]
+    fn stride_is_one_below_retain_window_or_with_overlay() {
+        // Overlay commits are single-layer in commit_to_disk; keep the gate eager.
+        assert_eq!(depth_gated_commit_stride(1, false), 1);
+        assert_eq!(depth_gated_commit_stride(3, false), 1);
+        assert_eq!(depth_gated_commit_stride(DB_COMMIT_THRESHOLD - 1, false), 1);
+        assert_eq!(depth_gated_commit_stride(DB_COMMIT_THRESHOLD, true), 1);
+        assert_eq!(
+            depth_gated_commit_stride(DB_COMMIT_THRESHOLD + 64, true),
+            1
+        );
+    }
+
+    #[test]
+    fn stride_is_production_constant_at_retain_window_without_overlay() {
+        assert_eq!(
+            depth_gated_commit_stride(DB_COMMIT_THRESHOLD, false),
+            DEPTH_GATED_COMMIT_STRIDE
+        );
+        assert_eq!(
+            depth_gated_commit_stride(DB_COMMIT_THRESHOLD + 1, false),
+            DEPTH_GATED_COMMIT_STRIDE
+        );
+    }
+
+    #[test]
+    fn needed_matches_depth_when_stride_is_one() {
+        assert_eq!(depth_gated_commit_needed(128, 1), 128);
+        assert_eq!(depth_gated_commit_needed(3, 1), 3);
+    }
+
+    #[test]
+    fn needed_adds_stride_minus_one() {
+        assert_eq!(
+            depth_gated_commit_needed(DB_COMMIT_THRESHOLD, DEPTH_GATED_COMMIT_STRIDE),
+            DB_COMMIT_THRESHOLD + DEPTH_GATED_COMMIT_STRIDE - 1
+        );
+        assert_eq!(depth_gated_commit_needed(0, 32), 31);
+    }
+}
+
+#[cfg(test)]
 mod account_code_tests {
     use super::*;
 
@@ -6094,10 +6180,7 @@ mod state_history_tests {
         }
     }
 
-    /// Asserts no STATE_HISTORY entry materializes for `block_number` within the
-    /// given window. Polls repeatedly; if an entry appears at any poll, fails
-    /// loudly. Absence at every poll over the full window counts as verified.
-    /// More robust than a single fixed sleep under CI load.
+    /// Asserts no STATE_HISTORY entry for `block_number` over a short poll window.
     fn assert_no_journal_entry(backend: &Arc<dyn StorageBackend>, block_number: BlockNumber) {
         let window = Duration::from_millis(500);
         let key = block_number.to_be_bytes();
@@ -6114,6 +6197,18 @@ mod state_history_tests {
             }
             std::thread::sleep(Duration::from_millis(20));
         }
+    }
+
+    /// Single-shot check after the caller has already synchronized past the relevant work.
+    fn assert_journal_absent(backend: &Arc<dyn StorageBackend>, block_number: BlockNumber) {
+        let read = backend.begin_read().expect("read view");
+        let v = read
+            .get(STATE_HISTORY, &block_number.to_be_bytes())
+            .expect("get");
+        assert!(
+            v.is_none(),
+            "expected no STATE_HISTORY entry for block {block_number}, got {v:?}"
+        );
     }
 
     /// Live commits gate on the canonical safe-commit root cell (see `get_commitable`),
@@ -6275,6 +6370,131 @@ mod state_history_tests {
             Some(vec![0xb0 | 1u8]),
             "block 2's pre-image is the value block 1 wrote"
         );
+    }
+
+    /// Depth-gated retain-window commits (`commit_depth >= DB_COMMIT_THRESHOLD`) wait for a
+    /// full [`DEPTH_GATED_COMMIT_STRIDE`] backlog, then flush that many layers in one
+    /// `commit_to_disk`. No journal yet at `DB_COMMIT_THRESHOLD` layers; a second stride
+    /// cycle journals the next contiguous range.
+    #[test]
+    fn depth_gated_retain_window_commits_on_stride_not_every_block() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(
+            backend.clone(),
+            dir.path().to_path_buf(),
+            1,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
+
+        let shared = Nibbles::from_raw(&[0x0a, 0x0b], false);
+        let mut prev_hash = H256::zero();
+        let needed = depth_gated_commit_needed(DB_COMMIT_THRESHOLD, DEPTH_GATED_COMMIT_STRIDE);
+        // Commit check walks from parent after phase-1, so first fire is at needed + 1.
+        let first_commit_at = (needed as u64) + 1;
+        let stride = DEPTH_GATED_COMMIT_STRIDE as u64;
+        let second_commit_at = first_commit_at + stride;
+
+        let push_block = |n: u64, prev: &mut H256| {
+            let mut root_bytes = [0u8; 32];
+            root_bytes[24..].copy_from_slice(&n.to_be_bytes());
+            let state_root = H256::from(root_bytes);
+            let block = make_block(n, *prev, state_root);
+            *prev = block.hash();
+            store
+                .store_block_updates(UpdateBatch {
+                    account_updates: vec![(shared.clone(), vec![n as u8])],
+                    storage_updates: vec![],
+                    blocks: vec![block],
+                    receipts: vec![],
+                    code_updates: vec![],
+                    commit_depth: Some(DB_COMMIT_THRESHOLD),
+                    wait_for_flush: false,
+                })
+                .unwrap();
+        };
+
+        for n in 1..=DB_COMMIT_THRESHOLD as u64 {
+            push_block(n, &mut prev_hash);
+        }
+
+        // wait_for_flush=false acks before phase-1; wait until layers are installed.
+        let layers_at_threshold =
+            await_layer_count(&store, DB_COMMIT_THRESHOLD, Duration::from_secs(5));
+        assert_eq!(
+            layers_at_threshold, DB_COMMIT_THRESHOLD,
+            "at the retain-window depth the cache should hold every layer and not have flushed"
+        );
+        assert_journal_absent(&backend, 1);
+
+        for n in (DB_COMMIT_THRESHOLD as u64 + 1)..=first_commit_at {
+            push_block(n, &mut prev_hash);
+        }
+
+        for n in 1..=stride {
+            let bytes = await_journal_entry(&backend, n, Duration::from_secs(5)).unwrap_or_else(
+                || panic!("first stride commit must journal block {n}"),
+            );
+            let entry = JournalEntry::decode(&bytes).unwrap();
+            if n == 1 {
+                assert_eq!(entry.parent_state_root, H256::zero());
+            }
+        }
+        assert_journal_absent(&backend, stride + 1);
+        assert_eq!(
+            await_layer_count_at_most(&store, DB_COMMIT_THRESHOLD, Duration::from_secs(5)),
+            DB_COMMIT_THRESHOLD,
+            "after the first stride commit the retain window should be exactly depth-sized"
+        );
+
+        for n in (first_commit_at + 1)..=second_commit_at {
+            push_block(n, &mut prev_hash);
+        }
+
+        for n in (stride + 1)..=(2 * stride) {
+            await_journal_entry(&backend, n, Duration::from_secs(5)).unwrap_or_else(|| {
+                panic!("second stride commit must journal block {n}")
+            });
+        }
+        assert_journal_absent(&backend, 2 * stride + 1);
+        assert_eq!(
+            await_layer_count_at_most(&store, DB_COMMIT_THRESHOLD, Duration::from_secs(5)),
+            DB_COMMIT_THRESHOLD,
+            "after the second stride commit the retain window should still be depth-sized"
+        );
+    }
+
+    /// Poll until `trie_cache` has at least `min_layers` (phase-1 may lag the ack).
+    fn await_layer_count(store: &Store, min_layers: usize, timeout: Duration) -> usize {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let n = store.trie_cache.read().unwrap().layer_count();
+            if n >= min_layers {
+                return n;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for {min_layers} trie layers (still {n})"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// Poll until `trie_cache` has at most `max_layers` (prune may lag the journal write).
+    fn await_layer_count_at_most(store: &Store, max_layers: usize, timeout: Duration) -> usize {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let n = store.trie_cache.read().unwrap().layer_count();
+            if n <= max_layers {
+                return n;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for <= {max_layers} trie layers (still {n})"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     /// The bespoke batch path SHALL skip the journal entirely. To actually exercise the

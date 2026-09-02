@@ -12,6 +12,10 @@
 
 ## Perf
 
+### 2026-08-25
+
+- Stride depth-gated trie commits every 32 layers once the retain window is warm, amortizing `rebuild_bloom` / FKV / write-batch fixed costs on full-sync and regen paths [#7214](https://github.com/lambdaclass/ethrex/pull/7214)
+
 ### 2026-08-24
 
 - Make `eth_estimateGas`'s plain-transfer short circuit fire. Its condition tested whether the recipient account existed rather than whether it had code, so every transfer to an ordinary funded wallet ran the full binary search instead of returning `TRANSACTION_GAS` at once [#7211](https://github.com/lambdaclass/ethrex/pull/7211)
