@@ -224,19 +224,37 @@ jobs:
         with:
           path: hive/workspace/logs
           pattern: "*_daily-results.zip"
-          merge-multiple: true
+
+      # Each simulator's results land in a directory named after its artifact. A
+      # simulator whose job finished without uploading anything must not vanish
+      # into a 0/0 line on an otherwise green report: on 2026-09-03 the
+      # consume-engine-rest artifact was missing and 20k tests dropped out of the
+      # totals with nothing flagged.
+      - name: Check that every simulator reported
+        id: coverage
+        shell: bash
+        run: |
+          missing=()
+          # The expected set is read from this workflow's own matrix so it cannot drift from it.
+          for sim in $(grep -oE 'file_name: [a-z0-9-]+' .github/workflows/daily_hive_report.yaml | awk '{print $2}' | sort -u); do
+            if ! compgen -G "hive/workspace/logs/${sim}_daily-results.zip/*.json" > /dev/null; then
+              missing+=("$sim")
+            fi
+          done
+          if (( ${#missing[@]} )); then
+            echo "::error::No results were uploaded by: ${missing[*]}. The report counts them as 0/0."
+          fi
+          echo "missing=${missing[*]-}" >> "$GITHUB_OUTPUT"
 
       - name: Flatten hive result files
         shell: bash
         run: |
-          shopt -s globstar nullglob
+          shopt -s nullglob
           mkdir -p hive/workspace/logs
-          for json in hive/workspace/logs/**/*.json; do
-            base_name=$(basename "$json")
-            target="hive/workspace/logs/$base_name"
-            if [[ "$json" != "$target" ]]; then
-              mv "$json" "$target"
-            fi
+          # One level down: the per-artifact directories. Client logs sit deeper
+          # and are deliberately left behind.
+          for f in hive/workspace/logs/*/*.json hive/workspace/logs/*/*.log; do
+            mv "$f" "hive/workspace/logs/$(basename "$f")"
           done
           find hive/workspace/logs -mindepth 1 -type d -exec rm -rf {} +
 
@@ -262,6 +280,17 @@ jobs:
       - name: Generate the hive report
         run: cargo run --manifest-path tooling/Cargo.toml -p hive_report > results.md
 
+      - name: Flag missing simulators in the report
+        if: steps.coverage.outputs.missing != ''
+        env:
+          MISSING: ${{ steps.coverage.outputs.missing }}
+        shell: bash
+        run: |
+          note="⚠️ *No results from:* ${MISSING// /, }. Counted as 0/0 below."
+          { printf '%s\n\n' "$note"; cat results.md; } > results.tmp && mv results.tmp results.md
+          jq --arg t "$note" '.blocks |= ([.[0], {type: "section", text: {type: "mrkdwn", text: $t}}] + .[1:])' \
+            hive_slack_blocks.json > blocks.tmp && mv blocks.tmp hive_slack_blocks.json
+
       - name: Upload daily result
         uses: actions/upload-artifact@v6
         with:
@@ -276,9 +305,16 @@ jobs:
           echo "# Hive coverage report" >> $GITHUB_STEP_SUMMARY
           cat results.md >> $GITHUB_STEP_SUMMARY
 
+      # Last, so the report and its artifact still go out; the job just stops
+      # being green about it.
+      - name: Fail when a simulator did not report
+        if: steps.coverage.outputs.missing != ''
+        run: exit 1
+
   post-daily-report:
     name: Post report to slack
     needs: [hive-report]
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
