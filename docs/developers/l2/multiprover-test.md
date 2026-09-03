@@ -161,6 +161,8 @@ Each response is `{"<object>": {...}, "signature": "<hex>"}`; the DAO wants the 
 
 The proof coordinator must bind `0.0.0.0` so the SP1 prover on the other host can reach it, and the qpl tool path must be passed even in dev mode.
 
+`--committer.commit-time` must not outpace proof generation. Both proofs are required per batch, so the pipeline advances at the slower prover's rate: an SP1 proof on `l2-gpu` measured a steady 106s, which is why 120s is used here. At 15s the committer outruns proving by about 7x, and the gap never closes — a 63-hour run reached batch 10983 committed against 2127 verified. Step 9 cannot pass in that state, however long it is left running.
+
 ```bash
 set -a; . ~/multiprover/$TAG/.env; set +a
 ~/multiprover/$TAG/ethrex-l2-linux-x86_64 l2 --no-monitor \
@@ -170,7 +172,7 @@ set -a; . ~/multiprover/$TAG/.env; set +a
   --l1.bridge-address "$ETHREX_WATCHER_BRIDGE_ADDRESS" \
   --l1.on-chain-proposer-address "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" \
   --l1.timelock-address "$ETHREX_TIMELOCK_ADDRESS" \
-  --eth.rpc-url http://localhost:8545 --committer.commit-time 15000 \
+  --eth.rpc-url http://localhost:8545 --committer.commit-time 120000 \
   --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d \
   --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
   --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
@@ -209,6 +211,8 @@ done
 
 ### 9. Run the integration suite
 
+The withdrawal tests block in `wait_for_verified_proof` until `lastVerifiedBatch` reaches the batch holding the withdrawal, so verification has to be keeping pace before this starts. Confirm `lastVerifiedBatch` is climbing and within a few batches of `lastCommittedBatch` rather than thousands behind; if it is falling behind, fix the commit time in step 5 and restart from a fresh L1 and L2.
+
 ```bash
 cd src
 INTEGRATION_TEST_L1_RPC=http://localhost:8545 \
@@ -231,5 +235,6 @@ cargo test -p ethrex-test l2_integration_test --release --features l2 -- --nocap
 | `Incorrect_Enclave_Id_Version` (`0x4e0f5696`) | TD_QE needs version 4 or 5, not the `version` inside the JSON |
 | `Unsupported chain_id: 9` | `automata-dcap-qpl-tool` cannot serve a dev chain; load the collateral directly (step 4) |
 | `verifyBatch` reverts `0x62013a95` | `InvalidTdxProof()` — a real quote was registered while dev mode was on, so the signer is quote-header bytes; deploy with `ETHREX_TDX_DEV_MODE=false` |
+| Suite hangs in a withdrawal test and later fails on an unreachable L2 RPC | verification is thousands of batches behind commits; `--committer.commit-time` is below the SP1 proof time (step 5) |
 | VM sits on `No blocks to prove` while batches are committed | the prover is asking for a batch whose input was pruned; restart from a fresh L1 **and** L2 with both provers attached before the first batch |
 | VM sits on `No blocks to prove` with nothing committed | normal; if it persists, the committer is failing — check the sequencer log |
