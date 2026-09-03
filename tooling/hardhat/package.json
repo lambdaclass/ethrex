@@ -10,13 +10,13 @@
     "validate:upgrades": "node scripts/validate-upgrades.js"
   },
   "devDependencies": {
-    "@nomicfoundation/hardhat-chai-matchers": "^2.0.6",
+    "@nomicfoundation/hardhat-chai-matchers": "^3.0.0",
     "@nomicfoundation/hardhat-ethers": "^3.0.4",
     "@openzeppelin/hardhat-upgrades": "^3.2.1",
     "@openzeppelin/contracts": "5.4.0",
     "@openzeppelin/contracts-upgradeable": "5.4.0",
     "chai": "^4.4.1",
     "ethers": "^6.14.0",
-    "hardhat": "^2.24.0"
+    "hardhat": "^3.3.0"
   }
 }
