@@ -161,19 +161,11 @@ impl Evm {
             self.stateless_validator.as_deref(),
         )?;
 
-        // Track cumulative post-refund gas for receipt.
-        //
-        // EIP-8141 splits a frame transaction's gas into an execution and a state
-        // dimension, and a receipt's `cumulative_gas_used` is the total gas the
-        // transaction used -- both dimensions summed. That is a different quantity
-        // from the block header's `gasUsed`, which EIP-8037 defines as the *maximum*
-        // of the two dimensions accumulated over the block, so the two must not be
-        // derived from one another.
+        // Track cumulative post-refund gas for receipt. `gas_spent` is the payer
+        // total across both gas dimensions for every transaction kind -- the frame
+        // path reports the same shape as the ordinary one -- so no per-kind
+        // adjustment happens here.
         *cumulative_gas_spent += execution_report.gas_spent;
-        if matches!(tx, Transaction::FrameTransaction(_)) {
-            *cumulative_gas_spent =
-                cumulative_gas_spent.saturating_add(execution_report.state_gas_used);
-        }
 
         let mut receipt = Receipt::new(
             tx.tx_type(),

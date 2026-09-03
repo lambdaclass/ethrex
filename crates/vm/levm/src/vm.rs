@@ -2557,10 +2557,15 @@ impl<'a> VM<'a> {
         // and signature data: the mandatory costs are always charged, and the data
         // cost is floored against what execution actually consumed.
         // Settlement runs over the combined usage and then splits it back out:
-        //   before   = execution + state, pre-refund
-        //   refund   = min(counter, before / 5)          (EIP-3529)
-        //   after    = before - refund
-        //   execution = max(after - state, calldata_floor)  (EIP-7623)
+        //   before    = execution + state, pre-refund
+        //   refund    = min(counter, before / 5)              (EIP-3529)
+        //   after     = before - refund
+        //   payer     = max(after - state, calldata_floor)    (EIP-7623)
+        //   block     = max(before - state, calldata_floor)   (EIP-7778)
+        // The payer and the block see different execution dimensions: the storage
+        // refund lowers what the payer pays without freeing the block capacity the
+        // transaction occupied, so the block figure ignores the refund while the
+        // payer figure applies it. The calldata floor binds each independently.
         // Capping the refund against the execution dimension alone would
         // under-refund a state-dominated transaction, and applying the floor before
         // removing the state dimension would let state gas satisfy a floor that
@@ -2573,9 +2578,13 @@ impl<'a> VM<'a> {
             .refunded_gas
             .min(gas_used_before_refund / crate::hooks::default_hook::MAX_REFUND_QUOTIENT);
         let gas_used_after_refund = gas_used_before_refund.saturating_sub(applied_refund);
-        let total_gas_used = gas_used_after_refund
+        let payer_execution_gas = gas_used_after_refund
             .saturating_sub(tx_state_gas)
             .max(frame_tx.calldata_floor_total());
+        let block_execution_gas = gas_used_before_refund
+            .saturating_sub(tx_state_gas)
+            .max(frame_tx.calldata_floor_total());
+        let total_gas_used = payer_execution_gas;
 
         // Gas refunds: the payer was debited the transaction's `max_cost` at
         // APPROVE (`max_gas` at `max_fee_per_gas`, plus the blob cost already at
@@ -2727,10 +2736,16 @@ impl<'a> VM<'a> {
         let frame_gas_used = total_gas_used.saturating_sub(intrinsic_gas);
         let gas_refund = sum_frame_gas_limits.saturating_sub(frame_gas_used);
 
+        // Report both dimensions in the same shape the ordinary-tx path uses, so
+        // block accounting and receipts consume frame and non-frame reports
+        // identically: `gas_used` carries the pre-refund block figure plus state
+        // (EIP-7778 -- block regular gas is `gas_used - state_gas_used`), and
+        // `gas_spent` carries the post-refund payer total plus state, which is what
+        // a receipt's `cumulative_gas_used` accumulates.
         let report = ExecutionReport {
             result,
-            gas_used: total_gas_used,
-            gas_spent: total_gas_used,
+            gas_used: block_execution_gas.saturating_add(state_gas_used),
+            gas_spent: total_gas_used.saturating_add(state_gas_used),
             gas_refunded: gas_refund,
             state_gas_used,
             output: Bytes::new(),

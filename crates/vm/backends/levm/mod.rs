@@ -351,29 +351,14 @@ impl LEVM {
             ));
 
             // EIP-7778: gas_spent (POST-REFUND) for receipt cumulative_gas_used.
-            //
-            // EIP-8141 splits a frame transaction's gas into an execution and a
-            // state dimension, and `cumulative_gas_used` is the total across both.
-            // The block header's `gasUsed` is a different quantity -- EIP-8037
-            // makes it the maximum of the two dimensions accumulated over the
-            // block -- so neither is derivable from the other.
-            let is_frame_tx = matches!(tx, Transaction::FrameTransaction(_));
+            // Frame and ordinary transactions report the same shape: the payer
+            // total across both gas dimensions.
             cumulative_gas_used += report.gas_spent;
-            if is_frame_tx {
-                cumulative_gas_used = cumulative_gas_used.saturating_add(report.state_gas_used);
-            }
 
             // EIP-8037 (Amsterdam+): block_gas_used = max(sum_regular, sum_state)
             // For pre-Amsterdam, state_gas_used is always 0 so gas_used == regular_gas.
             let tx_state_gas = report.state_gas_used;
-            // A frame transaction's `gas_used` is already the execution dimension
-            // alone -- its state charges draw from the frame's declared budget
-            // instead of spilling into execution gas -- so nothing is subtracted.
-            let tx_regular_gas = if is_frame_tx {
-                report.gas_used
-            } else {
-                report.gas_used.saturating_sub(tx_state_gas)
-            };
+            let tx_regular_gas = report.gas_used.saturating_sub(tx_state_gas);
             block_regular_gas_used = block_regular_gas_used.saturating_add(tx_regular_gas);
             block_state_gas_used = block_state_gas_used.saturating_add(tx_state_gas);
 
@@ -811,29 +796,14 @@ impl LEVM {
             }
 
             // EIP-7778: gas_spent (POST-REFUND) for receipt cumulative_gas_used.
-            //
-            // EIP-8141 splits a frame transaction's gas into an execution and a
-            // state dimension, and `cumulative_gas_used` is the total across both.
-            // The block header's `gasUsed` is a different quantity -- EIP-8037
-            // makes it the maximum of the two dimensions accumulated over the
-            // block -- so neither is derivable from the other.
-            let is_frame_tx = matches!(tx, Transaction::FrameTransaction(_));
+            // Frame and ordinary transactions report the same shape: the payer
+            // total across both gas dimensions.
             cumulative_gas_used += report.gas_spent;
-            if is_frame_tx {
-                cumulative_gas_used = cumulative_gas_used.saturating_add(report.state_gas_used);
-            }
 
             // EIP-8037 (Amsterdam+): block_gas_used = max(sum_regular, sum_state)
             // For pre-Amsterdam, state_gas_used is always 0 so gas_used == regular_gas.
             let tx_state_gas = report.state_gas_used;
-            // A frame transaction's `gas_used` is already the execution dimension
-            // alone -- its state charges draw from the frame's declared budget
-            // instead of spilling into execution gas -- so nothing is subtracted.
-            let tx_regular_gas = if is_frame_tx {
-                report.gas_used
-            } else {
-                report.gas_used.saturating_sub(tx_state_gas)
-            };
+            let tx_regular_gas = report.gas_used.saturating_sub(tx_state_gas);
             block_regular_gas_used = block_regular_gas_used.saturating_add(tx_regular_gas);
             block_state_gas_used = block_state_gas_used.saturating_add(tx_state_gas);
 
@@ -1533,15 +1503,7 @@ impl LEVM {
             ));
 
             let tx_state_gas = report.state_gas_used;
-            // A frame transaction's `gas_used` is already the execution dimension
-            // alone -- its state charges draw from the frame's declared budget
-            // instead of spilling into execution gas -- so nothing is subtracted.
-            let is_frame_tx = matches!(tx, Transaction::FrameTransaction(_));
-            let tx_regular_gas = if is_frame_tx {
-                report.gas_used
-            } else {
-                report.gas_used.saturating_sub(tx_state_gas)
-            };
+            let tx_regular_gas = report.gas_used.saturating_sub(tx_state_gas);
             block_regular_gas_used = block_regular_gas_used.saturating_add(tx_regular_gas);
             block_state_gas_used = block_state_gas_used.saturating_add(tx_state_gas);
         }
@@ -1593,12 +1555,6 @@ impl LEVM {
         let mut cumulative_gas_used = 0_u64;
         for (_, tx_type, report, _, _, _, _) in exec_results {
             cumulative_gas_used += report.gas_spent;
-            // EIP-8141: a frame transaction's `cumulative_gas_used` is its total gas
-            // across both dimensions, so the state figure joins the execution one
-            // here exactly as on the sequential path.
-            if tx_type == TxType::Frame {
-                cumulative_gas_used = cumulative_gas_used.saturating_add(report.state_gas_used);
-            }
             let mut receipt = Receipt::new(
                 tx_type,
                 matches!(report.result, TxResult::Success),
