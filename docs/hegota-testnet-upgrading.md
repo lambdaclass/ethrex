@@ -163,6 +163,28 @@ participants. Update the deployment's args-file on the host **and** the committe
 `fixtures/networks/hegota-testnet.yaml` in the same session, or the next relaunch
 silently reverts the change.
 
+## Changing a beacon node's flags in place
+
+The same snapshot-and-recreate mechanism as for the execution nodes, with two things that
+differ and one that bit. A kurtosis lighthouse container runs `sh -c "exec lighthouse
+beacon_node …"`: the whole command line is **one shell string**, so a new flag has to be
+appended *inside* that string. Appended as its own argv element after it, `sh -c` takes it
+as `$0` and the beacon node never sees it — the container comes up healthy, `docker
+inspect` shows the flag, and the setting is not in effect. Read the result back from the
+node (`/eth/v1/node/identity` for custody, the startup log for the rest), never from the
+command line. And the record to preserve is the ENR, not an enode: the node key lives in
+the datadir, which `docker commit` carries, so the published `bootnodes-cl.txt` stays
+valid; the ENR's sequence number goes up, which is normal.
+
+`scripts/hegota-testnet/set-el-flags.py` is execution-only (its post-checks are ethrex
+RPC). For a beacon node the equivalent is the `scripts/hegota-testnet/set-cl-flags.py`, used on
+2026-09-03 to make cl-2 and cl-3 supernodes on a live chain, one node at a time, with the
+chain never missing a slot: stop with a 60 s grace and check the exit code is `0`, `docker
+commit`, rename the old container `.old`, run the snapshot with the identical hostname,
+network, IP, aliases, labels, mounts and port bindings plus the flag inside the exec
+string, verify the node is at head with the same peer id before touching the next one, and
+remove `.old` so `kurtosis enclave inspect` stops reporting the service STOPPED.
+
 ## Upgrading kurtosis
 
 **The CLI and the engine must be the same version.** The engine exposes an API version

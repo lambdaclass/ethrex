@@ -289,7 +289,16 @@ Consensus layer:
 
 with `config.yaml` and `genesis.ssz` from the bundle. Sync from the checkpoint: a client
 started at genesis backfills every payload envelope since launch before it drives the
-execution client, and stalls in that backfill on a chain of any age. The endpoint is a
+execution client, and stalls in that backfill on a chain of any age.
+
+The chain runs PeerDAS with 128 custody groups (`NUMBER_OF_CUSTODY_GROUPS` in
+`config.yaml`) and the network's three beacon nodes are all supernodes, custodying every
+column. That is what lets a default consensus client (`CUSTODY_REQUIREMENT: 4`) range-sync
+at all: a joiner asks its peers for the data columns of each past epoch, and on a network
+this small any node holding only its own 4 groups leaves columns that no peer can serve,
+so the client sits at `Waiting for peers to be available on custody column subnets`.
+Nothing is required of the joiner; the requirement is on the operators, and it is recorded
+here because the ports table and the bootnode files do not carry it. The endpoint is a
 read-only proxy (`GET` on `/eth/*`) in front of one of the network's beacon nodes; it
 exists so joiners never need the beacon REST ports, which stay closed. The client must be
 FOCIL-aware;
