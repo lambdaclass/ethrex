@@ -236,11 +236,11 @@ jobs:
         run: |
           missing=()
           # The expected set is read from this workflow's own matrix so it cannot drift from it.
-          for sim in $(grep -oE 'file_name: [a-z0-9-]+' .github/workflows/daily_hive_report.yaml | awk '{print $2}' | sort -u); do
+          while read -r sim; do
             if ! compgen -G "hive/workspace/logs/${sim}_daily-results.zip/*.json" > /dev/null; then
               missing+=("$sim")
             fi
-          done
+          done < <(grep -oE 'file_name: [a-z0-9-]+' .github/workflows/daily_hive_report.yaml | awk '{print $2}' | sort -u)
           if (( ${#missing[@]} )); then
             echo "::error::No results were uploaded by: ${missing[*]}. The report counts them as 0/0."
           fi
