@@ -328,6 +328,15 @@ Plan for this before launch by keeping the genesis admin cold.
 - a leaked validator mnemonic, since every genesis validator key derives from it.
 
 When one is unavoidable, treat it as a new launch: fresh keys from
-`scripts/hegota-testnet/gen-deployment-keys.sh`, a fresh enclave, the full twelve-check
+`scripts/hegota-testnet/gen-deployment-keys.sh`, a fresh enclave, the full verification
 pass from `docs/hegota-testnet-verification.md`, a re-published bundle, and an announcement
 that the old chain is dead. Do not reuse the previous deployment's mnemonics.
+
+Two things the 2026-09-03 re-genesis (chain 1 ended at head 313,106) taught:
+
+- Launch from the pinned remote package path, not `./ethereum-package` — see the launch
+  step in `scripts/hegota-testnet/INSTALL.md` for the failure this avoids.
+- The faucet's key rotates with the deployment. Its container takes `PRIVATE_KEY` from
+  `~/hegota-faucet.env` at `docker run`, so update that line from the new `FAUCET_KEY` and
+  recreate the container (`--network host`, `--restart unless-stopped`, the artifacts bind
+  mount); a restart alone keeps funding from an address the new genesis never funded.

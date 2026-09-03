@@ -161,9 +161,26 @@ Install the firewall **before** this, not after. See section 10: the moment the 
 starts, every port it publishes is reachable, engine authrpc included.
 
 ```
-kurtosis run --enclave hegota-testnet ./ethereum-package --args-file ~/hegota-testnet.yaml
+kurtosis run --enclave hegota-testnet \
+  github.com/ethpandaops/ethereum-package@b5b3af65248f11702216e377d0377bcd8ccf4caf \
+  --args-file ~/hegota-testnet.yaml
 kurtosis enclave inspect hegota-testnet
 ```
+
+The remote path pins the same revision `ETHEREUM_PACKAGE_REVISION` names in the Makefile,
+so `./ethereum-package` and this are the same package. Prefer the remote form. Passing the
+local directory can fail with
+
+```
+No 'kurtosis.yml' file was found in the package root so fell back to Docker Compose package
+```
+
+even though the file is right there: the CLI (1.20.0) sometimes uploads the directory
+under a top-level `ethereum-package/` prefix, so the API container looks for
+`kurtosis.yml` at the archive root and finds a directory instead. `tar tzf` on the newest
+file in `~/.kurtosis/archive-cache/` shows it. Clearing that cache, recreating the enclave
+and restarting the engine do not fix it; the 2026-09-03 relaunch lost five attempts to
+each of those before the listing was checked. Check the listing first.
 
 Expect six client services (`el-1..3`, `cl-1..3`) plus `dora`, all `RUNNING`, alongside
 three validator clients and the keystore generator. The chain reaches Amsterdam at
