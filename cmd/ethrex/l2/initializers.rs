@@ -16,6 +16,7 @@ use ethrex_common::types::fee_config::{FeeConfig, L1FeeConfig, OperatorFeeConfig
 use ethrex_l2::sequencer::block_producer::{self, block_producer_protocol};
 use ethrex_l2::sequencer::l1_committer::{self, l1_committer_protocol, regenerate_state};
 use ethrex_p2p::{
+    netrestrict::NetRestrict,
     network::P2PContext,
     peer_handler::PeerHandler,
     peer_table::PeerTableServer,
@@ -303,6 +304,7 @@ pub async fn init_l2(
             local_p2p_node.node_id(),
             opts.node_opts.target_peers,
             store.clone(),
+            NetRestrict::new(opts.node_opts.netrestrict.clone()),
         );
         let p2p_context = P2PContext::new(
             local_p2p_node.clone(),
@@ -332,6 +334,7 @@ pub async fn init_l2(
             }),
             opts.node_opts.tx_broadcasting_time_interval,
             opts.node_opts.lookup_interval,
+            NetRestrict::new(opts.node_opts.netrestrict.clone()),
         )
         .expect("P2P context could not be created");
         let initiator = RLPxInitiator::spawn(p2p_context.clone());
