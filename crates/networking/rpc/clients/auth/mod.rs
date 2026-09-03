@@ -108,6 +108,9 @@ impl EngineClient {
         let request = RpcRequest::from(ForkChoiceUpdatedV4 {
             fork_choice_state: state,
             payload_attributes,
+            // This client is not a custody-providing consensus node, so the
+            // third parameter is null (EIP-8070, engine_forkchoiceUpdatedV4).
+            custody_columns: None,
         });
 
         match self.send_request(request).await? {
@@ -214,6 +217,7 @@ impl EngineClient {
             // matches the V4 path and is not suitable for deposit-bearing Amsterdam tests.
             execution_requests: vec![],
             raw_bal_hash: None,
+            undecodable_bal: false,
         }
         .into();
 
