@@ -336,6 +336,17 @@ Two things the 2026-09-03 re-genesis (chain 1 ended at head 313,106) taught:
 
 - Launch from the pinned remote package path, not `./ethereum-package` — see the launch
   step in `scripts/hegota-testnet/INSTALL.md` for the failure this avoids.
+- **The checkpoint endpoint needs three things, in order, before a joiner can use it.** A DNS
+  record for `checkpoint-sync.privacy.ethrex.xyz` (the zone is at Cloudflare; without it
+  Let's Encrypt returns NXDOMAIN and Caddy cannot issue, retrying on its own until the record
+  appears). A Caddy site block proxying `GET /eth/*` to `cl-1`'s REST port and refusing
+  everything else, copied from the frames deployment. And a **finalized epoch on the new
+  chain**: checkpoint sync serves the finalized state, and a chain minutes old has none
+  (`finality_checkpoints` reports epoch 0), so a joiner started before roughly epoch 3 gets no
+  checkpoint whatever the endpoint does. Chain 3 finalized epoch 2 about 17 minutes after
+  launch. A joiner given a checkpoint from the wrong chain is refused outright by the
+  consensus client ("Snapshot state appears to be from the wrong network"), which is the
+  bundle's `genesis_validators_root.txt` doing its job.
 - The faucet's key rotates with the deployment. Its container takes `PRIVATE_KEY` from
   `~/hegota-faucet.env` at `docker run`, so update that line from the new `FAUCET_KEY` and
   recreate the container (`--network host`, `--restart unless-stopped`, the artifacts bind
