@@ -361,7 +361,8 @@ Two things the 2026-09-03 re-genesis (chain 1 ended at head 313,106) taught:
 - **The checkpoint endpoint needs three things, in order, before a joiner can use it.** A DNS
   record for `checkpoint-sync.privacy.ethrex.xyz` (the zone is at Cloudflare; without it
   Let's Encrypt returns NXDOMAIN and Caddy cannot issue, retrying on its own until the record
-  appears). A Caddy site block proxying `GET /eth/*` to `cl-1`'s REST port and refusing
+  appears; the record for this deployment landed on 2026-09-03 and the certificate issued
+  within a minute of it). A Caddy site block proxying `GET /eth/*` to `cl-1`'s REST port and refusing
   everything else, copied from the frames deployment. And a **finalized epoch on the new
   chain**: checkpoint sync serves the finalized state, and a chain minutes old has none
   (`finality_checkpoints` reports epoch 0), so a joiner started before roughly epoch 3 gets no
