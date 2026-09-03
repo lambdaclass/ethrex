@@ -6,6 +6,7 @@ pub struct P2PBasedContext;
 use crate::{
     discovery::{DiscoveryConfig, DiscoveryServer, DiscoveryServerError},
     metrics::{CurrentStepValue, METRICS},
+    netrestrict::NetRestrict,
     peer_table::{PeerData, PeerTable, PeerTableServerProtocol as _},
     rlpx::{
         connection::server::{PeerConnBroadcastSender, PeerConnection},
@@ -52,6 +53,10 @@ pub struct P2PContext {
     pub based_context: Option<P2PBasedContext>,
     pub tx_broadcaster: ActorRef<TxBroadcaster>,
     pub initial_lookup_interval: f64,
+    /// IP networks peers must fall in. Inbound connections from outside are
+    /// dropped before the handshake; discovery applies the same list to what it
+    /// stores and dials.
+    pub netrestrict: NetRestrict,
     /// Caps concurrent INBOUND connections (including pre-handshake) so a flood of inbound
     /// dials can't accumulate connection actors/sockets without bound. Each inbound connection
     /// actor holds a permit for its lifetime; the permit is released when the actor is dropped.
@@ -76,6 +81,7 @@ impl P2PContext {
         based_context: Option<P2PBasedContext>,
         tx_broadcasting_time_interval: u64,
         lookup_interval: f64,
+        netrestrict: NetRestrict,
     ) -> Result<Self, NetworkError> {
         let (channel_broadcast_send_end, _) = tokio::sync::broadcast::channel::<(
             tokio::task::Id,
@@ -108,6 +114,7 @@ impl P2PContext {
             based_context,
             tx_broadcaster,
             initial_lookup_interval: lookup_interval,
+            netrestrict,
             inbound_admission: Arc::new(tokio::sync::Semaphore::new(MAX_INBOUND_CONNECTIONS)),
         })
     }
@@ -214,6 +221,11 @@ pub(crate) async fn serve_p2p_requests(context: P2PContext) {
 
         if external_tcp_addr == peer_addr {
             // Ignore connections from self
+            continue;
+        }
+
+        if !context.netrestrict.allows(peer_addr.ip()) {
+            tracing::debug!(peer = %peer_addr, "Dropping inbound connection from outside --p2p.netrestrict");
             continue;
         }
 

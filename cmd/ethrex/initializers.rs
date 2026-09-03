@@ -17,6 +17,7 @@ use ethrex_metrics::rpc::initialize_rpc_metrics;
 use ethrex_p2p::rlpx::initiator::RLPxInitiator;
 use ethrex_p2p::{
     DiscoveryConfig,
+    netrestrict::NetRestrict,
     network::P2PContext,
     peer_handler::PeerHandler,
     peer_table::{PeerTable, PeerTableServer},
@@ -466,10 +467,16 @@ pub async fn init_network(
 
     let bootnodes = get_bootnodes(opts, network, datadir);
 
+    let netrestrict = NetRestrict::new(opts.netrestrict.clone());
+    if !netrestrict.is_unrestricted() {
+        info!(%netrestrict, "P2P traffic restricted to the configured networks");
+    }
+
     let discovery_config = DiscoveryConfig {
         discv4_enabled: opts.discv4_enabled,
         discv5_enabled: opts.discv5_enabled,
         nat_extip_set: opts.nat_extip.is_some(),
+        netrestrict,
     };
 
     ethrex_p2p::start_network(context, bootnodes, discovery_config, shared_local_node)
@@ -926,8 +933,12 @@ pub async fn init_l1(
         record: local_node_record,
     }));
 
-    let peer_table =
-        PeerTableServer::spawn(local_p2p_node.node_id(), opts.target_peers, store.clone());
+    let peer_table = PeerTableServer::spawn(
+        local_p2p_node.node_id(),
+        opts.target_peers,
+        store.clone(),
+        NetRestrict::new(opts.netrestrict.clone()),
+    );
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
@@ -946,6 +957,7 @@ pub async fn init_l1(
         None,
         opts.tx_broadcasting_time_interval,
         opts.lookup_interval,
+        NetRestrict::new(opts.netrestrict.clone()),
     )
     .expect("P2P context could not be created");
 

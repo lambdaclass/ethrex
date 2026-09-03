@@ -383,7 +383,12 @@ pub async fn dummy_sync_manager() -> SyncManager {
 /// Creates a dummy PeerHandler for tests where interacting with peers is not needed
 /// This should only be used in tests as it won't be able to interact with the node's connected peers
 pub async fn dummy_peer_handler(store: Store) -> PeerHandler {
-    let peer_table = PeerTableServer::spawn(H256::random(), TARGET_PEERS, store);
+    let peer_table = PeerTableServer::spawn(
+        H256::random(),
+        TARGET_PEERS,
+        store,
+        ethrex_p2p::netrestrict::NetRestrict::default(),
+    );
     PeerHandler::new(peer_table.clone(), dummy_actor(peer_table).await)
 }
 
@@ -417,6 +422,7 @@ pub async fn dummy_p2p_context(peer_table: PeerTable) -> P2PContext {
         None,
         1000,
         100.0,
+        ethrex_p2p::netrestrict::NetRestrict::default(),
     )
     .unwrap()
 }

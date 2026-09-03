@@ -11,6 +11,7 @@
 
 use crate::{
     metrics::METRICS,
+    netrestrict::NetRestrict,
     peer_filter::{EthForkIdFilter, PeerFilter},
     rlpx::{connection::server::PeerConnection, p2p::Capability},
     types::{Node, NodeRecord},
@@ -23,7 +24,7 @@ use indexmap::IndexMap;
 use rand::distributions::WeightedIndex;
 use rand::prelude::Distribution;
 use rand::seq::{IteratorRandom, SliceRandom};
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use spawned_concurrency::{
     actor,
     error::ActorError,
@@ -64,6 +65,25 @@ const MAX_REPLACEMENTS_PER_BUCKET: usize = 10;
 /// structure allows (256 × 16 = 4,096 vs this larger capacity).
 /// 10K matches what Reth and Nethermind use for their candidate pools.
 const MAX_CONNECTION_POOL_SIZE: usize = 10_000;
+/// How long a dial candidate is left alone after its first failed attempt. Geth
+/// uses the same figure (`dialHistoryExpiration`, 35s) for the same purpose.
+const DIAL_BACKOFF_BASE: Duration = Duration::from_secs(35);
+/// Ceiling for the per-node dial backoff. Doubling from the base, a node that
+/// never answers is retried a sixth time roughly 19 minutes after the fifth, and
+/// every 30 minutes from then on, instead of once per sweep of the pool.
+const DIAL_BACKOFF_MAX: Duration = Duration::from_secs(30 * 60);
+
+/// Wait imposed after `failures` consecutive failed dials: 35s, 70s, 140s, …,
+/// capped at [`DIAL_BACKOFF_MAX`]. No failures, no wait.
+fn dial_backoff(failures: u32) -> Duration {
+    if failures == 0 {
+        return Duration::ZERO;
+    }
+    DIAL_BACKOFF_BASE
+        .checked_mul(1u32.checked_shl(failures - 1).unwrap_or(u32::MAX))
+        .unwrap_or(DIAL_BACKOFF_MAX)
+        .min(DIAL_BACKOFF_MAX)
+}
 
 /// A single k-bucket in the Kademlia routing table.
 /// Each bucket stores contacts at a specific XOR distance range from the local node.
@@ -296,6 +316,43 @@ impl Contact {
     }
 }
 
+/// A dial candidate in the flat connection pool, with the little state the RLPx
+/// initiator needs to stop hammering it.
+#[derive(Debug, Clone)]
+struct PoolEntry {
+    node: Node,
+    /// When this node was last handed out for dialing.
+    last_dial_attempt: Option<Instant>,
+    /// Dials since the last successful connection. Each one doubles the wait
+    /// before the next; see [`dial_backoff`].
+    dial_failures: u32,
+}
+
+impl PoolEntry {
+    fn new(node: Node) -> Self {
+        Self {
+            node,
+            last_dial_attempt: None,
+            dial_failures: 0,
+        }
+    }
+
+    /// Whether the backoff from previous failed dials has elapsed.
+    fn dial_allowed(&self, now: Instant) -> bool {
+        match self.last_dial_attempt {
+            None => true,
+            Some(at) => now.saturating_duration_since(at) >= dial_backoff(self.dial_failures),
+        }
+    }
+
+    /// Record that the node was handed out for dialing. Counted as a failure up
+    /// front; a connection that succeeds clears it again.
+    fn record_dial(&mut self, now: Instant) {
+        self.last_dial_attempt = Some(now);
+        self.dial_failures = self.dial_failures.saturating_add(1);
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PeerData {
     pub node: Node,
@@ -453,6 +510,7 @@ pub trait PeerTableServerProtocol: Send + Sync {
     fn target_reached(&self) -> Response<bool>;
     fn target_peers_reached(&self) -> Response<bool>;
     fn target_peers_completion(&self) -> Response<f64>;
+    fn discovered_count(&self) -> Response<u64>;
     fn get_contact_to_initiate(&self) -> Response<Option<Box<Contact>>>;
     fn get_contact_for_enr_lookup(&self) -> Response<Option<Box<Contact>>>;
     fn get_closest_from_pool(&self, target: H256, count: usize) -> Response<Vec<(H256, Node)>>;
@@ -498,7 +556,6 @@ pub struct PeerTableServer {
     local_node_id: H256,
     buckets: Vec<KBucket>,
     peers: IndexMap<H256, PeerData>,
-    already_tried_peers: FxHashSet<H256>,
     target_peers: usize,
     /// What this consumer requires of a discovered peer. Judged as each ENR
     /// arrives, over either discovery protocol; the answer is cached on the
@@ -512,7 +569,13 @@ pub struct PeerTableServer {
     /// has access to a much larger candidate pool than the k-bucket structure
     /// allows (k-buckets: 256 × 16 = 4,096 max; this pool: up to 50,000).
     /// K-buckets are still used for all Kademlia protocol operations.
-    connection_pool: IndexMap<H256, Node>,
+    connection_pool: IndexMap<H256, PoolEntry>,
+    /// Monotonic count of nodes ever added to the connection pool. Discovery
+    /// compares it before and after a lookup to tell whether the lookup found
+    /// anything this table did not already know.
+    discovered_count: u64,
+    /// IP networks a node must fall in to be stored at all. See [`NetRestrict`].
+    netrestrict: NetRestrict,
 }
 
 // Hand-written because `Box<dyn PeerFilter>` is not `Debug`, and requiring that
@@ -522,8 +585,8 @@ impl std::fmt::Debug for PeerTableServer {
         f.debug_struct("PeerTableServer")
             .field("local_node_id", &self.local_node_id)
             .field("peers", &self.peers)
-            .field("already_tried_peers", &self.already_tried_peers)
             .field("target_peers", &self.target_peers)
+            .field("netrestrict", &self.netrestrict)
             .field("sessions", &self.sessions)
             .field("connection_pool", &self.connection_pool)
             .finish_non_exhaustive()
@@ -538,32 +601,45 @@ impl PeerTableServer {
     /// A contact discovered without an ENR is never screened and stays dialable,
     /// so bootnodes are usable before they have published anything. See
     /// [`Self::spawn_with_filter`] for consumers on other networks.
-    pub fn spawn(local_node_id: H256, target_peers: usize, store: Store) -> PeerTable {
-        Self::spawn_with_filter(local_node_id, target_peers, EthForkIdFilter::new(store))
+    pub fn spawn(
+        local_node_id: H256,
+        target_peers: usize,
+        store: Store,
+        netrestrict: NetRestrict,
+    ) -> PeerTable {
+        Self::spawn_with_filter(
+            local_node_id,
+            target_peers,
+            EthForkIdFilter::new(store),
+            netrestrict,
+        )
     }
 
     pub fn spawn_with_filter(
         local_node_id: H256,
         target_peers: usize,
         filter: impl PeerFilter + 'static,
+        netrestrict: NetRestrict,
     ) -> PeerTable {
-        PeerTableServer::new(local_node_id, target_peers, Box::new(filter)).start()
+        PeerTableServer::new(local_node_id, target_peers, Box::new(filter), netrestrict).start()
     }
 
     pub(crate) fn new(
         local_node_id: H256,
         target_peers: usize,
         filter: Box<dyn PeerFilter>,
+        netrestrict: NetRestrict,
     ) -> Self {
         Self {
             local_node_id,
             buckets: vec![KBucket::default(); NUMBER_OF_BUCKETS],
             peers: Default::default(),
-            already_tried_peers: Default::default(),
             target_peers,
             filter,
             sessions: Default::default(),
             connection_pool: IndexMap::with_capacity(MAX_CONNECTION_POOL_SIZE),
+            discovered_count: 0,
+            netrestrict,
         }
     }
 
@@ -611,6 +687,7 @@ impl PeerTableServer {
             msg.negotiated_eth,
         );
         new_peer.is_connection_inbound = msg.is_inbound;
+        self.record_connected(&new_peer_id);
         self.peers.insert(new_peer_id, new_peer);
     }
 
@@ -844,6 +921,15 @@ impl PeerTableServer {
     }
 
     #[request_handler]
+    async fn handle_discovered_count(
+        &mut self,
+        _msg: peer_table_server_protocol::DiscoveredCount,
+        _ctx: &Context<Self>,
+    ) -> u64 {
+        self.discovered_count
+    }
+
+    #[request_handler]
     async fn handle_get_contact_to_initiate(
         &mut self,
         _msg: peer_table_server_protocol::GetContactToInitiate,
@@ -997,6 +1083,9 @@ impl PeerTableServer {
         msg: peer_table_server_protocol::InsertIfNew,
         _ctx: &Context<Self>,
     ) -> bool {
+        if !self.netrestrict.allows(msg.node.ip) {
+            return false;
+        }
         let node_id = msg.node.node_id();
         // Always add to the connection pool
         self.insert_to_connection_pool(node_id, msg.node.clone());
@@ -1180,7 +1269,16 @@ impl PeerTableServer {
         if self.connection_pool.len() >= MAX_CONNECTION_POOL_SIZE {
             self.connection_pool.shift_remove_index(0);
         }
-        self.connection_pool.insert(node_id, node);
+        self.connection_pool.insert(node_id, PoolEntry::new(node));
+        self.discovered_count += 1;
+    }
+
+    /// A connection to this node succeeded, so it is reachable: the next dial,
+    /// should it disconnect, starts from a clean slate.
+    fn record_connected(&mut self, node_id: &H256) {
+        if let Some(entry) = self.connection_pool.get_mut(node_id) {
+            entry.dial_failures = 0;
+        }
     }
 
     /// Look up a contact by node ID in either the main or replacement list.
@@ -1294,11 +1392,20 @@ impl PeerTableServer {
 
     // --- Contact operations ---
 
-    /// Prune disposable contacts from both main and replacement lists.
-    /// When a main contact is removed, a replacement is automatically promoted.
-    /// Pruned contacts remain in the connection pool so they can be retried
-    /// later — the RLPx handshake will reject them if they're truly bad.
+    /// Prune disposable contacts from both main and replacement lists, and from
+    /// the connection pool. When a main contact is removed, a replacement is
+    /// automatically promoted.
     fn prune(&mut self) {
+        // A node discovery could not even reach is no dial candidate either. Left
+        // in the pool, the RLPx initiator would keep offering it after every backoff.
+        let unreachable: Vec<H256> = self
+            .iter_contacts()
+            .filter(|(_, c)| c.disposable)
+            .map(|(id, _)| *id)
+            .collect();
+        for node_id in &unreachable {
+            self.connection_pool.shift_remove(node_id);
+        }
         for bucket in &mut self.buckets {
             // Collect disposable contacts from main list
             let main_disposable: Vec<H256> = bucket
@@ -1328,26 +1435,34 @@ impl PeerTableServer {
             return None;
         }
 
+        let now = Instant::now();
         let start = rand::random::<usize>() % pool_len;
         for offset in 0..pool_len {
             let idx = (start + offset) % pool_len;
-            let Some((node_id, node)) = self.connection_pool.get_index(idx) else {
+            let Some((node_id, entry)) = self.connection_pool.get_index(idx) else {
                 continue;
             };
             let node_id = *node_id;
 
+            // Skip what is connected, what is still backing off from a failed
+            // dial, and what discovery has already ruled out. A node the k-buckets
+            // never had room for has no contact to consult and stays dialable.
             if self.peers.contains_key(&node_id)
-                || self.already_tried_peers.contains(&node_id)
+                || !entry.dial_allowed(now)
                 || self
                     .get_contact_or_replacement(&node_id)
-                    .map(|c| !c.knows_us || c.unwanted || c.passes_filter == Some(false))
+                    .map(|c| {
+                        !c.knows_us || c.unwanted || c.disposable || c.passes_filter == Some(false)
+                    })
                     .unwrap_or(false)
             {
                 continue;
             }
 
-            let node = node.clone();
-            self.already_tried_peers.insert(node_id);
+            let node = entry.node.clone();
+            if let Some((_, entry)) = self.connection_pool.get_index_mut(idx) {
+                entry.record_dial(now);
+            }
             let contact = self
                 .get_contact_or_replacement(&node_id)
                 .cloned()
@@ -1355,9 +1470,6 @@ impl PeerTableServer {
             return Some(contact);
         }
 
-        // Exhausted all candidates — reset tried set for next cycle.
-        tracing::trace!("Resetting list of tried peers.");
-        self.already_tried_peers.clear();
         None
     }
 
@@ -1365,15 +1477,15 @@ impl PeerTableServer {
     fn do_get_closest_from_pool(&self, target: H256, count: usize) -> Vec<(H256, Node)> {
         let mut nodes: Vec<(H256, Node, H256)> = Vec::with_capacity(count);
 
-        for (node_id, node) in &self.connection_pool {
+        for (node_id, entry) in &self.connection_pool {
             let dist = xor_distance(&target, node_id);
             if nodes.len() < count {
-                nodes.push((*node_id, node.clone(), dist));
+                nodes.push((*node_id, entry.node.clone(), dist));
             } else if let Some((farthest_idx, _)) =
                 nodes.iter().enumerate().max_by_key(|(_, (_, _, d))| *d)
                 && dist < nodes[farthest_idx].2
             {
-                nodes[farthest_idx] = (*node_id, node.clone(), dist);
+                nodes[farthest_idx] = (*node_id, entry.node.clone(), dist);
             }
         }
 
@@ -1482,6 +1594,10 @@ impl PeerTableServer {
             if node_id == self.local_node_id {
                 continue;
             }
+            if !self.netrestrict.allows(node.ip) {
+                tracing::trace!(node = %node, "Ignoring node outside --p2p.netrestrict");
+                continue;
+            }
             #[cfg(feature = "metrics")]
             let insert_start = std::time::Instant::now();
 
@@ -1539,6 +1655,10 @@ impl PeerTableServer {
             if let Ok(node) = Node::from_enr(&node_record) {
                 let node_id = node.node_id();
                 if node_id == self.local_node_id {
+                    continue;
+                }
+                if !self.netrestrict.allows(node.ip) {
+                    tracing::trace!(node = %node, "Ignoring node outside --p2p.netrestrict");
                     continue;
                 }
 
@@ -1690,7 +1810,17 @@ mod tests {
     }
 
     fn table_with(filter: impl PeerFilter + 'static) -> PeerTableServer {
-        PeerTableServer::new(H256::zero(), 10, Box::new(filter))
+        PeerTableServer::new(H256::zero(), 10, Box::new(filter), NetRestrict::default())
+    }
+
+    /// A table that only keeps nodes inside `cidr`.
+    fn table_restricted_to(cidr: &str) -> PeerTableServer {
+        PeerTableServer::new(
+            H256::zero(),
+            10,
+            Box::new(FixedAnswer(true)),
+            NetRestrict::new(vec![cidr.parse().unwrap()]),
+        )
     }
 
     /// A signed record for `seed`'s node at sequence number `seq`.
@@ -2037,5 +2167,145 @@ mod tests {
         let mut remote = H256::zero();
         remote.0[0] = 0x80;
         assert_eq!(bucket_index(&local, &remote), Some(255));
+    }
+
+    // --- dial backoff ---
+
+    #[test]
+    fn dial_backoff_doubles_from_the_base_and_caps() {
+        assert_eq!(dial_backoff(0), Duration::ZERO);
+        assert_eq!(dial_backoff(1), DIAL_BACKOFF_BASE);
+        assert_eq!(dial_backoff(2), DIAL_BACKOFF_BASE * 2);
+        assert_eq!(dial_backoff(3), DIAL_BACKOFF_BASE * 4);
+        assert_eq!(dial_backoff(6), DIAL_BACKOFF_BASE * 32);
+        assert_eq!(dial_backoff(7), DIAL_BACKOFF_MAX);
+        assert_eq!(dial_backoff(u32::MAX), DIAL_BACKOFF_MAX);
+    }
+
+    #[tokio::test]
+    async fn a_dialed_candidate_is_not_offered_again_inside_its_backoff() {
+        // Before, the only thing between two dials of the same dead node was one
+        // sweep of the pool: with three dead nodes that meant one SYN each every
+        // 300ms, forever.
+        let mut table = table_with(FixedAnswer(true));
+        let (_, contact) = dummy_contact(11);
+        table
+            .do_new_contacts(vec![contact.node], DiscoveryProtocol::Discv4)
+            .await;
+
+        assert!(table.do_get_contact_to_initiate().is_some());
+        assert!(table.do_get_contact_to_initiate().is_none());
+    }
+
+    #[tokio::test]
+    async fn a_candidate_is_offered_again_once_its_backoff_elapsed() {
+        let mut table = table_with(FixedAnswer(true));
+        let (node_id, contact) = dummy_contact(12);
+        table
+            .do_new_contacts(vec![contact.node], DiscoveryProtocol::Discv4)
+            .await;
+        assert!(table.do_get_contact_to_initiate().is_some());
+
+        let entry = table.connection_pool.get_mut(&node_id).unwrap();
+        let elapsed = dial_backoff(entry.dial_failures);
+        entry.last_dial_attempt = Instant::now().checked_sub(elapsed);
+
+        assert!(table.do_get_contact_to_initiate().is_some());
+        assert_eq!(table.connection_pool[&node_id].dial_failures, 2);
+    }
+
+    #[tokio::test]
+    async fn a_successful_connection_resets_the_dial_failures() {
+        let mut table = table_with(FixedAnswer(true));
+        let (node_id, contact) = dummy_contact(13);
+        table
+            .do_new_contacts(vec![contact.node], DiscoveryProtocol::Discv4)
+            .await;
+        assert!(table.do_get_contact_to_initiate().is_some());
+        assert_eq!(table.connection_pool[&node_id].dial_failures, 1);
+
+        table.record_connected(&node_id);
+
+        assert_eq!(table.connection_pool[&node_id].dial_failures, 0);
+    }
+
+    #[tokio::test]
+    async fn an_unreachable_contact_is_neither_dialed_nor_kept_in_the_pool() {
+        let mut table = table_with(FixedAnswer(true));
+        let (node_id, contact) = dummy_contact(14);
+        table
+            .do_new_contacts(vec![contact.node], DiscoveryProtocol::Discv4)
+            .await;
+        table.get_contact_mut(&node_id).unwrap().disposable = true;
+
+        assert!(table.do_get_contact_to_initiate().is_none());
+
+        table.prune();
+
+        assert!(!table.connection_pool.contains_key(&node_id));
+        assert!(table.get_contact(&node_id).is_none());
+    }
+
+    // --- netrestrict ---
+
+    #[tokio::test]
+    async fn nodes_outside_the_netrestrict_are_never_stored() {
+        let mut table = table_restricted_to("10.0.0.0/8");
+        let inside = Node::new(
+            IpAddr::V4(Ipv4Addr::new(10, 1, 2, 3)),
+            30303,
+            30303,
+            H512::from_low_u64_be(21),
+        );
+        let outside = Node::new(
+            IpAddr::V4(Ipv4Addr::new(127, 0, 0, 22)),
+            30303,
+            30303,
+            H512::from_low_u64_be(22),
+        );
+
+        table
+            .do_new_contacts(
+                vec![inside.clone(), outside.clone()],
+                DiscoveryProtocol::Discv4,
+            )
+            .await;
+
+        assert!(table.get_contact(&inside.node_id()).is_some());
+        assert!(table.get_contact(&outside.node_id()).is_none());
+        assert!(!table.connection_pool.contains_key(&outside.node_id()));
+        assert_eq!(table.discovered_count, 1);
+    }
+
+    #[tokio::test]
+    async fn records_outside_the_netrestrict_are_never_stored() {
+        let mut table = table_restricted_to("10.0.0.0/8");
+        // `record_for` puts the node on 127.0.0.x.
+        let (node_id, record) = record_for(23, 1);
+
+        table.do_new_contact_records(vec![record]).await;
+
+        assert!(table.get_contact(&node_id).is_none());
+        assert!(table.connection_pool.is_empty());
+        assert_eq!(table.discovered_count, 0);
+    }
+
+    // --- discovered_count ---
+
+    #[tokio::test]
+    async fn discovered_count_only_grows_on_nodes_new_to_the_pool() {
+        let mut table = table_with(FixedAnswer(true));
+        let (_, a) = dummy_contact(31);
+        let (_, b) = dummy_contact(32);
+
+        table
+            .do_new_contacts(vec![a.node.clone()], DiscoveryProtocol::Discv4)
+            .await;
+        assert_eq!(table.discovered_count, 1);
+
+        table
+            .do_new_contacts(vec![a.node, b.node], DiscoveryProtocol::Discv4)
+            .await;
+        assert_eq!(table.discovered_count, 2);
     }
 }
