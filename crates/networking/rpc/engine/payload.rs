@@ -200,14 +200,12 @@ impl RpcHandler for NewPayloadV4Request {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        // EIP-7928 / Amsterdam: V4 payloads MUST NOT include the BAL field — that
-        // field belongs to V5. Per engine-API spec, structurally-invalid payloads
-        // return JSON-RPC -32602 (Invalid params), not PayloadStatus.INVALID.
-        if self.payload.block_access_list.is_some() {
-            return Err(RpcErr::WrongParam(
-                "block_access_list not allowed in engine_newPayloadV4".to_string(),
-            ));
-        }
+        // A V4 payload carrying the V5-only BAL field is not a malformed request:
+        // the field is ignored -- a V4 block has no BAL-hash header field, so the
+        // reconstructed header omits it and the block-hash check rejects the block
+        // with status INVALID. This matches EELS and geth, whose JSON decoding
+        // ignores unknown payload members, and the fork-transition fixtures pin
+        // exactly this outcome (INVALID_BLOCK_HASH, not error -32602).
 
         // validate the received requests
         validate_execution_requests(&self.execution_requests)?;
@@ -247,6 +245,25 @@ impl RpcHandler for NewPayloadV4Request {
             )));
         }
 
+        // A V4 payload carrying the V5-only `blockAccessList` field: the field
+        // itself never poisons params parsing, because the interesting failure is
+        // block-shaped. If the *header* also committed to a BAL hash, the block
+        // hash cannot match a V4 reconstruction (which has no such header field),
+        // and the fixtures pin that as status INVALID_BLOCK_HASH -- so the hash
+        // check runs first. A well-formed pre-Amsterdam block that merely carries
+        // the extra param is a version mismatch on the method itself, pinned as
+        // JSON-RPC -32602.
+        if self.payload.block_access_list.is_some() {
+            if let Err(RpcErr::Internal(error_msg)) = validate_block_hash(&self.payload, &block) {
+                return Ok(serde_json::to_value(PayloadStatus::invalid_with_err(
+                    &error_msg,
+                ))?);
+            }
+            return Err(RpcErr::WrongParam(
+                "block_access_list not allowed in engine_newPayloadV4".to_string(),
+            ));
+        }
+
         // A pre-Amsterdam header that carries block_access_list_hash produces a
         // block_hash that won't match the one ethrex reconstructs (the field is
         // omitted from the V4 header schema). That mismatch is surfaced as
@@ -275,9 +292,6 @@ pub struct NewPayloadV5Request {
     pub expected_blob_versioned_hashes: Vec<H256>,
     pub parent_beacon_block_root: H256,
     pub execution_requests: Vec<EncodedRequests>,
-    /// The BAL hash computed from the raw RLP bytes as received (no re-encoding/sorting).
-    /// This preserves the exact encoding from the payload for block hash validation.
-    pub raw_bal_hash: Option<H256>,
 }
 
 impl From<NewPayloadV5Request> for RpcRequest {
@@ -304,26 +318,6 @@ impl RpcHandler for NewPayloadV5Request {
             return Err(RpcErr::BadParams("Expected 4 params".to_owned()));
         }
 
-        // Extract the raw BAL hash from the JSON payload before deserialization.
-        // We hash the raw RLP bytes as-received to preserve the exact encoding
-        // (including any ordering) for accurate block hash validation.
-        let raw_bal_hash = params[0]
-            .get("blockAccessList")
-            .map(|v| {
-                let hex_str = v
-                    .as_str()
-                    .ok_or(RpcErr::WrongParam("blockAccessList".to_string()))?;
-                // EIP-7928 blockAccessList is a DATA field: the `0x` prefix is
-                // mandatory. Reject an unprefixed value rather than trimming it.
-                let hex_body = hex_str
-                    .strip_prefix("0x")
-                    .ok_or(RpcErr::WrongParam("blockAccessList".to_string()))?;
-                let bytes = hex::decode(hex_body)
-                    .map_err(|_| RpcErr::WrongParam("blockAccessList".to_string()))?;
-                Ok::<_, RpcErr>(ethrex_common::utils::keccak(bytes))
-            })
-            .transpose()?;
-
         Ok(Self {
             payload: serde_json::from_value(params[0].clone())
                 .map_err(|_| RpcErr::WrongParam("payload".to_string()))?,
@@ -333,7 +327,6 @@ impl RpcHandler for NewPayloadV5Request {
                 .map_err(|_| RpcErr::WrongParam("parent_beacon_block_root".to_string()))?,
             execution_requests: serde_json::from_value(params[3].clone())
                 .map_err(|_| RpcErr::WrongParam("execution_requests".to_string()))?,
-            raw_bal_hash,
         })
     }
 
@@ -354,10 +347,14 @@ impl NewPayloadV5Request {
         validate_execution_requests(&self.execution_requests)?;
 
         let requests_hash = compute_requests_hash(&self.execution_requests);
-        // Use the hash computed from the raw RLP bytes as-received.
-        // This preserves the exact encoding (including any ordering) from the payload,
-        // so the block hash check correctly detects BAL corruption.
-        let block_access_list_hash = self.raw_bal_hash;
+        // Hash the raw RLP bytes as received: the header commits to the exact
+        // wire encoding, so a decode/encode round-trip would canonicalize a
+        // non-canonical BAL and hide it from the block-hash check.
+        let block_access_list_hash = self
+            .payload
+            .block_access_list
+            .as_ref()
+            .map(ethrex_common::utils::keccak);
 
         let block = match get_block_from_payload(
             &self.payload,
@@ -406,7 +403,23 @@ impl NewPayloadV5Request {
             }
         }
 
-        let bal = self.payload.block_access_list.clone();
+        // Decode the BAL only now, after the block itself is assembled: the raw
+        // bytes are what the header hash commits to, and bytes that fail to
+        // decode make the payload INVALID -- they are not a malformed request.
+        let bal = match self
+            .payload
+            .block_access_list
+            .as_ref()
+            .map(|raw| BlockAccessList::decode(raw))
+            .transpose()
+        {
+            Ok(bal) => bal,
+            Err(err) => {
+                return Ok(serde_json::to_value(PayloadStatus::invalid_with_err(
+                    &format!("BAL validation failed: undecodable blockAccessList: {err}"),
+                ))?);
+            }
+        };
         let payload_status = handle_new_payload_v4(
             &self.payload,
             context,
@@ -938,9 +951,13 @@ fn parse_execution_payload(params: &Option<Vec<Value>>) -> Result<ExecutionPaylo
 /// The Amsterdam payload fields (EIP-7928 block access list, EIP-7843 slot number) must be
 /// absent from every pre-Amsterdam payload version.
 fn reject_amsterdam_payload_fields(payload: &ExecutionPayload) -> Result<(), RpcErr> {
-    if payload.block_access_list.is_some() {
-        return Err(RpcErr::WrongParam("block_access_list".to_string()));
-    }
+    // The two Amsterdam-only fields are deliberately treated differently on
+    // pre-V5 methods. A stray `blockAccessList` is *ignored*: no pre-V5 header
+    // field derives from it, so the reconstructed header omits the BAL hash and
+    // the block-hash check rejects the block with status INVALID -- the outcome
+    // EELS and geth produce, and the one the fork-transition fixtures pin
+    // (INVALID_BLOCK_HASH, no error code). `slotNumber` stays a params error:
+    // the same fixtures pin -32602 for it.
     if payload.slot_number.is_some() {
         return Err(RpcErr::WrongParam("slot_number".to_string()));
     }
@@ -1582,7 +1599,11 @@ mod tests {
             blob_gas_used: Some(0),
             excess_blob_gas: Some(0),
             slot_number: Some(0),
-            block_access_list: Some(BlockAccessList::default()),
+            block_access_list: Some({
+                let mut buf = Vec::new();
+                ethrex_rlp::encode::RLPEncode::encode(&BlockAccessList::default(), &mut buf);
+                Bytes::from(buf)
+            }),
             burned_fees: None,
         }
     }
@@ -1599,7 +1620,9 @@ mod tests {
         let request = NewPayloadWithWitnessV5Request::parse(&params).unwrap();
 
         assert_eq!(request.0.payload.slot_number, Some(0));
-        assert!(request.0.raw_bal_hash.is_some());
+        // The payload keeps the BAL as the raw bytes it arrived as; the hash the
+        // header commits to is derived from exactly these bytes at handling time.
+        assert!(request.0.payload.block_access_list.is_some());
     }
 
     #[test]

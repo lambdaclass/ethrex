@@ -221,7 +221,6 @@ impl EngineClient {
             // so blocks driven through this client carry no execution requests; this
             // matches the V4 path and is not suitable for deposit-bearing Amsterdam tests.
             execution_requests: vec![],
-            raw_bal_hash: None,
         }
         .into();
 
