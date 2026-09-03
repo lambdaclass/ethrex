@@ -414,13 +414,12 @@ const PUBLIC_KEY_BYTES: usize = 65;
 /// Note that upstream keeps `0x1501` across incompatible body changes, so the id
 /// does **not** identify the encoding. Three dialects have shipped under it:
 /// `tests-zkevm@v0.6.2`, then #3248 + #3278, then #3356 (which moved `state`,
-/// `codes` and `public_keys` to `ProgressiveList`). ethrex speaks the last one,
-/// matching `tests-zkevm@v0.8.0` and unchanged through `v0.8.3`. Both later
-/// releases only moved Python around: #3372 renamed the classes, and v0.8.3
-/// deleted `stateless_ssz.py` by folding those definitions into annotations on
-/// the dataclasses in `stateless.py`. SSZ encoding is positional, so neither
-/// touched the wire. A bundle from an older dialect will not be caught by this
-/// prefix — it fails later, in decode or on a mismatched root.
+/// `codes` and `public_keys` to `ProgressiveList`). ethrex speaks the last one.
+/// Releases since have only rearranged the Python that declares it, and SSZ
+/// encoding is positional, so renames and module moves leave the wire alone;
+/// which bundle is actually pinned lives in `tooling/ef_tests/.fixtures_url_zkevm`.
+/// A bundle from an older dialect will not be caught by this prefix — it fails
+/// later, in decode or on a mismatched root.
 pub const STATELESS_INPUT_SCHEMA_ID: u16 = 0x1501;
 
 /// Byte length of the big-endian [`STATELESS_INPUT_SCHEMA_ID`] prefix.

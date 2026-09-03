@@ -28,14 +28,11 @@ AMSTERDAM_URL := $(shell cat $(AMSTERDAM_FIXTURES_FILE))
 AMSTERDAM_SUBTREES := for_amsterdam for_bpo2toamsterdamattime15k
 AMSTERDAM_STAMP := $(SPECTEST_VECTORS_DIR)/.amsterdam_overlay
 
-# zkevm@v0.8.3 is filled against tests-glamsterdam-devnet@v8.1.3, the same content
-# the Amsterdam bundle above is pinned to; v0.8.2 trailed it at v8.1.0. It carries
-# the EIP-8025 stateless witness fields on top (executionWitness /
-# statelessInputBytes / statelessOutputBytes). The v0.8.2 → v0.8.3 upstream delta
-# leaves the guest contract alone: the schema id is still 0x1501, and `state`,
-# `codes` and `public_keys` stay progressive lists with `headers` bounded. What
-# moved is where the spec declares those types — a separate SSZ mirror module was
-# folded into annotations on the dataclasses themselves.
+# The zkevm bundle is the Amsterdam fixtures plus the EIP-8025 stateless witness
+# fields (executionWitness / statelessInputBytes / statelessOutputBytes). Bump it
+# to a release filled against the same tests-glamsterdam-devnet content the
+# Amsterdam pin above names: when the two drift, the bundles describe slightly
+# different chains.
 # Both bundles extract a `for_amsterdam/` subtree, so we keep the zkevm bundle in
 # a separate root that only the stateless harness reads, to avoid overlaying the
 # regular Amsterdam fixtures.
