@@ -403,6 +403,7 @@ pub trait RpcHandler: Sized {
 fn get_error_kind(err: &RpcErr) -> &'static str {
     match err {
         RpcErr::MethodNotFound(_) => "MethodNotFound",
+        RpcErr::MethodNotServedHere { .. } => "MethodNotServedHere",
         RpcErr::WrongParam(_) => "WrongParam",
         RpcErr::BadParams(_) => "BadParams",
         RpcErr::InvalidParams(_) => "InvalidParams",
@@ -1186,7 +1187,8 @@ where
             // a node started with e.g. `--http.api web3` would still expose
             // `eth_subscribe("newHeads")` over WS.
             if !context.allowed_namespaces.contains(&RpcNamespace::Eth) {
-                let err: Result<Value, RpcErr> = Err(RpcErr::MethodNotFound(req.method.clone()));
+                let err: Result<Value, RpcErr> =
+                    Err(namespace_not_enabled(&req.method, RpcNamespace::Eth));
                 return rpc_response(req.id, err).ok();
             }
             let result = if req.method == "eth_subscribe" {
@@ -1304,14 +1306,49 @@ pub async fn handle_eth_unsubscribe(
     Ok(Value::Bool(removed))
 }
 
+/// `-32601` for a method whose namespace ethrex implements but this endpoint is
+/// not configured to serve. Naming the namespace and the flag keeps a disabled
+/// allowlist from reading like an unimplemented method.
+fn namespace_not_enabled(method: &str, namespace: RpcNamespace) -> RpcErr {
+    RpcErr::MethodNotServedHere {
+        method: method.to_string(),
+        reason: format!(
+            "the '{}' namespace is not enabled on this endpoint; add it to --http.api",
+            namespace.as_prefix()
+        ),
+    }
+}
+
+/// `-32601` for `engine_*` reaching the public HTTP port. Distinct from
+/// [`namespace_not_enabled`]: `--http.api` refuses `engine` outright, so telling
+/// the caller to add it there would send them down a dead end.
+fn engine_not_on_http(method: &str) -> RpcErr {
+    RpcErr::MethodNotServedHere {
+        method: method.to_string(),
+        reason: "the 'engine' namespace is served on the authenticated RPC port \
+                 (--authrpc.port), not on the public HTTP port"
+            .to_string(),
+    }
+}
+
 /// Handle requests that can come from either clients or other users
 pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     let namespace = match req.namespace() {
         Ok(ns) => ns,
         Err(rpc_err) => return Err(rpc_err),
     };
+    // Engine is served on the authenticated port only. The CLI parser already
+    // rejects `--http.api engine`, but `allowed_namespaces` can also be built
+    // programmatically (e.g. in tests or future call sites), so HTTP dispatch
+    // must refuse Engine even if it ends up in the set. This runs *before* the
+    // allowlist check because `engine` is never in the allowlist on a real node:
+    // otherwise every `engine_*` call over HTTP would be told to add `engine` to
+    // a flag that rejects it.
+    if namespace == RpcNamespace::Engine {
+        return Err(engine_not_on_http(&req.method));
+    }
     if !context.allowed_namespaces.contains(&namespace) {
-        return Err(RpcErr::MethodNotFound(req.method.clone()));
+        return Err(namespace_not_enabled(&req.method, namespace));
     }
     match namespace {
         RpcNamespace::Eth => map_eth_requests(req, context).await,
@@ -1321,11 +1358,10 @@ pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Resu
         RpcNamespace::Net => map_net_requests(req, context).await,
         RpcNamespace::Mempool => map_mempool_requests(req, context),
         RpcNamespace::Testing => map_testing_requests(req, context).await,
-        // Engine is served on the authenticated port only. The CLI parser
-        // already rejects `--http.api engine`, but `allowed_namespaces` can
-        // also be built programmatically (e.g. in tests or future call sites),
-        // so HTTP dispatch must refuse Engine even if it ends up in the set.
-        RpcNamespace::Engine => Err(RpcErr::MethodNotFound(req.method.clone())),
+        // Unreachable: the guard above already returned. Kept so the match stays
+        // exhaustive without a catch-all arm that would silently route a
+        // namespace added later.
+        RpcNamespace::Engine => Err(engine_not_on_http(&req.method)),
     }
 }
 
@@ -1337,7 +1373,14 @@ pub async fn map_authrpc_requests(
     match req.namespace() {
         Ok(RpcNamespace::Engine) => map_engine_requests(req, context).await,
         Ok(RpcNamespace::Eth) => map_eth_requests(req, context).await,
-        _ => Err(RpcErr::MethodNotFound(req.method.clone())),
+        // A known namespace that this port does not serve is not the same as an
+        // unparseable method name, which `namespace()` already rejects.
+        Ok(_) => Err(RpcErr::MethodNotServedHere {
+            method: req.method.clone(),
+            reason: "the authenticated RPC port only serves the 'engine' and 'eth' namespaces"
+                .to_string(),
+        }),
+        Err(rpc_err) => Err(rpc_err),
     }
 }
 
@@ -1615,8 +1658,10 @@ mod tests {
     use std::{fs::File, path::Path};
 
     /// With the default `--http.api` allowlist (`eth,net,web3`), requests for
-    /// disabled namespaces like `debug_*` must return MethodNotFound and never
-    /// reach the handler.
+    /// disabled namespaces like `debug_*` must be refused before the handler and
+    /// must say *why*: a bare "Method not found" reads as "ethrex does not
+    /// implement `debug_traceTransaction`", which is what operators kept
+    /// concluding.
     #[tokio::test]
     async fn http_api_allowlist_blocks_debug_namespace_by_default() {
         let body = r#"{"jsonrpc":"2.0","method":"debug_traceTransaction","params":["0x0"],"id":1}"#;
@@ -1632,11 +1677,39 @@ mod tests {
 
         let result = map_http_requests(&request, context).await;
         match result {
-            Err(RpcErr::MethodNotFound(method)) => {
+            Err(RpcErr::MethodNotServedHere { method, reason }) => {
                 assert_eq!(method, "debug_traceTransaction");
+                assert!(reason.contains("'debug'"), "names the namespace: {reason}");
+                assert!(reason.contains("--http.api"), "names the flag: {reason}");
             }
-            other => panic!("expected MethodNotFound, got {other:?}"),
+            other => panic!("expected MethodNotServedHere, got {other:?}"),
         }
+    }
+
+    /// The reason must reach the wire under the spec's `-32601`, so a client that
+    /// keys on the code is unaffected while a human (or an agent) reading the
+    /// message learns the method exists.
+    #[test]
+    fn namespace_not_enabled_serializes_as_method_not_found() {
+        let meta: RpcErrorMetadata =
+            namespace_not_enabled("txpool_content", RpcNamespace::Mempool).into();
+        assert_eq!(meta.code, -32601);
+        assert!(
+            meta.message.contains("txpool_content"),
+            "names the method: {}",
+            meta.message
+        );
+        // The CLI spelling, not the enum variant name: `--http.api txpool`.
+        assert!(
+            meta.message.contains("'txpool'"),
+            "names the CLI namespace: {}",
+            meta.message
+        );
+        assert!(
+            meta.message.contains("--http.api"),
+            "names the flag: {}",
+            meta.message
+        );
     }
 
     /// A bind conflict must surface as a typed `RpcStartupError` naming the role and the
@@ -1676,7 +1749,10 @@ mod tests {
             let request: RpcRequest = serde_json::from_str(&body).unwrap();
             let result = map_http_requests(&request, context.clone()).await;
             assert!(
-                !matches!(result, Err(RpcErr::MethodNotFound(_))),
+                !matches!(
+                    result,
+                    Err(RpcErr::MethodNotFound(_) | RpcErr::MethodNotServedHere { .. })
+                ),
                 "default allowlist should route {method}, got {result:?}"
             );
         }
@@ -1733,6 +1809,40 @@ mod tests {
         );
     }
 
+    /// On a normally-configured node `engine` is simply absent from the
+    /// allowlist, so this is the path every real `engine_*` call over HTTP takes.
+    /// It must point at the authenticated port rather than at `--http.api`, which
+    /// refuses `engine`.
+    #[tokio::test]
+    async fn engine_namespace_on_http_points_at_the_authenticated_port() {
+        let body = r#"{"jsonrpc":"2.0","method":"engine_forkchoiceUpdatedV3","params":[],"id":1}"#;
+        let request: RpcRequest = serde_json::from_str(body).unwrap();
+        let mut storage =
+            Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+        storage
+            .set_chain_config(&example_chain_config())
+            .await
+            .unwrap();
+        let mut context = default_context_with_storage(storage).await;
+        context.allowed_namespaces = Arc::new(crate::DEFAULT_HTTP_API.iter().copied().collect());
+
+        let result = map_http_requests(&request, context).await;
+        match result {
+            Err(RpcErr::MethodNotServedHere { method, reason }) => {
+                assert_eq!(method, "engine_forkchoiceUpdatedV3");
+                assert!(
+                    reason.contains("--authrpc.port"),
+                    "points at the authenticated port: {reason}"
+                );
+                assert!(
+                    !reason.contains("--http.api"),
+                    "must not send the caller to a flag that rejects `engine`: {reason}"
+                );
+            }
+            other => panic!("expected MethodNotServedHere, got {other:?}"),
+        }
+    }
+
     /// The Engine namespace must never be served over the public HTTP endpoint,
     /// even if an operator passes `engine` to `--http.api` (the CLI rejects it,
     /// but defense-in-depth: the dispatcher still refuses).
@@ -1753,7 +1863,16 @@ mod tests {
         context.allowed_namespaces = Arc::new(all_with_engine);
 
         let result = map_http_requests(&request, context).await;
-        assert!(matches!(result, Err(RpcErr::MethodNotFound(_))));
+        match result {
+            Err(RpcErr::MethodNotServedHere { method, reason }) => {
+                assert_eq!(method, "engine_forkchoiceUpdatedV3");
+                assert!(
+                    reason.contains("--authrpc.port"),
+                    "points at the authenticated port: {reason}"
+                );
+            }
+            other => panic!("expected MethodNotServedHere, got {other:?}"),
+        }
     }
 
     // Maps string rpc response to RpcSuccessResponse as serde Value
