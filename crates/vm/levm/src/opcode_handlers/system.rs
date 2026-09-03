@@ -1436,6 +1436,12 @@ impl<'a> VM<'a> {
                     .frame_state_gas_spilled
                     .checked_add(child_frame_state_gas_spilled)
                     .ok_or(InternalError::Overflow)?;
+                // EIP-8037 (execution-specs#3478): with the child's gas merged in, the
+                // reservoir repays whatever spill is still outstanding in this frame —
+                // EELS calls `repay_state_gas_spill` here, on the success arm only.
+                if self.env.config.fork >= Fork::Amsterdam {
+                    self.repay_state_gas_spill()?;
+                }
             }
             TxResult::Revert(_) => {
                 // EIP-8037: the child already self-refilled its execution state gas via
@@ -1505,6 +1511,12 @@ impl<'a> VM<'a> {
                     .frame_state_gas_spilled
                     .checked_add(child_frame_state_gas_spilled)
                     .ok_or(InternalError::Overflow)?;
+                // EIP-8037 (execution-specs#3478): with the child's gas merged in, the
+                // reservoir repays whatever spill is still outstanding in this frame —
+                // EELS calls `repay_state_gas_spill` here, on the success arm only.
+                if self.env.config.fork >= Fork::Amsterdam {
+                    self.repay_state_gas_spill()?;
+                }
                 // EIP-8037 (#3002): the parent charged the NEW_ACCOUNT state gas only
                 // when the target was NOT alive (`new_account_charged = !target_alive`),
                 // exactly as EELS `generic_create`. On child success EELS does not

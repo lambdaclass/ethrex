@@ -1237,6 +1237,63 @@ impl<'a> VM<'a> {
         Ok(())
     }
 
+    /// EIP-8037 `repay_state_gas_spill` (EELS `incorporate_child`, success arm): once a
+    /// successful child's gas has merged into this frame, the reservoir repays the spill
+    /// still outstanding, up to what the reservoir holds.
+    ///
+    /// A refund can land in a different frame than the charge it undoes: the refunding
+    /// frame's spill may be smaller than the refund, so the excess credits the reservoir
+    /// even though the charge drew from `gas_remaining`. The merge is where the claim
+    /// (this frame's spill) and the credit (the reservoir) first share a frame, so that
+    /// is where the two pools settle between themselves.
+    ///
+    /// No state creation is undone, so `state_gas_used` does not move: the gas only
+    /// crosses back between the pools it drifted across. Both settlements stay
+    /// unchanged, which is what makes this repayment billing-neutral:
+    /// - user gas (`gas_limit - gas_remaining - state_gas_reservoir`) is unchanged
+    ///   because `gas_remaining` rises by exactly what the reservoir loses;
+    /// - the EIP-7778 regular dimension subtracts the cumulative `state_gas_spill`, so
+    ///   that counter drops by the repayment too — the reservoir (the state dimension)
+    ///   covered the charge after all, so it must stop being billed as regular gas.
+    ///
+    /// A failed child repays nothing: its rollback already restored the state whose
+    /// removal any refund credited.
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "subtractions proven safe by min()"
+    )]
+    pub fn repay_state_gas_spill(&mut self) -> Result<(), VMError> {
+        debug_assert!(
+            self.env.config.fork >= Fork::Amsterdam,
+            "repay_state_gas_spill called pre-Amsterdam"
+        );
+        let repayment = self
+            .state_gas_reservoir
+            .min(self.current_call_frame.frame_state_gas_spilled);
+        if repayment == 0 {
+            return Ok(());
+        }
+        self.current_call_frame.gas_remaining = self
+            .current_call_frame
+            .gas_remaining
+            .checked_add(i64::try_from(repayment).map_err(|_| InternalError::Overflow)?)
+            .ok_or(InternalError::Overflow)?;
+        // Safe: repayment = min(reservoir, frame spill) <= both.
+        self.state_gas_reservoir -= repayment;
+        self.current_call_frame.frame_state_gas_spilled -= repayment;
+        // Block accounting: every frame spill is mirrored in the cumulative counter, so
+        // it covers this repayment (`checked_sub` guards the invariant regardless).
+        self.state_gas_spill = self
+            .state_gas_spill
+            .checked_sub(repayment)
+            .ok_or(InternalError::Underflow)?;
+        // EELS asserts the claim and the credit cannot both survive a repayment.
+        debug_assert!(
+            self.state_gas_reservoir == 0 || self.current_call_frame.frame_state_gas_spilled == 0
+        );
+        Ok(())
+    }
+
     /// EIP-8037 `refill_frame_state_gas`: roll back this frame's state gas in LIFO
     /// order on revert or exceptional halt, mirroring EELS `refill_frame_state_gas`.
     ///
