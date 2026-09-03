@@ -82,6 +82,7 @@ participants:
       - --http.api=txpool
       - --http.api=debug
     validator_count: 32
+    supernode: true
   - el_type: ethrex
     el_image: ethrex:hegota-testnet
     cl_type: lighthouse
@@ -92,6 +93,7 @@ participants:
       - --http.api=txpool
       - --http.api=debug
     validator_count: 32
+    supernode: true
 
 # The consensus client must speak the FOCIL engine surface from the fork
 # boundary on, because ethrex rejects `newPayloadV5` and `forkchoiceUpdatedV4`
