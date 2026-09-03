@@ -231,7 +231,7 @@ for an execution node 3 is JSON-RPC. With `el.public_port_start: 32000`,
 | CL QUIC | 31003, 31010, 31017 | UDP | open for QUIC peers; TCP is the fallback |
 | EL JSON-RPC (node 0 only) | 32003 | TCP | public via reverse proxy |
 | Dora explorer | 31500 | TCP | public via reverse proxy |
-| CL beacon REST (node 0 only), `GET /eth/*` | 31001 | TCP | public via reverse proxy as `checkpoint-sync.privacy.ethrex.xyz`; the port itself stays closed |
+| CL beacon REST (node 0 only), `GET /eth/*` | 31001 | TCP | public via reverse proxy as `checkpoint-sync.privacy.ethrex.xyz`; the port itself stays closed. Serves correct data; see "Starting a node" for why Lighthouse cannot checkpoint-sync from it today |
 | EL engine authrpc | 32001, 32008, 32015 | TCP | must stay closed |
 | EL metrics | 32002, 32009, 32016 | TCP | must stay closed |
 | EL JSON-RPC (nodes 1, 2) | 32010, 32017 | TCP | must stay closed |
@@ -283,13 +283,18 @@ local address it found and no external peer can dial back.
 Consensus layer:
 
 ```
-<client> --boot-nodes "$(cat bootnodes-cl.txt | paste -sd,)" \
-         --checkpoint-sync-url https://checkpoint-sync.privacy.ethrex.xyz
+<client> --boot-nodes "$(cat bootnodes-cl.txt | paste -sd,)"
 ```
 
-with `config.yaml` and `genesis.ssz` from the bundle. Sync from the checkpoint: a client
-started at genesis backfills every payload envelope since launch before it drives the
-execution client, and stalls in that backfill on a chain of any age.
+with `config.yaml` and `genesis.ssz` from the bundle, syncing from genesis (for Lighthouse,
+`--allow-insecure-genesis-sync`); this chain imports at roughly 20 slots per second, so
+genesis sync is minutes. A checkpoint endpoint is published at
+`https://checkpoint-sync.privacy.ethrex.xyz`, a read-only proxy (`GET` on `/eth/*`) in
+front of one of the network's beacon nodes, and it serves a correct finalized block, state
+and payload envelope. The FOCIL-aware Lighthouse build this chain needs cannot use it yet:
+its checkpoint sync does not fetch the anchor's execution payload envelope on a Gloas
+chain, so every block after the checkpoint fails as `unknown parent` and the node never
+leaves the checkpoint slot. The user guide carries the full symptom.
 
 The chain runs PeerDAS with 128 custody groups (`NUMBER_OF_CUSTODY_GROUPS` in
 `config.yaml`) and the network's three beacon nodes are all supernodes, custodying every
@@ -298,9 +303,7 @@ at all: a joiner asks its peers for the data columns of each past epoch, and on 
 this small any node holding only its own 4 groups leaves columns that no peer can serve,
 so the client sits at `Waiting for peers to be available on custody column subnets`.
 Nothing is required of the joiner; the requirement is on the operators, and it is recorded
-here because the ports table and the bootnode files do not carry it. The endpoint is a
-read-only proxy (`GET` on `/eth/*`) in front of one of the network's beacon nodes; it
-exists so joiners never need the beacon REST ports, which stay closed. The client must be
+here because the ports table and the bootnode files do not carry it. The client must be
 FOCIL-aware;
 see "Engine API" above.
 

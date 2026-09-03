@@ -183,7 +183,11 @@ chain never missing a slot: stop with a 60 s grace and check the exit code is `0
 commit`, rename the old container `.old`, run the snapshot with the identical hostname,
 network, IP, aliases, labels, mounts and port bindings plus the flag inside the exec
 string, verify the node is at head with the same peer id before touching the next one, and
-remove `.old` so `kurtosis enclave inspect` stops reporting the service STOPPED.
+remove `.old` so `kurtosis enclave inspect` stops reporting the service STOPPED. Then
+re-publish the artifact bundle: the node key is unchanged but the ENR's sequence number
+and custody count are not, and the published `bootnodes-cl.txt` is stale until you do. A
+joiner given the stale records logged `Could not add peer to the local routing table` for
+one of them on 2026-09-03; with the re-published bundle it did not.
 
 ## Upgrading kurtosis
 
@@ -370,6 +374,11 @@ Two things the 2026-09-03 re-genesis (chain 1 ended at head 313,106) taught:
   launch. A joiner given a checkpoint from the wrong chain is refused outright by the
   consensus client ("Snapshot state appears to be from the wrong network"), which is the
   bundle's `genesis_validators_root.txt` doing its job.
+  And a fourth, which none of the above can supply: a consensus client that uses the
+  endpoint correctly. The FOCIL Lighthouse build does not on a Gloas chain (it never fetches
+  the anchor's payload envelope, so nothing imports past the checkpoint), which is why the
+  joining documents send joiners to genesis sync and keep the endpoint as future-facing. Do
+  not read a healthy endpoint as a working checkpoint-sync path; test it with a joiner.
 - The faucet's key rotates with the deployment. Its container takes `PRIVATE_KEY` from
   `~/hegota-faucet.env` at `docker run`, so update that line from the new `FAUCET_KEY` and
   recreate the container (`--network host`, `--restart unless-stopped`, the artifacts bind

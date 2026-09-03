@@ -137,25 +137,36 @@ ethrex --network genesis.json \
 the bind address and is **not** a substitute: a node that omits `--nat.extip` advertises
 whatever local address it found, and no external peer can dial back.
 
-Consensus layer, pointed at the execution client's engine port, and synced from a
-checkpoint rather than from genesis:
+Consensus layer, pointed at the execution client's engine port, synced from genesis:
 ```
 lighthouse beacon_node \
   --testnet-dir=. \
   --execution-endpoint=http://127.0.0.1:8551 \
   --execution-jwt=<path to the jwtsecret your EL uses> \
   --boot-nodes="$(paste -sd, bootnodes-cl.txt)" \
-  --checkpoint-sync-url=https://checkpoint-sync.privacy.ethrex.xyz
+  --allow-insecure-genesis-sync
 ```
 
-**Sync from the checkpoint, not from genesis.** Started at genesis, a consensus client has
-to backfill every payload envelope since launch before it drives your execution client
-anywhere, and on a chain that has been running for a while it stalls in that backfill with
-the execution client stranded a few blocks in. From the checkpoint the pair reaches head
-normally. The endpoint is a read-only view of one of the network's beacon nodes: `GET` on
-`/eth/*` only, everything else refused. Check the execution client separately from the
-beacon node afterwards; a beacon node can sit at head while its execution client is still
-at genesis.
+**Sync from genesis, not from the checkpoint endpoint, for now.** Genesis sync imports this
+chain at roughly 20 slots per second (1,900 slots in 90 seconds on 2026-09-03), so it is
+minutes, not hours, and the execution client follows a few blocks behind.
+
+A checkpoint endpoint exists, `https://checkpoint-sync.privacy.ethrex.xyz`, a read-only view
+of one of the network's beacon nodes (`GET` on `/eth/*` only, everything else refused), and
+it serves a correct finalized state, block and execution payload envelope. But the
+Lighthouse build this chain requires (`ethpandaops/lighthouse:focil`, v8.1.3-52e5197) does
+not use it correctly on a Gloas chain: it downloads the checkpoint block and state and never
+asks for the block's execution payload envelope, so the anchor sits in fork choice with no
+payload, the first block after it fails with `Block has an unknown parent: <checkpoint
+root>`, range sync blacklists every peer, and the node stays at the checkpoint slot for
+good. Verified on 2026-09-03 through the endpoint and directly against the beacon node, at
+checkpoints from slot 96 to slot 1,888; `--reset-payload-statuses` does not help. The
+endpoint stays up for when the client is fixed. If you try it anyway, the symptom above is
+what a failure looks like; nothing is wrong with your setup.
+
+If your execution client already followed an earlier checkpoint attempt, expect ethrex to
+log `Too deep reorg` while the consensus client replays from genesis; it clears once the
+replay passes the execution client's head.
 
 The consensus client must be FOCIL-aware. ethrex rejects `engine_newPayloadV5` and
 `engine_forkchoiceUpdatedV4` from Hegotá on, because only the V6/V5 pair carries
