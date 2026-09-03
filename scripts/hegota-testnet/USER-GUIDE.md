@@ -88,12 +88,27 @@ so a missing file fails at startup rather than at first use.
 
 ```
 mkdir hegota-testnet && cd hegota-testnet
-for f in genesis.json genesis.ssz config.yaml \
+for f in genesis.json genesis.ssz config.yaml chainspec.json besu.json \
          bootnodes.txt bootnodes-enr.txt bootnodes-cl.txt \
          deposit_contract.txt deposit_contract_block.txt \
-         deposit_contract_block_hash.txt genesis_validators_root.txt; do
+         deposit_contract_block_hash.txt genesis_validators_root.txt MANIFEST.txt; do
   curl -fsSLO "https://faucet.privacy.ethrex.xyz/artifacts/$f"
 done
+sha256sum -c MANIFEST.txt
+```
+
+`MANIFEST.txt` carries a sha256 for every published file, `chainspec.json` and `besu.json`
+included, so fetching only the files a node reads leaves the check reporting two missing
+files. Fetch the whole set and check it; the two extra files are generator output nobody
+maintains, and ethrex ignores them.
+
+You also need an ethrex build of this chain's branch. No published release or image carries
+it, and a stock release does not implement the rule set:
+
+```
+git clone --branch hegota-testnet --depth 1 https://github.com/lambdaclass/ethrex
+cd ethrex && make build-image TAG=hegota-testnet     # or: cargo build --release
+docker run --rm ethrex:hegota-testnet --version       # names the branch and commit
 ```
 
 The three bootnode files are also served live as JSON, so peers can be checked or
@@ -122,15 +137,25 @@ ethrex --network genesis.json \
 the bind address and is **not** a substitute: a node that omits `--nat.extip` advertises
 whatever local address it found, and no external peer can dial back.
 
-Consensus layer, pointed at the execution client's engine port:
-
+Consensus layer, pointed at the execution client's engine port, and synced from a
+checkpoint rather than from genesis:
 ```
 lighthouse beacon_node \
   --testnet-dir=. \
   --execution-endpoint=http://127.0.0.1:8551 \
-  --jwt-secrets=<path to the jwtsecret your EL generated> \
-  --boot-nodes="$(paste -sd, bootnodes-cl.txt)"
+  --execution-jwt=<path to the jwtsecret your EL uses> \
+  --boot-nodes="$(paste -sd, bootnodes-cl.txt)" \
+  --checkpoint-sync-url=https://checkpoint-sync.privacy.ethrex.xyz
 ```
+
+**Sync from the checkpoint, not from genesis.** Started at genesis, a consensus client has
+to backfill every payload envelope since launch before it drives your execution client
+anywhere, and on a chain that has been running for a while it stalls in that backfill with
+the execution client stranded a few blocks in. From the checkpoint the pair reaches head
+normally. The endpoint is a read-only view of one of the network's beacon nodes: `GET` on
+`/eth/*` only, everything else refused. Check the execution client separately from the
+beacon node afterwards; a beacon node can sit at head while its execution client is still
+at genesis.
 
 The consensus client must be FOCIL-aware. ethrex rejects `engine_newPayloadV5` and
 `engine_forkchoiceUpdatedV4` from Hegotá on, because only the V6/V5 pair carries

@@ -231,6 +231,7 @@ for an execution node 3 is JSON-RPC. With `el.public_port_start: 32000`,
 | CL QUIC | 31003, 31010, 31017 | UDP | open for QUIC peers; TCP is the fallback |
 | EL JSON-RPC (node 0 only) | 32003 | TCP | public via reverse proxy |
 | Dora explorer | 31500 | TCP | public via reverse proxy |
+| CL beacon REST (node 0 only), `GET /eth/*` | 31001 | TCP | public via reverse proxy as `checkpoint-sync.privacy.ethrex.xyz`; the port itself stays closed |
 | EL engine authrpc | 32001, 32008, 32015 | TCP | must stay closed |
 | EL metrics | 32002, 32009, 32016 | TCP | must stay closed |
 | EL JSON-RPC (nodes 1, 2) | 32010, 32017 | TCP | must stay closed |
@@ -282,10 +283,16 @@ local address it found and no external peer can dial back.
 Consensus layer:
 
 ```
-<client> --boot-nodes "$(cat bootnodes-cl.txt | paste -sd,)"
+<client> --boot-nodes "$(cat bootnodes-cl.txt | paste -sd,)" \
+         --checkpoint-sync-url https://checkpoint-sync.privacy.ethrex.xyz
 ```
 
-with `config.yaml` and `genesis.ssz` from the bundle. The client must be FOCIL-aware;
+with `config.yaml` and `genesis.ssz` from the bundle. Sync from the checkpoint: a client
+started at genesis backfills every payload envelope since launch before it drives the
+execution client, and stalls in that backfill on a chain of any age. The endpoint is a
+read-only proxy (`GET` on `/eth/*`) in front of one of the network's beacon nodes; it
+exists so joiners never need the beacon REST ports, which stay closed. The client must be
+FOCIL-aware;
 see "Engine API" above.
 
 ## Becoming a validator
