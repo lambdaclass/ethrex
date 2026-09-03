@@ -91,8 +91,8 @@ impl RLPxMessage for Transactions {
 // Broadcast message
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct NewPooledTransactionHashes {
-    pub(crate) transaction_types: Bytes,
-    pub(crate) transaction_sizes: Vec<usize>,
+    pub transaction_types: Bytes,
+    pub transaction_sizes: Vec<usize>,
     pub transaction_hashes: Vec<H256>,
 }
 
@@ -143,6 +143,18 @@ impl NewPooledTransactionHashes {
                     else {
                         continue;
                     };
+                    // A tx ingested over eth/72 may hold an elided bundle (commitments
+                    // and proofs, no blobs; cells travel separately). This pre-72
+                    // announcement promises a full-blob delivery, but the serve path
+                    // drops elided txs from pre-72 responses (`GetPooledTransactions`
+                    // arm in `connection/server.rs`), so we would announce a hash we
+                    // never deliver — and with a size no full-blob delivery can match.
+                    // geth's tx fetcher checks a delivered tx against every peer that
+                    // announced its hash, so when another peer delivers the full tx the
+                    // mismatch is charged to us. Skip it, mirroring the serve path.
+                    if tx_blobs_bundle.blobs.len() != tx_blobs_bundle.commitments.len() {
+                        continue;
+                    }
                     let p2p_tx =
                         P2PTransaction::EIP4844TransactionWithBlobs(WrappedEIP4844Transaction {
                             tx: eip4844_tx,
