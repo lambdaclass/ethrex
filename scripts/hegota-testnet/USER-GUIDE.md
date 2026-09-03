@@ -164,6 +164,10 @@ checkpoints from slot 96 to slot 1,888; `--reset-payload-statuses` does not help
 endpoint stays up for when the client is fixed. If you try it anyway, the symptom above is
 what a failure looks like; nothing is wrong with your setup.
 
+One `ERROR Could not add peer to the local routing table … "Failed bucket filter"` at
+startup is expected: the three beacon nodes share an IP and discv5 admits two per /24 into a
+bucket. The node connects to all three regardless.
+
 If your execution client already followed an earlier checkpoint attempt, expect ethrex to
 log `Too deep reorg` while the consensus client replays from genesis; it clears once the
 replay passes the execution client's head.

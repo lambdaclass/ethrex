@@ -303,7 +303,14 @@ at all: a joiner asks its peers for the data columns of each past epoch, and on 
 this small any node holding only its own 4 groups leaves columns that no peer can serve,
 so the client sits at `Waiting for peers to be available on custody column subnets`.
 Nothing is required of the joiner; the requirement is on the operators, and it is recorded
-here because the ports table and the bootnode files do not carry it. The client must be
+here because the ports table and the bootnode files do not carry it.
+
+Expect one `ERROR Could not add peer to the local routing table … error: "Failed bucket
+filter"` at consensus-client startup, for the third record in `bootnodes-cl.txt`. All three
+beacon nodes share one public IP, and discv5 admits at most two nodes from a /24 into a
+routing bucket, so the third record is refused by the table. It is still dialed: a joiner
+ends up connected to all three. The line is loud and looks like a broken bundle; it is
+neither. The client must be
 FOCIL-aware;
 see "Engine API" above.
 

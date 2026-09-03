@@ -185,9 +185,10 @@ network, IP, aliases, labels, mounts and port bindings plus the flag inside the 
 string, verify the node is at head with the same peer id before touching the next one, and
 remove `.old` so `kurtosis enclave inspect` stops reporting the service STOPPED. Then
 re-publish the artifact bundle: the node key is unchanged but the ENR's sequence number
-and custody count are not, and the published `bootnodes-cl.txt` is stale until you do. A
-joiner given the stale records logged `Could not add peer to the local routing table` for
-one of them on 2026-09-03; with the re-published bundle it did not.
+and custody count are not, and the published `bootnodes-cl.txt` is stale until you do. (An
+earlier revision of this paragraph blamed stale records for a joiner's `Could not add peer
+to the local routing table`; that was wrong. See the joining document: the error is discv5's
+IP limit and appears with fresh records too.)
 
 ## Upgrading kurtosis
 
