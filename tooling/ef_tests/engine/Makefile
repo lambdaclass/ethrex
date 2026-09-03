@@ -1,4 +1,4 @@
-.PHONY: download-test-vectors clean-vectors test test-rocksdb test-strict amsterdam-vectors help
+.PHONY: download-test-vectors clean-vectors test test-rocksdb test-strict amsterdam-vectors frames-vectors help
 
 VECTORS_ROOT := vectors
 FIXTURES_FILE := ../.fixtures_url
@@ -9,6 +9,15 @@ SPECTEST_URL := $(shell cat $(FIXTURES_FILE))
 AMSTERDAM_FIXTURES_FILE := ../.fixtures_url_amsterdam
 AMSTERDAM_ARTIFACT := amsterdam-tests.tar.gz
 AMSTERDAM_URL := $(shell cat $(AMSTERDAM_FIXTURES_FILE))
+
+FRAMES_FIXTURES_FILE := ../.fixtures_url_frames
+FRAMES_ARTIFACT := frames-tests.tar.gz
+FRAMES_URL := $(shell cat $(FRAMES_FIXTURES_FILE))
+# All Bogota-fork fixtures -- the EIP-8141 suites and the converted legacy
+# variants alike -- live under this one subtree, so it is the only thing the
+# frames bundle contributes here.
+FRAMES_SUBTREE := for_bogota
+FRAMES_STAMP := $(SPECTEST_VECTORS_DIR)/.frames_overlay
 
 # Subtrees the Amsterdam bundle contributes. `for_bpo2toamsterdamattime15k` holds the
 # fork-activation fixtures (a header field appearing mid-chain, the gas schedule
@@ -55,17 +64,35 @@ amsterdam-vectors: | $(SPECTEST_VECTORS_DIR) ## 📥 Overlay Amsterdam fixtures,
 help: ## 📚 Show help for each Makefile target
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
-download-test-vectors: $(VECTORS_TARGETS) amsterdam-vectors ## 📥 Download engine-format test vectors
+# Keyed on the release URL, exactly like the Amsterdam overlay above and the
+# blockchain runner's frames overlay: a subtree left on disk says nothing in its
+# mtime about which release produced it, and clearing it first drops fixtures a
+# later release renamed or removed.
+frames-vectors: | $(SPECTEST_VECTORS_DIR) ## 📥 Overlay the frames-devnet engine fixtures, re-fetching when the pinned release changed
+	@have=$$(cat $(FRAMES_STAMP) 2>/dev/null); \
+	[ -d $(SPECTEST_VECTORS_DIR)/$(FRAMES_SUBTREE) ] || have=; \
+	if [ "$$have" = "$(FRAMES_URL)" ]; then \
+		echo "Frames fixtures already overlaid from $(FRAMES_URL)"; \
+	else \
+		curl -fL -o $(FRAMES_ARTIFACT).part $(FRAMES_URL) && \
+		mv $(FRAMES_ARTIFACT).part $(FRAMES_ARTIFACT) && \
+		rm -rf $(SPECTEST_VECTORS_DIR)/$(FRAMES_SUBTREE) && \
+		tar -xzf $(FRAMES_ARTIFACT) --strip-components=2 -C $(SPECTEST_VECTORS_DIR) \
+			fixtures/blockchain_tests_engine/$(FRAMES_SUBTREE) && \
+		echo "$(FRAMES_URL)" > $(FRAMES_STAMP); \
+	fi
+
+download-test-vectors: $(VECTORS_TARGETS) amsterdam-vectors frames-vectors ## 📥 Download engine-format test vectors
 
 clean-vectors: ## 🗑️  Clean test vectors
 	rm -rf $(VECTORS_ROOT)
-	rm -f $(SPECTEST_ARTIFACT) $(AMSTERDAM_ARTIFACT) $(AMSTERDAM_ARTIFACT).part
+	rm -f $(SPECTEST_ARTIFACT) $(AMSTERDAM_ARTIFACT) $(AMSTERDAM_ARTIFACT).part $(FRAMES_ARTIFACT) $(FRAMES_ARTIFACT).part
 
-test: $(VECTORS_TARGETS) amsterdam-vectors ## 🧪 Run engine-format fixture suite (InMemory, release)
+test: $(VECTORS_TARGETS) amsterdam-vectors frames-vectors ## 🧪 Run engine-format fixture suite (InMemory, release)
 	cargo test -p ef_tests-engine --release
 
-test-rocksdb: $(VECTORS_TARGETS) amsterdam-vectors ## 🧪 Run with RocksDB backend
+test-rocksdb: $(VECTORS_TARGETS) amsterdam-vectors frames-vectors ## 🧪 Run with RocksDB backend
 	cargo test -p ef_tests-engine --release --features rocksdb
 
-test-strict: $(VECTORS_TARGETS) amsterdam-vectors ## 🧪 Run with strict validationError checking
+test-strict: $(VECTORS_TARGETS) amsterdam-vectors frames-vectors ## 🧪 Run with strict validationError checking
 	ETHREX_ENGINE_STRICT_EXCEPTIONS=1 cargo test -p ef_tests-engine --release
