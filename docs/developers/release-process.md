@@ -98,6 +98,7 @@ Before publishing the release, run through the following checks using the pre-re
 - [ ] Launch multisync on `ethrex-multisync-main`
 - [ ] Upgrade a local L2 created with the previous version and run the integration tests
 - [ ] Run the L2 integration tests with a SP1 prover on the GPU server (`l2-gpu`)
+- [ ] Run the multiprover test: SP1 prover on the GPU server (`l2-gpu`), TDX prover and the rest of the stack on `ethrex-tdx-baremetal`
 
 The commands for each target follow. The host roster changes between releases — fill in the ones you run and leave the placeholders for the rest. Replace `vX.Y.Z-rc.W` / `release/vX.Y.Z` with the version under test.
 
@@ -162,6 +163,23 @@ See [Upgrade test](l2/upgrade-test.md) for the full procedure.
 #### L2 integration tests with a SP1 prover (`l2-gpu`)
 
 See [L2 integration tests with a SP1 GPU prover](l2/sp1-gpu-integration-test.md) for the full procedure.
+
+#### Multiprover test (SP1 GPU + TDX)
+
+See [Multiprover test](l2/multiprover-test.md) for the full procedure. It runs across two hosts: the SP1 prover on `l2-gpu`, and the L1, deploy, sequencer and TDX prover VM on `ethrex-tdx-baremetal`, with the SP1 prover reaching the proof coordinator over the tailnet.
+
+The single-prover checks above each exercise one prover against an `OnChainProposer` that requires only that one. This is the only check where a batch must satisfy **two** provers before `lastVerifiedBatch` moves, which is the configuration a production rollup runs.
+
+Confirm on-chain that the deployment really requires both, rather than trusting the deploy flags — a batch verifying under a single-prover deployment would prove nothing:
+
+```bash
+rex call "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" 'REQUIRE_SP1_PROOF()' "$L1_RPC"   # 0x..01
+rex call "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" 'REQUIRE_TDX_PROOF()' "$L1_RPC"   # 0x..01
+```
+
+The check passes when `lastVerifiedBatch` advances past zero with both flags set.
+
+Run it with `ETHREX_TDX_DEV_MODE=false`, so the TDX quote is verified on chain by `verifyAndAttestOnChain` rather than trusted. That is the point of running on TDX hardware, and it is what CI cannot do — CI uses dev mode, where registration skips verification entirely. It needs two extra steps the runbook covers: pinning the verifier's expected measurements to the image being released, and loading this platform's TCB collateral, since the tool `ethrex` normally shells out to cannot serve a dev chain.
 
 ### Publish
 
