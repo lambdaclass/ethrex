@@ -108,6 +108,14 @@ looked fine from the deploying host.
       validator that was *deposited after genesis* and a deposit transaction.
       Following head proves the beacon indexer works and says nothing about
       the execution-layer indexers. See gotcha 7.
+- [ ] **Every artifact a *different* client consumes has been fed to that client.**
+      `genesis.json` is what ethrex reads; Nethermind reads `chainspec.json`, Besu
+      `besu.json`. A generator can emit a chainspec that schedules EIPs the chain does
+      not run, and only the client that reads it will notice. See gotcha 10.
+- [ ] **A second implementation decodes your transactions, not just peers with you.**
+      Peering, headers and fork-id all agree across clients that disagree on a
+      transaction's wire format; the disagreement surfaces only when a body with the
+      new transaction type is validated. See gotcha 11.
 - [ ] **Client tooling exists and is pinned.** If the released CLI predates
       the feature, publish a branch or commit that supports it and name it on
       the page.
@@ -290,3 +298,27 @@ enodes "TCP-refused"; the enodes were correct and the nodes healthy. Two
 lessons: reachability is a thing to *monitor*, since a passing check at
 publish time says nothing about tomorrow; and anything a gateway can forget
 must be re-asserted by a timer, exactly as the beacon peering already is.
+
+**10. The genesis generator schedules FOCIL in every Heze chainspec.**
+`ethereum-genesis-generator`'s `genesis_add_heze()` writes both
+`eip7805TransitionTimestamp` and `eip8141TransitionTimestamp` at the fork time into
+`chainspec.json` — the code comment says `# Enabled EIPs: 7805, 8141` and there is
+no knob to omit FOCIL (true at v6.1.6 and still at v6.1.7). This chain runs 8141
+alone. ethrex reads `genesis.json`, so it never saw the problem; a Nethermind fed the
+raw chainspec scheduled FOCIL at block 45 (the first Hegotá block), expected
+inclusion-list engine methods and FOCIL-shaped payloads from then on, and stalled at
+exactly that block on both full and snap sync. It reported the enodes as not serving
+history; the history was fine. Fix: publish a derived `chainspec-nethermind.json`
+with the `eip7805*` key removed — genesis and accounts untouched, same genesis hash.
+
+**11. Cross-client wire-format drift hides behind healthy peering.**
+The same Nethermind, on the corrected chainspec, peered, exchanged fork-ids (they
+match: both sides hash `hegota_time` and the timestamps agree), pulled headers — and
+then rejected every payload with a frame transaction: `Transaction 0 is not valid:
+Unexpected length of integer value`. Its `frames-devnet-0` image
+(`1.40.0-unstable+1b9daf39`, 2026-08-20) decodes three flat fee fields and a scalar
+frame gas limit; the chain emits the execution-specs#3396 envelope (merged the same
+day) with a nested `fees` list and `[execution, state]` limits. Nothing in discovery,
+STATUS, or header sync exercises a transaction body, so every "is the network
+healthy" signal was green. The check that would have caught it: have the second
+client *decode a real frame transaction from the chain*, not merely connect.

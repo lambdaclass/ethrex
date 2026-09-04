@@ -84,6 +84,22 @@ for f in "${PUBLISHED_FILES[@]}"; do
   cp -a "$SRC/$f" "$STAGE/$f"
 done
 
+# Nethermind consumes chainspec.json, and the genesis generator's heze step writes
+# both eip8141TransitionTimestamp AND eip7805TransitionTimestamp at the fork time
+# (`genesis_add_heze`, "Enabled EIPs: 7805, 8141" -- unconditional through v6.1.7).
+# This chain runs EIP-8141 alone; FOCIL is deliberately absent. A Nethermind fed the
+# raw file schedules FOCIL at block 45, expects inclusion-list engine methods and
+# FOCIL-shaped payloads from then on, and stalls at exactly that block. Publish a
+# derived copy with the FOCIL line removed; genesis and accounts are untouched, so
+# the genesis hash is identical. The original stays published byte-for-byte.
+python3 - "$STAGE/chainspec.json" "$STAGE/chainspec-nethermind.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+for k in [k for k in d["params"] if k.startswith("eip7805")]:
+    del d["params"][k]
+json.dump(d, open(sys.argv[2], "w"), indent=2)
+PY
+
 # Refuse to publish a secret even if the allowlist is edited carelessly later.
 for forbidden in mnemonics.yaml validator_names.yaml; do
   if [[ -e "$STAGE/$forbidden" ]]; then
