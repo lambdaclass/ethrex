@@ -1,0 +1,12 @@
+[Unit]
+Description=Re-assert the frames testnet's UPnP port mappings on the office router
+After=network-online.target
+
+[Service]
+Type=oneshot
+# The gateway (Huawei EchoLife IGD) reports LeaseDuration=0 mappings as
+# permanent but silently drops them if they are not renewed; Tailscale's
+# mapping survives only because it re-requests it. AddPortMapping is
+# idempotent for an identical entry, so re-asserting is free.
+ExecStart=/usr/bin/python3 /usr/local/bin/frames-portmap.py add
+ExecStart=/usr/bin/python3 /usr/local/bin/frames-portmap-8443.py

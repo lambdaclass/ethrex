@@ -47,6 +47,15 @@ Leave closed: `36001/36008/36015` (engine authrpc — reaching these is equivale
 controlling the node's head), `36002/36009/36016` (EL metrics), `36003/36010/36017`
 (EL RPC, reached through Caddy), `8088`/`8089`/`36400` (reached through Caddy).
 
+**If the forwards are UPnP mappings rather than static router rules, they must be
+renewed.** The office gateway (Huawei EchoLife IGD) accepts `LeaseDuration=0` and reports
+the mapping as permanent, then silently drops it if nothing re-requests it — the tailscale
+mapping on the same router survives only because tailscale renews it. Every frames mapping
+vanished within a day of being created, with no router reboot (WAN uptime 130 days), and
+an external joiner went to 0 EL peers as a result. `frames-portmap.timer` re-asserts all
+sixteen mappings every 10 minutes; `AddPortMapping` is idempotent for an identical entry.
+Static forwards configured by whoever administers the router remain the durable fix.
+
 **This is not only about external joiners.** The nodes advertise `nat_exit_ip`, so
 without these forwards nothing reaches them at the address they publish — including
 their own siblings on this host. That is what split the deployment into one chain per
