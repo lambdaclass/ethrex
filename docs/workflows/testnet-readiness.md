@@ -171,6 +171,11 @@ bundle and peering from a host outside the deployment network before
 publishing. Symptom: `net_peerCount` stays `0x0` with correct-looking
 bootnodes.
 
+UPnP mappings are gateway *state*, not config, and a gateway may expire "permanent"
+ones that are never renewed — this one did, silently, with no reboot. If forwards are
+UPnP-created, renew them on a timer and test reachability from outside on a schedule,
+not once. See gotcha 9.
+
 The second-order cost is worse than the first. A joiner that cannot use the
 published ENRs has no *discovery*, only the handful of static peers someone
 hand-fed it, so it cannot heal: when one of those peers drops, it degrades to
@@ -274,3 +279,14 @@ nice-to-have for external joiners — without them the deployment silently
 splits into one chain per node. The healthy reference on a directly-addressed
 host had all three execution nodes at an identical block and all three beacon
 nodes finalized at the same epoch.
+
+**9. "Permanent" UPnP mappings that quietly expire.**
+Every P2P forward on `frames-testnet` was a UPnP mapping requested with
+`LeaseDuration=0`; the gateway reported each as permanent. Within a day all
+sixteen were gone — no reboot (WAN uptime 130 days), no error, and the
+tailscale mapping on the same gateway untouched, because tailscale renews
+its own. An external team's node dropped to 0 EL peers and reported the
+enodes "TCP-refused"; the enodes were correct and the nodes healthy. Two
+lessons: reachability is a thing to *monitor*, since a passing check at
+publish time says nothing about tomorrow; and anything a gateway can forget
+must be re-asserted by a timer, exactly as the beacon peering already is.

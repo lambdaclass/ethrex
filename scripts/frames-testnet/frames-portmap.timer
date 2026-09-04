@@ -1,0 +1,10 @@
+[Unit]
+Description=Renew frames testnet UPnP mappings every 10 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=10min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target
