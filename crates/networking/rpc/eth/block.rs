@@ -386,7 +386,6 @@ pub async fn get_all_block_rpc_receipts(
         .map_err(|_| RpcErr::Internal("blob_base_fee does not fit in u64".to_owned()))?;
     // Fetch receipt info from block
     let block_hash = header.hash();
-    let block_timestamp = header.timestamp;
     let block_info = RpcReceiptBlockInfo::from_block_header(header);
     // Fetch receipts: only up to target_index+1 when set, otherwise all
     let fetch_count = target_index
@@ -426,7 +425,6 @@ pub async fn get_all_block_rpc_receipts(
             tx_info,
             block_info.clone(),
             current_log_index,
-            block_timestamp,
         );
         last_cumulative_gas_used += gas_used;
         current_log_index += receipt.logs.len() as u64;
