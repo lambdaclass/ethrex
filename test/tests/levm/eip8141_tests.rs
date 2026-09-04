@@ -1864,13 +1864,6 @@ mod frame_tx_opcode_handler_tests {
     }
 
     #[test]
-    fn sigparam_0x03_returns_signature_len() {
-        let ctx = ctx_with_one_signature();
-        let sig = ctx.tx.signatures.first().unwrap();
-        assert_eq!(U256::from(sig.signature.len()), U256::from(65u64));
-    }
-
-    #[test]
     fn sigparam_oob_index_returns_invalid_opcode() {
         let ctx = ctx_with_one_signature();
         // index 1 is out of bounds (only index 0 exists)
@@ -4051,8 +4044,10 @@ mod expiry_verifier_tests {
 mod sigparam_execution_tests {
     use super::*;
     use ethrex_common::types::{
-        FRAME_RECEIPT_STATUS_FAILURE, FRAME_SIG_SCHEME_ARBITRARY, FrameSignature,
+        FRAME_RECEIPT_STATUS_FAILURE, FRAME_SIG_SCHEME_ARBITRARY, FRAME_SIG_SCHEME_SECP256K1,
+        FrameSignature,
     };
+    use k256::ecdsa::SigningKey;
 
     /// Read slot `slot` of `addr` from the post-execution cache.
     fn storage_of(db: &GeneralizedDatabase, addr: Address, slot: U256) -> U256 {
@@ -4126,6 +4121,19 @@ mod sigparam_execution_tests {
         GeneralizedDatabase,
         Address,
     ) {
+        run_reader_signed(code, |_| signatures)
+    }
+
+    /// `run_reader` for entries that must commit to the transaction they sign: `sign` sees
+    /// the assembled transaction and returns its signature list.
+    fn run_reader_signed(
+        code: Bytes,
+        sign: impl FnOnce(&FrameTransaction) -> Vec<FrameSignature>,
+    ) -> (
+        Result<ExecutionReport, VMError>,
+        GeneralizedDatabase,
+        Address,
+    ) {
         let reader = Address::from_low_u64_be(0xB4B4);
         let mut tx = frame_tx_with_frames(vec![
             verify_frame(FUNDED_SENDER),
@@ -4141,7 +4149,7 @@ mod sigparam_execution_tests {
                 data: Bytes::new(),
             },
         ]);
-        tx.signatures = signatures;
+        tx.signatures = sign(&tx);
         let (result, db) = run_frame_tx(
             &[
                 (
@@ -4155,6 +4163,37 @@ mod sigparam_execution_tests {
             tx,
         );
         (result, db, reader)
+    }
+
+    /// A protocol-validated SECP256K1 entry over `tx`'s sig hash, from a throwaway key
+    /// whose address is named as the signer. The signature BYTES of an empty-msg entry
+    /// are elided from the hash but `signer` is committed, so the entry takes its final
+    /// shape before hashing and only the bytes are filled in after.
+    fn secp256k1_entry(tx: &FrameTransaction) -> FrameSignature {
+        let key = SigningKey::from_bytes(&[0x42u8; 32].into()).unwrap();
+        let uncompressed = key.verifying_key().to_encoded_point(false);
+        let pub_hash = ethrex_crypto::keccak::keccak_hash(&uncompressed.as_bytes()[1..]);
+        let signer = Address::from_slice(&pub_hash[12..]);
+
+        let mut unsigned = tx.clone();
+        unsigned.signatures = vec![FrameSignature {
+            scheme: FRAME_SIG_SCHEME_SECP256K1,
+            signer: Some(signer),
+            msg: Bytes::new(),
+            signature: Bytes::from(vec![0u8; 65]),
+        }];
+        let sig_hash = unsigned.compute_sig_hash();
+
+        let (raw_sig, recovery_id) = key.sign_prehash_recoverable(sig_hash.as_bytes()).unwrap();
+        let mut bytes = vec![0u8; 65];
+        bytes[0] = recovery_id.to_byte();
+        bytes[1..65].copy_from_slice(&raw_sig.to_bytes());
+        FrameSignature {
+            scheme: FRAME_SIG_SCHEME_SECP256K1,
+            signer: Some(signer),
+            msg: Bytes::new(),
+            signature: Bytes::from(bytes),
+        }
     }
 
     fn arbitrary_sig(bytes: Vec<u8>) -> FrameSignature {
@@ -4187,6 +4226,30 @@ mod sigparam_execution_tests {
         );
         result.expect("valid tx");
         assert_eq!(storage_of(&db, reader, U256::zero()), U256::from(7u64));
+    }
+
+    #[test]
+    fn sigparam_0x03_halts_for_a_protocol_validated_signature() {
+        // EIP-8141 exposes `len(signature)` for ARBITRARY entries only: the raw bytes of a
+        // protocol-validated scheme, their length included, stay un-introspectable. The
+        // same entry answers every other metadata param, which pins the halt on the param
+        // and not on the entry.
+        let (result, db, reader) = run_reader_signed(sigparam_metadata_code(0x01, 0), |tx| {
+            vec![secp256k1_entry(tx)]
+        });
+        result.expect("a correctly signed SECP256K1 entry is a valid tx");
+        assert_eq!(
+            storage_of(&db, reader, U256::zero()),
+            U256::from(u64::from(FRAME_SIG_SCHEME_SECP256K1)),
+        );
+
+        let (result, db, reader) = run_reader_signed(sigparam_metadata_code(0x03, 0), |tx| {
+            vec![secp256k1_entry(tx)]
+        });
+        let report = result.expect("the tx itself stays valid; only the reader frame halts");
+        let frame_results = report.frame_results.expect("per-frame results");
+        assert_eq!(frame_results[1].status, FRAME_RECEIPT_STATUS_FAILURE);
+        assert_eq!(storage_of(&db, reader, U256::zero()), U256::zero());
     }
 
     #[test]
@@ -5195,41 +5258,63 @@ mod intrinsic_gas_accounting_tests {
         );
     }
 
-    /// EIP-8141 `value_transfer_cost`: `TX_VALUE_COST` per value-carrying frame, in
-    /// the intrinsic AND in the calldata floor. It is charged per frame rather than per
-    /// distinct recipient, and adding value to a frame is the only thing that moves it.
+    /// EIP-8141 `value_transfer_cost`: `TX_VALUE_COST` per frame that moves value to
+    /// another account, in the intrinsic AND in the calldata floor. It is charged per
+    /// frame rather than per distinct recipient; a frame with no target or targeting
+    /// `tx.sender` moves nothing and is not charged, whatever its `value`.
     #[test]
-    fn each_value_carrying_frame_adds_the_value_transfer_cost() {
+    fn each_frame_moving_value_to_another_account_adds_the_value_transfer_cost() {
         let baseline = interop_reference_tx();
         let baseline_value_frames = baseline
             .frames
             .iter()
-            .filter(|f| !f.value.is_zero())
+            .filter(|f| !f.value.is_zero() && f.target.is_some_and(|t| t != baseline.sender))
             .count() as u64;
         assert_eq!(
             baseline.value_transfer_cost(),
             baseline_value_frames * ethrex_common::types::FRAME_TX_VALUE_COST
         );
 
-        // Give a zero-value frame a value: exactly one more TX_VALUE_COST, in both the
-        // intrinsic and the floor, because the term sits on both sides of `max_gas`.
+        // Point a zero-value frame at another account and give it value: exactly one more
+        // TX_VALUE_COST, in both the intrinsic and the floor, because the term sits on both
+        // sides of `max_gas`.
         let mut with_value = interop_reference_tx();
         let zero_valued = with_value
             .frames
             .iter()
             .position(|f| f.value.is_zero())
             .expect("the fixture has a zero-value frame");
+        with_value.frames[zero_valued].target = Some(Address::repeat_byte(0x22));
         with_value.frames[zero_valued].value = U256::one();
 
         assert_eq!(
             with_value.mandatory_gas(),
             baseline.mandatory_gas() + ethrex_common::types::FRAME_TX_VALUE_COST,
-            "a newly value-carrying frame adds exactly one TX_VALUE_COST"
+            "a frame newly moving value adds exactly one TX_VALUE_COST"
         );
         assert_eq!(
             with_value.calldata_floor_total(),
             baseline.calldata_floor_total() + ethrex_common::types::FRAME_TX_VALUE_COST,
             "the value cost is mandatory, so the calldata floor carries it too"
+        );
+
+        // The same value on a targetless frame, or on one targeting the sender, moves
+        // nothing and costs nothing.
+        let mut targetless = interop_reference_tx();
+        targetless.frames[zero_valued].target = None;
+        targetless.frames[zero_valued].value = U256::one();
+        assert_eq!(
+            targetless.mandatory_gas(),
+            baseline.mandatory_gas(),
+            "value on a targetless frame is not a transfer"
+        );
+        let mut self_pay = interop_reference_tx();
+        self_pay.frames[zero_valued].target = Some(self_pay.sender);
+        self_pay.frames[zero_valued].value = U256::one();
+        assert_eq!(
+            self_pay.mandatory_gas(),
+            baseline.mandatory_gas(),
+            "value to the sender itself is not a transfer"
         );
 
         // Raising an already value-carrying frame's value changes nothing: the charge is

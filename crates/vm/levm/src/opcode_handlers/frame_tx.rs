@@ -630,7 +630,15 @@ impl OpcodeHandler for OpSigParamHandler {
                     U256::from_big_endian(&sig.msg)
                 }
             }
-            0x03 => U256::from(sig.signature.len()),
+            // Signature length: ARBITRARY only. The raw bytes of a protocol-validated
+            // scheme stay un-introspectable, length included, so future aggregation
+            // remains possible; asking is an exceptional halt.
+            0x03 => {
+                if sig.scheme != ethrex_common::types::FRAME_SIG_SCHEME_ARBITRARY {
+                    return Err(ExceptionalHalt::InvalidOpcode.into());
+                }
+                U256::from(sig.signature.len())
+            }
             _ => return Err(ExceptionalHalt::InvalidOpcode.into()),
         };
         vm.current_call_frame.stack.push(result)?;

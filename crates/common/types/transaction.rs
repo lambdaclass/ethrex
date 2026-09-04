@@ -2518,11 +2518,15 @@ impl FrameTransaction {
             .saturating_add(self.value_transfer_cost())
     }
 
-    /// EIP-8141 `value_transfer_cost`: `TX_VALUE_COST` per frame carrying value.
+    /// EIP-8141 `value_transfer_cost`: `TX_VALUE_COST` per frame that moves value to
+    /// another account. A frame with no target, or one targeting `tx.sender`, moves
+    /// nothing whatever its `value`, so it is not charged.
     pub fn value_transfer_cost(&self) -> u64 {
         self.frames
             .iter()
-            .filter(|frame| !frame.value.is_zero())
+            .filter(|frame| {
+                !frame.value.is_zero() && frame.target.is_some_and(|target| target != self.sender)
+            })
             .fold(0u64, |acc, _| acc.saturating_add(FRAME_TX_VALUE_COST))
     }
 
