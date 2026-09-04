@@ -308,8 +308,10 @@ alone. ethrex reads `genesis.json`, so it never saw the problem; a Nethermind fe
 raw chainspec scheduled FOCIL at block 45 (the first Hegotá block), expected
 inclusion-list engine methods and FOCIL-shaped payloads from then on, and stalled at
 exactly that block on both full and snap sync. It reported the enodes as not serving
-history; the history was fine. Fix: publish a derived `chainspec-nethermind.json`
-with the `eip7805*` key removed — genesis and accounts untouched, same genesis hash.
+history; the history was fine. Fix: publish the chainspec with the `eip7805*` key
+removed, *under the canonical name* — genesis and accounts untouched, same genesis
+hash. Not as a second file beside the generator's: two chainspecs in one bundle is
+the same trap as publishing a Besu genesis for a network with no Besu.
 
 **11. Cross-client wire-format drift hides behind healthy peering.**
 The same Nethermind, on the corrected chainspec, peered, exchanged fork-ids (they

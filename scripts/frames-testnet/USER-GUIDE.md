@@ -118,20 +118,20 @@ for f in genesis.json genesis.ssz config.yaml \
 done
 ```
 
-**Nethermind: use `chainspec-nethermind.json`, not `chainspec.json`.** The genesis
-generator writes `eip7805TransitionTimestamp` (FOCIL) into every Heze chainspec alongside
-`eip8141TransitionTimestamp`, and this chain does not run FOCIL. Fed the raw file,
-Nethermind schedules FOCIL at the fork block, expects inclusion-list engine methods and
-FOCIL-shaped payloads from then on, and stalls at exactly that block (block 45) — headers
-arrive, bodies and state never validate. The derived file differs by that one key only;
-genesis and accounts are byte-identical, so the genesis hash is unchanged.
+**Nethermind:** `chainspec.json` in the bundle is ready to use. It is the genesis
+generator's output with one key removed: the generator writes `eip7805TransitionTimestamp`
+(FOCIL) into every Heze chainspec alongside `eip8141TransitionTimestamp`, and this chain
+does not run FOCIL. Fed the generator's file, Nethermind schedules FOCIL at the fork block,
+expects inclusion-list engine methods and FOCIL-shaped payloads from then on, and stalls at
+exactly that block (block 45) — headers arrive, bodies and state never validate. Genesis and
+accounts are untouched, so the genesis hash is the same one every other client computes.
 
 ```
-curl -fsSLO https://faucet.frames.ethrex.xyz/artifacts/chainspec-nethermind.json
-nethermind --Init.ChainSpecPath=chainspec-nethermind.json ...
+curl -fsSLO https://faucet.frames.ethrex.xyz/artifacts/chainspec.json
+nethermind --Init.ChainSpecPath=chainspec.json ...
 ```
 
-That file removes the first blocker; a second one lives in the client build. This chain's
+That removes the first blocker; a second one lives in the client build. This chain's
 frame transactions use the EIP-8141 envelope as of execution-specs#3396 (2026-08-20): seven
 top-level fields with the three fees nested in one `fees` list, and each frame's gas as a
 two-element `[execution, state]` list. A Nethermind built before that change decodes three

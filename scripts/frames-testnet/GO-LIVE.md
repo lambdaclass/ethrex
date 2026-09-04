@@ -77,8 +77,9 @@ dora and the faucet answer 200, `/api/claim` reaches the app, and
 
 ## 3b. Other execution clients
 
-Nethermind must use `chainspec-nethermind.json` from the bundle (the generator's
-`chainspec.json` schedules FOCIL, which this chain does not run) **and** a build that
+The bundle's `chainspec.json` is already corrected for Nethermind (the generator's
+own output schedules FOCIL, which this chain does not run; the published file has that key
+removed in place). Nethermind additionally needs a build that
 includes the execution-specs#3396 frame-transaction envelope; the public
 `ethpandaops/nethermind:frames-devnet-0` at `1b9daf39` predates it and rejects every
 frame transaction. See the user guide's "Join the network" note.
