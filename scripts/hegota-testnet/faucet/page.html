@@ -106,7 +106,8 @@
   <div class="panel">
     <table>
       <tr>
-        <td><a href="https://eips.ethereum.org/EIPS/eip-8141">EIP-8141</a></td>
+        <td><a href="https://eips.ethereum.org/EIPS/eip-8141">EIP-8141</a><br>
+          <a href="https://github.com/ethereum/EIPs/blob/7d1c8bfb94/EIPS/eip-8141.md" style="font-weight:400"><code>7d1c8bfb94</code></a></td>
         <td class="desc">Frame transactions: a new type <code>0x06</code> whose payload is a list of
           <em>frames</em>, each executed with its own target, mode and two gas budgets, with payment
           authorised by an <code>APPROVE</code> in a validation prefix. Authentication becomes a
@@ -114,22 +115,26 @@
           the account that pays need not be the one that acts.</td>
       </tr>
       <tr>
-        <td><a href="https://eips.ethereum.org/EIPS/eip-8250">EIP-8250</a></td>
+        <td><a href="https://eips.ethereum.org/EIPS/eip-8250">EIP-8250</a><br>
+          <a href="https://github.com/ethereum/EIPs/blob/e5cf246ff1/EIPS/eip-8250.md" style="font-weight:400"><code>e5cf246ff1</code></a></td>
         <td class="desc">Keyed nonces: up to 16 independent nonce keys per sender instead of one
           linear counter, tracked in a <code>NONCE_MANAGER</code> predeploy. A contract sender can
           have several transactions pending on different keys and none waits behind another.</td>
       </tr>
       <tr>
-        <td><a href="https://eips.ethereum.org/EIPS/eip-8272">EIP-8272</a></td>
+        <td><a href="https://eips.ethereum.org/EIPS/eip-8272">EIP-8272</a><br>
+          <a href="https://github.com/ethereum/EIPs/blob/0231fb05f5/EIPS/eip-8272.md" style="font-weight:400"><code>0231fb05f5</code></a></td>
         <td class="desc">Recent roots: verified <code>(source, slot, root)</code> tuples carried in
           the envelope, checked against a <code>RECENT_ROOT</code> predeploy before any frame runs
           and read in the prefix with <code>RECENTROOTREFLOAD</code>. A proof can be anchored to a
           root minutes old without the prefix touching storage.</td>
       </tr>
       <tr>
-        <td><a href="https://eips.ethereum.org/EIPS/eip-7805">EIP-7805</a></td>
+        <td><a href="https://eips.ethereum.org/EIPS/eip-7805">EIP-7805</a><br>
+          <a href="https://github.com/ethereum/EIPs/blob/9a345f96c2/EIPS/eip-7805.md" style="font-weight:400"><code>9a345f96c2</code></a></td>
         <td class="desc">Fork-choice enforced inclusion lists, with
           <a href="https://eips.ethereum.org/EIPS/eip-8369">EIP-8369</a>'s validation-only profiles
+          (at <a href="https://github.com/soispoke/EIPs/blob/33724bd7da/EIPS/eip-8369.md"><code>33724bd7da</code></a>, its unmerged PR branch)
           deciding which frame transactions are eligible: attesters replay only the validation
           prefix, under a fixed budget, so a builder cannot leave an eligible transaction out.</td>
       </tr>
@@ -139,6 +144,14 @@
       spend, the pool paying for it, concurrent spends, a fresh root to prove against, and an
       inclusion guarantee. Everything else is Glamsterdam. Each EIP is explained at length, with
       how they lean on each other, in <a href="/eips">the EIP guide</a>.
+    </p>
+    <p style="margin:.6rem 0 0;font-size:14px;color:var(--muted)">
+      The hash under each number is the <code>ethereum/EIPs</code> commit this chain implements.
+      These drafts move often and the chain does not follow them live: what runs here is the
+      text at those commits (<code>git show &lt;commit&gt;:EIPS/eip-&lt;n&gt;.md</code>), and a
+      spec change only reaches the chain through a relaunch. The
+      <a href="https://github.com/lambdaclass/ethrex/blob/hegota-testnet/docs/hegota-testnet-spec.md">network spec</a>
+      records the pins, the fork schedule and what is being tested.
     </p>
   </div>
 
