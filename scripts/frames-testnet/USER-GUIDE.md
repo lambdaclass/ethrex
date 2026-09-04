@@ -118,6 +118,29 @@ for f in genesis.json genesis.ssz config.yaml \
 done
 ```
 
+**Nethermind: use `chainspec-nethermind.json`, not `chainspec.json`.** The genesis
+generator writes `eip7805TransitionTimestamp` (FOCIL) into every Heze chainspec alongside
+`eip8141TransitionTimestamp`, and this chain does not run FOCIL. Fed the raw file,
+Nethermind schedules FOCIL at the fork block, expects inclusion-list engine methods and
+FOCIL-shaped payloads from then on, and stalls at exactly that block (block 45) — headers
+arrive, bodies and state never validate. The derived file differs by that one key only;
+genesis and accounts are byte-identical, so the genesis hash is unchanged.
+
+```
+curl -fsSLO https://faucet.frames.ethrex.xyz/artifacts/chainspec-nethermind.json
+nethermind --Init.ChainSpecPath=chainspec-nethermind.json ...
+```
+
+That file removes the first blocker; a second one lives in the client build. This chain's
+frame transactions use the EIP-8141 envelope as of execution-specs#3396 (2026-08-20): seven
+top-level fields with the three fees nested in one `fees` list, and each frame's gas as a
+two-element `[execution, state]` list. A Nethermind built before that change decodes three
+flat fee fields and a scalar frame gas limit, and rejects every payload carrying a frame
+transaction with `Unexpected length of integer value` — after headers arrive, before any
+body validates. `ethpandaops/nethermind:frames-devnet-0` at `1.40.0-unstable+1b9daf39` is
+such a build. Use a build that includes the #3396 envelope, or expect to stall at the first
+frame transaction.
+
 The three bootnode files are also served live as JSON, so peers can be checked or
 re-fetched without pulling the whole bundle:
 
