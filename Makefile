@@ -261,18 +261,14 @@ docs-serve: mermaid-init.js mermaid.min.js ## 📚 Generate and serve the docume
 
 # Used ONLY to resolve lockfile updates: the publish-age cooldown in
 # .cargo/config.toml (versions published less than 14 days ago are excluded) is
-# nightly-only; everything else runs on the stable toolchain in rust-toolchain.toml.
-# Resolution done on stable (`cargo add`, plain `cargo update`, an unlocked build
-# after a manifest edit) is NOT covered; this target is the intended path. Git
+# nightly-only; everything else runs on the stable toolchain in rust-toolchain.toml. Git
 # dependencies have no publish age and are refreshed WITHOUT any cooldown: review
-# their lockfile rev changes manually. Escape hatch for an urgent bump to a
-# version younger than the cooldown, applied to the WHOLE resolution:
-#   CARGO_RESOLVER_INCOMPATIBLE_PUBLISH_AGE=allow make update-cargo-lock
+# their lockfile rev changes manually.
 RESOLVER_TOOLCHAIN := nightly-2026-06-21
 CARGO_RESOLVE := cargo +$(RESOLVER_TOOLCHAIN) -Z min-publish-age tree
 
 update-cargo-lock: ## 📦 Update Cargo.lock files under the publish-age cooldown
-	rustup toolchain install $(RESOLVER_TOOLCHAIN) --profile minimal > /dev/null 2>&1
+	rustup toolchain install $(RESOLVER_TOOLCHAIN) --profile minimal --no-self-update > /dev/null
 	$(CARGO_RESOLVE)
 	$(CARGO_RESOLVE) --manifest-path crates/guest-program/bin/sp1/Cargo.toml
 	# risc0 temporarily skipped: c-kzg 2.1.8 floor exceeds the highest risc0 c-kzg fork tag
@@ -288,6 +284,41 @@ update-cargo-lock: ## 📦 Update Cargo.lock files under the publish-age cooldow
 	$(CARGO_RESOLVE) --manifest-path tooling/zkevm_bench/Cargo.toml
 	$(CARGO_RESOLVE) --manifest-path tooling/Cargo.toml
 	$(CARGO_RESOLVE) --manifest-path tooling/ef_tests/state/Cargo.toml
+
+# One entry per committed Cargo.lock (tooling/ef_tests/state shares tooling's;
+# risc0 is skipped for the reason above).
+COOLDOWN_MANIFESTS := Cargo.toml \
+	crates/guest-program/bin/sp1/Cargo.toml \
+	crates/guest-program/bin/zisk/Cargo.toml \
+	crates/guest-program/bin/openvm/Cargo.toml \
+	crates/guest-program/stateless-validator/Cargo.toml \
+	crates/guest-program/stateless-validator/bin/sp1/Cargo.toml \
+	crates/guest-program/stateless-validator/bin/zisk/Cargo.toml \
+	crates/guest-program/stateless-validator/bin/openvm/Cargo.toml \
+	crates/l2/tee/quote-gen/Cargo.toml \
+	crates/vm/levm/bench/revm_comparison/Cargo.toml \
+	tooling/zkevm_bench/Cargo.toml \
+	tooling/Cargo.toml
+
+# Stable cargo ignores the cooldown, so a lockfile can pin too-young crates
+# (`cargo update` on stable, or the CARGO_RESOLVER_INCOMPATIBLE_PUBLISH_AGE=allow
+# escape hatch). Re-resolve each lockfile under the cooldown without touching
+# it: a pin younger than the window shows up as a downgrade annotated with the
+# too-young version's publish date (downgrades for other reasons carry no such
+# note and are not flagged). A resolution that fails for reasons unrelated to
+# age only warns; the root workspace does today, since openvm's git deps pin
+# conflicting p3-baby-bear versions and only `cargo tree` can refresh its lock.
+cooldown-check: ## 🔍 Fail if a Cargo.lock pins crates younger than the publish-age cooldown
+	@rustup toolchain install $(RESOLVER_TOOLCHAIN) --profile minimal --no-self-update > /dev/null && \
+	status=0; \
+	for manifest in $(COOLDOWN_MANIFESTS); do \
+		if ! out=$$(cargo +$(RESOLVER_TOOLCHAIN) update --dry-run -Z min-publish-age --manifest-path $$manifest 2>&1); then \
+			echo "WARNING: publish-age cooldown probe failed for $$manifest:"; echo "$$out" | grep -v "^ *Updating " | head -20; continue; \
+		fi; \
+		hits=$$(echo "$$out" | grep -E "^ *Downgrading .*published" || true); \
+		if [ -n "$$hits" ]; then echo "ERROR: $$manifest pins crates younger than the publish-age cooldown:"; echo "$$hits"; status=1; fi; \
+	done; \
+	exit $$status
 
 check-cargo-lock: ## 🔍 Check Cargo.lock files are up to date
 	cargo metadata --locked > /dev/null
