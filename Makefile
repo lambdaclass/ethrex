@@ -259,22 +259,35 @@ docs: mermaid-init.js mermaid.min.js ## 📚 Generate the documentation
 docs-serve: mermaid-init.js mermaid.min.js ## 📚 Generate and serve the documentation
 	mdbook serve --open
 
-update-cargo-lock: ## 📦 Update Cargo.lock files
-	cargo tree
-	cargo tree --manifest-path crates/guest-program/bin/sp1/Cargo.toml
+# Used ONLY to resolve lockfile updates: the publish-age cooldown in
+# .cargo/config.toml (versions published less than 14 days ago are excluded) is
+# nightly-only; everything else runs on the stable toolchain in rust-toolchain.toml.
+# Resolution done on stable (`cargo add`, plain `cargo update`, an unlocked build
+# after a manifest edit) is NOT covered; this target is the intended path. Git
+# dependencies have no publish age and are refreshed WITHOUT any cooldown: review
+# their lockfile rev changes manually. Escape hatch for an urgent bump to a
+# version younger than the cooldown, applied to the WHOLE resolution:
+#   CARGO_RESOLVER_INCOMPATIBLE_PUBLISH_AGE=allow make update-cargo-lock
+RESOLVER_TOOLCHAIN := nightly-2026-06-21
+CARGO_RESOLVE := cargo +$(RESOLVER_TOOLCHAIN) -Z min-publish-age tree
+
+update-cargo-lock: ## 📦 Update Cargo.lock files under the publish-age cooldown
+	rustup toolchain install $(RESOLVER_TOOLCHAIN) --profile minimal > /dev/null 2>&1
+	$(CARGO_RESOLVE)
+	$(CARGO_RESOLVE) --manifest-path crates/guest-program/bin/sp1/Cargo.toml
 	# risc0 temporarily skipped: c-kzg 2.1.8 floor exceeds the highest risc0 c-kzg fork tag
 	# (v2.1.7-risczero.0), so its lockfile can't resolve. Re-add once a >=2.1.8 tag exists.
-	cargo tree --manifest-path crates/guest-program/bin/zisk/Cargo.toml
-	cargo tree --manifest-path crates/guest-program/bin/openvm/Cargo.toml
-	cargo tree --manifest-path crates/guest-program/stateless-validator/Cargo.toml
-	cargo tree --manifest-path crates/guest-program/stateless-validator/bin/sp1/Cargo.toml
-	cargo tree --manifest-path crates/guest-program/stateless-validator/bin/zisk/Cargo.toml
-	cargo tree --manifest-path crates/guest-program/stateless-validator/bin/openvm/Cargo.toml
-	cargo tree --manifest-path crates/l2/tee/quote-gen/Cargo.toml
-	cargo tree --manifest-path crates/vm/levm/bench/revm_comparison/Cargo.toml
-	cargo tree --manifest-path tooling/zkevm_bench/Cargo.toml
-	cargo tree --manifest-path tooling/Cargo.toml
-	cargo tree --manifest-path tooling/ef_tests/state/Cargo.toml
+	$(CARGO_RESOLVE) --manifest-path crates/guest-program/bin/zisk/Cargo.toml
+	$(CARGO_RESOLVE) --manifest-path crates/guest-program/bin/openvm/Cargo.toml
+	$(CARGO_RESOLVE) --manifest-path crates/guest-program/stateless-validator/Cargo.toml
+	$(CARGO_RESOLVE) --manifest-path crates/guest-program/stateless-validator/bin/sp1/Cargo.toml
+	$(CARGO_RESOLVE) --manifest-path crates/guest-program/stateless-validator/bin/zisk/Cargo.toml
+	$(CARGO_RESOLVE) --manifest-path crates/guest-program/stateless-validator/bin/openvm/Cargo.toml
+	$(CARGO_RESOLVE) --manifest-path crates/l2/tee/quote-gen/Cargo.toml
+	$(CARGO_RESOLVE) --manifest-path crates/vm/levm/bench/revm_comparison/Cargo.toml
+	$(CARGO_RESOLVE) --manifest-path tooling/zkevm_bench/Cargo.toml
+	$(CARGO_RESOLVE) --manifest-path tooling/Cargo.toml
+	$(CARGO_RESOLVE) --manifest-path tooling/ef_tests/state/Cargo.toml
 
 check-cargo-lock: ## 🔍 Check Cargo.lock files are up to date
 	cargo metadata --locked > /dev/null
