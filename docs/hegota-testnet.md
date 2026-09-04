@@ -347,7 +347,9 @@ The two things that decide whether this succeeds:
    requires an access token to deposit. That asymmetry is what makes the network both
    open to a third party and controlled by us.
 
-Companion documents on this branch: `docs/hegota-testnet-joining.md` (**the published
+Companion documents on this branch: `docs/hegota-testnet-spec.md` (the network spec in
+the devnet-page format: EIP list with pins, endpoints, testing focus, joining, local
+testing), `docs/hegota-testnet-joining.md` (**the published
 specification** — the five-EIP set, the pins, the consensus inputs no genesis file
 carries, the artifact list and the firewall surface),
 `docs/hegota-testnet-divergences.md` (the ledger that gates bring-up),

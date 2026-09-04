@@ -131,8 +131,20 @@ is the specification.
 
 ## Divergences from the pinned text
 
-Two, both one-way in the direction of ethrex being stricter, so neither can cause
-ethrex to accept a block a spec-literal client rejects.
+Two hold by design, both one-way in the direction of ethrex being stricter. Two more are
+defects of the binary the current chain runs (`31b532266`), fixed on the branch at
+`77e502ef4` and deployable only with a re-genesis; until then a client implementing the pin
+exactly must reproduce them to follow this chain:
+
+- **`SIGPARAM(0x03, i)` returns `len(signature)` for every scheme.** The pin defines it for
+  `ARBITRARY` entries only and halts otherwise. This one is lenient and it is exercised:
+  blocks 2787 and 2792 carry shielded-pool spends whose validation prefix reads it on a
+  secp256k1 entry, and a pin-exact client rejects both blocks.
+- **`TX_VALUE_COST` is charged for every frame with `value > 0`**, where the pin charges it
+  only for a frame with a target other than `tx.sender`. Stricter: a transaction the pin
+  admits can be rejected here as under-declared, never the reverse.
+
+The two by design:
 
 - **`SLOTNUM` (`0x4B`) is banned in the EIP-8141 validation prefix.** Upstream
   EIP-8141's banned list does not yet include it; `ethereum/EIPs#12066` is the open PR

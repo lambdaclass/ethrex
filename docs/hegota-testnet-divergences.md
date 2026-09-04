@@ -182,6 +182,49 @@ until it merges", which the code contradicts. Corrected in this pass.
 
 **Action:** closed — #12066 merged; nothing to carry.
 
+### 3.7 `SIGPARAM(0x03)` answered for every scheme — fixed, awaiting relaunch
+
+| | |
+| --- | --- |
+| ethrex at `31b532266` (the deployed binary) | `SIGPARAM(0x03, i)` returns `len(signature)` whatever the entry's scheme |
+| EIP-8141 at `7d1c8bfb94` | `len(signature)` is defined for `ARBITRARY` entries only; for any other scheme the read is an exceptional halt, because the raw bytes of a protocol-validated signature, their length included, stay un-introspectable so aggregation remains possible |
+| Consensus-visible | **yes**, and exercised on the live chain |
+
+Found by review of the shielded pool's tooling, whose dispatcher asserted `SIGPARAM(0, 3) == 65`
+on its secp256k1 authorizer entry in every spend. Under the pin that VERIFY frame halts, the
+sender never approves, and the transaction is invalid; on this chain it passed, and blocks 2787
+and 2792 of the current genesis carry two such spends. A client implementing the pin exactly
+therefore rejects those blocks: the divergence is lenient, the one direction the joining
+document promised this chain did not have.
+
+Fixed at `77e502ef4`: the opcode halts for any scheme other than `ARBITRARY`, with an
+execution test that reads `0x01` and `0x03` on the same correctly signed secp256k1 entry, so
+the halt is pinned to the param rather than to the entry. The pool's dispatcher dropped the
+check in the same review (the protocol already fixes a secp256k1 signature at 65 bytes).
+
+**Action:** the fix is consensus-visible and the current chain contains blocks that depend on
+the old behaviour, so it reaches the network only with a re-genesis; carried until then, and
+recorded in the joining document as a live divergence.
+
+### 3.8 `value_cost` charged for frames that move nothing — fixed, awaiting relaunch
+
+| | |
+| --- | --- |
+| ethrex at `31b532266` | `TX_VALUE_COST` for every frame with `value > 0` |
+| EIP-8141 at `7d1c8bfb94` | `value_cost(frame)` is `TX_VALUE_COST` only if `frame.value > 0 and frame.target is not None and frame.target != tx.sender` |
+| Consensus-visible | **yes** — intrinsic gas, so `max_gas` and the admission floor |
+
+A targetless frame or one targeting `tx.sender` moves no value, so the pin does not price the
+recipient write and transfer log it would otherwise cover. ethrex charged 6,000 per such frame:
+stricter, so a transaction valid under the pin could be rejected here as under-declared, never
+the reverse. The shielded pool is unaffected (its spends carry `value = 0` and its shield
+targets the pool from an EOA), which is why the live lifecycle never surfaced it.
+
+Fixed at `77e502ef4` with the predicate mirrored in `value_transfer_cost` and tests for the
+three cases (another account: charged; no target: free; the sender itself: free).
+
+**Action:** consensus-visible; re-genesis to deploy. Carried until then.
+
 ## 5.1 Opcode and TXPARAM ids EIP-8141 collides with — relocated
 
 Adopting EIP-8141 forced two id moves, both consensus-visible, both because EIP-8141 claims
@@ -707,6 +750,8 @@ Task 6.7's bar: zero rows may end the phase as "yes / unresolved / no fallback".
 | §3.4 per-IL code-byte budget | yes | **carried** — published in the artifact set and the extension draft |
 | §3.5 `AA_VOPS_SLOT_COUNT = 4`, absent means 4 not off | yes | **carried** — published; a joining client MUST NOT read the missing key as "off" |
 | §3.6 `SLOTNUM` banned in the validation prefix | yes | **closed** — EIPs#12066 merged 2026-08-11 |
+| §3.7 `SIGPARAM(0x03)` on a non-`ARBITRARY` entry | yes — lenient, exercised in blocks 2787/2792 | **carried** — fixed on the branch at `77e502ef4`; deploys with the next re-genesis; listed in the joining document meanwhile |
+| §3.8 `value_cost` on targetless / self-targeted frames | yes — stricter | **carried** — fixed on the branch at `77e502ef4`; deploys with the next re-genesis |
 | §5 `RECENT_ROOT_CODE` bytes | yes | **carried** — byte-identical to EIPs#12131; unmerged, so track it |
 | §5 static-context gas not pinned by a test | yes | **open test gap**, behaviour is spec-conformant; see §10.2 |
 | §8 canonical paymaster hash | yes | **carried** — matches EIPs#12041; unmerged, so track it |
