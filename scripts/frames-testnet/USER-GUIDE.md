@@ -27,7 +27,7 @@ gated; see "Become a validator" below.
 | RPC | `https://rpc1.frames.ethrex.xyz` (also `rpc2`, `rpc3`) |
 | Explorer | `https://dora.frames.ethrex.xyz` |
 | Faucet | `https://faucet.frames.ethrex.xyz` |
-| Artifact bundle | `https://faucet.frames.ethrex.xyz/artifacts` |
+| Artifact bundle | `https://faucet.frames.ethrex.xyz/artifacts` — every file below, plus `MANIFEST.txt` with a sha256 per file |
 | Bootnodes | `https://faucet.frames.ethrex.xyz/bootnodes` |
 | Deposit contract | `0x00000000219ab540356cBB839Cbe05303d7705Fa` |
 | Deposit gater | `0x00000000a11acc355c0de0000a11acc355c0de00` |
