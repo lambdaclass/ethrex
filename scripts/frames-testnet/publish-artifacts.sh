@@ -39,9 +39,11 @@ echo "==> enclave $ENCLAVE, publishing to $OUT_DIR as $PUBLIC_IP"
 #
 # The package stores /network-configs/ as one files artifact and mounts it into
 # every client. Downloading the artifact gets the whole set in one step and
-# without reaching into a container: genesis.json, chainspec.json, besu.json,
-# config.yaml, genesis.ssz, deposit_contract_block_hash.txt,
-# genesis_validators_root.txt and whatever else the generator wrote.
+# without reaching into a container: genesis.json, chainspec.json, config.yaml,
+# genesis.ssz, deposit_contract_block_hash.txt, genesis_validators_root.txt and
+# whatever else the generator wrote. Only what a joiner of THIS network needs is
+# republished from it: the generator also writes besu.json, and no Besu runs
+# frames, so publishing it would only hand someone a file to be misled by.
 # ---------------------------------------------------------------------------
 echo "==> downloading $GENESIS_ARTIFACT"
 kurtosis files download "$ENCLAVE" "$GENESIS_ARTIFACT" "$WORK_DIR/network-configs" >/dev/null
@@ -68,7 +70,6 @@ fi
 PUBLISHED_FILES=(
   genesis.json
   chainspec.json
-  besu.json
   config.yaml
   genesis.ssz
   deposit_contract.txt
