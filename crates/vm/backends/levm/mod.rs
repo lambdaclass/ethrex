@@ -3412,13 +3412,20 @@ impl LEVM {
     /// activation, clients must install..."). Idempotent: writes only when
     /// the existing code differs, so exactly one account update is produced
     /// (at the first Hegota block) and none afterwards.
+    ///
+    /// Only the code is installed. The account's nonce and balance are left
+    /// exactly as they were, so a previously nonexistent account keeps nonce
+    /// zero and any balance it held before the fork survives. That is what the
+    /// EIP specifies ("install the following ... runtime code") and what the
+    /// execution specs do; it differs from the genesis predeploys
+    /// (4788/2935/7002/7251), whose nonce 1 comes from the deployment
+    /// transaction that created them, not from a client-side install. Setting
+    /// nonce 1 here produced a different state root at the fork block from
+    /// every client that follows the spec.
     pub fn install_expiry_verifier_code(
         db: &mut GeneralizedDatabase,
         crypto: &dyn Crypto,
     ) -> Result<(), EvmError> {
-        // Predeploy convention (matches the genesis predeploys 4788/2935/7002/7251).
-        const PREDEPLOY_NONCE: u64 = 1;
-
         let current = db.get_account_code(EXPIRY_VERIFIER_PREDEPLOY.address)?;
         if current.code() == EXPIRY_VERIFIER_RUNTIME_BYTECODE.as_slice() {
             return Ok(());
@@ -3428,18 +3435,17 @@ impl LEVM {
             crypto,
         );
         let code_hash = code.hash;
-        // Record BAL code/nonce changes if recording is active, so a BAL
-        // reconstructor reproduces the same post-state (it takes nonce from
-        // prestate otherwise).
+        // Record the BAL code change if recording is active, so a BAL
+        // reconstructor reproduces the same post-state. There is no nonce change
+        // to record: the nonce is untouched, and the reconstructor carries the
+        // pre-state nonce forward for an account whose only change is its code.
         if let Some(recorder) = db.bal_recorder_mut() {
             recorder.record_code_change(EXPIRY_VERIFIER_PREDEPLOY.address, code.code_bytes());
-            recorder.record_nonce_change(EXPIRY_VERIFIER_PREDEPLOY.address, PREDEPLOY_NONCE);
         }
         let acc = db
             .get_account_mut(EXPIRY_VERIFIER_PREDEPLOY.address)
             .map_err(EvmError::from)?;
         acc.info.code_hash = code_hash;
-        acc.info.nonce = PREDEPLOY_NONCE;
         db.codes.entry(code_hash).or_insert(code);
         Ok(())
     }
@@ -4124,6 +4130,80 @@ mod bal_tests {
         ) -> Result<ethrex_common::types::CodeMetadata, DatabaseError> {
             Ok(ethrex_common::types::CodeMetadata { length: 0 })
         }
+    }
+
+    /// EIP-8141 installs the expiry verifier's *runtime code* at activation and
+    /// nothing else: an account that did not exist keeps nonce zero. The genesis
+    /// predeploys carry nonce 1 because a deployment transaction created them;
+    /// this one is written by the client, and the spec says code only. Getting
+    /// this wrong changes the fork block's state root against every other client.
+    #[test]
+    fn expiry_verifier_install_leaves_a_fresh_account_at_nonce_zero() {
+        let store = MockStore::new();
+        let mut db = GeneralizedDatabase::new(Arc::new(store));
+
+        LEVM::install_expiry_verifier_code(&mut db, &ethrex_crypto::NativeCrypto).unwrap();
+
+        let acc = db.get_account(EXPIRY_VERIFIER_PREDEPLOY.address).unwrap();
+        assert_eq!(acc.info.nonce, 0, "install must not touch the nonce");
+        assert_eq!(acc.info.balance, U256::zero());
+        assert_eq!(
+            db.get_account_code(EXPIRY_VERIFIER_PREDEPLOY.address)
+                .unwrap()
+                .code(),
+            EXPIRY_VERIFIER_RUNTIME_BYTECODE.as_slice()
+        );
+    }
+
+    /// An account that already existed at the address keeps its nonce and
+    /// balance: the install replaces code and nothing more.
+    #[test]
+    fn expiry_verifier_install_preserves_existing_nonce_and_balance() {
+        let store = MockStore::new().with_account(
+            EXPIRY_VERIFIER_PREDEPLOY.address,
+            AccountState {
+                nonce: 7,
+                balance: U256::from(5_000u64),
+                code_hash: *EMPTY_KECCAK_HASH,
+                storage_root: H256::zero(),
+            },
+        );
+        let mut db = GeneralizedDatabase::new(Arc::new(store));
+
+        LEVM::install_expiry_verifier_code(&mut db, &ethrex_crypto::NativeCrypto).unwrap();
+
+        let acc = db.get_account(EXPIRY_VERIFIER_PREDEPLOY.address).unwrap();
+        assert_eq!(acc.info.nonce, 7);
+        assert_eq!(acc.info.balance, U256::from(5_000u64));
+        assert_eq!(
+            db.get_account_code(EXPIRY_VERIFIER_PREDEPLOY.address)
+                .unwrap()
+                .code(),
+            EXPIRY_VERIFIER_RUNTIME_BYTECODE.as_slice()
+        );
+    }
+
+    /// Idempotent: a second call finds the code already in place and changes
+    /// nothing, so exactly one account update is ever produced for the install.
+    #[test]
+    fn expiry_verifier_install_is_idempotent() {
+        let store = MockStore::new();
+        let mut db = GeneralizedDatabase::new(Arc::new(store));
+
+        LEVM::install_expiry_verifier_code(&mut db, &ethrex_crypto::NativeCrypto).unwrap();
+        let first = db
+            .get_account(EXPIRY_VERIFIER_PREDEPLOY.address)
+            .unwrap()
+            .clone();
+        LEVM::install_expiry_verifier_code(&mut db, &ethrex_crypto::NativeCrypto).unwrap();
+        let second = db
+            .get_account(EXPIRY_VERIFIER_PREDEPLOY.address)
+            .unwrap()
+            .clone();
+
+        assert_eq!(first.info.nonce, second.info.nonce);
+        assert_eq!(first.info.code_hash, second.info.code_hash);
+        assert_eq!(second.info.nonce, 0);
     }
 
     #[test]
