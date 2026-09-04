@@ -3,3 +3,16 @@ rustflags = [
     "-Ctarget-cpu=x86-64-v3",
     "-Ctarget-feature=+avx2,+sse2,+ssse3,+sse4.1,+sse4.2,+bmi1,+lzcnt,+pclmulqdq",
 ]
+
+# Supply-chain cooldown for dependency resolution (unstable min-publish-age,
+# tracking issue rust-lang/cargo#17009): crate versions published less than
+# 14 days ago are excluded when the resolver runs on a nightly cargo.
+# Stable cargo ignores these tables silently, so builds from the committed
+# Cargo.lock files are unaffected; `make update-cargo-lock` resolves under the
+# policy. When the feature stabilizes, drop the [unstable] table and the
+# nightly resolver pin in the Makefile: the policy then binds all resolution.
+[unstable]
+min-publish-age = true
+
+[registry]
+global-min-publish-age = "14 days"

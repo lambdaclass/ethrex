@@ -7,6 +7,11 @@ Thank you for your interest in contributing to ethrex! Please read the following
 1. Fork the repository and create your branch from `main`.
 2. Make your changes, following the code style guidelines below.
 3. Run tests locally to ensure nothing is broken.
+   If you changed a dependency in any `Cargo.toml`, refresh the lockfiles with `make update-cargo-lock`
+   rather than a plain `cargo update`: it resolves under a 14-day publish-age cooldown
+   (`.cargo/config.toml`) that skips freshly published crate versions as a supply-chain precaution.
+   For an urgent bump to a version younger than that, prefix the command with
+   `CARGO_RESOLVER_INCOMPATIBLE_PUBLISH_AGE=allow` and review the whole lockfile diff.
 4. Open a pull request with a descriptive title (see PR naming rules below).
 5. Fill in the PR template if available, and link related issues.
 

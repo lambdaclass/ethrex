@@ -466,12 +466,28 @@ jobs:
         run: |
           make check-cargo-lock
 
+  cooldown-check:
+    name: Check dependency cooldown
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v6
+
+      # Stable cargo ignores the publish-age cooldown in .cargo/config.toml, so a
+      # lockfile can pin too-young crates. If this fails, re-resolve the offending
+      # lockfile with `make update-cargo-lock` or wait for the crate to age out.
+      - name: Check Cargo.lock files against the publish-age cooldown
+        run: |
+          make cooldown-check
+
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:
     # "Integration Test" is a required check, don't change the name
     name: Integration Test
     runs-on: ubuntu-latest
-    needs: [detect-changes, run-assertoor, run-hive, check-cargo-locks, engine-ef-tests]
+    needs: [detect-changes, run-assertoor, run-hive, check-cargo-locks, cooldown-check, engine-ef-tests]
     # Make sure this job runs even if the previous jobs failed or were skipped
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && always() && needs.run-assertoor.result != 'skipped' && needs.run-hive.result != 'skipped' }}
     steps:
@@ -484,6 +500,11 @@ jobs:
 
           if [ "${{ needs.run-hive.result }}" != "success" ]; then
             echo "Job Hive failed"
+            exit 1
+          fi
+
+          if [ "${{ needs.cooldown-check.result }}" != "success" ]; then
+            echo "Job Check dependency cooldown failed"
             exit 1
           fi
 
