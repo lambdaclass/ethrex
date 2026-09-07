@@ -107,39 +107,49 @@ fn build_sp1_program() {
 
 #[cfg(all(not(clippy), feature = "zisk-build-elf"))]
 fn build_zisk_program() {
-    // cargo-zisk rom-setup fails with `Os { code: 2, kind: NotFound, message: "No such file or directory" }`
-    // when building in a GitHub CI environment. This command is not required if we won't generate a proof
-    // so we skip it under the `ci` feature flag.
+    // Build the guest ELF with the ZisK toolchain. `cargo-zisk build` selects the
+    // `+zisk` toolchain, sets the `target-cpu=zisk` RUSTFLAGS, targets
+    // `riscv64ima-zisk-zkvm-elf`, and emits the ELF under `target/elf/`.
+    //
+    // We scrub the compiler env vars the outer `cargo` injects into build scripts
+    // (`RUSTC`, `RUSTC_WRAPPER`, `RUSTUP_TOOLCHAIN`, `RUSTFLAGS`,
+    // `CARGO_ENCODED_RUSTFLAGS`). Otherwise `cargo-zisk`'s inner `cargo +zisk` would
+    // reuse the host compiler, which doesn't know the `riscv64ima-zisk-zkvm-elf`
+    // target and fails with "could not find specification for target".
+    //
+    // `cargo-zisk setup` generates the proving key from the built ELF. It is only
+    // needed to generate proofs and fails inside the GitHub CI environment, so we
+    // skip it under the `ci` feature flag.
 
-    let mut build_command = std::process::Command::new("cargo");
-    #[cfg(not(feature = "ci"))]
-    let mut setup_command = std::process::Command::new("cargo-zisk");
+    // Guest ELF path relative to `./bin/zisk` (the command's working directory).
+    const GUEST_ELF: &str = "./target/elf/riscv64ima-zisk-zkvm-elf/release/ethrex-guest-zisk";
+    // Same ELF relative to this build script's working directory (the crate root).
+    const BUILT_ELF: &str =
+        "./bin/zisk/target/elf/riscv64ima-zisk-zkvm-elf/release/ethrex-guest-zisk";
 
+    let mut build_command = std::process::Command::new("cargo-zisk");
     build_command
-        .env("RUSTC", rustc_path("zisk"))
+        .env_remove("RUSTC")
+        .env_remove("RUSTC_WRAPPER")
+        .env_remove("RUSTUP_TOOLCHAIN")
         .env_remove("RUSTFLAGS")
         .env_remove("CARGO_ENCODED_RUSTFLAGS")
-        .args([
-            "+zisk",
-            "build",
-            "--release",
-            "--target",
-            "riscv64ima-zisk-zkvm-elf",
-        ])
+        .args(["build", "--release"])
         .stdout(std::process::Stdio::inherit())
         .stderr(std::process::Stdio::inherit())
         .current_dir("./bin/zisk");
+
+    #[cfg(not(feature = "ci"))]
+    let mut setup_command = std::process::Command::new("cargo-zisk");
     #[cfg(not(feature = "ci"))]
     {
         setup_command
-            .env("RUSTC", rustc_path("zisk"))
+            .env_remove("RUSTC")
+            .env_remove("RUSTC_WRAPPER")
+            .env_remove("RUSTUP_TOOLCHAIN")
             .env_remove("RUSTFLAGS")
             .env_remove("CARGO_ENCODED_RUSTFLAGS")
-            .args([
-                "rom-setup",
-                "-e",
-                "./target/riscv64ima-zisk-zkvm-elf/release/ethrex-guest-zisk",
-            ])
+            .args(["setup", "-e", GUEST_ELF])
             .stdout(std::process::Stdio::inherit())
             .stderr(std::process::Stdio::inherit())
             .current_dir("./bin/zisk");
@@ -179,11 +189,8 @@ fn build_zisk_program() {
 
     let _ = std::fs::create_dir("./bin/zisk/out");
 
-    std::fs::copy(
-        "./bin/zisk/target/riscv64ima-zisk-zkvm-elf/release/ethrex-guest-zisk",
-        "./bin/zisk/out/riscv64ima-zisk-elf",
-    )
-    .expect("could not copy Zisk elf to output directory");
+    std::fs::copy(BUILT_ELF, "./bin/zisk/out/riscv64ima-zisk-elf")
+        .expect("could not copy Zisk elf to output directory");
 }
 
 #[cfg(all(not(clippy), feature = "openvm-build-elf"))]
@@ -217,25 +224,4 @@ fn build_openvm_program() {
     }
 
     fs::copy(&elf_src, &elf_dst).expect("failed to copy ethrex-guest-openvm");
-}
-
-#[cfg(all(not(clippy), feature = "zisk-build-elf"))]
-/// Returns the path to `rustc` executable of the given toolchain.
-///
-/// Taken from https://github.com/eth-act/ere/blob/master/crates/compile-utils/src/rust.rs#L166
-pub fn rustc_path(toolchain: &str) -> std::path::PathBuf {
-    let mut cmd = std::process::Command::new("rustc");
-    let output = cmd
-        .env("RUSTUP_TOOLCHAIN", toolchain)
-        .args(["--print", "sysroot"])
-        .output()
-        .expect("Failed to execute rustc command");
-
-    if !output.status.success() {
-        panic!("Failed to get sysroot for toolchain {}", toolchain);
-    }
-
-    std::path::PathBuf::from(String::from_utf8_lossy(&output.stdout).trim())
-        .join("bin")
-        .join("rustc")
 }

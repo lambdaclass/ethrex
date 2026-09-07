@@ -26,6 +26,8 @@ jobs:
         uses: actions/checkout@v6
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+        with:
+          cache-pool: l1
 
       - name: Benchmarks
         uses: boa-dev/criterion-compare-action@v3

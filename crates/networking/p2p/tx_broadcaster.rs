@@ -23,8 +23,11 @@ use crate::{
     rlpx::{
         Message,
         connection::server::PeerConnection,
-        eth::transactions::{NewPooledTransactionHashes, Transactions},
-        p2p::{Capability, SUPPORTED_ETH_CAPABILITIES},
+        eth::{
+            eth72::transactions::NewPooledTransactionHashes72,
+            transactions::{NewPooledTransactionHashes, Transactions},
+        },
+        p2p::Capability,
     },
 };
 
@@ -127,28 +130,37 @@ pub struct TxBroadcaster {
 
 pub async fn send_tx_hashes(
     txs: Vec<MempoolTransaction>,
-    capabilities: Vec<Capability>,
+    negotiated_eth: Option<Capability>,
     connection: &mut PeerConnection,
     peer_id: H256,
     blockchain: &Arc<Blockchain>,
 ) -> Result<(), TxBroadcasterError> {
-    if SUPPORTED_ETH_CAPABILITIES
-        .iter()
-        .any(|cap| capabilities.contains(cap))
-    {
-        for tx_chunk in txs.chunks(NEW_POOLED_TRANSACTION_HASHES_SOFT_LIMIT) {
-            let tx_count = tx_chunk.len();
-            let mut txs_to_send = Vec::with_capacity(tx_count);
-            for tx in tx_chunk {
-                txs_to_send.push((**tx).clone());
-            }
-            let hashes_message = Message::NewPooledTransactionHashes(
-                NewPooledTransactionHashes::new(txs_to_send, blockchain)?,
-            );
-            connection.outgoing_message(hashes_message.clone()).await.unwrap_or_else(|err| {
-                debug!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send transaction hashes");
-            });
+    let Some(eth) = negotiated_eth else {
+        return Ok(());
+    };
+    // The announcement gained its `cell_mask` field in eth/72 (EIP-8070); sending
+    // that shape on an older session makes the peer's decoder see an over-long list.
+    let use_eth72_announcement = eth.version >= 72;
+    for tx_chunk in txs.chunks(NEW_POOLED_TRANSACTION_HASHES_SOFT_LIMIT) {
+        let tx_count = tx_chunk.len();
+        let mut txs_to_send = Vec::with_capacity(tx_count);
+        for tx in tx_chunk {
+            txs_to_send.push((**tx).clone());
         }
+        let hashes_message = if use_eth72_announcement {
+            Message::NewPooledTransactionHashes72(NewPooledTransactionHashes72::new(
+                txs_to_send,
+                blockchain,
+            )?)
+        } else {
+            Message::NewPooledTransactionHashes(NewPooledTransactionHashes::new(
+                txs_to_send,
+                blockchain,
+            )?)
+        };
+        connection.outgoing_message(hashes_message.clone()).await.unwrap_or_else(|err| {
+            debug!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send transaction hashes");
+        });
     }
     Ok(())
 }
@@ -299,20 +311,30 @@ impl TxBroadcaster {
         if txs_to_broadcast.is_empty() {
             return Ok(());
         }
-        let peers = self.peer_table.get_peers_with_capabilities().await?;
+        let peers = self.peer_table.get_connected_peers().await?;
         let peer_sqrt = (peers.len() as f64).sqrt();
 
         let full_txs = txs_to_broadcast
             .iter()
             .map(|tx| tx.transaction().clone())
             .filter(|tx| {
-                !matches!(tx, Transaction::EIP4844Transaction { .. }) && !tx.is_privileged()
+                // Blob (EIP-4844) and frame (EIP-8141) transactions have large
+                // bodies, so they are announced by hash only (never full-body
+                // broadcast), mirroring the EIP-4844 propagation policy.
+                !matches!(tx, Transaction::EIP4844Transaction { .. })
+                    && !matches!(tx, Transaction::FrameTransaction(_))
+                    && !tx.is_privileged()
             })
             .collect::<Vec<Transaction>>();
 
-        let blob_txs = txs_to_broadcast
+        // Transactions announced by hash only (not full-body): blob (EIP-4844)
+        // and frame (EIP-8141) transactions.
+        let announce_only_txs = txs_to_broadcast
             .iter()
-            .filter(|tx| matches!(tx.transaction(), Transaction::EIP4844Transaction { .. }))
+            .filter(|tx| {
+                matches!(tx.transaction(), Transaction::EIP4844Transaction { .. })
+                    || matches!(tx.transaction(), Transaction::FrameTransaction(_))
+            })
             .cloned()
             .collect::<Vec<MempoolTransaction>>();
 
@@ -322,7 +344,7 @@ impl TxBroadcaster {
         let (peers_to_send_full_txs, peers_to_send_hashes) =
             shuffled_peers.split_at(peer_sqrt.ceil() as usize);
 
-        for (peer_id, mut connection, capabilities) in peers_to_send_full_txs.iter().cloned() {
+        for (peer_id, mut connection, negotiated_eth) in peers_to_send_full_txs.iter().cloned() {
             let peer_idx = self.peer_index(peer_id);
             let txs_to_send = full_txs
                 .iter()
@@ -342,21 +364,26 @@ impl TxBroadcaster {
                     .collect(),
                 peer_id,
             );
-            // If a peer is selected to receive the full transactions, we don't send the blob transactions, since they only require to send the hashes
+            // If a peer is selected to receive the full transactions, we don't send the announce-only transactions (blob/frame), since they only require to send the hashes
             let txs_message = Message::Transactions(Transactions {
                 transactions: txs_to_send,
             });
             connection.outgoing_message(txs_message).await.unwrap_or_else(|err| {
                 debug!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send transactions");
             });
-            self.send_tx_hashes_internal(blob_txs.clone(), capabilities, &mut connection, peer_id)
-                .await?;
+            self.send_tx_hashes_internal(
+                announce_only_txs.clone(),
+                negotiated_eth,
+                &mut connection,
+                peer_id,
+            )
+            .await?;
         }
-        for (peer_id, mut connection, capabilities) in peers_to_send_hashes.iter().cloned() {
+        for (peer_id, mut connection, negotiated_eth) in peers_to_send_hashes.iter().cloned() {
             // If a peer is not selected to receive the full transactions, we only send the hashes of all transactions (including blob transactions)
             self.send_tx_hashes_internal(
                 txs_to_broadcast.clone(),
-                capabilities,
+                negotiated_eth,
                 &mut connection,
                 peer_id,
             )
@@ -375,7 +402,7 @@ impl TxBroadcaster {
     async fn send_tx_hashes_internal(
         &mut self,
         txs: Vec<MempoolTransaction>,
-        capabilities: Vec<Capability>,
+        negotiated_eth: Option<Capability>,
         connection: &mut PeerConnection,
         peer_id: H256,
     ) -> Result<(), TxBroadcasterError> {
@@ -401,7 +428,7 @@ impl TxBroadcaster {
         );
         send_tx_hashes(
             txs_to_send,
-            capabilities,
+            negotiated_eth,
             connection,
             peer_id,
             &self.blockchain,

@@ -1,23 +1,26 @@
 use ethrex_common::constants::EMPTY_KECCAK_HASH;
 use ethrex_common::tracing::{PrePostState, PrestateAccountState, PrestateResult, PrestateTrace};
-use ethrex_common::types::{Block, GenericTransaction, Transaction};
+use ethrex_common::types::{Block, Fork, GenericTransaction, Transaction};
 use ethrex_common::{
     Address, BigEndianHash, H256, U256,
-    tracing::{CallTrace, OpcodeTraceResult},
+    tracing::{CallTrace, CallTraceFrame, OpcodeTraceResult},
     types::BlockHeader,
 };
 use ethrex_crypto::Crypto;
+use ethrex_levm::StatelessValidator;
 use ethrex_levm::account::{AccountStatus, LevmAccount};
 use ethrex_levm::db::gen_db::CacheDB;
+use ethrex_levm::utils::get_base_fee_per_blob_gas;
 use ethrex_levm::vm::VMType;
 use ethrex_levm::{
+    EVMConfig, Environment,
     db::gen_db::GeneralizedDatabase,
     tracing::{LevmCallTracer, LevmOpcodeTracer, OpcodeTracerConfig},
     vm::VM,
 };
 
 use crate::backends::levm::{
-    adjust_disabled_base_fee, env_from_generic, synthetic_tx_from_generic,
+    adjust_disabled_base_fee, env_from_generic, generic_tx_to_transaction,
 };
 use crate::{EvmError, backends::levm::LEVM};
 
@@ -30,6 +33,7 @@ impl LEVM {
         stop_index: Option<usize>,
         vm_type: VMType,
         crypto: &dyn Crypto,
+        stateless_validator: Option<&dyn StatelessValidator>,
     ) -> Result<(), EvmError> {
         Self::prepare_block(block, db, vm_type, crypto)?;
 
@@ -45,7 +49,15 @@ impl LEVM {
                 break;
             }
 
-            Self::execute_tx(tx, sender, &block.header, db, vm_type, crypto)?;
+            Self::execute_tx(
+                tx,
+                sender,
+                &block.header,
+                db,
+                vm_type,
+                crypto,
+                stateless_validator,
+            )?;
         }
 
         // Process withdrawals only if the whole block has been executed.
@@ -71,13 +83,58 @@ impl LEVM {
         vm_type: VMType,
         crypto: &dyn Crypto,
     ) -> Result<PrestateResult, EvmError> {
-        let pre_snapshot: CacheDB = db.current_accounts_state.clone();
-
         let sender = tx
             .sender(crypto)
             .map_err(|e| EvmError::Transaction(format!("Couldn't recover sender: {e}")))?;
         let env = Self::setup_env(tx, sender, block_header, db, vm_type)?;
-        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, crypto)?;
+        Self::run_prestate_trace(db, env, tx, diff_mode, include_empty, vm_type, crypto)
+    }
+
+    /// `debug_traceCall` counterpart of [`Self::trace_tx_prestate`]: traces a synthetic
+    /// `eth_call`-shaped request against `db` (which must already hold the target state).
+    pub fn trace_call_prestate(
+        db: &mut GeneralizedDatabase,
+        block_header: &BlockHeader,
+        tx: &GenericTransaction,
+        diff_mode: bool,
+        include_empty: bool,
+        vm_type: VMType,
+        crypto: &dyn Crypto,
+    ) -> Result<PrestateResult, EvmError> {
+        let (env, converted) = prepare_call_env(tx, block_header, db, vm_type)?;
+        Self::run_prestate_trace(
+            db,
+            env,
+            &converted,
+            diff_mode,
+            include_empty,
+            vm_type,
+            crypto,
+        )
+    }
+
+    /// Runs `tx` with the prestateTracer over a prepared `env`, returning pre (and post,
+    /// when `diff_mode`) account state. Shared by the tx and call entry points.
+    fn run_prestate_trace(
+        db: &mut GeneralizedDatabase,
+        env: Environment,
+        tx: &Transaction,
+        diff_mode: bool,
+        include_empty: bool,
+        vm_type: VMType,
+        crypto: &dyn Crypto,
+    ) -> Result<PrestateResult, EvmError> {
+        let pre_snapshot: CacheDB = db.current_accounts_state.clone();
+
+        let mut vm = VM::new(
+            env,
+            db,
+            tx,
+            LevmCallTracer::disabled(),
+            vm_type,
+            crypto,
+            None,
+        )?;
         vm.execute()?;
 
         preload_touched_codes(&pre_snapshot, db)?;
@@ -100,37 +157,6 @@ impl LEVM {
             }
             Ok(PrestateResult::Prestate(pre_map))
         }
-    }
-
-    /// Trace a synthetic call (geth `debug_traceCall`) with the opcodeTracer.
-    ///
-    /// Mirrors `trace_call_from_generic`, but drives `LevmOpcodeTracer` instead of the
-    /// call tracer. Like the other two `*_from_generic` tracers, the block gas limit is
-    /// lifted and the disabled-base-fee adjustment applied, so a simulated call isn't
-    /// bounded by real block consensus rules.
-    pub fn opcodes_call_from_generic(
-        tx: &GenericTransaction,
-        block_header: &BlockHeader,
-        db: &mut GeneralizedDatabase,
-        vm_type: VMType,
-        crypto: &dyn Crypto,
-        cfg: OpcodeTracerConfig,
-    ) -> Result<OpcodeTraceResult, EvmError> {
-        let mut env = env_from_generic(tx, block_header, db, vm_type)?;
-        env.block_gas_limit = i64::MAX as u64;
-        adjust_disabled_base_fee(&mut env);
-        let synthetic = synthetic_tx_from_generic(tx)?;
-        let mut vm = VM::new(
-            env,
-            db,
-            &synthetic,
-            LevmCallTracer::disabled(),
-            vm_type,
-            crypto,
-        )?;
-        vm.opcode_tracer = LevmOpcodeTracer::new(cfg);
-        vm.execute()?;
-        Ok(vm.opcode_tracer.take_result())
     }
 
     /// Run transaction with opcode (EIP-3155) tracer activated.
@@ -151,21 +177,60 @@ impl LEVM {
             db,
             vm_type,
         )?;
-        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, crypto)?;
+        Self::run_opcode_trace(db, env, tx, cfg, vm_type, crypto)
+    }
+
+    /// `debug_traceCall` counterpart of [`Self::trace_tx_opcodes`].
+    pub fn trace_call_opcodes(
+        db: &mut GeneralizedDatabase,
+        block_header: &BlockHeader,
+        tx: &GenericTransaction,
+        cfg: OpcodeTracerConfig,
+        vm_type: VMType,
+        crypto: &dyn Crypto,
+    ) -> Result<OpcodeTraceResult, EvmError> {
+        let (env, converted) = prepare_call_env(tx, block_header, db, vm_type)?;
+        Self::run_opcode_trace(db, env, &converted, cfg, vm_type, crypto)
+    }
+
+    /// Runs `tx` with the opcode (EIP-3155) tracer over a prepared `env`. Shared by the
+    /// tx and call entry points.
+    fn run_opcode_trace(
+        db: &mut GeneralizedDatabase,
+        env: Environment,
+        tx: &Transaction,
+        cfg: OpcodeTracerConfig,
+        vm_type: VMType,
+        crypto: &dyn Crypto,
+    ) -> Result<OpcodeTraceResult, EvmError> {
+        let mut vm = VM::new(
+            env,
+            db,
+            tx,
+            LevmCallTracer::disabled(),
+            vm_type,
+            crypto,
+            None,
+        )?;
         vm.opcode_tracer = LevmOpcodeTracer::new(cfg);
         vm.execute()?;
         Ok(vm.opcode_tracer.take_result())
     }
 
-    /// Run transaction with callTracer activated.
+    /// Run transaction with callTracer activated. `log_index_base` is the number of logs
+    /// emitted by preceding txs in the block, so `withLog` logs get geth's block-absolute
+    /// `index` (pass 0 when there is no preceding context or logs aren't collected).
+    #[expect(clippy::too_many_arguments)]
     pub fn trace_tx_calls(
         db: &mut GeneralizedDatabase,
         block_header: &BlockHeader,
         tx: &Transaction,
         only_top_call: bool,
         with_log: bool,
+        log_index_base: u64,
         vm_type: VMType,
         crypto: &dyn Crypto,
+        stateless_validator: Option<&dyn StatelessValidator>,
     ) -> Result<CallTrace, EvmError> {
         let env = Self::setup_env(
             tx,
@@ -176,101 +241,256 @@ impl LEVM {
             db,
             vm_type,
         )?;
+        Self::run_call_trace(
+            db,
+            env,
+            tx,
+            only_top_call,
+            with_log,
+            log_index_base,
+            vm_type,
+            crypto,
+            stateless_validator,
+        )
+    }
+
+    /// `debug_traceCall` counterpart of [`Self::trace_tx_calls`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn trace_call_calls(
+        db: &mut GeneralizedDatabase,
+        block_header: &BlockHeader,
+        tx: &GenericTransaction,
+        only_top_call: bool,
+        with_log: bool,
+        log_index_base: u64,
+        vm_type: VMType,
+        crypto: &dyn Crypto,
+    ) -> Result<CallTrace, EvmError> {
+        let (env, converted) = prepare_call_env(tx, block_header, db, vm_type)?;
+        Self::run_call_trace(
+            db,
+            env,
+            &converted,
+            only_top_call,
+            with_log,
+            log_index_base,
+            vm_type,
+            crypto,
+            None,
+        )
+    }
+
+    /// Runs `tx` with the callTracer over a prepared `env`. Shared by the tx and call
+    /// entry points.
+    #[expect(clippy::too_many_arguments)]
+    fn run_call_trace(
+        db: &mut GeneralizedDatabase,
+        env: Environment,
+        tx: &Transaction,
+        only_top_call: bool,
+        with_log: bool,
+        log_index_base: u64,
+        vm_type: VMType,
+        crypto: &dyn Crypto,
+        stateless_validator: Option<&dyn StatelessValidator>,
+    ) -> Result<CallTrace, EvmError> {
         let mut vm = VM::new(
             env,
             db,
             tx,
-            LevmCallTracer::new(only_top_call, with_log),
+            LevmCallTracer::new(only_top_call, with_log, log_index_base),
             vm_type,
             crypto,
+            stateless_validator,
         )?;
 
-        vm.execute()?;
+        let report = vm.execute()?;
+        let fork = vm.env.config.fork;
 
-        let callframe = vm.get_trace_result()?;
+        let mut callframe = vm.get_trace_result()?;
+
+        // EIP-8037 two-dimensional gas, reported on the top-level frame only from
+        // Amsterdam onwards (execution-apis `CallFrame`). EIP-8141 frame
+        // transactions (`frame_results` is set) are skipped: their report's
+        // `gas_refunded` holds unused frame gas rather than the EIP-3529 refund
+        // these fields advertise, and the spec defines no aggregate attribution
+        // for them.
+        if fork >= Fork::Amsterdam && report.frame_results.is_none() {
+            // A portion cannot exceed its whole; the saturation below is a
+            // last-resort clamp, not an expected path.
+            debug_assert!(
+                report.state_gas_used <= report.gas_used,
+                "state_gas_used ({}) exceeds gas_used ({})",
+                report.state_gas_used,
+                report.gas_used
+            );
+            callframe.regular_gas_used =
+                Some(report.gas_used.saturating_sub(report.state_gas_used));
+            callframe.state_gas_used = Some(report.state_gas_used);
+            callframe.gas_refund = Some(report.gas_refunded);
+        }
 
         // We only return the top call because a transaction only has one call with subcalls
         Ok(vec![callframe])
     }
 
-    /// Trace a synthetic call (geth `debug_traceCall`) with the callTracer.
-    ///
-    /// Like `simulate_tx_from_generic` but attaches a real `LevmCallTracer`. The
-    /// `block_gas_limit` is disabled and the disabled-base-fee adjustment is applied
-    /// so that the call isn't bounded by real block consensus rules.
-    pub fn trace_call_from_generic(
-        tx: &GenericTransaction,
-        block_header: &BlockHeader,
+    /// Traces every transaction in `block` with the callTracer, oldest to newest.
+    /// `db` must already hold the block's parent state; this runs the block's system calls
+    /// (beacon root, etc.) and then each transaction in order, accumulating state. The
+    /// block-invariant `EVMConfig`/`chain_id`/blob fee are computed once and reused per tx
+    /// (the single-tx entry points recompute them each call). Returns `(tx_hash, trace)`.
+    pub fn trace_block_calls(
         db: &mut GeneralizedDatabase,
-        vm_type: VMType,
-        crypto: &dyn Crypto,
+        block: &Block,
         only_top_call: bool,
         with_log: bool,
-    ) -> Result<CallTrace, EvmError> {
-        let mut env = env_from_generic(tx, block_header, db, vm_type)?;
-        env.block_gas_limit = i64::MAX as u64;
-        adjust_disabled_base_fee(&mut env);
-        let synthetic = synthetic_tx_from_generic(tx)?;
-        let mut vm = VM::new(
-            env,
-            db,
-            &synthetic,
-            LevmCallTracer::new(only_top_call, with_log),
-            vm_type,
-            crypto,
-        )?;
-        vm.execute()?;
-        let callframe = vm.get_trace_result()?;
-        Ok(vec![callframe])
-    }
-
-    /// Trace a synthetic call (geth `debug_traceCall`) with the prestateTracer.
-    pub fn prestate_call_from_generic(
-        tx: &GenericTransaction,
-        block_header: &BlockHeader,
-        db: &mut GeneralizedDatabase,
         vm_type: VMType,
         crypto: &dyn Crypto,
+    ) -> Result<Vec<(H256, CallTrace)>, EvmError> {
+        Self::rerun_block(db, block, Some(0), vm_type, crypto, None)?;
+        let (config, chain_id, base_blob_fee) = block_trace_env_config(db, &block.header)?;
+        let mut traces = Vec::with_capacity(block.body.transactions.len());
+        // Running block-absolute log index: the whole block is traced from tx 0, so each
+        // tx's logs continue where the previous tx left off (geth's cumulative `logSize`).
+        let mut log_index_base = 0u64;
+        for (tx, sender) in block
+            .body
+            .get_transactions_with_sender(crypto)
+            .map_err(|e| EvmError::Transaction(e.to_string()))?
+        {
+            let env = Self::setup_env_with_config(
+                tx,
+                sender,
+                &block.header,
+                config,
+                chain_id,
+                vm_type,
+                base_blob_fee,
+            )?;
+            let trace = Self::run_call_trace(
+                db,
+                env,
+                tx,
+                only_top_call,
+                with_log,
+                log_index_base,
+                vm_type,
+                crypto,
+                None,
+            )?;
+            log_index_base = log_index_base.saturating_add(trace.iter().map(count_call_logs).sum());
+            traces.push((tx.hash(crypto), trace));
+        }
+        Ok(traces)
+    }
+
+    /// Traces every transaction in `block` with the prestateTracer. See
+    /// [`Self::trace_block_calls`] for the state/config-reuse semantics.
+    pub fn trace_block_prestate(
+        db: &mut GeneralizedDatabase,
+        block: &Block,
         diff_mode: bool,
         include_empty: bool,
-    ) -> Result<PrestateResult, EvmError> {
-        let pre_snapshot: CacheDB = db.current_accounts_state.clone();
-
-        let mut env = env_from_generic(tx, block_header, db, vm_type)?;
-        env.block_gas_limit = i64::MAX as u64;
-        adjust_disabled_base_fee(&mut env);
-        let synthetic = synthetic_tx_from_generic(tx)?;
-        let mut vm = VM::new(
-            env,
-            db,
-            &synthetic,
-            LevmCallTracer::disabled(),
-            vm_type,
-            crypto,
-        )?;
-        vm.execute()?;
-
-        preload_touched_codes(&pre_snapshot, db)?;
-
-        let mut pre_map = build_pre_state_map(&pre_snapshot, &db.current_accounts_state, db)?;
-
-        if diff_mode {
-            let (post_map, kept) =
-                build_post_state_map(&pre_snapshot, &db.current_accounts_state, db)?;
-            filter_diff_pre_storage(&mut pre_map, &db.current_accounts_state);
-            pre_map.retain(|addr, _| kept.contains(addr));
-            pre_map.retain(|_, state| !state.is_empty());
-            Ok(PrestateResult::Diff(PrePostState {
-                pre: pre_map,
-                post: post_map,
-            }))
-        } else {
-            if !include_empty {
-                pre_map.retain(|_, state| !state.is_empty());
-            }
-            Ok(PrestateResult::Prestate(pre_map))
+        vm_type: VMType,
+        crypto: &dyn Crypto,
+    ) -> Result<Vec<(H256, PrestateResult)>, EvmError> {
+        Self::rerun_block(db, block, Some(0), vm_type, crypto, None)?;
+        let (config, chain_id, base_blob_fee) = block_trace_env_config(db, &block.header)?;
+        let mut traces = Vec::with_capacity(block.body.transactions.len());
+        for (tx, sender) in block
+            .body
+            .get_transactions_with_sender(crypto)
+            .map_err(|e| EvmError::Transaction(e.to_string()))?
+        {
+            let env = Self::setup_env_with_config(
+                tx,
+                sender,
+                &block.header,
+                config,
+                chain_id,
+                vm_type,
+                base_blob_fee,
+            )?;
+            let trace =
+                Self::run_prestate_trace(db, env, tx, diff_mode, include_empty, vm_type, crypto)?;
+            traces.push((tx.hash(crypto), trace));
         }
+        Ok(traces)
     }
+
+    /// Traces every transaction in `block` with the opcode (EIP-3155) tracer. See
+    /// [`Self::trace_block_calls`] for the state/config-reuse semantics.
+    pub fn trace_block_opcodes(
+        db: &mut GeneralizedDatabase,
+        block: &Block,
+        cfg: OpcodeTracerConfig,
+        vm_type: VMType,
+        crypto: &dyn Crypto,
+    ) -> Result<Vec<(H256, OpcodeTraceResult)>, EvmError> {
+        Self::rerun_block(db, block, Some(0), vm_type, crypto, None)?;
+        let (config, chain_id, base_blob_fee) = block_trace_env_config(db, &block.header)?;
+        let mut traces = Vec::with_capacity(block.body.transactions.len());
+        for (tx, sender) in block
+            .body
+            .get_transactions_with_sender(crypto)
+            .map_err(|e| EvmError::Transaction(e.to_string()))?
+        {
+            let env = Self::setup_env_with_config(
+                tx,
+                sender,
+                &block.header,
+                config,
+                chain_id,
+                vm_type,
+                base_blob_fee,
+            )?;
+            let trace = Self::run_opcode_trace(db, env, tx, cfg.clone(), vm_type, crypto)?;
+            traces.push((tx.hash(crypto), trace));
+        }
+        Ok(traces)
+    }
+}
+
+/// Recursively counts the logs captured in a call frame and all its subcalls — the
+/// number of `withLog` logs a traced tx contributes to the block-absolute log index.
+fn count_call_logs(frame: &CallTraceFrame) -> u64 {
+    let own = u64::try_from(frame.logs.len()).unwrap_or(u64::MAX);
+    frame.calls.iter().fold(own, |acc, subcall| {
+        acc.saturating_add(count_call_logs(subcall))
+    })
+}
+
+/// Computes the block-invariant `(EVMConfig, chain_id, base_blob_fee)` once so a
+/// whole-block trace can reuse them across transactions instead of recomputing per tx.
+fn block_trace_env_config(
+    db: &GeneralizedDatabase,
+    header: &BlockHeader,
+) -> Result<(EVMConfig, u64, U256), EvmError> {
+    let chain_config = db.store.get_chain_config()?;
+    let config = EVMConfig::new_from_chain_config(&chain_config, header);
+    let base_blob_fee = get_base_fee_per_blob_gas(header.excess_blob_gas, &config)?;
+    Ok((config, chain_config.chain_id, base_blob_fee))
+}
+
+/// Builds the call-style [`Environment`] and concrete [`Transaction`] for tracing a
+/// synthetic `eth_call`-shaped request (`debug_traceCall`). Mirrors
+/// `simulate_tx_from_generic`: the sender is taken from `tx.from` (no signature
+/// recovery), the block gas-allowance check is skipped, and the base fee is relaxed when
+/// no gas price is provided.
+fn prepare_call_env(
+    tx: &GenericTransaction,
+    block_header: &BlockHeader,
+    db: &GeneralizedDatabase,
+    vm_type: VMType,
+) -> Result<(Environment, Transaction), EvmError> {
+    let mut env = env_from_generic(tx, block_header, db, vm_type)?;
+    // Skip the allowance check without touching `block_gas_limit`; see
+    // `simulate_tx_from_generic`. A trace must report the same GASLIMIT the traced block
+    // executed with.
+    env.disable_gas_allowance_check = true;
+    adjust_disabled_base_fee(&mut env);
+    let converted_tx = generic_tx_to_transaction(tx)?;
+    Ok((env, converted_tx))
 }
 
 /// Returns `(address, pre_account, post_account)` for every account in `post_cache`.

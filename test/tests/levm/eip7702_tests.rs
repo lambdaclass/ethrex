@@ -162,6 +162,7 @@ fn test_initial_tx_to_delegated_account_no_cold_access_charge() {
         LevmCallTracer::disabled(),
         VMType::L1,
         &NativeCrypto,
+        None,
     )
     .expect("Failed to create VM");
 
@@ -255,6 +256,7 @@ fn test_delegated_address_is_warmed_after_resolution() {
         LevmCallTracer::disabled(),
         VMType::L1,
         &NativeCrypto,
+        None,
     )
     .expect("Failed to create VM");
 

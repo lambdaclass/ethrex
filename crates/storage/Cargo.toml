@@ -37,6 +37,7 @@ testing = []
 [dev-dependencies]
 tempfile.workspace = true
 tokio = { workspace = true, features = ["full"] }
+proptest = "1.0.0"
 
 [lib]
 path = "./lib.rs"

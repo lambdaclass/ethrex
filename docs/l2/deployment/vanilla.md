@@ -1,6 +1,6 @@
 # Deploying a vanilla ethrex L2
 
-In this section, we'll cover how to deploy a vanilla ethrex L2 on a public network such as Holesky, Sepolia, or Mainnet.
+In this section, we'll cover how to deploy a vanilla ethrex L2 on a public network such as Hoodi, Sepolia, or Mainnet.
 
 ## Prerequisites
 

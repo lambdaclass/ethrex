@@ -1,0 +1,58 @@
+# Local repro: ethrex@glamsterdam-devnet-4 (local build) + prysm@glamsterdam-devnet-4-tmp
+#
+# Goal: reproduce the "Prysm didn't get to work with us" failure that motivated
+# implementing execution-apis#796 (targetGasLimit). Pairs ethrex's local image
+# (carrying the PR 796 implementation) with Prysm's glamsterdam-devnet-4-tmp
+# branch (the first CL to ship the field).
+#
+# Minimal preset for fast slot times (6s slots, 4 slots/epoch). Glamsterdam/Gloas
+# active at genesis so the FCUv4 + targetGasLimit codepath fires immediately.
+#
+# Run with:
+#   KURTOSIS_CONFIG_FILE=./fixtures/networks/glamsterdam-devnet-4-local.yaml make localnet
+
+participants:
+- cl_type: prysm
+  cl_image: ethpandaops/prysm-beacon-chain:glamsterdam-devnet-4-tmp-minimal
+  vc_type: prysm
+  vc_image: ethpandaops/prysm-validator:glamsterdam-devnet-4-tmp-minimal
+  el_type: ethrex
+  el_image: ethrex:local
+  el_extra_params:
+  # Workaround for ethereum-package PR-1392 not merged yet — kurtosis needs
+  # admin_nodeInfo to extract the enode before starting the CL, and
+  # ethrex's default --http.api excludes admin.
+  - --http.api=eth,net,web3,admin
+  el_extra_env_vars:
+    RUST_LOG: "info,ethrex_rpc=debug"
+  count: 2
+  validator_count: 128
+  supernode: true
+
+network_params:
+  preset: minimal
+  seconds_per_slot: 6
+  genesis_delay: 30
+  fulu_fork_epoch: 0
+  gloas_fork_epoch: 1                   # per glamsterdam-devnet-4 spec
+  genesis_gaslimit: 150000000           # per spec
+  gas_limit: 150000000                  # per spec
+
+ethereum_genesis_generator_params:
+  image: ethpandaops/ethereum-genesis-generator:6.0.6
+
+global_log_level: debug
+snooper_enabled: true
+
+additional_services:
+  - dora
+  - spamoor
+
+dora_params:
+  image: ethpandaops/dora:master
+
+spamoor_params:
+  image: ethpandaops/spamoor:master
+  spammers:
+    - scenario: eoatx
+      config: {throughput: 5}

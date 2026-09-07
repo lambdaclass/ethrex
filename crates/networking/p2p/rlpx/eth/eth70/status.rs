@@ -83,7 +83,7 @@ impl StatusMessage70 {
         let genesis_header = storage
             .get_block_header(0)?
             .ok_or(PeerConnectionError::NotFound("Genesis Block".to_string()))?;
-        let latest_block = storage.get_latest_block_number().await?;
+        let latest_block = storage.get_latest_block_number()?;
         let block_header =
             storage
                 .get_block_header(latest_block)?
@@ -105,7 +105,7 @@ impl StatusMessage70 {
             network_id,
             genesis,
             fork_id,
-            earliest_block: 0,
+            earliest_block: storage.get_earliest_block_number().await?,
             latest_block,
             latest_block_hash,
         })

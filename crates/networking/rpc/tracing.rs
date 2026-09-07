@@ -1,8 +1,7 @@
 use std::time::Duration;
 
-use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::H256;
-use ethrex_common::types::GenericTransaction;
+use ethrex_common::types::{Block, BlockHash, GenericTransaction};
 use ethrex_common::{
     serde_utils,
     tracing::{CallTraceFrame, PrestateResult, StructLoggerEmit, StructLoggerResult},
@@ -12,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    rpc::RpcHandler,
+    rpc::{RpcApiContext, RpcHandler},
     types::{
         block_identifier::{BlockIdentifier, BlockIdentifierOrHash},
         block_override::BlockOverrideSet,
@@ -20,6 +19,7 @@ use crate::{
     },
     utils::RpcErr,
 };
+use ethrex_blockchain::tracing::TraceCallOverrides;
 
 /// Default max amount of blocks to re-excute if it is not given
 const DEFAULT_REEXEC: u32 = 128;
@@ -36,13 +36,39 @@ pub struct TraceBlockByNumberRequest {
     trace_config: TraceConfig,
 }
 
-/// `debug_traceCall` request: trace a synthetic transaction (no on-chain hash)
-/// at a given historical block, with optional state and block overrides.
+pub struct TraceBlockByHashRequest {
+    block_hash: BlockHash,
+    trace_config: TraceConfig,
+}
+
 pub struct TraceCallRequest {
     transaction: GenericTransaction,
-    block: Option<BlockIdentifierOrHash>,
-    trace_config: TraceConfig,
+    block: BlockIdentifierOrHash,
+    trace_config: TraceCallConfig,
+}
+
+/// `debug_traceCall`'s third parameter. Extends [`TraceConfig`] with `txIndex`, the
+/// in-block transaction index whose pre-state the call should run on top of, and with
+/// geth's two override sets (geth's `TraceCallConfig`).
+///
+/// The override sets belong *here*, not in extra positional params: geth carries them
+/// as fields of this object. Positional params 4 and 5 are also accepted as an ethrex
+/// extension for backwards compatibility (see [`TraceCallRequest::parse`]).
+///
+/// Deliberately not `deny_unknown_fields`: geth's `TraceConfig` embeds its struct-logger
+/// config, so a legitimate client may send `enableMemory`/`disableStack` at this level.
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct TraceCallConfig {
+    #[serde(flatten)]
+    base: TraceConfig,
+    // geth serializes `txIndex` as `hexutil.Uint` (a hex string, e.g. `"0x2"`); accept
+    // that as well as a plain JSON number so geth-shaped requests aren't rejected.
+    #[serde(default, with = "serde_utils::u64::hex_str_opt")]
+    tx_index: Option<u64>,
+    #[serde(default)]
     state_overrides: Option<StateOverrideSet>,
+    #[serde(default)]
     block_overrides: Option<BlockOverrideSet>,
 }
 
@@ -60,32 +86,12 @@ struct TraceConfig {
     reexec: Option<u32>,
 }
 
-/// geth's `TraceCallConfig`: a [`TraceConfig`] plus the two override sets, which
-/// geth carries as *fields of the 3rd config object* rather than as separate
-/// positional params (`eth/tracers/api.go`, `TraceCallConfig`).
-///
-/// Deliberately not `deny_unknown_fields`: geth's `TraceConfig` embeds its
-/// struct-logger config, so a legitimate client may send `disableStack`,
-/// `enableMemory` and friends at this level. Rejecting unknown keys here would
-/// break those requests; the fix for silently-dropped overrides is to *accept*
-/// the fields, which is what this struct does.
-#[derive(Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-struct TraceCallConfig {
-    #[serde(flatten)]
-    trace_config: TraceConfig,
-    #[serde(default)]
-    state_overrides: Option<StateOverrideSet>,
-    #[serde(default)]
-    block_overrides: Option<BlockOverrideSet>,
-}
-
 /// The tracer variant to use for a debug trace request.
 ///
 /// **Divergence from geth**: geth's default (when no `tracer` field is provided) is the
 /// per-opcode tracer. ethrex keeps `CallTracer` as the default for compatibility with
 /// Blockscout-style clients that rely on the no-tracer-specified → callTracer behaviour.
-#[derive(Default, Deserialize, Clone)]
+#[derive(Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 // The wire-format names (`callTracer`, `prestateTracer`, `opcodeTracer`) are
 // fixed by client convention; variants must keep the `Tracer` suffix to
@@ -289,80 +295,360 @@ impl RpcHandler for TraceBlockByNumberRequest {
             .get_block_by_number(block_number)
             .await?
             .ok_or(RpcErr::Internal("Block not Found".to_string()))?;
-        let reexec = self.trace_config.reexec.unwrap_or(DEFAULT_REEXEC);
-        let timeout = self.trace_config.timeout.unwrap_or(DEFAULT_TIMEOUT);
-        match self.trace_config.tracer {
+        trace_block(block, &self.trace_config, context).await
+    }
+}
+
+impl RpcHandler for TraceBlockByHashRequest {
+    fn parse(params: &Option<Vec<serde_json::Value>>) -> Result<Self, RpcErr> {
+        let params = params
+            .as_ref()
+            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+        if params.len() != 1 && params.len() != 2 {
+            return Err(RpcErr::BadParams("Expected 1 or 2 params".to_owned()));
+        };
+        let trace_config = if params.len() == 2 {
+            serde_json::from_value(params[1].clone())?
+        } else {
+            TraceConfig::default()
+        };
+
+        Ok(TraceBlockByHashRequest {
+            block_hash: serde_json::from_value(params[0].clone())?,
+            trace_config,
+        })
+    }
+
+    async fn handle(&self, context: RpcApiContext) -> Result<serde_json::Value, RpcErr> {
+        let block = context
+            .storage
+            .get_block_by_hash(self.block_hash)
+            .await?
+            .ok_or(RpcErr::Internal("Block not Found".to_string()))?;
+        trace_block(block, &self.trace_config, context).await
+    }
+}
+
+/// Traces every transaction in `block` with the tracer selected by `trace_config` and
+/// returns the geth-RPC array shape shared by `debug_traceBlockByNumber` and
+/// `debug_traceBlockByHash` (one `{txHash, result}` entry per transaction).
+async fn trace_block(
+    block: Block,
+    trace_config: &TraceConfig,
+    context: RpcApiContext,
+) -> Result<Value, RpcErr> {
+    let reexec = trace_config.reexec.unwrap_or(DEFAULT_REEXEC);
+    let timeout = trace_config.timeout.unwrap_or(DEFAULT_TIMEOUT);
+    match trace_config.tracer {
+        TracerType::CallTracer => {
+            // Parse tracer config now that we know the type
+            let config = if let Some(value) = &trace_config.tracer_config {
+                serde_json::from_value(value.clone())?
+            } else {
+                CallTracerConfig::default()
+            };
+            let call_traces = context
+                .blockchain
+                .trace_block_calls(
+                    block,
+                    reexec,
+                    timeout,
+                    config.only_top_call,
+                    config.with_log,
+                )
+                .await
+                .map_err(|err| RpcErr::Internal(err.to_string()))?;
+            // Unwrap each CallTrace (Vec<CallTraceFrame>) to a single
+            // CallTraceFrame to match geth's callTracer response format.
+            let block_trace: BlockTrace<CallTraceFrame> = call_traces
+                .into_iter()
+                .map(|(hash, trace)| {
+                    let frame = trace
+                        .into_iter()
+                        .next()
+                        .ok_or_else(|| RpcErr::Internal("Empty call trace".to_string()))?;
+                    Ok((hash, frame).into())
+                })
+                .collect::<Result<_, RpcErr>>()?;
+            Ok(serde_json::to_value(block_trace)?)
+        }
+        TracerType::PrestateTracer => {
+            let config: PrestateTracerConfig = if let Some(value) = &trace_config.tracer_config {
+                serde_json::from_value(value.clone())?
+            } else {
+                PrestateTracerConfig::default()
+            };
+            config.validate()?;
+            let prestate_traces = context
+                .blockchain
+                .trace_block_prestate(
+                    block,
+                    reexec,
+                    timeout,
+                    config.diff_mode,
+                    config.include_empty,
+                )
+                .await
+                .map_err(|err| RpcErr::Internal(err.to_string()))?;
+            // Each trace result is already the correct variant (Prestate or Diff)
+            // based on the diff_mode flag, so we serialize directly.
+            let block_trace: Vec<serde_json::Value> = prestate_traces
+                .into_iter()
+                .map(|(hash, result)| {
+                    let trace_value = match result {
+                        PrestateResult::Prestate(trace) => serde_json::to_value(trace)?,
+                        PrestateResult::Diff(diff) => serde_json::to_value(diff)?,
+                    };
+                    serde_json::to_value(BlockTraceComponent {
+                        tx_hash: hash,
+                        result: trace_value,
+                    })
+                })
+                .collect::<Result<_, serde_json::Error>>()?;
+            Ok(serde_json::to_value(block_trace)?)
+        }
+        TracerType::OpcodeTracer => {
+            let cfg: OpcodeTracerConfig = trace_config
+                .tracer_config
+                .as_ref()
+                .map(|v| serde_json::from_value(v.clone()))
+                .transpose()?
+                .unwrap_or_default();
+            let emit = StructLoggerEmit {
+                mem_size: cfg.enable_memory,
+                return_data: cfg.enable_return_data,
+                refund: false,
+            };
+            let opcode_traces = context
+                .blockchain
+                .trace_block_opcodes(block, reexec, timeout, cfg)
+                .await
+                .map_err(|err| RpcErr::Internal(err.to_string()))?;
+            // Wrap each result with StructLoggerResult so it serializes in the
+            // geth-RPC shape expected by block-trace consumers.
+            let block_trace: Vec<serde_json::Value> = opcode_traces
+                .into_iter()
+                .map(|(hash, result)| {
+                    let wrapped = serde_json::to_value(StructLoggerResult {
+                        result: &result,
+                        emit,
+                    })?;
+                    serde_json::to_value(BlockTraceComponent {
+                        tx_hash: hash,
+                        result: wrapped,
+                    })
+                })
+                .collect::<Result<_, serde_json::Error>>()?;
+            Ok(serde_json::to_value(block_trace)?)
+        }
+    }
+}
+
+impl TraceCallRequest {
+    /// Convert the request's override sets into [`TraceCallOverrides`].
+    ///
+    /// The State Override Set is converted once here (it hashes every override code
+    /// blob), and the Block Override Set is baked into a synthetic header. The database
+    /// is still built from the real header inside the blockchain layer, so `state_root`
+    /// and block-hash ancestor walks resolve against actual chain state.
+    async fn build_overrides(
+        &self,
+        context: &RpcApiContext,
+        block: &ethrex_common::types::Block,
+    ) -> Result<TraceCallOverrides, RpcErr> {
+        let has_state = self
+            .trace_config
+            .state_overrides
+            .as_ref()
+            .is_some_and(|s| !s.is_empty());
+        let block_overrides = self
+            .trace_config
+            .block_overrides
+            .as_ref()
+            .filter(|b| !b.is_empty());
+        if !has_state && block_overrides.is_none() {
+            return Ok(TraceCallOverrides::default());
+        }
+
+        let effective_header = block_overrides.map(|bo| {
+            let chain_config = context.storage.get_chain_config();
+            bo.apply_to(block.header.clone(), &chain_config)
+        });
+        let state = match (has_state, self.trace_config.state_overrides.clone()) {
+            (true, Some(set)) => set.into_overrides(),
+            _ => Default::default(),
+        };
+        let real_head_number = if has_state {
+            context.storage.get_latest_block_number()?
+        } else {
+            0
+        };
+
+        Ok(TraceCallOverrides {
+            state,
+            real_head_number,
+            effective_header,
+        })
+    }
+}
+
+impl RpcHandler for TraceCallRequest {
+    fn parse(params: &Option<Vec<serde_json::Value>>) -> Result<Self, RpcErr> {
+        let params = params
+            .as_ref()
+            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+        if params.is_empty() || params.len() > 5 {
+            return Err(RpcErr::BadParams("Expected 1 to 5 params".to_owned()));
+        }
+
+        let transaction = serde_json::from_value(params[0].clone())?;
+
+        // Block and traceConfig are optional: a JSON `null` is treated the same as an
+        // omitted argument, matching geth (which accepts `traceCall(call, null, {...})`).
+        // Block defaults to `latest` when absent.
+        let block = match params.get(1) {
+            Some(value) if !value.is_null() => BlockIdentifierOrHash::parse(value.clone(), 1)?,
+            _ => BlockIdentifierOrHash::Identifier(BlockIdentifier::default()),
+        };
+
+        let mut trace_config: TraceCallConfig = match params.get(2) {
+            Some(value) if !value.is_null() => serde_json::from_value(value.clone())?,
+            _ => TraceCallConfig::default(),
+        };
+
+        // Positional params 4 and 5 are an ethrex extension kept for backwards
+        // compatibility. The geth-shaped nested fields win when both are present.
+        if trace_config.state_overrides.is_none()
+            && let Some(value) = params.get(3).filter(|v| !v.is_null())
+        {
+            trace_config.state_overrides = Some(serde_json::from_value(value.clone())?);
+        }
+        if trace_config.block_overrides.is_none()
+            && let Some(value) = params.get(4).filter(|v| !v.is_null())
+        {
+            trace_config.block_overrides = Some(serde_json::from_value(value.clone())?);
+        }
+
+        Ok(TraceCallRequest {
+            transaction,
+            block,
+            trace_config,
+        })
+    }
+
+    async fn handle(
+        &self,
+        context: crate::rpc::RpcApiContext,
+    ) -> Result<serde_json::Value, crate::utils::RpcErr> {
+        let block_number = self
+            .block
+            .resolve_block_number(&context.storage)
+            .await?
+            .ok_or(RpcErr::Internal("Block not Found".to_string()))?;
+        let block = context
+            .storage
+            .get_block_by_number(block_number)
+            .await?
+            .ok_or(RpcErr::Internal("Block not Found".to_string()))?;
+
+        // `None` traces on top of the full block (geth's default); `Some(i)` runs the
+        // call against the state just before the block's transaction `i`.
+        let tx_index = self.trace_config.tx_index.map(|i| i as usize);
+        // Match geth: `txIndex` must be < tx count, the sole exception being index 0 on
+        // an empty block. Reject otherwise so we don't silently trace against a bogus
+        // state (all txs applied but withdrawals skipped).
+        if let Some(i) = tx_index {
+            let tx_count = block.body.transactions.len();
+            if i >= tx_count && !(i == 0 && tx_count == 0) {
+                return Err(RpcErr::BadParams(format!(
+                    "txIndex {i} out of range for block with {tx_count} transactions"
+                )));
+            }
+        }
+        let reexec = self.trace_config.base.reexec.unwrap_or(DEFAULT_REEXEC);
+        let timeout = self.trace_config.base.timeout.unwrap_or(DEFAULT_TIMEOUT);
+
+        // geth's two override sets. Built once here and handed to whichever tracer runs;
+        // `Default` (no overrides) keeps the common path free of the extra storage reads.
+        let overrides = self.build_overrides(&context, &block).await?;
+
+        // Fill the nonce from account state when the caller omits it, matching geth's
+        // `ToMessage` (`args.Nonce = db.GetNonce(from)`) and `eth_estimateGas`. Without this
+        // the VM's nonce check compares the account's real nonce against a default of 0 and
+        // rejects the call.
+        let transaction = match self.transaction.nonce {
+            Some(_) => self.transaction.clone(),
+            None => {
+                let nonce = context
+                    .storage
+                    .get_nonce_by_account_address(block_number, self.transaction.from)
+                    .await?;
+                let mut transaction = self.transaction.clone();
+                transaction.nonce = nonce;
+                transaction
+            }
+        };
+
+        match self.trace_config.base.tracer {
             TracerType::CallTracer => {
                 // Parse tracer config now that we know the type
-                let config = if let Some(value) = &self.trace_config.tracer_config {
+                let config = if let Some(value) = &self.trace_config.base.tracer_config {
                     serde_json::from_value(value.clone())?
                 } else {
                     CallTracerConfig::default()
                 };
-                let call_traces = context
+                let call_trace = context
                     .blockchain
-                    .trace_block_calls(
+                    .trace_call_calls(
                         block,
+                        tx_index,
+                        transaction.clone(),
                         reexec,
                         timeout,
                         config.only_top_call,
                         config.with_log,
+                        overrides,
                     )
                     .await
                     .map_err(|err| RpcErr::Internal(err.to_string()))?;
-                // Unwrap each CallTrace (Vec<CallTraceFrame>) to a single
-                // CallTraceFrame to match geth's callTracer response format.
-                let block_trace: BlockTrace<CallTraceFrame> = call_traces
+                // Geth returns a single CallTraceFrame object, not an array.
+                let top_frame = call_trace
                     .into_iter()
-                    .map(|(hash, trace)| {
-                        let frame = trace
-                            .into_iter()
-                            .next()
-                            .ok_or_else(|| RpcErr::Internal("Empty call trace".to_string()))?;
-                        Ok((hash, frame).into())
-                    })
-                    .collect::<Result<_, RpcErr>>()?;
-                Ok(serde_json::to_value(block_trace)?)
+                    .next()
+                    .ok_or(RpcErr::Internal("Empty call trace".to_string()))?;
+                Ok(serde_json::to_value(top_frame)?)
             }
             TracerType::PrestateTracer => {
                 let config: PrestateTracerConfig =
-                    if let Some(value) = &self.trace_config.tracer_config {
+                    if let Some(value) = &self.trace_config.base.tracer_config {
                         serde_json::from_value(value.clone())?
                     } else {
                         PrestateTracerConfig::default()
                     };
                 config.validate()?;
-                let prestate_traces = context
+                let result = context
                     .blockchain
-                    .trace_block_prestate(
+                    .trace_call_prestate(
                         block,
+                        tx_index,
+                        transaction.clone(),
                         reexec,
                         timeout,
                         config.diff_mode,
                         config.include_empty,
+                        overrides,
                     )
                     .await
                     .map_err(|err| RpcErr::Internal(err.to_string()))?;
-                // Each trace result is already the correct variant (Prestate or Diff)
-                // based on the diff_mode flag, so we serialize directly.
-                let block_trace: Vec<serde_json::Value> = prestate_traces
-                    .into_iter()
-                    .map(|(hash, result)| {
-                        let trace_value = match result {
-                            PrestateResult::Prestate(trace) => serde_json::to_value(trace)?,
-                            PrestateResult::Diff(diff) => serde_json::to_value(diff)?,
-                        };
-                        serde_json::to_value(BlockTraceComponent {
-                            tx_hash: hash,
-                            result: trace_value,
-                        })
-                    })
-                    .collect::<Result<_, serde_json::Error>>()?;
-                Ok(serde_json::to_value(block_trace)?)
+                match result {
+                    PrestateResult::Prestate(trace) => Ok(serde_json::to_value(trace)?),
+                    PrestateResult::Diff(diff) => Ok(serde_json::to_value(diff)?),
+                }
             }
             TracerType::OpcodeTracer => {
                 let cfg: OpcodeTracerConfig = self
                     .trace_config
+                    .base
                     .tracer_config
                     .as_ref()
                     .map(|v| serde_json::from_value(v.clone()))
@@ -373,176 +659,25 @@ impl RpcHandler for TraceBlockByNumberRequest {
                     return_data: cfg.enable_return_data,
                     refund: false,
                 };
-                let opcode_traces = context
+                let result = context
                     .blockchain
-                    .trace_block_opcodes(block, reexec, timeout, cfg)
+                    .trace_call_opcodes(
+                        block,
+                        tx_index,
+                        transaction.clone(),
+                        reexec,
+                        timeout,
+                        cfg,
+                        overrides,
+                    )
                     .await
                     .map_err(|err| RpcErr::Internal(err.to_string()))?;
-                // Wrap each result with StructLoggerResult so it serializes in the
-                // geth-RPC shape expected by `debug_traceBlockByNumber` consumers.
-                let block_trace: Vec<serde_json::Value> = opcode_traces
-                    .into_iter()
-                    .map(|(hash, result)| {
-                        let wrapped = serde_json::to_value(StructLoggerResult {
-                            result: &result,
-                            emit,
-                        })?;
-                        serde_json::to_value(BlockTraceComponent {
-                            tx_hash: hash,
-                            result: wrapped,
-                        })
-                    })
-                    .collect::<Result<_, serde_json::Error>>()?;
-                Ok(serde_json::to_value(block_trace)?)
+                // `debug_traceCall` returns the geth-RPC structLogger shape.
+                Ok(serde_json::to_value(StructLoggerResult {
+                    result: &result,
+                    emit,
+                })?)
             }
         }
-    }
-}
-
-impl RpcHandler for TraceCallRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
-        let params = params
-            .as_ref()
-            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
-        if params.is_empty() {
-            return Err(RpcErr::BadParams("No params provided".to_owned()));
-        }
-        if params.len() > 5 {
-            return Err(RpcErr::BadParams(format!(
-                "Expected one to five params and {} were provided",
-                params.len()
-            )));
-        }
-        let transaction = serde_json::from_value(params[0].clone())?;
-        let block = match params.get(1) {
-            Some(v) if !v.is_null() => Some(BlockIdentifierOrHash::parse(v.clone(), 1)?),
-            _ => None,
-        };
-        let call_config: TraceCallConfig = match params.get(2) {
-            Some(v) if !v.is_null() => serde_json::from_value(v.clone())?,
-            _ => TraceCallConfig::default(),
-        };
-        // Positional params 4 and 5 are an ethrex extension kept for backwards
-        // compatibility. The geth-shaped nested fields win when both are present.
-        let positional_state_overrides = match params.get(3) {
-            Some(v) if !v.is_null() => Some(serde_json::from_value(v.clone())?),
-            _ => None,
-        };
-        let positional_block_overrides = match params.get(4) {
-            Some(v) if !v.is_null() => Some(serde_json::from_value(v.clone())?),
-            _ => None,
-        };
-        Ok(TraceCallRequest {
-            transaction,
-            block,
-            trace_config: call_config.trace_config,
-            state_overrides: call_config.state_overrides.or(positional_state_overrides),
-            block_overrides: call_config.block_overrides.or(positional_block_overrides),
-        })
-    }
-
-    async fn handle(
-        &self,
-        context: crate::rpc::RpcApiContext,
-    ) -> Result<Value, crate::utils::RpcErr> {
-        // Resolve historical header. Default to "latest" when no block param.
-        let block = self
-            .block
-            .clone()
-            .unwrap_or(BlockIdentifierOrHash::Identifier(BlockIdentifier::default()));
-        let real_header = match block.resolve_block_header(&context.storage).await? {
-            Some(header) => header,
-            None => return Ok(Value::Null),
-        };
-        let real_head_number = context.storage.get_latest_block_number().await?;
-        let chain_config = context.storage.get_chain_config();
-        let effective_header = match &self.block_overrides {
-            Some(bo) if !bo.is_empty() => bo.apply_to(real_header.clone(), &chain_config),
-            _ => real_header.clone(),
-        };
-
-        let timeout = self.trace_config.timeout.unwrap_or(DEFAULT_TIMEOUT);
-        let tracer = self.trace_config.tracer.clone();
-        let tracer_config = self.trace_config.tracer_config.clone();
-
-        let storage = context.storage.clone();
-        let blockchain = context.blockchain.clone();
-        let transaction = self.transaction.clone();
-        let state_overrides = self.state_overrides.clone();
-
-        let operation: Box<dyn FnOnce() -> Result<Value, crate::utils::RpcErr> + Send + 'static> =
-            Box::new(move || {
-                let inner = StoreVmDatabase::new(storage, real_header.clone())?;
-                let mut vm = match state_overrides {
-                    Some(set) if !set.is_empty() => blockchain.new_overlaid_evm(
-                        inner,
-                        set.into_overrides(),
-                        real_head_number,
-                    )?,
-                    _ => blockchain.new_evm(inner)?,
-                };
-
-                match tracer {
-                    TracerType::CallTracer => {
-                        let cfg: CallTracerConfig = match tracer_config {
-                            Some(v) => serde_json::from_value(v)?,
-                            None => CallTracerConfig::default(),
-                        };
-                        let trace = vm.trace_call_from_generic(
-                            &transaction,
-                            &effective_header,
-                            cfg.only_top_call,
-                            cfg.with_log,
-                        )?;
-                        // Geth returns a single frame, not an array.
-                        let top = trace
-                            .into_iter()
-                            .next()
-                            .ok_or(RpcErr::Internal("Empty call trace".to_string()))?;
-                        Ok(serde_json::to_value(top)?)
-                    }
-                    TracerType::PrestateTracer => {
-                        let cfg: PrestateTracerConfig = match tracer_config {
-                            Some(v) => serde_json::from_value(v)?,
-                            None => PrestateTracerConfig::default(),
-                        };
-                        cfg.validate()?;
-                        let result = vm.prestate_call_from_generic(
-                            &transaction,
-                            &effective_header,
-                            cfg.diff_mode,
-                            cfg.include_empty,
-                        )?;
-                        match result {
-                            PrestateResult::Prestate(t) => Ok(serde_json::to_value(t)?),
-                            PrestateResult::Diff(d) => Ok(serde_json::to_value(d)?),
-                        }
-                    }
-                    TracerType::OpcodeTracer => {
-                        let cfg: OpcodeTracerConfig = match tracer_config {
-                            Some(v) => serde_json::from_value(v)?,
-                            None => OpcodeTracerConfig::default(),
-                        };
-                        let emit = StructLoggerEmit {
-                            mem_size: cfg.enable_memory,
-                            return_data: cfg.enable_return_data,
-                            refund: false,
-                        };
-                        let result =
-                            vm.opcodes_call_from_generic(&transaction, &effective_header, cfg)?;
-                        // `debug_traceCall` returns the geth-RPC structLogger shape,
-                        // same as `debug_traceTransaction`.
-                        Ok(serde_json::to_value(StructLoggerResult {
-                            result: &result,
-                            emit,
-                        })?)
-                    }
-                }
-            });
-
-        tokio::time::timeout(timeout, tokio::task::spawn_blocking(operation))
-            .await
-            .map_err(|_| RpcErr::Internal("Tracing Timeout".to_string()))?
-            .map_err(|_| RpcErr::Internal("Unexpected Runtime Error".to_string()))?
     }
 }

@@ -33,7 +33,7 @@ impl RpcHandler for GasPrice {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let latest_block_number = context.storage.get_latest_block_number().await?;
+        let latest_block_number = context.storage.get_latest_block_number()?;
         let latest_header = context
             .storage
             .get_block_header(latest_block_number)?
@@ -49,7 +49,7 @@ impl RpcHandler for GasPrice {
             .gas_tip_estimator
             .lock()
             .await
-            .estimate_gas_tip(&context.storage)
+            .estimate_gas_tip(&context.storage, context.blockchain.options.min_tip_wei)
             .await?;
         // To complete the gas price, we need to add the base fee to the estimated gas tip.
         let mut gas_price = base_fee + estimated_gas_tip;
@@ -158,7 +158,11 @@ mod tests {
             "method":"eth_gasPrice",
             "id":1
         });
-        let expected_response = json!("0x3b9aca00");
+        // base_fee (0x3b9aca00) + the estimated tip, which the node floors at
+        // `--mempool.min-tip` (shipped default 1 wei) so this RPC can never
+        // suggest a price its own mempool would reject. The sampled txs here
+        // have a 0 effective tip, so the floor is what shows up in the total.
+        let expected_response = json!("0x3b9aca01");
         let request: RpcRequest = serde_json::from_value(raw_json).expect("Test json is not valid");
         let storage = setup_store().await;
         let context = default_context_with_storage(storage).await;

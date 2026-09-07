@@ -44,6 +44,23 @@ pub struct Environment {
     /// When true, skip balance deduction in `deduct_caller`. Used by the prewarmer
     /// to avoid early reverts on insufficient balance so that warming touches more storage.
     pub disable_balance_check: bool,
+    /// When true, skip the sender nonce-mismatch validation. Used by the simulation
+    /// RPCs (eth_call, eth_estimateGas, eth_createAccessList): call objects may omit
+    /// the nonce, and no client enforces it there. The account nonce still increments
+    /// during execution. `debug_traceCall` relies on it too (geth's
+    /// `ToMessage(_, skipNonceCheck=true)`): the synthetic call may run on top of a
+    /// mid-block state (`txIndex`) whose nonce differs from the value the caller
+    /// supplied, so enforcing the check would spuriously reject the trace.
+    pub disable_nonce_check: bool,
+    /// When true, skip the gas limits that gate a transaction's *admission* rather than
+    /// its execution: the block-level gas allowance and the EIP-7825 per-transaction cap.
+    /// Used by the simulation RPCs (eth_call, eth_estimateGas, debug_traceCall), whose
+    /// callers routinely pass a `gas` above either bound — tools commonly pass the block
+    /// gas limit — and still expect an answer, since nothing is being submitted.
+    /// This exists so `block_gas_limit` can keep the block's real value: that field is
+    /// observable through the GASLIMIT opcode and feeds the EIP-8037 cost-per-state-byte
+    /// formula, so raising it to bypass the allowance corrupts both.
+    pub disable_gas_allowance_check: bool,
     /// When true, the tx is a pre-execution system contract call (EIP-2935, EIP-4788,
     /// EIP-7002, EIP-7251 etc.). Skips the block-level gas-allowance check since system
     /// calls are allowed to exceed `block_gas_limit` (their 30M cap is a separate rule).
