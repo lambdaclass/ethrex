@@ -280,6 +280,11 @@ the landing page and the EIP guide at `/eips` — from `scripts/hegota-testnet/f
 are read **once at process start** (`GUIDE = load_guide()`), so editing the file is not
 enough; the process has to come back.
 
+The landing page's **Changelog** panel is where every upgrade is summarised for users, newest
+first: what changed, the date it took effect, and what a node operator or transaction builder
+has to do about it (resync, refetch the bundle, re-sign transactions). Write the entry in the
+same change as the upgrade and deploy the page with it, using the steps below.
+
 The container is worth preserving rather than recreating: its faucet key arrives as an
 environment variable at `docker run`, so a recreate needs that value again. `docker commit`
 is the wrong tool for the same reason — it would bake that key into an image layer.

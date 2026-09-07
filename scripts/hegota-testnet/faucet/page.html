@@ -102,6 +102,66 @@
     <p id="out" aria-live="polite"></p>
   </div>
 
+  <h2 id="changelog">Changelog</h2>
+  <div class="panel">
+    <table>
+      <tr>
+        <td>2026-09-04</td>
+        <td class="desc">The pages now show the <code>ethereum/EIPs</code> commit each EIP is
+          implemented at, and the
+          <a href="https://github.com/lambdaclass/ethrex/blob/hegota-testnet/docs/hegota-testnet-spec.md">network spec</a>
+          is published: rule set and pins, endpoints, what is being tested, how to join, and every
+          known divergence between the running nodes and the pinned text. Two such divergences in
+          EIP-8141 (<code>SIGPARAM(0x03)</code> answered for every signature scheme; the value
+          cost charged on frames that move nothing) are fixed on the branch and wait for the
+          next relaunch, because blocks already on this chain depend on the old behaviour.</td>
+      </tr>
+      <tr>
+        <td>2026-09-03</td>
+        <td class="desc">All three beacon nodes now custody every PeerDAS column, so a
+          consensus client with default custody can range-sync; before this a joiner could
+          stall waiting for columns no peer served. A read-only beacon API is published at
+          <code>checkpoint-sync.privacy.ethrex.xyz</code>; the FOCIL Lighthouse build cannot
+          checkpoint-sync from it yet on a Gloas chain, so sync from genesis (minutes). The
+          bootnode bundle was re-published with the changed beacon records: refetch
+          <code>bootnodes-cl.txt</code>.</td>
+      </tr>
+      <tr>
+        <td>2026-09-03<br><span style="font-weight:400">17:18 UTC</span></td>
+        <td class="desc"><strong>Fresh genesis on the updated specs</strong>, the chain running
+          now. Pins: EIP-8141 <code>7d1c8bfb94</code>, EIP-8250 <code>e5cf246ff1</code>,
+          EIP-8272 <code>0231fb05f5</code>, EIP-7805 <code>9a345f96c2</code>, EIP-8369
+          <code>33724bd7da</code>. For anyone building frame transactions: the envelope has
+          9 fields with the fees nested in one list, each frame declares
+          <code>limits = [execution, state]</code>, the intrinsic cost is 12,000 plus 6,000 per
+          frame that moves value, <code>SIGDATACOPY</code> is its own opcode at
+          <code>0xB5</code>, EIP-8250's ids moved to <code>TXPARAM 0x0D</code>–<code>0x10</code>,
+          and EIP-8272's count sits at <code>TXPARAM 0x11</code> with
+          <code>RECENTROOTREFLOAD</code> at <code>0xB6</code>. Every type <code>0x06</code>
+          transaction signed for the previous chain is invalid here. The previous chain ended at
+          block 313,106: wipe your database and resync from the new bundle. An earlier relaunch
+          the same day was withdrawn after 1,691 blocks; nothing from it carries over. Spec diffs:
+          <a href="https://gist.github.com/ilitteri/808996324a6409db38f45ed639e82a19">8141</a>,
+          <a href="https://gist.github.com/ilitteri/9f2a53396d92538ef6b6bee380078fbc">8250</a>,
+          <a href="https://gist.github.com/ilitteri/7fe0324152d5ae8ca9d888358796337f">8272</a>.</td>
+      </tr>
+      <tr>
+        <td>2026-08-11</td>
+        <td class="desc"><strong>Network launched</strong> as chain <code>8141</code>: EIP-8141,
+          EIP-8250, EIP-8272 and EIP-7805 with EIP-8369, activating together at one fork on top
+          of Glamsterdam, at the four core EIPs' <code>4093c21847</code> revision and EIP-8369's
+          <code>6f818e27dd</code>. Validator entry permissioned through a gated deposit
+          contract; syncing, peering and transacting open to anyone. Faucet, explorer and public
+          RPC online.</td>
+      </tr>
+    </table>
+    <p style="margin:1rem 0 0;font-size:14px;color:var(--muted)">
+      Newest first. Every relaunch, and every change a node operator or transaction builder has
+      to act on, gets an entry here with the date it took effect. The exact rule set and pins
+      are in the network spec.
+    </p>
+  </div>
+
   <h2>What this chain enables</h2>
   <div class="panel">
     <table>
