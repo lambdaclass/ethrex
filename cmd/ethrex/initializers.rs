@@ -867,6 +867,18 @@ pub async fn init_l1(
     };
     let store = match store_result {
         Ok(store) => store,
+        // Written by a newer ethrex. The data is intact and needs no resync; the
+        // fix is the binary, not the database. `removedb` is only mentioned as the
+        // deliberate way to abandon it.
+        Err(StoreError::IncompatibleDBVersion { found, expected }) if found > expected => {
+            return Err(eyre::eyre!(
+                "The database at {} was written by a newer ethrex (schema v{found}) than this binary supports (schema v{expected}). \
+                 Downgrading a database is not supported and it has not been modified. \
+                 Start an ethrex build that supports schema v{found} or later and the node will resume without resyncing. \
+                 Only if you intend to abandon this database, erase it with `ethrex removedb` and resync from scratch.",
+                datadir.display()
+            ));
+        }
         Err(err @ StoreError::IncompatibleDBVersion { .. })
         | Err(err @ StoreError::NotFoundDBVersion) => {
             return Err(eyre::eyre!(

@@ -2284,20 +2284,22 @@ impl Store {
                     // of erroring out.
                     init_metadata_file(&db_path)?;
                 }
+                // Neither arm below runs a migration, so neither is a
+                // `MigrationFailed`: that variant tells the operator the data may be
+                // half-converted, which is false here — the database is untouched.
                 Some(v) if v < 1 => {
-                    return Err(StoreError::MigrationFailed {
-                        from: v,
-                        to: STORE_SCHEMA_VERSION,
-                        reason: format!("DB version v{v} is invalid (predates migrations)"),
+                    // No ethrex ever wrote a v0 marker; the file is corrupt or hand-edited.
+                    return Err(StoreError::IncompatibleDBVersion {
+                        found: v,
+                        expected: STORE_SCHEMA_VERSION,
                     });
                 }
                 Some(v) if v > STORE_SCHEMA_VERSION => {
-                    return Err(StoreError::MigrationFailed {
-                        from: v,
-                        to: STORE_SCHEMA_VERSION,
-                        reason: format!(
-                            "DB version v{v} is more recent than the client expects (v{STORE_SCHEMA_VERSION}). Rolling back is not supported"
-                        ),
+                    // Written by a newer ethrex. Downgrading is unsupported, but the
+                    // database is intact: a binary that speaks v{v} opens it as is.
+                    return Err(StoreError::IncompatibleDBVersion {
+                        found: v,
+                        expected: STORE_SCHEMA_VERSION,
                     });
                 }
                 #[cfg(feature = "rocksdb")]
@@ -7523,6 +7525,74 @@ mod backfill_write_tests {
                 "block {n} must have a body (no gap left by resume)"
             );
         }
+    }
+}
+
+/// The schema-version guard runs before any backend is opened, so these tests need
+/// a persistent `EngineType` but never touch RocksDB itself.
+#[cfg(test)]
+#[cfg(feature = "rocksdb")]
+mod schema_version_guard_tests {
+    use super::*;
+
+    fn write_marker(dir: &Path, schema_version: u64) {
+        let metadata = StoreMetadata::new(schema_version);
+        std::fs::write(
+            dir.join(STORE_METADATA_FILENAME),
+            serde_json::to_string_pretty(&metadata).unwrap(),
+        )
+        .unwrap();
+    }
+
+    fn read_marker(dir: &Path) -> u64 {
+        read_store_schema_version(dir).unwrap().unwrap()
+    }
+
+    #[test]
+    fn a_database_ahead_of_the_binary_is_refused_and_left_untouched() {
+        // The scenario behind this test: a datadir opened once by a newer build
+        // (which stamps its own schema version) and then handed back to an older
+        // one. The older build must refuse with a version error — not a
+        // "migration failed" — and must not rewrite the marker, so the newer
+        // build can still open the database.
+        let dir = tempfile::tempdir().unwrap();
+        let newer = STORE_SCHEMA_VERSION + 1;
+        write_marker(dir.path(), newer);
+
+        let result =
+            Store::new_with_config(dir.path(), EngineType::RocksDB, StoreConfig::default());
+
+        assert!(
+            matches!(
+                result,
+                Err(StoreError::IncompatibleDBVersion { found, expected })
+                    if found == newer && expected == STORE_SCHEMA_VERSION
+            ),
+            "expected IncompatibleDBVersion, got {:?}",
+            result.err()
+        );
+        assert_eq!(read_marker(dir.path()), newer);
+    }
+
+    #[test]
+    fn a_zero_schema_version_is_incompatible_not_a_failed_migration() {
+        // No ethrex ever writes v0; the marker is corrupt. Nothing was migrated,
+        // so the error must not claim a migration failed.
+        let dir = tempfile::tempdir().unwrap();
+        write_marker(dir.path(), 0);
+
+        let result =
+            Store::new_with_config(dir.path(), EngineType::RocksDB, StoreConfig::default());
+
+        assert!(
+            matches!(
+                result,
+                Err(StoreError::IncompatibleDBVersion { found: 0, expected })
+                    if expected == STORE_SCHEMA_VERSION
+            ),
+            "expected IncompatibleDBVersion, got {:?}",
+            result.err()
+        );
     }
 }
 
