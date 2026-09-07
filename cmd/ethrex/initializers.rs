@@ -1153,11 +1153,10 @@ pub async fn regenerate_head_state(
             // Nothing at or below the head. Before giving up, check whether the
             // state on disk belongs to a block *above* the head (interrupted
             // full-sync batch, see `adopt_committed_head_above`).
-            if let Some(adopted) = adopt_committed_head_above(store, head_block_number).await? {
-                info!(
-                    "Recovered from an interrupted full-sync batch: canonical head moved from \
-                     {head_block_number} to {adopted}, whose state is the one on disk"
-                );
+            if adopt_committed_head_above(store, head_block_number)
+                .await?
+                .is_some()
+            {
                 return Ok(());
             }
             return Err(eyre::eyre!(
@@ -1169,6 +1168,15 @@ pub async fn regenerate_head_state(
         debug!("Need to regenerate state for block {parent_number}");
 
         let Some(parent_header) = store.get_block_header(parent_number)? else {
+            // A snap-synced datadir has no headers below its pivot, so the walk
+            // ends here instead of at genesis; the state may still be above the
+            // head for the same reason.
+            if adopt_committed_head_above(store, head_block_number)
+                .await?
+                .is_some()
+            {
+                return Ok(());
+            }
             return Err(eyre::eyre!(
                 "Parent header for block {parent_number} not found"
             ));
@@ -1265,6 +1273,10 @@ async fn adopt_committed_head_above(
         store
             .forkchoice_update(new_canonical_blocks, number, hash, None, None)
             .await?;
+        info!(
+            "Recovered from an interrupted full-sync batch: canonical head moved from \
+             {head_number} to {number}, whose state is the one on disk"
+        );
         return Ok(Some(number));
     }
     Ok(None)
