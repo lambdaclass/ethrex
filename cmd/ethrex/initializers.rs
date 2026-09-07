@@ -8,7 +8,7 @@ use crate::{
 };
 use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
 use ethrex_common::fd_limit::raise_fd_limit;
-use ethrex_common::types::Genesis;
+use ethrex_common::types::{BlockNumber, Genesis};
 use ethrex_config::networks::Network;
 use ethrex_rpc::WebSocketConfig;
 
@@ -1150,6 +1150,16 @@ pub async fn regenerate_head_state(
     // Find the last block with a known state root
     while !store.has_state_root(current_last_header.state_root)? {
         if current_last_header.number == 0 {
+            // Nothing at or below the head. Before giving up, check whether the
+            // state on disk belongs to a block *above* the head (interrupted
+            // full-sync batch, see `adopt_committed_head_above`).
+            if let Some(adopted) = adopt_committed_head_above(store, head_block_number).await? {
+                info!(
+                    "Recovered from an interrupted full-sync batch: canonical head moved from \
+                     {head_block_number} to {adopted}, whose state is the one on disk"
+                );
+                return Ok(());
+            }
             return Err(eyre::eyre!(
                 "Unknown state found in DB. Please run `ethrex removedb` and restart node"
             ));
@@ -1198,6 +1208,66 @@ pub async fn regenerate_head_state(
     info!("Finished regenerating state");
 
     Ok(())
+}
+
+/// Recovers a database whose canonical head lags the state on disk.
+///
+/// `add_blocks_in_batch` executes up to `EXECUTE_BATCH_SIZE` blocks per full-sync
+/// batch and commits trie layers by depth as it goes, but records the canonical
+/// head (`forkchoice_update`) only once, when the batch ends. A restart more than
+/// `DB_COMMIT_THRESHOLD` blocks into a batch therefore finds `LatestBlockNumber`
+/// at the previous batch end while the only state on disk belongs to a later
+/// block, and the downward walk in `regenerate_head_state` can never find it.
+///
+/// The headers of the interrupted batch are still in `FULLSYNC_HEADERS` (written
+/// before execution starts), so walk them upward from the head, checking that
+/// they chain onto it, until one carries the state root that is on disk; make
+/// that block the canonical head. Bodies between the old and the new head may
+/// not have been flushed before the interruption, so those blocks may be
+/// unavailable over RPC; the chain resumes from the new head regardless.
+///
+/// Returns the adopted head number, or `None` when no such block exists (the
+/// caller then reports the database as unrecoverable).
+async fn adopt_committed_head_above(
+    store: &Store,
+    head_number: BlockNumber,
+) -> eyre::Result<Option<BlockNumber>> {
+    // A batch is at most `EXECUTE_BATCH_SIZE` (1024 by default) blocks; the bound
+    // only caps the reads on a database that is corrupt for another reason.
+    const MAX_PROBE: u64 = 4096;
+
+    let Some(head_header) = store.get_block_header(head_number)? else {
+        return Ok(None);
+    };
+    let mut parent_hash = head_header.hash();
+    let mut new_canonical_blocks = Vec::new();
+
+    for number in (head_number + 1)..=(head_number + MAX_PROBE) {
+        let Some(header) = store.read_fullsync_batch(number, 1).await?.pop().flatten() else {
+            return Ok(None);
+        };
+        if header.parent_hash != parent_hash {
+            // Headers from another sync cycle; they do not extend our head.
+            return Ok(None);
+        }
+        let hash = header.hash();
+        new_canonical_blocks.push((number, hash));
+        parent_hash = hash;
+
+        if !store.has_state_root(header.state_root)? {
+            continue;
+        }
+        // `forkchoice_update` loads the head header by hash; the interrupted
+        // batch may not have flushed it yet.
+        if store.get_block_header_by_hash(hash)?.is_none() {
+            store.add_block_header(hash, header).await?;
+        }
+        store
+            .forkchoice_update(new_canonical_blocks, number, hash, None, None)
+            .await?;
+        return Ok(Some(number));
+    }
+    Ok(None)
 }
 
 #[cfg(test)]
