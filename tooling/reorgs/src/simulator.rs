@@ -304,11 +304,13 @@ impl Node {
             .unwrap();
 
         let requests_hash = compute_requests_hash(&payload_response.execution_requests.unwrap());
+        // The payload carries the BAL as raw RLP bytes; the header commits to that
+        // exact encoding, so hash the bytes as received (as the engine API does).
         let block_access_list_hash = payload_response
             .execution_payload
             .block_access_list
             .as_ref()
-            .map(|bal| bal.compute_hash(&ethrex_common::NativeCrypto));
+            .map(ethrex_common::utils::keccak);
         let block = payload_response
             .execution_payload
             .into_block(
