@@ -7,6 +7,7 @@ use ethrex_common::{
 use ethrex_crypto::{Crypto, CryptoError};
 use rustc_hash::FxHashMap;
 use std::borrow::Cow;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::RwLock;
 
 use crate::gas_cost::{MODEXP_STATIC_COST, P256_VERIFY_COST};
@@ -257,6 +258,82 @@ pub fn precompiles_for_fork(fork: Fork) -> impl Iterator<Item = Precompile> {
 pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
     (matches!(vm_type, VMType::L2(_)) && *address == P256VERIFY.address)
         || precompiles_for_fork(fork).any(|precompile| precompile.address == *address)
+}
+
+/// Precompile relocations requested by geth's `movePrecompileToAddress` State Override
+/// Set field. Simulation-only: this is `None` on every consensus path, in which case
+/// precompile dispatch is bit-identical to [`is_precompile`].
+///
+/// A move has two halves, and both matter for geth parity: the destination starts
+/// dispatching the precompile, and the vacated original address stops being one
+/// (it becomes an ordinary account).
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct PrecompileMoves {
+    /// Original precompile addresses that were moved away.
+    vacated: BTreeSet<Address>,
+    /// Destination -> the original precompile address whose implementation runs there.
+    relocated: BTreeMap<Address, Address>,
+}
+
+impl PrecompileMoves {
+    /// Build from `(precompile_address, destination_address)` pairs.
+    ///
+    /// A later pair wins if two moves name the same destination; callers that care
+    /// should validate before constructing.
+    pub fn from_pairs(pairs: impl IntoIterator<Item = (Address, Address)>) -> Self {
+        let mut moves = Self::default();
+        for (source, destination) in pairs {
+            moves.vacated.insert(source);
+            moves.relocated.insert(destination, source);
+        }
+        moves
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.vacated.is_empty() && self.relocated.is_empty()
+    }
+
+    /// True if `address` used to host a precompile that has been moved away.
+    pub fn is_vacated(&self, address: &Address) -> bool {
+        self.vacated.contains(address)
+    }
+
+    /// The address whose precompile implementation should run when `address` is
+    /// called, or `None` if `address` is not a relocation destination.
+    pub fn source_for(&self, address: &Address) -> Option<Address> {
+        self.relocated.get(address).copied()
+    }
+}
+
+/// [`is_precompile`], honoring any simulation-only precompile relocations.
+///
+/// With `moves == None` this is exactly [`is_precompile`] — the consensus path.
+pub fn is_precompile_with_moves(
+    address: &Address,
+    fork: Fork,
+    vm_type: VMType,
+    moves: Option<&PrecompileMoves>,
+) -> bool {
+    let Some(moves) = moves else {
+        return is_precompile(address, fork, vm_type);
+    };
+    // A destination wins over the address's own identity: `movePrecompileToAddress`
+    // may legitimately target an address that is itself a precompile.
+    if let Some(source) = moves.source_for(address) {
+        return is_precompile(&source, fork, vm_type);
+    }
+    if moves.is_vacated(address) {
+        return false;
+    }
+    is_precompile(address, fork, vm_type)
+}
+
+/// The address whose precompile implementation should execute for a call to
+/// `address`. Identity mapping unless `address` is a relocation destination.
+pub fn effective_precompile_address(address: Address, moves: Option<&PrecompileMoves>) -> Address {
+    moves
+        .and_then(|m| m.source_for(&address))
+        .unwrap_or(address)
 }
 
 /// Per-block cache for precompile results shared between warmer and executor.

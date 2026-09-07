@@ -6,7 +6,7 @@ use ethrex_common::{
 };
 use ethrex_crypto::keccak::keccak_hash;
 use ethrex_storage::Store;
-use ethrex_vm::{EvmError, VmDatabase};
+use ethrex_vm::{EvmError, PrecompileMoves, VmDatabase};
 use rustc_hash::FxHashMap;
 use std::{
     cmp::Ordering,
@@ -88,14 +88,6 @@ impl<Inner> OverlaidVmDatabase<Inner> {
 
     pub fn overrides(&self) -> &BTreeMap<Address, StateOverride> {
         &self.overrides
-    }
-
-    /// Look up a precompile relocation: if `movePrecompileToAddress` was set on
-    /// address `precompile`, returns the destination it was moved to.
-    pub fn precompile_target(&self, precompile: &Address) -> Option<Address> {
-        self.overrides
-            .get(precompile)
-            .and_then(|ov| ov.move_precompile_to)
     }
 }
 
@@ -191,6 +183,19 @@ impl<Inner: VmDatabase + Clone> VmDatabase for OverlaidVmDatabase<Inner> {
         }
         self.inner.get_code_metadata(code_hash)
     }
+}
+
+/// Collect the `movePrecompileToAddress` directives from a set of overrides into the
+/// form LEVM's dispatch consumes.
+///
+/// Geth applies precompile moves before the rest of the override set, which is why this
+/// is derived from the same map rather than tracked separately.
+pub fn precompile_moves(overrides: &BTreeMap<Address, StateOverride>) -> PrecompileMoves {
+    PrecompileMoves::from_pairs(
+        overrides
+            .iter()
+            .filter_map(|(source, ov)| ov.move_precompile_to.map(|dest| (*source, dest))),
+    )
 }
 
 /// Helper to compute the synthetic code hash for an override `code` blob.
@@ -571,7 +576,10 @@ mod overlaid_db_tests {
         let wrapper = OverlaidVmDatabase::new(mock, overrides, 0);
         // movePrecompileToAddress alone doesn't materialize an account.
         assert!(wrapper.get_account_state(addr(3)).unwrap().is_none());
-        assert_eq!(wrapper.precompile_target(&addr(3)), Some(addr(0xaa)));
+        assert_eq!(
+            precompile_moves(wrapper.overrides()).source_for(&addr(0xaa)),
+            Some(addr(3))
+        );
     }
 
     #[test]

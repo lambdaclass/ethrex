@@ -102,6 +102,37 @@ impl LEVM {
         }
     }
 
+    /// Trace a synthetic call (geth `debug_traceCall`) with the opcodeTracer.
+    ///
+    /// Mirrors `trace_call_from_generic`, but drives `LevmOpcodeTracer` instead of the
+    /// call tracer. Like the other two `*_from_generic` tracers, the block gas limit is
+    /// lifted and the disabled-base-fee adjustment applied, so a simulated call isn't
+    /// bounded by real block consensus rules.
+    pub fn opcodes_call_from_generic(
+        tx: &GenericTransaction,
+        block_header: &BlockHeader,
+        db: &mut GeneralizedDatabase,
+        vm_type: VMType,
+        crypto: &dyn Crypto,
+        cfg: OpcodeTracerConfig,
+    ) -> Result<OpcodeTraceResult, EvmError> {
+        let mut env = env_from_generic(tx, block_header, db, vm_type)?;
+        env.block_gas_limit = i64::MAX as u64;
+        adjust_disabled_base_fee(&mut env);
+        let synthetic = synthetic_tx_from_generic(tx)?;
+        let mut vm = VM::new(
+            env,
+            db,
+            &synthetic,
+            LevmCallTracer::disabled(),
+            vm_type,
+            crypto,
+        )?;
+        vm.opcode_tracer = LevmOpcodeTracer::new(cfg);
+        vm.execute()?;
+        Ok(vm.opcode_tracer.take_result())
+    }
+
     /// Run transaction with opcode (EIP-3155) tracer activated.
     pub fn trace_tx_opcodes(
         db: &mut GeneralizedDatabase,

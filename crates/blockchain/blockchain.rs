@@ -58,6 +58,7 @@ use ethrex_common::constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH, MIN_BASE_FEE_
 
 use crossbeam::channel::{self as cb, TryRecvError, select};
 // Re-export stateless validation functions for backwards compatibility
+use crate::vm::{OverlaidVmDatabase, StateOverride, precompile_moves};
 #[cfg(feature = "c-kzg")]
 use ethrex_common::types::EIP4844Transaction;
 #[cfg(feature = "c-kzg")]
@@ -3174,6 +3175,30 @@ impl Blockchain {
 
     pub fn new_evm<D: VmDatabase + 'static>(&self, vm_db: D) -> Result<Evm, EvmError> {
         new_evm(&self.options.r#type, vm_db)
+    }
+
+    /// [`Blockchain::new_evm`] for the RPC simulation paths that honor geth's State
+    /// Override Set (`eth_call`, `eth_estimateGas`, `eth_createAccessList`,
+    /// `debug_traceCall`).
+    ///
+    /// A State Override Set has two independent effects and they must be installed
+    /// together: the per-account overlay ([`OverlaidVmDatabase`]) and the
+    /// `movePrecompileToAddress` relocations, which live in the EVM rather than the
+    /// database because they change dispatch, not state. This constructor is the only
+    /// way to build the overlay, so the relocations can't be forgotten at a call site.
+    ///
+    /// `real_head_number` is the height of the real chain tip; see
+    /// [`OverlaidVmDatabase::new`].
+    pub fn new_overlaid_evm<D: VmDatabase + Clone + 'static>(
+        &self,
+        inner: D,
+        overrides: BTreeMap<Address, StateOverride>,
+        real_head_number: BlockNumber,
+    ) -> Result<Evm, EvmError> {
+        let moves = precompile_moves(&overrides);
+        let mut evm = self.new_evm(OverlaidVmDatabase::new(inner, overrides, real_head_number))?;
+        evm.set_precompile_moves(moves);
+        Ok(evm)
     }
 
     /// Get the current fork of the chain, based on the latest block's timestamp

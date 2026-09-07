@@ -127,6 +127,23 @@ impl Evm {
         )
     }
 
+    /// Trace a synthetic call (geth `debug_traceCall`) with the opcodeTracer.
+    pub fn opcodes_call_from_generic(
+        &mut self,
+        tx: &GenericTransaction,
+        block_header: &BlockHeader,
+        cfg: OpcodeTracerConfig,
+    ) -> Result<OpcodeTraceResult, EvmError> {
+        LEVM::opcodes_call_from_generic(
+            tx,
+            block_header,
+            &mut self.db,
+            self.vm_type,
+            self.crypto.as_ref(),
+            cfg,
+        )
+    }
+
     /// Trace a synthetic call (geth `debug_traceCall`) with the prestateTracer.
     pub fn prestate_call_from_generic(
         &mut self,
