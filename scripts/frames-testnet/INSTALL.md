@@ -353,7 +353,7 @@ talks to a node port directly still has the full API.
 
 ```
 [Unit]
-Description=Hegota testnet JSON-RPC namespace guard
+Description=Frames testnet JSON-RPC namespace guard
 After=network-online.target
 
 [Service]
@@ -438,8 +438,58 @@ nothing new, but it does mean inspect output is as sensitive as the env file and
 be pasted into a ticket or a chat. And `page.html` is baked into the image by `COPY`, so
 editing the page or `faucet.py` in a clone changes nothing that is being served — the
 image has to be rebuilt and the container recreated. Tag the outgoing image first
-(`docker tag hegota-faucet:latest hegota-faucet:pre-<change>`) so a bad page is one
+(`docker tag frames-faucet:latest frames-faucet:pre-<change>`) so a bad page is one
 `docker run` from being reverted.
+
+### Updating the faucet page
+
+The landing page's **Changelog** panel, the last section before the footer, is where every
+upgrade is summarised for users, newest first: what changed, the date it took effect, and what
+a node operator or transaction builder has to do about it (resync, refetch the bundle, re-sign
+transactions). It sits at the bottom on purpose, so the faucet stays the first thing a visitor
+sees; two pointers lead to it, the "Latest change: <date>" line under the lede and the sentence
+opening "Run a node". Write the entry in the same change as the upgrade, update the date in
+that "Latest change" line, and deploy the page with it, using the steps below.
+
+The container is worth preserving rather than recreating: its faucet key arrives as an
+environment variable at `docker run`, so a recreate needs that value again. `docker commit` is
+the wrong tool for the same reason — it would bake that key into an image layer. The page is
+read on every request, so a copied-in file is served at once; restart anyway so what is served
+comes from one clean process state.
+
+```bash
+# 1. Prove the live page is the branch source, so the deploy applies your change and
+#    nothing else. If it differs, stop and find out why.
+mkdir -p ~/faucet-page-backups
+docker cp frames-faucet:/app/page.html ~/faucet-page-backups/page.html.pre-<change>
+diff ~/faucet-page-backups/page.html.pre-<change> <branch copy of page.html>   # must be empty
+# 2. Copy in, restart, wait for healthy (~30s).
+docker cp page.html frames-faucet:/app/page.html
+docker restart frames-faucet
+docker ps --filter name=frames-faucet --format '{{.Status}}'
+# 3. Verify what is SERVED, not what you copied. The served page has the placeholders
+#    substituted, so compare the container's file to the branch, and read the served
+#    section order.
+docker cp frames-faucet:/app/page.html - | tar -xO | diff - page.html && echo identical
+curl -s https://faucet.frames.ethrex.xyz/ | grep -oE '<h2[^>]*>[^<]+' | sed 's/<h2[^>]*>//'
+curl -s -o /dev/null -w '%{http_code}\n' https://faucet.frames.ethrex.xyz/bootnodes
+```
+
+The order printed by the third command must end `Run a node`, `Become a validator`,
+`Changelog`. That leaves the change in the container's writable layer, which survives a
+restart but not a recreate. Make it durable by rebuilding the image from the same sources.
+The Dockerfile takes no secrets, and the running container keeps its own image ID until
+someone recreates it, so this is safe to do while it serves:
+
+```bash
+scp Dockerfile faucet.py page.html <host>:~/faucet-build/
+ssh <host> 'cd ~/faucet-build && docker build -t frames-faucet:latest .'
+docker run --rm --entrypoint sh frames-faucet:latest -c 'grep -c "<a string you added>" /app/page.html'
+```
+
+Hash-check `faucet.py` against the branch before rebuilding. If it has drifted, the image was
+built from something other than the branch, and a rebuild would change faucet behaviour as
+well as the page.
 
 ## 10. Firewall
 
@@ -641,7 +691,13 @@ bundle, and every externally deposited validator has to be deposited again.
    so nothing from the old chain remains in the served directory; check `MANIFEST.txt`
    lists exactly the new set and that `genesis.json` carries the new `timestamp`.
 
-7. **Re-run the readiness checklist** (`docs/workflows/testnet-readiness.md`), sections A,
+7. **Write the changelog entry and deploy the page** (section 9, "Updating the faucet page"):
+   the date, what changed, the previous chain's last block, and what a joiner has to do
+   (wipe, refetch the bundle, resync; validators deposited again). Update the "Latest change"
+   date under the lede in the same edit. Every later upgrade the users can notice gets the
+   same treatment: entry, date, page deployed with the change.
+
+8. **Re-run the readiness checklist** (`docs/workflows/testnet-readiness.md`), sections A,
    C and D: fetch the bundle from a machine outside the deployment, start a node from it,
    and confirm it discovers peers and reaches the head. Only then announce that the new
    chain is live.

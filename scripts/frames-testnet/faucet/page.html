@@ -90,6 +90,9 @@
     A public test network running <strong>EIP-8141 frame transactions</strong> on
     <a href="https://github.com/lambdaclass/ethrex">ethrex</a>. Test ETH has no value.
   </p>
+  <p style="margin:-1.1rem 0 1.75rem;font-size:14px;color:var(--muted)">
+    Latest change: 2026-09-07 · <a href="#changelog">changelog</a>
+  </p>
 
   <div class="panel">
     <div class="row">
@@ -104,7 +107,8 @@
   <div class="panel">
     <table>
       <tr>
-        <td><a href="https://eips.ethereum.org/EIPS/eip-8141">EIP-8141</a></td>
+        <td><a href="https://eips.ethereum.org/EIPS/eip-8141">EIP-8141</a><br>
+          <a href="https://github.com/ethereum/EIPs/blob/b75cbe6115/EIPS/eip-8141.md" style="font-weight:400"><code>b75cbe6115</code></a></td>
         <td class="desc">Frame transactions: a new type <code>0x06</code> whose payload is a list of
           <em>frames</em>, each executed with its own target, mode and two gas budgets, with payment
           authorised by an <code>APPROVE</code> in a validation prefix.</td>
@@ -113,6 +117,15 @@
     <p style="margin:1rem 0 0;font-size:14px;color:var(--muted)">
       That is the only addition. Everything else is Amsterdam, so a failure here is a
       frame-transaction failure, which is what makes the chain useful to implementers.
+    </p>
+    <p style="margin:.6rem 0 0;font-size:14px;color:var(--muted)">
+      The hash under the number is the <code>ethereum/EIPs</code> commit this chain implements.
+      The draft moves and the chain does not follow it live: what runs here is the text at that
+      commit (<code>git show &lt;commit&gt;:EIPS/eip-8141.md</code>), and a spec change only
+      reaches the chain through a relaunch. The
+      <a href="https://github.com/lambdaclass/ethrex/blob/frames-devnet-0/docs/eip-8141.md">network spec</a>
+      records the pin, the fixture release the nodes pass, and every known divergence between the
+      running nodes and the pinned text.
     </p>
   </div>
 
@@ -253,6 +266,10 @@ sig_hash  = keccak256(0x06 || rlp(envelope))      # empty-msg signature bytes el
 
   <h2>Run a node</h2>
   <div class="panel">
+    <p style="margin:0 0 1rem;font-size:14px;color:var(--muted)">
+      Read the <a href="#changelog">changelog</a> before syncing: a relaunch means a fresh
+      genesis, and a database from the previous chain has to be wiped.
+    </p>
     {{BOOTNODES}}
     <div class="note">
       <strong>The consensus client must <em>not</em> implement Heze</strong> — the opposite of
@@ -350,6 +367,61 @@ docker run -d --name frames-vc -v $PWD:/data \
       <code>exit_epoch</code> is. The stake returns to the withdrawal address 256 epochs
       after the exit.
     </div>
+  </div>
+
+  <h2 id="changelog">Changelog</h2>
+  <div class="panel">
+    <table>
+      <tr>
+        <td>2026-09-07</td>
+        <td class="desc">This page now shows the <code>ethereum/EIPs</code> commit EIP-8141 is
+          implemented at, <code>b75cbe6115</code>, and links the
+          <a href="https://github.com/lambdaclass/ethrex/blob/frames-devnet-0/docs/eip-8141.md">network spec</a>,
+          which records the pin, the fixture release the nodes pass and every known divergence.
+          <strong>A relaunch with a fresh genesis is being scheduled</strong>; its date will be
+          announced here. It brings two consensus changes that cannot be rolled out on the running
+          chain: the expiry verifier at <code>0x…8141</code> installed as the spec says, code only
+          with nonce <code>0</code> (the running chain installed it with nonce <code>1</code>, and
+          a client that follows the spec rejects the fork block), and the EIP-8037 merge-time
+          repayment of spilled state gas that the <code>tests-frames-devnet@v0.3.0</code> release
+          introduced. Frame receipts over JSON-RPC will also carry <code>stateGasUsed</code> per
+          frame. When it happens: the previous chain's last block will be recorded here; wipe your
+          database, refetch the bundle and resync; validators deposited on this chain have to be
+          deposited again.</td>
+      </tr>
+      <tr>
+        <td>2026-09-04</td>
+        <td class="desc">The published bootnodes are reachable again. The router had silently
+          dropped the port mappings that expose them, so every enode refused connections until
+          they were restored; the mappings are now renewed on a timer. The published <code>chainspec.json</code>
+          is corrected, without the FOCIL transition the genesis generator writes into every Heze
+          chainspec, which made a Nethermind node expect inclusion lists this chain never sends;
+          <code>besu.json</code> is no longer published. Clients that read the chainspec: refetch
+          the bundle.</td>
+      </tr>
+      <tr>
+        <td>2026-09-01</td>
+        <td class="desc">A checkpoint-sync endpoint is published at
+          <code>checkpoint-sync.frames.ethrex.xyz</code>, read-only <code>/eth/*</code> only, on
+          its own hostname because the consensus client strips the path from a base URL. Sync
+          from it: started from genesis the consensus client stalls in payload-envelope backfill
+          and leaves the execution client stranded a few blocks in.</td>
+      </tr>
+      <tr>
+        <td>2026-08-28</td>
+        <td class="desc"><strong>Network launched</strong> as chain <code>81410</code>: genesis at
+          16:45 UTC on Osaka, Amsterdam from epoch 1, EIP-8141 frame transactions from epoch 2
+          (16:51 UTC), nothing else added. The consensus layer stays on Gloas, which is what lets
+          the frames fork activate on the execution layer alone. Validator entry permissioned through a gated
+          deposit contract; syncing, peering and transacting open to anyone. Faucet, explorer and
+          public RPC online.</td>
+      </tr>
+    </table>
+    <p style="margin:1rem 0 0;font-size:14px;color:var(--muted)">
+      Newest first. Every relaunch, and every change a node operator or transaction builder has
+      to act on, gets an entry here with the date it took effect. The exact rule set and pin are
+      in the network spec.
+    </p>
   </div>
 
   <footer>Test ETH has no value. The chain may be reset without notice.</footer>
