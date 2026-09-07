@@ -4335,6 +4335,25 @@ impl Store {
         Ok(Some(BlockNumber::from_be_bytes(arr)))
     }
 
+    /// Returns the hash of the block whose trie-layer commit the `STATE_HISTORY`
+    /// entry at `block_number` journals, or `None` when there is no entry.
+    ///
+    /// The persist worker stages one entry per committed layer, so the entry at
+    /// [`Self::highest_state_history_block_number`] identifies the block whose
+    /// post-state is the one on disk.
+    pub fn get_state_history_block_hash(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<BlockHash>, StoreError> {
+        let read = self.backend.begin_read()?;
+        let Some(bytes) = read.get(STATE_HISTORY, &block_number.to_be_bytes())? else {
+            return Ok(None);
+        };
+        let entry = JournalEntry::decode(&bytes)
+            .map_err(|e| StoreError::Custom(format!("STATE_HISTORY entry {block_number}: {e}")))?;
+        Ok(Some(entry.block_hash))
+    }
+
     /// Returns the lowest block number with a `STATE_HISTORY` entry. Returns `None`
     /// if the journal is empty (no commits since boot, or fully pruned by finality).
     ///
@@ -4624,6 +4643,21 @@ impl Store {
     fn flatkeyvalue_computed_with_last_written(account: H256, last_written: &[u8]) -> bool {
         let account_nibbles = Nibbles::from_bytes(account.as_bytes());
         &last_written[0..64] > account_nibbles.as_ref()
+    }
+
+    /// Records that every block up to `block_number` is on disk, on disk and in the
+    /// buffer's mirror of the marker, so the next start anchors at that height.
+    ///
+    /// Used when startup adopts a head above the recorded one (interrupted
+    /// full-sync batch): the blocks were flushed by the persist worker before the
+    /// interruption, but earlier failed starts may have walked the marker down.
+    pub fn set_flushed_upto(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+        let mut tx = self.backend.begin_write()?;
+        write_flushed_upto(tx.as_mut(), block_number)?;
+        tx.commit()?;
+        mutate_block_buffer(&self.block_data_buffer, |b| {
+            b.set_flushed_upto(block_number)
+        })
     }
 
     /// Returns the highest block number durably flushed to disk, or `0` when
@@ -7523,6 +7557,41 @@ mod backfill_write_tests {
                 "block {n} must have a body (no gap left by resume)"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod state_history_hash_tests {
+    use super::*;
+    use crate::journal::JournalEntry;
+
+    /// The interrupted-batch recovery at startup identifies the block whose state is
+    /// on disk from the newest `STATE_HISTORY` entry, so the entry's block hash must
+    /// read back exactly as journaled, and an absent entry must read as `None`.
+    #[test]
+    fn journaled_block_hash_reads_back() {
+        let store = Store::new("", EngineType::InMemory).unwrap();
+        let entry = JournalEntry {
+            block_hash: H256::repeat_byte(0xab),
+            parent_state_root: H256::repeat_byte(0xcd),
+            account_trie_diff: vec![],
+            storage_trie_diff: vec![],
+            account_flat_diff: vec![],
+            storage_flat_diff: vec![],
+        };
+        store
+            .put_state_history_entry_for_test(42, &entry.encode())
+            .unwrap();
+
+        assert_eq!(
+            store.highest_state_history_block_number().unwrap(),
+            Some(42)
+        );
+        assert_eq!(
+            store.get_state_history_block_hash(42).unwrap(),
+            Some(H256::repeat_byte(0xab))
+        );
+        assert_eq!(store.get_state_history_block_hash(41).unwrap(), None);
     }
 }
 

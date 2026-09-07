@@ -1224,62 +1224,102 @@ pub async fn regenerate_head_state(
 /// batch and commits trie layers by depth as it goes, but records the canonical
 /// head (`forkchoice_update`) only once, when the batch ends. A restart more than
 /// `DB_COMMIT_THRESHOLD` blocks into a batch therefore finds `LatestBlockNumber`
-/// at the previous batch end while the only state on disk belongs to a later
-/// block, and the downward walk in `regenerate_head_state` can never find it.
+/// at the previous batch end while the only state on disk (a single-version path
+/// store) belongs to a later block, and the downward walk in
+/// `regenerate_head_state` can never find it.
 ///
-/// The headers of the interrupted batch are still in `FULLSYNC_HEADERS` (written
-/// before execution starts), so walk them upward from the head, checking that
-/// they chain onto it, until one carries the state root that is on disk; make
-/// that block the canonical head. Bodies between the old and the new head may
-/// not have been flushed before the interruption, so those blocks may be
-/// unavailable over RPC; the chain resumes from the new head regardless.
+/// The persist worker journals every layer it commits into `STATE_HISTORY`, keyed
+/// by block number and carrying the block hash, and it flushes the block data up
+/// to the executing block before each commit. So the newest journal entry names
+/// the block whose post-state is on disk, and the headers from there back to the
+/// head are on disk by hash. Verify the root, walk the parent hashes down to the
+/// head, and canonicalize the range. Bodies in that range are on disk for the
+/// same reason.
 ///
-/// Returns the adopted head number, or `None` when no such block exists (the
-/// caller then reports the database as unrecoverable).
+/// Returns the adopted head number, or `None` when the journal does not describe
+/// such a block (the caller then reports the database as unrecoverable).
 async fn adopt_committed_head_above(
     store: &Store,
     head_number: BlockNumber,
 ) -> eyre::Result<Option<BlockNumber>> {
-    // A batch is at most `EXECUTE_BATCH_SIZE` (1024 by default) blocks; the bound
-    // only caps the reads on a database that is corrupt for another reason.
-    const MAX_PROBE: u64 = 4096;
-
+    let Some(committed) = store.highest_state_history_block_number()? else {
+        debug!("interrupted-batch recovery: STATE_HISTORY is empty");
+        return Ok(None);
+    };
+    if committed <= head_number {
+        debug!(
+            "interrupted-batch recovery: newest journaled block {committed} is not above head {head_number}"
+        );
+        return Ok(None);
+    }
+    let Some(committed_hash) = store.get_state_history_block_hash(committed)? else {
+        return Ok(None);
+    };
+    let Some(committed_header) = store.get_block_header_by_hash(committed_hash)? else {
+        debug!(
+            "interrupted-batch recovery: header {committed_hash:?} of journaled block {committed} is not on disk"
+        );
+        return Ok(None);
+    };
+    if !store.has_state_root(committed_header.state_root)? {
+        debug!(
+            "interrupted-batch recovery: state root of journaled block {committed} is not on disk"
+        );
+        return Ok(None);
+    }
     let Some(head_header) = store.get_block_header(head_number)? else {
         return Ok(None);
     };
-    let mut parent_hash = head_header.hash();
-    let mut new_canonical_blocks = Vec::new();
 
-    for number in (head_number + 1)..=(head_number + MAX_PROBE) {
-        let Some(header) = store.read_fullsync_batch(number, 1).await?.pop().flatten() else {
+    // Walk back from the committed block to the head through the flushed headers,
+    // collecting the range to canonicalize; every step must chain by hash.
+    let mut range = Vec::with_capacity((committed - head_number) as usize);
+    let mut header = committed_header;
+    let mut hash = committed_hash;
+    for number in ((head_number + 1)..=committed).rev() {
+        if header.number != number {
+            debug!(
+                "interrupted-batch recovery: header {hash:?} has number {} where {number} was expected",
+                header.number
+            );
+            return Ok(None);
+        }
+        range.push((number, hash));
+        let parent_hash = header.parent_hash;
+        if number == head_number + 1 {
+            if parent_hash != head_header.hash() {
+                debug!(
+                    "interrupted-batch recovery: block {number} does not extend head {head_number}"
+                );
+                return Ok(None);
+            }
+            break;
+        }
+        let Some(parent) = store.get_block_header_by_hash(parent_hash)? else {
+            debug!(
+                "interrupted-batch recovery: header {parent_hash:?} (block {}) is not on disk",
+                number - 1
+            );
             return Ok(None);
         };
-        if header.parent_hash != parent_hash {
-            // Headers from another sync cycle; they do not extend our head.
-            return Ok(None);
-        }
-        let hash = header.hash();
-        new_canonical_blocks.push((number, hash));
-        parent_hash = hash;
-
-        if !store.has_state_root(header.state_root)? {
-            continue;
-        }
-        // `forkchoice_update` loads the head header by hash; the interrupted
-        // batch may not have flushed it yet.
-        if store.get_block_header_by_hash(hash)?.is_none() {
-            store.add_block_header(hash, header).await?;
-        }
-        store
-            .forkchoice_update(new_canonical_blocks, number, hash, None, None)
-            .await?;
-        info!(
-            "Recovered from an interrupted full-sync batch: canonical head moved from \
-             {head_number} to {number}, whose state is the one on disk"
-        );
-        return Ok(Some(number));
+        header = parent;
+        hash = parent_hash;
     }
-    Ok(None)
+    range.reverse();
+
+    store
+        .forkchoice_update(range, committed, committed_hash, None, None)
+        .await?;
+    // `anchor_to_durable_head` clamps the head to the flushed-upto marker on the
+    // next start, and the failed starts before this one walked that marker down
+    // to the old head; move it to the adopted head or the recovery repeats on
+    // every boot.
+    store.set_flushed_upto(committed)?;
+    info!(
+        "Recovered from an interrupted full-sync batch: canonical head moved from \
+         {head_number} to {committed}, whose state is the one on disk"
+    );
+    Ok(Some(committed))
 }
 
 #[cfg(test)]
