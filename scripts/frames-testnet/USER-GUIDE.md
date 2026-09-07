@@ -57,7 +57,10 @@ present.
 | --- | --- |
 | `0x0000000000000000000000000000000000008141` | `EXPIRY_VERIFIER`, 26 bytes |
 
-Installed by the client at the Hegotá boundary; it needs no genesis entry.
+Installed by the client at the Hegotá boundary; it needs no genesis entry. Only the code
+is written: the account's nonce stays `0` and any balance it held before the fork is kept.
+A node that disagrees on either field computes a different state root from the fork block
+on, so check `eth_getTransactionCount` of this address against `0x0` when you first sync.
 
 The Hegotá testnet also carries `NONCE_MANAGER` at `0x…8250` and `RECENT_ROOT_ADDRESS`
 at `0x…8272`. **Neither exists here** — `eth_getCode` returns empty at both, because

@@ -209,6 +209,12 @@ done
     | xargs sha256sum > MANIFEST.txt )
 
 mkdir -p "$OUT_DIR"
+# Publish the staged set and nothing else. A file left over from an earlier
+# publish — a renamed artifact, or a bundle from a previous genesis — would be
+# served next to the current one without appearing in MANIFEST.txt, and a
+# joiner has no way to tell the two apart. The bundle is flat, so only the
+# top-level files are replaced.
+find "$OUT_DIR" -maxdepth 1 -type f -delete
 cp -a "$STAGE"/. "$OUT_DIR"/
 
 # The bundle is read by two other users than the one that publishes it: the

@@ -59,6 +59,15 @@ looked fine from the deploying host.
 - [ ] **The feature works on-chain, observed in a real block** — not only in
       unit tests. Send the transaction type or opcode the testnet exists for
       and cite the block number.
+- [ ] **State the fork writes at activation is exactly what the spec says, checked
+      at the fork block.** A predeploy the fork installs (EIP-8141's expiry
+      verifier at `0x…8141`) must appear with the code and nothing else: read
+      `eth_getCode` and `eth_getTransactionCount` at the first block at or after
+      the fork timestamp and expect non-empty code and nonce `0x0`. Passing
+      fixtures do not cover this: every released fixture starts with the account
+      already in genesis, so a client that installs it with a nonce of one is
+      green on the whole suite and splits from spec-following clients at the
+      fork block. See gotcha 12.
 - [ ] **The EL serves the Engine API methods the CL asks for.** Check the CL's
       startup warnings; a "does not support some requested engine methods"
       line is a real gap even when the chain runs.
@@ -324,3 +333,16 @@ day) with a nested `fees` list and `[execution, state]` limits. Nothing in disco
 STATUS, or header sync exercises a transaction body, so every "is the network
 healthy" signal was green. The check that would have caught it: have the second
 client *decode a real frame transaction from the chain*, not merely connect.
+
+**12. A green fixture suite says nothing about what a fork writes at activation.**
+EIP-8141 installs the expiry verifier's code at `0x…8141` when the fork activates,
+and nothing else; a previously nonexistent account keeps nonce zero. The deploying
+client installed it with nonce one, and every released fixture starts at the frames
+fork with the account already in genesis, so the install path never runs under test
+and the whole suite passes either way. On chain, the wrong nonce sits in the state
+root of the fork block and of every block after it: a client that follows the
+specification rejects the fork block, and the fix cannot be deployed without a
+re-genesis. The check that catches it costs two RPC calls at the fork block from a
+machine outside the deployment, before the first joiner arrives: `eth_getCode`
+non-empty and `eth_getTransactionCount` equal to `0x0` at `0x…8141`. Section C now
+lists it.

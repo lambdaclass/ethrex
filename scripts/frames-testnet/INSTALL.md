@@ -574,3 +574,74 @@ of a different network and the binary has to be replaced inside running containe
 instead — and that only works if the container entrypoint was built for it. Retrofitting
 it later means recreating containers, which is the thing it exists to avoid. Record which
 path this host is built for.
+
+### What forces a re-genesis
+
+A change that alters the state root of a block already in the chain cannot be rolled out
+to a running network: a node with the fix disagrees with every node without it from that
+block on, so the chain splits instead of upgrading. Two kinds of change do this:
+
+- a fix to a state transition rule that already executed on this chain (a gas rule, a
+  predeploy install, a refund), unless every block the chain has produced happens not to
+  exercise it;
+- a change to `genesis.json`, `config.yaml` or any other genesis input, including the
+  fork schedule and the prefunded set.
+
+Everything else — RPC behaviour, peering, tooling, the faucet, the explorer — is a binary
+or service upgrade and does not need one.
+
+### Re-genesis procedure
+
+A re-genesis is section 1 and sections 5 to 9 again, with the same keys. The public
+surface (DNS, router forwards, Caddy, firewall, the faucet's and explorer's hostnames)
+does not change. What changes is the chain: a new genesis hash, a new fork id, new node
+keys and therefore new enodes and ENRs, and an empty validator set beyond the genesis
+validators. Every joiner has to wipe its data directory and start again from the new
+bundle, and every externally deposited validator has to be deposited again.
+
+1. **Announce it first.** Tell the teams running nodes the date, the chain id (unchanged)
+   and that the genesis hash, bootnodes and ENRs will change; they must not resume from
+   their existing data directories. Say what the re-genesis fixes.
+
+2. **Rebuild the execution client image** from the commit you intend to run (section 1).
+   The image tag is reused, so confirm the version string before launching:
+   ```
+   docker run --rm ethrex:frames-testnet --version
+   ```
+
+3. **Reuse the keys** (`~/frames-testnet-keys.env`) and the filled config
+   (`~/frames-testnet.yaml`) unless one of them is the reason for the re-genesis. The
+   faucet, gater admin and rich accounts keep their addresses, so nothing in the faucet
+   service or its page needs editing. Re-run the `REPLACE_WITH` check from section 4 if
+   the config was touched.
+
+4. **Stop the running chain and start the new one** (section 5). Removing the enclave
+   deletes the old chain's data on this host; there is nothing to keep from it.
+   ```
+   kurtosis enclave rm -f frames-testnet
+   kurtosis run --enclave frames-testnet ./ethereum-package --args-file ~/frames-testnet.yaml
+   ```
+   The faucet and the checkpoint-sync proxy point at fixed published ports, so they
+   follow the new enclave without reconfiguration. Restart the faucet once the new chain
+   answers: it caches its account's nonce, which the new chain starts from zero again.
+   The bootnode lists it serves it re-reads on its own when section 7 republishes them.
+
+5. **Verify the chain before publishing anything** (section 6): the three nodes agree,
+   finality advances, and frames are live. Then confirm the thing this network exists to
+   demonstrate is right at the fork block, from outside the host:
+   ```
+   # first block at or after bogotaTime: code present, nonce zero
+   eth_getCode(0x0000000000000000000000000000000000008141, <block>)          # non-empty
+   eth_getTransactionCount(0x0000000000000000000000000000000000008141, <block>)  # 0x0
+   ```
+   A node that installs the verifier with any other nonce produces a different state
+   root at that block and splits from every client that follows the specification.
+
+6. **Publish the bundle** (section 7). The script replaces the previously published files,
+   so nothing from the old chain remains in the served directory; check `MANIFEST.txt`
+   lists exactly the new set and that `genesis.json` carries the new `timestamp`.
+
+7. **Re-run the readiness checklist** (`docs/workflows/testnet-readiness.md`), sections A,
+   C and D: fetch the bundle from a machine outside the deployment, start a node from it,
+   and confirm it discovers peers and reaches the head. Only then announce that the new
+   chain is live.

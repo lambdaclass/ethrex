@@ -14,24 +14,19 @@
 # advertised public IP. They are per-deployment and two of them are secrets, so
 # they are not committed here.
 #
-# KNOWN GAP, read before deploying. The activation lever and the consensus
-# client are coupled and frames-devnet-0 does not yet satisfy both ends:
-#
-#   * The genesis generator emits `hezeTime`, which ethrex reads as its frames
-#     fork through the `hezeTime` alias on `hegota_time`. Setting
-#     `heze_fork_epoch` is the only lever that activates frames in a generated
-#     genesis, so it is what this file uses.
-#   * A consensus client running Heze drives `engine_newPayloadV6` and
-#     `engine_forkchoiceUpdatedV5`. frames-devnet-0 serves neither — it tops out
-#     at `newPayloadV5`/`forkchoiceUpdatedV4` — so the node halts at the fork
-#     boundary with no inert intermediate state.
-#
-# So this config is correct for the deployment target ("frames-devnet-0 at the
-# latest spec-tests release") only once that branch also serves the V6/V5 engine
-# pair. Until then a launch will freeze at the boundary. The alternative is to
-# activate frames at the Gloas/Amsterdam boundary instead, which needs a way to
-# emit `hezeTime` without moving the consensus fork; the generator exposes no
-# such knob today. Resolve this before the live deployment, not during it.
+# How frames activate on this chain, read before deploying. The genesis generator
+# derives the frames fork time from `heze_fork_epoch` and writes it to the
+# generated genesis.json as `bogotaTime` (ethrex reads `bogotaTime`, `hezeTime`
+# and `hegotaTime` alike as its frames fork), so that epoch is the only lever
+# that activates frames in a generated genesis. The consensus client must NOT
+# implement Heze: a Heze-aware
+# client switches to `engine_forkchoiceUpdatedV5` / `engine_newPayloadV6` at that
+# epoch, which frames-devnet-0 does not serve, and halts. The prysm images pinned
+# below are Gloas-only and ignore `HEZE_FORK_EPOCH`, so the execution layer
+# activates frames by timestamp while the consensus layer stays on Gloas. The
+# comment above `heze_fork_epoch` explains the mechanism in full. Do not swap
+# in a Heze-capable consensus client without first checking which engine
+# versions the execution client serves.
 
 participants:
   # The address these nodes advertise comes from `port_publisher.nat_exit_ip`
