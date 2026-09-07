@@ -658,6 +658,11 @@ bundle, and every externally deposited validator has to be deposited again.
    ```
    docker run --rm ethrex:frames-testnet --version
    ```
+   Pull the explorer image as well. Its tag is fixed in the config and kurtosis reuses a
+   locally cached tag, so an updated build only reaches the enclave after an explicit pull:
+   ```
+   docker pull ghcr.io/lambdaclass/dora:frames-testnet
+   ```
 
 3. **Reuse the keys** (`~/frames-testnet-keys.env`) and the filled config
    (`~/frames-testnet.yaml`) unless one of them is the reason for the re-genesis. The
