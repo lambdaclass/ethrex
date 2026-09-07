@@ -19,6 +19,8 @@ use ethrex_common::{
 };
 use serde::{Deserialize, Deserializer, de::Error as DeError};
 
+use crate::utils::RpcErr;
+
 /// JSON shape of geth's Block Override Set.
 ///
 /// `deny_unknown_fields` mirrors [`StateOverrideSet`](super::state_override::StateOverrideSet):
@@ -71,7 +73,14 @@ impl BlockOverrideSet {
     /// Produce a synthesized header by overlaying the set fields on top of
     /// `header`. The `chain_config` is consulted to resolve the blob-fee update
     /// fraction for the active fork when inverting `blobBaseFeePerGas`.
-    pub fn apply_to(&self, mut header: BlockHeader, chain_config: &ChainConfig) -> BlockHeader {
+    ///
+    /// Fails only for `blobBaseFeePerGas` on a fork with no blob schedule, where there is
+    /// no update fraction to invert against and honoring the request is impossible.
+    pub fn apply_to(
+        &self,
+        mut header: BlockHeader,
+        chain_config: &ChainConfig,
+    ) -> Result<BlockHeader, RpcErr> {
         if let Some(n) = self.number {
             header.number = n;
         }
@@ -97,23 +106,39 @@ impl BlockOverrideSet {
             header.parent_beacon_block_root = Some(r);
         }
         if let Some(desired) = self.blob_base_fee_per_gas {
-            let denom = chain_config
+            // Read after the `time` override above, so a timestamp that crosses into a
+            // blob-carrying fork resolves that fork's schedule.
+            let Some(denom) = chain_config
                 .get_fork_blob_schedule(header.timestamp)
                 .map(|s| s.base_fee_update_fraction)
-                .unwrap_or(0);
+                .filter(|d| *d != 0)
+            else {
+                return Err(RpcErr::BadParams(
+                    "blobBaseFeePerGas cannot be applied: the block's fork has no blob \
+                     schedule, so there is no update fraction to invert"
+                        .to_string(),
+                ));
+            };
             header.excess_blob_gas = Some(invert_blob_base_fee(desired, denom));
         }
         // Force hash recomputation by replacing the OnceCell.
         header.hash = Default::default();
-        header
+        Ok(header)
     }
 }
 
 /// Binary-search the smallest `excess_blob_gas` whose `fake_exponential`-derived
 /// blob base fee is ≥ `desired`. Returns 0 when the desired fee is at or below
-/// `MIN_BASE_FEE_PER_BLOB_GAS`. Returns `u64::MAX` when the desired fee is
-/// unreachable within the representable range (clamped).
+/// `MIN_BASE_FEE_PER_BLOB_GAS`, and the search ceiling (400_000_000, below where
+/// `fake_exponential` overflows) when the desired fee is unreachable within that range.
+///
+/// `denominator` must be non-zero; [`BlockOverrideSet::apply_to`] rejects the override
+/// rather than calling this with a fork that has no blob schedule.
 fn invert_blob_base_fee(desired: U256, denominator: u64) -> u64 {
+    debug_assert!(
+        denominator != 0,
+        "caller must reject a zero update fraction"
+    );
     if denominator == 0 {
         return 0;
     }
@@ -211,8 +236,27 @@ mod tests {
         assert_eq!(set.beacon_root, Some(root));
         assert!(!set.is_empty());
 
-        let header = set.apply_to(BlockHeader::default(), &ChainConfig::default());
+        let header = set
+            .apply_to(BlockHeader::default(), &ChainConfig::default())
+            .unwrap();
         assert_eq!(header.parent_beacon_block_root, Some(root));
+    }
+
+    /// Pre-Cancun there is no blob schedule, so `fake_exponential` has no update
+    /// fraction to invert against. Accepting the override and writing
+    /// `excess_blob_gas: Some(0)` would silently ignore what the caller asked for, so it
+    /// has to be an error.
+    #[test]
+    fn blob_base_fee_override_without_a_blob_schedule_is_rejected() {
+        let v = json!({ "blobBaseFeePerGas": "0x100" });
+        let set: BlockOverrideSet = serde_json::from_value(v).unwrap();
+        let err = set
+            .apply_to(BlockHeader::default(), &ChainConfig::default())
+            .expect_err("a blob fee override with no blob schedule must be rejected");
+        assert!(
+            format!("{err}").contains("blobBaseFeePerGas"),
+            "error should name the field, got: {err}"
+        );
     }
 
     #[test]

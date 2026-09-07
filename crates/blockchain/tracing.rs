@@ -39,6 +39,13 @@ impl TraceCallOverrides {
     fn has_state(&self) -> bool {
         !self.state.is_empty()
     }
+
+    /// True when the overlay must be installed. A Block Override Set alone is enough:
+    /// the overlay carries the `BLOCKHASH`-past-the-real-tip clamp, which is a property
+    /// of executing against a synthetic block rather than of the state overrides.
+    fn needs_overlay(&self) -> bool {
+        self.has_state() || self.effective_header.is_some()
+    }
 }
 
 impl Blockchain {
@@ -331,7 +338,7 @@ impl Blockchain {
             // Built from the real header even under a Block Override Set, so `state_root`
             // resolves; the synthetic header only feeds the EVM environment.
             let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.clone())?;
-            if overrides.has_state() {
+            if overrides.needs_overlay() {
                 return Ok(self.new_overlaid_evm(
                     vm_db,
                     overrides.state.clone(),

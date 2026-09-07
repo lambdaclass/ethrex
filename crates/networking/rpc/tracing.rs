@@ -470,19 +470,18 @@ impl TraceCallRequest {
             return Ok(TraceCallOverrides::default());
         }
 
-        let effective_header = block_overrides.map(|bo| {
-            let chain_config = context.storage.get_chain_config();
-            bo.apply_to(block.header.clone(), &chain_config)
-        });
+        let effective_header = match block_overrides {
+            Some(bo) => {
+                let chain_config = context.storage.get_chain_config();
+                Some(bo.apply_to(block.header.clone(), &chain_config)?)
+            }
+            None => None,
+        };
         let state = match (has_state, self.trace_config.state_overrides.clone()) {
             (true, Some(set)) => set.into_overrides(),
             _ => Default::default(),
         };
-        let real_head_number = if has_state {
-            context.storage.get_latest_block_number()?
-        } else {
-            0
-        };
+        let real_head_number = context.storage.get_latest_block_number()?;
 
         Ok(TraceCallOverrides {
             state,
