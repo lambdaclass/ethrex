@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use ethrex_blockchain::vm::{OverlaidVmDatabase, StoreVmDatabase};
+use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::H256;
 use ethrex_common::types::GenericTransaction;
 use ethrex_common::{
@@ -58,6 +58,26 @@ struct TraceConfig {
     timeout: Option<Duration>,
     #[serde(default)]
     reexec: Option<u32>,
+}
+
+/// geth's `TraceCallConfig`: a [`TraceConfig`] plus the two override sets, which
+/// geth carries as *fields of the 3rd config object* rather than as separate
+/// positional params (`eth/tracers/api.go`, `TraceCallConfig`).
+///
+/// Deliberately not `deny_unknown_fields`: geth's `TraceConfig` embeds its
+/// struct-logger config, so a legitimate client may send `disableStack`,
+/// `enableMemory` and friends at this level. Rejecting unknown keys here would
+/// break those requests; the fix for silently-dropped overrides is to *accept*
+/// the fields, which is what this struct does.
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct TraceCallConfig {
+    #[serde(flatten)]
+    trace_config: TraceConfig,
+    #[serde(default)]
+    state_overrides: Option<StateOverrideSet>,
+    #[serde(default)]
+    block_overrides: Option<BlockOverrideSet>,
 }
 
 /// The tracer variant to use for a debug trace request.
@@ -398,24 +418,26 @@ impl RpcHandler for TraceCallRequest {
             Some(v) if !v.is_null() => Some(BlockIdentifierOrHash::parse(v.clone(), 1)?),
             _ => None,
         };
-        let trace_config = match params.get(2) {
+        let call_config: TraceCallConfig = match params.get(2) {
             Some(v) if !v.is_null() => serde_json::from_value(v.clone())?,
-            _ => TraceConfig::default(),
+            _ => TraceCallConfig::default(),
         };
-        let state_overrides = match params.get(3) {
+        // Positional params 4 and 5 are an ethrex extension kept for backwards
+        // compatibility. The geth-shaped nested fields win when both are present.
+        let positional_state_overrides = match params.get(3) {
             Some(v) if !v.is_null() => Some(serde_json::from_value(v.clone())?),
             _ => None,
         };
-        let block_overrides = match params.get(4) {
+        let positional_block_overrides = match params.get(4) {
             Some(v) if !v.is_null() => Some(serde_json::from_value(v.clone())?),
             _ => None,
         };
         Ok(TraceCallRequest {
             transaction,
             block,
-            trace_config,
-            state_overrides,
-            block_overrides,
+            trace_config: call_config.trace_config,
+            state_overrides: call_config.state_overrides.or(positional_state_overrides),
+            block_overrides: call_config.block_overrides.or(positional_block_overrides),
         })
     }
 
@@ -452,11 +474,11 @@ impl RpcHandler for TraceCallRequest {
             Box::new(move || {
                 let inner = StoreVmDatabase::new(storage, real_header.clone())?;
                 let mut vm = match state_overrides {
-                    Some(set) if !set.is_empty() => {
-                        let wrapper =
-                            OverlaidVmDatabase::new(inner, set.into_overrides(), real_head_number);
-                        blockchain.new_evm(wrapper)?
-                    }
+                    Some(set) if !set.is_empty() => blockchain.new_overlaid_evm(
+                        inner,
+                        set.into_overrides(),
+                        real_head_number,
+                    )?,
                     _ => blockchain.new_evm(inner)?,
                 };
 
@@ -496,7 +518,25 @@ impl RpcHandler for TraceCallRequest {
                             PrestateResult::Diff(d) => Ok(serde_json::to_value(d)?),
                         }
                     }
-                    TracerType::OpcodeTracer => todo!(),
+                    TracerType::OpcodeTracer => {
+                        let cfg: OpcodeTracerConfig = match tracer_config {
+                            Some(v) => serde_json::from_value(v)?,
+                            None => OpcodeTracerConfig::default(),
+                        };
+                        let emit = StructLoggerEmit {
+                            mem_size: cfg.enable_memory,
+                            return_data: cfg.enable_return_data,
+                            refund: false,
+                        };
+                        let result =
+                            vm.opcodes_call_from_generic(&transaction, &effective_header, cfg)?;
+                        // `debug_traceCall` returns the geth-RPC structLogger shape,
+                        // same as `debug_traceTransaction`.
+                        Ok(serde_json::to_value(StructLoggerResult {
+                            result: &result,
+                            emit,
+                        })?)
+                    }
                 }
             });
 

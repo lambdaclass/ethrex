@@ -20,8 +20,12 @@ use ethrex_common::{
 use serde::{Deserialize, Deserializer, de::Error as DeError};
 
 /// JSON shape of geth's Block Override Set.
+///
+/// `deny_unknown_fields` mirrors [`StateOverrideSet`](super::state_override::StateOverrideSet):
+/// a typo'd or unmodelled override (geth's `withdrawals`, say) must be an error rather
+/// than a silent drop, which would return a plausible-looking but wrong result.
 #[derive(Debug, Default, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BlockOverrideSet {
     #[serde(default, deserialize_with = "deser_u64_hex_opt")]
     pub number: Option<u64>,
@@ -40,6 +44,15 @@ pub struct BlockOverrideSet {
     pub blob_base_fee_per_gas: Option<U256>,
     #[serde(default, deserialize_with = "deser_u256_hex_opt")]
     pub difficulty: Option<U256>,
+    /// Geth's `beaconRoot`, applied as the header's `parentBeaconBlockRoot`.
+    ///
+    /// Caveat: ethrex's simulation paths execute the transaction alone — they run no
+    /// system contracts — so this changes the header field (and therefore the header
+    /// hash) but does not write the root into the EIP-4788 beacon-roots ring buffer.
+    /// A simulated contract reading `BEACON_ROOTS_ADDRESS` will not observe it; to
+    /// simulate that, override the contract's storage through the State Override Set.
+    #[serde(default)]
+    pub beacon_root: Option<H256>,
 }
 
 impl BlockOverrideSet {
@@ -52,6 +65,7 @@ impl BlockOverrideSet {
             && self.base_fee_per_gas.is_none()
             && self.blob_base_fee_per_gas.is_none()
             && self.difficulty.is_none()
+            && self.beacon_root.is_none()
     }
 
     /// Produce a synthesized header by overlaying the set fields on top of
@@ -78,6 +92,9 @@ impl BlockOverrideSet {
         }
         if let Some(d) = self.difficulty {
             header.difficulty = d;
+        }
+        if let Some(r) = self.beacon_root {
+            header.parent_beacon_block_root = Some(r);
         }
         if let Some(desired) = self.blob_base_fee_per_gas {
             let denom = chain_config
@@ -168,6 +185,34 @@ mod tests {
         assert_eq!(set.base_fee_per_gas, Some(0x10));
         assert_eq!(set.blob_base_fee_per_gas, Some(U256::from(0x100)));
         assert_eq!(set.difficulty, Some(U256::zero()));
+    }
+
+    /// A typo'd or unsupported field must be an error, not a silent drop. Geth's
+    /// `BlockOverrides` carries fields ethrex doesn't model (`withdrawals`), and a
+    /// silently-ignored override yields a plausible-looking but wrong result.
+    #[test]
+    fn unknown_field_is_rejected() {
+        let v = json!({ "number": "0x1", "withdrawals": [] });
+        let err = serde_json::from_value::<BlockOverrideSet>(v)
+            .expect_err("unknown field should be rejected");
+        assert!(
+            err.to_string().contains("withdrawals"),
+            "error should name the offending field, got: {err}"
+        );
+    }
+
+    /// Geth's `BlockOverrides.BeaconRoot`, applied as the header's
+    /// `parentBeaconBlockRoot`.
+    #[test]
+    fn beacon_root_lands_on_the_header() {
+        let root = H256::from_low_u64_be(0xbeac);
+        let v = json!({ "beaconRoot": format!("{root:#x}") });
+        let set: BlockOverrideSet = serde_json::from_value(v).unwrap();
+        assert_eq!(set.beacon_root, Some(root));
+        assert!(!set.is_empty());
+
+        let header = set.apply_to(BlockHeader::default(), &ChainConfig::default());
+        assert_eq!(header.parent_beacon_block_root, Some(root));
     }
 
     #[test]

@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::{
@@ -11,10 +12,10 @@ use crate::{
 };
 use ethrex_blockchain::{
     Blockchain,
-    vm::{OverlaidVmDatabase, StoreVmDatabase},
+    vm::{StateOverride, StoreVmDatabase},
 };
 use ethrex_common::{
-    H256,
+    Address, H256,
     types::{AccessListEntry, BlockHash, BlockHeader, BlockNumber, GenericTransaction, TxKind},
 };
 
@@ -65,8 +66,12 @@ pub struct GetTransactionReceiptRequest {
 pub struct CreateAccessListRequest {
     pub transaction: GenericTransaction,
     pub block: Option<BlockIdentifier>,
-    /// Optional 3rd JSON-RPC param: geth State Override Set. Geth does not accept
-    /// a Block Override Set on this endpoint; a 4th param is rejected at parse time.
+    /// Optional 3rd JSON-RPC param: geth State Override Set.
+    ///
+    /// An ethrex extension: geth's `eth_createAccessList` takes two params only
+    /// (transaction, block) and accepts no override sets at all. Accepting a state
+    /// override is a superset of geth's contract, so geth-shaped requests still work.
+    /// A 4th param is rejected at parse time.
     pub state_overrides: Option<StateOverrideSet>,
 }
 #[derive(Default)]
@@ -139,12 +144,16 @@ impl RpcHandler for CallRequest {
             _ => return Ok(Value::Null),
         };
         let real_head_number = context.storage.get_latest_block_number().await?;
+        let state_overrides = self
+            .state_overrides
+            .clone()
+            .map(StateOverrideSet::into_overrides);
         let result = simulate_tx_with_overrides(
             &self.transaction,
             &header,
             context.storage,
             context.blockchain,
-            self.state_overrides.clone(),
+            state_overrides.as_ref(),
             self.block_overrides.clone(),
             real_head_number,
         )?;
@@ -392,9 +401,11 @@ impl RpcHandler for CreateAccessListRequest {
         let inner = StoreVmDatabase::new(context.storage.clone(), header.clone())?;
         let (gas_used, access_list, error) = match self.state_overrides.clone() {
             Some(set) if !set.is_empty() => {
-                let wrapper =
-                    OverlaidVmDatabase::new(inner, set.into_overrides(), real_head_number);
-                let mut vm = context.blockchain.new_evm(wrapper)?;
+                let mut vm = context.blockchain.new_overlaid_evm(
+                    inner,
+                    set.into_overrides(),
+                    real_head_number,
+                )?;
                 vm.create_access_list(&self.transaction, &header)?
             }
             _ => {
@@ -566,6 +577,13 @@ impl RpcHandler for EstimateGasRequest {
             .await?;
         }
 
+        // Converted once, then reused: the binary search below runs this up to ~64
+        // times, and `into_overrides` hashes every override code blob.
+        let state_overrides = self
+            .state_overrides
+            .clone()
+            .map(StateOverrideSet::into_overrides);
+
         // Check whether the execution is possible
         let mut transaction = transaction.clone();
         transaction.gas = Some(highest_gas_limit);
@@ -574,7 +592,7 @@ impl RpcHandler for EstimateGasRequest {
             &block_header,
             storage.clone(),
             blockchain.clone(),
-            self.state_overrides.clone(),
+            state_overrides.as_ref(),
             self.block_overrides.clone(),
             real_head_number,
         )?;
@@ -605,7 +623,7 @@ impl RpcHandler for EstimateGasRequest {
                 &block_header,
                 storage.clone(),
                 blockchain.clone(),
-                self.state_overrides.clone(),
+                state_overrides.as_ref(),
                 self.block_overrides.clone(),
                 real_head_number,
             );
@@ -660,10 +678,15 @@ fn simulate_tx(
 
 /// Override-aware variant of [`simulate_tx`].
 ///
-/// `state_overrides` (geth State Override Set) wraps the historical database in
-/// [`OverlaidVmDatabase`] so per-account balance/nonce/code/storage are observed
-/// instead of the real values. `block_overrides` (geth Block Override Set)
-/// synthesizes a header with the requested fields replaced.
+/// `state_overrides` is the *already converted* geth State Override Set; it is
+/// borrowed rather than owned because `eth_estimateGas` calls this once per
+/// binary-search step and [`StateOverrideSet::into_overrides`] hashes every
+/// override code blob. Convert once at the handler, then pass the result in.
+/// It reaches the EVM through [`Blockchain::new_overlaid_evm`], which applies both
+/// the per-account overlay and any `movePrecompileToAddress` relocations.
+///
+/// `block_overrides` (geth Block Override Set) synthesizes a header with the
+/// requested fields replaced.
 ///
 /// `real_head_number` is the height of the real chain tip; the wrapper returns
 /// zero for `BLOCKHASH(n)` when `n > real_head_number`, matching geth's behavior
@@ -673,7 +696,7 @@ pub(crate) fn simulate_tx_with_overrides(
     real_header: &BlockHeader,
     storage: Store,
     blockchain: Arc<Blockchain>,
-    state_overrides: Option<StateOverrideSet>,
+    state_overrides: Option<&BTreeMap<Address, StateOverride>>,
     block_overrides: Option<BlockOverrideSet>,
     real_head_number: BlockNumber,
 ) -> Result<ExecutionResult, RpcErr> {
@@ -688,9 +711,8 @@ pub(crate) fn simulate_tx_with_overrides(
     // from the SYNTHETIC header so number/timestamp/etc. reflect the override.
     let inner = StoreVmDatabase::new(storage, real_header.clone())?;
     let raw_result = match state_overrides {
-        Some(set) if !set.is_empty() => {
-            let wrapper = OverlaidVmDatabase::new(inner, set.into_overrides(), real_head_number);
-            let mut vm = blockchain.new_evm(wrapper)?;
+        Some(overrides) if !overrides.is_empty() => {
+            let mut vm = blockchain.new_overlaid_evm(inner, overrides.clone(), real_head_number)?;
             vm.simulate_tx_from_generic(transaction, &effective_header)?
         }
         _ => {
