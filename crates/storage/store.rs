@@ -4349,9 +4349,9 @@ impl Store {
         let Some(bytes) = read.get(STATE_HISTORY, &block_number.to_be_bytes())? else {
             return Ok(None);
         };
-        let entry = JournalEntry::decode(&bytes)
-            .map_err(|e| StoreError::Custom(format!("STATE_HISTORY entry {block_number}: {e}")))?;
-        Ok(Some(entry.block_hash))
+        JournalEntry::decode_block_hash(&bytes)
+            .map(Some)
+            .map_err(|e| StoreError::Custom(format!("STATE_HISTORY entry {block_number}: {e}")))
     }
 
     /// Returns the lowest block number with a `STATE_HISTORY` entry. Returns `None`
@@ -4645,13 +4645,25 @@ impl Store {
         &last_written[0..64] > account_nibbles.as_ref()
     }
 
-    /// Records that every block up to `block_number` is on disk, on disk and in the
-    /// buffer's mirror of the marker, so the next start anchors at that height.
+    /// Raises the `flushed_upto` marker to `block_number`, on disk and in the
+    /// buffer's mirror, so the next start anchors at that height. The marker is a
+    /// durability floor and only moves forward: a value at or below the current
+    /// one is a no-op.
     ///
     /// Used when startup adopts a head above the recorded one (interrupted
     /// full-sync batch): the blocks were flushed by the persist worker before the
-    /// interruption, but earlier failed starts may have walked the marker down.
-    pub fn set_flushed_upto(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+    /// interruption, but the failed starts in between walked the marker down.
+    ///
+    /// Must run while the persist worker is idle (at startup, before p2p and RPC
+    /// exist): the buffer update is a read-clone-swap with no compare-and-swap,
+    /// so a concurrent persist message could lose either mutation.
+    pub fn advance_flushed_upto(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+        if self
+            .read_flushed_upto_opt()?
+            .is_some_and(|current| current >= block_number)
+        {
+            return Ok(());
+        }
         let mut tx = self.backend.begin_write()?;
         write_flushed_upto(tx.as_mut(), block_number)?;
         tx.commit()?;
@@ -4828,8 +4840,11 @@ fn decode_flushed_upto(bytes: &[u8]) -> Result<BlockNumber, StoreError> {
     Ok(BlockNumber::from_le_bytes(arr))
 }
 
-/// RCU-swap the block-data buffer. The persist worker is the sole caller in
-/// production (no lost-update race); test helpers also call this on one thread.
+/// RCU-swap the block-data buffer: read-clone-mutate-swap with no compare-and-swap,
+/// so two concurrent callers lose one mutation. In production the persist worker
+/// is the only caller while the node runs; [`Store::advance_flushed_upto`] also
+/// calls it, but only at startup before the worker has any message in flight.
+/// Test helpers call it on one thread.
 fn mutate_block_buffer(
     buffer: &Arc<RwLock<Arc<BlockDataBuffer>>>,
     f: impl FnOnce(&mut BlockDataBuffer),
@@ -5186,7 +5201,8 @@ fn commit_to_disk(
     // into this write batch. After a deep reorg, the first
     // new-chain commit advances disk from the OLD chain's edge `D` directly to the new
     // chain's tip `T` in a single atomic write; the overlay supplies the bridge for keys
-    // layer_T does not touch. Only meaningful when `!is_batch` (full sync does not journal).
+    // layer_T does not touch. Only meaningful when `!is_batch`: the legacy batch-store path
+    // (`wait_for_flush == true`) is the one path that does not journal.
     let overlay_for_reconciliation = if !is_batch {
         trie.overlay().cloned()
     } else {
@@ -5276,8 +5292,10 @@ fn commit_to_disk(
         // Reverse-diff accumulators for this block's journal entry, one per CF. Each entry
         // stores the on-disk key as-is (storage CFs carry their nibble-encoded account-hash
         // prefix), so a future rollback applies diffs directly without interpretation. For
-        // full sync (`is_batch == true`), no journal entry is written: reorgs aren't
-        // supported during full sync, and journaling would slow it down by a read per write.
+        // the legacy batch-store path (`is_batch == true`) no journal entry is written.
+        // Every per-block path journals — including full sync through the unified
+        // pipeline, whose interrupted-batch recovery at startup relies on the newest
+        // entry naming the block whose state is on disk.
         let mut journal_account_trie: FlatDiff = Vec::new();
         let mut journal_storage_trie: FlatDiff = Vec::new();
         let mut journal_account_flat: FlatDiff = Vec::new();
@@ -6611,6 +6629,51 @@ mod state_history_tests {
         );
     }
 
+    /// The interrupted-batch recovery at startup identifies the block whose state is
+    /// on disk from the newest `STATE_HISTORY` entry, so the entry's block hash must
+    /// read back exactly as journaled and an absent entry must read as `None`.
+    #[tokio::test]
+    async fn journaled_block_hash_reads_back() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(
+            backend.clone(),
+            dir.path().to_path_buf(),
+            1,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
+
+        seed_journal_entries(&backend, &[3, 11]);
+        assert_eq!(
+            store.get_state_history_block_hash(11).unwrap(),
+            Some(H256::repeat_byte(11))
+        );
+        assert_eq!(store.get_state_history_block_hash(4).unwrap(), None);
+    }
+
+    /// `flushed_upto` is a durability floor: `advance_flushed_upto` raises it and
+    /// ignores a value at or below the current marker.
+    #[tokio::test]
+    async fn advance_flushed_upto_only_moves_forward() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(
+            backend,
+            dir.path().to_path_buf(),
+            1,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
+
+        store.advance_flushed_upto(10).unwrap();
+        assert_eq!(store.read_flushed_upto().unwrap(), 10);
+        store.advance_flushed_upto(5).unwrap();
+        assert_eq!(store.read_flushed_upto().unwrap(), 10);
+        store.advance_flushed_upto(12).unwrap();
+        assert_eq!(store.read_flushed_upto().unwrap(), 12);
+    }
+
     /// `lowest_state_history_block_number` SHALL return the min key present in
     /// `STATE_HISTORY`, or `None` when the table is empty. Phase 2's cap fallback
     /// depends on this when no finalized hash is known.
@@ -7557,41 +7620,6 @@ mod backfill_write_tests {
                 "block {n} must have a body (no gap left by resume)"
             );
         }
-    }
-}
-
-#[cfg(test)]
-mod state_history_hash_tests {
-    use super::*;
-    use crate::journal::JournalEntry;
-
-    /// The interrupted-batch recovery at startup identifies the block whose state is
-    /// on disk from the newest `STATE_HISTORY` entry, so the entry's block hash must
-    /// read back exactly as journaled, and an absent entry must read as `None`.
-    #[test]
-    fn journaled_block_hash_reads_back() {
-        let store = Store::new("", EngineType::InMemory).unwrap();
-        let entry = JournalEntry {
-            block_hash: H256::repeat_byte(0xab),
-            parent_state_root: H256::repeat_byte(0xcd),
-            account_trie_diff: vec![],
-            storage_trie_diff: vec![],
-            account_flat_diff: vec![],
-            storage_flat_diff: vec![],
-        };
-        store
-            .put_state_history_entry_for_test(42, &entry.encode())
-            .unwrap();
-
-        assert_eq!(
-            store.highest_state_history_block_number().unwrap(),
-            Some(42)
-        );
-        assert_eq!(
-            store.get_state_history_block_hash(42).unwrap(),
-            Some(H256::repeat_byte(0xab))
-        );
-        assert_eq!(store.get_state_history_block_hash(41).unwrap(), None);
     }
 }
 

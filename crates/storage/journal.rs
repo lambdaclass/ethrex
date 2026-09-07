@@ -149,6 +149,32 @@ impl JournalEntry {
         out
     }
 
+    /// Read only the block hash of an entry: the version byte followed by the
+    /// 32-byte hash at offset 1. Skips the reverse diffs, which can run to
+    /// megabytes for a state-heavy block, and does not depend on their
+    /// integrity. Rejects a foreign version byte like [`Self::decode`].
+    pub fn decode_block_hash(bytes: &[u8]) -> Result<H256, JournalDecodeError> {
+        let Some(&version) = bytes.first() else {
+            return Err(JournalDecodeError::Truncated {
+                offset: 0,
+                expected: 1,
+            });
+        };
+        if version != JOURNAL_VERSION {
+            return Err(JournalDecodeError::VersionMismatch {
+                expected: JOURNAL_VERSION,
+                found: version,
+            });
+        }
+        let Some(hash) = bytes.get(1..33) else {
+            return Err(JournalDecodeError::Truncated {
+                offset: 1,
+                expected: 32,
+            });
+        };
+        Ok(H256::from_slice(hash))
+    }
+
     /// Decode an entry from its on-disk byte representation.
     ///
     /// Returns [`JournalDecodeError::VersionMismatch`] if the version byte is
@@ -738,5 +764,37 @@ mod tests {
             buf.len(),
             "estimate must equal actual encoded length so encode() avoids realloc"
         );
+    }
+    #[test]
+    fn decode_block_hash_reads_the_hash_without_the_diffs() {
+        let entry = JournalEntry {
+            block_hash: H256::repeat_byte(0xab),
+            parent_state_root: H256::repeat_byte(0xcd),
+            account_trie_diff: vec![(vec![1, 2, 3], Some(vec![4]))],
+            storage_trie_diff: vec![],
+            account_flat_diff: vec![(vec![9], None)],
+            storage_flat_diff: vec![],
+        };
+        let bytes = entry.encode();
+        assert_eq!(
+            JournalEntry::decode_block_hash(&bytes).unwrap(),
+            H256::repeat_byte(0xab)
+        );
+        // Diffs are not looked at: a truncated tail still yields the hash ...
+        assert_eq!(
+            JournalEntry::decode_block_hash(&bytes[..40]).unwrap(),
+            H256::repeat_byte(0xab)
+        );
+        // ... but a foreign version byte or a record shorter than the hash is rejected.
+        let mut foreign = bytes.clone();
+        foreign[0] = JOURNAL_VERSION + 1;
+        assert!(matches!(
+            JournalEntry::decode_block_hash(&foreign),
+            Err(JournalDecodeError::VersionMismatch { .. })
+        ));
+        assert!(matches!(
+            JournalEntry::decode_block_hash(&bytes[..20]),
+            Err(JournalDecodeError::Truncated { .. })
+        ));
     }
 }
