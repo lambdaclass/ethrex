@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-8e6e5d72.js";
+            window.path_to_searchindex_js = "searchindex-edee57f9.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-c68b2aa5.js"></script>
@@ -2391,6 +2391,15 @@ the node logs a warning rather than pretending otherwise.</p>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <h1 id="databases"><a class="header" href="#databases">Databases</a></h1>
 <p>Ethrex uses a versioning system to ensure we don’t run on invalid data if we restart the node after a breaking change to the DB structure. This system consists of a <code>STORE_SCHEMA_VERSION</code> constant, defined in <code>crates/storage/lib.rs</code> that must be increased after any breaking change and that is checked every time we start the node.</p>
+<h2 id="schema-version-checks-at-startup"><a class="header" href="#schema-version-checks-at-startup">Schema version checks at startup</a></h2>
+<p>The version is stored in <code>metadata.json</code> inside the datadir and compared with the binary’s <code>STORE_SCHEMA_VERSION</code> before the database is opened:</p>
+<ul>
+<li><strong>Same version</strong>: the node starts normally.</li>
+<li><strong>Database older than the binary</strong>: the pending migrations run automatically, one version at a time, and <code>metadata.json</code> is updated after each step. Migrations are forward-only.</li>
+<li><strong>Database newer than the binary</strong>: the node refuses to start with an <code>Incompatible DB Version</code> error and leaves the database untouched. There is no downgrade path, but nothing needs to be erased: start an ethrex build that supports the database’s schema version (the one that wrote it, or newer) and the node resumes where it left off. <code>ethrex removedb</code> is only needed if you intend to abandon the database and resync from scratch.</li>
+<li><strong>No version file next to an existing database</strong>: the database predates versioning and cannot be migrated; a resync (<code>ethrex removedb</code>) is required.</li>
+</ul>
+<p>The newer-database case is easy to reach when the same datadir is shared by binaries built from different branches (for example, an image built from <code>main</code> and one built from a devnet branch): the first newer binary that opens the datadir stamps its own version, and the older one then refuses to open it.</p>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <h1 id="networking"><a class="header" href="#networking">Networking</a></h1>
 <p>The network crate handles the ethereum networking protocols. This involves:</p>
