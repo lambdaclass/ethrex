@@ -21,6 +21,8 @@ const RELOCATED: &str = "0x0000000000000000000000000000000000000aaa";
 const CALLER: &str = "0x000000000000000000000000000000000000beef";
 /// Calldata echoed back by the identity precompile.
 const PAYLOAD: &str = "0x11223344";
+/// Address the subcall tests install bytecode at.
+const CALLEE: &str = "0x000000000000000000000000000000000000cafe";
 
 fn eth_call(to: &str, overrides: serde_json::Value) -> String {
     json!({
@@ -156,5 +158,101 @@ async fn trace_call_treats_a_vacated_precompile_address_as_a_normal_account() {
     assert!(
         !output.contains("11223344"),
         "vacated address still ran the identity precompile; frame output: {output}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Dispatch from inside contract bytecode.
+//
+// Every test above calls the relocated address at the *top level*, which reaches only
+// the dispatch in `vm.rs`. The CALL family dispatches separately, in
+// `opcode_handlers/system.rs`, and the branch patched two expressions there: the
+// `address_is_precompile` predicate and the `effective_precompile_address` resolution.
+// Reaching a moved precompile through `STATICCALL` is the only way to exercise them.
+// ---------------------------------------------------------------------------
+
+/// PUSH4 0x11223344, MSTORE at 0, STATICCALL(gas, `target`, 0, 32, 32, 32), POP,
+/// RETURN mem[32..64].
+///
+/// Calls `target` with one 32-byte word and returns whatever it echoed back, so the
+/// identity precompile running there is visible as a word ending in `11223344` and its
+/// absence as a word of zeros (an empty account's `STATICCALL` succeeds writing nothing,
+/// and memory reads zero). `target` is a `PUSH2` literal, so it must fit in two bytes.
+fn staticcall_and_return(target: u16) -> String {
+    format!("0x6311223344600052602060206020600061{target:04x}5afa5060206020f3")
+}
+
+fn eth_call_no_data(to: &str, overrides: serde_json::Value) -> String {
+    json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "eth_call",
+        "params": [
+            { "from": CALLER, "to": to, "data": "0x" },
+            "latest",
+            overrides
+        ]
+    })
+    .to_string()
+}
+
+async fn call_result(overrides: serde_json::Value) -> String {
+    let storage = setup_store().await;
+    let context = default_context_with_storage(storage).await;
+    let response = call_http(context, eth_call_no_data(CALLEE, overrides)).await;
+    response
+        .get("result")
+        .and_then(|r| r.as_str())
+        .unwrap_or_else(|| panic!("expected a string result, got: {response}"))
+        .to_owned()
+}
+
+/// Control: with no relocation, `STATICCALL` to 0x04 reaches the identity precompile.
+/// Without this the negative assertion in the vacated-address test below could pass
+/// simply because the bytecode never worked.
+#[tokio::test]
+async fn subcall_reaches_the_identity_precompile_at_its_own_address() {
+    let result = call_result(json!({
+        CALLEE: { "code": staticcall_and_return(0x0004) }
+    }))
+    .await;
+
+    assert!(
+        result.contains("11223344"),
+        "the STATICCALL harness itself is broken: {result}"
+    );
+}
+
+/// A relocated precompile must dispatch when reached from contract bytecode, which goes
+/// through `system.rs` rather than the top-level path. Exercises both patched
+/// expressions: the destination has to *be* a precompile, and it has to resolve back to
+/// the implementation at 0x04.
+#[tokio::test]
+async fn subcall_dispatches_a_moved_precompile_at_the_destination() {
+    let result = call_result(json!({
+        CALLEE: { "code": staticcall_and_return(0x0aaa) },
+        IDENTITY: { "movePrecompileToAddress": RELOCATED }
+    }))
+    .await;
+
+    assert!(
+        result.contains("11223344"),
+        "identity precompile did not run at the relocated address via STATICCALL: {result}"
+    );
+}
+
+/// And the vacated address must stop being a precompile at this dispatch site too — the
+/// `address_is_precompile` half on its own, since no resolution is involved.
+#[tokio::test]
+async fn subcall_treats_a_vacated_precompile_address_as_a_normal_account() {
+    let result = call_result(json!({
+        CALLEE: { "code": staticcall_and_return(0x0004) },
+        IDENTITY: { "movePrecompileToAddress": RELOCATED }
+    }))
+    .await;
+
+    assert!(
+        !result.contains("11223344"),
+        "vacated address still ran the identity precompile via STATICCALL: {result}"
     );
 }
