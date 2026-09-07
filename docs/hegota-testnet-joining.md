@@ -139,7 +139,8 @@ exactly must reproduce them to follow this chain:
 - **`SIGPARAM(0x03, i)` returns `len(signature)` for every scheme.** The pin defines it for
   `ARBITRARY` entries only and halts otherwise. This one is lenient and it is exercised:
   blocks 2787 and 2792 carry shielded-pool spends whose validation prefix reads it on a
-  secp256k1 entry, and a pin-exact client rejects both blocks.
+  secp256k1 entry, and a pin-exact client rejects both blocks. Confirmed by replaying the
+  chain into the fixed ethrex: it stops at 2787, and it follows every block from 13342 on.
 - **`TX_VALUE_COST` is charged for every frame with `value > 0`**, where the pin charges it
   only for a frame with a target other than `tx.sender`. Stricter: a transaction the pin
   admits can be rejected here as under-declared, never the reverse.

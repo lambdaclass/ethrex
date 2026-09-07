@@ -202,6 +202,16 @@ execution test that reads `0x01` and `0x03` on the same correctly signed secp256
 the halt is pinned to the param rather than to the entry. The pool's dispatcher dropped the
 check in the same review (the protocol already fixes a secp256k1 signature at 65 bytes).
 
+**Verified against the live chain on 2026-09-07, without touching it.** Blocks 1–54850 were
+exported from a node's local RPC with `debug_getRawBlock` (the public endpoint's guard hides
+`debug_*`) and fed to `ethrex import` in local databases. The fixed binary imports 1–2786 and
+rejects 2787 with `Invalid frame transaction: VERIFY frame 0 (target 0x753d91ee…, 1407 bytes of
+code) failed: Invalid Opcode`, the old dispatcher's `SIGPARAM(0, 3)` read; the pre-fix binary
+imports the same file. With the pre-fix binary's state at 13341, the fixed binary imported
+13342–54850 (41,509 blocks, 29 frame transactions, including the merged tooling's spends at
+13342/13347/13352) with every state root matching. Only history stands between the fix and
+the chain.
+
 **Action:** the fix is consensus-visible and the current chain contains blocks that depend on
 the old behaviour, so it reaches the network only with a re-genesis; carried until then, and
 recorded in the joining document as a live divergence.
@@ -221,7 +231,10 @@ the reverse. The shielded pool is unaffected (its spends carry `value = 0` and i
 targets the pool from an EOA), which is why the live lifecycle never surfaced it.
 
 Fixed at `77e502ef4` with the predicate mirrored in `value_transfer_cost` and tests for the
-three cases (another account: charged; no target: free; the sender itself: free).
+three cases (another account: charged; no target: free; the sender itself: free). The replay
+described in §3.7 covers this change too: no frame transaction on the chain carries a
+targetless or self-targeted value frame, so the fixed binary reproduces every receipt root
+from 13342 to the head.
 
 **Action:** consensus-visible; re-genesis to deploy. Carried until then.
 

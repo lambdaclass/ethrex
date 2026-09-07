@@ -347,6 +347,48 @@ the life of the chain.** The remedies are:
 
 Plan for this before launch by keeping the genesis admin cold.
 
+## Validating a consensus change against the live chain without touching it
+
+Before a consensus-visible change reaches the nodes, replay the public chain through a local
+build of it. Nothing below talks to the live nodes' engine or peer ports, writes on the host,
+or starts a node that could peer with the network: it reads blocks and imports them into a
+throwaway database.
+
+```bash
+# 1. Export the chain from one node's LOCAL RPC as `<number> <rlp>` lines. The public endpoint's
+#    guard hides debug_*; 127.0.0.1:32003 on the host serves it. Streamed over ssh, nothing is
+#    written on the host. ~80 MB and ~4 minutes for 55k blocks.
+ssh admin@<host> 'python3 -' <<'PY' > chain.hex
+import http.client, json, sys
+c = http.client.HTTPConnection("127.0.0.1", 32003, timeout=30)
+def rpc(m, p):
+    c.request("POST", "/", json.dumps({"jsonrpc":"2.0","id":1,"method":m,"params":p}),
+              {"content-type": "application/json"})
+    return json.loads(c.getresponse().read())["result"]
+head = int(rpc("eth_blockNumber", []), 16)
+for n in range(1, head + 1):
+    print(n, rpc("debug_getRawBlock", [hex(n)]))
+PY
+
+# 2. Cut the range you want into an ethrex chain file: concatenated block RLPs, no outer list.
+python3 -c 'import sys
+lo, hi = int(sys.argv[2]), int(sys.argv[3])
+with open(sys.argv[1]) as f, open(sys.argv[4], "wb") as o:
+    for line in f:
+        n, raw = line.split(" ", 1)
+        if lo <= int(n) <= hi: o.write(bytes.fromhex(raw.strip()[2:]))' chain.hex 1 54806 chain.rlp
+
+# 3. Import with the binary under test against the published genesis. A rejected block ends the
+#    import with the block number and the validation error; success means every state root matched.
+ethrex --network genesis.json --datadir ./db-under-test import chain.rlp
+```
+
+To test a change the chain's own history contradicts, import up to the last compatible block
+with the deployed binary, then continue on the same `--datadir` with the new one: the database
+format is shared, and the import re-executes the uncommitted tail on start. That is how
+`77e502ef4` was checked: the fixed binary rejects block 2787 as the pin says it must, and from
+13342 it follows the chain to the head; see the ledger §3.7.
+
 ## What forces a re-genesis
 
 - a change to the genesis allocation, the fork schedule, or the chain ID;

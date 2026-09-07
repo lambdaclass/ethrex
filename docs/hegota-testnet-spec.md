@@ -104,8 +104,8 @@ The nodes run ethrex `31b532266`. Where its behaviour differs from the pins:
 
 | Rule | Live chain | Pinned text | Consequence | Status |
 |---|---|---|---|---|
-| EIP-8141 `SIGPARAM(0x03)` | returns `len(signature)` for every scheme | ARBITRARY entries only; exceptional halt otherwise | lenient. A pin-exact client rejects blocks whose validation prefix reads it on a secp256k1 entry, and the shielded pool's spends on this chain did (blocks 2787 and 2792) | fixed on the branch at `77e502ef4`; on the chain at the next relaunch |
-| EIP-8141 `value_cost` | `TX_VALUE_COST` for every frame with `value > 0` | only when the frame has a target and it is not `tx.sender` | stricter on intrinsic gas: a targetless or self-targeted value frame is overcharged 6,000 | fixed on the branch at `77e502ef4`; on the chain at the next relaunch |
+| EIP-8141 `SIGPARAM(0x03)` | returns `len(signature)` for every scheme | ARBITRARY entries only; exceptional halt otherwise | lenient. A pin-exact client rejects blocks whose validation prefix reads it on a secp256k1 entry, and the shielded pool's spends on this chain did (blocks 2787 and 2792) | fixed on the branch at `77e502ef4`, verified by replaying the exported chain (rejects 2787, follows 13342 → head); on the chain at the next relaunch |
+| EIP-8141 `value_cost` | `TX_VALUE_COST` for every frame with `value > 0` | only when the frame has a target and it is not `tx.sender` | stricter on intrinsic gas: a targetless or self-targeted value frame is overcharged 6,000 | fixed on the branch at `77e502ef4`, verified by the same replay; on the chain at the next relaunch |
 | EIP-8272 `RECENT_ROOT_CODE` | the 144-byte predeploy from [EIPs#12131](https://github.com/ethereum/EIPs/pull/12131) | still `TBD` in the pinned text | none while the PR's bytes hold; a byte change moves the code hash and the write's gas | tracked |
 | EIP-8141 `SLOTNUM` in the validation prefix | banned | banned since [EIPs#12066](https://github.com/ethereum/EIPs/pull/12066) merged | conformant | closed |
 | EIP-8250 mempool concurrency | a contract sender whose prefix reads no sender storage, installs no code and never touches the legacy nonce may have several keyed transactions pending | one pending frame transaction per sender | mempool policy, not consensus; proposed upstream as [EIPs#12039](https://github.com/ethereum/EIPs/pull/12039) | carried |
@@ -187,7 +187,8 @@ Diffs of the previous pins to the current ones: [EIP-8141 `4093c21847`→`7d1c8b
 
 **Tooling**
 
-- [minimal-shielded-pool PR-1 - move the tooling to the EIPs at this chain's pins](https://github.com/soispoke/minimal-shielded-pool/pull/1) Open
+- [minimal-shielded-pool PR-1 - move the tooling to the EIPs at this chain's pins](https://github.com/soispoke/minimal-shielded-pool/pull/1) Merged :heavy_check_mark:
+- [minimal-shielded-pool ISSUE-3 - track the EIP-8250 / EIP-8272 changes after the pins](https://github.com/soispoke/minimal-shielded-pool/issues/3) Open — the post-pin work deferred out of PR-1
 - [ethrex PR-6974 - `ethrex_simulateFrameTransaction`](https://github.com/lambdaclass/ethrex/pull/6974) — the dry-run RPC; live on this chain's nodes
 
 ## Joining
