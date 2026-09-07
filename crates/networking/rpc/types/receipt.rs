@@ -37,8 +37,15 @@ pub struct RpcFrameReceipt {
     /// (atomic-batch failure). Serialized as a hex-encoded byte.
     #[serde(with = "serde_utils::u8::hex_str")]
     pub status: u8,
+    /// `gas_used.execution` of the consensus frame receipt.
     #[serde(with = "serde_utils::u64::hex_str")]
     pub gas_used: u64,
+    /// `gas_used.state` of the consensus frame receipt: the frame's final
+    /// state-gas attribution. Omitting it made the receipt look as if state gas
+    /// were charged at transaction level, when the consensus encoding attributes
+    /// it per frame.
+    #[serde(with = "serde_utils::u64::hex_str")]
+    pub state_gas_used: u64,
     pub logs: Vec<RpcLogInfo>,
 }
 
@@ -47,6 +54,7 @@ impl From<FrameReceipt> for RpcFrameReceipt {
         Self {
             status: fr.status,
             gas_used: fr.gas_used,
+            state_gas_used: fr.state_gas_used,
             logs: fr.logs.into_iter().map(RpcLogInfo::from).collect(),
         }
     }
