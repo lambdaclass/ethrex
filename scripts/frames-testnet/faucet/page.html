@@ -373,21 +373,23 @@ docker run -d --name frames-vc -v $PWD:/data \
   <div class="panel">
     <table>
       <tr>
-        <td>2026-09-07</td>
-        <td class="desc">This page now shows the <code>ethereum/EIPs</code> commit EIP-8141 is
-          implemented at, <code>b75cbe6115</code>, and links the
-          <a href="https://github.com/lambdaclass/ethrex/blob/frames-devnet-0/docs/eip-8141.md">network spec</a>,
-          which records the pin, the fixture release the nodes pass and every known divergence.
-          <strong>A relaunch with a fresh genesis is being scheduled</strong>; its date will be
-          announced here. It brings two consensus changes that cannot be rolled out on the running
-          chain: the expiry verifier at <code>0x…8141</code> installed as the spec says, code only
-          with nonce <code>0</code> (the running chain installed it with nonce <code>1</code>, and
-          a client that follows the spec rejects the fork block), and the EIP-8037 merge-time
-          repayment of spilled state gas that the <code>tests-frames-devnet@v0.3.0</code> release
-          introduced. Frame receipts over JSON-RPC will also carry <code>stateGasUsed</code> per
-          frame. When it happens: the previous chain's last block will be recorded here; wipe your
-          database, refetch the bundle and resync; validators deposited on this chain have to be
-          deposited again.</td>
+        <td>2026-09-07<br><span style="font-weight:400">18:20 UTC</span></td>
+        <td class="desc"><strong>Fresh genesis</strong>, the chain running now: genesis hash
+          <code>0x4225d878…cfc27ab</code>, chain id unchanged, frames active from 18:27 UTC. The
+          previous chain ended at block 90,751; its execution layer had stopped producing blocks
+          on 2026-09-04, when a block mixing a frame transaction with other transactions was built
+          with one gas accounting and validated with another, so every block after it was
+          rejected. Nothing from it carries over: <strong>wipe your database, refetch the bundle
+          and resync</strong>; validators deposited on the previous chain have to be deposited
+          again. What the new chain runs: EIP-8141 at <code>b75cbe6115</code> and the
+          <code>tests-frames-devnet@v0.3.0</code> rule set, including the EIP-8037 merge-time
+          repayment of spilled state gas; the expiry verifier at <code>0x…8141</code> installed as
+          the spec says, code only with nonce <code>0</code> (the previous chain installed it with
+          nonce <code>1</code>, and a client that follows the spec rejected the fork block); frame
+          receipts over JSON-RPC carry <code>stateGasUsed</code> per frame. The explorer now
+          indexes execution blocks and frame transactions on this chain. The
+          <a href="https://github.com/lambdaclass/ethrex/blob/frames-devnet-0/docs/eip-8141.md">network spec</a>
+          records the pin, the fixture release the nodes pass and every known divergence.</td>
       </tr>
       <tr>
         <td>2026-09-04</td>
