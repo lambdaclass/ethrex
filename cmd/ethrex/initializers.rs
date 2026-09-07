@@ -8,7 +8,7 @@ use crate::{
 };
 use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
 use ethrex_common::fd_limit::raise_fd_limit;
-use ethrex_common::types::Genesis;
+use ethrex_common::types::{BlockNumber, Genesis};
 use ethrex_config::networks::Network;
 use ethrex_rpc::WebSocketConfig;
 
@@ -1062,6 +1062,15 @@ pub async fn regenerate_head_state(
     // Find the last block with a known state root
     while !store.has_state_root(current_last_header.state_root)? {
         if current_last_header.number == 0 {
+            // Nothing at or below the head. Before giving up, check whether the
+            // state on disk belongs to a block *above* the head (interrupted
+            // full-sync batch, see `adopt_committed_head_above`).
+            if adopt_committed_head_above(store, head_block_number)
+                .await?
+                .is_some()
+            {
+                return Ok(());
+            }
             return Err(eyre::eyre!(
                 "Unknown state found in DB. Please run `ethrex removedb` and restart node"
             ));
@@ -1071,6 +1080,15 @@ pub async fn regenerate_head_state(
         debug!("Need to regenerate state for block {parent_number}");
 
         let Some(parent_header) = store.get_block_header(parent_number)? else {
+            // A snap-synced datadir has no headers below its pivot, so the walk
+            // ends here instead of at genesis; the state may still be above the
+            // head for the same reason.
+            if adopt_committed_head_above(store, head_block_number)
+                .await?
+                .is_some()
+            {
+                return Ok(());
+            }
             return Err(eyre::eyre!(
                 "Parent header for block {parent_number} not found"
             ));
@@ -1106,6 +1124,110 @@ pub async fn regenerate_head_state(
     info!("Finished regenerating state");
 
     Ok(())
+}
+
+/// Recovers a database whose canonical head lags the state on disk.
+///
+/// `add_blocks_in_batch` executes up to `EXECUTE_BATCH_SIZE` blocks per full-sync
+/// batch and commits trie layers by depth as it goes, but records the canonical
+/// head (`forkchoice_update`) only once, when the batch ends. A restart more than
+/// `DB_COMMIT_THRESHOLD` blocks into a batch therefore finds `LatestBlockNumber`
+/// at the previous batch end while the only state on disk (a single-version path
+/// store) belongs to a later block, and the downward walk in
+/// `regenerate_head_state` can never find it.
+///
+/// The persist worker journals every layer it commits into `STATE_HISTORY`, keyed
+/// by block number and carrying the block hash, and it flushes the block data up
+/// to the executing block before each commit. So the newest journal entry names
+/// the block whose post-state is on disk, and the headers from there back to the
+/// head are on disk by hash. Verify the root, walk the parent hashes down to the
+/// head, and canonicalize the range. Bodies in that range are on disk for the
+/// same reason.
+///
+/// Returns the adopted head number, or `None` when the journal does not describe
+/// such a block (the caller then reports the database as unrecoverable).
+async fn adopt_committed_head_above(
+    store: &Store,
+    head_number: BlockNumber,
+) -> eyre::Result<Option<BlockNumber>> {
+    let Some(committed) = store.highest_state_history_block_number()? else {
+        debug!("interrupted-batch recovery: STATE_HISTORY is empty");
+        return Ok(None);
+    };
+    if committed <= head_number {
+        debug!(
+            "interrupted-batch recovery: newest journaled block {committed} is not above head {head_number}"
+        );
+        return Ok(None);
+    }
+    let Some(committed_hash) = store.get_state_history_block_hash(committed)? else {
+        return Ok(None);
+    };
+    let Some(committed_header) = store.get_block_header_by_hash(committed_hash)? else {
+        debug!(
+            "interrupted-batch recovery: header {committed_hash:?} of journaled block {committed} is not on disk"
+        );
+        return Ok(None);
+    };
+    if !store.has_state_root(committed_header.state_root)? {
+        debug!(
+            "interrupted-batch recovery: state root of journaled block {committed} is not on disk"
+        );
+        return Ok(None);
+    }
+    let Some(head_header) = store.get_block_header(head_number)? else {
+        return Ok(None);
+    };
+
+    // Walk back from the committed block to the head through the flushed headers,
+    // collecting the range to canonicalize; every step must chain by hash.
+    let mut range = Vec::with_capacity((committed - head_number) as usize);
+    let mut header = committed_header;
+    let mut hash = committed_hash;
+    for number in ((head_number + 1)..=committed).rev() {
+        if header.number != number {
+            debug!(
+                "interrupted-batch recovery: header {hash:?} has number {} where {number} was expected",
+                header.number
+            );
+            return Ok(None);
+        }
+        range.push((number, hash));
+        let parent_hash = header.parent_hash;
+        if number == head_number + 1 {
+            if parent_hash != head_header.hash() {
+                debug!(
+                    "interrupted-batch recovery: block {number} does not extend head {head_number}"
+                );
+                return Ok(None);
+            }
+            break;
+        }
+        let Some(parent) = store.get_block_header_by_hash(parent_hash)? else {
+            debug!(
+                "interrupted-batch recovery: header {parent_hash:?} (block {}) is not on disk",
+                number - 1
+            );
+            return Ok(None);
+        };
+        header = parent;
+        hash = parent_hash;
+    }
+    range.reverse();
+
+    store
+        .forkchoice_update(range, committed, committed_hash, None, None)
+        .await?;
+    // `anchor_to_durable_head` clamps the head to the flushed-upto marker on the
+    // next start, and the failed starts before this one walked that marker down
+    // to the old head; move it to the adopted head or the recovery repeats on
+    // every boot.
+    store.set_flushed_upto(committed)?;
+    info!(
+        "Recovered from an interrupted full-sync batch: canonical head moved from \
+         {head_number} to {committed}, whose state is the one on disk"
+    );
+    Ok(Some(committed))
 }
 
 #[cfg(test)]
