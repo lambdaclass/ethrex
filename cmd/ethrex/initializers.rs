@@ -1262,10 +1262,14 @@ pub async fn regenerate_head_state(
 /// single `add_blocks_in_batch` call, so an interrupted batch can be thousands of
 /// blocks long (a node that fell behind on Plataberget was killed 1 895 blocks into
 /// one). A head that was moved down on purpose is indistinguishable from an
-/// interrupted batch by the data alone; the one such path, `set_sync_block`
-/// (`sync-test` feature), is excluded by its caller. Blocks above the journaled
-/// one that did not change the state root have no journal entry and are left
-/// non-canonical; the sync fetches them again.
+/// interrupted batch by the data alone. `set_sync_block` (`sync-test` feature) is
+/// excluded by its caller. `debug_setHead` only moves the head marker: a rewind
+/// that stays at or above the committed root leaves nothing journaled above the
+/// head, so this does not fire; a rewind below the committed root is re-adopted
+/// here on restart, where the walk used to fail with "Unknown state" instead (such
+/// a rewind never survived a restart). Blocks above the journaled one that did not
+/// change the state root have no journal entry and are left non-canonical; the
+/// sync fetches them again.
 ///
 /// Returns whether a head was adopted; `false` leaves the database untouched and
 /// the caller reports it as unrecoverable.
