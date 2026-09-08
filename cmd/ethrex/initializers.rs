@@ -8,13 +8,14 @@ use crate::{
 };
 use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
 use ethrex_common::fd_limit::raise_fd_limit;
-use ethrex_common::types::Genesis;
+use ethrex_common::types::{BlockNumber, Genesis};
 use ethrex_config::networks::Network;
 use ethrex_rpc::WebSocketConfig;
 
 use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_processing_profile};
 use ethrex_metrics::rpc::initialize_rpc_metrics;
 use ethrex_p2p::rlpx::initiator::RLPxInitiator;
+use ethrex_p2p::snap::constants::EXECUTE_BATCH_SIZE_DEFAULT;
 use ethrex_p2p::{
     DiscoveryConfig,
     network::P2PContext,
@@ -1157,6 +1158,27 @@ pub async fn regenerate_head_state(
         unreachable!("Database is empty, genesis block should be present");
     };
 
+    // The persist worker journals every committed trie layer under its block
+    // number. An entry above the head means the full-sync batch that produced it
+    // was interrupted before its forkchoice update, and the walk below would
+    // descend to genesis (or to the snap pivot) without a hit: the only state on
+    // disk is above the head. Try the O(1) recovery first.
+    match store.highest_state_history_block_number() {
+        Ok(Some(journaled)) if journaled > head_block_number => {
+            match adopt_committed_head_above(store, head_block_number).await {
+                Ok(true) => return Ok(()),
+                Ok(false) => {}
+                // The walk's own diagnostic below is the one operators know; a
+                // broken journal must not replace it.
+                Err(err) => warn!(
+                    "Interrupted-batch recovery failed; continuing with the state walk: {err}"
+                ),
+            }
+        }
+        Ok(_) => {}
+        Err(err) => warn!("Could not read the trie-commit journal: {err}"),
+    }
+
     let mut current_last_header = last_header;
 
     // Find the last block with a known state root
@@ -1210,6 +1232,255 @@ pub async fn regenerate_head_state(
     info!("Finished regenerating state");
 
     Ok(())
+}
+
+/// Recovers a database whose canonical head lags the state on disk.
+///
+/// `add_blocks_in_batch` executes up to `EXECUTE_BATCH_SIZE` blocks per full-sync
+/// batch and commits trie layers by depth as it goes, but records the canonical
+/// head (`forkchoice_update`) only once, when the batch ends. A restart more than
+/// `DB_COMMIT_THRESHOLD` blocks into a batch therefore finds `LatestBlockNumber`
+/// at the previous batch end while the only state on disk (a single-version path
+/// store) belongs to a later block, and the downward walk in
+/// `regenerate_head_state` can never find it.
+///
+/// The persist worker journals every layer it commits into `STATE_HISTORY`, keyed
+/// by block number and carrying the block hash, and it flushes the block data up
+/// to and including the block being executed before each commit. So the newest
+/// journal entry names the block whose post-state is on disk, and the headers
+/// from there back to the head are on disk by hash. Verify the root, walk the
+/// parent hashes down to the head, and canonicalize the range.
+///
+/// The journaled block may be at most one batch above the head; a larger gap is
+/// not an interrupted batch but a head that was moved down on purpose (for
+/// example `set_sync_block`), which must stay where it was put. Blocks above the
+/// journaled one that did not change the state root have no journal entry and are
+/// left non-canonical; the sync fetches them again.
+///
+/// Returns whether a head was adopted; `false` leaves the database untouched and
+/// the caller reports it as unrecoverable.
+async fn adopt_committed_head_above(store: &Store, head_number: BlockNumber) -> eyre::Result<bool> {
+    const MAX_INTERRUPTED_BATCH: u64 = EXECUTE_BATCH_SIZE_DEFAULT as u64;
+
+    let Some(committed) = store.highest_state_history_block_number()? else {
+        debug!("Interrupted-batch recovery: STATE_HISTORY is empty");
+        return Ok(false);
+    };
+    if committed <= head_number {
+        debug!(
+            "Interrupted-batch recovery: newest journaled block {committed} is not above head {head_number}"
+        );
+        return Ok(false);
+    }
+    if committed - head_number > MAX_INTERRUPTED_BATCH {
+        debug!(
+            "Interrupted-batch recovery: journaled block {committed} is more than one batch \
+             ({MAX_INTERRUPTED_BATCH} blocks) above head {head_number}; treating the head as deliberate"
+        );
+        return Ok(false);
+    }
+    let Some(committed_hash) = store.get_state_history_block_hash(committed)? else {
+        debug!("Interrupted-batch recovery: journal entry {committed} vanished while reading it");
+        return Ok(false);
+    };
+    let Some(committed_header) = store.get_block_header_by_hash(committed_hash)? else {
+        debug!(
+            "Interrupted-batch recovery: header {committed_hash:?} of journaled block {committed} is not on disk"
+        );
+        return Ok(false);
+    };
+    if !store.has_state_root(committed_header.state_root)? {
+        debug!(
+            "Interrupted-batch recovery: state root of journaled block {committed} is not on disk"
+        );
+        return Ok(false);
+    }
+    let Some(head_header) = store.get_block_header(head_number)? else {
+        debug!(
+            "Interrupted-batch recovery: canonical header for head {head_number} is not on disk"
+        );
+        return Ok(false);
+    };
+
+    // Walk back from the committed block to the head through the flushed headers,
+    // collecting the range to canonicalize; every step must chain by hash.
+    let mut range = Vec::with_capacity((committed - head_number) as usize);
+    let mut header = committed_header;
+    let mut hash = committed_hash;
+    for number in ((head_number + 1)..=committed).rev() {
+        if header.number != number {
+            debug!(
+                "Interrupted-batch recovery: header {hash:?} has number {} where {number} was expected",
+                header.number
+            );
+            return Ok(false);
+        }
+        range.push((number, hash));
+        let parent_hash = header.parent_hash;
+        if number == head_number + 1 {
+            if parent_hash != head_header.hash() {
+                debug!(
+                    "Interrupted-batch recovery: block {number} does not extend head {head_number}"
+                );
+                return Ok(false);
+            }
+            break;
+        }
+        let Some(parent) = store.get_block_header_by_hash(parent_hash)? else {
+            debug!(
+                "Interrupted-batch recovery: header {parent_hash:?} (block {}) is not on disk",
+                number - 1
+            );
+            return Ok(false);
+        };
+        header = parent;
+        hash = parent_hash;
+    }
+
+    // Safe and finalized are left as they were: this only restores the head the
+    // interrupted batch would have recorded.
+    store
+        .forkchoice_update(range, committed, committed_hash, None, None)
+        .await?;
+    // `anchor_to_durable_head` clamps the head to the flushed-upto marker on the
+    // next start, and the failed starts before this one walked that marker down
+    // to the old head; raise it to the adopted head or the recovery repeats on
+    // every boot.
+    store.advance_flushed_upto(committed)?;
+    info!(
+        "Recovered from an interrupted full-sync batch: canonical head moved from \
+         {head_number} to {committed}, whose state is the one on disk"
+    );
+    Ok(true)
+}
+
+#[cfg(test)]
+mod interrupted_batch_recovery_tests {
+    //! `adopt_committed_head_above` against an in-memory store: genesis is the
+    //! canonical head, headers above it are on disk by hash only (as the persist
+    //! worker leaves them mid-batch), and `STATE_HISTORY` names the block whose
+    //! state is on disk.
+    use super::adopt_committed_head_above;
+    use ethrex_common::H256;
+    use ethrex_common::types::{BlockHeader, Genesis};
+    use ethrex_p2p::snap::constants::EXECUTE_BATCH_SIZE_DEFAULT;
+    use ethrex_storage::journal::JournalEntry;
+    use ethrex_storage::{EngineType, Store};
+
+    async fn store_at_genesis() -> (Store, BlockHeader) {
+        let genesis: Genesis =
+            serde_json::from_slice(include_bytes!("../../fixtures/genesis/l1.json")).unwrap();
+        let mut store = Store::new("", EngineType::InMemory).unwrap();
+        store.add_initial_state(genesis).await.unwrap();
+        let genesis_header = store.get_block_header(0).unwrap().unwrap();
+        (store, genesis_header)
+    }
+
+    /// A header chained onto `parent` with the given state root; the hash cache
+    /// starts empty so it is computed from these fields.
+    fn child(parent: &BlockHeader, state_root: H256) -> BlockHeader {
+        BlockHeader {
+            hash: Default::default(),
+            number: parent.number + 1,
+            parent_hash: parent.hash(),
+            state_root,
+            ..parent.clone()
+        }
+    }
+
+    fn journal(store: &Store, header: &BlockHeader) {
+        let entry = JournalEntry {
+            block_hash: header.hash(),
+            parent_state_root: H256::zero(),
+            account_trie_diff: vec![],
+            storage_trie_diff: vec![],
+            account_flat_diff: vec![],
+            storage_flat_diff: vec![],
+        };
+        store
+            .put_state_history_entry_for_test(header.number, &entry.encode())
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn adopts_the_journaled_block_and_canonicalizes_the_range() {
+        let (store, genesis) = store_at_genesis().await;
+        // Blocks 1 and 2 changed state that is no longer on disk; block 3's state
+        // root is the one on disk (the genesis root stands in for it).
+        let b1 = child(&genesis, H256::random());
+        let b2 = child(&b1, H256::random());
+        let b3 = child(&b2, genesis.state_root);
+        for h in [&b1, &b2, &b3] {
+            store.add_block_header(h.hash(), h.clone()).await.unwrap();
+        }
+        journal(&store, &b3);
+
+        assert!(adopt_committed_head_above(&store, 0).await.unwrap());
+
+        assert_eq!(store.get_latest_block_number().unwrap(), 3);
+        for h in [&b1, &b2, &b3] {
+            assert_eq!(
+                store.get_canonical_block_hash_sync(h.number).unwrap(),
+                Some(h.hash())
+            );
+        }
+        assert_eq!(store.read_flushed_upto().unwrap(), 3);
+    }
+
+    #[tokio::test]
+    async fn rejects_a_journaled_block_that_does_not_chain_onto_the_head() {
+        let (store, genesis) = store_at_genesis().await;
+        let b1 = child(&genesis, H256::random());
+        let mut b2 = child(&b1, H256::random());
+        b2.parent_hash = H256::random();
+        b2.hash = Default::default();
+        let b3 = child(&b2, genesis.state_root);
+        for h in [&b1, &b2, &b3] {
+            store.add_block_header(h.hash(), h.clone()).await.unwrap();
+        }
+        journal(&store, &b3);
+
+        assert!(!adopt_committed_head_above(&store, 0).await.unwrap());
+        assert_eq!(store.get_latest_block_number().unwrap(), 0);
+        assert_eq!(store.get_canonical_block_hash_sync(1).unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn rejects_a_journaled_block_whose_state_is_not_on_disk() {
+        let (store, genesis) = store_at_genesis().await;
+        let b1 = child(&genesis, H256::random());
+        store.add_block_header(b1.hash(), b1.clone()).await.unwrap();
+        journal(&store, &b1);
+
+        assert!(!adopt_committed_head_above(&store, 0).await.unwrap());
+        assert_eq!(store.get_latest_block_number().unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn leaves_a_head_more_than_one_batch_below_the_journal_alone() {
+        let (store, genesis) = store_at_genesis().await;
+        // A head that far below the newest journaled block was moved on purpose
+        // (`set_sync_block`), not interrupted; the recovery must not undo it.
+        let mut far = child(&genesis, genesis.state_root);
+        far.number = EXECUTE_BATCH_SIZE_DEFAULT as u64 + 1;
+        far.hash = Default::default();
+        store
+            .add_block_header(far.hash(), far.clone())
+            .await
+            .unwrap();
+        journal(&store, &far);
+
+        assert!(!adopt_committed_head_above(&store, 0).await.unwrap());
+        assert_eq!(store.get_latest_block_number().unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn does_nothing_when_the_journal_is_not_above_the_head() {
+        let (store, genesis) = store_at_genesis().await;
+        journal(&store, &genesis);
+        assert!(!adopt_committed_head_above(&store, 0).await.unwrap());
+        assert_eq!(store.get_latest_block_number().unwrap(), 0);
+    }
 }
 
 #[cfg(test)]
