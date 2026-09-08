@@ -536,7 +536,8 @@ impl RpcHandler for TraceCallRequest {
         // request alone: `txIndex` selects a mid-block pre-state, which only exists after
         // replaying the block's own transactions, and an overlay installed for that replay
         // would be visible to them. A permanent client error that retrying never fixes, so
-        // it belongs in `BadParams` (-32602) rather than surfacing as an internal error.
+        // it belongs in `BadParams` rather than surfacing as an internal error. (That maps
+        // to -32000 in this crate, not the JSON-RPC -32602; see `RpcErr`.)
         if trace_config.tx_index.is_some()
             && trace_config
                 .state_overrides
