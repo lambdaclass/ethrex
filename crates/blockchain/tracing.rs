@@ -372,6 +372,12 @@ impl Blockchain {
         Ok(vm)
     }
 
+    /// Rebuild the parent state for a block given its parent hash, returning an `Evm`
+    /// instance with all changes cached.
+    ///
+    /// Will re-execute all ancestor blocks whose state is not stored, up to a maximum
+    /// given by `reexec`. See [`Self::rebuild_parent_state_with_db`] for the variant that
+    /// also hands back the database.
     async fn rebuild_parent_state(
         &self,
         parent_hash: H256,
@@ -383,11 +389,15 @@ impl Blockchain {
             .0)
     }
 
-    /// [`Self::rebuild_parent_state`], also handing back the [`StoreVmDatabase`] the
-    /// rebuilt `Evm` reads through.
+    /// Rebuild the parent state for a block given its parent hash, returning an `Evm`
+    /// instance with all changes cached, together with the [`StoreVmDatabase`] that `Evm`
+    /// reads through.
     ///
-    /// `build_call_trace_vm` needs that exact instance: it carries the block-hash cache
-    /// for the re-executed parents, so a freshly constructed equivalent would make
+    /// Will re-execute all ancestor blocks whose state is not stored, up to a maximum
+    /// given by `reexec`.
+    ///
+    /// `build_call_trace_vm` needs that exact database instance: it carries the block-hash
+    /// cache for the re-executed parents, so a freshly constructed equivalent would make
     /// `BLOCKHASH` unresolvable for those blocks.
     async fn rebuild_parent_state_with_db(
         &self,
