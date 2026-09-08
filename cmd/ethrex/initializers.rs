@@ -15,7 +15,6 @@ use ethrex_rpc::WebSocketConfig;
 use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_processing_profile};
 use ethrex_metrics::rpc::initialize_rpc_metrics;
 use ethrex_p2p::rlpx::initiator::RLPxInitiator;
-use ethrex_p2p::snap::constants::EXECUTE_BATCH_SIZE_DEFAULT;
 use ethrex_p2p::{
     DiscoveryConfig,
     network::P2PContext,
@@ -1163,8 +1162,15 @@ pub async fn regenerate_head_state(
     // was interrupted before its forkchoice update, and the walk below would
     // descend to genesis (or to the snap pivot) without a hit: the only state on
     // disk is above the head. Try the O(1) recovery first.
+    // `set_sync_block` (`sync-test`) moves the head down on purpose right before
+    // this runs; the state above it is then not an interrupted batch and must not
+    // be re-adopted.
+    #[cfg(feature = "sync-test")]
+    let rewound_on_purpose = env::var("SYNC_BLOCK_NUM").is_ok();
+    #[cfg(not(feature = "sync-test"))]
+    let rewound_on_purpose = false;
     match store.highest_state_history_block_number() {
-        Ok(Some(journaled)) if journaled > head_block_number => {
+        Ok(Some(journaled)) if journaled > head_block_number && !rewound_on_purpose => {
             match adopt_committed_head_above(store, head_block_number).await {
                 Ok(true) => return Ok(()),
                 Ok(false) => {}
@@ -1251,17 +1257,23 @@ pub async fn regenerate_head_state(
 /// from there back to the head are on disk by hash. Verify the root, walk the
 /// parent hashes down to the head, and canonicalize the range.
 ///
-/// The journaled block may be at most one batch above the head; a larger gap is
-/// not an interrupted batch but a head that was moved down on purpose (for
-/// example `set_sync_block`), which must stay where it was put. Blocks above the
-/// journaled one that did not change the state root have no journal entry and are
-/// left non-canonical; the sync fetches them again.
+/// The gap is not bounded by `EXECUTE_BATCH_SIZE`: when the consensus client has
+/// already delivered every block of the gap, full sync executes all of them in a
+/// single `add_blocks_in_batch` call, so an interrupted batch can be thousands of
+/// blocks long (a node that fell behind on Plataberget was killed 1 895 blocks into
+/// one). A head that was moved down on purpose is indistinguishable from an
+/// interrupted batch by the data alone. `set_sync_block` (`sync-test` feature) is
+/// excluded by its caller. `debug_setHead` only moves the head marker: a rewind
+/// that stays at or above the committed root leaves nothing journaled above the
+/// head, so this does not fire; a rewind below the committed root is re-adopted
+/// here on restart, where the walk used to fail with "Unknown state" instead (such
+/// a rewind never survived a restart). Blocks above the journaled one that did not
+/// change the state root have no journal entry and are left non-canonical; the
+/// sync fetches them again.
 ///
 /// Returns whether a head was adopted; `false` leaves the database untouched and
 /// the caller reports it as unrecoverable.
 async fn adopt_committed_head_above(store: &Store, head_number: BlockNumber) -> eyre::Result<bool> {
-    const MAX_INTERRUPTED_BATCH: u64 = EXECUTE_BATCH_SIZE_DEFAULT as u64;
-
     let Some(committed) = store.highest_state_history_block_number()? else {
         debug!("Interrupted-batch recovery: STATE_HISTORY is empty");
         return Ok(false);
@@ -1269,13 +1281,6 @@ async fn adopt_committed_head_above(store: &Store, head_number: BlockNumber) -> 
     if committed <= head_number {
         debug!(
             "Interrupted-batch recovery: newest journaled block {committed} is not above head {head_number}"
-        );
-        return Ok(false);
-    }
-    if committed - head_number > MAX_INTERRUPTED_BATCH {
-        debug!(
-            "Interrupted-batch recovery: journaled block {committed} is more than one batch \
-             ({MAX_INTERRUPTED_BATCH} blocks) above head {head_number}; treating the head as deliberate"
         );
         return Ok(false);
     }
@@ -1363,7 +1368,6 @@ mod interrupted_batch_recovery_tests {
     use super::adopt_committed_head_above;
     use ethrex_common::H256;
     use ethrex_common::types::{BlockHeader, Genesis};
-    use ethrex_p2p::snap::constants::EXECUTE_BATCH_SIZE_DEFAULT;
     use ethrex_storage::journal::JournalEntry;
     use ethrex_storage::{EngineType, Store};
 
@@ -1457,21 +1461,31 @@ mod interrupted_batch_recovery_tests {
     }
 
     #[tokio::test]
-    async fn leaves_a_head_more_than_one_batch_below_the_journal_alone() {
+    async fn adopts_a_journaled_block_thousands_of_blocks_above_the_head() {
+        // A gap the size of a consensus-delivered pending-blocks batch (no
+        // EXECUTE_BATCH_SIZE chunking): the recovery must not cap it.
         let (store, genesis) = store_at_genesis().await;
-        // A head that far below the newest journaled block was moved on purpose
-        // (`set_sync_block`), not interrupted; the recovery must not undo it.
-        let mut far = child(&genesis, genesis.state_root);
-        far.number = EXECUTE_BATCH_SIZE_DEFAULT as u64 + 1;
-        far.hash = Default::default();
-        store
-            .add_block_header(far.hash(), far.clone())
-            .await
-            .unwrap();
-        journal(&store, &far);
+        let mut headers = Vec::with_capacity(1800);
+        let mut parent = genesis.clone();
+        for i in 0..1800u64 {
+            let root = if i == 1799 {
+                genesis.state_root
+            } else {
+                H256::random()
+            };
+            let h = child(&parent, root);
+            store.add_block_header(h.hash(), h.clone()).await.unwrap();
+            parent = h.clone();
+            headers.push(h);
+        }
+        journal(&store, headers.last().unwrap());
 
-        assert!(!adopt_committed_head_above(&store, 0).await.unwrap());
-        assert_eq!(store.get_latest_block_number().unwrap(), 0);
+        assert!(adopt_committed_head_above(&store, 0).await.unwrap());
+        assert_eq!(store.get_latest_block_number().unwrap(), 1800);
+        assert_eq!(
+            store.get_canonical_block_hash_sync(900).unwrap(),
+            Some(headers[899].hash())
+        );
     }
 
     #[tokio::test]
