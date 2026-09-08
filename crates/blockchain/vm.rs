@@ -191,12 +191,23 @@ impl<Inner: VmDatabase + Clone> VmDatabase for OverlaidVmDatabase<Inner> {
 /// Stand-in `storage_root` for an account the replay gave storage to without this layer
 /// materialising a trie for it.
 ///
-/// **Not a real trie root.** On this path `storage_root` has exactly one consumer,
+/// **Not a real trie root.** On this path `storage_root` feeds two things downstream:
 /// `LevmAccount::has_storage` (`crates/vm/levm/src/account.rs:78`, the EIP-7610
-/// create-collision check), and it only asks whether the root differs from
-/// `EMPTY_TRIE_HASH`. Computing the true root would mean hashing a storage trie for a
-/// value nothing on this path reads. Never commit this value and never compare it to a
-/// real root.
+/// create-collision check), which asks only whether the root differs from
+/// `EMPTY_TRIE_HASH`; and, less directly, `LevmAccount::exists`
+/// (`crates/vm/levm/src/account.rs:83`), via `state == AccountState::default()` — a
+/// stale non-empty root can flip `exists` from `false` to `true` for an account with
+/// zero nonce, zero balance and no code, changing `EXTCODEHASH` for that account from
+/// `0` to `keccak("")`. Both are still fail-closed, and both are effectively
+/// unreachable: the `exists` case needs that pre-EIP-161 relic shape. Computing the
+/// true root would mean hashing a storage trie for a value nothing on this path needs
+/// precisely.
+///
+/// Never commit this value, and never compare it to a real root — a warning that also
+/// covers a case that never produces the sentinel itself: when `removed_storage` is
+/// false and the base root is non-empty, `get_account_state` below returns that base
+/// root unchanged regardless of `added_storage`. That stale value is just as
+/// uncommittable, and worse, in that it looks exactly like a real trie root.
 const UNMATERIALISED_STORAGE_ROOT: H256 = H256([0xff; 32]);
 
 /// `VmDatabase` decorator that layers a finished block replay over the state that replay
@@ -219,6 +230,10 @@ pub struct ReplayedVmDatabase<Inner> {
 }
 
 impl<Inner> ReplayedVmDatabase<Inner> {
+    /// `updates` must carry at most one entry per address, as
+    /// `Evm::get_state_transitions` guarantees. A second update for the same address
+    /// is silently discarded rather than merged — see `AccountUpdate::merge`
+    /// (`crates/common/types/account_update.rs:38-50`) if a caller needs that instead.
     pub fn new(inner: Inner, updates: Vec<AccountUpdate>) -> Self {
         Self {
             inner,
@@ -236,9 +251,10 @@ impl<Inner: VmDatabase + Clone> VmDatabase for ReplayedVmDatabase<Inner> {
             return Ok(None);
         }
         let base = self.inner.get_account_state(address)?;
-        // `storage_root` feeds exactly one thing downstream: `LevmAccount::has_storage`,
-        // the EIP-7610 create-collision check. `AccountUpdate` carries no root, so serve
-        // one that answers that question the way the committed state would.
+        // `storage_root` feeds `LevmAccount::has_storage` (the EIP-7610 create-collision
+        // check) and, less directly, `LevmAccount::exists` — see the caveat on
+        // `UNMATERIALISED_STORAGE_ROOT` above. `AccountUpdate` carries no root, so serve
+        // one that answers those questions the way the committed state would.
         //
         // Ground truth is `apply_account_updates_from_trie_batch`
         // (`crates/storage/store.rs:2734-2762`): `removed_storage` resets the root to
@@ -285,13 +301,21 @@ impl<Inner: VmDatabase + Clone> VmDatabase for ReplayedVmDatabase<Inner> {
         let Some(update) = self.updates.get(&address) else {
             return self.inner.get_storage_slot(address, key);
         };
+        // Closed world, checked ahead of `added_storage`: the commit path never
+        // consults `added_storage` for a removed account
+        // (`apply_account_updates_from_trie_batch`, `crates/storage/store.rs:2727-2731`,
+        // removes the account from the trie and moves on to the next update).
+        if update.removed {
+            return Ok(Some(U256::zero()));
+        }
         if let Some(value) = update.added_storage.get(&key) {
             return Ok(Some(*value));
         }
-        // Closed world. `removed` deletes the account and its storage; `removed_storage`
-        // wipes the storage of a destroyed-then-recreated account. Either way a slot the
-        // replay did not write reads zero, never the stale trie value.
-        if update.removed || update.removed_storage {
+        // `removed_storage` wipes the storage of a destroyed-then-recreated account,
+        // whose `added_storage` above *is* its new storage — this check has to stay
+        // below the lookup. A slot the replay did not write reads zero, never the
+        // stale trie value.
+        if update.removed_storage {
             return Ok(Some(U256::zero()));
         }
         self.inner.get_storage_slot(address, key)
