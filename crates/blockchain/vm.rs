@@ -1,8 +1,11 @@
 use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
-    constants::EMPTY_KECCAK_HASH,
-    types::{AccountState, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code, CodeMetadata},
+    constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH},
+    types::{
+        AccountState, AccountUpdate, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code,
+        CodeMetadata,
+    },
 };
 use ethrex_crypto::keccak::keccak_hash;
 use ethrex_storage::Store;
@@ -182,6 +185,134 @@ impl<Inner: VmDatabase + Clone> VmDatabase for OverlaidVmDatabase<Inner> {
             }
         }
         self.inner.get_code_metadata(code_hash)
+    }
+}
+
+/// `VmDatabase` decorator that layers a finished block replay over the state that replay
+/// started from, so the replay can be read as a database.
+///
+/// `debug_traceCall` with `txIndex`, or against a block whose post-state is not stored,
+/// has to rebuild state by re-executing blocks. That replay must not observe a State
+/// Override Set: the block's own transactions really happened and have to execute against
+/// the state they really saw. Materialising the replay here lets the override decorator
+/// sit *above* it, which is geth's ordering — `StateAtTransaction` first,
+/// `StateOverride.Apply` second. See [`OverlaidVmDatabase`], the layer that goes on top.
+///
+/// `updates` come from `Evm::get_state_transitions`, the same value the commit path writes
+/// to the trie. Hence the invariant this type owes its callers: a read here must match
+/// what a [`StoreVmDatabase`] opened on `apply_account_updates(inner, updates)` returns.
+#[derive(Clone)]
+pub struct ReplayedVmDatabase<Inner> {
+    inner: Inner,
+    updates: Arc<FxHashMap<Address, AccountUpdate>>,
+}
+
+impl<Inner> ReplayedVmDatabase<Inner> {
+    pub fn new(inner: Inner, updates: Vec<AccountUpdate>) -> Self {
+        Self {
+            inner,
+            updates: Arc::new(updates.into_iter().map(|u| (u.address, u)).collect()),
+        }
+    }
+}
+
+impl<Inner: VmDatabase + Clone> VmDatabase for ReplayedVmDatabase<Inner> {
+    fn get_account_state(&self, address: Address) -> Result<Option<AccountState>, EvmError> {
+        let Some(update) = self.updates.get(&address) else {
+            return self.inner.get_account_state(address);
+        };
+        if update.removed {
+            return Ok(None);
+        }
+        let base = self.inner.get_account_state(address)?;
+        // `storage_root` feeds exactly one thing downstream: `LevmAccount::has_storage`,
+        // the EIP-7610 create-collision check. `AccountUpdate` carries no root, so pass
+        // the base one through and only correct it where the replay is known to have
+        // emptied storage. An account that *gains* storage while having no code and nonce
+        // 0 would be misreported, but EIP-7610 exists precisely because such accounts can
+        // no longer be created. `OverlaidVmDatabase` carries the same caveat above.
+        let storage_root = |base_root: H256| {
+            if update.removed_storage {
+                *EMPTY_TRIE_HASH
+            } else {
+                base_root
+            }
+        };
+        // No `info` means a storage-only update: the account itself is unchanged, and an
+        // `added_storage` entry alone must never bring an absent account into existence.
+        let Some(info) = &update.info else {
+            return Ok(base.map(|mut state| {
+                state.storage_root = storage_root(state.storage_root);
+                state
+            }));
+        };
+        let mut state = base.unwrap_or_default();
+        state.balance = info.balance;
+        state.nonce = info.nonce;
+        state.code_hash = info.code_hash;
+        state.storage_root = storage_root(state.storage_root);
+        Ok(Some(state))
+    }
+
+    fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError> {
+        let Some(update) = self.updates.get(&address) else {
+            return self.inner.get_storage_slot(address, key);
+        };
+        if let Some(value) = update.added_storage.get(&key) {
+            return Ok(Some(*value));
+        }
+        // Closed world. `removed` deletes the account and its storage; `removed_storage`
+        // wipes the storage of a destroyed-then-recreated account. Either way a slot the
+        // replay did not write reads zero, never the stale trie value.
+        if update.removed || update.removed_storage {
+            return Ok(Some(U256::zero()));
+        }
+        self.inner.get_storage_slot(address, key)
+    }
+
+    fn get_account_code(&self, code_hash: H256) -> Result<Code, EvmError> {
+        if code_hash == *EMPTY_KECCAK_HASH {
+            return Ok(Code::default());
+        }
+        // `get_state_transitions` clears the replay's `codes` map, so these updates are
+        // the only record of bytecode the replay deployed. Linear scan for the same
+        // reason `OverlaidVmDatabase` does: one block's modified-account set is small.
+        for update in self.updates.values() {
+            if let Some(code) = &update.code
+                && code.hash == code_hash
+            {
+                return Ok(code.clone());
+            }
+        }
+        self.inner.get_account_code(code_hash)
+    }
+
+    fn get_code_metadata(&self, code_hash: H256) -> Result<CodeMetadata, EvmError> {
+        if code_hash == *EMPTY_KECCAK_HASH {
+            return Ok(CodeMetadata { length: 0 });
+        }
+        for update in self.updates.values() {
+            if let Some(code) = &update.code
+                && code.hash == code_hash
+            {
+                return Ok(CodeMetadata {
+                    length: code.len() as u64,
+                });
+            }
+        }
+        self.inner.get_code_metadata(code_hash)
+    }
+
+    fn get_block_hash(&self, block_number: u64) -> Result<H256, EvmError> {
+        self.inner.get_block_hash(block_number)
+    }
+
+    fn get_chain_config(&self) -> Result<ChainConfig, EvmError> {
+        self.inner.get_chain_config()
+    }
+
+    fn code_cache_budget_bytes(&self) -> u64 {
+        self.inner.code_cache_budget_bytes()
     }
 }
 
@@ -633,11 +764,11 @@ mod overlaid_db_tests {
 
     /// Minimal in-memory `VmDatabase` for testing the overlay wrapper in isolation.
     #[derive(Clone, Default)]
-    struct MockDb {
-        accounts: Arc<Mutex<BTreeMap<Address, AccountState>>>,
-        storage: Arc<Mutex<BTreeMap<(Address, H256), U256>>>,
-        codes: Arc<Mutex<BTreeMap<H256, Code>>>,
-        block_hashes: Arc<Mutex<BTreeMap<u64, H256>>>,
+    pub(super) struct MockDb {
+        pub(super) accounts: Arc<Mutex<BTreeMap<Address, AccountState>>>,
+        pub(super) storage: Arc<Mutex<BTreeMap<(Address, H256), U256>>>,
+        pub(super) codes: Arc<Mutex<BTreeMap<H256, Code>>>,
+        pub(super) block_hashes: Arc<Mutex<BTreeMap<u64, H256>>>,
     }
 
     impl VmDatabase for MockDb {
@@ -678,13 +809,13 @@ mod overlaid_db_tests {
         }
     }
 
-    fn addr(byte: u8) -> Address {
+    pub(super) fn addr(byte: u8) -> Address {
         let mut bytes = [0u8; 20];
         bytes[19] = byte;
         Address::from(bytes)
     }
 
-    fn slot(byte: u8) -> H256 {
+    pub(super) fn slot(byte: u8) -> H256 {
         let mut bytes = [0u8; 32];
         bytes[31] = byte;
         H256::from(bytes)
@@ -885,5 +1016,315 @@ mod overlaid_db_tests {
         let state = wrapper.get_account_state(addr(7)).unwrap().unwrap();
         assert_eq!(state.balance, U256::from(7));
         assert_eq!(state.nonce, 3);
+    }
+}
+
+#[cfg(test)]
+mod replayed_db_tests {
+    use super::overlaid_db_tests::{MockDb, addr, slot};
+    use super::*;
+    use ethrex_common::types::AccountInfo;
+
+    fn update(address: Address) -> AccountUpdate {
+        AccountUpdate {
+            address,
+            ..Default::default()
+        }
+    }
+
+    fn info(balance: u64, nonce: u64) -> AccountInfo {
+        AccountInfo {
+            balance: U256::from(balance),
+            nonce,
+            code_hash: *EMPTY_KECCAK_HASH,
+        }
+    }
+
+    #[test]
+    fn untouched_account_falls_through_to_inner() {
+        let mock = MockDb::default();
+        mock.accounts.lock().unwrap().insert(
+            addr(1),
+            AccountState {
+                balance: U256::from(10),
+                ..Default::default()
+            },
+        );
+        let db = ReplayedVmDatabase::new(mock, vec![]);
+        let state = db.get_account_state(addr(1)).unwrap().unwrap();
+        assert_eq!(state.balance, U256::from(10));
+    }
+
+    #[test]
+    fn replayed_info_replaces_base_info() {
+        let mock = MockDb::default();
+        mock.accounts.lock().unwrap().insert(
+            addr(1),
+            AccountState {
+                balance: U256::from(10),
+                nonce: 1,
+                ..Default::default()
+            },
+        );
+        let db = ReplayedVmDatabase::new(
+            mock,
+            vec![AccountUpdate {
+                info: Some(info(999, 7)),
+                ..update(addr(1))
+            }],
+        );
+        let state = db.get_account_state(addr(1)).unwrap().unwrap();
+        assert_eq!(state.balance, U256::from(999));
+        assert_eq!(state.nonce, 7);
+    }
+
+    #[test]
+    fn account_created_by_the_replay_is_synthesized() {
+        let db = ReplayedVmDatabase::new(
+            MockDb::default(),
+            vec![AccountUpdate {
+                info: Some(info(5, 1)),
+                ..update(addr(2))
+            }],
+        );
+        let state = db.get_account_state(addr(2)).unwrap().unwrap();
+        assert_eq!(state.nonce, 1);
+        // A fresh account owns no storage.
+        assert_eq!(state.storage_root, *EMPTY_TRIE_HASH);
+    }
+
+    #[test]
+    fn storage_only_update_never_creates_an_absent_account() {
+        // An update carrying only `added_storage` must NOT bring an absent account into
+        // existence. Mirrors `OverlaidVmDatabase`'s gate on balance/nonce/code.
+        let mut added = FxHashMap::default();
+        added.insert(slot(1), U256::from(42));
+        let db = ReplayedVmDatabase::new(
+            MockDb::default(),
+            vec![AccountUpdate {
+                added_storage: added,
+                ..update(addr(3))
+            }],
+        );
+        assert!(db.get_account_state(addr(3)).unwrap().is_none());
+    }
+
+    #[test]
+    fn removed_account_is_absent_and_reads_zero_storage() {
+        let mock = MockDb::default();
+        mock.accounts.lock().unwrap().insert(
+            addr(4),
+            AccountState {
+                balance: U256::from(10),
+                ..Default::default()
+            },
+        );
+        mock.storage
+            .lock()
+            .unwrap()
+            .insert((addr(4), slot(1)), U256::from(7));
+        let db = ReplayedVmDatabase::new(
+            mock,
+            vec![AccountUpdate {
+                removed: true,
+                ..update(addr(4))
+            }],
+        );
+        assert!(db.get_account_state(addr(4)).unwrap().is_none());
+        assert_eq!(
+            db.get_storage_slot(addr(4), slot(1)).unwrap(),
+            Some(U256::zero())
+        );
+    }
+
+    #[test]
+    fn changed_slot_wins_and_unchanged_slot_falls_through() {
+        let mock = MockDb::default();
+        mock.accounts
+            .lock()
+            .unwrap()
+            .insert(addr(5), AccountState::default());
+        mock.storage
+            .lock()
+            .unwrap()
+            .insert((addr(5), slot(1)), U256::from(1));
+        mock.storage
+            .lock()
+            .unwrap()
+            .insert((addr(5), slot(2)), U256::from(2));
+        let mut added = FxHashMap::default();
+        added.insert(slot(1), U256::from(111));
+        let db = ReplayedVmDatabase::new(
+            mock,
+            vec![AccountUpdate {
+                added_storage: added,
+                ..update(addr(5))
+            }],
+        );
+        assert_eq!(
+            db.get_storage_slot(addr(5), slot(1)).unwrap(),
+            Some(U256::from(111))
+        );
+        assert_eq!(
+            db.get_storage_slot(addr(5), slot(2)).unwrap(),
+            Some(U256::from(2))
+        );
+    }
+
+    #[test]
+    fn removed_storage_closes_the_world() {
+        // Destroyed-and-recreated: slots not in `added_storage` read zero, never the
+        // stale trie value. This is the same closed-world rule geth's `fakeStorage` gives.
+        let mock = MockDb::default();
+        mock.accounts
+            .lock()
+            .unwrap()
+            .insert(addr(6), AccountState::default());
+        mock.storage
+            .lock()
+            .unwrap()
+            .insert((addr(6), slot(2)), U256::from(2));
+        let mut added = FxHashMap::default();
+        added.insert(slot(1), U256::from(111));
+        let db = ReplayedVmDatabase::new(
+            mock,
+            vec![AccountUpdate {
+                added_storage: added,
+                removed_storage: true,
+                info: Some(info(0, 1)),
+                ..update(addr(6))
+            }],
+        );
+        assert_eq!(
+            db.get_storage_slot(addr(6), slot(1)).unwrap(),
+            Some(U256::from(111))
+        );
+        assert_eq!(
+            db.get_storage_slot(addr(6), slot(2)).unwrap(),
+            Some(U256::zero())
+        );
+        // has_storage must read false: the trie storage is gone.
+        let state = db.get_account_state(addr(6)).unwrap().unwrap();
+        assert_eq!(state.storage_root, *EMPTY_TRIE_HASH);
+    }
+
+    #[test]
+    fn code_deployed_by_the_replay_is_served() {
+        let (hash, code) = synthetic_code(bytes::Bytes::from_static(&[0x60, 0x00]));
+        let db = ReplayedVmDatabase::new(
+            MockDb::default(),
+            vec![AccountUpdate {
+                info: Some(AccountInfo {
+                    balance: U256::zero(),
+                    nonce: 1,
+                    code_hash: hash,
+                }),
+                code: Some(code),
+                ..update(addr(7))
+            }],
+        );
+        assert_eq!(db.get_account_code(hash).unwrap().len(), 2);
+        assert_eq!(db.get_code_metadata(hash).unwrap().length, 2);
+        assert_eq!(
+            db.get_account_state(addr(7)).unwrap().unwrap().code_hash,
+            hash
+        );
+    }
+
+    // --- The composition claim (spec §7): the overlay sits ABOVE the replay layer. ---
+    //
+    // This is where `StorageMode::Replace` earns its billing as ethrex's `fakeStorage`
+    // equivalent: it must hide not only the trie value but the replay's own write to that
+    // account. Tested here rather than through a trace because the claim is purely about
+    // layer order, and the two decorators compose without an EVM.
+
+    fn replay_wrote(address: Address, key: H256, value: U256) -> Vec<AccountUpdate> {
+        let mut added = FxHashMap::default();
+        added.insert(key, value);
+        vec![AccountUpdate {
+            address,
+            added_storage: added,
+            ..Default::default()
+        }]
+    }
+
+    #[test]
+    fn replace_mode_hides_the_replays_own_write() {
+        let mock = MockDb::default();
+        mock.accounts
+            .lock()
+            .unwrap()
+            .insert(addr(8), AccountState::default());
+        mock.storage
+            .lock()
+            .unwrap()
+            .insert((addr(8), slot(1)), U256::from(1));
+        // The replay wrote slot 1 = 500.
+        let replayed =
+            ReplayedVmDatabase::new(mock, replay_wrote(addr(8), slot(1), U256::from(500)));
+        // A `state` override that mentions only slot 2 closes the world for this account.
+        let mut overrides = BTreeMap::new();
+        let mut replacement = BTreeMap::new();
+        replacement.insert(slot(2), U256::from(7));
+        overrides.insert(
+            addr(8),
+            StateOverride {
+                storage_mode: StorageMode::Replace(replacement),
+                ..Default::default()
+            },
+        );
+        let db = OverlaidVmDatabase::new(replayed, overrides, 0);
+        assert_eq!(
+            db.get_storage_slot(addr(8), slot(2)).unwrap(),
+            Some(U256::from(7))
+        );
+        // Neither the trie's 1 nor the replay's 500: closed world means zero.
+        assert_eq!(
+            db.get_storage_slot(addr(8), slot(1)).unwrap(),
+            Some(U256::zero())
+        );
+    }
+
+    #[test]
+    fn diff_mode_falls_through_to_the_replays_write() {
+        let mock = MockDb::default();
+        mock.accounts
+            .lock()
+            .unwrap()
+            .insert(addr(9), AccountState::default());
+        mock.storage
+            .lock()
+            .unwrap()
+            .insert((addr(9), slot(1)), U256::from(1));
+        let replayed =
+            ReplayedVmDatabase::new(mock, replay_wrote(addr(9), slot(1), U256::from(500)));
+        let mut overrides = BTreeMap::new();
+        let mut diff = BTreeMap::new();
+        diff.insert(slot(2), U256::from(7));
+        overrides.insert(
+            addr(9),
+            StateOverride {
+                storage_mode: StorageMode::Diff(diff),
+                ..Default::default()
+            },
+        );
+        let db = OverlaidVmDatabase::new(replayed, overrides, 0);
+        assert_eq!(
+            db.get_storage_slot(addr(9), slot(2)).unwrap(),
+            Some(U256::from(7))
+        );
+        // Not in the diff => the replay's value wins over the trie's.
+        assert_eq!(
+            db.get_storage_slot(addr(9), slot(1)).unwrap(),
+            Some(U256::from(500))
+        );
+    }
+
+    #[test]
+    fn empty_code_hash_is_served_without_touching_inner() {
+        // The inner MockDb has no codes at all, so a fall-through would error.
+        let db = ReplayedVmDatabase::new(MockDb::default(), vec![]);
+        assert_eq!(db.get_account_code(*EMPTY_KECCAK_HASH).unwrap().len(), 0);
+        assert_eq!(db.get_code_metadata(*EMPTY_KECCAK_HASH).unwrap().length, 0);
     }
 }
