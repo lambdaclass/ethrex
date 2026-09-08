@@ -372,13 +372,28 @@ impl Blockchain {
         Ok(vm)
     }
 
-    /// Rebuild the parent state for a block given its parent hash, returning an `Evm` instance with all changes cached
-    /// Will re-execute all ancestor block's which's state is not stored up to a maximum given by `reexec`
     async fn rebuild_parent_state(
         &self,
         parent_hash: H256,
         reexec: u32,
     ) -> Result<Evm, ChainError> {
+        Ok(self
+            .rebuild_parent_state_with_db(parent_hash, reexec)
+            .await?
+            .0)
+    }
+
+    /// [`Self::rebuild_parent_state`], also handing back the [`StoreVmDatabase`] the
+    /// rebuilt `Evm` reads through.
+    ///
+    /// `build_call_trace_vm` needs that exact instance: it carries the block-hash cache
+    /// for the re-executed parents, so a freshly constructed equivalent would make
+    /// `BLOCKHASH` unresolvable for those blocks.
+    async fn rebuild_parent_state_with_db(
+        &self,
+        parent_hash: H256,
+        reexec: u32,
+    ) -> Result<(Evm, StoreVmDatabase), ChainError> {
         // Check if we need to re-execute parent blocks
         let blocks_to_re_execute =
             get_missing_state_parents(parent_hash, &self.storage, reexec).await?;
@@ -401,12 +416,12 @@ impl Blockchain {
             parent_header,
             block_hash_cache,
         )?;
-        let mut vm = self.new_evm(vm_db)?;
+        let mut vm = self.new_evm(vm_db.clone())?;
         // Run parents to rebuild pre-state
         for block in blocks_to_re_execute.iter().rev() {
             vm.rerun_block(block, None)?;
         }
-        Ok(vm)
+        Ok((vm, vm_db))
     }
 }
 
