@@ -421,4 +421,13 @@ async fn trace_call_rejects_state_overrides_combined_with_tx_index() {
         message.contains("stateOverrides"),
         "error should explain the stateOverrides limitation, got: {response}"
     );
+    // `txIndex` is right there in the params, so this is a permanent client error that
+    // retrying never fixes. It must not come back as -32603 Internal error, which tells a
+    // caller the node faulted. -32000 is what `RpcErr::BadParams` maps to throughout this
+    // crate; the JSON-RPC standard code for this would be -32602, but that mapping is
+    // repo-wide and not this PR's to change.
+    assert_eq!(
+        error["code"], -32000,
+        "a request-shape error must not be reported as an internal error: {response}"
+    );
 }

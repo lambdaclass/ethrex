@@ -21,40 +21,59 @@ use serde::{Deserialize, Deserializer, de::Error as DeError};
 
 use crate::utils::RpcErr;
 
-/// JSON shape of geth's Block Override Set.
+/// JSON shape of geth's Block Override Set (`internal/ethapi/override.BlockOverrides`).
+///
+/// Field names follow geth, which marshals Go field names and whose `encoding/json`
+/// matches keys case-insensitively — so `FeeRecipient` is reached as `feeRecipient`.
+/// geth renamed `Coinbase`/`Random` to `FeeRecipient`/`PrevRandao` and calls the blob fee
+/// `BlobBaseFee`; alloy (reth, Foundry) keeps the older spellings as canonical and adds
+/// `baseFee`, and erigon uses `blockNumber`/`timestamp`. Every spelling in circulation is
+/// accepted via `alias`, so a request shaped for any of those clients works here.
 ///
 /// `deny_unknown_fields` mirrors [`StateOverrideSet`](super::state_override::StateOverrideSet):
-/// a typo'd or unmodelled override (geth's `withdrawals`, say) must be an error rather
-/// than a silent drop, which would return a plausible-looking but wrong result.
+/// an override this client cannot honor must be an error rather than a silent drop, which
+/// would return a plausible-looking but wrong result. `beacon_root`, `withdrawals` and
+/// `block_hash` are declared for exactly that reason — see [`BlockOverrideSet::apply_to`].
 #[derive(Debug, Default, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BlockOverrideSet {
-    #[serde(default, deserialize_with = "deser_u64_hex_opt")]
+    #[serde(default, alias = "blockNumber", deserialize_with = "deser_u64_hex_opt")]
     pub number: Option<u64>,
-    #[serde(default, deserialize_with = "deser_u64_hex_opt")]
+    #[serde(default, alias = "timestamp", deserialize_with = "deser_u64_hex_opt")]
     pub time: Option<u64>,
     #[serde(default, deserialize_with = "deser_u64_hex_opt")]
     pub gas_limit: Option<u64>,
-    #[serde(default)]
+    /// geth's `FeeRecipient`; `coinbase` is the older spelling alloy still uses.
+    #[serde(default, alias = "feeRecipient")]
     pub coinbase: Option<Address>,
-    /// Override for PREVRANDAO.
-    #[serde(default)]
+    /// Override for PREVRANDAO. geth's `PrevRandao`; `random` is the older spelling.
+    #[serde(default, alias = "prevRandao")]
     pub random: Option<H256>,
-    #[serde(default, deserialize_with = "deser_u64_hex_opt")]
+    /// geth's `BaseFeePerGas`; `baseFee` is alloy's canonical spelling.
+    #[serde(default, alias = "baseFee", deserialize_with = "deser_u64_hex_opt")]
     pub base_fee_per_gas: Option<u64>,
-    #[serde(default, deserialize_with = "deser_u256_hex_opt")]
+    /// geth's `BlobBaseFee`. `blobBaseFeePerGas` was ethrex's own spelling and is kept as
+    /// an alias so requests written against earlier builds of this branch still parse.
+    #[serde(
+        default,
+        rename = "blobBaseFee",
+        alias = "blobBaseFeePerGas",
+        deserialize_with = "deser_u256_hex_opt"
+    )]
     pub blob_base_fee_per_gas: Option<U256>,
     #[serde(default, deserialize_with = "deser_u256_hex_opt")]
     pub difficulty: Option<U256>,
-    /// Geth's `beaconRoot`, applied as the header's `parentBeaconBlockRoot`.
-    ///
-    /// Caveat: ethrex's simulation paths execute the transaction alone — they run no
-    /// system contracts — so this changes the header field (and therefore the header
-    /// hash) but does not write the root into the EIP-4788 beacon-roots ring buffer.
-    /// A simulated contract reading `BEACON_ROOTS_ADDRESS` will not observe it; to
-    /// simulate that, override the contract's storage through the State Override Set.
-    #[serde(default)]
+    /// geth's `BeaconRoot`. Declared only to be refused with a reason: see
+    /// [`BlockOverrideSet::apply_to`].
+    #[serde(default, alias = "parentBeaconBlockRoot")]
     pub beacon_root: Option<H256>,
+    /// geth's `Withdrawals`. Declared only to be refused with a reason.
+    #[serde(default)]
+    pub withdrawals: Option<serde_json::Value>,
+    /// reth/alloy's `blockHash` extension (a number -> hash map read by `BLOCKHASH`).
+    /// Not a geth field. Declared only to be refused with a reason.
+    #[serde(default)]
+    pub block_hash: Option<serde_json::Value>,
 }
 
 impl BlockOverrideSet {
@@ -68,6 +87,8 @@ impl BlockOverrideSet {
             && self.blob_base_fee_per_gas.is_none()
             && self.difficulty.is_none()
             && self.beacon_root.is_none()
+            && self.withdrawals.is_none()
+            && self.block_hash.is_none()
     }
 
     /// Produce a synthesized header by overlaying the set fields on top of
@@ -102,8 +123,33 @@ impl BlockOverrideSet {
         if let Some(d) = self.difficulty {
             header.difficulty = d;
         }
-        if let Some(r) = self.beacon_root {
-            header.parent_beacon_block_root = Some(r);
+        // geth's `BlockOverrides.Apply` refuses these two, and for the same reason: the
+        // block's system contracts would have to run for either to mean anything, and no
+        // simulation path runs them. Setting `parentBeaconBlockRoot` on the header alone
+        // would leave the EIP-4788 ring buffer untouched, so a contract reading
+        // `BEACON_ROOTS_ADDRESS` would not observe it — a silent no-op. To simulate that,
+        // override the beacon-roots contract's storage through the State Override Set.
+        if self.beacon_root.is_some() {
+            return Err(RpcErr::BadParams(
+                "beaconRoot is not supported: honoring it requires running the block's \
+                 EIP-4788 system call, which simulation does not. Override the \
+                 beacon-roots contract's storage via the State Override Set instead"
+                    .to_string(),
+            ));
+        }
+        if self.withdrawals.is_some() {
+            return Err(RpcErr::BadParams(
+                "withdrawals is not supported: honoring it requires processing the \
+                 block's withdrawals, which simulation does not"
+                    .to_string(),
+            ));
+        }
+        if self.block_hash.is_some() {
+            return Err(RpcErr::BadParams(
+                "blockHash is not supported: it is a reth/alloy extension, not part of \
+                 geth's Block Override Set"
+                    .to_string(),
+            ));
         }
         if let Some(desired) = self.blob_base_fee_per_gas {
             // Read after the `time` override above, so a timestamp that crosses into a
@@ -212,34 +258,81 @@ mod tests {
         assert_eq!(set.difficulty, Some(U256::zero()));
     }
 
-    /// A typo'd or unsupported field must be an error, not a silent drop. Geth's
-    /// `BlockOverrides` carries fields ethrex doesn't model (`withdrawals`), and a
-    /// silently-ignored override yields a plausible-looking but wrong result.
+    /// A typo must be an error, not a silent drop: a silently-ignored override yields a
+    /// plausible-looking but wrong result. Every field geth or alloy actually defines is
+    /// modelled (and refused with a reason where it cannot be honored), so what is left
+    /// for this to catch is genuine misspelling.
     #[test]
     fn unknown_field_is_rejected() {
-        let v = json!({ "number": "0x1", "withdrawals": [] });
+        let v = json!({ "number": "0x1", "gasLimitt": "0x1" });
         let err = serde_json::from_value::<BlockOverrideSet>(v)
             .expect_err("unknown field should be rejected");
         assert!(
-            err.to_string().contains("withdrawals"),
+            err.to_string().contains("gasLimitt"),
             "error should name the offending field, got: {err}"
         );
     }
 
-    /// Geth's `BlockOverrides.BeaconRoot`, applied as the header's
-    /// `parentBeaconBlockRoot`.
+    /// geth's `BlockOverrides.Apply` returns an error for `beaconRoot` (and
+    /// `withdrawals`): they cannot be honored without running the block's system
+    /// contracts, which no simulation path does. Named explicitly so the error says why
+    /// rather than "unknown field".
     #[test]
-    fn beacon_root_lands_on_the_header() {
-        let root = H256::from_low_u64_be(0xbeac);
-        let v = json!({ "beaconRoot": format!("{root:#x}") });
+    fn beacon_root_is_rejected_as_unsupported() {
+        let v = json!({ "beaconRoot": format!("{:#x}", H256::from_low_u64_be(0xbeac)) });
         let set: BlockOverrideSet = serde_json::from_value(v).unwrap();
-        assert_eq!(set.beacon_root, Some(root));
-        assert!(!set.is_empty());
-
-        let header = set
+        let err = set
             .apply_to(BlockHeader::default(), &ChainConfig::default())
-            .unwrap();
-        assert_eq!(header.parent_beacon_block_root, Some(root));
+            .expect_err("beaconRoot must be rejected");
+        assert!(
+            format!("{err}").contains("beaconRoot"),
+            "error should name the field, got: {err}"
+        );
+    }
+
+    /// Same for `withdrawals`, and for reth/alloy's `blockHash` extension: both are
+    /// declared so the refusal is explanatory.
+    #[test]
+    fn withdrawals_and_block_hash_are_rejected_as_unsupported() {
+        for field in ["withdrawals", "blockHash"] {
+            let v = json!({ field: json!(null) });
+            let set: BlockOverrideSet = serde_json::from_value(v)
+                .unwrap_or_else(|e| panic!("`{field}` should be a known field, got: {e}"));
+            let _ = set;
+        }
+        let set: BlockOverrideSet = serde_json::from_value(json!({ "withdrawals": [] })).unwrap();
+        let err = set
+            .apply_to(BlockHeader::default(), &ChainConfig::default())
+            .expect_err("withdrawals must be rejected");
+        assert!(format!("{err}").contains("withdrawals"), "got: {err}");
+    }
+
+    /// geth's current field names, which ethrex did not accept: `FeeRecipient` and
+    /// `PrevRandao` replaced the older `Coinbase`/`Random`, and the blob fee is
+    /// `BlobBaseFee` (Go matches JSON keys case-insensitively).
+    #[test]
+    fn geth_current_field_names_are_accepted() {
+        let v = json!({
+            "feeRecipient": "0x000000000000000000000000000000000000beef",
+            "prevRandao": "0x000000000000000000000000000000000000000000000000000000000000dead",
+            "baseFeePerGas": "0x10",
+            "blobBaseFee": "0x100"
+        });
+        let set: BlockOverrideSet = serde_json::from_value(v).expect("geth names must parse");
+        assert_eq!(set.coinbase, Some(Address::from_low_u64_be(0xbeef)));
+        assert_eq!(set.random, Some(H256::from_low_u64_be(0xdead)));
+        assert_eq!(set.base_fee_per_gas, Some(0x10));
+        assert_eq!(set.blob_base_fee_per_gas, Some(U256::from(0x100)));
+    }
+
+    /// alloy's canonical `baseFee`, and erigon's `blockNumber`/`timestamp`.
+    #[test]
+    fn alloy_and_erigon_aliases_are_accepted() {
+        let v = json!({ "blockNumber": "0x7", "timestamp": "0x8", "baseFee": "0x9" });
+        let set: BlockOverrideSet = serde_json::from_value(v).expect("aliases must parse");
+        assert_eq!(set.number, Some(7));
+        assert_eq!(set.time, Some(8));
+        assert_eq!(set.base_fee_per_gas, Some(9));
     }
 
     /// Pre-Cancun there is no blob schedule, so `fake_exponential` has no update

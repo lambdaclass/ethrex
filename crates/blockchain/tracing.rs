@@ -347,15 +347,21 @@ impl Blockchain {
             }
             return Ok(self.new_evm(vm_db)?);
         }
-        // The re-execution path runs the block's own transactions, and an overlay
-        // installed here would be visible to them. A State Override Set has to apply to
-        // the traced call alone, on top of that state, so reject instead of returning a
-        // trace computed against overridden inputs the block never saw.
+        // Only the "state not stored" case reaches here: the RPC layer rejects
+        // `txIndex` + `stateOverrides` up front, since that is knowable from the request.
+        // This one is a property of the *node* — the same request succeeds where the
+        // block's post-state is retained — so it is reported as a server-side condition
+        // rather than a bad parameter.
+        //
+        // The overlay cannot be installed on this path at all: rebuilding means re-running
+        // the block's own transactions, and an overlay would be visible to them, when a
+        // State Override Set has to apply to the traced call alone on top of that state.
         if overrides.has_state() {
             return Err(ChainError::Custom(
-                "stateOverrides on debug_traceCall requires tracing on top of a block whose \
-                 state is stored: it is not supported with txIndex, or on a block that needs \
-                 re-execution"
+                "stateOverrides on debug_traceCall needs the block's post-state to be \
+                 stored; this block's state would have to be rebuilt by re-execution, \
+                 which an override cannot be applied on top of. An archive node, or a \
+                 more recent block, can serve this request"
                     .to_string(),
             ));
         }
