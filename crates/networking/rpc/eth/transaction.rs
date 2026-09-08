@@ -17,7 +17,10 @@ use ethrex_blockchain::{
 use ethrex_common::{
     Address, H256, U256,
     constants::{EMPTY_KECCAK_HASH, GAS_PER_BLOB},
-    types::{AccessListEntry, BlockHash, BlockHeader, BlockNumber, GenericTransaction, TxKind},
+    types::{
+        AccessListEntry, BlockHash, BlockHeader, BlockNumber, ChainConfig, GenericTransaction,
+        TxKind,
+    },
 };
 
 use crate::types::{block_override::BlockOverrideSet, state_override::StateOverrideSet};
@@ -158,10 +161,17 @@ impl RpcHandler for CallRequest {
             _ => return Ok(Value::Null),
         };
         let real_head_number = context.storage.get_latest_block_number()?;
-        let state_overrides = self
-            .state_overrides
-            .clone()
-            .map(StateOverrideSet::into_overrides);
+        let chain_config = context.storage.get_chain_config();
+        let effective_header = match self.block_overrides.as_ref().filter(|b| !b.is_empty()) {
+            Some(bo) => bo.apply_to(header.clone(), &chain_config)?,
+            None => header.clone(),
+        };
+        let state_overrides = convert_state_overrides(
+            self.state_overrides.clone(),
+            &context.blockchain,
+            &chain_config,
+            &effective_header,
+        )?;
         let result = simulate_tx_with_overrides(
             &self.transaction,
             &header,
@@ -413,13 +423,18 @@ impl RpcHandler for CreateAccessListRequest {
         // Build the Evm with optional override wrapper. createAccessList does not
         // accept a Block Override Set, so the header is always the real one.
         let inner = StoreVmDatabase::new(context.storage.clone(), header.clone())?;
-        let (gas_used, access_list, error) = match self.state_overrides.clone() {
-            Some(set) if !set.is_empty() => {
-                let mut vm = context.blockchain.new_overlaid_evm(
-                    inner,
-                    set.into_overrides(),
-                    real_head_number,
-                )?;
+        let state_overrides = convert_state_overrides(
+            self.state_overrides.clone(),
+            &context.blockchain,
+            &context.storage.get_chain_config(),
+            &header,
+        )?;
+        let (gas_used, access_list, error) = match state_overrides {
+            Some(overrides) => {
+                let mut vm =
+                    context
+                        .blockchain
+                        .new_overlaid_evm(inner, overrides, real_head_number)?;
                 vm.create_access_list(&self.transaction, &header)?
             }
             _ => {
@@ -573,15 +588,6 @@ impl RpcHandler for EstimateGasRequest {
         };
         let real_head_number = storage.get_latest_block_number()?;
 
-        // Converted once and reused: the balance cap below reads it, and the binary search
-        // runs the simulation up to ~64 times while `into_overrides` hashes every
-        // override code blob.
-        let state_overrides = self
-            .state_overrides
-            .clone()
-            .map(StateOverrideSet::into_overrides)
-            .filter(|o| !o.is_empty());
-
         // Fork and the search ceiling have to come from the header the transaction will
         // actually execute against: a `time` override can cross a fork boundary and a
         // `gasLimit` override moves the ceiling. Recomputed rather than threaded down
@@ -592,6 +598,16 @@ impl RpcHandler for EstimateGasRequest {
             None => block_header.clone(),
         };
         let current_fork = chain_config.fork(effective_header.timestamp);
+
+        // Converted once and reused: the balance cap below reads it, and the binary search
+        // runs the simulation up to ~64 times while `into_overrides` hashes every override
+        // code blob. Follows the effective header, which it is validated against.
+        let state_overrides = convert_state_overrides(
+            self.state_overrides.clone(),
+            blockchain,
+            &chain_config,
+            &effective_header,
+        )?;
 
         let transaction = match self.transaction.nonce {
             Some(_nonce) => self.transaction.clone(),
@@ -788,6 +804,26 @@ fn max_blob_gas_cost(blob_versioned_hashes: &[H256], max_fee_per_blob_gas: Optio
 /// both cases no balance bounds the gas: the ceiling is returned unchanged. Checked here
 /// rather than at the call site so no caller can reach the division with a zero divisor,
 /// which is the same split this function's `fee_cap` argument exists to close.
+/// Convert a State Override Set into the map the simulation paths consume, validating
+/// `movePrecompileToAddress` against the fork the call will actually execute under.
+///
+/// `None` and empty sets both convert to `None`, so callers can treat "no overrides" and
+/// "an empty override object" the same way. The fork comes from the *effective* header
+/// because a `time` block override can cross a fork boundary and so change which
+/// addresses are precompiles.
+fn convert_state_overrides(
+    set: Option<StateOverrideSet>,
+    blockchain: &Blockchain,
+    chain_config: &ChainConfig,
+    effective_header: &BlockHeader,
+) -> Result<Option<BTreeMap<Address, StateOverride>>, RpcErr> {
+    let Some(set) = set.filter(|s| !s.is_empty()) else {
+        return Ok(None);
+    };
+    let fork = chain_config.fork(effective_header.timestamp);
+    Ok(Some(set.into_overrides(fork, blockchain.vm_type()?)?))
+}
+
 async fn recap_with_account_balances(
     highest_gas_limit: u64,
     transaction: &GenericTransaction,

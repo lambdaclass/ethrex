@@ -281,42 +281,53 @@ pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
         || precompiles_for_fork(fork).any(|precompile| precompile.address == *address)
 }
 
-/// Precompile relocations requested by geth's `movePrecompileToAddress` State Override
-/// Set field. Simulation-only: this is `None` on every consensus path, in which case
-/// precompile dispatch is bit-identical to [`is_precompile`].
+/// Precompile-dispatch changes requested by a geth State Override Set. Simulation-only:
+/// this is `None` on every consensus path, in which case precompile dispatch is
+/// bit-identical to [`is_precompile`].
 ///
-/// A move has two halves, and both matter for geth parity: the destination starts
-/// dispatching the precompile, and the vacated original address stops being one
-/// (it becomes an ordinary account).
+/// Two independent effects, both matching geth's `StateOverride.Apply`:
+///
+/// - `movePrecompileToAddress` makes a destination address dispatch the precompile that
+///   lives at the named source.
+/// - **Any** overridden address stops dispatching as a precompile. geth does
+///   `delete(precompiles, addr)` for every address in the override set, not only the
+///   sources of a move, so overriding `0x04`'s balance alone takes the identity precompile
+///   out of the active set and leaves an ordinary account behind.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct PrecompileMoves {
-    /// Original precompile addresses that were moved away.
-    vacated: BTreeSet<Address>,
+    /// Overridden addresses, which no longer dispatch as precompiles.
+    suppressed: BTreeSet<Address>,
     /// Destination -> the original precompile address whose implementation runs there.
     relocated: BTreeMap<Address, Address>,
 }
 
 impl PrecompileMoves {
-    /// Build from `(precompile_address, destination_address)` pairs.
+    /// Build from the `(precompile_address, destination_address)` relocations and the full
+    /// set of overridden addresses.
     ///
-    /// A later pair wins if two moves name the same destination; callers that care
-    /// should validate before constructing.
-    pub fn from_pairs(pairs: impl IntoIterator<Item = (Address, Address)>) -> Self {
-        let mut moves = Self::default();
-        for (source, destination) in pairs {
-            moves.vacated.insert(source);
-            moves.relocated.insert(destination, source);
+    /// A later pair wins if two moves name the same destination; the RPC layer rejects
+    /// that shape before it gets here, as geth does.
+    pub fn from_parts(
+        moves: impl IntoIterator<Item = (Address, Address)>,
+        overridden: impl IntoIterator<Item = Address>,
+    ) -> Self {
+        let mut result = Self {
+            suppressed: overridden.into_iter().collect(),
+            relocated: BTreeMap::new(),
+        };
+        for (source, destination) in moves {
+            result.relocated.insert(destination, source);
         }
-        moves
+        result
     }
 
     pub fn is_empty(&self) -> bool {
-        self.vacated.is_empty() && self.relocated.is_empty()
+        self.suppressed.is_empty() && self.relocated.is_empty()
     }
 
-    /// True if `address` used to host a precompile that has been moved away.
-    pub fn is_vacated(&self, address: &Address) -> bool {
-        self.vacated.contains(address)
+    /// True if `address` is overridden and so no longer dispatches as a precompile.
+    pub fn is_suppressed(&self, address: &Address) -> bool {
+        self.suppressed.contains(address)
     }
 
     /// The address whose precompile implementation should run when `address` is
@@ -339,11 +350,13 @@ pub fn is_precompile_with_moves(
         return is_precompile(address, fork, vm_type);
     };
     // A destination wins over the address's own identity: `movePrecompileToAddress`
-    // may legitimately target an address that is itself a precompile.
+    // may legitimately target an address that is itself a precompile. A destination
+    // cannot also be overridden — the RPC layer rejects that, as geth does — so this
+    // never has to arbitrate between a relocation and a suppression.
     if let Some(source) = moves.source_for(address) {
         return is_precompile(&source, fork, vm_type);
     }
-    if moves.is_vacated(address) {
+    if moves.is_suppressed(address) {
         return false;
     }
     is_precompile(address, fork, vm_type)

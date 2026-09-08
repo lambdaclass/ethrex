@@ -256,3 +256,47 @@ async fn subcall_treats_a_vacated_precompile_address_as_a_normal_account() {
         "vacated address still ran the identity precompile via STATICCALL: {result}"
     );
 }
+
+/// geth's `StateOverride.Apply` does `delete(precompiles, addr)` for **any** overridden
+/// address, not just the source of a move. So overriding nothing but a precompile's
+/// balance takes it out of the active precompile set and leaves an ordinary account.
+///
+/// This is the one semantic here that bites a request nobody wrote deliberately:
+/// `{"0x04": {"balance": "0x1"}}` reads like a no-op but silences the precompile.
+#[tokio::test]
+async fn overriding_a_precompile_address_stops_it_dispatching() {
+    let storage = setup_store().await;
+    let context = default_context_with_storage(storage).await;
+
+    let body = eth_call(IDENTITY, json!({ IDENTITY: { "balance": "0x1" } }));
+    let response = call_http(context, body).await;
+    let result = response
+        .get("result")
+        .and_then(|r| r.as_str())
+        .unwrap_or_else(|| panic!("expected a string result, got: {response}"));
+
+    assert!(
+        !result.contains("11223344"),
+        "an overridden precompile address must stop dispatching; got: {result}"
+    );
+}
+
+/// Control: without the override the identity precompile still echoes, so the assertion
+/// above tracks the override rather than a broken request.
+#[tokio::test]
+async fn an_unoverridden_precompile_still_dispatches() {
+    let storage = setup_store().await;
+    let context = default_context_with_storage(storage).await;
+
+    let body = eth_call(IDENTITY, json!({}));
+    let response = call_http(context, body).await;
+    let result = response
+        .get("result")
+        .and_then(|r| r.as_str())
+        .unwrap_or_else(|| panic!("expected a string result, got: {response}"));
+
+    assert!(
+        result.contains("11223344"),
+        "the identity precompile should echo when nothing overrides it; got: {result}"
+    );
+}

@@ -102,6 +102,7 @@ use ethrex_trie::{Nibbles, Node, NodeRef, Trie, TrieError, TrieLogger, TrieNode}
 #[cfg(feature = "rayon")]
 use ethrex_vm::backends::BLOATED_BATCH_THRESHOLD;
 use ethrex_vm::backends::CachingDatabase;
+use ethrex_vm::backends::VMType;
 #[cfg(feature = "rayon")]
 use ethrex_vm::backends::levm::LEVM;
 use ethrex_vm::backends::levm::db::DatabaseLogger;
@@ -4126,6 +4127,13 @@ impl Blockchain {
         new_evm(&self.options.r#type, vm_db)
     }
 
+    /// The [`VMType`] this chain executes with. Exposed so the RPC layer can answer
+    /// fork-and-VM-dependent questions — whether an address is a precompile, say — without
+    /// having to build an [`Evm`] first.
+    pub fn vm_type(&self) -> Result<VMType, EvmError> {
+        vm_type_for(&self.options.r#type)
+    }
+
     /// [`Blockchain::new_evm`] for the RPC simulation paths that honor geth's State
     /// Override Set (`eth_call`, `eth_estimateGas`, `eth_createAccessList`,
     /// `debug_traceCall`).
@@ -4709,6 +4717,19 @@ fn handle_subtrie(
         }
     }
     Ok(())
+}
+
+/// The [`VMType`] a given [`BlockchainType`] executes with.
+pub fn vm_type_for(blockchain_type: &BlockchainType) -> Result<VMType, EvmError> {
+    Ok(match blockchain_type {
+        BlockchainType::L1 => VMType::L1,
+        BlockchainType::L2(l2_config) => VMType::L2(
+            *l2_config
+                .fee_config
+                .read()
+                .map_err(|_| EvmError::Custom("Fee config lock was poisoned".to_string()))?,
+        ),
+    })
 }
 
 pub fn new_evm<D: VmDatabase + 'static>(

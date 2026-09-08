@@ -470,15 +470,19 @@ impl TraceCallRequest {
             return Ok(TraceCallOverrides::default());
         }
 
+        let chain_config = context.storage.get_chain_config();
         let effective_header = match block_overrides {
-            Some(bo) => {
-                let chain_config = context.storage.get_chain_config();
-                Some(bo.apply_to(block.header.clone(), &chain_config)?)
-            }
+            Some(bo) => Some(bo.apply_to(block.header.clone(), &chain_config)?),
             None => None,
         };
+        // Validated against the header the traced call will execute under, since a `time`
+        // override can cross a fork boundary and change which addresses are precompiles.
+        let fork_header = effective_header.as_ref().unwrap_or(&block.header);
         let state = match (has_state, self.trace_config.state_overrides.clone()) {
-            (true, Some(set)) => set.into_overrides(),
+            (true, Some(set)) => set.into_overrides(
+                chain_config.fork(fork_header.timestamp),
+                context.blockchain.vm_type()?,
+            )?,
             _ => Default::default(),
         };
         let real_head_number = context.storage.get_latest_block_number()?;

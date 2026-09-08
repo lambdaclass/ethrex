@@ -185,16 +185,23 @@ impl<Inner: VmDatabase + Clone> VmDatabase for OverlaidVmDatabase<Inner> {
     }
 }
 
-/// Collect the `movePrecompileToAddress` directives from a set of overrides into the
-/// form LEVM's dispatch consumes.
+/// Derive the precompile-dispatch changes a set of overrides implies, in the form LEVM
+/// consumes.
 ///
-/// Geth applies precompile moves before the rest of the override set, which is why this
-/// is derived from the same map rather than tracked separately.
+/// Both halves come from the same map, matching geth's `StateOverride.Apply`: the
+/// `movePrecompileToAddress` relocations, and the suppression of **every** overridden
+/// address (geth's `delete(precompiles, addr)`), so overriding a precompile address at all
+/// takes it out of the active set.
+///
+/// Validation of the moves themselves — that the source is a precompile, and that the
+/// destination is not itself overridden — happens at the RPC layer, where the active fork
+/// is known and the failure can be reported as a bad parameter.
 pub fn precompile_moves(overrides: &BTreeMap<Address, StateOverride>) -> PrecompileMoves {
-    PrecompileMoves::from_pairs(
+    PrecompileMoves::from_parts(
         overrides
             .iter()
             .filter_map(|(source, ov)| ov.move_precompile_to.map(|dest| (*source, dest))),
+        overrides.keys().copied(),
     )
 }
 
@@ -741,6 +748,27 @@ mod overlaid_db_tests {
             precompile_moves(wrapper.overrides()).source_for(&addr(0xaa)),
             Some(addr(3))
         );
+    }
+
+    /// geth's `StateOverride.Apply` does `delete(precompiles, addr)` for **any** overridden
+    /// address, not only the source of a move: overriding a precompile address at all takes
+    /// it out of the active precompile set.
+    #[test]
+    fn overriding_a_precompile_address_at_all_vacates_it() {
+        let mut overrides = BTreeMap::new();
+        overrides.insert(
+            addr(4),
+            StateOverride {
+                balance: Some(U256::one()),
+                ..Default::default()
+            },
+        );
+        let moves = precompile_moves(&overrides);
+        assert!(
+            moves.is_suppressed(&addr(4)),
+            "a balance override on a precompile address must vacate it"
+        );
+        assert_eq!(moves.source_for(&addr(4)), None, "nothing was relocated");
     }
 
     #[test]
