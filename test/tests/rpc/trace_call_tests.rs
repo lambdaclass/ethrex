@@ -386,13 +386,57 @@ async fn trace_call_with_prestate_tracer_reports_overridden_prestate() {
     );
 }
 
-/// A State Override Set can only be applied when the call runs on top of a block whose
-/// post-state is stored. With `txIndex` the blockchain layer rebuilds the parent state
-/// and re-runs the block's own transactions, and an overlay installed for that would be
-/// visible to them — so the request is refused rather than answered with a trace
-/// computed against inputs the block never saw.
+/// `txIndex` and `stateOverrides` compose, as they do in geth and reth. The blockchain
+/// layer materialises the replay as a database and layers the overlay on top of it, so
+/// the override reaches the traced call without ever being visible to the block's own
+/// transactions. See `test/tests/blockchain/trace_call_replay_tests.rs` for the
+/// state-level proof; these pin that the parser no longer refuses the combination.
+#[test]
+fn trace_call_parses_state_overrides_combined_with_tx_index() {
+    parse(vec![
+        call_object(),
+        json!("latest"),
+        json!({
+            "tracer": "callTracer",
+            "txIndex": "0x2",
+            "stateOverrides": {
+                "0x1000000000000000000000000000000000000000": { "balance": "0x1" }
+            }
+        }),
+    ])
+    .expect("txIndex together with stateOverrides must parse");
+}
+
+/// Same for `movePrecompileToAddress`. The relocations ride on the second `Evm` — only
+/// `new_overlaid_evm` installs them, and the replay `Evm` is built with plain `new_evm` —
+/// so the block's own transactions keep dispatching the real precompile table. Move
+/// *validation* happens in `handle`, where the fork is known, so the parser accepts this
+/// without needing a chain.
+#[test]
+fn trace_call_parses_move_precompile_combined_with_tx_index() {
+    parse(vec![
+        call_object(),
+        json!("latest"),
+        json!({
+            "tracer": "callTracer",
+            "txIndex": "0x2",
+            "stateOverrides": {
+                "0x0000000000000000000000000000000000000001": {
+                    "movePrecompileToAddress": "0xc000000000000000000000000000000000000000"
+                }
+            }
+        }),
+    ])
+    .expect("txIndex together with movePrecompileToAddress must parse");
+}
+
+/// Accepting the combination is separate from the `txIndex` range check, which stays:
+/// `txIndex` must be less than the block's transaction count (the sole exception being
+/// index 0 on an empty block). That bound guards against tracing a state where all
+/// transactions ran but withdrawals were skipped, and has nothing to do with overrides.
+/// This one goes through the HTTP path because the check lives in `handle`, not `parse`.
 #[tokio::test]
-async fn trace_call_rejects_state_overrides_combined_with_tx_index() {
+async fn trace_call_still_rejects_out_of_range_tx_index() {
     let storage = setup_store().await;
     let context = default_context_with_storage(storage).await;
 
@@ -403,11 +447,7 @@ async fn trace_call_rejects_state_overrides_combined_with_tx_index() {
         "params": [
             { "from": CALLER, "to": CALLEE, "data": "0x" },
             "latest",
-            {
-                "tracer": "opcodeTracer",
-                "txIndex": "0x0",
-                "stateOverrides": { CALLEE: { "code": ADD_THEN_STOP } }
-            }
+            { "tracer": "opcodeTracer", "txIndex": "0x5" }
         ]
     })
     .to_string();
@@ -418,16 +458,7 @@ async fn trace_call_rejects_state_overrides_combined_with_tx_index() {
         .unwrap_or_else(|| panic!("expected an error, got: {response}"));
     let message = error["message"].as_str().unwrap_or_default();
     assert!(
-        message.contains("stateOverrides"),
-        "error should explain the stateOverrides limitation, got: {response}"
-    );
-    // `txIndex` is right there in the params, so this is a permanent client error that
-    // retrying never fixes. It must not come back as -32603 Internal error, which tells a
-    // caller the node faulted. -32000 is what `RpcErr::BadParams` maps to throughout this
-    // crate; the JSON-RPC standard code for this would be -32602, but that mapping is
-    // repo-wide and not this PR's to change.
-    assert_eq!(
-        error["code"], -32000,
-        "a request-shape error must not be reported as an internal error: {response}"
+        message.contains("out of range"),
+        "expected an out-of-range txIndex error, got: {message}"
     );
 }

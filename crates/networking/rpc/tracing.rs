@@ -532,29 +532,6 @@ impl RpcHandler for TraceCallRequest {
             trace_config.block_overrides = Some(serde_json::from_value(value.clone())?);
         }
 
-        // Caught here rather than in the blockchain layer because it is knowable from the
-        // request alone: `txIndex` selects a mid-block pre-state, which only exists after
-        // replaying the block's own transactions, and an overlay installed for that replay
-        // would be visible to them. A permanent client error that retrying never fixes, so
-        // it belongs in `BadParams` rather than surfacing as an internal error. (That maps
-        // to -32000 in this crate, not the JSON-RPC -32602; see `RpcErr`.)
-        if trace_config.tx_index.is_some()
-            && trace_config
-                .state_overrides
-                .as_ref()
-                .is_some_and(|set| !set.is_empty())
-        {
-            return Err(RpcErr::BadParams(
-                concat!(
-                    "stateOverrides cannot be combined with txIndex: the override has to ",
-                    "apply to the traced call alone, but reaching a mid-block pre-state ",
-                    "requires re-executing the block's own transactions, which the overlay ",
-                    "would also affect",
-                )
-                .to_string(),
-            ));
-        }
-
         Ok(TraceCallRequest {
             transaction,
             block,
