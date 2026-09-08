@@ -608,6 +608,20 @@ docker run --rm -it pk910/gated-deposit-contract-cli -k $ADMIN_KEY -r $RPC \
 `<DEPOSITOR_EOA>` is the address that will **send** the deposit transaction, not the
 withdrawal address and not the validator pubkey. This is the most common mistake.
 
+A slot lets the address deposit; it does not give it the 32 ETH per validator the deposit
+moves, and the faucet's drip is far below that. Send the stake with the slots, from one of
+the deployment's rich accounts, signed on the host inside the faucet image so no extra
+tooling is installed. 97 ETH covers three validators and their gas:
+```
+set -a; . ~/frames-testnet-keys.env; set +a
+docker run --rm --network host -e K="$RICH_01_KEY" -e TO=<DEPOSITOR_EOA> -e AMOUNT_ETH=97 \
+  -v $PWD/scripts/frames-testnet/fund-depositor.py:/fund-depositor.py:ro \
+  --entrypoint python frames-faucet:latest /fund-depositor.py
+```
+Confirm both with the recipient's token balance (`balanceOf` on the gating contract,
+`0x00000000A11Acc355c0dE0000A11aCC355C0DE00`) and `eth_getBalance`, then tell the operator
+which address was granted and how many slots.
+
 Test both directions after launch: a deposit from a token-less address must revert with
 `Not enough tokens`, and the same deposit must succeed after minting. Only proving both
 shows the gate is working rather than simply broken for everyone.
