@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 use crate::{
     Blockchain,
     error::ChainError,
-    vm::{StateOverride, StoreVmDatabase},
+    vm::{ReplayedVmDatabase, StateOverride, StoreVmDatabase},
 };
 
 /// The geth override sets applied to a `debug_traceCall`. `Default` means "no
@@ -326,7 +326,9 @@ impl Blockchain {
     /// re-execution. This is the common path (e.g. tracing a call on `latest`) and matches
     /// what `eth_call` does. When a specific `tx_index` is requested, or the block's state
     /// isn't stored (archive/pruned gap), the parent state is rebuilt and the block re-run
-    /// up to `tx_index` (processing withdrawals only when the whole block runs).
+    /// up to `tx_index` (processing withdrawals only when the whole block runs), then
+    /// exposed as a [`ReplayedVmDatabase`] so the override overlay can be layered on top
+    /// of the replay rather than around it.
     async fn build_call_trace_vm(
         &self,
         block: &Block,
@@ -347,29 +349,40 @@ impl Blockchain {
             }
             return Ok(self.new_evm(vm_db)?);
         }
-        // Only the "state not stored" case reaches here: the RPC layer rejects
-        // `txIndex` + `stateOverrides` up front, since that is knowable from the request.
-        // This one is a property of the *node* — the same request succeeds where the
-        // block's post-state is retained — so it is reported as a server-side condition
-        // rather than a bad parameter.
+        // Re-execution path: `txIndex` was given, or the block's post-state is not stored
+        // (archive/pruned gap). Both mean rebuilding state by replaying blocks.
         //
-        // The overlay cannot be installed on this path at all: rebuilding means re-running
-        // the block's own transactions, and an overlay would be visible to them, when a
-        // State Override Set has to apply to the traced call alone on top of that state.
-        if overrides.has_state() {
-            return Err(ChainError::Custom(
-                "stateOverrides on debug_traceCall needs the block's post-state to be \
-                 stored; this block's state would have to be rebuilt by re-execution, \
-                 which an override cannot be applied on top of. An archive node, or a \
-                 more recent block, can serve this request"
-                    .to_string(),
-            ));
-        }
-        let mut vm = self
-            .rebuild_parent_state(block.header.parent_hash, reexec)
+        // The replay must not see the State Override Set — the block's own transactions
+        // really happened and have to execute against the state they really saw. So the
+        // replay finishes in its own `Evm`, is materialised as a `ReplayedVmDatabase`, and
+        // the overlay goes on top of that for a second `Evm` that runs only the traced
+        // call. That is geth's ordering: `StateAtTransaction`, then `StateOverride.Apply`.
+        let (mut vm, base_db) = self
+            .rebuild_parent_state_with_db(block.header.parent_hash, reexec)
             .await?;
         vm.rerun_block(block, tx_index)?;
-        Ok(vm)
+        // `get_state_transitions` diffs `current_accounts_state` against
+        // `initial_accounts_state`, so this is the complete replay only while the latter
+        // is still the untouched `base_db` baseline. That holds because `rerun_block` is
+        // `prepare_block` plus a plain `execute_tx` loop; the drain-back that folds
+        // in-block changes into `initial_accounts_state` lives in the BAL-parallel and
+        // streaming-merkleizer executors, which tracing does not use. If `rerun_block`
+        // ever adopts one, this returns a PARTIAL diff and traces go quietly wrong.
+        //
+        // There is deliberately no assertion here. A drain merges `current_accounts_state`
+        // into `initial_accounts_state` and later transactions repopulate `current`, so the
+        // drained and undrained states are indistinguishable from outside — any cheap
+        // assert would pass in exactly the case it claims to catch. The comment is the
+        // guard; keep it attached to this call.
+        let replayed = ReplayedVmDatabase::new(base_db, vm.get_state_transitions()?);
+        if overrides.needs_overlay() {
+            return Ok(self.new_overlaid_evm(
+                replayed,
+                overrides.state.clone(),
+                overrides.real_head_number,
+            )?);
+        }
+        Ok(self.new_evm(replayed)?)
     }
 
     /// Rebuild the parent state for a block given its parent hash, returning an `Evm`
