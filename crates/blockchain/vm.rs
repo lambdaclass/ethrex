@@ -188,6 +188,17 @@ impl<Inner: VmDatabase + Clone> VmDatabase for OverlaidVmDatabase<Inner> {
     }
 }
 
+/// Stand-in `storage_root` for an account the replay gave storage to without this layer
+/// materialising a trie for it.
+///
+/// **Not a real trie root.** On this path `storage_root` has exactly one consumer,
+/// `LevmAccount::has_storage` (`crates/vm/levm/src/account.rs:78`, the EIP-7610
+/// create-collision check), and it only asks whether the root differs from
+/// `EMPTY_TRIE_HASH`. Computing the true root would mean hashing a storage trie for a
+/// value nothing on this path reads. Never commit this value and never compare it to a
+/// real root.
+const UNMATERIALISED_STORAGE_ROOT: H256 = H256([0xff; 32]);
+
 /// `VmDatabase` decorator that layers a finished block replay over the state that replay
 /// started from, so the replay can be read as a database.
 ///
@@ -226,16 +237,32 @@ impl<Inner: VmDatabase + Clone> VmDatabase for ReplayedVmDatabase<Inner> {
         }
         let base = self.inner.get_account_state(address)?;
         // `storage_root` feeds exactly one thing downstream: `LevmAccount::has_storage`,
-        // the EIP-7610 create-collision check. `AccountUpdate` carries no root, so pass
-        // the base one through and only correct it where the replay is known to have
-        // emptied storage. An account that *gains* storage while having no code and nonce
-        // 0 would be misreported, but EIP-7610 exists precisely because such accounts can
-        // no longer be created. `OverlaidVmDatabase` carries the same caveat above.
+        // the EIP-7610 create-collision check. `AccountUpdate` carries no root, so serve
+        // one that answers that question the way the committed state would.
+        //
+        // Ground truth is `apply_account_updates_from_trie_batch`
+        // (`crates/storage/store.rs:2734-2762`): `removed_storage` resets the root to
+        // empty, and a non-empty `added_storage` then rebuilds the trie on top of that
+        // reset — inserting non-zero values, removing zero ones — and overwrites the
+        // root. So the committed root is non-empty exactly when the resulting trie is.
+        //
+        // One residual over-report is accepted: if the base trie is non-empty and
+        // `added_storage` zeroes every slot in it, the true root is empty and this still
+        // reports non-empty. Detecting that needs the real trie, which this layer
+        // deliberately does not open, and over-reporting a collision is the safe
+        // direction to be wrong in.
         let storage_root = |base_root: H256| {
-            if update.removed_storage {
+            let root_after_wipe = if update.removed_storage {
                 *EMPTY_TRIE_HASH
             } else {
                 base_root
+            };
+            if root_after_wipe != *EMPTY_TRIE_HASH {
+                root_after_wipe
+            } else if update.added_storage.values().any(|v| !v.is_zero()) {
+                UNMATERIALISED_STORAGE_ROOT
+            } else {
+                *EMPTY_TRIE_HASH
             }
         };
         // No `info` means a storage-only update: the account itself is unchanged, and an
@@ -1203,9 +1230,10 @@ mod replayed_db_tests {
             db.get_storage_slot(addr(6), slot(2)).unwrap(),
             Some(U256::zero())
         );
-        // has_storage must read false: the trie storage is gone.
+        // The account was destroyed and repopulated, so it has storage again — the
+        // committed root would be the rebuilt trie's, not empty.
         let state = db.get_account_state(addr(6)).unwrap().unwrap();
-        assert_eq!(state.storage_root, *EMPTY_TRIE_HASH);
+        assert_ne!(state.storage_root, *EMPTY_TRIE_HASH);
     }
 
     #[test]
@@ -1326,5 +1354,49 @@ mod replayed_db_tests {
         let db = ReplayedVmDatabase::new(MockDb::default(), vec![]);
         assert_eq!(db.get_account_code(*EMPTY_KECCAK_HASH).unwrap().len(), 0);
         assert_eq!(db.get_code_metadata(*EMPTY_KECCAK_HASH).unwrap().length, 0);
+    }
+
+    #[test]
+    fn destroyed_account_with_nothing_written_back_reports_no_storage() {
+        let mock = MockDb::default();
+        mock.accounts.lock().unwrap().insert(
+            addr(10),
+            AccountState {
+                storage_root: H256::from([0xab; 32]),
+                ..Default::default()
+            },
+        );
+        let db = ReplayedVmDatabase::new(
+            mock,
+            vec![AccountUpdate {
+                removed_storage: true,
+                info: Some(info(0, 1)),
+                ..update(addr(10))
+            }],
+        );
+        let state = db.get_account_state(addr(10)).unwrap().unwrap();
+        assert_eq!(state.storage_root, *EMPTY_TRIE_HASH);
+    }
+
+    #[test]
+    fn storage_added_to_a_storageless_account_reports_storage() {
+        // Base trie is empty; the replay writes a non-zero slot. The committed root would
+        // be non-empty, so `has_storage` must be true.
+        let mock = MockDb::default();
+        mock.accounts
+            .lock()
+            .unwrap()
+            .insert(addr(11), AccountState::default());
+        let mut added = FxHashMap::default();
+        added.insert(slot(1), U256::from(1));
+        let db = ReplayedVmDatabase::new(
+            mock,
+            vec![AccountUpdate {
+                added_storage: added,
+                ..update(addr(11))
+            }],
+        );
+        let state = db.get_account_state(addr(11)).unwrap().unwrap();
+        assert_ne!(state.storage_root, *EMPTY_TRIE_HASH);
     }
 }
