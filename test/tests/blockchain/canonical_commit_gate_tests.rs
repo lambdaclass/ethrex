@@ -171,7 +171,7 @@ async fn non_canonical_blocks_do_not_prune_genesis() {
     // Precondition that makes the property load-bearing: no FCU ran, so the canonical
     // head is still genesis (block 0). safe_commit_root is therefore still zero.
     assert_eq!(
-        store.get_latest_block_number().await.unwrap(),
+        store.get_latest_block_number().unwrap(),
         0,
         "canonical head must stay at genesis when no forkchoice_update is called"
     );
@@ -400,7 +400,7 @@ async fn bounded_reexec_without_fcu_bounds_memory_and_serves_window() {
     // No FCU ever ran: the canonical head is still genesis, so the safe-commit cell stayed
     // zero — the canonical gate would have committed nothing.
     assert_eq!(
-        store.get_latest_block_number().await.unwrap(),
+        store.get_latest_block_number().unwrap(),
         0,
         "precondition: no forkchoice_update was issued, canonical head stays at genesis"
     );

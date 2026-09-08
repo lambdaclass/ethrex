@@ -144,7 +144,7 @@ async fn test_reorg_from_long_to_short_chain() {
     assert_ne!(retrieved_1a, retrieved_1b);
     assert_eq!(retrieved_1b, block_1b.header);
     assert!(is_canonical(&store, 1, hash_1b).await.unwrap());
-    assert_eq!(latest_canonical_block_hash(&store).await.unwrap(), hash_1b);
+    assert_eq!(latest_canonical_block_hash(&store).unwrap(), hash_1b);
 
     // Add a third block at height 2, child to the canonical one.
     let block_2 = new_block(&store, &block_1b.header).await;
@@ -156,7 +156,7 @@ async fn test_reorg_from_long_to_short_chain() {
         .await
         .unwrap();
     let retrieved_2 = store.get_block_header_by_hash(hash_2).unwrap();
-    assert_eq!(latest_canonical_block_hash(&store).await.unwrap(), hash_2);
+    assert_eq!(latest_canonical_block_hash(&store).unwrap(), hash_2);
 
     assert!(retrieved_2.is_some());
     assert!(is_canonical(&store, 2, hash_2).await.unwrap());
@@ -230,7 +230,7 @@ async fn new_head_ancestor_of_finalized_should_skip() {
     // State must be unchanged after the skip.
     assert_eq!(store.get_finalized_block_number().await.unwrap(), Some(2));
     assert_eq!(store.get_safe_block_number().await.unwrap(), Some(2));
-    assert_eq!(store.get_latest_block_number().await.unwrap(), 3);
+    assert_eq!(store.get_latest_block_number().unwrap(), 3);
 }
 
 #[tokio::test]
@@ -259,17 +259,14 @@ async fn latest_block_number_should_always_be_the_canonical_head() {
         .add_block(block_2.clone())
         .expect("Could not add block 2.");
 
-    assert_eq!(
-        latest_canonical_block_hash(&store).await.unwrap(),
-        genesis_hash
-    );
+    assert_eq!(latest_canonical_block_hash(&store).unwrap(), genesis_hash);
 
     // Make that chain the canonical one.
     apply_fork_choice(&store, hash_2, genesis_hash, genesis_hash, None)
         .await
         .unwrap();
 
-    assert_eq!(latest_canonical_block_hash(&store).await.unwrap(), hash_2);
+    assert_eq!(latest_canonical_block_hash(&store).unwrap(), hash_2);
 
     // Add a new, non canonical block, starting from genesis.
     let block_1b = new_block(&store, &genesis_header).await;
@@ -279,7 +276,7 @@ async fn latest_block_number_should_always_be_the_canonical_head() {
         .expect("Could not add block b.");
 
     // The latest block should be the same.
-    assert_eq!(latest_canonical_block_hash(&store).await.unwrap(), hash_2);
+    assert_eq!(latest_canonical_block_hash(&store).unwrap(), hash_2);
 
     // if we apply fork choice to the new one, then we should
     apply_fork_choice(&store, hash_b, genesis_hash, genesis_hash, None)
@@ -287,7 +284,7 @@ async fn latest_block_number_should_always_be_the_canonical_head() {
         .unwrap();
 
     // The latest block should now be the new head.
-    assert_eq!(latest_canonical_block_hash(&store).await.unwrap(), hash_b);
+    assert_eq!(latest_canonical_block_hash(&store).unwrap(), hash_b);
 }
 
 #[tokio::test]

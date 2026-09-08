@@ -1,224 +1,28 @@
 use std::sync::Arc;
 
-#[cfg(feature = "eip-8025")]
-use ethrex_common::Address;
-#[cfg(feature = "eip-8025")]
-use ethrex_common::utils::keccak;
+use ethrex_common::types::ELASTICITY_MULTIPLIER;
+use ethrex_common::types::stateless_ssz::{
+    STATELESS_INPUT_SCHEMA_ID, SszPublicKeys, SszStatelessInput, SszStatelessValidationResult,
+};
 use ethrex_crypto::Crypto;
+use ethrex_vm::Evm;
+use libssz_merkle::{HashTreeRoot, Sha256Hasher};
 
 use crate::common::ExecutionError;
 use crate::common::execute_blocks;
-use crate::l1::input::ProgramInput;
-#[cfg(feature = "eip-8025")]
-use crate::l1::input::{
-    CanonicalExecutionWitness, CanonicalStatelessInput, DecodedEip8025, PublicKeysList,
-};
-use crate::l1::output::ProgramOutput;
-
-use ethrex_common::types::ELASTICITY_MULTIPLIER;
-use ethrex_common::validate_block_access_list_hash;
-use ethrex_vm::Evm;
-
-#[cfg(feature = "eip-8025")]
-use libssz_merkle::Sha256Hasher;
-
-#[cfg(not(feature = "eip-8025"))]
-use crate::common::BatchExecutionResult;
-
-/// Execute the L1 stateless validation program.
-///
-/// This validates and executes a batch of L1 blocks, verifying state transitions
-/// without access to the full blockchain state.
-#[cfg(not(feature = "eip-8025"))]
-pub fn execution_program(
-    input: ProgramInput,
-    crypto: Arc<dyn Crypto>,
-) -> Result<ProgramOutput, ExecutionError> {
-    let ProgramInput {
-        blocks,
-        execution_witness,
-    } = input;
-
-    let BatchExecutionResult {
-        receipts: _,
-        initial_state_hash,
-        final_state_hash,
-        last_block_hash,
-        non_privileged_count,
-        chain_id,
-        burned_fees: _,
-        bals: _,
-    } = execute_blocks(
-        &blocks,
-        execution_witness,
-        ELASTICITY_MULTIPLIER,
-        |db, _| {
-            // L1 VM factory - simple creation without fee configs
-            Ok(Evm::new_for_l1(db.clone(), crypto.clone()))
-        },
-        crypto.clone(),
-    )?;
-
-    Ok(ProgramOutput {
-        initial_state_hash,
-        final_state_hash,
-        last_block_hash,
-        chain_id: chain_id.into(),
-        transaction_count: non_privileged_count,
-    })
-}
+use crate::l1::input::decode_stateless_input;
 
 /// Wrapper to bridge `ethrex_crypto::Crypto` to `libssz_merkle::Sha256Hasher`,
 /// so `hash_tree_root` is computed via crypto precompiles in the zkVM.
 /// Required because the orphan rule prevents a direct impl on `Arc<dyn Crypto>`.
-#[cfg(feature = "eip-8025")]
 struct CryptoWrapper(Arc<dyn Crypto>);
 
-#[cfg(feature = "eip-8025")]
 impl Sha256Hasher for CryptoWrapper {
     fn hash(&self, data: &[u8]) -> [u8; 32] {
         self.0.sha256(data)
     }
 }
 
-/// Decode and execute the L1 stateless validation program from EIP-8025 wire
-/// bytes.
-///
-/// The wire format is version-prefixed; see [`super::decode_eip8025`] for the
-/// per-version layout. Legacy and canonical-input payloads both commit to the
-/// decoded `NewPayloadRequest` root and report execution validity as a boolean.
-#[cfg(feature = "eip-8025")]
-pub fn execution_program(
-    bytes: &[u8],
-    crypto: Arc<dyn Crypto>,
-) -> Result<ProgramOutput, ExecutionError> {
-    let decoded = super::decode_eip8025(bytes).map_err(|err| {
-        ExecutionError::Internal(format!("failed to decode EIP-8025 input: {err}"))
-    })?;
-
-    execute_decoded(ProgramInput::Wire(decoded), crypto)
-}
-
-/// Execute an already-built [`ProgramInput`].
-///
-/// The `Direct` arm has no `NewPayloadRequest`, so it returns a sentinel
-/// `ProgramOutput` with zero request_root and `valid = true`. `ExecBackend`
-/// promotes `valid = false` to `Err` for result-only callers.
-#[cfg(feature = "eip-8025")]
-pub fn execute_decoded(
-    input: ProgramInput,
-    crypto: Arc<dyn Crypto>,
-) -> Result<ProgramOutput, ExecutionError> {
-    use libssz_merkle::HashTreeRoot;
-
-    match input {
-        ProgramInput::Direct {
-            blocks,
-            execution_witness,
-        } => {
-            let chain_id = execution_witness.chain_config.chain_id;
-            execute_blocks(
-                &blocks,
-                execution_witness,
-                ELASTICITY_MULTIPLIER,
-                |db, _| Ok(Evm::new_for_l1(db.clone(), crypto.clone())),
-                crypto.clone(),
-            )?;
-            Ok(ProgramOutput {
-                new_payload_request_root: [0u8; 32],
-                valid: true,
-                chain_id,
-            })
-        }
-        ProgramInput::Wire(DecodedEip8025::Legacy {
-            new_payload_request,
-            execution_witness,
-        }) => {
-            let request_root = new_payload_request.hash_tree_root(&CryptoWrapper(crypto.clone()));
-            let chain_id = execution_witness.chain_config.chain_id;
-            let valid =
-                validate_eip8025_execution(&new_payload_request, execution_witness, crypto).is_ok();
-
-            Ok(ProgramOutput {
-                new_payload_request_root: request_root,
-                valid,
-                chain_id,
-            })
-        }
-        ProgramInput::Wire(DecodedEip8025::Canonical {
-            stateless_input,
-            chain_config,
-        }) => Ok(execute_canonical_stateless_input_decoded(
-            stateless_input,
-            chain_config,
-            crypto,
-        )),
-    }
-}
-
-#[cfg(feature = "eip-8025")]
-fn execute_canonical_stateless_input_decoded(
-    stateless_input: CanonicalStatelessInput,
-    chain_config: ethrex_common::types::ChainConfig,
-    crypto: Arc<dyn Crypto>,
-) -> ProgramOutput {
-    use libssz_merkle::HashTreeRoot;
-
-    let request_root = stateless_input
-        .new_payload_request
-        .hash_tree_root(&CryptoWrapper(crypto.clone()));
-    let chain_id = stateless_input.chain_config.chain_id;
-    let valid = validate_eip8025_canonical_execution(stateless_input, chain_config, crypto).is_ok();
-
-    ProgramOutput {
-        new_payload_request_root: request_root,
-        valid,
-        chain_id,
-    }
-}
-
-#[cfg(feature = "eip-8025")]
-fn decode_payload_transactions<const MAX_TXS: usize, const MAX_BYTES_PER_TX: usize>(
-    transactions: &libssz_types::SszList<libssz_types::SszList<u8, MAX_BYTES_PER_TX>, MAX_TXS>,
-) -> Result<Vec<ethrex_common::types::Transaction>, String> {
-    transactions
-        .iter()
-        .map(|tx_bytes| {
-            ethrex_common::types::Transaction::decode_canonical(tx_bytes)
-                .map_err(|e| format!("tx decode: {e}"))
-        })
-        .collect::<Result<Vec<_>, _>>()
-}
-
-#[cfg(feature = "eip-8025")]
-fn decode_payload_withdrawals<const MAX_WITHDRAWALS: usize>(
-    withdrawals: &libssz_types::SszList<
-        ethrex_common::types::eip8025_ssz::Withdrawal,
-        MAX_WITHDRAWALS,
-    >,
-) -> Vec<ethrex_common::types::Withdrawal> {
-    use ethrex_common::Address;
-
-    withdrawals
-        .iter()
-        .map(|w| ethrex_common::types::Withdrawal {
-            index: w.index,
-            validator_index: w.validator_index,
-            address: Address::from_slice(&w.address.0),
-            amount: w.amount,
-        })
-        .collect()
-}
-
-/// Convert a 32-byte little-endian SSZ `uint256` base-fee field to `u64`.
-///
-/// The upper 24 bytes (`[8..32]`) MUST be zero. They don't affect block validation
-/// (base fee fits in `u64` for any real chain), but they ARE covered by
-/// `NewPayloadRequest::hash_tree_root()`. Silently truncating to the low 8 bytes
-/// would let ~2^192 distinct SSZ inputs reconstruct the *same* block while producing
-/// *different* roots, breaking the "one block ⇒ one root" commitment invariant for
-/// any root-keyed consumer (e.g. a ZK variant or a root-anchored settlement path).
-/// Rejecting non-zero upper bytes closes that malleability.
 fn base_fee_per_gas_from_le_bytes(bytes: &[u8; 32]) -> Result<u64, String> {
     if bytes[8..].iter().any(|&b| b != 0) {
         return Err("base_fee_per_gas exceeds u64 (non-zero upper bytes)".to_string());
@@ -230,163 +34,7 @@ fn base_fee_per_gas_from_le_bytes(bytes: &[u8; 32]) -> Result<u64, String> {
     ))
 }
 
-#[cfg(feature = "eip-8025")]
-fn validate_reconstructed_block_hash(
-    block: &ethrex_common::types::Block,
-    expected_hash: &[u8; 32],
-    crypto: &dyn Crypto,
-) -> Result<(), String> {
-    let computed_hash = block.header.compute_block_hash(crypto);
-    let expected_hash = ethrex_common::H256::from_slice(expected_hash);
-    if computed_hash != expected_hash {
-        return Err(format!(
-            "block_hash mismatch: expected {expected_hash:?}, got {computed_hash:?}"
-        ));
-    }
-
-    Ok(())
-}
-
 /// Transform an SSZ `NewPayloadRequest` into a `Block`.
-#[cfg(feature = "eip-8025")]
-fn eip8025_new_payload_request_to_block(
-    req: &ethrex_common::types::eip8025_ssz::NewPayloadRequest,
-    crypto: &dyn Crypto,
-) -> Result<ethrex_common::types::Block, String> {
-    use bytes::Bytes;
-    use ethrex_common::constants::DEFAULT_OMMERS_HASH;
-    use ethrex_common::types::requests::compute_requests_hash;
-    use ethrex_common::types::{
-        Block, BlockBody, BlockHeader, compute_transactions_root, compute_withdrawals_root,
-    };
-    use ethrex_common::{Address, Bloom, H256};
-
-    let payload = &req.execution_payload;
-
-    let transactions = decode_payload_transactions(&payload.transactions)?;
-
-    let withdrawals = decode_payload_withdrawals(&payload.withdrawals);
-
-    // Build execution_requests from the SSZ typed ExecutionRequests field
-    let execution_requests = req.execution_requests.to_encoded_requests();
-    let requests_hash = compute_requests_hash(&execution_requests);
-
-    let base_fee_per_gas = base_fee_per_gas_from_le_bytes(&payload.base_fee_per_gas)?;
-    let logs_bloom = Bloom::from_slice(&payload.logs_bloom);
-
-    let transactions_root = compute_transactions_root(&transactions, crypto);
-    let withdrawals_root = compute_withdrawals_root(&withdrawals, crypto);
-
-    let body = BlockBody {
-        transactions,
-        ommers: vec![],
-        withdrawals: Some(withdrawals),
-    };
-
-    let header = BlockHeader {
-        parent_hash: H256::from_slice(&payload.parent_hash),
-        ommers_hash: *DEFAULT_OMMERS_HASH,
-        coinbase: Address::from_slice(&payload.fee_recipient.0),
-        state_root: H256::from_slice(&payload.state_root),
-        transactions_root,
-        receipts_root: H256::from_slice(&payload.receipts_root),
-        logs_bloom,
-        difficulty: 0.into(),
-        number: payload.block_number,
-        gas_limit: payload.gas_limit,
-        gas_used: payload.gas_used,
-        timestamp: payload.timestamp,
-        extra_data: Bytes::copy_from_slice(&payload.extra_data),
-        prev_randao: H256::from_slice(&payload.prev_randao),
-        nonce: 0,
-        base_fee_per_gas: Some(base_fee_per_gas),
-        withdrawals_root: Some(withdrawals_root),
-        blob_gas_used: Some(payload.blob_gas_used),
-        excess_blob_gas: Some(payload.excess_blob_gas),
-        parent_beacon_block_root: Some(H256::from_slice(&req.parent_beacon_block_root)),
-        requests_hash: Some(requests_hash),
-        ..Default::default()
-    };
-
-    Ok(Block::new(header, body))
-}
-
-/// Transform an Amsterdam SSZ `NewPayloadRequest` into a `Block`.
-#[cfg(feature = "eip-8025")]
-fn new_payload_request_amsterdam_to_block(
-    req: &ethrex_common::types::eip8025_ssz::NewPayloadRequestAmsterdam,
-    crypto: &dyn Crypto,
-) -> Result<ethrex_common::types::Block, String> {
-    use bytes::Bytes;
-    use ethrex_common::constants::DEFAULT_OMMERS_HASH;
-    use ethrex_common::types::block_access_list::BlockAccessList;
-    use ethrex_common::types::requests::compute_requests_hash;
-    use ethrex_common::types::{
-        Block, BlockBody, BlockHeader, compute_transactions_root, compute_withdrawals_root,
-    };
-    use ethrex_common::{Address, Bloom, H256};
-    use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-
-    let payload = &req.execution_payload;
-
-    let transactions = decode_payload_transactions(&payload.transactions)?;
-    let withdrawals = decode_payload_withdrawals(&payload.withdrawals);
-
-    let block_access_list = BlockAccessList::decode(&payload.block_access_list)
-        .map_err(|e| format!("block access list decode: {e}"))?;
-    block_access_list
-        .validate_ordering()
-        .map_err(|e| format!("block access list ordering: {e}"))?;
-    if block_access_list.encode_to_vec().as_slice() != &payload.block_access_list[..] {
-        return Err("block access list is not canonically encoded".to_string());
-    }
-
-    let execution_requests = req.execution_requests.to_encoded_requests();
-    let requests_hash = compute_requests_hash(&execution_requests);
-    let base_fee_per_gas = base_fee_per_gas_from_le_bytes(&payload.base_fee_per_gas)?;
-    let logs_bloom = Bloom::from_slice(&payload.logs_bloom);
-
-    let transactions_root = compute_transactions_root(&transactions, crypto);
-    let withdrawals_root = compute_withdrawals_root(&withdrawals, crypto);
-
-    let body = BlockBody {
-        transactions,
-        ommers: vec![],
-        withdrawals: Some(withdrawals),
-    };
-
-    let header = BlockHeader {
-        parent_hash: H256::from_slice(&payload.parent_hash),
-        ommers_hash: *DEFAULT_OMMERS_HASH,
-        coinbase: Address::from_slice(&payload.fee_recipient.0),
-        state_root: H256::from_slice(&payload.state_root),
-        transactions_root,
-        receipts_root: H256::from_slice(&payload.receipts_root),
-        logs_bloom,
-        difficulty: 0.into(),
-        number: payload.block_number,
-        gas_limit: payload.gas_limit,
-        gas_used: payload.gas_used,
-        timestamp: payload.timestamp,
-        extra_data: Bytes::copy_from_slice(&payload.extra_data),
-        prev_randao: H256::from_slice(&payload.prev_randao),
-        nonce: 0,
-        base_fee_per_gas: Some(base_fee_per_gas),
-        withdrawals_root: Some(withdrawals_root),
-        blob_gas_used: Some(payload.blob_gas_used),
-        excess_blob_gas: Some(payload.excess_blob_gas),
-        parent_beacon_block_root: Some(H256::from_slice(&req.parent_beacon_block_root)),
-        requests_hash: Some(requests_hash),
-        block_access_list_hash: Some(block_access_list.compute_hash(crypto)),
-        slot_number: Some(payload.slot_number),
-        ..Default::default()
-    };
-
-    let block = Block::new(header, body);
-    validate_reconstructed_block_hash(&block, &payload.block_hash, crypto)?;
-    Ok(block)
-}
-
 /// Validate that the blob versioned hashes in the `NewPayloadRequest` match
 /// the blob commitments in the block's transactions.
 fn validate_versioned_hashes<'a>(
@@ -417,12 +65,8 @@ fn validate_versioned_hashes<'a>(
     Ok(())
 }
 
-/// Transform a native-rollup SSZ `NewPayloadRequest` (`stateless_ssz`) into a `Block`.
-///
-/// Always compiled — used by the EXECUTE precompile path (`ethrex-blockchain`),
-/// the L2 advancer, and [`verify_stateless_block`]. Distinct from
-/// [`eip8025_new_payload_request_to_block`], which reconstructs from the
-/// EIP-8025 guest's `eip8025_ssz` payload (no in-SSZ block access list).
+/// Transform an SSZ `NewPayloadRequest` into a `Block`. Shared by the EXECUTE
+/// precompile path, the L2 advancer, and [`verify_stateless_block`].
 pub fn new_payload_request_to_block(
     req: &ethrex_common::types::stateless_ssz::NewPayloadRequest,
     crypto: &dyn Crypto,
@@ -514,46 +158,104 @@ pub fn new_payload_request_to_block(
     // hash the producer set — honoring the empty-BAL special case. An empty
     // field means pre-Amsterdam: leave block_access_list_hash as None.
     if !payload.block_access_list.is_empty() {
-        use ethrex_rlp::decode::RLPDecode;
+        use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
         let bal_bytes: Vec<u8> = payload.block_access_list.iter().copied().collect();
         let bal = ethrex_common::types::block_access_list::BlockAccessList::decode(&bal_bytes)
             .map_err(|e| format!("block_access_list decode: {e}"))?;
+        // Decoding preserves the wire order while encoding sorts by address, and
+        // `compute_hash` re-encodes — so without these two checks a permuted or
+        // otherwise non-canonical BAL canonicalizes away and still produces the
+        // expected hash. `engine_newPayloadV5` hashes the raw bytes for the same
+        // reason (`rpc/engine/payload.rs`); the guest has to reject explicitly.
+        bal.validate_ordering()
+            .map_err(|e| format!("block_access_list ordering: {e}"))?;
+        if bal.encode_to_vec() != bal_bytes {
+            return Err("block access list is not canonically encoded".to_string());
+        }
         header.block_access_list_hash = Some(bal.compute_hash(crypto));
     }
 
     Ok(Block::new(header, body))
 }
 
-/// Core stateless block validation for the native-rollup EXECUTE path.
+/// Validate the per-transaction public keys carried by a stateless input.
 ///
-/// Sole caller: `ethrex-blockchain`'s `verify_stateless_new_payload`
-/// (`StatelessExecutor`, the `StatelessValidator` trait impl invoked by the
-/// EXECUTE precompile). NOTE: the zkVM guest binaries do **not** call this —
-/// they validate via the separate `validate_eip8025_*` path
-/// (`eip8025_new_payload_request_to_block`), so changes here do not affect
-/// zk-proof output.
+/// The spec's `StatelessInput` supplies one uncompressed secp256k1 key per
+/// transaction so a guest can skip `ecrecover`; a key that does not derive to the
+/// recovered sender must reject the payload (#6716). Called from
+/// [`verify_stateless_block`] — the single point both the zkVM guest and the
+/// EXECUTE precompile pass through — so neither path can drop it.
 ///
-/// Implements the `verify_stateless_new_payload` logic from execution-specs:
-/// reconstruct block → validate versioned hashes → execute statelessly →
-/// inject recomputed `burned_fees` → validate the recomputed block access list
-/// hash (Amsterdam+) → verify `block_hash`.
+/// Upstream `build_stateless_input` skips keys for undecodable or bad-signature
+/// transactions, so a short `public_keys` is possible; such payloads are invalid
+/// on both sides, and the length is checked before any zip so a short list fails
+/// cleanly rather than panicking.
+pub fn validate_public_keys(
+    public_keys: &SszPublicKeys,
+    block: &ethrex_common::types::Block,
+    crypto: &dyn Crypto,
+) -> Result<(), ExecutionError> {
+    if public_keys.len() != block.body.transactions.len() {
+        return Err(ExecutionError::Internal(format!(
+            "Found {} public keys in the stateless input, but there are {} transactions",
+            public_keys.len(),
+            block.body.transactions.len()
+        )));
+    }
+    for (public_key, tx) in public_keys.iter().zip(block.body.transactions.iter()) {
+        // SSZ decode fixes the length at 65; uncompressed secp256k1 is 0x04 || X || Y.
+        let pk_bytes: &[u8] = public_key;
+        let Some((tag, xy)) = pk_bytes.split_first() else {
+            return Err(ExecutionError::Internal(
+                "Stateless input public key is empty".to_string(),
+            ));
+        };
+        if *tag != 0x04 {
+            return Err(ExecutionError::Internal(
+                "Stateless input public key is not a 65-byte uncompressed secp256k1 key"
+                    .to_string(),
+            ));
+        }
+        let hashed = ethrex_common::utils::keccak(xy);
+        let derived = ethrex_common::Address::from_slice(&hashed[12..]);
+        let recovered = tx.sender(crypto).map_err(|e| {
+            ExecutionError::Internal(format!("failed to recover transaction sender: {e}"))
+        })?;
+        if recovered != derived {
+            return Err(ExecutionError::Internal(
+                "Stateless input public key does not match recovered transaction sender"
+                    .to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Stateless validation of a single payload, shared by every entrypoint: the
+/// zkVM guests via [`run_stateless_guest`], and the EXECUTE precompile via
+/// `verify_inner` in `ethrex-blockchain`. Everything a payload must satisfy
+/// belongs here rather than in a caller — see [`validate_public_keys`] for what
+/// splitting it cost.
 ///
-/// **Always compiled** — no `#[cfg(feature = "eip-8025")]` gate, so the
-/// always-compiled `verify_inner` in `ethrex-blockchain` can call it without
-/// pulling in the SSZ feature.
+/// Implements `verify_stateless_new_payload` from execution-specs: reconstruct
+/// block → check the supplied public keys → validate versioned hashes → execute
+/// statelessly (which validates the recomputed block access list hash on
+/// Amsterdam+) → inject recomputed `burned_fees` → verify `block_hash`.
 pub fn verify_stateless_block(
     new_payload_request: &ethrex_common::types::stateless_ssz::NewPayloadRequest,
+    public_keys: &SszPublicKeys,
     execution_witness: ethrex_common::types::block_execution_witness::ExecutionWitness,
     crypto: Arc<dyn Crypto>,
 ) -> Result<(), ExecutionError> {
-    // ChainConfig is Copy — capture it before execute_blocks consumes execution_witness.
-    let chain_config = execution_witness.chain_config;
-
     // Transform SSZ NewPayloadRequest → Block.
     // Do NOT call block.hash() here — burned_fees is not yet known so any
     // cached value would be stale.
     let block = new_payload_request_to_block(new_payload_request, crypto.as_ref())
         .map_err(|e| ExecutionError::Internal(format!("payload conversion: {e}")))?;
+
+    // Check the supplied keys against the recovered senders before committing to
+    // execution, so a mismatched key rejects without paying for a block.
+    validate_public_keys(public_keys, &block, crypto.as_ref())?;
 
     // Keep block in a fixed-size array so we can reclaim it after execute_blocks
     // (which borrows it as &[Block] without consuming it).
@@ -583,24 +285,16 @@ pub fn verify_stateless_block(
     // original header, so the hash is unchanged — no regression on the
     // current path.
     let recomputed_burned_fees = result.burned_fees.first().copied().flatten();
-    let recomputed_bal = result.bals.into_iter().next().flatten();
     let [block] = blocks;
-    let tx_count = block.body.transactions.len();
     let verified_header = block.header.into_with_burned_fees(recomputed_burned_fees);
 
-    // EIP-7928 (Amsterdam+): validate the recomputed BAL — structural checks
-    // (index bounds, size cap) and hash match against header.block_access_list_hash.
-    // Pre-Amsterdam blocks produce recomputed_bal = None, so this is a no-op there.
-    if let Some(ref bal) = recomputed_bal {
-        validate_block_access_list_hash(
-            &verified_header,
-            &chain_config,
-            bal,
-            tx_count,
-            crypto.as_ref(),
-        )
-        .map_err(ExecutionError::BlockValidation)?;
-    }
+    // No BAL validation here: `execute_blocks` already ran
+    // `validate_block_access_list_hash` on this block, and re-running it would
+    // be a second full traversal plus another RLP-encode-and-keccak of the
+    // whole access list inside the zkVM. The check reads only `timestamp`,
+    // `gas_limit` and `block_access_list_hash`, none of which
+    // `into_with_burned_fees` touches, so a second call cannot reach a
+    // different verdict.
 
     let computed_hash = verified_header.hash();
     let expected_hash =
@@ -614,239 +308,178 @@ pub fn verify_stateless_block(
     Ok(())
 }
 
-#[cfg(feature = "eip-8025")]
-fn canonical_execution_witness_to_rpc(
-    witness: CanonicalExecutionWitness,
-) -> ethrex_common::types::block_execution_witness::RpcExecutionWitness {
-    use bytes::Bytes;
-
-    fn copy_ssz_bytes<const MAX_BYTES: usize>(
-        bytes: &libssz_types::SszList<u8, MAX_BYTES>,
-    ) -> Bytes {
-        Bytes::copy_from_slice(bytes)
+/// Per-stage instrumentation for [`run_stateless_guest_traced`].
+///
+/// Every method defaults to a no-op, so [`run_stateless_guest`] pays nothing for
+/// it — `print` takes `fmt::Arguments` so its message is never formatted unless a
+/// trace consumes it. The zkVM guests supply their platform's cycle scopes; the
+/// scope names appear in ZisK profiling output, so keep them stable.
+pub trait GuestTrace {
+    fn scope<T>(_name: &str, f: impl FnOnce() -> T) -> T {
+        f()
     }
-
-    ethrex_common::types::block_execution_witness::RpcExecutionWitness {
-        state: witness.state.iter().map(copy_ssz_bytes).collect(),
-        // The specs do not have a `keys` field in the witness. This field
-        // is inherited from a legacy debug_executionWitness design.
-        // A `keys` field is not currently planned to be included in
-        // the specs. It might if there is rough consensus it is valuable
-        // for execution witness validation performance.
-        keys: Vec::new(),
-        codes: witness.codes.iter().map(copy_ssz_bytes).collect(),
-        headers: witness.headers.iter().map(copy_ssz_bytes).collect(),
-    }
+    fn print(_message: core::fmt::Arguments<'_>) {}
 }
 
-/// Validate the canonical input's `ChainConfig` and witness, then reconstruct
-/// the `Block` from the Amsterdam `NewPayloadRequest` it carries and execute it
-/// statelessly.
-#[cfg(feature = "eip-8025")]
-pub fn validate_eip8025_canonical_execution(
-    stateless_input: CanonicalStatelessInput,
-    chain_config: ethrex_common::types::ChainConfig,
+/// The [`GuestTrace`] used by the uninstrumented entrypoint.
+pub struct NoTrace;
+impl GuestTrace for NoTrace {}
+
+/// Run the stateless validation guest: `statelessInputBytes` in,
+/// `statelessOutputBytes` out.
+///
+/// Never panics and never returns an error, mirroring `run_stateless_guest` in
+/// `stateless_guest.py`. A **decode** failure commits the all-zero default. A
+/// decodable input commits the real payload-request root, `chain_id` and
+/// `schema_id` **even when validation fails** — zero sentinels are the
+/// decode-failure signal only, and the root is computed before validation runs.
+pub fn run_stateless_guest(input_bytes: &[u8], crypto: Arc<dyn Crypto>) -> Vec<u8> {
+    run_stateless_guest_traced::<NoTrace>(input_bytes, crypto)
+}
+
+/// [`run_stateless_guest`] with per-stage instrumentation. One implementation
+/// serves both, so an instrumented guest cannot drift from the plain one.
+pub fn run_stateless_guest_traced<T: GuestTrace>(
+    input_bytes: &[u8],
+    crypto: Arc<dyn Crypto>,
+) -> Vec<u8> {
+    use libssz::SszEncode;
+
+    let Ok(input) = T::scope("deserialize_input", || decode_stateless_input(input_bytes)) else {
+        let mut out = Vec::new();
+        SszStatelessValidationResult::default().ssz_append(&mut out);
+        return out;
+    };
+
+    let new_payload_request_root = T::scope("new_payload_request_root", || {
+        input
+            .new_payload_request
+            .hash_tree_root(&CryptoWrapper(crypto.clone()))
+    });
+    let chain_id = input.chain_id;
+
+    // No `validate_chain_config` scope: #3278 removed all chain configuration
+    // from the wire, so the fork comes from the schema id and the config is
+    // derived inside the validation.
+    let successful_validation = T::scope("run_validation", || {
+        validate_stateless_execution(&input, crypto)
+            .inspect_err(|err| T::print(format_args!("Validation failed: {err}\n")))
+    })
+    .is_ok();
+
+    T::scope("serialize_output", || {
+        let mut out = Vec::new();
+        SszStatelessValidationResult {
+            new_payload_request_root,
+            successful_validation,
+            chain_id,
+            schema_id: STATELESS_INPUT_SCHEMA_ID,
+        }
+        .ssz_append(&mut out);
+        out
+    })
+}
+
+/// Validate a decoded stateless input: rebuild the `ExecutionWitness`, derive the
+/// `ChainConfig` from `(chain_id, Amsterdam)`, and hand off to
+/// [`verify_stateless_block`], which checks the public keys and executes.
+pub fn validate_stateless_execution(
+    input: &SszStatelessInput,
     crypto: Arc<dyn Crypto>,
 ) -> Result<(), ExecutionError> {
-    let block_timestamp = stateless_input
-        .new_payload_request
-        .execution_payload
-        .timestamp;
-    let block_number = stateless_input
-        .new_payload_request
-        .execution_payload
-        .block_number;
-    validate_canonical_chain_config(
-        &stateless_input.chain_config,
-        &chain_config,
-        block_number,
-        block_timestamp,
-    )?;
+    let execution_witness =
+        ethrex_common::types::block_execution_witness::ExecutionWitness::from_ssz(
+            input,
+            crypto.as_ref(),
+        )
+        .map_err(|e| ExecutionError::Internal(format!("witness rebuild: {e}")))?;
 
-    let rpc_witness = canonical_execution_witness_to_rpc(stateless_input.witness);
-    // Decode headers once; reused by the chain-linkage check and `into_execution_witness`.
-    let decoded_headers = ethrex_common::types::block_execution_witness::decode_witness_headers(
-        &rpc_witness.headers,
-    )?;
-    // EELS `test_validation_headers_non_contiguous_chain`: check chain linkage
-    // in input order, before any sort/dedup.
-    ethrex_common::types::block_execution_witness::validate_witness_headers_chain(
-        &decoded_headers,
-        crypto.as_ref(),
-    )?;
-
-    let execution_witness = rpc_witness.into_execution_witness(
-        chain_config,
-        block_number,
-        &decoded_headers,
-        crypto.as_ref(),
-    )?;
-
-    validate_eip8025_amsterdam_execution(
-        &stateless_input.new_payload_request,
+    verify_stateless_block(
+        &input.new_payload_request,
+        &input.public_keys,
         execution_witness,
         crypto,
-        stateless_input.public_keys,
     )
 }
 
-/// Validate `chain_id`, `active_fork.activation`, and `active_fork.blob_schedule`
-/// from the prover's `CanonicalChainConfig` against the verifier's `ChainConfig`.
-#[cfg(feature = "eip-8025")]
-fn validate_canonical_chain_config(
-    canonical: &crate::l1::input::CanonicalChainConfig,
-    expected: &ethrex_common::types::ChainConfig,
-    block_number: u64,
-    block_timestamp: u64,
-) -> Result<(), ExecutionError> {
-    if canonical.chain_id != expected.chain_id {
-        return Err(ExecutionError::Internal(format!(
-            "chain_id mismatch between canonical input ({}) and chain config ({})",
-            canonical.chain_id, expected.chain_id
-        )));
-    }
-
-    // EELS `validate_chain_config` / `_is_activation_active`: the declared active
-    // fork must actually be active for this payload. The activation point must set
-    // a block_number or a timestamp, and the payload must be at or past it.
-    // `block_number`/`timestamp` are `SszList<u64, MAX_OPTIONAL_FORK_ACTIVATION_VALUES=1>`,
-    // i.e. an `Option<u64>` carrying 0 or 1 value.
-    let activation = &canonical.active_fork.activation;
-    let activation_block_number = activation.block_number.iter().next().copied();
-    let activation_timestamp = activation.timestamp.iter().next().copied();
-    if activation_block_number.is_none() && activation_timestamp.is_none() {
-        return Err(ExecutionError::Internal(
-            "fork activation must set block_number or timestamp".to_string(),
-        ));
-    }
-    if let Some(activation_block_number) = activation_block_number
-        && block_number < activation_block_number
-    {
-        return Err(ExecutionError::Internal(format!(
-            "ChainConfig active_fork is not active for the target payload: \
-             block_number {block_number} precedes activation {activation_block_number}"
-        )));
-    }
-    if let Some(activation_timestamp) = activation_timestamp
-        && block_timestamp < activation_timestamp
-    {
-        return Err(ExecutionError::Internal(format!(
-            "ChainConfig active_fork is not active for the target payload: \
-             timestamp {block_timestamp} precedes activation {activation_timestamp}"
-        )));
-    }
-
-    // As of glamsterdam-devnet-7, `SszForkConfig` carries only `activation` — the
-    // `fork` id and per-fork `blob_schedule` fields were dropped from the canonical
-    // input, so there is nothing further to cross-check against `expected` here
-    // beyond the chain id and activation already validated above.
-
-    Ok(())
-}
-
-/// Reconstruct the `Block` from a legacy `NewPayloadRequest` and execute it
-/// statelessly against the supplied `ExecutionWitness`.
-#[cfg(feature = "eip-8025")]
-pub fn validate_eip8025_execution(
-    new_payload_request: &ethrex_common::types::eip8025_ssz::NewPayloadRequest,
+/// Validate blocks statelessly against an in-memory witness.
+///
+/// The spec entrypoint is [`run_stateless_guest`]; this exists for callers that
+/// hold a witness they generated themselves — the ef_tests witness-sufficiency
+/// checks — rather than spec wire bytes. It commits to nothing.
+pub fn validate_blocks_statelessly(
+    blocks: &[ethrex_common::types::Block],
     execution_witness: ethrex_common::types::block_execution_witness::ExecutionWitness,
     crypto: Arc<dyn Crypto>,
 ) -> Result<(), ExecutionError> {
-    // Transform SSZ NewPayloadRequest → Block
-    let block = eip8025_new_payload_request_to_block(new_payload_request, crypto.as_ref())
-        .map_err(|e| ExecutionError::Internal(format!("payload conversion: {e}")))?;
-
-    validate_reconstructed_block_hash(
-        &block,
-        &new_payload_request.execution_payload.block_hash,
-        crypto.as_ref(),
-    )
-    .map_err(|e| ExecutionError::Internal(format!("payload conversion: {e}")))?;
-
-    // Validate blob versioned hashes
-    validate_versioned_hashes(&block, new_payload_request.versioned_hashes.iter())?;
-
-    // Execute statelessly — reuse the common `execute_blocks` infrastructure
-    let _result = execute_blocks(
-        &[block],
+    execute_blocks(
+        blocks,
         execution_witness,
         ELASTICITY_MULTIPLIER,
         |db, _| Ok(Evm::new_for_l1(db.clone(), crypto.clone())),
         crypto.clone(),
     )?;
-
     Ok(())
 }
 
-#[cfg(feature = "eip-8025")]
-fn validate_eip8025_amsterdam_execution(
-    new_payload_request: &ethrex_common::types::eip8025_ssz::NewPayloadRequestAmsterdam,
-    execution_witness: ethrex_common::types::block_execution_witness::ExecutionWitness,
-    crypto: Arc<dyn Crypto>,
-    public_keys: PublicKeysList,
-) -> Result<(), ExecutionError> {
-    let block = new_payload_request_amsterdam_to_block(new_payload_request, crypto.as_ref())
-        .map_err(|e| ExecutionError::Internal(format!("payload conversion: {e}")))?;
-
-    validate_versioned_hashes(&block, new_payload_request.versioned_hashes.iter())?;
-
-    if public_keys.len() != block.body.transactions.len() {
-        return Err(ExecutionError::Internal(format!(
-            "Found {} public keys in the stateless input, but there are {} transactions",
-            public_keys.len(),
-            block.body.transactions.len()
-        )));
-    }
-    for (public_key, tx) in public_keys.iter().zip(block.body.transactions.iter()) {
-        // SSZ decode fixes the length at 65; uncompressed secp256k1 is 0x04 || X || Y.
-        let pk_bytes: &[u8] = public_key;
-        if pk_bytes[0] != 0x04 {
-            return Err(ExecutionError::Internal(
-                "Stateless input public key is not a 65-byte uncompressed secp256k1 key"
-                    .to_string(),
-            ));
-        }
-        let derived = Address::from_slice(&keccak(&pk_bytes[1..])[12..]);
-        let recovered = tx.sender(crypto.as_ref()).map_err(|e| {
-            ExecutionError::Internal(format!("failed to recover transaction sender: {e}"))
-        })?;
-        if recovered != derived {
-            return Err(ExecutionError::Internal(
-                "Stateless input public key does not match recovered transaction sender"
-                    .to_string(),
-            ));
-        }
-    }
-
-    let _result = execute_blocks(
-        &[block],
-        execution_witness,
-        ELASTICITY_MULTIPLIER,
-        |db, _| Ok(Evm::new_for_l1(db.clone(), crypto.clone())),
-        crypto.clone(),
-    )?;
-
-    Ok(())
-}
-
-#[cfg(all(test, feature = "eip-8025"))]
+#[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use super::*;
+    use crate::crypto::NativeCrypto;
+    use libssz::SszEncode;
 
-    use crate::{common::ExecutionError, crypto::NativeCrypto, l1::execution_program};
+    fn default_result_bytes() -> Vec<u8> {
+        let mut out = Vec::new();
+        SszStatelessValidationResult::default().ssz_append(&mut out);
+        out
+    }
 
+    /// A guest must never panic on hostile input, and a decode failure commits the
+    /// all-zero result rather than a partially-filled one.
     #[test]
-    fn execution_program_rejects_invalid_eip8025_wire_bytes() {
-        let err = match execution_program(&[], Arc::new(NativeCrypto)) {
-            Ok(_) => panic!("expected invalid EIP-8025 input to fail decoding"),
-            Err(err) => err,
-        };
+    fn malformed_input_yields_default_result() {
+        let crypto = Arc::new(NativeCrypto);
+        let expected = default_result_bytes();
 
-        match err {
-            ExecutionError::Internal(msg) => {
-                assert_eq!(msg, "failed to decode EIP-8025 input: input too short");
-            }
-            other => panic!("expected internal decode error, got {other:?}"),
+        for bytes in [
+            vec![],                       // no schema id at all
+            vec![0x15],                   // half a schema id
+            vec![0x15, 0x01],             // right id, empty body
+            vec![0x15, 0x02, 0x00],       // right fork, wrong revision
+            vec![0x16, 0x01, 0x00],       // wrong fork index
+            vec![0x15, 0x01, 0xde, 0xad], // right id, garbage body
+        ] {
+            assert_eq!(
+                run_stateless_guest(&bytes, crypto.clone()),
+                expected,
+                "input {bytes:?} must produce the default result"
+            );
+        }
+    }
+
+    /// The output is fully fixed-size under #3278: 32 + 1 + 8 + 2.
+    #[test]
+    fn default_result_is_43_zero_bytes() {
+        let encoded = default_result_bytes();
+        assert_eq!(encoded.len(), 43, "result must be fixed-size");
+        assert!(
+            encoded.iter().all(|b| *b == 0),
+            "a decode failure commits all zeros, including schema_id"
+        );
+    }
+
+    /// Only `0x1501` decodes — the guest's entire fork check, so the one
+    /// rejection that must not regress.
+    #[test]
+    fn only_amsterdam_schema_id_decodes() {
+        assert_eq!(STATELESS_INPUT_SCHEMA_ID, 0x1501);
+        for id in [0x1401u16, 0x1502, 0x1601, 0x0000] {
+            let mut bytes = id.to_be_bytes().to_vec();
+            bytes.extend_from_slice(&[0u8; 8]);
+            assert!(
+                decode_stateless_input(&bytes).is_err(),
+                "schema id {id:#06x} must be rejected"
+            );
         }
     }
 }

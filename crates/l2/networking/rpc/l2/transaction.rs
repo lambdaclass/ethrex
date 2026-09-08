@@ -85,7 +85,6 @@ impl RpcHandler for SponsoredTx {
                         .l1_ctx
                         .storage
                         .get_latest_block_number()
-                        .await
                         .map_err(RpcErr::from)?,
                     self.to,
                 )
@@ -125,7 +124,6 @@ impl RpcHandler for SponsoredTx {
             .l1_ctx
             .storage
             .get_latest_block_number()
-            .await
             .map_err(RpcErr::from)?;
         let chain_config = context.l1_ctx.storage.get_chain_config();
 
@@ -142,7 +140,10 @@ impl RpcHandler for SponsoredTx {
             .gas_tip_estimator
             .lock()
             .await
-            .estimate_gas_tip(&context.l1_ctx.storage)
+            .estimate_gas_tip(
+                &context.l1_ctx.storage,
+                context.l1_ctx.blockchain.options.min_tip_wei,
+            )
             .await?;
         let gas_price_request =
             ethrex_rpc::RpcHandler::handle(&ethrex_rpc::GasPrice {}, context.l1_ctx.clone())

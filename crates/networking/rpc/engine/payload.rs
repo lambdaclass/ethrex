@@ -278,6 +278,12 @@ pub struct NewPayloadV5Request {
     /// The BAL hash computed from the raw RLP bytes as received (no re-encoding/sorting).
     /// This preserves the exact encoding from the payload for block hash validation.
     pub raw_bal_hash: Option<H256>,
+    /// Set when `blockAccessList` was present as well-formed DATA (0x-prefixed hex)
+    /// whose bytes are not a valid RLP encoding of the block access list. The engine
+    /// spec mandates `{status: INVALID, latestValidHash: null}` for this — not a
+    /// -32602 error, which is reserved for a missing or schema-invalid field
+    /// (execution-apis amsterdam.md, engine_newPayloadV5 spec 3).
+    pub undecodable_bal: bool,
 }
 
 impl From<NewPayloadV5Request> for RpcRequest {
@@ -307,7 +313,9 @@ impl RpcHandler for NewPayloadV5Request {
         // Extract the raw BAL hash from the JSON payload before deserialization.
         // We hash the raw RLP bytes as-received to preserve the exact encoding
         // (including any ordering) for accurate block hash validation.
-        let raw_bal_hash = params[0]
+        let mut payload_value = params[0].clone();
+        let mut undecodable_bal = false;
+        let raw_bal_hash = payload_value
             .get("blockAccessList")
             .map(|v| {
                 let hex_str = v
@@ -320,12 +328,26 @@ impl RpcHandler for NewPayloadV5Request {
                     .ok_or(RpcErr::WrongParam("blockAccessList".to_string()))?;
                 let bytes = hex::decode(hex_body)
                     .map_err(|_| RpcErr::WrongParam("blockAccessList".to_string()))?;
+                // Well-formed DATA whose bytes don't RLP-decode into a BAL must yield
+                // `{status: INVALID}`, not -32602. Flag it here (the decision belongs
+                // to `handle`, which can return a status) rather than failing parse.
+                if BlockAccessList::decode(&bytes).is_err() {
+                    undecodable_bal = true;
+                }
                 Ok::<_, RpcErr>(ethrex_common::utils::keccak(bytes))
             })
             .transpose()?;
+        if undecodable_bal {
+            // `ExecutionPayload`'s serde RLP-decodes the field and would fail the
+            // whole params parse with -32602; drop it so deserialization succeeds
+            // and `handle` can answer with the mandated INVALID status.
+            if let Some(obj) = payload_value.as_object_mut() {
+                obj.remove("blockAccessList");
+            }
+        }
 
         Ok(Self {
-            payload: serde_json::from_value(params[0].clone())
+            payload: serde_json::from_value(payload_value)
                 .map_err(|_| RpcErr::WrongParam("payload".to_string()))?,
             expected_blob_versioned_hashes: serde_json::from_value(params[1].clone())
                 .map_err(|_| RpcErr::WrongParam("expected_blob_versioned_hashes".to_string()))?,
@@ -334,6 +356,7 @@ impl RpcHandler for NewPayloadV5Request {
             execution_requests: serde_json::from_value(params[3].clone())
                 .map_err(|_| RpcErr::WrongParam("execution_requests".to_string()))?,
             raw_bal_hash,
+            undecodable_bal,
         })
     }
 
@@ -348,6 +371,21 @@ impl NewPayloadV5Request {
         context: RpcApiContext,
         make_witness: bool,
     ) -> Result<Value, RpcErr> {
+        // Must precede every other check: a present-but-undecodable BAL answers
+        // `{status: INVALID, latestValidHash: null}` (engine spec, amsterdam.md
+        // newPayloadV5 spec 3). The field was dropped from `self.payload` at parse
+        // time, so falling through would misreport it as missing (-32602).
+        if self.undecodable_bal {
+            // Wording matters: EEST's ethrex exception mapper resolves
+            // BlockException.INVALID_BLOCK_ACCESS_LIST by matching the substring
+            // "Failed to RLP decode BAL" (the serde-layer message this path
+            // predates). Keep it as the prefix so consume-engine attributes the
+            // INVALID status to the right exception.
+            return Ok(serde_json::to_value(PayloadStatus::invalid_with_err(
+                "Failed to RLP decode BAL: blockAccessList is not a valid RLP \
+                 encoding of the block access list",
+            ))?);
+        }
         validate_execution_payload_v5(&self.payload)?;
 
         // validate the received requests
@@ -754,7 +792,7 @@ impl RpcHandler for GetPayloadBodiesByRangeV1Request {
         if self.count > GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE {
             return Err(RpcErr::TooLargeRequest);
         }
-        let latest_block_number = context.storage.get_latest_block_number().await?;
+        let latest_block_number = context.storage.get_latest_block_number()?;
         // NOTE: we truncate the range because the spec says we "MUST NOT return trailing
         // null values if the request extends past the current latest known block"
         let last = latest_block_number.min(self.start + self.count - 1);
@@ -888,7 +926,7 @@ impl RpcHandler for GetPayloadBodiesByRangeV2Request {
         if self.count > GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE {
             return Err(RpcErr::TooLargeRequest);
         }
-        let latest_block_number = context.storage.get_latest_block_number().await?;
+        let latest_block_number = context.storage.get_latest_block_number()?;
         // NOTE: we truncate the range because the spec says we "MUST NOT return trailing
         // null values if the request extends past the current latest known block"
         let last = latest_block_number.min(self.start + self.count - 1);
@@ -935,6 +973,19 @@ fn parse_execution_payload(params: &Option<Vec<Value>>) -> Result<ExecutionPaylo
     serde_json::from_value(params[0].clone()).map_err(|_| RpcErr::WrongParam("payload".to_string()))
 }
 
+/// The Amsterdam payload fields (EIP-7928 block access list, EIP-7843 slot number) must be
+/// absent from every pre-Amsterdam payload version.
+fn reject_amsterdam_payload_fields(payload: &ExecutionPayload) -> Result<(), RpcErr> {
+    if payload.block_access_list.is_some() {
+        return Err(RpcErr::WrongParam("block_access_list".to_string()));
+    }
+    if payload.slot_number.is_some() {
+        return Err(RpcErr::WrongParam("slot_number".to_string()));
+    }
+
+    Ok(())
+}
+
 fn validate_execution_payload_v1(payload: &ExecutionPayload) -> Result<(), RpcErr> {
     // Validate that only the required arguments are present
     if payload.withdrawals.is_some() {
@@ -947,7 +998,7 @@ fn validate_execution_payload_v1(payload: &ExecutionPayload) -> Result<(), RpcEr
         return Err(RpcErr::WrongParam("excess_blob_gas".to_string()));
     }
 
-    Ok(())
+    reject_amsterdam_payload_fields(payload)
 }
 
 fn validate_execution_payload_v2(payload: &ExecutionPayload) -> Result<(), RpcErr> {
@@ -962,11 +1013,11 @@ fn validate_execution_payload_v2(payload: &ExecutionPayload) -> Result<(), RpcEr
         return Err(RpcErr::WrongParam("excess_blob_gas".to_string()));
     }
 
-    Ok(())
+    reject_amsterdam_payload_fields(payload)
 }
 
-fn validate_execution_payload_v3(payload: &ExecutionPayload) -> Result<(), RpcErr> {
-    // Validate that only the required arguments are present
+/// Fields shared by every payload version from Cancun onwards.
+fn validate_execution_payload_cancun_fields(payload: &ExecutionPayload) -> Result<(), RpcErr> {
     if payload.withdrawals.is_none() {
         return Err(RpcErr::WrongParam("withdrawals".to_string()));
     }
@@ -980,16 +1031,25 @@ fn validate_execution_payload_v3(payload: &ExecutionPayload) -> Result<(), RpcEr
     Ok(())
 }
 
+/// Shared by `engine_newPayloadV3` and `engine_newPayloadV4`, both of which predate Amsterdam.
+fn validate_execution_payload_v3(payload: &ExecutionPayload) -> Result<(), RpcErr> {
+    // Validate that only the required arguments are present
+    validate_execution_payload_cancun_fields(payload)?;
+
+    reject_amsterdam_payload_fields(payload)
+}
+
 #[inline]
 fn validate_execution_payload_v4(payload: &ExecutionPayload) -> Result<(), RpcErr> {
-    // This method follows the same specification as `engine_newPayloadV4` additionally
-    // rejects payload without block access list
+    // The Amsterdam payload shape: the Cancun fields plus a block access list. Reached only
+    // through `validate_execution_payload_v5`, so the Amsterdam fields are required here
+    // rather than rejected.
 
     if payload.block_access_list.is_none() {
         return Err(RpcErr::WrongParam("block_access_list".to_string()));
     }
 
-    validate_execution_payload_v3(payload)?;
+    validate_execution_payload_cancun_fields(payload)?;
 
     Ok(())
 }

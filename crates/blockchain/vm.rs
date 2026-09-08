@@ -130,6 +130,10 @@ impl StoreVmDatabase {
 }
 
 impl VmDatabase for StoreVmDatabase {
+    fn code_cache_budget_bytes(&self) -> u64 {
+        self.store.code_cache_budget_bytes()
+    }
+
     #[instrument(
         level = "trace",
         name = "Account read",
@@ -359,6 +363,44 @@ impl VmDatabase for StoreVmDatabase {
             ))),
             Err(e) => Err(EvmError::DB(e.to_string())),
         }
+    }
+
+    #[instrument(
+        level = "trace",
+        name = "Account codes batch read",
+        skip_all,
+        fields(namespace = "block_execution")
+    )]
+    fn get_account_codes_batch(&self, code_hashes: &[H256]) -> Result<Vec<Option<Code>>, EvmError> {
+        // The empty hash is answered here rather than sent to the store, matching
+        // `get_account_code`, so a batch containing EOAs does not fault on it.
+        let to_read: Vec<H256> = code_hashes
+            .iter()
+            .copied()
+            .filter(|h| *h != *EMPTY_KECCAK_HASH)
+            .collect();
+        let read = self
+            .store
+            .get_account_codes_batch(&to_read)
+            .map_err(|e| EvmError::DB(e.to_string()))?;
+
+        let mut by_hash: FxHashMap<H256, Code> = FxHashMap::default();
+        for (hash, code) in to_read.iter().zip(read.into_iter()) {
+            if let Some(code) = code {
+                by_hash.insert(*hash, code);
+            }
+        }
+
+        Ok(code_hashes
+            .iter()
+            .map(|h| {
+                if *h == *EMPTY_KECCAK_HASH {
+                    Some(Code::default())
+                } else {
+                    by_hash.get(h).cloned()
+                }
+            })
+            .collect())
     }
 
     #[instrument(

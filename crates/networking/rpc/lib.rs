@@ -69,7 +69,7 @@ mod net;
 pub mod rpc;
 pub mod subscription_manager;
 pub mod testing;
-mod tracing;
+pub mod tracing;
 
 pub mod clients;
 pub mod types;

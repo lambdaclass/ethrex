@@ -15,7 +15,6 @@ rocksdb = ["ethrex-storage/rocksdb"]
 l2 = ["ethrex/l2", "ethrex/l2-sql"]
 c-kzg = ["ethrex-common/c-kzg"]
 rayon = ["ethrex-levm/rayon"]
-eip-8025 = ["ethrex-levm/eip-8025"]
 
 [dependencies]
 ethrex-common.workspace = true
@@ -64,6 +63,8 @@ reqwest.workspace = true
 tokio-util.workspace = true
 ethrex-guest-program = { workspace = true, default-features = false }
 libssz.workspace = true
+libssz-merkle.workspace = true
+libssz-types.workspace = true
 ethrex-crypto.workspace = true
 ethrex-metrics = { workspace = true, features = ["metrics"] }
 serial_test = "3"

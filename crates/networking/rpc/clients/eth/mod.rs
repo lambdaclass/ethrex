@@ -68,6 +68,97 @@ pub const MAX_RETRY_DELAY: u64 = 1800;
 // 0x08c379a0 == Error(String)
 pub const ERROR_FUNCTION_SELECTOR: [u8; 4] = [0x08, 0xc3, 0x79, 0xa0];
 
+/// Builds the call object `eth_estimateGas` is asked about.
+///
+/// Split out from [`EthClient::estimate_gas`] so the field set can be asserted on: an
+/// omitted field is not a smaller question, it is a different one.
+pub fn estimate_gas_call_object(transaction: GenericTransaction) -> Result<Value, EthClientError> {
+    let to = match transaction.to {
+        TxKind::Call(addr) => Some(format!("{addr:#x}")),
+        TxKind::Create => None,
+    };
+
+    let mut data = json!({
+        "to": to,
+        "input": format!("0x{:#x}", transaction.input),
+        "from": format!("{:#x}", transaction.from),
+        "value": format!("{:#x}", transaction.value),
+
+    });
+
+    if !transaction.blob_versioned_hashes.is_empty() {
+        let blob_versioned_hashes_str: Vec<_> = transaction
+            .blob_versioned_hashes
+            .into_iter()
+            .map(|hash| format!("{hash:#x}"))
+            .collect();
+
+        data.as_object_mut()
+            .ok_or_else(|| {
+                EthClientError::Custom("Failed to mutate data in estimate_gas".to_owned())
+            })?
+            .insert(
+                "blobVersionedHashes".to_owned(),
+                json!(blob_versioned_hashes_str),
+            );
+    }
+
+    if !transaction.blobs.is_empty() {
+        let blobs_str: Vec<_> = transaction
+            .blobs
+            .into_iter()
+            .map(|blob| format!("0x{}", hex::encode(blob)))
+            .collect();
+
+        data.as_object_mut()
+            .ok_or_else(|| {
+                EthClientError::Custom("Failed to mutate data in estimate_gas".to_owned())
+            })?
+            .insert("blobs".to_owned(), json!(blobs_str));
+    }
+
+    // Add the nonce just if present, otherwise the RPC will use the latest nonce
+    if let Some(nonce) = transaction.nonce
+        && let Value::Object(ref mut map) = data
+    {
+        map.insert("nonce".to_owned(), json!(format!("{nonce:#x}")));
+    }
+
+    // Send the fees the transaction will actually carry. Omitting them leaves the
+    // server simulating at a zero gas price, and on an L2 a zero gas price disables
+    // the fee configs entirely (`adjust_disabled_l2_fees`), so the estimate comes back
+    // without the L1 data fee gas that the submitted transaction is charged — and the
+    // transaction then runs out of gas at exactly its estimate.
+    if let Value::Object(ref mut map) = data {
+        if let Some(max_fee_per_gas) = transaction.max_fee_per_gas {
+            map.insert(
+                "maxFeePerGas".to_owned(),
+                json!(format!("{max_fee_per_gas:#x}")),
+            );
+        }
+        if let Some(max_priority_fee_per_gas) = transaction.max_priority_fee_per_gas {
+            map.insert(
+                "maxPriorityFeePerGas".to_owned(),
+                json!(format!("{max_priority_fee_per_gas:#x}")),
+            );
+        }
+        if !transaction.gas_price.is_zero() {
+            map.insert(
+                "gasPrice".to_owned(),
+                json!(format!("{:#x}", transaction.gas_price)),
+            );
+        }
+        if let Some(max_fee_per_blob_gas) = transaction.max_fee_per_blob_gas {
+            map.insert(
+                "maxFeePerBlobGas".to_owned(),
+                json!(format!("{max_fee_per_blob_gas:#x}")),
+            );
+        }
+    }
+
+    Ok(data)
+}
+
 impl EthClient {
     pub fn new(url: Url) -> Result<EthClient, EthClientError> {
         Self::new_with_config(
@@ -243,57 +334,7 @@ impl EthClient {
         &self,
         transaction: GenericTransaction,
     ) -> Result<u64, EthClientError> {
-        let to = match transaction.to {
-            TxKind::Call(addr) => Some(format!("{addr:#x}")),
-            TxKind::Create => None,
-        };
-
-        let mut data = json!({
-            "to": to,
-            "input": format!("0x{:#x}", transaction.input),
-            "from": format!("{:#x}", transaction.from),
-            "value": format!("{:#x}", transaction.value),
-
-        });
-
-        if !transaction.blob_versioned_hashes.is_empty() {
-            let blob_versioned_hashes_str: Vec<_> = transaction
-                .blob_versioned_hashes
-                .into_iter()
-                .map(|hash| format!("{hash:#x}"))
-                .collect();
-
-            data.as_object_mut()
-                .ok_or_else(|| {
-                    EthClientError::Custom("Failed to mutate data in estimate_gas".to_owned())
-                })?
-                .insert(
-                    "blobVersionedHashes".to_owned(),
-                    json!(blob_versioned_hashes_str),
-                );
-        }
-
-        if !transaction.blobs.is_empty() {
-            let blobs_str: Vec<_> = transaction
-                .blobs
-                .into_iter()
-                .map(|blob| format!("0x{}", hex::encode(blob)))
-                .collect();
-
-            data.as_object_mut()
-                .ok_or_else(|| {
-                    EthClientError::Custom("Failed to mutate data in estimate_gas".to_owned())
-                })?
-                .insert("blobs".to_owned(), json!(blobs_str));
-        }
-
-        // Add the nonce just if present, otherwise the RPC will use the latest nonce
-        if let Some(nonce) = transaction.nonce
-            && let Value::Object(ref mut map) = data
-        {
-            map.insert("nonce".to_owned(), json!(format!("{nonce:#x}")));
-        }
-
+        let data = estimate_gas_call_object(transaction)?;
         let request = RpcRequest::new("eth_estimateGas", Some(vec![data, json!("latest")]));
 
         match self.send_request(request).await? {
@@ -653,5 +694,69 @@ impl EthClient {
             map.insert(url.to_string(), response);
         }
         map
+    }
+}
+
+#[cfg(test)]
+mod estimate_gas_call_object_tests {
+    //! The call object `eth_estimateGas` is asked about must carry the fees the
+    //! transaction will actually pay.
+    //!
+    //! Omitting them leaves the server simulating at a zero gas price, and on an L2 a
+    //! zero gas price disables the fee configs outright
+    //! (`adjust_disabled_l2_fees`), so the estimate comes back with no L1 data fee gas
+    //! at all. Since the SDK submits the estimate verbatim, the transaction then runs
+    //! out of gas at exactly its own estimate — which is how the L2 fee-token
+    //! integration test failed.
+    use super::*;
+
+    fn eip1559_tx() -> GenericTransaction {
+        GenericTransaction {
+            to: TxKind::Create,
+            from: Address::repeat_byte(0xaa),
+            max_fee_per_gas: Some(2_000_000_000),
+            max_priority_fee_per_gas: Some(1_000_000_000),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn carries_the_fees_the_transaction_will_pay() {
+        let data = estimate_gas_call_object(eip1559_tx()).expect("call object should build");
+        let object = data.as_object().expect("call object is a JSON object");
+
+        assert_eq!(
+            object.get("maxFeePerGas").and_then(|v| v.as_str()),
+            Some("0x77359400"),
+            "maxFeePerGas must be sent, or the server simulates at a zero gas price: {data}"
+        );
+        assert_eq!(
+            object.get("maxPriorityFeePerGas").and_then(|v| v.as_str()),
+            Some("0x3b9aca00"),
+            "maxPriorityFeePerGas must be sent: {data}"
+        );
+    }
+
+    /// A legacy transaction carries `gasPrice` instead, and a zero one is left out so a
+    /// genuinely fee-less call still reaches the relaxed path.
+    #[test]
+    fn carries_gas_price_only_when_set() {
+        let with_price = GenericTransaction {
+            gas_price: U256::from(7u64),
+            ..eip1559_tx()
+        };
+        let data = estimate_gas_call_object(with_price).expect("call object should build");
+        assert_eq!(
+            data.as_object()
+                .and_then(|o| o.get("gasPrice"))
+                .and_then(|v| v.as_str()),
+            Some("0x7"),
+        );
+
+        let data = estimate_gas_call_object(eip1559_tx()).expect("call object should build");
+        assert!(
+            data.as_object().expect("object").get("gasPrice").is_none(),
+            "a zero gasPrice must be omitted rather than sent as 0x0: {data}"
+        );
     }
 }

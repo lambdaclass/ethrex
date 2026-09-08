@@ -9,7 +9,7 @@ use tracing::{error, info, warn};
 
 use crate::{
     Blockchain,
-    error::{self, ChainError, InvalidForkChoice},
+    error::{ChainError, ForkChoiceElement, InvalidForkChoice},
     is_canonical,
 };
 
@@ -99,18 +99,18 @@ pub async fn apply_fork_choice(
     let head_res = store.get_block_header_by_hash(head_hash)?;
 
     if !safe_hash.is_zero() {
-        check_order(&safe_res, &head_res)?;
+        check_order(&safe_res, &head_res, ForkChoiceElement::Safe)?;
     }
 
     if !finalized_hash.is_zero() && !safe_hash.is_zero() {
-        check_order(&finalized_res, &safe_res)?;
+        check_order(&finalized_res, &safe_res, ForkChoiceElement::Finalized)?;
     }
 
     let Some(head) = head_res else {
         return Err(InvalidForkChoice::Syncing);
     };
 
-    let latest = store.get_latest_block_number().await?;
+    let latest = store.get_latest_block_number()?;
     let head_is_canonical = is_canonical(store, head.number, head_hash).await?;
 
     // execution-apis PR 786: the no-reorg skip is only allowed when there is a known
@@ -189,8 +189,8 @@ pub async fn apply_fork_choice(
             || new_canonical_blocks.contains(&(finalized.number, finalized_hash)))
     {
         return Err(InvalidForkChoice::Disconnected(
-            error::ForkChoiceElement::Head,
-            error::ForkChoiceElement::Finalized,
+            ForkChoiceElement::Head,
+            ForkChoiceElement::Finalized,
         ));
     }
 
@@ -201,8 +201,8 @@ pub async fn apply_fork_choice(
             || new_canonical_blocks.contains(&(safe.number, safe_hash)))
     {
         return Err(InvalidForkChoice::Disconnected(
-            error::ForkChoiceElement::Head,
-            error::ForkChoiceElement::Safe,
+            ForkChoiceElement::Head,
+            ForkChoiceElement::Safe,
         ));
     }
 
@@ -261,15 +261,17 @@ pub async fn apply_fork_choice(
 }
 
 // Checks that block 1 is prior to block 2 and that if the second is present, the first one is too.
+// `missing` names the element `block_1` was looked up as, so an absent block is reported as the
+// element the caller actually asked for. Hardcoding one element here mislabels every other call
+// site, which sends whoever reads the log looking at the wrong forkchoice field.
 fn check_order(
     block_1: &Option<BlockHeader>,
     block_2: &Option<BlockHeader>,
+    missing: ForkChoiceElement,
 ) -> Result<(), InvalidForkChoice> {
     // We don't need to perform the check if the hashes are null
     match (block_1, block_2) {
-        (None, Some(_)) => Err(InvalidForkChoice::ElementNotFound(
-            error::ForkChoiceElement::Finalized,
-        )),
+        (None, Some(_)) => Err(InvalidForkChoice::ElementNotFound(missing)),
         (Some(b1), Some(b2)) => {
             if b1.number > b2.number {
                 Err(InvalidForkChoice::Unordered)
@@ -489,7 +491,7 @@ async fn reorg_apply_deep(
         // Reverted depth (old-chain blocks unwound), matching the TooDeepReorg
         // gate's definition. `head - pivot` would report ~0/1 for the
         // canonical-head case no matter how deep the unwind.
-        let latest = store.get_latest_block_number().await.unwrap_or(head.number);
+        let latest = store.get_latest_block_number().unwrap_or(head.number);
         let reorg_depth = latest.saturating_sub(pivot_number);
         METRICS_REORG.reorg_depth_hist.observe(reorg_depth as f64);
     );
@@ -501,8 +503,12 @@ async fn reorg_apply_deep(
         .ok_or(InvalidForkChoice::StateNotReachable)?;
     let to_block = pivot_number.saturating_add(1);
     if edge < to_block {
-        // Pivot is above the cache edge ; `apply_fork_choice` should have
-        // succeeded as a shallow reorg. Bail.
+        // The overlay range [pivot+1, edge] is empty: no committed block sits above the
+        // pivot, so no overlay can make the head's state readable again. We only reach here
+        // after the shallow path already failed with an unreachable head state, so that
+        // state is genuinely absent locally — never committed, and its in-memory layers
+        // dropped — rather than merely shadowed by newer commits. Nothing local recovers
+        // it, so report it and let the caller sync.
         warn!(
             edge,
             to_block, "deep-reorg path entered but pivot is above cache edge"
@@ -764,5 +770,59 @@ fn map_chain_error_for_fcu(err: ChainError, last_valid_hash: H256) -> InvalidFor
         | ChainError::WitnessGeneration(_)
         | ChainError::Custom(_)
         | ChainError::UnknownPayload => InvalidForkChoice::StateNotReachable,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn header(number: u64) -> BlockHeader {
+        BlockHeader {
+            number,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn missing_element_is_reported_as_the_element_looked_up() {
+        let present = Some(header(10));
+
+        let err = check_order(&None, &present, ForkChoiceElement::Safe).unwrap_err();
+        assert!(matches!(
+            err,
+            InvalidForkChoice::ElementNotFound(ForkChoiceElement::Safe)
+        ));
+
+        let err = check_order(&None, &present, ForkChoiceElement::Finalized).unwrap_err();
+        assert!(matches!(
+            err,
+            InvalidForkChoice::ElementNotFound(ForkChoiceElement::Finalized)
+        ));
+    }
+
+    #[test]
+    fn known_blocks_in_the_wrong_order_are_unordered_not_missing() {
+        let err = check_order(
+            &Some(header(20)),
+            &Some(header(10)),
+            ForkChoiceElement::Safe,
+        )
+        .unwrap_err();
+        assert!(matches!(err, InvalidForkChoice::Unordered));
+    }
+
+    #[test]
+    fn known_blocks_in_order_pass() {
+        for (lower, upper) in [(10, 20), (10, 10)] {
+            assert!(
+                check_order(
+                    &Some(header(lower)),
+                    &Some(header(upper)),
+                    ForkChoiceElement::Safe,
+                )
+                .is_ok()
+            );
+        }
     }
 }

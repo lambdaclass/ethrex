@@ -188,22 +188,19 @@ pub fn prepare_revm_for_tx<'state>(
         .chain_config()
         .map_err(|err| EFTestRunnerError::VMInitializationFailed(err.to_string()))?;
 
-    let blob_excess_gas_and_price = if test.env.current_excess_blob_gas.is_none() {
-        None
-    } else {
-        Some(BlobExcessGasAndPrice::new(
-            test.env
-                .current_excess_blob_gas
-                .unwrap()
-                .try_into()
-                .unwrap(),
-            if fork >= &Fork::Prague {
-                BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE
-            } else {
-                BLOB_BASE_FEE_UPDATE_FRACTION
-            },
-        ))
-    };
+    let blob_excess_gas_and_price =
+        test.env
+            .current_excess_blob_gas
+            .map(|current_excess_blob_gas| {
+                BlobExcessGasAndPrice::new(
+                    current_excess_blob_gas.try_into().unwrap(),
+                    if fork >= &Fork::Prague {
+                        BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE
+                    } else {
+                        BLOB_BASE_FEE_UPDATE_FRACTION
+                    },
+                )
+            });
     let block_env = RevmBlockEnv {
         number: RevmU256::from_limbs(test.env.current_number.0),
         beneficiary: RevmAddress(test.env.current_coinbase.0.into()),

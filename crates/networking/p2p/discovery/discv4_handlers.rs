@@ -1,5 +1,4 @@
 use crate::{
-    backend,
     discovery::lookup::{IterativeLookup, LOOKUP_ALPHA, LOOKUP_BUCKET_SIZE},
     discv4::{
         messages::{
@@ -10,13 +9,13 @@ use crate::{
     },
     metrics::METRICS,
     peer_table::{Contact, ContactValidation, DiscoveryProtocol, PeerTableServerProtocol as _},
-    types::{Endpoint, Node, NodeRecord},
+    types::{Endpoint, Node},
     utils::{
         get_msg_expiration_from_seconds, is_msg_expired, node_id, public_key_from_signing_key,
     },
 };
 use bytes::{Bytes, BytesMut};
-use ethrex_common::{H256, H512, types::ForkId};
+use ethrex_common::{H256, H512};
 use rand::rngs::OsRng;
 use secp256k1::SecretKey;
 use std::time::Duration;
@@ -378,6 +377,11 @@ impl DiscoveryServer {
             self.discv4_send_enr_request(&contact.node).await?;
         }
 
+        trace!(protocol = "discv4", observed_ip = %message.to.ip, "Recorded discv4 PONG IP vote");
+        if let Some(ip) = self.ip_predictor.record_ip_vote(message.to.ip, node_id) {
+            self.apply_predicted_ip(ip, "discv4");
+        }
+
         Ok(())
     }
 
@@ -494,57 +498,6 @@ impl DiscoveryServer {
             enr_response_message.request_hash,
             enr_response_message.node_record.clone(),
         )?;
-
-        self.discv4_validate_enr_fork_id(
-            node_id,
-            sender_public_key,
-            enr_response_message.node_record,
-        )
-        .await?;
-
-        Ok(())
-    }
-
-    async fn discv4_validate_enr_fork_id(
-        &mut self,
-        node_id: H256,
-        sender_public_key: H512,
-        node_record: NodeRecord,
-    ) -> Result<(), DiscoveryServerError> {
-        let node_fork_id = node_record.get_fork_id().cloned();
-
-        let Some(remote_fork_id) = node_fork_id else {
-            self.peer_table.set_is_fork_id_valid(node_id, false)?;
-            debug!(protocol = "discv4", received = "ENRResponse", from = %format!("{sender_public_key:#x}"), "missing fork id in ENR response, skipping");
-            return Ok(());
-        };
-
-        let chain_config = self.store.get_chain_config();
-        let genesis_header = self
-            .store
-            .get_block_header(0)?
-            .ok_or(DiscoveryServerError::InvalidContact)?;
-        let latest_block_number = self.store.get_latest_block_number().await?;
-        let latest_block_header = self
-            .store
-            .get_block_header(latest_block_number)?
-            .ok_or(DiscoveryServerError::InvalidContact)?;
-
-        let local_fork_id = ForkId::new(
-            chain_config,
-            genesis_header.clone(),
-            latest_block_header.timestamp,
-            latest_block_number,
-        );
-
-        if !backend::is_fork_id_valid(&self.store, &remote_fork_id).await? {
-            self.peer_table.set_is_fork_id_valid(node_id, false)?;
-            debug!(protocol = "discv4", received = "ENRResponse", from = %format!("{sender_public_key:#x}"), local_fork_id=%local_fork_id, remote_fork_id=%remote_fork_id, "fork id mismatch in ENR response, skipping");
-            return Ok(());
-        }
-
-        debug!(protocol = "discv4", received = "ENRResponse", from = %format!("{sender_public_key:#x}"), local_fork_id=%local_fork_id, remote_fork_id=%remote_fork_id, "valid fork id in ENR found");
-        self.peer_table.set_is_fork_id_valid(node_id, true)?;
 
         Ok(())
     }

@@ -58,11 +58,18 @@ impl RpcReceipt {
         tx_info: RpcReceiptTxInfo,
         block_info: RpcReceiptBlockInfo,
         init_log_index: u64,
+        block_timestamp: u64,
     ) -> Self {
         let mut logs = vec![];
         let mut log_index = init_log_index;
         for log in receipt.logs.clone() {
-            logs.push(RpcLog::new(log, log_index, &tx_info, &block_info));
+            logs.push(RpcLog::new(
+                log,
+                log_index,
+                &tx_info,
+                &block_info,
+                block_timestamp,
+            ));
             log_index += 1;
         }
         let payer = receipt.payer;
@@ -118,6 +125,18 @@ pub struct RpcLog {
     pub block_hash: BlockHash,
     #[serde(with = "serde_utils::u64::hex_str")]
     pub block_number: BlockNumber,
+    /// Timestamp of the block this log was emitted in. Optional in the
+    /// execution-apis `Log` schema, but every other client populates it, and
+    /// indexers that read it off the log would otherwise need a separate block
+    /// lookup per receipt. Passed in rather than taken from
+    /// `RpcReceiptBlockInfo`, which is flattened into `RpcReceipt` and so must
+    /// not gain a serialized field: `blockTimestamp` belongs on the log object
+    /// only, not alongside the receipt's own keys.
+    ///
+    /// Defaulted on the way in: the schema marks it optional, so a peer that
+    /// omits it must still decode rather than fail the whole response.
+    #[serde(with = "serde_utils::u64::hex_str", default)]
+    pub block_timestamp: u64,
 }
 
 impl RpcLog {
@@ -126,6 +145,7 @@ impl RpcLog {
         log_index: u64,
         tx_info: &RpcReceiptTxInfo,
         block_info: &RpcReceiptBlockInfo,
+        block_timestamp: u64,
     ) -> RpcLog {
         Self {
             log: log.into(),
@@ -135,6 +155,7 @@ impl RpcLog {
             transaction_index: tx_info.transaction_index,
             block_hash: block_info.block_hash,
             block_number: block_info.block_number,
+            block_timestamp,
         }
     }
 }
@@ -285,8 +306,63 @@ mod tests {
                 block_number: 3,
             },
             0,
+            1786901200,
         );
-        let expected = r#"{"type":"0x3","status":"0x1","cumulativeGasUsed":"0x93","logsBloom":"0x00000000000000000080000000000000000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","logs":[{"address":"0x0000000000000000000000000000000000000000","topics":[],"data":"0x73747261776265727279","logIndex":"0x0","removed":false,"transactionHash":"0x0000000000000000000000000000000000000000000000000000000000000000","transactionIndex":"0x1","blockHash":"0x0000000000000000000000000000000000000000000000000000000000000000","blockNumber":"0x3"}],"transactionHash":"0x0000000000000000000000000000000000000000000000000000000000000000","transactionIndex":"0x1","from":"0x0000000000000000000000000000000000000000","to":"0x7435ed30a8b4aeb0877cef0c6e8cffe834eb865f","contractAddress":null,"gasUsed":"0x93","effectiveGasPrice":"0x9d","blockHash":"0x0000000000000000000000000000000000000000000000000000000000000000","blockNumber":"0x3"}"#;
+        let expected = r#"{"type":"0x3","status":"0x1","cumulativeGasUsed":"0x93","logsBloom":"0x00000000000000000080000000000000000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","logs":[{"address":"0x0000000000000000000000000000000000000000","topics":[],"data":"0x73747261776265727279","logIndex":"0x0","removed":false,"transactionHash":"0x0000000000000000000000000000000000000000000000000000000000000000","transactionIndex":"0x1","blockHash":"0x0000000000000000000000000000000000000000000000000000000000000000","blockNumber":"0x3","blockTimestamp":"0x6a81f2d0"}],"transactionHash":"0x0000000000000000000000000000000000000000000000000000000000000000","transactionIndex":"0x1","from":"0x0000000000000000000000000000000000000000","to":"0x7435ed30a8b4aeb0877cef0c6e8cffe834eb865f","contractAddress":null,"gasUsed":"0x93","effectiveGasPrice":"0x9d","blockHash":"0x0000000000000000000000000000000000000000000000000000000000000000","blockNumber":"0x3"}"#;
         assert_eq!(serde_json::to_string(&receipt).unwrap(), expected);
+    }
+
+    /// `blockTimestamp` belongs on the log object and nowhere else. Every other
+    /// client populates it there, and indexers reading it off a receipt's logs
+    /// otherwise need a separate block lookup per receipt. The placement half
+    /// matters just as much: `RpcReceiptBlockInfo` is `#[serde(flatten)]`-ed into
+    /// `RpcReceipt`, so sourcing the timestamp from it would also emit a
+    /// receipt-level `blockTimestamp` that no other client sends.
+    #[test]
+    fn block_timestamp_is_on_the_log_and_not_on_the_receipt() {
+        let receipt = RpcReceipt::new(
+            Receipt {
+                tx_type: TxType::EIP1559,
+                succeeded: true,
+                cumulative_gas_used: 21_000,
+                logs: vec![Log {
+                    address: Address::zero(),
+                    topics: vec![],
+                    data: Bytes::new(),
+                }],
+                payer: None,
+                frame_receipts: None,
+            },
+            RpcReceiptTxInfo {
+                transaction_hash: H256::zero(),
+                transaction_index: 0,
+                from: Address::zero(),
+                to: None,
+                contract_address: None,
+                gas_used: 21_000,
+                effective_gas_price: 1,
+                blob_gas_price: None,
+                blob_gas_used: None,
+            },
+            RpcReceiptBlockInfo {
+                block_hash: BlockHash::zero(),
+                block_number: 3,
+            },
+            0,
+            1786901200,
+        );
+
+        let json = serde_json::to_value(&receipt).expect("serialize");
+        let obj = json.as_object().expect("receipt is an object");
+        assert!(
+            !obj.contains_key("blockTimestamp"),
+            "receipt-level keys must stay byte-for-byte what they were"
+        );
+        let log = json["logs"][0].as_object().expect("log is an object");
+        assert_eq!(
+            log.get("blockTimestamp").and_then(|v| v.as_str()),
+            Some("0x6a81f2d0"),
+            "each log must carry the block's timestamp"
+        );
     }
 }

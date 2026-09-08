@@ -3,7 +3,7 @@ use ethrex_common::{
     Address, H256, U256,
     types::{AccountState, ChainConfig, Code, CodeMetadata},
 };
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::{Arc, OnceLock, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 pub mod gen_db;
@@ -51,6 +51,19 @@ pub trait Database: Send + Sync {
             .map(|a| self.get_account_state(*a))
             .collect()
     }
+    /// Batch bytecode lookup, aligned to `code_hashes`. `None` means the hash is absent
+    /// from the database. Default: loop. Backends with a batched read path (e.g. rocksdb
+    /// `multi_get_cf` on the account-codes table) should override this; the caching layer
+    /// above dispatches to it from [`Self::prefetch_codes`].
+    fn get_account_codes_batch(
+        &self,
+        code_hashes: &[H256],
+    ) -> Result<Vec<Option<Code>>, DatabaseError> {
+        code_hashes
+            .iter()
+            .map(|h| self.get_account_code(*h).map(Some))
+            .collect()
+    }
     /// Batch storage-slot lookup. Default: loop. Backends with a batched read
     /// path (e.g. rocksdb `multi_get_cf` on the storage flat key-value table)
     /// should override this and the caching layer above will dispatch to it.
@@ -61,6 +74,31 @@ pub trait Database: Send + Sync {
         keys.iter()
             .map(|&(addr, key)| self.get_storage_value(addr, key))
             .collect()
+    }
+
+    /// Byte budget for warming bytecode ahead of execution, as measured by [`Code::size`].
+    ///
+    /// Bounds the bytecode a block warm reads speculatively, since a block access list
+    /// does not say which of its addresses were accessed for their code. Backends holding
+    /// a bytecode cache report its capacity, which is how much the node was configured to
+    /// keep resident; the default is the floor for a backend without one.
+    fn code_cache_budget_bytes(&self) -> u64 {
+        64 * 1024 * 1024
+    }
+
+    /// Prefetch a batch of bytecodes into the cache. Default: sequential fallback.
+    ///
+    /// Returns the total [`Code::size`] warmed, so a caller warming a whole block can
+    /// hold itself to [`Self::code_cache_budget_bytes`]. An absent hash is not an error:
+    /// warming has nothing to do for it and the executor reports it if reached.
+    fn prefetch_codes(&self, code_hashes: &[H256]) -> Result<u64, DatabaseError> {
+        let mut warmed = 0u64;
+        for &hash in code_hashes {
+            if let Ok(code) = self.get_account_code(hash) {
+                warmed = warmed.saturating_add(u64::try_from(code.size()).unwrap_or(u64::MAX));
+            }
+        }
+        Ok(warmed)
     }
     /// Prefetch a batch of accounts into the cache. Default: sequential fallback.
     fn prefetch_accounts(&self, addresses: &[Address]) -> Result<(), DatabaseError> {
@@ -157,7 +195,7 @@ impl CachingDatabase {
     /// Per-slot parallel point-gets, in `missing` order. Warm-optimal fan-out
     /// for normal-sized prefetch batches; bloated batches use the sorted batch
     /// multi_get instead (see `prefetch_storage`).
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     fn point_get_storage_many(
         &self,
         missing: &[(Address, H256)],
@@ -169,7 +207,7 @@ impl CachingDatabase {
             .collect()
     }
 
-    #[cfg(not(all(feature = "rayon", not(feature = "eip-8025"))))]
+    #[cfg(not(feature = "rayon"))]
     fn point_get_storage_many(
         &self,
         missing: &[(Address, H256)],
@@ -214,7 +252,7 @@ impl CachingDatabase {
     /// Per-account parallel point-gets, in `missing` order. Warm-optimal fan-out
     /// for normal-sized prefetch batches; large batches use the sorted sharded
     /// multi_get instead (see `prefetch_accounts`).
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     fn point_get_accounts_many(
         &self,
         missing: &[Address],
@@ -226,7 +264,7 @@ impl CachingDatabase {
             .collect()
     }
 
-    #[cfg(not(all(feature = "rayon", not(feature = "eip-8025"))))]
+    #[cfg(not(feature = "rayon"))]
     fn point_get_accounts_many(
         &self,
         missing: &[Address],
@@ -305,14 +343,83 @@ impl Database for CachingDatabase {
     }
 
     fn get_code_metadata(&self, code_hash: H256) -> Result<CodeMetadata, DatabaseError> {
-        // Delegate directly to the underlying database.
-        // The underlying Store already has its own code_metadata_cache,
-        // so we don't need to duplicate caching here.
+        // Answer from resident code when there is any. The BAL warmer loads the block's
+        // bytecode into this cache, so a length read usually has the answer here under a
+        // shared read lock. Falling straight through would instead take the store's
+        // single mutex-guarded metadata cache, serializing every `EXTCODESIZE` across
+        // the parallel executor's threads.
+        if let Some(code) = self.read_code()?.get(&code_hash) {
+            return Ok(CodeMetadata {
+                length: u64::try_from(code.len()).unwrap_or(u64::MAX),
+            });
+        }
         self.inner.get_code_metadata(code_hash)
     }
 
     fn precompile_cache(&self) -> Option<&PrecompileCache> {
         self.precompile_cache.as_ref()
+    }
+
+    /// Warms every address through [`Self::prefetch_accounts`], then answers from the
+    /// cache under one read lock. Repeated addresses cost a single database read, and a
+    /// caller that wants the states pays one map lookup each rather than a full
+    /// `get_account_state` round trip per address.
+    ///
+    /// The read lock spans the whole assembly, so callers should keep `addresses` to a
+    /// bounded slice: a writer (an executor filling the same cache) waits on it.
+    fn get_account_states_batch(
+        &self,
+        addresses: &[Address],
+    ) -> Result<Vec<AccountState>, DatabaseError> {
+        self.prefetch_accounts(addresses)?;
+        let cache = self.read_accounts()?;
+        addresses
+            .iter()
+            .map(|addr| {
+                cache.get(addr).copied().ok_or_else(|| {
+                    DatabaseError::Custom(format!("account {addr:?} missing after prefetch"))
+                })
+            })
+            .collect()
+    }
+
+    fn code_cache_budget_bytes(&self) -> u64 {
+        self.inner.code_cache_budget_bytes()
+    }
+
+    /// Fetches the uncached bytecodes in one batch and inserts them, reading each
+    /// distinct hash once however many entries share it.
+    ///
+    /// Returns only the warmed byte count, not the bytecodes: the executor reads code
+    /// through [`Self::get_account_code`], which this turns into a cache hit. Assembling
+    /// a result vector here would hold the write lock that guards every executor code
+    /// read for the length of the batch, to build something a warming caller discards.
+    fn prefetch_codes(&self, code_hashes: &[H256]) -> Result<u64, DatabaseError> {
+        let missing: Vec<H256> = {
+            let cache = self.read_code()?;
+            let mut seen: FxHashSet<H256> = FxHashSet::default();
+            code_hashes
+                .iter()
+                .copied()
+                .filter(|h| !cache.contains_key(h) && seen.insert(*h))
+                .collect()
+        };
+
+        if missing.is_empty() {
+            return Ok(0);
+        }
+
+        let codes = self.inner.get_account_codes_batch(&missing)?;
+        let mut warmed = 0u64;
+        let mut cache = self.write_code()?;
+        for (hash, code) in missing.into_iter().zip(codes.into_iter()) {
+            // An absent hash has nothing to warm; the executor reports it if reached.
+            if let Some(code) = code {
+                warmed = warmed.saturating_add(u64::try_from(code.size()).unwrap_or(u64::MAX));
+                cache.entry(hash).or_insert(code);
+            }
+        }
+        Ok(warmed)
     }
 
     fn prefetch_accounts(&self, addresses: &[Address]) -> Result<(), DatabaseError> {

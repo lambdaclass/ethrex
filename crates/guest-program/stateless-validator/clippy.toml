@@ -1,0 +1,18 @@
+allow-unwrap-in-tests = true
+
+# Field elements are not constrained to be canonical after OpenVM arithmetic; serializing
+# raw limbs lets a prover choose between `v` and `v + p` as precompile output. Serialize
+# via `fp_be`, which calls `IntMod::assert_reduced` first.
+#
+# NOTE: this rule cannot fire on `src/crypto/openvm.rs` today, because `pr_nostd.yaml`
+# excludes the `openvm` feature from its check matrix (its crates need a newer rustc than
+# the pinned toolchain). The textual guard in that workflow is what actually enforces this.
+[[disallowed-methods]]
+path = "openvm_algebra_guest::IntMod::as_le_bytes"
+reason = "serializes unreduced limbs; a prover can choose v or v+p"
+replacement = "fp_be"
+
+[[disallowed-methods]]
+path = "openvm_algebra_guest::IntMod::to_be_bytes"
+reason = "serializes unreduced limbs; a prover can choose v or v+p"
+replacement = "fp_be"
