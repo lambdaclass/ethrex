@@ -7,7 +7,7 @@ use ethrex_common::{
 };
 use ethrex_rpc::{
     engine::{blobs::BlobsV4Request, fork_choice::ForkChoiceUpdatedV4},
-    rpc::{RpcApiContext, RpcHandler},
+    rpc::RpcHandler,
     test_utils::default_context_with_storage,
     utils::{RpcErr, RpcErrorMetadata},
 };
@@ -28,14 +28,16 @@ fn hex_mask(mask: u128) -> String {
     format!("0x{}", hex::encode(mask.to_le_bytes()))
 }
 
-async fn fresh_context() -> RpcApiContext {
+use ethrex_rpc::test_utils::TestContext;
+
+async fn fresh_context() -> TestContext {
     let store = Store::new("test", EngineType::InMemory).expect("store");
     default_context_with_storage(store).await
 }
 
 // getBlobsV4 (EIP-8070) is an Amsterdam Engine API method, so the serving-path
 // tests activate Amsterdam (which implies Osaka, where cell proofs first exist).
-async fn amsterdam_context() -> RpcApiContext {
+async fn amsterdam_context() -> TestContext {
     let mut store = Store::new("test-amsterdam", EngineType::InMemory).expect("store");
     let config = ChainConfig {
         chain_id: 1,
@@ -60,7 +62,7 @@ async fn blobs_v4_pre_amsterdam_returns_null() {
     let ctx = fresh_context().await; // no fork times configured
     let req =
         BlobsV4Request::parse(&Some(vec![json!([H256::zero()]), json!(hex_mask(1u128))])).unwrap();
-    let result = req.handle(ctx).await.unwrap();
+    let result = req.handle(ctx.clone()).await.unwrap();
     let arr = result.as_array().unwrap();
     assert_eq!(arr.len(), 1);
     assert!(arr[0].is_null(), "pre-Amsterdam must return null entry");
@@ -75,7 +77,7 @@ async fn blobs_v4_rejects_over_cap() {
         json!(hex_mask(1u128)),
     ]))
     .unwrap();
-    let err = req.handle(ctx).await.unwrap_err();
+    let err = req.handle(ctx.clone()).await.unwrap_err();
     assert!(
         matches!(err, RpcErr::TooLargeRequest),
         "over-cap must return TooLargeRequest, got {err:?}"
@@ -90,7 +92,7 @@ async fn blobs_v4_unknown_hash_returns_null_entry() {
         json!(hex_mask(u128::MAX)),
     ]))
     .unwrap();
-    let result = req.handle(ctx).await.unwrap();
+    let result = req.handle(ctx.clone()).await.unwrap();
     let arr = result.as_array().unwrap();
     assert_eq!(arr.len(), 1);
     assert!(arr[0].is_null(), "unknown hash must return null entry");
@@ -130,7 +132,7 @@ async fn blobs_v4_sparse_mask_returns_length_128_matrix() {
         json!(hex_mask(mask)),
     ]))
     .unwrap();
-    let result = req.handle(ctx).await.unwrap();
+    let result = req.handle(ctx.clone()).await.unwrap();
     let arr = result.as_array().unwrap();
     assert_eq!(arr.len(), 1);
     let entry = &arr[0];
@@ -191,7 +193,7 @@ async fn blobs_v4_version_zero_bundle_returns_null_entry() {
         json!(hex_mask(u128::MAX)),
     ]))
     .unwrap();
-    let result = req.handle(ctx).await.unwrap();
+    let result = req.handle(ctx.clone()).await.unwrap();
     let arr = result.as_array().unwrap();
     assert_eq!(arr.len(), 1);
     assert!(
@@ -358,7 +360,7 @@ fn chain_config(active: bool) -> ChainConfig {
     }
 }
 
-async fn context_with_chain_config(osaka_active: bool) -> RpcApiContext {
+async fn context_with_chain_config(osaka_active: bool) -> TestContext {
     let mut storage =
         Store::new("test-blobs", EngineType::InMemory).expect("Failed to create test store");
     storage
@@ -374,7 +376,7 @@ async fn blobs_v4_accepts_exactly_max_size() {
     // be rejected as too large (regression guard for the `>=` vs `>` off-by-one).
     let context = context_with_chain_config(true).await;
     let request = blobs_v4_request(vec![H256::zero(); GET_BLOBS_V1_REQUEST_MAX_SIZE], u128::MAX);
-    let result = request.handle(context).await;
+    let result = request.handle(context.clone()).await;
     assert!(!matches!(result, Err(RpcErr::TooLargeRequest)));
 }
 
@@ -416,7 +418,7 @@ async fn blobs_v4_response_is_sparse_length_128() {
     }
     let mask: u128 = (1 << 0) | (1 << 5);
     let request = blobs_v4_request(vec![hashes[0]], mask);
-    let result = request.handle(context).await.unwrap();
+    let result = request.handle(context.clone()).await.unwrap();
     let entry = &result.as_array().unwrap()[0];
     let blob_cells = entry["blobCells"].as_array().unwrap();
     let proofs = entry["proofs"].as_array().unwrap();
@@ -454,7 +456,7 @@ async fn blobs_v4_missing_stored_and_no_blob_returns_null_cell() {
 
     // No stored cells, blob is elided — expect null cell.
     let request = blobs_v4_request(vec![hashes[0]], 1); // column 0 only
-    let result = request.handle(context).await.unwrap();
+    let result = request.handle(context.clone()).await.unwrap();
     let arr = result.as_array().unwrap();
     // The hash resolved, so we get Some(BlobCellsAndProofsV1) with a null cell.
     let entry = &arr[0];

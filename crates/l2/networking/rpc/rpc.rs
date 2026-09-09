@@ -112,7 +112,8 @@ pub async fn bind_api(
     }
 
     let active_filters = Arc::new(Mutex::new(HashMap::new()));
-    let block_worker_channel = ethrex_rpc::start_block_executor(blockchain.clone());
+    // Detached for the lifetime of the process, as on L1.
+    let (block_worker_channel, _executor) = ethrex_rpc::start_block_executor(blockchain.clone());
     let service_context = RpcApiContext {
         l1_ctx: ethrex_rpc::RpcApiContext {
             storage,
