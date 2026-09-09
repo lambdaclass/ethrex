@@ -3070,6 +3070,7 @@ impl<'a> VM<'a> {
         frame_indices: &[usize],
         deploy_index: Option<usize>,
         canonical_paymaster_pay_frame: Option<usize>,
+        recent_root_verifier_frame: Option<usize>,
         profile_2: Option<crate::validation_observer::Profile2Replay>,
     ) -> Result<PrefixSimResult, VMError> {
         use crate::validation_observer::ValidationObserver;
@@ -3158,6 +3159,8 @@ impl<'a> VM<'a> {
         let expiry_verifier = ethrex_common::types::frame_tx_expiry_verifier();
         let mut observer = ValidationObserver::new(sender, deploy_index, expiry_verifier);
         observer.canonical_paymaster_pay_frame = canonical_paymaster_pay_frame;
+        observer.recent_root_verifier_frame = recent_root_verifier_frame;
+        observer.recent_root_address = ethrex_common::types::frame_tx_recent_root();
         if let Some(profile_2) = profile_2 {
             observer.focil_surface = Some(profile_2.surface);
             observer.code_budget = Some(profile_2.code_budget);
@@ -3717,7 +3720,15 @@ impl<'a> VM<'a> {
 
         let banned = match opcode {
             GASPRICE | BLOCKHASH | COINBASE | NUMBER | PREVRANDAO | GASLIMIT | BASEFEE
-            | BLOBBASEFEE | SLOTNUM | INVALID | SELFDESTRUCT | BALANCE | SELFBALANCE => true,
+            | BLOBBASEFEE | INVALID | SELFDESTRUCT | BALANCE | SELFBALANCE => true,
+            // EIP-8272 §Public mempool handling, permission 1: `SLOTNUM` may run
+            // inside `RECENT_ROOT_CODE` while the recent-root verifier frame
+            // executes it at the top level. Everywhere else it stays banned: a
+            // prefix that branches on the slot passes at admission and fails at
+            // inclusion.
+            SLOTNUM => !self
+                .validation_observer
+                .in_recent_root_frame(self.current_call_frame.code_address),
             // TIMESTAMP is permitted only when the currently executing contract
             // IS the EXPIRY_VERIFIER predeploy (checked by code_address so the
             // rule tracks the executing contract at every call depth, not just the
@@ -3746,6 +3757,17 @@ impl<'a> VM<'a> {
     pub fn validation_check_sload(&mut self, address: Address, slot: H256) {
         use crate::validation_observer::FrameSimViolation;
         if self.validation_observer.in_canonical_pay_frame() {
+            return;
+        }
+        // EIP-8272 §Public mempool handling, permission 2: the recent-root verifier
+        // frame may read the predeploy's own storage. The tuples it names are the
+        // transaction's recent-root dependencies, tracked by the mempool from the
+        // frame's data rather than from these reads.
+        if address == self.validation_observer.recent_root_address
+            && self
+                .validation_observer
+                .in_recent_root_frame(self.current_call_frame.code_address)
+        {
             return;
         }
         if let Some(surface) = self.validation_observer.focil_surface {

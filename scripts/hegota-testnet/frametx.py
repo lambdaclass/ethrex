@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""Current-format EIP-8141/8250/8272 frame-transaction (type 0x06) encoder.
+"""Current-format EIP-8141/8250 frame-transaction (type 0x06) encoder.
 
 EIP-8141 wire layout, verified against the repo golden vector:
   raw = 0x06 || rlp([chain_id, nonce_keys, nonce_seq, sender, frames, signatures,
-                     fees, blob_hashes, recent_root_references])
+                     fees, blob_hashes])
   fees      = rlp([max_priority_fee, max_fee, max_blob_fee])
   frame     = rlp([mode, flags, target_or_empty, limits, value, data])
   limits    = rlp([execution, state])
 
-The composition of the three EIPs is this chain's choice, because none of them specifies
-it: EIP-8250 replaces the canonical scalar `nonce` with `nonce_keys, nonce_seq` in place,
-EIP-8272 appends `recent_root_references` last, and EIP-8141's `fees` list sits where
-its three flat fee fields used to be.
+The composition is this chain's choice, because no EIP specifies it: EIP-8250 replaces
+the canonical scalar `nonce` with `nonce_keys, nonce_seq` in place, and EIP-8141's `fees`
+list sits where its three flat fee fields used to be. EIP-8272 (824cbc0b0e) adds no
+envelope field: its recent roots travel in a canonical VERIFY frame.
   signature = rlp([scheme, signer, msg, signature_bytes])  # scheme: 0=ARBITRARY, 1=SECP256K1, 2=P256
   sig_hash  = keccak256(0x06 || rlp(envelope with empty-msg signatures' bytes elided))
 """
@@ -71,12 +71,11 @@ class FrameSig:
 
 class FrameTx:
     def __init__(self, chain_id, nonce_keys, nonce_seq, sender, frames, signatures,
-                 max_priority_fee, max_fee, max_blob_fee=0, blob_hashes=None, recent_root_refs=None):
+                 max_priority_fee, max_fee, max_blob_fee=0, blob_hashes=None):
         self.chain_id, self.nonce_keys, self.nonce_seq, self.sender = chain_id, nonce_keys, nonce_seq, sender
         self.frames, self.signatures = frames, signatures
         self.max_priority_fee, self.max_fee, self.max_blob_fee = max_priority_fee, max_fee, max_blob_fee
         self.blob_hashes = blob_hashes or []
-        self.recent_root_refs = recent_root_refs or []
     def _envelope(self, elide_sigs):
         return [
             rlp_int(self.chain_id),
@@ -88,7 +87,6 @@ class FrameTx:
             rlp_list([rlp_int(self.max_priority_fee), rlp_int(self.max_fee),
                       rlp_int(self.max_blob_fee)]),
             rlp_list([rlp_bytes(h) for h in self.blob_hashes]),
-            rlp_list([r for r in self.recent_root_refs]),  # entries pre-encoded if any
         ]
     def encode(self) -> bytes:
         return rlp_list(self._envelope(elide_sigs=False))
@@ -112,8 +110,8 @@ if __name__ == "__main__":
         max_priority_fee=0x3b9aca00,
         max_fee=0x6fc23ac00,
     )
-    EXPECT_RLP = "f8b301c1800794000000000000000000000000000000000000abcdeccc010380c48252088080821122de0280940000000000000000000000000000000000001234c4829c40808080f85cf85a0194000000000000000000000000000000000000abcd80b8410101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101cc843b9aca008506fc23ac0080c0c0"
-    EXPECT_SIGHASH = "0xd4df51143828c0338882dbd10c3308f3569972fe1928a7b5040ee18057920510"
+    EXPECT_RLP = "f8b201c1800794000000000000000000000000000000000000abcdeccc010380c48252088080821122de0280940000000000000000000000000000000000001234c4829c40808080f85cf85a0194000000000000000000000000000000000000abcd80b8410101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101cc843b9aca008506fc23ac0080c0"
+    EXPECT_SIGHASH = "0x73827d510b0029220c237a46b27f6b6b8e7a3fd3b52c42a55c6c6e343fc45951"
     got_rlp = golden.encode().hex()
     got_sh = "0x" + golden.sig_hash().hex()
     print("RLP match:     ", got_rlp == EXPECT_RLP)

@@ -628,7 +628,6 @@ impl From<Transaction> for FrameTransaction {
             // legacy key `[0]` at that sequence.
             nonce_keys: vec![U256::zero()],
             nonce_seq: val.nonce.try_into().unwrap_or(u64::MAX),
-            recent_root_references: Vec::new(),
             sender: val.sender.unwrap_or_default(),
             frames: val
                 .frames

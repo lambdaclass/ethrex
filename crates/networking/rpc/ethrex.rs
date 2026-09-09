@@ -44,7 +44,7 @@ pub struct SimulateFrameTransactionRequest {
 struct SimulateFrameTransactionResult {
     /// Whether every frame-specific admission gate passed: EIP-8141 static
     /// constraints and signature authentication, EIP-8250 nonce-key rules,
-    /// EIP-8272 recent-root references, and the
+    /// EIP-8272 recent-root verifier frame tuples, and the
     /// validation-prefix simulation — the same checks the mempool runs, in the
     /// same order, so a `false` never under-rejects.
     ///
@@ -225,15 +225,15 @@ impl RpcHandler for SimulateFrameTransactionRequest {
         }
         let prefix_shape = Some(prefix_shape_name(&prefix.shape).to_owned());
 
-        // EIP-8272 recent-root references read head state natively rather than
-        // through the EVM, and sit behind static validation and signature
-        // authentication for the reason the mempool orders them that way: a
-        // bounded number of storage reads must not be reachable by a transaction
+        // EIP-8272: the recent-root verifier frame's tuples are read from head state
+        // natively rather than through the EVM, behind static validation and
+        // signature authentication for the reason the mempool orders them that way:
+        // a bounded number of storage reads must not be reachable by a transaction
         // that fails a cheap check first.
         if let Err(error) =
             context
                 .blockchain
-                .check_recent_root_references(frame_tx, &header, header.number)
+                .check_recent_root_frame(frame_tx, &header, header.number)
         {
             return structurally_invalid(error.to_string(), max_cost);
         }
@@ -319,10 +319,13 @@ impl SimulateFrameTransactionRequest {
     ) -> Result<FrameValidationOutcome, RpcErr> {
         let vm_db = StoreVmDatabase::new(context.storage.clone(), header.clone())?;
         let mut vm = context.blockchain.new_evm(vm_db)?;
+        // The state is the head's; the block context is the next block's (EIP-8272
+        // §Current slot), exactly as the mempool simulates.
+        let prospective = context.blockchain.prospective_header(header);
         // EvmError maps to RpcErr::Vm (-32015) via From, matching eth_call/estimateGas.
         vm.simulate_frame_validation_prefix(
             &self.transaction,
-            header,
+            &prospective,
             prefix,
             Some(FRAME_CANONICAL_PAYMASTER_CODE_HASH),
             context.blockchain.options.max_verify_gas,
@@ -355,7 +358,8 @@ impl SimulateFrameTransactionRequest {
             Err(error) => return (None, None, None, Some(error.to_string())),
         };
         let mut cumulative_gas = 0u64;
-        match vm.execute_tx(&self.transaction, header, &mut cumulative_gas, sender) {
+        let prospective = context.blockchain.prospective_header(header);
+        match vm.execute_tx(&self.transaction, &prospective, &mut cumulative_gas, sender) {
             Ok((receipt, report)) => {
                 let frames = receipt.frame_receipts.map(|frames| {
                     frames

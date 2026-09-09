@@ -32,7 +32,7 @@ use crate::{
 /// `gas_left` its `gas_limit - gas_used`. Every read this evaluator performs
 /// goes through `header.state_root` explicitly (never a canonical block
 /// number), which is what makes it safe to use before `header` is canonical —
-/// see [`Blockchain::check_recent_root_references_at_root`].
+/// see [`Blockchain::check_recent_root_frame_at_root`].
 pub struct BlockchainProfile2Evaluator<'a> {
     blockchain: &'a Blockchain,
     header: &'a BlockHeader,
@@ -141,9 +141,9 @@ impl<'a> BlockchainProfile2Evaluator<'a> {
             config.effective_slot_number(self.header.slot_number, self.header.timestamp);
         // The block's OWN slot: a frame tx executing inside this block sees
         // this slot as `env.slot_number`, not the slot after it (that is the
-        // prospective admission question `check_recent_root_references`
-        // asks; this one asks whether the reference is valid AT this block).
-        if let Err(err) = self.blockchain.check_recent_root_references_at_root(
+        // prospective admission question `check_recent_root_frame` asks; this
+        // one asks whether the recent-root frame's tuples hold AT this block).
+        if let Err(err) = self.blockchain.check_recent_root_frame_at_root(
             tx,
             current_slot,
             state_header.state_root,

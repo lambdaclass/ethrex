@@ -6,7 +6,8 @@ Checks the four EIPs the chain's identity rests on, against a live node:
   8141  a frame transaction is admitted, mines, and returns per-frame
         receipts carrying the two-dimensional gas_used
   8272  the recent-root predeploy is exactly RECENT_ROOT_CODE, a 64-byte write
-        succeeds, and both rejection paths revert
+        succeeds, both write rejection paths revert, and the canonical verifier frame
+        admits a written root, rejects an unwritten one, and is refused out of position
   8250  keyed-nonce admission: key 0 cannot queue, and concurrency is denied for an
         EOA sender (its default-code prefix authenticates against its own nonce)
   7805  the FOCIL engine surface answers, and an inclusion list contains the pending
@@ -46,7 +47,7 @@ import urllib.request
 
 CAST = os.path.expanduser("~/.foundry/bin/cast")
 RECENT_ROOT_ADDRESS = "0x0000000000000000000000000000000000008272"
-RECENT_ROOT_CODE_LEN = 144
+RECENT_ROOT_CODE_LEN = 345
 # EIP-8037 STATE_BYTES_PER_NEW_ACCOUNT * CPSB: what a value-bearing frame is charged for
 # funding an address that does not exist yet, drawn from that frame's own `limits.state`.
 NEW_ACCOUNT_STATE_GAS = 120 * 1530
@@ -222,13 +223,17 @@ def drain_pool(what: str) -> None:
     print(f"  WARN  pool still not empty before {what}; results below may be a race")
 
 
-def recent_root_reference(source_id: bytes, slot: int, root: bytes) -> bytes:
-    """EIP-8272 reference: [source_id, slot, root]."""
-    return rl([rb(source_id), ri(slot), rb(root)])
+def recent_root_tuple(source_id: bytes, slot: int, root: bytes) -> bytes:
+    """EIP-8272 tuple, as the verifier frame packs it: source_id || uint64_be(slot) || root."""
+    return source_id + slot.to_bytes(8, "big") + root
 
 
-def build_frame_tx(chain_id, sender, key, seq, frames, priority, max_fee, sender_key,
-                   references=(), sign=True):
+def recent_root_frame(*tuples: bytes) -> bytes:
+    """The canonical EIP-8272 verifier frame: VERIFY to 0x…8272, no flags, no state, tuples as data."""
+    return frame(1, 0x00, RECENT_ROOT_ADDRESS, 80_000, 0, 0, b"".join(tuples))
+
+
+def build_frame_tx(chain_id, sender, key, seq, frames, priority, max_fee, sender_key, sign=True):
     """The envelope; fees are one nested list and the signature covers the whole thing.
 
     `sign=False` builds a zero-signature envelope, which is what a contract sender uses:
@@ -239,7 +244,7 @@ def build_frame_tx(chain_id, sender, key, seq, frames, priority, max_fee, sender
         entries = [] if signature is None else [rl([ri(1), rb(addr(sender)), rb(b""), rb(signature)])]
         fees = rl([ri(priority), ri(max_fee), ri(0)])
         return rl([ri(chain_id), rl([ri(key)]), ri(seq), rb(addr(sender)), rl(frames),
-                   rl(entries), fees, rl([]), rl(list(references))])
+                   rl(entries), fees, rl([])])
 
     if not sign:
         return "0x06" + envelope(None).hex()
@@ -294,7 +299,6 @@ TXPARAM_IDS = [
     (0x0E, 1, "len(nonce_keys) (8250)"),
     (0x0F, 2, "nonce_keys_hash (8250)"),
     (0x10, 3, "nonce_keys[0] (8250)"),
-    (0x11, 4, "len(recent_root_references) (8272)"),
 ]
 
 
@@ -313,8 +317,8 @@ def txparam_id_check(chain_id, sender_contract) -> None:
     raw = build_frame_tx(
         chain_id, sender_contract, key, 0,
         [frame(1, 0x03, sender_contract, 80_000, 0, 0, b""),
-         # Five slot creations, so five slots' worth of state gas.
-         frame(0, 0x00, probe, 400_000, 5 * SSTORE_SET_STATE_GAS, 0, b"")],
+         # Four slot creations, so four slots' worth of state gas.
+         frame(0, 0x00, probe, 400_000, 4 * SSTORE_SET_STATE_GAS, 0, b"")],
         *fees(), None, sign=False)
     tx_hash = rpc(RPC, "eth_sendRawTransaction", [raw])
     receipt = None
@@ -339,7 +343,6 @@ def txparam_id_check(chain_id, sender_contract) -> None:
         0x0E: 1,
         0x0F: int(digest, 16),
         0x10: key,
-        0x11: 0,
     }
     for idx, slot, label in TXPARAM_IDS:
         got = int(rpc(RPC, "eth_getStorageAt", [probe, hex(slot), "latest"]), 16)
@@ -516,26 +519,29 @@ def main() -> int:
         except subprocess.CalledProcessError:
             check(label, True)
 
-    # The reference half. The predeploy derives `source_id = keccak(CALLER || salt)` over the
-    # unpadded 20-byte caller, and stores the entry under the slot the write executed in, so
-    # a reference to (source_id, that slot, root) is the one a frame transaction can declare.
-    # This is the read side of EIP-8272 end to end: the protocol recomputes `entry_hash` and
-    # compares it against the predeploy's storage before the transaction is admitted.
+    # The verification half. The predeploy derives `source_id = keccak(CALLER || salt)` over
+    # the unpadded 20-byte caller and stores the entry under the slot the write executed in,
+    # so a (source_id, that slot, root) tuple is what the canonical verifier frame declares.
+    # This is EIP-8272's read side end to end: admission recomputes `entry_hash` against the
+    # predeploy's storage, and the frame then runs RECENT_ROOT_CODE's validation operation in
+    # the prefix simulation, where `SLOTNUM` and the predeploy's own storage are permitted to
+    # it and to nothing else. A misplaced verifier frame is rejected on shape alone.
     if written.get("status") == "0x1":
         source_id = bytes.fromhex(
             cast_cmd("keccak", "0x" + bytes.fromhex(sender[2:]).hex() + salt.hex())[2:])
         write_block = rpc(RPC, "eth_getBlockByHash", [written["blockHash"], False])
         write_slot = int(write_block["slotNumber"], 16)
         seq = int(rpc(RPC, "eth_getTransactionCount", [sender, "latest"]), 16)
-        for label, referenced_root, expect_valid in [
-            ("a frame transaction referencing the written root is admitted", root, True),
-            ("one referencing a root that was never written is rejected", bytes([0x33]) * 32, False),
+        self_verify = frame(1, 0x03, sender, 80_000, 0, 0, b"")
+        for label, frames_for, expect_valid in [
+            ("a frame transaction verifying the written root is admitted",
+             [recent_root_frame(recent_root_tuple(source_id, write_slot, root)), self_verify], True),
+            ("one verifying a root that was never written is rejected",
+             [recent_root_frame(recent_root_tuple(source_id, write_slot, bytes([0x33]) * 32)), self_verify], False),
+            ("a verifier frame after account validation is rejected",
+             [self_verify, recent_root_frame(recent_root_tuple(source_id, write_slot, root))], False),
         ]:
-            raw = build_frame_tx(
-                chain_id, sender, 0, seq,
-                [frame(1, 0x03, sender, 80_000, 0, 0, b"")],
-                *fees(), KEY,
-                references=[recent_root_reference(source_id, write_slot, referenced_root)])
+            raw = build_frame_tx(chain_id, sender, 0, seq, frames_for, *fees(), KEY)
             try:
                 rpc(RPC, "eth_sendRawTransaction", [raw])
                 check(label, expect_valid, "admitted")

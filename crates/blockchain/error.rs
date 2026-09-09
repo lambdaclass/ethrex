@@ -200,6 +200,8 @@ pub enum MempoolError {
         "EIP-8272 recent-root reference is not committed in the RECENT_ROOT_ADDRESS predeploy at head state"
     )]
     FrameTxRecentRootNotCommitted,
+    #[error("EIP-8272 RECENT_ROOT_ADDRESS does not hold RECENT_ROOT_CODE at head state")]
+    FrameTxRecentRootCodeMismatch,
     #[error("Mempool {occupancy_pct}% full; rejecting gapped-nonce tx (nonce gap = {nonce_gap})")]
     GapAdmissionDeniedUnderPressure { occupancy_pct: u8, nonce_gap: u64 },
     #[error("L2-only transaction type is not valid on an L1 node")]

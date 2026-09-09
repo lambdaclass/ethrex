@@ -33,6 +33,7 @@ use ethrex_common::types::{
 use ethrex_common::{Address, Bytes, H160, H256, U256};
 use ethrex_storage::error::StoreError;
 use ethrex_storage::{EngineType, Store};
+use ethrex_vm::system_contracts::RECENT_ROOT_RUNTIME_BYTECODE;
 
 const MEMPOOL_MAX_SIZE_TEST: usize = 10_000;
 
@@ -1357,19 +1358,19 @@ async fn mempool_accepts_frame_tx_with_deadline_at_head_timestamp() {
 }
 
 // ---------------------------------------------------------------------------
-// EIP-8272 recent-root reference freshness policy
+// EIP-8272 recent-root verifier frame: the public mempool policy
 // ---------------------------------------------------------------------------
 
 /// Head slot for the recent-root policy tests. Chosen larger than
-/// `FRAME_TX_RECENT_ROOT_USABLE_WINDOW + 1` so an expired reference slot is
-/// still a valid (non-underflowing) u64.
+/// `FRAME_TX_RECENT_ROOT_USABLE_WINDOW + 1` so an expired tuple slot is still a
+/// valid (non-underflowing) u64.
 const RECENT_ROOT_TEST_HEAD_SLOT: u64 = 10_000;
 
 /// Store where Hegota AND Amsterdam are active and the genesis head carries
-/// `slot_number == RECENT_ROOT_TEST_HEAD_SLOT` (EIP-7843), so the EIP-8272
-/// mempool freshness policy applies. Every reference in `committed` is seeded
-/// into the RECENT_ROOT_ADDRESS predeploy storage (`storage_key -> entry_hash`)
-/// so it validates against head state.
+/// `slot_number == RECENT_ROOT_TEST_HEAD_SLOT` (EIP-7843), so the EIP-8272 mempool
+/// policy applies. The predeploy holds `RECENT_ROOT_CODE`, and every tuple in
+/// `committed` is seeded into its storage (`storage_key -> entry_hash`) so it
+/// validates against head state, in the admission check and in the simulation.
 async fn setup_hegota_store_with_slot(committed: &[RecentRootReference]) -> Store {
     let predeploy_storage: BTreeMap<U256, U256> = committed
         .iter()
@@ -1403,9 +1404,7 @@ async fn setup_hegota_store_with_slot(committed: &[RecentRootReference]) -> Stor
             (
                 frame_tx_recent_root(),
                 GenesisAccount {
-                    // The predeploy holds no runtime bytecode (the write is
-                    // handled natively); only its storage matters here.
-                    code: Bytes::new(),
+                    code: Bytes::from_static(&RECENT_ROOT_RUNTIME_BYTECODE),
                     storage: predeploy_storage,
                     balance: U256::zero(),
                     nonce: 1,
@@ -1424,7 +1423,7 @@ async fn setup_hegota_store_with_slot(committed: &[RecentRootReference]) -> Stor
     store
 }
 
-fn recent_root_reference(slot: u64) -> RecentRootReference {
+fn recent_root_tuple(slot: u64) -> RecentRootReference {
     RecentRootReference {
         source_id: H256::from_low_u64_be(0x1234),
         slot,
@@ -1432,17 +1431,47 @@ fn recent_root_reference(slot: u64) -> RecentRootReference {
     }
 }
 
-fn frame_tx_with_reference(reference: RecentRootReference) -> FrameTransaction {
+/// The canonical EIP-8272 verifier frame over `tuples`, each packed as
+/// `source_id || uint64_be(slot) || root`.
+fn recent_root_frame(tuples: &[RecentRootReference]) -> Frame {
+    let mut data = Vec::with_capacity(tuples.len() * 72);
+    for tuple in tuples {
+        data.extend_from_slice(tuple.source_id.as_bytes());
+        data.extend_from_slice(&tuple.slot.to_be_bytes());
+        data.extend_from_slice(tuple.root.as_bytes());
+    }
+    Frame {
+        mode: FrameMode::Verify as u8,
+        flags: 0,
+        target: Some(frame_tx_recent_root()),
+        gas_limit: 60_000,
+        state_gas_limit: 0,
+        value: U256::zero(),
+        data: Bytes::from(data),
+    }
+}
+
+/// `minimal_valid_frame_tx` led by a recent-root verifier frame over `tuples`.
+fn frame_tx_with_recent_root_frame(tuples: &[RecentRootReference]) -> FrameTransaction {
     let mut frame_tx = minimal_valid_frame_tx();
-    frame_tx.recent_root_references = vec![reference];
+    frame_tx.frames.insert(0, recent_root_frame(tuples));
     frame_tx
+}
+
+async fn admit(store: Store, frame_tx: FrameTransaction) -> Result<(), MempoolError> {
+    let blockchain = Blockchain::default_with_store(store);
+    let tx = Transaction::FrameTransaction(frame_tx);
+    blockchain
+        .validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap())
+        .await
+        .map(|_| ())
 }
 
 #[tokio::test]
 async fn mempool_skips_recent_root_policy_without_head_slot_number() {
-    // A head header with no EIP-7843 slot number gives nothing sound to compare
-    // a reference's slot against, so `check_recent_root_references` guards
-    // rather than rejects and block execution stays the authoritative check.
+    // A head header with no EIP-7843 slot number gives nothing sound to compare a
+    // tuple's slot against, so `check_recent_root_frame` guards rather than
+    // rejects and block execution stays the authoritative check.
     //
     // Driven through the entry point directly rather than through
     // `validate_transaction`. The scenario needs a head whose `slot_number` is
@@ -1455,31 +1484,124 @@ async fn mempool_skips_recent_root_policy_without_head_slot_number() {
     let mut head = store.get_block_header(0).unwrap().expect("genesis header");
     let blockchain = Blockchain::default_with_store(store);
 
-    let reference = recent_root_reference(RECENT_ROOT_TEST_HEAD_SLOT);
-    let frame_tx = frame_tx_with_reference(reference);
+    let frame_tx =
+        frame_tx_with_recent_root_frame(&[recent_root_tuple(RECENT_ROOT_TEST_HEAD_SLOT)]);
     assert!(
         head.slot_number.is_some(),
-        "an Amsterdam+ genesis header carries a slot number; the guard's input          has to be constructed rather than found"
+        "an Amsterdam+ genesis header carries a slot number; the guard's input has to be constructed rather than found"
     );
 
     head.slot_number = None;
     assert!(
         blockchain
-            .check_recent_root_references(&frame_tx, &head, 0)
+            .check_recent_root_frame(&frame_tx, &head, 0)
             .is_ok(),
         "the policy must be skipped when the head carries no slot number"
     );
 
-    // The control: with a slot number present the policy runs and rejects this
-    // reference as too new, so the skip above is the guard rather than the
-    // reference happening to be acceptable.
+    // The control: with a slot number present the policy runs. This store has no
+    // RECENT_ROOT_CODE installed, which is the first thing it checks, so the skip
+    // above is the guard rather than the frame happening to be acceptable.
     head.slot_number = Some(0);
     assert!(
         matches!(
-            blockchain.check_recent_root_references(&frame_tx, &head, 0),
-            Err(MempoolError::FrameTxRecentRootTooNew { .. })
+            blockchain.check_recent_root_frame(&frame_tx, &head, 0),
+            Err(MempoolError::FrameTxRecentRootCodeMismatch)
         ),
         "with a head slot number the policy must run"
+    );
+}
+
+#[tokio::test]
+async fn recent_root_frame_is_admitted_when_its_tuple_is_committed() {
+    // Written in the head slot, referenceable from the next: admission judges the
+    // tuple prospectively (head slot + 1) and the simulation then runs
+    // RECENT_ROOT_CODE at that slot, where the observer permits its SLOTNUM and its
+    // read of the predeploy's own storage inside this frame and nowhere else.
+    let tuple = recent_root_tuple(RECENT_ROOT_TEST_HEAD_SLOT);
+    let store = setup_hegota_store_with_slot(std::slice::from_ref(&tuple)).await;
+    let result = admit(store, frame_tx_with_recent_root_frame(&[tuple])).await;
+    assert!(
+        result.is_ok(),
+        "a recent-root frame over a committed, in-window tuple must be admitted; got {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn recent_root_frame_is_rejected_for_an_uncommitted_root() {
+    let committed = recent_root_tuple(RECENT_ROOT_TEST_HEAD_SLOT);
+    let store = setup_hegota_store_with_slot(std::slice::from_ref(&committed)).await;
+    let mut wrong_root = committed;
+    wrong_root.root = H256::from_low_u64_be(0x9999);
+    let result = admit(store, frame_tx_with_recent_root_frame(&[wrong_root])).await;
+    assert!(
+        matches!(result, Err(MempoolError::FrameTxRecentRootNotCommitted)),
+        "a tuple whose entry is not committed must be rejected; got {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn recent_root_frame_is_rejected_when_too_new_or_expired() {
+    // Both tuples are committed, so the age rule is the only thing that fails.
+    let too_new = recent_root_tuple(RECENT_ROOT_TEST_HEAD_SLOT + 1);
+    let expired =
+        recent_root_tuple(RECENT_ROOT_TEST_HEAD_SLOT - FRAME_TX_RECENT_ROOT_USABLE_WINDOW);
+    let store = setup_hegota_store_with_slot(&[too_new.clone(), expired.clone()]).await;
+
+    let result = admit(store.clone(), frame_tx_with_recent_root_frame(&[too_new])).await;
+    assert!(
+        matches!(result, Err(MempoolError::FrameTxRecentRootTooNew { .. })),
+        "a tuple for the next slot is too new; got {result:?}"
+    );
+    let result = admit(store, frame_tx_with_recent_root_frame(&[expired])).await;
+    assert!(
+        matches!(result, Err(MempoolError::FrameTxRecentRootExpired { .. })),
+        "a tuple RECENT_ROOT_LENGTH slots old has expired; got {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn recent_root_frame_is_rejected_without_recent_root_code() {
+    // The same tuple, on a chain whose predeploy does not hold RECENT_ROOT_CODE.
+    let store = setup_hegota_store().await;
+    let result = admit(
+        store,
+        frame_tx_with_recent_root_frame(&[recent_root_tuple(RECENT_ROOT_TEST_HEAD_SLOT)]),
+    )
+    .await;
+    assert!(
+        matches!(result, Err(MempoolError::FrameTxRecentRootCodeMismatch)),
+        "a recent-root frame needs RECENT_ROOT_CODE at the predeploy; got {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn recent_root_frame_must_lead_the_transaction() {
+    // The verifier frame after account validation is not the protocol verifier:
+    // the structural rules reject it rather than run it as an ordinary frame.
+    let tuple = recent_root_tuple(RECENT_ROOT_TEST_HEAD_SLOT);
+    let store = setup_hegota_store_with_slot(std::slice::from_ref(&tuple)).await;
+    let mut frame_tx = minimal_valid_frame_tx();
+    frame_tx.frames.push(recent_root_frame(&[tuple]));
+    let result = admit(store, frame_tx).await;
+    assert!(
+        matches!(&result, Err(MempoolError::FrameTxInvalidPrefixStructure(msg)) if msg.contains("recent-root")),
+        "a misplaced recent-root frame must fail the structural rules; got {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn recent_root_frame_counts_toward_max_verify_gas() {
+    // The frame's `limits.execution` joins the prefix budget: alone it may equal
+    // MAX_VERIFY_GAS, but with the self-verify frame's 200 gas on top it does not.
+    let tuple = recent_root_tuple(RECENT_ROOT_TEST_HEAD_SLOT);
+    let store = setup_hegota_store_with_slot(std::slice::from_ref(&tuple)).await;
+    let mut frame_tx = frame_tx_with_recent_root_frame(&[tuple]);
+    frame_tx.frames[0].gas_limit = FRAME_TX_MAX_VERIFY_GAS;
+    let result = admit(store, frame_tx).await;
+    assert!(
+        matches!(result, Err(MempoolError::FrameTxVerifyGasBudgetExceeded)),
+        "the recent-root frame's gas must count toward MAX_VERIFY_GAS; got {result:?}"
     );
 }
 

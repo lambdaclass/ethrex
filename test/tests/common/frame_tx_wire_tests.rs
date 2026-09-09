@@ -55,19 +55,19 @@ fn golden() -> FrameTransaction {
         max_fee_per_gas: U256::from(0x6fc23ac00u64),
         max_fee_per_blob_gas: U256::zero(),
         blob_versioned_hashes: vec![],
-        recent_root_references: vec![],
         ..Default::default()
     }
 }
 
 /// Byte-for-byte what `scripts/hegota-testnet/frametx.py` produces for `golden()`.
 ///
-/// **These two strings must not move again.** The encoding is settled; every later step of
-/// adopting the updated spec is semantics. If a gas, receipt or opcode change moves the golden
-/// vector, an encoding change leaked into a step that had no business touching the wire,
-/// and the right response is to find it rather than to re-pin these constants.
-const GOLDEN_RLP: &str = "f8b301c1800794000000000000000000000000000000000000abcdeccc010380c48252088080821122de0280940000000000000000000000000000000000001234c4829c40808080f85cf85a0194000000000000000000000000000000000000abcd80b8410101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101cc843b9aca008506fc23ac0080c0c0";
-const GOLDEN_SIG_HASH: &str = "0xd4df51143828c0338882dbd10c3308f3569972fe1928a7b5040ee18057920510";
+/// **These two strings must not move again.** The encoding is settled (EIP-8272 at
+/// `824cbc0b0e` dropped its envelope field, which is the last change); every later step of
+/// adopting the updated specs is semantics. If a gas, receipt or opcode change moves the
+/// golden vector, an encoding change leaked into a step that had no business touching the
+/// wire, and the right response is to find it rather than to re-pin these constants.
+const GOLDEN_RLP: &str = "f8b201c1800794000000000000000000000000000000000000abcdeccc010380c48252088080821122de0280940000000000000000000000000000000000001234c4829c40808080f85cf85a0194000000000000000000000000000000000000abcd80b8410101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101cc843b9aca008506fc23ac0080c0";
+const GOLDEN_SIG_HASH: &str = "0x73827d510b0029220c237a46b27f6b6b8e7a3fd3b52c42a55c6c6e343fc45951";
 
 #[test]
 fn the_v2_envelope_encodes_to_the_golden_vector() {
@@ -154,8 +154,8 @@ fn the_v2_envelope_nests_limits_and_fees() {
     let fields = rlp_children(payload);
     assert_eq!(
         fields.len(),
-        9,
-        "chain_id, nonce_keys, nonce_seq, sender, frames, signatures, fees, blob_hashes, recent_root_references"
+        8,
+        "chain_id, nonce_keys, nonce_seq, sender, frames, signatures, fees, blob_hashes"
     );
 
     // field 4 is the frame list; each frame is [mode, flags, target, limits, value, data]
@@ -196,7 +196,6 @@ fn the_v2_envelope_round_trips_through_the_canonical_decoder() {
     assert_eq!(decoded.frames[0].gas_limit, 0x5208);
     assert_eq!(decoded.frames[0].state_gas_limit, 0);
     assert_eq!(decoded.max_fee_per_gas, U256::from(0x6fc23ac00u64));
-    assert_eq!(decoded.recent_root_references.len(), 0);
 }
 
 /// A frame carrying a state budget must survive the round trip, since `limits.state` is

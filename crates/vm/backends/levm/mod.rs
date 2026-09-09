@@ -3202,6 +3202,18 @@ impl LEVM {
             _ => None,
         };
 
+        // EIP-8272: the recent-root verifier frame gets its two permissions only
+        // while the predeploy runs RECENT_ROOT_CODE; admission rejects a mismatch
+        // outright, and the observer simply grants nothing here when it differs.
+        let recent_root_frame = prefix.recent_root_index.filter(|_| {
+            db.get_account(RECENT_ROOT_ADDRESS.address)
+                .map(|account| {
+                    account.info.code_hash
+                        == ethrex_common::utils::keccak(RECENT_ROOT_RUNTIME_BYTECODE)
+                })
+                .unwrap_or(false)
+        });
+
         let env = Self::setup_env(tx, sender, block_header, db, vm_type)?;
         let blob_base_fee = env.base_blob_fee_per_gas;
         let mut vm = VM::new(
@@ -3218,6 +3230,7 @@ impl LEVM {
             &prefix.frame_indices,
             prefix.deploy_index,
             canonical_pay_frame,
+            recent_root_frame,
             profile_2.clone(),
         ) {
             Ok(sim) => sim,

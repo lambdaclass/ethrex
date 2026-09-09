@@ -1986,6 +1986,36 @@ impl Frame {
     pub fn is_expiry_verifier(&self) -> bool {
         self.mode == FrameMode::Verify as u8 && self.target == Some(frame_tx_expiry_verifier())
     }
+
+    /// EIP-8272 §Recent root verifier frame: a VERIFY frame targeting
+    /// RECENT_ROOT_ADDRESS with no flags, no value, no state budget, and data
+    /// that is one to sixteen packed 72-byte tuples. A frame to that address with
+    /// any other shape is an ordinary frame, which the contract handles as such
+    /// (and the public mempool then judges by the ordinary rules).
+    pub fn is_recent_root_verifier(&self) -> bool {
+        let len = self.data.len();
+        self.mode == FrameMode::Verify as u8
+            && self.target == Some(frame_tx_recent_root())
+            && self.flags == 0
+            && self.value.is_zero()
+            && self.state_gas_limit == 0
+            && (FRAME_TX_RECENT_ROOT_TUPLE_BYTES
+                ..=FRAME_TX_MAX_RECENT_ROOT_REFERENCES * FRAME_TX_RECENT_ROOT_TUPLE_BYTES)
+                .contains(&len)
+            && len.is_multiple_of(FRAME_TX_RECENT_ROOT_TUPLE_BYTES)
+    }
+
+    /// The tuples a recent-root verifier frame carries, in order. Empty for any
+    /// frame [`Frame::is_recent_root_verifier`] rejects.
+    pub fn recent_root_tuples(&self) -> Vec<RecentRootReference> {
+        if !self.is_recent_root_verifier() {
+            return Vec::new();
+        }
+        self.data
+            .chunks_exact(FRAME_TX_RECENT_ROOT_TUPLE_BYTES)
+            .filter_map(RecentRootReference::from_tuple_bytes)
+            .collect()
+    }
 }
 
 impl RLPEncode for Frame {
@@ -2095,9 +2125,9 @@ impl RLPDecode for FrameSignature {
     }
 }
 
-/// EIP-8272 recent-root reference: a declared `(source_id, slot, root)` tuple.
-/// RLP: `[source_id, slot, root]`. `root` is opaque to consensus; applications
-/// bind its meaning. `slot` is a beacon slot number (`< 2**64`).
+/// EIP-8272 recent-root reference: one `(source_id, slot, root)` tuple of a recent-root
+/// verifier frame, packed in its data as `source_id(32) || uint64_be(slot) || root(32)`.
+/// `root` is opaque to consensus; applications bind its meaning.
 #[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
 pub struct RecentRootReference {
     #[rkyv(with=crate::rkyv_utils::H256Wrapper)]
@@ -2165,9 +2195,6 @@ pub struct FrameTransaction {
     pub max_fee_per_blob_gas: U256,
     #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::H256Wrapper>)]
     pub blob_versioned_hashes: Vec<H256>,
-    /// EIP-8272: declared recent-root references (0..=`FRAME_TX_MAX_RECENT_ROOT_REFERENCES`).
-    /// Appended as the last RLP envelope field.
-    pub recent_root_references: Vec<RecentRootReference>,
     #[rkyv(with=rkyv::with::Skip)]
     pub inner_hash: OnceCell<H256>,
     #[rkyv(with=rkyv::with::Skip)]
@@ -2186,8 +2213,11 @@ pub const FRAME_TX_ENTRY_POINT_U64: u64 = 0xaa;
 pub const FRAME_TX_MAX_FRAMES: usize = 64;
 /// EIP-8250: maximum number of nonce keys per frame transaction.
 pub const FRAME_TX_MAX_NONCE_KEYS: usize = 16;
-/// EIP-8272: maximum number of recent-root references per frame transaction.
+/// EIP-8272 `MAX_RECENT_ROOT_REFERENCES`: the most `(source_id, slot, root)` tuples a
+/// recent-root verifier frame may carry.
 pub const FRAME_TX_MAX_RECENT_ROOT_REFERENCES: usize = 16;
+/// EIP-8272 `RECENT_ROOT_TUPLE_BYTES`: one packed tuple, `source_id(32) || slot(8) || root(32)`.
+pub const FRAME_TX_RECENT_ROOT_TUPLE_BYTES: usize = 72;
 
 // EIP-8141 publishes these in its Constants table; assert the constants reproduce them
 // exactly, so a repricing or a re-spelling upstream is a compile error here rather than a
@@ -2277,17 +2307,6 @@ pub fn frame_tx_recent_root() -> Address {
     Address::from_low_u64_be(FRAME_TX_RECENT_ROOT_U64)
 }
 
-/// EIP-8272 intrinsic gas constants: `RECENT_ROOT_REFERENCE_ADDRESS_GAS` is
-/// `ACCESS_LIST_ADDRESS_COST` and `RECENT_ROOT_REFERENCE_GAS` is
-/// `ACCESS_LIST_STORAGE_KEY_COST + 2 * KECCAK256_BASE_GAS + 7 * KECCAK256_WORD_GAS`.
-/// Both access-list parameters are 3000 from Amsterdam onward (EIP-8038), and
-/// frame transactions exist only from Hegota, which is after Amsterdam, so the
-/// raised values always apply and neither needs a fork parameter. Defined here
-/// rather than in levm's `gas_cost` because ethrex-common cannot depend on it;
-/// `gas_cost` asserts at compile time that the two agree.
-pub const FRAME_TX_RECENT_ROOT_REFERENCE_ADDRESS_GAS: u64 = 2400;
-pub const FRAME_TX_RECENT_ROOT_REFERENCE_GAS: u64 = 1900 + 2 * 30 + 7 * 6;
-
 /// EIP-8272 recent-root ring-buffer length: the RECENT_ROOT_ADDRESS predeploy
 /// keeps one entry per source per slot for the last `RECENT_ROOT_LENGTH` slots;
 /// storage keys are derived from `slot mod RECENT_ROOT_LENGTH`.
@@ -2311,6 +2330,20 @@ pub fn recent_root_storage_domain() -> H256 {
 }
 
 impl RecentRootReference {
+    /// One packed tuple of a recent-root verifier frame's data. `None` unless
+    /// `bytes` is exactly `RECENT_ROOT_TUPLE_BYTES` long.
+    pub fn from_tuple_bytes(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() != FRAME_TX_RECENT_ROOT_TUPLE_BYTES {
+            return None;
+        }
+        let slot = u64::from_be_bytes(bytes[32..40].try_into().ok()?);
+        Some(Self {
+            source_id: H256::from_slice(&bytes[..32]),
+            slot,
+            root: H256::from_slice(&bytes[40..]),
+        })
+    }
+
     /// EIP-8272 entry hash committed into RECENT_ROOT_ADDRESS storage:
     /// `keccak256(ENTRY_DOMAIN || source_id || uint64_be(slot) || root)`.
     /// Commits to the RAW slot (not `slot mod RECENT_ROOT_LENGTH`), so a
@@ -2343,6 +2376,32 @@ impl RecentRootReference {
 }
 
 impl FrameTransaction {
+    /// EIP-8272 §Public mempool handling: the index of the recent-root verifier
+    /// frame when it sits where the public mempool requires it — first, or second
+    /// behind an expiry verifier frame. A matching frame anywhere else is not the
+    /// protocol verifier and fails the structural rules
+    /// ([`FrameValidationError::RecentRootFrameMisplaced`]).
+    pub fn recent_root_verifier_index(&self) -> Option<usize> {
+        match self.frames.as_slice() {
+            [first, ..] if first.is_recent_root_verifier() => Some(0),
+            [first, second, ..]
+                if first.is_expiry_verifier() && second.is_recent_root_verifier() =>
+            {
+                Some(1)
+            }
+            _ => None,
+        }
+    }
+
+    /// The `(source_id, slot, root)` tuples the recent-root verifier frame declares,
+    /// empty when the transaction carries none in the mempool position.
+    pub fn recent_root_tuples(&self) -> Vec<RecentRootReference> {
+        self.recent_root_verifier_index()
+            .and_then(|index| self.frames.get(index))
+            .map(Frame::recent_root_tuples)
+            .unwrap_or_default()
+    }
+
     /// Whether the frame at `index` belongs to an atomic batch (EIP-8250): it
     /// is a batch member (`flags` bit 2 set) or the terminator immediately
     /// following one. Frames in a batch are reverted together, so any state a
@@ -2389,7 +2448,6 @@ impl FrameTransaction {
                 self.max_fee_per_blob_gas,
             ))
             .encode_field(&self.blob_versioned_hashes)
-            .encode_field(&self.recent_root_references)
             .finish();
         keccak(&buf)
     }
@@ -2445,9 +2503,8 @@ impl FrameTransaction {
             }))
     }
 
-    /// EIP-7623 calldata cost over the frame and signature data, EIP-8250's
-    /// nonce calldata and EIP-8272's `rlp(recent_root_references)`: 4 gas per
-    /// zero byte, 16 per non-zero byte.
+    /// EIP-7623 calldata cost over the frame and signature data and EIP-8250's
+    /// nonce calldata: 4 gas per zero byte, 16 per non-zero byte.
     pub fn data_cost(&self) -> u64 {
         let fields = self.data_fields().flatten().fold(0u64, |acc, byte| {
             acc.saturating_add(if *byte == 0 { 4 } else { 16 })
@@ -2631,14 +2688,6 @@ impl FrameTransaction {
         }
         if self.nonce_seq == u64::MAX {
             return Err("nonce_seq must be < 2**64 - 1".to_string());
-        }
-        // EIP-8272: at most FRAME_TX_MAX_RECENT_ROOT_REFERENCES references.
-        // (3-tuple shape, 32-byte source_id/root, and slot < 2**64 are enforced
-        // by the RecentRootReference type / RLP decoding.)
-        if self.recent_root_references.len() > FRAME_TX_MAX_RECENT_ROOT_REFERENCES {
-            return Err(format!(
-                "recent_root_references count must be <= {FRAME_TX_MAX_RECENT_ROOT_REFERENCES}"
-            ));
         }
         if self.frames.is_empty() || self.frames.len() > FRAME_TX_MAX_FRAMES {
             return Err(format!(
@@ -2861,12 +2910,17 @@ impl FrameTransaction {
     /// are skipped during shape matching but their indices are NOT included in
     /// `frame_indices` (which holds only the semantically meaningful prefix frames).
     pub fn validation_prefix(&self) -> Result<ValidationPrefix, FrameValidationError> {
+        // EIP-8272: a leading recent-root verifier frame is a protocol frame like
+        // the expiry verifier and is skipped by shape matching. Only the leading
+        // position is skipped; a matching frame elsewhere stays in the sequence
+        // and fails the shape or the structural rules.
+        let recent_root_index = self.recent_root_verifier_index();
         // Collect non-expiry frame indices in order.
         let non_expiry: Vec<usize> = self
             .frames
             .iter()
             .enumerate()
-            .filter(|(_, f)| !f.is_expiry_verifier())
+            .filter(|(idx, f)| !f.is_expiry_verifier() && Some(*idx) != recent_root_index)
             .map(|(i, _)| i)
             .collect();
 
@@ -2902,6 +2956,7 @@ impl FrameTransaction {
                 frame_indices: vec![non_expiry[0], non_expiry[1], non_expiry[2]],
                 deploy_index: Some(non_expiry[0]),
                 pay_index: Some(non_expiry[2]),
+                recent_root_index,
             });
         }
 
@@ -2912,6 +2967,7 @@ impl FrameTransaction {
                 frame_indices: vec![non_expiry[0], non_expiry[1]],
                 deploy_index: Some(non_expiry[0]),
                 pay_index: Some(non_expiry[1]),
+                recent_root_index,
             });
         }
 
@@ -2926,6 +2982,7 @@ impl FrameTransaction {
                 frame_indices: vec![non_expiry[0], non_expiry[1]],
                 deploy_index: None,
                 pay_index: Some(non_expiry[1]),
+                recent_root_index,
             });
         }
 
@@ -2936,6 +2993,7 @@ impl FrameTransaction {
                 frame_indices: vec![non_expiry[0]],
                 deploy_index: None,
                 pay_index: Some(non_expiry[0]),
+                recent_root_index,
             });
         }
 
@@ -2958,7 +3016,10 @@ impl FrameTransaction {
     /// - No frame in the prefix has the atomic-batch flag set.
     /// - An expiry verifier frame, if present, is the first frame of the transaction.
     /// - No VERIFY frame follows the validation prefix.
-    /// - Total gas budget: Σ(prefix frame gas_limits) + signature_verification_cost() ≤ `max_verify_gas`.
+    /// - An EIP-8272 recent-root verifier frame, if present, is first (or second behind the
+    ///   expiry frame), and no other frame has its shape.
+    /// - Total gas budget: Σ(prefix frame gas_limits, the recent-root frame's included) +
+    ///   signature_verification_cost() ≤ `max_verify_gas`.
     /// - Total state budget: Σ(prefix frame state_gas_limits) ≤ [`FRAME_TX_MAX_VERIFY_STATE_GAS`].
     ///
     /// `max_verify_gas` is the node's `MAX_VERIFY_GAS` budget; the spec value is
@@ -3070,6 +3131,16 @@ impl FrameTransaction {
             return Err(FrameValidationError::ExpiryFrameNotFirst { frame_index });
         }
 
+        // EIP-8272 §Public mempool handling: at most one recent-root verifier
+        // frame, immediately after the optional expiry frame and before every
+        // other frame. Anything matching the frame's shape elsewhere is rejected
+        // rather than run as an ordinary frame.
+        if let Some((frame_index, _)) = self.frames.iter().enumerate().find(|(idx, frame)| {
+            frame.is_recent_root_verifier() && Some(*idx) != prefix.recent_root_index
+        }) {
+            return Err(FrameValidationError::RecentRootFrameMisplaced { frame_index });
+        }
+
         // EIP-8141 §Structural Rules rule 8: no VERIFY frame may follow the
         // validation prefix. A reverting VERIFY frame invalidates the whole
         // transaction wherever it sits, so one placed after the prefix would make
@@ -3087,9 +3158,11 @@ impl FrameTransaction {
         }
 
         // Gas budget: prefix frame gas limits + signature cost ≤ MAX_VERIFY_GAS.
+        // EIP-8272 counts the recent-root verifier frame's `limits.execution` too.
         let prefix_gas: u64 = prefix
             .frame_indices
             .iter()
+            .chain(prefix.recent_root_index.iter())
             .map(|&i| self.frames[i].gas_limit)
             .fold(0u64, |acc, g| acc.saturating_add(g));
         let total_verify_gas = prefix_gas.saturating_add(self.signature_verification_cost());
@@ -3144,6 +3217,11 @@ pub struct ValidationPrefix {
     pub deploy_index: Option<usize>,
     /// Index of the pay (or self_verify) frame within `frames`.
     pub pay_index: Option<usize>,
+    /// Index of the EIP-8272 recent-root verifier frame, when one leads the
+    /// transaction (first, or second behind an expiry verifier). Skipped by shape
+    /// matching like the expiry frame; its `limits.execution` counts toward
+    /// `MAX_VERIFY_GAS`.
+    pub recent_root_index: Option<usize>,
 }
 
 /// Errors produced by `FrameTransaction::validation_prefix` and
@@ -3178,6 +3256,10 @@ pub enum FrameValidationError {
     VerifyGasBudgetExceeded { actual: u64, limit: u64 },
     #[error("prefix state gas budget exceeded: {actual} > {limit} (MAX_VERIFY_STATE_GAS)")]
     VerifyStateBudgetExceeded { actual: u64, limit: u64 },
+    #[error(
+        "frame {frame_index}: a recent-root verifier frame must be the first frame, or the second behind an expiry verifier frame"
+    )]
+    RecentRootFrameMisplaced { frame_index: usize },
 }
 
 impl RLPEncode for FrameTransaction {
@@ -3195,7 +3277,6 @@ impl RLPEncode for FrameTransaction {
                 self.max_fee_per_blob_gas,
             ))
             .encode_field(&self.blob_versioned_hashes)
-            .encode_field(&self.recent_root_references)
             .finish();
     }
 }
@@ -3227,7 +3308,6 @@ impl RLPDecode for FrameTransaction {
             fees_decoder.decode_field("max_fee_per_blob_gas")?;
         fees_decoder.finish()?;
         let (blob_versioned_hashes, decoder) = decoder.decode_field("blob_versioned_hashes")?;
-        let (recent_root_references, decoder) = decoder.decode_field("recent_root_references")?;
         let tx = FrameTransaction {
             chain_id,
             nonce_keys,
@@ -3239,7 +3319,6 @@ impl RLPDecode for FrameTransaction {
             max_fee_per_gas,
             max_fee_per_blob_gas,
             blob_versioned_hashes,
-            recent_root_references,
             inner_hash: OnceCell::new(),
             cached_canonical: OnceCell::new(),
         };
@@ -3628,26 +3707,6 @@ mod serde_impl {
         }
     }
 
-    /// JSON (RPC) representation of an EIP-8272 recent-root reference.
-    #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
-    #[serde(rename_all = "camelCase")]
-    pub struct RecentRootReferenceEntry {
-        pub source_id: H256,
-        #[serde(with = "crate::serde_utils::u64::hex_str")]
-        pub slot: u64,
-        pub root: H256,
-    }
-
-    impl From<&RecentRootReference> for RecentRootReferenceEntry {
-        fn from(value: &RecentRootReference) -> RecentRootReferenceEntry {
-            RecentRootReferenceEntry {
-                source_id: value.source_id,
-                slot: value.slot,
-                root: value.root,
-            }
-        }
-    }
-
     fn serialize_u256_hex<S: serde::Serializer>(value: &U256, s: S) -> Result<S::Ok, S::Error> {
         s.serialize_str(&format!("{value:#x}"))
     }
@@ -3946,7 +4005,7 @@ mod serde_impl {
         where
             S: serde::Serializer,
         {
-            let mut s = serializer.serialize_struct("FrameTransaction", 11)?;
+            let mut s = serializer.serialize_struct("FrameTransaction", 10)?;
             s.serialize_field("type", &TxType::Frame)?;
             s.serialize_field("chainId", &format!("{:#x}", self.chain_id))?;
             s.serialize_field(
@@ -3978,14 +4037,6 @@ mod serde_impl {
             s.serialize_field("maxFeePerGas", &format!("{:#x}", self.max_fee_per_gas))?;
             s.serialize_field("maxFeePerBlobGas", &self.max_fee_per_blob_gas)?;
             s.serialize_field("blobVersionedHashes", &self.blob_versioned_hashes)?;
-            s.serialize_field(
-                "recentRootReferences",
-                &self
-                    .recent_root_references
-                    .iter()
-                    .map(RecentRootReferenceEntry::from)
-                    .collect::<Vec<_>>(),
-            )?;
             s.end()
         }
     }
@@ -5719,7 +5770,6 @@ mod tests {
             max_fee_per_gas: U256::from(30_000_000_000u64),
             max_fee_per_blob_gas: U256::zero(),
             blob_versioned_hashes: vec![],
-            recent_root_references: vec![],
             inner_hash: OnceCell::new(),
             cached_canonical: OnceCell::new(),
         }
@@ -6006,27 +6056,57 @@ mod tests {
     }
 
     #[test]
-    fn recent_root_references_round_trip_and_validation() {
-        let mut tx = make_test_frame_tx();
-        tx.recent_root_references = vec![RecentRootReference {
+    fn recent_root_tuples_are_read_from_the_verifier_frame() {
+        let tuple = RecentRootReference {
             source_id: H256::repeat_byte(0x11),
             slot: 7,
             root: H256::repeat_byte(0x22),
-        }];
-        let mut buf = Vec::new();
-        tx.encode(&mut buf);
-        let (decoded, rest) = FrameTransaction::decode_unfinished(&buf).unwrap();
-        assert!(rest.is_empty());
-        assert_eq!(decoded.recent_root_references, tx.recent_root_references);
-        // more than FRAME_TX_MAX_RECENT_ROOT_REFERENCES (16) is rejected.
-        tx.recent_root_references = (0..17u64)
-            .map(|i| RecentRootReference {
-                source_id: H256::zero(),
-                slot: i,
-                root: H256::zero(),
-            })
-            .collect();
-        assert!(tx.validate_static_constraints().is_err());
+        };
+        let mut packed = Vec::new();
+        packed.extend_from_slice(tuple.source_id.as_bytes());
+        packed.extend_from_slice(&7u64.to_be_bytes());
+        packed.extend_from_slice(tuple.root.as_bytes());
+        assert_eq!(
+            RecentRootReference::from_tuple_bytes(&packed),
+            Some(tuple.clone())
+        );
+        assert_eq!(RecentRootReference::from_tuple_bytes(&packed[..71]), None);
+
+        let verifier = |data: Vec<u8>| Frame {
+            mode: FrameMode::Verify as u8,
+            flags: 0,
+            target: Some(frame_tx_recent_root()),
+            gas_limit: 50_000,
+            state_gas_limit: 0,
+            value: U256::zero(),
+            data: Bytes::from(data),
+        };
+        assert!(verifier(packed.clone()).is_recent_root_verifier());
+        assert_eq!(verifier(packed.repeat(16)).recent_root_tuples().len(), 16);
+        // The shape is exact: 71, 73 and 17 tuples' worth of bytes are not a verifier frame,
+        // and neither is a matching frame with flags, value or a state budget.
+        assert!(!verifier(packed[..71].to_vec()).is_recent_root_verifier());
+        let mut long = packed.clone();
+        long.push(0);
+        assert!(!verifier(long).is_recent_root_verifier());
+        assert!(!verifier(packed.repeat(17)).is_recent_root_verifier());
+        assert!(!verifier(Vec::new()).is_recent_root_verifier());
+        let mut flagged = verifier(packed.clone());
+        flagged.flags = 1;
+        assert!(!flagged.is_recent_root_verifier());
+        let mut budgeted = verifier(packed.clone());
+        budgeted.state_gas_limit = 1;
+        assert!(!budgeted.is_recent_root_verifier());
+
+        // Position: first, or second behind an expiry frame; nowhere else.
+        let mut tx = make_test_frame_tx();
+        let others = tx.frames.clone();
+        tx.frames = [vec![verifier(packed.clone())], others.clone()].concat();
+        assert_eq!(tx.recent_root_verifier_index(), Some(0));
+        assert_eq!(tx.recent_root_tuples(), vec![tuple.clone()]);
+        tx.frames = [others.clone(), vec![verifier(packed.clone())]].concat();
+        assert_eq!(tx.recent_root_verifier_index(), None);
+        assert!(tx.recent_root_tuples().is_empty());
     }
 
     #[test]
@@ -6080,7 +6160,6 @@ mod tests {
             nonce_seq: 0,
             sender: Address::from_low_u64_be(0xABCD),
             frames,
-            recent_root_references: Vec::new(),
             signatures: vec![],
             max_priority_fee_per_gas: U256::from(1_000_000_000u64),
             max_fee_per_gas: U256::from(30_000_000_000u64),
@@ -6166,7 +6245,6 @@ mod tests {
             nonce_seq: 0,
             sender: Address::from_low_u64_be(0xABCD),
             frames,
-            recent_root_references: Vec::new(),
             signatures: vec![],
             max_priority_fee_per_gas: U256::from(1_000_000_000u64),
             max_fee_per_gas: U256::from(30_000_000_000u64),
@@ -6283,7 +6361,6 @@ mod tests {
             max_fee_per_gas: U256::from(30_000_000_000u64),
             max_fee_per_blob_gas: U256::zero(),
             blob_versioned_hashes: vec![],
-            recent_root_references: vec![],
             inner_hash: OnceCell::new(),
             cached_canonical: OnceCell::new(),
         };
@@ -6666,7 +6743,6 @@ mod tests {
             max_fee_per_gas: U256::from(0x6fc23ac00u64),
             max_fee_per_blob_gas: U256::zero(),
             blob_versioned_hashes: vec![],
-            recent_root_references: vec![],
             inner_hash: OnceCell::new(),
             cached_canonical: OnceCell::new(),
         };
@@ -6680,7 +6756,7 @@ mod tests {
         // including a mistake; two implementations agreeing is what makes it a vector.
         assert_eq!(
             rlp_hex,
-            "f8b601c1800794000000000000000000000000000000000000abcdefcf010380c7825208831e848080821122de0280940000000000000000000000000000000000001234c4829c40808080f85cf85a0194000000000000000000000000000000000000abcd80b8410101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101cc843b9aca008506fc23ac0080c0c0"
+            "f8b501c1800794000000000000000000000000000000000000abcdefcf010380c7825208831e848080821122de0280940000000000000000000000000000000000001234c4829c40808080f85cf85a0194000000000000000000000000000000000000abcd80b8410101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101cc843b9aca008506fc23ac0080c0"
         );
 
         // Round-trips losslessly.
@@ -6692,7 +6768,7 @@ mod tests {
         // Also cross-checked against frametx.py's EXPECT_SIGHASH.
         assert_eq!(
             format!("{:#x}", sig_hash),
-            "0x1f8fe39cfb306817aa91739a0a49f4c41d653877707c32bf049ae9b563a07df3",
+            "0xab79d82e38567c944b076afa917f6df24ba84ea4d67aebf786382955ab27e05d",
         );
 
         // Elision invariant: changing empty-msg signature bytes must NOT change sig_hash.

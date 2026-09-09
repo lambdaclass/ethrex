@@ -140,7 +140,6 @@ fn frame_tx_with_frames(frames: Vec<Frame>) -> FrameTransaction {
         max_fee_per_gas: U256::from(HARNESS_BASE_FEE + 1_000),
         max_fee_per_blob_gas: U256::zero(),
         blob_versioned_hashes: Vec::new(),
-        recent_root_references: Vec::new(),
         inner_hash: Default::default(),
         cached_canonical: Default::default(),
     }
@@ -2857,7 +2856,7 @@ mod validation_observer_tests {
             code_budget: CodeBodyBudget::unbounded(),
         });
         let result = vm
-            .run_frame_validation_prefix(frame_indices, deploy_index, None, profile_2)
+            .run_frame_validation_prefix(frame_indices, deploy_index, None, None, profile_2)
             .unwrap();
         (result, vm.validation_observer.violation.clone())
     }
@@ -2926,7 +2925,7 @@ mod validation_observer_tests {
         )
         .unwrap();
         let _ = vm
-            .run_frame_validation_prefix(&[0], None, None, None)
+            .run_frame_validation_prefix(&[0], None, None, None, None)
             .unwrap();
         assert!(
             vm.validation_observer.violation.is_none(),
@@ -3126,7 +3125,7 @@ mod validation_observer_tests {
         )
         .unwrap();
         let result = vm
-            .run_frame_validation_prefix(&[0], Some(0), None, None)
+            .run_frame_validation_prefix(&[0], Some(0), None, None, None)
             .unwrap();
         assert!(
             vm.validation_observer.violation.is_none(),
@@ -3396,6 +3395,7 @@ mod frame_validation_prefix_tests {
             frame_indices: vec![0, 1],
             deploy_index: Some(0),
             pay_index: Some(1),
+            recent_root_index: None,
         };
         let outcome = LEVM::simulate_frame_validation_prefix(
             &tx,
@@ -3434,6 +3434,7 @@ mod frame_validation_prefix_tests {
             frame_indices: vec![0],
             deploy_index: None,
             pay_index: Some(0),
+            recent_root_index: None,
         };
         let outcome = LEVM::simulate_frame_validation_prefix(
             &tx,
@@ -3487,6 +3488,7 @@ mod frame_validation_prefix_tests {
             frame_indices: vec![0],
             deploy_index: None,
             pay_index: Some(0),
+            recent_root_index: None,
         };
         let outcome = LEVM::simulate_frame_validation_prefix(
             &tx,

@@ -314,14 +314,14 @@ const TXPARAM_STATE_GAS_LEFT: u64 = 0x0C;
 // The published values are asserted here so a renumbering is a compile error rather than a
 // silent wrong answer, the same guard the opcode bytes carry in `opcodes.rs`.
 //
-// EIP-8141 `state_gas_left`; EIP-8250 `e5cf246ff1`; EIP-8272 `0231fb05f5`. `0x12` is
+// EIP-8141 `state_gas_left`; EIP-8250 `94f5a3e3c1`; EIP-8272 (`824cbc0b0e`) claims no
+// index. `0x12` is
 // ethrex's own resolved-payer read, which yields to any spec id that lands on it.
 const _: () = assert!(TXPARAM_STATE_GAS_LEFT == 0x0C);
 const _: () = assert!(TXPARAM_LEGACY_SENDER_NONCE == 0x0D);
 const _: () = assert!(TXPARAM_NONCE_KEY_COUNT == 0x0E);
 const _: () = assert!(TXPARAM_NONCE_KEYS_HASH == 0x0F);
 const _: () = assert!(TXPARAM_NONCE_KEY_0 == 0x10);
-const _: () = assert!(TXPARAM_RECENT_ROOT_REFERENCE_COUNT == 0x11);
 const _: () = assert!(TXPARAM_RESOLVED_PAYER == 0x12);
 
 /// EIP-8250 `TXPARAM_NONCE_KEY_COUNT`.
@@ -330,8 +330,6 @@ const TXPARAM_NONCE_KEY_COUNT: u64 = 0x0E;
 const TXPARAM_NONCE_KEYS_HASH: u64 = 0x0F;
 /// EIP-8250 `TXPARAM_NONCE_KEY_0`.
 const TXPARAM_NONCE_KEY_0: u64 = 0x10;
-/// EIP-8272 `TXPARAM_RECENT_ROOT_REFERENCE_COUNT`.
-const TXPARAM_RECENT_ROOT_REFERENCE_COUNT: u64 = 0x11;
 /// ethrex-only resolved-payer read, knob-gated on `payerTxparamTime`.
 const TXPARAM_RESOLVED_PAYER: u64 = 0x12;
 

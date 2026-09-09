@@ -72,27 +72,6 @@ pub const FRAMEDATACOPY_STATIC: u64 = 3;
 pub const FRAMEDATACOPY_DYNAMIC_BASE: u64 = 3;
 pub const FRAMEPARAM: u64 = 2;
 pub const SIGPARAM: u64 = 2;
-// EIP-8272 Recent Roots
-pub const RECENTROOTREFLOAD: u64 = 3;
-/// EIP-8272 defines both charges by formula over the EIP-2930 access-list costs rather
-/// than as absolute numbers, so they track whatever gas schedule is in force. Under the
-/// EIP-8038 v8.1.0 schedule this base implements, that is 2400 and 1900 + 60 + 42 = 2002;
-/// the older draft's Amsterdam-raised 3000/3000 gave 3000 and 3102. This is a
-/// consensus-visible repricing of a live rule -- see the divergence ledger.
-pub const RECENT_ROOT_REFERENCE_ADDRESS_GAS: u64 = ACCESS_LIST_ADDRESS_COST;
-/// ACCESS_LIST_STORAGE_KEY_COST + 2*KECCAK256_BASE + 7*KECCAK256_WORD (ethrex
-/// names the keccak constants KECCAK25_STATIC / KECCAK25_DYNAMIC_BASE).
-pub const RECENT_ROOT_REFERENCE_GAS: u64 =
-    ACCESS_LIST_STORAGE_KEY_COST + 2 * KECCAK25_STATIC + 7 * KECCAK25_DYNAMIC_BASE;
-// `total_gas_limit` charges these through ethrex-common, which cannot depend on
-// this module. Keep the two definitions from drifting apart.
-const _: () = assert!(
-    RECENT_ROOT_REFERENCE_ADDRESS_GAS
-        == ethrex_common::types::FRAME_TX_RECENT_ROOT_REFERENCE_ADDRESS_GAS
-);
-const _: () =
-    assert!(RECENT_ROOT_REFERENCE_GAS == ethrex_common::types::FRAME_TX_RECENT_ROOT_REFERENCE_GAS);
-
 pub fn framedatacopy(
     new_memory_size: usize,
     current_memory_size: usize,
