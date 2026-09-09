@@ -347,10 +347,12 @@ fn single_fork(s: &str) -> anyhow::Result<ethrex_common::types::Fork> {
         "BPO4" => Fork::BPO4,
         "BPO5" => Fork::BPO5,
         "Amsterdam" => Fork::Amsterdam,
-        // EIP-7805 (FOCIL) ships as the "Bogota" fork in execution-apis /
-        // execution-specs (tests-focil@v0.1.0+); ethrex names it "Hegota"
-        // internally (genesis already aliases bogotaTime → hegota_time).
-        "Bogota" | "Hegota" => Fork::Hegota,
+        // EIP-8141's fork carries three names: the EEST fixtures label it "Bogota",
+        // the consensus layer calls the same boundary "Heze", and ethrex's own enum
+        // says Hegota. Without this arm every frame fixture fails at parse time with
+        // "Unknown network", which reads as the whole suite being broken rather than
+        // as the runner not recognising the fork.
+        "Bogota" | "Hegota" | "Heze" => Fork::Hegota,
         other => anyhow::bail!("Unknown network: {other}"),
     };
     Ok(f)
@@ -404,6 +406,7 @@ fn build_chain_config_json(
         (Fork::BPO4, "bpo4Time"),
         (Fork::BPO5, "bpo5Time"),
         (Fork::Amsterdam, "amsterdamTime"),
+        (Fork::Hegota, "hegotaTime"),
     ];
 
     for &(fork, field) in TIME_FORKS {

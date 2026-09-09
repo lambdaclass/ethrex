@@ -79,7 +79,7 @@ fn seeded_db(accounts: &[SeededAccount]) -> GeneralizedDatabase {
 fn frame_tx_env(tx: &FrameTransaction) -> Environment {
     Environment {
         origin: tx.sender,
-        gas_limit: tx.total_gas_limit(),
+        gas_limit: tx.max_gas(),
         block_gas_limit: (i64::MAX - 1) as u64,
         config: EVMConfig::new(Fork::Hegota, EVMConfig::canonical_values(Fork::Hegota)),
         chain_id: U256::from(HARNESS_CHAIN_ID),
@@ -98,8 +98,8 @@ fn frame_tx_with_keys(frames: Vec<Frame>, nonce_keys: Vec<U256>) -> FrameTransac
         sender: FUNDED_SENDER,
         frames,
         signatures: Vec::new(),
-        max_priority_fee_per_gas: 1,
-        max_fee_per_gas: HARNESS_BASE_FEE + 1_000,
+        max_priority_fee_per_gas: U256::from(1),
+        max_fee_per_gas: U256::from(HARNESS_BASE_FEE + 1_000),
         max_fee_per_blob_gas: U256::zero(),
         blob_versioned_hashes: Vec::new(),
         recent_root_references: Vec::new(),
@@ -114,7 +114,7 @@ fn frame(mode: FrameMode, flags: u8, target: Address, gas_limit: u64, data: &[u8
         flags,
         target: Some(target),
         gas_limit,
-        state_limit: 0,
+        state_gas_limit: 0,
         value: U256::zero(),
         data: Bytes::from(data.to_vec()),
     }
@@ -439,7 +439,7 @@ fn a_contract_sender_can_approve_on_a_first_use_keyed_nonce() {
                 flags: 0x03,
                 target: Some(contract),
                 gas_limit: 80_000,
-                state_limit: 0,
+                state_gas_limit: 0,
                 value: U256::zero(),
                 data: Bytes::new(),
             },
@@ -448,7 +448,7 @@ fn a_contract_sender_can_approve_on_a_first_use_keyed_nonce() {
                 flags: 0,
                 target: Some(recipient),
                 gas_limit: 30_000,
-                state_limit: NEW_ACCOUNT_STATE_GAS,
+                state_gas_limit: NEW_ACCOUNT_STATE_GAS,
                 value: U256::from(100u64),
                 data: Bytes::new(),
             },
@@ -470,7 +470,7 @@ fn a_contract_sender_can_approve_on_a_first_use_keyed_nonce() {
     );
     let frame_results = report.frame_results.expect("frame results present");
     assert_eq!(
-        frame_results[1].status,
+        frame_results[1].0,
         ethrex_common::types::FRAME_RECEIPT_STATUS_SUCCESS,
         "the SENDER frame must deliver its value; got {frame_results:?}"
     );
@@ -512,7 +512,7 @@ fn two_keyed_transactions_from_one_contract_sender_both_execute() {
                     flags: 0x03,
                     target: Some(contract),
                     gas_limit: 80_000,
-                    state_limit: 0,
+                    state_gas_limit: 0,
                     value: U256::zero(),
                     data: Bytes::new(),
                 },
@@ -521,7 +521,7 @@ fn two_keyed_transactions_from_one_contract_sender_both_execute() {
                     flags: 0,
                     target: Some(recipient),
                     gas_limit: 30_000,
-                    state_limit: NEW_ACCOUNT_STATE_GAS,
+                    state_gas_limit: NEW_ACCOUNT_STATE_GAS,
                     value: U256::from(100u64),
                     data: Bytes::new(),
                 },
@@ -550,7 +550,7 @@ fn two_keyed_transactions_from_one_contract_sender_both_execute() {
         });
         let frames = report.frame_results.expect("frame results present");
         assert_eq!(
-            frames[1].status,
+            frames[1].0,
             ethrex_common::types::FRAME_RECEIPT_STATUS_SUCCESS,
             "transaction {index}'s SENDER frame must deliver its value; got {frames:?}"
         );

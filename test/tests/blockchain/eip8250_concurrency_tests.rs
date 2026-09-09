@@ -90,7 +90,7 @@ fn keyed_tx(chain_id: u64, index: u64) -> Transaction {
                 flags: 0x03,
                 target: Some(FRAME_SENDER),
                 gas_limit: 80_000,
-                state_limit: 0,
+                state_gas_limit: 0,
                 value: U256::zero(),
                 data: Bytes::new(),
             },
@@ -99,14 +99,14 @@ fn keyed_tx(chain_id: u64, index: u64) -> Transaction {
                 flags: 0,
                 target: Some(Address::from_low_u64_be(0xBEEF_0000 + index)),
                 gas_limit: 30_000,
-                state_limit: NEW_ACCOUNT_STATE_GAS,
+                state_gas_limit: NEW_ACCOUNT_STATE_GAS,
                 value: U256::from(100u64),
                 data: Bytes::new(),
             },
         ],
         signatures: vec![],
-        max_priority_fee_per_gas: 0,
-        max_fee_per_gas: TEST_MAX_FEE_PER_GAS,
+        max_priority_fee_per_gas: U256::from(0),
+        max_fee_per_gas: U256::from(TEST_MAX_FEE_PER_GAS),
         ..Default::default()
     })
 }
@@ -114,7 +114,13 @@ fn keyed_tx(chain_id: u64, index: u64) -> Transaction {
 #[tokio::test]
 async fn two_keyed_transactions_from_one_contract_sender_build_into_one_block() {
     let (store, chain_id) = setup_store("eip8250-concurrency").await;
-    let blockchain = Blockchain::new(store.clone(), BlockchainOptions::default());
+    let blockchain = Blockchain::new(
+        store.clone(),
+        BlockchainOptions {
+            min_tip_wei: 0,
+            ..BlockchainOptions::default()
+        },
+    );
     let genesis_header = store.get_block_header(0).unwrap().unwrap();
 
     for index in 0..2 {
@@ -170,7 +176,13 @@ async fn two_keyed_transactions_from_one_contract_sender_build_into_one_block() 
 #[tokio::test]
 async fn a_deployed_contract_sender_is_not_resolved_as_codeless() {
     let (store, chain_id) = setup_store("eip8250-deployed-sender").await;
-    let blockchain = Blockchain::new(store.clone(), BlockchainOptions::default());
+    let blockchain = Blockchain::new(
+        store.clone(),
+        BlockchainOptions {
+            min_tip_wei: 0,
+            ..BlockchainOptions::default()
+        },
+    );
     let genesis_header = store.get_block_header(0).unwrap().unwrap();
 
     // PUSH1 len; PUSH1 12; PUSH1 0; CODECOPY; PUSH1 len; PUSH1 0; RETURN ‖ runtime
@@ -288,7 +300,13 @@ async fn a_deployed_contract_sender_is_not_resolved_as_codeless() {
 #[tokio::test]
 async fn a_frame_tx_is_kept_when_the_builder_runs_it_against_a_parent_that_predates_its_target() {
     let (store, chain_id) = setup_store("eip8250-stale-parent").await;
-    let blockchain = Blockchain::new(store.clone(), BlockchainOptions::default());
+    let blockchain = Blockchain::new(
+        store.clone(),
+        BlockchainOptions {
+            min_tip_wei: 0,
+            ..BlockchainOptions::default()
+        },
+    );
     let genesis_header = store.get_block_header(0).unwrap().unwrap();
 
     let runtime = APPROVE_BOTH_CODE;

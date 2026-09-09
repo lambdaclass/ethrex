@@ -1449,9 +1449,9 @@ fn is_frame_tx_intrinsically_invalid(e: &ChainError) -> bool {
     let message = e.to_string();
     // Structural: the frame list itself is malformed (frame count, reserved modes, batch
     // flags). No state can make it well-formed.
-    message.contains("Invalid frame transaction: static constraints")
+    message.contains("Invalid frame transaction format:")
         // The signature list does not authenticate the sender. Fixed by the bytes.
-        || message.contains("Invalid frame transaction: signature does not recover")
+        || message.contains("Invalid frame transaction: signature validation failed")
         // Submitted against a chain where EIP-8141 is not active. A frame transaction is
         // not includable before the fork and the pool should not hold it.
         || message.contains("not supported before the Hegota fork")
@@ -1954,12 +1954,22 @@ mod tests {
         // (via From, which stringifies) -> ChainError::InvalidBlock.
         use ethrex_levm::errors::{TxValidationError, VMError};
         let intrinsic: ChainError = EvmError::from(VMError::TxValidation(
-            TxValidationError::InvalidFrameTransaction("static constraints".to_string()),
+            TxValidationError::InvalidFrameTransactionFormat("Frame 0: reserved mode".to_string()),
         ))
         .into();
         assert!(
             is_frame_tx_intrinsically_invalid(&intrinsic),
             "a malformed frame list is intrinsic and must be evicted; got: {intrinsic}"
+        );
+
+        let bad_signature: ChainError = EvmError::from(VMError::TxValidation(
+            TxValidationError::InvalidFrameSignature,
+        ))
+        .into();
+        assert!(
+            is_frame_tx_intrinsically_invalid(&bad_signature),
+            "a signature that does not authenticate the sender is fixed by the bytes; got: \
+             {bad_signature}"
         );
 
         let pre_fork: ChainError =

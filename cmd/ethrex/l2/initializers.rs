@@ -261,6 +261,7 @@ pub async fn init_l2(
         precompute_witnesses: opts.node_opts.precompute_witnesses,
         private_mempool: opts.node_opts.mempool_private,
         precompile_cache_enabled: true,
+        min_tip_wei: opts.node_opts.mempool_min_tip,
         price_bump_percent: opts.node_opts.mempool_price_bump,
         blob_price_bump_percent: opts.node_opts.mempool_blob_price_bump,
         max_queued_txs_per_account: opts.node_opts.mempool_max_queued_txs_per_account,
@@ -509,6 +510,10 @@ pub async fn init_native_rollup_l2(
         private_mempool: opts.node_opts.mempool_private,
         price_bump_percent: opts.node_opts.mempool_price_bump,
         blob_price_bump_percent: opts.node_opts.mempool_blob_price_bump,
+        min_tip_wei: opts.node_opts.mempool_min_tip,
+        max_verify_gas: opts.node_opts.mempool_max_verify_gas,
+        blob_sampling_enabled: false, // L2 rejects blob txs; no eth/72 sampling
+        blob_eager_provider: false,
     };
 
     let blockchain = init_blockchain(store.clone(), blockchain_opts);
@@ -517,6 +522,10 @@ pub async fn init_native_rollup_l2(
     let signer = get_signer(&datadir);
     let (local_p2p_node, _network_config) = get_local_p2p_node(&opts.node_opts, &signer);
     let local_node_record = get_local_node_record(&datadir, &local_p2p_node, &signer);
+    let shared_local_node: SharedLocalNode = Arc::new(RwLock::new(LocalNode {
+        node: local_p2p_node,
+        record: local_node_record,
+    }));
 
     let tracker = TaskTracker::new();
 
@@ -542,8 +551,7 @@ pub async fn init_native_rollup_l2(
         &opts.node_opts,
         &opts,
         None, // no p2p peer handler
-        local_p2p_node,
-        local_node_record,
+        shared_local_node,
         store.clone(),
         blockchain.clone(),
         None, // no syncer

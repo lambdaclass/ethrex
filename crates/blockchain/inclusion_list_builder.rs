@@ -320,7 +320,14 @@ fn order_by_production_score(candidates: Vec<MempoolTransaction>) -> Vec<Transac
             // Cast through `u128 -> f64`. ~2^53 micros ≈ 285 years; safe.
             #[allow(clippy::cast_precision_loss)]
             let age_seconds = (age_micros as f64) / 1_000_000.0;
-            let tip = mtx.transaction().max_priority_fee().unwrap_or(0);
+            // The tip only feeds a logarithmic score, so clamping it to u64 loses nothing
+            // that could change the ordering in practice.
+            let tip = mtx
+                .transaction()
+                .max_priority_fee()
+                .unwrap_or_default()
+                .min(ethrex_common::U256::from(u64::MAX))
+                .low_u64();
             #[allow(clippy::cast_precision_loss)]
             let tip_term = (tip as f64 + 1.0).ln();
             let score = age_seconds * (1.0 + tip_term);
@@ -341,8 +348,8 @@ fn order_by_priority_fee(candidates: Vec<MempoolTransaction>) -> Vec<Transaction
         .map(|mtx| mtx.transaction().clone())
         .collect();
     txs.sort_by(|a, b| {
-        let a_tip = a.max_priority_fee().unwrap_or(0);
-        let b_tip = b.max_priority_fee().unwrap_or(0);
+        let a_tip = a.max_priority_fee().unwrap_or_default();
+        let b_tip = b.max_priority_fee().unwrap_or_default();
         b_tip.cmp(&a_tip)
     });
     txs

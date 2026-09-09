@@ -115,11 +115,11 @@ pub const FRAME_TX_MIN_FEE_BUMP_PERCENT: u64 = 10;
 /// Whether `new_fee` clears `old_fee` by at least
 /// [`FRAME_TX_MIN_FEE_BUMP_PERCENT`]. The strict-greater conjunct carries the
 /// zero case, where the percentage bound alone would admit an equal bid.
-fn fee_is_bumped(old_fee: u64, new_fee: u64) -> bool {
-    let required = u128::from(old_fee).saturating_mul(u128::from(
+fn fee_is_bumped(old_fee: U256, new_fee: U256) -> bool {
+    let required = old_fee.saturating_mul(U256::from(
         100u64.saturating_add(FRAME_TX_MIN_FEE_BUMP_PERCENT),
     ));
-    new_fee > old_fee && u128::from(new_fee).saturating_mul(100) >= required
+    new_fee > old_fee && new_fee.saturating_mul(U256::from(100u64)) >= required
 }
 
 /// Whether `new` clears `existing` raised by `bump_percent`, in U256.
@@ -2718,13 +2718,14 @@ pub fn transaction_intrinsic_gas(
     header: &BlockHeader,
     config: &ChainConfig,
 ) -> Result<u64, MempoolError> {
-    // EIP-8141 frame txs: gas_limit() IS the computed total_gas_limit(), which
-    // already includes the frame-tx intrinsic overhead. The fork-general
-    // formula below misprices them (their data() is empty and the base differs),
-    // so report exactly the non-frame-gas overhead the VM charges as intrinsic.
+    // EIP-8141 frame txs: gas_limit() IS the computed `max_gas`, which already
+    // includes the frame-tx intrinsic overhead. The fork-general formula below
+    // misprices them (their data() is empty and the base differs), so report
+    // exactly the non-frame-gas overhead the VM charges as intrinsic.
     if let Transaction::FrameTransaction(frame_tx) = tx {
-        let frame_gas: u64 = frame_tx.frames.iter().map(|f| f.gas_limit).sum();
-        return Ok(frame_tx.total_gas_limit().saturating_sub(frame_gas));
+        return Ok(frame_tx
+            .mandatory_gas()
+            .saturating_add(frame_tx.data_cost()));
     }
 
     // Mempool admission must charge the same intrinsic gas LEVM enforces at

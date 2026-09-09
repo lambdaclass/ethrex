@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Generate the key material one Hegotá testnet deployment needs, and print the
+# Generate the key material one Frames testnet deployment needs, and print the
 # config block that goes with it.
 #
-#   ./gen-deployment-keys.sh > /root/hegota-testnet-keys.env
+#   ./gen-deployment-keys.sh > /root/frames-testnet-keys.env
 #
 # Produces two independent BIP-39 mnemonics:
 #
@@ -35,7 +35,7 @@ command -v cast >/dev/null || {
 # rather than re-deriving so the addresses always match the phrase we emit.
 gen() { cast wallet new-mnemonic --accounts "$1"; }
 
-phrase_of() { sed -n '/^Phrase:/{n;p;}' <<<"$1" | tr -d '\r'; }
+phrase_of() { sed -n '/^Phrase:/{n;p}' <<<"$1" | tr -d '\r'; }
 nth_addr()  { grep '^Address:'     <<<"$1" | sed -n "$2p" | awk '{print $2}'; }
 nth_key()   { grep '^Private key:' <<<"$1" | sed -n "$2p" | awk '{print $3}'; }
 
@@ -45,8 +45,8 @@ OPERATOR_OUT="$(gen "$OPERATOR_ACCOUNTS")"
 VALIDATOR_MNEMONIC="$(phrase_of "$VALIDATOR_OUT")"
 OPERATOR_MNEMONIC="$(phrase_of "$OPERATOR_OUT")"
 
-echo "# Hegotá testnet deployment keys. SECRET. Do not commit, do not copy into"
-echo "# fixtures/networks/hegota-testnet.yaml beyond the addresses."
+echo "# Frames testnet deployment keys. SECRET. Do not commit, do not copy into"
+echo "# fixtures/networks/frames-testnet.yaml beyond the addresses."
 echo "# Generated for a single deployment; a re-genesis needs a fresh run."
 echo
 echo "VALIDATOR_MNEMONIC=\"$VALIDATOR_MNEMONIC\""
@@ -70,7 +70,7 @@ done
 
 echo
 echo "# ---------------------------------------------------------------------"
-echo "# Paste into fixtures/networks/hegota-testnet.yaml, replacing the"
+echo "# Paste into fixtures/networks/frames-testnet.yaml, replacing the"
 echo "# REPLACE_WITH_* markers. Addresses only — the keys above stay on this"
 echo "# host."
 echo "# ---------------------------------------------------------------------"

@@ -139,7 +139,7 @@ fn keyed_frame_tx(nonce_keys: Vec<U256>, nonce_seq: u64) -> Transaction {
             flags: APPROVE_EXECUTION_AND_PAYMENT,
             target: Some(addr(0x01)),
             gas_limit: 21_000,
-            state_limit: 0,
+            state_gas_limit: 0,
             value: U256::zero(),
             data: Default::default(),
         }],
@@ -149,8 +149,8 @@ fn keyed_frame_tx(nonce_keys: Vec<U256>, nonce_seq: u64) -> Transaction {
             msg: Default::default(),
             signature: Default::default(),
         }],
-        max_priority_fee_per_gas: 1,
-        max_fee_per_gas: 1_000,
+        max_priority_fee_per_gas: U256::from(1),
+        max_fee_per_gas: U256::from(1_000),
         ..Default::default()
     })
 }

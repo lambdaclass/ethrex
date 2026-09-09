@@ -161,7 +161,10 @@ impl Evm {
             self.stateless_validator.as_deref(),
         )?;
 
-        // Track cumulative post-refund gas for receipt
+        // Track cumulative post-refund gas for receipt. `gas_spent` is the payer
+        // total across both gas dimensions for every transaction kind -- the frame
+        // path reports the same shape as the ordinary one -- so no per-kind
+        // adjustment happens here.
         *cumulative_gas_spent += execution_report.gas_spent;
 
         let mut receipt = Receipt::new(
@@ -177,11 +180,13 @@ impl Evm {
             receipt.frame_receipts = execution_report.frame_results.take().map(|results| {
                 results
                     .into_iter()
-                    .map(|result| ethrex_common::types::FrameReceipt {
-                        status: result.status,
-                        gas_used: result.gas_used,
-                        state_gas_used: result.state_gas_used,
-                        logs: result.logs,
+                    .map(|(status, gas_used, state_gas_used, logs)| {
+                        ethrex_common::types::FrameReceipt {
+                            status,
+                            gas_used,
+                            state_gas_used,
+                            logs,
+                        }
                     })
                     .collect()
             });

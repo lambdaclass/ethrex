@@ -31,7 +31,7 @@ fn golden() -> FrameTransaction {
                 flags: 3,
                 target: None,
                 gas_limit: 0x5208,
-                state_limit: 0,
+                state_gas_limit: 0,
                 value: U256::zero(),
                 data: Bytes::from_static(&[0x11, 0x22]),
             },
@@ -40,7 +40,7 @@ fn golden() -> FrameTransaction {
                 flags: 0,
                 target: Some(Address::from_low_u64_be(0x1234)),
                 gas_limit: 0x9c40,
-                state_limit: 0,
+                state_gas_limit: 0,
                 value: U256::zero(),
                 data: Bytes::new(),
             },
@@ -51,8 +51,8 @@ fn golden() -> FrameTransaction {
             msg: Bytes::new(),
             signature: Bytes::from(vec![0x01u8; 65]),
         }],
-        max_priority_fee_per_gas: 0x3b9aca00,
-        max_fee_per_gas: 0x6fc23ac00,
+        max_priority_fee_per_gas: U256::from(0x3b9aca00),
+        max_fee_per_gas: U256::from(0x6fc23ac00u64),
         max_fee_per_blob_gas: U256::zero(),
         blob_versioned_hashes: vec![],
         recent_root_references: vec![],
@@ -194,8 +194,8 @@ fn the_v2_envelope_round_trips_through_the_canonical_decoder() {
         panic!("decoded to the wrong transaction type");
     };
     assert_eq!(decoded.frames[0].gas_limit, 0x5208);
-    assert_eq!(decoded.frames[0].state_limit, 0);
-    assert_eq!(decoded.max_fee_per_gas, 0x6fc23ac00);
+    assert_eq!(decoded.frames[0].state_gas_limit, 0);
+    assert_eq!(decoded.max_fee_per_gas, U256::from(0x6fc23ac00u64));
     assert_eq!(decoded.recent_root_references.len(), 0);
 }
 
@@ -204,7 +204,7 @@ fn the_v2_envelope_round_trips_through_the_canonical_decoder() {
 #[test]
 fn a_state_budget_round_trips() {
     let mut tx = golden();
-    tx.frames[1].state_limit = 4_000_000;
+    tx.frames[1].state_gas_limit = 4_000_000;
     let mut raw = vec![0x06u8];
     tx.encode(&mut raw);
     let Transaction::FrameTransaction(decoded) =
@@ -212,9 +212,9 @@ fn a_state_budget_round_trips() {
     else {
         panic!("wrong type")
     };
-    assert_eq!(decoded.frames[1].state_limit, 4_000_000);
+    assert_eq!(decoded.frames[1].state_gas_limit, 4_000_000);
     assert_eq!(
-        decoded.state_gas_limit(),
+        decoded.total_frame_state_gas(),
         4_000_000,
         "the transaction's state dimension is the sum of its frames'"
     );

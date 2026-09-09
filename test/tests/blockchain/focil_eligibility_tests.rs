@@ -52,7 +52,7 @@ fn verify_frame(target: Option<Address>, scope: u8, gas_limit: u64) -> Frame {
         flags: scope,
         target,
         gas_limit,
-        state_limit: 0,
+        state_gas_limit: 0,
         value: U256::zero(),
         data: Default::default(),
     }
@@ -74,8 +74,8 @@ fn frame_tx(frames: Vec<Frame>) -> FrameTransaction {
             msg: Default::default(),
             signature: Default::default(),
         }],
-        max_priority_fee_per_gas: 1,
-        max_fee_per_gas: 1_000,
+        max_priority_fee_per_gas: U256::from(1),
+        max_fee_per_gas: U256::from(1_000),
         max_fee_per_blob_gas: U256::zero(),
         blob_versioned_hashes: vec![],
         ..Default::default()
@@ -182,7 +182,7 @@ fn an_unrecognized_prefix_is_not_a_candidate() {
         flags: 0,
         target: Some(Address::repeat_byte(0xaa)),
         gas_limit: 1_000,
-        state_limit: 0,
+        state_gas_limit: 0,
         value: U256::zero(),
         data: Default::default(),
     }]);
@@ -210,7 +210,7 @@ fn an_expiry_verifier_frames_gas_counts_toward_the_budget() {
             flags: 0,
             target: Some(frame_tx_expiry_verifier()),
             gas_limit: 7_000,
-            state_limit: 0,
+            state_gas_limit: 0,
             value: U256::zero(),
             data: 0u64.to_be_bytes().to_vec().into(),
         },

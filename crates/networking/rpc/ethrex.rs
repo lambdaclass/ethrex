@@ -256,7 +256,7 @@ impl RpcHandler for SimulateFrameTransactionRequest {
         // rejected on submit (EIP-7825 / block gas limit) anyway.
         let fork = context.storage.get_chain_config().fork(header.timestamp);
         let max_allowed = get_max_allowed_gas_limit(header.gas_limit, fork);
-        let total_gas_limit = frame_tx.total_gas_limit();
+        let total_gas_limit = frame_tx.max_gas();
         if total_gas_limit > max_allowed {
             return to_value(SimulateFrameTransactionResult {
                 valid: false,

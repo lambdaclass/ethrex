@@ -57,11 +57,7 @@ pub mod stateless;
 pub mod tracing;
 pub mod vm;
 
-use ::tracing::{error, info, instrument, warn};
-// Every `debug!` call site lives in the rayon warmer path, so the import is
-// unused in any configuration that compiles that path out.
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
-use ::tracing::debug;
+use ::tracing::{debug, error, info, instrument, warn};
 use constants::{AMSTERDAM_MAX_INITCODE_SIZE, MAX_INITCODE_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
@@ -306,6 +302,10 @@ impl Drop for ReorgGuard<'_> {
     }
 }
 
+/// Default min-tip floor (wei). Matches geth's mempool `PriceLimit = 1 wei`.
+/// Effectively just rejects zero-tip transactions at admission.
+pub const DEFAULT_MIN_TIP_WEI: u64 = 1;
+
 /// Configuration options for the blockchain.
 #[derive(Debug, Clone)]
 pub struct BlockchainOptions {
@@ -331,6 +331,12 @@ pub struct BlockchainOptions {
     /// warmer thread and the executor. Set to false (via `--no-precompile-cache`) to
     /// disable the cache for benchmarking purposes.
     pub precompile_cache_enabled: bool,
+    /// Minimum priority-fee *cap* (in wei) required for a transaction to be
+    /// admitted into the mempool. Compared against the raw tip cap
+    /// (`max_priority_fee_per_gas` for typed txs, `gas_price` for legacy), NOT
+    /// the base-fee-dependent effective tip — matching geth's `PriceLimit`
+    /// check on `tx.GasTipCap()`. Set to 0 to disable the floor.
+    pub min_tip_wei: u64,
     /// Minimum fee-field bump (in percent) required to replace a non-blob
     /// transaction at the same `(sender, nonce)`. Matches the 10%
     /// default of every peer EL client.
@@ -384,10 +390,6 @@ pub struct BlockchainOptions {
     /// validating signatures and simulating a frame transaction's validation
     /// prefix. Mempool policy (SHOULD), not consensus, so it is operator-tunable.
     pub max_verify_gas: u64,
-    /// EIP-8312 admission budget for transactions carrying UTXO frames. Separate
-    /// knob from `max_verify_gas`: the two lanes are disjoint, and this devnet
-    /// already runs a raised `max_verify_gas` for EIP-8272 proof benchmarking.
-    pub max_utxo_verify_gas: u64,
 }
 
 impl Default for BlockchainOptions {
@@ -400,6 +402,7 @@ impl Default for BlockchainOptions {
             precompute_witnesses: false,
             private_mempool: false,
             precompile_cache_enabled: true,
+            min_tip_wei: DEFAULT_MIN_TIP_WEI,
             price_bump_percent: DEFAULT_PRICE_BUMP_PERCENT,
             blob_price_bump_percent: DEFAULT_BLOB_PRICE_BUMP_PERCENT,
             max_queued_txs_per_account: DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT,
@@ -411,7 +414,6 @@ impl Default for BlockchainOptions {
             max_reorg_depth: None,
             gap_admit_occupancy_threshold: DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD,
             max_verify_gas: DEFAULT_MAX_VERIFY_GAS,
-            max_utxo_verify_gas: ethrex_common::types::MAX_UTXO_VERIFY_GAS,
         }
     }
 }
@@ -569,14 +571,26 @@ impl Blockchain {
         }
     }
 
+    /// Test-permissive `Blockchain` constructor. Mirrors `BlockchainOptions::default`
+    /// but disables admission-policy gates (e.g. the min-tip floor) so that
+    /// unrelated tests don't need to set every mempool option explicitly.
+    ///
+    /// **Do not use in production.** Despite the name, this is not a "sensible
+    /// default" constructor: it deliberately weakens mempool admission. Node
+    /// startup builds its `BlockchainOptions` from the CLI instead (see
+    /// `cmd/ethrex/initializers.rs`). Every current caller is a test harness.
     pub fn default_with_store(store: Store) -> Self {
+        let options = BlockchainOptions {
+            min_tip_wei: 0,
+            ..BlockchainOptions::default()
+        };
         Self {
             storage: store,
             mempool: Mempool::new(MAX_MEMPOOL_SIZE_DEFAULT),
             is_synced: AtomicBool::new(false),
             reorg_in_progress: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
-            options: BlockchainOptions::default(),
+            options,
             merkle_pool: Self::build_merkle_pool(),
             prewarmed: PrewarmedCache::default(),
         }
@@ -3472,10 +3486,12 @@ impl Blockchain {
             };
             utxo_budget = utxo_budget.saturating_add(spend.admission_gas());
         }
-        if utxo_budget > self.options.max_utxo_verify_gas {
+        // EIP-8312 is being removed from this branch; until that lands the admission
+        // budget is the EIP's constant rather than a node option.
+        let max_utxo_verify_gas = ethrex_common::types::MAX_UTXO_VERIFY_GAS;
+        if utxo_budget > max_utxo_verify_gas {
             return Err(MempoolError::InvalidFrameTransaction(format!(
-                "UTXO admission budget exceeded: {utxo_budget} > {}",
-                self.options.max_utxo_verify_gas
+                "UTXO admission budget exceeded: {utxo_budget} > {max_utxo_verify_gas}"
             )));
         }
 
@@ -4001,41 +4017,14 @@ impl Blockchain {
                 return Err(MempoolError::InvalidFrameSignature);
             }
 
-            // EIP-8312: a self-funded spend is its own validation prefix. Its
-            // validity depends only on transaction fields and the vault's protocol
-            // state, so it needs no EVM prefix simulation — and it cannot satisfy
-            // the four EIP-8141 prefix shapes, which are DEFAULT/VERIFY-only, so
-            // without this lane it would be rejected as an unrecognized prefix.
-            //
-            // A sponsored spend keeps the ordinary prefix (the sponsor's pay frame)
-            // and additionally has its UTXO frames pre-verified below — an explicit
-            // exception to the rule that no failure-invalidating frame follows the
-            // prefix, sound because a UTXO frame's cost is computable from the frame
-            // alone and its checks read only vault protocol state.
-            let self_funded_lane = frame_tx.is_self_funded_utxo_spend(utxo_frames_active);
-
-            if !self_funded_lane {
-                // EIP-8141 §Mempool: validate the prefix shape and structural rules.
-                // The full gas-budget check (prefix frame gas limits + sig cost ≤
-                // MAX_VERIFY_GAS) is the authoritative superset of the cheap
-                // sig-cost pre-filter above; both are kept for defence-in-depth.
-                let prefix = frame_tx.validation_prefix().map_err(MempoolError::from)?;
-                frame_tx
-                    .validate_prefix_structure(&prefix, self.options.max_verify_gas)
-                    .map_err(MempoolError::from)?;
-            }
-
-            if utxo_frames_active {
-                self.check_utxo_admission(frame_tx, header_no, header.number.saturating_add(1))?;
-            }
-
-            // One head-state storage read runs per reference, so this must stay
-            // behind `validate_static_constraints` (which caps the reference count
-            // at FRAME_TX_MAX_RECENT_ROOT_REFERENCES) and behind signature
-            // authentication: ahead of them, a single unauthenticated transaction
-            // sized at MAX_TX_SIZE could declare thousands of references and force
-            // a keccak-random storage lookup for each.
-            self.check_recent_root_references(frame_tx, &header, header_no)?;
+            // EIP-8141 §Mempool: validate the prefix shape and structural rules.
+            // The full gas-budget check (prefix frame gas limits + sig cost ≤
+            // MAX_VERIFY_GAS) is the authoritative superset of the cheap
+            // sig-cost pre-filter above; both are kept for defence-in-depth.
+            let prefix = frame_tx.validation_prefix().map_err(MempoolError::from)?;
+            frame_tx
+                .validate_prefix_structure(&prefix, self.options.max_verify_gas)
+                .map_err(MempoolError::from)?;
         }
 
         // Wire size cap for non-blob txs: peer-policy default, not consensus.
@@ -4093,8 +4082,30 @@ impl Blockchain {
         }
 
         // Check priority fee is less or equal than gas fee gap
-        if tx.max_priority_fee().unwrap_or(0) > tx.max_fee_per_gas().unwrap_or(0) {
+        if tx.max_priority_fee().unwrap_or_default() > tx.max_fee_per_gas().unwrap_or_default() {
             return Err(MempoolError::TxTipAboveFeeCapError);
+        }
+
+        // Admission-time minimum tip floor. Compares the raw tip cap
+        // (`max_priority_fee_per_gas` for typed txs, `gas_price` for legacy)
+        // against `min_tip_wei`, matching geth's `PriceLimit` check on
+        // `tx.GasTipCap()` and reth's check on `max_priority_fee_per_gas`.
+        // Using the raw tip cap keeps the admission decision independent of
+        // the current base fee, so a tx that paid the floor at admission
+        // doesn't get reclassified as under-floor when base fee oscillates.
+        // A floor of 0 disables the check.
+        if self.options.min_tip_wei > 0 {
+            // Saturate to u64::MAX on overflow: a U256 tip cap above u64::MAX
+            // wei is astronomically larger than any sane floor, so clamping
+            // (and therefore admitting) is the correct direction here. Do not
+            // reuse this pattern where truncation would flip a comparison.
+            let tip_cap = u64::try_from(tx.gas_tip_cap()).unwrap_or(u64::MAX);
+            if tip_cap < self.options.min_tip_wei {
+                return Err(MempoolError::TipBelowMinimum {
+                    actual: tip_cap,
+                    limit: self.options.min_tip_wei,
+                });
+            }
         }
 
         // EIP-7702 type-4 structural validation, mirroring LEVM's

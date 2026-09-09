@@ -158,27 +158,21 @@ pub enum TxValidationError {
         "Transaction gas limit exceeds maximum. Transaction hash: {tx_hash}, transaction gas limit: {tx_gas_limit}"
     )]
     TxMaxGasLimitExceeded { tx_hash: H256, tx_gas_limit: u64 },
-    /// EIP-8141: the transaction is not includable. Six distinct rules produce this
+    /// EIP-8141: the transaction is not includable. Several distinct rules produce this
     /// verdict, and a node operator reading a log cannot act on "invalid" alone, so the
     /// reason travels with the error. The payload is chosen from a fixed set of literals
     /// at the raise site, never user data, so it is safe to log and to return over RPC.
     #[error("Invalid frame transaction: {0}")]
     InvalidFrameTransaction(String),
-    /// EIP-8272: a reference whose slot is not yet referenceable. A root written
-    /// in slot `S` becomes referenceable in slot `S + 1`, so this resolves on its
-    /// own as the chain advances and must not be treated as intrinsic invalidity.
-    #[error("EIP-8272 recent-root reference is not yet referenceable at this slot")]
-    FrameTxRecentRootNotReferenceable,
-    /// EIP-8272: a reference outside the usable window, or one whose entry is not
-    /// committed under `RECENT_ROOT_ADDRESS` in the transaction pre-state.
-    #[error("EIP-8272 recent-root reference is expired or not committed")]
-    FrameTxRecentRootInvalid,
-    /// EIP-8312: a spend whose input cannot be proven YET — its creation block's
-    /// openings root is written at that block's end (so a UTXO is never spendable
-    /// in its own creation block), or its batch is not sealed yet. Resolves on its
-    /// own as the chain advances, so the builder keeps the transaction pooled
-    /// rather than evicting a valid spend. Distinct from every other UTXO failure,
-    /// which is permanent.
+    /// EIP-8141 static validity: well-formed RLP that breaks a static constraint. The
+    /// rule that failed is carried through for the same reason as above.
+    #[error("Invalid frame transaction format: {0}")]
+    InvalidFrameTransactionFormat(String),
+    #[error("Invalid frame transaction: signature validation failed")]
+    InvalidFrameSignature,
+    /// EIP-8312: a spend whose input cannot be proven yet; resolves as the chain
+    /// advances, so the builder keeps the transaction pooled. (EIP-8312 is being
+    /// removed from this branch; the variant stays only until that removal lands.)
     #[error("EIP-8312 UTXO input is not yet spendable at this block")]
     UtxoNotYetSpendable,
 }
@@ -274,6 +268,12 @@ pub enum TxResult {
     Revert(VMError),
 }
 
+/// One frame's outcome: `(status, gas_used.execution, gas_used.state, logs)`.
+///
+/// EIP-8141 gives a frame receipt two gas dimensions, so the execution and
+/// state figures travel together from the frame loop to the receipt.
+pub type FrameResult = (u8, u64, u64, Vec<Log>);
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExecutionReport {
     pub result: TxResult,
@@ -294,29 +294,10 @@ pub struct ExecutionReport {
     pub logs: Vec<Log>,
     /// For frame transactions: the address that paid for gas
     pub payer_address: Option<Address>,
-    /// For frame transactions: one entry per frame, in frame order.
+    /// For frame transactions: per-frame results (status, gas_used, logs).
+    /// `status` is a `FRAME_RECEIPT_STATUS_*` code (0 = failure, 1 = success,
+    /// 2 = skipped due to failed atomic batch, per EIP-8141 receipt encoding).
     pub frame_results: Option<Vec<FrameResult>>,
-}
-
-/// One frame's outcome inside an EIP-8141 frame transaction, as reported in the
-/// transaction's receipt.
-///
-/// `gas_used` and `state_gas_used` are the two halves of EIP-8141's two-dimensional
-/// `gas_used = [execution, state]`. They are separate budgets that never mix, so
-/// they are named rather than positional: both are `u64`, and swapping them would
-/// misreport every frame without failing to compile.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FrameResult {
-    /// A `FRAME_RECEIPT_STATUS_*` code (0 = failure, 1 = success, 3 = skipped
-    /// due to a failed atomic batch, per the EIP-8141 receipt encoding).
-    pub status: u8,
-    /// Execution gas drawn from the frame's `limits.execution`.
-    pub gas_used: u64,
-    /// State gas drawn from the frame's `limits.state`. Zero for a frame that
-    /// reverted or halted exceptionally, and subject to reduction by a later
-    /// frame's cross-frame refill.
-    pub state_gas_used: u64,
-    pub logs: Vec<Log>,
 }
 
 impl ExecutionReport {

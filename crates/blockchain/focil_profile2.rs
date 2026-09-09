@@ -103,10 +103,10 @@ impl<'a> IlProfile2Evaluator for BlockchainProfile2Evaluator<'a> {
     /// within a block, so evaluating it at the start would mark every full block
     /// unsatisfied and turn the inclusion list into a hard claim on block space.
     fn evaluate(&self, tx: &FrameTransaction) -> Profile2Eligibility {
-        if tx.total_gas_limit() > self.gas_left {
+        if tx.max_gas() > self.gas_left {
             return Profile2Eligibility::Ineligible(format!(
                 "total gas limit {} exceeds the block's remaining gas {}",
-                tx.total_gas_limit(),
+                tx.max_gas(),
                 self.gas_left
             ));
         }

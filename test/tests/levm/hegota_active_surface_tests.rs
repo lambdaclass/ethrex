@@ -57,12 +57,12 @@ fn tx_with_frame_mode(mode: u8) -> FrameTransaction {
             flags: 0x03,
             target: Some(Address::from_low_u64_be(0xABCD)),
             gas_limit: 50_000,
-            state_limit: 0,
+            state_gas_limit: 0,
             value: U256::zero(),
             data: Default::default(),
         }],
-        max_priority_fee_per_gas: 1,
-        max_fee_per_gas: 1_000,
+        max_priority_fee_per_gas: U256::from(1),
+        max_fee_per_gas: U256::from(1_000),
         ..Default::default()
     }
 }

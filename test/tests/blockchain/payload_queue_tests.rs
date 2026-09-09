@@ -41,7 +41,7 @@ fn frame_tx(sender: Address, nonce_keys: Vec<U256>, nonce_seq: u64) -> Transacti
             flags: APPROVE_EXECUTION_AND_PAYMENT,
             target: Some(sender),
             gas_limit: 21_000,
-            state_limit: 0,
+            state_gas_limit: 0,
             value: U256::zero(),
             data: Default::default(),
         }],
@@ -51,8 +51,8 @@ fn frame_tx(sender: Address, nonce_keys: Vec<U256>, nonce_seq: u64) -> Transacti
             msg: Default::default(),
             signature: Default::default(),
         }],
-        max_priority_fee_per_gas: 1,
-        max_fee_per_gas: 1_000,
+        max_priority_fee_per_gas: U256::from(1),
+        max_fee_per_gas: U256::from(1_000),
         ..Default::default()
     })
 }

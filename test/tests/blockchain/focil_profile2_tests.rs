@@ -112,7 +112,7 @@ fn verify_frame(target: Option<Address>, scope: u8, gas_limit: u64) -> Frame {
         flags: scope,
         target,
         gas_limit,
-        state_limit: 0,
+        state_gas_limit: 0,
         value: U256::zero(),
         data: Default::default(),
     }
@@ -140,8 +140,8 @@ fn self_verify_tx(sender: Address, gas_limit: u64) -> FrameTransaction {
         // `baseFeePerGas`, so `fee_valid` holds in both the unit-level tests
         // (default header, base fee 0) and the end-to-end tests (a real
         // chain's base fee).
-        max_priority_fee_per_gas: 1,
-        max_fee_per_gas: 10_000_000_000,
+        max_priority_fee_per_gas: U256::from(1),
+        max_fee_per_gas: U256::from(10_000_000_000u64),
         max_fee_per_blob_gas: U256::zero(),
         blob_versioned_hashes: vec![],
         ..Default::default()
@@ -590,7 +590,7 @@ async fn frame_tx_with_a_utxo_frame_is_undecided() {
         flags: 0,
         target: None,
         gas_limit: 0,
-        state_limit: 0,
+        state_gas_limit: 0,
         value: U256::zero(),
         data: Default::default(),
     });

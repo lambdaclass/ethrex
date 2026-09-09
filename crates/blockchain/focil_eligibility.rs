@@ -147,7 +147,7 @@ pub fn fee_valid(tx: &Transaction, base_fee_per_gas: u64) -> bool {
                 return false;
             };
             let priority = tx.max_priority_fee().unwrap_or_default();
-            max_fee >= base_fee_per_gas && priority <= max_fee
+            max_fee >= ethrex_common::U256::from(base_fee_per_gas) && priority <= max_fee
         }
     }
 }
