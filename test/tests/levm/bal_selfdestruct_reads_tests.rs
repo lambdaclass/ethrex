@@ -163,6 +163,7 @@ fn selfdestruct_does_not_record_warm_unread_slots_as_bal_reads() {
         disable_balance_check: false,
         disable_nonce_check: false,
         disable_gas_allowance_check: false,
+        disable_sender_eoa_check: false,
         is_system_call: false,
     };
 
