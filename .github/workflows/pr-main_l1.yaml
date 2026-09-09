@@ -411,9 +411,14 @@ jobs:
         id: run-hive-action
         uses: ethpandaops/hive-github-action@v0.5.0
         with:
-          hive_repository: ethereum/hive
-          # ethereum/hive#1530 merge (deposit contract address mapper fix)
-          hive_version: 7c4c99ebb79955f23e1952fb0282a0dadcb6e181
+          # Our fork of ethereum/hive: identical to upstream 7c4c99eb (the deposit-contract
+          # mapper fix from ethereum/hive#1530) plus one commit pinning the go-ethereum
+          # checkout inside the devp2p simulator. Upstream builds that simulator from geth
+          # master, so its eth/snap suite changed under us on 2026-09-02 (Osaka testdata,
+          # eth/72) and failed every PR with "wrong fork ID". Bump GETH_REF in the fork to
+          # move deliberately.
+          hive_repository: lambdaclass/hive-ci
+          hive_version: bda630136e76df758b1ab3f6879af3ae0b106813
           simulator: ${{ matrix.simulation }}
           client: ethrex
           client_config: ${{ steps.client-config.outputs.config }}
