@@ -12,7 +12,7 @@
 //!     (EIP-8141 §"Default code").
 
 use crate::{
-    errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
+    errors::{ExceptionalHalt, OpcodeResult, VMError},
     gas_cost,
     memory::calculate_memory_size,
     opcode_handlers::OpcodeHandler,
@@ -109,15 +109,7 @@ pub fn apply_approve(
             let tx_cost = compute_tx_max_cost(ctx)?;
             let sender = ctx.tx.sender;
 
-            vm.consume_keyed_nonces(sender)?;
-            // Payer balance underflow is a frame-level revert, not a consensus
-            // fault: the outer restore_cache_state() path rolls back the nonce
-            // increment above when RevertOpcode propagates.
-            match vm.decrease_account_balance(frame_target, tx_cost) {
-                Ok(()) => {}
-                Err(InternalError::Underflow) => return Err(VMError::RevertOpcode),
-                Err(e) => return Err(VMError::Internal(e)),
-            }
+            approve_payment_effects(vm, sender, frame_target, tx_cost)?;
 
             // EIP-8141 pins the initial `accessed_addresses` set and adds the payer
             // to it when an APPROVE with payment scope binds it and collects
@@ -171,13 +163,7 @@ pub fn apply_approve(
             let tx_cost = compute_tx_max_cost(ctx)?;
             let sender = ctx.tx.sender;
 
-            vm.consume_keyed_nonces(sender)?;
-            // See scope 0x1 above for the Underflow → RevertOpcode rationale.
-            match vm.decrease_account_balance(frame_target, tx_cost) {
-                Ok(()) => {}
-                Err(InternalError::Underflow) => return Err(VMError::RevertOpcode),
-                Err(e) => return Err(VMError::Internal(e)),
-            }
+            approve_payment_effects(vm, sender, frame_target, tx_cost)?;
 
             // EIP-8141 pins the initial `accessed_addresses` set and adds the payer
             // to it when an APPROVE with payment scope binds it and collects
@@ -198,6 +184,32 @@ pub fn apply_approve(
             return Err(ExceptionalHalt::InvalidOpcode.into());
         }
     }
+    Ok(())
+}
+
+/// The once-per-transaction payment effects, in EIP-8141's order as amended by
+/// EIP-8250 §Nonce consumption. An underfunded payer reverts the frame before
+/// anything is touched. The state gas the nonce set owes — sender account
+/// creation for key 0, one storage set per fresh keyed slot — is then charged
+/// from the frame's `limits.state`, and a frame that cannot cover it halts with
+/// no effect applied. Only then are the nonces consumed and `max_cost`
+/// collected; the caller binds `payer` (and `sender_approved`) right after, so
+/// the effects land together or not at all.
+fn approve_payment_effects(
+    vm: &mut VM<'_>,
+    sender: ethrex_common::Address,
+    payer: ethrex_common::Address,
+    tx_cost: U256,
+) -> Result<(), VMError> {
+    if vm.db.get_account(payer)?.info.balance < tx_cost {
+        return Err(VMError::RevertOpcode);
+    }
+    let nonce_state_gas = vm.nonce_state_gas(sender)?;
+    vm.increase_state_gas(nonce_state_gas)?;
+    vm.consume_keyed_nonces(sender)?;
+    // Checked above, so an underflow here is an internal fault rather than a
+    // frame-level revert.
+    vm.decrease_account_balance(payer, tx_cost)?;
     Ok(())
 }
 

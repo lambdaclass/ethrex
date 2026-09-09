@@ -3523,10 +3523,14 @@ mod frame_validation_prefix_tests {
     fn sponsored_pay_frame_may_target_non_sender() {
         let sender = addr(0x5E_11_02);
         let sponsor = addr(0x42_D9_3E);
-        let frames = vec![
+        let mut frames = vec![
             frame(1, 0x02, sender, 40_000),  // only_verify -> sender
             frame(1, 0x01, sponsor, 40_000), // pay -> sponsor
         ];
+        // Two frames at the helper's state budget would breach MAX_VERIFY_STATE_GAS.
+        for f in &mut frames {
+            f.state_gas_limit = 100_000;
+        }
         let tx = frame_tx_prefix(sender, frames);
         let Transaction::FrameTransaction(frame_tx) = &tx else {
             unreachable!("frame_tx_prefix builds a frame transaction")

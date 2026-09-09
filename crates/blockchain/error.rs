@@ -164,6 +164,8 @@ pub enum MempoolError {
     FrameTxInvalidPrefixStructure(String),
     #[error("Frame transaction prefix gas budget (frames + sig cost) exceeds MAX_VERIFY_GAS")]
     FrameTxVerifyGasBudgetExceeded,
+    #[error("Frame transaction prefix state gas budget exceeds MAX_VERIFY_STATE_GAS")]
+    FrameTxVerifyStateBudgetExceeded,
     #[error("A pending frame transaction from this sender is already in the pool")]
     FrameTxSenderAlreadyPending,
     #[error("A frame transaction in the other nonce-key domain is already pending for this sender")]
@@ -210,6 +212,9 @@ impl From<FrameValidationError> for MempoolError {
             FrameValidationError::UnrecognizedPrefix => MempoolError::FrameTxUnrecognizedPrefix,
             FrameValidationError::VerifyGasBudgetExceeded { .. } => {
                 MempoolError::FrameTxVerifyGasBudgetExceeded
+            }
+            FrameValidationError::VerifyStateBudgetExceeded { .. } => {
+                MempoolError::FrameTxVerifyStateBudgetExceeded
             }
             other => MempoolError::FrameTxInvalidPrefixStructure(other.to_string()),
         }

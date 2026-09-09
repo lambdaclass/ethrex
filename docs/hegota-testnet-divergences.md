@@ -31,7 +31,7 @@ moved that day, and both moves are consensus-visible renumberings caused by EIP-
 | --- | --- | --- | --- | --- | --- |
 | 8141 | `4093c21847` → **`7d1c8bfb94`** | **+326/−96 — a new envelope, see §6** | **yes** | **the updated spec adopted and implemented**, pin bumped; re-genesis required | — |
 | 7805 | `4093c21847` | none — byte-identical | no | closed | — |
-| 8250 | `81b976ac01` → **`e5cf246ff1`** | **TXPARAM ids shifted up by one** (2026-08-31), plus an Abstract sentence | **yes** — every prefix reading a keyed-nonce id | **implemented**, pin bumped | — |
+| 8250 | `81b976ac01` → `e5cf246ff1` → **`94f5a3e3c1`** | TXPARAM ids shifted up by one (2026-08-31); then **first use of a keyed nonce priced as state gas** (PR #12279, 2026-09): one storage set per fresh key from the approving frame's `limits.state`, key `[0]` pays account creation only, EIP-8141 rule 6 lets a VERIFY frame budget it | **yes** — every keyed-nonce approval's gas | **implemented**, pin bumped; re-genesis required | — |
 | 8272 | `d8636a330d` → **`0231fb05f5`** | **reference count `0x0F`→`0x11`, `RECENTROOTREFLOAD` `0xB5`→`0xB6`** (2026-08-31), plus an Abstract sentence | **yes** | **implemented**, pin bumped; the opcode byte already matched | — |
 | 8369 | `6f818e27dd` → **`33724bd7da`** | three commits, +17/−13: Profile 1 candidacy stated by transaction type, `MAX_VERIFY_GAS_PER_TX` demoted to "up to `MAX_VERIFY_GAS_PER_IL`", and **budget fill split into a two-stage debit** | **yes** — it decides Profile 2 admission | **implemented**, see §7; pin bumped | — |
 
@@ -725,11 +725,12 @@ EIP-2929 `accessed_addresses` or `accessed_storage_keys`, are NOT charged under 
 `SSTORE` pricing, and do NOT warm the address or slot for later user-level access."
 
 **Conformant on all three.** `consume_keyed_nonces` never calls `add_accessed_address`
-or its storage equivalent, and charges only `KEYED_NONCE_FIRST_USE_GAS` on a key's first
-use. Two tests in `test/tests/levm/eip8250_tests.rs`:
+or its storage equivalent, and the only charge a fresh key carries is the spec's
+`KEYED_NONCE_FIRST_USE_STATE_GAS` of state gas, taken before consumption. Two tests in
+`test/tests/levm/eip8250_tests.rs`:
 `consuming_a_keyed_nonce_does_not_warm_the_nonce_manager` (probing `NONCE_MANAGER` after
 a keyed consumption costs exactly what probing a never-touched account costs) and
-`a_keyed_nonce_is_not_priced_as_an_sstore` (a second first-use key costs one surcharge
+`a_keyed_nonce_first_use_is_priced_as_state_gas` (a second first-use key costs one storage set of state gas
 plus envelope data, with no storage charge layered on).
 
 The third clause — the *slot* not entering `accessed_storage_keys` — is not separately

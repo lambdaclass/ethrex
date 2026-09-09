@@ -122,7 +122,6 @@ series replaces it; the FOCIL, 8250 concurrency and state-dimension checks pass 
 ## Follow-ups this merge leaves
 
 - Implement EIP-8272 at `824cbc0b0e` (canonical frame) — replaces what rule 3 dropped.
-- Implement EIP-8250 at `94f5a3e3c1` (state-gas first use) inside `consume_keyed_nonces`.
 - Re-pin EIP-8369 to `51dc7b939a`; verify `codeFlag` treats a 7702 delegation as code.
 - Regenerate the golden envelope vector (`frametx.py` and the Rust test) for the 8250
   envelope on frames' encoding.

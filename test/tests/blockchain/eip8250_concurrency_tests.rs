@@ -47,6 +47,9 @@ const FRAME_SENDER: Address = Address::repeat_byte(0xC5);
 /// EIP-8037 STATE_BYTES_PER_NEW_ACCOUNT * CPSB: what a frame pays to create the account
 /// it funds.
 const NEW_ACCOUNT_STATE_GAS: u64 = 120 * 1530;
+/// EIP-8250 `KEYED_NONCE_FIRST_USE_STATE_GAS`: what the approving frame pays to create
+/// a fresh key's NONCE_MANAGER slot.
+const KEYED_NONCE_FIRST_USE_STATE_GAS: u64 = 64 * 1530;
 
 fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
@@ -90,7 +93,7 @@ fn keyed_tx(chain_id: u64, index: u64) -> Transaction {
                 flags: 0x03,
                 target: Some(FRAME_SENDER),
                 gas_limit: 80_000,
-                state_gas_limit: 0,
+                state_gas_limit: KEYED_NONCE_FIRST_USE_STATE_GAS,
                 value: U256::zero(),
                 data: Bytes::new(),
             },

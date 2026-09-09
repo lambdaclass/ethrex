@@ -1658,20 +1658,23 @@ impl<'a> VM<'a> {
         Ok(report)
     }
 
-    /// Execute a frame transaction (EIP-8141).
-    /// This bypasses the normal prepare/finalize hooks and orchestrates per-frame execution.
+    /// EIP-8250: the NONCE_MANAGER storage slot of `(sender, key)`,
+    /// `keccak256(left_pad_32(sender) || uint256_to_bytes32(key))`.
+    fn keyed_nonce_slot(sender: Address, key: U256) -> H256 {
+        let mut preimage = [0u8; 64];
+        preimage[12..32].copy_from_slice(sender.as_bytes());
+        preimage[32..64].copy_from_slice(&key.to_big_endian());
+        H256(ethrex_crypto::keccak::keccak_hash(preimage))
+    }
+
     /// EIP-8250: the current sequence value for `(sender, nonce_key)`. Key 0 is
     /// the account's linear account nonce; non-zero keys live in the
-    /// NONCE_MANAGER predeploy at slot
-    /// `keccak256(left_pad_32(sender) || uint256_to_bytes32(key))` (absent = 0).
+    /// NONCE_MANAGER predeploy at [`VM::keyed_nonce_slot`] (absent = 0).
     fn current_nonce_seq(&mut self, sender: Address, key: U256) -> Result<u64, VMError> {
         if key.is_zero() {
             return Ok(self.db.get_account(sender)?.info.nonce);
         }
-        let mut preimage = [0u8; 64];
-        preimage[12..32].copy_from_slice(sender.as_bytes());
-        preimage[32..64].copy_from_slice(&key.to_big_endian());
-        let slot = H256(ethrex_crypto::keccak::keccak_hash(preimage));
+        let slot = Self::keyed_nonce_slot(sender, key);
         let nonce_manager = ethrex_common::types::frame_tx_nonce_manager();
         // Ensure the NONCE_MANAGER account is cached before reading its storage.
         let _ = self.db.get_account(nonce_manager)?;
@@ -1689,12 +1692,13 @@ impl<'a> VM<'a> {
         Ok(value.low_u64())
     }
 
-    /// EIP-8250: consume every selected nonce key at payment approval. Key 0
-    /// increments the sender's linear account nonce; non-zero keys write
-    /// `nonce_seq + 1` to NONCE_MANAGER storage, charging
-    /// `KEYED_NONCE_FIRST_USE_GAS` the first time a key is used (slot 0 ->
-    /// nonzero). Validation already proved `current_nonce_seq == nonce_seq` for
-    /// each selected key.
+    /// EIP-8250 §Nonce consumption: consume every selected nonce key at payment
+    /// approval. Key 0 increments the sender's linear account nonce; non-zero
+    /// keys write `nonce_seq + 1` to NONCE_MANAGER storage. Validation already
+    /// proved `current_nonce_seq == nonce_seq` for each selected key, and the
+    /// state gas the consumption owes was charged from [`VM::nonce_state_gas`]
+    /// before this runs: the writes themselves are protocol bookkeeping and
+    /// carry no execution gas.
     ///
     /// NOTE (Hegotá devnet): non-zero-key writes use the standard backed-up
     /// storage path and so are reverted by an enclosing atomic batch's revert.
@@ -1717,16 +1721,9 @@ impl<'a> VM<'a> {
                 self.increment_account_nonce(sender)?;
                 continue;
             }
-            let mut preimage = [0u8; 64];
-            preimage[12..32].copy_from_slice(sender.as_bytes());
-            preimage[32..64].copy_from_slice(&key.to_big_endian());
-            let slot = H256(ethrex_crypto::keccak::keccak_hash(preimage));
+            let slot = Self::keyed_nonce_slot(sender, *key);
             let _ = self.db.get_account(nonce_manager)?;
             let current = self.get_storage_value(nonce_manager, slot)?;
-            if current.is_zero() {
-                self.current_call_frame
-                    .increase_consumed_gas(crate::gas_cost::KEYED_NONCE_FIRST_USE_GAS)?;
-            }
             let slot_u256 = U256::from_big_endian(&slot.0);
             self.update_account_storage(
                 nonce_manager,
@@ -1739,6 +1736,43 @@ impl<'a> VM<'a> {
         Ok(())
     }
 
+    /// EIP-8250 §Nonce consumption, step 1: the state gas a payment-scoped
+    /// `APPROVE` owes for the nonce set it is about to consume. Key `[0]` pays
+    /// `STATE_BYTES_PER_NEW_ACCOUNT * CPSB` when `tx.sender` does not exist under
+    /// EIP-8037's existence rule, and nothing otherwise; every other key pays
+    /// `KEYED_NONCE_FIRST_USE_STATE_GAS`, one storage set, when its NONCE_MANAGER
+    /// slot still reads zero, which is what first use looks like.
+    ///
+    /// Reads only. The caller charges the figure from the frame's `limits.state`
+    /// before consuming anything, so a frame that cannot cover it halts with no
+    /// approval effect applied.
+    pub(crate) fn nonce_state_gas(&mut self, sender: Address) -> Result<u64, VMError> {
+        let nonce_keys = match &self.tx {
+            Transaction::FrameTransaction(ft) => ft.nonce_keys.clone(),
+            _ => return Ok(0),
+        };
+        // Static validation admits key 0 only as the sole key.
+        if nonce_keys.first().is_some_and(|key| key.is_zero()) {
+            return Ok(if self.db.get_account(sender)?.is_empty() {
+                self.state_gas_new_account
+            } else {
+                0
+            });
+        }
+        let nonce_manager = ethrex_common::types::frame_tx_nonce_manager();
+        let _ = self.db.get_account(nonce_manager)?;
+        let mut first_uses: u64 = 0;
+        for key in &nonce_keys {
+            let slot = Self::keyed_nonce_slot(sender, *key);
+            if self.get_storage_value(nonce_manager, slot)?.is_zero() {
+                first_uses = first_uses.saturating_add(1);
+            }
+        }
+        Ok(first_uses.saturating_mul(self.state_gas_storage_set))
+    }
+
+    /// Execute a frame transaction (EIP-8141).
+    /// This bypasses the normal prepare/finalize hooks and orchestrates per-frame execution.
     fn execute_frame_tx(&mut self) -> Result<ExecutionReport, VMError> {
         use crate::errors::TxResult;
 

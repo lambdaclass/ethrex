@@ -367,7 +367,7 @@ def concurrency_check(chain_id) -> None:
         recipient = derived_address("beef", base * 2 + index)
         raws.append(build_frame_tx(
             chain_id, contract, key, 0,
-            [frame(1, 0x03, contract, 80_000, 0, 0, b""),
+            [frame(1, 0x03, contract, 80_000, SSTORE_SET_STATE_GAS, 0, b""),
              frame(2, 0x00, recipient, 30_000, NEW_ACCOUNT_STATE_GAS, 100, b"")],
             *fees(), None,
             sign=False))
@@ -555,9 +555,23 @@ def main() -> int:
         check("key 0 cannot queue a future sequence", "Nonce mismatch" in str(exc), str(exc)[:90])
 
     # A key this sender has never used is at sequence 0 by definition, which is what makes
-    # this check independent of every earlier run.
+    # this check independent of every earlier run. Its first use creates the key's
+    # NONCE_MANAGER slot, and EIP-8250 charges that as state gas to the approving frame, so
+    # the VERIFY frame declares one storage set of state budget; the same frames with no
+    # state budget must halt on the charge and be turned away.
     fresh_key = 0x8141_0000 + seq
-    keyed = build_frame_tx(chain_id, sender, fresh_key, 0, frames, *fees(), KEY)
+    keyed_frames = [
+        frame(1, 0x03, sender, 80_000, SSTORE_SET_STATE_GAS, 0, b""),
+        frame(2, 0x00, recipient, 30_000, NEW_ACCOUNT_STATE_GAS, 100, b""),
+    ]
+    unbudgeted = build_frame_tx(chain_id, sender, fresh_key, 0, frames, *fees(), KEY)
+    try:
+        rpc(RPC, "eth_sendRawTransaction", [unbudgeted])
+        check("a fresh key with no state budget is rejected", False,
+              "a keyed tx whose VERIFY frame cannot pay the slot's state gas was admitted")
+    except RuntimeError as exc:
+        check("a fresh key with no state budget is rejected", "reverted" in str(exc), str(exc)[:100])
+    keyed = build_frame_tx(chain_id, sender, fresh_key, 0, keyed_frames, *fees(), KEY)
     try:
         rpc(RPC, "eth_sendRawTransaction", [keyed])
         check("a keyed frame transaction is admitted", True, f"key={hex(fresh_key)}")
@@ -568,7 +582,7 @@ def main() -> int:
     # default-code prefix authenticates against its own account nonce, which a sibling
     # key-0 transaction bumps, so `keyed_concurrency_verdict` denies it and the second
     # pending frame transaction is refused whatever key it carries.
-    second_key = build_frame_tx(chain_id, sender, fresh_key + 1, 0, frames, *fees(), KEY)
+    second_key = build_frame_tx(chain_id, sender, fresh_key + 1, 0, keyed_frames, *fees(), KEY)
     try:
         rpc(RPC, "eth_sendRawTransaction", [second_key])
         check("an EOA sender is denied concurrency", False,
@@ -594,7 +608,7 @@ def main() -> int:
     # with whatever the earlier sections left behind.
     pending_raw = build_frame_tx(
         chain_id, sender_contract, 0x7805_0000, 0,
-        [frame(1, 0x03, sender_contract, 80_000, 0, 0, b"")],
+        [frame(1, 0x03, sender_contract, 80_000, SSTORE_SET_STATE_GAS, 0, b"")],
         *fees(), None, sign=False)
     pending_hash = rpc(RPC, "eth_sendRawTransaction", [pending_raw])
 
@@ -627,7 +641,7 @@ def main() -> int:
     # frame transactions wholesale would answer `true` here and pass every check above.
     unbuilt_raw = build_frame_tx(
         chain_id, sender_contract, 0x7805_0001, 0,
-        [frame(1, 0x03, sender_contract, 80_000, 0, 0, b"")],
+        [frame(1, 0x03, sender_contract, 80_000, SSTORE_SET_STATE_GAS, 0, b"")],
         *fees(), None, sign=False)
     rpc(RPC, "eth_sendRawTransaction", [unbuilt_raw])
     head = rpc(RPC, "eth_getBlockByNumber", ["latest", False])
