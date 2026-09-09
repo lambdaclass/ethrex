@@ -290,7 +290,12 @@ pub fn open_store_with_config(datadir: &Path, config: StoreConfig) -> Result<Sto
 
 pub fn init_blockchain(store: Store, blockchain_opts: BlockchainOptions) -> Arc<Blockchain> {
     info!("Initiating blockchain with levm");
-    Blockchain::new(store, blockchain_opts).into()
+    let blockchain = Blockchain::new(store, blockchain_opts);
+    // The pool is built on first merkleization, which for a node is the first block
+    // it imports. Force it here so a node that cannot spawn the 17 workers fails at
+    // boot rather than panicking inside the merkleizer mid-`newPayload`.
+    blockchain.preinitialize_merkle_pool();
+    blockchain.into()
 }
 
 /// Cause of a fatal-subsystem shutdown, set by [`spawn_fatal`] before it cancels the node.
