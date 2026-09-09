@@ -316,6 +316,23 @@ pub struct TestContext {
     executor: Option<std::thread::JoinHandle<()>>,
 }
 
+impl TestContext {
+    /// Consume the guard and return the inner context, leaving the
+    /// `block_executor` thread detached.
+    ///
+    /// For the rare test that must *own* an [`RpcApiContext`] by value — e.g. to
+    /// embed it in another struct — where holding the guard alongside it would
+    /// mean depending on drop order to avoid a hang. Teardown reverts to being
+    /// asynchronous here, so prefer holding the guard wherever a test can.
+    pub fn into_detached(mut self) -> RpcApiContext {
+        // Dropping the handle detaches the thread; `Drop` then has nothing to join.
+        self.executor = None;
+        self.context
+            .take()
+            .expect("TestContext is only taken apart in Drop")
+    }
+}
+
 impl std::ops::Deref for TestContext {
     type Target = RpcApiContext;
 

@@ -432,7 +432,11 @@ mod tests {
     async fn test_context(ethrex_namespace_allowed: bool) -> RpcApiContext {
         let storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
-        let l1_ctx = ethrex_rpc::test_utils::default_context_with_storage(storage).await;
+        // The L2 context owns its `l1_ctx` by value, so the guard cannot be kept
+        // alive alongside it without depending on drop order.
+        let l1_ctx = ethrex_rpc::test_utils::default_context_with_storage(storage)
+            .await
+            .into_detached();
         let rollup_store = ethrex_storage_rollup::StoreRollup::new(
             std::path::Path::new(""),
             EngineTypeRollup::InMemory,
