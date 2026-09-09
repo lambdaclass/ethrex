@@ -377,10 +377,13 @@ pub trait RpcHandler: Sized {
         };
         let method = req.method.as_str();
 
-        let result = record_async_duration(namespace, method, async move {
-            request.handle(context.clone()).await
-        })
-        .await;
+        let result =
+            record_async_duration(
+                namespace,
+                method,
+                async move { request.handle(context).await },
+            )
+            .await;
 
         let outcome = match &result {
             Ok(_) => RpcOutcome::Success,
