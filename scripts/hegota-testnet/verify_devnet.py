@@ -316,7 +316,8 @@ def txparam_id_check(chain_id, sender_contract) -> None:
     key = 0x8250_2000 + int(rpc(RPC, "eth_getTransactionCount", [sender_contract, "latest"]), 16)
     raw = build_frame_tx(
         chain_id, sender_contract, key, 0,
-        [frame(1, 0x03, sender_contract, 80_000, 0, 0, b""),
+        # A fresh key: the approving frame budgets the keyed-nonce slot it creates.
+        [frame(1, 0x03, sender_contract, 80_000, SSTORE_SET_STATE_GAS, 0, b""),
          # Four slot creations, so four slots' worth of state gas.
          frame(0, 0x00, probe, 400_000, 4 * SSTORE_SET_STATE_GAS, 0, b"")],
         *fees(), None, sign=False)
