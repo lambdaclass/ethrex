@@ -10,7 +10,7 @@ There are several consensus clients and all of them work with ethrex. When choos
 - [Lodestar](https://lodestar.chainsafe.io/)
 - [Nimbus](https://nimbus.team/)
 - [Prysm](https://prysm.offchainlabs.com/)
-- [Teku](https://consensys.io/teku)
+- [Teku](https://docs.teku.consensys.io/)
 - [Grandine](https://docs.grandine.io/)
 
 ## Configuring ethrex
