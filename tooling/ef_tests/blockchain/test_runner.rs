@@ -27,22 +27,13 @@ use ethrex_vm::EvmError;
 use regex::Regex;
 
 thread_local! {
-    /// Per-OS-thread merkleization pool, lazily built on first use, shared by every
-    /// `Blockchain` this thread builds.
-    ///
-    /// `Blockchain` builds its own pool on first merkleization, which is enough for
-    /// harnesses where most instances never merkleize. Every fixture here does:
-    /// `run_ef_test` constructs a `Blockchain` per fixture and calls
-    /// `add_block_pipeline` on it immediately. Without sharing, the ~10k+ blockchain
-    /// fixtures (and ~24k stateless ones) each spawn 17 `merkle-worker` threads, and
-    /// `rayon::ThreadPool`'s `Drop` only signals termination without joining — so the
-    /// live-thread backlog grows faster than the OS reaps it and aborts the macOS CI
-    /// runner. Sharing bounds the cost at `runner_threads * 17`.
-    ///
-    /// The merkle protocol's 16 worker jobs cross-communicate via channels, so each
-    /// pool may have only one concurrent `in_place_scope` caller; keying by
-    /// `thread_local!` makes the calling test-runner thread the natural exclusive
-    /// owner, and `parse_and_execute` drives its fixtures one at a time.
+    /// Per-OS-thread merkleization pool, lazily built on first use. Mirrors the
+    /// pattern used by `tooling/ef_tests/engine` so the ~10k+ blockchain tests
+    /// don't each spawn a fresh 17-thread rayon pool of their own.
+    /// The merkle protocol's 16 worker jobs cross-communicate via channels, so
+    /// each pool may have only one concurrent `in_place_scope` caller; keying by
+    /// `thread_local!` makes the calling test-runner thread the natural
+    /// exclusive owner.
     static MERKLE_POOL: std::cell::OnceCell<Arc<rayon::ThreadPool>> =
         const { std::cell::OnceCell::new() };
 }

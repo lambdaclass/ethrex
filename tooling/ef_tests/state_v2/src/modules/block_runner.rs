@@ -16,16 +16,10 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 thread_local! {
-    /// Per-OS-thread merkleization pool, lazily built on first use. See the matching
-    /// helper in `tooling/ef_tests/blockchain/test_runner.rs` for the reasoning:
-    /// `run_test` builds a `Blockchain` per test case and calls `add_block_pipeline`
-    /// on it immediately, so `Blockchain`'s own lazy pool would spawn 17
-    /// `merkle-worker` threads per case and rayon never joins them on drop.
-    ///
-    /// The merkle protocol requires exclusive ownership of its pool per concurrent
-    /// caller; `add_block_pipeline` is synchronous, so a single OS thread cannot
-    /// have two `in_place_scope` calls live at once, and keying by `thread_local!`
-    /// provides that.
+    /// Per-OS-thread merkleization pool, lazily built on first use. See the
+    /// matching helper in `tooling/ef_tests/blockchain/test_runner.rs` for the
+    /// reasoning; the merkle protocol requires exclusive ownership of its pool
+    /// per concurrent caller, and keying by `thread_local!` provides that.
     static MERKLE_POOL: std::cell::OnceCell<Arc<rayon::ThreadPool>> =
         const { std::cell::OnceCell::new() };
 }

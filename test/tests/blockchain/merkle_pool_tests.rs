@@ -1,22 +1,13 @@
 //! Thread cost of a `Blockchain`'s merkleization pool.
 //!
-//! The pool is 17 OS threads, and `rayon::ThreadPool`'s `Drop` only signals its
-//! workers to terminate — it never joins them. A harness that builds many
-//! short-lived `Blockchain`s therefore accumulates un-reaped threads, and enough of
-//! that backlog crosses the macOS CI runner's per-task thread cap and aborts the
-//! whole test binary with SIGABRT before libtest can report anything.
+//! Two mechanisms keep it bounded, covering opposite cases, so each gets its own
+//! test: the pool is built on first use, so an instance that never merkleizes pays
+//! nothing; and `for_test_harness_with_pool` seeds a shared one, for the ef_tests
+//! runners where every instance merkleizes and laziness saves nothing.
 //!
-//! Two mechanisms keep the cost bounded, and each needs its own test because they
-//! cover opposite cases:
-//!
-//! - `Blockchain::new` / `for_test_harness` build the pool on *first use*, so an
-//!   instance that never merkleizes costs nothing. That covers read-only RPC, which
-//!   is nearly every test in this binary.
-//! - `for_test_harness_with_pool` seeds a *shared* pool, for harnesses where every
-//!   instance merkleizes and laziness therefore buys nothing. The ef_tests runners
-//!   are all of this shape: one `Blockchain` per fixture, `add_block_pipeline`
-//!   called on it immediately, across ~10k+ blockchain and ~5600 engine fixtures.
-
+//! Both matter because rayon only signals a pool's workers on drop and never joins
+//! them, so a harness building many short-lived `Blockchain`s accumulates live
+//! threads faster than the OS reaps them.
 use ethrex_blockchain::{Blockchain, BlockchainOptions};
 use ethrex_storage::{EngineType, Store};
 use std::sync::Arc;
@@ -25,24 +16,22 @@ fn store() -> Store {
     Store::new("", EngineType::InMemory).expect("in-memory store")
 }
 
-/// A fresh `Blockchain` must not pay for 17 threads before it merkleizes.
+/// A fresh `Blockchain` must not build its pool before it merkleizes.
 #[test]
 fn a_new_blockchain_does_not_build_its_merkle_pool_eagerly() {
     let blockchain = Blockchain::new(store(), BlockchainOptions::default());
     assert!(
         !blockchain.merkle_pool_initialized(),
-        "constructing a Blockchain built the 17-thread merkleization pool; only \
-         first merkleization should"
+        "constructing a Blockchain built the merkleization pool; only first \
+         merkleization should"
     );
 }
 
 /// The invariant the ef_tests runners depend on: instances built with a shared pool
 /// use *that* pool and never build their own.
 ///
-/// Without this, each of the ~10k+ fixtures spawns its own 17 `merkle-worker`
-/// threads. The `strong_count` assertion is the load-bearing half — every instance
-/// reporting `merkle_pool_initialized()` would also be true if each had quietly
-/// built a pool of its own.
+/// The `strong_count` assertion is the load-bearing half: every instance reporting
+/// `merkle_pool_initialized()` would also hold if each had quietly built its own.
 #[test]
 fn a_shared_pool_is_used_by_every_instance_that_seeds_from_it() {
     const INSTANCES: usize = 8;
@@ -71,9 +60,9 @@ fn a_shared_pool_is_used_by_every_instance_that_seeds_from_it() {
     assert_eq!(Arc::strong_count(&pool), baseline);
 }
 
-/// `for_test_harness` disables the mempool prewarmer, whose OS thread plus rayon
-/// pool (half the available cores) would otherwise outlive the test that created it.
-/// `default_with_store` is documented as test-only too, so it must agree.
+/// `for_test_harness` disables the mempool prewarmer, whose threads would otherwise
+/// outlive the test that created them. `default_with_store` is documented as
+/// test-only too, so it must agree.
 #[test]
 fn test_constructors_disable_the_mempool_prewarmer() {
     assert!(

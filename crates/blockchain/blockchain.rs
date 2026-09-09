@@ -271,15 +271,11 @@ pub struct Blockchain {
     /// Persistent thread pool for merkleization workers.
     /// 17 threads: 16 shard workers + 1 watcher/coordination.
     ///
-    /// Built on first merkleization rather than at construction: 17 OS threads is
-    /// a steep price for a `Blockchain` that never merkleizes, which is every
-    /// read-only RPC path and therefore nearly every RPC test. Laziness is no help
-    /// to a harness where *every* instance merkleizes, though — those seed the cell
-    /// with a shared pool instead, via [`Self::for_test_harness_with_pool`].
-    ///
-    /// Node startup seeds it eagerly (see [`Self::preinitialize_merkle_pool`]) so a
-    /// pool that cannot be created still fails at boot. Use [`Self::merkle_pool`]
-    /// to read it.
+    /// Built on first merkleization, so a `Blockchain` that never merkleizes pays
+    /// nothing; node startup seeds it eagerly via
+    /// [`Self::preinitialize_merkle_pool`], and harnesses where every instance
+    /// merkleizes seed a shared one via [`Self::for_test_harness_with_pool`].
+    /// Use [`Self::merkle_pool`] to read it.
     merkle_pool: OnceLock<Arc<rayon::ThreadPool>>,
     /// Cache handoff slot from the mempool prewarmer to
     /// `execute_block_pipeline`; see `PrewarmedCache` and `crate::prewarm`.
@@ -571,12 +567,8 @@ impl Blockchain {
 
     /// Builds the merkleization pool now, unless it is already seeded.
     ///
-    /// Node startup calls this so that a pool which cannot be created — 17
-    /// `pthread_create`s, which fail with `EAGAIN` under a thread-limit — panics at
-    /// boot, as it did when `Blockchain::new` built the pool eagerly. Without it a
-    /// lazily-built pool defers that panic into the scoped merkleizer thread during
-    /// the first `newPayload`, where it surfaces as a propagated panic on join
-    /// rather than a clean startup failure.
+    /// Node startup calls this so a pool that cannot be created fails the process at
+    /// boot, rather than panicking inside the merkleizer during the first block.
     pub fn preinitialize_merkle_pool(&self) {
         let _ = self.merkle_pool();
     }
@@ -584,7 +576,7 @@ impl Blockchain {
     /// Whether the merkleization pool has been built yet.
     ///
     /// Exposed so tests can assert that a `Blockchain` which never merkleizes does
-    /// not pay for 17 OS threads.
+    /// not pay for the pool.
     pub fn merkle_pool_initialized(&self) -> bool {
         self.merkle_pool.get().is_some()
     }
@@ -617,8 +609,7 @@ impl Blockchain {
     /// that never merkleizes costs no threads at all.
     ///
     /// Use [`Self::for_test_harness_with_pool`] instead in a harness where every
-    /// instance *does* merkleize: laziness saves nothing there, and a fresh pool
-    /// per instance is what this constructor is trying to avoid.
+    /// instance *does* merkleize, so laziness saves nothing.
     pub fn for_test_harness(store: Store) -> Self {
         Self {
             storage: store,
@@ -640,12 +631,9 @@ impl Blockchain {
     /// Like [`Self::for_test_harness`], but seeds the merkleization pool with an
     /// externally-owned one rather than leaving it to be built on first use.
     ///
-    /// For harnesses where *every* instance merkleizes, so laziness buys nothing:
-    /// the ef_tests runners build one `Blockchain` per fixture and immediately call
-    /// `add_block_pipeline`, so a per-instance pool means `fixtures * 17` OS
-    /// threads instead of `runner_threads * 17`. `rayon::ThreadPool`'s `Drop` only
-    /// signals termination — it never joins — so those threads pile up faster than
-    /// the OS reaps them, which is what aborts the macOS CI runner.
+    /// For the ef_tests runners, which build one `Blockchain` per fixture and
+    /// merkleize with every one, so a per-instance pool would spawn a pool per
+    /// fixture. See their `thread_local!` pools for the accounting.
     ///
     /// SAFETY: the caller must ensure each pool has only one concurrent
     /// `in_place_scope` user at a time. The internal merkle protocol requires all

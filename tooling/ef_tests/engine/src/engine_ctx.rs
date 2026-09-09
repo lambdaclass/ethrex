@@ -2,13 +2,9 @@
 //!
 //! Lives in the test tooling (not in `ethrex-rpc`) because the shared statics
 //! and the thread-local rayon pool below exist solely to amortise per-fixture
-//! cost across the ~5600 fixtures this crate runs. Production has no reason to
-//! share a `SyncManager` across `RpcApiContext`s or to hand out a single merkle
-//! pool per worker thread.
-//!
-//! `Blockchain` builds its merkleization pool on first use, which is enough for
-//! harnesses where most instances never merkleize. Every fixture here drives
-//! `newPayload`, so all ~5600 do — hence the sharing.
+//! cost across the ~5600 fixtures this crate runs. Production has no reason
+//! to share a `SyncManager` across `RpcApiContext`s or to hand out a single
+//! merkle pool per worker thread.
 
 use std::sync::Arc;
 
@@ -37,18 +33,9 @@ thread_local! {
     /// The merkle protocol requires its 16 worker jobs to run concurrently and
     /// communicate via channels, so each pool can have only ONE concurrent
     /// `in_place_scope` caller. Keying by `thread_local!` makes the calling
-    /// tokio worker thread the natural owner of its pool — there are at most
-    /// `num_cpus` worker threads alive, so total OS-thread cost is bounded by
-    /// `num_cpus * 17` instead of `fixture_count * 17`.
-    ///
-    /// LATENT RISK: the pool's user is not the thread that reads this cell. Each
-    /// context merkleizes on its own detached `block_executor` thread, so two
-    /// contexts built on one worker thread share a pool across two executors.
-    /// Safe as the harness drives it — `EngineApiHarness` awaits each
-    /// `newPayload` before moving on, so no block is ever in flight when the next
-    /// fixture starts — but a fixture that drove two harnesses concurrently would
-    /// deadlock. Give such a fixture its own pool via
-    /// `Blockchain::build_merkle_pool`.
+    /// tokio worker thread the natural exclusive owner of its pool — there are
+    /// at most `num_cpus` worker threads alive, so total OS-thread cost is
+    /// bounded by `num_cpus * 17` instead of `fixture_count * 17`.
     static THREAD_LOCAL_MERKLE_POOL: std::cell::OnceCell<Arc<rayon::ThreadPool>> =
         const { std::cell::OnceCell::new() };
 }
