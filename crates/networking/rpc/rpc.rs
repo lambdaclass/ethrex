@@ -1839,7 +1839,7 @@ mod tests {
         let mut context = default_context_with_storage(storage).await;
         context.allowed_namespaces = Arc::new(crate::DEFAULT_HTTP_API.iter().copied().collect());
 
-        let result = map_http_requests(&request, context).await;
+        let result = map_http_requests(&request, context.clone()).await;
         match result {
             Err(RpcErr::MethodNotServedHere { method, reason }) => {
                 assert_eq!(method, "engine_forkchoiceUpdatedV3");
