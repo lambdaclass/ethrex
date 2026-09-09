@@ -109,6 +109,16 @@ again.
   re-verified by fixtures; the Amsterdam, legacy and FOCIL suites still run. The fixture
   runner maps a fixture `nonce` onto key `[0]` so it compiles.
 
+## Local gate of the merge commit
+
+`375c837c5` was built into `ethrex:hegota-upgrade` and run as the three-node kurtosis devnet
+from `fixtures/networks/hegota-testnet.yaml` (locally generated keys; the Dora image has no
+arm64 build, so the explorer was left out). `scripts/hegota-testnet/verify_devnet.py` after
+Hegota activation: 30 of 31 checks pass. The one failure is expected: the TXPARAM probe frame
+reads index `0x11`, the old EIP-8272 reference count that rule 3 drops, so the probe halts.
+The 8272 section still passes because the envelope field is decoded until the canonical-frame
+series replaces it; the FOCIL, 8250 concurrency and state-dimension checks pass unchanged.
+
 ## Follow-ups this merge leaves
 
 - Remove EIP-8312 (`crates/common/types/utxo.rs`, the vault paths in the VM, mempool and
