@@ -271,10 +271,9 @@ pub struct Blockchain {
     /// Persistent thread pool for merkleization workers.
     /// 17 threads: 16 shard workers + 1 watcher/coordination.
     ///
-    /// Built on first merkleization rather than at construction: 17 OS threads is
-    /// a steep price for a `Blockchain` that never merkleizes, which is every
-    /// read-only RPC path and therefore nearly every test. Use [`Self::merkle_pool`]
-    /// to read it.
+    /// Built on first merkleization, not at construction: a `Blockchain` that
+    /// never merkleizes -- every read-only RPC path, and nearly every test --
+    /// should not pay 17 OS threads. Use [`Self::merkle_pool`] to read it.
     merkle_pool: OnceLock<rayon::ThreadPool>,
     /// Cache handoff slot from the mempool prewarmer to
     /// `execute_block_pipeline`; see `PrewarmedCache` and `crate::prewarm`.
@@ -411,12 +410,16 @@ pub struct BlockchainOptions {
     /// transactions with a nonce gap relative to the sender's on-chain nonce
     /// are rejected. Setting to 100 disables the check.
     pub gap_admit_occupancy_threshold: u8,
-    /// If true (default), a `Blockchain` that drives block import may spawn a
-    /// mempool prewarmer. The prewarmer owns an OS thread plus a rayon pool sized
-    /// at half the available cores, and both hold a strong reference to this
-    /// `Blockchain`. Test harnesses that build many short-lived `Blockchain`s set
-    /// this to false: nothing in the test suite exercises prewarming, and the
-    /// threads would otherwise outlive each test (see `for_test_harness`).
+    /// If true (default), a `Blockchain` driving block import may spawn a mempool
+    /// prewarmer: an OS thread plus a rayon pool at half the available cores, both
+    /// holding a strong reference to this `Blockchain`.
+    ///
+    /// Test harnesses set this to false. The prewarmer thread does exit on its own
+    /// once its `PrewarmHandle` drops and closes the channel -- nothing is leaked
+    /// -- but it is never joined, so a large test binary creates such threads
+    /// faster than the OS reaps them. No test exercises prewarming, so not
+    /// spawning it is both cheaper and simpler than plumbing a `JoinHandle`
+    /// through `PrewarmHandle` to join it. See `for_test_harness`.
     pub mempool_prewarm_enabled: bool,
 }
 
