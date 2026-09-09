@@ -271,9 +271,8 @@ pub struct Blockchain {
     /// Persistent thread pool for merkleization workers.
     /// 17 threads: 16 shard workers + 1 watcher/coordination.
     ///
-    /// Built on first merkleization, not at construction: a `Blockchain` that
-    /// never merkleizes -- every read-only RPC path, and nearly every test --
-    /// should not pay 17 OS threads. Use [`Self::merkle_pool`] to read it.
+    /// Initialized independently to reduce costs during tests.
+    /// Use [`Self::merkle_pool`] to read.
     merkle_pool: OnceLock<rayon::ThreadPool>,
     /// Cache handoff slot from the mempool prewarmer to
     /// `execute_block_pipeline`; see `PrewarmedCache` and `crate::prewarm`.
