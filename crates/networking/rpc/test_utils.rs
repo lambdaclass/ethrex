@@ -309,7 +309,9 @@ pub fn all_namespaces_for_tests() -> HashSet<RpcNamespace> {
 ///
 /// Derefs to [`RpcApiContext`], so field access and method calls work unchanged.
 /// Note that cloning the inner context out and storing it past the guard's own
-/// lifetime would keep a sender alive and make the join block forever.
+/// lifetime keeps a sender alive; the join is bounded by
+/// [`TEARDOWN_JOIN_TIMEOUT`] so that mistake panics with an explanation instead
+/// of hanging the test with no output.
 pub struct TestContext {
     /// `Option` so `Drop` can release the context strictly before joining.
     context: Option<RpcApiContext>,
@@ -351,16 +353,51 @@ impl std::ops::DerefMut for TestContext {
     }
 }
 
+/// How long [`TestContext`]'s drop waits for the `block_executor` thread before
+/// giving up and reporting a leaked context.
+///
+/// An idle executor exits as soon as its last sender drops, so the normal wait is
+/// microseconds; this only has to be longer than the slowest in-flight block
+/// import in the suite. Generous, because the cost is paid only when a test is
+/// already broken.
+pub const TEARDOWN_JOIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 impl Drop for TestContext {
     fn drop(&mut self) {
         // Order matters: the executor loop ends when its last sender goes away, so
         // the context has to be released before the join can return.
         drop(self.context.take());
-        if let Some(executor) = self.executor.take() {
-            // A panicking executor thread is reported by whatever test awaited its
-            // result; failing here would mask that with a teardown panic.
-            let _ = executor.join();
+        let Some(executor) = self.executor.take() else {
+            return;
+        };
+        // An unbounded `join` here is a hang, not a failure: a surviving clone of the
+        // inner `RpcApiContext` holds a `block_worker_channel` sender open, so the
+        // executor loop never ends. On the default single-threaded `#[tokio::test]`
+        // runtime it can never end, because a spawned task holding that clone cannot
+        // be polled while this thread blocks. Bound the wait so the mistake reports
+        // itself with a diagnosis instead of a silent timeout.
+        let deadline = std::time::Instant::now() + TEARDOWN_JOIN_TIMEOUT;
+        while !executor.is_finished() {
+            if std::time::Instant::now() >= deadline {
+                // Already unwinding: a second panic would abort the process and bury
+                // the failure the test was actually reporting. Leave the thread
+                // detached and let the real error through.
+                if std::thread::panicking() {
+                    return;
+                }
+                panic!(
+                    "TestContext teardown timed out after {TEARDOWN_JOIN_TIMEOUT:?}: the \
+                     block_executor thread is still alive, so a clone of the inner \
+                     RpcApiContext outlived the guard and is holding its \
+                     block_worker_channel sender open. Keep the guard alive for the whole \
+                     test, or call `into_detached()` if the context must be owned by value."
+                );
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
         }
+        // A panicking executor thread is reported by whatever test awaited its
+        // result; failing here would mask that with a teardown panic.
+        let _ = executor.join();
     }
 }
 
