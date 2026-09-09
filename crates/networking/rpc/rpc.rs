@@ -1881,7 +1881,6 @@ mod tests {
                             "hegotaTime": null,
                             "derivedSlotTime": null,
                             "payerTxparamTime": null,
-                            "utxoFramesTime": null,
                             "aaVopsSlotCount": null,
                             "genesisTimestamp": null,
                             "secondsPerSlot": null,

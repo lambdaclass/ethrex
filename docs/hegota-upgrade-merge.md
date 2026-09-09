@@ -56,9 +56,9 @@ again.
      recheck). It is replaced by the canonical-frame design of `824cbc0b0e` in the next commit
      series, so nothing of it was worth porting. The predeploy install stays.
    - EIP-8312 (UTXO frames). It was never part of the chain's rule set and it touched every
-     conflicted core file; what still compiles is left in place for this merge commit and
-     removed in a follow-up. Until then `check_utxo_admission` reads the EIP's constant
-     instead of the dropped node option, and `UtxoNotYetSpendable` stays as an error variant.
+     conflicted core file; what still compiled was left in place for the merge commit and
+     removed in the commit that follows it (the type module, the vault predeploy and its
+     block-end openings roots, the frame mode, the admission lane, the config switch).
 
 ## Hunks resolved by hand (everything else was a clean side pick)
 
@@ -121,8 +121,6 @@ series replaces it; the FOCIL, 8250 concurrency and state-dimension checks pass 
 
 ## Follow-ups this merge leaves
 
-- Remove EIP-8312 (`crates/common/types/utxo.rs`, the vault paths in the VM, mempool and
-  builder, its tests, the two UTXO mempool tests kept in `mempool_tests.rs`).
 - Implement EIP-8272 at `824cbc0b0e` (canonical frame) — replaces what rule 3 dropped.
 - Implement EIP-8250 at `94f5a3e3c1` (state-gas first use) inside `consume_keyed_nonces`.
 - Re-pin EIP-8369 to `51dc7b939a`; verify `codeFlag` treats a 7702 delegation as code.

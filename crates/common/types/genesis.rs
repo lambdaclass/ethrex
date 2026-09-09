@@ -337,28 +337,6 @@ pub struct ChainConfig {
     #[serde(default)]
     pub payer_txparam_time: Option<u64>,
 
-    /// EIP-8312 (UTXO frames) activation timestamp.
-    ///
-    /// EIP-8312 is a Draft whose fork assignment is undecided upstream, so it
-    /// gets its own activation timestamp rather than riding `Fork::Hegota` like
-    /// the rest of the frame-transaction family (EIP-8141/8250/8272). This
-    /// also makes a state-preserving in-place upgrade possible: a FUTURE
-    /// timestamp leaves every already-produced block re-executing identically
-    /// (no vault account, no openings-root writes, no UTXO frame mode), which is
-    /// what lets the running devnet adopt EIP-8312 without a new genesis.
-    ///
-    /// `None` = EIP-8312 is not scheduled on this chain (the default: every
-    /// existing network and fixture). Setting it also requires Hegota to be
-    /// scheduled, because UTXO frames are EIP-8141 frame transactions; see
-    /// [`ChainConfig::is_utxo_frames_activated`].
-    ///
-    /// The Hegotá testnet leaves this UNSET, which is what keeps EIP-8312 out of
-    /// its rule set while the code stays in the tree: frame mode 5 is rejected
-    /// by static validation, no vault account is installed, and no block-end
-    /// openings root is written.
-    #[serde(default)]
-    pub utxo_frames_time: Option<u64>,
-
     /// EIP-8369 `AA_VOPS_SLOT_COUNT`: how many leading storage slots of `sender`
     /// and `payer` sit inside the FOCIL Profile 2 validation surface. A read
     /// outside the surface makes a transaction ineligible for inclusion-list
@@ -497,32 +475,6 @@ impl ChainConfig {
     pub fn is_payer_txparam_activated(&self, block_timestamp: u64) -> bool {
         self.payer_txparam_time
             .is_some_and(|time| time <= block_timestamp)
-    }
-
-    /// Whether EIP-8312 (UTXO frames) is active at `block_timestamp`.
-    ///
-    /// Requires both its own activation timestamp (see
-    /// [`ChainConfig::utxo_frames_time`]) and Hegota, because a UTXO frame is a
-    /// frame inside an EIP-8141 frame transaction — a chain that scheduled
-    /// EIP-8312 without EIP-8141 could never carry one.
-    ///
-    /// This is the single predicate every EIP-8312 gate MUST use: frame-mode
-    /// admissibility, execution dispatch, vault provisioning, the openings-root
-    /// block-end operation, and mempool admission. Two gate sites resolving
-    /// activation from different expressions (a config-field check on one side, a
-    /// fork-ordinal check on the other) has already caused a
-    /// consensus-vs-admission stall on this codebase; do not reintroduce it.
-    /// The Hegotá half is resolved through the fork ordinal, not
-    /// `is_hegota_activated`. The two agree only while Hegotá is the newest fork:
-    /// once a successor exists, a chain that schedules it without an explicit
-    /// `hegotaTime` has `fork >= Hegota` while the field is unset, so a field-based
-    /// gate diverges from execution. Every other admission gate on this branch was
-    /// converted to the ordinal for exactly that reason; this one must not be the
-    /// remaining exception.
-    pub fn is_utxo_frames_activated(&self, block_timestamp: u64) -> bool {
-        self.utxo_frames_time
-            .is_some_and(|time| time <= block_timestamp)
-            && self.get_fork(block_timestamp) >= Fork::Hegota
     }
 
     /// EIP-8369 `AA_VOPS_SLOT_COUNT`, falling back to

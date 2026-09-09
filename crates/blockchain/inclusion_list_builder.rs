@@ -21,7 +21,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use ethrex_common::{
     Address, H256, U256,
     constants::EMPTY_KECCAK_HASH,
-    types::{MempoolTransaction, Transaction, utxo_vault},
+    types::{MempoolTransaction, Transaction},
 };
 use rustc_hash::FxHashMap;
 
@@ -218,15 +218,9 @@ impl InclusionListBuilder {
                 Err(_) => continue,
             };
 
-            // EIP-8312: every UTXO spend shares the vault sender, so per-sender
-            // limits there are network-wide limits. Their conflict domain is the
-            // input-index set, not the sender, and the 8 KiB list cap already
-            // bounds how many reach the list.
-            let is_vault_sender = sender == utxo_vault();
-
             let (mut linear, non_linear): (Vec<_>, Vec<_>) = sender_txs
                 .into_iter()
-                .partition(|mtx| is_linear_nonce_domain(mtx.transaction()) && !is_vault_sender);
+                .partition(|mtx| is_linear_nonce_domain(mtx.transaction()));
 
             // Sort by ascending nonce. The mempool `Ord` ranks by tip, not
             // nonce, so do not rely on it for the per-sender cap.
@@ -281,10 +275,7 @@ impl InclusionListBuilder {
             }
 
             for mtx in non_linear {
-                // The per-sender cap still bounds one sender's share of the
-                // list, but a vault-sender spend belongs to whoever built it,
-                // so it is exempt.
-                if !is_vault_sender && taken >= self.per_sender_cap {
+                if taken >= self.per_sender_cap {
                     break;
                 }
                 if !is_il_eligible_shape(mtx.transaction()) {

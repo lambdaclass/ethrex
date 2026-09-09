@@ -64,10 +64,9 @@ block-level access lists, EIP-8037 state-creation gas and EIP-8282 builder execu
 requests. A client that does not implement Amsterdam cannot follow this chain at any
 height.
 
-Two EIPs are present in the ethrex binary but **not** part of this chain's rule set:
-EIP-8312 (UTXO frames) is inert because `utxoFramesTime` is unset, and EIP-7906
-(transaction assertions) is deleted from the branch entirely. Neither should be
-implemented.
+Two EIPs that once shared this codebase are **not** part of this chain's rule set and
+are deleted from the branch: EIP-8312 (UTXO frames) and EIP-7906 (transaction
+assertions). Neither should be implemented.
 
 ## Fork schedule
 

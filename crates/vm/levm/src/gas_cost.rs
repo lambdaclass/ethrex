@@ -96,56 +96,6 @@ const _: () = assert!(
 const _: () =
     assert!(RECENT_ROOT_REFERENCE_GAS == ethrex_common::types::FRAME_TX_RECENT_ROOT_REFERENCE_GAS);
 
-// EIP-8312 UTXO frames. Every constant is a sum of EIP-8038 / EIP-2780 / EIP-8037
-// primitives rather than a bespoke number, so a future repricing flows through.
-// Frame transactions exist only from Hegota, which is after Amsterdam, so the
-// raised EIP-8038 values always apply and none of these needs a fork parameter.
-
-/// Per UTXO frame: the `SLOT_NEXT_INDEX` update (cold read + write).
-///
-/// EIP-8312 publishes this as an absolute total, and its Rationale decomposes it over the
-/// EIP-8038 draft that priced a cold storage access at 3000 (3000 + 10_000 = 13_000).
-/// The v8.1.0 schedule this base implements prices that access at 2100, so the
-/// decomposition now yields 12_100. What a second client implements is the EIP's
-/// published total, so the total is pinned and the stale decomposition is recorded for
-/// the author rather than followed.
-pub const GAS_UTXO_FRAME: u64 = 13_000;
-
-/// Per input: the openings-root read, the spent-bit word write (both charged at
-/// the cold rate unconditionally, so the price is independent of third-party
-/// warmth), plus the keccak of the 80-byte leaf preimage (3 words). Pinned to the
-/// EIP's published total for the same reason as `GAS_UTXO_FRAME`; the v8.1.0
-/// decomposition gives 14_248.
-pub const GAS_UTXO_INPUT: u64 = 16_048;
-
-/// Per proof sibling: the keccak of one 64-byte interior node (2 words).
-pub const GAS_UTXO_SIBLING: u64 = KECCAK25_STATIC + 2 * KECCAK25_DYNAMIC_BASE;
-
-/// Per created UTXO output: the `UtxoCreated` log (LOG3 with 64 bytes of data).
-pub const GAS_UTXO_OUT: u64 = LOGN_STATIC + 3 * LOGN_DYNAMIC_BASE + 64 * LOGN_DYNAMIC_BYTE_BASE;
-
-/// Per account output: the marginal recipient cost of a value transfer under
-/// EIP-2780, plus its EIP-7708 transfer log.
-/// The v8.1.0 `TX_VALUE_COST` absorbs the transfer log that the earlier schedule priced
-/// separately (4244 + 1756 = 6000), so the sum still reproduces the EIP's 9000.
-pub const GAS_UTXO_ACCOUNT_OUT: u64 = COLD_ACCOUNT_ACCESS_AMSTERDAM + TX_VALUE_COST_AMSTERDAM;
-
-// The EIP publishes these totals; assert our derivations reproduce them exactly,
-// so a primitive changing under us is a compile error rather than a silent
-// consensus divergence.
-const _: () = assert!(GAS_UTXO_FRAME == 13_000);
-const _: () = assert!(GAS_UTXO_INPUT == 16_048);
-const _: () = assert!(GAS_UTXO_SIBLING == 42);
-const _: () = assert!(GAS_UTXO_OUT == 2_012);
-const _: () = assert!(GAS_UTXO_ACCOUNT_OUT == 9_000);
-// ethrex-common carries copies for mempool/admission math (it cannot depend on
-// levm); assert the two agree so a repricing cannot silently diverge them.
-const _: () = assert!(GAS_UTXO_FRAME == ethrex_common::types::GAS_UTXO_FRAME);
-const _: () = assert!(GAS_UTXO_INPUT == ethrex_common::types::GAS_UTXO_INPUT);
-const _: () = assert!(GAS_UTXO_SIBLING == ethrex_common::types::GAS_UTXO_SIBLING);
-const _: () = assert!(GAS_UTXO_OUT == ethrex_common::types::GAS_UTXO_OUT);
-const _: () = assert!(GAS_UTXO_ACCOUNT_OUT == ethrex_common::types::GAS_UTXO_ACCOUNT_OUT);
-
 pub fn framedatacopy(
     new_memory_size: usize,
     current_memory_size: usize,

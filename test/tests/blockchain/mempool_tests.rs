@@ -5022,16 +5022,6 @@ async fn admission_denies_keyed_concurrency_when_the_prefix_reads_sender_storage
     );
 }
 
-// ---------------------------------------------------------------------------
-// EIP-8312: per-UTXO-index pool identity.
-//
-// A vault-sender transaction has no meaningful sender or nonce, so its conflict
-// domain is its input-index set — global across senders, because two spends of
-// one index conflict regardless of who submitted them. The mempool's per-index
-// rule is the ONLY thing that stops two same-index spends being pooled at once
-// (the spent bit is not set until inclusion).
-// ---------------------------------------------------------------------------
-
 /// `add_transaction` queues the tx for P2P broadcast (the default path).
 /// `add_transaction_no_broadcast` does not, modeling the private-mempool
 /// flag's effect on RPC-submitted transactions: they're available locally

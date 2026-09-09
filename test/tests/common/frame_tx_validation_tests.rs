@@ -553,7 +553,7 @@ fn atomic_batch_flag_on_verify_frame_is_invalid() {
         },
     ];
     assert!(
-        tx.validate_static_constraints(false)
+        tx.validate_static_constraints()
             .unwrap_err()
             .contains("atomic batch flag on a VERIFY frame")
     );
@@ -585,7 +585,7 @@ fn atomic_batch_followed_by_verify_frame_is_invalid() {
         },
     ];
     assert!(
-        tx.validate_static_constraints(false)
+        tx.validate_static_constraints()
             .unwrap_err()
             .contains("atomic batch flag followed by a VERIFY frame")
     );
@@ -597,13 +597,13 @@ fn static_validation_rejects_approve_execution_with_third_party_target() {
     let mut tx = make_test_frame_tx();
     tx.frames[0].target = Some(Address::from_low_u64_be(0xBEEF));
     assert!(
-        tx.validate_static_constraints(false)
+        tx.validate_static_constraints()
             .unwrap_err()
             .contains("APPROVE_EXECUTION requires an empty target or tx.sender"),
     );
     // An empty target resolves to tx.sender, so it is allowed.
     tx.frames[0].target = None;
-    assert!(tx.validate_static_constraints(false).is_ok());
+    assert!(tx.validate_static_constraints().is_ok());
 }
 
 #[test]
@@ -612,14 +612,14 @@ fn static_validation_rejects_wrong_blob_hash_version() {
     tx.blob_versioned_hashes = vec![H256([0xABu8; 32])];
     tx.max_fee_per_blob_gas = U256::from(1u64);
     assert!(
-        tx.validate_static_constraints(false)
+        tx.validate_static_constraints()
             .unwrap_err()
             .contains("wrong version byte"),
     );
     let mut hash = [0xABu8; 32];
     hash[0] = VERSIONED_HASH_VERSION_KZG;
     tx.blob_versioned_hashes = vec![H256(hash)];
-    assert!(tx.validate_static_constraints(false).is_ok());
+    assert!(tx.validate_static_constraints().is_ok());
 }
 
 #[test]
@@ -628,7 +628,7 @@ fn static_validation_rejects_blob_fee_without_blobs() {
     assert!(tx.blob_versioned_hashes.is_empty());
     tx.max_fee_per_blob_gas = U256::from(1u64);
     assert!(
-        tx.validate_static_constraints(false)
+        tx.validate_static_constraints()
             .unwrap_err()
             .contains("max_fee_per_blob_gas must be zero"),
     );
@@ -647,13 +647,13 @@ fn static_validation_rejects_more_blobs_than_the_per_transaction_limit() {
     hash[0] = VERSIONED_HASH_VERSION_KZG;
     tx.blob_versioned_hashes = vec![H256(hash); MAX_BLOBS_PER_TX];
     assert!(
-        tx.validate_static_constraints(false).is_ok(),
+        tx.validate_static_constraints().is_ok(),
         "{MAX_BLOBS_PER_TX} blobs are within the per-transaction limit"
     );
 
     tx.blob_versioned_hashes.push(H256(hash));
     assert!(
-        tx.validate_static_constraints(false)
+        tx.validate_static_constraints()
             .unwrap_err()
             .contains(&format!("Blob count must not exceed {MAX_BLOBS_PER_TX}")),
     );
@@ -698,13 +698,13 @@ fn max_gas_takes_the_calldata_floor_when_it_exceeds_the_standard_limit() {
     tx.frames[1].state_gas_limit = 0;
     assert!(tx.calldata_floor_total() > tx.standard_gas_limit());
     assert_eq!(tx.max_gas(), tx.calldata_floor_total());
-    assert!(tx.validate_static_constraints(false).is_ok());
+    assert!(tx.validate_static_constraints().is_ok());
 
     // With enough frame gas to outweigh the floor, `max_gas` is the standard limit.
     tx.frames[1].gas_limit = 100_000;
     assert!(tx.standard_gas_limit() > tx.calldata_floor_total());
     assert_eq!(tx.max_gas(), tx.standard_gas_limit());
-    assert!(tx.validate_static_constraints(false).is_ok());
+    assert!(tx.validate_static_constraints().is_ok());
 }
 
 // ---------------------------------------------------------------------------

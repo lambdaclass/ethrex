@@ -4,8 +4,7 @@
 # Active rule set: EIP-8141 (frame transactions), EIP-8250 (keyed nonces),
 # EIP-8272 (recent roots), EIP-7805 (FOCIL), EIP-8369 (FOCIL eligibility, no
 # activation switch of its own). All activate together at the single Hegotá fork,
-# which the consensus layer calls `heze`. EIP-7906 is not on this chain.
-# EIP-8312 is present in the binary but inert: `utxoFramesTime` is unset.
+# which the consensus layer calls `heze`. EIP-7906 and EIP-8312 are not on this chain.
 #
 # Launch:
 #   make localnet ENCLAVE=hegota-testnet \

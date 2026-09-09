@@ -698,33 +698,6 @@ pub struct VM<'a> {
     /// whether an Amsterdam precompile-halt must roll the charge back (the
     /// recipient never materializes on halt).
     pub value_new_account_charged: bool,
-    /// EIP-8312: vault storage writes staged for the transaction-commit flush —
-    /// slot -> post-value on `UTXO_VAULT`. Currently the spent bits set by UTXO
-    /// frames, whose spec requires that "a later frame failure cannot undo them"
-    /// (the same durability EIP-8250 mandates for consumed keyed nonces).
-    ///
-    /// Durability is achieved by NOT writing through the journal during the frame
-    /// loop: staged writes are invisible to `CallFrameBackup` and to the
-    /// atomic-batch unroll, because at the time those restore the cache nothing
-    /// has been written to it. The flush happens once, after the
-    /// loop and after the tx-validity decision, through the ordinary journaled
-    /// path — so the writes DO land in `tx_level_backup` and therefore remain
-    /// reversible by `undo_last_tx` when a builder drops the transaction, and the
-    /// BAL records them exactly once with no checkpoint able to demote them.
-    ///
-    /// A `BTreeMap` so the flush order (and hence BAL record order) is
-    /// deterministic across executions and execution paths.
-    pub durable_vault_writes: std::collections::BTreeMap<H256, U256>,
-    /// EIP-8312: state gas owed for durable writes, accumulated separately from
-    /// `state_gas_used` and folded into it after the frame loop.
-    ///
-    /// The frame loop resets `state_gas_used` to a frame's or batch's entry
-    /// value when that scope fails, on the premise "the state changes were
-    /// reverted, so no state grew". Durable writes falsify that premise: the
-    /// state grew and stays grown. Keeping their gas here exempts it from those
-    /// resets, so the transaction — and through it the block's EIP-8037 state
-    /// dimension — still bills for the growth.
-    pub durable_state_gas: u64,
     /// EIP-8037: `current_call_frame.state_gas_used_at_entry` captured by
     /// `enter_prepare_region` right before the atomic prepare region (EIP-7702
     /// auth + prepare-dispatch charges) begins. `fail_prepare_region` rewinds the
@@ -1124,8 +1097,6 @@ impl<'a> VM<'a> {
             state_gas_auth_base,
             intrinsic_state_gas: 0,
             value_new_account_charged: false,
-            durable_vault_writes: std::collections::BTreeMap::new(),
-            durable_state_gas: 0,
             prep_baseline_state_gas: 0,
             prep_baseline_reservoir: 0,
             prep_baseline_state_gas_spill: 0,
@@ -1687,93 +1658,6 @@ impl<'a> VM<'a> {
         Ok(report)
     }
 
-    /// EIP-8312: allocate the next global UTXO index from the vault's counter.
-    ///
-    /// Settlement-created UTXOs draw from the SAME counter the deposit bytecode
-    /// uses, so indices are globally unique and strictly monotonic across both
-    /// creation channels — which is what lets the block-end openings tree order a
-    /// block's leaves by index and keeps the spent bitfield collision-free.
-    ///
-    /// This is an ordinary journaled write: unlike a spent bit it has no
-    /// durability requirement, because settlement only runs for a transaction
-    /// that is already committed.
-    fn allocate_utxo_index(&mut self, vault: Address) -> Result<u64, VMError> {
-        let slot =
-            ethrex_common::H256(U256::from(ethrex_common::types::SLOT_NEXT_INDEX).to_big_endian());
-        let _ = self.db.get_account(vault)?;
-        let current = self.get_storage_value(vault, slot)?;
-        let next = current
-            .checked_add(U256::one())
-            .ok_or(VMError::Internal(InternalError::Overflow))?;
-        let slot_key = U256::from_big_endian(&slot.0);
-        self.update_account_storage(vault, slot, slot_key, next, current)?;
-        // The counter is bounded by the index space the leaf encoding and the
-        // spent bitfield are defined over.
-        u64::try_from(current).map_err(|_| VMError::Internal(InternalError::Overflow))
-    }
-
-    /// EIP-8312: read a vault storage slot through the durable-write overlay.
-    ///
-    /// A staged write is visible to every later read in the same transaction —
-    /// a second UTXO frame spending an index in the same 256-index word MUST see
-    /// the first frame's bit set, or one transaction could double-spend. Reads
-    /// that miss the overlay fall through to the ordinary storage path, so they
-    /// warm the slot and are BAL-recorded like any other read (which is what
-    /// keeps EIP-8025 witnesses sufficient).
-    pub fn read_vault_slot(&mut self, slot: H256) -> Result<U256, VMError> {
-        if let Some(staged) = self.durable_vault_writes.get(&slot) {
-            return Ok(*staged);
-        }
-        let vault = ethrex_common::types::utxo_vault();
-        // Ensure the vault account is cached before touching its storage.
-        let _ = self.db.get_account(vault)?;
-        Ok(self.get_storage_value(vault, slot)?)
-    }
-
-    /// EIP-8312: stage a durable vault write. Not applied to the cache here —
-    /// see [`VM::flush_durable_vault_writes`] for why that is the mechanism that
-    /// makes the write survive frame and batch reverts.
-    pub fn stage_durable_vault_write(&mut self, slot: H256, value: U256) {
-        self.durable_vault_writes.insert(slot, value);
-    }
-
-    /// EIP-8312: apply every staged vault write through the ordinary journaled
-    /// path, exactly once, after the frame loop and after the transaction has
-    /// been found valid.
-    ///
-    /// Ordering is the whole design. Every scope-revert the frame loop performs
-    /// (per-frame failure, atomic-batch unroll) restores the cache from a
-    /// backup captured before this point, so it cannot undo a
-    /// write that has not been made yet. Conversely, going through
-    /// `update_account_storage` here means the write is recorded in the live
-    /// call-frame backup, which is absorbed into `tx_level_backup` — so a builder
-    /// that later drops the transaction (`undo_last_tx`) still reverts it, and
-    /// the BAL records it once with no checkpoint left that could demote it back
-    /// to a read.
-    pub fn flush_durable_vault_writes(&mut self) -> Result<(), VMError> {
-        if self.durable_vault_writes.is_empty() {
-            return Ok(());
-        }
-        let vault = ethrex_common::types::utxo_vault();
-        // Ensure the vault account is cached before touching its storage.
-        let _ = self.db.get_account(vault)?;
-        let staged = std::mem::take(&mut self.durable_vault_writes);
-        for (slot, value) in staged {
-            let current = self.get_storage_value(vault, slot)?;
-            let slot_key = U256::from_big_endian(&slot.0);
-            self.update_account_storage(vault, slot, slot_key, value, current)?;
-        }
-        Ok(())
-    }
-
-    /// EIP-8312: drop every staged vault write without applying it. Used when the
-    /// transaction turns out invalid: nothing was written, so this only releases
-    /// the staging area, but it keeps the invariant explicit at the call site.
-    pub fn discard_durable_vault_writes(&mut self) {
-        self.durable_vault_writes.clear();
-        self.durable_state_gas = 0;
-    }
-
     /// Execute a frame transaction (EIP-8141).
     /// This bypasses the normal prepare/finalize hooks and orchestrates per-frame execution.
     /// EIP-8250: the current sequence value for `(sender, nonce_key)`. Key 0 is
@@ -1890,7 +1774,7 @@ impl<'a> VM<'a> {
         // The reason is carried through: a client that rejects the transaction for the
         // right reason but reports the wrong one is indistinguishable from a client that
         // rejected it by accident (see the mapper note above `TxValidationError`).
-        if let Err(e) = frame_tx.validate_static_constraints(self.env.config.utxo_frames_active) {
+        if let Err(e) = frame_tx.validate_static_constraints() {
             return Err(VMError::TxValidation(
                 crate::errors::TxValidationError::InvalidFrameTransactionFormat(e),
             ));
@@ -2079,9 +1963,6 @@ impl<'a> VM<'a> {
         // EIP-8141: how many cross-frame state-gas refills had been recorded when the
         // batch opened. Everything after that index is a refill the batch caused, and an
         // unroll owes those back to the frames they were taken from.
-        // EIP-8312: settlements produced by UTXO frames, applied after the loop.
-        let mut utxo_settlements: Vec<crate::opcode_handlers::frame_tx::UtxoSettlement> =
-            Vec::new();
         let mut skip_until_batch_end: Option<usize> = None; // skip remaining frames in a failed batch
 
         // Execute frames sequentially
@@ -2190,39 +2071,6 @@ impl<'a> VM<'a> {
             ctx.current_frame_index = frame_idx;
             ctx.approve_called_in_current_frame = false;
 
-            // EIP-8312: a UTXO frame executes no EVM code. Dispatch it natively
-            // here, before any target or delegation resolution — the vault
-            // carries real runtime code, so a target-based interception would
-            // make semantics depend on code that must never run for a spend.
-            if frame.execution_mode() == Some(FrameMode::Utxo) {
-                match crate::opcode_handlers::frame_tx::execute_utxo_frame(self, frame, frame_idx)?
-                {
-                    Some((frame_gas, settlement)) => {
-                        utxo_settlements.push(settlement);
-                        total_gas_used = total_gas_used.saturating_add(frame_gas);
-                        let ctx = self.frame_tx_context.as_mut().ok_or(VMError::Internal(
-                            InternalError::Custom("missing frame tx context".to_string()),
-                        ))?;
-                        // A UTXO frame either succeeds or invalidates the whole
-                        // transaction, so its receipt entry is always success.
-                        // Settlement appends its logs after the loop.
-                        ctx.frame_results.push((
-                            ethrex_common::types::FRAME_RECEIPT_STATUS_SUCCESS,
-                            frame_gas,
-                            0,
-                            Vec::new(),
-                        ));
-                    }
-                    None => {
-                        // Any failed check invalidates the transaction, as with a
-                        // reverting VERIFY frame.
-                        tx_invalid = Some("EIP-8312 UTXO frame check failed".to_string());
-                        break;
-                    }
-                }
-                continue;
-            }
-
             let target = frame.target.unwrap_or(sender);
 
             // Determine caller and static mode per frame mode
@@ -2242,12 +2090,10 @@ impl<'a> VM<'a> {
                     }
                     (sender, false)
                 }
-                // EIP-8312: a UTXO frame executes no EVM code; it is dispatched
-                // natively (no caller, no target, no call frame) — see the UTXO
-                // handler. Reserved modes were rejected by static validation, so
-                // `None` here is unreachable; treat it as tx-invalid defensively
-                // rather than falling through to an EVM call.
-                Some(FrameMode::Utxo) | None => {
+                // Reserved modes were rejected by static validation, so `None` here
+                // is unreachable; treat it as tx-invalid defensively rather than
+                // falling through to an EVM call.
+                None => {
                     tx_invalid = Some(format!(
                         "frame {frame_idx} declares a reserved execution mode"
                     ));
@@ -2891,78 +2737,19 @@ impl<'a> VM<'a> {
             // substate revert is needed.
             tx_level_backup.absorb(&self.current_call_frame.call_frame_backup);
             crate::utils::restore_cache_state(self.db, tx_level_backup)?;
-            // EIP-8312: an invalid transaction is not included, so its spent bits
-            // must leave no trace. They were only ever staged (never written to
-            // the cache), so dropping the staging area is the whole rollback.
-            self.discard_durable_vault_writes();
             return Err(VMError::TxValidation(
                 crate::errors::TxValidationError::InvalidFrameTransaction(reason),
             ));
         }
 
-        // EIP-8312 transaction commit. The transaction is valid and will be
-        // included, so the spent bits staged by its UTXO frames become real here
-        // — after every scope-revert the frame loop could perform, and through
-        // the journaled path so `undo_last_tx` and the BAL still see them.
-        // (Settlement of UTXO outputs will run in this same window.)
-        self.flush_durable_vault_writes()?;
-        // EIP-8037: fold in the state gas those durable writes owe. It was kept
-        // out of `state_gas_used` for the duration of the loop precisely so the
-        // per-frame, per-batch, and body resets could not drop it — the state
-        // they grew is still there.
-        if self.durable_state_gas > 0 {
-            let durable = i64::try_from(self.durable_state_gas).map_err(|_| {
-                VMError::Internal(InternalError::Custom(
-                    "durable state gas exceeds i64::MAX".to_string(),
-                ))
-            })?;
-            self.state_gas_used = self.state_gas_used.saturating_add(durable);
-            self.durable_state_gas = 0;
-        }
-
         // Take ownership of frame context
-        let mut ctx =
-            self.frame_tx_context
-                .take()
-                .ok_or(VMError::Internal(InternalError::Custom(
-                    "missing frame tx context".to_string(),
-                )))?;
+        let ctx = self
+            .frame_tx_context
+            .take()
+            .ok_or(VMError::Internal(InternalError::Custom(
+                "missing frame tx context".to_string(),
+            )))?;
         let payer = ctx.payer_address.unwrap_or(sender);
-
-        // EIP-8312 settlement, phase 1 of 2: return the unused
-        // `GAS_NEW_ACCOUNT_STATE` reserves. A UTXO frame charged the full
-        // new-account reserve for every account output, because whether the
-        // recipient exists is third-party state that frame validation must not
-        // read; here, where reading it is safe, the reserve comes back for
-        // recipients that already exist. Existence is evaluated BEFORE any of this
-        // transaction's settlement transfers are applied, so a recipient that only
-        // this transaction creates does not look pre-existing.
-        //
-        // This runs before the gas math below because the EIP requires the returns
-        // to be finalized before gas used, the fee, and the refund are computed —
-        // the fee feeds each spend's change output, so the order is load-bearing.
-        let mut reserve_returned: u64 = 0;
-        if !utxo_settlements.is_empty() {
-            for settlement in &utxo_settlements {
-                for (recipient, _) in &settlement.account_outs {
-                    // `account_exists` per EIP-8037 is `is_account_alive`, i.e.
-                    // exists && non-empty — the same predicate the new-account
-                    // charge itself uses (`!is_empty()` in `generic_create`), so a
-                    // charge and its return can never disagree about existence.
-                    if !self.db.get_account(*recipient)?.is_empty() {
-                        reserve_returned =
-                            reserve_returned.saturating_add(settlement.new_account_reserve_each);
-                    }
-                }
-            }
-            if reserve_returned > 0 {
-                total_gas_used = total_gas_used.saturating_sub(reserve_returned);
-                // The returned portion is state gas, so the transaction's state
-                // dimension must shed it too or block accounting over-bills.
-                let returned = i64::try_from(reserve_returned).unwrap_or(i64::MAX);
-                self.state_gas_used = self.state_gas_used.saturating_sub(returned);
-            }
-        }
 
         // EIP-8141 gas finalization. EIP-3529 storage refunds accumulate into a
         // single transaction-scoped counter across frames — `substate.refunded_gas`,
@@ -3064,90 +2851,6 @@ impl<'a> VM<'a> {
             self.increase_account_balance(self.env.coinbase, coinbase_fee)?;
         }
 
-        // EIP-8312 settlement, phase 2 of 2: pay out each UTXO frame's outputs, in
-        // frame order. This cannot fail — frame execution proved every spend
-        // solvent (its inputs cover its signed outputs, and for a self-funded
-        // spend the transaction's maximum cost too).
-        //
-        // The fee is only known now, which is why the change output exists: it is
-        // signed with value zero and receives `spent - signed_out - fee` here.
-        // `owed` is what the payer actually pays, so for a self-funded spend
-        // (payer == vault) that is exactly the fee the change must absorb.
-        if !utxo_settlements.is_empty() {
-            let vault = ethrex_common::types::utxo_vault();
-            let settlements = std::mem::take(&mut utxo_settlements);
-            for settlement in settlements {
-                let fee = if settlement.self_funded {
-                    owed
-                } else {
-                    U256::zero()
-                };
-                // Cannot underflow: execution asserted spent >= signed_out (+ the
-                // maximum cost when self-funded), and owed <= max_cost.
-                let change_value = settlement
-                    .spent_value
-                    .checked_sub(settlement.signed_out)
-                    .and_then(|v| v.checked_sub(fee))
-                    .ok_or(VMError::Internal(InternalError::Underflow))?;
-
-                let utxo_out_count = settlement.utxo_outs.len();
-                let outputs: Vec<(Address, U256)> = settlement
-                    .utxo_outs
-                    .iter()
-                    .chain(settlement.account_outs.iter())
-                    .copied()
-                    .collect();
-
-                let mut settlement_logs: Vec<Log> = Vec::new();
-                for (j, (recipient, signed_value)) in outputs.into_iter().enumerate() {
-                    let value = if j == settlement.change_index {
-                        change_value
-                    } else {
-                        signed_value
-                    };
-                    if j < utxo_out_count {
-                        // Create a new UTXO: allocate the next global index from
-                        // the vault's counter (the same counter the deposit path
-                        // uses, so indices are globally unique) and emit the
-                        // creation log. The opening is never stored; this log is
-                        // its only record, and the block-end openings root is
-                        // built from it.
-                        let index = self.allocate_utxo_index(vault)?;
-                        settlement_logs.push(crate::utils::create_utxo_created_log(
-                            vault,
-                            settlement.source,
-                            recipient,
-                            index,
-                            value,
-                        ));
-                    } else {
-                        // Credit an account directly out of the vault's balance.
-                        // A zero-value credit creates no account (EIP-161), which
-                        // is why the reserve for a non-existent recipient of a
-                        // zero-value change output is still consumed above.
-                        if !value.is_zero() {
-                            self.decrease_account_balance(vault, value)?;
-                            self.increase_account_balance(recipient, value)?;
-                            // EIP-7708: the transfer emits its own log, whose cost
-                            // is priced into GAS_UTXO_ACCOUNT_OUT.
-                            settlement_logs.push(crate::utils::create_eth_transfer_log(
-                                vault, recipient, value,
-                            ));
-                        }
-                    }
-                }
-
-                // Attribute the settlement's logs to the frame that produced it,
-                // per the EIP ("logs emitted by settlement are appended to the
-                // UTXO frame's receipt entry"), and to the transaction aggregate
-                // that the header and receipt blooms are derived from.
-                all_logs.extend(settlement_logs.iter().cloned());
-                if let Some(entry) = ctx.frame_results.get_mut(settlement.frame_index) {
-                    entry.3.extend(settlement_logs);
-                }
-            }
-        }
-
         // EIP-8141: finalize self-destructs at tx end, mirroring the default
         // finalize hook ordering (refund -> coinbase -> delete). SELFDESTRUCT is
         // unrestricted during frame execution (the banned-opcode set only applies
@@ -3223,8 +2926,7 @@ impl<'a> VM<'a> {
         // EIP-8037: report the transaction's net state gas, which the block-level
         // split (regular = gas_used - state_gas_used) uses to bill each dimension.
         // This is the whole state dimension: the frames' pool spends, which settlement
-        // added to `gas_used` above, plus any EIP-8312 durable-vault state gas, which
-        // spilled into a UTXO frame's execution gas and so is already inside it.
+        // added to `gas_used` above.
         let state_gas_used =
             u64::try_from(self.state_gas_used.max(0)).map_err(|_| InternalError::Overflow)?;
 
@@ -3355,7 +3057,7 @@ impl<'a> VM<'a> {
 
         let sender = frame_tx.sender;
 
-        if let Err(e) = frame_tx.validate_static_constraints(self.env.config.utxo_frames_active) {
+        if let Err(e) = frame_tx.validate_static_constraints() {
             return Err(VMError::TxValidation(
                 crate::errors::TxValidationError::InvalidFrameTransactionFormat(e),
             ));
@@ -3512,15 +3214,6 @@ impl<'a> VM<'a> {
                     // Structural rules exclude SENDER frames from the prefix.
                     return Err(VMError::Internal(InternalError::Custom(
                         "SENDER frame in validation prefix".to_string(),
-                    )));
-                }
-                Some(FrameMode::Utxo) => {
-                    // EIP-8312: a UTXO frame executes no EVM code, so it is never
-                    // simulated here. A self-funded spend is its own validation
-                    // prefix, checked natively at admission; sponsored spends put
-                    // UTXO frames after the prefix.
-                    return Err(VMError::Internal(InternalError::Custom(
-                        "UTXO frame in validation prefix".to_string(),
                     )));
                 }
                 None => {
@@ -4584,8 +4277,6 @@ impl<'a> VM<'a> {
             state_gas_auth_base: 0,
             intrinsic_state_gas: 0,
             value_new_account_charged: false,
-            durable_vault_writes: std::collections::BTreeMap::new(),
-            durable_state_gas: 0,
             prep_baseline_state_gas: 0,
             prep_baseline_reservoir: 0,
             prep_baseline_state_gas_spill: 0,

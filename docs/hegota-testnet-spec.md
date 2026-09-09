@@ -47,8 +47,8 @@ that meta is live, including EIP-7928 block-level access lists, EIP-8037 state-c
 and EIP-8282 builder execution requests. A client without Glamsterdam cannot follow this chain
 at any height.
 
-**Not on this chain:** EIP-7906 (deleted from the branch) and EIP-8312 (present in the binary,
-inert because `utxoFramesTime` is unset). And do not implement the fork from
+**Not on this chain:** EIP-7906 and EIP-8312, both deleted from the branch. And do not
+implement the fork from
 [EIP-8081](https://eips.ethereum.org/EIPS/eip-8081)'s meta, which lists EIP-7805 alone under the
 name Hegotá: a client built from it rejects every frame transaction on the chain.
 

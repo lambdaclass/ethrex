@@ -34,7 +34,6 @@ moved that day, and both moves are consensus-visible renumberings caused by EIP-
 | 8250 | `81b976ac01` → **`e5cf246ff1`** | **TXPARAM ids shifted up by one** (2026-08-31), plus an Abstract sentence | **yes** — every prefix reading a keyed-nonce id | **implemented**, pin bumped | — |
 | 8272 | `d8636a330d` → **`0231fb05f5`** | **reference count `0x0F`→`0x11`, `RECENTROOTREFLOAD` `0xB5`→`0xB6`** (2026-08-31), plus an Abstract sentence | **yes** | **implemented**, pin bumped; the opcode byte already matched | — |
 | 8369 | `6f818e27dd` → **`33724bd7da`** | three commits, +17/−13: Profile 1 candidacy stated by transaction type, `MAX_VERIFY_GAS_PER_TX` demoted to "up to `MAX_VERIFY_GAS_PER_IL`", and **budget fill split into a two-stage debit** | **yes** — it decides Profile 2 admission | **implemented**, see §7; pin bumped | — |
-| 8312 | `a5da3f608c` | not diffable — author's fork only, no upstream `EIPS/eip-8312.md` | n/a while `utxoFramesTime` is unset | inert; re-check if the EIP is upstreamed | Edgar |
 
 The core EIPs have not moved normatively since the branch reconciled against them.
 The only expanded text is EIP-8369's, and it expands the list of things the *enforcing
@@ -51,7 +50,6 @@ statement of the fork's contents, and it is much narrower than this branch:
 | 8141 Frame Transaction | Considered for Inclusion | active |
 | 8250 Keyed Nonces | Proposed for Inclusion | active |
 | 8272 Recent Roots | Proposed for Inclusion | active |
-| 8312 UTXO Frames | not listed | present, inert (`utxoFramesTime` unset) |
 | 8369 FOCIL Eligibility | not listed (open PR #12110) | active, no off switch |
 
 | Item | ethrex behaviour | Spec behaviour | Consensus-visible | Action | Owner |
@@ -477,8 +475,8 @@ against the head and against every later block, which is why it recurred roughly
 three and why nothing about the transaction itself ever looked wrong.
 
 **The rule was the wrong shape, not missing an entry.** It enumerated the *transient*
-failures — nonce mismatch, unreferenceable recent root, unspendable UTXO input, block
-capacity — and evicted everything else. Under that shape every state-dependent failure mode
+failures — nonce mismatch, unreferenceable recent root, block capacity — and evicted
+everything else. Under that shape every state-dependent failure mode
 is a transaction-losing bug until somebody adds it to the list, and three had been added
 that way, one at a time; this would have been the fourth. A frame transaction reads the
 chain throughout its execution — targets, code, balances, storage — so almost nothing it can
@@ -522,14 +520,6 @@ reference charge 3102 → 2002. **Recent roots are live on the running chain**, 
 reprices a rule already in force; a node on this base disagrees with that chain's history.
 The pinned EIP-8272 write measurement moved by exactly the cold-access delta,
 127 256 → 126 356.
-
-EIP-8312 instead publishes absolute totals, and its Rationale decomposes them over the
-old schedule (13 000 = 3000 + 10 000). Under v8.1.0 the same decomposition yields 12 100.
-The published totals are what a second client implements, so `GAS_UTXO_FRAME` and
-`GAS_UTXO_INPUT` stay pinned at 13 000 and 16 048 and the stale decomposition is recorded
-in `crates/vm/levm/src/gas_cost.rs`. `GAS_UTXO_ACCOUNT_OUT` still reproduces its published
-9000, because the new `TX_VALUE_COST` absorbs the transfer log exactly. Worth raising with
-the EIP-8312 author.
 
 **Action:** this is the second independent reason the live chain needs a re-genesis rather
 than an upgrade. Owner: unassigned.

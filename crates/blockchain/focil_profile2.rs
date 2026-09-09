@@ -10,7 +10,7 @@
 use std::cell::RefCell;
 
 use ethrex_common::H256;
-use ethrex_common::types::{BlockHeader, FrameMode, FrameTransaction, Transaction};
+use ethrex_common::types::{BlockHeader, FrameTransaction, Transaction};
 use ethrex_vm::{CodeBodyBudget, FocilVopsSurface, Profile2Replay};
 
 use crate::{
@@ -136,22 +136,6 @@ impl<'a> BlockchainProfile2Evaluator<'a> {
             ..self.header.clone()
         };
         let state_header = &state_header;
-        // EIP-8369 does not model EIP-8312 at all, and a UTXO frame executes
-        // AFTER the validation prefix and can invalidate it (a spent input, an
-        // unproven opening), which the prefix-only replay below never
-        // observes. Replaying just the prefix would therefore risk reporting
-        // a transaction includable that isn't.
-        if tx
-            .frames
-            .iter()
-            .any(|frame| frame.mode == FrameMode::Utxo as u8)
-        {
-            return Profile2Eligibility::Undecided(
-                "frame transaction carries an EIP-8312 UTXO frame, which EIP-8369 does not model"
-                    .to_string(),
-            );
-        }
-
         let config = self.blockchain.storage.get_chain_config();
         let current_slot =
             config.effective_slot_number(self.header.slot_number, self.header.timestamp);

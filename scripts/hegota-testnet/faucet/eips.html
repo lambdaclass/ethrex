@@ -363,7 +363,6 @@
     <li class="core depth-1"><a href="#eip8250"><span class="n">8250</span> Keyed Nonces</a></li>
     <li class="core depth-1"><a href="#eip8272"><span class="n">8272</span> Recent Roots</a></li>
     <li class="core depth-1"><a href="#eip7906"><span class="n">7906</span> Tx Assertions (not on this chain)</a></li>
-    <li class="core depth-1"><a href="#eip8312"><span class="n">8312</span> UTXO Frames</a></li>
   </ol>
 
   <h2>Other axis</h2>
@@ -422,7 +421,7 @@
 <figure>
 <svg viewBox="0 0 720 430" role="img" aria-labelledby="maptitle mapdesc">
   <title id="maptitle">Dependency map of the Hegotá EIP stack</title>
-  <desc id="mapdesc">EIP-8141 sits at the centre. EIP-8250, EIP-8272, EIP-7906 and EIP-8312 each extend it, though only 8250 and 8272 run on this chain. EIP-7805 and EIP-8369 form a separate consensus axis that constrains it. EIP-7928, EIP-8037 and EIP-7843 sit underneath as existing machinery.</desc>
+  <desc id="mapdesc">EIP-8141 sits at the centre. EIP-8250, EIP-8272 and EIP-7906 each extend it, though only 8250 and 8272 run on this chain. EIP-7805 and EIP-8369 form a separate consensus axis that constrains it. EIP-7928, EIP-8037 and EIP-7843 sit underneath as existing machinery.</desc>
 
   <g font-family="ui-sans-serif, system-ui, sans-serif">
 
@@ -438,29 +437,24 @@
 
     <!-- extensions -->
     <g font-size="11.5">
-      <rect x="30" y="60" width="150" height="58" rx="5" fill="var(--paper-2)" stroke="var(--rule)"/>
-      <text x="105" y="82" font-size="12.5" font-weight="650" fill="var(--ink)" text-anchor="middle">EIP-8250</text>
-      <text x="105" y="100" fill="var(--ink-3)" text-anchor="middle">keyed nonces</text>
+      <rect x="119" y="60" width="150" height="58" rx="5" fill="var(--paper-2)" stroke="var(--rule)"/>
+      <text x="194" y="82" font-size="12.5" font-weight="650" fill="var(--ink)" text-anchor="middle">EIP-8250</text>
+      <text x="194" y="100" fill="var(--ink-3)" text-anchor="middle">keyed nonces</text>
 
-      <rect x="196" y="60" width="150" height="58" rx="5" fill="var(--paper-2)" stroke="var(--rule)"/>
-      <text x="271" y="82" font-size="12.5" font-weight="650" fill="var(--ink)" text-anchor="middle">EIP-8272</text>
-      <text x="271" y="100" fill="var(--ink-3)" text-anchor="middle">recent roots</text>
+      <rect x="285" y="60" width="150" height="58" rx="5" fill="var(--paper-2)" stroke="var(--rule)"/>
+      <text x="360" y="82" font-size="12.5" font-weight="650" fill="var(--ink)" text-anchor="middle">EIP-8272</text>
+      <text x="360" y="100" fill="var(--ink-3)" text-anchor="middle">recent roots</text>
 
-      <rect x="362" y="60" width="150" height="58" rx="5" fill="var(--paper-2)" stroke="var(--rule)"/>
-      <text x="437" y="82" font-size="12.5" font-weight="650" fill="var(--ink)" text-anchor="middle">EIP-7906</text>
-      <text x="437" y="100" fill="var(--ink-3)" text-anchor="middle">tx assertions</text>
-
-      <rect x="528" y="60" width="162" height="58" rx="5" fill="var(--paper-2)" stroke="var(--rule)" stroke-dasharray="4 3"/>
-      <text x="609" y="82" font-size="12.5" font-weight="650" fill="var(--ink)" text-anchor="middle">EIP-8312</text>
-      <text x="609" y="100" fill="var(--ink-3)" text-anchor="middle">UTXO frames</text>
+      <rect x="451" y="60" width="150" height="58" rx="5" fill="var(--paper-2)" stroke="var(--rule)"/>
+      <text x="526" y="82" font-size="12.5" font-weight="650" fill="var(--ink)" text-anchor="middle">EIP-7906</text>
+      <text x="526" y="100" fill="var(--ink-3)" text-anchor="middle">tx assertions</text>
     </g>
 
     <!-- connectors up -->
     <g stroke="var(--core)" stroke-width="1.4" fill="none" opacity=".75">
-      <path d="M105 118 L105 150 Q105 176 212 190"/>
-      <path d="M271 118 L271 176"/>
-      <path d="M437 118 L437 176"/>
-      <path d="M609 118 L609 150 Q609 176 508 190"/>
+      <path d="M194 118 L194 150 Q194 176 212 186"/>
+      <path d="M360 118 L360 176"/>
+      <path d="M526 118 L526 150 Q526 176 508 186"/>
     </g>
 
     <!-- focil axis -->
@@ -486,7 +480,7 @@
 
 <ul>
   <li><strong>The base.</strong> EIP-8141 defines the new transaction type. Nothing else in the stack means anything without it.</li>
-  <li><strong>The extensions.</strong> 8250 and 8272 each add a field to that base, and are live here. 8312 adds a frame kind on its own schedule, and 7906 would have added another &mdash; neither runs on this chain.</li>
+  <li><strong>The extensions.</strong> 8250 and 8272 each add a field to that base, and are live here. 7906 would have added a frame kind of its own; it does not run on this chain.</li>
   <li><strong>The other axis.</strong> 7805 and 8369 are about censorship, not authentication. They say what a builder must include and what happens when it does not.</li>
   <li><strong>The ground.</strong> 7928, 8037 and 7843 already shipped in the previous fork. The stack borrows their machinery rather than reinventing it.</li>
 </ul>
@@ -522,7 +516,7 @@ each frame = [mode, flags, target, gas_limit, value, data]</code></pre>
     <tr><td><code>2</code></td><td>SENDER</td><td>The actual work, run as the sender.</td></tr>
     <tr><td><code>3</code></td><td>&mdash;</td><td><strong>Unassigned on this chain.</strong> EIP-7906 would have put its <code>POST_TX</code> result check here; that EIP is not in the build, and a frame declaring mode <code>3</code> is rejected.</td></tr>
     <tr><td><code>4</code></td><td>&mdash;</td><td>Reserved for EIP-8288&rsquo;s <code>DEP_VERIFY</code>, which is deferred. Also rejected.</td></tr>
-    <tr><td><code>5</code></td><td>UTXO</td><td>EIP-8312. Spends a payment object. Present in the build but never activates here, because <code>utxoFramesTime</code> is unset.</td></tr>
+    <tr><td><code>5</code> and above</td><td>&mdash;</td><td>Reserved. Rejected, like <code>3</code> and <code>4</code>.</td></tr>
   </tbody>
 </table>
 </div>
@@ -711,35 +705,6 @@ nonce_seq  : u64                                 // the value they must all be a
 </div>
 
 <!-- ============================================ -->
-<div class="eip" id="eip8312">
-  <span class="num">EIP-8312</span>
-  <span class="layer">Extends 8141 · separate schedule</span>
-</div>
-<h2>UTXO Frames</h2>
-
-<p class="oneline"><b>The problem:</b> paying someone who has no account yet costs a permanent account entry in the world state. <b>The fix:</b> a one-shot payment object that leaves almost nothing behind.</p>
-
-<p>Ethereum uses accounts. Bitcoin uses UTXOs: discrete coins that are created once and spent once. EIP-8312 adds a UTXO-shaped payment primitive alongside the account model.</p>
-
-<p>You deposit to a vault at <code>0x…8312</code> naming a recipient. The protocol assigns an index and, at the end of the block, commits that block&rsquo;s creations into a Merkle root. Spending is a new frame mode that runs <strong>no EVM code at all</strong>: the frame carries Merkle proofs, and the protocol checks them, flips an irreversible spent bit, and pays out.</p>
-
-<div class="scroll">
-<table>
-  <thead><tr><th>Flow</th><th>Gas</th><th>Permanent state left behind</th></tr></thead>
-  <tbody>
-    <tr><td>Create one payment object</td><td>36,334</td><td>none</td></tr>
-    <tr><td>Spend it</td><td>56,094</td><td>one spent bit</td></tr>
-    <tr><td>Full cycle</td><td>92,428</td><td>~0.3 bytes</td></tr>
-    <tr><td>Plain transfer to a fresh account</td><td>204,600</td><td>~120 bytes</td></tr>
-  </tbody>
-</table>
-</div>
-
-<p>So the complete create-and-spend cycle is about 2.2&times; cheaper in gas than a single ordinary transfer to a new account, and hundreds of times cheaper in permanent state. The state gap matters more than the gas gap, because under two-dimensional gas it is the state dimension that fills a block first.</p>
-
-<p>The value is concentrated rather than general. This is a payments primitive, strongest for one-shot, high-volume payouts to recipients who do not exist on chain yet. It is not a replacement for accounts.</p>
-
-<!-- ============================================ -->
 <div class="eip is-adj" id="eip7805">
   <span class="num">EIP-7805</span>
   <a class="pin" href="https://github.com/ethereum/EIPs/blob/9a345f96c2/EIPS/eip-7805.md" title="The ethereum/EIPs commit this chain implements">spec 9a345f96c2</a>
@@ -811,7 +776,7 @@ nonce_seq  : u64                                 // the value they must all be a
 <p>Every block carries a structured record of the state it touched: which accounts, which storage slots, what changed. It was built for parallel execution and stateless clients. FOCIL reuses it for something else entirely: reconstructing what the world looked like at a given position inside a block, which is exactly what judging an omission at a named index requires.</p>
 
 <h3>EIP-8037 &mdash; Two-dimensional gas</h3>
-<p>Gas splits into an execution dimension and a state-growth dimension, each with its own limit. This is why EIP-8312&rsquo;s tiny state footprint matters so much: a block runs out of state room before it runs out of compute, so the cheap-in-state option raises real throughput rather than just saving fees.</p>
+<p>Gas splits into an execution dimension and a state-growth dimension, each with its own limit. A block runs out of state room before it runs out of compute, so anything cheap in state raises real throughput rather than just saving fees.</p>
 
 <h3>EIP-7843 &mdash; Slot number</h3>
 <p>The execution layer can read the current consensus slot. EIP-8272&rsquo;s expiry window is expressed in slots, so recent roots depend directly on this.</p>
@@ -852,10 +817,6 @@ nonce_seq  : u64                                 // the value they must all be a
   <thead><tr><th>Where</th><th>Spec says</th><th>This branch does</th><th>Why</th></tr></thead>
   <tbody>
     <tr>
-      <td>UTXO frame mode</td><td><code>3</code></td><td><code>5</code></td>
-      <td>EIP-7906 already shipped mode <code>3</code> for POST_TX. Renumbering would invalidate signed transactions and every tool that makes them.</td>
-    </tr>
-    <tr>
       <td><code>AA_VOPS_SLOT_COUNT</code></td><td>unset, &ldquo;2 to 4, pending benchmarks&rdquo;</td><td><code>4</code>, as a config value</td>
       <td>Top of the range is the worst case for validator work, so a result that passes at 4 passes at 2 and 3. Configurable so the range can be measured.</td>
     </tr>
@@ -888,7 +849,6 @@ nonce_seq  : u64                                 // the value they must all be a
   <thead><tr><th>Feature</th><th>Switch</th><th>Notes</th></tr></thead>
   <tbody>
     <tr><td>8141, 8250, 8272, 7906</td><td><code>hegotaTime</code></td><td>One fork, all at once. Also called <code>heze</code> on the consensus side.</td></tr>
-    <tr><td>8312 UTXO frames</td><td><code>utxoFramesTime</code></td><td>Its fork assignment is undecided upstream, so it gets its own switch and stays completely inert until a chain opts in.</td></tr>
     <tr><td>7805 FOCIL</td><td><code>hegotaTime</code></td><td>Same fork, but it is the one feature that is not purely execution-layer.</td></tr>
   </tbody>
 </table>
@@ -901,7 +861,7 @@ nonce_seq  : u64                                 // the value they must all be a
 
 <h3>A useful habit</h3>
 
-<p>Giving a feature its own future timestamp, rather than folding it into a fork, means every block already produced re-executes identically. A running chain can adopt the feature without starting over. That is why EIP-8312 could be added to a live devnet, and it is a technique worth reaching for whenever a change is not yet certain.</p>
+<p>Giving a feature its own future timestamp, rather than folding it into a fork, means every block already produced re-executes identically. A running chain can adopt the feature without starting over. It is a technique worth reaching for whenever a change is not yet certain.</p>
 
 </main>
 

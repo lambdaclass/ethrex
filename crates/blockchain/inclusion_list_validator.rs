@@ -72,8 +72,7 @@ pub enum Profile2Eligibility {
     /// [`ethrex_levm::validation_observer::FrameSimViolation::StorageOutsideVopsSurface`]):
     /// the omission is excused.
     Ineligible(String),
-    /// Eligibility could not be decided (e.g. an EIP-8312 UTXO frame, which
-    /// EIP-8369 does not model, or a VM construction failure). Per the
+    /// Eligibility could not be decided (e.g. a VM construction failure). Per the
     /// governing asymmetry, an undecidable omission is excused rather than
     /// risking an unjustified verdict.
     Undecided(String),
@@ -396,14 +395,8 @@ impl InclusionListSatisfactionValidator {
         crypto: &dyn Crypto,
         profile_2: Option<&dyn IlProfile2Evaluator>,
     ) -> IlCheckReport {
-        let utxo_frames_active = config.is_utxo_frames_activated(header.timestamp);
         let base_fee = header.base_fee_per_gas.unwrap_or_default();
-        let fill_outcomes = fill_il_budget(
-            il,
-            utxo_frames_active,
-            config.fork(header.timestamp),
-            crypto,
-        );
+        let fill_outcomes = fill_il_budget(il, config.fork(header.timestamp), crypto);
 
         let mut report = IlCheckReport::default();
 
@@ -413,7 +406,7 @@ impl InclusionListSatisfactionValidator {
                 continue;
             }
 
-            let profile = classify(tx_il, utxo_frames_active);
+            let profile = classify(tx_il);
 
             // EIP-8369 Profile 2. A transaction that passes stateful eligibility
             // replay at the evaluation index could have been included, so its

@@ -198,23 +198,19 @@ pub fn verify_budget_signature_cost(tx: &FrameTransaction) -> u64 {
 
 /// Classify a transaction into its VOPS profile from the transaction alone.
 ///
-/// `utxo_frames_active` is `ChainConfig::is_utxo_frames_activated` for the block
-/// being judged; it is threaded through to EIP-8141 static validation and gates
-/// only whether EIP-8312 UTXO frames are admissible.
-///
 /// Shape decides the candidate profile: non-frame transactions without blobs are
 /// Profile 1 candidates, frame transactions with empty `blob_versioned_hashes`
 /// are Profile 2 candidates. Anything carrying blobs is outside both, because
 /// blob gas has its own target and maximum and EIP-8369 defines no omission
 /// check over that second budget.
-pub fn classify(tx: &Transaction, utxo_frames_active: bool) -> VopsProfile {
+pub fn classify(tx: &Transaction) -> VopsProfile {
     if tx.tx_type() == TxType::EIP4844 || !tx.blob_versioned_hashes().is_empty() {
         return VopsProfile::Ineligible;
     }
 
     match tx {
         Transaction::FrameTransaction(frame_tx) => {
-            if is_profile_2_candidate(frame_tx, utxo_frames_active) {
+            if is_profile_2_candidate(frame_tx) {
                 VopsProfile::TwoCandidate
             } else {
                 VopsProfile::Ineligible
@@ -241,11 +237,8 @@ pub fn classify(tx: &Transaction, utxo_frames_active: bool) -> VopsProfile {
 ///
 /// Condition 3 is enforced by [`FrameTransaction::validate_prefix_structure`],
 /// which rejects both as EIP-8141 structural violations.
-///
-/// A self-funded EIP-8312 UTXO spend matches no recognized prefix and so is not
-/// a candidate, which is the intended outcome.
-pub fn is_profile_2_candidate(tx: &FrameTransaction, utxo_frames_active: bool) -> bool {
-    if tx.validate_static_constraints(utxo_frames_active).is_err() {
+pub fn is_profile_2_candidate(tx: &FrameTransaction) -> bool {
+    if tx.validate_static_constraints().is_err() {
         return false;
     }
 
@@ -361,12 +354,7 @@ impl FillOutcome {
 /// half is debited only once the signatures pass.
 ///
 /// Returns one outcome per input transaction, positionally.
-pub fn fill_il_budget(
-    il: &[Transaction],
-    utxo_frames_active: bool,
-    fork: Fork,
-    crypto: &dyn Crypto,
-) -> Vec<FillOutcome> {
+pub fn fill_il_budget(il: &[Transaction], fork: Fork, crypto: &dyn Crypto) -> Vec<FillOutcome> {
     let mut remaining = MAX_VERIFY_GAS_PER_IL;
     let mut outcomes = Vec::with_capacity(il.len());
 
@@ -410,7 +398,7 @@ pub fn fill_il_budget(
 
         remaining -= prefix_cost;
 
-        if is_profile_2_candidate(frame_tx, utxo_frames_active) {
+        if is_profile_2_candidate(frame_tx) {
             outcomes.push(FillOutcome::Admitted { cost: total_cost });
         } else {
             outcomes.push(FillOutcome::ChargedNotAdmitted { cost: total_cost });

@@ -170,11 +170,6 @@ pub enum TxValidationError {
     InvalidFrameTransactionFormat(String),
     #[error("Invalid frame transaction: signature validation failed")]
     InvalidFrameSignature,
-    /// EIP-8312: a spend whose input cannot be proven yet; resolves as the chain
-    /// advances, so the builder keeps the transaction pooled. (EIP-8312 is being
-    /// removed from this branch; the variant stays only until that removal lands.)
-    #[error("EIP-8312 UTXO input is not yet spendable at this block")]
-    UtxoNotYetSpendable,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]

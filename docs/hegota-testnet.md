@@ -1,5 +1,9 @@
 # Hegotá testnet — implementation plan
 
+> Historical record of the first launch. Where it says EIP-8312 "stays in the tree but
+> inert", that no longer holds: the upgrade-2 series removed EIP-8312 from the branch on
+> 2026-09-09 (see `docs/hegota-upgrade-merge.md`).
+
 Working document. Plan for `hegota-testnet`: a permissioned, externally reachable
 kurtosis devnet carrying **four transaction-layer EIPs plus EIP-8369 as FOCIL's
 eligibility layer** on one ethrex binary, with a fixed chain ID and a reproducible

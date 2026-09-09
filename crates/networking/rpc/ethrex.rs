@@ -44,7 +44,7 @@ pub struct SimulateFrameTransactionRequest {
 struct SimulateFrameTransactionResult {
     /// Whether every frame-specific admission gate passed: EIP-8141 static
     /// constraints and signature authentication, EIP-8250 nonce-key rules,
-    /// EIP-8272 recent-root references, EIP-8312 UTXO openings, and the
+    /// EIP-8272 recent-root references, and the
     /// validation-prefix simulation — the same checks the mempool runs, in the
     /// same order, so a `false` never under-rejects.
     ///
@@ -177,10 +177,9 @@ impl RpcHandler for SimulateFrameTransactionRequest {
         // of native storage reads.
         //
         // EIP-8141 static constraints, which is also where EIP-8250's nonce-key
-        // rules and EIP-8312's fork gating are enforced.
+        // rules are enforced.
         let config = context.storage.get_chain_config();
-        let utxo_frames_active = config.is_utxo_frames_activated(header.timestamp);
-        if let Err(error) = frame_tx.validate_static_constraints(utxo_frames_active) {
+        if let Err(error) = frame_tx.validate_static_constraints() {
             return structurally_invalid(error, max_cost);
         }
 
@@ -226,19 +225,11 @@ impl RpcHandler for SimulateFrameTransactionRequest {
         }
         let prefix_shape = Some(prefix_shape_name(&prefix.shape).to_owned());
 
-        // EIP-8312 UTXO admission and EIP-8272 recent-root references. Both read
-        // head state natively rather than through the EVM, and both sit behind
-        // static validation and signature authentication for the reason the
-        // mempool orders them that way: a bounded number of storage reads must
-        // not be reachable by a transaction that fails a cheap check first.
-        if utxo_frames_active
-            && let Err(error) =
-                context
-                    .blockchain
-                    .check_utxo_admission(frame_tx, header.number, header.number + 1)
-        {
-            return structurally_invalid(error.to_string(), max_cost);
-        }
+        // EIP-8272 recent-root references read head state natively rather than
+        // through the EVM, and sit behind static validation and signature
+        // authentication for the reason the mempool orders them that way: a
+        // bounded number of storage reads must not be reachable by a transaction
+        // that fails a cheap check first.
         if let Err(error) =
             context
                 .blockchain
