@@ -488,7 +488,7 @@
 <!-- ============================================ -->
 <div class="eip" id="eip8141">
   <span class="num">EIP-8141</span>
-  <a class="pin" href="https://github.com/ethereum/EIPs/blob/7d1c8bfb94/EIPS/eip-8141.md" title="The ethereum/EIPs commit this chain implements">spec 7d1c8bfb94</a>
+  <a class="pin" href="https://github.com/ethereum/EIPs/blob/b75cbe6115/EIPS/eip-8141.md" title="The ethereum/EIPs commit this chain implements">spec b75cbe6115</a>
   <span class="layer">Base · activates at Hegotá</span>
 </div>
 <h2>Frame Transactions</h2>
@@ -568,7 +568,7 @@ each frame = [mode, flags, target, gas_limit, value, data]</code></pre>
 <!-- ============================================ -->
 <div class="eip" id="eip8250">
   <span class="num">EIP-8250</span>
-  <a class="pin" href="https://github.com/ethereum/EIPs/blob/e5cf246ff1/EIPS/eip-8250.md" title="The ethereum/EIPs commit this chain implements">spec e5cf246ff1</a>
+  <a class="pin" href="https://github.com/ethereum/EIPs/blob/94f5a3e3c1/EIPS/eip-8250.md" title="The ethereum/EIPs commit this chain implements">spec 94f5a3e3c1</a>
   <span class="layer">Extends 8141 · activates at Hegotá</span>
 </div>
 <h2>Keyed Nonces</h2>
@@ -598,15 +598,15 @@ nonce_seq  : u64                                 // the value they must all be a
 
 <div class="note ours">
   <span class="tag">Read this before you write code</span>
-  <p>This chain launched against EIP-8250 at revision <code>81b976ac0</code>. Upstream has
-  since shifted its <code>TXPARAM</code> indices up by one, because EIP-8141 took
-  <code>0x0C</code> for its own use. <strong>Three of the four indices in today&rsquo;s spec
-  are wrong here</strong> &mdash; the table below is what this chain answers.</p>
-  <p><code>0x0F</code> is the one that will hurt. Here it is EIP-8272&rsquo;s
-  <code>len(recent_root_references)</code>, so asking for the digest at the spec&rsquo;s index
-  <strong>returns a number instead of failing</strong> &mdash; almost always <code>0</code>. A
-  comparison against it fails closed, but anything that uses the value as a nullifier or a
-  domain tag silently collapses every transaction onto the same one.</p>
+  <p>This chain follows EIP-8250 at revision <code>94f5a3e3c1</code>: the <code>TXPARAM</code>
+  indices are the spec&rsquo;s (<code>0x0D</code>&ndash;<code>0x10</code>), and the first use of a
+  keyed nonce costs <strong>state gas</strong>, one storage set (97,920) per fresh key, taken from
+  the approving frame&rsquo;s <code>limits.state</code>. A VERIFY frame that consumes two fresh
+  nullifier keys must declare 195,840 of state budget; with none it halts and the transaction is
+  invalid. The prefix&rsquo;s state budgets together may not exceed 500,000.</p>
+  <p>There is no <code>TXPARAM 0x11</code>: EIP-8272 claims no index any more. A wallet built
+  for the first launch that reads it gets an exceptional halt, which is the loud failure you
+  want.</p>
   <p><code>nonce_keys_hash</code> is
   <code>keccak256(be32(len) &#8214; be32(k&#8320;) &#8214; &hellip;)</code> over the whole key
   set. There is deliberately no per-index accessor: pass the key you care about in
@@ -642,22 +642,23 @@ nonce_seq  : u64                                 // the value they must all be a
 <!-- ============================================ -->
 <div class="eip" id="eip8272">
   <span class="num">EIP-8272</span>
-  <a class="pin" href="https://github.com/ethereum/EIPs/blob/0231fb05f5/EIPS/eip-8272.md" title="The ethereum/EIPs commit this chain implements">spec 0231fb05f5</a>
+  <a class="pin" href="https://github.com/ethereum/EIPs/blob/824cbc0b0e/EIPS/eip-8272.md" title="The ethereum/EIPs commit this chain implements">spec 824cbc0b0e</a>
   <span class="layer">Extends 8141 · activates at Hegotá</span>
 </div>
 <h2>Recent Roots</h2>
 
-<p class="oneline"><b>The problem:</b> verification code often needs to check a proof against a recent commitment, but reading another contract&rsquo;s mutable storage during validation is dangerous. <b>The fix:</b> declare the commitment in the signed envelope instead.</p>
+<p class="oneline"><b>The problem:</b> verification code often needs to check a proof against a recent commitment, but reading another contract&rsquo;s mutable storage during validation is dangerous. <b>The fix:</b> a canonical verifier frame that proves the commitment before any application code runs.</p>
 
 <p>Consider a privacy protocol. To spend, you prove membership in a Merkle tree whose root lives in some contract&rsquo;s storage. Your validation code needs that root.</p>
 
 <p>Reading it directly creates a problem the whole network feels. That storage slot is shared: it changes whenever anyone else uses the protocol. So a single change can invalidate every pending transaction that read it at once, which is exactly the mass-invalidation behaviour a mempool cannot tolerate.</p>
 
-<p>EIP-8272 lets the transaction carry the roots it depends on, as signed data:</p>
+<p>EIP-8272 lets the transaction carry the roots it depends on, as the data of a canonical VERIFY frame that leads the transaction (first, or second behind an expiry verifier):</p>
 
-<pre><code>recent_root_references : [ (source_id, slot, root), ... ]   // up to 16</code></pre>
+<pre><code>frame 0  VERIFY  target 0x…8272  flags 0  limits.state 0
+         data = (source_id ‖ slot ‖ root) × 1..16        // 72 bytes each</code></pre>
 
-<p>The protocol validates these against the <code>RECENT_ROOT_ADDRESS</code> predeploy at <code>0x…8272</code>, which keeps a ring buffer of recent commitments. A reference is valid while its slot is within roughly the last 8191 slots. Validation code reads its own envelope with <code>RECENTROOTREFLOAD</code> (<code>0xB5</code>) and never touches shared storage.</p>
+<p>The frame runs the <code>RECENT_ROOT_ADDRESS</code> predeploy at <code>0x…8272</code>, which keeps a ring buffer of recent commitments and now has a validation operation: every tuple must name a slot before the current one and at most 8191 slots old, and its entry must be stored. A failing tuple reverts the frame, and a reverting VERIFY frame invalidates the transaction, so application code that runs afterwards can read the proven tuples back with <code>FRAMEDATALOAD</code> and check the frame&rsquo;s status with <code>FRAMEPARAM</code>, never touching shared storage itself. The mempool checks the tuples natively before simulating anything, counts the frame&rsquo;s gas toward <code>MAX_VERIFY_GAS</code>, and refuses a verifier frame anywhere but the leading position.</p>
 
 <div class="note plain">
   <span class="tag">Why the ring buffer is bounded</span>
@@ -728,7 +729,7 @@ nonce_seq  : u64                                 // the value they must all be a
 <!-- ============================================ -->
 <div class="eip is-adj" id="eip8369">
   <span class="num">EIP-8369</span>
-  <a class="pin" href="https://github.com/soispoke/EIPs/blob/33724bd7da/EIPS/eip-8369.md" title="The commit this chain implements, on the EIP's unmerged PR branch (ethereum/EIPs#12110)">spec 33724bd7da</a>
+  <a class="pin" href="https://github.com/ethereum/EIPs/blob/51dc7b939a/EIPS/eip-8369.md" title="The ethereum/EIPs commit this chain implements">spec 51dc7b939a</a>
   <span class="layer">Consensus axis · informational</span>
 </div>
 <h2>VOPS Profiles for FOCIL Eligibility</h2>
@@ -788,21 +789,22 @@ nonce_seq  : u64                                 // the value they must all be a
 
 <pre><code>type 0x06 frame transaction
   nonce_keys  [0x9f3a…]        ← 8250: an independent replay lane
-  recent_root_references [(…)] ← 8272: the commitment its proof needs
 
-  frame 0  VERIFY  only_verify   ← the validation prefix
-  frame 1  VERIFY  pay             establishes authorisation + payer
+  frame 0  VERIFY  0x…8272       ← 8272: proves the commitment its proof needs
+  frame 1  VERIFY  only_verify   ← the validation prefix
+  frame 2  VERIFY  pay             establishes authorisation + payer
   ──────────────────────────────
-  frame 2  SENDER                ← the body: the actual transfer
-  frame 3  POST_TX               ← 7906: check nothing unexpected happened</code></pre>
+  frame 3  SENDER                ← the body: the actual transfer
+  frame 4  POST_TX               ← 7906: check nothing unexpected happened</code></pre>
 
 <ol>
-  <li><strong>Before any code runs</strong>, the protocol checks the keyed nonces (8250) and validates the recent-root references (8272). Both are decided up front, not during execution.</li>
-  <li><strong>Frame 0</strong> verifies the passkey signature. It reads its proof material from the envelope with <code>RECENTROOTREFLOAD</code>, never from shared storage, so no other user&rsquo;s activity can invalidate it.</li>
-  <li><strong>Frame 1</strong> runs the sponsor&rsquo;s logic and calls <code>APPROVE</code>. The sponsor is now the payer and is charged the maximum possible cost.</li>
-  <li><strong>Frame 2</strong> does the real work as the sender.</li>
-  <li><strong>Frame 3</strong> inspects the finished result with <code>TXDIFF</code>. If an invariant broke, it reverts frame 2 &mdash; but frames 0 and 1 stay committed and the sponsor still pays.</li>
-  <li><strong>Separately</strong>, FOCIL (7805) may have listed this transaction. Whether a builder can be punished for omitting it is decided by 8369: frames 0 and 1 must fit the bounded state surface and the gas budget.</li>
+  <li><strong>Before any code runs</strong>, the protocol checks the keyed nonces (8250) and, at admission, the recent-root tuples (8272) against the predeploy&rsquo;s storage.</li>
+  <li><strong>Frame 0</strong> runs the recent-root predeploy&rsquo;s validation operation over the tuples. If any is stale or unknown the frame reverts and the transaction is invalid; nothing after it runs.</li>
+  <li><strong>Frame 1</strong> verifies the passkey signature and reads the proven tuples back from frame 0 with <code>FRAMEDATALOAD</code>, never from shared storage, so no other user&rsquo;s activity can invalidate it.</li>
+  <li><strong>Frame 2</strong> runs the sponsor&rsquo;s logic and calls <code>APPROVE</code>. The sponsor is now the payer and is charged the maximum possible cost.</li>
+  <li><strong>Frame 3</strong> does the real work as the sender.</li>
+  <li><strong>Frame 4</strong> inspects the finished result with <code>TXDIFF</code>. If an invariant broke, it reverts frame 3 &mdash; but frames 0 to 2 stay committed and the sponsor still pays.</li>
+  <li><strong>Separately</strong>, FOCIL (7805) may have listed this transaction. Whether a builder can be punished for omitting it is decided by 8369: frames 0 to 2 must fit the bounded state surface and the gas budget.</li>
 </ol>
 
 <p>Notice that the validation prefix, frames 0 and 1, is doing three jobs at once. It authenticates, it decides who pays, and it is the thing FOCIL has to be able to afford to re-run. Every difficult constraint in the stack lands on those two frames.</p>

@@ -18,10 +18,10 @@ Re-audited 2026-08-25 against `ethereum/EIPs@master`, 70 commits past the pin. T
 core EIPs were pinned at `4093c21847`; 8250, 8272 and 7805 are byte-identical to it still,
 8141 is not, and EIP-8369's PR head has moved.
 
-EIP-8141 is pinned at `7d1c8bfb94` (2026-08-24, "account block execution gas before refund
-(EIP-7778)"), verified byte-identical to the copy this implementation was written against.
-That revision is the reason the frame path reports a pre-refund `gas_used` for the block and
-a post-refund `gas_spent` for the payer.
+EIP-8141 was pinned at `7d1c8bfb94` (2026-08-24, "account block execution gas before refund
+(EIP-7778)"), the revision behind the pre-refund `gas_used` for the block and post-refund
+`gas_spent` for the payer; the upgrade-2 series moved it to `b75cbe6115` (2026-09-01), which
+only removes a redundant assertion, by merging the `frames-devnet-0` line that implements it.
 
 **Re-audited 2026-08-31.** EIP-8141 and EIP-7805 have not moved. EIP-8250 and EIP-8272 both
 moved that day, and both moves are consensus-visible renumberings caused by EIP-8141's `0x0C` and
@@ -30,11 +30,11 @@ series then moved both again, to `94f5a3e3c1` and `824cbc0b0e` (see the table).
 
 | EIP | Pin | Drift to head | Consensus-visible | Action | Owner |
 | --- | --- | --- | --- | --- | --- |
-| 8141 | `4093c21847` → **`7d1c8bfb94`** | **+326/−96 — a new envelope, see §6** | **yes** | **the updated spec adopted and implemented**, pin bumped; re-genesis required | — |
+| 8141 | `4093c21847` → `7d1c8bfb94` → **`b75cbe6115`** | +326/−96 to `7d1c8bfb94` (a new envelope, see §6); then a redundant state-gas assertion removed (2026-09-01) | **yes** (the first move) | **implemented**, pin bumped; re-genesis required | — |
 | 7805 | `4093c21847` | none — byte-identical | no | closed | — |
 | 8250 | `81b976ac01` → `e5cf246ff1` → **`94f5a3e3c1`** | TXPARAM ids shifted up by one (2026-08-31); then **first use of a keyed nonce priced as state gas** (PR #12279, 2026-09): one storage set per fresh key from the approving frame's `limits.state`, key `[0]` pays account creation only, EIP-8141 rule 6 lets a VERIFY frame budget it | **yes** — every keyed-nonce approval's gas | **implemented**, pin bumped; re-genesis required | — |
 | 8272 | `d8636a330d` → `0231fb05f5` → **`824cbc0b0e`** | reference count and `RECENTROOTREFLOAD` renumbered (2026-08-31); then **the envelope field, `TXPARAM 0x11`, `RECENTROOTREFLOAD` and the reference intrinsic gas removed for a canonical VERIFY frame** to `0x…8272` carrying `n × 72`-byte tuples, the contract gaining a validation operation, the frame counting toward `MAX_VERIFY_GAS`, `current_slot = head slotNumber + 1` in the mempool (PRs #12281, #12302, 2026-09) | **yes** — wire format and rule set | **implemented**, pin bumped; `RECENT_ROOT_CODE` bytes are ethrex's until upstream publishes; re-genesis required | — |
-| 8369 | `6f818e27dd` → **`33724bd7da`** | three commits, +17/−13: Profile 1 candidacy stated by transaction type, `MAX_VERIFY_GAS_PER_TX` demoted to "up to `MAX_VERIFY_GAS_PER_IL`", and **budget fill split into a two-stage debit** | **yes** — it decides Profile 2 admission | **implemented**, see §7; pin bumped | — |
+| 8369 | `6f818e27dd` → `33724bd7da` → **`51dc7b939a`** | three commits, +17/−13 (Profile 1 candidacy by transaction type, `MAX_VERIFY_GAS_PER_TX` demoted, two-stage budget fill); then **merged upstream** 2026-09-01 with an editorial pass that states `codeFlag = 1` for an EIP-7702-delegated account, which is how eligibility already classified it | no (the second move) | **implemented**, pin bumped | — |
 
 The core EIPs have not moved normatively since the branch reconciled against them.
 The only expanded text is EIP-8369's, and it expands the list of things the *enforcing
@@ -263,7 +263,7 @@ The current map, matching upstream:
 | `0x0E` | `len(nonce_keys)` | 8250 |
 | `0x0F` | `nonce_keys_hash` | 8250 |
 | `0x10` | `nonce_keys[0]` | 8250 |
-| `0x11` | `len(recent_root_references)` | 8272 |
+| `0x11` | — (EIP-8272 `824cbc0b0e` claims no index; the count lived here until then) | — |
 | `0x12` | resolved payer | ethrex only, knob-gated |
 
 EIP-8141 gets the disputed id in every case: it is the EIP the rest of the set extends, and
@@ -600,8 +600,8 @@ silently stops being one.
 | EIPs#12091 | block inclusion gating and payer solvency | **closed unmerged** | nothing owed; drop from the watch list |
 | EIPs#12041 | canonical paymaster reference bytecode | open | implemented ahead of merge; the pinned 355-byte runtime's hash (§8 — Task 6.4 closed) |
 | EIPs#12039 | keyed mempool concurrency | open | ships `keyed_concurrency_verdict`; devnet-verified for a contract sender |
-| EIPs#12110 | VOPS profiles for FOCIL eligibility (EIP-8369 itself) | open | implemented ahead of merge, pinned at `33724bd7da` (§3.2–3.5, §8) |
-| EIPs#12131 | specify `RECENT_ROOT_CODE` | open | `#7120`; bytes verified identical (§5) — a byte change would move the code hash and the write's gas, so this one is still a fork risk for a running chain |
+| EIPs#12110 | VOPS profiles for FOCIL eligibility (EIP-8369 itself) | **merged 2026-09-01** | implemented; pinned at `51dc7b939a` (§3.2–3.5, §8) |
+| EIPs#12131 | specify `RECENT_ROOT_CODE` | **closed unmerged** | the constants table still reads `TBD`; the 345-byte two-operation runtime this chain installs is ethrex's (`docs/eip-8272.md`), and a later upstream publication that differs is a fork |
 
 Editorial or idle, tracked so a later pass need not rediscover them:
 

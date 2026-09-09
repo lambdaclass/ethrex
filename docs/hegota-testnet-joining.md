@@ -39,11 +39,11 @@ this network runs is the list below, pinned to exact revisions.
 
 | EIP | Title | Pin | Source |
 | --- | --- | --- | --- |
-| 8141 | Frame Transaction | `7d1c8bfb94` | `ethereum/EIPs` |
-| 8250 | Keyed Nonces | `e5cf246ff1` | `ethereum/EIPs` |
-| 8272 | Recent Roots | `0231fb05f5` | `ethereum/EIPs` |
+| 8141 | Frame Transaction | `b75cbe6115` | `ethereum/EIPs` |
+| 8250 | Keyed Nonces | `94f5a3e3c1` | `ethereum/EIPs` |
+| 8272 | Recent Roots | `824cbc0b0e` | `ethereum/EIPs` (`RECENT_ROOT_CODE` is ethrex's, see `docs/eip-8272.md`) |
 | 7805 | Fork-choice enforced Inclusion Lists (FOCIL) | `9a345f96c2` | `ethereum/EIPs` |
-| 8369 | VOPS Profiles for FOCIL Eligibility | `33724bd7da` | `soispoke/EIPs@codex/vops-profiles-focil` (PR #12110, unmerged) |
+| 8369 | VOPS Profiles for FOCIL Eligibility | `51dc7b939a` | `ethereum/EIPs` (merged 2026-09-01) |
 
 All five activate together at one timestamp. There is no per-EIP activation and no
 intermediate state in which some are live and others are not.
