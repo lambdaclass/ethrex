@@ -1146,7 +1146,7 @@ mod call_nonce_tests {
             "params": [call_object, "latest"],
         }))
         .unwrap();
-        map_http_requests(&request, context).await.unwrap()
+        map_http_requests(&request, context.clone()).await.unwrap()
     }
 
     /// A call object without `nonce` must not be rejected for senders whose
@@ -1230,7 +1230,7 @@ mod estimate_gas_fee_cap_tests {
             "params": [call_object, "latest"],
         }))
         .unwrap();
-        map_http_requests(&request, context).await.unwrap()
+        map_http_requests(&request, context.clone()).await.unwrap()
     }
 
     /// A 1559 call object carries its fee cap in `maxFeePerGas`, leaving the legacy
@@ -1392,7 +1392,7 @@ mod plain_transfer_short_circuit_tests {
             "params": [call_object, "latest"],
         }))
         .unwrap();
-        map_http_requests(&request, context).await
+        map_http_requests(&request, context.clone()).await
     }
 
     /// A transfer to an ordinary funded account is what the short circuit exists for, and

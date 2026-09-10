@@ -48,7 +48,7 @@ async fn moved_precompile_executes_at_destination() {
         RELOCATED,
         json!({ IDENTITY: { "movePrecompileToAddress": RELOCATED } }),
     );
-    let response = call_http(context, body).await;
+    let response = call_http(&context, body).await;
 
     let result = response
         .get("result")
@@ -72,7 +72,7 @@ async fn vacated_precompile_address_is_a_normal_account() {
         IDENTITY,
         json!({ IDENTITY: { "movePrecompileToAddress": RELOCATED } }),
     );
-    let response = call_http(context, body).await;
+    let response = call_http(&context, body).await;
 
     let result = response
         .get("result")
@@ -132,7 +132,7 @@ async fn trace_call_dispatches_a_moved_precompile_at_the_destination() {
         RELOCATED,
         json!({ IDENTITY: { "movePrecompileToAddress": RELOCATED } }),
     );
-    let response = call_http(context, body).await;
+    let response = call_http(&context, body).await;
     let output = frame_output(&response);
 
     assert!(
@@ -152,7 +152,7 @@ async fn trace_call_treats_a_vacated_precompile_address_as_a_normal_account() {
         IDENTITY,
         json!({ IDENTITY: { "movePrecompileToAddress": RELOCATED } }),
     );
-    let response = call_http(context, body).await;
+    let response = call_http(&context, body).await;
     let output = frame_output(&response);
 
     assert!(
@@ -199,7 +199,7 @@ fn eth_call_no_data(to: &str, overrides: serde_json::Value) -> String {
 async fn call_result(overrides: serde_json::Value) -> String {
     let storage = setup_store().await;
     let context = default_context_with_storage(storage).await;
-    let response = call_http(context, eth_call_no_data(CALLEE, overrides)).await;
+    let response = call_http(&context, eth_call_no_data(CALLEE, overrides)).await;
     response
         .get("result")
         .and_then(|r| r.as_str())
@@ -269,7 +269,7 @@ async fn overriding_a_precompile_address_stops_it_dispatching() {
     let context = default_context_with_storage(storage).await;
 
     let body = eth_call(IDENTITY, json!({ IDENTITY: { "balance": "0x1" } }));
-    let response = call_http(context, body).await;
+    let response = call_http(&context, body).await;
     let result = response
         .get("result")
         .and_then(|r| r.as_str())
@@ -289,7 +289,7 @@ async fn an_unoverridden_precompile_still_dispatches() {
     let context = default_context_with_storage(storage).await;
 
     let body = eth_call(IDENTITY, json!({}));
-    let response = call_http(context, body).await;
+    let response = call_http(&context, body).await;
     let result = response
         .get("result")
         .and_then(|r| r.as_str())

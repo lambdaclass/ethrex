@@ -135,7 +135,7 @@ async fn trace_call_with_opcode_tracer_returns_struct_logs() {
     let storage = setup_store().await;
     let context = default_context_with_storage(storage).await;
 
-    let response = call_http(context, trace_call_body("opcodeTracer")).await;
+    let response = call_http(&context, trace_call_body("opcodeTracer")).await;
 
     let result = response
         .get("result")
@@ -189,7 +189,7 @@ async fn trace_call_with_opcode_tracer_reports_revert_as_failed() {
     })
     .to_string();
 
-    let response = call_http(context, body).await;
+    let response = call_http(&context, body).await;
     let result = response
         .get("result")
         .unwrap_or_else(|| panic!("expected a result, got: {response}"));
@@ -233,7 +233,7 @@ async fn trace_call_applies_state_overrides_nested_in_config() {
     })
     .to_string();
 
-    let response = call_http(context, body).await;
+    let response = call_http(&context, body).await;
     let result = response
         .get("result")
         .unwrap_or_else(|| panic!("expected a result, got: {response}"));
@@ -274,7 +274,7 @@ async fn trace_call_applies_block_overrides_nested_in_config() {
     })
     .to_string();
 
-    let response = call_http(context, body).await;
+    let response = call_http(&context, body).await;
     let result = response
         .get("result")
         .unwrap_or_else(|| panic!("expected a result, got: {response}"));
@@ -320,7 +320,7 @@ async fn trace_call_with_call_tracer_returns_a_call_frame() {
     })
     .to_string();
 
-    let response = call_http(context, body).await;
+    let response = call_http(&context, body).await;
     let result = response
         .get("result")
         .unwrap_or_else(|| panic!("expected a result, got: {response}"));
@@ -365,7 +365,7 @@ async fn trace_call_with_prestate_tracer_reports_overridden_prestate() {
     })
     .to_string();
 
-    let response = call_http(context, body).await;
+    let response = call_http(&context, body).await;
     let result = response
         .get("result")
         .unwrap_or_else(|| panic!("expected a result, got: {response}"));
@@ -452,7 +452,7 @@ async fn trace_call_still_rejects_out_of_range_tx_index() {
     })
     .to_string();
 
-    let response = call_http(context, body).await;
+    let response = call_http(&context, body).await;
     let error = response
         .get("error")
         .unwrap_or_else(|| panic!("expected an error, got: {response}"));

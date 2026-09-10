@@ -33,7 +33,9 @@ async fn get_block_by_hash(storage: Store, hash: H256) -> serde_json::Value {
     );
     let request: RpcRequest = serde_json::from_str(&body).unwrap();
     let context = default_context_with_storage(storage).await;
-    map_eth_requests(&request, context).await.expect("rpc ok")
+    map_eth_requests(&request, context.clone())
+        .await
+        .expect("rpc ok")
 }
 
 // eth_getBlockByHash must return the block stored FOR the requested hash. A

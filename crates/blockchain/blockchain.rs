@@ -116,6 +116,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::LazyLock;
+use std::sync::OnceLock;
 use std::sync::mpsc::Sender;
 use std::sync::{
     Arc, RwLock,
@@ -272,10 +273,12 @@ pub struct Blockchain {
     /// Persistent thread pool for merkleization workers.
     /// 17 threads: 16 shard workers + 1 watcher/coordination.
     ///
-    /// `Arc` for sharing in test harnesses that build many `Blockchain`s; the
-    /// production path keeps the original semantics (one fresh pool per call
-    /// to `Blockchain::new` / `default_with_store`).
-    merkle_pool: Arc<rayon::ThreadPool>,
+    /// Built on first merkleization, so a `Blockchain` that never merkleizes pays
+    /// nothing; node startup seeds it eagerly via
+    /// [`Self::preinitialize_merkle_pool`], and harnesses where every instance
+    /// merkleizes seed a shared one via [`Self::for_test_harness_with_pool`].
+    /// Use [`Self::merkle_pool`] to read it.
+    merkle_pool: OnceLock<Arc<rayon::ThreadPool>>,
     /// Cache handoff slot from the mempool prewarmer to
     /// `execute_block_pipeline`; see `PrewarmedCache` and `crate::prewarm`.
     prewarmed: PrewarmedCache,
@@ -411,6 +414,17 @@ pub struct BlockchainOptions {
     /// transactions with a nonce gap relative to the sender's on-chain nonce
     /// are rejected. Setting to 100 disables the check.
     pub gap_admit_occupancy_threshold: u8,
+    /// If true (default), a `Blockchain` driving block import may spawn a mempool
+    /// prewarmer: an OS thread plus a rayon pool at half the available cores, both
+    /// holding a strong reference to this `Blockchain`.
+    ///
+    /// Test harnesses set this to false. The prewarmer thread does exit on its own
+    /// once its `PrewarmHandle` drops and closes the channel -- nothing is leaked
+    /// -- but it is never joined, so a large test binary creates such threads
+    /// faster than the OS reaps them. No test exercises prewarming, so not
+    /// spawning it is both cheaper and simpler than plumbing a `JoinHandle`
+    /// through `PrewarmHandle` to join it. See `for_test_harness`.
+    pub mempool_prewarm_enabled: bool,
 }
 
 impl Default for BlockchainOptions {
@@ -434,6 +448,7 @@ impl Default for BlockchainOptions {
             blob_eager_provider: false,
             max_reorg_depth: None,
             gap_admit_occupancy_threshold: DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD,
+            mempool_prewarm_enabled: true,
         }
     }
 }
@@ -532,9 +547,11 @@ struct BalStateWorkItem {
 }
 
 impl Blockchain {
-    /// Build a fresh 17-thread merkleization pool. Used by the default
-    /// constructors; tests that build many `Blockchain`s should share one pool
-    /// via `default_with_store_and_pool` to avoid spawning the pool repeatedly.
+    /// Build a fresh 17-thread merkleization pool.
+    ///
+    /// The size is load-bearing, not a tuning knob: 16 shard workers plus one
+    /// watcher, and all 16 must be resident at once because they cross-communicate
+    /// over channels. A smaller pool deadlocks rather than running slower.
     pub fn build_merkle_pool() -> Arc<rayon::ThreadPool> {
         Arc::new(
             rayon::ThreadPoolBuilder::new()
@@ -543,6 +560,27 @@ impl Blockchain {
                 .build()
                 .expect("Failed to create merkle thread pool"),
         )
+    }
+
+    /// This `Blockchain`'s merkleization pool, building it on first use.
+    fn merkle_pool(&self) -> &rayon::ThreadPool {
+        self.merkle_pool.get_or_init(Self::build_merkle_pool)
+    }
+
+    /// Builds the merkleization pool now, unless it is already seeded.
+    ///
+    /// Node startup calls this so a pool that cannot be created fails the process at
+    /// boot, rather than panicking inside the merkleizer during the first block.
+    pub fn preinitialize_merkle_pool(&self) {
+        let _ = self.merkle_pool();
+    }
+
+    /// Whether the merkleization pool has been built yet.
+    ///
+    /// Exposed so tests can assert that a `Blockchain` which never merkleizes does
+    /// not pay for the pool.
+    pub fn merkle_pool_initialized(&self) -> bool {
+        self.merkle_pool.get().is_some()
     }
 
     pub fn new(store: Store, blockchain_opts: BlockchainOptions) -> Self {
@@ -560,31 +598,57 @@ impl Blockchain {
             reorg_in_progress: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: blockchain_opts,
-            merkle_pool: Self::build_merkle_pool(),
+            merkle_pool: OnceLock::new(),
             prewarmed: PrewarmedCache::default(),
         }
     }
 
-    /// Like `default_with_store`, but reuses an externally-owned merkleization
-    /// pool. Intended for test harnesses that build many short-lived
-    /// `Blockchain` instances; sharing the pool avoids spawning 17 fresh OS
-    /// threads per instance.
+    /// `Blockchain` for a test harness that builds many short-lived instances.
     ///
-    /// SAFETY: the caller must ensure each pool has only one concurrent
-    /// `in_place_scope` user at a time. The internal merkle protocol requires
-    /// all 16 worker jobs to run concurrently (they cross-communicate via
-    /// channels); sharing a pool across simultaneous callers deadlocks.
-    pub fn default_with_store_and_pool(store: Store, pool: Arc<rayon::ThreadPool>) -> Self {
+    /// Keeps `BlockchainOptions::default()` but disables the mempool prewarmer,
+    /// whose threads would otherwise outlive the test that created them. The
+    /// merkleization pool is lazy (see the `merkle_pool` field), so an instance
+    /// that never merkleizes costs no threads at all.
+    ///
+    /// Use [`Self::for_test_harness_with_pool`] instead in a harness where every
+    /// instance *does* merkleize, so laziness saves nothing.
+    pub fn for_test_harness(store: Store) -> Self {
         Self {
             storage: store,
             mempool: Mempool::new(MAX_MEMPOOL_SIZE_DEFAULT),
             is_synced: AtomicBool::new(false),
             reorg_in_progress: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
-            options: BlockchainOptions::default(),
-            merkle_pool: pool,
+            options: BlockchainOptions {
+                // No test exercises prewarming, and its threads would outlive the
+                // test that created them.
+                mempool_prewarm_enabled: false,
+                ..Default::default()
+            },
+            merkle_pool: OnceLock::new(),
             prewarmed: PrewarmedCache::default(),
         }
+    }
+
+    /// Like [`Self::for_test_harness`], but seeds the merkleization pool with an
+    /// externally-owned one rather than leaving it to be built on first use.
+    ///
+    /// For the ef_tests runners, which build one `Blockchain` per fixture and
+    /// merkleize with every one, so a per-instance pool would spawn a pool per
+    /// fixture. See their `thread_local!` pools for the accounting.
+    ///
+    /// SAFETY: the caller must ensure each pool has only one concurrent
+    /// `in_place_scope` user at a time. The internal merkle protocol requires all
+    /// 16 worker jobs to run concurrently (they cross-communicate via channels), so
+    /// sharing a pool between simultaneous callers deadlocks rather than running
+    /// slower. Keying the pool by `thread_local!` in the runner, and driving each
+    /// pool's blocks from its own thread, is what gives that exclusivity.
+    pub fn for_test_harness_with_pool(store: Store, pool: Arc<rayon::ThreadPool>) -> Self {
+        let blockchain = Self::for_test_harness(store);
+        if blockchain.merkle_pool.set(pool).is_err() {
+            unreachable!("a freshly built Blockchain has an empty merkle pool cell");
+        }
+        blockchain
     }
 
     /// Test-permissive `Blockchain` constructor. Mirrors `BlockchainOptions::default`
@@ -598,6 +662,9 @@ impl Blockchain {
     pub fn default_with_store(store: Store) -> Self {
         let options = BlockchainOptions {
             min_tip_wei: 0,
+            // Every caller is a test harness, so match `for_test_harness`: the
+            // prewarmer's threads would outlive the test that created them.
+            mempool_prewarm_enabled: false,
             ..BlockchainOptions::default()
         };
         Self {
@@ -607,7 +674,7 @@ impl Blockchain {
             reorg_in_progress: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options,
-            merkle_pool: Self::build_merkle_pool(),
+            merkle_pool: OnceLock::new(),
             prewarmed: PrewarmedCache::default(),
         }
     }
@@ -1280,7 +1347,7 @@ impl Blockchain {
         // (dispatching messages, collecting results) runs on the calling thread
         // via in_place_scope, so it executes concurrently with the pool tasks.
         let watcher_error: Arc<std::sync::Mutex<Option<StoreError>>> = Default::default();
-        let result = self.merkle_pool.in_place_scope(|s| {
+        let result = self.merkle_pool().in_place_scope(|s| {
             // Spawn 16 unified workers (each gets clone of all 16 senders)
             for (i, rx) in workers_rx.into_iter().enumerate() {
                 let all_senders = workers_tx.clone();
