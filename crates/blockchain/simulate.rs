@@ -32,7 +32,10 @@ use thiserror::Error;
 
 use crate::{
     Blockchain, BlockchainType,
-    vm::{SimulationOverlay, SimulationVmDatabase, StateOverride, StorageMode, StoreVmDatabase},
+    vm::{
+        SimulationOverlay, SimulationVmDatabase, StateOverride, StorageMode, StoreVmDatabase,
+        precompile_moves,
+    },
 };
 
 /// Maximum simulated block height above the base block (geth's
@@ -488,6 +491,12 @@ impl Blockchain {
 
             let sim_db = SimulationVmDatabase::new(store_db.clone(), Arc::new(overlay.clone()));
             let mut evm = self.new_evm(sim_db).map_err(internal)?;
+            // The other half of a State Override Set: the account overlay above feeds
+            // reads, while `movePrecompileToAddress` changes precompile *dispatch*, which
+            // is EVM configuration rather than state. Installed per block, matching geth,
+            // which derives a fresh active-precompile set for each simulated block instead
+            // of carrying relocations forward.
+            evm.set_precompile_moves(precompile_moves(&sanitized.spec.state_overrides));
 
             // Pre-execution system calls (EIP-4788 beacon root, EIP-2935 block
             // hash history) run for every simulated block, gap-filled ones

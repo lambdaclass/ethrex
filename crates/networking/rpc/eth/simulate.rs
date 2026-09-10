@@ -1085,4 +1085,125 @@ mod integration_tests {
             assert_eq!(error_code(err), -32602, "{field}");
         }
     }
+
+    /// Identity / datacopy precompile: it echoes its calldata, so a relocation either
+    /// dispatched it (output == input) or it did not (output empty), with no ambiguous
+    /// middle ground.
+    const IDENTITY: &str = "0x0000000000000000000000000000000000000004";
+    /// Where these tests relocate it to.
+    const RELOCATED: &str = "0x0000000000000000000000000000000000000aaa";
+    const PAYLOAD: &str = "0x11223344";
+
+    /// One simulated block with `state_overrides`, calling `to` with [`PAYLOAD`].
+    async fn simulate_call_to(to: &str, state_overrides: Value) -> Value {
+        let result = simulate(json!([{
+            "blockStateCalls": [{
+                "stateOverrides": state_overrides,
+                "calls": [{"from": RICH, "to": to, "input": PAYLOAD}],
+            }],
+        }, "latest"]))
+        .await
+        .expect("the simulation itself should succeed");
+        result.as_array().unwrap()[0]["calls"][0].clone()
+    }
+
+    /// A relocated precompile must dispatch at its destination inside a simulated block,
+    /// as it already does on the `eth_call` path. The engine builds its own `Evm`, so the
+    /// relocations have to be installed there too.
+    #[tokio::test]
+    async fn moved_precompile_executes_at_destination() {
+        let call = simulate_call_to(
+            RELOCATED,
+            json!({ IDENTITY: { "movePrecompileToAddress": RELOCATED } }),
+        )
+        .await;
+        assert_eq!(call["status"], json!("0x1"), "call failed: {call}");
+        assert!(
+            call["returnData"]
+                .as_str()
+                .is_some_and(|data| data.contains("11223344")),
+            "the identity precompile did not run at the relocated address; got: {call}"
+        );
+    }
+
+    /// Control for the test above: with no relocation the destination is an empty
+    /// account, so the echo cannot be coming from anywhere but the move.
+    #[tokio::test]
+    async fn destination_without_relocation_returns_no_data() {
+        let call = simulate_call_to(RELOCATED, json!({})).await;
+        assert_eq!(call["returnData"], json!("0x"), "got: {call}");
+    }
+
+    /// The vacated address stops behaving as a precompile: geth drops any overridden
+    /// address from the active set, turning 0x04 into a regular (here, empty) account,
+    /// so the call succeeds returning nothing.
+    #[tokio::test]
+    async fn vacated_precompile_address_is_a_normal_account() {
+        let call = simulate_call_to(
+            IDENTITY,
+            json!({ IDENTITY: { "movePrecompileToAddress": RELOCATED } }),
+        )
+        .await;
+        assert_eq!(
+            call["returnData"],
+            json!("0x"),
+            "0x04 still echoed after being overridden: {call}"
+        );
+    }
+
+    /// Relocations are per block, not cumulative. geth derives a fresh active-precompile
+    /// set for each simulated block, whereas the *account* overlay deliberately does
+    /// accumulate — so this pins the one of the two that is easy to get wrong. Block 2
+    /// sends no overrides, so 0x04 must dispatch as a precompile again and the
+    /// destination must be an empty account.
+    ///
+    /// Fails if the relocations are installed once outside the per-block loop, or unioned
+    /// across blocks the way the account overlay is.
+    #[tokio::test]
+    async fn relocations_do_not_carry_into_later_simulated_blocks() {
+        let echoes = |call: &Value| {
+            call["returnData"]
+                .as_str()
+                .is_some_and(|data| data.contains("11223344"))
+        };
+        let result = simulate(json!([{
+            "blockStateCalls": [
+                {
+                    "stateOverrides": { IDENTITY: { "movePrecompileToAddress": RELOCATED } },
+                    "calls": [{"from": RICH, "to": RELOCATED, "input": PAYLOAD}],
+                },
+                {
+                    "calls": [
+                        {"from": RICH, "to": RELOCATED, "input": PAYLOAD},
+                        {"from": RICH, "to": IDENTITY, "input": PAYLOAD},
+                    ],
+                },
+            ],
+        }, "latest"]))
+        .await
+        .expect("the simulation itself should succeed");
+        let blocks = result.as_array().unwrap();
+
+        let relocated_in_block_1 = &blocks[0]["calls"][0];
+        assert!(
+            echoes(relocated_in_block_1),
+            "the relocation should hold in the block that requested it; got: \
+             {relocated_in_block_1}"
+        );
+
+        let relocated_in_block_2 = &blocks[1]["calls"][0];
+        assert_eq!(
+            relocated_in_block_2["returnData"],
+            json!("0x"),
+            "the relocation leaked into a block that did not request it: \
+             {relocated_in_block_2}"
+        );
+
+        let identity_in_block_2 = &blocks[1]["calls"][1];
+        assert!(
+            echoes(identity_in_block_2),
+            "0x04 should be a precompile again once no override suppresses it; got: \
+             {identity_in_block_2}"
+        );
+    }
 }
