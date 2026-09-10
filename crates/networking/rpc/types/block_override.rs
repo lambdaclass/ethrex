@@ -4,13 +4,17 @@
 //! the synthetic block context used by the simulated call. Omitted fields keep
 //! the real header values.
 //!
-//! `blobBaseFeePerGas` is special: ethrex's EVM derives `BLOBBASEFEE` from
-//! `header.excess_blob_gas` via `fake_exponential`. To honor a direct override
-//! we invert that function and find the `excess_blob_gas` that produces the
-//! requested fee. The inversion is exact when the desired fee is representable
-//! within the fake-exponential range for the active fork's update fraction; for
-//! values that fall between representable steps the result rounds down to the
-//! closest fee ≤ requested.
+//! `blobBaseFee` is special: ethrex's EVM derives `BLOBBASEFEE` from
+//! `header.excess_blob_gas` via `fake_exponential`, so honoring a direct override means
+//! inverting that function to recover the `excess_blob_gas` that produces the requested
+//! fee. geth assigns its block context's `BlobBaseFee` outright and needs no inversion.
+//!
+//! The inversion is exact when the requested fee is representable for the active fork's
+//! update fraction. Between representable steps it rounds **down**, to the largest fee at
+//! or below the request: a caller that pairs the override with a `maxFeePerBlobGas` equal
+//! to the fee it asked for must not have the call rejected for undercutting a base fee
+//! the node rounded up past it. Zero is the one request that cannot be honored downwards,
+//! because EIP-4844 floors the blob base fee at `MIN_BASE_FEE_PER_BLOB_GAS`.
 
 use ethrex_common::{
     Address, H256, U256,
@@ -173,10 +177,14 @@ impl BlockOverrideSet {
     }
 }
 
-/// Binary-search the smallest `excess_blob_gas` whose `fake_exponential`-derived
-/// blob base fee is ≥ `desired`. Returns 0 when the desired fee is at or below
-/// `MIN_BASE_FEE_PER_BLOB_GAS`, and the search ceiling (400_000_000, below where
-/// `fake_exponential` overflows) when the desired fee is unreachable within that range.
+/// Binary-search the largest `excess_blob_gas` whose `fake_exponential`-derived blob base
+/// fee is ≤ `desired`, so a request that falls between representable steps rounds down
+/// rather than up. See the module docs for why that direction.
+///
+/// Returns 0 both when `desired` is at or below `MIN_BASE_FEE_PER_BLOB_GAS` — the protocol
+/// floor, and so the one case where the derived fee can come out above the request — and
+/// when no excess in range stays at or below it. Returns the search ceiling
+/// (400_000_000, below where `fake_exponential` overflows) when the whole range does.
 ///
 /// `denominator` must be non-zero; [`BlockOverrideSet::apply_to`] rejects the override
 /// rather than calling this with a fork that has no blob schedule.
@@ -197,17 +205,22 @@ fn invert_blob_base_fee(desired: U256, denominator: u64) -> u64 {
     };
     // fake_exponential overflows past ~400_000_000 numerator (per its doc comment).
     // Cap the search range conservatively below that, then clamp.
-    let mut lo: u64 = 0;
-    let mut hi: u64 = 400_000_000;
-    if compute(hi) < desired {
-        return hi;
+    const CAP: u64 = 400_000_000;
+    if compute(CAP) <= desired {
+        return CAP;
     }
+    // Invariant: `compute(lo) <= desired < compute(hi + 1)`. The early return above
+    // establishes `compute(0) == factor < desired`, so `lo` starts inside the range and
+    // the loop only ever moves it to another value that satisfies the bound.
+    let mut lo: u64 = 0;
+    let mut hi: u64 = CAP;
     while lo < hi {
-        let mid = lo + (hi - lo) / 2;
-        if compute(mid) < desired {
-            lo = mid + 1;
+        // Round the midpoint up, so `lo` makes progress when the two bounds are adjacent.
+        let mid = lo + (hi - lo).div_ceil(2);
+        if compute(mid) <= desired {
+            lo = mid;
         } else {
-            hi = mid;
+            hi = mid - 1;
         }
     }
     lo
@@ -368,9 +381,10 @@ mod tests {
 
     #[test]
     fn invert_blob_fee_round_trips_within_one_step() {
-        // Round-trip: pick an excess, compute fee, invert, recompute. Should match
-        // exactly because the binary search finds the smallest excess whose fee is
-        // ≥ desired, and the chosen `desired` is the exact output of `compute`.
+        // Round-trip: pick an excess, compute fee, invert, recompute. An exactly
+        // representable `desired` must come back unchanged whichever way the search
+        // rounds, so this pins exactness, not direction — see
+        // `invert_blob_fee_rounds_down_between_representable_steps` for that.
         let denom = 3338477u64;
         let factor = U256::from(MIN_BASE_FEE_PER_BLOB_GAS);
         let original_excess: u64 = 786_432;
@@ -378,5 +392,51 @@ mod tests {
         let recovered = invert_blob_base_fee(fee, denom);
         let recovered_fee = fake_exponential(factor, U256::from(recovered), denom).unwrap();
         assert_eq!(fee, recovered_fee);
+    }
+
+    /// The rounding direction, on a request that is not representable.
+    ///
+    /// A caller that pairs `blobBaseFee` with a `maxFeePerBlobGas` equal to the fee it
+    /// asked for must not have the call rejected for undercutting the base fee, so the
+    /// derived fee has to land at or below the request. Rounding up fails the first
+    /// assertion; the second pins that the excess chosen is the largest one that stays
+    /// under, which is what makes the answer the closest representable fee rather than
+    /// merely a smaller one.
+    #[test]
+    fn invert_blob_fee_rounds_down_between_representable_steps() {
+        let denom = 3338477u64;
+        let factor = U256::from(MIN_BASE_FEE_PER_BLOB_GAS);
+        let compute = |excess: u64| fake_exponential(factor, U256::from(excess), denom).unwrap();
+
+        // The fee gains about `fee / denominator` per unit of excess, so its step only
+        // exceeds one wei once the fee itself passes the update fraction. Below that every
+        // integer fee is representable and there is nothing to round between.
+        let excess = 60_000_000u64;
+        let below = compute(excess);
+        let above = compute(excess + 1);
+        assert!(
+            above > below + U256::one(),
+            "the step must be wider than one wei to have a gap to round in: {below} -> {above}"
+        );
+
+        // One wei under the next representable fee: no excess produces exactly this.
+        let between = above - U256::one();
+        let recovered = invert_blob_base_fee(between, denom);
+        assert!(
+            compute(recovered) <= between,
+            "asked for {between}, got {} from excess {recovered}",
+            compute(recovered)
+        );
+        assert_eq!(
+            recovered, excess,
+            "must pick the largest excess at or below the request, not merely a smaller one"
+        );
+    }
+
+    /// A request the whole search range stays under clamps to the ceiling rather than
+    /// wrapping or erroring.
+    #[test]
+    fn invert_blob_fee_clamps_an_unreachable_request() {
+        assert_eq!(invert_blob_base_fee(U256::MAX, 3338477), 400_000_000);
     }
 }
