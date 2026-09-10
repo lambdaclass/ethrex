@@ -1,0 +1,228 @@
+;;; RECENT_ROOT_CODE — EIP-8272 recent-root predeploy runtime, two operations.
+;;;
+;;; The write operation is byte-for-byte the runtime from ethereum/sys-asm#53 (the
+;;; 2026-08-31 EIP-8272 text). The validation operation is what the 2026-09-04 text
+;;; (canonical verifier frame, ethereum/EIPs PR 12281) added and left as `TBD`; this
+;;; file is ethrex's implementation of it until upstream publishes one.
+;;;
+;;; Calldata selects the operation by length, the two encodings being disjoint:
+;;;
+;;;   64 bytes                       write:    salt(32) || root(32)
+;;;   n * 72 bytes, 1 <= n <= 16     validate: n tuples of source_id(32) || slot(8) || root(32)
+;;;   anything else, or value > 0    revert
+;;;
+;;; write (msg.sender is the source address, S the current slot):
+;;;   source_id   = keccak256(msg.sender || salt)
+;;;   entry_hash  = keccak256(ENTRY_DOMAIN   || source_id || uint64_be(S)        || root)
+;;;   storage_key = keccak256(STORAGE_DOMAIN || source_id || uint64_be(S % 8192))
+;;;   storage[storage_key] = entry_hash
+;;;
+;;; validate, for every tuple (current_slot is SLOTNUM):
+;;;   slot < current_slot
+;;;   current_slot - slot <= RECENT_ROOT_USABLE_WINDOW (8191)
+;;;   storage[keccak256(STORAGE_DOMAIN || source_id || uint64_be(slot % 8192))]
+;;;       == keccak256(ENTRY_DOMAIN || source_id || uint64_be(slot) || root)
+;;; Any failing tuple reverts; success returns no data and changes no state. Duplicate
+;;; tuples are checked independently. The operation reads only its own storage and
+;;; makes no call, which is what lets a validation prefix be permitted to run it.
+;;;
+;;; Only a write in RECENT_ROOT_ADDRESS's own storage context is a recent-root write:
+;;; in a static context the SSTORE fails, and under DELEGATECALL/CALLCODE (or a
+;;; 7702 account delegated here) it lands in the executing account's storage.
+
+#pragma target "amsterdam"
+
+;;; ENTRY_DOMAIN   = keccak256("RECENT_ROOT_ENTRY")
+#define ENTRY_DOMAIN   = 0x8f42481679c8e6fefa040974b3c905e0ce3f2e464ba93acdb074a41181617efc
+;;; STORAGE_DOMAIN = keccak256("RECENT_ROOT_STORAGE")
+#define STORAGE_DOMAIN = 0xbdc897da2177d260ff5f4be5d4b2aad43f89c3347a305b584fa5a2546d053daa
+;;; RECENT_ROOT_LENGTH - 1, the ring-buffer index mask (RECENT_ROOT_LENGTH = 8192).
+#define RING_MASK = 0x1fff
+;;; RECENT_ROOT_USABLE_WINDOW
+#define USABLE_WINDOW = 0x1fff
+;;; RECENT_ROOT_TUPLE_BYTES and MAX_RECENT_ROOT_REFERENCES * RECENT_ROOT_TUPLE_BYTES
+#define TUPLE_BYTES = 0x48
+#define MAX_VALIDATE_BYTES = 0x480
+
+    ;; A call value rejects both operations.
+    callvalue           ; [value]
+    push2 @fail         ; [@fail, value]
+    jumpi               ; []
+
+    ;; Dispatch on calldata length: 64 -> write, else try validate.
+    calldatasize        ; [len]
+    push1 0x40          ; [64, len]
+    eq                  ; [len == 64]
+    push2 @write        ; [@write, len == 64]
+    jumpi               ; []
+
+    ;; validate: 1 <= n <= 16 tuples of 72 bytes, nothing else.
+    calldatasize        ; [len]
+    dup1                ; [len, len]
+    iszero              ; [len == 0, len]
+    push2 @fail         ; [@fail, len == 0, len]
+    jumpi               ; [len]
+    dup1                ; [len, len]
+    push2 MAX_VALIDATE_BYTES ; [1152, len, len]
+    lt                  ; [1152 < len, len]
+    push2 @fail         ; [@fail, 1152 < len, len]
+    jumpi               ; [len]
+    dup1                ; [len, len]
+    push1 TUPLE_BYTES   ; [72, len, len]
+    swap1               ; [len, 72, len]
+    mod                 ; [len % 72, len]
+    push2 @fail         ; [@fail, len % 72, len]
+    jumpi               ; [len]
+
+    ;; Loop over tuples. Stack: [len, off]; memory 0x00..0x70 is the scratch for the
+    ;; two preimages. Domains are written once; only source_id, slot and root move.
+    push1 0x00          ; [off, len]
+    push ENTRY_DOMAIN   ; [ENTRY_DOMAIN, off, len]
+    push1 0x00          ; [0x00, ENTRY_DOMAIN, off, len]
+    mstore              ; [off, len]        mem[0x00..0x20] = ENTRY_DOMAIN
+    push STORAGE_DOMAIN ; [STORAGE_DOMAIN, off, len]
+    push1 0x80          ; [0x80, STORAGE_DOMAIN, off, len]
+    mstore              ; [off, len]        mem[0x80..0xa0] = STORAGE_DOMAIN
+
+loop:
+    ;; tuple at `off`: source_id = cd[off..off+32], slot = cd[off+32..off+40],
+    ;; root = cd[off+40..off+72].
+    dup1                ; [off, off, len]
+    calldataload        ; [source_id, off, len]
+    dup1                ; [source_id, source_id, off, len]
+    push1 0x20          ; [0x20, source_id, source_id, off, len]
+    mstore              ; [source_id, off, len]     mem[0x20..0x40] = source_id
+    push1 0xa0          ; [0xa0, source_id, off, len]
+    mstore              ; [off, len]                mem[0xa0..0xc0] = source_id
+
+    ;; slot: the top eight bytes of the word at off+32.
+    dup1                ; [off, off, len]
+    push1 0x20          ; [0x20, off, off, len]
+    add                 ; [off+32, off, len]
+    calldataload        ; [slot_word, off, len]
+    push1 0xc0          ; [192, slot_word, off, len]
+    shr                 ; [slot, off, len]
+
+    ;; slot < current_slot, and current_slot - slot <= USABLE_WINDOW.
+    slotnum             ; [current, slot, off, len]
+    dup2                ; [slot, current, slot, off, len]
+    dup2                ; [current, slot, current, slot, off, len]
+    gt                  ; [current > slot, current, slot, off, len]
+    iszero              ; [current <= slot, current, slot, off, len]
+    push2 @fail         ; [@fail, current <= slot, current, slot, off, len]
+    jumpi               ; [current, slot, off, len]
+    dup2                ; [slot, current, slot, off, len]
+    swap1               ; [current, slot, slot, off, len]
+    sub                 ; [age, slot, off, len]
+    push2 USABLE_WINDOW ; [8191, age, slot, off, len]
+    lt                  ; [8191 < age, slot, off, len]
+    push2 @fail         ; [@fail, 8191 < age, slot, off, len]
+    jumpi               ; [slot, off, len]
+
+    ;; entry preimage: mem[0x40..0x48] = uint64_be(slot) (stored as a word at 0x28,
+    ;; whose low eight bytes land at 0x40..0x48 after source_id overwrote the rest)
+    ;; then root at 0x48..0x68.
+    dup1                ; [slot, slot, off, len]
+    push1 0x28          ; [0x28, slot, slot, off, len]
+    mstore              ; [slot, off, len]          mem[0x40..0x48] = uint64_be(slot)
+    push1 0x20          ; [0x20, slot, off, len]    (re-store source_id: the word write above clobbered 0x28..0x40)
+    dup3                ; [off, 0x20, slot, off, len]
+    calldataload        ; [source_id, 0x20, slot, off, len]
+    swap1               ; [0x20, source_id, slot, off, len]
+    mstore              ; [slot, off, len]          mem[0x20..0x40] = source_id again
+    dup2                ; [off, slot, off, len]
+    push1 0x28          ; [0x28, off, slot, off, len]
+    add                 ; [off+40, slot, off, len]
+    push1 0x20          ; [0x20, off+40, slot, off, len]
+    swap1               ; [off+40, 0x20, slot, off, len]
+    push1 0x48          ; [0x48, off+40, 0x20, slot, off, len]
+    calldatacopy        ; [slot, off, len]          mem[0x48..0x68] = root
+    push1 0x68          ; [104, slot, off, len]
+    push1 0x00          ; [0x00, 104, slot, off, len]
+    keccak256           ; [entry_hash, slot, off, len]
+
+    ;; storage preimage: mem[0xc0..0xc8] = uint64_be(slot & RING_MASK), source_id at 0xa0.
+    swap1               ; [slot, entry_hash, off, len]
+    push2 RING_MASK     ; [0x1fff, slot, entry_hash, off, len]
+    and                 ; [i, entry_hash, off, len]
+    push1 0xa8          ; [0xa8, i, entry_hash, off, len]
+    mstore              ; [entry_hash, off, len]    mem[0xc0..0xc8] = uint64_be(i)
+    dup2                ; [off, entry_hash, off, len]
+    calldataload        ; [source_id, entry_hash, off, len]
+    push1 0xa0          ; [0xa0, source_id, entry_hash, off, len]
+    mstore              ; [entry_hash, off, len]    mem[0xa0..0xc0] = source_id again
+    push1 0x48          ; [72, entry_hash, off, len]
+    push1 0x80          ; [0x80, 72, entry_hash, off, len]
+    keccak256           ; [storage_key, entry_hash, off, len]
+    sload               ; [stored, entry_hash, off, len]
+    eq                  ; [stored == entry_hash, off, len]
+    iszero              ; [mismatch, off, len]
+    push2 @fail         ; [@fail, mismatch, off, len]
+    jumpi               ; [off, len]
+
+    ;; next tuple, or done.
+    push1 TUPLE_BYTES   ; [72, off, len]
+    add                 ; [off+72, len]
+    dup2                ; [len, off+72, len]
+    dup2                ; [off+72, len, off+72, len]
+    lt                  ; [off+72 < len, off+72, len]
+    push2 @loop         ; [@loop, off+72 < len, off+72, len]
+    jumpi               ; [off+72, len]
+    stop
+
+fail:
+    push1 0x00          ; [0]
+    push1 0x00          ; [0, 0]
+    revert              ; []
+
+write:
+    ;; source_id = keccak256(caller || salt), laid out at mem[0x0c..0x40).
+    caller              ; [caller]
+    push1 0x00          ; [0, caller]
+    mstore              ; []                       mem[0x00..0x20] = caller (address in low 20 bytes)
+    push1 0x20          ; [0x20]
+    push1 0x00          ; [0, 0x20]
+    push1 0x20          ; [0x20, 0, 0x20]
+    calldatacopy        ; []                       mem[0x20..0x40] = salt
+    push1 0x34          ; [52]
+    push1 0x0c          ; [0x0c, 52]
+    keccak256           ; [source_id]
+
+    ;; entry_hash preimage at mem[0x40..0xa8):
+    ;;   ENTRY_DOMAIN(32) || source_id(32) || uint64_be(SLOTNUM)(8) || root(32).
+    dup1                ; [source_id, source_id]
+    push ENTRY_DOMAIN   ; [ENTRY_DOMAIN, source_id, source_id]
+    push1 0x40          ; [0x40, ENTRY_DOMAIN, source_id, source_id]
+    mstore              ; [source_id, source_id]   mem[0x40..0x60] = ENTRY_DOMAIN
+    slotnum             ; [slot, source_id, source_id]
+    push1 0x68          ; [0x68, slot, source_id, source_id]
+    mstore              ; [source_id, source_id]   mem[0x80..0x88] = uint64_be(slot)
+    push1 0x60          ; [0x60, source_id, source_id]
+    mstore              ; [source_id]              mem[0x60..0x80] = source_id
+    push1 0x20          ; [0x20, source_id]
+    push1 0x20          ; [0x20, 0x20, source_id]
+    push1 0x88          ; [0x88, 0x20, 0x20, source_id]
+    calldatacopy        ; [source_id]              mem[0x88..0xa8] = root
+    push1 0x68          ; [104, source_id]
+    push1 0x40          ; [0x40, 104, source_id]
+    keccak256           ; [entry_hash, source_id]
+
+    ;; storage_key preimage at mem[0xa8..0xf0):
+    ;;   STORAGE_DOMAIN(32) || source_id(32) || uint64_be(SLOTNUM % 8192)(8).
+    dup2                ; [source_id, entry_hash, source_id]
+    push STORAGE_DOMAIN ; [STORAGE_DOMAIN, source_id, entry_hash, source_id]
+    push1 0xa8          ; [0xa8, STORAGE_DOMAIN, source_id, entry_hash, source_id]
+    mstore              ; [source_id, entry_hash, source_id]   mem[0xa8..0xc8] = STORAGE_DOMAIN
+    push2 RING_MASK     ; [0x1fff, source_id, entry_hash, source_id]
+    slotnum             ; [slot, 0x1fff, source_id, entry_hash, source_id]
+    and                 ; [i, source_id, entry_hash, source_id]
+    push1 0xd0          ; [0xd0, i, source_id, entry_hash, source_id]
+    mstore              ; [source_id, entry_hash, source_id]   mem[0xe8..0xf0] = uint64_be(i)
+    push1 0xc8          ; [0xc8, source_id, entry_hash, source_id]
+    mstore              ; [entry_hash, source_id]              mem[0xc8..0xe8] = source_id
+    push1 0x48          ; [72, entry_hash, source_id]
+    push1 0xa8          ; [0xa8, 72, entry_hash, source_id]
+    keccak256           ; [storage_key, entry_hash, source_id]
+
+    sstore              ; [source_id]              storage[storage_key] = entry_hash
+    stop
