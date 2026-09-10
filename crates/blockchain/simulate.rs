@@ -337,13 +337,68 @@ fn state_override_to_update(
 /// disambiguates), the nonce is auto-filled from the live simulated state,
 /// missing gas gets the remaining block gas, and the signature is zeroed (the
 /// sender is carried out-of-band). Returns `(tx, sender, gas_capped)`;
+/// Running per-block gas totals.
+///
+/// EIP-8037 splits a block's allowance into a regular and a state dimension, each bounded
+/// by the block gas limit *independently*. That makes the room left for the next call
+/// `min(limit - regular, limit - state)`, which is strictly more than the pre-Amsterdam
+/// `limit - total` once both dimensions are non-zero — so the single running total is not
+/// enough to decide inclusion, and using it refuses calls a real Amsterdam block includes.
+#[derive(Clone, Copy, Default)]
+struct BlockGasTally {
+    /// Σ `report.gas_used`: the pre-Amsterdam single budget.
+    total: u64,
+    regular: u64,
+    state: u64,
+}
+
+impl BlockGasTally {
+    /// Accumulate one executed call, splitting it exactly as the payload builder does so a
+    /// simulated block's gas matches what building the same block would report.
+    fn add(&mut self, report_gas_used: u64, state_gas_used: u64) {
+        self.total = self.total.saturating_add(report_gas_used);
+        self.state = self.state.saturating_add(state_gas_used);
+        self.regular = self
+            .regular
+            .saturating_add(report_gas_used.saturating_sub(state_gas_used));
+    }
+
+    /// The block's `gasUsed` header value: `max(Σregular, Σstate)` from Amsterdam on
+    /// (mirroring `PayloadBuildContext::gas_used`), the plain sum before it.
+    fn block_gas_used(&self, fork: Fork) -> u64 {
+        if fork >= Fork::Amsterdam {
+            self.regular.max(self.state)
+        } else {
+            self.total
+        }
+    }
+
+    /// Gas available to the next call, per dimension from Amsterdam on.
+    fn remaining(&self, gas_limit: u64, fork: Fork) -> u64 {
+        if fork >= Fork::Amsterdam {
+            self.regular_available(gas_limit)
+                .min(self.state_available(gas_limit))
+        } else {
+            gas_limit.saturating_sub(self.total)
+        }
+    }
+
+    fn regular_available(&self, gas_limit: u64) -> u64 {
+        gas_limit.saturating_sub(self.regular)
+    }
+
+    fn state_available(&self, gas_limit: u64) -> u64 {
+        gas_limit.saturating_sub(self.state)
+    }
+}
+
 /// `gas_capped` marks calls whose gas was clamped by the request-wide cap.
 fn build_sim_transaction(
     call: &GenericTransaction,
     header: &BlockHeader,
     chain_id: u64,
     fork: Fork,
-    block_gas_used: u64,
+    gas_tally: &BlockGasTally,
     budget_remaining: u64,
     evm: &mut ethrex_vm::Evm,
 ) -> Result<(Transaction, Address, bool), SimulationError> {
@@ -359,10 +414,21 @@ fn build_sim_transaction(
         Some(nonce) => nonce,
         None => evm.get_account_nonce(sender).map_err(internal)?,
     };
-    let remaining_block_gas = header.gas_limit.saturating_sub(block_gas_used);
+    let remaining_block_gas = gas_tally.remaining(header.gas_limit, fork);
     let (gas_limit, gas_capped) = match call.gas {
         Some(gas) => {
-            if gas > remaining_block_gas {
+            // Mirrors `ethrex_vm::check_2d_gas_allowance`, which cannot be called here: it
+            // takes a built `Transaction`, and the gas limit being derived is what would go
+            // into one. The regular dimension's worst case is the whole tx gas, capped by
+            // EIP-7825; the state dimension has no such cap.
+            let exceeds = if fork >= Fork::Amsterdam {
+                let regular_contrib = gas.min(get_max_allowed_gas_limit(header.gas_limit, fork));
+                regular_contrib > gas_tally.regular_available(header.gas_limit)
+                    || gas > gas_tally.state_available(header.gas_limit)
+            } else {
+                gas > remaining_block_gas
+            };
+            if exceeds {
                 return Err(SimulationError::BlockGasLimitReached {
                     requested: gas,
                     remaining: remaining_block_gas,
@@ -515,7 +581,7 @@ impl Blockchain {
             let mut receipts = Vec::with_capacity(call_count);
             let mut calls = Vec::with_capacity(call_count);
             let mut block_logs: Vec<Log> = Vec::new();
-            let mut gas_used: u64 = 0;
+            let mut gas_tally = BlockGasTally::default();
             let mut blob_gas_used: u64 = 0;
             let mut cumulative_gas_spent: u64 = 0;
 
@@ -525,7 +591,7 @@ impl Blockchain {
                     &header,
                     chain_config.chain_id,
                     fork,
-                    gas_used,
+                    &gas_tally,
                     budget_remaining,
                     &mut evm,
                 )?;
@@ -545,7 +611,7 @@ impl Blockchain {
                     Err(SimulationTxError::Evm(evm_error)) => return Err(internal(evm_error)),
                 };
 
-                gas_used += report.gas_used;
+                gas_tally.add(report.gas_used, report.state_gas_used);
                 budget_remaining = budget_remaining.saturating_sub(report.gas_used);
                 blob_gas_used += (tx.blob_versioned_hashes().len() * GAS_PER_BLOB as usize) as u64;
 
@@ -617,7 +683,7 @@ impl Blockchain {
                 calls.push(call_result);
             }
 
-            header.gas_used = gas_used;
+            header.gas_used = gas_tally.block_gas_used(fork);
             if header.blob_gas_used.is_some() {
                 header.blob_gas_used = Some(blob_gas_used);
             }

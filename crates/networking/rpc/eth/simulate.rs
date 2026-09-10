@@ -702,6 +702,62 @@ mod integration_tests {
     const FRESH_A: &str = "0xc000000000000000000000000000000000000000";
     const FRESH_B: &str = "0xc100000000000000000000000000000000000000";
 
+    /// Runs against the Amsterdam-activated genesis, for EIP-8037 / EIP-7928 behaviour.
+    async fn simulate_amsterdam(params: Value) -> Result<Value, RpcErr> {
+        let storage = crate::test_utils::setup_store_amsterdam().await;
+        let context = default_context_with_storage(storage).await;
+        let request: RpcRequest = serde_json::from_value(json!({
+            "jsonrpc": "2.0", "id": 1, "method": "eth_simulateV1", "params": params,
+        }))
+        .unwrap();
+        map_http_requests(&request, context).await
+    }
+
+    /// Two calls that both create state: one writes a fresh storage slot, one creates a
+    /// fresh account. Used to compare the block's `gasUsed` against the naive sum.
+    fn state_creating_calls() -> Value {
+        json!([{
+            "blockStateCalls": [{
+                // SSTORE(key=2, value=1): creates a storage slot, so state gas > 0.
+                "stateOverrides": { FRESH_A: { "code": "0x6001600255" } },
+                "calls": [
+                    {"from": RICH, "to": FRESH_A, "gas": "0x100000"},
+                    {"from": RICH, "to": FRESH_B, "value": "0x1", "gas": "0x100000"},
+                ],
+            }],
+        }, "latest"])
+    }
+
+    /// Two calls under a 400_000 block gas limit, sized so the second fits the two
+    /// EIP-8037 dimensions but not the pre-Amsterdam single budget.
+    fn two_call_budget_request() -> Value {
+        json!([{
+            "blockStateCalls": [{
+                "blockOverrides": { "gasLimit": "0x61a80" },
+                "stateOverrides": { FRESH_A: { "code": "0x6001600255" } },
+                "calls": [
+                    {"from": RICH, "to": FRESH_A, "gas": "0x30d40"},
+                    {"from": RICH, "to": FRESH_B, "value": "0x1", "gas": "0x46cd0"},
+                ],
+            }],
+        }, "latest"])
+    }
+
+    fn block_and_call_gas(result: &Value) -> (u64, u64) {
+        let block = &result.as_array().unwrap()[0];
+        let hex = |v: &Value| {
+            u64::from_str_radix(v.as_str().unwrap().trim_start_matches("0x"), 16).unwrap()
+        };
+        let block_gas = hex(&block["gasUsed"]);
+        let call_sum = block["calls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| hex(&c["gasUsed"]))
+            .sum();
+        (block_gas, call_sum)
+    }
+
     async fn simulate(params: Value) -> Result<Value, RpcErr> {
         let storage = setup_store().await;
         let context = default_context_with_storage(storage).await;
@@ -1082,6 +1138,131 @@ mod integration_tests {
     const BEACON_TIME_WORD: &str =
         "0x000000000000000000000000000000000000000000000000000000006668e200";
     const BEACON_ROOT: &str = "0x00000000000000000000000000000000000000000000000000000000000000ff";
+
+    /// A call that supplies no `gas` is granted the block's remaining gas, which from
+    /// Amsterdam on is the per-dimension budget. The callee reads `GAS` and returns it, so
+    /// the granted limit is observable: anything above the single-budget 274_974 can only
+    /// come from the per-dimension 302_080, since what the callee sees is strictly less
+    /// than what it was granted.
+    ///
+    /// This is the half of the rule the explicit-gas tests do not reach — they exercise
+    /// the rejection, this exercises the budget the inferred limit is drawn from.
+    #[tokio::test]
+    async fn amsterdam_inferred_gas_limit_uses_the_per_dimension_budget() {
+        // GAS, MSTORE(0), RETURN(0, 32).
+        const GAS_PROBE_CODE: &str = "0x5a60005260206000f3";
+        const GAS_PROBE: &str = "0xc200000000000000000000000000000000000000";
+        let result = simulate_amsterdam(json!([{
+            "blockStateCalls": [{
+                "blockOverrides": { "gasLimit": "0x61a80" },
+                "stateOverrides": {
+                    FRESH_A: { "code": "0x6001600255" },
+                    GAS_PROBE: { "code": GAS_PROBE_CODE },
+                },
+                "calls": [
+                    {"from": RICH, "to": FRESH_A, "gas": "0x30d40"},
+                    {"from": RICH, "to": GAS_PROBE},
+                ],
+            }],
+        }, "latest"]))
+        .await
+        .expect("the gas-probing call should run");
+        let call = &result.as_array().unwrap()[0]["calls"][1];
+        let gas_seen = u64::from_str_radix(
+            call["returnData"]
+                .as_str()
+                .expect("the probe returns a word")
+                .trim_start_matches("0x"),
+            16,
+        )
+        .expect("the probe returns a gas value");
+        assert!(
+            gas_seen > 274_974,
+            "a call supplying no gas should draw on the per-dimension budget (302_080), \
+             not the single budget (274_974); the callee saw only {gas_seen}"
+        );
+    }
+
+    /// EIP-8037 inclusion is per dimension: the room left for the next call is
+    /// `min(limit - sum_regular, limit - sum_state)`, which is *more* than the
+    /// pre-Amsterdam `limit - sum_total`. Applying the 1D rule on Amsterdam refuses calls
+    /// a real Amsterdam block would include. reth gates the same rule on the fork
+    /// (`enable_amsterdam_eip8037`) rather than on `validation`, so this holds in the
+    /// default relaxed mode too.
+    ///
+    /// Block limit 400_000. The first call spends regular 97_920 / state 27_106
+    /// (125_026 together). The second asks 290_000: over the 1D remainder of 274_974,
+    /// but inside both dimensions (302_080 regular, 372_894 state). Its gas limit also
+    /// has to cover the call itself — a transfer creating a fresh account costs ~204_600
+    /// on Amsterdam, since account creation is charged to the state dimension.
+    #[tokio::test]
+    async fn amsterdam_inclusion_uses_per_dimension_budgets() {
+        let result = simulate_amsterdam(two_call_budget_request())
+            .await
+            .expect("the second call fits both gas dimensions");
+        let calls = result.as_array().unwrap()[0]["calls"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(
+            calls[1]["status"],
+            json!("0x1"),
+            "second call failed: {}",
+            calls[1]
+        );
+    }
+
+    /// Control for the test above: widening the budget to two dimensions must not amount
+    /// to removing the check. 320_000 still exceeds the *regular* dimension's 302_080
+    /// while fitting the state dimension's 372_894, so it has to be refused — which also
+    /// proves the regular dimension is the one being consulted, not just the looser of
+    /// the two.
+    #[tokio::test]
+    async fn amsterdam_inclusion_still_refuses_a_call_over_one_dimension() {
+        let err = simulate_amsterdam(json!([{
+            "blockStateCalls": [{
+                "blockOverrides": { "gasLimit": "0x61a80" },
+                "stateOverrides": { FRESH_A: { "code": "0x6001600255" } },
+                "calls": [
+                    {"from": RICH, "to": FRESH_A, "gas": "0x30d40"},
+                    {"from": RICH, "to": FRESH_B, "value": "0x1", "gas": "0x4e200"},
+                ],
+            }],
+        }, "latest"]))
+        .await
+        .expect_err("320_000 exceeds the regular dimension's remaining 302_080");
+        assert_eq!(error_code(err), -38015);
+    }
+
+    /// EIP-8037: a block's gas is `max(sum_regular, sum_state)`, not the sum of the two
+    /// dimensions (`PayloadBuildContext::gas_used`). So once calls create state, the
+    /// block's `gasUsed` must come out *below* the naive sum of the per-call figures.
+    /// reth applies the same rule in simulation, gated on the fork rather than on
+    /// `validation`.
+    #[tokio::test]
+    async fn amsterdam_block_gas_is_the_max_of_both_dimensions() {
+        let result = simulate_amsterdam(state_creating_calls()).await.unwrap();
+        let (block_gas, call_sum) = block_and_call_gas(&result);
+        assert!(
+            block_gas < call_sum,
+            "EIP-8037 block gas should be max(regular, state), so below the naive sum \
+             {call_sum}; got {block_gas}"
+        );
+    }
+
+    /// Control for the rule above: pre-Amsterdam a block's gas *is* the sum, so the same
+    /// calls must produce equality. This is what pins the assertion above to the fork
+    /// gate rather than to some unrelated gas change.
+    #[tokio::test]
+    async fn pre_amsterdam_block_gas_is_the_sum() {
+        let result = simulate(state_creating_calls()).await.unwrap();
+        let (block_gas, call_sum) = block_and_call_gas(&result);
+        assert_eq!(
+            block_gas, call_sum,
+            "pre-Amsterdam the block's gas is the plain sum of its transactions"
+        );
+    }
 
     /// A `beaconRoot` override must reach the header of the simulated block.
     #[tokio::test]
