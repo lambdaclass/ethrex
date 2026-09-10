@@ -358,6 +358,15 @@ impl Blockchain {
             .rebuild_parent_state_with_db(block.header.parent_hash, reexec)
             .await?;
         vm.rerun_block(block, tx_index)?;
+        // With no overlay to install there is nothing to layer over, so hand back the
+        // replay's own `Evm` as this function always did. Projecting it through
+        // `ReplayedVmDatabase` would work, but the projection reconstructs `storage_root`
+        // from an `AccountUpdate` rather than carrying the real one (see
+        // `UNMATERIALISED_STORAGE_ROOT`), and there is no reason to put the
+        // override-free `txIndex` trace through an approximation it does not need.
+        if !overrides.needs_overlay() {
+            return Ok(vm);
+        }
         // `get_state_transitions` diffs `current_accounts_state` against
         // `initial_accounts_state`, so this is the complete replay only while the latter
         // is still the untouched `base_db` baseline. That holds because `rerun_block` is
@@ -372,14 +381,7 @@ impl Blockchain {
         // assert would pass in exactly the case it claims to catch. The comment is the
         // guard; keep it attached to this call.
         let replayed = ReplayedVmDatabase::new(base_db, vm.get_state_transitions()?);
-        if overrides.needs_overlay() {
-            return Ok(self.new_overlaid_evm(
-                replayed,
-                overrides.state.clone(),
-                block.header.number,
-            )?);
-        }
-        Ok(self.new_evm(replayed)?)
+        Ok(self.new_overlaid_evm(replayed, overrides.state.clone(), block.header.number)?)
     }
 
     /// Rebuild the parent state for a block given its parent hash, returning an `Evm`
