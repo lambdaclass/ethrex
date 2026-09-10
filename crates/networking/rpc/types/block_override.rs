@@ -27,12 +27,15 @@ use crate::utils::RpcErr;
 
 /// JSON shape of geth's Block Override Set (`internal/ethapi/override.BlockOverrides`).
 ///
-/// Field names follow geth, which marshals Go field names and whose `encoding/json`
-/// matches keys case-insensitively — so `FeeRecipient` is reached as `feeRecipient`.
-/// geth renamed `Coinbase`/`Random` to `FeeRecipient`/`PrevRandao` and calls the blob fee
+/// `BlockOverrides` carries no `json` tags in geth, so Go marshals it under its field
+/// names (`FeeRecipient`, `BaseFeePerGas`, ...) and unmarshals case-insensitively. Both
+/// spellings are therefore in circulation for the same field, and both are accepted here:
+/// the camelCase form geth's own documentation and every JavaScript or Rust client use,
+/// and the PascalCase form Go produces from geth's struct. geth renamed
+/// `Coinbase`/`Random` to `FeeRecipient`/`PrevRandao` and calls the blob fee
 /// `BlobBaseFee`; alloy (reth, Foundry) keeps the older spellings as canonical and adds
-/// `baseFee`, and erigon uses `blockNumber`/`timestamp`. Every spelling in circulation is
-/// accepted via `alias`, so a request shaped for any of those clients works here.
+/// `baseFee`, and erigon uses `blockNumber`/`timestamp`. All of those are accepted via
+/// `alias` too, so a request shaped for any of those clients works here.
 ///
 /// `deny_unknown_fields` mirrors [`StateOverrideSet`](super::state_override::StateOverrideSet):
 /// an override this client cannot honor must be an error rather than a silent drop, which
@@ -41,42 +44,71 @@ use crate::utils::RpcErr;
 #[derive(Debug, Default, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BlockOverrideSet {
-    #[serde(default, alias = "blockNumber", deserialize_with = "deser_u64_hex_opt")]
+    #[serde(
+        default,
+        alias = "Number",
+        alias = "blockNumber",
+        alias = "BlockNumber",
+        deserialize_with = "deser_u64_hex_opt"
+    )]
     pub number: Option<u64>,
-    #[serde(default, alias = "timestamp", deserialize_with = "deser_u64_hex_opt")]
+    #[serde(
+        default,
+        alias = "Time",
+        alias = "timestamp",
+        alias = "Timestamp",
+        deserialize_with = "deser_u64_hex_opt"
+    )]
     pub time: Option<u64>,
-    #[serde(default, deserialize_with = "deser_u64_hex_opt")]
+    #[serde(default, alias = "GasLimit", deserialize_with = "deser_u64_hex_opt")]
     pub gas_limit: Option<u64>,
     /// geth's `FeeRecipient`; `coinbase` is the older spelling alloy still uses.
-    #[serde(default, alias = "feeRecipient")]
+    #[serde(
+        default,
+        alias = "Coinbase",
+        alias = "feeRecipient",
+        alias = "FeeRecipient"
+    )]
     pub coinbase: Option<Address>,
     /// Override for PREVRANDAO. geth's `PrevRandao`; `random` is the older spelling.
-    #[serde(default, alias = "prevRandao")]
+    #[serde(default, alias = "Random", alias = "prevRandao", alias = "PrevRandao")]
     pub random: Option<H256>,
     /// geth's `BaseFeePerGas`; `baseFee` is alloy's canonical spelling.
-    #[serde(default, alias = "baseFee", deserialize_with = "deser_u64_hex_opt")]
+    #[serde(
+        default,
+        alias = "BaseFeePerGas",
+        alias = "baseFee",
+        alias = "BaseFee",
+        deserialize_with = "deser_u64_hex_opt"
+    )]
     pub base_fee_per_gas: Option<u64>,
     /// geth's `BlobBaseFee`. `blobBaseFeePerGas` was ethrex's own spelling and is kept as
     /// an alias so requests written against earlier builds of this branch still parse.
     #[serde(
         default,
         rename = "blobBaseFee",
+        alias = "BlobBaseFee",
         alias = "blobBaseFeePerGas",
         deserialize_with = "deser_u256_hex_opt"
     )]
     pub blob_base_fee_per_gas: Option<U256>,
-    #[serde(default, deserialize_with = "deser_u256_hex_opt")]
+    #[serde(default, alias = "Difficulty", deserialize_with = "deser_u256_hex_opt")]
     pub difficulty: Option<U256>,
     /// geth's `BeaconRoot`. Declared only to be refused with a reason: see
     /// [`BlockOverrideSet::apply_to`].
-    #[serde(default, alias = "parentBeaconBlockRoot")]
+    #[serde(
+        default,
+        alias = "BeaconRoot",
+        alias = "parentBeaconBlockRoot",
+        alias = "ParentBeaconBlockRoot"
+    )]
     pub beacon_root: Option<H256>,
     /// geth's `Withdrawals`. Declared only to be refused with a reason.
-    #[serde(default)]
+    #[serde(default, alias = "Withdrawals")]
     pub withdrawals: Option<serde_json::Value>,
     /// reth/alloy's `blockHash` extension (a number -> hash map read by `BLOCKHASH`).
     /// Not a geth field. Declared only to be refused with a reason.
-    #[serde(default)]
+    #[serde(default, alias = "BlockHash")]
     pub block_hash: Option<serde_json::Value>,
 }
 
@@ -336,6 +368,45 @@ mod tests {
         assert_eq!(set.random, Some(H256::from_low_u64_be(0xdead)));
         assert_eq!(set.base_fee_per_gas, Some(0x10));
         assert_eq!(set.blob_base_fee_per_gas, Some(U256::from(0x100)));
+    }
+
+    /// The spellings Go itself produces from geth's struct. `BlockOverrides` has no
+    /// `json` tags, so a client that marshals geth's own type sends these, and geth
+    /// accepts them on the way back in because `encoding/json` matches case-insensitively.
+    /// Rejecting them would fail exactly the geth-shaped requests this exists to serve.
+    #[test]
+    fn geth_go_field_names_are_accepted() {
+        let v = json!({
+            "Number": "0x1000",
+            "Time": "0x65000000",
+            "GasLimit": "0x1c9c380",
+            "FeeRecipient": "0x000000000000000000000000000000000000beef",
+            "PrevRandao": "0x000000000000000000000000000000000000000000000000000000000000dead",
+            "BaseFeePerGas": "0x10",
+            "BlobBaseFee": "0x100",
+            "Difficulty": "0x0"
+        });
+        let set: BlockOverrideSet =
+            serde_json::from_value(v).expect("geth's Go field names must parse");
+        assert_eq!(set.number, Some(0x1000));
+        assert_eq!(set.time, Some(0x65000000));
+        assert_eq!(set.gas_limit, Some(0x1c9c380));
+        assert_eq!(set.coinbase, Some(Address::from_low_u64_be(0xbeef)));
+        assert_eq!(set.random, Some(H256::from_low_u64_be(0xdead)));
+        assert_eq!(set.base_fee_per_gas, Some(0x10));
+        assert_eq!(set.blob_base_fee_per_gas, Some(U256::from(0x100)));
+        assert_eq!(set.difficulty, Some(U256::zero()));
+    }
+
+    /// The refused fields have to be reachable under Go's spelling too, or the error
+    /// degrades from "not supported, and here is why" to "unknown field".
+    #[test]
+    fn refused_fields_are_reachable_under_go_spellings() {
+        for field in ["BeaconRoot", "Withdrawals", "BlockHash"] {
+            let v = json!({ field: json!(null) });
+            serde_json::from_value::<BlockOverrideSet>(v)
+                .unwrap_or_else(|e| panic!("`{field}` must be a known field, got: {e}"));
+        }
     }
 
     /// alloy's canonical `baseFee`, and erigon's `blockNumber`/`timestamp`.

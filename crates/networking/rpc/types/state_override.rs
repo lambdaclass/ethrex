@@ -4,7 +4,13 @@
 //!
 //! `state` and `stateDiff` are mutually exclusive per address; supplying both is
 //! rejected at parse time with a descriptive error. Mixed-case hex addresses are
-//! accepted (handled by `ethereum_types::Address`'s deserialize).
+//! accepted (handled by `ethereum_types::Address`'s deserialize), and so are mixed-case
+//! field names, because geth's `encoding/json` matches them case-insensitively.
+//!
+//! One deliberate deviation: geth ignores a field it does not know, and this rejects it.
+//! A silently dropped override yields a plausible-looking but wrong answer, which is
+//! worse for the caller than an error naming the field. Every field geth itself defines
+//! is modelled, so what this rejects is a misspelling.
 
 use std::collections::BTreeMap;
 
@@ -124,7 +130,11 @@ impl<'de> Visitor<'de> for AccountOverrideVisitor {
         let mut move_precompile_to: Option<Address> = None;
 
         while let Some(key) = map.next_key::<String>()? {
-            match key.as_str() {
+            // geth's `encoding/json` matches keys case-insensitively, so `Balance` and
+            // `balance` name the same field there. Match on a lowercased key so every
+            // casing a client may send is accepted; the unknown-field error below still
+            // echoes the key as it was written.
+            match key.to_ascii_lowercase().as_str() {
                 "balance" => {
                     let v: String = map.next_value()?;
                     balance = Some(parse_u256(&v).map_err(A::Error::custom)?);
@@ -140,15 +150,15 @@ impl<'de> Visitor<'de> for AccountOverrideVisitor {
                 "state" => {
                     state = Some(map.next_value()?);
                 }
-                "stateDiff" => {
+                "statediff" => {
                     state_diff = Some(map.next_value()?);
                 }
-                "movePrecompileToAddress" => {
+                "moveprecompiletoaddress" => {
                     move_precompile_to = Some(map.next_value()?);
                 }
-                other => {
+                _ => {
                     return Err(A::Error::custom(format!(
-                        "unknown field `{other}` in state override; expected one of \
+                        "unknown field `{key}` in state override; expected one of \
                          balance, nonce, code, state, stateDiff, movePrecompileToAddress"
                     )));
                 }
@@ -264,6 +274,46 @@ mod tests {
             .unwrap();
         let ov = &set.0[&addr];
         assert!(matches!(ov.storage_mode, StorageMode::Diff(_)));
+    }
+
+    /// Go matches JSON keys case-insensitively, so a client that sends geth's field
+    /// names in any other casing gets an answer from geth. Rejecting those here would
+    /// fail requests geth serves.
+    #[test]
+    fn field_names_are_case_insensitive() {
+        let v = json!({
+            "0x00000000000000000000000000000000000000ee": {
+                "Balance": "0x1",
+                "NONCE": "0x2",
+                "Code": "0x00",
+                "StateDiff": {
+                    "0x0000000000000000000000000000000000000000000000000000000000000001": "0x2a"
+                }
+            }
+        });
+        let set: StateOverrideSet =
+            serde_json::from_value(v).expect("mixed-case field names must parse");
+        let addr: Address = "0x00000000000000000000000000000000000000ee"
+            .parse()
+            .unwrap();
+        let ov = &set.0[&addr];
+        assert_eq!(ov.balance, Some(U256::one()));
+        assert_eq!(ov.nonce, Some(2));
+        assert!(ov.code.is_some());
+        assert!(matches!(ov.storage_mode, StorageMode::Diff(_)));
+    }
+
+    /// The unknown-field error must echo the key as the caller wrote it, not the
+    /// lowercased form matched against.
+    #[test]
+    fn unknown_field_error_names_the_key_as_written() {
+        let v = json!({ "0x00000000000000000000000000000000000000ee": { "BalanceOf": "0x1" } });
+        let err = serde_json::from_value::<StateOverrideSet>(v)
+            .expect_err("unknown field must be rejected");
+        assert!(
+            err.to_string().contains("BalanceOf"),
+            "error should name the field as written, got: {err}"
+        );
     }
 
     #[test]
