@@ -108,8 +108,21 @@ impl<Inner: VmDatabase + Clone> VmDatabase for OverlaidVmDatabase<Inner> {
             return Ok(base);
         }
         // Synthesize an account if the address is unknown on chain but the override
-        // gives it state. Other overrides (e.g. movePrecompileToAddress only) keep
-        // the account absent.
+        // gives it state. Other overrides keep the account absent, and deliberately:
+        //
+        // - `movePrecompileToAddress` changes dispatch, not state, so it has no account
+        //   to give.
+        // - A `state`/`stateDiff`-only override leaves the account absent while
+        //   `get_storage_slot` below still answers from the overlay. geth's `SetStorage`
+        //   does create a state object, and `StateOverride.Apply` finishes with
+        //   `Finalise(false)`, which does not prune it — but that object is `empty()`, and
+        //   both clients gate what is observable on emptiness rather than on presence:
+        //   geth's `EXTCODEHASH` returns zero for an empty account, and here
+        //   `LevmAccount::from(AccountState)` derives `exists` from the state differing
+        //   from the default, so synthesizing `AccountState::default()` would not change
+        //   what the EVM sees either. Storage is reachable both ways because
+        //   `GeneralizedDatabase::get_storage_value` reads through to the database
+        //   without consulting `exists`.
         let mut state = match base {
             Some(s) => s,
             None if ov.balance.is_some() || ov.nonce.is_some() || ov.code.is_some() => {

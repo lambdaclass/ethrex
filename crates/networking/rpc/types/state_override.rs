@@ -186,6 +186,14 @@ impl<'de> Visitor<'de> for AccountOverrideVisitor {
     }
 }
 
+// The `0x` prefix is optional here, as it is for every other quantity ethrex's RPC layer
+// parses (`ethrex_common::serde_utils` trims it the same way), so an unprefixed string is
+// read as hex rather than rejected. geth is stricter: it reads these through `hexutil`,
+// which requires the prefix and would reject `"30000000"` instead of taking it for
+// 0x30000000. Tightening that belongs in `serde_utils`, for the whole RPC surface at once
+// — doing it here alone would leave a block override's `gasLimit` refusing what the
+// transaction object's own `gas` still accepts.
+
 fn parse_u256(s: &str) -> Result<U256, String> {
     let s = s.trim_start_matches("0x");
     U256::from_str_radix(s, 16).map_err(|e| format!("invalid u256: {e}"))

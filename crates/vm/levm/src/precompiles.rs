@@ -305,8 +305,9 @@ impl PrecompileMoves {
     /// Build from the `(precompile_address, destination_address)` relocations and the full
     /// set of overridden addresses.
     ///
-    /// A later pair wins if two moves name the same destination; the RPC layer rejects
-    /// that shape before it gets here, as geth does.
+    /// A later pair wins if two moves name the same destination, which is also what
+    /// geth's `StateOverride.Apply` does: it assigns `precompiles[dest]` per move, in
+    /// address order, and only refuses a destination that is itself overridden.
     pub fn from_parts(
         moves: impl IntoIterator<Item = (Address, Address)>,
         overridden: impl IntoIterator<Item = Address>,
