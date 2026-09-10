@@ -3,7 +3,7 @@ use std::time::Duration;
 use ethrex_common::{
     Address, H256,
     tracing::{CallTrace, OpcodeTraceResult, PrestateResult},
-    types::{Block, BlockHeader, BlockNumber, GenericTransaction},
+    types::{Block, BlockHeader, GenericTransaction},
 };
 use ethrex_storage::Store;
 use ethrex_vm::tracing::OpcodeTracerConfig;
@@ -26,9 +26,6 @@ use crate::{
 pub struct TraceCallOverrides {
     /// State Override Set, already converted by the RPC layer.
     pub state: BTreeMap<Address, StateOverride>,
-    /// Height of the real chain tip. The overlay returns zero for `BLOCKHASH(n)` when
-    /// `n` is past it, matching geth for a synthetic block beyond the tip.
-    pub real_head_number: BlockNumber,
     /// Header the EVM environment is built from when a Block Override Set was given.
     /// The *database* is always built from the real header, so `state_root` and
     /// block-hash ancestor walks still resolve against actual chain state.
@@ -41,7 +38,7 @@ impl TraceCallOverrides {
     }
 
     /// True when the overlay must be installed. A Block Override Set alone is enough:
-    /// the overlay carries the `BLOCKHASH`-past-the-real-tip clamp, which is a property
+    /// the overlay carries the `BLOCKHASH`-past-the-base-block clamp, which is a property
     /// of executing against a synthetic block rather than of the state overrides.
     fn needs_overlay(&self) -> bool {
         self.has_state() || self.effective_header.is_some()
@@ -344,7 +341,7 @@ impl Blockchain {
                 return Ok(self.new_overlaid_evm(
                     vm_db,
                     overrides.state.clone(),
-                    overrides.real_head_number,
+                    block.header.number,
                 )?);
             }
             return Ok(self.new_evm(vm_db)?);
@@ -379,7 +376,7 @@ impl Blockchain {
             return Ok(self.new_overlaid_evm(
                 replayed,
                 overrides.state.clone(),
-                overrides.real_head_number,
+                block.header.number,
             )?);
         }
         Ok(self.new_evm(replayed)?)

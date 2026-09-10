@@ -485,11 +485,8 @@ impl TraceCallRequest {
             )?,
             _ => Default::default(),
         };
-        let real_head_number = context.storage.get_latest_block_number()?;
-
         Ok(TraceCallOverrides {
             state,
-            real_head_number,
             effective_header,
         })
     }

@@ -4211,16 +4211,16 @@ impl Blockchain {
     /// database because they change dispatch, not state. This constructor is the only
     /// way to build the overlay, so the relocations can't be forgotten at a call site.
     ///
-    /// `real_head_number` is the height of the real chain tip; see
-    /// [`OverlaidVmDatabase::new`].
+    /// `base_block_number` is the number of the real header the call is made against;
+    /// see [`OverlaidVmDatabase::new`].
     pub fn new_overlaid_evm<D: VmDatabase + Clone + 'static>(
         &self,
         inner: D,
         overrides: BTreeMap<Address, StateOverride>,
-        real_head_number: BlockNumber,
+        base_block_number: BlockNumber,
     ) -> Result<Evm, EvmError> {
         let moves = precompile_moves(&overrides);
-        let mut evm = self.new_evm(OverlaidVmDatabase::new(inner, overrides, real_head_number))?;
+        let mut evm = self.new_evm(OverlaidVmDatabase::new(inner, overrides, base_block_number))?;
         evm.set_precompile_moves(moves);
         Ok(evm)
     }

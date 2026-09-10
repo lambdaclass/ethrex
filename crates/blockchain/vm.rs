@@ -61,27 +61,31 @@ pub enum StorageMode {
 /// inner database. Used by RPC simulation paths (`eth_call`, `eth_estimateGas`,
 /// `eth_createAccessList`, `debug_traceCall`) to honor geth's State Override Set.
 ///
-/// `real_head_number` is the height of the real chain head at construction time.
-/// Block-override callers may synthesize a header beyond it; `get_block_hash` returns
-/// zero for any block number past `real_head_number` so that `BLOCKHASH` matches geth
-/// when the synthetic block sits past the chain tip.
+/// `base_block_number` is the number of the real header the call is being made against.
+/// A Block Override Set may synthesize a header at some other height, and `BLOCKHASH`
+/// must not answer from beyond the real one: geth builds its hash function from the real
+/// header before applying the overrides and returns zero for any number at or above it
+/// (`core/vm.GetHashFn`, `ref.Number.Uint64() <= n`). LEVM's own 256-block window is
+/// measured against the *synthetic* number, exactly as geth's `opBlockhash` measures its
+/// window against the overridden `BlockNumber`, so this is the second of the two gates
+/// geth applies, not a replacement for it.
 #[derive(Clone)]
 pub struct OverlaidVmDatabase<Inner> {
     inner: Inner,
     overrides: Arc<BTreeMap<Address, StateOverride>>,
-    real_head_number: BlockNumber,
+    base_block_number: BlockNumber,
 }
 
 impl<Inner> OverlaidVmDatabase<Inner> {
     pub fn new(
         inner: Inner,
         overrides: BTreeMap<Address, StateOverride>,
-        real_head_number: BlockNumber,
+        base_block_number: BlockNumber,
     ) -> Self {
         Self {
             inner,
             overrides: Arc::new(overrides),
-            real_head_number,
+            base_block_number,
         }
     }
 
@@ -144,8 +148,11 @@ impl<Inner: VmDatabase + Clone> VmDatabase for OverlaidVmDatabase<Inner> {
     }
 
     fn get_block_hash(&self, block_number: u64) -> Result<H256, EvmError> {
-        // Geth returns zero for BLOCKHASH(n) where n is past the real chain head.
-        if block_number > self.real_head_number {
+        // geth returns zero for BLOCKHASH(n) once n reaches the number of the real
+        // header the call is made against, however far ahead a `number` override moved
+        // the synthetic block. Clamping at the chain tip instead would answer with real
+        // canonical hashes for the blocks between the two.
+        if block_number >= self.base_block_number {
             return Ok(H256::zero());
         }
         self.inner.get_block_hash(block_number)
@@ -1035,20 +1042,28 @@ mod overlaid_db_tests {
         );
     }
 
+    /// The cutoff is the base block's own number, not the chain tip: geth's hash
+    /// function is built from the real header before the block overrides are applied, so
+    /// it answers zero from that height upwards. A tip-based cutoff would serve the real
+    /// hashes of blocks 100..=tip to a call whose synthetic number sits past them.
     #[test]
-    fn block_hash_past_real_head_returns_zero() {
+    fn block_hash_at_or_past_the_base_block_returns_zero() {
         let mock = MockDb::default();
-        mock.block_hashes
-            .lock()
-            .unwrap()
-            .insert(50, H256::from_low_u64_be(0xdead));
+        for number in [50u64, 100, 150] {
+            mock.block_hashes
+                .lock()
+                .unwrap()
+                .insert(number, H256::from_low_u64_be(0xdead));
+        }
         let wrapper = OverlaidVmDatabase::new(mock, BTreeMap::new(), 100);
-        // <= real head — delegates.
+        // Below the base block: delegates.
         assert_eq!(
             wrapper.get_block_hash(50).unwrap(),
             H256::from_low_u64_be(0xdead)
         );
-        // > real head — zero.
+        // The base block itself, and anything above it: zero, even though the inner
+        // database holds a hash for both.
+        assert_eq!(wrapper.get_block_hash(100).unwrap(), H256::zero());
         assert_eq!(wrapper.get_block_hash(150).unwrap(), H256::zero());
     }
 

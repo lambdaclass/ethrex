@@ -316,7 +316,6 @@ fn overrides_setting_balance(address: Address, balance: u64) -> TraceCallOverrid
     );
     TraceCallOverrides {
         state,
-        real_head_number: 1,
         effective_header: None,
     }
 }
