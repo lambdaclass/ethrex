@@ -33,10 +33,11 @@ use crate::utils::RpcErr;
 ///
 /// `deny_unknown_fields` mirrors [`StateOverrideSet`](super::state_override::StateOverrideSet):
 /// an override this client cannot honor must be an error rather than a silent drop, which
-/// would return a plausible-looking but wrong result. `beacon_root` and `block_hash` are
-/// declared for exactly that reason — see [`BlockOverrideSet::apply_to`]. `withdrawals` is
-/// the one field whose support depends on the caller: `eth_simulateV1` builds a block and
-/// processes them, while the `eth_call` family has no block to attach them to and refuses.
+/// would return a plausible-looking but wrong result. `block_hash` is declared for exactly
+/// that reason — see [`BlockOverrideSet::apply_to`]. `withdrawals` and `beacon_root` are
+/// the fields whose support depends on the caller: `eth_simulateV1` builds a block and runs
+/// its system calls, so it honors both, while the `eth_call` family has no block to attach
+/// withdrawals to and runs no system contracts, and refuses them.
 #[derive(Debug, Default, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BlockOverrideSet {
@@ -66,9 +67,11 @@ pub struct BlockOverrideSet {
     pub blob_base_fee_per_gas: Option<U256>,
     #[serde(default, deserialize_with = "deser_u256_hex_opt")]
     pub difficulty: Option<U256>,
-    /// geth's `BeaconRoot`. Declared only to be refused with a reason: see
-    /// [`BlockOverrideSet::apply_to`] for the `eth_call` family and
-    /// `eth_simulateV1`'s own refusal in `crates/networking/rpc/eth/simulate.rs`.
+    /// geth's `BeaconRoot`. Support depends on the caller, like `withdrawals`:
+    /// `eth_simulateV1` honors it, because that engine runs the block's system calls and
+    /// so writes the value into the EIP-4788 ring buffer; the `eth_call` family refuses it
+    /// in [`BlockOverrideSet::apply_to`], where nothing runs system contracts and the
+    /// value would only reach the header.
     #[serde(default, alias = "parentBeaconBlockRoot")]
     pub beacon_root: Option<H256>,
     /// Withdrawals to apply in the simulated block (balance credits +

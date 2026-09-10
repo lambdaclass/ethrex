@@ -70,6 +70,10 @@ pub struct SimBlockOverrides {
     pub excess_blob_gas: Option<u64>,
     pub difficulty: Option<U256>,
     pub withdrawals: Vec<Withdrawal>,
+    /// EIP-4788 parent beacon block root. Honored rather than refused because this
+    /// engine runs the block's system calls, so the value is written into the
+    /// beacon-roots ring buffer and is observable from a simulated contract.
+    pub beacon_root: Option<ethrex_common::H256>,
 }
 
 #[derive(Clone, Debug)]
@@ -280,7 +284,7 @@ fn make_sim_header(
         excess_blob_gas,
         parent_beacon_block_root: chain_config
             .is_cancun_activated(timestamp)
-            .then_some(ethrex_common::H256::zero()),
+            .then(|| overrides.beacon_root.unwrap_or_default()),
         requests_hash: chain_config
             .is_prague_activated(timestamp)
             .then_some(*DEFAULT_REQUESTS_HASH),

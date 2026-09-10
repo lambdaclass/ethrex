@@ -214,18 +214,12 @@ fn block_state_call_to_spec(
     vm_type: VMType,
 ) -> Result<SimulationBlockSpec, RpcErr> {
     let block_overrides = entry.block_overrides.unwrap_or_default();
-    // `beaconRoot` and `blockHash` are modelled on `BlockOverrideSet` only so they can be
-    // refused with a reason. Refusing them here is what keeps that promise on this path:
-    // the fields are mapped across by hand below, so anything left unmapped would parse
+    // Every field is mapped across by hand below, so anything left unmapped would parse
     // and then be silently ignored, answering with a plausible-looking but wrong result.
-    if block_overrides.beacon_root.is_some() {
-        return Err(invalid_params(
-            "beaconRoot is not supported: honoring it requires running the block's \
-             EIP-4788 system call, which simulation does not. Override the beacon-roots \
-             contract's storage via the State Override Set instead"
-                .to_string(),
-        ));
-    }
+    // `blockHash` is the one field that cannot be honored, so it is refused with a reason.
+    // `beaconRoot` *is* honored here, unlike on the `eth_call` family's `apply_to` path:
+    // this engine runs the block's system calls, so the value reaches the EIP-4788 ring
+    // buffer rather than just sitting on the header.
     if block_overrides.block_hash.is_some() {
         return Err(invalid_params(
             "blockHash is not supported: it is a reth/alloy extension, not part of the \
@@ -261,6 +255,7 @@ fn block_state_call_to_spec(
             excess_blob_gas,
             difficulty: block_overrides.difficulty,
             withdrawals: block_overrides.withdrawals.unwrap_or_default(),
+            beacon_root: block_overrides.beacon_root,
         },
         state_overrides,
         calls: entry.calls,
@@ -1061,29 +1056,70 @@ mod integration_tests {
     /// response looks plausible while disregarding what was asked.
     #[tokio::test]
     async fn unsupported_block_overrides_are_refused() {
-        let cases = [
-            (
-                "beaconRoot",
-                json!("0x00000000000000000000000000000000000000000000000000000000000000ff"),
-            ),
-            (
-                "blockHash",
-                json!({"0x1": "0x00000000000000000000000000000000000000000000000000000000000000ff"}),
-            ),
-        ];
-        for (field, value) in cases {
-            let err = simulate(json!([{
-                "blockStateCalls": [{ "blockOverrides": { field: value } }],
-            }, "latest"]))
-            .await
-            .expect_err("an override that cannot be honored must not be silently dropped");
-            let message = err.to_string();
-            assert!(
-                message.contains(field),
-                "the refusal should name {field}, got: {message}"
-            );
-            assert_eq!(error_code(err), -32602, "{field}");
-        }
+        let value =
+            json!({"0x1": "0x00000000000000000000000000000000000000000000000000000000000000ff"});
+        let err = simulate(json!([{
+            "blockStateCalls": [{ "blockOverrides": { "blockHash": value } }],
+        }, "latest"]))
+        .await
+        .expect_err("an override that cannot be honored must not be silently dropped");
+        let message = err.to_string();
+        assert!(
+            message.contains("blockHash"),
+            "the refusal should name the field, got: {message}"
+        );
+        assert_eq!(error_code(err), -32602);
+    }
+
+    /// EIP-4788 beacon-roots predeploy, present in `fixtures/genesis/l1.json` with its
+    /// canonical code. Called with a 32-byte timestamp it returns the root stored for
+    /// that timestamp, which is how a simulated contract would observe the override.
+    const BEACON_ROOTS: &str = "0x000f3df6d732807ef1319fb7b8bb8522d0beac02";
+    /// A timestamp after the base block's, used as both the `time` override and the
+    /// beacon-roots lookup key.
+    const BEACON_TIME: &str = "0x6668e200";
+    /// [`BEACON_TIME`] as the 32-byte big-endian word the predeploy expects.
+    const BEACON_TIME_WORD: &str =
+        "0x000000000000000000000000000000000000000000000000000000006668e200";
+    const BEACON_ROOT: &str = "0x00000000000000000000000000000000000000000000000000000000000000ff";
+
+    /// A `beaconRoot` override must reach the header of the simulated block.
+    #[tokio::test]
+    async fn beacon_root_override_reaches_the_simulated_header() {
+        let result = simulate(json!([{
+            "blockStateCalls": [{
+                "blockOverrides": { "time": BEACON_TIME, "beaconRoot": BEACON_ROOT },
+            }],
+        }, "latest"]))
+        .await
+        .expect("a beaconRoot override should be honored");
+        let block = result.as_array().unwrap().last().unwrap();
+        assert_eq!(block["parentBeaconBlockRoot"], json!(BEACON_ROOT));
+    }
+
+    /// The override must also be *written into the EIP-4788 ring buffer*, not merely
+    /// stamped on the header. This is what separates `eth_simulateV1` from the
+    /// `eth_call` family: the engine runs the block's system calls, so a simulated
+    /// contract reading `BEACON_ROOTS_ADDRESS` observes the overridden root. On the
+    /// `eth_call` path nothing runs system contracts, which is exactly why
+    /// `BlockOverrideSet::apply_to` refuses the field there.
+    #[tokio::test]
+    async fn beacon_root_override_is_observable_through_the_predeploy() {
+        let result = simulate(json!([{
+            "blockStateCalls": [{
+                "blockOverrides": { "time": BEACON_TIME, "beaconRoot": BEACON_ROOT },
+                "calls": [{"from": RICH, "to": BEACON_ROOTS, "input": BEACON_TIME_WORD}],
+            }],
+        }, "latest"]))
+        .await
+        .expect("a beaconRoot override should be honored");
+        let call = &result.as_array().unwrap()[0]["calls"][0];
+        assert_eq!(call["status"], json!("0x1"), "the read reverted: {call}");
+        assert_eq!(
+            call["returnData"],
+            json!(BEACON_ROOT),
+            "the beacon-roots predeploy did not return the overridden root: {call}"
+        );
     }
 
     /// Identity / datacopy precompile: it echoes its calldata, so a relocation either
