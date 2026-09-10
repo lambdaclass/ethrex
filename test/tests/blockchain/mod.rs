@@ -13,6 +13,7 @@ mod l1_tx_type_tests;
 mod logs_bloom_tests;
 mod mempool_cells_tests;
 mod mempool_tests;
+mod merkle_pool_tests;
 mod payload_build_loop_tests;
 mod payload_tests;
 mod sampling_tests;

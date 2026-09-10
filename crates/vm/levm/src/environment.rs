@@ -54,13 +54,24 @@ pub struct Environment {
     pub disable_nonce_check: bool,
     /// When true, skip the gas limits that gate a transaction's *admission* rather than
     /// its execution: the block-level gas allowance and the EIP-7825 per-transaction cap.
-    /// Used by the simulation RPCs (eth_call, eth_estimateGas, debug_traceCall), whose
-    /// callers routinely pass a `gas` above either bound — tools commonly pass the block
-    /// gas limit — and still expect an answer, since nothing is being submitted.
+    /// Used by every simulation RPC (eth_call, eth_estimateGas, eth_createAccessList,
+    /// debug_traceCall), whose callers routinely pass a `gas` above either bound — tools
+    /// commonly pass the block gas limit — and still expect an answer, since nothing is
+    /// being submitted.
     /// This exists so `block_gas_limit` can keep the block's real value: that field is
     /// observable through the GASLIMIT opcode and feeds the EIP-8037 cost-per-state-byte
     /// formula, so raising it to bypass the allowance corrupts both.
     pub disable_gas_allowance_check: bool,
+    /// When true, skip the EIP-3607 validation that rejects a sender carrying code.
+    /// Used by every simulation RPC (eth_call, eth_estimateGas, eth_createAccessList,
+    /// debug_traceCall). EIP-3607 exists because a contract has no private key, so no
+    /// valid signature should exist for its address; a simulated call carries no
+    /// signature at all and its `from` is just an assertion by the caller, so the rule
+    /// has nothing to protect there. Enforcing it breaks the common practice of
+    /// simulating a call whose sender is a contract, such as a smart contract wallet
+    /// previewing its own transaction. Transaction admission keeps enforcing it: the
+    /// mempool rejects such a sender outright, and block execution never sets this flag.
+    pub disable_sender_eoa_check: bool,
     /// When true, the tx is a pre-execution system contract call (EIP-2935, EIP-4788,
     /// EIP-7002, EIP-7251 etc.). Skips the block-level gas-allowance check since system
     /// calls are allowed to exceed `block_gas_limit` (their 30M cap is a separate rule).

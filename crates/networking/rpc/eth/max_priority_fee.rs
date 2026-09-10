@@ -32,17 +32,17 @@ impl RpcHandler for MaxPriorityFee {
 mod tests {
     use super::*;
     use crate::test_utils::{
-        BASE_PRICE_IN_WEI, add_eip1559_tx_blocks, add_legacy_tx_blocks, add_mixed_tx_blocks,
-        default_context_with_storage, setup_store,
+        BASE_PRICE_IN_WEI, TestContext, add_eip1559_tx_blocks, add_legacy_tx_blocks,
+        add_mixed_tx_blocks, default_context_with_storage, setup_store,
     };
     use crate::{
-        rpc::{RpcApiContext, RpcHandler, map_http_requests},
+        rpc::{RpcHandler, map_http_requests},
         utils::{RpcRequest, parse_json_hex},
     };
     use ethrex_common::types::MIN_GAS_TIP;
     use serde_json::json;
 
-    async fn default_context() -> RpcApiContext {
+    async fn default_context() -> TestContext {
         let storage = setup_store().await;
         default_context_with_storage(storage).await
     }
@@ -54,7 +54,7 @@ mod tests {
         add_legacy_tx_blocks(&context.storage, 100, 10).await;
 
         let gas_price = MaxPriorityFee {};
-        let response = gas_price.handle(context).await.unwrap();
+        let response = gas_price.handle(context.clone()).await.unwrap();
         let parsed_result = parse_json_hex(&response).unwrap();
         assert_eq!(parsed_result, BASE_PRICE_IN_WEI);
     }
@@ -66,7 +66,7 @@ mod tests {
         add_eip1559_tx_blocks(&context.storage, 100, 10).await;
 
         let gas_price = MaxPriorityFee {};
-        let response = gas_price.handle(context).await.unwrap();
+        let response = gas_price.handle(context.clone()).await.unwrap();
         let parsed_result = parse_json_hex(&response).unwrap();
         assert_eq!(parsed_result, BASE_PRICE_IN_WEI);
     }
@@ -78,7 +78,7 @@ mod tests {
         add_mixed_tx_blocks(&context.storage, 100, 10).await;
 
         let gas_price = MaxPriorityFee {};
-        let response = gas_price.handle(context).await.unwrap();
+        let response = gas_price.handle(context.clone()).await.unwrap();
         let parsed_result = parse_json_hex(&response).unwrap();
         assert_eq!(parsed_result, BASE_PRICE_IN_WEI);
     }
@@ -90,7 +90,7 @@ mod tests {
         add_mixed_tx_blocks(&context.storage, 100, 0).await;
 
         let gas_price = MaxPriorityFee {};
-        let response = gas_price.handle(context).await.unwrap();
+        let response = gas_price.handle(context.clone()).await.unwrap();
         let parsed_result = parse_json_hex(&response).unwrap();
         assert_eq!(parsed_result, MIN_GAS_TIP);
     }
@@ -100,7 +100,7 @@ mod tests {
         let context = default_context().await;
         let gas_price = MaxPriorityFee {};
 
-        let response = gas_price.handle(context).await.unwrap();
+        let response = gas_price.handle(context.clone()).await.unwrap();
         let parsed_result = parse_json_hex(&response).unwrap();
         assert_eq!(parsed_result, MIN_GAS_TIP);
     }
@@ -119,7 +119,7 @@ mod tests {
 
         add_eip1559_tx_blocks(&context.storage, 100, 3).await;
 
-        let response = map_http_requests(&request, context).await.unwrap();
+        let response = map_http_requests(&request, context.clone()).await.unwrap();
         assert_eq!(response, expected_response)
     }
 }
