@@ -113,7 +113,6 @@ impl GlobalChainStatusTable {
 
         let current_block = store
             .get_latest_block_number()
-            .await
             .map_err(|_| MonitorError::GetLatestBlock)?
             + 1;
 

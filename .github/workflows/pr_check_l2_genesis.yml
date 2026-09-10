@@ -32,6 +32,8 @@ jobs:
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+        with:
+          cache-pool: l2
 
       - name: Install solc
         uses: ./.github/actions/install-solc

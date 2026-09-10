@@ -652,6 +652,11 @@ pub enum BlockChainExpectedException {
     TxtException(String),
     BlockException(BlockExpectedException),
     RLPException,
+    /// A malformed transaction signature (out-of-range legacy `v`, non-bool typed
+    /// `y_parity`, or out-of-range `r`/`s`). Depending on tx type this surfaces either
+    /// at block RLP decoding (typed tx with a non-bool `y_parity` byte) or during
+    /// execution (legacy tx sender recovery rejects the signature).
+    InvalidSignature,
     Other,
 }
 

@@ -4,7 +4,7 @@ use crate::{
         errors::CommitterError,
         utils::{
             self, batch_checkpoint_name, fetch_blocks_with_respective_fee_configs,
-            get_git_commit_hash, system_now_ms,
+            get_git_commit_hash, read_trusted_block, system_now_ms,
         },
     },
 };
@@ -18,7 +18,7 @@ use ethrex_common::{
     types::{
         BLOB_BASE_FEE_UPDATE_FRACTION, BlobsBundle, Block, BlockNumber, Fork, Genesis,
         MIN_BASE_FEE_PER_BLOB_GAS, TxType, batch::Batch, blobs_bundle, fake_exponential,
-        fee_config::FeeConfig,
+        fee_config::FeeConfig, normalize_legacy_withdrawals,
     },
 };
 use ethrex_l2_common::sequencer_state::{SequencerState, SequencerStatus};
@@ -847,25 +847,17 @@ impl L1Committer {
             // the checkpoint for re-execution, this is during witness generation
             // in generate_and_store_batch_prover_input and for later in this
             // function.
-            let potential_batch_block = {
-                let Some(block_to_commit_body) = self
-                    .store
-                    .get_block_body(block_to_commit_number)
+            // Read through `read_trusted_block`, not directly from the store:
+            // the blocks encoded into the blob here have to stay byte-identical
+            // to the ones the prover input is built from, and that helper is the
+            // single place the legacy body shape is normalized.
+            let Some(potential_batch_block) =
+                read_trusted_block(&self.store, block_to_commit_number)
                     .await
                     .map_err(CommitterError::from)?
-                else {
-                    debug!("No new block to commit, skipping..");
-                    break;
-                };
-                let block_to_commit_header = self
-                    .store
-                    .get_block_header(block_to_commit_number)
-                    .map_err(CommitterError::from)?
-                    .ok_or(CommitterError::FailedToGetInformationFromStorage(
-                        "Failed to get_block_header() after get_block_body()".to_owned(),
-                    ))?;
-
-                Block::new(block_to_commit_header, block_to_commit_body)
+            else {
+                debug!("No new block to commit, skipping..");
+                break;
             };
 
             let current_block_gas_used = potential_batch_block.header.gas_used;
@@ -938,6 +930,7 @@ impl L1Committer {
                         requests: vec![],
                         // Use the block header's gas_used
                         block_gas_used: potential_batch_block.header.gas_used,
+                        burned_fees: None,
                         tx_gas_breakdowns: Vec::new(),
                     },
                 )?;
@@ -1626,7 +1619,7 @@ pub async fn regenerate_state(
     let target_block_number = match target_block_number {
         Some(0) => return Ok(()),
         Some(n) => n - 1,
-        None => store.get_latest_block_number().await?,
+        None => store.get_latest_block_number()?,
     };
     if target_block_number == 0 {
         return Ok(());
@@ -1641,11 +1634,14 @@ pub async fn regenerate_state(
     for block_number in last_state_number + 1..=target_block_number {
         debug!("Re-applying block {block_number} to regenerate state");
 
-        let Some(block) = store.get_block_by_number(block_number).await? else {
+        let Some(mut block) = store.get_block_by_number(block_number).await? else {
             return Err(CommitterError::FailedToCreateCheckpoint(format!(
                 "Block {block_number} not found"
             )));
         };
+        // Stored blocks produced by older ethrex versions may carry the legacy
+        // omitted-withdrawals body shape, which block validation now rejects.
+        normalize_legacy_withdrawals(&block.header, &mut block.body);
 
         let Some(fee_config) = rollup_store.get_fee_config_by_block(block_number).await? else {
             return Err(CommitterError::FailedToCreateCheckpoint(format!(

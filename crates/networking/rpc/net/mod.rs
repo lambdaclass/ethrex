@@ -12,6 +12,10 @@ pub fn version(_req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcEr
     Ok(value)
 }
 
+pub fn listening(_req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+    Ok(json!(context.peer_handler.is_some()))
+}
+
 pub async fn peer_count(_req: &RpcRequest, mut context: RpcApiContext) -> Result<Value, RpcErr> {
     let Some(peer_handler) = &mut context.peer_handler else {
         return Err(RpcErr::Internal("Peer handler not initialized".to_string()));

@@ -19,6 +19,7 @@ use ethrex_common::types::{ChainConfig, GenericTransaction};
 use ethrex_common::{H256, serde_utils};
 use ethrex_crypto::NativeCrypto;
 use ethrex_vm::TxValidationError;
+use ethrex_vm::backends::VMType;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -98,20 +99,9 @@ pub struct SimulateCallResult {
     #[serde(with = "serde_utils::u64::hex_str")]
     pub max_used_gas: u64,
     /// Always serialized; empty for failed calls.
-    pub logs: Vec<SimulateRpcLog>,
+    pub logs: Vec<RpcLog>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<SimulateCallErrorJson>,
-}
-
-/// `RpcLog` plus `blockTimestamp`, which simulate results carry in each log
-/// object. A wrapper keeps `eth_getLogs`/receipt responses untouched.
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SimulateRpcLog {
-    #[serde(flatten)]
-    pub log: RpcLog,
-    #[serde(with = "serde_utils::u64::hex_str")]
-    pub block_timestamp: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -167,14 +157,15 @@ impl RpcHandler for EthSimulateRequest {
             None => return Err(RpcErr::BadParams("header not found".to_owned())),
         };
         let chain_config = context.storage.get_chain_config();
+        let vm_type = context.blockchain.vm_type()?;
         let request = SimulationRequest {
             blocks: self
                 .payload
                 .block_state_calls
                 .iter()
                 .cloned()
-                .map(|entry| block_state_call_to_spec(entry, &base_header, &chain_config))
-                .collect(),
+                .map(|entry| block_state_call_to_spec(entry, &base_header, &chain_config, vm_type))
+                .collect::<Result<Vec<_>, _>>()?,
             base: base_header,
             validation: self.payload.validation,
             trace_transfers: self.payload.trace_transfers,
@@ -210,12 +201,38 @@ fn invalid_params(message: String) -> RpcErr {
 }
 
 /// Convert one JSON `blockStateCalls` entry into the engine's spec type.
+///
+/// This is the only place a `blockStateCalls` entry's override sets are consumed, so it is
+/// also where the block-override fields this method cannot honor are refused. The
+/// `eth_call` family gets those refusals from [`BlockOverrideSet::apply_to`], which this
+/// path deliberately does not use: it builds a whole block rather than overlaying one
+/// header, so it honors `withdrawals`, which `apply_to` rejects.
 fn block_state_call_to_spec(
     entry: BlockStateCall,
     base_header: &ethrex_common::types::BlockHeader,
     chain_config: &ChainConfig,
-) -> SimulationBlockSpec {
+    vm_type: VMType,
+) -> Result<SimulationBlockSpec, RpcErr> {
     let block_overrides = entry.block_overrides.unwrap_or_default();
+    // `beaconRoot` and `blockHash` are modelled on `BlockOverrideSet` only so they can be
+    // refused with a reason. Refusing them here is what keeps that promise on this path:
+    // the fields are mapped across by hand below, so anything left unmapped would parse
+    // and then be silently ignored, answering with a plausible-looking but wrong result.
+    if block_overrides.beacon_root.is_some() {
+        return Err(invalid_params(
+            "beaconRoot is not supported: honoring it requires running the block's \
+             EIP-4788 system call, which simulation does not. Override the beacon-roots \
+             contract's storage via the State Override Set instead"
+                .to_string(),
+        ));
+    }
+    if block_overrides.block_hash.is_some() {
+        return Err(invalid_params(
+            "blockHash is not supported: it is a reth/alloy extension, not part of the \
+             eth_simulateV1 or geth Block Override Set"
+                .to_string(),
+        ));
+    }
     // Fork-schedule hint for the blobBaseFee inversion: the resolved block
     // timestamp is not known until the engine sanitizes the chain, so the
     // override (or the base-relative default) approximates it. Only matters
@@ -224,7 +241,16 @@ fn block_state_call_to_spec(
         .time
         .unwrap_or(base_header.timestamp.saturating_add(12));
     let excess_blob_gas = block_overrides.resolved_excess_blob_gas(chain_config, timestamp_hint);
-    SimulationBlockSpec {
+    // Precompile-ness depends on the fork, and a `time` override can cross a fork
+    // boundary, so resolve it against the effective timestamp rather than the base
+    // header's — same reasoning as `convert_state_overrides` on the eth_call path.
+    let fork = chain_config.fork(timestamp_hint);
+    let state_overrides = entry
+        .state_overrides
+        .map(|set| set.into_overrides(fork, vm_type))
+        .transpose()?
+        .unwrap_or_default();
+    Ok(SimulationBlockSpec {
         overrides: SimBlockOverrides {
             number: block_overrides.number,
             time: block_overrides.time,
@@ -236,12 +262,9 @@ fn block_state_call_to_spec(
             difficulty: block_overrides.difficulty,
             withdrawals: block_overrides.withdrawals.unwrap_or_default(),
         },
-        state_overrides: entry
-            .state_overrides
-            .map(StateOverrideSet::into_overrides)
-            .unwrap_or_default(),
+        state_overrides,
         calls: entry.calls,
-    }
+    })
 }
 
 /// Hydrate one engine result into its response shape: the block serialized
@@ -272,16 +295,14 @@ fn build_simulated_block(
                 .logs
                 .into_iter()
                 .map(|log| {
-                    let rpc_log = SimulateRpcLog {
-                        log: RpcLog {
-                            log: log.into(),
-                            log_index,
-                            removed: false,
-                            transaction_hash: tx_hashes.get(tx_index).copied().unwrap_or_default(),
-                            transaction_index: tx_index as u64,
-                            block_hash,
-                            block_number,
-                        },
+                    let rpc_log = RpcLog {
+                        log: log.into(),
+                        log_index,
+                        removed: false,
+                        transaction_hash: tx_hashes.get(tx_index).copied().unwrap_or_default(),
+                        transaction_index: tx_index as u64,
+                        block_hash,
+                        block_number,
                         block_timestamp,
                     };
                     log_index += 1;
@@ -1031,5 +1052,37 @@ mod integration_tests {
             json!("0x000000000000000000000000000000000000beef")
         );
         assert_eq!(block["baseFeePerGas"], json!("0x7"));
+    }
+
+    /// `beaconRoot` and `blockHash` are modelled on `BlockOverrideSet` only so they can be
+    /// refused with a reason. This handler maps block-override fields across by hand
+    /// rather than going through `BlockOverrideSet::apply_to`, so the refusal has to be
+    /// enforced here too: without it both fields parse and are then ignored, and the
+    /// response looks plausible while disregarding what was asked.
+    #[tokio::test]
+    async fn unsupported_block_overrides_are_refused() {
+        let cases = [
+            (
+                "beaconRoot",
+                json!("0x00000000000000000000000000000000000000000000000000000000000000ff"),
+            ),
+            (
+                "blockHash",
+                json!({"0x1": "0x00000000000000000000000000000000000000000000000000000000000000ff"}),
+            ),
+        ];
+        for (field, value) in cases {
+            let err = simulate(json!([{
+                "blockStateCalls": [{ "blockOverrides": { field: value } }],
+            }, "latest"]))
+            .await
+            .expect_err("an override that cannot be honored must not be silently dropped");
+            let message = err.to_string();
+            assert!(
+                message.contains(field),
+                "the refusal should name {field}, got: {message}"
+            );
+            assert_eq!(error_code(err), -32602, "{field}");
+        }
     }
 }

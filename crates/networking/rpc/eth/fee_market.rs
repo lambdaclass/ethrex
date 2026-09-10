@@ -219,7 +219,7 @@ async fn get_range(
     // Get earliest block
     let earliest_block_num = storage.get_earliest_block_number().await?;
     // Get latest block
-    let latest_block_num = storage.get_latest_block_number().await?;
+    let latest_block_num = storage.get_latest_block_number()?;
     // Get the expected finish block number from the parameter
     let expected_finish_block_num = expected_finish_block
         .resolve_block_number(storage)
@@ -256,6 +256,9 @@ fn calculate_percentiles_for_block(block: Block, percentiles: &[f32]) -> Vec<u64
                 .max_priority_fee_per_gas
                 .min(t.max_fee_per_gas.saturating_sub(base_fee_per_gas)),
             Transaction::FeeTokenTransaction(t) => t
+                .max_priority_fee_per_gas
+                .min(t.max_fee_per_gas.saturating_sub(base_fee_per_gas)),
+            Transaction::FrameTransaction(t) => t
                 .max_priority_fee_per_gas
                 .min(t.max_fee_per_gas.saturating_sub(base_fee_per_gas)),
         })

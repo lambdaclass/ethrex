@@ -120,6 +120,7 @@ fn prestate_trace_includes_newly_accessed_storage_slots() {
         &mut db,
         VMType::L1,
         &NativeCrypto,
+        None,
     )
     .expect("tx_a should succeed");
 
@@ -205,6 +206,7 @@ fn prestate_diff_mode_includes_newly_accessed_storage_slots() {
         &mut db,
         VMType::L1,
         &NativeCrypto,
+        None,
     )
     .expect("tx_a should succeed");
 
@@ -282,6 +284,7 @@ fn prestate_trace_excludes_storage_slots_from_previous_txs() {
         &mut db,
         VMType::L1,
         &NativeCrypto,
+        None,
     )
     .expect("tx_a should succeed");
 
@@ -1116,6 +1119,7 @@ fn prestate_pre_storage_excludes_slots_not_present_in_post() {
         &mut db,
         VMType::L1,
         &NativeCrypto,
+        None,
     )
     .expect("warmup tx should succeed");
 

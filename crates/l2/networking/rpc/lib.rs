@@ -4,4 +4,4 @@ mod rpc;
 pub mod signer;
 pub mod utils;
 
-pub use rpc::start_api;
+pub use rpc::{BoundRpc, bind_api, start_api};

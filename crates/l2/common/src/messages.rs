@@ -30,6 +30,12 @@ pub const BRIDGE_ADDRESS: Address = H160([
     0x00, 0x00, 0xff, 0xff,
 ]);
 
+/// Address of the L2Bridge predeploy for native rollups (handles L1 messages and withdrawals).
+pub const NATIVE_ROLLUP_L2_BRIDGE: Address = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0xff, 0xfd,
+]);
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct L1MessageProof {
     pub batch_number: u64,

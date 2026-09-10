@@ -3,6 +3,11 @@ use ethrex_common::{
     types::{Block, BlockBody, BlockHeader, BlockNumber},
 };
 use ethrex_storage::{EngineType, Store, UpdateBatch};
+// Only the `rocksdb`-gated batch test below references the commit threshold. Keep the
+// import on the same cfg as its call site so a build without `rocksdb` does not leave
+// it unused.
+#[cfg(feature = "rocksdb")]
+use ethrex_storage::BATCH_COMMIT_THRESHOLD;
 
 #[tokio::test]
 async fn flushed_upto_defaults_to_zero() {
@@ -78,12 +83,13 @@ fn minimal_batch(number: BlockNumber, parent_hash: H256) -> (Block, UpdateBatch)
         receipts: vec![(block.hash(), vec![])],
         blocks: vec![block.clone()],
         code_updates: vec![],
-        batch_mode: false,
+        commit_depth: None,
+        wait_for_flush: false,
     };
     (block, batch)
 }
 
-/// Drive several sequential store_block_updates (batch_mode: false) through the
+/// Drive several sequential store_block_updates (commit_depth: None) through the
 /// live path and assert every block is readable (buffer or disk) and
 /// read_flushed_upto advances monotonically with no gaps.
 ///
@@ -156,7 +162,7 @@ async fn poll_flushed_upto_reaches(store: &Store, target: BlockNumber) {
 }
 
 /// Live path routed through the single persist worker: several sequential
-/// `store_block_updates` (batch_mode: false) must each stage their block and
+/// `store_block_updates` (commit_depth: None) must each stage their block and
 /// the worker must flush them, advancing the durable `flushed_upto` marker to
 /// the full block count. Same invariant as `sequential_live_updates_no_lost_inserts`
 /// but a minimal smoke test that the unified persist worker stages + flushes.
@@ -357,7 +363,7 @@ async fn boot_clamps_head_to_flushed_upto() {
         .expect("boot must not brick: head clamped to durable block 10");
 
     assert_eq!(
-        store.get_latest_block_number().await.expect("head"),
+        store.get_latest_block_number().expect("head"),
         10,
         "boot must clamp LatestBlockNumber to the durable head"
     );
@@ -423,7 +429,7 @@ async fn boot_on_legacy_db_without_marker_keeps_head() {
 
     // Head must be preserved at 10, NOT rewound to genesis.
     assert_eq!(
-        store.get_latest_block_number().await.expect("head"),
+        store.get_latest_block_number().expect("head"),
         10,
         "legacy DB must keep its head, not clamp to genesis"
     );
@@ -441,7 +447,7 @@ async fn boot_on_legacy_db_without_marker_keeps_head() {
 /// live → full-sync → restart sequence the marker lagged and the boot clamp
 /// silently rewound the head.
 ///
-/// RED (pre-fix): `apply_updates_synchronous` runs for `batch_mode: true` and never
+/// RED (pre-fix): `apply_updates_synchronous` runs for the batch path and never
 /// touches the marker, so `read_flushed_upto()` stays 0 and this FAILS.
 /// GREEN (post-fix): the batch path routes through the single persist worker, whose
 /// `flush_block_data` drains all staged blocks in one tx and writes the max block
@@ -463,7 +469,7 @@ async fn batch_path_advances_flushed_upto() {
     let mut store = Store::new(path, EngineType::RocksDB).expect("store");
     store.add_initial_state(genesis).await.expect("genesis");
 
-    // Build a single batch_mode=true UpdateBatch carrying blocks 1..=3 (the
+    // Build a single depth-gated UpdateBatch carrying blocks 1..=3 (the
     // full-sync shape: many blocks, one aggregate trie diff, one fsync). The
     // first block's parent is genesis so `batch_state_roots` resolves a parent
     // state root.
@@ -488,7 +494,8 @@ async fn batch_path_advances_flushed_upto() {
         receipts,
         blocks,
         code_updates: vec![],
-        batch_mode: true,
+        commit_depth: Some(BATCH_COMMIT_THRESHOLD),
+        wait_for_flush: true,
     };
 
     store
@@ -930,7 +937,7 @@ async fn boot_walks_past_reorged_unflushed_head() {
         .expect("boot must not brick: head walks down to durable block 9");
 
     assert_eq!(
-        store.get_latest_block_number().await.expect("head"),
+        store.get_latest_block_number().expect("head"),
         9,
         "boot must re-anchor LatestBlockNumber to the highest resolvable head"
     );
@@ -938,5 +945,146 @@ async fn boot_walks_past_reorged_unflushed_head() {
         store.read_flushed_upto().expect("marker"),
         9,
         "marker must be lowered to the resolved durable head"
+    );
+}
+
+/// A graceful `shutdown()` must flush block data that only lives in the buffer,
+/// so a block a crash would lose survives a restart.
+///
+/// Mirror of `boot_clamps_head_to_flushed_upto` (where a drop loses the buffered
+/// block): here `shutdown()` is called instead of dropping, and the block must
+/// be durable on reopen.
+#[cfg(feature = "rocksdb")]
+#[tokio::test]
+async fn shutdown_flushes_buffered_block_a_crash_would_lose() {
+    use ethrex_common::types::Genesis;
+
+    const GENESIS_KURTOSIS: &str = include_str!("../../../fixtures/genesis/kurtosis.json");
+    let genesis: Genesis =
+        serde_json::from_str(GENESIS_KURTOSIS).expect("deserialize kurtosis.json");
+    let genesis_hash = genesis.get_block().hash();
+
+    let dir = tempfile::tempdir().expect("tmp");
+    let path = dir.path().to_str().unwrap();
+
+    {
+        let mut store = Store::new(path, EngineType::RocksDB).expect("store");
+        store
+            .add_initial_state(genesis.clone())
+            .await
+            .expect("genesis");
+
+        // Block 10 is only buffered, never flushed via the per-block path.
+        let b10 = Block::new(
+            BlockHeader {
+                number: 10,
+                parent_hash: genesis_hash,
+                ..Default::default()
+            },
+            BlockBody::default(),
+        );
+        let hash10 = b10.hash();
+        store.buffer_block_for_test(&b10);
+        store
+            .forkchoice_update(vec![(10, hash10)], 10, hash10, None, None)
+            .await
+            .expect("fcu 10");
+        assert_eq!(
+            store.read_flushed_upto().expect("marker"),
+            0,
+            "precondition: block 10 is buffered, not yet flushed"
+        );
+
+        // Graceful shutdown must persist the buffered block (a crash would lose it).
+        store.shutdown().await.expect("shutdown flush");
+    }
+
+    let mut store = Store::new(path, EngineType::RocksDB).expect("reopen");
+    store
+        .add_initial_state(genesis)
+        .await
+        .expect("boot after clean shutdown");
+
+    assert_eq!(
+        store.read_flushed_upto().expect("marker"),
+        10,
+        "shutdown must have flushed the buffered block to disk"
+    );
+    assert_eq!(
+        store.get_latest_block_number().expect("head"),
+        10,
+        "head must stay at the durable block after a clean shutdown"
+    );
+}
+
+/// A graceful `shutdown()` must NOT force-commit the in-memory trie diff-layers.
+/// The on-disk trie is a single-version, path-based store: folding the
+/// non-finalized tail into it would make a post-restart reorg unrecoverable, so
+/// the recent layers are deliberately left in memory and dropped on exit. They
+/// re-execute on the next start from the deep on-disk base, exactly as after any
+/// other restart.
+///
+/// Genesis -> A (head). A's trie diff never reaches `DB_COMMIT_THRESHOLD` depth,
+/// so it lives only in the layer cache; after a clean shutdown + reopen its trie
+/// node must NOT be on disk.
+#[cfg(feature = "rocksdb")]
+#[tokio::test]
+async fn shutdown_does_not_force_commit_trie_layers() {
+    use ethrex_common::types::Genesis;
+    use ethrex_trie::Nibbles;
+
+    const GENESIS_KURTOSIS: &str = include_str!("../../../fixtures/genesis/kurtosis.json");
+    let genesis: Genesis =
+        serde_json::from_str(GENESIS_KURTOSIS).expect("deserialize kurtosis.json");
+    let genesis_hash = genesis.get_block().hash();
+
+    let root_a = H256::from_low_u64_be(0xA1);
+    // A short key routed to ACCOUNT_TRIE_NODES (len neither 65 nor 131, and <= 65).
+    let key_a: Vec<u8> = vec![0xA0, 0, 1, 2];
+
+    let dir = tempfile::tempdir().expect("tmp");
+    let path = dir.path().to_str().unwrap();
+
+    {
+        let mut store = Store::new(path, EngineType::RocksDB).expect("store");
+        store
+            .add_initial_state(genesis.clone())
+            .await
+            .expect("genesis");
+
+        let header = BlockHeader {
+            number: 1,
+            parent_hash: genesis_hash,
+            state_root: root_a,
+            ..Default::default()
+        };
+        let block_a = Block::new(header, BlockBody::default());
+        let hash_a = block_a.hash();
+        let batch_a = UpdateBatch {
+            account_updates: vec![(Nibbles::from_hex(key_a.clone()), vec![0x42])],
+            storage_updates: vec![],
+            receipts: vec![(hash_a, vec![])],
+            blocks: vec![block_a],
+            code_updates: vec![],
+            commit_depth: None,
+            wait_for_flush: false,
+        };
+        store.store_block_updates(batch_a).expect("store A");
+
+        store
+            .forkchoice_update(vec![(1, hash_a)], 1, hash_a, None, None)
+            .await
+            .expect("fcu to A");
+
+        store.shutdown().await.expect("shutdown flush");
+    }
+
+    let store = Store::new(path, EngineType::RocksDB).expect("reopen");
+
+    // The shallow trie layer must have stayed in memory: nothing was force-committed.
+    assert_eq!(
+        store.get_trie_node_for_test(true, &key_a).expect("read A"),
+        None,
+        "shutdown must not force-commit the in-memory trie diff-layer"
     );
 }

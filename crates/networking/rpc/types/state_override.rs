@@ -10,12 +10,17 @@ use std::collections::BTreeMap;
 
 use bytes::Bytes;
 use ethrex_blockchain::vm::{StateOverride, StorageMode, synthetic_code};
+use ethrex_common::types::Fork;
 use ethrex_common::{Address, H256, U256};
+use ethrex_vm::backends::VMType;
+use ethrex_vm::is_precompile;
 use serde::{
     Deserialize, Deserializer,
     de::{Error as DeError, MapAccess, Visitor},
 };
 use std::fmt;
+
+use crate::utils::RpcErr;
 
 /// `StateOverrideSet` — keyed by address, each value is an [`AccountOverride`].
 #[derive(Debug, Default, Clone, Deserialize)]
@@ -25,11 +30,45 @@ pub struct StateOverrideSet(pub BTreeMap<Address, AccountOverride>);
 impl StateOverrideSet {
     /// Convert into the semantic per-address overrides consumed by
     /// `OverlaidVmDatabase`. Computes synthetic code hashes once during conversion.
-    pub fn into_overrides(self) -> BTreeMap<Address, StateOverride> {
-        self.0
+    ///
+    /// This is also where `movePrecompileToAddress` is validated, because it is the one
+    /// function every override-carrying endpoint has to call to get a usable map — the
+    /// same reason `Blockchain::new_overlaid_evm` is the only way to build the overlay.
+    /// Both checks mirror geth's `StateOverride.Apply`, and both are caller mistakes, so
+    /// they surface as bad parameters rather than as VM or internal errors:
+    ///
+    /// - the source must actually be a precompile at `fork` (geth: `"account %s is not a
+    ///   precompile"`), which is why the fork and [`VMType`] have to be known here;
+    /// - the destination must not itself be overridden (geth: `"account %s is already
+    ///   overridden"`), which keeps "relocated precompile or override?" from being
+    ///   silently resolved one way.
+    pub fn into_overrides(
+        self,
+        fork: Fork,
+        vm_type: VMType,
+    ) -> Result<BTreeMap<Address, StateOverride>, RpcErr> {
+        for (address, ov) in &self.0 {
+            let Some(destination) = ov.move_precompile_to else {
+                continue;
+            };
+            if !is_precompile(address, fork, vm_type) {
+                return Err(RpcErr::BadParams(format!(
+                    "account {address:#x} is not a precompile, so movePrecompileToAddress \
+                     cannot relocate it"
+                )));
+            }
+            if self.0.contains_key(&destination) {
+                return Err(RpcErr::BadParams(format!(
+                    "account {destination:#x} is already overridden, so a precompile \
+                     cannot be moved onto it"
+                )));
+            }
+        }
+        Ok(self
+            .0
             .into_iter()
             .map(|(addr, ov)| (addr, ov.into_state_override()))
-            .collect()
+            .collect())
     }
 
     pub fn is_empty(&self) -> bool {
@@ -297,5 +336,58 @@ mod tests {
         });
         let err = serde_json::from_value::<StateOverrideSet>(v).unwrap_err();
         assert!(err.to_string().contains("unknown field"));
+    }
+
+    /// geth's `StateOverride.Apply` refuses a `movePrecompileToAddress` whose *source* is
+    /// not a precompile (`"account %s is not a precompile"`). A silent no-op would answer
+    /// a request that asked for something impossible.
+    #[test]
+    fn moving_a_non_precompile_is_rejected() {
+        let v = json!({
+            "0x000000000000000000000000000000000000dead": {
+                "movePrecompileToAddress": "0x0000000000000000000000000000000000000aaa"
+            }
+        });
+        let set: StateOverrideSet = serde_json::from_value(v).unwrap();
+        let err = set
+            .into_overrides(Fork::Prague, VMType::L1)
+            .expect_err("moving a non-precompile must be rejected");
+        assert!(format!("{err}").contains("not a precompile"), "got: {err}");
+    }
+
+    /// And a destination that is itself overridden (`"account %s is already overridden"`),
+    /// which would otherwise leave "does the relocated precompile or the override win?"
+    /// silently resolved one way.
+    #[test]
+    fn moving_onto_an_overridden_destination_is_rejected() {
+        let v = json!({
+            "0x0000000000000000000000000000000000000004": {
+                "movePrecompileToAddress": "0x0000000000000000000000000000000000000aaa"
+            },
+            "0x0000000000000000000000000000000000000aaa": { "balance": "0x1" }
+        });
+        let set: StateOverrideSet = serde_json::from_value(v).unwrap();
+        let err = set
+            .into_overrides(Fork::Prague, VMType::L1)
+            .expect_err("an overridden destination must be rejected");
+        assert!(
+            format!("{err}").contains("already overridden"),
+            "got: {err}"
+        );
+    }
+
+    /// The legitimate case still works.
+    #[test]
+    fn moving_a_real_precompile_is_accepted() {
+        let v = json!({
+            "0x0000000000000000000000000000000000000004": {
+                "movePrecompileToAddress": "0x0000000000000000000000000000000000000aaa"
+            }
+        });
+        let set: StateOverrideSet = serde_json::from_value(v).unwrap();
+        let overrides = set
+            .into_overrides(Fork::Prague, VMType::L1)
+            .expect("moving the identity precompile must be accepted");
+        assert_eq!(overrides.len(), 1);
     }
 }

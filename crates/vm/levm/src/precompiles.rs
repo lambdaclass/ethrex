@@ -7,6 +7,7 @@ use ethrex_common::{
 use ethrex_crypto::{Crypto, CryptoError};
 use rustc_hash::FxHashMap;
 use std::borrow::Cow;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::RwLock;
 
 use crate::gas_cost::{MODEXP_STATIC_COST, P256_VERIFY_COST};
@@ -227,6 +228,24 @@ pub const P256VERIFY: Precompile = Precompile {
     active_since_fork: Osaka,
 };
 
+/// EXECUTE precompile address (0x0101) for Native Rollups (EIP-8079).
+/// Active only on L1 at or above `Fork::LStar`. The L1-only + LStar gate is
+/// enforced in `is_precompile` (the `matches!(vm_type, VMType::L1)` check);
+/// `execute_precompile`'s dispatch only re-checks `fork >= LStar` and relies on
+/// `is_precompile` having already rejected the L2 case at the call site.
+/// NOTE: `EXECUTE` is intentionally NOT in the `PRECOMPILES` array, so its
+/// `active_since_fork` below is never consulted by `precompiles_for_fork` — the
+/// gating is entirely the hand-written checks above. The field is set for
+/// documentation only.
+pub const EXECUTE: Precompile = Precompile {
+    address: H160([
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x01, 0x01,
+    ]),
+    name: "EXECUTE",
+    active_since_fork: LStar,
+};
+
 pub const PRECOMPILES: [Precompile; 18] = [
     ECRECOVER,
     SHA2_256,
@@ -255,8 +274,100 @@ pub fn precompiles_for_fork(fork: Fork) -> impl Iterator<Item = Precompile> {
 }
 
 pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
+    if fork >= Fork::LStar && matches!(vm_type, VMType::L1) && *address == EXECUTE.address {
+        return true;
+    }
     (matches!(vm_type, VMType::L2(_)) && *address == P256VERIFY.address)
         || precompiles_for_fork(fork).any(|precompile| precompile.address == *address)
+}
+
+/// Precompile-dispatch changes requested by a geth State Override Set. Simulation-only:
+/// this is `None` on every consensus path, in which case precompile dispatch is
+/// bit-identical to [`is_precompile`].
+///
+/// Two independent effects, both matching geth's `StateOverride.Apply`:
+///
+/// - `movePrecompileToAddress` makes a destination address dispatch the precompile that
+///   lives at the named source.
+/// - **Any** overridden address stops dispatching as a precompile. geth does
+///   `delete(precompiles, addr)` for every address in the override set, not only the
+///   sources of a move, so overriding `0x04`'s balance alone takes the identity precompile
+///   out of the active set and leaves an ordinary account behind.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct PrecompileMoves {
+    /// Overridden addresses, which no longer dispatch as precompiles.
+    suppressed: BTreeSet<Address>,
+    /// Destination -> the original precompile address whose implementation runs there.
+    relocated: BTreeMap<Address, Address>,
+}
+
+impl PrecompileMoves {
+    /// Build from the `(precompile_address, destination_address)` relocations and the full
+    /// set of overridden addresses.
+    ///
+    /// A later pair wins if two moves name the same destination; the RPC layer rejects
+    /// that shape before it gets here, as geth does.
+    pub fn from_parts(
+        moves: impl IntoIterator<Item = (Address, Address)>,
+        overridden: impl IntoIterator<Item = Address>,
+    ) -> Self {
+        let mut result = Self {
+            suppressed: overridden.into_iter().collect(),
+            relocated: BTreeMap::new(),
+        };
+        for (source, destination) in moves {
+            result.relocated.insert(destination, source);
+        }
+        result
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.suppressed.is_empty() && self.relocated.is_empty()
+    }
+
+    /// True if `address` is overridden and so no longer dispatches as a precompile.
+    pub fn is_suppressed(&self, address: &Address) -> bool {
+        self.suppressed.contains(address)
+    }
+
+    /// The address whose precompile implementation should run when `address` is
+    /// called, or `None` if `address` is not a relocation destination.
+    pub fn source_for(&self, address: &Address) -> Option<Address> {
+        self.relocated.get(address).copied()
+    }
+}
+
+/// [`is_precompile`], honoring any simulation-only precompile relocations.
+///
+/// With `moves == None` this is exactly [`is_precompile`] — the consensus path.
+pub fn is_precompile_with_moves(
+    address: &Address,
+    fork: Fork,
+    vm_type: VMType,
+    moves: Option<&PrecompileMoves>,
+) -> bool {
+    let Some(moves) = moves else {
+        return is_precompile(address, fork, vm_type);
+    };
+    // A destination wins over the address's own identity: `movePrecompileToAddress`
+    // may legitimately target an address that is itself a precompile. A destination
+    // cannot also be overridden — the RPC layer rejects that, as geth does — so this
+    // never has to arbitrate between a relocation and a suppression.
+    if let Some(source) = moves.source_for(address) {
+        return is_precompile(&source, fork, vm_type);
+    }
+    if moves.is_suppressed(address) {
+        return false;
+    }
+    is_precompile(address, fork, vm_type)
+}
+
+/// The address whose precompile implementation should execute for a call to
+/// `address`. Identity mapping unless `address` is a relocation destination.
+pub fn effective_precompile_address(address: Address, moves: Option<&PrecompileMoves>) -> Address {
+    moves
+        .and_then(|m| m.source_for(&address))
+        .unwrap_or(address)
 }
 
 /// Per-block cache for precompile results shared between warmer and executor.
@@ -304,6 +415,7 @@ pub fn execute_precompile(
     fork: Fork,
     cache: Option<&PrecompileCache>,
     crypto: &dyn Crypto,
+    _stateless_validator: Option<&dyn crate::StatelessValidator>,
 ) -> Result<Bytes, VMError> {
     type PrecompileFn = fn(&Bytes, &mut u64, Fork, &dyn Crypto) -> Result<Bytes, VMError>;
 
@@ -335,6 +447,18 @@ pub fn execute_precompile(
             Some(p_256_verify as PrecompileFn);
         precompiles
     };
+
+    // EXECUTE precompile is dispatched before the const table (LStar runtime gate;
+    // L1-only enforcement is at the is_precompile call site).
+    if fork >= Fork::LStar && address == EXECUTE.address {
+        return crate::execute_precompile::execute_precompile(
+            calldata,
+            gas_remaining,
+            fork,
+            crypto,
+            _stateless_validator,
+        );
+    }
 
     if address[0..18] != [0u8; 18] {
         return Err(VMError::Internal(InternalError::InvalidPrecompileAddress));
@@ -1480,4 +1604,26 @@ pub fn bls12_map_fp2_to_g2(
     output[144..192].copy_from_slice(&result[96..144]);
     output[208..256].copy_from_slice(&result[144..192]);
     Ok(Bytes::copy_from_slice(&output))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethrex_common::types::Fork;
+
+    /// I3 gate test: EXECUTE precompile is L1-only and only active since LStar.
+    #[test]
+    fn execute_precompile_gated_by_lstar_and_l1() {
+        let execute_addr = EXECUTE.address;
+        // Pre-LStar L1: not a precompile.
+        assert!(!is_precompile(&execute_addr, Fork::Amsterdam, VMType::L1));
+        // LStar on L2: not a precompile (L1-only, I3).
+        assert!(!is_precompile(
+            &execute_addr,
+            Fork::LStar,
+            VMType::L2(Default::default())
+        ));
+        // LStar on L1: is a precompile.
+        assert!(is_precompile(&execute_addr, Fork::LStar, VMType::L1));
+    }
 }

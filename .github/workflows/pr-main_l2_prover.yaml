@@ -26,15 +26,12 @@ jobs:
       run_tests: ${{ steps.finish.outputs.run_tests }}
     steps:
       - uses: actions/checkout@v6
-      - uses: dorny/paths-filter@v4
-        id: filter
-        with:
-          filters: |
-            run_tests:
-              - '!docs/**'
+      - uses: ./.github/actions/detect-changes
+        id: changes
       - name: finish
         id: finish
-        run: echo "run_tests=${{ steps.filter.outputs.run_tests }}" >> "$GITHUB_OUTPUT"
+        # Documentation and repository metadata only: no job here builds it.
+        run: echo "run_tests=${{ steps.changes.outputs.inert_only == 'false' }}" >> "$GITHUB_OUTPUT"
       - name: Print result
         run: echo "run_tests=${{ steps.finish.outputs.run_tests }}"
 
@@ -46,7 +43,10 @@ jobs:
     strategy:
       matrix:
         # Note: openvm backend linting is disabled due to a problem in the installation https://github.com/lambdaclass/ethrex/issues/5509
-        backend: ["sp1", "risc0", "zisk"]
+        # Note: risc0 backend linting is temporarily disabled: the c-kzg 2.1.8 floor exceeds the
+        # highest risc0 c-kzg fork tag (v2.1.7-risczero.0), so the guest workspace can't resolve.
+        # Re-add "risc0" once risc0/c-kzg-4844 publishes a >=2.1.8 tag.
+        backend: ["sp1", "zisk"]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v6
@@ -96,6 +96,20 @@ jobs:
       - name: Check ${{ matrix.backend }} Cargo.lock modified but not committed
         run: |
           git diff --exit-code -- crates/guest-program/bin/${{ matrix.backend }}/Cargo.lock
+
+      # zkevm_bench is a standalone workspace excluded from the root workspace
+      # (it hard-depends on x86-64-only zisk), so it must be linted explicitly.
+      # --all-targets compiles the smoke test without running it (the test needs
+      # a full guest ELF, which CI skips). --locked doubles as a lockfile check.
+      - name: Clippy zkevm_bench
+        if: matrix.backend == 'zisk'
+        run: |
+          cargo clippy --locked --manifest-path tooling/zkevm_bench/Cargo.toml --all-targets
+
+      - name: Check zkevm_bench Cargo.lock modified but not committed
+        if: matrix.backend == 'zisk'
+        run: |
+          git diff --exit-code -- tooling/zkevm_bench/Cargo.lock
 
   lint_exec:
     name: Lint exec backend

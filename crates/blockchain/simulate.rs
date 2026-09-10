@@ -15,10 +15,10 @@ use ethrex_common::{
     Address, U256,
     constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, GAS_PER_BLOB},
     types::{
-        AccountInfo, AccountUpdate, Block, BlockBody, BlockHeader, ChainConfig,
-        EIP1559Transaction, EIP4844Transaction, EIP7702Transaction, ELASTICITY_MULTIPLIER, Fork,
-        GenericTransaction, LegacyTransaction, Log, Receipt, Transaction, TxKind, Withdrawal,
-        bloom_from_logs, calc_excess_blob_gas, calculate_base_fee_per_gas, compute_receipts_root,
+        AccountInfo, AccountUpdate, Block, BlockBody, BlockHeader, ChainConfig, EIP1559Transaction,
+        EIP4844Transaction, EIP7702Transaction, ELASTICITY_MULTIPLIER, Fork, GenericTransaction,
+        LegacyTransaction, Log, Receipt, Transaction, TxKind, Withdrawal, bloom_from_logs,
+        calc_excess_blob_gas, calculate_base_fee_per_gas, compute_receipts_root,
         compute_transactions_root, compute_withdrawals_root, requests::compute_requests_hash,
         tx_fields::AuthorizationTuple,
     },
@@ -470,14 +470,14 @@ impl Blockchain {
         let mut results = Vec::with_capacity(blocks.len());
 
         for sanitized in blocks {
-            let mut header = make_sim_header(&parent, &sanitized, &chain_config, request.validation);
+            let mut header =
+                make_sim_header(&parent, &sanitized, &chain_config, request.validation);
             let fork = chain_config.fork(header.timestamp);
 
             // State overrides are applied prior to execution of the block and
             // become part of the overlay (and thus the state root).
             if !sanitized.spec.state_overrides.is_empty() {
-                let pre_db =
-                    SimulationVmDatabase::new(store_db.clone(), Arc::new(overlay.clone()));
+                let pre_db = SimulationVmDatabase::new(store_db.clone(), Arc::new(overlay.clone()));
                 for (address, override_) in sanitized.spec.state_overrides.clone() {
                     if override_.is_noop() {
                         continue;
@@ -534,8 +534,7 @@ impl Blockchain {
 
                 gas_used += report.gas_used;
                 budget_remaining = budget_remaining.saturating_sub(report.gas_used);
-                blob_gas_used +=
-                    (tx.blob_versioned_hashes().len() * GAS_PER_BLOB as usize) as u64;
+                blob_gas_used += (tx.blob_versioned_hashes().len() * GAS_PER_BLOB as usize) as u64;
 
                 // Trace-transfer logs go to the per-call results but must stay
                 // out of receipts, the logs bloom and request extraction.
@@ -617,9 +616,7 @@ impl Blockchain {
 
             // EIP-7685 request system calls (withdrawal/consolidation queues).
             if is_l1 && chain_config.is_prague_activated(header.timestamp) {
-                let requests = evm
-                    .extract_requests(&receipts, &header)
-                    .map_err(internal)?;
+                let requests = evm.extract_requests(&receipts, &header).map_err(internal)?;
                 let encoded: Vec<_> = requests.iter().map(|request| request.encode()).collect();
                 header.requests_hash = Some(compute_requests_hash(&encoded));
             }
@@ -694,10 +691,13 @@ mod tests {
     #[test]
     fn sanitize_defaults_number_and_timestamp() {
         let base = base_header(100, 1000);
-        let blocks = sanitize_blocks(&base, vec![spec_with(None, None), spec_with(None, None)])
-            .unwrap();
+        let blocks =
+            sanitize_blocks(&base, vec![spec_with(None, None), spec_with(None, None)]).unwrap();
         assert_eq!(
-            blocks.iter().map(|b| (b.number, b.timestamp)).collect::<Vec<_>>(),
+            blocks
+                .iter()
+                .map(|b| (b.number, b.timestamp))
+                .collect::<Vec<_>>(),
             vec![(101, 1012), (102, 1024)]
         );
     }
@@ -707,7 +707,10 @@ mod tests {
         let base = base_header(100, 1000);
         let blocks = sanitize_blocks(&base, vec![spec_with(Some(104), None)]).unwrap();
         assert_eq!(
-            blocks.iter().map(|b| (b.number, b.timestamp)).collect::<Vec<_>>(),
+            blocks
+                .iter()
+                .map(|b| (b.number, b.timestamp))
+                .collect::<Vec<_>>(),
             vec![(101, 1012), (102, 1024), (103, 1036), (104, 1048)]
         );
         assert!(blocks[0].spec.calls.is_empty());
@@ -722,7 +725,13 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            matches!(err, SimulationError::BlockNumberNotAscending { given: 105, prev: 110 }),
+            matches!(
+                err,
+                SimulationError::BlockNumberNotAscending {
+                    given: 105,
+                    prev: 110
+                }
+            ),
             "unexpected error: {err:?}"
         );
         // Equal numbers are rejected too (this is how "more blocks than fit
@@ -738,7 +747,10 @@ mod tests {
         .unwrap_err();
         assert!(matches!(
             err,
-            SimulationError::BlockNumberNotAscending { given: 102, prev: 102 }
+            SimulationError::BlockNumberNotAscending {
+                given: 102,
+                prev: 102
+            }
         ));
     }
 
@@ -752,7 +764,10 @@ mod tests {
         .unwrap_err();
         assert!(matches!(
             err,
-            SimulationError::TimestampNotAscending { given: 1100, prev: 1100 }
+            SimulationError::TimestampNotAscending {
+                given: 1100,
+                prev: 1100
+            }
         ));
     }
 
@@ -772,7 +787,10 @@ mod tests {
         let err = sanitize_blocks(&base, vec![spec_with(Some(103), Some(1020))]).unwrap_err();
         assert!(matches!(
             err,
-            SimulationError::TimestampNotAscending { given: 1020, prev: 1024 }
+            SimulationError::TimestampNotAscending {
+                given: 1020,
+                prev: 1024
+            }
         ));
     }
 
