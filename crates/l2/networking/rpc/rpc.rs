@@ -112,7 +112,8 @@ pub async fn bind_api(
     }
 
     let active_filters = Arc::new(Mutex::new(HashMap::new()));
-    let block_worker_channel = ethrex_rpc::start_block_executor(blockchain.clone());
+    // Detached for the lifetime of the process, as on L1.
+    let (block_worker_channel, _executor) = ethrex_rpc::start_block_executor(blockchain.clone());
     let service_context = RpcApiContext {
         l1_ctx: ethrex_rpc::RpcApiContext {
             storage,
@@ -431,7 +432,11 @@ mod tests {
     async fn test_context(ethrex_namespace_allowed: bool) -> RpcApiContext {
         let storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
-        let l1_ctx = ethrex_rpc::test_utils::default_context_with_storage(storage).await;
+        // The L2 context owns its `l1_ctx` by value, so the guard cannot be kept
+        // alive alongside it without depending on drop order.
+        let l1_ctx = ethrex_rpc::test_utils::default_context_with_storage(storage)
+            .await
+            .into_detached();
         let rollup_store = ethrex_storage_rollup::StoreRollup::new(
             std::path::Path::new(""),
             EngineTypeRollup::InMemory,
