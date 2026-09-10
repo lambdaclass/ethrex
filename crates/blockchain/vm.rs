@@ -193,6 +193,13 @@ impl<Inner: VmDatabase + Clone> VmDatabase for OverlaidVmDatabase<Inner> {
         }
         self.inner.get_code_metadata(code_hash)
     }
+
+    fn code_cache_budget_bytes(&self) -> u64 {
+        // The overlay holds no bytecode cache of its own, so this is the inner
+        // backend's budget. Reporting the trait default instead would have the
+        // simulation paths warm against a figure the backend never agreed to.
+        self.inner.code_cache_budget_bytes()
+    }
 }
 
 /// Stand-in `storage_root` for an account the replay gave storage to without this layer
