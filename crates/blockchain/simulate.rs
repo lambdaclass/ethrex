@@ -568,6 +568,18 @@ impl Blockchain {
             // of carrying relocations forward.
             evm.set_precompile_moves(precompile_moves(&sanitized.spec.state_overrides));
 
+            // EIP-7928: an Amsterdam block commits to its Block Access List, so a
+            // simulated one has to record it. Enabled *before* the pre-execution system
+            // calls, as the payload builder does, so the EIP-4788/2935 writes land in the
+            // BAL: index 0 is the pre-execution phase, transaction i takes i + 1, and the
+            // post-execution phase takes call_count + 1. Recorded per block, matching
+            // geth and reth, which both build a fresh BAL for each simulated block.
+            let records_bal = is_l1 && fork >= Fork::Amsterdam;
+            if records_bal {
+                evm.enable_bal_recording();
+                evm.set_bal_index(0);
+            }
+
             // Pre-execution system calls (EIP-4788 beacon root, EIP-2935 block
             // hash history) run for every simulated block, gap-filled ones
             // included; the history writes are what make BLOCKHASH work.
@@ -585,7 +597,12 @@ impl Blockchain {
             let mut blob_gas_used: u64 = 0;
             let mut cumulative_gas_spent: u64 = 0;
 
-            for call in &sanitized.spec.calls {
+            for (call_index, call) in sanitized.spec.calls.iter().enumerate() {
+                // Set before the transaction is built, so the nonce read below is
+                // attributed to this transaction rather than to the previous one.
+                if records_bal {
+                    evm.set_bal_index(u32::try_from(call_index + 1).unwrap_or(u32::MAX));
+                }
                 let (tx, sender, gas_capped) = build_sim_transaction(
                     call,
                     &header,
@@ -688,6 +705,11 @@ impl Blockchain {
                 header.blob_gas_used = Some(blob_gas_used);
             }
 
+            // Post-execution phase (withdrawals, EIP-7685 request system calls).
+            if records_bal {
+                evm.set_bal_index(u32::try_from(call_count + 1).unwrap_or(u32::MAX));
+            }
+
             if !sanitized.spec.overrides.withdrawals.is_empty() {
                 evm.process_withdrawals(&sanitized.spec.overrides.withdrawals)
                     .map_err(internal)?;
@@ -699,6 +721,11 @@ impl Blockchain {
                 let encoded: Vec<_> = requests.iter().map(|request| request.encode()).collect();
                 header.requests_hash = Some(compute_requests_hash(&encoded));
             }
+
+            // Taken once every phase has been recorded; `None` before Amsterdam, which
+            // leaves the header field unset as a pre-fork block requires.
+            header.block_access_list_hash =
+                evm.take_bal().map(|bal| bal.compute_hash(&NativeCrypto));
 
             for update in evm.get_state_transitions().map_err(internal)? {
                 overlay.merge_update(update);

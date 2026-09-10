@@ -1235,6 +1235,89 @@ mod integration_tests {
         assert_eq!(error_code(err), -38015);
     }
 
+    /// EIP-7928: an Amsterdam block commits to its Block Access List, so a simulated
+    /// Amsterdam block must carry a `blockAccessListHash`. geth builds a construction BAL
+    /// in `simulate.go` and assembles the block with it; reth enables a per-block BAL
+    /// builder in `simulate_v1`, Amsterdam-gated. (nethermind deliberately does not, for
+    /// an implementation reason of its own.)
+    #[tokio::test]
+    async fn amsterdam_simulated_block_commits_to_its_access_list() {
+        let result = simulate_amsterdam(state_creating_calls()).await.unwrap();
+        let block = &result.as_array().unwrap()[0];
+        let hash = block["blockAccessListHash"]
+            .as_str()
+            .unwrap_or_else(|| panic!("no blockAccessListHash on an Amsterdam block: {block}"));
+        assert_ne!(hash, "0x", "blockAccessListHash must be a real commitment");
+    }
+
+    /// The commitment has to be derived from what the block actually touched, not a
+    /// constant empty-BAL hash: a block whose call writes storage must not share its
+    /// commitment with one that runs no calls at all.
+    #[tokio::test]
+    async fn access_list_commitment_reflects_what_the_block_touched() {
+        let with_calls = simulate_amsterdam(state_creating_calls()).await.unwrap();
+        let without_calls = simulate_amsterdam(json!([{
+            "blockStateCalls": [{}],
+        }, "latest"]))
+        .await
+        .unwrap();
+        let hash_of = |r: &Value| {
+            r.as_array().unwrap()[0]["blockAccessListHash"]
+                .as_str()
+                .map(str::to_owned)
+        };
+        let touched = hash_of(&with_calls).expect("commitment on the block with calls");
+        let empty = hash_of(&without_calls).expect("commitment on the empty block");
+        assert_ne!(
+            touched, empty,
+            "the commitment does not depend on the block's accesses"
+        );
+    }
+
+    /// The BAL must include the pre-execution system calls, which is only true if
+    /// recording is enabled *before* they run — the ordering the payload builder uses
+    /// (`vm.enable_bal_recording()` then `set_bal_index(0)`, both ahead of the system
+    /// calls). Two blocks differing only in `beaconRoot` write different values into the
+    /// EIP-4788 ring buffer, so their commitments must differ. Enable recording after the
+    /// system calls instead and both come out identical.
+    #[tokio::test]
+    async fn access_list_commitment_includes_the_pre_execution_system_calls() {
+        async fn commitment(beacon_root: &str) -> String {
+            let result = simulate_amsterdam(json!([{
+                "blockStateCalls": [{
+                    "blockOverrides": { "time": BEACON_TIME, "beaconRoot": beacon_root },
+                }],
+            }, "latest"]))
+            .await
+            .expect("simulation should succeed");
+            result.as_array().unwrap()[0]["blockAccessListHash"]
+                .as_str()
+                .expect("an Amsterdam block commits to its access list")
+                .to_owned()
+        }
+        let one =
+            commitment("0x0000000000000000000000000000000000000000000000000000000000000001").await;
+        let two =
+            commitment("0x0000000000000000000000000000000000000000000000000000000000000002").await;
+        assert_ne!(
+            one, two,
+            "the commitment omits the EIP-4788 system-call writes, so recording starts \
+             too late to cover the pre-execution phase"
+        );
+    }
+
+    /// Control: pre-Amsterdam there is no such commitment, so the field must be absent
+    /// rather than zero — which is also what pins the two tests above to the fork gate.
+    #[tokio::test]
+    async fn pre_amsterdam_block_has_no_access_list_commitment() {
+        let result = simulate(state_creating_calls()).await.unwrap();
+        let block = &result.as_array().unwrap()[0];
+        assert!(
+            block.get("blockAccessListHash").is_none(),
+            "pre-Amsterdam blocks must not carry a blockAccessListHash: {block}"
+        );
+    }
+
     /// EIP-8037: a block's gas is `max(sum_regular, sum_state)`, not the sum of the two
     /// dimensions (`PayloadBuildContext::gas_used`). So once calls create state, the
     /// block's `gasUsed` must come out *below* the naive sum of the per-call figures.
