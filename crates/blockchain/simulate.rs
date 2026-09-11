@@ -105,9 +105,13 @@ pub struct SimulatedCallResult {
     pub return_data: Bytes,
     /// Post-refund gas, what the caller pays (`gasUsed` in the response).
     pub gas_used: u64,
-    /// Pre-refund gas (`maxUsedGas` in the response). Approximated as the gas
-    /// consumed before refunds; geth reports the in-flight peak, which can be
-    /// slightly higher for calls whose inner frames return unused gas.
+    /// Pre-refund gas (`maxUsedGas` in the response). geth (`settleGas`'s
+    /// `peakUsed`) and reth both report `max(pre-refund gas, EIP-7623 calldata
+    /// floor)` -- the name is misleading, neither tracks an in-flight peak. This
+    /// omits the floor term, so it agrees with both unless the floor binds, where
+    /// it over-reports by up to the refund. Amsterdam folds the floor into
+    /// `gas_used` already; pre-Amsterdam the report carries no pre-refund figure
+    /// (`gas_used == gas_spent`), so closing it needs one surfaced.
     pub max_used_gas: u64,
     /// Interleaved execution + trace-transfer logs; empty for failed calls.
     pub logs: Vec<Log>,
