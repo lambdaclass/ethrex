@@ -3,7 +3,7 @@
 use ethrex_common::H256;
 use ethrex_common::types::{
     DEPENDENCY_SCHEME_LEANSPHINCS, DEPENDENCY_SCHEME_LEANSTARK, DependencyTriple,
-    FRAME_TX_MAX_FRAMES,
+    FRAME_TX_MAX_FRAMES, Frame, FrameMode, FrameTransaction,
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 
@@ -84,8 +84,12 @@ fn the_wrapper_limits_are_enforced() {
 /// benchmarks 245 SPHINCS signatures per aggregate. But a wrapper may carry at most
 /// `MAX_LEANSIG_DEPS_PER_WRAPPER` (16) leanSPHINCS dependencies, while a single
 /// transaction may declare `MAX_SIGS_PER_TX` (16). So one maximally-loaded
-/// transaction fills a whole wrapper, and a node cannot broadcast "one wrapper
-/// containing all currently active transactions" for any pool holding two of them.
+/// transaction fills a whole wrapper.
+///
+/// Lighter transactions still aggregate together -- sixteen declaring one signature
+/// each fit. What the limit fixes is the ceiling: no wrapper ever carries more than
+/// 16 signatures however they are spread, an order of magnitude below what the
+/// tooling proves in one aggregate.
 ///
 /// If the limits are raised upstream this test fails, which is the point: it should
 /// be looked at rather than silently tracking a number.
@@ -94,8 +98,8 @@ fn one_transaction_can_fill_an_entire_wrapper() {
     assert_eq!(
         MAX_LEANSIG_DEPS_PER_WRAPPER, FRAME_TX_MAX_SIGS_PER_TX,
         "a wrapper holds exactly one maximally-loaded transaction's worth of \
-         leanSPHINCS dependencies, so aggregating across transactions is impossible \
-         at these values"
+         leanSPHINCS dependencies, so the per-wrapper ceiling is sized against one \
+         transaction rather than against what an aggregate can hold"
     );
     assert_eq!(
         MAX_LEANSTARK_DEPS_PER_WRAPPER, 1,
@@ -119,8 +123,10 @@ fn a_wrapper_with_no_transactions_is_rejected() {
 }
 
 /// Notes item 22. Rule 1 of both modes is that `deps` is the union of the
-/// transactions' dependencies, which a receiver holding only hashes cannot check.
-/// The EIP permits hashes and gives no way to resolve one.
+/// transactions' dependencies, which a receiver has to resolve the hash to check.
+/// A node with a pool of already-broadcast wrappers should resolve first; this
+/// implementation has no wrapper transport (item 21) and so nothing to resolve
+/// against, and the EIP defines no behaviour for a miss either way.
 #[test]
 fn a_hash_only_wrapper_cannot_have_its_union_checked() {
     let agg = UnavailableAggregator;
@@ -131,28 +137,66 @@ fn a_hash_only_wrapper_cannot_have_its_union_checked() {
     );
 }
 
+/// A transaction declaring exactly `deps`, so a wrapper carrying it gets past the
+/// union check and the rules after it can be reached.
+fn tx_declaring(deps: &[DependencyTriple]) -> FrameTransaction {
+    let mut data = Vec::new();
+    for d in deps {
+        data.extend_from_slice(&d.encode());
+    }
+    FrameTransaction {
+        frames: vec![Frame {
+            mode: FrameMode::DepVerify as u8,
+            data: bytes::Bytes::from(data),
+            ..Default::default()
+        }],
+        ..Default::default()
+    }
+}
+
 #[test]
 fn mode_zero_needs_one_proof_per_dependency() {
     let agg = UnavailableAggregator;
+    let deps = vec![sphincs(1), sphincs(2)];
     let w = MempoolWrapper {
-        transactions: vec![WrapperEntry::Hash(H256::from_low_u64_be(1))],
+        transactions: vec![WrapperEntry::Full(Box::new(tx_declaring(&deps)))],
         content: WrapperContent::Direct {
-            deps: vec![sphincs(1), sphincs(2)],
+            deps: deps.clone(),
             proofs: vec![vec![0u8; 4]],
         },
     };
-    // The union check runs first and short-circuits on the hash entry, so drive the
-    // count check directly.
-    match w.content {
-        WrapperContent::Direct {
-            ref deps,
-            ref proofs,
-        } => {
-            assert_ne!(deps.len(), proofs.len());
-        }
-        _ => unreachable!(),
+    assert_eq!(
+        w.validate(&agg),
+        Err(WrapperError::ProofCountMismatch { proofs: 1, deps: 2 }),
+        "the count rule has to be what rejects this, not the union check upstream of it"
+    );
+}
+
+/// "Each dependency has a corresponding proof that can be verified individually."
+/// Individually means against that dependency's own scheme -- so mode 0's proofs go
+/// to `verify_witness`, never to `verify`, whose subject is an aggregate over a
+/// whole expected set.
+#[test]
+fn mode_zero_verifies_each_dependency_on_its_own_terms() {
+    let agg = UnavailableAggregator;
+    for deps in [vec![sphincs(1)], vec![stark(1)]] {
+        let w = MempoolWrapper {
+            transactions: vec![WrapperEntry::Full(Box::new(tx_declaring(&deps)))],
+            content: WrapperContent::Direct {
+                deps: deps.clone(),
+                proofs: vec![vec![0u8; 4]],
+            },
+        };
+        // `UnavailableAggregator` refuses both entry points, so what this pins is
+        // that validation reaches a per-dependency check at all rather than
+        // short-circuiting earlier.
+        assert_eq!(
+            w.validate(&agg),
+            Err(WrapperError::Aggregate(crate::AggregateError::NoBackend)),
+            "scheme {:#04x} must reach a per-dependency check",
+            deps[0].scheme
+        );
     }
-    assert_eq!(w.validate(&agg), Err(WrapperError::UnresolvedHashes));
 }
 
 #[test]

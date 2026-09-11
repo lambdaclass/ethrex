@@ -7,13 +7,17 @@
 //! names the item it settles so a later spec revision points straight at it.
 
 use bytes::Bytes;
-use ethrex_common::types::{BlockBody, BlockHeader, RecursiveStark, Transaction};
+use ethrex_common::constants::DEFAULT_OMMERS_HASH;
+use ethrex_common::types::{
+    Block, BlockBody, BlockHeader, ChainConfig, RecursiveStark, Transaction,
+};
 use ethrex_common::types::{
     DEPENDENCY_SCHEME_LEANSPHINCS, DEPENDENCY_SCHEME_LEANSTARK, DependencyTriple,
     FRAME_TX_DEPENDENCY_TRIPLE_BYTES, FRAME_TX_MAX_DEPENDENCIES_PER_FRAME,
     FRAME_TX_MAX_SIGS_PER_TX, Frame, FrameMode, FrameTransaction, LEANSPHINCS_VERIFICATION_GAS,
     LEANSTARK_VERIFICATION_GAS, deduplicate_and_sort_dependencies, dependencies_hash,
 };
+use ethrex_common::validation::validate_block_pre_execution;
 use ethrex_common::{Address, H256, U256};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
@@ -599,6 +603,35 @@ fn jstar_header(burned_fees: Option<u64>, recursive_stark: Option<RecursiveStark
     }
 }
 
+/// The parent a J* block is validated against: the fields `validate_block_header`
+/// and the blob-gas check read from a parent, and nothing else.
+fn jstar_parent() -> BlockHeader {
+    BlockHeader {
+        number: 0,
+        timestamp: 1_000,
+        gas_limit: 30_000_000,
+        gas_used: 0,
+        ommers_hash: *DEFAULT_OMMERS_HASH,
+        ..jstar_header(None, None)
+    }
+}
+
+/// A chain whose rule set is J*. The chain id matches `tx_with`'s, so the
+/// pre-execution chain-id check does not speak where a dependency rule should.
+fn jstar_chain_config() -> ChainConfig {
+    ChainConfig {
+        chain_id: 1,
+        shanghai_time: Some(0),
+        cancun_time: Some(0),
+        prague_time: Some(0),
+        osaka_time: Some(0),
+        amsterdam_time: Some(0),
+        hegota_time: Some(0),
+        jstar_time: Some(0),
+        ..Default::default()
+    }
+}
+
 fn a_proof() -> RecursiveStark {
     RecursiveStark {
         proof: Bytes::from_static(b"an opaque aggregate"),
@@ -878,4 +911,128 @@ fn a_dependency_frame_before_a_recent_root_frame_displaces_it() {
         "a dependency frame at index 0 pushes it out of position, so it stops being \
          recognised as a recent-root frame at all"
     );
+}
+
+/// Block-validity rule 1, through the function block import actually calls.
+///
+/// Every other test here checks a piece -- the digest, the header field, the
+/// dependency set of a transaction. This one drives the rule through
+/// `validate_block_pre_execution`, over one body and two headers that differ only
+/// in the digest they declare.
+#[test]
+fn rule_one_rejects_a_header_that_disagrees_with_the_body() {
+    let tx = tx_with(vec![dep_frame(&[sphincs(1, 2)]), self_verify_frame()]);
+    let body = BlockBody {
+        transactions: vec![Transaction::FrameTransaction(tx)],
+        ommers: Vec::new(),
+        withdrawals: Some(Vec::new()),
+    };
+
+    let parent = jstar_parent();
+    let config = jstar_chain_config();
+
+    let block_declaring = |digest: H256| {
+        let mut header = jstar_header(
+            None,
+            Some(RecursiveStark {
+                proof: Bytes::new(),
+                block_deps_hash: digest,
+            }),
+        );
+        header.number = parent.number + 1;
+        header.timestamp = parent.timestamp + 12;
+        header.gas_limit = parent.gas_limit;
+        header.parent_hash = parent.hash();
+        header.ommers_hash = *DEFAULT_OMMERS_HASH;
+        Block::new(header, body.clone())
+    };
+
+    validate_block_pre_execution(
+        &block_declaring(body.block_deps_hash()),
+        &parent,
+        &config,
+        2,
+    )
+    .expect("a header whose digest is the digest of its body's dependencies is valid");
+
+    let tampered = block_declaring(H256::from_low_u64_be(0xBAD));
+    let err = validate_block_pre_execution(&tampered, &parent, &config, 2)
+        .expect_err("a header that disagrees with its body must be rejected")
+        .to_string();
+    assert!(
+        err.contains("dependency digest"),
+        "rule 1 must be what rejects it, not an unrelated check: {err}"
+    );
+}
+
+/// Rule 1 applies to a block with no dependencies at all: the digest of the empty
+/// set is still a commitment, so a header naming anything else is invalid.
+#[test]
+fn rule_one_binds_a_block_that_declares_no_dependencies() {
+    let body = BlockBody {
+        transactions: Vec::new(),
+        ommers: Vec::new(),
+        withdrawals: Some(Vec::new()),
+    };
+    assert!(
+        body.dependencies().is_empty(),
+        "a block with no frame transactions declares nothing"
+    );
+
+    let parent = jstar_parent();
+    let config = jstar_chain_config();
+
+    let block_declaring = |digest: H256| {
+        let mut header = jstar_header(
+            None,
+            Some(RecursiveStark {
+                proof: Bytes::new(),
+                block_deps_hash: digest,
+            }),
+        );
+        header.number = parent.number + 1;
+        header.timestamp = parent.timestamp + 12;
+        header.gas_limit = parent.gas_limit;
+        header.parent_hash = parent.hash();
+        header.ommers_hash = *DEFAULT_OMMERS_HASH;
+        Block::new(header, body.clone())
+    };
+
+    validate_block_pre_execution(
+        &block_declaring(dependencies_hash(&[])),
+        &parent,
+        &config,
+        2,
+    )
+    .expect("the digest of the empty set is the right commitment for an empty block");
+
+    assert!(
+        validate_block_pre_execution(&block_declaring(H256::zero()), &parent, &config, 2).is_err(),
+        "a zero digest is not the digest of the empty set, and must not pass as one"
+    );
+}
+
+/// The header field is mandatory from J*, including on a block whose transactions
+/// declare nothing -- otherwise the header's schema would depend on its body.
+#[test]
+fn a_jstar_header_without_the_field_is_rejected() {
+    let body = BlockBody {
+        transactions: Vec::new(),
+        ommers: Vec::new(),
+        withdrawals: Some(Vec::new()),
+    };
+    let parent = jstar_parent();
+    let config = jstar_chain_config();
+
+    let mut header = jstar_header(None, None);
+    header.number = parent.number + 1;
+    header.timestamp = parent.timestamp + 12;
+    header.gas_limit = parent.gas_limit;
+    header.parent_hash = parent.hash();
+    header.ommers_hash = *DEFAULT_OMMERS_HASH;
+
+    let err = validate_block_pre_execution(&Block::new(header, body), &parent, &config, 2)
+        .expect_err("a J* header must carry the recursive_stark entry")
+        .to_string();
+    assert!(err.to_lowercase().contains("recursive"), "{err}");
 }

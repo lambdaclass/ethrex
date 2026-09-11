@@ -1368,7 +1368,7 @@ impl Blockchain {
         // block and the block hash is stable.
         if context
             .chain_config()
-            .is_jstar_activated(context.payload.header.timestamp)
+            .is_jstar_or_later(context.payload.header.timestamp)
         {
             context.payload.header.recursive_stark = Some(RecursiveStark {
                 proof: Bytes::new(),

@@ -1618,6 +1618,38 @@ async fn try_execute_payload(
                 error.to_string(),
             ))
         }
+        // EIP-8288 rule 2. A proof that does not discharge the block's declared
+        // dependencies is a failed commitment check like any other, so it gets the
+        // same treatment as `InvalidBlock`: without this arm it falls through to
+        // `RpcErr::Internal` and the CL is told the node broke rather than that the
+        // block is bad, and the bad-block bookkeeping never runs.
+        Err(ChainError::RecursiveStarkInvalid(error)) => {
+            warn!(%block_hash, %block_number, "Recursive stark proof is invalid: {error}");
+            context
+                .storage
+                .set_latest_valid_ancestor(block_hash, latest_valid_hash)
+                .await?;
+            context.storage.add_bad_block(bad_block_candidate).await?;
+            Ok(PayloadStatus::invalid_with(latest_valid_hash, error))
+        }
+        // And its counterpart, which must not be INVALID: this node has no backend
+        // for the block's dependencies and has therefore learned nothing about it.
+        // Saying INVALID would tell the consensus client that a chain everyone else
+        // follows is bad (notes item 19).
+        //
+        // SYNCING is the least-wrong of the statuses the engine API offers -- "not
+        // validated yet" rather than "bad" -- but it is a poor fit, because nothing
+        // will make this node able to validate. No sync is triggered for that
+        // reason. The EIP has no status for "cannot verify"; that is the gap item 19
+        // asks the authors to close.
+        Err(ChainError::RecursiveStarkUnverifiable(error)) => {
+            warn!(
+                %block_hash, %block_number,
+                "Cannot verify this block's EIP-8288 dependencies, so it is neither \
+                 accepted nor declared invalid: {error}"
+            );
+            Ok(PayloadStatus::syncing())
+        }
         Err(ChainError::StoreError(error)) => {
             warn!(%block_hash, %block_number, "Error storing block: {error}");
             Err(RpcErr::Internal(error.to_string()))

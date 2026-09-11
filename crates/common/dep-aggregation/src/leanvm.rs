@@ -160,12 +160,30 @@ impl DependencyAggregator for LeanVmAggregator {
     }
 
     fn verify_witness(&self, witness: &DependencyWitness) -> Result<(), AggregateError> {
+        // Dispatch on the scheme rather than assume leanSPHINCS: mode 0 carries a
+        // leanSTARK dependency's own STARK, and this backend has no way to check one
+        // (item 29). Reading those bytes as a signature would be the wrong question,
+        // and would fail as `ProofMalformed` -- a statement about the proof rather
+        // than about this backend's reach.
+        if !self.supports_scheme(witness.triple.scheme) {
+            return Err(AggregateError::SchemeUnsupported {
+                scheme: witness.triple.scheme,
+            });
+        }
+
         // No circuit and no aggregate: a leanSPHINCS dependency's witness is a
         // public key and a signature, and checking it is an ordinary signature
         // verification. This is the cheap path mode 0 exists for.
         let (key, message, signature) = decode_sphincs_witness(witness)?;
         sphincs::verify(&key, &message, &signature)
             .map_err(|e| AggregateError::ProofInvalid(format!("{e:?}")))
+    }
+
+    fn supports_scheme(&self, scheme: u8) -> bool {
+        // leanVM aggregates XMSS, SPHINCS and data-availability claims. It has no
+        // way to express "this arbitrary STARK verified against this verification
+        // key", so leanSTARK has no counterpart here.
+        scheme == DEPENDENCY_SCHEME_LEANSPHINCS
     }
 
     fn aggregated_vk(&self) -> H256 {

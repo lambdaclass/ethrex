@@ -363,10 +363,12 @@ impl BlockBody {
     /// EIP-8288 `block_deps_hash`: the digest the block header's `recursive_stark`
     /// entry must carry, and the first of the EIP's three block-validity rules.
     ///
-    /// The second rule -- that the recursive STARK verifies against this hash and
-    /// `AGGREGATED_VK` -- is not implementable while `AGGREGATED_VK` is `TBD` in the
-    /// EIP and no Lean Ethereum verifier exists to link against. See
-    /// `docs/eip-8288.md`.
+    /// The second rule -- that the proof discharges the dependencies this digest
+    /// names -- lives in `ethrex_blockchain::eip8288`, because it needs an
+    /// aggregation backend and this crate has none. It is implemented: see
+    /// `docs/eip-8288.md`. An earlier revision of this comment said it could not be,
+    /// which confused the EIP listing `AGGREGATED_VK` as `TBD` with the tooling
+    /// being absent; the tooling exists.
     pub fn block_deps_hash(&self) -> H256 {
         crate::types::dependencies_hash(&self.dependencies())
     }
@@ -964,7 +966,7 @@ pub fn validate_prague_header_fields(
     //
     // Gated separately from the Amsterdam pair above because J* is its own fork
     // (Amsterdam 25 < Hegota 26 < J* 27), so a block can be Amsterdam without it.
-    if chain_config.is_jstar_activated(header.timestamp) {
+    if chain_config.is_jstar_or_later(header.timestamp) {
         if header.recursive_stark.is_none() {
             return Err(InvalidBlockHeaderError::RecursiveStarkNotPresent);
         }

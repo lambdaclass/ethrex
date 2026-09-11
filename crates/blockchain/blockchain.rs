@@ -3976,6 +3976,22 @@ impl Blockchain {
                     limit: FRAME_TX_MAX_SIGS_PER_TX,
                 });
             }
+            // A dependency this node's backend cannot discharge is one this node can
+            // never build a block for, so admitting the transaction would fill a pool
+            // slot with something it can never include. Refuse it here rather than
+            // let a griefer stuff pools for free with statically valid transactions.
+            //
+            // Admission only. A block that already carries such a dependency is
+            // "cannot verify", not "invalid" -- see `validate_recursive_stark`.
+            if let Some(unsupported) = dependencies
+                .iter()
+                .find(|d| !self.aggregator.supports_scheme(d.scheme))
+            {
+                return Err(MempoolError::FrameTxUnsupportedDependencyScheme {
+                    scheme: unsupported.scheme,
+                });
+            }
+
             let leanstark = dependencies.iter().filter(|d| d.is_leanstark()).count();
             if leanstark > FRAME_TX_MAX_STARKS_PER_TX {
                 return Err(MempoolError::FrameTxTooManyDependencies {

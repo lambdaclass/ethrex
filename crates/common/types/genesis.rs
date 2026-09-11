@@ -528,6 +528,25 @@ impl ChainConfig {
         self.jstar_time.is_some_and(|time| time <= block_timestamp)
     }
 
+    /// Whether EIP-8288's rules apply, resolved **by ordinal** rather than by
+    /// `jstarTime` alone. Use this, not [`ChainConfig::is_jstar_activated`], for
+    /// every EIP-8288 gate.
+    ///
+    /// The two answer differently on a schedule that names a later fork without
+    /// naming J*: [`ChainConfig::get_fork`] is a first-match cascade, so
+    /// `lstarTime` alone resolves to [`Fork::LStar`], and `is_jstar_activated` is
+    /// then `false` while the VM's frame-mode gate — which only has a [`Fork`] to
+    /// work with, not a schedule — reads `fork >= Fork::JStar` and answers `true`.
+    ///
+    /// That combination is the worst one on offer: dependency verification frames
+    /// are legal, and nothing commits to them or discharges them. No header field
+    /// is required, rule 1 does not run, and rule 2 does not run. Resolving by
+    /// ordinal puts every gate on the same side of the question. On a well-formed
+    /// schedule it *is* the same question.
+    pub fn is_jstar_or_later(&self, block_timestamp: u64) -> bool {
+        self.get_fork(block_timestamp) >= Fork::JStar
+    }
+
     pub fn is_lstar_activated(&self, block_timestamp: u64) -> bool {
         self.lstar_time.is_some_and(|time| time <= block_timestamp)
     }
@@ -1035,7 +1054,7 @@ impl Genesis {
         // alone here rather than fixed in passing.
         let recursive_stark =
             self.config
-                .is_jstar_activated(self.timestamp)
+                .is_jstar_or_later(self.timestamp)
                 .then(|| crate::types::RecursiveStark {
                     proof: Bytes::new(),
                     block_deps_hash: crate::types::dependencies_hash(&[]),

@@ -132,16 +132,33 @@ pub trait DependencyAggregator: Send + Sync + Debug {
         children: &[&[u8]],
     ) -> Result<Vec<u8>, AggregateError>;
 
-    /// Verify one dependency directly from its witness, with no aggregation.
+    /// Verify one dependency directly from its own proof material, with no
+    /// aggregation.
     ///
-    /// This is what EIP-8288's mode-0 wrapper carries for a leanSPHINCS
-    /// dependency. §Mempool Wrapper Object is explicit that mode 0 holds "one STARK
-    /// per leanSTARK dependency" -- not per dependency -- and that a node may
-    /// "naively concatenate the leanSPHINCS instead of proving them". Mode 0 is also
-    /// what a user's very first broadcast uses, and a user has no aggregate yet, so
-    /// requiring a recursive proof here would make the mode unusable for its stated
-    /// purpose.
+    /// This is what EIP-8288's mode-0 wrapper carries, and what "each dependency has
+    /// a corresponding proof that can be verified individually" means. The material
+    /// differs by scheme, which is why this is one scheme-dispatching entry point
+    /// rather than two: §Mempool Wrapper Object says mode 0 holds "one STARK per
+    /// leanSTARK dependency" -- not per dependency -- and that a node may "naively
+    /// concatenate the leanSPHINCS instead of proving them". So for leanSPHINCS the
+    /// material is the raw signature, and for leanSTARK it is that dependency's own
+    /// STARK, checked against its own `verification_key_hash`.
+    ///
+    /// Neither is an aggregate, so neither goes to [`DependencyAggregator::verify`],
+    /// whose contract is the protocol aggregation circuit over a whole expected set.
+    /// Mode 0 is also what a user's very first broadcast uses, and a user has no
+    /// aggregate yet, so requiring a recursive proof here would make the mode
+    /// unusable for its stated purpose.
     fn verify_witness(&self, witness: &DependencyWitness) -> Result<(), AggregateError>;
+
+    /// Whether this backend can prove and verify a dependency of `scheme`.
+    ///
+    /// Admission needs this. A scheme the backend cannot discharge makes every
+    /// block carrying it invalid, so admitting such a transaction fills a pool slot
+    /// with something that can never be included -- a free griefing vector, since
+    /// the transaction is statically valid and costs nothing to construct. The
+    /// mempool refuses them instead.
+    fn supports_scheme(&self, scheme: u8) -> bool;
 
     /// The protocol-level verification key this backend verifies against.
     ///

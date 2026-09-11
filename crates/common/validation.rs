@@ -65,7 +65,7 @@ pub fn validate_block_pre_execution(
     // verification frame never runs, so its triples are known from the body alone.
     // Rule 2 -- that the recursive proof discharges that set -- does need a backend
     // and lives in the blockchain crate.
-    if chain_config.is_jstar_activated(block.header.timestamp) {
+    if chain_config.is_jstar_or_later(block.header.timestamp) {
         let declared = block
             .header
             .recursive_stark
