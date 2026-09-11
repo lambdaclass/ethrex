@@ -10,7 +10,7 @@ license = "MIT OR Apache-2.0"
 # NOTE: Using `default-features = false, features = ["inputcpy"]` mainly to disable the other
 #       feature enabled by default `user-hints`, which this binary doesn't use but introduces lots
 #       of dependencies.
-ere-platform-zisk = { git = "https://github.com/eth-act/ere", rev = "8961a4e7ac5c9ca2dc6a2fc848452f23a186b1aa", default-features = false, features = ["inputcpy"] }
+ere-platform-zisk = { git = "https://github.com/eth-act/ere", tag = "v0.17.0", default-features = false, features = ["inputcpy"] }
 
 ethrex-stateless-validator = { path = "../..", features = ["ere", "zisk"] }
 

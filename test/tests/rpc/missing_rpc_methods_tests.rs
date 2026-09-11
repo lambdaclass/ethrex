@@ -9,7 +9,9 @@ use ethrex_rpc::test_utils::{
 };
 use serde_json::Value;
 
-async fn context_with_one_block() -> ethrex_rpc::RpcApiContext {
+use ethrex_rpc::test_utils::TestContext;
+
+async fn context_with_one_block() -> TestContext {
     let store = setup_store().await;
     add_legacy_tx_blocks(&store, 1, 1).await;
     default_context_with_storage(store).await
@@ -24,7 +26,7 @@ async fn uncle_count_is_zero_for_a_known_block_and_null_for_an_unknown_one() {
     let context = context_with_one_block().await;
 
     let by_number = call_http(
-        context.clone(),
+        &context,
         call("eth_getUncleCountByBlockNumber", r#"["0x1"]"#),
     )
     .await;
@@ -34,7 +36,7 @@ async fn uncle_count_is_zero_for_a_known_block_and_null_for_an_unknown_one() {
     );
 
     let block_hash = call_http(
-        context.clone(),
+        &context,
         call("eth_getBlockByNumber", r#"["0x1",false]"#),
     )
     .await["result"]["hash"]
@@ -42,7 +44,7 @@ async fn uncle_count_is_zero_for_a_known_block_and_null_for_an_unknown_one() {
         .expect("block should have a hash")
         .to_owned();
     let by_hash = call_http(
-        context.clone(),
+        &context,
         call(
             "eth_getUncleCountByBlockHash",
             &format!(r#"["{block_hash}"]"#),
@@ -54,7 +56,7 @@ async fn uncle_count_is_zero_for_a_known_block_and_null_for_an_unknown_one() {
     // An unknown block must be `null`, not an error — matching the
     // transaction-count getters this mirrors.
     let unknown = call_http(
-        context,
+        &context,
         call("eth_getUncleCountByBlockNumber", r#"["0x999999"]"#),
     )
     .await;
@@ -65,7 +67,7 @@ async fn uncle_count_is_zero_for_a_known_block_and_null_for_an_unknown_one() {
 async fn new_block_filter_registers_and_polls() {
     let context = context_with_one_block().await;
 
-    let created = call_http(context.clone(), call("eth_newBlockFilter", "[]")).await;
+    let created = call_http(&context, call("eth_newBlockFilter", "[]")).await;
     let id = created["result"]
         .as_str()
         .unwrap_or_else(|| panic!("eth_newBlockFilter must return a filter id: {created}"))
@@ -75,7 +77,7 @@ async fn new_block_filter_registers_and_polls() {
     // The filter anchors at the head at registration, so an immediate poll
     // reports nothing rather than replaying history.
     let changes = call_http(
-        context,
+        &context,
         call("eth_getFilterChanges", &format!(r#"["{id}"]"#)),
     )
     .await;
@@ -92,11 +94,7 @@ async fn new_block_filter_registers_and_polls() {
 async fn raw_transaction_getters_agree_across_all_three_spellings() {
     let context = context_with_one_block().await;
 
-    let block = call_http(
-        context.clone(),
-        call("eth_getBlockByNumber", r#"["0x1",true]"#),
-    )
-    .await;
+    let block = call_http(&context, call("eth_getBlockByNumber", r#"["0x1",true]"#)).await;
     let tx_hash = block["result"]["transactions"][0]["hash"]
         .as_str()
         .expect("block should contain a transaction")
@@ -104,7 +102,7 @@ async fn raw_transaction_getters_agree_across_all_three_spellings() {
     let block_hash = block["result"]["hash"].as_str().expect("hash").to_owned();
 
     let by_hash = call_http(
-        context.clone(),
+        &context,
         call("eth_getRawTransactionByHash", &format!(r#"["{tx_hash}"]"#)),
     )
     .await;
@@ -115,7 +113,7 @@ async fn raw_transaction_getters_agree_across_all_three_spellings() {
 
     // The `debug_` spelling already existed; the `eth_` one must agree with it.
     let debug_form = call_http(
-        context.clone(),
+        &context,
         call("debug_getRawTransaction", &format!(r#"["{tx_hash}"]"#)),
     )
     .await;
@@ -134,7 +132,7 @@ async fn raw_transaction_getters_agree_across_all_three_spellings() {
             format!(r#"["{block_hash}","0x0"]"#),
         ),
     ] {
-        let response = call_http(context.clone(), call(method, &params)).await;
+        let response = call_http(&context, call(method, &params)).await;
         assert_eq!(
             response["result"], by_hash["result"],
             "{method} must return the same bytes as by-hash; got {response}"
@@ -143,7 +141,7 @@ async fn raw_transaction_getters_agree_across_all_three_spellings() {
 
     // An index past the end is `null`, not an error.
     let past_end = call_http(
-        context,
+        &context,
         call(
             "eth_getRawTransactionByBlockNumberAndIndex",
             r#"["0x1","0x9"]"#,

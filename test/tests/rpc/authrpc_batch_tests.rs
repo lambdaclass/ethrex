@@ -23,7 +23,7 @@ async fn authrpc_accepts_batched_eth_requests() {
     ]"#
     .to_string();
 
-    let value = call_authrpc(context, auth, body).await;
+    let value = call_authrpc(&context, auth, body).await;
     let arr = value
         .as_array()
         .expect("batched auth response must be a JSON array");
@@ -49,7 +49,7 @@ async fn authrpc_rejects_empty_batch() {
     let context = default_context_with_storage(storage).await;
     let auth = jwt_auth_header_for(&context);
 
-    let value = call_authrpc(context, auth, "[]".to_string()).await;
+    let value = call_authrpc(&context, auth, "[]".to_string()).await;
     let err = value
         .get("error")
         .expect("empty batch must produce an error response");
@@ -73,7 +73,7 @@ async fn authrpc_batch_auth_failure_preserves_ids() {
     ]"#
     .to_string();
 
-    let value = call_authrpc(context, None, body).await;
+    let value = call_authrpc(&context, None, body).await;
     let arr = value
         .as_array()
         .expect("batched auth failure must return a JSON array, got {value:?}");
@@ -104,7 +104,7 @@ async fn authrpc_single_auth_failure_keeps_request_id() {
     let context = default_context_with_storage(storage).await;
 
     let body = r#"{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":42}"#.to_string();
-    let value = call_authrpc(context, None, body).await;
+    let value = call_authrpc(&context, None, body).await;
     assert_eq!(value.get("id").and_then(|v| v.as_u64()), Some(42));
     let err = value.get("error").expect("auth failure must error");
     assert_eq!(err.get("code").and_then(|v| v.as_i64()), Some(-32000));
@@ -125,7 +125,7 @@ async fn authrpc_rejects_oversize_batch() {
         .collect();
     let body = format!("[{}]", reqs.join(","));
 
-    let value = call_authrpc(context, auth, body).await;
+    let value = call_authrpc(&context, auth, body).await;
     let err = value
         .get("error")
         .expect("oversize batch must produce an error response");

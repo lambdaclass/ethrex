@@ -94,7 +94,7 @@ mod tests {
         add_legacy_tx_blocks(&context.storage, 100, 10).await;
 
         let gas_price = GasPrice {};
-        let response = gas_price.handle(context).await.unwrap();
+        let response = gas_price.handle(context.clone()).await.unwrap();
         let parsed_result = parse_json_hex(&response).unwrap();
         assert_eq!(parsed_result, 2 * BASE_PRICE_IN_WEI);
     }
@@ -107,7 +107,7 @@ mod tests {
         add_eip1559_tx_blocks(&context.storage, 100, 10).await;
 
         let gas_price = GasPrice {};
-        let response = gas_price.handle(context).await.unwrap();
+        let response = gas_price.handle(context.clone()).await.unwrap();
         let parsed_result = parse_json_hex(&response).unwrap();
         assert_eq!(parsed_result, 2 * BASE_PRICE_IN_WEI);
     }
@@ -120,7 +120,7 @@ mod tests {
         add_mixed_tx_blocks(&context.storage, 100, 10).await;
 
         let gas_price = GasPrice {};
-        let response = gas_price.handle(context).await.unwrap();
+        let response = gas_price.handle(context.clone()).await.unwrap();
         let parsed_result = parse_json_hex(&response).unwrap();
         assert_eq!(parsed_result, 2 * BASE_PRICE_IN_WEI);
     }
@@ -133,7 +133,7 @@ mod tests {
         add_mixed_tx_blocks(&context.storage, 100, 0).await;
 
         let gas_price = GasPrice {};
-        let response = gas_price.handle(context).await.unwrap();
+        let response = gas_price.handle(context.clone()).await.unwrap();
         let parsed_result = parse_json_hex(&response).unwrap();
         assert_eq!(parsed_result, BASE_PRICE_IN_WEI + MIN_GAS_TIP);
     }
@@ -145,7 +145,7 @@ mod tests {
         let gas_price = GasPrice {};
         // genesis base fee is = BASE_PRICE_IN_WEI
         let expected_gas_price = BASE_PRICE_IN_WEI + MIN_GAS_TIP;
-        let response = gas_price.handle(context).await.unwrap();
+        let response = gas_price.handle(context.clone()).await.unwrap();
         let parsed_result = parse_json_hex(&response).unwrap();
         assert_eq!(parsed_result, expected_gas_price);
     }
@@ -169,7 +169,7 @@ mod tests {
 
         add_legacy_tx_blocks(&context.storage, 100, 1).await;
 
-        let response = map_http_requests(&request, context).await.unwrap();
+        let response = map_http_requests(&request, context.clone()).await.unwrap();
         assert_eq!(response, expected_response)
     }
 }

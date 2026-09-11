@@ -11,6 +11,8 @@ use serde::{Deserialize, Serialize};
 const MAINNET_BOOTNODES: &str = include_str!("../../../cmd/ethrex/networks/mainnet/bootnodes.json");
 const SEPOLIA_BOOTNODES: &str = include_str!("../../../cmd/ethrex/networks/sepolia/bootnodes.json");
 const HOODI_BOOTNODES: &str = include_str!("../../../cmd/ethrex/networks/hoodi/bootnodes.json");
+const PLATABERGET_BOOTNODES: &str =
+    include_str!("../../../cmd/ethrex/networks/plataberget/bootnodes.json");
 
 pub const MAINNET_GENESIS_CONTENTS: &str =
     include_str!("../../../cmd/ethrex/networks/mainnet/genesis.json");
@@ -18,6 +20,8 @@ pub const HOODI_GENESIS_CONTENTS: &str =
     include_str!("../../../cmd/ethrex/networks/hoodi/genesis.json");
 pub const SEPOLIA_GENESIS_CONTENTS: &str =
     include_str!("../../../cmd/ethrex/networks/sepolia/genesis.json");
+pub const PLATABERGET_GENESIS_CONTENTS: &str =
+    include_str!("../../../cmd/ethrex/networks/plataberget/genesis.json");
 pub const LOCAL_DEVNET_GENESIS_CONTENTS: &str = include_str!("../../../fixtures/genesis/l1.json");
 pub const LOCAL_DEVNETL2_GENESIS_CONTENTS: &str = include_str!("../../../fixtures/genesis/l2.json");
 
@@ -27,6 +31,7 @@ pub const LOCAL_DEVNET_PRIVATE_KEYS: &str =
 pub const MAINNET_CHAIN_ID: u64 = 0x1;
 pub const HOODI_CHAIN_ID: u64 = 0x88bb0;
 pub const SEPOLIA_CHAIN_ID: u64 = 0xAA36A7;
+pub const PLATABERGET_CHAIN_ID: u64 = 7091047534;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Network {
@@ -43,6 +48,11 @@ pub enum PublicNetwork {
     Hoodi,
     Sepolia,
     Mainnet,
+    /// Platåberget: the first public Glamsterdam testnet, run on the
+    /// glamsterdam-devnet-8 spec (genesis 2026-08-13, Amsterdam at
+    /// timestamp 1787212224). Configs:
+    /// https://github.com/ethpandaops/glamsterdam-devnets/tree/master/network-configs/devnet-8
+    Plataberget,
 }
 
 impl From<&str> for Network {
@@ -51,6 +61,7 @@ impl From<&str> for Network {
             "hoodi" => Network::PublicNetwork(PublicNetwork::Hoodi),
             "mainnet" => Network::PublicNetwork(PublicNetwork::Mainnet),
             "sepolia" => Network::PublicNetwork(PublicNetwork::Sepolia),
+            "plataberget" => Network::PublicNetwork(PublicNetwork::Plataberget),
             // Note that we don't allow to manually specify the local devnet genesis
             s => Network::GenesisPath(PathBuf::from(s)),
         }
@@ -65,6 +76,7 @@ impl TryFrom<u64> for Network {
             MAINNET_CHAIN_ID => Ok(Network::PublicNetwork(PublicNetwork::Mainnet)),
             SEPOLIA_CHAIN_ID => Ok(Network::PublicNetwork(PublicNetwork::Sepolia)),
             HOODI_CHAIN_ID => Ok(Network::PublicNetwork(PublicNetwork::Hoodi)),
+            PLATABERGET_CHAIN_ID => Ok(Network::PublicNetwork(PublicNetwork::Plataberget)),
             _ => Err(format!("Unknown chain ID: {}", value)),
         }
     }
@@ -88,6 +100,7 @@ impl fmt::Display for Network {
             Network::PublicNetwork(PublicNetwork::Hoodi) => write!(f, "hoodi"),
             Network::PublicNetwork(PublicNetwork::Mainnet) => write!(f, "mainnet"),
             Network::PublicNetwork(PublicNetwork::Sepolia) => write!(f, "sepolia"),
+            Network::PublicNetwork(PublicNetwork::Plataberget) => write!(f, "plataberget"),
             Network::LocalDevnet => write!(f, "local-devnet"),
             Network::LocalDevnetL2 => write!(f, "local-devnet-l2"),
             Network::L2Chain(chain_id) => write!(f, "l2-chain-{}", chain_id),
@@ -128,6 +141,7 @@ impl Network {
             Network::PublicNetwork(PublicNetwork::Mainnet) => Some("mainnet".to_owned()),
             Network::PublicNetwork(PublicNetwork::Hoodi) => Some("hoodi".to_owned()),
             Network::PublicNetwork(PublicNetwork::Sepolia) => Some("sepolia".to_owned()),
+            Network::PublicNetwork(PublicNetwork::Plataberget) => Some("plataberget".to_owned()),
             Network::LocalDevnet => None,
             Network::LocalDevnetL2 => None,
             Network::L2Chain(chain_id) => Some(format!("chain-{chain_id}")),
@@ -144,10 +158,11 @@ impl Network {
         // Explicit list derived from PublicNetwork variants + dev mode.
         // Update this when adding new PublicNetwork variants.
         &[
-            "mainnet", // PublicNetwork::Mainnet
-            "hoodi",   // PublicNetwork::Hoodi
-            "sepolia", // PublicNetwork::Sepolia
-            "dev",     // dev mode
+            "mainnet",     // PublicNetwork::Mainnet
+            "hoodi",       // PublicNetwork::Hoodi
+            "sepolia",     // PublicNetwork::Sepolia
+            "plataberget", // PublicNetwork::Plataberget
+            "dev",         // dev mode
         ]
     }
 
@@ -156,6 +171,7 @@ impl Network {
             Network::PublicNetwork(PublicNetwork::Hoodi) => HOODI_BOOTNODES,
             Network::PublicNetwork(PublicNetwork::Mainnet) => MAINNET_BOOTNODES,
             Network::PublicNetwork(PublicNetwork::Sepolia) => SEPOLIA_BOOTNODES,
+            Network::PublicNetwork(PublicNetwork::Plataberget) => PLATABERGET_BOOTNODES,
             _ => return vec![],
         };
         serde_json::from_str(bootnodes).expect("bootnodes file should be valid JSON")
@@ -167,6 +183,7 @@ fn get_genesis_contents(network: PublicNetwork) -> &'static str {
         PublicNetwork::Hoodi => HOODI_GENESIS_CONTENTS,
         PublicNetwork::Mainnet => MAINNET_GENESIS_CONTENTS,
         PublicNetwork::Sepolia => SEPOLIA_GENESIS_CONTENTS,
+        PublicNetwork::Plataberget => PLATABERGET_GENESIS_CONTENTS,
     }
 }
 
@@ -190,6 +207,17 @@ mod tests {
         assert_genesis_hash(
             PublicNetwork::Sepolia,
             "25a5cc106eea7138acab33231d7160d69cb777ee0c2c553fcddf5138993e6dd9",
+        );
+    }
+
+    #[test]
+    fn test_plataberget_genesis_block_hash() {
+        // Value published on the network's config page (https://plataberget.dev/,
+        // "Genesis Hash (EL)"), served by
+        // https://github.com/ethpandaops/glamsterdam-devnets/tree/master/network-configs/devnet-8
+        assert_genesis_hash(
+            PublicNetwork::Plataberget,
+            "ee33ef92bbabcf07bcf44fea1d18a7925c5f7f9da8f81334ea19b0f3cb892b31",
         );
     }
 

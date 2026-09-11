@@ -483,11 +483,9 @@ fn prepare_call_env(
     db: &GeneralizedDatabase,
     vm_type: VMType,
 ) -> Result<(Environment, Transaction), EvmError> {
+    // `env_from_generic` relaxes the allowance check without touching `block_gas_limit`:
+    // a trace must report the same GASLIMIT the traced block executed with.
     let mut env = env_from_generic(tx, block_header, db, vm_type)?;
-    // Skip the allowance check without touching `block_gas_limit`; see
-    // `simulate_tx_from_generic`. A trace must report the same GASLIMIT the traced block
-    // executed with.
-    env.disable_gas_allowance_check = true;
     adjust_disabled_base_fee(&mut env);
     let converted_tx = generic_tx_to_transaction(tx)?;
     Ok((env, converted_tx))
