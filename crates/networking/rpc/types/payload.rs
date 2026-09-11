@@ -8,9 +8,9 @@ use ethrex_common::{
     constants::DEFAULT_OMMERS_HASH,
     serde_utils,
     types::{
-        BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, Transaction, Withdrawal,
-        block_access_list::BlockAccessList, compute_transactions_root, compute_withdrawals_root,
-        requests::EncodedRequests,
+        BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, RecursiveStark, Transaction,
+        Withdrawal, block_access_list::BlockAccessList, compute_transactions_root,
+        compute_withdrawals_root, requests::EncodedRequests,
     },
 };
 
@@ -80,6 +80,13 @@ pub struct ExecutionPayload {
         default
     )]
     pub burned_fees: Option<u64>,
+    // recursive_stark (EIP-8288, J*+): the aggregate proof and the digest of the
+    // block's dependency set. Part of the header hash at J*, so it must survive the
+    // getPayload -> newPayload round-trip for the same reason `burned_fees` must:
+    // without it a producer's own block fails its block-hash check on import.
+    // `None` for pre-J* payloads (skipped in serialization).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub recursive_stark: Option<RecursiveStark>,
 }
 
 #[derive(Clone, Debug)]
@@ -169,6 +176,7 @@ impl ExecutionPayload {
             slot_number: self.slot_number,
             block_access_list_hash,
             burned_fees: self.burned_fees,
+            recursive_stark: self.recursive_stark,
             ..Default::default()
         };
 
@@ -207,6 +215,7 @@ impl ExecutionPayload {
             slot_number: block.header.slot_number,
             block_access_list,
             burned_fees: block.header.burned_fees,
+            recursive_stark: block.header.recursive_stark,
         }
     }
 }

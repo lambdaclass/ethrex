@@ -1581,6 +1581,8 @@ mod tests {
 
     fn v5_payload() -> ExecutionPayload {
         ExecutionPayload {
+            // A V5 payload predates J*, so it carries no recursive_stark.
+            recursive_stark: None,
             parent_hash: H256::zero(),
             fee_recipient: Default::default(),
             state_root: H256::zero(),
