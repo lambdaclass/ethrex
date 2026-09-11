@@ -3406,8 +3406,10 @@ name = "ethrex-dep-aggregation"
 version = "23.0.0"
 dependencies = [
  "blake3",
+ "bytes",
  "ethereum-types",
  "ethrex-common 23.0.0",
+ "ethrex-rlp 23.0.0",
  "thiserror 2.0.18",
  "tracing",
 ]
