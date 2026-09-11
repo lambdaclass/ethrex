@@ -43,6 +43,7 @@
 //! ```
 
 pub mod constants;
+pub mod eip8288;
 pub mod error;
 pub mod fork_choice;
 pub mod mempool;
@@ -89,6 +90,7 @@ pub use ethrex_common::{
     validate_gas_used, validate_receipts_root_and_logs_bloom, validate_requests_hash,
 };
 use ethrex_crypto::NativeCrypto;
+use ethrex_dep_aggregation::DependencyAggregator;
 use ethrex_metrics::metrics;
 use ethrex_rlp::constants::RLP_NULL;
 use ethrex_rlp::decode::RLPDecode;
@@ -256,6 +258,13 @@ pub struct Blockchain {
     /// Cache handoff slot from the mempool prewarmer to
     /// `execute_block_pipeline`; see `PrewarmedCache` and `crate::prewarm`.
     prewarmed: PrewarmedCache,
+    /// EIP-8288 recursive-proof backend, for block-validity rule 2.
+    ///
+    /// Chosen at compile time rather than configured: a node must not be able to be
+    /// talked into accepting proofs it has no code to check. Without the `leanvm`
+    /// feature this is the backend that refuses, so a block carrying a proof is
+    /// rejected rather than waved through.
+    aggregator: Arc<dyn DependencyAggregator>,
 }
 
 /// Newtype around the prewarmer's cache-handoff slot so `Blockchain` can keep
@@ -548,6 +557,7 @@ impl Blockchain {
             options: blockchain_opts,
             merkle_pool: Self::build_merkle_pool(),
             prewarmed: PrewarmedCache::default(),
+            aggregator: ethrex_dep_aggregation::default_aggregator().into(),
         }
     }
 
@@ -570,6 +580,7 @@ impl Blockchain {
             options: BlockchainOptions::default(),
             merkle_pool: pool,
             prewarmed: PrewarmedCache::default(),
+            aggregator: ethrex_dep_aggregation::default_aggregator().into(),
         }
     }
 
@@ -595,6 +606,7 @@ impl Blockchain {
             options,
             merkle_pool: Self::build_merkle_pool(),
             prewarmed: PrewarmedCache::default(),
+            aggregator: ethrex_dep_aggregation::default_aggregator().into(),
         }
     }
 
@@ -693,6 +705,10 @@ impl Blockchain {
             &NativeCrypto,
         )?;
         validate_requests_hash(&block.header, &chain_config, &execution_result.requests)?;
+        // EIP-8288 block-validity rule 2. Rule 1, the digest-vs-body check, already
+        // ran in `validate_block_pre_execution`; this one needs the aggregation
+        // backend. A build with none rejects any block carrying a proof.
+        crate::eip8288::validate_recursive_stark(block, &chain_config, self.aggregator.as_ref())?;
         if let Some(bal) = &bal {
             validate_block_access_list_hash(
                 &block.header,

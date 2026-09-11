@@ -7,6 +7,15 @@ use crate::types::{InvalidBlockBodyError, InvalidBlockHeaderError};
 pub enum InvalidBlockError {
     #[error("Requests hash does not match the one in the header after executing")]
     RequestsHashMismatch,
+    #[error("EIP-8288 recursive stark entry is missing from a Hegota header")]
+    RecursiveStarkMissing,
+    #[error(
+        "EIP-8288 block dependency digest mismatch: header declares {declared:#x}, block's transactions give {computed:#x}"
+    )]
+    RecursiveStarkDepsHashMismatch {
+        declared: ethereum_types::H256,
+        computed: ethereum_types::H256,
+    },
     #[error("Block access list hash does not match the one in the header after executing")]
     BlockAccessListHashMismatch,
     #[error("Block access list contains index {index} exceeding max valid index {max}")]

@@ -7,7 +7,7 @@
 //! names the item it settles so a later spec revision points straight at it.
 
 use bytes::Bytes;
-use ethrex_common::types::{BlockBody, Transaction};
+use ethrex_common::types::{BlockBody, BlockHeader, RecursiveStark, Transaction};
 use ethrex_common::types::{
     DEPENDENCY_SCHEME_LEANSPHINCS, DEPENDENCY_SCHEME_LEANSTARK, DependencyTriple,
     FRAME_TX_DEPENDENCY_TRIPLE_BYTES, FRAME_TX_MAX_DEPENDENCIES_PER_FRAME, Frame, FrameMode,
@@ -15,6 +15,8 @@ use ethrex_common::types::{
     deduplicate_and_sort_dependencies, dependencies_hash,
 };
 use ethrex_common::{Address, H256, U256};
+use ethrex_rlp::decode::RLPDecode;
+use ethrex_rlp::encode::RLPEncode;
 use once_cell::sync::OnceCell;
 
 fn triple(scheme: u8, data: u64, vk: u64) -> DependencyTriple {
@@ -521,5 +523,143 @@ fn a_dependency_frame_alone_is_not_a_validation_prefix() {
     assert!(
         tx.validation_prefix().is_err(),
         "a transaction needs a frame that approves payment"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The recursive_stark header field
+// ---------------------------------------------------------------------------
+
+/// A header shaped the way a real J* block's is.
+///
+/// The trailing optionals must be filled in the combination the fork schedule
+/// actually produces, not an arbitrary one. Hegotá sits above Amsterdam, so
+/// `requests_hash`, `block_access_list_hash` and `slot_number` are all present; an
+/// invented header with, say, `burned_fees` set and `slot_number` absent is not a
+/// shape any chain emits, and RLP's positional trailing optionals decode it wrong.
+/// That greedy-decode hazard is real but pre-existing, and `payload.rs` carries a
+/// `debug_assert` about it for the `slot_number`/`burned_fees` pair.
+/// Every optional before it must be filled too, not just the neighbours. The
+/// header's whole trailing-optional run decodes greedily, so leaving an earlier
+/// `Option<H256>` empty lets it absorb a later one: with `withdrawals_root` unset,
+/// `requests_hash` lands in it and everything after shifts. That is a property of
+/// the existing encoding rather than anything this EIP adds, but it means a test
+/// header has to be a shape the chain really produces.
+fn jstar_header(burned_fees: Option<u64>, recursive_stark: Option<RecursiveStark>) -> BlockHeader {
+    BlockHeader {
+        base_fee_per_gas: Some(7),
+        withdrawals_root: Some(H256::from_low_u64_be(0x3D6)),
+        blob_gas_used: Some(0),
+        excess_blob_gas: Some(0),
+        parent_beacon_block_root: Some(H256::from_low_u64_be(0xBEAC)),
+        requests_hash: Some(H256::from_low_u64_be(0x7E9)),
+        block_access_list_hash: Some(H256::from_low_u64_be(0xBA1)),
+        slot_number: Some(64),
+        burned_fees,
+        recursive_stark,
+        ..Default::default()
+    }
+}
+
+fn a_proof() -> RecursiveStark {
+    RecursiveStark {
+        proof: Bytes::from_static(b"an opaque aggregate"),
+        block_deps_hash: H256::from_low_u64_be(0xDEA5),
+    }
+}
+
+/// `recursive_stark` sits immediately before `burned_fees`, and J* (27) activates
+/// before LStar (28), so there is a window in which the first is present and the
+/// second is not.
+///
+/// RLP trailing optionals are positional and decode greedily, so a present field
+/// after an absent one normally shifts everything. It does not bite across this
+/// pair because they have different RLP shapes: a `u64` does not decode as a list
+/// and a list does not decode as a `u64`, so whichever is absent yields `None`
+/// without consuming.
+///
+/// This is the shape of every J*-but-pre-LStar block. If it breaks, every such
+/// block decodes wrong, which is why it gets its own test.
+#[test]
+fn recursive_stark_survives_absent_burned_fees() {
+    let header = jstar_header(None, Some(a_proof()));
+
+    let mut buf = Vec::new();
+    header.encode(&mut buf);
+    let decoded = BlockHeader::decode(&buf).expect("a J* pre-LStar header must round-trip");
+
+    assert_eq!(
+        decoded.burned_fees, None,
+        "the absent scalar must stay absent"
+    );
+    assert_eq!(
+        decoded.slot_number,
+        Some(64),
+        "and must not have swallowed the preceding optional"
+    );
+    assert_eq!(
+        decoded.recursive_stark,
+        Some(a_proof()),
+        "the list must not be swallowed by the preceding optional scalar"
+    );
+}
+
+#[test]
+fn recursive_stark_round_trips_alongside_burned_fees() {
+    let header = jstar_header(Some(4_242), Some(a_proof()));
+    let mut buf = Vec::new();
+    header.encode(&mut buf);
+    let decoded = BlockHeader::decode(&buf).unwrap();
+    assert_eq!(decoded.burned_fees, Some(4_242));
+    assert_eq!(decoded.recursive_stark, Some(a_proof()));
+    assert_eq!(decoded, header);
+}
+
+#[test]
+fn a_header_without_recursive_stark_round_trips_unchanged() {
+    let header = jstar_header(Some(1), None);
+    let mut buf = Vec::new();
+    header.encode(&mut buf);
+    let decoded = BlockHeader::decode(&buf).unwrap();
+    assert_eq!(decoded.recursive_stark, None);
+    assert_eq!(decoded.burned_fees, Some(1));
+    assert_eq!(decoded, header);
+}
+
+/// An empty proof still round-trips. A block whose transactions declare no
+/// dependencies still carries the field, with the digest of the empty set, because
+/// a header schema that depended on the body would be worse.
+#[test]
+fn an_empty_proof_round_trips() {
+    let header = jstar_header(
+        None,
+        Some(RecursiveStark {
+            proof: Bytes::new(),
+            block_deps_hash: dependencies_hash(&[]),
+        }),
+    );
+    let mut buf = Vec::new();
+    header.encode(&mut buf);
+    assert_eq!(BlockHeader::decode(&buf).unwrap(), header);
+}
+
+/// The field is part of the header hash, so it must survive a getPayload ->
+/// newPayload round-trip or a producer's own block fails its hash check on import.
+#[test]
+fn recursive_stark_participates_in_the_block_hash() {
+    let base = jstar_header(None, Some(a_proof()));
+    let mut altered = a_proof();
+    altered.block_deps_hash = H256::from_low_u64_be(0xBEEF);
+    let other = jstar_header(None, Some(altered));
+
+    assert_ne!(
+        base.hash(),
+        other.hash(),
+        "changing the declared dependency digest must change the header hash"
+    );
+    assert_ne!(
+        base.hash(),
+        jstar_header(None, None).hash(),
+        "and dropping the field entirely must change it too"
     );
 }
