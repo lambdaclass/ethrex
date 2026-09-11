@@ -3287,6 +3287,7 @@ dependencies = [
  "crossbeam",
  "ethrex-common 23.0.0",
  "ethrex-crypto",
+ "ethrex-dep-aggregation",
  "ethrex-guest-program",
  "ethrex-metrics",
  "ethrex-rlp 23.0.0",
@@ -3398,6 +3399,17 @@ dependencies = [
  "sha2 0.10.9",
  "thiserror 2.0.18",
  "tiny-keccak",
+]
+
+[[package]]
+name = "ethrex-dep-aggregation"
+version = "23.0.0"
+dependencies = [
+ "blake3",
+ "ethereum-types",
+ "ethrex-common 23.0.0",
+ "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]

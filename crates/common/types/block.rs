@@ -152,6 +152,19 @@ pub struct BlockHeader {
         default = "Option::default"
     )]
     pub slot_number: Option<u64>,
+    // J* fork fields (EIP-8288)
+    //
+    // Before `burned_fees` because header optionals are a positional RLP run and J*
+    // (27) activates before LStar (28), so activation order and encoding order
+    // agree. The two are adjacent trailing optionals, which `payload.rs` documents
+    // as a decode hazard -- a present field after an absent one shifts everything.
+    // It does not bite across this pair, because they have different RLP shapes: a
+    // `u64` does not decode as a list and a list does not decode as a `u64`, so
+    // whichever is absent yields `None` without consuming.
+    // `recursive_stark_survives_absent_burned_fees` pins the case every
+    // J*-but-pre-LStar block hits.
+    #[serde(skip_serializing_if = "Option::is_none", default = "Option::default")]
+    pub recursive_stark: Option<RecursiveStark>,
     // LStar fork fields (EIP-8079)
     #[serde(
         skip_serializing_if = "Option::is_none",
@@ -189,6 +202,7 @@ impl PartialEq for BlockHeader {
             requests_hash,
             block_access_list_hash,
             slot_number,
+            recursive_stark,
             burned_fees,
         } = self;
 
@@ -214,6 +228,7 @@ impl PartialEq for BlockHeader {
             && block_access_list_hash == &other.block_access_list_hash
             && slot_number == &other.slot_number
             && burned_fees == &other.burned_fees
+            && recursive_stark == &other.recursive_stark
             && logs_bloom == &other.logs_bloom
             && extra_data == &other.extra_data
     }
@@ -245,6 +260,7 @@ impl RLPEncode for BlockHeader {
             .encode_optional_field(&self.requests_hash)
             .encode_optional_field(&self.block_access_list_hash)
             .encode_optional_field(&self.slot_number)
+            .encode_optional_field(&self.recursive_stark)
             .encode_optional_field(&self.burned_fees)
             .finish();
     }
@@ -277,6 +293,9 @@ impl RLPDecode for BlockHeader {
         let (requests_hash, decoder) = decoder.decode_optional_field();
         let (block_access_list_hash, decoder) = decoder.decode_optional_field();
         let (slot_number, decoder) = decoder.decode_optional_field();
+        // Before `burned_fees`: J* precedes LStar. Safe as a pair because a list and
+        // a u64 do not decode as each other; see the field's comment.
+        let (recursive_stark, decoder) = decoder.decode_optional_field();
         let (burned_fees, decoder) = decoder.decode_optional_field();
 
         Ok((
@@ -305,6 +324,7 @@ impl RLPDecode for BlockHeader {
                 requests_hash,
                 block_access_list_hash,
                 slot_number,
+                recursive_stark,
                 burned_fees,
             },
             decoder.finish()?,
@@ -496,6 +516,59 @@ pub struct Withdrawal {
     pub address: Address,
     #[serde(with = "crate::serde_utils::u64::hex_str")]
     pub amount: u64,
+}
+
+/// EIP-8288 `recursive_stark`: the aggregate proof discharging every dependency
+/// declared by every transaction in the block, plus the digest of that dependency
+/// set.
+///
+/// `block_deps_hash` duplicates what `BlockBody::block_deps_hash` computes from the
+/// transactions. That redundancy is the EIP's design and it is load-bearing: it
+/// gives a light client the dependency-set digest without the block body, and it is
+/// what block-validity rule 1 checks the body against.
+///
+/// The proof is opaque here on purpose. Its encoding belongs to whichever
+/// aggregation backend produced it, and `ethrex-dep-aggregation` is the only place
+/// that may interpret it.
+#[derive(
+    Clone, Debug, PartialEq, Eq, Default, Serialize, Deserialize, RSerialize, RDeserialize, Archive,
+)]
+#[serde(rename_all = "camelCase")]
+pub struct RecursiveStark {
+    /// The serialized recursive proof. Bounded by
+    /// `ethrex_dep_aggregation::MAX_RECURSIVE_STARK_PROOF_BYTES`; EIP-8288 sets no
+    /// bound of its own, which is raised as item 16 with its authors.
+    #[serde(with = "crate::serde_utils::bytes")]
+    #[rkyv(with = crate::rkyv_utils::BytesWrapper)]
+    pub proof: Bytes,
+    /// BLAKE3-256 over the concatenated 96-byte dependency triples of the block,
+    /// deduplicated and sorted. Must equal `BlockBody::block_deps_hash`.
+    #[rkyv(with = crate::rkyv_utils::H256Wrapper)]
+    pub block_deps_hash: H256,
+}
+
+impl RLPEncode for RecursiveStark {
+    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        Encoder::new(buf)
+            .encode_field(&self.proof)
+            .encode_field(&self.block_deps_hash)
+            .finish();
+    }
+}
+
+impl RLPDecode for RecursiveStark {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        let decoder = Decoder::new(rlp)?;
+        let (proof, decoder) = decoder.decode_field("proof")?;
+        let (block_deps_hash, decoder) = decoder.decode_field("block_deps_hash")?;
+        Ok((
+            RecursiveStark {
+                proof,
+                block_deps_hash,
+            },
+            decoder.finish()?,
+        ))
+    }
 }
 
 impl RLPEncode for Withdrawal {
@@ -717,6 +790,10 @@ pub enum InvalidBlockHeaderError {
     SlotNumberNotPresent,
     #[error("Slot number is present")]
     SlotNumberPresent,
+    #[error("EIP-8288 recursive stark entry is not present")]
+    RecursiveStarkNotPresent,
+    #[error("EIP-8288 recursive stark entry is present")]
+    RecursiveStarkPresent,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -862,6 +939,20 @@ pub fn validate_prague_header_fields(
             return Err(InvalidBlockHeaderError::SlotNumberPresent);
         }
     }
+    // EIP-8288: the recursive_stark entry is a mandatory trailing header field from
+    // J*. Mandatory even for a block whose transactions declare no dependencies: its
+    // block_deps_hash is then the digest of the empty set, and a field that appeared
+    // only sometimes would make the header schema depend on the body.
+    //
+    // Gated separately from the Amsterdam pair above because J* is its own fork
+    // (Amsterdam 25 < Hegota 26 < J* 27), so a block can be Amsterdam without it.
+    if chain_config.is_jstar_activated(header.timestamp) {
+        if header.recursive_stark.is_none() {
+            return Err(InvalidBlockHeaderError::RecursiveStarkNotPresent);
+        }
+    } else if header.recursive_stark.is_some() {
+        return Err(InvalidBlockHeaderError::RecursiveStarkPresent);
+    }
     Ok(())
 }
 
@@ -891,6 +982,9 @@ pub fn validate_cancun_header_fields(
     if header.slot_number.is_some() {
         return Err(InvalidBlockHeaderError::SlotNumberPresent);
     }
+    if header.recursive_stark.is_some() {
+        return Err(InvalidBlockHeaderError::RecursiveStarkPresent);
+    }
     Ok(())
 }
 
@@ -916,6 +1010,9 @@ pub fn validate_pre_cancun_header_fields(
     }
     if header.slot_number.is_some() {
         return Err(InvalidBlockHeaderError::SlotNumberPresent);
+    }
+    if header.recursive_stark.is_some() {
+        return Err(InvalidBlockHeaderError::RecursiveStarkPresent);
     }
     Ok(())
 }

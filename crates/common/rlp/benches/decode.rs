@@ -55,6 +55,7 @@ fn random_block_header(rng: &mut impl Rng) -> BlockHeader {
         block_access_list_hash: None,
         slot_number: None,
         burned_fees: None,
+        recursive_stark: None,
     }
 }
 

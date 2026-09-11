@@ -294,6 +294,10 @@ pub struct ChainConfig {
         alias = "bogota_time"
     )]
     pub hegota_time: Option<u64>,
+    /// EIP-8288 (PQ signature and STARK aggregation) activates here. Between
+    /// Hegota and LStar.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub jstar_time: Option<u64>,
     pub lstar_time: Option<u64>,
 
     /// EIP-7843 beacon-slot derivation knob (ethrex devnet, new-fork decoupling).
@@ -420,7 +424,8 @@ pub enum Fork {
     BPO5 = 24,
     Amsterdam = 25,
     Hegota = 26,
-    LStar = 27,
+    JStar = 27,
+    LStar = 28,
 }
 
 impl From<Fork> for &str {
@@ -453,6 +458,7 @@ impl From<Fork> for &str {
             Fork::BPO5 => "BPO5",
             Fork::Amsterdam => "Amsterdam",
             Fork::Hegota => "Hegota",
+            Fork::JStar => "JStar",
             Fork::LStar => "LStar",
         }
     }
@@ -516,6 +522,10 @@ impl ChainConfig {
             return (block_timestamp - genesis_ts) / seconds_per_slot;
         }
         0
+    }
+
+    pub fn is_jstar_activated(&self, block_timestamp: u64) -> bool {
+        self.jstar_time.is_some_and(|time| time <= block_timestamp)
     }
 
     pub fn is_lstar_activated(&self, block_timestamp: u64) -> bool {
@@ -690,6 +700,8 @@ impl ChainConfig {
     pub fn get_fork(&self, block_timestamp: u64) -> Fork {
         if self.is_lstar_activated(block_timestamp) {
             Fork::LStar
+        } else if self.is_jstar_activated(block_timestamp) {
+            Fork::JStar
         } else if self.is_hegota_activated(block_timestamp) {
             Fork::Hegota
         } else if self.is_amsterdam_activated(block_timestamp) {
@@ -748,6 +760,7 @@ impl ChainConfig {
         } else if self.is_bpo1_activated(block_timestamp) {
             Some(self.blob_schedule.bpo1)
         } else if self.is_lstar_activated(block_timestamp)
+            || self.is_jstar_activated(block_timestamp)
             || self.is_hegota_activated(block_timestamp)
             || self.is_amsterdam_activated(block_timestamp)
         {
@@ -761,6 +774,7 @@ impl ChainConfig {
         } else if self.is_osaka_activated(block_timestamp) {
             Some(self.blob_schedule.osaka)
         } else if self.is_amsterdam_activated(block_timestamp)
+            || self.is_jstar_activated(block_timestamp)
             || self.is_lstar_activated(block_timestamp)
         {
             // An Amsterdam-era genesis that schedules no BPO or Osaka fork and pins no
@@ -803,6 +817,7 @@ impl ChainConfig {
             Fork::BPO5,
             Fork::Amsterdam,
             Fork::Hegota,
+            Fork::JStar,
             Fork::LStar,
         ]
         .into_iter()
@@ -819,6 +834,8 @@ impl ChainConfig {
     pub fn get_last_scheduled_fork(&self) -> Fork {
         if self.lstar_time.is_some() {
             Fork::LStar
+        } else if self.jstar_time.is_some() {
+            Fork::JStar
         } else if self.hegota_time.is_some() {
             Fork::Hegota
         } else if self.amsterdam_time.is_some() {
@@ -856,6 +873,7 @@ impl ChainConfig {
             Fork::BPO5 => self.bpo5_time,
             Fork::Amsterdam => self.amsterdam_time,
             Fork::Hegota => self.hegota_time,
+            Fork::JStar => self.jstar_time,
             Fork::LStar => self.lstar_time,
             Fork::Homestead => self.homestead_block,
             Fork::DaoFork => self.dao_fork_block,

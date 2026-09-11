@@ -14,6 +14,13 @@ pub use ethrex_common::InvalidBlockError;
 pub enum ChainError {
     #[error("Invalid Block: {0}")]
     InvalidBlock(#[from] InvalidBlockError),
+    #[error("EIP-8288 recursive stark is invalid: {0}")]
+    RecursiveStarkInvalid(String),
+    /// This node cannot check the proof, which says nothing about the block.
+    /// Distinct from `RecursiveStarkInvalid` because conflating "the proof is bad"
+    /// with "I have no verifier" would have a node declare valid chains invalid.
+    #[error("EIP-8288 recursive stark could not be verified by this node: {0}")]
+    RecursiveStarkUnverifiable(String),
     #[error("Parent block not found")]
     ParentNotFound,
     //TODO: If a block with block_number greater than latest plus one is received
@@ -74,6 +81,11 @@ impl ChainError {
             ChainError::Custom(_) => "custom_error",
             ChainError::UnknownPayload => "unknown_payload",
             ChainError::IlUnsatisfied { .. } => "il_unsatisfied",
+            // Separate metrics on purpose: one counts bad proofs, the other counts
+            // this node's inability to check them. A single label would hide a
+            // misconfigured build behind what looks like network misbehaviour.
+            ChainError::RecursiveStarkInvalid(_) => "recursive_stark_invalid",
+            ChainError::RecursiveStarkUnverifiable(_) => "recursive_stark_unverifiable",
         }
     }
 }
