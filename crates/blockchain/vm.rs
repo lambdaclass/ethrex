@@ -102,6 +102,13 @@ impl<Inner> OverlaidVmDatabase<Inner> {
 }
 
 impl<Inner: VmDatabase + Clone> VmDatabase for OverlaidVmDatabase<Inner> {
+    // The batch methods are deliberately left to their trait defaults, which loop the
+    // single-key ones above — the only place the overrides are applied. Forwarding them to
+    // the inner database would read straight past the overlay. One consequence to know
+    // before wiring them anywhere: the default `get_account_codes_batch` maps a missing
+    // hash to `Err`, where `StoreVmDatabase`'s own batch deliberately reports `Ok(None)`.
+    // Nothing reaches it today, since the override paths build no `CachingDatabase` and
+    // `prefetch_codes` has no callers.
     fn get_account_state(&self, address: Address) -> Result<Option<AccountState>, EvmError> {
         let base = self.inner.get_account_state(address)?;
         let Some(ov) = self.overrides.get(&address) else {
@@ -299,7 +306,7 @@ pub struct ReplayedVmDatabase<Inner> {
 impl<Inner> ReplayedVmDatabase<Inner> {
     /// `updates` must carry at most one entry per address, as
     /// `Evm::get_state_transitions` guarantees. A second update for the same address
-    /// is silently discarded rather than merged — see `AccountUpdate::merge`
+    /// overwrites the first rather than merging with it — see `AccountUpdate::merge`
     /// (`crates/common/types/account_update.rs:38-50`) if a caller needs that instead.
     pub fn new(inner: Inner, updates: Vec<AccountUpdate>) -> Self {
         Self {
@@ -310,6 +317,8 @@ impl<Inner> ReplayedVmDatabase<Inner> {
 }
 
 impl<Inner: VmDatabase + Clone> VmDatabase for ReplayedVmDatabase<Inner> {
+    // Same as `OverlaidVmDatabase`: the batch methods keep their trait defaults so they
+    // loop the single-key ones and see the replay, rather than the state it started from.
     fn get_account_state(&self, address: Address) -> Result<Option<AccountState>, EvmError> {
         let Some(update) = self.updates.get(&address) else {
             return self.inner.get_account_state(address);
