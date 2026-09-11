@@ -24,6 +24,8 @@ exclude = [
   "discord\\.com/channels",
   "ethereum\\.stackexchange\\.com",
   "hive\\.ethpandaops\\.io",
+  # x.com answers non-browser clients with 403; the profile links resolve in a browser.
+  "x\\.com",
 ]
 
 # SUMMARY.md uses intentional mdBook draft chapters (empty links), which
