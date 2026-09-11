@@ -322,9 +322,9 @@ fn decode_sphincs_witness(
     let message: sphincs::Message = witness.triple.data_hash.0;
 
     // A leanSPHINCS signature is a fixed 4,924 bytes. Worth recording because
-    // EIP-8288's Motivation puts hash-based signatures at "~2-3 kB", which is off
-    // by roughly a factor of two against the scheme its own tooling implements;
-    // raised as item 18.
+    // EIP-8288's Motivation puts hash-based signatures at "~2-3 kB", which is off by
+    // roughly a factor of two against the scheme its own tooling implements -- so the
+    // EIP's bandwidth estimates should not be taken as a bound here.
     let sig_bytes: &[u8; sphincs::SIG_SIZE] = sig_bytes
         .try_into()
         .map_err(|_| AggregateError::ProofMalformed)?;

@@ -164,11 +164,15 @@ pub trait DependencyAggregator: Send + Sync + Debug {
 
     /// Whether this backend can prove and verify a dependency of `scheme`.
     ///
-    /// Admission needs this. A scheme the backend cannot discharge makes every
-    /// block carrying it invalid, so admitting such a transaction fills a pool slot
-    /// with something that can never be included -- a free griefing vector, since
-    /// the transaction is statically valid and costs nothing to construct. The
-    /// mempool refuses them instead.
+    /// Admission needs this. A scheme this backend cannot discharge is one this node
+    /// can never build a block for, so admitting such a transaction fills a pool slot
+    /// with something it can never include -- a free griefing vector, since the
+    /// transaction is statically valid and costs nothing to construct. The mempool
+    /// refuses them instead.
+    ///
+    /// Admission only. A *block* already carrying such a dependency is "cannot
+    /// verify" rather than "invalid": whether some other backend can discharge the
+    /// scheme is not a fact available locally.
     fn supports_scheme(&self, scheme: u8) -> bool;
 
     /// The protocol-level verification key this backend verifies against.
