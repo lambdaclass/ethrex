@@ -20,6 +20,9 @@ ethrex-rlp.workspace = true
 # (`-p ethrex-trie --no-default-features`), not through this dependency.
 ethrex-trie.workspace = true
 ethrex-crypto.workspace = true
+# EIP-8288 `block_deps_hash`: BLAKE3-256, the one digest in the execution layer
+# that is not keccak256. Pinned, because it is consensus-critical.
+blake3.workspace = true
 
 tracing.workspace = true
 ethereum-types.workspace = true

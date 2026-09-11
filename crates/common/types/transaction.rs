@@ -1792,7 +1792,11 @@ pub struct FeeTokenTransaction {
     pub cached_canonical: OnceCell<Vec<u8>>,
 }
 
-/// EIP-8141 Frame Transaction mode
+/// EIP-8141 Frame Transaction mode, with EIP-8288's `DEP_VERIFY_FRAME_MODE`.
+///
+/// Mode 3 is `DepVerify`; every value above it is reserved and makes the
+/// transaction invalid. An earlier note here put DEP_VERIFY at 4 while the EIP was
+/// still being drafted -- EIP-8288 @ `ef1abf4b6d` assigns it 3.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
 #[repr(u8)]
 pub enum FrameMode {
@@ -1800,6 +1804,9 @@ pub enum FrameMode {
     Default = 0,
     Verify = 1,
     Sender = 2,
+    /// EIP-8288: declares dependencies for the block's recursive STARK. Never
+    /// executed as EVM code.
+    DepVerify = 3,
 }
 
 impl FrameMode {
@@ -1810,6 +1817,8 @@ impl FrameMode {
             0 => Some(FrameMode::Default),
             1 => Some(FrameMode::Verify),
             2 => Some(FrameMode::Sender),
+            // EIP-8288 DEP_VERIFY_FRAME_MODE.
+            3 => Some(FrameMode::DepVerify),
             _ => None,
         }
     }
@@ -1821,13 +1830,15 @@ impl From<FrameMode> for u8 {
             FrameMode::Default => 0,
             FrameMode::Verify => 1,
             FrameMode::Sender => 2,
+            FrameMode::DepVerify => 3,
         }
     }
 }
 
 /// EIP-8141 Frame: a single execution step within a frame transaction.
 ///
-/// `mode` is the execution mode (0=DEFAULT, 1=VERIFY, 2=SENDER; 3-255 reserved).
+/// `mode` is the execution mode (0=DEFAULT, 1=VERIFY, 2=SENDER, 3=DEP_VERIFY per
+/// EIP-8288; 4-255 reserved).
 /// `flags` bits: 0-1 = APPROVE scope restriction, 2 = atomic batch flag (valid
 /// on DEFAULT and SENDER frames only), 3-7 reserved (must be zero).
 #[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
@@ -1870,8 +1881,44 @@ impl Frame {
     /// An expiry verifier frame is a VERIFY frame targeting EXPIRY_VERIFIER
     /// (EIP-8141).
     pub fn is_expiry_verifier(&self) -> bool {
-        self.execution_mode() == FrameMode::Verify
-            && self.target == Some(frame_tx_expiry_verifier())
+        self.mode == FrameMode::Verify as u8 && self.target == Some(frame_tx_expiry_verifier())
+    }
+
+    /// EIP-8288: a dependency verification frame, by mode alone.
+    ///
+    /// Shape is checked in `validate_static_constraints`, not here. Unlike the
+    /// EIP-8272 recent-root frame -- which is an ordinary VERIFY frame that only
+    /// *becomes* special when its whole shape matches -- mode 3 has no other
+    /// meaning, so a malformed one is invalid rather than ordinary.
+    pub fn is_dependency_verification(&self) -> bool {
+        self.mode == FrameMode::DepVerify as u8
+    }
+
+    /// EIP-8288 `frame.data_triples`. `None` when this is not a dependency
+    /// verification frame, or when its data is not a whole number of well-formed
+    /// 96-byte triples.
+    pub fn dependency_triples(&self) -> Option<Vec<DependencyTriple>> {
+        if !self.is_dependency_verification() {
+            return None;
+        }
+        let len = self.data.len();
+        if len == 0 || !len.is_multiple_of(FRAME_TX_DEPENDENCY_TRIPLE_BYTES) {
+            return None;
+        }
+        self.data
+            .chunks_exact(FRAME_TX_DEPENDENCY_TRIPLE_BYTES)
+            .map(DependencyTriple::from_bytes)
+            .collect()
+    }
+
+    /// EIP-8288 `verification_gas(dep_verify_frame)`: the execution budget a
+    /// dependency verification frame must declare.
+    pub fn dependency_verification_gas(&self) -> Option<u64> {
+        Some(
+            self.dependency_triples()?
+                .iter()
+                .fold(0u64, |acc, t| acc.saturating_add(t.verification_gas())),
+        )
     }
 }
 
@@ -2022,6 +2069,140 @@ pub const FRAME_TX_PER_FRAME_COST: u64 = 475;
 pub const FRAME_TX_ENTRY_POINT_U64: u64 = 0xaa;
 /// Maximum number of frames allowed per EIP-8141 frame transaction.
 pub const FRAME_TX_MAX_FRAMES: usize = 64;
+// ---------------------------------------------------------------------------
+// EIP-8288: dependency verification frames.
+//
+// A frame with mode DEP_VERIFY declares `(scheme, data_hash, verification_key_hash)`
+// triples that the block's recursive STARK must prove. The frame is never executed;
+// see `docs/eip-8288.md` for the reading of the spec these constants encode, and
+// `scripts/hegota-testnet/NOTES-FOR-8288-AUTHOR.md` for the questions that reading
+// had to answer.
+// ---------------------------------------------------------------------------
+
+/// EIP-8288 `MAX_DEPENDENCIES_PER_FRAME`.
+pub const FRAME_TX_MAX_DEPENDENCIES_PER_FRAME: usize = 256;
+/// EIP-8288 `DEPENDENCY_TRIPLE_BYTES`: `scheme(32) || data_hash(32) || verification_key_hash(32)`.
+pub const FRAME_TX_DEPENDENCY_TRIPLE_BYTES: usize = 96;
+/// EIP-8288 `LEANSPHINCS_SCHEME`.
+pub const DEPENDENCY_SCHEME_LEANSPHINCS: u8 = 0x10;
+/// EIP-8288 `LEANSTARK_SCHEME`.
+pub const DEPENDENCY_SCHEME_LEANSTARK: u8 = 0x11;
+/// EIP-8288 `LEANSPHINCS_VERIFICATION_GAS`.
+pub const LEANSPHINCS_VERIFICATION_GAS: u64 = 3_000;
+/// EIP-8288 `LEANSTARK_VERIFICATION_GAS`.
+pub const LEANSTARK_VERIFICATION_GAS: u64 = 30_000;
+/// EIP-8288 `MAX_SIGS_PER_TX`. Mempool policy, not a block-validity rule: the EIP
+/// files it under Mempool-Level Limits, so a block carrying more is still valid.
+pub const FRAME_TX_MAX_SIGS_PER_TX: usize = 16;
+/// EIP-8288 `MAX_STARKS_PER_TX`. Mempool policy, as above.
+pub const FRAME_TX_MAX_STARKS_PER_TX: usize = 1;
+
+const _: () = assert!(FRAME_TX_MAX_DEPENDENCIES_PER_FRAME == 256);
+const _: () = assert!(FRAME_TX_DEPENDENCY_TRIPLE_BYTES == 96);
+const _: () = assert!(DEPENDENCY_SCHEME_LEANSPHINCS == 0x10);
+const _: () = assert!(DEPENDENCY_SCHEME_LEANSTARK == 0x11);
+const _: () = assert!(LEANSPHINCS_VERIFICATION_GAS == 3_000);
+const _: () = assert!(LEANSTARK_VERIFICATION_GAS == 30_000);
+const _: () = assert!(FRAME_TX_MAX_SIGS_PER_TX == 16);
+const _: () = assert!(FRAME_TX_MAX_STARKS_PER_TX == 1);
+
+/// One EIP-8288 dependency: `(scheme, data_hash, verification_key_hash)`.
+///
+/// Ordering is lexicographic over the 96-byte encoding rather than over the
+/// `(scheme, data_hash, vk_hash)` tuple. The EIP's pseudocode sorts tuples, which
+/// compares `scheme` as a small integer, while the consensus hash is taken over
+/// the encoding, where `scheme` is a big-endian 32-byte word. The two agree for
+/// every scheme below 0x100 and diverge above it; sorting what is hashed is the
+/// order that stays correct. Raised as item 9 with the spec authors.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub struct DependencyTriple {
+    pub scheme: u8,
+    pub data_hash: H256,
+    pub verification_key_hash: H256,
+}
+
+impl DependencyTriple {
+    /// The 96-byte wire encoding: 31 zero bytes, the scheme byte, then the two hashes.
+    pub fn encode(&self) -> [u8; FRAME_TX_DEPENDENCY_TRIPLE_BYTES] {
+        let mut out = [0u8; FRAME_TX_DEPENDENCY_TRIPLE_BYTES];
+        out[31] = self.scheme;
+        out[32..64].copy_from_slice(self.data_hash.as_bytes());
+        out[64..96].copy_from_slice(self.verification_key_hash.as_bytes());
+        out
+    }
+
+    /// Parse one 96-byte triple. `None` when the length is wrong, when the 31-byte
+    /// scheme padding is non-zero, or when the scheme byte is not one this EIP
+    /// assigns -- all three are validity constraints, so an unparseable triple and
+    /// an invalid one are the same rejection.
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() != FRAME_TX_DEPENDENCY_TRIPLE_BYTES {
+            return None;
+        }
+        if bytes[..31].iter().any(|b| *b != 0) {
+            return None;
+        }
+        let scheme = bytes[31];
+        if scheme != DEPENDENCY_SCHEME_LEANSPHINCS && scheme != DEPENDENCY_SCHEME_LEANSTARK {
+            return None;
+        }
+        Some(Self {
+            scheme,
+            data_hash: H256::from_slice(&bytes[32..64]),
+            verification_key_hash: H256::from_slice(&bytes[64..96]),
+        })
+    }
+
+    /// The per-triple verification gas this dependency contributes to its frame.
+    pub fn verification_gas(&self) -> u64 {
+        if self.scheme == DEPENDENCY_SCHEME_LEANSPHINCS {
+            LEANSPHINCS_VERIFICATION_GAS
+        } else {
+            LEANSTARK_VERIFICATION_GAS
+        }
+    }
+
+    pub fn is_leansphincs(&self) -> bool {
+        self.scheme == DEPENDENCY_SCHEME_LEANSPHINCS
+    }
+
+    pub fn is_leanstark(&self) -> bool {
+        self.scheme == DEPENDENCY_SCHEME_LEANSTARK
+    }
+}
+
+/// EIP-8288 `deduplicate_and_sort`, over the 96-byte encoding (see `DependencyTriple`).
+pub fn deduplicate_and_sort_dependencies(mut deps: Vec<DependencyTriple>) -> Vec<DependencyTriple> {
+    deps.sort_unstable_by_key(|d| d.encode());
+    deps.dedup();
+    deps
+}
+
+/// EIP-8288 `block_deps_hash` / `get_deps_hash`: BLAKE3-256 over the concatenated
+/// 96-byte triples of an already deduplicated and sorted list.
+///
+/// BLAKE3 rather than keccak256: the Specification writes an unqualified `hash`,
+/// and the function is named only in Security Considerations. Raised as item 8.
+pub fn dependencies_hash(deps: &[DependencyTriple]) -> H256 {
+    let mut hasher = blake3::Hasher::new();
+    for dep in deps {
+        hasher.update(&dep.encode());
+    }
+    H256::from_slice(hasher.finalize().as_bytes())
+}
+
+// EIP-8141 publishes these in its Constants table; assert the constants reproduce them
+// exactly, so a repricing or a re-spelling upstream is a compile error here rather than a
+// silent consensus change. Same guard the EIP-8272 constants carry in
+// `crates/vm/levm/src/gas_cost.rs`, and the reason the intrinsic drop from 15000
+// to 12000 was invisible to 1372 tests: the suite derives its expected intrinsic from this
+// constant, so it can check the formula's composition but never the published figure.
+const _: () = assert!(FRAME_TX_INTRINSIC_COST == 12_000);
+const _: () = assert!(FRAME_TX_PER_FRAME_COST == 475);
+const _: () = assert!(FRAME_TX_MAX_FRAMES == 64);
+const _: () = assert!(FRAME_TX_EXPIRY_DATA_LENGTH == 8);
+const _: () = assert!(FRAME_TX_STANDARD_TOKEN_COST == 4);
+const _: () = assert!(FRAME_TX_TOTAL_COST_FLOOR_PER_TOKEN == 16);
 /// EIP-7623 `STANDARD_TOKEN_COST`, and the EIP-7976 floor per token. Frame
 /// transactions exist only from Hegota onward, which is after Amsterdam, so the
 /// raised EIP-7976 floor always applies and neither needs a fork parameter.
@@ -2262,6 +2443,34 @@ impl FrameTransaction {
 
     /// Validate static constraints per EIP-8141 spec.
     /// Returns an error string if the transaction is invalid.
+    /// EIP-8288 `dependencies(tx)`: every triple from every dependency
+    /// verification frame, deduplicated and sorted.
+    ///
+    /// Frames whose data does not parse contribute nothing here;
+    /// `validate_static_constraints` rejects those, so a transaction that reaches
+    /// execution has none.
+    pub fn dependencies(&self) -> Vec<DependencyTriple> {
+        let mut out = Vec::new();
+        for frame in &self.frames {
+            if let Some(triples) = frame.dependency_triples() {
+                out.extend(triples);
+            }
+        }
+        deduplicate_and_sort_dependencies(out)
+    }
+
+    /// The number of declared dependencies before deduplication. This is what gas
+    /// is charged on: EIP-8288 §Gas Accounting makes duplicate declarations legal
+    /// but wasteful, so the charge counts declarations and the block's dependency
+    /// set counts distinct triples.
+    pub fn declared_dependency_count(&self) -> usize {
+        self.frames
+            .iter()
+            .filter_map(|f| f.dependency_triples())
+            .map(|t| t.len())
+            .sum()
+    }
+
     pub fn validate_static_constraints(&self) -> Result<(), String> {
         // tx.sender != zero address
         if self.sender == Address::zero() {
@@ -2324,8 +2533,9 @@ impl FrameTransaction {
         let mut total_frame_gas: u128 = 0;
         let mut expiry_frame_count: usize = 0;
         for (i, frame) in self.frames.iter().enumerate() {
-            // Reject reserved execution modes (3-255)
-            if frame.mode >= 3 {
+            // Reject reserved execution modes: 0 to 2 are EIP-8141's, 3 is
+            // EIP-8288's DEP_VERIFY, everything above is reserved.
+            if FrameMode::from_u8(frame.mode).is_none() {
                 return Err(format!("Frame {i}: reserved execution mode {}", frame.mode));
             }
             // Reserved flag bits 3-7 must be zero
@@ -2334,6 +2544,75 @@ impl FrameTransaction {
                     "Frame {i}: reserved flag bits must be zero (flags={:#04x})",
                     frame.flags
                 ));
+            }
+            // EIP-8288 dependency verification frames. The EIP writes these
+            // constraints against fields EIP-8141 does not have -- a scalar
+            // `gas_limit`, and a `target` glossed as both `None` and the zero
+            // address -- so the reading here is spelled out in
+            // `scripts/hegota-testnet/NOTES-FOR-8288-AUTHOR.md` items 2 and 3 and
+            // in `docs/eip-8288.md`. In short: the sum binds `limits.execution`,
+            // `limits.state` must be zero, and `target` must be absent.
+            if frame.is_dependency_verification() {
+                let Some(triples) = frame.dependency_triples() else {
+                    return Err(format!(
+                        "Frame {i}: dependency verification frame data must be a whole number of \
+                         {FRAME_TX_DEPENDENCY_TRIPLE_BYTES}-byte triples, each with 31 zero bytes \
+                         of scheme padding and a known scheme byte"
+                    ));
+                };
+                if triples.len() > FRAME_TX_MAX_DEPENDENCIES_PER_FRAME {
+                    return Err(format!(
+                        "Frame {i}: dependency count must be between 1 and \
+                         {FRAME_TX_MAX_DEPENDENCIES_PER_FRAME}, got {}",
+                        triples.len()
+                    ));
+                }
+                if frame.target.is_some() {
+                    return Err(format!(
+                        "Frame {i}: dependency verification frame must have no target"
+                    ));
+                }
+                if frame.flags != 0 {
+                    return Err(format!(
+                        "Frame {i}: dependency verification frame must have flags == 0"
+                    ));
+                }
+                if frame.state_gas_limit != 0 {
+                    return Err(format!(
+                        "Frame {i}: dependency verification frame must have state_gas_limit == 0 \
+                         (got {})",
+                        frame.state_gas_limit
+                    ));
+                }
+                // A dependency verification frame carries no flags, so it cannot be
+                // a batch member -- but that also makes it a valid *terminator* for a
+                // batch an earlier frame opened, and a terminator is the frame at
+                // which the batch commits. A frame that never executes has nothing to
+                // commit or roll back, and letting one close a batch would put the
+                // commit on a frame with no outcome. EIP-8288 says nothing about
+                // atomic batches at all; EIP-8141 already restricts the flag by mode
+                // (a VERIFY frame may not carry it), so a mode-specific restriction
+                // is in keeping. Raised as item 13 with the spec authors.
+                let inside_batch = i
+                    .checked_sub(1)
+                    .and_then(|prev| self.frames.get(prev))
+                    .is_some_and(Frame::is_atomic_batch);
+                if inside_batch {
+                    return Err(format!(
+                        "Frame {i}: dependency verification frame must not sit inside an \
+                         atomic batch"
+                    ));
+                }
+                let expected = triples
+                    .iter()
+                    .fold(0u64, |acc, t| acc.saturating_add(t.verification_gas()));
+                if frame.gas_limit != expected {
+                    return Err(format!(
+                        "Frame {i}: dependency verification frame must declare gas_limit == \
+                         {expected}, got {}",
+                        frame.gas_limit
+                    ));
+                }
             }
             // Expiry verifier frames (EIP-8141): VERIFY
             // frames targeting EXPIRY_VERIFIER must have flags == 0, value == 0
@@ -2473,11 +2752,22 @@ impl FrameTransaction {
     /// `frame_indices` (which holds only the semantically meaningful prefix frames).
     pub fn validation_prefix(&self) -> Result<ValidationPrefix, FrameValidationError> {
         // Collect non-expiry frame indices in order.
+        // EIP-8288 dependency verification frames are skipped the same way, from any
+        // position. The EIP does not say where they may sit, and its own Test Cases 1
+        // and 2 put one at index 0 ahead of the approving VERIFY frame -- a shape with
+        // no recognizable prefix if the frame counted. Making them transparent is the
+        // only reading under which those test cases describe a valid transaction.
+        // Raised as item 12 with the spec authors.
+        //
+        // Their declared gas is deliberately NOT added to the MAX_VERIFY_GAS sum
+        // below. That budget bounds the EVM work a node must do before it knows the
+        // payer, and a dependency frame runs nothing; what bounds it instead is
+        // MAX_FRAMES x MAX_DEPENDENCIES_PER_FRAME on parsing.
         let non_expiry: Vec<usize> = self
             .frames
             .iter()
             .enumerate()
-            .filter(|(_, f)| !f.is_expiry_verifier())
+            .filter(|(_, f)| !f.is_expiry_verifier() && !f.is_dependency_verification())
             .map(|(i, _)| i)
             .collect();
 

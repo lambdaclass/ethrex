@@ -3334,6 +3334,7 @@ dependencies = [
 name = "ethrex-common"
 version = "23.0.0"
 dependencies = [
+ "blake3",
  "bytes",
  "crc32fast",
  "ethereum-types",

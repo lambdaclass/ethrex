@@ -159,6 +159,14 @@ pub enum MempoolError {
     FrameTxInvalidPrefixStructure(String),
     #[error("Frame transaction prefix gas budget (frames + sig cost) exceeds MAX_VERIFY_GAS")]
     FrameTxVerifyGasBudgetExceeded,
+    #[error(
+        "Frame transaction declares {count} {scheme} dependencies, more than the mempool's limit of {limit}"
+    )]
+    FrameTxTooManyDependencies {
+        scheme: &'static str,
+        count: usize,
+        limit: usize,
+    },
     #[error("A pending frame transaction from this sender is already in the pool")]
     FrameTxSenderAlreadyPending,
     #[error("Frame transaction validation-prefix simulation failed: {0}")]
