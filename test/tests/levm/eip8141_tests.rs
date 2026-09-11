@@ -2861,6 +2861,78 @@ mod validation_observer_tests {
         (result, vm.validation_observer.violation.clone())
     }
 
+    /// Code that requires `FRAMEPARAM(frame 0, 0x05) == 1` -- "the first frame
+    /// succeeded" -- before approving. Reverts when the read disagrees; halts when
+    /// the read itself is unsupported.
+    fn approve_if_first_frame_succeeded() -> Bytes {
+        Bytes::from(vec![
+            0x60, 0x05, // PUSH1 0x05  (param: status)
+            0x60, 0x00, // PUSH1 0x00  (frame index, on top)
+            0xB3, // FRAMEPARAM
+            0x60, 0x01, // PUSH1 1
+            0x14, // EQ
+            0x60, 0x10, // PUSH1 0x10 (the JUMPDEST below)
+            0x57, // JUMPI
+            0x60, 0x00, // PUSH1 0
+            0x60, 0x00, // PUSH1 0
+            0xFD, // REVERT
+            0x5B, // JUMPDEST  (offset 0x10)
+            0x60, 0x03, // PUSH1 3 (scope)
+            0x60, 0x00, // PUSH1 0 (length)
+            0x60, 0x00, // PUSH1 0 (offset)
+            0xAA, // APPROVE
+            0x00, // STOP
+        ])
+    }
+
+    /// A prefix frame may read a *completed* earlier frame through `FRAMEPARAM`
+    /// 0x05, 0x0A and 0x0B, and the mempool simulation must answer the way block
+    /// execution does. It records nothing per frame until this is exercised, so the
+    /// read halted, the frame was counted as reverted, and the transaction was
+    /// refused at admission while executing fine in a block -- reported only as
+    /// "validation prefix frame reverted", with no index and no reason.
+    ///
+    /// EIP-8272 puts this on the ordinary path: the canonical recent-root verifier
+    /// frame leads the transaction and is not itself part of the prefix, so the
+    /// frame behind it confirms it succeeded before trusting the tuple it proved.
+    #[test]
+    fn a_prefix_frame_can_read_a_completed_earlier_frames_status() {
+        let sender = addr(0x5E12);
+        let leading = addr(0x8272);
+        let tx = frame_tx_for_obs(
+            sender,
+            vec![
+                // Frame 0: a leading VERIFY that is not part of the prefix, as
+                // EIP-8272's recent-root verifier frame is.
+                verify_frame_obs(leading, 50_000, 0x00, Bytes::new()),
+                verify_frame_obs(sender, 50_000, 0x03, Bytes::new()),
+            ],
+        );
+        let mut db = build_db(vec![
+            (leading, account_with_code(0, Bytes::from(vec![0x00]))),
+            (
+                sender,
+                account_with_code(0, approve_if_first_frame_succeeded()),
+            ),
+        ]);
+        // The prefix is frame 1 alone; frame 0 runs ahead of it either way.
+        let (result, violation) = run(&tx, &mut db, sender, &[1], None, None);
+        assert!(
+            violation.is_none(),
+            "reading a completed frame breaks no rule"
+        );
+        assert!(
+            !result.any_revert,
+            "the prefix frame must not revert: frame 0 completed successfully, so \
+             FRAMEPARAM(0, 0x05) has an answer and it is 1"
+        );
+        assert_eq!(
+            result.payer_address,
+            Some(sender),
+            "the approval behind the status check must still bind the payer"
+        );
+    }
+
     #[test]
     fn passing_self_verify_sets_payer_and_no_violation() {
         let sender = addr(0x5E11);

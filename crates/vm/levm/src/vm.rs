@@ -3400,6 +3400,16 @@ impl<'a> VM<'a> {
             // Outside a frame the dimension is not isolated.
             self.state_gas_isolated = false;
 
+            // EIP-8141 `gas_used.state`, read before the reservoir is reset for the
+            // next frame, exactly as the execution path computes it.
+            let frame_state_gas_used = if frame_success {
+                frame
+                    .state_gas_limit
+                    .saturating_sub(self.state_gas_reservoir)
+            } else {
+                0
+            };
+
             // The dispatch spent out of the post-charge budget, so the entry charge is
             // added back to get what the frame actually consumed (the early-halt arms
             // above already report the whole declared budget).
@@ -3411,6 +3421,32 @@ impl<'a> VM<'a> {
             total_gas_used = total_gas_used
                 .checked_add(frame_gas_used)
                 .ok_or(VMError::Internal(InternalError::Overflow))?;
+
+            // Record the frame the way execution does. `FRAMEPARAM` 0x05, 0x0A and
+            // 0x0B read a *completed* frame's status and two gas dimensions out of
+            // `frame_results`, and an index the vector does not carry halts the
+            // reader. Leaving the vector empty here therefore made every prefix frame
+            // that inspects an earlier one halt at admission while executing fine in
+            // a block -- silently, because the mempool reports only "validation prefix
+            // frame reverted". EIP-8272's canonical grammar puts that read on the
+            // normal path: the recent-root verifier frame leads, and the frame behind
+            // it confirms the verifier succeeded before trusting the tuple.
+            let ctx =
+                self.frame_tx_context
+                    .as_mut()
+                    .ok_or(VMError::Internal(InternalError::Custom(
+                        "missing frame tx context".to_string(),
+                    )))?;
+            ctx.frame_results.push((
+                if frame_success {
+                    ethrex_common::types::FRAME_RECEIPT_STATUS_SUCCESS
+                } else {
+                    ethrex_common::types::FRAME_RECEIPT_STATUS_FAILURE
+                },
+                frame_gas_used,
+                frame_state_gas_used,
+                Vec::new(),
+            ));
 
             if !frame_success {
                 any_revert = true;
