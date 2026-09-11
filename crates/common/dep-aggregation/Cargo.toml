@@ -1,0 +1,35 @@
+[package]
+name = "ethrex-dep-aggregation"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
+license.workspace = true
+description = "EIP-8288 dependency aggregation: the seam between block validity and a recursive-proof backend"
+repository.workspace = true
+
+[dependencies]
+ethrex-common.workspace = true
+ethereum-types = { version = "0.15.1", default-features = false }
+thiserror = { version = "2.0.9", default-features = false }
+tracing.workspace = true
+blake3.workspace = true
+
+# The leanVM backend. Optional, off by default, and confined to this crate.
+#
+# leanVM is pre-1.0 and restructures its crate layout between revisions -- the
+# revision ethlambda pins exports `lean-multisig` and `leansig_wrapper`, neither of
+# which exists in the layout below. The blast radius of a rename therefore has to
+# stay at one file, which is why nothing outside this crate may name a leanVM type.
+# Pinned to a revision for the same reason the rest of the workspace pins versions.
+lean_vm = { git = "https://github.com/leanEthereum/leanVM.git", rev = "7f9777da6ab3d7bb8d10c3f5c7edce2554fcfc03", optional = true }
+rec_aggregation = { git = "https://github.com/leanEthereum/leanVM.git", rev = "7f9777da6ab3d7bb8d10c3f5c7edce2554fcfc03", optional = true }
+sphincs = { git = "https://github.com/leanEthereum/leanVM.git", rev = "7f9777da6ab3d7bb8d10c3f5c7edce2554fcfc03", optional = true }
+
+[features]
+default = []
+# Compiles the real recursive-proof backend. Off by default: it pulls a large
+# proving stack, and producing an aggregate peaks around 9-11 GiB of resident
+# memory. A node built without it can still enforce EIP-8288 block-validity rule 1
+# and will reject any block carrying a proof rather than accept one it cannot check.
+leanvm = ["dep:lean_vm", "dep:rec_aggregation", "dep:sphincs"]
