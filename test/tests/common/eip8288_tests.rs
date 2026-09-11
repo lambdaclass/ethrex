@@ -10,9 +10,9 @@ use bytes::Bytes;
 use ethrex_common::types::{BlockBody, BlockHeader, RecursiveStark, Transaction};
 use ethrex_common::types::{
     DEPENDENCY_SCHEME_LEANSPHINCS, DEPENDENCY_SCHEME_LEANSTARK, DependencyTriple,
-    FRAME_TX_DEPENDENCY_TRIPLE_BYTES, FRAME_TX_MAX_DEPENDENCIES_PER_FRAME, Frame, FrameMode,
-    FrameTransaction, LEANSPHINCS_VERIFICATION_GAS, LEANSTARK_VERIFICATION_GAS,
-    deduplicate_and_sort_dependencies, dependencies_hash,
+    FRAME_TX_DEPENDENCY_TRIPLE_BYTES, FRAME_TX_MAX_DEPENDENCIES_PER_FRAME,
+    FRAME_TX_MAX_SIGS_PER_TX, Frame, FrameMode, FrameTransaction, LEANSPHINCS_VERIFICATION_GAS,
+    LEANSTARK_VERIFICATION_GAS, deduplicate_and_sort_dependencies, dependencies_hash,
 };
 use ethrex_common::{Address, H256, U256};
 use ethrex_rlp::decode::RLPDecode;
@@ -403,6 +403,44 @@ fn duplicate_declarations_are_charged_but_deduplicated() {
     );
 }
 
+/// The per-transaction limits count distinct dependencies, not declarations, and
+/// the spec is explicit that exceeding the limit in declarations is legal:
+///
+/// > it is legal to have a transaction with eg. `> MAX_SIGS_PER_TX` leanSPHINCS
+/// > dependency _declarations_, if some of them are pointing to the same object so
+/// > the deduplicated list is within limits.
+///
+/// The per-frame bound counts the other way -- declarations -- so the two are not
+/// redundant. Getting this backwards would reject legal transactions at admission
+/// while admitting frames the frame rule forbids, and the sentence that settles it
+/// sits four sections away from the rule it governs (notes item 6).
+#[test]
+fn the_per_transaction_limit_counts_distinct_dependencies_not_declarations() {
+    let a = sphincs(1, 1);
+    let b = sphincs(2, 2);
+    // Twenty declarations of two distinct dependencies: over MAX_SIGS_PER_TX in
+    // declarations, well under it once deduplicated.
+    let declarations: Vec<_> = std::iter::repeat_n([a, b], 10).flatten().collect();
+    let tx = tx_with(vec![dep_frame(&declarations), self_verify_frame()]);
+
+    assert!(
+        tx.validate_static_constraints().is_ok(),
+        "{:?}",
+        tx.validate_static_constraints()
+    );
+    assert_eq!(tx.declared_dependency_count(), 20);
+    assert!(
+        tx.declared_dependency_count() > FRAME_TX_MAX_SIGS_PER_TX,
+        "the declarations exceed the per-transaction limit"
+    );
+    assert_eq!(
+        tx.dependencies(),
+        vec![a, b],
+        "but the deduplicated set, which the limit actually governs, holds two"
+    );
+    assert!(tx.dependencies().len() <= FRAME_TX_MAX_SIGS_PER_TX);
+}
+
 #[test]
 fn a_transaction_with_no_dependency_frames_has_no_dependencies() {
     let tx = tx_with(vec![self_verify_frame()]);
@@ -624,6 +662,54 @@ fn a_header_without_recursive_stark_round_trips_unchanged() {
     assert_eq!(decoded.recursive_stark, None);
     assert_eq!(decoded.burned_fees, Some(1));
     assert_eq!(decoded, header);
+}
+
+/// The field must survive a getPayload -> newPayload round-trip, or a producer's
+/// own J* block fails its block-hash check on import.
+///
+/// This was genuinely missing. `ExecutionPayload` carried every other fork-gated
+/// header field and not this one, so `from_block` dropped it and `into_block` left
+/// it `None`. Found by auditing the implementation against the spec rather than by
+/// any test, which is why there is one now.
+#[test]
+fn recursive_stark_survives_the_execution_payload_round_trip() {
+    let entry = RecursiveStark {
+        proof: Bytes::from_static(b"an aggregate"),
+        block_deps_hash: H256::from_low_u64_be(0xD1),
+    };
+    let header = jstar_header(None, Some(entry.clone()));
+    let block = ethrex_common::types::Block::new(
+        header.clone(),
+        BlockBody {
+            transactions: Vec::new(),
+            ommers: Vec::new(),
+            withdrawals: Some(Vec::new()),
+        },
+    );
+
+    let payload = ethrex_rpc::types::payload::ExecutionPayload::from_block(block, None);
+    assert_eq!(
+        payload.recursive_stark,
+        Some(entry),
+        "getPayload must carry the entry to the consensus client"
+    );
+
+    let rebuilt = payload
+        .into_block(
+            header.parent_beacon_block_root,
+            header.requests_hash,
+            header.block_access_list_hash,
+        )
+        .expect("newPayload must rebuild the block");
+    assert_eq!(
+        rebuilt.header.recursive_stark, header.recursive_stark,
+        "and newPayload must put it back"
+    );
+
+    // Not comparing whole block hashes: `into_block` recomputes `withdrawals_root`
+    // from the body, and this fixture's is fabricated. What matters is that the
+    // entry makes the trip, since the hash it feeds is already covered by
+    // `recursive_stark_participates_in_the_block_hash`.
 }
 
 /// An empty proof still round-trips. A block whose transactions declare no
