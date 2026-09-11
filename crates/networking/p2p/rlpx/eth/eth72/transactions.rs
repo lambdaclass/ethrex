@@ -91,18 +91,17 @@ impl NewPooledTransactionHashes72 {
 
         for transaction in transactions {
             let tx_type = transaction.tx_type();
-            if tx_type as u8 == 3 {
-                has_blob_tx = true;
-            }
-            transaction_types.push(tx_type as u8);
             let transaction_hash = transaction.hash(&NativeCrypto);
-            transaction_hashes.push(transaction_hash);
             let transaction_size = match transaction {
                 Transaction::EIP4844Transaction(eip4844_tx) => {
-                    let tx_blobs_bundle = blockchain
-                        .mempool
-                        .get_blobs_bundle(transaction_hash)?
-                        .unwrap_or_default();
+                    // See `NewPooledTransactionHashes::new`: a blob tx whose bundle is no
+                    // longer in the pool cannot be served, so it must not be announced.
+                    // An empty bundle would announce ~162 bytes for a ~137 KB transaction.
+                    let Some(tx_blobs_bundle) =
+                        blockchain.mempool.get_blobs_bundle(transaction_hash)?
+                    else {
+                        continue;
+                    };
                     let p2p_tx =
                         P2PTransaction::EIP4844TransactionWithBlobs(WrappedEIP4844Transaction {
                             tx: eip4844_tx,
@@ -114,6 +113,11 @@ impl NewPooledTransactionHashes72 {
                 }
                 _ => transaction.encode_canonical_len(),
             };
+            if tx_type as u8 == 3 {
+                has_blob_tx = true;
+            }
+            transaction_types.push(tx_type as u8);
+            transaction_hashes.push(transaction_hash);
             transaction_sizes.push(transaction_size);
         }
 

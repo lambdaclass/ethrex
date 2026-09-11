@@ -354,6 +354,7 @@ impl RpcHandler for GetStorageValuesRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::TestContext;
     use serde_json::json;
 
     #[test]
@@ -484,7 +485,7 @@ mod tests {
     /// Builds an in-memory store whose genesis pre-sets `address`'s nonce, and a
     /// context over it. Mirrors `setup_store` but lets the test fix the on-chain
     /// nonce without executing blocks.
-    async fn context_with_account_nonce(address: Address, nonce: u64) -> RpcApiContext {
+    async fn context_with_account_nonce(address: Address, nonce: u64) -> TestContext {
         use crate::test_utils::{TEST_GENESIS, default_context_with_storage};
         use ethrex_common::types::{Genesis, GenesisAccount};
         use ethrex_storage::{EngineType, Store};
