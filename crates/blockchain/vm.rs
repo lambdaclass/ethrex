@@ -142,8 +142,33 @@ impl<Inner: VmDatabase + Clone> VmDatabase for OverlaidVmDatabase<Inner> {
         if let Some((h, _)) = &ov.code {
             state.code_hash = *h;
         }
-        // storage_root is left untouched: the wrapper intercepts get_storage_slot
-        // directly, so the EVM never observes a storage_root that has to match.
+        // `storage_root` has to follow the storage override, even though no slot read
+        // goes through it. `LevmAccount::from` turns it into `has_storage`
+        // (`crates/vm/levm/src/account.rs:78`) and folds it into `exists`, and
+        // `create_would_collide` reads `has_storage` — so passing the real root through
+        // let a `state` override that empties an account still abort a simulated CREATE2
+        // on it with `AddressAlreadyOccupied`, while every slot read zero. geth does not:
+        // `SetStorage` installs a fresh object built by `NewEmptyStateAccount`, whose
+        // `Root` is `EmptyRootHash`, so its collision check sees no storage either.
+        //
+        // The non-empty answer is a sentinel, never a real root; nothing on this path may
+        // commit it or compare it to one. Only its emptiness is ever read.
+        state.storage_root = match &ov.storage_mode {
+            // No storage override: the account keeps whatever the chain says.
+            StorageMode::None => state.storage_root,
+            // `state`: a closed world. The account has storage only if this map gives it
+            // some, exactly as geth's replacement object does.
+            StorageMode::Replace(map) => storage_root_for(map.values().any(|v| !v.is_zero())),
+            // `stateDiff`: an overlay. Real storage survives underneath, so the account
+            // has storage if it already did or if the overlay adds a non-zero slot.
+            StorageMode::Diff(map) => {
+                if state.storage_root != *EMPTY_TRIE_HASH {
+                    state.storage_root
+                } else {
+                    storage_root_for(map.values().any(|v| !v.is_zero()))
+                }
+            }
+        };
         Ok(Some(state))
     }
 
@@ -218,8 +243,9 @@ impl<Inner: VmDatabase + Clone> VmDatabase for OverlaidVmDatabase<Inner> {
     }
 }
 
-/// Stand-in `storage_root` for an account the replay gave storage to without this layer
-/// materialising a trie for it.
+/// Stand-in `storage_root` for an account that has storage without this layer
+/// materialising a trie for it: one the replay wrote to, or one a State Override Set gave
+/// slots to.
 ///
 /// **Not a real trie root.** On this path `storage_root` feeds two things downstream:
 /// `LevmAccount::has_storage` (`crates/vm/levm/src/account.rs:78`, the EIP-7610
@@ -239,6 +265,17 @@ impl<Inner: VmDatabase + Clone> VmDatabase for OverlaidVmDatabase<Inner> {
 /// root unchanged regardless of `added_storage`. That stale value is just as
 /// uncommittable, and worse, in that it looks exactly like a real trie root.
 const UNMATERIALISED_STORAGE_ROOT: H256 = H256([0xff; 32]);
+
+/// The `storage_root` to report for an account whose storage this layer knows only as a
+/// map: the sentinel when it holds anything, the empty-trie root when it does not. Only
+/// the distinction between the two is ever read — see [`UNMATERIALISED_STORAGE_ROOT`].
+fn storage_root_for(has_storage: bool) -> H256 {
+    if has_storage {
+        UNMATERIALISED_STORAGE_ROOT
+    } else {
+        *EMPTY_TRIE_HASH
+    }
+}
 
 /// `VmDatabase` decorator that layers a finished block replay over the state that replay
 /// started from, so the replay can be read as a database.
@@ -1069,6 +1106,95 @@ mod overlaid_db_tests {
     /// function is built from the real header before the block overrides are applied, so
     /// it answers zero from that height upwards. A tip-based cutoff would serve the real
     /// hashes of blocks 100..=tip to a call whose synthetic number sits past them.
+    /// A `state` override that empties an account has to empty its `storage_root` too.
+    ///
+    /// No slot read consults the root, but `LevmAccount::from` turns it into
+    /// `has_storage`, and `create_would_collide` reads that — so a stale real root made a
+    /// simulated CREATE2 abort on an account the EVM could see was empty in every other
+    /// way. geth's `SetStorage` installs an object whose `Root` is `EmptyRootHash`, so it
+    /// does not collide either.
+    #[test]
+    fn replace_mode_empties_the_storage_root_when_it_empties_the_account() {
+        let mock = MockDb::default();
+        mock.accounts.lock().unwrap().insert(
+            addr(8),
+            AccountState {
+                // A real, non-empty root: this account has storage on chain.
+                storage_root: H256::from_low_u64_be(0xbeef),
+                ..Default::default()
+            },
+        );
+        let mut overrides = BTreeMap::new();
+        overrides.insert(
+            addr(8),
+            StateOverride {
+                storage_mode: StorageMode::Replace(BTreeMap::new()),
+                ..Default::default()
+            },
+        );
+        let wrapper = OverlaidVmDatabase::new(mock, Arc::new(overrides), 0);
+        let state = wrapper.get_account_state(addr(8)).unwrap().unwrap();
+        assert_eq!(
+            state.storage_root, *EMPTY_TRIE_HASH,
+            "an emptied account must not keep a root that reads as having storage"
+        );
+    }
+
+    /// The other direction: `state` with values, and `stateDiff` adding one, must report
+    /// storage even though no trie was built for either.
+    #[test]
+    fn an_override_that_gives_storage_reports_a_non_empty_root() {
+        for mode in [
+            StorageMode::Replace(BTreeMap::from([(slot(1), U256::from(5))])),
+            StorageMode::Diff(BTreeMap::from([(slot(1), U256::from(5))])),
+        ] {
+            let mut overrides = BTreeMap::new();
+            overrides.insert(
+                addr(9),
+                StateOverride {
+                    balance: Some(U256::one()),
+                    storage_mode: mode,
+                    ..Default::default()
+                },
+            );
+            let wrapper = OverlaidVmDatabase::new(MockDb::default(), Arc::new(overrides), 0);
+            let state = wrapper.get_account_state(addr(9)).unwrap().unwrap();
+            assert_ne!(
+                state.storage_root, *EMPTY_TRIE_HASH,
+                "an override that gives an account slots must report storage"
+            );
+        }
+    }
+
+    /// `stateDiff` is an overlay, so the real storage underneath still counts even when
+    /// the overlay itself only zeroes slots.
+    #[test]
+    fn diff_mode_keeps_a_real_root_it_did_not_empty() {
+        let mock = MockDb::default();
+        let real_root = H256::from_low_u64_be(0xbeef);
+        mock.accounts.lock().unwrap().insert(
+            addr(10),
+            AccountState {
+                storage_root: real_root,
+                ..Default::default()
+            },
+        );
+        let mut overrides = BTreeMap::new();
+        overrides.insert(
+            addr(10),
+            StateOverride {
+                storage_mode: StorageMode::Diff(BTreeMap::from([(slot(1), U256::zero())])),
+                ..Default::default()
+            },
+        );
+        let wrapper = OverlaidVmDatabase::new(mock, Arc::new(overrides), 0);
+        let state = wrapper.get_account_state(addr(10)).unwrap().unwrap();
+        assert_eq!(
+            state.storage_root, real_root,
+            "a diff that zeroes one slot does not empty the storage underneath it"
+        );
+    }
+
     #[test]
     fn block_hash_at_or_past_the_base_block_returns_zero() {
         let mock = MockDb::default();
