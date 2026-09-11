@@ -160,16 +160,18 @@ impl MempoolWrapper {
                 // transactions", and a user's first broadcast has no aggregate, so
                 // demanding a recursive proof here would make the mode unusable for
                 // the case it exists to serve.
+                // Both schemes go to `verify_witness`, which dispatches on the
+                // scheme. A leanSTARK dependency does carry a STARK of its own, but
+                // it is *its* STARK, to be checked against its own
+                // `verification_key_hash` -- not an aggregate produced by the
+                // protocol circuit over an expected set, which is what `verify`
+                // means. Sending it to `verify` asks the wrong question of the
+                // backend and would pass or fail for the wrong reason.
                 for (dep, proof) in deps.iter().zip(proofs) {
-                    if dep.is_leansphincs() {
-                        aggregator.verify_witness(&DependencyWitness {
-                            triple: *dep,
-                            witness: proof.clone(),
-                        })?;
-                    } else {
-                        // A leanSTARK dependency does carry a STARK of its own.
-                        aggregator.verify(proof, std::slice::from_ref(dep))?;
-                    }
+                    aggregator.verify_witness(&DependencyWitness {
+                        triple: *dep,
+                        witness: proof.clone(),
+                    })?;
                 }
                 Ok(())
             }

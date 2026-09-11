@@ -179,6 +179,10 @@ pub enum MempoolError {
         count: usize,
         limit: usize,
     },
+    #[error(
+        "Frame transaction declares a dependency of scheme {scheme:#04x}, which this node's aggregation backend cannot discharge"
+    )]
+    FrameTxUnsupportedDependencyScheme { scheme: u8 },
     #[error("A pending frame transaction from this sender is already in the pool")]
     FrameTxSenderAlreadyPending,
     #[error("Frame transaction validation-prefix simulation failed: {0}")]

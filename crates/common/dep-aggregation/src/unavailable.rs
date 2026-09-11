@@ -42,6 +42,13 @@ impl DependencyAggregator for UnavailableAggregator {
         Err(AggregateError::NoBackend)
     }
 
+    fn supports_scheme(&self, _scheme: u8) -> bool {
+        // No backend discharges nothing. A block with any dependency at all is
+        // unverifiable here, so no dependency-bearing transaction should be
+        // admitted either.
+        false
+    }
+
     fn aggregated_vk(&self) -> H256 {
         // Not a real key and must never be treated as one. A node with no backend
         // verifies nothing, so there is no circuit whose identity this could name.

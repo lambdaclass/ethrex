@@ -124,3 +124,39 @@ fn rule_one_needs_no_backend() {
         "which is a real digest, so an all-zero header field is not silently valid"
     );
 }
+
+/// A block that declares no dependencies is valid without any backend at all.
+///
+/// This one matters more than it looks. The header entry is mandatory from J*, so
+/// without the vacuous arm every J* block reaches a backend -- including every
+/// block on a chain where nobody has used the feature -- and a default build would
+/// refuse the whole chain rather than the transactions it cannot check. Failing
+/// closed is right; failing closed on any J* block rather than on unproven
+/// dependencies is the wrong granularity. Found by a second audit.
+#[test]
+fn an_empty_dependency_set_needs_no_backend() {
+    let agg = UnavailableAggregator;
+    assert!(!agg.supports_scheme(DEPENDENCY_SCHEME_LEANSPHINCS));
+
+    // The rule-2 caller short-circuits on an empty set before reaching the backend,
+    // so what this pins is that the backend really would have refused.
+    assert_eq!(
+        agg.verify(&[], &[]),
+        Err(AggregateError::NoBackend),
+        "the backend refuses everything, so the short-circuit is what makes an \
+         empty-set block importable"
+    );
+}
+
+/// A backend advertises which schemes it can discharge, so admission can refuse a
+/// transaction whose dependencies no block could ever prove.
+#[test]
+fn a_backend_declares_the_schemes_it_supports() {
+    let agg = UnavailableAggregator;
+    for scheme in [DEPENDENCY_SCHEME_LEANSPHINCS, DEPENDENCY_SCHEME_LEANSTARK] {
+        assert!(
+            !agg.supports_scheme(scheme),
+            "a build with no backend discharges nothing"
+        );
+    }
+}
