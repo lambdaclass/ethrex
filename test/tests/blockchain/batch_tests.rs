@@ -1,4 +1,4 @@
-use std::{fs::File, io::BufReader, path::PathBuf};
+use std::{fs::File, io::BufReader, path::PathBuf, sync::Arc};
 
 use bytes::Bytes;
 use ethrex_blockchain::{
@@ -234,10 +234,11 @@ async fn batch_selfdestruct_created_account_no_spurious_state() {
     // 7. Create a fresh store B and re-execute both blocks in batch.
     //    This is the code path that was buggy before the fix.
     let (store_b, _) = setup_store(sender).await;
-    let blockchain_b = Blockchain::default_with_store(store_b);
+    let blockchain_b = Arc::new(Blockchain::default_with_store(store_b));
 
     let result = blockchain_b
-        .add_blocks_in_batch(vec![block1, block2], &[], CancellationToken::new())
+        .clone()
+        .add_blocks_in_batch(vec![block1, block2], vec![], CancellationToken::new())
         .await;
 
     assert!(
@@ -382,10 +383,11 @@ async fn batch_cross_batch_blockhash_regression() {
     // Batch 1: blocks 1-2, Batch 2: block 3
     // Block 3 needs blockhash(2) which is only in batch 1.
     let (store_b, _) = setup_store(sender).await;
-    let blockchain_b = Blockchain::default_with_store(store_b);
+    let blockchain_b = Arc::new(Blockchain::default_with_store(store_b));
 
     let result1 = blockchain_b
-        .add_blocks_in_batch(vec![block1, block2], &[], CancellationToken::new())
+        .clone()
+        .add_blocks_in_batch(vec![block1, block2], vec![], CancellationToken::new())
         .await;
     assert!(
         result1.is_ok(),
@@ -394,7 +396,7 @@ async fn batch_cross_batch_blockhash_regression() {
     );
 
     let result2 = blockchain_b
-        .add_blocks_in_batch(vec![block3], &[], CancellationToken::new())
+        .add_blocks_in_batch(vec![block3], vec![], CancellationToken::new())
         .await;
     assert!(
         result2.is_ok(),
@@ -438,10 +440,10 @@ async fn batch_single_block_selfdestruct() {
 
     // Batch path: re-execute the same block on a fresh store.
     let (store_b, _) = setup_store(sender).await;
-    let blockchain_b = Blockchain::default_with_store(store_b);
+    let blockchain_b = Arc::new(Blockchain::default_with_store(store_b));
 
     let result = blockchain_b
-        .add_blocks_in_batch(vec![block1], &[], CancellationToken::new())
+        .add_blocks_in_batch(vec![block1], vec![], CancellationToken::new())
         .await;
 
     assert!(
