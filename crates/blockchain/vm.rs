@@ -77,14 +77,17 @@ pub struct OverlaidVmDatabase<Inner> {
 }
 
 impl<Inner> OverlaidVmDatabase<Inner> {
+    /// `overrides` arrives shared rather than owned: `eth_estimateGas` builds one
+    /// overlay per binary-search step, and copying the map — with a storage map inside
+    /// every entry — on each of them is pure waste.
     pub fn new(
         inner: Inner,
-        overrides: BTreeMap<Address, StateOverride>,
+        overrides: Arc<BTreeMap<Address, StateOverride>>,
         base_block_number: BlockNumber,
     ) -> Self {
         Self {
             inner,
-            overrides: Arc::new(overrides),
+            overrides,
             base_block_number,
         }
     }
@@ -99,6 +102,13 @@ impl<Inner> OverlaidVmDatabase<Inner> {
 }
 
 impl<Inner: VmDatabase + Clone> VmDatabase for OverlaidVmDatabase<Inner> {
+    // The batch methods are deliberately left to their trait defaults, which loop the
+    // single-key ones above — the only place the overrides are applied. Forwarding them to
+    // the inner database would read straight past the overlay. One consequence to know
+    // before wiring them anywhere: the default `get_account_codes_batch` maps a missing
+    // hash to `Err`, where `StoreVmDatabase`'s own batch deliberately reports `Ok(None)`.
+    // Nothing reaches it today, since the override paths build no `CachingDatabase` and
+    // `prefetch_codes` has no callers.
     fn get_account_state(&self, address: Address) -> Result<Option<AccountState>, EvmError> {
         let base = self.inner.get_account_state(address)?;
         let Some(ov) = self.overrides.get(&address) else {
@@ -139,8 +149,33 @@ impl<Inner: VmDatabase + Clone> VmDatabase for OverlaidVmDatabase<Inner> {
         if let Some((h, _)) = &ov.code {
             state.code_hash = *h;
         }
-        // storage_root is left untouched: the wrapper intercepts get_storage_slot
-        // directly, so the EVM never observes a storage_root that has to match.
+        // `storage_root` has to follow the storage override, even though no slot read
+        // goes through it. `LevmAccount::from` turns it into `has_storage`
+        // (`crates/vm/levm/src/account.rs:78`) and folds it into `exists`, and
+        // `create_would_collide` reads `has_storage` — so passing the real root through
+        // let a `state` override that empties an account still abort a simulated CREATE2
+        // on it with `AddressAlreadyOccupied`, while every slot read zero. geth does not:
+        // `SetStorage` installs a fresh object built by `NewEmptyStateAccount`, whose
+        // `Root` is `EmptyRootHash`, so its collision check sees no storage either.
+        //
+        // The non-empty answer is a sentinel, never a real root; nothing on this path may
+        // commit it or compare it to one. Only its emptiness is ever read.
+        state.storage_root = match &ov.storage_mode {
+            // No storage override: the account keeps whatever the chain says.
+            StorageMode::None => state.storage_root,
+            // `state`: a closed world. The account has storage only if this map gives it
+            // some, exactly as geth's replacement object does.
+            StorageMode::Replace(map) => storage_root_for(map.values().any(|v| !v.is_zero())),
+            // `stateDiff`: an overlay. Real storage survives underneath, so the account
+            // has storage if it already did or if the overlay adds a non-zero slot.
+            StorageMode::Diff(map) => {
+                if state.storage_root != *EMPTY_TRIE_HASH {
+                    state.storage_root
+                } else {
+                    storage_root_for(map.values().any(|v| !v.is_zero()))
+                }
+            }
+        };
         Ok(Some(state))
     }
 
@@ -215,8 +250,9 @@ impl<Inner: VmDatabase + Clone> VmDatabase for OverlaidVmDatabase<Inner> {
     }
 }
 
-/// Stand-in `storage_root` for an account the replay gave storage to without this layer
-/// materialising a trie for it.
+/// Stand-in `storage_root` for an account that has storage without this layer
+/// materialising a trie for it: one the replay wrote to, or one a State Override Set gave
+/// slots to.
 ///
 /// **Not a real trie root.** On this path `storage_root` feeds two things downstream:
 /// `LevmAccount::has_storage` (`crates/vm/levm/src/account.rs:78`, the EIP-7610
@@ -236,6 +272,17 @@ impl<Inner: VmDatabase + Clone> VmDatabase for OverlaidVmDatabase<Inner> {
 /// root unchanged regardless of `added_storage`. That stale value is just as
 /// uncommittable, and worse, in that it looks exactly like a real trie root.
 const UNMATERIALISED_STORAGE_ROOT: H256 = H256([0xff; 32]);
+
+/// The `storage_root` to report for an account whose storage this layer knows only as a
+/// map: the sentinel when it holds anything, the empty-trie root when it does not. Only
+/// the distinction between the two is ever read — see [`UNMATERIALISED_STORAGE_ROOT`].
+fn storage_root_for(has_storage: bool) -> H256 {
+    if has_storage {
+        UNMATERIALISED_STORAGE_ROOT
+    } else {
+        *EMPTY_TRIE_HASH
+    }
+}
 
 /// `VmDatabase` decorator that layers a finished block replay over the state that replay
 /// started from, so the replay can be read as a database.
@@ -259,7 +306,7 @@ pub struct ReplayedVmDatabase<Inner> {
 impl<Inner> ReplayedVmDatabase<Inner> {
     /// `updates` must carry at most one entry per address, as
     /// `Evm::get_state_transitions` guarantees. A second update for the same address
-    /// is silently discarded rather than merged — see `AccountUpdate::merge`
+    /// overwrites the first rather than merging with it — see `AccountUpdate::merge`
     /// (`crates/common/types/account_update.rs:38-50`) if a caller needs that instead.
     pub fn new(inner: Inner, updates: Vec<AccountUpdate>) -> Self {
         Self {
@@ -270,6 +317,8 @@ impl<Inner> ReplayedVmDatabase<Inner> {
 }
 
 impl<Inner: VmDatabase + Clone> VmDatabase for ReplayedVmDatabase<Inner> {
+    // Same as `OverlaidVmDatabase`: the batch methods keep their trait defaults so they
+    // loop the single-key ones and see the replay, rather than the state it started from.
     fn get_account_state(&self, address: Address) -> Result<Option<AccountState>, EvmError> {
         let Some(update) = self.updates.get(&address) else {
             return self.inner.get_account_state(address);
@@ -1326,7 +1375,7 @@ mod overlaid_db_tests {
                 ..Default::default()
             },
         );
-        let wrapper = OverlaidVmDatabase::new(mock, overrides, 0);
+        let wrapper = OverlaidVmDatabase::new(mock, Arc::new(overrides), 0);
         let state = wrapper.get_account_state(addr(1)).unwrap().unwrap();
         assert_eq!(state.balance, U256::from(999));
     }
@@ -1342,7 +1391,7 @@ mod overlaid_db_tests {
                 ..Default::default()
             },
         );
-        let wrapper = OverlaidVmDatabase::new(mock, overrides, 0);
+        let wrapper = OverlaidVmDatabase::new(mock, Arc::new(overrides), 0);
         // Address has no real state — wrapper should synthesize.
         let state = wrapper.get_account_state(addr(2)).unwrap().unwrap();
         assert_eq!(state.nonce, 42);
@@ -1359,7 +1408,7 @@ mod overlaid_db_tests {
                 ..Default::default()
             },
         );
-        let wrapper = OverlaidVmDatabase::new(mock, overrides, 0);
+        let wrapper = OverlaidVmDatabase::new(mock, Arc::new(overrides), 0);
         // movePrecompileToAddress alone doesn't materialize an account.
         assert!(wrapper.get_account_state(addr(3)).unwrap().is_none());
         assert_eq!(
@@ -1401,7 +1450,7 @@ mod overlaid_db_tests {
                 ..Default::default()
             },
         );
-        let wrapper = OverlaidVmDatabase::new(mock, overrides, 0);
+        let wrapper = OverlaidVmDatabase::new(mock, Arc::new(overrides), 0);
         let state = wrapper.get_account_state(addr(4)).unwrap().unwrap();
         assert_eq!(state.code_hash, hash);
         let fetched = wrapper.get_account_code(hash).unwrap();
@@ -1428,7 +1477,7 @@ mod overlaid_db_tests {
                 ..Default::default()
             },
         );
-        let wrapper = OverlaidVmDatabase::new(mock, overrides, 0);
+        let wrapper = OverlaidVmDatabase::new(mock, Arc::new(overrides), 0);
         // Slot 0 should NOT see the inner 0xff because Replace mode erases it.
         assert_eq!(
             wrapper.get_storage_slot(addr(5), slot(0)).unwrap(),
@@ -1458,7 +1507,7 @@ mod overlaid_db_tests {
                 ..Default::default()
             },
         );
-        let wrapper = OverlaidVmDatabase::new(mock, overrides, 0);
+        let wrapper = OverlaidVmDatabase::new(mock, Arc::new(overrides), 0);
         // Diff mode: real slot 0 is preserved.
         assert_eq!(
             wrapper.get_storage_slot(addr(6), slot(0)).unwrap(),
@@ -1475,6 +1524,95 @@ mod overlaid_db_tests {
     /// function is built from the real header before the block overrides are applied, so
     /// it answers zero from that height upwards. A tip-based cutoff would serve the real
     /// hashes of blocks 100..=tip to a call whose synthetic number sits past them.
+    /// A `state` override that empties an account has to empty its `storage_root` too.
+    ///
+    /// No slot read consults the root, but `LevmAccount::from` turns it into
+    /// `has_storage`, and `create_would_collide` reads that — so a stale real root made a
+    /// simulated CREATE2 abort on an account the EVM could see was empty in every other
+    /// way. geth's `SetStorage` installs an object whose `Root` is `EmptyRootHash`, so it
+    /// does not collide either.
+    #[test]
+    fn replace_mode_empties_the_storage_root_when_it_empties_the_account() {
+        let mock = MockDb::default();
+        mock.accounts.lock().unwrap().insert(
+            addr(8),
+            AccountState {
+                // A real, non-empty root: this account has storage on chain.
+                storage_root: H256::from_low_u64_be(0xbeef),
+                ..Default::default()
+            },
+        );
+        let mut overrides = BTreeMap::new();
+        overrides.insert(
+            addr(8),
+            StateOverride {
+                storage_mode: StorageMode::Replace(BTreeMap::new()),
+                ..Default::default()
+            },
+        );
+        let wrapper = OverlaidVmDatabase::new(mock, Arc::new(overrides), 0);
+        let state = wrapper.get_account_state(addr(8)).unwrap().unwrap();
+        assert_eq!(
+            state.storage_root, *EMPTY_TRIE_HASH,
+            "an emptied account must not keep a root that reads as having storage"
+        );
+    }
+
+    /// The other direction: `state` with values, and `stateDiff` adding one, must report
+    /// storage even though no trie was built for either.
+    #[test]
+    fn an_override_that_gives_storage_reports_a_non_empty_root() {
+        for mode in [
+            StorageMode::Replace(BTreeMap::from([(slot(1), U256::from(5))])),
+            StorageMode::Diff(BTreeMap::from([(slot(1), U256::from(5))])),
+        ] {
+            let mut overrides = BTreeMap::new();
+            overrides.insert(
+                addr(9),
+                StateOverride {
+                    balance: Some(U256::one()),
+                    storage_mode: mode,
+                    ..Default::default()
+                },
+            );
+            let wrapper = OverlaidVmDatabase::new(MockDb::default(), Arc::new(overrides), 0);
+            let state = wrapper.get_account_state(addr(9)).unwrap().unwrap();
+            assert_ne!(
+                state.storage_root, *EMPTY_TRIE_HASH,
+                "an override that gives an account slots must report storage"
+            );
+        }
+    }
+
+    /// `stateDiff` is an overlay, so the real storage underneath still counts even when
+    /// the overlay itself only zeroes slots.
+    #[test]
+    fn diff_mode_keeps_a_real_root_it_did_not_empty() {
+        let mock = MockDb::default();
+        let real_root = H256::from_low_u64_be(0xbeef);
+        mock.accounts.lock().unwrap().insert(
+            addr(10),
+            AccountState {
+                storage_root: real_root,
+                ..Default::default()
+            },
+        );
+        let mut overrides = BTreeMap::new();
+        overrides.insert(
+            addr(10),
+            StateOverride {
+                storage_mode: StorageMode::Diff(BTreeMap::from([(slot(1), U256::zero())])),
+                ..Default::default()
+            },
+        );
+        let wrapper = OverlaidVmDatabase::new(mock, Arc::new(overrides), 0);
+        let state = wrapper.get_account_state(addr(10)).unwrap().unwrap();
+        assert_eq!(
+            state.storage_root, real_root,
+            "a diff that zeroes one slot does not empty the storage underneath it"
+        );
+    }
+
     #[test]
     fn block_hash_at_or_past_the_base_block_returns_zero() {
         let mock = MockDb::default();
@@ -1484,7 +1622,7 @@ mod overlaid_db_tests {
                 .unwrap()
                 .insert(number, H256::from_low_u64_be(0xdead));
         }
-        let wrapper = OverlaidVmDatabase::new(mock, BTreeMap::new(), 100);
+        let wrapper = OverlaidVmDatabase::new(mock, Arc::new(BTreeMap::new()), 100);
         // Below the base block: delegates.
         assert_eq!(
             wrapper.get_block_hash(50).unwrap(),
@@ -1507,7 +1645,7 @@ mod overlaid_db_tests {
         mock.accounts.lock().unwrap().insert(addr(7), original);
         let mut overrides = BTreeMap::new();
         overrides.insert(addr(7), StateOverride::default());
-        let wrapper = OverlaidVmDatabase::new(mock, overrides, 0);
+        let wrapper = OverlaidVmDatabase::new(mock, Arc::new(overrides), 0);
         let state = wrapper.get_account_state(addr(7)).unwrap().unwrap();
         assert_eq!(state.balance, U256::from(7));
         assert_eq!(state.nonce, 3);
@@ -1769,7 +1907,7 @@ mod replayed_db_tests {
                 ..Default::default()
             },
         );
-        let db = OverlaidVmDatabase::new(replayed, overrides, 0);
+        let db = OverlaidVmDatabase::new(replayed, Arc::new(overrides), 0);
         assert_eq!(
             db.get_storage_slot(addr(8), slot(2)).unwrap(),
             Some(U256::from(7))
@@ -1804,7 +1942,7 @@ mod replayed_db_tests {
                 ..Default::default()
             },
         );
-        let db = OverlaidVmDatabase::new(replayed, overrides, 0);
+        let db = OverlaidVmDatabase::new(replayed, Arc::new(overrides), 0);
         assert_eq!(
             db.get_storage_slot(addr(9), slot(2)).unwrap(),
             Some(U256::from(7))

@@ -10,9 +10,11 @@
 use bytes::Bytes;
 use ethrex_common::types::{Genesis, GenesisAccount};
 use ethrex_common::{Address, U256};
+use ethrex_levm::utils::calculate_create2_address;
 use ethrex_rpc::test_utils::{call_http, default_context_with_storage, setup_store};
 use ethrex_storage::{EngineType, Store};
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 use std::str::FromStr;
 
 /// Address the overrides install synthetic bytecode at.
@@ -137,6 +139,103 @@ async fn call_observes_overridden_storage() {
 
     let response = call_http(&context, body).await;
     assert_eq!(word_value(expect_result(&response)), "5678");
+}
+
+/// Deployer for the CREATE2 collision tests.
+const FACTORY: &str = "0x000000000000000000000000000000000000fac7";
+
+/// `PUSH1 0 ×4; CREATE2; PUSH1 0; MSTORE; PUSH1 0x20; PUSH1 0; RETURN` — CREATE2 with a
+/// zero salt and empty init code, returning the address it produced. CREATE2 pushes zero
+/// instead when the target is already occupied, so the returned word says which happened.
+const CREATE2_FACTORY_CODE: &str = "0x6000600060006000f560005260206000f3";
+
+/// The address [`CREATE2_FACTORY_CODE`] deploys to, derived the way the EVM derives it.
+fn create2_target() -> Address {
+    calculate_create2_address(
+        Address::from_str(FACTORY).unwrap(),
+        &Bytes::new(),
+        U256::zero(),
+    )
+    .expect("create2 address derivation")
+}
+
+/// Genesis with the factory deployed and its CREATE2 target holding storage, and nothing
+/// else: no balance, no nonce, no code. Storage is then the only thing that can make the
+/// target collide.
+async fn store_with_an_occupied_create2_target() -> Store {
+    let mut genesis = l1_genesis();
+    genesis.alloc.insert(
+        Address::from_str(FACTORY).unwrap(),
+        GenesisAccount {
+            code: Bytes::from(hex::decode(CREATE2_FACTORY_CODE.trim_start_matches("0x")).unwrap()),
+            storage: Default::default(),
+            balance: U256::zero(),
+            nonce: 0,
+        },
+    );
+    genesis.alloc.insert(
+        create2_target(),
+        GenesisAccount {
+            code: Bytes::new(),
+            storage: BTreeMap::from([(U256::zero(), U256::one())]),
+            balance: U256::zero(),
+            nonce: 0,
+        },
+    );
+    store_from(genesis).await
+}
+
+/// Control: with the target's storage intact, the deployment collides and CREATE2 pushes
+/// zero. Without this, the test below cannot tell a working override from a fixture that
+/// never collided in the first place.
+#[tokio::test]
+async fn create2_collides_with_an_account_that_has_storage() {
+    let storage = store_with_an_occupied_create2_target().await;
+    let context = default_context_with_storage(storage).await;
+
+    let body = request(
+        "eth_call",
+        json!([{ "from": FUNDED_SENDER, "to": FACTORY, "data": "0x" }, "latest"]),
+    );
+
+    let response = call_http(&context, body).await;
+    assert_eq!(
+        word_value(expect_result(&response)),
+        "0",
+        "the target holds storage, so CREATE2 must report a collision: {response}"
+    );
+}
+
+/// An override that empties the target must empty its storage root with it.
+///
+/// The override leaves an account the EVM can see is empty in every way it can inspect:
+/// no code, no nonce, and every slot reading zero. The EIP-7610 collision check reads
+/// `has_storage`, which comes from `storage_root` and from nothing else, so passing the
+/// real root through the overlay made this CREATE2 keep failing against state the caller
+/// had already overridden away. geth does not: its `SetStorage` installs an account whose
+/// root is the empty-trie root.
+#[tokio::test]
+async fn an_override_that_empties_an_account_clears_the_create2_collision() {
+    let storage = store_with_an_occupied_create2_target().await;
+    let context = default_context_with_storage(storage).await;
+    let target = create2_target();
+
+    let body = request(
+        "eth_call",
+        json!([
+            { "from": FUNDED_SENDER, "to": FACTORY, "data": "0x" },
+            "latest",
+            { format!("{target:#x}"): { "code": "0x", "nonce": "0x0", "state": {} } }
+        ]),
+    );
+
+    let response = call_http(&context, body).await;
+    assert_eq!(
+        word_value(expect_result(&response)),
+        format!("{target:x}").trim_start_matches('0'),
+        "the emptied target must no longer collide, so CREATE2 returns its address: \
+         {response}"
+    );
 }
 
 /// `eth_estimateGas` short-circuits a plain value transfer to 21000 without

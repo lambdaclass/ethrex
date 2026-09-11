@@ -3,12 +3,13 @@ use std::time::Duration;
 use ethrex_common::{
     Address, H256,
     tracing::{CallTrace, OpcodeTraceResult, PrestateResult},
-    types::{Block, BlockHeader, GenericTransaction},
+    types::{Block, BlockHeader, BlockNumber, GenericTransaction},
 };
 use ethrex_storage::Store;
 use ethrex_vm::tracing::OpcodeTracerConfig;
 use ethrex_vm::{Evm, EvmError};
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use crate::{
     Blockchain,
@@ -24,8 +25,9 @@ use crate::{
 /// baked into `effective_header` by the caller.
 #[derive(Default, Clone)]
 pub struct TraceCallOverrides {
-    /// State Override Set, already converted by the RPC layer.
-    pub state: BTreeMap<Address, StateOverride>,
+    /// State Override Set, already converted by the RPC layer. Shared rather than owned
+    /// so building the overlay does not copy it.
+    pub state: Arc<BTreeMap<Address, StateOverride>>,
     /// Header the EVM environment is built from when a Block Override Set was given.
     /// The *database* is always built from the real header, so `state_root` and
     /// block-hash ancestor walks still resolve against actual chain state.
@@ -37,11 +39,24 @@ impl TraceCallOverrides {
         !self.state.is_empty()
     }
 
-    /// True when the overlay must be installed. A Block Override Set alone is enough:
-    /// the overlay carries the `BLOCKHASH`-past-the-base-block clamp, which is a property
-    /// of executing against a synthetic block rather than of the state overrides.
-    fn needs_overlay(&self) -> bool {
-        self.has_state() || self.effective_header.is_some()
+    /// True when the overlay must be installed: there is state to overlay, or the
+    /// synthetic block sits above the real one.
+    ///
+    /// A Block Override Set on its own only needs the overlay for its
+    /// `BLOCKHASH`-past-the-base-block clamp, and that clamp cannot fire unless `number`
+    /// moved forward: LEVM measures its own 256-block window against the synthetic number
+    /// (`opcode_handlers/block.rs`), so with the number unchanged or moved down every
+    /// number it can reach is already below the base. Overriding only `time`, `coinbase`
+    /// or `difficulty` therefore reaches the environment and the fork, never the database
+    /// — and on the re-execution path an overlay would otherwise pull the trace through
+    /// `ReplayedVmDatabase`'s reconstructed `storage_root` for nothing, which is the same
+    /// thing `build_call_trace_vm` avoids for an override-free trace.
+    fn needs_overlay(&self, base_block_number: BlockNumber) -> bool {
+        self.has_state()
+            || self
+                .effective_header
+                .as_ref()
+                .is_some_and(|header| header.number > base_block_number)
     }
 }
 
@@ -337,7 +352,7 @@ impl Blockchain {
             // Built from the real header even under a Block Override Set, so `state_root`
             // resolves; the synthetic header only feeds the EVM environment.
             let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.clone())?;
-            if overrides.needs_overlay() {
+            if overrides.needs_overlay(block.header.number) {
                 return Ok(self.new_overlaid_evm(
                     vm_db,
                     overrides.state.clone(),
@@ -364,7 +379,7 @@ impl Blockchain {
         // from an `AccountUpdate` rather than carrying the real one (see
         // `UNMATERIALISED_STORAGE_ROOT`), and there is no reason to put the
         // override-free `txIndex` trace through an approximation it does not need.
-        if !overrides.needs_overlay() {
+        if !overrides.needs_overlay(block.header.number) {
             return Ok(vm);
         }
         // `get_state_transitions` diffs `current_accounts_state` against

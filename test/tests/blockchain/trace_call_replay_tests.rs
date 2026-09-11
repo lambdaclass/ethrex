@@ -315,7 +315,7 @@ fn overrides_setting_balance(address: Address, balance: u64) -> TraceCallOverrid
         },
     );
     TraceCallOverrides {
-        state,
+        state: std::sync::Arc::new(state),
         effective_header: None,
     }
 }
