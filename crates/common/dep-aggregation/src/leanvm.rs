@@ -309,6 +309,77 @@ mod tests {
     }
 
     #[test]
+    /// Both block-validity rules against one block carrying a real aggregate.
+    ///
+    /// Rule 1 is the header's digest against the block's own transactions; rule 2 is
+    /// the proof against that same set. Together they are what makes a dependency
+    /// binding: rule 1 alone lets a block declare anything and prove nothing, rule 2
+    /// alone lets the header disagree with the body.
+    ///
+    /// Ignored for the same memory reason as the round trip above.
+    #[test]
+    #[ignore = "leanVM proving peaks at 9-11 GiB and takes ~1s"]
+    fn a_block_carrying_a_real_aggregate_satisfies_both_rules() {
+        use ethrex_common::U256;
+        use ethrex_common::types::{
+            BlockBody, DEPENDENCY_SCHEME_LEANSPHINCS as SPHINCS, Frame, FrameMode,
+            FrameTransaction, LEANSPHINCS_VERIFICATION_GAS, RecursiveStark, Transaction,
+        };
+
+        let agg = LeanVmAggregator::new();
+        let (t1, w1) = dependency(10, [0xA1; 32]);
+        let (t2, w2) = dependency(11, [0xB2; 32]);
+
+        // A transaction declaring both dependencies in one frame.
+        let mut data = t1.encode().to_vec();
+        data.extend_from_slice(&t2.encode());
+        let tx = FrameTransaction {
+            frames: vec![Frame {
+                mode: FrameMode::DepVerify as u8,
+                flags: 0,
+                target: None,
+                gas_limit: 2 * LEANSPHINCS_VERIFICATION_GAS,
+                state_gas_limit: 0,
+                value: U256::zero(),
+                data: data.into(),
+            }],
+            ..Default::default()
+        };
+        let body = BlockBody {
+            transactions: vec![Transaction::FrameTransaction(tx)],
+            ommers: Vec::new(),
+            withdrawals: None,
+        };
+
+        let declared = body.dependencies();
+        assert_eq!(declared.len(), 2, "the frame declares both dependencies");
+
+        let proof = agg
+            .aggregate(&[w1, w2], &[])
+            .expect("the builder aggregates what the block declares");
+
+        let header_entry = RecursiveStark {
+            proof: proof.into(),
+            block_deps_hash: body.block_deps_hash(),
+        };
+
+        // Rule 1.
+        assert_eq!(header_entry.block_deps_hash, body.block_deps_hash());
+        // Rule 2.
+        agg.verify(&header_entry.proof, &declared)
+            .expect("the aggregate discharges the block's dependencies");
+
+        // A header that declares a different digest fails rule 1 while the proof
+        // still verifies -- which is why rule 1 is not redundant.
+        let tampered = RecursiveStark {
+            proof: header_entry.proof.clone(),
+            block_deps_hash: H256::from_low_u64_be(0xBAD),
+        };
+        assert_ne!(tampered.block_deps_hash, body.block_deps_hash());
+        assert!(agg.verify(&tampered.proof, &declared).is_ok());
+    }
+
+    #[test]
     fn a_witness_must_match_the_dependency_it_is_filed_under() {
         let (_, w) = dependency(4, [0x44; 32]);
         let mut tampered = w.clone();
