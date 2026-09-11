@@ -2747,11 +2747,25 @@ impl<'a> VM<'a> {
             && self.current_call_frame.gas_remaining >= 0
             && self.tx.authorization_list().is_none()
             // Precompiles dispatch via run_execution even with empty bytecode.
-            && !precompiles::is_precompile(
-                &self.current_call_frame.to,
-                self.env.config.fork,
-                self.vm_type,
-            )
+            && !self.address_is_precompile(&self.current_call_frame.to)
+    }
+
+    /// [`precompiles::is_precompile`], honoring simulation-only relocations from
+    /// `movePrecompileToAddress`. Identical to the plain check on consensus paths,
+    /// where `db.precompile_moves` is `None`.
+    pub(crate) fn address_is_precompile(&self, address: &Address) -> bool {
+        precompiles::is_precompile_with_moves(
+            address,
+            self.env.config.fork,
+            self.vm_type,
+            self.db.precompile_moves.as_deref(),
+        )
+    }
+
+    /// The address whose precompile implementation should execute for a call to
+    /// `address` (identity mapping unless `address` is a relocation destination).
+    pub(crate) fn effective_precompile_address(&self, address: Address) -> Address {
+        precompiles::effective_precompile_address(address, self.db.precompile_moves.as_deref())
     }
 
     /// Main execution loop.
@@ -2791,11 +2805,7 @@ impl<'a> VM<'a> {
         let top_frame_new_account_charged = self.value_new_account_charged;
 
         #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
-        if precompiles::is_precompile(
-            &self.current_call_frame.to,
-            self.env.config.fork,
-            self.vm_type,
-        ) {
+        if self.address_is_precompile(&self.current_call_frame.to) {
             // `execute_precompile` itself never touches state gas (it only mutates
             // `gas_remaining`; it has no access to `state_gas_used` / `state_gas_reservoir` /
             // `state_gas_spill`) — the assert below guards that. The in-region EIP-2780
@@ -2805,7 +2815,9 @@ impl<'a> VM<'a> {
             // `&mut self.current_call_frame` so the refund call, which needs `&mut self`,
             // can run after `execute_precompile`.
             let state_gas_used_before_precompile = self.state_gas_used;
-            let code_address = self.current_call_frame.code_address;
+            // Resolve a relocation destination back to the precompile it hosts.
+            let code_address =
+                self.effective_precompile_address(self.current_call_frame.code_address);
             let precompile_gas_limit = self.current_call_frame.gas_limit;
             let mut gas_remaining = self.current_call_frame.gas_remaining as u64;
             let result = Self::execute_precompile(

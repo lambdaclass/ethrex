@@ -18,7 +18,6 @@ use crate::{
     gas_cost,
     memory::{self, calculate_memory_size},
     opcode_handlers::OpcodeHandler,
-    precompiles,
     utils::{address_to_word, create_eth_transfer_log, word_to_address, *},
     vm::VM,
 };
@@ -1197,9 +1196,7 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue);
         }
 
-        if precompiles::is_precompile(&code_address, self.env.config.fork, self.vm_type)
-            && !is_delegation_7702
-        {
+        if self.address_is_precompile(&code_address) && !is_delegation_7702 {
             // Record precompile address touch for BAL per EIP-7928
             if let Some(recorder) = self.db.bal_recorder.as_mut() {
                 recorder.record_touched_address(code_address);
@@ -1207,7 +1204,8 @@ impl<'a> VM<'a> {
 
             let mut gas_remaining = gas_limit;
             let ctx_result = Self::execute_precompile(
-                code_address,
+                // Resolve a relocation destination back to the precompile it hosts.
+                self.effective_precompile_address(code_address),
                 &calldata,
                 gas_limit,
                 &mut gas_remaining,

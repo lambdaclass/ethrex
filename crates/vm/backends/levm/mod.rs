@@ -3821,7 +3821,7 @@ pub fn calculate_gas_price_for_tx(
 /// When basefee tracking is disabled  (ie. env.disable_base_fee = true; env.disable_block_gas_limit = true;)
 /// and no gas prices were specified, lower the basefee to 0 to avoid breaking EVM invariants (basefee < feecap)
 /// See https://github.com/ethereum/go-ethereum/blob/00294e9d28151122e955c7db4344f06724295ec5/core/vm/evm.go#L137
-fn adjust_disabled_base_fee(env: &mut Environment) {
+pub(crate) fn adjust_disabled_base_fee(env: &mut Environment) {
     if env.gas_price == U256::zero() {
         env.base_fee_per_gas = U256::zero();
     }
@@ -3856,7 +3856,7 @@ fn adjust_disabled_l2_fees(env: &Environment, vm_type: VMType) -> VMType {
     vm_type
 }
 
-fn env_from_generic(
+pub(crate) fn env_from_generic(
     tx: &GenericTransaction,
     header: &BlockHeader,
     db: &GeneralizedDatabase,
@@ -3933,7 +3933,7 @@ fn env_from_generic(
     })
 }
 
-/// Converts a `GenericTransaction` (RPC/simulation input) into a concrete `Transaction`.
+/// Build a synthetic `Transaction` from a `GenericTransaction` for simulation paths.
 ///
 /// Split out from `vm_from_generic` so the caller owns the resulting `Transaction` for at least
 /// the VM's lifetime — `VM` now borrows its tx (`&'a Transaction`) instead of cloning it.
