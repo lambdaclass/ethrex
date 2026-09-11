@@ -323,6 +323,7 @@ fn create_block_for_testing() -> (BlockHeader, BlockBody) {
         Transaction::decode(&hex::decode("f86d80843baa0c4082f618946177843db3138ae69679a54b95cf345ed759450d870aa87bee538000808360306ba0151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65da064c5dd5aae2fbb535830ebbdad0234975cd7ece3562013b63ea18cc0df6c97d4").unwrap()).unwrap()],
         ommers: Default::default(),
         withdrawals: Default::default(),
+        ..Default::default()
     };
     (block_header, block_body)
 }

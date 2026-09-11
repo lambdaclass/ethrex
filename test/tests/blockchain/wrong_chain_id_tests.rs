@@ -127,6 +127,7 @@ async fn rejects_block_with_wrong_chain_id_transaction() {
         transactions: vec![tx],
         ommers: Vec::new(),
         withdrawals: None,
+        ..Default::default()
     };
 
     // Post-state consistent with ethrex executing the transfer (sender drained, nonce

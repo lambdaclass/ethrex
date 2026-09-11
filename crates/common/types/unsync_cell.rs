@@ -11,7 +11,7 @@ unsafe impl<T: Sync> Sync for OnceCell<T> {}
 
 impl<T> OnceCell<T> {
     #[inline]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self(core::cell::UnsafeCell::new(None))
     }
 
