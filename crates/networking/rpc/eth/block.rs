@@ -5,8 +5,8 @@ use tracing::debug;
 use crate::{
     rpc::{RpcApiContext, RpcHandler},
     types::{
-        block::RpcBlock,
-        block_identifier::{BlockIdentifier, BlockIdentifierOrHash},
+        block::{RpcBlock, RpcHeader},
+        block_identifier::{BlockIdentifier, BlockIdentifierOrHash, BlockTag},
         receipt::{RpcReceipt, RpcReceiptBlockInfo, RpcReceiptTxInfo},
     },
     utils::RpcErr,
@@ -24,6 +24,14 @@ pub struct GetBlockByNumberRequest {
 pub struct GetBlockByHashRequest {
     pub block: BlockHash,
     pub hydrated: bool,
+}
+
+pub struct GetHeaderByNumberRequest {
+    pub block: BlockIdentifier,
+}
+
+pub struct GetHeaderByHashRequest {
+    pub block: BlockHash,
 }
 
 pub struct GetBlockTransactionCountRequest {
@@ -110,6 +118,65 @@ impl RpcHandler for GetBlockByHashRequest {
         };
         let block = RpcBlock::build(block.header, block.body, self.block, self.hydrated)?;
         serde_json::to_value(&block).map_err(|error| RpcErr::Internal(error.to_string()))
+    }
+}
+
+impl RpcHandler for GetHeaderByNumberRequest {
+    fn parse(params: &Option<Vec<Value>>) -> Result<GetHeaderByNumberRequest, RpcErr> {
+        let params = params
+            .as_ref()
+            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+        if params.len() != 1 {
+            return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
+        };
+        Ok(GetHeaderByNumberRequest {
+            block: BlockIdentifier::parse(params[0].clone(), 0)?,
+        })
+    }
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        let storage = &context.storage;
+        debug!("Requested header with number: {}", self.block);
+        // Per the spec, the pending tag returns null instead of aliasing latest.
+        if matches!(self.block, BlockIdentifier::Tag(BlockTag::Pending)) {
+            return Ok(Value::Null);
+        }
+        let block_number = match self.block.resolve_block_number(storage).await? {
+            Some(block_number) => block_number,
+            _ => return Ok(Value::Null),
+        };
+        let header = match storage.get_block_header(block_number)? {
+            Some(header) => header,
+            _ => return Ok(Value::Null),
+        };
+        let hash = header.hash();
+        serde_json::to_value(RpcHeader { hash, header })
+            .map_err(|error| RpcErr::Internal(error.to_string()))
+    }
+}
+
+impl RpcHandler for GetHeaderByHashRequest {
+    fn parse(params: &Option<Vec<Value>>) -> Result<GetHeaderByHashRequest, RpcErr> {
+        let params = params
+            .as_ref()
+            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+        if params.len() != 1 {
+            return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
+        };
+        Ok(GetHeaderByHashRequest {
+            block: serde_json::from_value(params[0].clone())?,
+        })
+    }
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        let storage = &context.storage;
+        debug!("Requested header with hash: {:#x}", self.block);
+        let Some(header) = storage.get_block_header_by_hash(self.block)? else {
+            return Ok(Value::Null);
+        };
+        serde_json::to_value(RpcHeader {
+            hash: self.block,
+            header,
+        })
+        .map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
 
