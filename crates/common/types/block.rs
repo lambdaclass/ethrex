@@ -365,10 +365,7 @@ impl BlockBody {
     ///
     /// The second rule -- that the proof discharges the dependencies this digest
     /// names -- lives in `ethrex_blockchain::eip8288`, because it needs an
-    /// aggregation backend and this crate has none. It is implemented: see
-    /// `docs/eip-8288.md`. An earlier revision of this comment said it could not be,
-    /// which confused the EIP listing `AGGREGATED_VK` as `TBD` with the tooling
-    /// being absent; the tooling exists.
+    /// aggregation backend and this crate has none.
     pub fn block_deps_hash(&self) -> H256 {
         crate::types::dependencies_hash(&self.dependencies())
     }

@@ -113,10 +113,16 @@ pub enum WrapperError {
 impl MempoolWrapper {
     /// The EIP's per-mode receive checks.
     ///
-    /// Both modes share the two count limits and the union check; they differ in
-    /// how the dependencies are proven. Rule 1 of both modes compares `deps`
-    /// against the transactions' own dependencies, so it is only checkable when
-    /// every entry is a full transaction.
+    /// Both modes share the two count limits; they differ in how the dependencies
+    /// are proven.
+    ///
+    /// The union check runs for **both** modes, which is stricter than the EIP.
+    /// §Mempool Wrapper Object lists it only under mode 0 -- mode 1's four checks
+    /// are the digest, the proof, and the two limits. Applied to mode 1 as written,
+    /// a wrapper could carry a perfectly valid aggregate over dependencies that have
+    /// nothing to do with the transactions it bundles, and a receiver would have no
+    /// rule to reject it by. That reads as an oversight rather than a decision, but
+    /// it is a divergence either way and is recorded as one in `docs/eip-8288.md`.
     pub fn validate(&self, aggregator: &dyn DependencyAggregator) -> Result<(), WrapperError> {
         if self.transactions.is_empty() {
             return Err(WrapperError::Empty);
@@ -195,8 +201,9 @@ impl MempoolWrapper {
         }
     }
 
-    /// Rule 1 of both modes: `deps` is the sorted, deduplicated union of the
-    /// dependencies of every transaction in the wrapper.
+    /// `deps` is the sorted, deduplicated union of the dependencies of every
+    /// transaction in the wrapper. Mode 0's rule 1, applied to mode 1 as well for
+    /// the reason given on `validate`.
     fn check_deps_are_the_union(&self) -> Result<(), WrapperError> {
         if self
             .transactions
@@ -219,6 +226,12 @@ impl MempoolWrapper {
     }
 
     /// The digest the EIP names as the recursive proof's public input.
+    ///
+    /// Informational. Mode 1's rule 1 compares this against the proof's public
+    /// input, which is only meaningful if the proof binds it -- and a leanVM
+    /// aggregate does not, it publishes claim lists. Validation therefore compares
+    /// the claims themselves and never reads this value; it is exposed so a caller
+    /// that does have a digest-binding backend can use it.
     pub fn deps_hash(&self) -> H256 {
         dependencies_hash(self.content.deps())
     }
