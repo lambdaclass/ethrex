@@ -103,9 +103,9 @@ fn parity_env(fork: Fork, block_gas_limit: u64) -> Environment {
         fee_token: None,
         disable_balance_check: true,
         disable_nonce_check: false,
-        disable_eoa_check: false,
         trace_eth_transfers: false,
         disable_gas_allowance_check: false,
+        disable_sender_eoa_check: false,
         is_system_call: false,
     }
 }
@@ -332,9 +332,9 @@ fn exec_env(fork: Fork) -> Environment {
         fee_token: None,
         disable_balance_check: true,
         disable_nonce_check: false,
-        disable_eoa_check: false,
         trace_eth_transfers: false,
         disable_gas_allowance_check: false,
+        disable_sender_eoa_check: false,
         is_system_call: false,
     }
 }

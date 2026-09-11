@@ -16,8 +16,8 @@
 
 use bytes::Bytes;
 use ethrex_blockchain::vm::StoreVmDatabase;
-use ethrex_common::types::{Account, BlockHeader, ChainConfig, Code, GenericTransaction};
-use ethrex_common::{Address, U256, constants::EMPTY_TRIE_HASH};
+use ethrex_common::types::{Account, BlockHeader, ChainConfig, Code, GenericTransaction, TxKind};
+use ethrex_common::{Address, H256, U256, constants::EMPTY_TRIE_HASH};
 use ethrex_crypto::NativeCrypto;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::vm::VMType;
@@ -203,5 +203,109 @@ fn simulation_still_runs_a_call_asking_for_more_gas_than_the_block_allows() {
         simulated_block_gas_limit(Some(BLOCK_GAS_LIMIT * 2)),
         U256::from(BLOCK_GAS_LIMIT),
         "an over-limit `gas` must still run, and still see the real GASLIMIT"
+    );
+}
+
+/// A call object sent from `GASLIMIT_READER`, an account that holds code. This is
+/// the shape EIP-3607 rejects when the transaction is a real, signed one.
+fn call_from_a_contract_account(gas: Option<u64>) -> GenericTransaction {
+    GenericTransaction {
+        from: GASLIMIT_READER,
+        to: TxKind::Call(GASLIMIT_READER),
+        gas,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn simulation_allows_a_contract_as_the_sender() {
+    // EIP-3607 rejects a sender that holds code because a contract has no private
+    // key, so no valid signature should exist for its address. A simulated call
+    // carries no signature and its `from` is just an assertion by the caller, so
+    // the rule protects nothing here and simulation must answer instead of
+    // rejecting. Simulating a call whose sender is a contract is routine: a smart
+    // contract wallet previewing its own transaction does exactly this.
+    let (mut db, header) = amsterdam_db_and_header(Some(0));
+    let result = LEVM::simulate_tx_from_generic(
+        &call_from_a_contract_account(None),
+        &header,
+        &mut db,
+        VMType::L1,
+        &NativeCrypto,
+        None,
+    )
+    .expect("a sender holding code must not be rejected under simulation");
+    assert!(
+        matches!(result, ExecutionResult::Success { .. }),
+        "expected the call to run, got {result:?}"
+    );
+}
+
+/// Runs `eth_createAccessList`'s path over `tx` and returns its result.
+fn access_list_result(tx: GenericTransaction) -> ExecutionResult {
+    let (mut db, header) = amsterdam_db_and_header(Some(0));
+    let (result, _access_list) =
+        LEVM::create_access_list(tx, &header, &mut db, VMType::L1, &NativeCrypto)
+            .expect("access list creation must not error");
+    result
+}
+
+#[test]
+fn access_list_creation_allows_a_contract_as_the_sender() {
+    // Access list creation is a simulation too, and the same callers use it with a
+    // contract as `from`. It shares the env builder with the other simulation RPCs,
+    // so it gets the same relaxation.
+    let result = access_list_result(call_from_a_contract_account(None));
+    assert!(
+        matches!(result, ExecutionResult::Success { .. }),
+        "expected the call to run, got {result:?}"
+    );
+}
+
+#[test]
+fn access_list_creation_runs_a_call_asking_for_more_gas_than_the_block_allows() {
+    // This used to fail the block gas-allowance check while `eth_call` and
+    // `eth_estimateGas` answered the very same call object, since the relaxation
+    // was opted into per caller and this path never opted in. Tools that pass the
+    // block gas limit as `gas` hit it routinely. The sender here is an EOA, so the
+    // gas allowance is the only thing under test.
+    let tx = GenericTransaction {
+        from: SENDER,
+        to: TxKind::Call(GASLIMIT_READER),
+        gas: Some(BLOCK_GAS_LIMIT * 2),
+        ..Default::default()
+    };
+    let result = access_list_result(tx);
+    assert!(
+        matches!(result, ExecutionResult::Success { .. }),
+        "expected the call to run, got {result:?}"
+    );
+}
+
+#[test]
+fn simulation_allows_a_zero_blob_fee_cap() {
+    // A call object opts out of blob fees by passing `maxFeePerBlobGas: 0`, the same
+    // way it opts out of gas fees by passing no gas price. That must not be rejected
+    // for undercutting the block's blob base fee, which has a floor of 1 even when
+    // the block carries no excess blob gas: the relaxation has to lower the blob base
+    // fee the check reads, not the excess that fee was derived from.
+    let (mut db, header) = amsterdam_db_and_header(Some(0));
+    let mut versioned_hash = [0u8; 32];
+    // VERSIONED_HASH_VERSION_KZG, so the hash still passes the blob validations that
+    // a zero fee cap has no business bypassing.
+    versioned_hash[0] = 0x01;
+    let tx = GenericTransaction {
+        from: SENDER,
+        to: TxKind::Call(GASLIMIT_READER),
+        max_fee_per_blob_gas: Some(U256::zero()),
+        blob_versioned_hashes: vec![H256(versioned_hash)],
+        ..Default::default()
+    };
+    let result =
+        LEVM::simulate_tx_from_generic(&tx, &header, &mut db, VMType::L1, &NativeCrypto, None)
+            .expect("a zero blob fee cap must not be rejected under simulation");
+    assert!(
+        matches!(result, ExecutionResult::Success { .. }),
+        "expected the call to run, got {result:?}"
     );
 }

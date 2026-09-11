@@ -135,7 +135,7 @@ impl Hook for DefaultHook {
         }
 
         // (9) SENDER_NOT_EOA
-        if !vm.env.disable_eoa_check {
+        if !vm.env.disable_sender_eoa_check {
             let code = vm.db.get_code(sender_info.code_hash)?;
             validate_sender(sender_address, code.code())?;
         }

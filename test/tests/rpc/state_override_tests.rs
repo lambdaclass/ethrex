@@ -73,7 +73,7 @@ async fn call_executes_overridden_code() {
         ]),
     );
 
-    let response = call_http(context, body).await;
+    let response = call_http(&context, body).await;
     assert_eq!(word_value(expect_result(&response)), "2a");
 }
 
@@ -90,7 +90,7 @@ async fn call_without_overrides_hits_the_empty_account() {
         json!([{ "from": CALLER, "to": CALLEE, "data": "0x" }, "latest"]),
     );
 
-    let response = call_http(context, body).await;
+    let response = call_http(&context, body).await;
     assert_eq!(expect_result(&response), "0x");
 }
 
@@ -113,7 +113,7 @@ async fn call_observes_overridden_balance() {
         ]),
     );
 
-    let response = call_http(context, body).await;
+    let response = call_http(&context, body).await;
     assert_eq!(word_value(expect_result(&response)), "1234");
 }
 
@@ -135,7 +135,7 @@ async fn call_observes_overridden_storage() {
         ]),
     );
 
-    let response = call_http(context, body).await;
+    let response = call_http(&context, body).await;
     assert_eq!(word_value(expect_result(&response)), "5678");
 }
 
@@ -153,7 +153,7 @@ async fn estimate_gas_with_code_override_skips_the_value_transfer_short_circuit(
         "eth_estimateGas",
         json!([{ "from": CALLER, "to": CALLEE, "value": "0x0" }, "latest"]),
     );
-    let response = call_http(context.clone(), plain).await;
+    let response = call_http(&context, plain).await;
     assert_eq!(
         expect_result(&response),
         "0x5208",
@@ -172,7 +172,7 @@ async fn estimate_gas_with_code_override_skips_the_value_transfer_short_circuit(
             }
         ]),
     );
-    let response = call_http(context, overridden).await;
+    let response = call_http(&context, overridden).await;
     let estimate = expect_result(&response);
     let gas = u64::from_str_radix(estimate.trim_start_matches("0x"), 16)
         .unwrap_or_else(|e| panic!("estimate {estimate} is not hex: {e}"));
@@ -214,7 +214,7 @@ async fn estimate_gas_exact_rerun_honors_the_override_sets() {
         ]),
     );
 
-    let response = call_http(context, body).await;
+    let response = call_http(&context, body).await;
     let estimate = expect_result(&response);
     let gas = u64::from_str_radix(estimate.trim_start_matches("0x"), 16)
         .unwrap_or_else(|e| panic!("estimate {estimate} is not hex: {e}"));
@@ -248,7 +248,7 @@ async fn estimate_gas_caps_against_the_overridden_balance() {
         ]),
     );
 
-    let response = call_http(context, body).await;
+    let response = call_http(&context, body).await;
     assert_eq!(
         word_value(expect_result(&response)),
         "5208",
@@ -278,7 +278,7 @@ async fn call_with_only_block_overrides_clamps_blockhash_past_the_tip() {
         ]),
     );
 
-    let response = call_http(context, body).await;
+    let response = call_http(&context, body).await;
     assert_eq!(
         word_value(expect_result(&response)),
         "0",
@@ -304,7 +304,7 @@ async fn estimate_gas_ceiling_follows_the_block_gas_limit_override() {
         "eth_estimateGas",
         json!([{ "from": FUNDED_SENDER, "to": CALLEE, "value": "0x0" }, "latest"]),
     );
-    let response = call_http(context.clone(), plain).await;
+    let response = call_http(&context, plain).await;
     assert_eq!(expect_result(&response), "0x5208", "control: {response}");
 
     // Same transfer under a gasLimit override below the 21000 intrinsic cost.
@@ -317,7 +317,7 @@ async fn estimate_gas_ceiling_follows_the_block_gas_limit_override() {
             { "gasLimit": "0x5000" }
         ]),
     );
-    let response = call_http(context, capped).await;
+    let response = call_http(&context, capped).await;
     assert!(
         response.get("error").is_some(),
         "a 0x5000 gasLimit override cannot cover 21000 intrinsic gas, so the estimate \

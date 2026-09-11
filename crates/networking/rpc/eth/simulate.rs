@@ -710,7 +710,7 @@ mod integration_tests {
             "jsonrpc": "2.0", "id": 1, "method": "eth_simulateV1", "params": params,
         }))
         .unwrap();
-        map_http_requests(&request, context).await
+        map_http_requests(&request, context.clone()).await
     }
 
     /// Two calls that both create state: one writes a fresh storage slot, one creates a
@@ -768,7 +768,7 @@ mod integration_tests {
             "params": params,
         }))
         .unwrap();
-        map_http_requests(&request, context).await
+        map_http_requests(&request, context.clone()).await
     }
 
     fn error_code(err: RpcErr) -> i32 {
