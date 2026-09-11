@@ -24,6 +24,7 @@ use std::sync::{Arc, Mutex};
 use ethrex_common::types::DependencyTriple;
 use ethrex_dep_aggregation::{AggregateError, DependencyAggregator, DependencyWitness};
 use rustc_hash::FxHashMap;
+use tracing::warn;
 
 /// Verified witnesses, keyed by the dependency each one discharges.
 ///
@@ -31,7 +32,7 @@ use rustc_hash::FxHashMap;
 /// limit could exhaust memory for the price of signing. Eviction is arbitrary rather
 /// than LRU -- a dropped entry costs an admission, not correctness, so the ordering
 /// is not worth the bookkeeping.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct DependencyWitnessStore {
     inner: Mutex<FxHashMap<DependencyTriple, Arc<Vec<u8>>>>,
     capacity: usize,
@@ -41,11 +42,21 @@ pub struct DependencyWitnessStore {
 /// limit, which is far more than the wrapper limits can actually deliver.
 pub const DEFAULT_WITNESS_CAPACITY: usize = 4096;
 
+impl Default for DependencyWitnessStore {
+    fn default() -> Self {
+        // Not a derive: a derived `Default` gives capacity zero, and a store that can
+        // hold nothing makes every dependency permanently inadmissible without
+        // anything reporting a problem.
+        Self::new(DEFAULT_WITNESS_CAPACITY)
+    }
+}
+
 impl DependencyWitnessStore {
+    /// `capacity` is clamped to at least one, for the reason in [`Default`].
     pub fn new(capacity: usize) -> Self {
         Self {
             inner: Mutex::new(FxHashMap::default()),
-            capacity,
+            capacity: capacity.max(1),
         }
     }
 
@@ -53,7 +64,8 @@ impl DependencyWitnessStore {
     ///
     /// Verification happens here rather than at the call site so that nothing can
     /// put an unchecked witness in: the store's whole value is that membership means
-    /// "this node established this claim".
+    /// "this node established this claim". `Ok` therefore means the witness was
+    /// verified **and** stored, and the only error is the verification failing.
     pub fn insert_verified(
         &self,
         aggregator: &dyn DependencyAggregator,
@@ -61,14 +73,16 @@ impl DependencyWitnessStore {
     ) -> Result<(), AggregateError> {
         aggregator.verify_witness(witness)?;
 
-        let Ok(mut map) = self.inner.lock() else {
-            return Ok(());
-        };
-        if map.len() >= self.capacity && !map.contains_key(&witness.triple) {
-            let Some(victim) = map.keys().next().copied() else {
-                return Ok(());
-            };
-            map.remove(&victim);
+        let mut map = self.lock();
+        // Evict before inserting a new key, never after, so the bound is never
+        // briefly exceeded. Re-inserting a key already present displaces nothing.
+        if !map.contains_key(&witness.triple) {
+            while map.len() >= self.capacity {
+                let Some(victim) = map.keys().next().copied() else {
+                    break;
+                };
+                map.remove(&victim);
+            }
         }
         map.insert(witness.triple, Arc::new(witness.witness.clone()));
         Ok(())
@@ -76,10 +90,7 @@ impl DependencyWitnessStore {
 
     /// Whether this node has verified the witness for `triple`.
     pub fn holds(&self, triple: &DependencyTriple) -> bool {
-        self.inner
-            .lock()
-            .map(|map| map.contains_key(triple))
-            .unwrap_or(false)
+        self.lock().contains_key(triple)
     }
 
     /// The witnesses for `triples`, in the order asked for.
@@ -88,7 +99,7 @@ impl DependencyWitnessStore {
     /// publish a proof covering less than the block declares, which fails rule 2 just
     /// as surely as publishing nothing.
     pub fn witnesses_for(&self, triples: &[DependencyTriple]) -> Option<Vec<DependencyWitness>> {
-        let map = self.inner.lock().ok()?;
+        let map = self.lock();
         triples
             .iter()
             .map(|triple| {
@@ -101,10 +112,24 @@ impl DependencyWitnessStore {
     }
 
     pub fn len(&self) -> usize {
-        self.inner.lock().map(|map| map.len()).unwrap_or(0)
+        self.lock().len()
     }
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    /// Take the lock, recovering if a previous holder panicked.
+    ///
+    /// Recovery is right here, not merely convenient: the guarded value is a plain
+    /// map of verified witnesses with no invariant spanning two operations, so a
+    /// panic cannot leave it half-updated in a way that matters. Treating poisoning
+    /// as fatal would instead make one unrelated panic silently refuse every
+    /// dependency for the rest of the process's life.
+    fn lock(&self) -> std::sync::MutexGuard<'_, FxHashMap<DependencyTriple, Arc<Vec<u8>>>> {
+        self.inner.lock().unwrap_or_else(|poisoned| {
+            warn!("dependency witness store lock was poisoned by a panicking holder; recovering");
+            poisoned.into_inner()
+        })
     }
 }
