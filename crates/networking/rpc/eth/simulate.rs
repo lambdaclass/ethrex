@@ -775,6 +775,104 @@ mod integration_tests {
         RpcErrorMetadata::from(err).code
     }
 
+    /// Bytecode clearing storage slots 1..=n (`PUSH1 0; PUSH1 s; SSTORE` each, then
+    /// STOP), with those slots pre-set to 1 by a state override. Mirrors geth's
+    /// `clearSlots` helper in `core/eip8037_test.go`, so the gas figures below can be
+    /// compared against the assertions geth makes on its own implementation.
+    fn clear_slots(n: u8) -> (String, Value) {
+        let mut code = String::from("0x");
+        let mut state = serde_json::Map::new();
+        for slot in 1..=n {
+            // PUSH1 0x00; PUSH1 slot; SSTORE
+            code.push_str(&format!("600060{slot:02x}55"));
+            state.insert(format!("0x{slot:064x}"), json!(format!("0x{:064x}", 1)));
+        }
+        code.push_str("00"); // STOP
+        (code, Value::Object(state))
+    }
+
+    /// `maxUsedGas` is the pre-refund figure, so a refunded call must report more of it
+    /// than `gasUsed`, and with the refund hitting the EIP-3529 cap the two are related
+    /// exactly by that cap. This is geth's own `TestRefundCappedAt20Percent` assertion
+    /// (`core/eip8037_test.go`) applied through `eth_simulateV1`, and it pins the
+    /// pre-Amsterdam reconstruction `gas_spent + gas_refunded` -- the report carries no
+    /// pre-refund field before EIP-7778, so that sum is the only route to it.
+    #[tokio::test]
+    async fn max_used_gas_is_the_pre_refund_figure() {
+        let (code, state) = clear_slots(3);
+        let result = simulate(json!([{
+            "blockStateCalls": [{
+                "stateOverrides": { FRESH_A: { "code": code, "state": state } },
+                "calls": [{"from": RICH, "to": FRESH_A, "gas": "0x100000"}],
+            }],
+        }, "latest"]))
+        .await
+        .unwrap();
+        let call = &result.as_array().unwrap()[0]["calls"][0];
+        let hex = |v: &Value| {
+            u64::from_str_radix(v.as_str().unwrap().trim_start_matches("0x"), 16).unwrap()
+        };
+        let (gas_used, max_used) = (hex(&call["gasUsed"]), hex(&call["maxUsedGas"]));
+        assert!(
+            max_used > gas_used,
+            "a refunded call must report maxUsedGas {max_used} above gasUsed {gas_used}"
+        );
+        // EIP-3529: refund is capped at a fifth of the pre-refund gas, and 3 cleared
+        // slots (3 x 4800) exceed that cap, so the cap is what is applied.
+        assert_eq!(
+            gas_used,
+            max_used - max_used / 5,
+            "gasUsed should be maxUsedGas less the capped refund"
+        );
+    }
+
+    /// The EIP-7623 calldata floor case, where ethrex and geth/reth part company.
+    /// geth reports `max(pre_refund, floor)` (`settleGas`'s `peakUsed`) and reth
+    /// `total_gas_spent().max(floor_gas())`; ethrex reconstructs `gas_spent +
+    /// gas_refunded`, and once the floor binds `gas_spent` is the floor, so the refund
+    /// is added on top of it instead of being absorbed by it.
+    ///
+    /// Pinned rather than fixed: before EIP-7778 the report sets `gas_used ==
+    /// gas_spent`, so the pre-refund figure is not recoverable here at all once the
+    /// floor has replaced it. Closing this needs that figure surfaced on
+    /// `ExecutionReport`. The assertion below is the current behaviour; if it starts
+    /// failing because `maxUsedGas` dropped to the floor, that gap was closed and this
+    /// test should become an equality against `floor`.
+    #[tokio::test]
+    async fn max_used_gas_over_reports_when_the_calldata_floor_binds() {
+        let (code, state) = clear_slots(1);
+        // 1000 zero calldata bytes: EIP-7623 floor = 21000 + 10 * 1000 tokens = 31000,
+        // which exceeds what this cheap call spends after its refund.
+        let data = format!("0x{}", "00".repeat(1000));
+        let result = simulate(json!([{
+            "blockStateCalls": [{
+                "stateOverrides": { FRESH_A: { "code": code, "state": state } },
+                "calls": [{"from": RICH, "to": FRESH_A, "gas": "0x100000", "input": data}],
+            }],
+        }, "latest"]))
+        .await
+        .unwrap();
+        let call = &result.as_array().unwrap()[0]["calls"][0];
+        let hex = |v: &Value| {
+            u64::from_str_radix(v.as_str().unwrap().trim_start_matches("0x"), 16).unwrap()
+        };
+        let (gas_used, max_used) = (hex(&call["gasUsed"]), hex(&call["maxUsedGas"]));
+        const FLOOR: u64 = 21_000 + 10 * 1_000;
+        const SSTORE_CLEAR_REFUND: u64 = 4_800;
+        assert_eq!(
+            gas_used, FLOOR,
+            "the EIP-7623 floor should have replaced the post-refund gas"
+        );
+        // This call's pre-refund gas (~30_006) is under the floor, so geth's
+        // `max(pre_refund, floor)` and reth's `total_gas_spent().max(floor_gas())`
+        // both come out at FLOOR. ethrex adds the refund on top of the floor instead.
+        assert_eq!(
+            max_used,
+            FLOOR + SSTORE_CLEAR_REFUND,
+            "known divergence: geth and reth both report {FLOOR} here"
+        );
+    }
+
     #[tokio::test]
     async fn simple_transfer_with_balance_override() {
         // `ethSimulate-simple.io`: fund a fresh account via stateOverrides,
