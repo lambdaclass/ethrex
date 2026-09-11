@@ -15,7 +15,8 @@ use ethrex_common::{
     },
     types::{
         AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-        ChainConfig, MempoolTransaction, Receipt, Transaction, TxKind, TxType, Withdrawal,
+        ChainConfig, MempoolTransaction, Receipt, RecursiveStark, Transaction, TxKind, TxType,
+        Withdrawal,
         block_access_list::BlockAccessList,
         bloom_from_logs, calc_excess_blob_gas, calculate_base_fee_per_blob_gas,
         calculate_base_fee_per_gas, compute_receipts_root, compute_transactions_root,
@@ -1351,6 +1352,29 @@ impl Blockchain {
             .as_ref()
             .map(|bal| bal.compute_hash(&NativeCrypto));
         context.block_access_list = block_access_list;
+
+        // EIP-8288 (J*+): set the recursive_stark entry.
+        //
+        // Must run after the transaction set is final -- `fill_transactions` can drop
+        // one mid-build -- for the same reason `transactions_root` does. It does not
+        // depend on execution results: a dependency verification frame never runs, so
+        // the block's dependency set is a function of the body alone.
+        //
+        // The proof itself is left empty here. Producing one is the aggregator's job
+        // and costs about a second and several gigabytes of memory, so it belongs on
+        // the aggregation path rather than inside payload finalisation; a build
+        // without a backend would have nothing to put here regardless. The digest is
+        // still correct and still committed to, so rule 1 holds for a locally built
+        // block and the block hash is stable.
+        if context
+            .chain_config()
+            .is_jstar_activated(context.payload.header.timestamp)
+        {
+            context.payload.header.recursive_stark = Some(RecursiveStark {
+                proof: Bytes::new(),
+                block_deps_hash: context.payload.body.block_deps_hash(),
+            });
+        }
 
         // EIP-8079 (LStar+): compute and set burned_fees in block header.
         // Uses the same helper and identical inputs as the verification path

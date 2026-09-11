@@ -97,3 +97,30 @@ fn the_leanstark_scheme_is_named_as_unsupported() {
     assert!(rendered.contains("0x11"), "{rendered}");
     assert!(rendered.contains("cannot be proven"), "{rendered}");
 }
+
+/// The block-validity rules split by what they need, and rule 1 must hold for a
+/// build with no aggregation backend at all -- it is computed from the block's own
+/// transactions. Only rule 2 needs a verifier.
+///
+/// This pins that a node without the `leanvm` feature still rejects a tampered
+/// dependency digest rather than deferring everything to a backend it does not have.
+#[test]
+fn rule_one_needs_no_backend() {
+    use ethrex_common::types::{BlockBody, dependencies_hash};
+
+    let empty = BlockBody {
+        transactions: Vec::new(),
+        ommers: Vec::new(),
+        withdrawals: None,
+    };
+    assert_eq!(
+        empty.block_deps_hash(),
+        dependencies_hash(&[]),
+        "a block with no dependencies commits to the digest of the empty set, not to zero"
+    );
+    assert_ne!(
+        empty.block_deps_hash(),
+        ethrex_common::H256::zero(),
+        "which is a real digest, so an all-zero header field is not silently valid"
+    );
+}

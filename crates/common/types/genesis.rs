@@ -1027,6 +1027,20 @@ impl Genesis {
             .is_amsterdam_activated(self.timestamp)
             .then_some(self.slot_number.unwrap_or(0));
 
+        // EIP-8288: the entry is mandatory from J*, including at genesis. A genesis
+        // block has no transactions, so its dependency set is empty and its digest is
+        // the digest of the empty list -- not zero, and not absent. Without this a
+        // chain that starts at J* fails its own header-presence check on block 0.
+        // `burned_fees` has the same latent gap for an LStar genesis and is left
+        // alone here rather than fixed in passing.
+        let recursive_stark =
+            self.config
+                .is_jstar_activated(self.timestamp)
+                .then(|| crate::types::RecursiveStark {
+                    proof: Bytes::new(),
+                    block_deps_hash: crate::types::dependencies_hash(&[]),
+                });
+
         BlockHeader {
             parent_hash: H256::zero(),
             ommers_hash: *DEFAULT_OMMERS_HASH,
@@ -1051,6 +1065,7 @@ impl Genesis {
             requests_hash,
             block_access_list_hash,
             slot_number,
+            recursive_stark,
             ..Default::default()
         }
     }
