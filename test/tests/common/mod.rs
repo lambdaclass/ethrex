@@ -5,6 +5,7 @@ mod base64_tests;
 mod blobs_bundle_tests;
 mod code_serde_tests;
 mod eip7702_authorization_tests;
+mod eip8288_tests;
 mod fork_schedule_tests;
 mod frame_tx_validation_tests;
 mod frame_tx_wire_tests;

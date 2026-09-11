@@ -73,9 +73,9 @@ use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{
     AccountInfo, AccountState, AccountUpdate, BalSynthesisItem, Block, BlockHash, BlockHeader,
-    BlockNumber, Code, FRAME_TX_MAX_VERIFY_GAS, FrameTransaction, Transaction,
-    WrappedEIP4844Transaction, WrappedFrameTransaction, synthesize_bal_updates,
-    validate_block_body,
+    BlockNumber, Code, FRAME_TX_MAX_SIGS_PER_TX, FRAME_TX_MAX_STARKS_PER_TX,
+    FRAME_TX_MAX_VERIFY_GAS, FrameTransaction, Transaction, WrappedEIP4844Transaction,
+    WrappedFrameTransaction, synthesize_bal_updates, validate_block_body,
 };
 use ethrex_common::types::{EIP7702_DELEGATED_CODE_LEN, is_eip7702_delegation};
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
@@ -3925,6 +3925,30 @@ impl Blockchain {
             frame_tx
                 .validate_prefix_structure(&prefix, self.options.max_verify_gas)
                 .map_err(MempoolError::from)?;
+
+            // EIP-8288 MAX_SIGS_PER_TX / MAX_STARKS_PER_TX. Mempool policy, not a
+            // block-validity rule: the EIP files both under Mempool-Level Limits, so a
+            // block carrying more is still valid and only propagation is bounded. The
+            // classification is ambiguous -- Security Considerations lists them beside
+            // rules that *are* consensus rules -- and is raised as item 7 with the
+            // spec authors. Applied to the deduplicated set, as the EIP specifies.
+            let dependencies = frame_tx.dependencies();
+            let leansphincs = dependencies.iter().filter(|d| d.is_leansphincs()).count();
+            if leansphincs > FRAME_TX_MAX_SIGS_PER_TX {
+                return Err(MempoolError::FrameTxTooManyDependencies {
+                    scheme: "leanSPHINCS",
+                    count: leansphincs,
+                    limit: FRAME_TX_MAX_SIGS_PER_TX,
+                });
+            }
+            let leanstark = dependencies.iter().filter(|d| d.is_leanstark()).count();
+            if leanstark > FRAME_TX_MAX_STARKS_PER_TX {
+                return Err(MempoolError::FrameTxTooManyDependencies {
+                    scheme: "leanSTARK",
+                    count: leanstark,
+                    limit: FRAME_TX_MAX_STARKS_PER_TX,
+                });
+            }
 
             // EIP-8272 §Public mempool handling: the recent-root verifier frame's
             // tuples are judged against head state before any EVM work, a bounded

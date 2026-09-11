@@ -77,6 +77,7 @@ ethrex-config = { path = "./crates/common/config" }
 ethrex-p2p = { path = "./crates/networking/p2p", version = "23.0.0" }
 ethrex-rpc = { path = "./crates/networking/rpc", version = "23.0.0" }
 ethrex-storage = { path = "./crates/storage", version = "23.0.0" }
+blake3 = { version = "=1.8.4", default-features = false }
 ethrex-vm = { path = "./crates/vm", version = "23.0.0", default-features = false }
 ethrex-levm = { path = "./crates/vm/levm", version = "23.0.0" }
 ethrex-trie = { path = "./crates/common/trie", version = "23.0.0" }

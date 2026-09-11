@@ -807,6 +807,10 @@ pub fn execute_default_code(
         // Consumes no execution gas (the frame's value transfer is handled by
         // the caller's deferred transfer).
         Some(FrameMode::Sender | FrameMode::Default) => Ok((true, 0, Vec::new())),
+        // EIP-8288: a dependency verification frame never executes, so it never
+        // reaches default code either. `execute_frame_tx` completes it before the
+        // target is resolved.
+        Some(FrameMode::DepVerify) => Err(ExceptionalHalt::InvalidOpcode.into()),
         // A reserved mode is rejected by static validation.
         None => Err(ExceptionalHalt::InvalidOpcode.into()),
     }

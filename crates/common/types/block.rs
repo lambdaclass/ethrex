@@ -325,6 +325,32 @@ pub struct BlockBody {
 }
 
 impl BlockBody {
+    /// EIP-8288 `dependencies(block)`: every dependency triple declared by every
+    /// transaction in the block, deduplicated and sorted.
+    ///
+    /// Non-frame transactions declare none, so a block with no frame transactions
+    /// yields an empty list and `dependencies_hash` of the empty concatenation.
+    pub fn dependencies(&self) -> Vec<crate::types::DependencyTriple> {
+        let mut out = Vec::new();
+        for tx in &self.transactions {
+            if let Transaction::FrameTransaction(frame_tx) = tx {
+                out.extend(frame_tx.dependencies());
+            }
+        }
+        crate::types::deduplicate_and_sort_dependencies(out)
+    }
+
+    /// EIP-8288 `block_deps_hash`: the digest the block header's `recursive_stark`
+    /// entry must carry, and the first of the EIP's three block-validity rules.
+    ///
+    /// The second rule -- that the recursive STARK verifies against this hash and
+    /// `AGGREGATED_VK` -- is not implementable while `AGGREGATED_VK` is `TBD` in the
+    /// EIP and no Lean Ethereum verifier exists to link against. See
+    /// `docs/eip-8288.md`.
+    pub fn block_deps_hash(&self) -> H256 {
+        crate::types::dependencies_hash(&self.dependencies())
+    }
+
     pub const fn empty() -> Self {
         Self {
             transactions: Vec::new(),

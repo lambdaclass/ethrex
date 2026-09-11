@@ -2105,6 +2105,39 @@ impl<'a> VM<'a> {
             ctx.current_frame_index = frame_idx;
             ctx.approve_called_in_current_frame = false;
 
+            // EIP-8288: a dependency verification frame declares triples for the
+            // block's recursive STARK and is never executed as EVM code. It still
+            // *completes*, and still gets a receipt entry, for two reasons the EIP
+            // leaves unstated (raised as item 4 with its authors):
+            //
+            //   - EIP-8288 tells contracts to walk the frame list with FRAMEPARAM and
+            //     pick out mode-3 frames, so those frames are addressable by index.
+            //     FRAMEPARAM 0x05/0x0A/0x0B read `frame_results` by the same index and
+            //     halt on a missing entry, so skipping the entry would make a frame
+            //     the EIP invites contracts to inspect unreadable.
+            //   - EIP-8141 builds a transaction's logs by concatenating frame receipts
+            //     "in frame order". An absent entry shifts every later frame's receipt
+            //     index away from its frame index.
+            //
+            // Its whole declared execution budget is consumed and none of it is
+            // refundable: EIP-8288 says the gas is "still fully charged even if the
+            // transaction reverts", and EIP-8141 would otherwise refund a frame that
+            // used nothing, making dependencies free (item 5). No frame-entry access
+            // charge is levied, because nothing is entered -- `target` is required
+            // absent for this mode, so there is no account to warm (item 3).
+            if frame.execution_mode() == Some(FrameMode::DepVerify) {
+                total_gas_used = total_gas_used
+                    .checked_add(frame.gas_limit)
+                    .ok_or(VMError::Internal(InternalError::Overflow))?;
+                ctx.frame_results.push((
+                    ethrex_common::types::FRAME_RECEIPT_STATUS_SUCCESS,
+                    frame.gas_limit,
+                    0,
+                    Vec::new(),
+                ));
+                continue;
+            }
+
             let target = frame.target.unwrap_or(sender);
 
             // Determine caller and static mode per frame mode
@@ -2123,6 +2156,14 @@ impl<'a> VM<'a> {
                         break;
                     }
                     (sender, false)
+                }
+                // Handled above: the frame is never executed, so it never reaches
+                // the caller/static decision.
+                Some(FrameMode::DepVerify) => {
+                    tx_invalid = Some(format!(
+                        "frame {frame_idx} is a dependency verification frame and must not execute"
+                    ));
+                    break;
                 }
                 // Reserved modes were rejected by static validation, so `None` here
                 // is unreachable; treat it as tx-invalid defensively rather than
@@ -3236,6 +3277,25 @@ impl<'a> VM<'a> {
             ctx.current_frame_index = frame_idx;
             ctx.approve_called_in_current_frame = false;
 
+            // EIP-8288: a dependency verification frame is filtered out of the prefix
+            // shape, but the loop still walks every index up to the last prefix frame,
+            // so one sitting ahead of the prefix is iterated here. Complete it exactly
+            // as block execution does -- consuming its whole declared budget and
+            // recording a successful result -- so the mempool and the chain agree
+            // about the same transaction. Getting this wrong is not hypothetical: a
+            // prefix frame that reads an earlier frame through FRAMEPARAM halts when
+            // `frame_results` has no entry for it.
+            if frame.execution_mode() == Some(FrameMode::DepVerify) {
+                total_gas_used = total_gas_used.saturating_add(frame.gas_limit);
+                ctx.frame_results.push((
+                    ethrex_common::types::FRAME_RECEIPT_STATUS_SUCCESS,
+                    frame.gas_limit,
+                    0,
+                    Vec::new(),
+                ));
+                continue;
+            }
+
             let target = frame.target.unwrap_or(sender);
 
             // Sync observer per-frame fields before the frame runs.
@@ -3251,6 +3311,12 @@ impl<'a> VM<'a> {
                     // Structural rules exclude SENDER frames from the prefix.
                     return Err(VMError::Internal(InternalError::Custom(
                         "SENDER frame in validation prefix".to_string(),
+                    )));
+                }
+                Some(FrameMode::DepVerify) => {
+                    // Completed above, before the target is resolved.
+                    return Err(VMError::Internal(InternalError::Custom(
+                        "dependency verification frame reached prefix execution".to_string(),
                     )));
                 }
                 None => {

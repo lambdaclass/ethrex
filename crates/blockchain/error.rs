@@ -166,6 +166,14 @@ pub enum MempoolError {
     FrameTxVerifyGasBudgetExceeded,
     #[error("Frame transaction prefix state gas budget exceeds MAX_VERIFY_STATE_GAS")]
     FrameTxVerifyStateBudgetExceeded,
+    #[error(
+        "Frame transaction declares {count} {scheme} dependencies, more than the mempool's limit of {limit}"
+    )]
+    FrameTxTooManyDependencies {
+        scheme: &'static str,
+        count: usize,
+        limit: usize,
+    },
     #[error("A pending frame transaction from this sender is already in the pool")]
     FrameTxSenderAlreadyPending,
     #[error("A frame transaction in the other nonce-key domain is already pending for this sender")]

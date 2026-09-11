@@ -2933,6 +2933,69 @@ mod validation_observer_tests {
         );
     }
 
+    /// EIP-8288: a dependency verification frame is never executed, but it still
+    /// completes and still gets a `frame_results` entry. A prefix frame that reads
+    /// it through `FRAMEPARAM(0x05)` must therefore get an answer rather than an
+    /// exceptional halt — the same failure mode a missing entry caused for the
+    /// EIP-8272 recent-root frame.
+    ///
+    /// This also pins the position rule: the dependency frame sits at index 0,
+    /// ahead of the approving frame, exactly as EIP-8288's Test Case 1 describes.
+    #[test]
+    fn a_dependency_verification_frame_completes_without_executing() {
+        use ethrex_common::types::{
+            DEPENDENCY_SCHEME_LEANSPHINCS, DependencyTriple, LEANSPHINCS_VERIFICATION_GAS,
+        };
+
+        let sender = addr(0x5E13);
+        let triple = DependencyTriple {
+            scheme: DEPENDENCY_SCHEME_LEANSPHINCS,
+            data_hash: H256::from_low_u64_be(0xD474),
+            verification_key_hash: H256::from_low_u64_be(0x7E51),
+        };
+        let dep_frame = Frame {
+            mode: 3,
+            flags: 0,
+            target: None,
+            gas_limit: LEANSPHINCS_VERIFICATION_GAS,
+            state_gas_limit: 0,
+            value: U256::zero(),
+            data: Bytes::from(triple.encode().to_vec()),
+        };
+        // Reads FRAMEPARAM(frame 0, 0x05) and approves only when it reports success.
+        let tx = frame_tx_for_obs(
+            sender,
+            vec![
+                dep_frame,
+                verify_frame_obs(sender, 50_000, 0x03, Bytes::new()),
+            ],
+        );
+        let mut db = build_db(vec![(
+            sender,
+            account_with_code(0, approve_if_first_frame_succeeded()),
+        )]);
+        // The prefix is frame 1 alone: dependency frames are transparent to shape
+        // matching, which is what makes EIP-8288's own test cases valid EIP-8141
+        // transactions.
+        let (result, violation) = run(&tx, &mut db, sender, &[1], None, None);
+        assert!(violation.is_none(), "a dependency frame breaks no rule");
+        assert!(
+            !result.any_revert,
+            "the dependency frame must complete, so FRAMEPARAM(0, 0x05) answers 1"
+        );
+        assert_eq!(
+            result.payer_address,
+            Some(sender),
+            "the approval behind the status check must still bind the payer"
+        );
+        assert!(
+            result.total_gas_used >= LEANSPHINCS_VERIFICATION_GAS,
+            "the frame's declared budget is consumed in full, not refunded: \
+             total {} should include {LEANSPHINCS_VERIFICATION_GAS}",
+            result.total_gas_used
+        );
+    }
+
     #[test]
     fn passing_self_verify_sets_payer_and_no_violation() {
         let sender = addr(0x5E11);
