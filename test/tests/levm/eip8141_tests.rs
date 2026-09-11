@@ -2399,25 +2399,15 @@ mod validation_observer_tests {
         frame_indices: &[usize],
         deploy_index: Option<usize>,
     ) -> (PrefixSimResult, Option<FrameSimViolation>) {
-        run_at(
-            tx,
-            db,
-            sender,
-            frame_indices,
-            deploy_index,
-            focil_surface,
-            Fork::Hegota,
-        )
+        run_at(tx, db, sender, frame_indices, deploy_index, Fork::Hegota)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn run_at(
         tx: &Transaction,
         db: &mut GeneralizedDatabase,
         sender: Address,
         frame_indices: &[usize],
         deploy_index: Option<usize>,
-        focil_surface: Option<FocilVopsSurface>,
         fork: Fork,
     ) -> (PrefixSimResult, Option<FrameSimViolation>) {
         let env = env_at(sender, fork);
@@ -2506,7 +2496,7 @@ mod validation_observer_tests {
         // matching, which is what makes EIP-8288's own test cases valid EIP-8141
         // transactions.
         // J*, not Hegotá: mode 3 is a reserved byte before EIP-8288 activates.
-        let (result, violation) = run_at(&tx, &mut db, sender, &[1], None, None, Fork::JStar);
+        let (result, violation) = run_at(&tx, &mut db, sender, &[1], None, Fork::JStar);
         assert!(violation.is_none(), "a dependency frame breaks no rule");
         assert!(
             !result.any_revert,

@@ -546,7 +546,7 @@ pub const MAX_RECURSIVE_STARK_PROOF_BYTES: usize = 1 << 20;
 pub struct RecursiveStark {
     /// The serialized recursive proof. Bounded by
     /// `ethrex_dep_aggregation::MAX_RECURSIVE_STARK_PROOF_BYTES`; EIP-8288 sets no
-    /// bound of its own, which is raised as item 16 with its authors.
+    /// bound of its own, so this supplies one.
     #[serde(with = "crate::serde_utils::bytes")]
     #[rkyv(with = crate::rkyv_utils::BytesWrapper)]
     pub proof: Bytes,

@@ -34,6 +34,7 @@ impl DependencyAggregator for UnavailableAggregator {
         &self,
         _raw: &[DependencyWitness],
         _children: &[&[u8]],
+        _declare: Option<&[DependencyTriple]>,
     ) -> Result<Vec<u8>, AggregateError> {
         Err(AggregateError::NoBackend)
     }

@@ -25,8 +25,7 @@
 //! check the proof, then check that what it proved is what the block declared.
 //!
 //! [`DependencyAggregator::verify`] takes both the proof and the expected
-//! dependency set for exactly that reason. See item 14 of
-//! `scripts/hegota-testnet/NOTES-FOR-8288-AUTHOR.md`.
+//! dependency set for exactly that reason.
 
 use std::fmt::Debug;
 
@@ -41,11 +40,8 @@ pub use wrapper::{MempoolWrapper, WrapperContent, WrapperEntry, WrapperError};
 #[cfg(feature = "leanvm")]
 pub mod leanvm;
 
-#[cfg(test)]
-mod tests;
-
-#[cfg(test)]
-mod wrapper_tests;
+#[cfg(feature = "leanvm")]
+pub mod test_support;
 
 /// Whether this build carries a real aggregation backend.
 ///
@@ -62,7 +58,7 @@ pub const LEANVM_AGGREGATOR: bool = cfg!(feature = "leanvm");
 /// transactions it exists to serve, and a malformed length is cheaper to reject
 /// here than after allocation. leanVM's aggregates measure about 300 KiB, so this
 /// leaves generous room for recursion depth while staying an eighth of the block
-/// budget. See item 16 of `NOTES-FOR-8288-AUTHOR.md`.
+/// budget.
 pub const MAX_RECURSIVE_STARK_PROOF_BYTES: usize = 1 << 20;
 
 // The header's RLP decode applies the same bound, so an oversized proof is refused
@@ -126,10 +122,25 @@ pub trait DependencyAggregator: Send + Sync + Debug {
     /// Produce a proof discharging `raw`, absorbing `children` (proofs from a
     /// previous aggregation round or from peers) so the result covers their claims
     /// too. This is the recursion EIP-8288 is built on.
+    ///
+    /// `declare` is what makes the recursion usable rather than only possible. A
+    /// child proof covers the dependencies of whoever built it, and the next round
+    /// rarely wants all of them: a transaction was included, or dropped, or expired,
+    /// so the set moves. `Some(set)` publishes exactly `set` and discards the rest;
+    /// `None` publishes everything the inputs establish.
+    ///
+    /// Without it a builder absorbing a child covering `{A, B}` could not produce a
+    /// proof for a block containing only `A` -- and [`DependencyAggregator::verify`]
+    /// would correctly reject the `{A, B}` proof for that block, so the mismatch
+    /// surfaces as an unbuildable block rather than as a bad one.
+    ///
+    /// An implementation must fail rather than silently narrow: every triple in
+    /// `declare` has to be established by `raw` or by a child.
     fn aggregate(
         &self,
         raw: &[DependencyWitness],
         children: &[&[u8]],
+        declare: Option<&[DependencyTriple]>,
     ) -> Result<Vec<u8>, AggregateError>;
 
     /// Verify one dependency directly from its own proof material, with no
@@ -164,7 +175,7 @@ pub trait DependencyAggregator: Send + Sync + Debug {
     ///
     /// EIP-8288 lists `AGGREGATED_VK` as `TBD`. It need not be: it is the identity
     /// of the aggregation circuit, so a backend can derive it rather than having a
-    /// value assigned. See item 15 of `NOTES-FOR-8288-AUTHOR.md`.
+    /// value assigned.
     fn aggregated_vk(&self) -> H256;
 
     /// A short name for logs and error messages.

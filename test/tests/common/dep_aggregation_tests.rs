@@ -6,7 +6,7 @@ use ethrex_common::types::{
     DEPENDENCY_SCHEME_LEANSPHINCS, DEPENDENCY_SCHEME_LEANSTARK, DependencyTriple,
 };
 
-use crate::{
+use ethrex_dep_aggregation::{
     AggregateError, DependencyAggregator, LEANVM_AGGREGATOR, MAX_RECURSIVE_STARK_PROOF_BYTES,
     UnavailableAggregator, check_proof_length, default_aggregator,
 };
@@ -52,7 +52,10 @@ fn the_unavailable_backend_fails_closed() {
         Err(AggregateError::NoBackend),
         "including for a block that declares no dependencies, which still carries a proof"
     );
-    assert_eq!(agg.aggregate(&[], &[]), Err(AggregateError::NoBackend));
+    assert_eq!(
+        agg.aggregate(&[], &[], None),
+        Err(AggregateError::NoBackend)
+    );
 }
 
 /// EIP-8288 sets no bound on the proof, but the header rides inside the block and
@@ -132,7 +135,7 @@ fn rule_one_needs_no_backend() {
 /// block on a chain where nobody has used the feature -- and a default build would
 /// refuse the whole chain rather than the transactions it cannot check. Failing
 /// closed is right; failing closed on any J* block rather than on unproven
-/// dependencies is the wrong granularity. Found by a second audit.
+/// dependencies is the wrong granularity.
 #[test]
 fn an_empty_dependency_set_needs_no_backend() {
     let agg = UnavailableAggregator;

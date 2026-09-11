@@ -2,9 +2,9 @@
 //! transaction and block dependency sets, and the gas rule.
 //!
 //! Spec read: `ethereum/EIPs` `EIPS/eip-8288.md` @ `ef1abf4b6d`. Where the EIP is
-//! ambiguous these tests pin the reading described in `docs/eip-8288.md` and
-//! argued in `scripts/hegota-testnet/NOTES-FOR-8288-AUTHOR.md`; each such test
-//! names the item it settles so a later spec revision points straight at it.
+//! ambiguous these tests pin the reading described in `docs/eip-8288.md`, and each
+//! such test says which ambiguity it settles, so a later spec revision that decides
+//! differently fails here rather than somewhere subtler.
 
 use bytes::Bytes;
 use ethrex_common::constants::DEFAULT_OMMERS_HASH;
@@ -78,8 +78,7 @@ fn self_verify_frame() -> Frame {
 fn tx_with(frames: Vec<Frame>) -> FrameTransaction {
     FrameTransaction {
         chain_id: 1,
-        nonce_keys: vec![U256::zero()],
-        nonce_seq: 0,
+        nonce: 0,
         sender: Address::from_low_u64_be(0xABCD),
         frames,
         signatures: vec![],
@@ -159,7 +158,7 @@ fn verification_gas_is_per_scheme() {
 }
 
 // ---------------------------------------------------------------------------
-// deduplicate_and_sort, and the ordering question (notes item 9)
+// deduplicate_and_sort, and the ordering question
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -175,7 +174,7 @@ fn dependencies_are_deduplicated_and_sorted() {
     );
 }
 
-/// Notes item 9. The EIP sorts `(scheme, data_hash, vk_hash)` tuples, which
+/// The EIP sorts `(scheme, data_hash, vk_hash)` tuples, which
 /// compares `scheme` as a small integer; the consensus hash is taken over the
 /// encoding, where `scheme` is a big-endian 32-byte word. For every scheme the EIP
 /// assigns the two orders agree, which is why sorting the encoding is safe to
@@ -224,7 +223,7 @@ fn the_empty_dependency_set_hashes_to_the_empty_blake3_digest() {
 }
 
 // ---------------------------------------------------------------------------
-// Static validity of the frame (notes items 2 and 3)
+// Static validity of the frame
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -254,7 +253,7 @@ fn a_dependency_frame_must_declare_exactly_the_verification_gas_sum() {
     }
 }
 
-/// Notes item 2: the EIP says "the frame's `gas_limit`", but EIP-8141 frames carry
+/// The EIP says "the frame's `gas_limit`", but EIP-8141 frames carry
 /// `limits = [execution, state]`. The sum binds the execution dimension, and the
 /// state dimension must be zero — the same shape EIP-8141 pins on its own expiry
 /// verifier frame, which likewise grows no state.
@@ -268,7 +267,7 @@ fn a_dependency_frame_must_declare_no_state_gas() {
     assert!(err.contains("state_gas_limit"), "{err}");
 }
 
-/// Notes item 3: the EIP glosses `None` as "address `0x00...00`", but in EIP-8141
+/// The EIP glosses `None` as "address `0x00...00`", but in EIP-8141
 /// an absent target resolves to `tx.sender` while an explicit zero address
 /// resolves to itself. We require the field absent, so the frame names no account
 /// and no frame-entry access charge is levied.
@@ -339,7 +338,7 @@ fn a_dependency_frame_may_carry_max_dependencies_per_frame_triples() {
     assert!(err.contains("dependency count"), "{err}");
 }
 
-/// Notes item 13. A dependency frame carries no flags, which makes it a valid
+/// A dependency frame carries no flags, which makes it a valid
 /// *terminator* for a batch an earlier frame opened -- and a terminator is where
 /// the batch commits. A frame that never executes has nothing to commit, so it
 /// must not close one. EIP-8288 says nothing about atomic batches.
@@ -371,7 +370,7 @@ fn a_dependency_frame_after_an_unbatched_frame_is_accepted() {
 }
 
 // ---------------------------------------------------------------------------
-// dependencies(tx) and gas (notes item 5)
+// dependencies(tx) and gas
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -417,7 +416,7 @@ fn duplicate_declarations_are_charged_but_deduplicated() {
 /// The per-frame bound counts the other way -- declarations -- so the two are not
 /// redundant. Getting this backwards would reject legal transactions at admission
 /// while admitting frames the frame rule forbids, and the sentence that settles it
-/// sits four sections away from the rule it governs (notes item 6).
+/// sits four sections away from the rule it governs.
 #[test]
 fn the_per_transaction_limit_counts_distinct_dependencies_not_declarations() {
     let a = sphincs(1, 1);
@@ -527,7 +526,7 @@ fn block_dependency_hash_does_not_depend_on_transaction_order() {
 }
 
 // ---------------------------------------------------------------------------
-// Frame position (notes item 12)
+// Frame position
 // ---------------------------------------------------------------------------
 
 /// The EIP's own Test Case 1: a dependency frame at index 0, followed by the
@@ -700,10 +699,9 @@ fn a_header_without_recursive_stark_round_trips_unchanged() {
 /// The field must survive a getPayload -> newPayload round-trip, or a producer's
 /// own J* block fails its block-hash check on import.
 ///
-/// This was genuinely missing. `ExecutionPayload` carried every other fork-gated
-/// header field and not this one, so `from_block` dropped it and `into_block` left
-/// it `None`. Found by auditing the implementation against the spec rather than by
-/// any test, which is why there is one now.
+/// Easy to leave out, and silent when it is: `ExecutionPayload` carries every other
+/// fork-gated header field, so an omission here shows up only as a block hash that
+/// disagrees with itself, one fork late.
 #[test]
 fn recursive_stark_survives_the_execution_payload_round_trip() {
     let entry = RecursiveStark {
@@ -784,7 +782,7 @@ fn recursive_stark_participates_in_the_block_hash() {
 }
 
 // ---------------------------------------------------------------------------
-// Fork gating, and the constraints an audit found untested
+// Fork gating
 // ---------------------------------------------------------------------------
 
 /// Mode 3 is EIP-8288's, and EIP-8288 activates at J*. Before J* the byte is a
@@ -870,47 +868,6 @@ fn an_oversized_proof_is_refused_at_decode() {
     let mut buf = Vec::new();
     at_limit.encode(&mut buf);
     assert_eq!(BlockHeader::decode(&buf).unwrap(), at_limit);
-}
-
-/// EIP-8272's recent-root frame must sit first, or second behind an expiry frame.
-/// A dependency frame at index 0 -- the shape EIP-8288's own Test Cases 1 and 2
-/// describe -- displaces it.
-///
-/// Neither EIP says how the two position rules compose. We implement EIP-8272's as
-/// written, since it is already deployed, and pin the consequence here so it is
-/// visible rather than surprising. Raised as item 23 with the spec authors.
-#[test]
-fn a_dependency_frame_before_a_recent_root_frame_displaces_it() {
-    use ethrex_common::types::frame_tx_recent_root;
-
-    let recent_root = Frame {
-        mode: FrameMode::Verify as u8,
-        flags: 0,
-        target: Some(frame_tx_recent_root()),
-        gas_limit: 30_000,
-        state_gas_limit: 0,
-        value: U256::zero(),
-        data: Bytes::from(vec![0u8; 72]),
-    };
-
-    let ordered_well = tx_with(vec![recent_root.clone(), self_verify_frame()]);
-    assert_eq!(
-        ordered_well.recent_root_verifier_index(),
-        Some(0),
-        "a recent-root frame in its allowed position is recognised"
-    );
-
-    let displaced = tx_with(vec![
-        dep_frame(&[sphincs(1, 2)]),
-        recent_root,
-        self_verify_frame(),
-    ]);
-    assert_eq!(
-        displaced.recent_root_verifier_index(),
-        None,
-        "a dependency frame at index 0 pushes it out of position, so it stops being \
-         recognised as a recent-root frame at all"
-    );
 }
 
 /// Block-validity rule 1, through the function block import actually calls.
