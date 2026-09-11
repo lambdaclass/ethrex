@@ -1684,6 +1684,13 @@ impl<'a> VM<'a> {
         // The reason is carried through: a client that rejects the transaction for the
         // right reason but reports the wrong one is indistinguishable from a client that
         // rejected it by accident (see the mapper note above `TxValidationError`).
+        // EIP-8288 gating, separate from the shape checks below: mode 3 is a
+        // reserved byte before J*, so a block carrying one is invalid there.
+        if let Err(e) = frame_tx.validate_fork_constraints(self.env.config.fork) {
+            return Err(VMError::TxValidation(
+                crate::errors::TxValidationError::InvalidFrameTransactionFormat(e),
+            ));
+        }
         if let Err(e) = frame_tx.validate_static_constraints() {
             return Err(VMError::TxValidation(
                 crate::errors::TxValidationError::InvalidFrameTransactionFormat(e),
@@ -2960,6 +2967,13 @@ impl<'a> VM<'a> {
 
         let sender = frame_tx.sender;
 
+        // EIP-8288 gating, separate from the shape checks below: mode 3 is a
+        // reserved byte before J*, so a block carrying one is invalid there.
+        if let Err(e) = frame_tx.validate_fork_constraints(self.env.config.fork) {
+            return Err(VMError::TxValidation(
+                crate::errors::TxValidationError::InvalidFrameTransactionFormat(e),
+            ));
+        }
         if let Err(e) = frame_tx.validate_static_constraints() {
             return Err(VMError::TxValidation(
                 crate::errors::TxValidationError::InvalidFrameTransactionFormat(e),

@@ -518,6 +518,13 @@ pub struct Withdrawal {
     pub amount: u64,
 }
 
+/// The largest `recursive_stark` proof a header may carry.
+///
+/// Mirrors `ethrex_dep_aggregation::MAX_RECURSIVE_STARK_PROOF_BYTES`, which cannot
+/// be imported here: that crate depends on this one. Asserted equal in
+/// `crates/common/dep-aggregation/src/tests.rs` so the two cannot drift.
+pub const MAX_RECURSIVE_STARK_PROOF_BYTES: usize = 1 << 20;
+
 /// EIP-8288 `recursive_stark`: the aggregate proof discharging every dependency
 /// declared by every transaction in the block, plus the digest of that dependency
 /// set.
@@ -559,7 +566,18 @@ impl RLPEncode for RecursiveStark {
 impl RLPDecode for RecursiveStark {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let decoder = Decoder::new(rlp)?;
-        let (proof, decoder) = decoder.decode_field("proof")?;
+        let (proof, decoder) = decoder.decode_field::<Bytes>("proof")?;
+        // Bounded here, not only where it is verified. An unbounded field in a
+        // header is allocated and hashed by every node that sees the block, long
+        // before any aggregation backend looks at it -- and a node built without one
+        // never looks at all. EIP-7934's block cap is the only other bound, and it
+        // is eight times larger than any real proof.
+        if proof.len() > MAX_RECURSIVE_STARK_PROOF_BYTES {
+            return Err(RLPDecodeError::Custom(format!(
+                "recursive stark proof is {} bytes, over the {MAX_RECURSIVE_STARK_PROOF_BYTES}-byte limit",
+                proof.len()
+            )));
+        }
         let (block_deps_hash, decoder) = decoder.decode_field("block_deps_hash")?;
         Ok((
             RecursiveStark {

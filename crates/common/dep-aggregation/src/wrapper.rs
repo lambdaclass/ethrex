@@ -27,7 +27,9 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 
-use crate::{AggregateError, DependencyAggregator, MAX_RECURSIVE_STARK_PROOF_BYTES};
+use crate::{
+    AggregateError, DependencyAggregator, DependencyWitness, MAX_RECURSIVE_STARK_PROOF_BYTES,
+};
 
 /// EIP-8288 `MAX_LEANSIG_DEPS_PER_WRAPPER`.
 pub const MAX_LEANSIG_DEPS_PER_WRAPPER: usize = 16;
@@ -148,10 +150,26 @@ impl MempoolWrapper {
                     });
                 }
                 // "Each dependency has a corresponding proof that can be verified
-                // individually." Checking one dependency at a time is what the mode
-                // means, so each proof is verified against a single-element set.
+                // individually."
+                //
+                // For leanSPHINCS that proof is the raw witness, not a STARK. The
+                // EIP says so twice: mode 0 carries "one STARK per leanSTARK
+                // dependency" -- not one per dependency -- and a node may "naively
+                // concatenate the leanSPHINCS instead of proving them". Mode 0 is
+                // also "intended to be used primarily by clients broadcasting their
+                // transactions", and a user's first broadcast has no aggregate, so
+                // demanding a recursive proof here would make the mode unusable for
+                // the case it exists to serve.
                 for (dep, proof) in deps.iter().zip(proofs) {
-                    aggregator.verify(proof, std::slice::from_ref(dep))?;
+                    if dep.is_leansphincs() {
+                        aggregator.verify_witness(&DependencyWitness {
+                            triple: *dep,
+                            witness: proof.clone(),
+                        })?;
+                    } else {
+                        // A leanSTARK dependency does carry a STARK of its own.
+                        aggregator.verify(proof, std::slice::from_ref(dep))?;
+                    }
                 }
                 Ok(())
             }
