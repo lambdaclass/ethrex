@@ -324,7 +324,6 @@ async fn collect_block_logs(
                         transaction_index: tx_index as u64,
                         block_number: block_num,
                         block_hash,
-                        block_timestamp: block_header.timestamp,
                         removed: false,
                     });
                 }
