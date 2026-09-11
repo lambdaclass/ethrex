@@ -503,6 +503,39 @@ The technique is worth keeping: every removal funnels through
 `probe_contract_sender_tx.py` names the caller in one run. That is what found this after six
 suspects had been ruled out by reading.
 
+## 6.4 The mempool simulation answered `FRAMEPARAM` differently from a block — FIXED
+
+Found on 2026-09-11 by the minimal shielded pool, running its lifecycle against a local
+devnet built from this branch. Every spend was refused at admission with
+`validation prefix frame reverted`, and mined perfectly once the node was fixed.
+
+`VM::simulate_validation_prefix` ran the prefix frames but never pushed anything into
+`FrameTxContext::frame_results`, while `execute_frame_tx` pushes a
+`(status, gas_used.execution, gas_used.state, logs)` tuple for every frame it runs. The three
+`FRAMEPARAM` indices that describe a **completed** frame — `0x05` status, `0x0A`
+`gas_used.execution`, `0x0B` `gas_used.state` — resolve against that vector and halt on an
+index it does not carry. A prefix frame that inspected an earlier frame therefore halted in
+the mempool and succeeded in a block: the two disagreed about the same transaction.
+
+EIP-8272 at `824cbc0b0e` puts that read on the ordinary path. The canonical recent-root
+verifier frame leads the transaction and is deliberately *not* part of the validation
+prefix, so the frame behind it is expected to confirm the verifier succeeded before trusting
+the tuple it proved. Any contract following that grammar was unusable through the public
+mempool.
+
+The diagnosis was slow for a reason worth recording: the rejection carries no frame index and
+no revert reason. `ethrex_simulateFrameTransaction` reduces the whole prefix to
+`sim.any_revert`, so a status read that halts is indistinguishable from a failed proof, an
+insolvent payer or a stale root. Narrowing it needed a gas bisection of the verifier frame
+(5,579 gas for one tuple, 12,044 for sixteen — the pinned 30,000 was never the problem) and
+then a read of the two code paths side by side. **Worth improving**: the violation string
+should name the frame that reverted, and say whether it reverted or halted.
+
+The fix records each simulated frame the way execution does, with the state figure read
+before the reservoir resets and a failed frame attributed none of it. Regression test:
+`a_prefix_frame_can_read_a_completed_earlier_frames_status` in
+`test/tests/levm/eip8141_tests.rs`, which fails without it.
+
 ## 7. The glamsterdam-devnet-8 base reprices Amsterdam
 
 The testnet is now built on `origin/glamsterdam-devnet-8`, whose commit `fe6b15abb`
