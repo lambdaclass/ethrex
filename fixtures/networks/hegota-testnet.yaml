@@ -10,6 +10,17 @@
 #   make localnet ENCLAVE=hegota-testnet \
 #     KURTOSIS_CONFIG_FILE=fixtures/networks/hegota-testnet.yaml
 #
+# On a single host, drop the whole `port_publisher` block at the end of this file
+# before launching. It exists so a public deployment advertises one reachable
+# address, and it is the ONLY source of what every node puts in its ENR. Filling
+# `nat_exit_ip` with a loopback address to get a local run therefore makes each
+# container advertise itself: discovery resolves every peer to its own loopback,
+# all three nodes sit at zero peers, and each builds a separate chain with a third
+# of the validator set. Nothing errors and blocks keep coming, so the only tell is
+# `/eth/v1/node/peer_count` reading zero. Without the block kurtosis advertises
+# enclave-internal addresses and assigns host ports dynamically, which is what a
+# one-host devnet wants; read them back with `kurtosis enclave inspect`.
+#
 # Three values MUST be replaced before a real deployment, and are marked
 # REPLACE below: the validator mnemonic, the prefunded/admin addresses, and the
 # advertised public IP. They are per-deployment and two of them are secrets, so
