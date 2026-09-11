@@ -314,7 +314,7 @@ const TXPARAM_STATE_GAS_LEFT: u64 = 0x0C;
 // The published values are asserted here so a renumbering is a compile error rather than a
 // silent wrong answer, the same guard the opcode bytes carry in `opcodes.rs`.
 //
-// EIP-8141 `state_gas_left`; EIP-8250 `94f5a3e3c1`; EIP-8272 (`824cbc0b0e`) claims no
+// EIP-8141 `state_gas_left`; EIP-8250 `f3079a09e8`; EIP-8272 (`824cbc0b0e`) claims no
 // index. `0x12` is
 // ethrex's own resolved-payer read, which yields to any spec id that lands on it.
 const _: () = assert!(TXPARAM_STATE_GAS_LEFT == 0x0C);

@@ -33,7 +33,7 @@ has moved and is *not* on this chain.
 | EIP | Title | Pinned commit | Status |
 |--------|-----|-----|:-----:|
 | [EIP-8141](https://eips.ethereum.org/EIPS/eip-8141) | Frame Transaction | [`b75cbe6115`](https://github.com/ethereum/EIPs/blob/b75cbe6115/EIPS/eip-8141.md) (2026-09-01) | :new: |
-| [EIP-8250](https://eips.ethereum.org/EIPS/eip-8250) | Keyed Nonces | [`94f5a3e3c1`](https://github.com/ethereum/EIPs/blob/94f5a3e3c1/EIPS/eip-8250.md) (2026-09-02) | :new: |
+| [EIP-8250](https://eips.ethereum.org/EIPS/eip-8250) | Keyed Nonces | [`f3079a09e8`](https://github.com/ethereum/EIPs/blob/f3079a09e8/EIPS/eip-8250.md) (2026-09-11) | :new: |
 | [EIP-8272](https://eips.ethereum.org/EIPS/eip-8272) | Recent Roots | [`824cbc0b0e`](https://github.com/ethereum/EIPs/blob/824cbc0b0e/EIPS/eip-8272.md) (2026-09-07) | :new: |
 | [EIP-7805](https://eips.ethereum.org/EIPS/eip-7805) | Fork-choice enforced Inclusion Lists (FOCIL) | [`9a345f96c2`](https://github.com/ethereum/EIPs/blob/9a345f96c2/EIPS/eip-7805.md) | :new: |
 | [EIP-8369](https://eips.ethereum.org/EIPS/eip-8369) | VOPS Profiles for FOCIL Eligibility | [`51dc7b939a`](https://github.com/ethereum/EIPs/blob/51dc7b939a/EIPS/eip-8369.md) (2026-09-02, merged upstream 2026-09-01) | :new: |

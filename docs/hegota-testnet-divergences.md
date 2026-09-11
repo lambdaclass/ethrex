@@ -26,13 +26,13 @@ only removes a redundant assertion, by merging the `frames-devnet-0` line that i
 **Re-audited 2026-08-31.** EIP-8141 and EIP-7805 have not moved. EIP-8250 and EIP-8272 both
 moved that day, and both moves are consensus-visible renumberings caused by EIP-8141's `0x0C` and
 `0xB5` claims — see §5.1. Implemented and re-pinned to `e5cf246ff1` and `0231fb05f5`; the upgrade-2
-series then moved both again, to `94f5a3e3c1` and `824cbc0b0e` (see the table).
+series then moved both again, to `f3079a09e8` and `824cbc0b0e` (see the table).
 
 | EIP | Pin | Drift to head | Consensus-visible | Action | Owner |
 | --- | --- | --- | --- | --- | --- |
 | 8141 | `4093c21847` → `7d1c8bfb94` → **`b75cbe6115`** | +326/−96 to `7d1c8bfb94` (a new envelope, see §6); then a redundant state-gas assertion removed (2026-09-01) | **yes** (the first move) | **implemented**, pin bumped; re-genesis required | — |
 | 7805 | `4093c21847` | none — byte-identical | no | closed | — |
-| 8250 | `81b976ac01` → `e5cf246ff1` → **`94f5a3e3c1`** | TXPARAM ids shifted up by one (2026-08-31); then **first use of a keyed nonce priced as state gas** (PR #12279, 2026-09): one storage set per fresh key from the approving frame's `limits.state`, key `[0]` pays account creation only, EIP-8141 rule 6 lets a VERIFY frame budget it | **yes** — every keyed-nonce approval's gas | **implemented**, pin bumped; re-genesis required | — |
+| 8250 | `81b976ac01` → `e5cf246ff1` → `94f5a3e3c1` → **`f3079a09e8`** | TXPARAM ids shifted up by one (2026-08-31); then **first use of a keyed nonce priced as state gas** (PR #12279, 2026-09): one storage set per fresh key from the approving frame's `limits.state`, key `[0]` pays account creation only, EIP-8141 rule 6 lets a VERIFY frame budget it; then the payload block restored EIP-8141's nested `fees` list it had flattened (PR #12316, 2026-09-11) | **yes** — every keyed-nonce approval's gas (the fee correction is editorial: the encoder already nests `fees`) | **implemented**, pin bumped; re-genesis required | — |
 | 8272 | `d8636a330d` → `0231fb05f5` → **`824cbc0b0e`** | reference count and `RECENTROOTREFLOAD` renumbered (2026-08-31); then **the envelope field, `TXPARAM 0x11`, `RECENTROOTREFLOAD` and the reference intrinsic gas removed for a canonical VERIFY frame** to `0x…8272` carrying `n × 72`-byte tuples, the contract gaining a validation operation, the frame counting toward `MAX_VERIFY_GAS`, `current_slot = head slotNumber + 1` in the mempool (PRs #12281, #12302, 2026-09) | **yes** — wire format and rule set | **implemented**, pin bumped; `RECENT_ROOT_CODE` bytes are ethrex's until upstream publishes; re-genesis required | — |
 | 8369 | `6f818e27dd` → `33724bd7da` → **`51dc7b939a`** | three commits, +17/−13 (Profile 1 candidacy by transaction type, `MAX_VERIFY_GAS_PER_TX` demoted, two-stage budget fill); then **merged upstream** 2026-09-01 with an editorial pass that states `codeFlag = 1` for an EIP-7702-delegated account, which is how eligibility already classified it | no (the second move) | **implemented**, pin bumped | — |
 
