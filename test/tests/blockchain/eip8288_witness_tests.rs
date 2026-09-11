@@ -109,15 +109,59 @@ fn a_partial_witness_set_yields_nothing() {
 
 /// Entries arrive from the network, so the store is bounded: a peer that could add
 /// without limit could exhaust memory for the price of signing.
+///
+/// `Ok` means stored, under eviction pressure too. A success that silently kept
+/// nothing would leave the caller believing a dependency had become admissible when
+/// it had not.
 #[test]
-fn the_store_is_bounded() {
+fn the_store_is_bounded_and_success_means_stored() {
     let store = DependencyWitnessStore::new(4);
     for n in 0..16 {
         store
             .insert_verified(&CredulousAggregator, &witness(n))
-            .unwrap();
+            .expect("the backend accepts every witness here");
+        assert!(
+            store.holds(&triple(n)),
+            "witness {n} reported stored but is not there"
+        );
+        assert!(store.len() <= 4, "the bound holds after every insert");
     }
-    assert!(store.len() <= 4);
+}
+
+/// Re-inserting a dependency already held must not evict anything to make room for
+/// something already present.
+#[test]
+fn reinserting_a_held_dependency_evicts_nothing() {
+    let store = DependencyWitnessStore::new(2);
+    store
+        .insert_verified(&CredulousAggregator, &witness(1))
+        .unwrap();
+    store
+        .insert_verified(&CredulousAggregator, &witness(2))
+        .unwrap();
+    assert_eq!(store.len(), 2);
+
+    store
+        .insert_verified(&CredulousAggregator, &witness(1))
+        .unwrap();
+    assert!(store.holds(&triple(1)) && store.holds(&triple(2)));
+    assert_eq!(store.len(), 2);
+}
+
+/// A store that can hold nothing would make every dependency permanently
+/// inadmissible with nothing reporting a problem, so neither the default nor a zero
+/// capacity may produce one.
+#[test]
+fn a_store_always_has_room_for_at_least_one_witness() {
+    for store in [
+        DependencyWitnessStore::default(),
+        DependencyWitnessStore::new(0),
+    ] {
+        store
+            .insert_verified(&CredulousAggregator, &witness(1))
+            .expect("verification succeeded, so the witness must be kept");
+        assert!(store.holds(&triple(1)));
+    }
 }
 
 /// The wrapper object's purpose: mode 0 carries individually verifiable proofs, and
