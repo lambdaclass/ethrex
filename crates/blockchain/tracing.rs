@@ -9,6 +9,7 @@ use ethrex_storage::Store;
 use ethrex_vm::tracing::OpcodeTracerConfig;
 use ethrex_vm::{Evm, EvmError};
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use crate::{
     Blockchain,
@@ -24,8 +25,9 @@ use crate::{
 /// baked into `effective_header` by the caller.
 #[derive(Default, Clone)]
 pub struct TraceCallOverrides {
-    /// State Override Set, already converted by the RPC layer.
-    pub state: BTreeMap<Address, StateOverride>,
+    /// State Override Set, already converted by the RPC layer. Shared rather than owned
+    /// so building the overlay does not copy it.
+    pub state: Arc<BTreeMap<Address, StateOverride>>,
     /// Header the EVM environment is built from when a Block Override Set was given.
     /// The *database* is always built from the real header, so `state_root` and
     /// block-hash ancestor walks still resolve against actual chain state.

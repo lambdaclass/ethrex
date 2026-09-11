@@ -161,23 +161,24 @@ impl RpcHandler for CallRequest {
             _ => return Ok(Value::Null),
         };
         let chain_config = context.storage.get_chain_config();
+        // Built once and handed down. `None` means the call runs against the real header.
         let effective_header = match self.block_overrides.as_ref().filter(|b| !b.is_empty()) {
-            Some(bo) => bo.apply_to(header.clone(), &chain_config)?,
-            None => header.clone(),
+            Some(bo) => Some(bo.apply_to(header.clone(), &chain_config)?),
+            None => None,
         };
         let state_overrides = convert_state_overrides(
             self.state_overrides.clone(),
             &context.blockchain,
             &chain_config,
-            &effective_header,
+            effective_header.as_ref().unwrap_or(&header),
         )?;
         let result = simulate_tx_with_overrides(
             &self.transaction,
             &header,
+            effective_header.as_ref(),
             context.storage,
             context.blockchain,
             state_overrides.as_ref(),
-            self.block_overrides.clone(),
         )?;
         serde_json::to_value(format!("0x{:#x}", result.output()))
             .map_err(|error| RpcErr::Internal(error.to_string()))
@@ -588,10 +589,13 @@ impl RpcHandler for EstimateGasRequest {
         // because `simulate_tx_with_overrides` needs the *real* header for the database.
         // The account and nonce lookups below deliberately keep the real block number.
         let effective_header = match self.block_overrides.as_ref().filter(|b| !b.is_empty()) {
-            Some(bo) => bo.apply_to(block_header.clone(), &chain_config)?,
-            None => block_header.clone(),
+            Some(bo) => Some(bo.apply_to(block_header.clone(), &chain_config)?),
+            None => None,
         };
-        let current_fork = chain_config.fork(effective_header.timestamp);
+        // The header the transaction will execute against: the synthetic one when a Block
+        // Override Set was given, the real one otherwise.
+        let env_header = effective_header.as_ref().unwrap_or(&block_header);
+        let current_fork = chain_config.fork(env_header.timestamp);
 
         // Converted once and reused: the balance cap below reads it, and the binary search
         // runs the simulation up to ~64 times while `into_overrides` hashes every override
@@ -600,7 +604,7 @@ impl RpcHandler for EstimateGasRequest {
             self.state_overrides.clone(),
             blockchain,
             &chain_config,
-            &effective_header,
+            env_header,
         )?;
 
         let transaction = match self.transaction.nonce {
@@ -657,7 +661,7 @@ impl RpcHandler for EstimateGasRequest {
         }
 
         // Prepare binary search
-        let highest_gas_limit = get_max_allowed_gas_limit(effective_header.gas_limit, current_fork);
+        let highest_gas_limit = get_max_allowed_gas_limit(env_header.gas_limit, current_fork);
         let mut highest_gas_limit = match transaction.gas {
             Some(gas) => gas.min(highest_gas_limit),
             None => highest_gas_limit,
@@ -695,10 +699,10 @@ impl RpcHandler for EstimateGasRequest {
         let result = simulate_tx_with_overrides(
             &transaction,
             &block_header,
+            effective_header.as_ref(),
             storage.clone(),
             blockchain.clone(),
             state_overrides.as_ref(),
-            self.block_overrides.clone(),
         )?;
 
         let gas_used = result.gas_used();
@@ -717,10 +721,10 @@ impl RpcHandler for EstimateGasRequest {
         if let Ok(ExecutionResult::Success { .. }) = simulate_tx_with_overrides(
             &transaction,
             &block_header,
+            effective_header.as_ref(),
             storage.clone(),
             blockchain.clone(),
             state_overrides.as_ref(),
-            self.block_overrides.clone(),
         ) {
             return serde_json::to_value(format!("{gas_used:#x}"))
                 .map_err(|error| RpcErr::Internal(error.to_string()));
@@ -752,10 +756,10 @@ impl RpcHandler for EstimateGasRequest {
             let result = simulate_tx_with_overrides(
                 &transaction,
                 &block_header,
+                effective_header.as_ref(),
                 storage.clone(),
                 blockchain.clone(),
                 state_overrides.as_ref(),
-                self.block_overrides.clone(),
             );
             if let Ok(ExecutionResult::Success { .. }) = result {
                 highest_gas_limit = middle_gas_limit;
@@ -786,15 +790,6 @@ fn max_blob_gas_cost(blob_versioned_hashes: &[H256], max_fee_per_blob_gas: Optio
         .unwrap_or(U256::MAX)
 }
 
-/// Caps the estimation ceiling at the gas the sender can actually pay for.
-///
-/// `fee_cap` is the per-gas price the transaction's balance check uses: `max_fee_per_gas`
-/// when the call object carries one, otherwise the legacy `gas_price`.
-///
-/// A zero `fee_cap` is a request that names no fee at all, or names a fee of zero, and in
-/// both cases no balance bounds the gas: the ceiling is returned unchanged. Checked here
-/// rather than at the call site so no caller can reach the division with a zero divisor,
-/// which is the same split this function's `fee_cap` argument exists to close.
 /// Convert a State Override Set into the map the simulation paths consume, validating
 /// `movePrecompileToAddress` against the fork the call will actually execute under.
 ///
@@ -807,21 +802,32 @@ fn convert_state_overrides(
     blockchain: &Blockchain,
     chain_config: &ChainConfig,
     effective_header: &BlockHeader,
-) -> Result<Option<BTreeMap<Address, StateOverride>>, RpcErr> {
+) -> Result<Option<Arc<BTreeMap<Address, StateOverride>>>, RpcErr> {
     let Some(set) = set.filter(|s| !s.is_empty()) else {
         return Ok(None);
     };
     let fork = chain_config.fork(effective_header.timestamp);
-    Ok(Some(set.into_overrides(fork, blockchain.vm_type()?)?))
+    Ok(Some(Arc::new(
+        set.into_overrides(fork, blockchain.vm_type()?)?,
+    )))
 }
 
+/// Caps the estimation ceiling at the gas the sender can actually pay for.
+///
+/// `fee_cap` is the per-gas price the transaction's balance check uses: `max_fee_per_gas`
+/// when the call object carries one, otherwise the legacy `gas_price`.
+///
+/// A zero `fee_cap` is a request that names no fee at all, or names a fee of zero, and in
+/// both cases no balance bounds the gas: the ceiling is returned unchanged. Checked here
+/// rather than at the call site so no caller can reach the division with a zero divisor,
+/// which is the same split this function's `fee_cap` argument exists to close.
 async fn recap_with_account_balances(
     highest_gas_limit: u64,
     transaction: &GenericTransaction,
     fee_cap: U256,
     storage: &Store,
     block_number: BlockNumber,
-    state_overrides: Option<&BTreeMap<Address, StateOverride>>,
+    state_overrides: Option<&Arc<BTreeMap<Address, StateOverride>>>,
 ) -> Result<u64, RpcErr> {
     if fee_cap.is_zero() {
         return Ok(highest_gas_limit);
@@ -868,7 +874,7 @@ fn simulate_tx(
     storage: Store,
     blockchain: Arc<Blockchain>,
 ) -> Result<ExecutionResult, RpcErr> {
-    simulate_tx_with_overrides(transaction, block_header, storage, blockchain, None, None)
+    simulate_tx_with_overrides(transaction, block_header, None, storage, blockchain, None)
 }
 
 /// Override-aware variant of [`simulate_tx`].
@@ -880,8 +886,10 @@ fn simulate_tx(
 /// It reaches the EVM through [`Blockchain::new_overlaid_evm`], which applies both
 /// the per-account overlay and any `movePrecompileToAddress` relocations.
 ///
-/// `block_overrides` (geth Block Override Set) synthesizes a header with the
-/// requested fields replaced.
+/// `effective_header` is the synthetic header a Block Override Set produced, already
+/// built by the caller; `None` means there was no such set. It is the caller's because
+/// the fork it implies also decides how the State Override Set is validated, so building
+/// it twice would put two sources of truth a request apart.
 ///
 /// `real_header` is the header the call is made against, and stays the database's view
 /// of the chain no matter what the Block Override Set says. The overlay also takes its
@@ -890,17 +898,12 @@ fn simulate_tx(
 pub(crate) fn simulate_tx_with_overrides(
     transaction: &GenericTransaction,
     real_header: &BlockHeader,
+    effective_header: Option<&BlockHeader>,
     storage: Store,
     blockchain: Arc<Blockchain>,
-    state_overrides: Option<&BTreeMap<Address, StateOverride>>,
-    block_overrides: Option<BlockOverrideSet>,
+    state_overrides: Option<&Arc<BTreeMap<Address, StateOverride>>>,
 ) -> Result<ExecutionResult, RpcErr> {
-    let chain_config = storage.get_chain_config();
-    let block_overrides = block_overrides.filter(|bo| !bo.is_empty());
-    let effective_header = match &block_overrides {
-        Some(bo) => bo.apply_to(real_header.clone(), &chain_config)?,
-        None => real_header.clone(),
-    };
+    let env_header = effective_header.unwrap_or(real_header);
 
     // Build the inner DB from the REAL header so state_root and block-hash
     // ancestor walks resolve against actual chain state. The EVM env is built
@@ -912,13 +915,13 @@ pub(crate) fn simulate_tx_with_overrides(
     // keying it on the state overrides made the same request error or return zero
     // depending on whether an unrelated state override happened to be present.
     let state_overrides = state_overrides.filter(|o| !o.is_empty());
-    let raw_result = if state_overrides.is_some() || block_overrides.is_some() {
+    let raw_result = if state_overrides.is_some() || effective_header.is_some() {
         let overrides = state_overrides.cloned().unwrap_or_default();
         let mut vm = blockchain.new_overlaid_evm(inner, overrides, real_header.number)?;
-        vm.simulate_tx_from_generic(transaction, &effective_header)?
+        vm.simulate_tx_from_generic(transaction, env_header)?
     } else {
         let mut vm = blockchain.new_evm(inner)?;
-        vm.simulate_tx_from_generic(transaction, &effective_header)?
+        vm.simulate_tx_from_generic(transaction, env_header)?
     };
 
     match raw_result {

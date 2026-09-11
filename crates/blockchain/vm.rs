@@ -77,14 +77,17 @@ pub struct OverlaidVmDatabase<Inner> {
 }
 
 impl<Inner> OverlaidVmDatabase<Inner> {
+    /// `overrides` arrives shared rather than owned: `eth_estimateGas` builds one
+    /// overlay per binary-search step, and copying the map — with a storage map inside
+    /// every entry — on each of them is pure waste.
     pub fn new(
         inner: Inner,
-        overrides: BTreeMap<Address, StateOverride>,
+        overrides: Arc<BTreeMap<Address, StateOverride>>,
         base_block_number: BlockNumber,
     ) -> Self {
         Self {
             inner,
-            overrides: Arc::new(overrides),
+            overrides,
             base_block_number,
         }
     }
@@ -917,7 +920,7 @@ mod overlaid_db_tests {
                 ..Default::default()
             },
         );
-        let wrapper = OverlaidVmDatabase::new(mock, overrides, 0);
+        let wrapper = OverlaidVmDatabase::new(mock, Arc::new(overrides), 0);
         let state = wrapper.get_account_state(addr(1)).unwrap().unwrap();
         assert_eq!(state.balance, U256::from(999));
     }
@@ -933,7 +936,7 @@ mod overlaid_db_tests {
                 ..Default::default()
             },
         );
-        let wrapper = OverlaidVmDatabase::new(mock, overrides, 0);
+        let wrapper = OverlaidVmDatabase::new(mock, Arc::new(overrides), 0);
         // Address has no real state — wrapper should synthesize.
         let state = wrapper.get_account_state(addr(2)).unwrap().unwrap();
         assert_eq!(state.nonce, 42);
@@ -950,7 +953,7 @@ mod overlaid_db_tests {
                 ..Default::default()
             },
         );
-        let wrapper = OverlaidVmDatabase::new(mock, overrides, 0);
+        let wrapper = OverlaidVmDatabase::new(mock, Arc::new(overrides), 0);
         // movePrecompileToAddress alone doesn't materialize an account.
         assert!(wrapper.get_account_state(addr(3)).unwrap().is_none());
         assert_eq!(
@@ -992,7 +995,7 @@ mod overlaid_db_tests {
                 ..Default::default()
             },
         );
-        let wrapper = OverlaidVmDatabase::new(mock, overrides, 0);
+        let wrapper = OverlaidVmDatabase::new(mock, Arc::new(overrides), 0);
         let state = wrapper.get_account_state(addr(4)).unwrap().unwrap();
         assert_eq!(state.code_hash, hash);
         let fetched = wrapper.get_account_code(hash).unwrap();
@@ -1019,7 +1022,7 @@ mod overlaid_db_tests {
                 ..Default::default()
             },
         );
-        let wrapper = OverlaidVmDatabase::new(mock, overrides, 0);
+        let wrapper = OverlaidVmDatabase::new(mock, Arc::new(overrides), 0);
         // Slot 0 should NOT see the inner 0xff because Replace mode erases it.
         assert_eq!(
             wrapper.get_storage_slot(addr(5), slot(0)).unwrap(),
@@ -1049,7 +1052,7 @@ mod overlaid_db_tests {
                 ..Default::default()
             },
         );
-        let wrapper = OverlaidVmDatabase::new(mock, overrides, 0);
+        let wrapper = OverlaidVmDatabase::new(mock, Arc::new(overrides), 0);
         // Diff mode: real slot 0 is preserved.
         assert_eq!(
             wrapper.get_storage_slot(addr(6), slot(0)).unwrap(),
@@ -1075,7 +1078,7 @@ mod overlaid_db_tests {
                 .unwrap()
                 .insert(number, H256::from_low_u64_be(0xdead));
         }
-        let wrapper = OverlaidVmDatabase::new(mock, BTreeMap::new(), 100);
+        let wrapper = OverlaidVmDatabase::new(mock, Arc::new(BTreeMap::new()), 100);
         // Below the base block: delegates.
         assert_eq!(
             wrapper.get_block_hash(50).unwrap(),
@@ -1098,7 +1101,7 @@ mod overlaid_db_tests {
         mock.accounts.lock().unwrap().insert(addr(7), original);
         let mut overrides = BTreeMap::new();
         overrides.insert(addr(7), StateOverride::default());
-        let wrapper = OverlaidVmDatabase::new(mock, overrides, 0);
+        let wrapper = OverlaidVmDatabase::new(mock, Arc::new(overrides), 0);
         let state = wrapper.get_account_state(addr(7)).unwrap().unwrap();
         assert_eq!(state.balance, U256::from(7));
         assert_eq!(state.nonce, 3);
@@ -1360,7 +1363,7 @@ mod replayed_db_tests {
                 ..Default::default()
             },
         );
-        let db = OverlaidVmDatabase::new(replayed, overrides, 0);
+        let db = OverlaidVmDatabase::new(replayed, Arc::new(overrides), 0);
         assert_eq!(
             db.get_storage_slot(addr(8), slot(2)).unwrap(),
             Some(U256::from(7))
@@ -1395,7 +1398,7 @@ mod replayed_db_tests {
                 ..Default::default()
             },
         );
-        let db = OverlaidVmDatabase::new(replayed, overrides, 0);
+        let db = OverlaidVmDatabase::new(replayed, Arc::new(overrides), 0);
         assert_eq!(
             db.get_storage_slot(addr(9), slot(2)).unwrap(),
             Some(U256::from(7))

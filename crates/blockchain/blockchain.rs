@@ -4216,7 +4216,7 @@ impl Blockchain {
     pub fn new_overlaid_evm<D: VmDatabase + Clone + 'static>(
         &self,
         inner: D,
-        overrides: BTreeMap<Address, StateOverride>,
+        overrides: Arc<BTreeMap<Address, StateOverride>>,
         base_block_number: BlockNumber,
     ) -> Result<Evm, EvmError> {
         let moves = precompile_moves(&overrides);
