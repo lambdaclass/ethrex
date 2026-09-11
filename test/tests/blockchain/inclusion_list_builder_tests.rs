@@ -11,7 +11,6 @@ use ethrex_common::types::{
     APPROVE_EXECUTION_AND_PAYMENT, EIP1559Transaction, EIP4844Transaction,
     FRAME_SIG_SCHEME_SECP256K1, Frame, FrameMode, FrameSignature, FrameTransaction,
     LegacyTransaction, MempoolTransaction, PrivilegedL2Transaction, Transaction, TxKind,
-    utxo_vault,
 };
 use ethrex_common::{Address, H256, U256};
 use ethrex_crypto::NativeCrypto;
@@ -139,7 +138,7 @@ fn keyed_frame_tx(nonce_keys: Vec<U256>, nonce_seq: u64) -> Transaction {
             flags: APPROVE_EXECUTION_AND_PAYMENT,
             target: Some(addr(0x01)),
             gas_limit: 21_000,
-            state_limit: 0,
+            state_gas_limit: 0,
             value: U256::zero(),
             data: Default::default(),
         }],
@@ -149,20 +148,10 @@ fn keyed_frame_tx(nonce_keys: Vec<U256>, nonce_seq: u64) -> Transaction {
             msg: Default::default(),
             signature: Default::default(),
         }],
-        max_priority_fee_per_gas: 1,
-        max_fee_per_gas: 1_000,
+        max_priority_fee_per_gas: U256::from(1),
+        max_fee_per_gas: U256::from(1_000),
         ..Default::default()
     })
-}
-
-/// An EIP-8312 UTXO spend: sender is the shared vault address, so it carries no
-/// per-sender identity at all.
-fn vault_frame_tx(nonce_keys: Vec<U256>) -> Transaction {
-    let Transaction::FrameTransaction(mut tx) = keyed_frame_tx(nonce_keys, 0) else {
-        unreachable!()
-    };
-    tx.sender = utxo_vault();
-    Transaction::FrameTransaction(tx)
 }
 
 fn insert_tx(mempool: &Mempool, sender: Address, tx: Transaction) -> H256 {
@@ -386,36 +375,6 @@ fn keyed_frame_txs_on_disjoint_keys_do_not_collapse() {
     let hashes: Vec<H256> = il.iter().map(|tx| tx.hash(&NativeCrypto)).collect();
     assert!(hashes.contains(&first));
     assert!(hashes.contains(&second));
-}
-
-#[test]
-fn vault_sender_spends_are_not_per_sender_capped() {
-    let mempool = Mempool::new(64);
-    let state = FakeState::default();
-    // EIP-8312: every UTXO spend shares the vault sender, so a per-sender cap
-    // there would cap the whole network.
-    let vault = utxo_vault();
-    state.set(vault, 0, U256::zero());
-
-    let mut hashes = Vec::new();
-    for key in 1..=4u64 {
-        hashes.push(insert_tx(
-            &mempool,
-            vault,
-            vault_frame_tx(vec![U256::from(key)]),
-        ));
-    }
-
-    let builder = InclusionListBuilder::new(IlPolicy::Production, 2, MAX_BYTES_PER_INCLUSION_LIST);
-    let il = builder.build(&mempool, 0, &state);
-
-    let built: Vec<H256> = il.iter().map(|tx| tx.hash(&NativeCrypto)).collect();
-    for hash in &hashes {
-        assert!(
-            built.contains(hash),
-            "a vault-sender spend must not be dropped by the per-sender cap"
-        );
-    }
 }
 
 #[test]

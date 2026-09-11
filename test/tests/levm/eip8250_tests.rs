@@ -48,6 +48,9 @@ const SSTORE_THEN_STOP_CODE: &[u8] = &[0x60, 0x01, 0x60, 0x00, 0x55, 0x00];
 /// EIP-8037 STATE_BYTES_PER_NEW_ACCOUNT * CPSB: the state gas a value-bearing frame
 /// pays to bring a fresh account into existence.
 const NEW_ACCOUNT_STATE_GAS: u64 = 120 * 1530;
+/// EIP-8250 `KEYED_NONCE_FIRST_USE_STATE_GAS` = EIP-8037 STATE_BYTES_PER_STORAGE_SET * CPSB:
+/// the state gas a payment approval pays for each keyed-nonce slot it creates.
+const KEYED_NONCE_FIRST_USE_STATE_GAS: u64 = 64 * 1530;
 /// NONCE_MANAGER predeploy runtime code: PUSH1 0; PUSH1 0; REVERT.
 const NONCE_MANAGER_STUB_CODE: &[u8] = &[0x60, 0x00, 0x60, 0x00, 0xFD];
 
@@ -79,7 +82,7 @@ fn seeded_db(accounts: &[SeededAccount]) -> GeneralizedDatabase {
 fn frame_tx_env(tx: &FrameTransaction) -> Environment {
     Environment {
         origin: tx.sender,
-        gas_limit: tx.total_gas_limit(),
+        gas_limit: tx.max_gas(),
         block_gas_limit: (i64::MAX - 1) as u64,
         config: EVMConfig::new(Fork::Hegota, EVMConfig::canonical_values(Fork::Hegota)),
         chain_id: U256::from(HARNESS_CHAIN_ID),
@@ -98,11 +101,10 @@ fn frame_tx_with_keys(frames: Vec<Frame>, nonce_keys: Vec<U256>) -> FrameTransac
         sender: FUNDED_SENDER,
         frames,
         signatures: Vec::new(),
-        max_priority_fee_per_gas: 1,
-        max_fee_per_gas: HARNESS_BASE_FEE + 1_000,
+        max_priority_fee_per_gas: U256::from(1),
+        max_fee_per_gas: U256::from(HARNESS_BASE_FEE + 1_000),
         max_fee_per_blob_gas: U256::zero(),
         blob_versioned_hashes: Vec::new(),
-        recent_root_references: Vec::new(),
         inner_hash: Default::default(),
         cached_canonical: Default::default(),
     }
@@ -114,7 +116,7 @@ fn frame(mode: FrameMode, flags: u8, target: Address, gas_limit: u64, data: &[u8
         flags,
         target: Some(target),
         gas_limit,
-        state_limit: 0,
+        state_gas_limit: 0,
         value: U256::zero(),
         data: Bytes::from(data.to_vec()),
     }
@@ -243,7 +245,10 @@ fn key0_consumption_survives_a_later_batch_revert() {
     ];
     let tx = frame_tx_with_keys(
         vec![
-            frame(FrameMode::Verify, 0x03, FUNDED_SENDER, 100_000, &[]),
+            Frame {
+                state_gas_limit: KEYED_NONCE_FIRST_USE_STATE_GAS,
+                ..frame(FrameMode::Verify, 0x03, FUNDED_SENDER, 100_000, &[])
+            },
             frame(FrameMode::Sender, 0x04, reverter, 100_000, &[]),
             frame(FrameMode::Sender, 0x00, reverter, 100_000, &[]),
         ],
@@ -285,7 +290,10 @@ fn keyed_nonce_consumption_survives_a_later_batch_revert() {
     ];
     let tx = frame_tx_with_keys(
         vec![
-            frame(FrameMode::Verify, 0x03, FUNDED_SENDER, 100_000, &[]),
+            Frame {
+                state_gas_limit: KEYED_NONCE_FIRST_USE_STATE_GAS,
+                ..frame(FrameMode::Verify, 0x03, FUNDED_SENDER, 100_000, &[])
+            },
             frame(FrameMode::Sender, 0x04, reverter, 100_000, &[]),
             frame(FrameMode::Sender, 0x00, reverter, 100_000, &[]),
         ],
@@ -331,11 +339,16 @@ fn balance_probe_code(addr: Address) -> Bytes {
 }
 
 /// Run a frame tx that consumes `nonce_keys` and then probes `probed`'s
-/// warm/cold status from a DEFAULT frame, returning total `gas_used`.
-fn keyed_nonce_probe_gas(probed: Address, nonce_keys: Vec<U256>) -> u64 {
+/// warm/cold status from a DEFAULT frame, returning the execution report. The
+/// VERIFY frame carries the state budget for two fresh keys, which is what the
+/// probes below consume at most.
+fn keyed_nonce_probe(probed: Address, nonce_keys: Vec<U256>) -> ExecutionReport {
     let tx = frame_tx_with_keys(
         vec![
-            frame(FrameMode::Verify, 0x03, FUNDED_SENDER, 100_000, &[]),
+            Frame {
+                state_gas_limit: 2 * KEYED_NONCE_FIRST_USE_STATE_GAS,
+                ..frame(FrameMode::Verify, 0x03, FUNDED_SENDER, 100_000, &[])
+            },
             frame(FrameMode::Default, 0, PROBE, 100_000, &[]),
         ],
         nonce_keys,
@@ -359,9 +372,7 @@ fn keyed_nonce_probe_gas(probed: Address, nonce_keys: Vec<U256>) -> u64 {
         ],
         tx,
     );
-    result
-        .expect("the keyed-nonce probe tx must execute")
-        .gas_used
+    result.expect("the keyed-nonce probe tx must execute")
 }
 
 #[test]
@@ -369,8 +380,8 @@ fn consuming_a_keyed_nonce_does_not_warm_the_nonce_manager() {
     let nonce_manager = ethrex_common::types::frame_tx_nonce_manager();
     let keys = vec![U256::one()];
 
-    let manager_gas = keyed_nonce_probe_gas(nonce_manager, keys.clone());
-    let control_gas = keyed_nonce_probe_gas(COLD_CONTROL, keys);
+    let manager_gas = keyed_nonce_probe(nonce_manager, keys.clone()).gas_used;
+    let control_gas = keyed_nonce_probe(COLD_CONTROL, keys).gas_used;
 
     assert_eq!(
         manager_gas, control_gas,
@@ -381,38 +392,45 @@ fn consuming_a_keyed_nonce_does_not_warm_the_nonce_manager() {
 }
 
 #[test]
-fn a_keyed_nonce_is_not_priced_as_an_sstore() {
-    // The only keyed-nonce charge is the first-use state-growth surcharge, and
-    // it applies per newly-occupied key. A second key costs exactly one more
-    // surcharge — not an additional EIP-2200 SSTORE charge, and not a cold-slot
-    // access on top.
-    let one_key = keyed_nonce_probe_gas(COLD_CONTROL, vec![U256::one()]);
-    let two_keys = keyed_nonce_probe_gas(COLD_CONTROL, vec![U256::one(), U256::from(2u64)]);
+fn a_keyed_nonce_first_use_is_priced_as_state_gas() {
+    // EIP-8250 §Nonce consumption: the only keyed-nonce charge is one storage set of
+    // state gas per newly-occupied key, drawn from the approving frame's
+    // `limits.state`. It is not execution gas, not an EIP-2200 SSTORE charge, and
+    // not a cold-slot access on top.
+    let legacy_only = keyed_nonce_probe(COLD_CONTROL, vec![U256::zero()]);
+    let one_key = keyed_nonce_probe(COLD_CONTROL, vec![U256::one()]);
+    let two_keys = keyed_nonce_probe(COLD_CONTROL, vec![U256::one(), U256::from(2u64)]);
 
-    // An extra key also lengthens the signed envelope, so the delta carries a
-    // few gas of ordinary transaction data cost. What it must NOT carry is any
-    // storage pricing: a cold slot access or an EIP-2200 charge would add
-    // thousands, so bounding the excess below `ENVELOPE_SLACK` is what makes
-    // this an assertion about pricing rather than about an exact total.
-    const ENVELOPE_SLACK: u64 = 100;
-    let surcharge = ethrex_levm::gas_cost::KEYED_NONCE_FIRST_USE_GAS;
-
-    let second_key_delta = two_keys - one_key;
-    assert!(
-        (surcharge..surcharge + ENVELOPE_SLACK).contains(&second_key_delta),
-        "a second first-use keyed nonce must cost one KEYED_NONCE_FIRST_USE_GAS \
-         ({surcharge}) plus envelope data only, but cost {second_key_delta} more \
-         -- a storage charge is layered on top"
+    // The state dimension: exactly one first-use charge per fresh key, and none
+    // for key 0, which is the account nonce and occupies no NONCE_MANAGER slot.
+    assert_eq!(
+        one_key.state_gas_used - legacy_only.state_gas_used,
+        KEYED_NONCE_FIRST_USE_STATE_GAS,
+        "one fresh key must cost exactly one KEYED_NONCE_FIRST_USE_STATE_GAS of state gas"
+    );
+    assert_eq!(
+        two_keys.state_gas_used - one_key.state_gas_used,
+        KEYED_NONCE_FIRST_USE_STATE_GAS,
+        "a second fresh key must cost exactly one more KEYED_NONCE_FIRST_USE_STATE_GAS"
     );
 
-    // Key 0 is the legacy account nonce and occupies no NONCE_MANAGER slot, so
-    // it carries no surcharge at all.
-    let legacy_only = keyed_nonce_probe_gas(COLD_CONTROL, vec![U256::zero()]);
-    let keyed_delta = one_key - legacy_only;
+    // The execution dimension: an extra key only lengthens the signed envelope, so
+    // the delta is a few gas of ordinary transaction data cost. A cold slot access
+    // or an EIP-2200 charge would add thousands, so bounding the excess below
+    // `ENVELOPE_SLACK` is what makes this an assertion about pricing.
+    const ENVELOPE_SLACK: u64 = 100;
+    let execution = |report: &ExecutionReport| report.gas_used - report.state_gas_used;
+    let keyed_delta = execution(&one_key) - execution(&legacy_only);
     assert!(
-        (surcharge..surcharge + ENVELOPE_SLACK).contains(&keyed_delta),
-        "the legacy nonce key must carry no keyed-nonce surcharge, so one keyed \
-         key should cost one surcharge ({surcharge}) more, not {keyed_delta}"
+        keyed_delta < ENVELOPE_SLACK,
+        "consuming a fresh keyed nonce must cost no execution gas beyond envelope data, \
+         but cost {keyed_delta} more"
+    );
+    let second_key_delta = execution(&two_keys) - execution(&one_key);
+    assert!(
+        second_key_delta < ENVELOPE_SLACK,
+        "a second fresh key must cost no execution gas beyond envelope data, but cost \
+         {second_key_delta} more -- a storage charge is layered on top"
     );
 }
 
@@ -424,10 +442,8 @@ fn a_keyed_nonce_is_not_priced_as_an_sstore() {
 ///
 /// This is the transaction that `eth_sendRawTransaction` admits and the builder then
 /// evicts, so it is worth pinning as a unit: the two paths must agree, and the tighter
-/// budgets are the probe's, not round numbers. The VERIFY frame declares
-/// `limits.state = 0`, which is correct only as long as consuming a keyed nonce for the
-/// first time charges no state gas — a first-use charge routed to the frame pool would
-/// halt the frame, revert the approval, and invalidate the transaction.
+/// budgets are the probe's, not round numbers. The VERIFY frame declares exactly the
+/// state budget EIP-8250 charges for creating the key's NONCE_MANAGER slot.
 #[test]
 fn a_contract_sender_can_approve_on_a_first_use_keyed_nonce() {
     let contract = Address::repeat_byte(0xC5);
@@ -439,7 +455,7 @@ fn a_contract_sender_can_approve_on_a_first_use_keyed_nonce() {
                 flags: 0x03,
                 target: Some(contract),
                 gas_limit: 80_000,
-                state_limit: 0,
+                state_gas_limit: KEYED_NONCE_FIRST_USE_STATE_GAS,
                 value: U256::zero(),
                 data: Bytes::new(),
             },
@@ -448,7 +464,7 @@ fn a_contract_sender_can_approve_on_a_first_use_keyed_nonce() {
                 flags: 0,
                 target: Some(recipient),
                 gas_limit: 30_000,
-                state_limit: NEW_ACCOUNT_STATE_GAS,
+                state_gas_limit: NEW_ACCOUNT_STATE_GAS,
                 value: U256::from(100u64),
                 data: Bytes::new(),
             },
@@ -470,7 +486,7 @@ fn a_contract_sender_can_approve_on_a_first_use_keyed_nonce() {
     );
     let frame_results = report.frame_results.expect("frame results present");
     assert_eq!(
-        frame_results[1].status,
+        frame_results[1].0,
         ethrex_common::types::FRAME_RECEIPT_STATUS_SUCCESS,
         "the SENDER frame must deliver its value; got {frame_results:?}"
     );
@@ -512,7 +528,7 @@ fn two_keyed_transactions_from_one_contract_sender_both_execute() {
                     flags: 0x03,
                     target: Some(contract),
                     gas_limit: 80_000,
-                    state_limit: 0,
+                    state_gas_limit: KEYED_NONCE_FIRST_USE_STATE_GAS,
                     value: U256::zero(),
                     data: Bytes::new(),
                 },
@@ -521,7 +537,7 @@ fn two_keyed_transactions_from_one_contract_sender_both_execute() {
                     flags: 0,
                     target: Some(recipient),
                     gas_limit: 30_000,
-                    state_limit: NEW_ACCOUNT_STATE_GAS,
+                    state_gas_limit: NEW_ACCOUNT_STATE_GAS,
                     value: U256::from(100u64),
                     data: Bytes::new(),
                 },
@@ -550,7 +566,7 @@ fn two_keyed_transactions_from_one_contract_sender_both_execute() {
         });
         let frames = report.frame_results.expect("frame results present");
         assert_eq!(
-            frames[1].status,
+            frames[1].0,
             ethrex_common::types::FRAME_RECEIPT_STATUS_SUCCESS,
             "transaction {index}'s SENDER frame must deliver its value; got {frames:?}"
         );
@@ -561,6 +577,171 @@ fn two_keyed_transactions_from_one_contract_sender_both_execute() {
                 .unwrap_or_default(),
             U256::from(100u64),
             "transaction {index}'s recipient must be funded"
+        );
+    }
+}
+
+/// The same transaction with a VERIFY frame that declares no state budget: the
+/// first-use charge cannot be covered, the frame halts with no approval effect,
+/// and a halted VERIFY frame invalidates the transaction.
+#[test]
+fn a_first_use_keyed_nonce_halts_the_frame_without_its_state_budget() {
+    let contract = Address::repeat_byte(0xC5);
+    let mut tx = frame_tx_with_keys(
+        vec![
+            Frame {
+                mode: u8::from(FrameMode::Verify),
+                flags: 0x03,
+                target: Some(contract),
+                gas_limit: 80_000,
+                state_gas_limit: 0,
+                value: U256::zero(),
+                data: Bytes::new(),
+            },
+            Frame {
+                mode: u8::from(FrameMode::Sender),
+                flags: 0,
+                target: Some(Address::from_low_u64_be(0xF00D)),
+                gas_limit: 30_000,
+                state_gas_limit: NEW_ACCOUNT_STATE_GAS,
+                value: U256::from(100u64),
+                data: Bytes::new(),
+            },
+        ],
+        vec![U256::from(0x9999_0000u64)],
+    );
+    tx.sender = contract;
+
+    let accounts = [(
+        contract,
+        U256::from(10u64).pow(U256::from(18u64)),
+        0,
+        Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+    )];
+    let (result, db) = run_frame_tx(&accounts, tx);
+    let err = result.expect_err(
+        "a VERIFY frame that cannot pay the keyed-nonce first-use state gas must halt \
+         and invalidate the transaction",
+    );
+    assert!(
+        format!("{err:?}").contains("VERIFY"),
+        "the rejection must name the reverted VERIFY frame, got {err:?}"
+    );
+    // No approval effect applied: the key's slot was never written.
+    let slot = keyed_slot(contract, U256::from(0x9999_0000u64));
+    assert!(
+        storage_slot(&db, ethrex_common::types::frame_tx_nonce_manager(), slot).is_zero(),
+        "a halted approval must leave the keyed-nonce slot unwritten"
+    );
+}
+
+// ==================== Key 0 from a sender that does not exist ====================
+
+/// EIP-8250 §Nonce consumption, step 1, on the legacy key: when `tx.sender` does not
+/// exist under EIP-8037's existence rule, the approving frame pays account creation
+/// state gas immediately before the nonce increment creates the account. The sender
+/// here is a never-seen EOA with no balance, so a paymaster's `APPROVE(APPROVE_PAYMENT)`
+/// is what consumes the nonce, and it is that frame's `limits.state` that pays.
+mod key_zero_from_a_fresh_sender {
+    use super::*;
+    use ethrex_common::types::{FRAME_SIG_SCHEME_SECP256K1, FrameSignature};
+    use k256::ecdsa::SigningKey;
+
+    /// APPROVE(scope=1): payment approval from a paymaster's own code.
+    const APPROVE_PAYMENT_CODE: &[u8] = &[0x60, 0x01, 0x60, 0x00, 0x60, 0x00, 0xAA];
+    const PAYMASTER: Address = Address::repeat_byte(0xFA);
+
+    fn key_and_address(seed: u8) -> (SigningKey, Address) {
+        let signing_key = SigningKey::from_bytes(&[seed; 32].into()).unwrap();
+        let uncompressed = signing_key.verifying_key().to_encoded_point(false);
+        let pub_hash = ethrex_crypto::keccak::keccak_hash(&uncompressed.as_bytes()[1..]);
+        (signing_key, Address::from_slice(&pub_hash[12..]))
+    }
+
+    fn sign(key: &SigningKey, sig_hash: H256, signer: Address) -> FrameSignature {
+        let (raw_sig, recovery_id) = key.sign_prehash_recoverable(sig_hash.as_bytes()).unwrap();
+        let mut bytes = vec![0u8; 65];
+        bytes[0] = recovery_id.to_byte();
+        bytes[1..].copy_from_slice(&raw_sig.to_bytes());
+        FrameSignature {
+            scheme: FRAME_SIG_SCHEME_SECP256K1,
+            signer: Some(signer),
+            msg: Bytes::new(),
+            signature: Bytes::from(bytes),
+        }
+    }
+
+    /// A signed `[VERIFY(exec) on the sender's default code, VERIFY(pay) on the
+    /// paymaster]` transaction from a sender that exists nowhere, with `pay_state`
+    /// as the paymaster frame's state budget.
+    fn sponsored_tx_from_nowhere(pay_state: u64) -> (FrameTransaction, Address) {
+        let (key, sender) = key_and_address(0x5A);
+        let mut tx = frame_tx_with_keys(
+            vec![
+                frame(FrameMode::Verify, 0x02, sender, 100_000, &[]),
+                Frame {
+                    state_gas_limit: pay_state,
+                    ..frame(FrameMode::Verify, 0x01, PAYMASTER, 100_000, &[])
+                },
+            ],
+            vec![U256::zero()],
+        );
+        tx.sender = sender;
+        tx.signatures = vec![FrameSignature {
+            scheme: FRAME_SIG_SCHEME_SECP256K1,
+            signer: Some(sender),
+            msg: Bytes::new(),
+            signature: Bytes::from(vec![0u8; 65]),
+        }];
+        let sig_hash = tx.compute_sig_hash();
+        tx.signatures[0] = sign(&key, sig_hash, sender);
+        tx.inner_hash = Default::default();
+        tx.cached_canonical = Default::default();
+        (tx, sender)
+    }
+
+    fn paymaster() -> SeededAccount {
+        (
+            PAYMASTER,
+            U256::from(10u64).pow(U256::from(18u64)),
+            0,
+            Bytes::from(APPROVE_PAYMENT_CODE.to_vec()),
+        )
+    }
+
+    #[test]
+    fn the_approving_frame_pays_account_creation() {
+        let (tx, sender) = sponsored_tx_from_nowhere(NEW_ACCOUNT_STATE_GAS);
+        let (result, db) = run_frame_tx(&[paymaster()], tx);
+        let report = result.expect("a sponsored transaction from a fresh sender must be valid");
+        let frames = report.frame_results.expect("frame results present");
+        assert_eq!(
+            frames[1].2, NEW_ACCOUNT_STATE_GAS,
+            "the paymaster frame must be attributed the sender's account creation, got {frames:?}"
+        );
+        assert_eq!(
+            frames[0].2, 0,
+            "the sender's own VERIFY frame creates nothing"
+        );
+        assert_eq!(
+            nonce_of(&db, sender),
+            1,
+            "the increment created the account at nonce 1"
+        );
+    }
+
+    #[test]
+    fn without_the_state_budget_the_approval_halts() {
+        let (tx, sender) = sponsored_tx_from_nowhere(NEW_ACCOUNT_STATE_GAS - 1);
+        let (result, db) = run_frame_tx(&[paymaster()], tx);
+        result.expect_err(
+            "a paymaster frame one gas short of the account creation charge must halt and \
+             invalidate the transaction",
+        );
+        assert_eq!(
+            nonce_of(&db, sender),
+            0,
+            "no approval effect may survive the halt"
         );
     }
 }

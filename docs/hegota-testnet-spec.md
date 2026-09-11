@@ -32,11 +32,11 @@ has moved and is *not* on this chain.
 
 | EIP | Title | Pinned commit | Status |
 |--------|-----|-----|:-----:|
-| [EIP-8141](https://eips.ethereum.org/EIPS/eip-8141) | Frame Transaction | [`7d1c8bfb94`](https://github.com/ethereum/EIPs/blob/7d1c8bfb94/EIPS/eip-8141.md) (2026-08-24) | :new: |
-| [EIP-8250](https://eips.ethereum.org/EIPS/eip-8250) | Keyed Nonces | [`e5cf246ff1`](https://github.com/ethereum/EIPs/blob/e5cf246ff1/EIPS/eip-8250.md) (2026-08-31) | :new: |
-| [EIP-8272](https://eips.ethereum.org/EIPS/eip-8272) | Recent Roots | [`0231fb05f5`](https://github.com/ethereum/EIPs/blob/0231fb05f5/EIPS/eip-8272.md) (2026-08-31) | :new: |
+| [EIP-8141](https://eips.ethereum.org/EIPS/eip-8141) | Frame Transaction | [`b75cbe6115`](https://github.com/ethereum/EIPs/blob/b75cbe6115/EIPS/eip-8141.md) (2026-09-01) | :new: |
+| [EIP-8250](https://eips.ethereum.org/EIPS/eip-8250) | Keyed Nonces | [`f3079a09e8`](https://github.com/ethereum/EIPs/blob/f3079a09e8/EIPS/eip-8250.md) (2026-09-11) | :new: |
+| [EIP-8272](https://eips.ethereum.org/EIPS/eip-8272) | Recent Roots | [`824cbc0b0e`](https://github.com/ethereum/EIPs/blob/824cbc0b0e/EIPS/eip-8272.md) (2026-09-07) | :new: |
 | [EIP-7805](https://eips.ethereum.org/EIPS/eip-7805) | Fork-choice enforced Inclusion Lists (FOCIL) | [`9a345f96c2`](https://github.com/ethereum/EIPs/blob/9a345f96c2/EIPS/eip-7805.md) | :new: |
-| [EIP-8369](https://github.com/ethereum/EIPs/pull/12110) | VOPS Profiles for FOCIL Eligibility | [`33724bd7da`](https://github.com/soispoke/EIPs/blob/33724bd7da/EIPS/eip-8369.md) on the PR branch, unmerged | :new: |
+| [EIP-8369](https://eips.ethereum.org/EIPS/eip-8369) | VOPS Profiles for FOCIL Eligibility | [`51dc7b939a`](https://github.com/ethereum/EIPs/blob/51dc7b939a/EIPS/eip-8369.md) (2026-09-02, merged upstream 2026-09-01) | :new: |
 
 Each pin is the last commit that touched that EIP's file. EIP-8369 is in the set because
 EIP-7805 enforcement over frame transactions is undefined without an eligibility rule, and
@@ -47,8 +47,8 @@ that meta is live, including EIP-7928 block-level access lists, EIP-8037 state-c
 and EIP-8282 builder execution requests. A client without Glamsterdam cannot follow this chain
 at any height.
 
-**Not on this chain:** EIP-7906 (deleted from the branch) and EIP-8312 (present in the binary,
-inert because `utxoFramesTime` is unset). And do not implement the fork from
+**Not on this chain:** EIP-7906 and EIP-8312, both deleted from the branch. And do not
+implement the fork from
 [EIP-8081](https://eips.ethereum.org/EIPS/eip-8081)'s meta, which lists EIP-7805 alone under the
 name Hegotá: a client built from it rejects every frame transaction on the chain.
 
@@ -113,23 +113,30 @@ The nodes run ethrex `31b532266`. Where its behaviour differs from the pins:
 The full ledger, with the reasoning behind each row, is
 [`docs/hegota-testnet-divergences.md`](hegota-testnet-divergences.md).
 
-## Changed upstream since the pins (not on this chain)
 
-Both changes are consensus-visible and each is a re-genesis to adopt. Tooling written against
-this chain must target the pins, not the current drafts.
+## Changed since the first launch
 
-- **EIP-8272** dropped the envelope field, `TXPARAM 0x11` and `RECENTROOTREFLOAD`. The current
-  draft carries the references as a leading VERIFY frame targeting
-  `0x0000000000000000000000000000000000008272`, each `(source_id, slot, root)` packed into 72
-  bytes of frame data. `RECENT_ROOT_CODE` is still `TBD`.
-- **EIP-8250** moved the first use of a keyed nonce from 20,000 execution gas, deducted from
-  the frame's remaining gas, to 97,920 state gas charged during the payment `APPROVE` and
-  attributed to the frame that calls it. A frame that consumes two fresh nullifier keys
-  therefore needs 195,840 of `limits.state` under the current draft; it needs none here.
+The chain that launched on 2026-09-03 pinned EIP-8141 `7d1c8bfb94`, EIP-8250 `e5cf246ff1`, EIP-8272
+`0231fb05f5` and EIP-8369 `33724bd7da`. The re-genesis moves every pin to the revisions above.
+Every change is consensus-visible, which is why it is a re-genesis; tooling written against the
+first launch must move with it.
 
-Diffs of the previous pins to the current ones: [EIP-8141 `4093c21847`→`7d1c8bfb94`](https://gist.github.com/ilitteri/808996324a6409db38f45ed639e82a19),
-[EIP-8250 `4093c21847`→`e5cf246ff1`](https://gist.github.com/ilitteri/9f2a53396d92538ef6b6bee380078fbc),
-[EIP-8272 `4093c21847`→`0231fb05f5`](https://gist.github.com/ilitteri/7fe0324152d5ae8ca9d888358796337f).
+- **EIP-8250** prices the first use of a keyed nonce as state gas: one storage set (97,920 at
+  this chain's parameters) per fresh key, from the approving frame's `limits.state`, instead of
+  20,000 execution gas. Key `[0]` pays account creation when the sender does not exist. A frame
+  that consumes two fresh nullifier keys therefore declares 195,840 of `limits.state`; with none
+  it halts and the transaction is invalid. The validation prefix's state budgets together may
+  not exceed `MAX_VERIFY_STATE_GAS` (500,000).
+- **EIP-8272** drops the envelope field, `TXPARAM 0x11` and `RECENTROOTREFLOAD`. Recent roots
+  travel in a canonical VERIFY frame to `0x…8272`, first (or second behind an expiry verifier),
+  carrying one to sixteen 72-byte `(source_id, slot, root)` tuples; the predeploy's new
+  validation operation checks them, the frame's gas counts toward `MAX_VERIFY_GAS`, and the
+  mempool judges the tuples at `head slotNumber + 1`. The envelope has eight fields again.
+  `RECENT_ROOT_CODE` is still `TBD` upstream; this chain runs a 345-byte two-operation runtime
+  of its own (see `docs/eip-8272.md`).
+- **EIP-8141** at `b75cbe6115` removes a redundant assertion; nothing observable changes.
+- **EIP-8369** was merged upstream; the pinned revision clarifies that `codeFlag` is 1 for an
+  EIP-7702-delegated account, which is how eligibility already classified it here.
 
 ## Testing focus
 
@@ -143,8 +150,9 @@ Diffs of the previous pins to the current ones: [EIP-8141 `4093c21847`→`7d1c8b
 - **Keyed-nonce concurrency (EIP-8250)**: two keyed transactions from one contract sender
   admitted side by side and landing in the same block; `NONCE_MANAGER` predeploy reads through
   `TXPARAM 0x0D`–`0x10`.
-- **Recent roots (EIP-8272)**: a root written in slot *N* referenceable from slot *N+1*;
-  `RECENTROOTREFLOAD` in the prefix; the 144-byte predeploy at `0x…8272`.
+- **Recent roots (EIP-8272)**: a root written in slot *N* verifiable from slot *N+1* through the
+  canonical verifier frame; the 345-byte two-operation predeploy at `0x…8272`; a misplaced or
+  unbudgeted verifier frame refused by the mempool.
 - **FOCIL over frame transactions (EIP-7805 + EIP-8369)**: inclusion lists enforced at both
   endpoints with `AA_VOPS_SLOT_COUNT = 4`; `inclusionListSatisfied: false` returned as a `VALID`
   payload the consensus layer must not attest to; engine `newPayloadV6` / `forkchoiceUpdatedV5`
@@ -179,8 +187,10 @@ Diffs of the previous pins to the current ones: [EIP-8141 `4093c21847`→`7d1c8b
 
 **EIPs**
 
-- [PR-12110 - EIP-8369 VOPS profiles for FOCIL eligibility](https://github.com/ethereum/EIPs/pull/12110) Open :exclamation: — implemented here at `33724bd7da`
-- [PR-12131 - specify `RECENT_ROOT_CODE`](https://github.com/ethereum/EIPs/pull/12131) Open :exclamation: — the bytes this chain runs; a change is a fork
+- [PR-12110 - EIP-8369 VOPS profiles for FOCIL eligibility](https://github.com/ethereum/EIPs/pull/12110) merged 2026-09-01 — implemented here at `51dc7b939a`
+- `RECENT_ROOT_CODE` has no upstream bytes: [PR-12131](https://github.com/ethereum/EIPs/pull/12131) was closed and the
+  spec's constants table still reads `TBD`, so the two-operation runtime this chain installs is ethrex's; a
+  later upstream publication that differs is a fork
 - [PR-12041 - canonical paymaster reference bytecode](https://github.com/ethereum/EIPs/pull/12041) Open :exclamation: — implemented ahead of merge
 - [PR-12039 - keyed mempool concurrency](https://github.com/ethereum/EIPs/pull/12039) Open — the mempool extension this chain ships
 - Merged and conformant: [PR-12066](https://github.com/ethereum/EIPs/pull/12066) `SLOTNUM` ban, [PR-12109](https://github.com/ethereum/EIPs/pull/12109) atomic-batch approval scope, [PR-12026](https://github.com/ethereum/EIPs/pull/12026) floor repricing, [PR-12061](https://github.com/ethereum/EIPs/pull/12061) frame receipt status, [PR-12062](https://github.com/ethereum/EIPs/pull/12062) state-gas dimension, [PR-12113](https://github.com/ethereum/EIPs/pull/12113) initial access set :heavy_check_mark:

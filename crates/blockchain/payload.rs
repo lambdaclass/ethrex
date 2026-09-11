@@ -21,7 +21,6 @@ use ethrex_common::{
         calculate_base_fee_per_gas, compute_receipts_root, compute_transactions_root,
         compute_withdrawals_root,
         requests::{EncodedRequests, compute_requests_hash},
-        utxo_vault,
     },
 };
 
@@ -659,7 +658,6 @@ impl Blockchain {
         }
         self.extract_requests(&mut context)?;
         self.apply_withdrawals(&mut context)?;
-        self.write_openings_roots(&mut context)?;
         self.finalize_payload(&mut context)?;
 
         let interval = Instant::now().duration_since(since).as_millis();
@@ -685,24 +683,6 @@ impl Blockchain {
         }
 
         Ok(context.into())
-    }
-
-    /// EIP-8312: commit this block's created UTXOs. Runs last in the post-tx
-    /// phase — after requests and withdrawals, matching the import paths exactly —
-    /// and before `finalize_payload`, which takes the BAL and computes the state
-    /// root, both of which must already include these writes.
-    pub fn write_openings_roots(&self, context: &mut PayloadBuildContext) -> Result<(), EvmError> {
-        if !context
-            .chain_config()
-            .is_utxo_frames_activated(context.payload.header.timestamp)
-        {
-            return Ok(());
-        }
-        let block_number = context.payload.header.number;
-        let receipts = std::mem::take(&mut context.receipts);
-        let result = context.vm.write_openings_roots(&receipts, block_number);
-        context.receipts = receipts;
-        result
     }
 
     pub fn apply_withdrawals(&self, context: &mut PayloadBuildContext) -> Result<(), EvmError> {
@@ -1035,8 +1015,8 @@ impl Blockchain {
                     // INCLUSION is not. It can be turned away by things that have
                     // nothing to do with its bytes — a nonce mismatch from queue
                     // ordering, an EIP-8272 reference the next slot makes
-                    // referenceable, a UTXO input not yet spendable, or simply a
-                    // block with no room left in one of EIP-8037's two gas
+                    // referenceable, or simply a block with no room left in one
+                    // of EIP-8037's two gas
                     // dimensions. None of those recur once the cause moves on, so
                     // the transaction stays pooled, mirroring how regular txs are
                     // treated.
@@ -1449,9 +1429,9 @@ fn is_frame_tx_intrinsically_invalid(e: &ChainError) -> bool {
     let message = e.to_string();
     // Structural: the frame list itself is malformed (frame count, reserved modes, batch
     // flags). No state can make it well-formed.
-    message.contains("Invalid frame transaction: static constraints")
+    message.contains("Invalid frame transaction format:")
         // The signature list does not authenticate the sender. Fixed by the bytes.
-        || message.contains("Invalid frame transaction: signature does not recover")
+        || message.contains("Invalid frame transaction: signature validation failed")
         // Submitted against a chain where EIP-8141 is not active. A frame transaction is
         // not includable before the fork and the pool should not hold it.
         || message.contains("not supported before the Hegota fork")
@@ -1700,15 +1680,13 @@ impl TransactionQueue {
     /// normally invalidates all the later ones. That reasoning holds only in the
     /// linear account-nonce domain. An [EIP-8250] keyed frame transaction owns
     /// its own `(sender, nonce_key)` sequence and the mempool admits at most one
-    /// pending transaction per key set, and every [EIP-8312] UTXO spend shares
-    /// the vault sender while carrying no nonce at all. Neither has dependents,
-    /// so only the head is dropped — otherwise one unusable UTXO spend would
-    /// evict every other user's spend from the block.
+    /// pending transaction per key set, so it has no dependents and only the
+    /// head is dropped.
     pub fn pop(&mut self) -> Result<(), ChainError> {
         let Some(head) = self.heads.first() else {
             return Ok(());
         };
-        if !head_has_dependents(head.tx.transaction(), head.tx.sender()) {
+        if !head_has_dependents(head.tx.transaction()) {
             return self.shift();
         }
         let sender = self.heads.remove(0).tx.sender();
@@ -1750,13 +1728,8 @@ impl TransactionQueue {
 ///
 /// True for the linear account-nonce domain, where a queue is a nonce chain.
 /// False for [EIP-8250] keyed frame transactions, whose `nonce_seq` counts
-/// within a `(sender, nonce_key)` sequence of its own, and for [EIP-8312] UTXO
-/// spends, which all share the vault sender and are keyed by their input indices
-/// rather than by any nonce.
-fn head_has_dependents(tx: &Transaction, sender: Address) -> bool {
-    if sender == utxo_vault() {
-        return false;
-    }
+/// within a `(sender, nonce_key)` sequence of its own.
+fn head_has_dependents(tx: &Transaction) -> bool {
     !matches!(tx, Transaction::FrameTransaction(frame_tx) if frame_tx.is_keyed())
 }
 
@@ -1954,12 +1927,22 @@ mod tests {
         // (via From, which stringifies) -> ChainError::InvalidBlock.
         use ethrex_levm::errors::{TxValidationError, VMError};
         let intrinsic: ChainError = EvmError::from(VMError::TxValidation(
-            TxValidationError::InvalidFrameTransaction("static constraints".to_string()),
+            TxValidationError::InvalidFrameTransactionFormat("Frame 0: reserved mode".to_string()),
         ))
         .into();
         assert!(
             is_frame_tx_intrinsically_invalid(&intrinsic),
             "a malformed frame list is intrinsic and must be evicted; got: {intrinsic}"
+        );
+
+        let bad_signature: ChainError = EvmError::from(VMError::TxValidation(
+            TxValidationError::InvalidFrameSignature,
+        ))
+        .into();
+        assert!(
+            is_frame_tx_intrinsically_invalid(&bad_signature),
+            "a signature that does not authenticate the sender is fixed by the bytes; got: \
+             {bad_signature}"
         );
 
         let pre_fork: ChainError =

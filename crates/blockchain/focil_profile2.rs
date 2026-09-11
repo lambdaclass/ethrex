@@ -10,7 +10,7 @@
 use std::cell::RefCell;
 
 use ethrex_common::H256;
-use ethrex_common::types::{BlockHeader, FrameMode, FrameTransaction, Transaction};
+use ethrex_common::types::{BlockHeader, FrameTransaction, Transaction};
 use ethrex_vm::{CodeBodyBudget, FocilVopsSurface, Profile2Replay};
 
 use crate::{
@@ -32,7 +32,7 @@ use crate::{
 /// `gas_left` its `gas_limit - gas_used`. Every read this evaluator performs
 /// goes through `header.state_root` explicitly (never a canonical block
 /// number), which is what makes it safe to use before `header` is canonical —
-/// see [`Blockchain::check_recent_root_references_at_root`].
+/// see [`Blockchain::check_recent_root_frame_at_root`].
 pub struct BlockchainProfile2Evaluator<'a> {
     blockchain: &'a Blockchain,
     header: &'a BlockHeader,
@@ -103,10 +103,10 @@ impl<'a> IlProfile2Evaluator for BlockchainProfile2Evaluator<'a> {
     /// within a block, so evaluating it at the start would mark every full block
     /// unsatisfied and turn the inclusion list into a hard claim on block space.
     fn evaluate(&self, tx: &FrameTransaction) -> Profile2Eligibility {
-        if tx.total_gas_limit() > self.gas_left {
+        if tx.max_gas() > self.gas_left {
             return Profile2Eligibility::Ineligible(format!(
                 "total gas limit {} exceeds the block's remaining gas {}",
-                tx.total_gas_limit(),
+                tx.max_gas(),
                 self.gas_left
             ));
         }
@@ -136,30 +136,14 @@ impl<'a> BlockchainProfile2Evaluator<'a> {
             ..self.header.clone()
         };
         let state_header = &state_header;
-        // EIP-8369 does not model EIP-8312 at all, and a UTXO frame executes
-        // AFTER the validation prefix and can invalidate it (a spent input, an
-        // unproven opening), which the prefix-only replay below never
-        // observes. Replaying just the prefix would therefore risk reporting
-        // a transaction includable that isn't.
-        if tx
-            .frames
-            .iter()
-            .any(|frame| frame.mode == FrameMode::Utxo as u8)
-        {
-            return Profile2Eligibility::Undecided(
-                "frame transaction carries an EIP-8312 UTXO frame, which EIP-8369 does not model"
-                    .to_string(),
-            );
-        }
-
         let config = self.blockchain.storage.get_chain_config();
         let current_slot =
             config.effective_slot_number(self.header.slot_number, self.header.timestamp);
         // The block's OWN slot: a frame tx executing inside this block sees
         // this slot as `env.slot_number`, not the slot after it (that is the
-        // prospective admission question `check_recent_root_references`
-        // asks; this one asks whether the reference is valid AT this block).
-        if let Err(err) = self.blockchain.check_recent_root_references_at_root(
+        // prospective admission question `check_recent_root_frame` asks; this
+        // one asks whether the recent-root frame's tuples hold AT this block).
+        if let Err(err) = self.blockchain.check_recent_root_frame_at_root(
             tx,
             current_slot,
             state_header.state_root,

@@ -112,7 +112,7 @@ fn verify_frame(target: Option<Address>, scope: u8, gas_limit: u64) -> Frame {
         flags: scope,
         target,
         gas_limit,
-        state_limit: 0,
+        state_gas_limit: 0,
         value: U256::zero(),
         data: Default::default(),
     }
@@ -140,8 +140,8 @@ fn self_verify_tx(sender: Address, gas_limit: u64) -> FrameTransaction {
         // `baseFeePerGas`, so `fee_valid` holds in both the unit-level tests
         // (default header, base fee 0) and the end-to-end tests (a real
         // chain's base fee).
-        max_priority_fee_per_gas: 1,
-        max_fee_per_gas: 10_000_000_000,
+        max_priority_fee_per_gas: U256::from(1),
+        max_fee_per_gas: U256::from(10_000_000_000u64),
         max_fee_per_blob_gas: U256::zero(),
         blob_versioned_hashes: vec![],
         ..Default::default()
@@ -220,7 +220,7 @@ fn ineligible_and_undecided_omissions_are_excluded_from_unjustified() {
     );
     verdicts.insert(
         undecided_sender,
-        Profile2Eligibility::Undecided("carries a UTXO frame".to_string()),
+        Profile2Eligibility::Undecided("replay could not decide".to_string()),
     );
     let evaluator = FakeEvaluator::with(verdicts);
 
@@ -265,7 +265,7 @@ fn ignored_and_charged_not_admitted_never_reach_the_evaluator() {
     let ignored_tx = self_verify_tx(ignored_sender, MAX_VERIFY_GAS_PER_TX + 1);
 
     // Priceable (a valid prefix shape) but statically invalid (empty
-    // `nonce_keys`, which EIP-8250 forbids for a non-vault sender) →
+    // `nonce_keys`, which EIP-8250 forbids) →
     // `FillOutcome::ChargedNotAdmitted`.
     let mut charged_not_admitted_tx = self_verify_tx(charged_not_admitted_sender, 50_000);
     charged_not_admitted_tx.nonce_keys = vec![];
@@ -380,7 +380,7 @@ async fn setup_profile2_store_funded(
                 // `self_verify_tx`'s APPROVE_EXECUTION_AND_PAYMENT self-pays:
                 // it debits `max_fee_per_gas * total_gas_limit` from this same
                 // account inside the VERIFY frame, which reverts on an
-                // underfunded sender before any surface/UTXO check runs.
+                // underfunded sender before any surface check runs.
                 balance,
                 nonce,
             },
@@ -570,45 +570,6 @@ async fn self_verify_frame_tx_reading_outside_the_surface_is_ineligible() {
     }
 
     verdict.expect("an out-of-surface read must not fail the block");
-}
-
-/// A frame tx carrying an EIP-8312 UTXO frame is `Undecided`: EIP-8369 does
-/// not model UTXO frames, so replaying only the validation prefix cannot
-/// account for a spend that could invalidate it after the prefix runs. The
-/// payload verdict is unaffected.
-#[tokio::test]
-async fn frame_tx_with_a_utxo_frame_is_undecided() {
-    let sender = Address::from_low_u64_be(0xE33);
-    let (store, blockchain, genesis) =
-        setup_profile2_store(&[(sender, approve_code(APPROVE_EXECUTION_AND_PAYMENT))]).await;
-
-    let mut tx = self_verify_tx(sender, 50_000);
-    // The UTXO frame's data is never decoded: `evaluate()` returns `Undecided`
-    // on frame mode alone, before validation-prefix derivation.
-    tx.frames.push(Frame {
-        mode: FrameMode::Utxo as u8,
-        flags: 0,
-        target: None,
-        gas_limit: 0,
-        state_limit: 0,
-        value: U256::zero(),
-        data: Default::default(),
-    });
-    let il = vec![frame_tx_transaction(tx.clone())];
-
-    let (header, verdict) =
-        import_block_omitting_il(&store, &blockchain, &genesis, il.clone()).await;
-
-    let gas_left = header.gas_limit.saturating_sub(header.gas_used);
-    let evaluator =
-        BlockchainProfile2Evaluator::new(&blockchain, &header, header.state_root, gas_left);
-    match evaluator.evaluate(&tx) {
-        Profile2Eligibility::Undecided(_) => {}
-        other => panic!("expected Undecided, got {other:?}"),
-    }
-
-    // Undecided is excused, so the block stands.
-    verdict.expect("an undecidable omission must not fail the block");
 }
 
 /// Eligibility is not constant across a payload, which is what makes a

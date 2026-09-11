@@ -236,3 +236,40 @@ Note which direction that leaves untested. A client that wrongly **excused** fra
 transactions would be caught by check 14's `newPayloadV6` replay; the missing clause is a
 client that is wrongly **strict**, whose failure mode is refusing to attest to good blocks
 rather than splitting consensus.
+
+## Upgrade-2 validation record (2026-09-11)
+
+The local gate of the branch that re-genesises the chain onto the current specs. Three
+ethrex nodes with Lighthouse, chain 8141, built from the branch image, Osaka at genesis,
+Amsterdam at epoch 1 and Hegotá at epoch 2. The `port_publisher` block is removed for a
+one-host run: see the caveat at the top of `fixtures/networks/hegota-testnet.yaml`.
+
+Spec revisions under test: EIP-8141 `b75cbe6115`, EIP-8250 `f3079a09e8`, EIP-8272
+`824cbc0b0e`, EIP-7805 `9a345f96c2`, EIP-8369 `51dc7b939a`.
+
+| What | Result |
+| --- | --- |
+| `scripts/hegota-testnet/verify_devnet.py` | 36 of 36 checks, 0 failures |
+| Recent-root predeploy runtime | 345 bytes, keccak `cd1cae00e1d3…`, the pinned value |
+| Nonce-manager predeploy | `0x60006000fd`, as specified |
+| Peering | 2 peers per node, block number tracking slot number |
+| Minimal shielded pool, full lifecycle | deploy, shield, publish root, transfer, publish root, withdraw, claim — all mined with status `0x1`, recipient credited the exact expected amount |
+| Rust suites | blockchain 14,906 / stateless 3,138 / engine 11,057 / integration 1,296, all passing; clippy `--all-targets -D warnings` and fmt clean |
+
+Gas measured on chain, for the pool's three-frame spend grammar:
+
+| Frame | Declared | Used |
+| --- | --- | --- |
+| recent-root verifier, one tuple | 30,000 | 5,579 |
+| recent-root verifier, sixteen tuples | 30,000 | 12,044 |
+| proof VERIFY | 320,000 execution, 195,840 state | 254,712 execution |
+| settlement SENDER, transfer | 1,400,000 execution, 550,000 state | 796,585 execution |
+| settlement SENDER, withdraw | 1,400,000 execution, 550,000 state | 25,495 execution |
+
+The run found one node defect, fixed on this branch and recorded as §6.4 of
+`docs/hegota-testnet-divergences.md`: the mempool validation-prefix simulation recorded
+no per-frame results, so a prefix frame reading an earlier frame's `FRAMEPARAM` status
+halted at admission while executing correctly in a block. Every shielded-pool spend was
+refused until it was fixed. It also found two pool-side defects, fixed in the pool's own
+pull request.
+

@@ -179,15 +179,7 @@ pub enum Opcode {
     FRAMEDATACOPY = 0xB2,
     FRAMEPARAM = 0xB3,
     SIGPARAM = 0xB4,
-    // EIP-8141 moves SIGPARAM's copy operation out into its own instruction and
-    // assigns it 0xB5 — the byte EIP-8272's RECENTROOTREFLOAD had been using, because
-    // EIP-8272's own Constants table asked for 0xB4 and that collided with SIGPARAM.
-    // EIP-8141's assignment wins and RECENTROOTREFLOAD moves along to the next free byte:
-    // EIP-8141 is the EIP everything else in this set builds on, and EIP-8272 has
-    // already been relocated once. Recorded in the divergence ledger; raised upstream,
-    // since a shared frame-opcode registry is what would have prevented both moves.
     SIGDATACOPY = 0xB5,
-    RECENTROOTREFLOAD = 0xB6,
     // EIP-8024
     DUPN = 0xE6,
     SWAPN = 0xE7,
@@ -206,7 +198,6 @@ pub enum Opcode {
 }
 
 // The frame-opcode bytes have now collided twice across this EIP set, so pin them:
-// EIP-8141 publishes SIGDATACOPY at 0xB5, EIP-8272's RECENTROOTREFLOAD moved to 0xB6
 // after already having moved off 0xB4, and nothing in the set may share a byte. A future
 // relocation is then a compile error instead of two clients disagreeing about an opcode.
 // A discriminant read is the only way to assert an opcode's byte at compile time; the
@@ -214,11 +205,7 @@ pub enum Opcode {
 #[expect(clippy::as_conversions)]
 const _: () = assert!(Opcode::SIGDATACOPY as u8 == 0xB5);
 #[expect(clippy::as_conversions)]
-const _: () = assert!(Opcode::RECENTROOTREFLOAD as u8 == 0xB6);
-#[expect(clippy::as_conversions)]
 const _: () = assert!(Opcode::SIGPARAM as u8 != Opcode::SIGDATACOPY as u8);
-#[expect(clippy::as_conversions)]
-const _: () = assert!(Opcode::SIGDATACOPY as u8 != Opcode::RECENTROOTREFLOAD as u8);
 
 impl From<u8> for Opcode {
     #[expect(clippy::as_conversions)]
@@ -365,7 +352,6 @@ impl From<u8> for Opcode {
             table[0xB3] = Opcode::FRAMEPARAM;
             table[0xB4] = Opcode::SIGPARAM;
             table[0xB5] = Opcode::SIGDATACOPY;
-            table[0xB6] = Opcode::RECENTROOTREFLOAD;
             table[0x51] = Opcode::MLOAD;
             table[0x52] = Opcode::MSTORE;
             table[0x53] = Opcode::MSTORE8;
@@ -691,8 +677,6 @@ impl<'a> VM<'a> {
         opcode_table[Opcode::FRAMEPARAM as usize] = OpCodeFn::new::<OpFrameParamHandler>();
         opcode_table[Opcode::SIGPARAM as usize] = OpCodeFn::new::<OpSigParamHandler>();
         opcode_table[Opcode::SIGDATACOPY as usize] = OpCodeFn::new::<OpSigDataCopyHandler>();
-        opcode_table[Opcode::RECENTROOTREFLOAD as usize] =
-            OpCodeFn::new::<OpRecentRootRefLoadHandler>();
 
         opcode_table
     }
@@ -709,7 +693,7 @@ mod tests {
     }
 
     /// The frame-transaction opcode surface, as installed at Hegotá.
-    const FRAME_OPCODES: [(usize, &str); 8] = [
+    const FRAME_OPCODES: [(usize, &str); 7] = [
         (0xAA, "APPROVE"),
         (0xB0, "TXPARAM"),
         (0xB1, "FRAMEDATALOAD"),
@@ -717,7 +701,6 @@ mod tests {
         (0xB3, "FRAMEPARAM"),
         (0xB4, "SIGPARAM"),
         (0xB5, "SIGDATACOPY"),
-        (0xB6, "RECENTROOTREFLOAD"),
     ];
 
     /// Bytes adjacent to the frame surface that no EIP in the Hegotá set

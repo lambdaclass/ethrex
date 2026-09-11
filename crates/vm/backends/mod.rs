@@ -161,7 +161,10 @@ impl Evm {
             self.stateless_validator.as_deref(),
         )?;
 
-        // Track cumulative post-refund gas for receipt
+        // Track cumulative post-refund gas for receipt. `gas_spent` is the payer
+        // total across both gas dimensions for every transaction kind -- the frame
+        // path reports the same shape as the ordinary one -- so no per-kind
+        // adjustment happens here.
         *cumulative_gas_spent += execution_report.gas_spent;
 
         let mut receipt = Receipt::new(
@@ -177,11 +180,13 @@ impl Evm {
             receipt.frame_receipts = execution_report.frame_results.take().map(|results| {
                 results
                     .into_iter()
-                    .map(|result| ethrex_common::types::FrameReceipt {
-                        status: result.status,
-                        gas_used: result.gas_used,
-                        state_gas_used: result.state_gas_used,
-                        logs: result.logs,
+                    .map(|(status, gas_used, state_gas_used, logs)| {
+                        ethrex_common::types::FrameReceipt {
+                            status,
+                            gas_used,
+                            state_gas_used,
+                            logs,
+                        }
                     })
                     .collect()
             });
@@ -209,15 +214,6 @@ impl Evm {
             LEVM::install_nonce_manager_code(&mut self.db, self.crypto.as_ref())?;
             // EIP-8272: the recent-root predeploy.
             LEVM::install_recent_root_code(&mut self.db, self.crypto.as_ref())?;
-        }
-
-        // EIP-8312: the UTXO vault, on its own activation timestamp rather than
-        // the Hegota fork. Mirrors the install in `LEVM::prepare_block` (import
-        // path) — both sides must install or builder and importer diverge.
-        if matches!(self.vm_type, VMType::L1)
-            && chain_config.is_utxo_frames_activated(block_header.timestamp)
-        {
-            LEVM::install_vault_code(&mut self.db, self.crypto.as_ref())?;
         }
 
         if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
@@ -249,21 +245,6 @@ impl Evm {
 
     /// Wraps [LEVM::process_withdrawals].
     /// Applies the withdrawals to the state or the block_chache if using [LEVM].
-    /// EIP-8312: commit the block's created UTXOs (see
-    /// `LEVM::write_openings_roots`). The build-path counterpart of the call the
-    /// import paths make; both must run, in the same position, or the builder
-    /// produces a block its own importer rejects.
-    pub fn write_openings_roots(
-        &mut self,
-        receipts: &[Receipt],
-        block_number: u64,
-    ) -> Result<(), EvmError> {
-        match self.vm_type {
-            VMType::L1 => LEVM::write_openings_roots(&mut self.db, receipts, block_number),
-            VMType::L2(_) => Ok(()),
-        }
-    }
-
     pub fn process_withdrawals(&mut self, withdrawals: &[Withdrawal]) -> Result<(), EvmError> {
         LEVM::process_withdrawals(&mut self.db, withdrawals)
     }

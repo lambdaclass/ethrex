@@ -90,6 +90,8 @@ pub enum MempoolError {
     TxMaxInitCodeSizeError,
     #[error("Transaction encoded size ({actual} bytes) exceeds the {limit}-byte limit")]
     TxSizeExceeded { actual: usize, limit: usize },
+    #[error("Tip cap {actual} wei below the configured minimum of {limit} wei")]
+    TipBelowMinimum { actual: u64, limit: u64 },
     #[error(
         "Sender {sender:#x} has {count} queued (future-nonce) transactions (per-account cap {limit}); rejecting new future transaction"
     )]
@@ -162,6 +164,8 @@ pub enum MempoolError {
     FrameTxInvalidPrefixStructure(String),
     #[error("Frame transaction prefix gas budget (frames + sig cost) exceeds MAX_VERIFY_GAS")]
     FrameTxVerifyGasBudgetExceeded,
+    #[error("Frame transaction prefix state gas budget exceeds MAX_VERIFY_STATE_GAS")]
+    FrameTxVerifyStateBudgetExceeded,
     #[error("A pending frame transaction from this sender is already in the pool")]
     FrameTxSenderAlreadyPending,
     #[error("A frame transaction in the other nonce-key domain is already pending for this sender")]
@@ -196,6 +200,8 @@ pub enum MempoolError {
         "EIP-8272 recent-root reference is not committed in the RECENT_ROOT_ADDRESS predeploy at head state"
     )]
     FrameTxRecentRootNotCommitted,
+    #[error("EIP-8272 RECENT_ROOT_ADDRESS does not hold RECENT_ROOT_CODE at head state")]
+    FrameTxRecentRootCodeMismatch,
     #[error("Mempool {occupancy_pct}% full; rejecting gapped-nonce tx (nonce gap = {nonce_gap})")]
     GapAdmissionDeniedUnderPressure { occupancy_pct: u8, nonce_gap: u64 },
     #[error("L2-only transaction type is not valid on an L1 node")]
@@ -208,6 +214,9 @@ impl From<FrameValidationError> for MempoolError {
             FrameValidationError::UnrecognizedPrefix => MempoolError::FrameTxUnrecognizedPrefix,
             FrameValidationError::VerifyGasBudgetExceeded { .. } => {
                 MempoolError::FrameTxVerifyGasBudgetExceeded
+            }
+            FrameValidationError::VerifyStateBudgetExceeded { .. } => {
+                MempoolError::FrameTxVerifyStateBudgetExceeded
             }
             other => MempoolError::FrameTxInvalidPrefixStructure(other.to_string()),
         }

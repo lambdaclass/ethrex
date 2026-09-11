@@ -194,6 +194,15 @@ pub struct ValidationObserver {
     /// frame's resolved target carries the canonical runtime code hash, which is
     /// what admits the access-restriction skip (see module docs).
     pub canonical_paymaster_pay_frame: Option<usize>,
+    /// Index of the EIP-8272 recent-root verifier frame, if the transaction leads
+    /// with one and the code at `RECENT_ROOT_ADDRESS` is `RECENT_ROOT_CODE` (the
+    /// harness checks the code before setting this). While that frame runs
+    /// `RECENT_ROOT_CODE` at the top level, `SLOTNUM` and `SLOAD`s of the
+    /// predeploy's own storage are permitted; nothing else changes, and no nested
+    /// call inherits either permission.
+    pub recent_root_verifier_frame: Option<usize>,
+    /// Address of the RECENT_ROOT_ADDRESS predeploy (0x…8272).
+    pub recent_root_address: Address,
     /// The opcode byte executed on the previous dispatch-loop iteration. Used to
     /// enforce the `GAS` sequential rule (`GAS` is allowed only immediately
     /// before a `*CALL`). Reset each iteration.
@@ -228,6 +237,8 @@ impl ValidationObserver {
             current_frame_mode: 0,
             expiry_verifier: Address::zero(),
             canonical_paymaster_pay_frame: None,
+            recent_root_verifier_frame: None,
+            recent_root_address: Address::zero(),
             last_opcode: 0,
             touched_sender_slots: Vec::new(),
             read_legacy_nonce: false,
@@ -253,6 +264,8 @@ impl ValidationObserver {
             current_frame_mode: 0,
             expiry_verifier,
             canonical_paymaster_pay_frame: None,
+            recent_root_verifier_frame: None,
+            recent_root_address: Address::zero(),
             last_opcode: 0,
             touched_sender_slots: Vec::new(),
             read_legacy_nonce: false,
@@ -260,6 +273,15 @@ impl ValidationObserver {
             focil_surface: None,
             code_budget: None,
         }
+    }
+
+    /// Whether the recent-root verifier frame is the one executing, at the top
+    /// level: the executing contract must be the predeploy itself, so a callee of
+    /// the frame (impossible for `RECENT_ROOT_CODE`, but the rule is stated for the
+    /// frame, not for the code) inherits nothing.
+    pub fn in_recent_root_frame(&self, code_address: Address) -> bool {
+        self.recent_root_verifier_frame == Some(self.current_frame_index)
+            && code_address == self.recent_root_address
     }
 
     /// Whether `(address, slot)` lies inside the EIP-8369 Profile 2 surface:

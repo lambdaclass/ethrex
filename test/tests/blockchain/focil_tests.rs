@@ -30,6 +30,7 @@ use ethrex_common::{
 use ethrex_crypto::NativeCrypto;
 use ethrex_l2_rpc::signer::{LocalSigner, Signable, Signer};
 use ethrex_storage::{EngineType, Store};
+use ethrex_vm::system_contracts::RECENT_ROOT_RUNTIME_BYTECODE;
 use secp256k1::SecretKey;
 
 const TEST_PRIVATE_KEY: &str = "850643a0224065ecce3882673c21f56bcf6eef86274cc21cadff15930b59fc8c";
@@ -470,10 +471,10 @@ async fn mixed_valid_and_invalid_omitted_il_is_unsatisfied() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// EIP-8272 recent-root judgment: `check_recent_root_references_at_root` takes
+// EIP-8272 recent-root judgment: `check_recent_root_frame_at_root` takes
 // `current_slot` as an explicit parameter, which is what makes it usable to
-// judge a reference *inside* the block whose slot it names — a question
-// distinct from admission's "would this be valid in the next block".
+// judge a verifier frame's tuple *inside* the block whose slot it names — a
+// question distinct from admission's "would this be valid in the next block".
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// A reference to slot `S`, committed in the RECENT_ROOT_ADDRESS predeploy at
@@ -482,7 +483,7 @@ async fn mixed_valid_and_invalid_omitted_il_is_unsatisfied() {
 /// VM's own `env.slot_number == S`, and a root only becomes referenceable the
 /// slot after it was written) and accepted with `current_slot == S + 1`
 /// (admission's prospective question: would this be valid in the block that
-/// follows a head at slot `S`). Pre-fix, `check_recent_root_references` always
+/// follows a head at slot `S`). Pre-fix, the admission-side check always
 /// derived `current_slot = header.slot_number + 1` regardless of which
 /// question was being asked, which would have wrongly admitted the in-block
 /// case too.
@@ -506,9 +507,9 @@ async fn recent_root_reference_off_by_one_between_judgment_and_admission() {
         alloc: [(
             frame_tx_recent_root(),
             GenesisAccount {
-                // The predeploy holds no runtime bytecode; only its storage,
-                // seeded with this reference's committed entry, matters here.
-                code: Bytes::new(),
+                // RECENT_ROOT_CODE, as the check requires, over storage seeded
+                // with this tuple's committed entry.
+                code: Bytes::from_static(&RECENT_ROOT_RUNTIME_BYTECODE),
                 storage: predeploy_storage,
                 balance: U256::zero(),
                 nonce: 1,
@@ -528,8 +529,20 @@ async fn recent_root_reference_off_by_one_between_judgment_and_admission() {
     let blockchain = Blockchain::default_with_store(store.clone());
     let state_root = store.get_block_header(0).unwrap().unwrap().state_root;
 
+    let mut data = Vec::with_capacity(72);
+    data.extend_from_slice(reference.source_id.as_bytes());
+    data.extend_from_slice(&reference.slot.to_be_bytes());
+    data.extend_from_slice(reference.root.as_bytes());
     let frame_tx = FrameTransaction {
-        recent_root_references: vec![reference],
+        frames: vec![Frame {
+            mode: FrameMode::Verify as u8,
+            flags: 0,
+            target: Some(frame_tx_recent_root()),
+            gas_limit: 60_000,
+            state_gas_limit: 0,
+            value: U256::zero(),
+            data: Bytes::from(data),
+        }],
         ..Default::default()
     };
 
@@ -537,7 +550,7 @@ async fn recent_root_reference_off_by_one_between_judgment_and_admission() {
     // reference names the very slot it is being evaluated in, which can never
     // be referenceable yet.
     let judged_in_own_slot =
-        blockchain.check_recent_root_references_at_root(&frame_tx, REFERENCE_SLOT, state_root);
+        blockchain.check_recent_root_frame_at_root(&frame_tx, REFERENCE_SLOT, state_root);
     assert!(
         matches!(
             judged_in_own_slot,
@@ -550,7 +563,7 @@ async fn recent_root_reference_off_by_one_between_judgment_and_admission() {
     // slot the transaction could land in. The entry is in-window and
     // committed, so admission accepts it.
     let admitted_against_next_slot =
-        blockchain.check_recent_root_references_at_root(&frame_tx, REFERENCE_SLOT + 1, state_root);
+        blockchain.check_recent_root_frame_at_root(&frame_tx, REFERENCE_SLOT + 1, state_root);
     assert!(
         admitted_against_next_slot.is_ok(),
         "reference to slot S must be accepted when current_slot == S + 1; got {admitted_against_next_slot:?}"
@@ -565,7 +578,7 @@ fn expiry_frame(deadline: u64) -> Frame {
         flags: 0x00,
         target: Some(frame_tx_expiry_verifier()),
         gas_limit: 30_000,
-        state_limit: 0,
+        state_gas_limit: 0,
         value: U256::zero(),
         data: Bytes::copy_from_slice(&deadline.to_be_bytes()),
     }

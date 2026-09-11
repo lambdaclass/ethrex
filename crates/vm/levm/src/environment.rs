@@ -84,14 +84,6 @@ pub struct EVMConfig {
     /// the EIP-8141 frame-tx opcode `TXPARAM(0x12)`. Block-invariant; derived
     /// from [`ChainConfig::payer_txparam_time`] vs the block timestamp.
     pub payer_txparam_active: bool,
-    /// Whether EIP-8312 (UTXO frames) is active for this block. Block-invariant;
-    /// derived from [`ChainConfig::is_utxo_frames_activated`]. EIP-8312 carries
-    /// its own activation timestamp because its fork assignment is undecided
-    /// upstream, so this is NOT implied by `fork >= Fork::Hegota`. Gates the
-    /// admissibility of UTXO frames (mode 5), the vault provisioning, the
-    /// openings-root block-end operation, and the UTXO execution path. Every
-    /// consumer MUST read this flag rather than re-deriving activation.
-    pub utxo_frames_active: bool,
 }
 
 impl EVMConfig {
@@ -101,10 +93,6 @@ impl EVMConfig {
             blob_schedule,
             slot_number: U256::zero(),
             payer_txparam_active: false,
-            // EIP-8312 needs an explicit activation timestamp from a
-            // ChainConfig; a bare fork-only construction (EF tests, tools) has
-            // none, so it is inactive.
-            utxo_frames_active: false,
         }
     }
 
@@ -124,7 +112,6 @@ impl EVMConfig {
             blob_schedule,
             slot_number,
             payer_txparam_active: chain_config.is_payer_txparam_activated(block_header.timestamp),
-            utxo_frames_active: chain_config.is_utxo_frames_activated(block_header.timestamp),
         }
     }
 
@@ -180,7 +167,6 @@ impl Default for EVMConfig {
             blob_schedule: Self::canonical_values(fork),
             slot_number: U256::zero(),
             payer_txparam_active: false,
-            utxo_frames_active: false,
         }
     }
 }

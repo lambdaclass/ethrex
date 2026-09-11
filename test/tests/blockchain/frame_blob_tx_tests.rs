@@ -101,13 +101,13 @@ fn blob_frame_tx(versioned_hashes: Vec<H256>) -> FrameTransaction {
             flags: 0x03, // APPROVE_EXECUTION_AND_PAYMENT
             target: Some(sender),
             gas_limit: 100_000,
-            state_limit: 0,
+            state_gas_limit: 0,
             value: U256::zero(),
             data: Bytes::new(),
         }],
         signatures: vec![],
-        max_priority_fee_per_gas: 0,
-        max_fee_per_gas: 1_000_000_000,
+        max_priority_fee_per_gas: U256::from(0),
+        max_fee_per_gas: U256::from(1_000_000_000),
         max_fee_per_blob_gas: U256::from(1_000u64),
         blob_versioned_hashes: versioned_hashes,
         ..Default::default()
@@ -256,7 +256,7 @@ async fn blob_frame_transaction_over_the_plain_size_cap_is_admitted() {
         flags: 0,
         target: Some(Address::from_low_u64_be(SENDER)),
         gas_limit: 10_000_000,
-        state_limit: 0,
+        state_gas_limit: 0,
         value: U256::zero(),
         data: Bytes::from(data),
     });

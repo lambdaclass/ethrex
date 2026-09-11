@@ -1894,8 +1894,8 @@ async fn handle_incoming_message(
                                     {
                                         target |= 1u128 << extra_col;
                                     }
-                                    // A provider peer can serve every column, so the
-                                    // target set needs no per-peer availability mask.
+                                    // A full provider holds every column, so the
+                                    // whole target is fetchable from it.
                                     let fetch_mask = target;
                                     if fetch_mask != 0 {
                                         state.pending_cell_requests.push((vec![hash], fetch_mask));

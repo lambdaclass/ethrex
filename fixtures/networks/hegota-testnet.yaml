@@ -4,12 +4,22 @@
 # Active rule set: EIP-8141 (frame transactions), EIP-8250 (keyed nonces),
 # EIP-8272 (recent roots), EIP-7805 (FOCIL), EIP-8369 (FOCIL eligibility, no
 # activation switch of its own). All activate together at the single Hegotá fork,
-# which the consensus layer calls `heze`. EIP-7906 is not on this chain.
-# EIP-8312 is present in the binary but inert: `utxoFramesTime` is unset.
+# which the consensus layer calls `heze`. EIP-7906 and EIP-8312 are not on this chain.
 #
 # Launch:
 #   make localnet ENCLAVE=hegota-testnet \
 #     KURTOSIS_CONFIG_FILE=fixtures/networks/hegota-testnet.yaml
+#
+# On a single host, drop the whole `port_publisher` block at the end of this file
+# before launching. It exists so a public deployment advertises one reachable
+# address, and it is the ONLY source of what every node puts in its ENR. Filling
+# `nat_exit_ip` with a loopback address to get a local run therefore makes each
+# container advertise itself: discovery resolves every peer to its own loopback,
+# all three nodes sit at zero peers, and each builds a separate chain with a third
+# of the validator set. Nothing errors and blocks keep coming, so the only tell is
+# `/eth/v1/node/peer_count` reading zero. Without the block kurtosis advertises
+# enclave-internal addresses and assigns host ports dynamically, which is what a
+# one-host devnet wants; read them back with `kurtosis enclave inspect`.
 #
 # Three values MUST be replaced before a real deployment, and are marked
 # REPLACE below: the validator mnemonic, the prefunded/admin addresses, and the

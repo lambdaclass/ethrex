@@ -317,10 +317,9 @@ Inherited from Amsterdam, and live: EIP-7928 block-level access lists, EIP-8037
 two-dimensional gas, EIP-8038 repricing, EIP-7843 slot numbers, EIP-8282 builder
 deposits and exits.
 
-Two EIPs are present in the ethrex binary but **not** part of this chain's rule set:
-EIP-8312 (UTXO frames) never activates because `utxoFramesTime` is unset, and EIP-7906
-(transaction assertions) is not in the build at all. Frame mode 3, which EIP-7906 would
-have used, is unassigned here.
+Two EIPs that once shared this codebase are **not** part of this chain's rule set and
+are not in the build: EIP-8312 (UTXO frames) and EIP-7906 (transaction assertions).
+Frame mode 3, which EIP-7906 would have used, is unassigned here.
 
 ### Frame transactions
 

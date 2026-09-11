@@ -35,7 +35,7 @@ command -v cast >/dev/null || {
 # rather than re-deriving so the addresses always match the phrase we emit.
 gen() { cast wallet new-mnemonic --accounts "$1"; }
 
-phrase_of() { sed -n '/^Phrase:/{n;p}' <<<"$1" | tr -d '\r'; }
+phrase_of() { sed -n '/^Phrase:/{n;p;}' <<<"$1" | tr -d '\r'; }
 nth_addr()  { grep '^Address:'     <<<"$1" | sed -n "$2p" | awk '{print $2}'; }
 nth_key()   { grep '^Private key:' <<<"$1" | sed -n "$2p" | awk '{print $3}'; }
 

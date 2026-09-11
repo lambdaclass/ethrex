@@ -16,7 +16,6 @@ mod eip8141_tests;
 mod eip8246_tests;
 mod eip8250_tests;
 mod eip8272_tests;
-mod eip8312_tests;
 mod hegota_active_surface_tests;
 mod l2_fee_token_ratio_tests;
 mod l2_fee_token_tests;

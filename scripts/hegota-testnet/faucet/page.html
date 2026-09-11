@@ -110,7 +110,7 @@
     <table>
       <tr>
         <td><a href="https://eips.ethereum.org/EIPS/eip-8141">EIP-8141</a><br>
-          <a href="https://github.com/ethereum/EIPs/blob/7d1c8bfb94/EIPS/eip-8141.md" style="font-weight:400"><code>7d1c8bfb94</code></a></td>
+          <a href="https://github.com/ethereum/EIPs/blob/b75cbe6115/EIPS/eip-8141.md" style="font-weight:400"><code>b75cbe6115</code></a></td>
         <td class="desc">Frame transactions: a new type <code>0x06</code> whose payload is a list of
           <em>frames</em>, each executed with its own target, mode and two gas budgets, with payment
           authorised by an <code>APPROVE</code> in a validation prefix. Authentication becomes a
@@ -119,25 +119,26 @@
       </tr>
       <tr>
         <td><a href="https://eips.ethereum.org/EIPS/eip-8250">EIP-8250</a><br>
-          <a href="https://github.com/ethereum/EIPs/blob/e5cf246ff1/EIPS/eip-8250.md" style="font-weight:400"><code>e5cf246ff1</code></a></td>
+          <a href="https://github.com/ethereum/EIPs/blob/f3079a09e8/EIPS/eip-8250.md" style="font-weight:400"><code>f3079a09e8</code></a></td>
         <td class="desc">Keyed nonces: up to 16 independent nonce keys per sender instead of one
           linear counter, tracked in a <code>NONCE_MANAGER</code> predeploy. A contract sender can
           have several transactions pending on different keys and none waits behind another.</td>
       </tr>
       <tr>
         <td><a href="https://eips.ethereum.org/EIPS/eip-8272">EIP-8272</a><br>
-          <a href="https://github.com/ethereum/EIPs/blob/0231fb05f5/EIPS/eip-8272.md" style="font-weight:400"><code>0231fb05f5</code></a></td>
-        <td class="desc">Recent roots: verified <code>(source, slot, root)</code> tuples carried in
-          the envelope, checked against a <code>RECENT_ROOT</code> predeploy before any frame runs
-          and read in the prefix with <code>RECENTROOTREFLOAD</code>. A proof can be anchored to a
-          root minutes old without the prefix touching storage.</td>
+          <a href="https://github.com/ethereum/EIPs/blob/824cbc0b0e/EIPS/eip-8272.md" style="font-weight:400"><code>824cbc0b0e</code></a></td>
+        <td class="desc">Recent roots: verified <code>(source, slot, root)</code> tuples carried
+          in a canonical VERIFY frame that leads the transaction and is checked by a
+          <code>RECENT_ROOT</code> predeploy before application code runs; the prefix reads them
+          back with <code>FRAMEDATALOAD</code>. A proof can be anchored to a root minutes old
+          without the prefix touching storage.</td>
       </tr>
       <tr>
         <td><a href="https://eips.ethereum.org/EIPS/eip-7805">EIP-7805</a><br>
           <a href="https://github.com/ethereum/EIPs/blob/9a345f96c2/EIPS/eip-7805.md" style="font-weight:400"><code>9a345f96c2</code></a></td>
         <td class="desc">Fork-choice enforced inclusion lists, with
           <a href="https://eips.ethereum.org/EIPS/eip-8369">EIP-8369</a>'s validation-only profiles
-          (at <a href="https://github.com/soispoke/EIPs/blob/33724bd7da/EIPS/eip-8369.md"><code>33724bd7da</code></a>, its unmerged PR branch)
+          (at <a href="https://github.com/ethereum/EIPs/blob/51dc7b939a/EIPS/eip-8369.md"><code>51dc7b939a</code></a>, merged upstream)
           deciding which frame transactions are eligible: attesters replay only the validation
           prefix, under a fixed budget, so a builder cannot leave an eligible transaction out.</td>
       </tr>
@@ -194,7 +195,7 @@
 cd ethrex/scripts/hegota-testnet &amp;&amp; pip install eth-keys eth-hash[pycryptodome]</pre>
     <p style="margin:0 0 .8rem;font-size:14px">
       Only this branch speaks the wire format this chain runs: nested fees, a per-frame
-      <code>[execution, state]</code> pair, keyed nonces and recent-root references. Released
+      <code>[execution, state]</code> pair, keyed nonces, recent roots in a verifier frame. Released
       libraries, and <code>rex</code> for now, encode an older envelope and are rejected on
       decode (see the first error below).
     </p>
@@ -259,14 +260,15 @@ curl -s https://rpc1.privacy.ethrex.xyz -H 'content-type: application/json' \
 
   <h2>Building one</h2>
   <div class="panel">
-        <p style="margin:0 0 .8rem">The envelope is a type byte followed by a 9-field RLP list:</p>
-<pre>0x06 || rlp([chain_id, nonce_keys, nonce_seq, sender, frames, signatures, fees, blob_hashes, recent_root_references])
+        <p style="margin:0 0 .8rem">The envelope is a type byte followed by an 8-field RLP list:</p>
+<pre>0x06 || rlp([chain_id, nonce_keys, nonce_seq, sender, frames, signatures, fees, blob_hashes])
 nonce_keys = [0]                                  # the legacy account nonce; or 1..16 strictly increasing keys (EIP-8250)
 frame      = [mode, flags, target, [execution, state], value, data]
 fees       = [max_priority_fee, max_fee, max_fee_per_blob_gas]
 signature  = [scheme, signer, msg, signature]     # scheme 1 = secp256k1
-recent_root_references = []                       # or [source_id, slot, root] tuples (EIP-8272)
-sig_hash   = keccak256(0x06 || rlp(envelope))     # empty-msg signature bytes elided</pre>
+sig_hash   = keccak256(0x06 || rlp(envelope))     # empty-msg signature bytes elided
+# recent roots (EIP-8272): a leading VERIFY frame to 0x…8272, flags 0, state 0,
+#   data = (source_id ‖ uint64_be(slot) ‖ root) × 1..16</pre>
     <table>
       <tr><td>mode 0</td><td class="desc"><code>DEFAULT</code>, called by the entry point.</td></tr>
       <tr><td>mode 1</td><td class="desc"><code>VERIFY</code>, static; where authorisation happens.
@@ -385,6 +387,22 @@ lighthouse beacon_node \
   <h2 id="changelog">Changelog</h2>
   <div class="panel">
     <table>
+      <tr>
+        <td>Pending<br><span style="font-weight:400">next re-genesis</span></td>
+        <td class="desc"><strong>Upgrade to the current specs</strong>, prepared on the branch
+          and awaiting the relaunch. Pins move to EIP-8141 <code>b75cbe6115</code>, EIP-8250
+          <code>f3079a09e8</code>, EIP-8272 <code>824cbc0b0e</code>, EIP-8369
+          <code>51dc7b939a</code> (merged upstream). For anyone building frame transactions: the
+          first use of a keyed nonce costs 97,920 of <em>state</em> gas from the approving frame
+          (195,840 for two fresh keys) instead of 20,000 execution gas, and the prefix's state
+          budgets may not exceed 500,000; recent roots leave the envelope for a canonical VERIFY
+          frame to <code>0x…8272</code> carrying 72-byte tuples, so the envelope has 8 fields,
+          <code>TXPARAM 0x11</code> and <code>RECENTROOTREFLOAD</code> are gone, and the
+          predeploy runs a 345-byte two-operation runtime. Every type <code>0x06</code>
+          transaction signed for the current chain will be invalid on the new one; the two
+          EIP-8141 divergences fixed on the branch ship with it. EIP-8312 is removed from the
+          build. Date and resync instructions will be added here at the relaunch.</td>
+      </tr>
       <tr>
         <td>2026-09-04</td>
         <td class="desc">The pages now show the <code>ethereum/EIPs</code> commit each EIP is

@@ -22,13 +22,12 @@ pub const FRAME_RECEIPT_STATUS_SKIPPED: u8 = 2;
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct FrameReceipt {
     pub status: u8,
-    /// `gas_used.execution`: the frame's execution gas, before refunds.
+    /// `gas_used.execution` -- execution gas the frame used, before refunds.
     pub gas_used: u64,
-    /// `gas_used.state`: the frame's EIP-8037 state gas *after* every state-gas refill and
-    /// rollback in the transaction has been applied. A later frame clearing state an
-    /// earlier frame created reduces the earlier frame's figure, so this is the only
-    /// receipt field a subsequent frame can move, and the sum across frames is the
-    /// transaction's net state growth.
+    /// `gas_used.state` -- the frame's final state-gas attribution. EIP-8141 makes
+    /// this the state gas left standing after every state-gas refill and rollback
+    /// in the transaction has been applied, so a later frame can reduce an earlier
+    /// frame's value.
     pub state_gas_used: u64,
     pub logs: Vec<Log>,
 }
@@ -755,7 +754,7 @@ mod test {
 
     #[test]
     fn test_frame_receipt_skipped_status_rlp_roundtrip() {
-        // Spec line 137: status code 0x3 marks frames skipped by a failed atomic batch.
+        // EIP-8141 §Receipt: status code 0x2 marks frames skipped by a failed atomic batch.
         let fr = FrameReceipt {
             status: FRAME_RECEIPT_STATUS_SKIPPED,
             gas_used: 0,
@@ -763,9 +762,20 @@ mod test {
             logs: vec![],
         };
         let encoded = fr.encode_to_vec();
+        // Consensus bytes: list(5) = [status 0x02, gas_used list(2) = [0x80, 0x80],
+        // logs [] (0xc0)]. EIP-8141 makes `gas_used` the `[execution, state]` pair,
+        // so a skipped frame's zeros are an inner list rather than one scalar.
+        // Asserted literally so a status-code regression (e.g. back to 0x3), or a
+        // silent collapse of the pair, fails here and not only at a higher layer.
+        assert_eq!(
+            encoded,
+            vec![0xc5, 0x02, 0xc2, 0x80, 0x80, 0xc0],
+            "skipped frame receipt must encode status 0x02 and a two-dimensional gas_used"
+        );
         let decoded = FrameReceipt::decode(&encoded).unwrap();
         assert_eq!(fr, decoded);
         assert_eq!(decoded.status, FRAME_RECEIPT_STATUS_SKIPPED);
+        assert_eq!(decoded.status, 2, "skipped status must decode back to 2");
     }
 
     #[test]

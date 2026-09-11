@@ -832,6 +832,7 @@ pub async fn init_l1(
             precompute_witnesses: opts.precompute_witnesses,
             private_mempool: opts.mempool_private,
             precompile_cache_enabled: !opts.no_precompile_cache,
+            min_tip_wei: opts.mempool_min_tip,
             price_bump_percent: opts.mempool_price_bump,
             blob_price_bump_percent: opts.mempool_blob_price_bump,
             max_queued_txs_per_account: opts.mempool_max_queued_txs_per_account,
@@ -843,7 +844,6 @@ pub async fn init_l1(
             max_reorg_depth: opts.max_reorg_depth,
             gap_admit_occupancy_threshold: opts.mempool_gap_admit_occupancy_threshold,
             max_verify_gas: opts.mempool_max_verify_gas,
-            max_utxo_verify_gas: opts.mempool_max_utxo_verify_gas,
         },
     );
 

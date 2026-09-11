@@ -7,8 +7,8 @@ use crate::system_contracts::{
     BUILDER_EXIT_CONTRACT_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
     EXPIRY_VERIFIER_PREDEPLOY, EXPIRY_VERIFIER_RUNTIME_BYTECODE, HISTORY_STORAGE_ADDRESS,
     NONCE_MANAGER_PREDEPLOY, NONCE_MANAGER_RUNTIME_BYTECODE, PRAGUE_SYSTEM_CONTRACTS,
-    RECENT_ROOT_ADDRESS, RECENT_ROOT_RUNTIME_BYTECODE, SYSTEM_ADDRESS, UTXO_VAULT_PREDEPLOY,
-    UTXO_VAULT_RUNTIME_BYTECODE, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
+    RECENT_ROOT_ADDRESS, RECENT_ROOT_RUNTIME_BYTECODE, SYSTEM_ADDRESS,
+    WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
 use crate::{EvmError, ExecutionResult};
 use bytes::Bytes;
@@ -54,7 +54,7 @@ use ethrex_levm::db::gen_db::{
 };
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_levm::db::{Database, gen_db::CacheDB};
-use ethrex_levm::errors::{FrameResult, InternalError, TxValidationError};
+use ethrex_levm::errors::{InternalError, TxValidationError};
 use ethrex_levm::memory::Memory;
 #[cfg(feature = "perf_opcode_timings")]
 use ethrex_levm::timings::{OPCODE_TIMINGS, PRECOMPILES_TIMINGS};
@@ -115,15 +115,17 @@ pub struct LEVM;
 /// Build the per-frame receipts (EIP-8141) for a frame transaction from an
 /// execution report's `frame_results`. Returns `None` when the report carries
 /// no frame results.
-fn frame_receipts_from(frame_results: Option<Vec<FrameResult>>) -> Option<Vec<FrameReceipt>> {
+fn frame_receipts_from(
+    frame_results: Option<Vec<ethrex_levm::errors::FrameResult>>,
+) -> Option<Vec<FrameReceipt>> {
     frame_results.map(|results| {
         results
             .into_iter()
-            .map(|result| FrameReceipt {
-                status: result.status,
-                gas_used: result.gas_used,
-                state_gas_used: result.state_gas_used,
-                logs: result.logs,
+            .map(|(status, gas_used, state_gas_used, logs)| FrameReceipt {
+                status,
+                gas_used,
+                state_gas_used,
+                logs,
             })
             .collect()
     })
@@ -168,7 +170,24 @@ pub fn check_2d_gas_allowance(
     block_gas_used_state: u64,
     block_gas_limit: u64,
 ) -> Result<(), EvmError> {
-    let tx_gas = tx.gas_limit();
+    // A frame transaction declares its two budgets separately, so each dimension
+    // reserves only what can be spent in it: the execution side mirrors the EIP-7825
+    // cap (`intrinsic + Σ limits.execution`, or the calldata floor, whichever binds),
+    // and the state side is the frames' total state budget. Reserving the combined
+    // figure in both dimensions would double-count every frame transaction.
+    let (regular_gas, state_gas) = match tx {
+        Transaction::FrameTransaction(frame_tx) => (
+            frame_tx
+                .mandatory_gas()
+                .saturating_add(frame_tx.data_cost())
+                .saturating_add(frame_tx.total_frame_execution_gas())
+                .max(frame_tx.calldata_floor_total()),
+            frame_tx
+                .total_frame_gas()
+                .saturating_sub(frame_tx.total_frame_execution_gas()),
+        ),
+        _ => (tx.gas_limit(), tx.gas_limit()),
+    };
     let regular_available = block_gas_limit.saturating_sub(block_gas_used_regular);
     let state_available = block_gas_limit.saturating_sub(block_gas_used_state);
 
@@ -176,7 +195,7 @@ pub fn check_2d_gas_allowance(
     // TX_MAX_GAS_LIMIT. The spec uses the full tx gas with no intrinsic
     // subtraction; intrinsic underfunding is rejected separately in transaction
     // validation, not by this inclusion check.
-    let regular_contrib = tx_gas.min(TX_MAX_GAS_LIMIT_AMSTERDAM);
+    let regular_contrib = regular_gas.min(TX_MAX_GAS_LIMIT_AMSTERDAM);
     if regular_contrib > regular_available {
         return Err(EvmError::Transaction(format!(
             "Gas allowance exceeded: regular dim worst-case {regular_contrib} > \
@@ -186,7 +205,7 @@ pub fn check_2d_gas_allowance(
     }
 
     // State dim: worst-case state contribution = full tx.gas.
-    let state_contrib = tx_gas;
+    let state_contrib = state_gas;
     if state_contrib > state_available {
         return Err(EvmError::Transaction(format!(
             "Gas allowance exceeded: state dim worst-case {state_contrib} > \
@@ -332,7 +351,9 @@ impl LEVM {
                 &report,
             ));
 
-            // EIP-7778: gas_spent (POST-REFUND) for receipt cumulative_gas_used
+            // EIP-7778: gas_spent (POST-REFUND) for receipt cumulative_gas_used.
+            // Frame and ordinary transactions report the same shape: the payer
+            // total across both gas dimensions.
             cumulative_gas_used += report.gas_spent;
 
             // EIP-8037 (Amsterdam+): block_gas_used = max(sum_regular, sum_state)
@@ -422,13 +443,6 @@ impl LEVM {
 
         if let Some(withdrawals) = &block.body.withdrawals {
             Self::process_withdrawals(db, withdrawals)?;
-        }
-
-        // EIP-8312: commit this block's created UTXOs. Last in the post-tx phase,
-        // after requests and withdrawals, and in the same position on every
-        // execution path — an asymmetry here diverges builder from importer.
-        if chain_config.is_utxo_frames_activated(block.header.timestamp) {
-            Self::write_openings_roots(db, &receipts, block.header.number)?;
         }
 
         // Extract BAL if recording was enabled
@@ -597,15 +611,6 @@ impl LEVM {
                 Self::process_withdrawals(db, withdrawals)?;
             }
 
-            // EIP-8312: commit this block's created UTXOs, in the same position as
-            // on the sequential paths. This must precede
-            // `validate_bal_withdrawal_index` below, which checks the n+1 index
-            // against actual post-phase state — and on this path the state root is
-            // derived from the BAL, so a missing write is a state-root mismatch
-            // even when execution itself was correct.
-            if chain_config.is_utxo_frames_activated(block.header.timestamp) {
-                Self::write_openings_roots(db, &receipts, block.header.number)?;
-            }
             // State transitions for merkleizer come from bal_to_account_updates,
             // not from db — no need to call send_state_transitions_tx here.
 
@@ -792,7 +797,9 @@ impl LEVM {
                 tx_since_last_flush += 1;
             }
 
-            // EIP-7778: gas_spent (POST-REFUND) for receipt cumulative_gas_used
+            // EIP-7778: gas_spent (POST-REFUND) for receipt cumulative_gas_used.
+            // Frame and ordinary transactions report the same shape: the payer
+            // total across both gas dimensions.
             cumulative_gas_used += report.gas_spent;
 
             // EIP-8037 (Amsterdam+): block_gas_used = max(sum_regular, sum_state)
@@ -891,12 +898,6 @@ impl LEVM {
             Self::process_withdrawals(db, withdrawals)?;
         }
 
-        // EIP-8312: commit this block's created UTXOs. Last in the post-tx phase,
-        // after requests and withdrawals, and in the same position on every
-        // execution path — an asymmetry here diverges builder from importer.
-        if chain_config.is_utxo_frames_activated(block.header.timestamp) {
-            Self::write_openings_roots(db, &receipts, block.header.number)?;
-        }
         LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
 
         // Extract BAL if recording was enabled
@@ -3013,8 +3014,8 @@ impl LEVM {
             block_excess_blob_gas,
             block_blob_gas_used: block_header.blob_gas_used,
             tx_blob_hashes: tx.blob_versioned_hashes(),
-            tx_max_priority_fee_per_gas: tx.max_priority_fee().map(U256::from),
-            tx_max_fee_per_gas: tx.max_fee_per_gas().map(U256::from),
+            tx_max_priority_fee_per_gas: tx.max_priority_fee(),
+            tx_max_fee_per_gas: tx.max_fee_per_gas(),
             tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas(),
             tx_nonce: tx.nonce(),
             block_gas_limit: block_header.gas_limit,
@@ -3201,6 +3202,18 @@ impl LEVM {
             _ => None,
         };
 
+        // EIP-8272: the recent-root verifier frame gets its two permissions only
+        // while the predeploy runs RECENT_ROOT_CODE; admission rejects a mismatch
+        // outright, and the observer simply grants nothing here when it differs.
+        let recent_root_frame = prefix.recent_root_index.filter(|_| {
+            db.get_account(RECENT_ROOT_ADDRESS.address)
+                .map(|account| {
+                    account.info.code_hash
+                        == ethrex_common::utils::keccak(RECENT_ROOT_RUNTIME_BYTECODE)
+                })
+                .unwrap_or(false)
+        });
+
         let env = Self::setup_env(tx, sender, block_header, db, vm_type)?;
         let blob_base_fee = env.base_blob_fee_per_gas;
         let mut vm = VM::new(
@@ -3217,6 +3230,7 @@ impl LEVM {
             &prefix.frame_indices,
             prefix.deploy_index,
             canonical_pay_frame,
+            recent_root_frame,
             profile_2.clone(),
         ) {
             Ok(sim) => sim,
@@ -3238,7 +3252,6 @@ impl LEVM {
             }
         };
 
-        let max_cost = Self::frame_tx_max_cost(frame_tx, blob_base_fee);
         let reservation_ceiling = Self::frame_tx_reservation_ceiling(frame_tx);
         let touched_sender_slots = vm.validation_observer.touched_sender_slots.clone();
         let read_legacy_nonce = vm.validation_observer.read_legacy_nonce;
@@ -3261,6 +3274,7 @@ impl LEVM {
         // whether it passed and why not. The budget is the state the observer
         // reached, which the caller carries to the next replay of the same
         // inclusion list.
+        let max_cost = Self::frame_tx_max_cost(frame_tx, blob_base_fee);
         let observed = FrameValidationOutcome {
             passed: false,
             violation: None,
@@ -3319,9 +3333,10 @@ impl LEVM {
         })
     }
 
-    /// TXPARAM 0x06 max cost for a frame transaction. Single source of truth is
-    /// [`FrameTransaction::max_cost`]; see it for the formula and the saturating
-    /// (reservation-ceiling) rationale.
+    /// TXPARAM 0x06 max cost for a frame transaction: `max_gas * max_fee_per_gas +
+    /// len(blob_hashes) * GAS_PER_BLOB * blob_base_fee`. Saturating on purpose: this
+    /// is a reservation ceiling, so overflowing to `U256::MAX` is conservative, where
+    /// the consensus TXPARAM handler uses checked math and halts instead.
     fn frame_tx_max_cost(
         frame_tx: &ethrex_common::types::FrameTransaction,
         blob_base_fee: U256,
@@ -3330,23 +3345,31 @@ impl LEVM {
     }
 
     /// Mempool reservation ceiling for a frame transaction:
-    /// `max_gas * max_fee_per_gas + len(blob_hashes) * GAS_PER_BLOB * max_fee_per_blob_gas`,
+    /// `max_gas * max_fee_per_gas + len(blob_hashes) * 131072 * max_fee_per_blob_gas`,
     /// saturating.
     ///
-    /// The consensus `max_cost` that `APPROVE` collects prices blobs at the including
-    /// block's `blob_base_fee`. That rate is not known at admission — the simulation runs
-    /// against the current head while execution charges the base fee of whichever later
-    /// block includes the transaction — and the blob base fee moves per block, so
-    /// reserving at the head's rate can reserve less than the eventual charge.
-    /// `max_fee_per_blob_gas >= blob_base_fee` is an inclusion condition (EIP-8141 §Blob
-    /// handling), so the declared max rate bounds every block that can include the
-    /// transaction, which is what makes this a true ceiling.
+    /// The consensus `max_cost` that APPROVE collects prices blobs at the
+    /// including block's `blob_base_fee` (EIP-8141 §Gas Accounting, TXPARAM 0x06;
+    /// `load_tx_param` 0x06 in `opcode_handlers/frame_tx.rs`). That rate is not
+    /// known at admission — the simulation runs against the current head, while
+    /// execution charges the base fee of whichever later block includes the
+    /// transaction — and the blob base fee moves per block, so pricing the
+    /// reservation at the head's rate could reserve less than the eventual charge.
+    /// `max_fee_per_blob_gas >= blob_base_fee` is an inclusion condition
+    /// (EIP-8141 §Blob handling), so the declared max rate bounds every block that
+    /// can include the transaction and keeps this a true ceiling.
     ///
-    /// Saturating rather than checked, deliberately: the TXPARAM 0x06 consensus handler
-    /// uses checked arithmetic and halts on overflow, while saturating to `U256::MAX`
-    /// here only makes the reservation larger, never smaller.
+    /// Intentionally saturating (not checked): the TXPARAM 0x06 consensus handler
+    /// uses checked_mul/checked_add and halts on overflow. Saturating to
+    /// `U256::MAX` here only makes the reservation larger, never smaller.
     fn frame_tx_reservation_ceiling(frame_tx: &ethrex_common::types::FrameTransaction) -> U256 {
-        frame_tx.max_cost(frame_tx.max_fee_per_blob_gas)
+        let gas_cost = frame_tx
+            .max_fee_per_gas
+            .saturating_mul(U256::from(frame_tx.max_gas()));
+        let blob_cost = U256::from(frame_tx.blob_versioned_hashes.len())
+            .saturating_mul(U256::from(131072u64))
+            .saturating_mul(frame_tx.max_fee_per_blob_gas);
+        gas_cost.saturating_add(blob_cost)
     }
 
     pub fn get_state_transitions(
@@ -3446,13 +3469,20 @@ impl LEVM {
     /// activation, clients must install..."). Idempotent: writes only when
     /// the existing code differs, so exactly one account update is produced
     /// (at the first Hegota block) and none afterwards.
+    ///
+    /// Only the code is installed. The account's nonce and balance are left
+    /// exactly as they were, so a previously nonexistent account keeps nonce
+    /// zero and any balance it held before the fork survives. That is what the
+    /// EIP specifies ("install the following ... runtime code") and what the
+    /// execution specs do; it differs from the genesis predeploys
+    /// (4788/2935/7002/7251), whose nonce 1 comes from the deployment
+    /// transaction that created them, not from a client-side install. Setting
+    /// nonce 1 here produced a different state root at the fork block from
+    /// every client that follows the spec.
     pub fn install_expiry_verifier_code(
         db: &mut GeneralizedDatabase,
         crypto: &dyn Crypto,
     ) -> Result<(), EvmError> {
-        // Predeploy convention (matches the genesis predeploys 4788/2935/7002/7251).
-        const PREDEPLOY_NONCE: u64 = 1;
-
         let current = db.get_account_code(EXPIRY_VERIFIER_PREDEPLOY.address)?;
         if current.code() == EXPIRY_VERIFIER_RUNTIME_BYTECODE.as_slice() {
             return Ok(());
@@ -3462,18 +3492,17 @@ impl LEVM {
             crypto,
         );
         let code_hash = code.hash;
-        // Record BAL code/nonce changes if recording is active, so a BAL
-        // reconstructor reproduces the same post-state (it takes nonce from
-        // prestate otherwise).
+        // Record the BAL code change if recording is active, so a BAL
+        // reconstructor reproduces the same post-state. There is no nonce change
+        // to record: the nonce is untouched, and the reconstructor carries the
+        // pre-state nonce forward for an account whose only change is its code.
         if let Some(recorder) = db.bal_recorder_mut() {
             recorder.record_code_change(EXPIRY_VERIFIER_PREDEPLOY.address, code.code_bytes());
-            recorder.record_nonce_change(EXPIRY_VERIFIER_PREDEPLOY.address, PREDEPLOY_NONCE);
         }
         let acc = db
             .get_account_mut(EXPIRY_VERIFIER_PREDEPLOY.address)
             .map_err(EvmError::from)?;
         acc.info.code_hash = code_hash;
-        acc.info.nonce = PREDEPLOY_NONCE;
         db.codes.entry(code_hash).or_insert(code);
         Ok(())
     }
@@ -3572,195 +3601,6 @@ impl LEVM {
         acc.info.code_hash = code_hash;
         acc.info.nonce = new_nonce;
         db.codes.entry(code_hash).or_insert(code);
-        Ok(())
-    }
-
-    /// Install the EIP-8312 UTXO vault predeploy at EIP-8312 activation.
-    ///
-    /// Unlike the EIP-8272 namespace predeploy, the vault carries real runtime
-    /// bytecode (deposits), so this follows the expiry-verifier shape. Idempotent:
-    /// writes only when the existing code differs, so exactly one account update
-    /// is produced (at the first activated block) and none afterwards.
-    ///
-    /// A pre-existing balance at the address is preserved and becomes inert vault
-    /// surplus: conservation bounds every frame's outflows by its proven input
-    /// value, so a surplus cannot be spent and solvency is unaffected. The nonce
-    /// converges to `max(existing, 1)`, matching the EIP-8250 activation rule.
-    pub fn install_vault_code(
-        db: &mut GeneralizedDatabase,
-        crypto: &dyn Crypto,
-    ) -> Result<(), EvmError> {
-        // Predeploy convention (matches the genesis predeploys 4788/2935/7002/7251).
-        const PREDEPLOY_NONCE: u64 = 1;
-
-        let current = db.get_account_code(UTXO_VAULT_PREDEPLOY.address)?;
-        if current.code() == UTXO_VAULT_RUNTIME_BYTECODE.as_slice() {
-            return Ok(());
-        }
-        let existing_nonce = db
-            .get_account(UTXO_VAULT_PREDEPLOY.address)
-            .map_err(EvmError::from)?
-            .info
-            .nonce;
-        let new_nonce = existing_nonce.max(PREDEPLOY_NONCE);
-        let code = Code::from_bytecode(Bytes::from_static(&UTXO_VAULT_RUNTIME_BYTECODE), crypto);
-        let code_hash = code.hash;
-        // Record BAL code/nonce changes if recording is active, so a BAL
-        // reconstructor reproduces the same post-state.
-        if let Some(recorder) = db.bal_recorder_mut() {
-            recorder.record_code_change(UTXO_VAULT_PREDEPLOY.address, code.code_bytes());
-            recorder.record_nonce_change(UTXO_VAULT_PREDEPLOY.address, new_nonce);
-        }
-        let acc = db
-            .get_account_mut(UTXO_VAULT_PREDEPLOY.address)
-            .map_err(EvmError::from)?;
-        acc.info.code_hash = code_hash;
-        acc.info.nonce = new_nonce;
-        db.codes.entry(code_hash).or_insert(code);
-        Ok(())
-    }
-
-    /// EIP-8312 block-end openings roots.
-    ///
-    /// After every transaction in the block, commit the UTXOs it created: write
-    /// the Merkle root of this block's openings to its ring slot, and — at a batch
-    /// boundary — the root of the batch's openings roots to its batch slot. These
-    /// are the commitments a later spend proves against.
-    ///
-    /// Leaves come from the block's `UtxoCreated` receipt logs rather than from an
-    /// execution-time accumulator. That choice matters three times over: a
-    /// transaction the builder drops has no receipt and therefore contributes no
-    /// leaf (no rollback bookkeeping needed); the parallel importer collects
-    /// receipts in transaction order like every other path, so all four paths
-    /// agree by construction; and both creation channels (vault deposits and
-    /// settlement outputs) emit the same log, so neither can be forgotten.
-    ///
-    /// The log's *emitter* is load-bearing: any contract can emit a log with the
-    /// same topic, so only logs whose address is the vault may become leaves.
-    /// Filtering on topic alone would let anyone forge a spendable UTXO out of the
-    /// vault's pooled balance.
-    ///
-    /// The write is protocol-direct (no EVM, no gas) and manually BAL-recorded,
-    /// like `process_withdrawals`.
-    pub fn write_openings_roots(
-        db: &mut GeneralizedDatabase,
-        receipts: &[Receipt],
-        block_number: u64,
-    ) -> Result<(), EvmError> {
-        use ethrex_common::types::{
-            UTXO_CREATED_TOPIC, merkle_root, opening_leaf, ring_slot, seals_batch, utxo_vault,
-        };
-
-        let vault = utxo_vault();
-
-        // Collect this block's created UTXOs, ordered by index. Indices come from
-        // one global counter, so ordering by index is ordering by creation.
-        let mut created: Vec<(u64, H256)> = Vec::new();
-        for receipt in receipts {
-            for log in &receipt.logs {
-                // Emitter check first: a same-topic log from any other address is
-                // not a UTXO creation.
-                if log.address != vault {
-                    continue;
-                }
-                if log.topics.first() != Some(&UTXO_CREATED_TOPIC) || log.topics.len() != 3 {
-                    continue;
-                }
-                if log.data.len() != 64 {
-                    continue;
-                }
-                // topics[1] = source, topics[2] = recipient (both left-padded);
-                // data = index (32 bytes) ++ value (32 bytes).
-                let source = Address::from_slice(&log.topics[1].0[12..]);
-                let recipient = Address::from_slice(&log.topics[2].0[12..]);
-                let index_word = U256::from_big_endian(&log.data[..32]);
-                // The index space the leaf encoding and spent bitfield are defined
-                // over is u64; a wider value cannot be a real creation.
-                let Ok(index) = u64::try_from(index_word) else {
-                    continue;
-                };
-                let value = U256::from_big_endian(&log.data[32..]);
-                created.push((index, opening_leaf(index, source, recipient, value)));
-            }
-        }
-        created.sort_unstable_by_key(|(index, _)| *index);
-        let leaves: Vec<H256> = created.into_iter().map(|(_, leaf)| leaf).collect();
-
-        // The ring write is UNCONDITIONAL: a block that created nothing writes the
-        // all-zeros empty-tree root, which CLEARS the entry this slot held one ring
-        // length ago. Skipping it would silently grant that stale root a second
-        // window, and would diverge from any client that writes it — only visibly
-        // after the first wrap, thousands of blocks later.
-        let root = merkle_root(&leaves);
-        Self::write_vault_slot(db, vault, ring_slot(block_number), root)?;
-
-        // At a batch boundary, seal the batch: its leaves are the openings roots of
-        // its blocks, exactly as written to the ring (including the zero roots of
-        // empty blocks, which are real leaves here, not padding).
-        if seals_batch(block_number) {
-            let batch_size = ethrex_common::types::BATCH_SIZE;
-            let first = block_number.saturating_sub(batch_size - 1);
-            let mut batch_leaves: Vec<H256> = Vec::with_capacity(batch_size as usize);
-            for n in first..=block_number {
-                let slot = ring_slot(n);
-                let value = Self::read_vault_slot(db, vault, slot)?;
-                batch_leaves.push(H256(value.to_big_endian()));
-            }
-            let batch_root = merkle_root(&batch_leaves);
-            Self::write_vault_slot(
-                db,
-                vault,
-                ethrex_common::types::batch_slot_for_block(block_number),
-                batch_root,
-            )?;
-        }
-
-        Ok(())
-    }
-
-    fn vault_slot_key(slot: U256) -> H256 {
-        H256(slot.to_big_endian())
-    }
-
-    fn read_vault_slot(
-        db: &mut GeneralizedDatabase,
-        vault: Address,
-        slot: U256,
-    ) -> Result<U256, EvmError> {
-        let key = Self::vault_slot_key(slot);
-        // Cache first, then the store — and through `get_storage_slot`, which keeps
-        // the `initial_accounts_state` bookkeeping. Both halves matter: the
-        // store fall-through is what lets batch sealing read ring slots written up
-        // to a full batch earlier (this block never touched them, so they are not
-        // cached), and the bookkeeping is what lets `get_state_transitions` compute
-        // a diff for a slot this write introduces — without it, building the block's
-        // account updates fails with "Failed to get old value from account's initial
-        // storage".
-        let _ = db.get_account(vault).map_err(EvmError::from)?;
-        db.get_storage_slot(vault, key).map_err(EvmError::from)
-    }
-
-    /// Protocol-direct vault storage write for the block-end phase, BAL-recorded
-    /// by hand because nothing else records a write made outside the EVM (the
-    /// parallel importer rebuilds post-state from the BAL, so an unrecorded write
-    /// is a state-root divergence).
-    fn write_vault_slot(
-        db: &mut GeneralizedDatabase,
-        vault: Address,
-        slot: U256,
-        value: H256,
-    ) -> Result<(), EvmError> {
-        let key = Self::vault_slot_key(slot);
-        let new_value = U256::from_big_endian(value.as_bytes());
-        let current = Self::read_vault_slot(db, vault, slot)?;
-        // The recorder keys slots by U256, matching the EIP-7928 wire form.
-        let slot_key = U256::from_big_endian(&key.0);
-        if let Some(recorder) = db.bal_recorder_mut() {
-            recorder.capture_pre_storage(vault, slot_key, current);
-            recorder.record_storage_write(vault, slot_key, new_value);
-        }
-        let acc = db.get_account_mut(vault).map_err(EvmError::from)?;
-        acc.storage.insert(key, new_value);
         Ok(())
     }
 
@@ -3944,15 +3784,6 @@ impl LEVM {
             Self::install_nonce_manager_code(db, crypto)?;
             // EIP-8272: the recent-root predeploy.
             Self::install_recent_root_code(db, crypto)?;
-        }
-
-        // EIP-8312: the UTXO vault. Gated on its own activation timestamp, not on
-        // the Hegota fork — the EIP's fork assignment is undecided upstream, and a
-        // future timestamp is what keeps every already-produced block
-        // re-executing identically. Also hooked in apply_system_calls for the
-        // payload-build path; a one-sided install would diverge build from import.
-        if chain_config.is_utxo_frames_activated(block_header.timestamp) {
-            Self::install_vault_code(db, crypto)?;
         }
 
         if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
@@ -4164,13 +3995,13 @@ pub fn calculate_gas_price_for_tx(
         fee_per_gas += operator_fee_config.operator_fee_per_gas;
     }
 
-    if fee_per_gas > max_fee_per_gas {
+    if U256::from(fee_per_gas) > max_fee_per_gas {
         return Err(VMError::TxValidation(
             TxValidationError::InsufficientMaxFeePerGas,
         ));
     }
 
-    Ok(min(max_priority_fee + fee_per_gas, max_fee_per_gas).into())
+    Ok(min(max_priority_fee + fee_per_gas, max_fee_per_gas))
 }
 
 /// When basefee tracking is disabled  (ie. env.disable_base_fee = true; env.disable_block_gas_limit = true;)
@@ -4451,6 +4282,80 @@ mod bal_tests {
         ) -> Result<ethrex_common::types::CodeMetadata, DatabaseError> {
             Ok(ethrex_common::types::CodeMetadata { length: 0 })
         }
+    }
+
+    /// EIP-8141 installs the expiry verifier's *runtime code* at activation and
+    /// nothing else: an account that did not exist keeps nonce zero. The genesis
+    /// predeploys carry nonce 1 because a deployment transaction created them;
+    /// this one is written by the client, and the spec says code only. Getting
+    /// this wrong changes the fork block's state root against every other client.
+    #[test]
+    fn expiry_verifier_install_leaves_a_fresh_account_at_nonce_zero() {
+        let store = MockStore::new();
+        let mut db = GeneralizedDatabase::new(Arc::new(store));
+
+        LEVM::install_expiry_verifier_code(&mut db, &ethrex_crypto::NativeCrypto).unwrap();
+
+        let acc = db.get_account(EXPIRY_VERIFIER_PREDEPLOY.address).unwrap();
+        assert_eq!(acc.info.nonce, 0, "install must not touch the nonce");
+        assert_eq!(acc.info.balance, U256::zero());
+        assert_eq!(
+            db.get_account_code(EXPIRY_VERIFIER_PREDEPLOY.address)
+                .unwrap()
+                .code(),
+            EXPIRY_VERIFIER_RUNTIME_BYTECODE.as_slice()
+        );
+    }
+
+    /// An account that already existed at the address keeps its nonce and
+    /// balance: the install replaces code and nothing more.
+    #[test]
+    fn expiry_verifier_install_preserves_existing_nonce_and_balance() {
+        let store = MockStore::new().with_account(
+            EXPIRY_VERIFIER_PREDEPLOY.address,
+            AccountState {
+                nonce: 7,
+                balance: U256::from(5_000u64),
+                code_hash: *EMPTY_KECCAK_HASH,
+                storage_root: H256::zero(),
+            },
+        );
+        let mut db = GeneralizedDatabase::new(Arc::new(store));
+
+        LEVM::install_expiry_verifier_code(&mut db, &ethrex_crypto::NativeCrypto).unwrap();
+
+        let acc = db.get_account(EXPIRY_VERIFIER_PREDEPLOY.address).unwrap();
+        assert_eq!(acc.info.nonce, 7);
+        assert_eq!(acc.info.balance, U256::from(5_000u64));
+        assert_eq!(
+            db.get_account_code(EXPIRY_VERIFIER_PREDEPLOY.address)
+                .unwrap()
+                .code(),
+            EXPIRY_VERIFIER_RUNTIME_BYTECODE.as_slice()
+        );
+    }
+
+    /// Idempotent: a second call finds the code already in place and changes
+    /// nothing, so exactly one account update is ever produced for the install.
+    #[test]
+    fn expiry_verifier_install_is_idempotent() {
+        let store = MockStore::new();
+        let mut db = GeneralizedDatabase::new(Arc::new(store));
+
+        LEVM::install_expiry_verifier_code(&mut db, &ethrex_crypto::NativeCrypto).unwrap();
+        let first = db
+            .get_account(EXPIRY_VERIFIER_PREDEPLOY.address)
+            .unwrap()
+            .clone();
+        LEVM::install_expiry_verifier_code(&mut db, &ethrex_crypto::NativeCrypto).unwrap();
+        let second = db
+            .get_account(EXPIRY_VERIFIER_PREDEPLOY.address)
+            .unwrap()
+            .clone();
+
+        assert_eq!(first.info.nonce, second.info.nonce);
+        assert_eq!(first.info.code_hash, second.info.code_hash);
+        assert_eq!(second.info.nonce, 0);
     }
 
     #[test]
