@@ -164,3 +164,39 @@ libssz-derive = "0.2.2"
 
 [workspace.lints.clippy]
 redundant_clone = "warn"
+
+# leanVM is developed and tested only in release: its own cargo aliases are
+# `test --release` / `clippy --release`, and its `.cargo/config.toml` sets
+# `target-cpu=native`. Under a debug profile its circuit builder panics on an
+# arithmetic-overflow check during warm-up, so build it optimised even in dev.
+# Scoped to the leanVM packages so nothing else changes.
+[profile.dev.package.lean_vm]
+opt-level = 3
+overflow-checks = false
+[profile.dev.package.rec_aggregation]
+opt-level = 3
+overflow-checks = false
+[profile.dev.package.sphincs]
+opt-level = 3
+overflow-checks = false
+[profile.dev.package.pcs]
+opt-level = 3
+overflow-checks = false
+[profile.dev.package.flock]
+opt-level = 3
+overflow-checks = false
+[profile.dev.package.primitives]
+opt-level = 3
+overflow-checks = false
+[profile.dev.package.lean_compiler]
+opt-level = 3
+overflow-checks = false
+[profile.dev.package.xmss]
+opt-level = 3
+overflow-checks = false
+[profile.dev.package.lean_da]
+opt-level = 3
+overflow-checks = false
+[profile.dev.package.fiat_shamir]
+opt-level = 3
+overflow-checks = false

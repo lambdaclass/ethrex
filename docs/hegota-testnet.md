@@ -439,11 +439,10 @@ Assumptions, each stated so it can be falsified:
 - **`payerTxparamTime` (resolved-payer `TXPARAM 0x11`) and `derivedSlotTime`.** Left
   unset for the same reason; `TXPARAM 0x11` keeps its `InvalidOpcode` halt and the
   slot arrives from the consensus client over the engine API.
-- **EIP-8288** (PQ signatures + STARK aggregation). Its execution-layer half — the
-  `DEP_VERIFY` frame mode, dependency triples, gas and `block_deps_hash` — is
-  implemented on the `eip-8288` branch and described in `docs/eip-8288.md`. The
-  recursive STARK it all feeds is still upstream-blocked: `AGGREGATED_VK` is `TBD`
-  in the EIP and there is no verifier to link. Not scheduled on this chain.
+- **EIP-8288** (PQ signatures + STARK aggregation). A J* EIP, not a Hegotá one, and
+  not scheduled on this chain. Implemented on the `eip-8288` branch, including real
+  recursive aggregation against leanVM behind an off-by-default feature; see
+  `docs/eip-8288.md`.
 - **EIP-8025** stateless proving and any prover integration.
 - **Bare-metal / non-kurtosis deployment.** No systemd units, no non-kurtosis node
   packaging.

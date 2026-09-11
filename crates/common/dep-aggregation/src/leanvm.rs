@@ -224,3 +224,102 @@ fn decode_sphincs_witness(
 
     Ok((key, message, signature))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::DependencyWitness;
+    use ethrex_common::types::DEPENDENCY_SCHEME_LEANSTARK;
+
+    /// One leanSPHINCS dependency, with the witness that discharges it.
+    ///
+    /// Deterministic from `seed` so a failure is reproducible; leanVM exposes
+    /// `key_gen_from_seed` for exactly that.
+    fn dependency(seed: u8, message: [u8; 32]) -> (DependencyTriple, DependencyWitness) {
+        let (sk, pk) = sphincs::key_gen_from_seed([seed; 32]);
+        // Seeded rather than from the OS: signing samples randomness, and a test
+        // that fails intermittently on a proving system is not worth having.
+        let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(seed as u64);
+        let signature =
+            sphincs::sign(&mut rng, &sk, &message).expect("signing with a fresh key must succeed");
+
+        let triple = DependencyTriple {
+            scheme: DEPENDENCY_SCHEME_LEANSPHINCS,
+            data_hash: H256(message),
+            verification_key_hash: leansphincs_verification_key_hash(&pk),
+        };
+        let mut witness = pk.flatten().to_vec();
+        witness.extend_from_slice(&signature.to_bytes());
+        (triple, DependencyWitness { triple, witness })
+    }
+
+    /// The premise of this whole PoC: a real recursive aggregate, produced and then
+    /// verified against the dependency set a block would declare.
+    ///
+    /// Ignored by default because proving peaks around 9-11 GiB of resident memory
+    /// and takes about a second. Run it deliberately:
+    /// `cargo test -p ethrex-dep-aggregation --features leanvm -- --ignored`
+    #[test]
+    #[ignore = "leanVM proving peaks at 9-11 GiB and takes ~1s"]
+    fn a_real_aggregate_verifies_against_the_dependencies_it_proves() {
+        let agg = LeanVmAggregator::new();
+
+        let (t1, w1) = dependency(1, [0x11; 32]);
+        let (t2, w2) = dependency(2, [0x22; 32]);
+        let expected = ethrex_common::types::deduplicate_and_sort_dependencies(vec![t1, t2]);
+
+        let proof = agg
+            .aggregate(&[w1, w2], &[])
+            .expect("aggregating two leanSPHINCS dependencies must succeed");
+
+        agg.verify(&proof, &expected)
+            .expect("the aggregate must discharge exactly the dependencies it proved");
+
+        // The check EIP-8288's rule 2 omits. Without it any valid aggregate would
+        // satisfy any block, since the proof does not bind the block's digest.
+        let (other, _) = dependency(3, [0x33; 32]);
+        assert!(
+            agg.verify(&proof, &[other]).is_err(),
+            "a proof must not satisfy a dependency set it does not cover"
+        );
+        assert!(
+            agg.verify(&proof, &expected[..1]).is_err(),
+            "nor a strict subset of what it proved"
+        );
+    }
+
+    /// leanSTARK has no counterpart in leanVM, and the backend says so by name
+    /// rather than failing with something that reads like a corrupt proof.
+    #[test]
+    fn a_leanstark_dependency_is_reported_as_unsupported() {
+        let triple = DependencyTriple {
+            scheme: DEPENDENCY_SCHEME_LEANSTARK,
+            data_hash: H256::zero(),
+            verification_key_hash: H256::zero(),
+        };
+        // The scheme check runs before any proving or verifying, so this needs no
+        // warm-up and no circuit.
+        let agg = LeanVmAggregator;
+        assert_eq!(
+            agg.verify(&[], &[triple]),
+            Err(AggregateError::SchemeUnsupported {
+                scheme: DEPENDENCY_SCHEME_LEANSTARK
+            })
+        );
+    }
+
+    #[test]
+    fn a_witness_must_match_the_dependency_it_is_filed_under() {
+        let (_, w) = dependency(4, [0x44; 32]);
+        let mut tampered = w.clone();
+        tampered.triple.verification_key_hash = H256::from_low_u64_be(0xBAD);
+        assert!(
+            matches!(
+                decode_sphincs_witness(&tampered),
+                Err(AggregateError::ClaimsMismatch(_))
+            ),
+            "a witness whose key does not hash to the declared value must be refused, \
+             or an aggregate could prove a claim the block never declared"
+        );
+    }
+}

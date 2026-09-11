@@ -35,3 +35,6 @@ default = []
 # memory. A node built without it can still enforce EIP-8288 block-validity rule 1
 # and will reject any block carrying a proof rather than accept one it cannot check.
 leanvm = ["dep:lean_vm", "dep:rec_aggregation", "dep:sphincs"]
+
+[dev-dependencies]
+rand = "0.9"
