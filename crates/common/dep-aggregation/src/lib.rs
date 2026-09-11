@@ -34,13 +34,18 @@ use ethereum_types::H256;
 use ethrex_common::types::DependencyTriple;
 
 pub mod unavailable;
+pub mod wrapper;
 pub use unavailable::UnavailableAggregator;
+pub use wrapper::{MempoolWrapper, WrapperContent, WrapperEntry, WrapperError};
 
 #[cfg(feature = "leanvm")]
 pub mod leanvm;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod wrapper_tests;
 
 /// Whether this build carries a real aggregation backend.
 ///
