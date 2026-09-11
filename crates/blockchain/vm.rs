@@ -603,6 +603,15 @@ impl<Inner: VmDatabase + Clone> VmDatabase for SimulationVmDatabase<Inner> {
         }
         self.inner.get_code_metadata(code_hash)
     }
+
+    fn code_cache_budget_bytes(&self) -> u64 {
+        // Same as `OverlaidVmDatabase`: this layer holds no bytecode cache, so the
+        // budget is the inner backend's. Nothing reads it on the simulation path yet;
+        // this keeps the fourth wrapper consistent with the other three, so a future
+        // bounded warm cannot silently get the 64 MiB trait default here — which would
+        // override an inner backend reporting zero to stop warming.
+        self.inner.code_cache_budget_bytes()
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -1031,7 +1040,15 @@ mod test_mock_db {
         pub(super) block_hashes: Arc<Mutex<BTreeMap<u64, H256>>>,
     }
 
+    /// Deliberately not the 64 MiB trait default, so a wrapper that forwards
+    /// `code_cache_budget_bytes` is distinguishable from one that does not.
+    pub(super) const MOCK_CODE_CACHE_BUDGET: u64 = 7 * 1024 * 1024;
+
     impl VmDatabase for MockDb {
+        fn code_cache_budget_bytes(&self) -> u64 {
+            MOCK_CODE_CACHE_BUDGET
+        }
+
         fn get_account_state(&self, address: Address) -> Result<Option<AccountState>, EvmError> {
             Ok(self.accounts.lock().unwrap().get(&address).copied())
         }
@@ -1084,7 +1101,7 @@ mod test_mock_db {
 
 #[cfg(test)]
 mod simulation_db_tests {
-    use super::test_mock_db::{MockDb, addr, slot};
+    use super::test_mock_db::{MOCK_CODE_CACHE_BUDGET, MockDb, addr, slot};
     use super::*;
     use ethrex_common::types::AccountInfo;
 
@@ -1270,6 +1287,19 @@ mod simulation_db_tests {
             code.code_bytes()
         );
         assert_eq!(db.get_code_metadata(hash).unwrap().length, 2);
+    }
+
+    /// The simulation layer holds no bytecode cache, so the budget has to come from
+    /// the backend underneath it. Nothing consumes the value yet, which is exactly why
+    /// this is pinned here: a regression would otherwise be invisible until a bounded
+    /// warm starts reading it, and the default would silently override an inner
+    /// backend reporting zero to stop warming.
+    #[test]
+    fn code_cache_budget_is_the_inner_backend_s() {
+        let db = SimulationVmDatabase::new(MockDb::default(), Arc::new(SimulationOverlay::new(0)));
+        assert_eq!(db.code_cache_budget_bytes(), MOCK_CODE_CACHE_BUDGET);
+        // Without the forward this would be the trait default instead.
+        assert_ne!(db.code_cache_budget_bytes(), 64 * 1024 * 1024);
     }
 }
 
