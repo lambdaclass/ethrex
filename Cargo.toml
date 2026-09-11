@@ -8,6 +8,7 @@ members = [
   "crates/common/rlp",
   "crates/common/trie",
   "crates/common/crypto",
+  "crates/common/dep-aggregation",
   "crates/l2/",
   "crates/l2/common",
   "crates/l2/prover",
@@ -74,6 +75,7 @@ overflow-checks = true
 ethrex-blockchain = { path = "./crates/blockchain", version = "23.0.0", default-features = false }
 ethrex-common = { path = "./crates/common", version = "23.0.0", default-features = false }
 ethrex-config = { path = "./crates/common/config" }
+ethrex-dep-aggregation = { path = "./crates/common/dep-aggregation", version = "23.0.0", default-features = false }
 ethrex-p2p = { path = "./crates/networking/p2p", version = "23.0.0" }
 ethrex-rpc = { path = "./crates/networking/rpc", version = "23.0.0" }
 ethrex-storage = { path = "./crates/storage", version = "23.0.0" }

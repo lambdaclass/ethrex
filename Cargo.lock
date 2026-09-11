@@ -3789,6 +3789,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethereum_serde_utils"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "38df44a7a271ab43835678f9215b53cc2523e4714a215da6643d83dc110245da"
+dependencies = [
+ "alloy-primitives",
+ "hex",
+ "serde",
+ "serde_derive",
+ "serde_json",
+]
+
+[[package]]
+name = "ethereum_ssz"
+version = "0.10.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e462875ad8693755ea8913d6e905715c76ea4836e2254e18c9cf0f7a8f8c2a13"
+dependencies = [
+ "alloy-primitives",
+ "ethereum_serde_utils",
+ "itertools 0.14.0",
+ "serde",
+ "serde_derive",
+ "smallvec",
+ "typenum",
+]
+
+[[package]]
 name = "ethrex"
 version = "23.0.0"
 dependencies = [
@@ -3960,6 +3988,20 @@ dependencies = [
  "sha2",
  "thiserror 2.0.18",
  "tiny-keccak",
+]
+
+[[package]]
+name = "ethrex-dep-aggregation"
+version = "23.0.0"
+dependencies = [
+ "blake3",
+ "ethereum-types 0.15.1",
+ "ethrex-common",
+ "lean_vm",
+ "rec_aggregation",
+ "sphincs",
+ "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]
@@ -4670,6 +4712,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "fiat_shamir"
+version = "0.1.0"
+source = "git+https://github.com/leanEthereum/leanVM.git?rev=7f9777da6ab3d7bb8d10c3f5c7edce2554fcfc03#7f9777da6ab3d7bb8d10c3f5c7edce2554fcfc03"
+dependencies = [
+ "parallel",
+ "primitives",
+ "serde",
+]
+
+[[package]]
 name = "fields"
 version = "1.0.0-alpha"
 source = "git+https://github.com/0xPolygonHermez/pil2-proofman.git?tag=v1.0.0-alpha#4f2a34ac686c788ad66a1a8ea0a17a016319e65b"
@@ -4739,6 +4791,18 @@ checksum = "843fba2746e448b37e26a819579957415c8cef339bf08564fe8b7ddbd959573c"
 dependencies = [
  "crc32fast",
  "miniz_oxide",
+]
+
+[[package]]
+name = "flock"
+version = "0.1.0"
+source = "git+https://github.com/leanEthereum/leanVM.git?rev=7f9777da6ab3d7bb8d10c3f5c7edce2554fcfc03#7f9777da6ab3d7bb8d10c3f5c7edce2554fcfc03"
+dependencies = [
+ "fiat_shamir",
+ "parallel",
+ "pcs",
+ "primitives",
+ "zk_alloc",
 ]
 
 [[package]]
@@ -6463,6 +6527,42 @@ name = "lazycell"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "830d08ce1d1d941e6b30645f1a0eb5643013d835ce3779a5fc208261dbe10f55"
+
+[[package]]
+name = "lean_compiler"
+version = "0.1.0"
+source = "git+https://github.com/leanEthereum/leanVM.git?rev=7f9777da6ab3d7bb8d10c3f5c7edce2554fcfc03#7f9777da6ab3d7bb8d10c3f5c7edce2554fcfc03"
+dependencies = [
+ "lean_vm",
+ "primitives",
+]
+
+[[package]]
+name = "lean_da"
+version = "0.1.0"
+source = "git+https://github.com/leanEthereum/leanVM.git?rev=7f9777da6ab3d7bb8d10c3f5c7edce2554fcfc03#7f9777da6ab3d7bb8d10c3f5c7edce2554fcfc03"
+dependencies = [
+ "fiat_shamir",
+ "parallel",
+ "pcs",
+ "primitives",
+ "serde",
+ "tracing",
+]
+
+[[package]]
+name = "lean_vm"
+version = "0.1.0"
+source = "git+https://github.com/leanEthereum/leanVM.git?rev=7f9777da6ab3d7bb8d10c3f5c7edce2554fcfc03#7f9777da6ab3d7bb8d10c3f5c7edce2554fcfc03"
+dependencies = [
+ "fiat_shamir",
+ "flock",
+ "parallel",
+ "pcs",
+ "primitives",
+ "tracing",
+ "zk_alloc",
+]
 
 [[package]]
 name = "leb128fmt"
@@ -8889,7 +8989,7 @@ dependencies = [
  "static_assertions",
  "toml",
  "tracing",
- "tracing-forest",
+ "tracing-forest 0.1.6",
  "tracing-subscriber 0.3.23",
  "zkhash 0.2.0 (git+https://github.com/HorizenLabs/poseidon2.git?rev=bb476b9)",
 ]
@@ -8927,7 +9027,7 @@ dependencies = [
  "static_assertions",
  "toml",
  "tracing",
- "tracing-forest",
+ "tracing-forest 0.1.6",
  "tracing-subscriber 0.3.23",
  "zkhash 0.2.0 (git+https://github.com/HorizenLabs/poseidon2.git?rev=bb476b9)",
 ]
@@ -10044,6 +10144,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "parallel"
+version = "0.1.0"
+source = "git+https://github.com/leanEthereum/leanVM.git?rev=7f9777da6ab3d7bb8d10c3f5c7edce2554fcfc03#7f9777da6ab3d7bb8d10c3f5c7edce2554fcfc03"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "parity-scale-codec"
 version = "3.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10149,6 +10257,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "83a0692ec44e4cf1ef28ca317f14f8f07da2d95ec3fa01f86e4467b725e60917"
 dependencies = [
  "digest 0.10.7",
+]
+
+[[package]]
+name = "pcs"
+version = "0.1.0"
+source = "git+https://github.com/leanEthereum/leanVM.git?rev=7f9777da6ab3d7bb8d10c3f5c7edce2554fcfc03#7f9777da6ab3d7bb8d10c3f5c7edce2554fcfc03"
+dependencies = [
+ "fiat_shamir",
+ "parallel",
+ "primitives",
+ "serde",
+ "tracing",
+ "zk_alloc",
 ]
 
 [[package]]
@@ -10522,6 +10643,19 @@ dependencies = [
  "impl-rlp",
  "impl-serde",
  "uint 0.10.0",
+]
+
+[[package]]
+name = "primitives"
+version = "0.1.0"
+source = "git+https://github.com/leanEthereum/leanVM.git?rev=7f9777da6ab3d7bb8d10c3f5c7edce2554fcfc03#7f9777da6ab3d7bb8d10c3f5c7edce2554fcfc03"
+dependencies = [
+ "libc",
+ "parallel",
+ "serde",
+ "tracing-forest 0.3.1",
+ "tracing-subscriber 0.3.23",
+ "zk_alloc",
 ]
 
 [[package]]
@@ -11132,6 +11266,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f87cc11a0140b4b0da0ffc889885760c61b13672d80a908920b2c0df078fa14"
 dependencies = [
  "rayon",
+]
+
+[[package]]
+name = "rec_aggregation"
+version = "0.1.0"
+source = "git+https://github.com/leanEthereum/leanVM.git?rev=7f9777da6ab3d7bb8d10c3f5c7edce2554fcfc03#7f9777da6ab3d7bb8d10c3f5c7edce2554fcfc03"
+dependencies = [
+ "bincode 1.3.3",
+ "flock",
+ "lean_compiler",
+ "lean_da",
+ "lean_vm",
+ "parallel",
+ "pcs",
+ "primitives",
+ "rand 0.9.4",
+ "serde",
+ "sphincs",
+ "tracing",
+ "xmss",
 ]
 
 [[package]]
@@ -13030,7 +13184,7 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "tracing",
- "tracing-forest",
+ "tracing-forest 0.1.6",
  "tracing-subscriber 0.3.23",
  "typenum",
  "web-time",
@@ -13452,6 +13606,17 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber 0.3.23",
+]
+
+[[package]]
+name = "sphincs"
+version = "0.1.0"
+source = "git+https://github.com/leanEthereum/leanVM.git?rev=7f9777da6ab3d7bb8d10c3f5c7edce2554fcfc03#7f9777da6ab3d7bb8d10c3f5c7edce2554fcfc03"
+dependencies = [
+ "parallel",
+ "primitives",
+ "rand 0.9.4",
+ "serde",
 ]
 
 [[package]]
@@ -14352,6 +14517,19 @@ dependencies = [
  "ansi_term",
  "smallvec",
  "thiserror 1.0.69",
+ "tracing",
+ "tracing-subscriber 0.3.23",
+]
+
+[[package]]
+name = "tracing-forest"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f09cb459317a3811f76644334473239d696cd8efc606963ae7d1c308cead3b74"
+dependencies = [
+ "ansi_term",
+ "smallvec",
+ "thiserror 2.0.18",
  "tracing",
  "tracing-subscriber 0.3.23",
 ]
@@ -15625,6 +15803,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "xmss"
+version = "0.1.0"
+source = "git+https://github.com/leanEthereum/leanVM.git?rev=7f9777da6ab3d7bb8d10c3f5c7edce2554fcfc03#7f9777da6ab3d7bb8d10c3f5c7edce2554fcfc03"
+dependencies = [
+ "ethereum_ssz",
+ "parallel",
+ "primitives",
+ "rand 0.9.4",
+ "serde",
+]
+
+[[package]]
 name = "yaml-rust2"
 version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -15834,6 +16024,14 @@ dependencies = [
  "zisk-definitions",
  "zisk-verifier",
  "zkvm-interface",
+]
+
+[[package]]
+name = "zk_alloc"
+version = "0.1.0"
+source = "git+https://github.com/leanEthereum/leanVM.git?rev=7f9777da6ab3d7bb8d10c3f5c7edce2554fcfc03#7f9777da6ab3d7bb8d10c3f5c7edce2554fcfc03"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
