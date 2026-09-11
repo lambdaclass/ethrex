@@ -10,6 +10,8 @@ repository.workspace = true
 
 [dependencies]
 ethrex-common.workspace = true
+ethrex-rlp.workspace = true
+bytes = "1.6"
 ethereum-types = { version = "0.15.1", default-features = false }
 thiserror = { version = "2.0.9", default-features = false }
 tracing.workspace = true

@@ -3996,8 +3996,10 @@ name = "ethrex-dep-aggregation"
 version = "23.0.0"
 dependencies = [
  "blake3",
+ "bytes",
  "ethereum-types 0.15.1",
  "ethrex-common",
+ "ethrex-rlp",
  "lean_vm",
  "rec_aggregation",
  "sphincs",
