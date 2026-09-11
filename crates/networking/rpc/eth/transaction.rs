@@ -160,7 +160,6 @@ impl RpcHandler for CallRequest {
             // Block not found
             _ => return Ok(Value::Null),
         };
-        let real_head_number = context.storage.get_latest_block_number()?;
         let chain_config = context.storage.get_chain_config();
         let effective_header = match self.block_overrides.as_ref().filter(|b| !b.is_empty()) {
             Some(bo) => bo.apply_to(header.clone(), &chain_config)?,
@@ -179,7 +178,6 @@ impl RpcHandler for CallRequest {
             context.blockchain,
             state_overrides.as_ref(),
             self.block_overrides.clone(),
-            real_head_number,
         )?;
         serde_json::to_value(format!("0x{:#x}", result.output()))
             .map_err(|error| RpcErr::Internal(error.to_string()))
@@ -418,8 +416,6 @@ impl RpcHandler for CreateAccessListRequest {
             // Block not found
             _ => return Ok(Value::Null),
         };
-        let real_head_number = context.storage.get_latest_block_number()?;
-
         // Build the Evm with optional override wrapper. createAccessList does not
         // accept a Block Override Set, so the header is always the real one.
         let inner = StoreVmDatabase::new(context.storage.clone(), header.clone())?;
@@ -434,7 +430,7 @@ impl RpcHandler for CreateAccessListRequest {
                 let mut vm =
                     context
                         .blockchain
-                        .new_overlaid_evm(inner, overrides, real_head_number)?;
+                        .new_overlaid_evm(inner, overrides, header.number)?;
                 vm.create_access_list(&self.transaction, &header)?
             }
             _ => {
@@ -586,8 +582,6 @@ impl RpcHandler for EstimateGasRequest {
             // Block not found
             _ => return Ok(Value::Null),
         };
-        let real_head_number = storage.get_latest_block_number()?;
-
         // Fork and the search ceiling have to come from the header the transaction will
         // actually execute against: a `time` override can cross a fork boundary and a
         // `gasLimit` override moves the ceiling. Recomputed rather than threaded down
@@ -705,7 +699,6 @@ impl RpcHandler for EstimateGasRequest {
             blockchain.clone(),
             state_overrides.as_ref(),
             self.block_overrides.clone(),
-            real_head_number,
         )?;
 
         let gas_used = result.gas_used();
@@ -728,7 +721,6 @@ impl RpcHandler for EstimateGasRequest {
             blockchain.clone(),
             state_overrides.as_ref(),
             self.block_overrides.clone(),
-            real_head_number,
         ) {
             return serde_json::to_value(format!("{gas_used:#x}"))
                 .map_err(|error| RpcErr::Internal(error.to_string()));
@@ -764,7 +756,6 @@ impl RpcHandler for EstimateGasRequest {
                 blockchain.clone(),
                 state_overrides.as_ref(),
                 self.block_overrides.clone(),
-                real_head_number,
             );
             if let Ok(ExecutionResult::Success { .. }) = result {
                 highest_gas_limit = middle_gas_limit;
@@ -877,17 +868,7 @@ fn simulate_tx(
     storage: Store,
     blockchain: Arc<Blockchain>,
 ) -> Result<ExecutionResult, RpcErr> {
-    // No overrides => `real_head_number` is unused inside the wrapper, since
-    // we don't build one. Passing 0 keeps the call sites uniform.
-    simulate_tx_with_overrides(
-        transaction,
-        block_header,
-        storage,
-        blockchain,
-        None,
-        None,
-        0,
-    )
+    simulate_tx_with_overrides(transaction, block_header, storage, blockchain, None, None)
 }
 
 /// Override-aware variant of [`simulate_tx`].
@@ -902,9 +883,10 @@ fn simulate_tx(
 /// `block_overrides` (geth Block Override Set) synthesizes a header with the
 /// requested fields replaced.
 ///
-/// `real_head_number` is the height of the real chain tip; the wrapper returns
-/// zero for `BLOCKHASH(n)` when `n > real_head_number`, matching geth's behavior
-/// when the synthetic block sits past the tip.
+/// `real_header` is the header the call is made against, and stays the database's view
+/// of the chain no matter what the Block Override Set says. The overlay also takes its
+/// number as the `BLOCKHASH` cutoff, matching geth, which builds its hash function from
+/// this same header before the overrides are applied.
 pub(crate) fn simulate_tx_with_overrides(
     transaction: &GenericTransaction,
     real_header: &BlockHeader,
@@ -912,7 +894,6 @@ pub(crate) fn simulate_tx_with_overrides(
     blockchain: Arc<Blockchain>,
     state_overrides: Option<&BTreeMap<Address, StateOverride>>,
     block_overrides: Option<BlockOverrideSet>,
-    real_head_number: BlockNumber,
 ) -> Result<ExecutionResult, RpcErr> {
     let chain_config = storage.get_chain_config();
     let block_overrides = block_overrides.filter(|bo| !bo.is_empty());
@@ -926,14 +907,14 @@ pub(crate) fn simulate_tx_with_overrides(
     // from the SYNTHETIC header so number/timestamp/etc. reflect the override.
     let inner = StoreVmDatabase::new(storage, real_header.clone())?;
     // The overlay is built for *either* override set, not just the state one. Its
-    // `BLOCKHASH` clamp — zero past the real tip — is a property of running against a
-    // synthetic block, which a Block Override Set creates on its own; keying it on the
-    // state overrides made the same request error or return zero depending on whether an
-    // unrelated state override happened to be present.
+    // `BLOCKHASH` clamp — zero from the base block's own number upwards — is a property of
+    // running against a synthetic block, which a Block Override Set creates on its own;
+    // keying it on the state overrides made the same request error or return zero
+    // depending on whether an unrelated state override happened to be present.
     let state_overrides = state_overrides.filter(|o| !o.is_empty());
     let raw_result = if state_overrides.is_some() || block_overrides.is_some() {
         let overrides = state_overrides.cloned().unwrap_or_default();
-        let mut vm = blockchain.new_overlaid_evm(inner, overrides, real_head_number)?;
+        let mut vm = blockchain.new_overlaid_evm(inner, overrides, real_header.number)?;
         vm.simulate_tx_from_generic(transaction, &effective_header)?
     } else {
         let mut vm = blockchain.new_evm(inner)?;

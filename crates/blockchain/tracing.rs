@@ -3,7 +3,7 @@ use std::time::Duration;
 use ethrex_common::{
     Address, H256,
     tracing::{CallTrace, OpcodeTraceResult, PrestateResult},
-    types::{Block, BlockHeader, BlockNumber, GenericTransaction},
+    types::{Block, BlockHeader, GenericTransaction},
 };
 use ethrex_storage::Store;
 use ethrex_vm::tracing::OpcodeTracerConfig;
@@ -26,9 +26,6 @@ use crate::{
 pub struct TraceCallOverrides {
     /// State Override Set, already converted by the RPC layer.
     pub state: BTreeMap<Address, StateOverride>,
-    /// Height of the real chain tip. The overlay returns zero for `BLOCKHASH(n)` when
-    /// `n` is past it, matching geth for a synthetic block beyond the tip.
-    pub real_head_number: BlockNumber,
     /// Header the EVM environment is built from when a Block Override Set was given.
     /// The *database* is always built from the real header, so `state_root` and
     /// block-hash ancestor walks still resolve against actual chain state.
@@ -41,7 +38,7 @@ impl TraceCallOverrides {
     }
 
     /// True when the overlay must be installed. A Block Override Set alone is enough:
-    /// the overlay carries the `BLOCKHASH`-past-the-real-tip clamp, which is a property
+    /// the overlay carries the `BLOCKHASH`-past-the-base-block clamp, which is a property
     /// of executing against a synthetic block rather than of the state overrides.
     fn needs_overlay(&self) -> bool {
         self.has_state() || self.effective_header.is_some()
@@ -344,7 +341,7 @@ impl Blockchain {
                 return Ok(self.new_overlaid_evm(
                     vm_db,
                     overrides.state.clone(),
-                    overrides.real_head_number,
+                    block.header.number,
                 )?);
             }
             return Ok(self.new_evm(vm_db)?);
@@ -361,6 +358,15 @@ impl Blockchain {
             .rebuild_parent_state_with_db(block.header.parent_hash, reexec)
             .await?;
         vm.rerun_block(block, tx_index)?;
+        // With no overlay to install there is nothing to layer over, so hand back the
+        // replay's own `Evm` as this function always did. Projecting it through
+        // `ReplayedVmDatabase` would work, but the projection reconstructs `storage_root`
+        // from an `AccountUpdate` rather than carrying the real one (see
+        // `UNMATERIALISED_STORAGE_ROOT`), and there is no reason to put the
+        // override-free `txIndex` trace through an approximation it does not need.
+        if !overrides.needs_overlay() {
+            return Ok(vm);
+        }
         // `get_state_transitions` diffs `current_accounts_state` against
         // `initial_accounts_state`, so this is the complete replay only while the latter
         // is still the untouched `base_db` baseline. That holds because `rerun_block` is
@@ -375,14 +381,7 @@ impl Blockchain {
         // assert would pass in exactly the case it claims to catch. The comment is the
         // guard; keep it attached to this call.
         let replayed = ReplayedVmDatabase::new(base_db, vm.get_state_transitions()?);
-        if overrides.needs_overlay() {
-            return Ok(self.new_overlaid_evm(
-                replayed,
-                overrides.state.clone(),
-                overrides.real_head_number,
-            )?);
-        }
-        Ok(self.new_evm(replayed)?)
+        Ok(self.new_overlaid_evm(replayed, overrides.state.clone(), block.header.number)?)
     }
 
     /// Rebuild the parent state for a block given its parent hash, returning an `Evm`

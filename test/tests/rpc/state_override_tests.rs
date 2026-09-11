@@ -189,8 +189,8 @@ async fn estimate_gas_with_code_override_skips_the_value_transfer_short_circuit(
 const NEEDS_100K_AVAILABLE: &str = "0x5a620186a011600a57005b60006000fd";
 
 /// PUSH1 1, NUMBER, SUB, BLOCKHASH, PUSH1 0, MSTORE, PUSH1 0x20, PUSH1 0, RETURN
-/// — returns BLOCKHASH(NUMBER-1), which is inside the 256-block window but past the real
-/// chain tip once `number` is overridden far ahead.
+/// — returns BLOCKHASH(NUMBER-1), which is inside the 256-block window but past the block
+/// the call is made against once `number` is overridden far ahead.
 const RETURN_PARENT_BLOCKHASH: &str = "0x600143034060005260206000f3";
 
 /// `eth_estimateGas` re-runs the transaction at the gas it consumed and, if that
@@ -256,15 +256,15 @@ async fn estimate_gas_caps_against_the_overridden_balance() {
     );
 }
 
-/// The "BLOCKHASH past the real tip reads zero" rule belongs to the synthetic block, not
-/// to the State Override Set. A Block Override Set that moves `number` past the tip must
-/// get it too, otherwise the same request errors or succeeds depending on whether an
-/// unrelated state override happens to be present.
+/// The "BLOCKHASH from the base block's number upwards reads zero" rule belongs to the
+/// synthetic block, not to the State Override Set. A Block Override Set that moves
+/// `number` ahead must get it too, otherwise the same request errors or succeeds
+/// depending on whether an unrelated state override happens to be present.
 ///
 /// The callee's code comes from the genesis `alloc` rather than a `code` override,
 /// because a code override would itself build the overlay and so hide the bug.
 #[tokio::test]
-async fn call_with_only_block_overrides_clamps_blockhash_past_the_tip() {
+async fn call_with_only_block_overrides_clamps_blockhash_past_the_base_block() {
     let storage = store_with_deployed_code(CALLEE, RETURN_PARENT_BLOCKHASH).await;
     let context = default_context_with_storage(storage).await;
 
@@ -282,7 +282,8 @@ async fn call_with_only_block_overrides_clamps_blockhash_past_the_tip() {
     assert_eq!(
         word_value(expect_result(&response)),
         "0",
-        "BLOCKHASH past the real tip must read zero even with no state override: {response}"
+        "BLOCKHASH past the base block must read zero even with no state override: \
+         {response}"
     );
 }
 
