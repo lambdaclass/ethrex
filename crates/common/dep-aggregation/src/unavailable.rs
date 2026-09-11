@@ -38,6 +38,10 @@ impl DependencyAggregator for UnavailableAggregator {
         Err(AggregateError::NoBackend)
     }
 
+    fn verify_witness(&self, _witness: &DependencyWitness) -> Result<(), AggregateError> {
+        Err(AggregateError::NoBackend)
+    }
+
     fn aggregated_vk(&self) -> H256 {
         // Not a real key and must never be treated as one. A node with no backend
         // verifies nothing, so there is no circuit whose identity this could name.

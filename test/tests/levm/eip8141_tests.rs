@@ -2769,7 +2769,13 @@ mod validation_observer_tests {
     }
 
     fn hegota_env(sender: Address) -> Environment {
-        let config = EVMConfig::new(Fork::Hegota, EVMConfig::canonical_values(Fork::Hegota));
+        env_at(sender, Fork::Hegota)
+    }
+
+    /// EIP-8288's `DEP_VERIFY` mode is gated at J*, so a test exercising one needs a
+    /// later fork than the rest of this harness runs at.
+    fn env_at(sender: Address, fork: Fork) -> Environment {
+        let config = EVMConfig::new(fork, EVMConfig::canonical_values(fork));
         Environment {
             origin: sender,
             gas_limit: 30_000_000,
@@ -2840,7 +2846,28 @@ mod validation_observer_tests {
         deploy_index: Option<usize>,
         focil_surface: Option<FocilVopsSurface>,
     ) -> (PrefixSimResult, Option<FrameSimViolation>) {
-        let env = hegota_env(sender);
+        run_at(
+            tx,
+            db,
+            sender,
+            frame_indices,
+            deploy_index,
+            focil_surface,
+            Fork::Hegota,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn run_at(
+        tx: &Transaction,
+        db: &mut GeneralizedDatabase,
+        sender: Address,
+        frame_indices: &[usize],
+        deploy_index: Option<usize>,
+        focil_surface: Option<FocilVopsSurface>,
+        fork: Fork,
+    ) -> (PrefixSimResult, Option<FrameSimViolation>) {
+        let env = env_at(sender, fork);
         let mut vm = VM::new(
             env,
             db,
@@ -2977,7 +3004,8 @@ mod validation_observer_tests {
         // The prefix is frame 1 alone: dependency frames are transparent to shape
         // matching, which is what makes EIP-8288's own test cases valid EIP-8141
         // transactions.
-        let (result, violation) = run(&tx, &mut db, sender, &[1], None, None);
+        // J*, not Hegotá: mode 3 is a reserved byte before EIP-8288 activates.
+        let (result, violation) = run_at(&tx, &mut db, sender, &[1], None, None, Fork::JStar);
         assert!(violation.is_none(), "a dependency frame breaks no rule");
         assert!(
             !result.any_revert,

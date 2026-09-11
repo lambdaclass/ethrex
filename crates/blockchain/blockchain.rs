@@ -3917,6 +3917,11 @@ impl Blockchain {
             frame_tx
                 .validate_static_constraints()
                 .map_err(MempoolError::InvalidFrameTransaction)?;
+            // EIP-8288: mode 3 is a reserved byte before J*, so admitting one would
+            // fill a pool slot with a transaction no block can carry.
+            frame_tx
+                .validate_fork_constraints(fork)
+                .map_err(MempoolError::InvalidFrameTransaction)?;
 
             // Frame `data` size is bounded by the wire-size cap below
             // (MAX_TX_SIZE over encode_canonical_len), which covers the

@@ -749,3 +749,133 @@ fn recursive_stark_participates_in_the_block_hash() {
         "and dropping the field entirely must change it too"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Fork gating, and the constraints an audit found untested
+// ---------------------------------------------------------------------------
+
+/// Mode 3 is EIP-8288's, and EIP-8288 activates at J*. Before J* the byte is a
+/// reserved mode, which is exactly what the EIP's Backwards Compatibility section
+/// says a node without the EIP must treat it as.
+///
+/// This was a real defect. `FrameMode::from_u8` maps 3 unconditionally, so a
+/// dependency frame was valid from Hegotá: on that chain a transaction could
+/// declare dependencies nothing obligates anyone to prove, and pay gas for a
+/// verification that never happens, while every conformant client rejected the same
+/// transaction as a reserved mode. That is a consensus split, not a missing feature.
+#[test]
+fn a_dependency_frame_is_not_valid_before_jstar() {
+    use ethrex_common::types::Fork;
+
+    let tx = tx_with(vec![dep_frame(&[sphincs(1, 2)]), self_verify_frame()]);
+    // The shape is fine at every fork; only the mode assignment is gated.
+    assert!(tx.validate_static_constraints().is_ok());
+
+    for fork in [Fork::Amsterdam, Fork::Hegota] {
+        let err = tx
+            .validate_fork_constraints(fork)
+            .expect_err("mode 3 is reserved before J*");
+        assert!(err.contains("before J*"), "{err}");
+    }
+    for fork in [Fork::JStar, Fork::LStar] {
+        assert!(tx.validate_fork_constraints(fork).is_ok());
+    }
+}
+
+#[test]
+fn the_fork_gate_only_touches_dependency_frames() {
+    use ethrex_common::types::Fork;
+
+    let tx = tx_with(vec![self_verify_frame()]);
+    for fork in [Fork::Amsterdam, Fork::Hegota, Fork::JStar] {
+        assert!(tx.validate_fork_constraints(fork).is_ok());
+    }
+}
+
+/// The EIP requires `value == 0`. It is enforced by EIP-8141's generic rule that
+/// only a SENDER frame may move value, not by the dependency-frame block -- correct,
+/// but load-bearing at a distance, and the one constraint with no test. If EIP-8141
+/// ever relaxes that rule, this catches the silent loss.
+#[test]
+fn a_dependency_frame_must_not_move_value() {
+    let mut frame = dep_frame(&[sphincs(1, 2)]);
+    frame.value = U256::one();
+    let err = tx_with(vec![frame, self_verify_frame()])
+        .validate_static_constraints()
+        .expect_err("a dependency frame must not carry value");
+    assert!(err.contains("value"), "{err}");
+}
+
+/// An oversized proof is refused at decode, before it is allocated and hashed --
+/// not only when a backend looks at it, which a node built without one never does.
+#[test]
+fn an_oversized_proof_is_refused_at_decode() {
+    use ethrex_common::types::MAX_RECURSIVE_STARK_PROOF_BYTES;
+
+    let too_big = jstar_header(
+        None,
+        Some(RecursiveStark {
+            proof: Bytes::from(vec![0u8; MAX_RECURSIVE_STARK_PROOF_BYTES + 1]),
+            block_deps_hash: H256::zero(),
+        }),
+    );
+    let mut buf = Vec::new();
+    too_big.encode(&mut buf);
+    assert!(
+        BlockHeader::decode(&buf).is_err(),
+        "a header must not decode a proof over the limit"
+    );
+
+    // One exactly at the limit still round-trips, so the bound is not off by one.
+    let at_limit = jstar_header(
+        None,
+        Some(RecursiveStark {
+            proof: Bytes::from(vec![0u8; MAX_RECURSIVE_STARK_PROOF_BYTES]),
+            block_deps_hash: H256::zero(),
+        }),
+    );
+    let mut buf = Vec::new();
+    at_limit.encode(&mut buf);
+    assert_eq!(BlockHeader::decode(&buf).unwrap(), at_limit);
+}
+
+/// EIP-8272's recent-root frame must sit first, or second behind an expiry frame.
+/// A dependency frame at index 0 -- the shape EIP-8288's own Test Cases 1 and 2
+/// describe -- displaces it.
+///
+/// Neither EIP says how the two position rules compose. We implement EIP-8272's as
+/// written, since it is already deployed, and pin the consequence here so it is
+/// visible rather than surprising. Raised as item 23 with the spec authors.
+#[test]
+fn a_dependency_frame_before_a_recent_root_frame_displaces_it() {
+    use ethrex_common::types::frame_tx_recent_root;
+
+    let recent_root = Frame {
+        mode: FrameMode::Verify as u8,
+        flags: 0,
+        target: Some(frame_tx_recent_root()),
+        gas_limit: 30_000,
+        state_gas_limit: 0,
+        value: U256::zero(),
+        data: Bytes::from(vec![0u8; 72]),
+    };
+
+    let ordered_well = tx_with(vec![recent_root.clone(), self_verify_frame()]);
+    assert_eq!(
+        ordered_well.recent_root_verifier_index(),
+        Some(0),
+        "a recent-root frame in its allowed position is recognised"
+    );
+
+    let displaced = tx_with(vec![
+        dep_frame(&[sphincs(1, 2)]),
+        recent_root,
+        self_verify_frame(),
+    ]);
+    assert_eq!(
+        displaced.recent_root_verifier_index(),
+        None,
+        "a dependency frame at index 0 pushes it out of position, so it stops being \
+         recognised as a recent-root frame at all"
+    );
+}

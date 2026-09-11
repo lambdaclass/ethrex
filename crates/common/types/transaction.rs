@@ -2856,6 +2856,34 @@ impl FrameTransaction {
             .sum()
     }
 
+    /// The fork-dependent half of static validity.
+    ///
+    /// `validate_static_constraints` is deliberately fork-free: it checks the shape
+    /// of a frame transaction, and every rule in it has held since EIP-8141
+    /// activated. Mode assignment is not like that. `DEP_VERIFY` is EIP-8288's, and
+    /// EIP-8288 activates at J*, so before J* the byte 3 is a reserved mode and a
+    /// frame carrying it makes the transaction invalid -- which is exactly what the
+    /// EIP's own Backwards Compatibility section says a node without it must do.
+    ///
+    /// Without this, mode 3 would be valid from Hegotá. On a Hegotá chain a
+    /// transaction could then declare dependencies that nothing in the protocol
+    /// obligates anyone to prove, and pay gas for a verification that never happens,
+    /// while every conformant Hegotá client rejected the same transaction as a
+    /// reserved mode. That is a consensus split, not a missing feature.
+    pub fn validate_fork_constraints(&self, fork: crate::types::Fork) -> Result<(), String> {
+        if fork >= crate::types::Fork::JStar {
+            return Ok(());
+        }
+        for (i, frame) in self.frames.iter().enumerate() {
+            if frame.is_dependency_verification() {
+                return Err(format!(
+                    "Frame {i}: dependency verification frames (EIP-8288) are not valid before J*"
+                ));
+            }
+        }
+        Ok(())
+    }
+
     pub fn validate_static_constraints(&self) -> Result<(), String> {
         // tx.sender != zero address
         if self.sender == Address::zero() {

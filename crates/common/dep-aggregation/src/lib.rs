@@ -65,6 +65,14 @@ pub const LEANVM_AGGREGATOR: bool = cfg!(feature = "leanvm");
 /// budget. See item 16 of `NOTES-FOR-8288-AUTHOR.md`.
 pub const MAX_RECURSIVE_STARK_PROOF_BYTES: usize = 1 << 20;
 
+// The header's RLP decode applies the same bound, so an oversized proof is refused
+// before it is allocated rather than only when a backend looks at it. The two
+// constants cannot be one item -- `ethrex-common` cannot depend on this crate --
+// so they are asserted equal instead.
+const _: () = assert!(
+    MAX_RECURSIVE_STARK_PROOF_BYTES == ethrex_common::types::MAX_RECURSIVE_STARK_PROOF_BYTES
+);
+
 /// One dependency together with the secret material that discharges it.
 ///
 /// The triple is what the transaction declared and what the block commits to; the
@@ -123,6 +131,17 @@ pub trait DependencyAggregator: Send + Sync + Debug {
         raw: &[DependencyWitness],
         children: &[&[u8]],
     ) -> Result<Vec<u8>, AggregateError>;
+
+    /// Verify one dependency directly from its witness, with no aggregation.
+    ///
+    /// This is what EIP-8288's mode-0 wrapper carries for a leanSPHINCS
+    /// dependency. §Mempool Wrapper Object is explicit that mode 0 holds "one STARK
+    /// per leanSTARK dependency" -- not per dependency -- and that a node may
+    /// "naively concatenate the leanSPHINCS instead of proving them". Mode 0 is also
+    /// what a user's very first broadcast uses, and a user has no aggregate yet, so
+    /// requiring a recursive proof here would make the mode unusable for its stated
+    /// purpose.
+    fn verify_witness(&self, witness: &DependencyWitness) -> Result<(), AggregateError>;
 
     /// The protocol-level verification key this backend verifies against.
     ///

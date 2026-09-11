@@ -159,6 +159,15 @@ impl DependencyAggregator for LeanVmAggregator {
         Ok(bytes)
     }
 
+    fn verify_witness(&self, witness: &DependencyWitness) -> Result<(), AggregateError> {
+        // No circuit and no aggregate: a leanSPHINCS dependency's witness is a
+        // public key and a signature, and checking it is an ordinary signature
+        // verification. This is the cheap path mode 0 exists for.
+        let (key, message, signature) = decode_sphincs_witness(witness)?;
+        sphincs::verify(&key, &message, &signature)
+            .map_err(|e| AggregateError::ProofInvalid(format!("{e:?}")))
+    }
+
     fn aggregated_vk(&self) -> H256 {
         // EIP-8288 lists AGGREGATED_VK as TBD, and the natural value is the
         // identity of the aggregation circuit. leanVM builds that circuit
