@@ -122,11 +122,37 @@ fn a_wrapper_with_no_transactions_is_rejected() {
     assert_eq!(w.validate(&agg), Err(WrapperError::Empty));
 }
 
-/// Rule 1 of both modes is that `deps` is the union of the transactions'
-/// dependencies, which a receiver has to resolve the hash to check. A node with a
-/// pool of already-broadcast wrappers should resolve first; this implementation has
-/// no wrapper transport and so nothing to resolve against, and the EIP defines no
-/// behaviour for a miss either way.
+/// The union check runs for mode 1 as well, which is stricter than the EIP:
+/// §Mempool Wrapper Object lists it only under mode 0. Without it a mode-1 wrapper
+/// could carry a valid aggregate over dependencies unrelated to the transactions it
+/// bundles, and a receiver would have no rule to reject it by.
+///
+/// Pinned here because it is a divergence, so raising the EIP's mode-1 list to match
+/// should make this test redundant rather than make it fail silently.
+#[test]
+fn a_mode_one_wrapper_is_held_to_the_union_rule_too() {
+    let agg = UnavailableAggregator;
+    let honest = tx_declaring(&[sphincs(1)]);
+
+    let w = MempoolWrapper {
+        transactions: vec![WrapperEntry::Full(Box::new(honest))],
+        content: WrapperContent::Recursive {
+            // Not what the transaction declares.
+            deps: vec![sphincs(99)],
+            recursive_stark: vec![0u8; 8],
+        },
+    };
+    assert_eq!(
+        w.validate(&agg),
+        Err(WrapperError::DepsNotUnion),
+        "a mode-1 wrapper may not claim dependencies its transactions do not declare"
+    );
+}
+
+/// The union rule needs the transaction, so a receiver has to resolve the hash to
+/// check it. A node with a pool of already-broadcast wrappers should resolve first;
+/// this implementation has no wrapper transport and so nothing to resolve against,
+/// and the EIP defines no behaviour for a miss either way.
 #[test]
 fn a_hash_only_wrapper_cannot_have_its_union_checked() {
     let agg = UnavailableAggregator;

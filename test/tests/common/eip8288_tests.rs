@@ -294,6 +294,44 @@ fn a_dependency_frame_must_have_no_flags() {
     assert!(err.contains("flags"), "{err}");
 }
 
+/// EIP-8288 states four separate constraints over a dependency frame's `data`, and
+/// each rejection has to name the one it broke. A shared message sends whoever is
+/// debugging a rejected transaction to the wrong rule.
+#[test]
+fn each_dependency_data_rule_reports_itself() {
+    let mut wrong_length = dep_frame(&[sphincs(1, 2)]);
+    wrong_length.data = Bytes::from(vec![0u8; 95]);
+
+    let mut empty = dep_frame(&[sphincs(1, 2)]);
+    empty.data = Bytes::new();
+    empty.gas_limit = 0;
+
+    let mut dirty_padding = dep_frame(&[sphincs(1, 2)]);
+    let mut bytes = dirty_padding.data.to_vec();
+    bytes[30] = 1;
+    dirty_padding.data = Bytes::from(bytes);
+
+    let mut unknown_scheme = dep_frame(&[sphincs(1, 2)]);
+    let mut bytes = unknown_scheme.data.to_vec();
+    bytes[31] = 0x12;
+    unknown_scheme.data = Bytes::from(bytes);
+
+    for (frame, expected) in [
+        (wrong_length, "whole number"),
+        (empty, "at least one"),
+        (dirty_padding, "padding"),
+        (unknown_scheme, "does not assign"),
+    ] {
+        let err = tx_with(vec![frame, self_verify_frame()])
+            .validate_static_constraints()
+            .expect_err("each of these breaks a rule");
+        assert!(
+            err.contains(expected),
+            "expected the message to name the rule ({expected}), got: {err}"
+        );
+    }
+}
+
 #[test]
 fn a_dependency_frame_must_carry_whole_triples() {
     for len in [1usize, 95, 97, 191] {

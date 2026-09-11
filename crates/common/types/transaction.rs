@@ -2005,17 +2005,55 @@ impl Frame {
     /// EIP-8288 `frame.data_triples`. `None` when this is not a dependency
     /// verification frame, or when its data is not a whole number of well-formed
     /// 96-byte triples.
+    ///
+    /// Use [`Frame::parse_dependency_triples`] where the *reason* matters:
+    /// validation reports it, and four separate rules land here.
     pub fn dependency_triples(&self) -> Option<Vec<DependencyTriple>> {
+        self.parse_dependency_triples().ok()
+    }
+
+    /// [`Frame::dependency_triples`], with the rule that rejected it.
+    ///
+    /// EIP-8288 states four distinct constraints over this field -- a length that
+    /// is a whole number of triples, at least one triple, 31 zero bytes of scheme
+    /// padding, and an assigned scheme byte. Collapsing them into one message sends
+    /// whoever is debugging a rejected transaction to the wrong rule.
+    pub fn parse_dependency_triples(&self) -> Result<Vec<DependencyTriple>, String> {
         if !self.is_dependency_verification() {
-            return None;
+            return Err("frame is not a dependency verification frame".to_string());
         }
         let len = self.data.len();
-        if len == 0 || !len.is_multiple_of(FRAME_TX_DEPENDENCY_TRIPLE_BYTES) {
-            return None;
+        if !len.is_multiple_of(FRAME_TX_DEPENDENCY_TRIPLE_BYTES) {
+            return Err(format!(
+                "data must be a whole number of {FRAME_TX_DEPENDENCY_TRIPLE_BYTES}-byte \
+                 triples, got {len} bytes"
+            ));
+        }
+        if len == 0 {
+            return Err("must declare at least one dependency".to_string());
         }
         self.data
             .chunks_exact(FRAME_TX_DEPENDENCY_TRIPLE_BYTES)
-            .map(DependencyTriple::from_bytes)
+            .enumerate()
+            .map(|(n, chunk)| {
+                // Split the two remaining rules apart the same way, so a bad scheme
+                // byte and stray padding are never reported as each other.
+                let Some(padding) = chunk.get(..31) else {
+                    return Err(format!("triple {n} is truncated"));
+                };
+                if padding.iter().any(|b| *b != 0) {
+                    return Err(format!(
+                        "triple {n} has non-zero scheme padding; the first 31 bytes of \
+                         each triple must be zero"
+                    ));
+                }
+                DependencyTriple::from_bytes(chunk).ok_or_else(|| {
+                    format!(
+                        "triple {n} names scheme {:#04x}, which EIP-8288 does not assign",
+                        chunk.get(31).copied().unwrap_or_default()
+                    )
+                })
+            })
             .collect()
     }
 
@@ -2998,16 +3036,12 @@ impl FrameTransaction {
             // In short: the sum binds `limits.execution`, `limits.state` must be
             // zero, and `target` must be absent.
             if frame.is_dependency_verification() {
-                let Some(triples) = frame.dependency_triples() else {
-                    return Err(format!(
-                        "Frame {i}: dependency verification frame data must be a whole number of \
-                         {FRAME_TX_DEPENDENCY_TRIPLE_BYTES}-byte triples, each with 31 zero bytes \
-                         of scheme padding and a known scheme byte"
-                    ));
-                };
+                let triples = frame
+                    .parse_dependency_triples()
+                    .map_err(|reason| format!("Frame {i}: {reason}"))?;
                 if triples.len() > FRAME_TX_MAX_DEPENDENCIES_PER_FRAME {
                     return Err(format!(
-                        "Frame {i}: dependency count must be between 1 and \
+                        "Frame {i}: dependency count must be at most \
                          {FRAME_TX_MAX_DEPENDENCIES_PER_FRAME}, got {}",
                         triples.len()
                     ));

@@ -183,6 +183,14 @@ impl RpcHandler for SimulateFrameTransactionRequest {
             return structurally_invalid(error, max_cost);
         }
 
+        // EIP-8288 mode 3 is a reserved byte before J*, and the mempool refuses it
+        // on that ground alone. Omitting the gate here would have this endpoint
+        // answer "structurally fine" for a transaction admission is about to reject,
+        // which is the one thing it exists not to do.
+        if let Err(error) = frame_tx.validate_fork_constraints(config.fork(header.timestamp)) {
+            return structurally_invalid(error, max_cost);
+        }
+
         // EIP-8141 §Mempool rule #6: signature verification is charged against
         // MAX_VERIFY_GAS, so a transaction whose signature cost alone exceeds the
         // budget can never satisfy the prefix gas limit.

@@ -203,14 +203,14 @@ pub fn verify_budget_signature_cost(tx: &FrameTransaction) -> u64 {
 /// are Profile 2 candidates. Anything carrying blobs is outside both, because
 /// blob gas has its own target and maximum and EIP-8369 defines no omission
 /// check over that second budget.
-pub fn classify(tx: &Transaction) -> VopsProfile {
+pub fn classify(tx: &Transaction, fork: Fork) -> VopsProfile {
     if tx.tx_type() == TxType::EIP4844 || !tx.blob_versioned_hashes().is_empty() {
         return VopsProfile::Ineligible;
     }
 
     match tx {
         Transaction::FrameTransaction(frame_tx) => {
-            if is_profile_2_candidate(frame_tx) {
+            if is_profile_2_candidate(frame_tx, fork) {
                 VopsProfile::TwoCandidate
             } else {
                 VopsProfile::Ineligible
@@ -237,8 +237,19 @@ pub fn classify(tx: &Transaction) -> VopsProfile {
 ///
 /// Condition 3 is enforced by [`FrameTransaction::validate_prefix_structure`],
 /// which rejects both as EIP-8141 structural violations.
-pub fn is_profile_2_candidate(tx: &FrameTransaction) -> bool {
+pub fn is_profile_2_candidate(tx: &FrameTransaction, fork: Fork) -> bool {
     if tx.validate_static_constraints().is_err() {
+        return false;
+    }
+
+    // Static validity is deliberately fork-free, so it accepts an EIP-8288
+    // dependency frame at any fork. Eligibility must not: before J* mode 3 is a
+    // reserved byte, the transaction cannot execute, and calling it a candidate
+    // would put something unincludable on an inclusion list. Unreachable while the
+    // pool gates on the same fork, but eligibility is reached from the IL validator
+    // too, and a fork-sensitive rule enforced at only some of its gates is exactly
+    // the shape that goes wrong later.
+    if tx.validate_fork_constraints(fork).is_err() {
         return false;
     }
 
@@ -398,7 +409,7 @@ pub fn fill_il_budget(il: &[Transaction], fork: Fork, crypto: &dyn Crypto) -> Ve
 
         remaining -= prefix_cost;
 
-        if is_profile_2_candidate(frame_tx) {
+        if is_profile_2_candidate(frame_tx, fork) {
             outcomes.push(FillOutcome::Admitted { cost: total_cost });
         } else {
             outcomes.push(FillOutcome::ChargedNotAdmitted { cost: total_cost });

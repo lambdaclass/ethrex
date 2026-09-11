@@ -406,7 +406,7 @@ impl InclusionListSatisfactionValidator {
                 continue;
             }
 
-            let profile = classify(tx_il);
+            let profile = classify(tx_il, config.fork(header.timestamp));
 
             // EIP-8369 Profile 2. A transaction that passes stateful eligibility
             // replay at the evaluation index could have been included, so its

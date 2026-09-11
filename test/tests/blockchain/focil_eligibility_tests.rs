@@ -4,6 +4,7 @@ use ethrex_common::types::Fork;
 use ethrex_crypto::NativeCrypto;
 use k256::ecdsa::SigningKey;
 
+use ethrex_blockchain::focil_eligibility::is_profile_2_candidate;
 use ethrex_blockchain::focil_eligibility::{
     FillOutcome, MAX_VERIFY_GAS_PER_IL, MAX_VERIFY_GAS_PER_TX, SenderCode, VopsProfile, classify,
     classify_sender_code, default_evaluation_index, evaluation_index, fee_valid, fill_il_budget,
@@ -137,14 +138,59 @@ fn eip1559_tx(max_fee: u64, priority: u64) -> Transaction {
 
 #[test]
 fn regular_transactions_are_profile_1() {
-    assert_eq!(classify(&legacy_tx()), VopsProfile::One);
-    assert_eq!(classify(&eip1559_tx(1_000, 1)), VopsProfile::One);
+    assert_eq!(classify(&legacy_tx(), Fork::Hegota), VopsProfile::One);
+    assert_eq!(
+        classify(&eip1559_tx(1_000, 1), Fork::Hegota),
+        VopsProfile::One
+    );
 }
 
 #[test]
 fn a_recognized_prefix_within_budget_is_a_profile_2_candidate() {
     let tx = Transaction::FrameTransaction(self_verify_tx(50_000));
-    assert_eq!(classify(&tx), VopsProfile::TwoCandidate);
+    assert_eq!(classify(&tx, Fork::Hegota), VopsProfile::TwoCandidate);
+}
+
+/// Static validity is fork-free by design, so it accepts an EIP-8288 dependency
+/// frame at any fork. Eligibility must not: before J* the transaction cannot
+/// execute, and calling it a candidate would put something unincludable on an
+/// inclusion list.
+#[test]
+fn a_dependency_frame_is_not_eligible_before_jstar() {
+    use ethrex_common::types::{
+        DEPENDENCY_SCHEME_LEANSPHINCS, DependencyTriple, FrameMode, LEANSPHINCS_VERIFICATION_GAS,
+    };
+
+    let triple = DependencyTriple {
+        scheme: DEPENDENCY_SCHEME_LEANSPHINCS,
+        data_hash: ethrex_common::H256::from_low_u64_be(1),
+        verification_key_hash: ethrex_common::H256::from_low_u64_be(2),
+    };
+    let tx = frame_tx(vec![
+        Frame {
+            mode: FrameMode::DepVerify as u8,
+            flags: 0,
+            target: None,
+            gas_limit: LEANSPHINCS_VERIFICATION_GAS,
+            state_gas_limit: 0,
+            value: U256::zero(),
+            data: triple.encode().to_vec().into(),
+        },
+        verify_frame(Some(sender()), APPROVE_EXECUTION_AND_PAYMENT, 50_000),
+    ]);
+
+    assert!(
+        tx.validate_static_constraints().is_ok(),
+        "the shape itself is valid; only the fork gate should reject it"
+    );
+    assert!(
+        !is_profile_2_candidate(&tx, Fork::Hegota),
+        "mode 3 is a reserved byte before J*"
+    );
+    assert!(
+        is_profile_2_candidate(&tx, Fork::JStar),
+        "and eligible once the fork that defines it is live"
+    );
 }
 
 /// EIP-8369 puts every blob-carrying transaction outside both profiles: "blob gas
@@ -156,7 +202,7 @@ fn blob_carrying_transactions_are_outside_both_profiles() {
     let mut tx = self_verify_tx(50_000);
     tx.blob_versioned_hashes = vec![Default::default()];
     assert_eq!(
-        classify(&Transaction::FrameTransaction(tx)),
+        classify(&Transaction::FrameTransaction(tx), Fork::Hegota),
         VopsProfile::Ineligible
     );
 }
@@ -168,7 +214,7 @@ fn a_prefix_over_the_per_tx_cap_is_not_a_candidate() {
     let tx = self_verify_tx(MAX_VERIFY_GAS_PER_TX + 1);
     assert!(verify_budget_cost(&tx).is_some_and(|c| c > MAX_VERIFY_GAS_PER_TX));
     assert_eq!(
-        classify(&Transaction::FrameTransaction(tx)),
+        classify(&Transaction::FrameTransaction(tx), Fork::Hegota),
         VopsProfile::Ineligible
     );
 }
@@ -187,7 +233,7 @@ fn an_unrecognized_prefix_is_not_a_candidate() {
         data: Default::default(),
     }]);
     assert_eq!(
-        classify(&Transaction::FrameTransaction(tx)),
+        classify(&Transaction::FrameTransaction(tx), Fork::Hegota),
         VopsProfile::Ineligible
     );
 }
@@ -376,7 +422,7 @@ fn the_only_verify_pay_shape_is_a_candidate() {
         verify_frame(Some(Address::repeat_byte(0x22)), APPROVE_PAYMENT, 30_000),
     ]);
     assert_eq!(
-        classify(&Transaction::FrameTransaction(tx.clone())),
+        classify(&Transaction::FrameTransaction(tx.clone()), Fork::Hegota),
         VopsProfile::TwoCandidate
     );
     // Both prefix frames are priced, plus the one signature.
