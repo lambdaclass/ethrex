@@ -765,6 +765,10 @@ impl Blockchain {
         let start_instant = Instant::now();
 
         let chain_config = self.storage.get_chain_config();
+        // Cloned out of `self` so the scoped execution thread below can run
+        // EIP-8288's rule 2 without borrowing the blockchain; it is an Arc, so this
+        // is a pointer bump.
+        let aggregator = self.aggregator.clone();
 
         // Validate the block pre-execution
         validate_block_pre_execution(block, parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
@@ -1075,6 +1079,16 @@ impl Blockchain {
                             &block.header,
                             &chain_config,
                             &execution_result.requests,
+                        )?;
+                        // EIP-8288 block-validity rule 2, the same check
+                        // `execute_block` runs. Both paths must enforce it: a node
+                        // importing through the pipeline would otherwise accept a
+                        // block whose recursive proof discharges nothing, while
+                        // every other client rejects it.
+                        crate::eip8288::validate_recursive_stark(
+                            block,
+                            &chain_config,
+                            aggregator.as_ref(),
                         )?;
                         // EIP-7928 block_access_list_hash commitment check.
                         //
