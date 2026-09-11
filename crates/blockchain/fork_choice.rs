@@ -750,7 +750,7 @@ impl Drop for AbortReorgGuard<'_> {
 ///
 /// `last_valid_hash` is the failing block's parent ; the deepest block on the
 /// new chain that replayed successfully.
-fn map_chain_error_for_fcu(err: ChainError, last_valid_hash: H256) -> InvalidForkChoice {
+pub fn map_chain_error_for_fcu(err: ChainError, last_valid_hash: H256) -> InvalidForkChoice {
     match err {
         // EIP-8288 rule 2: a block whose recursive proof does not discharge the
         // dependencies it declares is invalid, the same as any other failed
@@ -781,35 +781,5 @@ fn map_chain_error_for_fcu(err: ChainError, last_valid_hash: H256) -> InvalidFor
         // any case: only `engine_newPayloadV6` supplies an inclusion list, and
         // the fork-choice replay path imports blocks without one.
         | ChainError::IlUnsatisfied { .. } => InvalidForkChoice::StateNotReachable,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// EIP-8288 notes item 19. The two recursive-stark errors exist to be told
-    /// apart here: "this block is wrong" and "this node cannot tell" are different
-    /// answers to give a consensus client, and collapsing them would have a node
-    /// with no aggregation backend declare a chain everyone else follows invalid.
-    #[test]
-    fn the_two_recursive_stark_errors_map_to_different_fork_choice_outcomes() {
-        let last_valid = H256::from_low_u64_be(0xFEED);
-
-        assert!(matches!(
-            map_chain_error_for_fcu(
-                ChainError::RecursiveStarkInvalid("proof does not discharge".to_string()),
-                last_valid,
-            ),
-            InvalidForkChoice::InvalidAncestor(h) if h == last_valid
-        ));
-
-        assert!(matches!(
-            map_chain_error_for_fcu(
-                ChainError::RecursiveStarkUnverifiable("no backend".to_string()),
-                last_valid,
-            ),
-            InvalidForkChoice::StateNotReachable
-        ));
     }
 }

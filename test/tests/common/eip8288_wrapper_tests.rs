@@ -7,12 +7,12 @@ use ethrex_common::types::{
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 
-use crate::wrapper::{
+use ethrex_common::types::FRAME_TX_MAX_SIGS_PER_TX;
+use ethrex_dep_aggregation::wrapper::{
     AGGREGATION_INTERVAL_MS, MAX_LEANSIG_DEPS_PER_WRAPPER, MAX_LEANSTARK_DEPS_PER_WRAPPER,
     MempoolWrapper, WrapperContent, WrapperEntry, WrapperError,
 };
-use crate::{DependencyAggregator, UnavailableAggregator};
-use ethrex_common::types::FRAME_TX_MAX_SIGS_PER_TX;
+use ethrex_dep_aggregation::{DependencyAggregator, UnavailableAggregator};
 
 fn dep(scheme: u8, n: u64) -> DependencyTriple {
     DependencyTriple {
@@ -77,7 +77,7 @@ fn the_wrapper_limits_are_enforced() {
     );
 }
 
-/// Notes item 20, pinned as an assertion rather than only as prose.
+/// The wrapper limits, pinned as an assertion rather than only as prose.
 ///
 /// EIP-8288 exists to aggregate many signatures into one proof -- its Motivation
 /// talks about "many thousands of signatures per slot", and the tooling it names
@@ -122,11 +122,11 @@ fn a_wrapper_with_no_transactions_is_rejected() {
     assert_eq!(w.validate(&agg), Err(WrapperError::Empty));
 }
 
-/// Notes item 22. Rule 1 of both modes is that `deps` is the union of the
-/// transactions' dependencies, which a receiver has to resolve the hash to check.
-/// A node with a pool of already-broadcast wrappers should resolve first; this
-/// implementation has no wrapper transport (item 21) and so nothing to resolve
-/// against, and the EIP defines no behaviour for a miss either way.
+/// Rule 1 of both modes is that `deps` is the union of the transactions'
+/// dependencies, which a receiver has to resolve the hash to check. A node with a
+/// pool of already-broadcast wrappers should resolve first; this implementation has
+/// no wrapper transport and so nothing to resolve against, and the EIP defines no
+/// behaviour for a miss either way.
 #[test]
 fn a_hash_only_wrapper_cannot_have_its_union_checked() {
     let agg = UnavailableAggregator;
@@ -192,7 +192,9 @@ fn mode_zero_verifies_each_dependency_on_its_own_terms() {
         // short-circuiting earlier.
         assert_eq!(
             w.validate(&agg),
-            Err(WrapperError::Aggregate(crate::AggregateError::NoBackend)),
+            Err(WrapperError::Aggregate(
+                ethrex_dep_aggregation::AggregateError::NoBackend
+            )),
             "scheme {:#04x} must reach a per-dependency check",
             deps[0].scheme
         );
@@ -256,7 +258,9 @@ fn wrapper_validation_fails_closed_without_a_backend() {
     // passes and validation reaches the proof.
     assert!(matches!(
         w.validate(&agg),
-        Err(WrapperError::Aggregate(crate::AggregateError::NoBackend))
+        Err(WrapperError::Aggregate(
+            ethrex_dep_aggregation::AggregateError::NoBackend
+        ))
     ));
     assert_eq!(agg.name(), "unavailable");
 }

@@ -9,6 +9,8 @@ mod eip7702_zero_transfer_tests;
 mod eip8037_block_gate_tests;
 mod eip8070_kzg_tests;
 mod eip8250_concurrency_tests;
+mod eip8288_rule_tests;
+mod eip8288_witness_tests;
 mod explicit_blob_tx_tests;
 mod focil_eligibility_tests;
 mod focil_profile2_tests;

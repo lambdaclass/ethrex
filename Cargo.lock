@@ -4512,6 +4512,7 @@ dependencies = [
  "ethrex-blockchain",
  "ethrex-common",
  "ethrex-crypto",
+ "ethrex-dep-aggregation",
  "ethrex-guest-program",
  "ethrex-l2",
  "ethrex-l2-common",

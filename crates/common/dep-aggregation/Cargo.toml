@@ -28,13 +28,14 @@ lean_vm = { git = "https://github.com/leanEthereum/leanVM.git", rev = "7f9777da6
 rec_aggregation = { git = "https://github.com/leanEthereum/leanVM.git", rev = "7f9777da6ab3d7bb8d10c3f5c7edce2554fcfc03", optional = true }
 sphincs = { git = "https://github.com/leanEthereum/leanVM.git", rev = "7f9777da6ab3d7bb8d10c3f5c7edce2554fcfc03", optional = true }
 
+# Only for `test_support`, which builds deterministic signing material for tests
+# that live outside this crate. Pulled in by `leanvm`, never by a default build.
+rand = { version = "0.9", optional = true }
+
 [features]
 default = []
 # Compiles the real recursive-proof backend. Off by default: it pulls a large
 # proving stack, and producing an aggregate peaks around 9-11 GiB of resident
 # memory. A node built without it can still enforce EIP-8288 block-validity rule 1
 # and will reject any block carrying a proof rather than accept one it cannot check.
-leanvm = ["dep:lean_vm", "dep:rec_aggregation", "dep:sphincs"]
-
-[dev-dependencies]
-rand = "0.9"
+leanvm = ["dep:lean_vm", "dep:rec_aggregation", "dep:sphincs", "dep:rand"]

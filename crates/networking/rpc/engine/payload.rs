@@ -1635,13 +1635,13 @@ async fn try_execute_payload(
         // And its counterpart, which must not be INVALID: this node has no backend
         // for the block's dependencies and has therefore learned nothing about it.
         // Saying INVALID would tell the consensus client that a chain everyone else
-        // follows is bad (notes item 19).
+        // follows is bad.
         //
         // SYNCING is the least-wrong of the statuses the engine API offers -- "not
         // validated yet" rather than "bad" -- but it is a poor fit, because nothing
         // will make this node able to validate. No sync is triggered for that
-        // reason. The EIP has no status for "cannot verify"; that is the gap item 19
-        // asks the authors to close.
+        // reason. The engine API has no status for "cannot verify", which is what
+        // makes this answer awkward rather than merely unusual.
         Err(ChainError::RecursiveStarkUnverifiable(error)) => {
             warn!(
                 %block_hash, %block_number,

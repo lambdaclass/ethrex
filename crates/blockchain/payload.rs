@@ -7,6 +7,8 @@ use std::{
 
 use rustc_hash::FxHashMap;
 
+use ethrex_common::types::DependencyTriple;
+
 use ethrex_common::{
     Address, Bloom, Bytes, H256, U256,
     constants::{
@@ -1313,6 +1315,40 @@ impl Blockchain {
         Ok(())
     }
 
+    /// The recursive proof for a block declaring `dependencies`.
+    ///
+    /// Empty for an empty set: rule 2 holds by arithmetic there, so a chain nobody
+    /// uses this feature on never pays for a proving run.
+    ///
+    /// Otherwise this aggregates from the witnesses the node has verified. Mempool
+    /// admission refuses a dependency whose witness is missing, so anything that
+    /// reached a block has one -- a miss here is a bug in that invariant rather than
+    /// a condition to recover from, and it is reported instead of producing a block
+    /// that would fail its own rule 2 on import.
+    fn aggregate_block_dependencies(
+        &self,
+        dependencies: &[DependencyTriple],
+    ) -> Result<Bytes, ChainError> {
+        if dependencies.is_empty() {
+            return Ok(Bytes::new());
+        }
+
+        let witnesses = self
+            .dependency_witnesses
+            .witnesses_for(dependencies)
+            .ok_or_else(|| {
+                ChainError::RecursiveStarkInvalid(
+                    "cannot build a block whose dependencies this node holds no witnesses for"
+                        .to_string(),
+                )
+            })?;
+
+        self.aggregator()
+            .aggregate(&witnesses, &[], Some(dependencies))
+            .map(Bytes::from)
+            .map_err(|e| ChainError::RecursiveStarkInvalid(e.to_string()))
+    }
+
     pub fn finalize_payload(&self, context: &mut PayloadBuildContext) -> Result<(), ChainError> {
         // Take BAL from VM before getting state transitions (which clears state)
         let block_access_list = context.vm.take_bal();
@@ -1360,18 +1396,19 @@ impl Blockchain {
         // depend on execution results: a dependency verification frame never runs, so
         // the block's dependency set is a function of the body alone.
         //
-        // The proof itself is left empty here. Producing one is the aggregator's job
-        // and costs about a second and several gigabytes of memory, so it belongs on
-        // the aggregation path rather than inside payload finalisation; a build
-        // without a backend would have nothing to put here regardless. The digest is
-        // still correct and still committed to, so rule 1 holds for a locally built
-        // block and the block hash is stable.
+        // The proof has to be produced here too, and cannot be filled in afterwards:
+        // it is inside the header, so adding it later changes the block hash. A block
+        // whose transactions declare nothing needs no proof and pays nothing;
+        // otherwise this is where aggregation lands, and it is why EIP-8288's proving
+        // cost sits in the builder's critical path rather than off it.
         if context
             .chain_config()
             .is_jstar_or_later(context.payload.header.timestamp)
         {
+            let dependencies = context.payload.body.dependencies();
+            let proof = self.aggregate_block_dependencies(&dependencies)?;
             context.payload.header.recursive_stark = Some(RecursiveStark {
-                proof: Bytes::new(),
+                proof,
                 block_deps_hash: context.payload.body.block_deps_hash(),
             });
         }

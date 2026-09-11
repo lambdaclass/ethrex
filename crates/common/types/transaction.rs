@@ -2265,10 +2265,9 @@ pub const FRAME_TX_RECENT_ROOT_TUPLE_BYTES: usize = 72;
 // EIP-8288: dependency verification frames.
 //
 // A frame with mode DEP_VERIFY declares `(scheme, data_hash, verification_key_hash)`
-// triples that the block's recursive STARK must prove. The frame is never executed;
-// see `docs/eip-8288.md` for the reading of the spec these constants encode, and
-// `scripts/hegota-testnet/NOTES-FOR-8288-AUTHOR.md` for the questions that reading
-// had to answer.
+// triples that the block's recursive STARK must prove. The frame is never executed.
+// `docs/eip-8288.md` records the reading of the spec these constants encode, and
+// where that reading had to choose between readings the spec leaves open.
 // ---------------------------------------------------------------------------
 
 /// EIP-8288 `MAX_DEPENDENCIES_PER_FRAME`.
@@ -2305,8 +2304,8 @@ const _: () = assert!(FRAME_TX_MAX_STARKS_PER_TX == 1);
 /// compares `scheme` as a small integer, while the consensus hash is taken over
 /// the encoding, where `scheme` is a big-endian 32-byte word. The two agree for
 /// every scheme below 0x100 and diverge above it; sorting what is hashed is the
-/// order that stays correct. Raised as item 9 with the spec authors.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Default)]
+/// order that stays correct.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct DependencyTriple {
     pub scheme: u8,
     pub data_hash: H256,
@@ -2374,7 +2373,7 @@ pub fn deduplicate_and_sort_dependencies(mut deps: Vec<DependencyTriple>) -> Vec
 /// 96-byte triples of an already deduplicated and sorted list.
 ///
 /// BLAKE3 rather than keccak256: the Specification writes an unqualified `hash`,
-/// and the function is named only in Security Considerations. Raised as item 8.
+/// and the function is named only in Security Considerations.
 pub fn dependencies_hash(deps: &[DependencyTriple]) -> H256 {
     let mut hasher = blake3::Hasher::new();
     for dep in deps {
@@ -2995,10 +2994,9 @@ impl FrameTransaction {
             // EIP-8288 dependency verification frames. The EIP writes these
             // constraints against fields EIP-8141 does not have -- a scalar
             // `gas_limit`, and a `target` glossed as both `None` and the zero
-            // address -- so the reading here is spelled out in
-            // `scripts/hegota-testnet/NOTES-FOR-8288-AUTHOR.md` items 2 and 3 and
-            // in `docs/eip-8288.md`. In short: the sum binds `limits.execution`,
-            // `limits.state` must be zero, and `target` must be absent.
+            // address -- so the reading here is spelled out in `docs/eip-8288.md`.
+            // In short: the sum binds `limits.execution`, `limits.state` must be
+            // zero, and `target` must be absent.
             if frame.is_dependency_verification() {
                 let Some(triples) = frame.dependency_triples() else {
                     return Err(format!(
@@ -3039,7 +3037,7 @@ impl FrameTransaction {
                 // commit on a frame with no outcome. EIP-8288 says nothing about
                 // atomic batches at all; EIP-8141 already restricts the flag by mode
                 // (a VERIFY frame may not carry it), so a mode-specific restriction
-                // is in keeping. Raised as item 13 with the spec authors.
+                // is in keeping.
                 let inside_batch = i
                     .checked_sub(1)
                     .and_then(|prev| self.frames.get(prev))
@@ -3209,7 +3207,6 @@ impl FrameTransaction {
         // and 2 put one at index 0 ahead of the approving VERIFY frame -- a shape with
         // no recognizable prefix if the frame counted. Making them transparent is the
         // only reading under which those test cases describe a valid transaction.
-        // Raised as item 12 with the spec authors.
         //
         // Their declared gas is deliberately NOT added to the MAX_VERIFY_GAS sum
         // below. That budget bounds the EVM work a node must do before it knows the

@@ -43,6 +43,8 @@
 //! ```
 
 pub mod constants;
+pub mod dependency_witnesses;
+
 pub mod eip8288;
 pub mod error;
 pub mod focil_eligibility;
@@ -60,6 +62,7 @@ pub mod vm;
 
 use ::tracing::{debug, error, info, instrument, warn};
 use constants::{AMSTERDAM_MAX_INITCODE_SIZE, MAX_INITCODE_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
+use dependency_witnesses::DependencyWitnessStore;
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH, MIN_BASE_FEE_PER_BLOB_GAS};
@@ -88,7 +91,9 @@ pub use ethrex_common::{
     validate_gas_used, validate_receipts_root_and_logs_bloom, validate_requests_hash,
 };
 use ethrex_crypto::NativeCrypto;
-use ethrex_dep_aggregation::DependencyAggregator;
+use ethrex_dep_aggregation::{
+    DependencyAggregator, DependencyWitness, MempoolWrapper, WrapperContent, WrapperError,
+};
 use ethrex_metrics::metrics;
 use ethrex_rlp::constants::RLP_NULL;
 use ethrex_rlp::decode::RLPDecode;
@@ -264,6 +269,11 @@ pub struct Blockchain {
     /// feature this is the backend that refuses, so a block carrying a proof is
     /// rejected rather than waved through.
     aggregator: Arc<dyn DependencyAggregator>,
+    /// EIP-8288 dependencies whose witnesses this node has verified.
+    ///
+    /// Gates mempool admission and feeds block production; see
+    /// [`crate::dependency_witnesses`] for why both need it.
+    pub dependency_witnesses: Arc<DependencyWitnessStore>,
 }
 
 /// Newtype around the prewarmer's cache-handoff slot so `Blockchain` can keep
@@ -557,6 +567,9 @@ impl Blockchain {
             merkle_pool: Self::build_merkle_pool(),
             prewarmed: PrewarmedCache::default(),
             aggregator: ethrex_dep_aggregation::default_aggregator().into(),
+            dependency_witnesses: Arc::new(DependencyWitnessStore::new(
+                dependency_witnesses::DEFAULT_WITNESS_CAPACITY,
+            )),
         }
     }
 
@@ -580,6 +593,9 @@ impl Blockchain {
             merkle_pool: pool,
             prewarmed: PrewarmedCache::default(),
             aggregator: ethrex_dep_aggregation::default_aggregator().into(),
+            dependency_witnesses: Arc::new(DependencyWitnessStore::new(
+                dependency_witnesses::DEFAULT_WITNESS_CAPACITY,
+            )),
         }
     }
 
@@ -606,7 +622,49 @@ impl Blockchain {
             merkle_pool: Self::build_merkle_pool(),
             prewarmed: PrewarmedCache::default(),
             aggregator: ethrex_dep_aggregation::default_aggregator().into(),
+            dependency_witnesses: Arc::new(DependencyWitnessStore::new(
+                dependency_witnesses::DEFAULT_WITNESS_CAPACITY,
+            )),
         }
+    }
+
+    /// The EIP-8288 aggregation backend this build carries.
+    pub fn aggregator(&self) -> &dyn DependencyAggregator {
+        self.aggregator.as_ref()
+    }
+
+    /// Take in a mempool wrapper: run the EIP's receive checks, then keep whatever
+    /// witnesses it establishes so the dependencies they discharge become admissible.
+    ///
+    /// This is the only way anything enters the witness store, and the reason the
+    /// wrapper object exists at all -- without it, mode 0's individually verifiable
+    /// proofs are validated and then thrown away. Only mode 0 yields reusable
+    /// witnesses: a mode-1 wrapper carries one recursive proof over the whole set,
+    /// which discharges those dependencies but cannot be split back into per-claim
+    /// material for a later, different set.
+    ///
+    /// No transport calls this yet. EIP-8288 specifies none -- it says wrappers are
+    /// broadcast and stops -- so a wrapper reaches a node only if something hands it
+    /// over directly.
+    pub fn ingest_wrapper(&self, wrapper: &MempoolWrapper) -> Result<usize, WrapperError> {
+        wrapper.validate(self.aggregator.as_ref())?;
+
+        let WrapperContent::Direct { deps, proofs } = &wrapper.content else {
+            return Ok(0);
+        };
+
+        let mut kept = 0;
+        for (triple, proof) in deps.iter().zip(proofs) {
+            self.dependency_witnesses.insert_verified(
+                self.aggregator.as_ref(),
+                &DependencyWitness {
+                    triple: *triple,
+                    witness: proof.clone(),
+                },
+            )?;
+            kept += 1;
+        }
+        Ok(kept)
     }
 
     /// L1 blocks must not contain L2-only transaction types (`FeeToken` 0x7d,
@@ -3965,8 +4023,8 @@ impl Blockchain {
             // block-validity rule: the EIP files both under Mempool-Level Limits, so a
             // block carrying more is still valid and only propagation is bounded. The
             // classification is ambiguous -- Security Considerations lists them beside
-            // rules that *are* consensus rules -- and is raised as item 7 with the
-            // spec authors. Applied to the deduplicated set, as the EIP specifies.
+            // rules that *are* consensus rules. Applied to the deduplicated set, as
+            // the EIP specifies.
             let dependencies = frame_tx.dependencies();
             let leansphincs = dependencies.iter().filter(|d| d.is_leansphincs()).count();
             if leansphincs > FRAME_TX_MAX_SIGS_PER_TX {
@@ -3989,6 +4047,25 @@ impl Blockchain {
             {
                 return Err(MempoolError::FrameTxUnsupportedDependencyScheme {
                     scheme: unsupported.scheme,
+                });
+            }
+
+            // A declaration is free to write. Nothing in the transaction proves the
+            // signature it names exists, and the proof travels separately, so a
+            // transaction whose approval rests on a declared signature would
+            // otherwise pass prefix simulation without this node establishing that
+            // the signature is real.
+            //
+            // It is also what block production needs: a builder including this
+            // transaction must publish a proof discharging the dependency, and can
+            // only build one from the witness. Admitting what cannot be proven
+            // produces blocks that fail their own rule 2.
+            if let Some(unverified) = dependencies
+                .iter()
+                .find(|d| !self.dependency_witnesses.holds(d))
+            {
+                return Err(MempoolError::FrameTxUnverifiedDependency {
+                    data_hash: unverified.data_hash,
                 });
             }
 

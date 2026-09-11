@@ -190,6 +190,10 @@ pub enum MempoolError {
         "Frame transaction declares a dependency of scheme {scheme:#04x}, which this node's aggregation backend cannot discharge"
     )]
     FrameTxUnsupportedDependencyScheme { scheme: u8 },
+    #[error(
+        "Frame transaction declares a dependency over {data_hash:#x} whose witness this node has not verified"
+    )]
+    FrameTxUnverifiedDependency { data_hash: H256 },
     #[error("A pending frame transaction from this sender is already in the pool")]
     FrameTxSenderAlreadyPending,
     #[error("A frame transaction in the other nonce-key domain is already pending for this sender")]

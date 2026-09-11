@@ -16,6 +16,9 @@ l2 = ["ethrex/l2", "ethrex/l2-sql"]
 c-kzg = ["ethrex-common/c-kzg"]
 rayon = ["ethrex-levm/rayon"]
 eip-8025 = ["ethrex-levm/eip-8025"]
+# Compiles the real EIP-8288 aggregation backend so its tests can run. Off by
+# default: it pulls a large proving stack and its proving tests need ~10 GiB.
+leanvm = ["ethrex-dep-aggregation/leanvm"]
 
 [dependencies]
 ethrex-common.workspace = true
@@ -28,6 +31,7 @@ ethrex-storage = { workspace = true, features = ["testing"] }
 ethrex-levm.workspace = true
 ethrex-vm.workspace = true
 ethrex-rpc.workspace = true
+ethrex-dep-aggregation.workspace = true
 
 [dev-dependencies]
 ethrex-rpc = { workspace = true, features = ["test-utils"] }

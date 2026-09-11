@@ -13,8 +13,7 @@
 //! receiver performs, and then says wrappers are "broadcast" -- no devp2p message,
 //! no capability version, no announcement scheme, and no way to resolve the
 //! transaction hashes it permits in place of full transactions. Inventing an `eth`
-//! message here would be inventing protocol, so the transport is left out and
-//! raised as item 21.
+//! message here would be inventing protocol, so the transport is left out.
 
 use ethrex_common::H256;
 use ethrex_common::types::{
@@ -47,7 +46,7 @@ const _: () = assert!(AGGREGATION_INTERVAL_MS == 1_000);
 /// The EIP allows a bare hash "for transactions that were already broadcast in a
 /// previous wrapper", but gives no way to resolve one a receiver has never seen,
 /// and a receiver holding only a hash cannot check that `deps` is the union of the
-/// transactions' dependencies -- rule 1 of both modes. See item 22.
+/// transactions' dependencies -- rule 1 of both modes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WrapperEntry {
     Full(Box<FrameTransaction>),
@@ -152,21 +151,21 @@ impl MempoolWrapper {
                 // "Each dependency has a corresponding proof that can be verified
                 // individually."
                 //
-                // For leanSPHINCS that proof is the raw witness, not a STARK. The
-                // EIP says so twice: mode 0 carries "one STARK per leanSTARK
-                // dependency" -- not one per dependency -- and a node may "naively
-                // concatenate the leanSPHINCS instead of proving them". Mode 0 is
-                // also "intended to be used primarily by clients broadcasting their
-                // transactions", and a user's first broadcast has no aggregate, so
-                // demanding a recursive proof here would make the mode unusable for
-                // the case it exists to serve.
-                // Both schemes go to `verify_witness`, which dispatches on the
-                // scheme. A leanSTARK dependency does carry a STARK of its own, but
-                // it is *its* STARK, to be checked against its own
-                // `verification_key_hash` -- not an aggregate produced by the
-                // protocol circuit over an expected set, which is what `verify`
-                // means. Sending it to `verify` asks the wrong question of the
-                // backend and would pass or fail for the wrong reason.
+                // Individually means against that dependency's own scheme, so both
+                // go to `verify_witness`, which dispatches. For leanSPHINCS the
+                // material is the raw signature, not a STARK -- the EIP says so
+                // twice: mode 0 carries "one STARK per leanSTARK dependency", not
+                // one per dependency, and a node may "naively concatenate the
+                // leanSPHINCS instead of proving them". For leanSTARK it is that
+                // dependency's own STARK, checked against its own
+                // `verification_key_hash`.
+                //
+                // Neither is an aggregate produced by the protocol circuit over an
+                // expected set, which is what `verify` means, so neither goes there.
+                // Mode 0 is also "intended to be used primarily by clients
+                // broadcasting their transactions", and a user's first broadcast has
+                // no aggregate, so demanding a recursive proof here would make the
+                // mode unusable for the case it exists to serve.
                 for (dep, proof) in deps.iter().zip(proofs) {
                     aggregator.verify_witness(&DependencyWitness {
                         triple: *dep,
@@ -188,7 +187,7 @@ impl MempoolWrapper {
                 // The EIP's rule 1 here is that the proof's public input equals
                 // `hash(deps)`. Our aggregator checks the stronger and more useful
                 // property -- that the claims proven *are* `deps` -- for the reason
-                // in item 14: a digest comparison is only equivalent if the proof
+                // given above: a digest comparison is only equivalent if the proof
                 // actually binds that digest, which the named tooling does not.
                 aggregator.verify(recursive_stark, deps)?;
                 Ok(())

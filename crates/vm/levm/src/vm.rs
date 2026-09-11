@@ -2115,7 +2115,7 @@ impl<'a> VM<'a> {
             // EIP-8288: a dependency verification frame declares triples for the
             // block's recursive STARK and is never executed as EVM code. It still
             // *completes*, and still gets a receipt entry, for two reasons the EIP
-            // leaves unstated (raised as item 4 with its authors):
+            // leaves unstated:
             //
             //   - EIP-8288 tells contracts to walk the frame list with FRAMEPARAM and
             //     pick out mode-3 frames, so those frames are addressable by index.
@@ -2129,9 +2129,9 @@ impl<'a> VM<'a> {
             // Its whole declared execution budget is consumed and none of it is
             // refundable: EIP-8288 says the gas is "still fully charged even if the
             // transaction reverts", and EIP-8141 would otherwise refund a frame that
-            // used nothing, making dependencies free (item 5). No frame-entry access
+            // used nothing, making dependencies free. No frame-entry access
             // charge is levied, because nothing is entered -- `target` is required
-            // absent for this mode, so there is no account to warm (item 3).
+            // absent for this mode, so there is no account to warm.
             if frame.execution_mode() == Some(FrameMode::DepVerify) {
                 total_gas_used = total_gas_used
                     .checked_add(frame.gas_limit)
