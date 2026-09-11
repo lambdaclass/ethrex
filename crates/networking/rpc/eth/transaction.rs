@@ -812,15 +812,6 @@ fn convert_state_overrides(
     )))
 }
 
-/// Caps the estimation ceiling at the gas the sender can actually pay for.
-///
-/// `fee_cap` is the per-gas price the transaction's balance check uses: `max_fee_per_gas`
-/// when the call object carries one, otherwise the legacy `gas_price`.
-///
-/// A zero `fee_cap` is a request that names no fee at all, or names a fee of zero, and in
-/// both cases no balance bounds the gas: the ceiling is returned unchanged. Checked here
-/// rather than at the call site so no caller can reach the division with a zero divisor,
-/// which is the same split this function's `fee_cap` argument exists to close.
 async fn recap_with_account_balances(
     highest_gas_limit: u64,
     transaction: &GenericTransaction,
