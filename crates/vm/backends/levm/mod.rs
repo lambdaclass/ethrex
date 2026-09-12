@@ -688,6 +688,11 @@ impl LEVM {
                 )));
             }
 
+            // Only the Engine API checked ordering. Two changes at one index pass the
+            // `find_exact_change_*` lookups (first entry) while synthesis uses the last.
+            bal.validate_ordering()
+                .map_err(|e| EvmError::Custom(format!("BAL validation failed: {e}")))?;
+
             // EIP-7928 size cap: validated after execution so that transaction-level
             // errors (e.g. gas allowance exceeded) take priority.
             validate_block_access_list_size(&block.header, &chain_config, &bal)

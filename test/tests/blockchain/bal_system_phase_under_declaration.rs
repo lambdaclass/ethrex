@@ -13,7 +13,7 @@ use ethrex_common::{
     H160, H256, U256,
     types::{
         Block, DEFAULT_BUILDER_GAS_CEIL, ELASTICITY_MULTIPLIER, Genesis, Withdrawal,
-        block_access_list::{BlockAccessList, NonceChange},
+        block_access_list::{BlockAccessList, NonceChange, StorageChange},
     },
 };
 use ethrex_crypto::NativeCrypto;
@@ -508,6 +508,60 @@ async fn parallel_path_rejects_bal_demoting_a_pre_block_write_to_a_read() {
     let msg = err.to_string();
     assert!(
         msg.contains("was written during system calls") && msg.contains("index 0"),
+        "rejected for the wrong reason: {msg}"
+    );
+}
+
+/// Two index-0 changes for one slot, canonical first and forged last: validation reads
+/// the first, synthesis merkleizes the last.
+#[tokio::test]
+async fn parallel_path_rejects_bal_with_duplicate_pre_block_changes() {
+    let build_store = setup_store().await;
+    let (mut block, bal) = build_valid_amsterdam_block(&build_store).await;
+    let genesis_header = build_store.get_block_header(0).unwrap().unwrap();
+
+    let address = HISTORY_STORAGE_ADDRESS.address;
+    let victim = bal
+        .accounts()
+        .iter()
+        .position(|a| a.address == address)
+        .expect("block should record the history-storage contract");
+
+    let mut kept = bal.accounts().to_vec();
+    let slot_change = kept[victim]
+        .storage_changes
+        .iter_mut()
+        .find(|sc| sc.slot_changes.iter().any(|c| c.block_access_index == 0))
+        .expect("history contract must write at index 0");
+    let canonical = slot_change
+        .slot_changes
+        .iter()
+        .find(|c| c.block_access_index == 0)
+        .expect("index-0 change")
+        .post_value;
+    let forged = canonical + U256::one();
+    slot_change.slot_changes.push(StorageChange::new(0, forged));
+
+    let trimmed = Arc::new(BlockAccessList::from_accounts(kept));
+    block.header.block_access_list_hash = Some(trimmed.compute_hash(&NativeCrypto));
+    block.header.state_root = forge_state_root(&build_store, &genesis_header, &trimmed);
+
+    let par_store = setup_store().await;
+    let par_bc = Blockchain::new(
+        par_store,
+        BlockchainOptions {
+            bal_parallel_exec_enabled: true,
+            ..Default::default()
+        },
+    );
+    let par = par_bc.add_block_pipeline_bal(block, Some(trimmed));
+    let err = par.expect_err(
+        "parallel path accepted a BAL carrying two index-0 changes for one slot, \
+         validating the first and merkleizing the second",
+    );
+    let msg = err.to_string();
+    assert!(
+        msg.contains("BAL validation failed"),
         "rejected for the wrong reason: {msg}"
     );
 }
