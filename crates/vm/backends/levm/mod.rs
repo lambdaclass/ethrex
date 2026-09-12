@@ -19,9 +19,9 @@ use ethrex_common::types::TxType;
 use ethrex_common::types::block_access_list::BlockAccessList;
 #[cfg(feature = "rayon")]
 use ethrex_common::types::block_access_list::{
-    BalAddressIndex, find_exact_change_balance, find_exact_change_code, find_exact_change_nonce,
-    find_exact_change_storage, has_exact_change_balance, has_exact_change_code,
-    has_exact_change_nonce, has_exact_change_storage,
+    AccountChanges, BalAddressIndex, find_exact_change_balance, find_exact_change_code,
+    find_exact_change_nonce, find_exact_change_storage, has_exact_change_balance,
+    has_exact_change_code, has_exact_change_nonce, has_exact_change_storage,
 };
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{AuthorizationTuple, EIP7702Transaction};
@@ -76,6 +76,9 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
+
+/// EIP-7928 `block_access_index` of the pre-block system calls.
+const PRE_BLOCK_BAL_INDEX: u32 = 0;
 
 /// EIP-8079 `burned_fees` for an LStar block: `base_fee · post_refund_gas +
 /// blob_base_fee · blob_gas_used`. `post_refund_gas` is the block's post-refund
@@ -500,9 +503,13 @@ impl LEVM {
             validate_header_bal_indices(&bal, block.body.transactions.len())
                 .map_err(|e| EvmError::Custom(e.to_string()))?;
 
-            // Outer db has no BAL recorder: header BAL drives validation.
-            // Per-tx tx_dbs enable a shadow recorder for accessed-entry checks.
-            Self::prepare_block(block, db, vm_type, crypto)?;
+            // Shadow-record the system phases: their account cache also holds internal
+            // loads the recorder never sees, so it can't say what they touched.
+            db.enable_bal_recording();
+            db.set_bal_index(PRE_BLOCK_BAL_INDEX);
+            let prepare_result = Self::prepare_block(block, db, vm_type, crypto);
+            let pre_block_bal = db.take_bal().unwrap_or_default();
+            prepare_result?;
 
             // Build validation index once — shared across parallel execution and post-exec seeding.
             let validation_index = Arc::new(bal.build_validation_index());
@@ -528,6 +535,7 @@ impl LEVM {
                 merkleizer.as_ref(),
                 queue_length,
                 system_seed,
+                &pre_block_bal,
                 crypto,
                 Arc::clone(&validation_index),
                 stateless_validator,
@@ -578,17 +586,28 @@ impl LEVM {
                 &validation_index.accounts_by_min_index,
             )?;
 
-            // Order must match geth: requests (system calls) BEFORE withdrawals.
-            let requests = match vm_type {
-                VMType::L1 => {
-                    extract_all_requests_levm(&receipts, db, &block.header, vm_type, crypto)?
-                }
-                VMType::L2(_) => Default::default(),
-            };
+            let withdrawal_bal_idx = u32::try_from(block.body.transactions.len())
+                .map(|n| n.saturating_add(1))
+                .unwrap_or(u32::MAX);
+            db.enable_bal_recording();
+            db.set_bal_index(withdrawal_bal_idx);
 
-            if let Some(withdrawals) = &block.body.withdrawals {
-                Self::process_withdrawals(db, withdrawals)?;
-            }
+            // Order must match geth: requests (system calls) BEFORE withdrawals.
+            let post_block_result = (|| -> Result<Vec<Requests>, EvmError> {
+                let requests = match vm_type {
+                    VMType::L1 => {
+                        extract_all_requests_levm(&receipts, db, &block.header, vm_type, crypto)?
+                    }
+                    VMType::L2(_) => Default::default(),
+                };
+
+                if let Some(withdrawals) = &block.body.withdrawals {
+                    Self::process_withdrawals(db, withdrawals)?;
+                }
+                Ok(requests)
+            })();
+            let post_block_bal = db.take_bal().unwrap_or_default();
+            let requests = post_block_result?;
             // State transitions for merkleizer come from bal_to_account_updates,
             // not from db — no need to call send_state_transitions_tx here.
 
@@ -620,23 +639,22 @@ impl LEVM {
                         unaccessed_pure_accounts.remove(&w.address);
                     }
                 }
-                for addr in db.current_accounts_state.keys() {
-                    // EIP-7928: SYSTEM_ADDRESS in db state comes from pre-exec system
-                    // calls and doesn't legitimize a bare BAL entry — the per-tx shadow
-                    // recorder has already marked off user-tx touches.
-                    if *addr == SYSTEM_ADDRESS {
+                for canon in post_block_bal.accounts() {
+                    // EIP-7928: only user-tx touches legitimize a bare SYSTEM_ADDRESS entry.
+                    if canon.address == SYSTEM_ADDRESS {
                         continue;
                     }
-                    unaccessed_pure_accounts.remove(addr);
+                    unaccessed_pure_accounts.remove(&canon.address);
                 }
             }
 
             Self::validate_bal_covers(
                 &db.current_accounts_state,
+                &post_block_bal,
                 &bal,
                 &validation_index,
                 "the withdrawal/request phase",
-                true,
+                withdrawal_bal_idx,
             )?;
 
             // EIP-7928 records withdrawal recipients regardless of amount, but
@@ -1046,28 +1064,191 @@ impl LEVM {
         Ok(updates)
     }
 
-    /// Rejects accounts and storage slots touched outside transaction execution that the
-    /// supplied BAL omits. `require_bal_entry` is false for `initial_accounts_state`,
-    /// which also holds internal loads the BAL recorder never sees.
+    /// Validates a system phase the per-tx shadow recorder doesn't cover, against
+    /// `phase_bal`, the BAL that phase's own recorder built. Every canonical entry must
+    /// be in the supplied BAL with matching values, and nothing may be declared at
+    /// `phase_idx` that the phase didn't do. The state root can't catch a mismatch:
+    /// the parallel merkleizer derives it from the supplied BAL.
     #[cfg(feature = "rayon")]
     fn validate_bal_covers(
         cache: &CacheDB,
+        phase_bal: &BlockAccessList,
         bal: &BlockAccessList,
         index: &BalAddressIndex,
         phase: &str,
-        require_bal_entry: bool,
+        phase_idx: u32,
     ) -> Result<(), EvmError> {
+        // No SYSTEM_ADDRESS exemption: the recorder already drops it inside system calls,
+        // so it only reaches `phase_bal` when something else changed it.
+        for canon in phase_bal.accounts() {
+            let addr = canon.address;
+            let Some(supplied) = index
+                .addr_to_idx
+                .get(&addr)
+                .and_then(|i| bal.accounts().get(*i))
+            else {
+                return Err(EvmError::Custom(format!(
+                    "BAL validation failed: account {addr:?} was accessed during {phase} \
+                     but is missing from BAL"
+                )));
+            };
+
+            // By value, not membership, so a write demoted to a read is caught.
+            for canon_slot in &canon.storage_changes {
+                let slot = canon_slot.slot;
+                let supplied_changes = supplied
+                    .storage_changes
+                    .binary_search_by(|sc| sc.slot.cmp(&slot))
+                    .ok()
+                    .and_then(|i| supplied.storage_changes.get(i))
+                    .map(|sc| sc.slot_changes.as_slice())
+                    .unwrap_or_default();
+                for canon_change in &canon_slot.slot_changes {
+                    let idx = canon_change.block_access_index;
+                    match find_exact_change_storage(supplied_changes, idx) {
+                        Some(v) if v == canon_change.post_value => {}
+                        Some(v) => {
+                            return Err(EvmError::Custom(format!(
+                                "BAL validation failed: account {addr:?} storage slot {slot} \
+                                 was written during {phase} to {} but the BAL declares {v} \
+                                 at index {idx}",
+                                canon_change.post_value
+                            )));
+                        }
+                        None => {
+                            return Err(EvmError::Custom(format!(
+                                "BAL validation failed: account {addr:?} storage slot {slot} \
+                                 was written during {phase} to {} but the BAL declares no \
+                                 change at index {idx}",
+                                canon_change.post_value
+                            )));
+                        }
+                    }
+                }
+            }
+
+            for canon_change in &canon.balance_changes {
+                let idx = canon_change.block_access_index;
+                let expected = canon_change.post_balance;
+                if find_exact_change_balance(&supplied.balance_changes, idx) != Some(expected) {
+                    return Err(EvmError::Custom(format!(
+                        "BAL validation failed: account {addr:?} balance changed to {expected} \
+                         during {phase} but the BAL declares no matching change at index {idx}"
+                    )));
+                }
+            }
+            for canon_change in &canon.nonce_changes {
+                let idx = canon_change.block_access_index;
+                let expected = canon_change.post_nonce;
+                if find_exact_change_nonce(&supplied.nonce_changes, idx) != Some(expected) {
+                    return Err(EvmError::Custom(format!(
+                        "BAL validation failed: account {addr:?} nonce changed to {expected} \
+                         during {phase} but the BAL declares no matching change at index {idx}"
+                    )));
+                }
+            }
+            for canon_change in &canon.code_changes {
+                let idx = canon_change.block_access_index;
+                if find_exact_change_code(&supplied.code_changes, idx)
+                    != Some(&canon_change.new_code)
+                {
+                    return Err(EvmError::Custom(format!(
+                        "BAL validation failed: account {addr:?} code changed during {phase} \
+                         but the BAL declares no matching change at index {idx}"
+                    )));
+                }
+            }
+
+            // A read shows up as a change if a later transaction writes the slot.
+            for &slot in &canon.storage_reads {
+                if supplied.storage_reads.binary_search(&slot).is_err()
+                    && supplied
+                        .storage_changes
+                        .binary_search_by(|sc| sc.slot.cmp(&slot))
+                        .is_err()
+                {
+                    return Err(EvmError::Custom(format!(
+                        "BAL validation failed: storage slot {slot} of account {addr:?} was \
+                         read during {phase} but is missing from BAL"
+                    )));
+                }
+            }
+        }
+
+        // Nothing extra at the phase's own index: a no-op change there matches the
+        // cache, so `validate_bal_withdrawal_index` alone accepts it.
+        let canonical: FxHashMap<Address, &AccountChanges> = phase_bal
+            .accounts()
+            .iter()
+            .map(|a| (a.address, a))
+            .collect();
+        for supplied in bal.accounts() {
+            let addr = supplied.address;
+            let canon = canonical.get(&addr).copied();
+            for sc in &supplied.storage_changes {
+                if find_exact_change_storage(&sc.slot_changes, phase_idx).is_none() {
+                    continue;
+                }
+                let declared_canonically = canon.is_some_and(|c| {
+                    c.storage_changes
+                        .binary_search_by(|cs| cs.slot.cmp(&sc.slot))
+                        .ok()
+                        .and_then(|i| c.storage_changes.get(i))
+                        .is_some_and(|cs| {
+                            find_exact_change_storage(&cs.slot_changes, phase_idx).is_some()
+                        })
+                });
+                if !declared_canonically {
+                    return Err(EvmError::Custom(format!(
+                        "BAL validation failed: account {addr:?} declares a storage change \
+                         for slot {} at index {phase_idx} but {phase} did not write it",
+                        sc.slot
+                    )));
+                }
+            }
+            if find_exact_change_balance(&supplied.balance_changes, phase_idx).is_some()
+                && canon.is_none_or(|c| {
+                    find_exact_change_balance(&c.balance_changes, phase_idx).is_none()
+                })
+            {
+                return Err(EvmError::Custom(format!(
+                    "BAL validation failed: account {addr:?} declares a balance change at \
+                     index {phase_idx} but {phase} did not change its balance"
+                )));
+            }
+            if find_exact_change_nonce(&supplied.nonce_changes, phase_idx).is_some()
+                && canon
+                    .is_none_or(|c| find_exact_change_nonce(&c.nonce_changes, phase_idx).is_none())
+            {
+                return Err(EvmError::Custom(format!(
+                    "BAL validation failed: account {addr:?} declares a nonce change at \
+                     index {phase_idx} but {phase} did not change its nonce"
+                )));
+            }
+            if find_exact_change_code(&supplied.code_changes, phase_idx).is_some()
+                && canon
+                    .is_none_or(|c| find_exact_change_code(&c.code_changes, phase_idx).is_none())
+            {
+                return Err(EvmError::Custom(format!(
+                    "BAL validation failed: account {addr:?} declares a code change at \
+                     index {phase_idx} but {phase} did not change its code"
+                )));
+            }
+        }
+
+        // Backstop from the cache, independent of the recorder.
         for (addr, acct) in cache {
             if *addr == SYSTEM_ADDRESS {
                 continue;
             }
-            let bal_acct = match index
+            let supplied = match index
                 .addr_to_idx
                 .get(addr)
                 .and_then(|i| bal.accounts().get(*i))
             {
                 Some(a) => a,
-                None if require_bal_entry => {
+                // Cached storage means a real access; info-only probes load no slots.
+                None if !acct.storage.is_empty() => {
                     return Err(EvmError::Custom(format!(
                         "BAL validation failed: account {addr:?} was accessed during {phase} \
                          but is missing from BAL"
@@ -1078,13 +1259,13 @@ impl LEVM {
             // storage_reads is strictly ascending, as at the per-tx check; binary
             // search fails closed on an unsorted list, so release stays sound.
             debug_assert!(
-                bal_acct.storage_reads.windows(2).all(|w| w[0] < w[1]),
+                supplied.storage_reads.windows(2).all(|w| w[0] < w[1]),
                 "storage_reads must be strictly ascending for binary_search"
             );
             for key in acct.storage.keys() {
                 let slot = ethrex_common::BigEndianHash::into_uint(key);
-                if bal_acct.storage_reads.binary_search(&slot).is_err()
-                    && bal_acct
+                if supplied.storage_reads.binary_search(&slot).is_err()
+                    && supplied
                         .storage_changes
                         .binary_search_by(|sc| sc.slot.cmp(&slot))
                         .is_err()
@@ -1175,6 +1356,7 @@ impl LEVM {
         merkleizer: Option<&Sender<Vec<AccountUpdate>>>,
         queue_length: &AtomicUsize,
         system_seed: Arc<CacheDB>,
+        pre_block_bal: &BlockAccessList,
         crypto: &dyn Crypto,
         validation_index: Arc<BalAddressIndex>,
         stateless_validator: Option<&dyn StatelessValidator>,
@@ -1240,16 +1422,17 @@ impl LEVM {
             }
         }
 
-        // Mark pure-access accounts that were touched during system calls.
+        // Mark pure-access accounts that were touched during system calls, per the
+        // recorder: `system_seed` also holds unrecorded internal loads.
         // EIP-7928: SYSTEM_ADDRESS is excluded from BAL entries created by system calls
         // (only user-tx touches legitimize it). Keep it in `unaccessed_pure_accounts` so a
         // BAL that carries a bare SYSTEM_ADDRESS entry without a corresponding user-tx
         // touch is rejected as extraneous.
-        for addr in system_seed.keys() {
-            if *addr == SYSTEM_ADDRESS {
+        for canon in pre_block_bal.accounts() {
+            if canon.address == SYSTEM_ADDRESS {
                 continue;
             }
-            unaccessed_pure_accounts.remove(addr);
+            unaccessed_pure_accounts.remove(&canon.address);
         }
 
         // Mark storage reads that occurred during system calls (prepare_block).
@@ -1572,7 +1755,14 @@ impl LEVM {
 
         // 4. Surface the BAL errors held back until the gas-limit check has passed:
         //    system-call coverage, then the first deferred per-tx error in tx order.
-        Self::validate_bal_covers(&system_seed, &arc_bal, &arc_idx, "system calls", false)?;
+        Self::validate_bal_covers(
+            &system_seed,
+            pre_block_bal,
+            &arc_bal,
+            &arc_idx,
+            "system calls",
+            PRE_BLOCK_BAL_INDEX,
+        )?;
 
         for (_, _, _, _, _, _, deferred) in &mut exec_results {
             if let Some(err) = deferred.take() {
@@ -2655,8 +2845,7 @@ impl LEVM {
         bal: &BlockAccessList,
         index: &BalAddressIndex,
     ) -> Result<(), EvmError> {
-        const PRE_EXEC_IDX: u32 = 0;
-        let Some(active_accounts) = index.tx_to_accounts.get(&PRE_EXEC_IDX) else {
+        let Some(active_accounts) = index.tx_to_accounts.get(&PRE_BLOCK_BAL_INDEX) else {
             return Ok(());
         };
 
@@ -2679,7 +2868,9 @@ impl LEVM {
             let actual = db.current_accounts_state.get(&addr);
 
             // Balance
-            if let Some(expected) = find_exact_change_balance(&acct.balance_changes, PRE_EXEC_IDX) {
+            if let Some(expected) =
+                find_exact_change_balance(&acct.balance_changes, PRE_BLOCK_BAL_INDEX)
+            {
                 match actual {
                     Some(a) if a.info.balance == expected => {
                         if expected == pre_account(addr)?.0 {
@@ -2706,7 +2897,9 @@ impl LEVM {
             }
 
             // Nonce
-            if let Some(expected) = find_exact_change_nonce(&acct.nonce_changes, PRE_EXEC_IDX) {
+            if let Some(expected) =
+                find_exact_change_nonce(&acct.nonce_changes, PRE_BLOCK_BAL_INDEX)
+            {
                 match actual {
                     Some(a) if a.info.nonce == expected => {
                         if expected == pre_account(addr)?.1 {
@@ -2733,7 +2926,9 @@ impl LEVM {
             }
 
             // Code
-            if let Some(expected_code) = find_exact_change_code(&acct.code_changes, PRE_EXEC_IDX) {
+            if let Some(expected_code) =
+                find_exact_change_code(&acct.code_changes, PRE_BLOCK_BAL_INDEX)
+            {
                 let expected_hash = if expected_code.is_empty() {
                     *EMPTY_KECCAK_HASH
                 } else {
@@ -2766,7 +2961,7 @@ impl LEVM {
             // Storage
             for sc in &acct.storage_changes {
                 let Some(expected_value) =
-                    find_exact_change_storage(&sc.slot_changes, PRE_EXEC_IDX)
+                    find_exact_change_storage(&sc.slot_changes, PRE_BLOCK_BAL_INDEX)
                 else {
                     continue;
                 };
