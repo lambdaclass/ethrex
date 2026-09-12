@@ -6,6 +6,7 @@ mod blobs_bundle_tests;
 mod code_serde_tests;
 mod dep_aggregation_tests;
 mod eip7702_authorization_tests;
+mod eip8288_spec_questions;
 mod eip8288_tests;
 mod eip8288_wrapper_tests;
 mod fork_schedule_tests;

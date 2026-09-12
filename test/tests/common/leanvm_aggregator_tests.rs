@@ -195,3 +195,111 @@ fn a_witness_must_match_the_dependency_it_is_filed_under() {
     agg.verify_witness(&w)
         .expect("and the untampered one still checks out");
 }
+
+/// Measure what aggregation actually costs, which EIP-8288's gas constants assert
+/// without data: it prices `verification_gas` as "the _expected_ cost of verifying
+/// the recursive STARK" and gives 3,000 and 30,000 with no measurement behind them.
+///
+/// Reports proving wall time, verification wall time and proof size against the
+/// dependency count. Peak memory is not measured in-process; run the whole binary
+/// under a resident-set reporter for that. Ignored by default, and driven one count
+/// per invocation so an external reporter attributes memory to a single aggregate:
+///
+/// `EIP8288_BENCH_DEPS=16 cargo test -p ethrex-test --features leanvm -- --ignored --nocapture bench_aggregation_cost`
+#[test]
+#[ignore = "benchmark; set EIP8288_BENCH_DEPS and run deliberately"]
+fn bench_aggregation_cost() {
+    use std::time::Instant;
+
+    let n: usize = std::env::var("EIP8288_BENCH_DEPS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(4);
+    assert!(n >= 1 && n <= 256, "1..=256 dependencies");
+
+    let built = Instant::now();
+    let agg = LeanVmAggregator::new();
+    let warm_up = built.elapsed();
+
+    let pairs: Vec<_> = (0..n)
+        .map(|i| dependency(i as u8, [(i as u8).wrapping_mul(7); 32]))
+        .collect();
+    let triples: Vec<_> = pairs.iter().map(|(t, _)| *t).collect();
+    let witnesses: Vec<_> = pairs.iter().map(|(_, w)| w.clone()).collect();
+    let expected = deduplicate_and_sort_dependencies(triples);
+    assert_eq!(
+        expected.len(),
+        n,
+        "seeds must produce distinct dependencies"
+    );
+
+    let t = Instant::now();
+    let proof = agg
+        .aggregate(&witnesses, &[], Some(&expected))
+        .expect("aggregation must succeed");
+    let prove = t.elapsed();
+
+    let t = Instant::now();
+    agg.verify(&proof, &expected).expect("must verify");
+    let verify = t.elapsed();
+
+    println!(
+        "EIP8288_BENCH deps={n} warm_up_ms={} prove_ms={} verify_ms={} proof_bytes={}",
+        warm_up.as_millis(),
+        prove.as_millis(),
+        verify.as_millis(),
+        proof.len()
+    );
+}
+
+/// The mempool loop does not re-prove from witnesses. It absorbs the previous
+/// round's aggregate and its peers' aggregates as children. Whether recursion is
+/// cheaper than re-proving is what decides whether the loop is viable at
+/// `AGGREGATION_INTERVAL`, and EIP-8288 assumes it is without measuring.
+#[test]
+#[ignore = "benchmark; set EIP8288_BENCH_DEPS and run deliberately"]
+fn bench_recursive_absorption() {
+    use std::time::Instant;
+
+    let n: usize = std::env::var("EIP8288_BENCH_DEPS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(8);
+
+    let agg = LeanVmAggregator::new();
+    let pairs: Vec<_> = (0..n)
+        .map(|i| dependency(i as u8, [(i as u8).wrapping_mul(7); 32]))
+        .collect();
+    let triples: Vec<_> = pairs.iter().map(|(t, _)| *t).collect();
+    let witnesses: Vec<_> = pairs.iter().map(|(_, w)| w.clone()).collect();
+    let expected = deduplicate_and_sort_dependencies(triples);
+
+    // Round one: prove the set from raw witnesses.
+    let t = Instant::now();
+    let child = agg
+        .aggregate(&witnesses, &[], Some(&expected))
+        .expect("round one");
+    let flat = t.elapsed();
+
+    // Round two: absorb that aggregate as a child and add one new dependency, which
+    // is what a mempool node does every AGGREGATION_INTERVAL.
+    let (extra_t, extra_w) = dependency(250, [0xEE; 32]);
+    let mut union = expected.clone();
+    union.push(extra_t);
+    let union = deduplicate_and_sort_dependencies(union);
+
+    let t = Instant::now();
+    let merged = agg
+        .aggregate(&[extra_w], &[child.as_slice()], Some(&union))
+        .expect("round two absorbs the child");
+    let recursive = t.elapsed();
+
+    agg.verify(&merged, &union).expect("merged must verify");
+
+    println!(
+        "EIP8288_RECURSE deps={n} flat_prove_ms={} absorb_child_plus_one_ms={} merged_bytes={}",
+        flat.as_millis(),
+        recursive.as_millis(),
+        merged.len()
+    );
+}
