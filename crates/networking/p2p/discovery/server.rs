@@ -36,7 +36,9 @@ use tokio::sync::watch;
 use tokio_util::udp::UdpFramed;
 use tracing::{debug, error, info, trace, warn};
 
-use super::{DiscoveryConfig, codec::DiscriminatingCodec, lookup_interval_function};
+use super::{
+    DiscoveryConfig, codec::DiscriminatingCodec, lookup_interval_function, next_lookup_interval,
+};
 
 /// Minimum packet size for a valid discv4 packet.
 /// hash (32) + signature (65) + type (1) = 98 bytes
@@ -146,6 +148,21 @@ impl DiscoveryServer {
     ) -> Result<(), DiscoveryServerError> {
         debug!("Starting discovery server");
 
+        let bootnodes: Vec<Node> = bootnodes
+            .into_iter()
+            .filter(|node| {
+                let allowed = config.netrestrict.allows(node.ip);
+                if !allowed {
+                    warn!(
+                        node = %node,
+                        netrestrict = %config.netrestrict,
+                        "Dropping bootnode outside --p2p.netrestrict"
+                    );
+                }
+                allowed
+            })
+            .collect();
+
         let discv4 = if config.discv4_enabled {
             info!(
                 protocol = "discv4",
@@ -169,6 +186,18 @@ impl DiscoveryServer {
         } else {
             None
         };
+
+        // With both protocols off the bootnodes are the whole network this node
+        // will ever know. Hand them to the dialer anyway, so disabling discovery
+        // doubles as a static-peers mode instead of a node with no peers at all.
+        // The protocol tag only steers revalidation, which is not running.
+        if discv4.is_none() && discv5.is_none() && !bootnodes.is_empty() {
+            info!(
+                count = bootnodes.len(),
+                "Discovery disabled, using bootnodes as static peers"
+            );
+            peer_table.new_contacts(bootnodes.clone(), DiscoveryProtocol::Discv4)?;
+        }
 
         let ip_override_locked = config.nat_extip_set;
         let mut server = Self {
@@ -302,7 +331,7 @@ impl DiscoveryServer {
         let _ = self.discv4_lookup().await.inspect_err(
             |e| error!(protocol = "discv4", err=?e, "Error performing Discovery lookup"),
         );
-        let interval = self.get_lookup_interval().await;
+        let interval = self.get_lookup_interval(DiscoveryProtocol::Discv4).await;
         send_after(interval, ctx.clone(), discovery_server_protocol::LookupV4);
     }
 
@@ -316,7 +345,7 @@ impl DiscoveryServer {
         let _ = self.discv5_lookup().await.inspect_err(
             |e| error!(protocol = "discv5", err=?e, "Error performing Discovery lookup"),
         );
-        let interval = self.get_lookup_interval().await;
+        let interval = self.get_lookup_interval(DiscoveryProtocol::Discv5).await;
         send_after(interval, ctx.clone(), discovery_server_protocol::LookupV5);
     }
 
@@ -330,7 +359,7 @@ impl DiscoveryServer {
         let _ = self.discv4_enr_lookup().await.inspect_err(
             |e| error!(protocol = "discv4", err=?e, "Error performing Discovery lookup"),
         );
-        let interval = self.get_lookup_interval().await;
+        let interval = self.get_lookup_interval(DiscoveryProtocol::Discv4).await;
         send_after(interval, ctx.clone(), discovery_server_protocol::EnrLookup);
     }
 
@@ -355,6 +384,10 @@ impl DiscoveryServer {
     // --- Shared logic ---
 
     async fn route_packet(&mut self, data: &[u8], from: SocketAddr) {
+        if !self.config.netrestrict.allows(from.ip()) {
+            trace!(%from, "Dropping UDP packet from outside --p2p.netrestrict");
+            return;
+        }
         if is_discv4_packet(data) {
             self.route_to_discv4(data, from).await;
         } else {
@@ -467,17 +500,43 @@ impl DiscoveryServer {
         guard.record = self.local_node_record.clone();
     }
 
-    pub(crate) async fn get_lookup_interval(&self) -> Duration {
+    /// How long until the next lookup tick for `protocol`.
+    ///
+    /// While a lookup is in flight the tick follows the completion-based pacing,
+    /// so the lookup finishes promptly. Between lookups the saturation backoff
+    /// applies as well: a network that keeps answering with nodes we already
+    /// know is asked less and less often, down to the steady-state rate.
+    pub(crate) async fn get_lookup_interval(&self, protocol: DiscoveryProtocol) -> Duration {
         let peer_completion = self
             .peer_table
             .target_peers_completion()
             .await
             .unwrap_or_default();
-        lookup_interval_function(
-            peer_completion,
-            ITERATIVE_LOOKUP_INITIAL_MS,
-            ITERATIVE_LOOKUP_INTERVAL_MS,
-        )
+        let (lookup_in_flight, empty_lookups_in_a_row) = match protocol {
+            DiscoveryProtocol::Discv4 => self
+                .discv4
+                .as_ref()
+                .map(|s| (!s.active_lookups.is_empty(), s.empty_lookups_in_a_row)),
+            DiscoveryProtocol::Discv5 => self
+                .discv5
+                .as_ref()
+                .map(|s| (!s.active_lookups.is_empty(), s.empty_lookups_in_a_row)),
+        }
+        .unwrap_or((false, 0));
+        if lookup_in_flight {
+            lookup_interval_function(
+                peer_completion,
+                ITERATIVE_LOOKUP_INITIAL_MS,
+                ITERATIVE_LOOKUP_INTERVAL_MS,
+            )
+        } else {
+            next_lookup_interval(
+                peer_completion,
+                empty_lookups_in_a_row,
+                ITERATIVE_LOOKUP_INITIAL_MS,
+                ITERATIVE_LOOKUP_INTERVAL_MS,
+            )
+        }
     }
     /// Republish the ENR when the network layer reports a new fork id.
     ///
@@ -553,6 +612,7 @@ impl DiscoveryServer {
                 discv4_enabled: false,
                 discv5_enabled: true,
                 nat_extip_set: false,
+                netrestrict: crate::netrestrict::NetRestrict::default(),
             },
             discv4: None,
             discv5: Some(Discv5State::default()),
@@ -592,9 +652,12 @@ mod tests {
             record: local_node_record.clone(),
         }));
         let udp_socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
-        let peer_table = PeerTableServer::spawn(H256::random(), TARGET_PEERS, {
-            ethrex_storage::Store::new("", ethrex_storage::EngineType::InMemory).unwrap()
-        });
+        let peer_table = PeerTableServer::spawn(
+            H256::random(),
+            TARGET_PEERS,
+            ethrex_storage::Store::new("", ethrex_storage::EngineType::InMemory).unwrap(),
+            crate::netrestrict::NetRestrict::default(),
+        );
         DiscoveryServer {
             local_node,
             local_node_record,
@@ -605,6 +668,7 @@ mod tests {
                 discv4_enabled: false,
                 discv5_enabled: false,
                 nat_extip_set: ip_override_locked,
+                netrestrict: crate::netrestrict::NetRestrict::default(),
             },
             discv4: None,
             discv5: None,

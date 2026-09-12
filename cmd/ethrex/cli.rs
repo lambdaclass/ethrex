@@ -18,6 +18,7 @@ use ethrex_blockchain::{
 use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis, validate_block_body};
 use ethrex_p2p::{
     discovery::INITIAL_LOOKUP_INTERVAL_MS,
+    netrestrict::IpNet,
     peer_table::TARGET_PEERS,
     sync::{HistoryChain, SyncMode},
     tx_broadcaster::BROADCAST_INTERVAL_MS,
@@ -485,6 +486,18 @@ pub struct Options {
     )]
     pub lookup_interval: f64,
     #[arg(
+        long = "p2p.netrestrict",
+        value_parser = clap::value_parser!(IpNet),
+        value_name = "CIDR_LIST",
+        value_delimiter = ',',
+        num_args = 1..,
+        help = "Restrict P2P traffic to the given IP networks (comma separated CIDRs).",
+        long_help = "Comma separated IP networks in CIDR notation, e.g. 10.0.0.0/8,172.16.0.0/12. Nodes discovered outside these networks are ignored, bootnodes outside are dropped, and inbound TCP and UDP from outside is discarded. Meant for private devnets and other closed networks. Unrestricted when not set.",
+        help_heading = "P2P options",
+        env = "ETHREX_P2P_NETRESTRICT"
+    )]
+    pub netrestrict: Vec<IpNet>,
+    #[arg(
         long = "builder.extra-data",
         default_value = get_minimal_client_version(),
         value_name = "EXTRA_DATA",
@@ -636,6 +649,7 @@ impl Default for Options {
             tx_broadcasting_time_interval: Default::default(),
             target_peers: Default::default(),
             lookup_interval: INITIAL_LOOKUP_INTERVAL_MS,
+            netrestrict: Default::default(),
             extra_data: get_minimal_client_version(),
             gas_limit: DEFAULT_BUILDER_GAS_CEIL,
             max_blobs_per_block: None,
