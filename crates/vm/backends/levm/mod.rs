@@ -631,6 +631,29 @@ impl LEVM {
                 }
             }
 
+            Self::validate_bal_covers(
+                &db.current_accounts_state,
+                &bal,
+                &validation_index,
+                "the withdrawal/request phase",
+                true,
+            )?;
+
+            // EIP-7928 records withdrawal recipients regardless of amount, but
+            // `process_withdrawals` only loads the account for amount > 0, so a
+            // 0-amount recipient never enters the cache walked above.
+            if let Some(withdrawals) = &block.body.withdrawals {
+                for w in withdrawals {
+                    if !validation_index.addr_to_idx.contains_key(&w.address) {
+                        return Err(EvmError::Custom(format!(
+                            "BAL validation failed: withdrawal recipient {:?} is missing \
+                             from BAL",
+                            w.address
+                        )));
+                    }
+                }
+            }
+
             // Any remaining unread storage_reads are extraneous BAL entries.
             if let Some((addr, key)) = unread_storage_reads.iter().next() {
                 let slot = ethrex_common::BigEndianHash::into_uint(key);
@@ -1022,6 +1045,68 @@ impl LEVM {
         }
 
         Ok(updates)
+    }
+
+    /// Rejects accounts and storage slots touched outside transaction execution
+    /// (system calls, withdrawals, request extraction) that the supplied BAL omits.
+    /// The per-tx shadow recorder covers the transaction phases.
+    ///
+    /// `require_bal_entry` says whether an account absent from the BAL is itself an
+    /// error. It holds for caches that record genuine execution touches, but not for
+    /// `initial_accounts_state`, which `load_account` also fills from internal loads
+    /// the BAL recorder never sees (`install_expiry_verifier_code` reads the EIP-8141
+    /// predeploy on every Hegota block and returns early once installed, recording
+    /// nothing). Requiring an entry there would reject honest blocks. Whole-account
+    /// omission in that phase is caught by the state root instead, since the
+    /// pre-block contracts always write and the BAL feeds the merkleizer.
+    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    fn validate_bal_covers(
+        cache: &CacheDB,
+        bal: &BlockAccessList,
+        index: &BalAddressIndex,
+        phase: &str,
+        require_bal_entry: bool,
+    ) -> Result<(), EvmError> {
+        for (addr, acct) in cache {
+            if *addr == SYSTEM_ADDRESS {
+                continue;
+            }
+            let bal_acct = match index
+                .addr_to_idx
+                .get(addr)
+                .and_then(|i| bal.accounts().get(*i))
+            {
+                Some(a) => a,
+                None if require_bal_entry => {
+                    return Err(EvmError::Custom(format!(
+                        "BAL validation failed: account {addr:?} was accessed during {phase} \
+                         but is missing from BAL"
+                    )));
+                }
+                None => continue,
+            };
+            // storage_reads is strictly ascending, as at the per-tx check; binary
+            // search fails closed on an unsorted list, so release stays sound.
+            debug_assert!(
+                bal_acct.storage_reads.windows(2).all(|w| w[0] < w[1]),
+                "storage_reads must be strictly ascending for binary_search"
+            );
+            for key in acct.storage.keys() {
+                let slot = ethrex_common::BigEndianHash::into_uint(key);
+                if bal_acct.storage_reads.binary_search(&slot).is_err()
+                    && bal_acct
+                        .storage_changes
+                        .binary_search_by(|sc| sc.slot.cmp(&slot))
+                        .is_err()
+                {
+                    return Err(EvmError::Custom(format!(
+                        "BAL validation failed: storage slot {slot} of account {addr:?} was \
+                         read during {phase} but is missing from BAL"
+                    )));
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Eager BAL prefix seed — used only by the outer DB path (parallel-execution
@@ -1495,8 +1580,11 @@ impl LEVM {
             )));
         }
 
-        // 4. Surface the first deferred BAL validation error (in tx order) now
-        //    that the gas-limit check has passed.
+        // 4. Surface the BAL errors held back until the gas-limit check passed, so
+        //    GAS_USED_OVERFLOW keeps priority: system-call coverage, then the first
+        //    deferred per-tx error in tx order.
+        Self::validate_bal_covers(&system_seed, &arc_bal, &arc_idx, "system calls", false)?;
+
         for (_, _, _, _, _, _, deferred) in &mut exec_results {
             if let Some(err) = deferred.take() {
                 return Err(err);
