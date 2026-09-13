@@ -2284,20 +2284,22 @@ impl Store {
                     // of erroring out.
                     init_metadata_file(&db_path)?;
                 }
+                // Neither arm below runs a migration, so neither is a
+                // `MigrationFailed`: that variant tells the operator the data may be
+                // half-converted, which is false here — the database is untouched.
                 Some(v) if v < 1 => {
-                    return Err(StoreError::MigrationFailed {
-                        from: v,
-                        to: STORE_SCHEMA_VERSION,
-                        reason: format!("DB version v{v} is invalid (predates migrations)"),
+                    // No ethrex ever wrote a v0 marker; the file is corrupt or hand-edited.
+                    return Err(StoreError::IncompatibleDBVersion {
+                        found: v,
+                        expected: STORE_SCHEMA_VERSION,
                     });
                 }
                 Some(v) if v > STORE_SCHEMA_VERSION => {
-                    return Err(StoreError::MigrationFailed {
-                        from: v,
-                        to: STORE_SCHEMA_VERSION,
-                        reason: format!(
-                            "DB version v{v} is more recent than the client expects (v{STORE_SCHEMA_VERSION}). Rolling back is not supported"
-                        ),
+                    // Written by a newer ethrex. Downgrading is unsupported, but the
+                    // database is intact: a binary that speaks v{v} opens it as is.
+                    return Err(StoreError::IncompatibleDBVersion {
+                        found: v,
+                        expected: STORE_SCHEMA_VERSION,
                     });
                 }
                 #[cfg(feature = "rocksdb")]
@@ -4335,6 +4337,25 @@ impl Store {
         Ok(Some(BlockNumber::from_be_bytes(arr)))
     }
 
+    /// Returns the hash of the block whose trie-layer commit the `STATE_HISTORY`
+    /// entry at `block_number` journals, or `None` when there is no entry.
+    ///
+    /// The persist worker stages one entry per committed layer, so the entry at
+    /// [`Self::highest_state_history_block_number`] identifies the block whose
+    /// post-state is the one on disk.
+    pub fn get_state_history_block_hash(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<BlockHash>, StoreError> {
+        let read = self.backend.begin_read()?;
+        let Some(bytes) = read.get(STATE_HISTORY, &block_number.to_be_bytes())? else {
+            return Ok(None);
+        };
+        JournalEntry::decode_block_hash(&bytes)
+            .map(Some)
+            .map_err(|e| StoreError::Custom(format!("STATE_HISTORY entry {block_number}: {e}")))
+    }
+
     /// Returns the lowest block number with a `STATE_HISTORY` entry. Returns `None`
     /// if the journal is empty (no commits since boot, or fully pruned by finality).
     ///
@@ -4626,6 +4647,33 @@ impl Store {
         &last_written[0..64] > account_nibbles.as_ref()
     }
 
+    /// Raises the `flushed_upto` marker to `block_number`, on disk and in the
+    /// buffer's mirror, so the next start anchors at that height. The marker is a
+    /// durability floor and only moves forward: a value at or below the current
+    /// one is a no-op.
+    ///
+    /// Used when startup adopts a head above the recorded one (interrupted
+    /// full-sync batch): the blocks were flushed by the persist worker before the
+    /// interruption, but the failed starts in between walked the marker down.
+    ///
+    /// Must run while the persist worker is idle (at startup, before p2p and RPC
+    /// exist): the buffer update is a read-clone-swap with no compare-and-swap,
+    /// so a concurrent persist message could lose either mutation.
+    pub fn advance_flushed_upto(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+        if self
+            .read_flushed_upto_opt()?
+            .is_some_and(|current| current >= block_number)
+        {
+            return Ok(());
+        }
+        let mut tx = self.backend.begin_write()?;
+        write_flushed_upto(tx.as_mut(), block_number)?;
+        tx.commit()?;
+        mutate_block_buffer(&self.block_data_buffer, |b| {
+            b.set_flushed_upto(block_number)
+        })
+    }
+
     /// Returns the highest block number durably flushed to disk, or `0` when
     /// the marker is absent. Use [`Self::read_flushed_upto_opt`] when you need
     /// to distinguish "absent marker" (legacy DB, everything is durable) from
@@ -4794,8 +4842,11 @@ fn decode_flushed_upto(bytes: &[u8]) -> Result<BlockNumber, StoreError> {
     Ok(BlockNumber::from_le_bytes(arr))
 }
 
-/// RCU-swap the block-data buffer. The persist worker is the sole caller in
-/// production (no lost-update race); test helpers also call this on one thread.
+/// RCU-swap the block-data buffer: read-clone-mutate-swap with no compare-and-swap,
+/// so two concurrent callers lose one mutation. In production the persist worker
+/// is the only caller while the node runs; [`Store::advance_flushed_upto`] also
+/// calls it, but only at startup before the worker has any message in flight.
+/// Test helpers call it on one thread.
 fn mutate_block_buffer(
     buffer: &Arc<RwLock<Arc<BlockDataBuffer>>>,
     f: impl FnOnce(&mut BlockDataBuffer),
@@ -5152,7 +5203,8 @@ fn commit_to_disk(
     // into this write batch. After a deep reorg, the first
     // new-chain commit advances disk from the OLD chain's edge `D` directly to the new
     // chain's tip `T` in a single atomic write; the overlay supplies the bridge for keys
-    // layer_T does not touch. Only meaningful when `!is_batch` (full sync does not journal).
+    // layer_T does not touch. Only meaningful when `!is_batch`: the legacy batch-store path
+    // (`wait_for_flush == true`) is the one path that does not journal.
     let overlay_for_reconciliation = if !is_batch {
         trie.overlay().cloned()
     } else {
@@ -5242,8 +5294,10 @@ fn commit_to_disk(
         // Reverse-diff accumulators for this block's journal entry, one per CF. Each entry
         // stores the on-disk key as-is (storage CFs carry their nibble-encoded account-hash
         // prefix), so a future rollback applies diffs directly without interpretation. For
-        // full sync (`is_batch == true`), no journal entry is written: reorgs aren't
-        // supported during full sync, and journaling would slow it down by a read per write.
+        // the legacy batch-store path (`is_batch == true`) no journal entry is written.
+        // Every per-block path journals — including full sync through the unified
+        // pipeline, whose interrupted-batch recovery at startup relies on the newest
+        // entry naming the block whose state is on disk.
         let mut journal_account_trie: FlatDiff = Vec::new();
         let mut journal_storage_trie: FlatDiff = Vec::new();
         let mut journal_account_flat: FlatDiff = Vec::new();
@@ -6577,6 +6631,51 @@ mod state_history_tests {
         );
     }
 
+    /// The interrupted-batch recovery at startup identifies the block whose state is
+    /// on disk from the newest `STATE_HISTORY` entry, so the entry's block hash must
+    /// read back exactly as journaled and an absent entry must read as `None`.
+    #[tokio::test]
+    async fn journaled_block_hash_reads_back() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(
+            backend.clone(),
+            dir.path().to_path_buf(),
+            1,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
+
+        seed_journal_entries(&backend, &[3, 11]);
+        assert_eq!(
+            store.get_state_history_block_hash(11).unwrap(),
+            Some(H256::repeat_byte(11))
+        );
+        assert_eq!(store.get_state_history_block_hash(4).unwrap(), None);
+    }
+
+    /// `flushed_upto` is a durability floor: `advance_flushed_upto` raises it and
+    /// ignores a value at or below the current marker.
+    #[tokio::test]
+    async fn advance_flushed_upto_only_moves_forward() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(
+            backend,
+            dir.path().to_path_buf(),
+            1,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
+
+        store.advance_flushed_upto(10).unwrap();
+        assert_eq!(store.read_flushed_upto().unwrap(), 10);
+        store.advance_flushed_upto(5).unwrap();
+        assert_eq!(store.read_flushed_upto().unwrap(), 10);
+        store.advance_flushed_upto(12).unwrap();
+        assert_eq!(store.read_flushed_upto().unwrap(), 12);
+    }
+
     /// `lowest_state_history_block_number` SHALL return the min key present in
     /// `STATE_HISTORY`, or `None` when the table is empty. Phase 2's cap fallback
     /// depends on this when no finalized hash is known.
@@ -7523,6 +7622,74 @@ mod backfill_write_tests {
                 "block {n} must have a body (no gap left by resume)"
             );
         }
+    }
+}
+
+/// The schema-version guard runs before any backend is opened, so these tests need
+/// a persistent `EngineType` but never touch RocksDB itself.
+#[cfg(test)]
+#[cfg(feature = "rocksdb")]
+mod schema_version_guard_tests {
+    use super::*;
+
+    fn write_marker(dir: &Path, schema_version: u64) {
+        let metadata = StoreMetadata::new(schema_version);
+        std::fs::write(
+            dir.join(STORE_METADATA_FILENAME),
+            serde_json::to_string_pretty(&metadata).unwrap(),
+        )
+        .unwrap();
+    }
+
+    fn read_marker(dir: &Path) -> u64 {
+        read_store_schema_version(dir).unwrap().unwrap()
+    }
+
+    #[test]
+    fn a_database_ahead_of_the_binary_is_refused_and_left_untouched() {
+        // The scenario behind this test: a datadir opened once by a newer build
+        // (which stamps its own schema version) and then handed back to an older
+        // one. The older build must refuse with a version error — not a
+        // "migration failed" — and must not rewrite the marker, so the newer
+        // build can still open the database.
+        let dir = tempfile::tempdir().unwrap();
+        let newer = STORE_SCHEMA_VERSION + 1;
+        write_marker(dir.path(), newer);
+
+        let result =
+            Store::new_with_config(dir.path(), EngineType::RocksDB, StoreConfig::default());
+
+        assert!(
+            matches!(
+                result,
+                Err(StoreError::IncompatibleDBVersion { found, expected })
+                    if found == newer && expected == STORE_SCHEMA_VERSION
+            ),
+            "expected IncompatibleDBVersion, got {:?}",
+            result.err()
+        );
+        assert_eq!(read_marker(dir.path()), newer);
+    }
+
+    #[test]
+    fn a_zero_schema_version_is_incompatible_not_a_failed_migration() {
+        // No ethrex ever writes v0; the marker is corrupt. Nothing was migrated,
+        // so the error must not claim a migration failed.
+        let dir = tempfile::tempdir().unwrap();
+        write_marker(dir.path(), 0);
+
+        let result =
+            Store::new_with_config(dir.path(), EngineType::RocksDB, StoreConfig::default());
+
+        assert!(
+            matches!(
+                result,
+                Err(StoreError::IncompatibleDBVersion { found: 0, expected })
+                    if expected == STORE_SCHEMA_VERSION
+            ),
+            "expected IncompatibleDBVersion, got {:?}",
+            result.err()
+        );
     }
 }
 
