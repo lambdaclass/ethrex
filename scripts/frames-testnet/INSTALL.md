@@ -662,6 +662,33 @@ instead — and that only works if the container entrypoint was built for it. Re
 it later means recreating containers, which is the thing it exists to avoid. Record which
 path this host is built for.
 
+### Recovering after a host reboot
+
+The enclave's containers are created with `restart: no`, so a reboot leaves every node
+stopped while everything around them comes back: docker starts, the kurtosis engine
+starts, and any non-kurtosis service with a restart policy starts, which makes the host
+look healthy while the chain is dead. **Start them in dependency order, with `docker
+start`. Never `kurtosis run` to recover** — that recreates the enclave and re-genesises
+the chain, which is the one thing a reboot does not require.
+
+```
+for c in $(docker ps -a --format '{{.Names}}' | grep -E '^el-[0-9]-' | sort); do docker start "$c"; done
+for c in $(docker ps -a --format '{{.Names}}' | grep -E '^cl-[0-9]-' | sort); do docker start "$c"; done
+for c in $(docker ps -a --format '{{.Names}}' | grep -E '^vc-[0-9]-|^dora--' | sort); do docker start "$c"; done
+```
+
+Then re-assert the host pieces, because two of them fail open or fall away on a reboot:
+
+```
+sudo systemctl restart frames-firewall.service    # see section 10: it can fail at boot
+sudo systemctl start frames-portmap.service       # router mappings do not survive
+sudo systemctl start frames-cl-peers.service      # trusted-peer list is in memory
+```
+
+Verify from **outside** the host, not from it: `eth_chainId` and `eth_blockNumber` against
+the public RPC name, the faucet and explorer pages, and that the block number is moving.
+A reachable endpoint serving a frozen block number is the failure described below.
+
 ### What forces a re-genesis
 
 A change that alters the state root of a block already in the chain cannot be rolled out
@@ -676,6 +703,30 @@ block on, so the chain splits instead of upgrading. Two kinds of change do this:
 
 Everything else — RPC behaviour, peering, tooling, the faucet, the explorer — is a binary
 or service upgrade and does not need one.
+
+**A long enough halt also forces one, and this is the surprising case.** If every node
+stops at once — a power cut on a single-host deployment does exactly this — the chain does
+not simply resume when they come back. A beacon node has to replay every empty slot
+between its last block and the current slot before it can compute the current epoch's
+duties or build a block. Measured on this deployment, that replay costs about **0.155 s
+per epoch of gap**, it is recomputed from the last block on every attempt, and nothing
+about it is cached. A slot is 6 s, so once the gap passes roughly **40 epochs, about two
+hours**, the work no longer fits in the slot that needs it. Every slot tick then restarts
+a replay that the next tick preempts: the nodes burn CPU indefinitely, the head never
+moves, the beacon API keeps reporting `is_optimistic: true`, `/eth/v1/node/health`
+answers `206`, and the validator clients log `No responsive beacon node found` and never
+ask for a block. The gap widens in real time, so it never converges.
+
+How to tell this apart from a node that is merely slow to start: proposer duties for the
+**head** epoch return in well under a second while duties for the **current** epoch time
+out, and the execution client's engine-API counters show only
+`engine_exchangeCapabilities` — no `forkchoiceUpdated`, no `newPayload` — because the
+consensus client never gets far enough to drive it.
+
+There is no nudge that fixes this, so do not spend the outage looking for one. Restarting
+the containers, re-peering, or warming the state through the duties endpoint all fail for
+the same reason: the replay result is discarded. Bring the chain back within the window
+or plan a re-genesis.
 
 ### Re-genesis procedure
 
