@@ -274,6 +274,26 @@ the pinned 30,000 at all. The pool never sends more than one tuple, and its disp
 pins the frame's data length to 72 bytes, so the shape it actually uses is the first
 row. Anyone budgeting a multi-tuple frame needs a fresh measurement with distinct roots.
 
+### Re-validation after the pool review (2026-09-14)
+
+The shielded pool's review round found a one-slot disagreement between the wallet's copy
+of the recent-root window rule and the node's. The wallet compared a publication slot
+against the head slot; admission judges a transaction against the earliest block that
+could carry it, so the node compares against the head slot plus one. At a protocol age of
+exactly 8,191 the wallet signed a transaction the node then refused.
+
+The node is right and unchanged. What this adds to the record is live evidence for the
+premise, which had only been read out of the source before. With the head at slot 66, the
+node refuses a tuple naming slot 67 with `slot 67 is not referenceable before slot 67`,
+naming its own `current_slot` as 67. That is the plus-one, stated by the node rather than
+inferred from it.
+
+Re-run from the pool's pushed commit on a fresh devnet at the same pins: the lifecycle is
+green through the claim with the recipient credited exactly, the conformance script passes
+36 of 36, and per-frame gas is identical to the first run. The far edge of the window at
+8,191 slots stays unit-tested rather than live, because reaching it needs about fourteen
+hours of block production, which a disposable devnet does not justify.
+
 The run found one node defect, fixed on this branch and recorded as §6.4 of
 `docs/hegota-testnet-divergences.md`: the mempool validation-prefix simulation recorded
 no per-frame results, so a prefix frame reading an earlier frame's `FRAMEPARAM` status
