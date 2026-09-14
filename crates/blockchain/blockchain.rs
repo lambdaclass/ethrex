@@ -65,6 +65,7 @@ use ethrex_common::constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH, MIN_BASE_FEE_
 
 use crossbeam::channel::{self as cb, TryRecvError, select};
 // Re-export stateless validation functions for backwards compatibility
+use crate::vm::{OverlaidVmDatabase, StateOverride, precompile_moves};
 #[cfg(feature = "c-kzg")]
 use ethrex_common::types::EIP4844Transaction;
 #[cfg(feature = "c-kzg")]
@@ -101,6 +102,7 @@ use ethrex_trie::{Nibbles, Node, NodeRef, Trie, TrieError, TrieLogger, TrieNode}
 #[cfg(feature = "rayon")]
 use ethrex_vm::backends::BLOATED_BATCH_THRESHOLD;
 use ethrex_vm::backends::CachingDatabase;
+use ethrex_vm::backends::VMType;
 #[cfg(feature = "rayon")]
 use ethrex_vm::backends::levm::LEVM;
 use ethrex_vm::backends::levm::db::DatabaseLogger;
@@ -4188,8 +4190,39 @@ impl Blockchain {
         Ok(result)
     }
 
-    pub fn new_evm(&self, vm_db: StoreVmDatabase) -> Result<Evm, EvmError> {
+    pub fn new_evm<D: VmDatabase + 'static>(&self, vm_db: D) -> Result<Evm, EvmError> {
         new_evm(&self.options.r#type, vm_db)
+    }
+
+    /// The [`VMType`] this chain executes with. Exposed so the RPC layer can answer
+    /// fork-and-VM-dependent questions — whether an address is a precompile, say — without
+    /// having to build an [`Evm`] first.
+    pub fn vm_type(&self) -> Result<VMType, EvmError> {
+        vm_type_for(&self.options.r#type)
+    }
+
+    /// [`Blockchain::new_evm`] for the RPC simulation paths that honor geth's State
+    /// Override Set (`eth_call`, `eth_estimateGas`, `eth_createAccessList`,
+    /// `debug_traceCall`).
+    ///
+    /// A State Override Set has two independent effects and they must be installed
+    /// together: the per-account overlay ([`OverlaidVmDatabase`]) and the
+    /// `movePrecompileToAddress` relocations, which live in the EVM rather than the
+    /// database because they change dispatch, not state. This constructor is the only
+    /// way to build the overlay, so the relocations can't be forgotten at a call site.
+    ///
+    /// `base_block_number` is the number of the real header the call is made against;
+    /// see [`OverlaidVmDatabase::new`].
+    pub fn new_overlaid_evm<D: VmDatabase + Clone + 'static>(
+        &self,
+        inner: D,
+        overrides: Arc<BTreeMap<Address, StateOverride>>,
+        base_block_number: BlockNumber,
+    ) -> Result<Evm, EvmError> {
+        let moves = precompile_moves(&overrides);
+        let mut evm = self.new_evm(OverlaidVmDatabase::new(inner, overrides, base_block_number))?;
+        evm.set_precompile_moves(moves);
+        Ok(evm)
     }
 
     /// Get the current fork of the chain, based on the latest block's timestamp
@@ -4753,7 +4786,23 @@ fn handle_subtrie(
     Ok(())
 }
 
-pub fn new_evm(blockchain_type: &BlockchainType, vm_db: StoreVmDatabase) -> Result<Evm, EvmError> {
+/// The [`VMType`] a given [`BlockchainType`] executes with.
+pub fn vm_type_for(blockchain_type: &BlockchainType) -> Result<VMType, EvmError> {
+    Ok(match blockchain_type {
+        BlockchainType::L1 => VMType::L1,
+        BlockchainType::L2(l2_config) => VMType::L2(
+            *l2_config
+                .fee_config
+                .read()
+                .map_err(|_| EvmError::Custom("Fee config lock was poisoned".to_string()))?,
+        ),
+    })
+}
+
+pub fn new_evm<D: VmDatabase + 'static>(
+    blockchain_type: &BlockchainType,
+    vm_db: D,
+) -> Result<Evm, EvmError> {
     let mut evm = match blockchain_type {
         BlockchainType::L1 => Evm::new_for_l1(vm_db, Arc::new(NativeCrypto)),
         BlockchainType::L2(l2_config) => {
