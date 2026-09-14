@@ -588,6 +588,29 @@ Persist with `apt install iptables-persistent && netfilter-persistent save`, and
 default `INPUT` policy while you are there — a host that ships `-P INPUT ACCEPT` with no
 rules is relying entirely on this chain.
 
+### Re-applying the rules at boot
+
+If the rules are installed by a systemd unit rather than `iptables-persistent`, order it
+after the network is up, not merely after docker:
+
+```
+After=docker.service network-online.target
+Wants=network-online.target
+```
+
+Docker is ready well before DHCP has installed a default route, and the rules are derived
+from that route — `EXT=$(ip -4 route show default | awk '{print $5; exit}')`. A unit
+ordered only `After=docker.service` runs too early, finds no route, exits non-zero, and
+the host finishes booting with an **empty** `DOCKER-USER` chain. That fails open: the
+chain's whole protection is its trailing `DROP`, so no rules means engine authrpc, EL RPC,
+metrics and beacon REST are reachable through whatever the router forwards, while
+`systemctl is-enabled` still reports the unit as enabled. Have the script wait for the
+route as well, and give the unit `Restart=on-failure`, so neither half depends on the
+other being right.
+
+Check it explicitly after any reboot — `systemctl is-active frames-firewall.service` and
+`iptables -S DOCKER-USER`. An enabled unit is not evidence that the rules are loaded.
+
 ## 11. Granting validator slots
 
 Anyone may sync, peer and transact. Only validator entry is gated, by a token the
