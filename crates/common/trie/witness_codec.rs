@@ -646,7 +646,6 @@ mod tests {
     #[test]
     fn leaf_paths_are_correctly_packed() {
         use alloc::sync::Arc;
-        use ethrex_crypto::Crypto;
 
         // leaf with partial path nibbles [0x0a, 0x0b] under branch choice 0x0f;
         // decoded-compact leaf partials carry the trailing leaf flag (16),
@@ -655,14 +654,8 @@ mod tests {
             Nibbles::from_raw(&[0xab], true),
             vec![0x11; 40],
         ));
-        let hash_of = |node: &Node| {
-            NodeRef::from(node.clone())
-                .compute_hash(&NativeCrypto)
-                .finalize(&NativeCrypto)
-        };
-        let leaf_hash = hash_of(&leaf);
         let mut choices = BranchNode::EMPTY_CHOICES;
-        choices[0x0f] = NodeRef::Node(Arc::new(leaf.clone()), Default::default());
+        choices[0x0f] = NodeRef::Node(Arc::new(leaf), Default::default());
         let branch = Node::Branch(Box::new(BranchNode::new(choices)));
         let branch_hash = hash_of(&branch);
 
@@ -671,12 +664,9 @@ mod tests {
 
         let mut pos = 0;
         let mut leaves = Vec::new();
-        let record_slices: Vec<&[u8]> = records.iter().map(Vec::as_slice).collect();
-        let (_root, _hash) =
-            decode_subtree_records(&record_slices, &mut pos, Some(&mut leaves)).unwrap();
+        let (_root, _hash) = decode_subtree_records(&records, &mut pos, Some(&mut leaves)).unwrap();
         assert_eq!(leaves.len(), 1);
-        // expected full path: [0x0f, 0x0a, 0x0b] -> packed [0xf0, 0xab]... wait odd count
-        eprintln!("leaf path: {:02x?}", leaves[0].0);
+        // full path [0x0f, 0x0a, 0x0b] packs to [0xfa, 0xb0]
         assert_eq!(leaves[0].0, vec![0xf0u8 | 0x0a, 0xb0u8]);
     }
 }

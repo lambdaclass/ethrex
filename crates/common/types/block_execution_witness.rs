@@ -389,8 +389,7 @@ fn build_tries_from_records(
     }
     let mut leaves = Vec::new();
     let (state_root_ref, root_hash) =
-        decode_subtree_records(records, &mut pos, Some(&mut leaves))
-            .map_err(TrieError::from)?;
+        decode_subtree_records(records, &mut pos, Some(&mut leaves)).map_err(TrieError::from)?;
     if root_hash != initial_state_root {
         return Err(GuestProgramStateError::Custom(format!(
             "witness state trie root {root_hash} does not match the parent header's state root {initial_state_root}"
