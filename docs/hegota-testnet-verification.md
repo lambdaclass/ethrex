@@ -261,10 +261,18 @@ Gas measured on chain, for the pool's three-frame spend grammar:
 | Frame | Declared | Used |
 | --- | --- | --- |
 | recent-root verifier, one tuple | 30,000 | 5,579 |
-| recent-root verifier, sixteen tuples | 30,000 | 12,044 |
+| recent-root verifier, sixteen copies of one tuple | 30,000 | 12,044 |
 | proof VERIFY | 320,000 execution, 195,840 state | 254,712 execution |
 | settlement SENDER, transfer | 1,400,000 execution, 550,000 state | 796,585 execution |
 | settlement SENDER, withdraw | 1,400,000 execution, 550,000 state | 25,495 execution |
+
+The sixteen-tuple row is not a measurement of sixteen distinct roots, and must not be
+read as one. The probe repeated a single tuple, so all sixteen shared one storage key
+and the frame paid one cold `SLOAD` and fifteen warm ones. Sixteen distinct roots are
+sixteen cold reads, 33,600 gas before the rest of the verifier runs, which does not fit
+the pinned 30,000 at all. The pool never sends more than one tuple, and its dispatcher
+pins the frame's data length to 72 bytes, so the shape it actually uses is the first
+row. Anyone budgeting a multi-tuple frame needs a fresh measurement with distinct roots.
 
 The run found one node defect, fixed on this branch and recorded as §6.4 of
 `docs/hegota-testnet-divergences.md`: the mempool validation-prefix simulation recorded

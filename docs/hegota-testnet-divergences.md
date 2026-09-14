@@ -527,7 +527,7 @@ The diagnosis was slow for a reason worth recording: the rejection carries no fr
 no revert reason. `ethrex_simulateFrameTransaction` reduces the whole prefix to
 `sim.any_revert`, so a status read that halts is indistinguishable from a failed proof, an
 insolvent payer or a stale root. Narrowing it needed a gas bisection of the verifier frame
-(5,579 gas for one tuple, 12,044 for sixteen — the pinned 30,000 was never the problem) and
+(5,579 gas for the pool's one-tuple frame, well inside the pinned 30,000, which ruled the budget out) and
 then a read of the two code paths side by side. **Worth improving**: the violation string
 should name the frame that reverted, and say whether it reverted or halted.
 
