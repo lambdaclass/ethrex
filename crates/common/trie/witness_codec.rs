@@ -80,8 +80,10 @@ pub fn encode_witness_node(node: &Node, hash: &H256, out: &mut Vec<u8>) {
 }
 
 fn push_nibbles(nibbles: &Nibbles, out: &mut Vec<u8>) {
-    out.push(nibbles.encode_compact_len() as u8);
-    nibbles.encode_compact_into(out);
+    // Host-side only; `encode_compact` allocates, which is fine here.
+    let compact = nibbles.encode_compact();
+    out.push(compact.len() as u8);
+    out.extend_from_slice(&compact);
 }
 
 fn push_bytes(bytes: &[u8], out: &mut Vec<u8>) {
