@@ -215,7 +215,7 @@ pub fn validate_public_keys(
                     .to_string(),
             ));
         }
-        let hashed = ethrex_common::utils::keccak(xy);
+        let hashed = crypto.keccak256(xy);
         let derived = ethrex_common::Address::from_slice(&hashed[12..]);
         let recovered = tx.sender(crypto).map_err(|e| {
             ExecutionError::Internal(format!("failed to recover transaction sender: {e}"))
