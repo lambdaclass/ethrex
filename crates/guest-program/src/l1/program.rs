@@ -171,7 +171,13 @@ pub fn new_payload_request_to_block(
         if bal.encode_to_vec() != bal_bytes {
             return Err("block access list is not canonically encoded".to_string());
         }
-        header.block_access_list_hash = Some(bal.compute_hash(crypto));
+        // The check above proved these bytes ARE the canonical encoding, so hash
+        // them rather than have `compute_hash` encode the list a second time.
+        header.block_access_list_hash = Some(
+            ethrex_common::types::block_access_list::BlockAccessList::hash_of_canonical_encoding(
+                bal_bytes, crypto,
+            ),
+        );
     }
 
     Ok(Block::new(header, body))
