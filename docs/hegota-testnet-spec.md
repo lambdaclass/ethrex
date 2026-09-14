@@ -1,10 +1,11 @@
 # hegota-testnet spec
 
 :::info
-:mega: **Live since 2026-09-03 17:18:26 UTC.** Chain ID `8141`, genesis hash
-`0x7ca0f7358d127dc4a68983050eb88837a5f384225254d1b009fa87fbcd0f2332`. This is the third genesis
-of the network: the previous chain ended at block 313,106 and was replaced, so a node that
-followed it must wipe its database and resync from the new bundle.
+:mega: **Live since 2026-09-14 21:47:31 UTC.** Chain ID `8141`, genesis hash
+`0x2036e3fe3eaaa15382a9befde816137b6b2cda1e3df8ca0c92e89bc17a3fca5a`. This is the fourth genesis
+of the network: the previous chain ended at block 160,854 and was replaced, so a node that
+followed it must wipe its database and resync from the new bundle. Every account balance and
+every signed type `0x06` transaction from that chain is void here.
 :::
 
 :::info
@@ -57,7 +58,7 @@ name Hegotá: a client built from it rejects every frame transaction on the chai
 | | |
 |---|---|
 | Chain ID / network ID | `8141` |
-| Genesis | `1788455906` (2026-09-03 17:18:26 UTC), hash `0x7ca0f735…cd0f2332` |
+| Genesis | `1789422451` (2026-09-14 21:47:31 UTC), hash `0x2036e3fe…7a3fca5a` |
 | Slot / epoch | 6 s, 32 slots |
 | Fork schedule | Fulu / Osaka at epoch 0 · Gloas / Amsterdam at epoch 1 (genesis + 192 s) · Heze / Hegotá at epoch 2 (genesis + 384 s) |
 | Block gas limit | 200,000,000 |
@@ -114,10 +115,11 @@ The full ledger, with the reasoning behind each row, is
 [`docs/hegota-testnet-divergences.md`](hegota-testnet-divergences.md).
 
 
-## Changed since the first launch
+## Changed since the previous chain
 
-The chain that launched on 2026-09-03 pinned EIP-8141 `7d1c8bfb94`, EIP-8250 `e5cf246ff1`, EIP-8272
-`0231fb05f5` and EIP-8369 `33724bd7da`. The re-genesis moves every pin to the revisions above.
+The chain that ran from 2026-09-03 to 2026-09-14 pinned EIP-8141 `7d1c8bfb94`, EIP-8250
+`e5cf246ff1`, EIP-8272 `0231fb05f5` and EIP-8369 `33724bd7da`. This re-genesis moves every pin to
+the revisions above.
 Every change is consensus-visible, which is why it is a re-genesis; tooling written against the
 first launch must move with it.
 

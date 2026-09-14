@@ -93,7 +93,7 @@
     <a href="https://github.com/lambdaclass/ethrex">ethrex</a>. Test ETH has no value.
   </p>
   <p style="margin:-1.1rem 0 1.75rem;font-size:14px;color:var(--muted)">
-    Latest change: 2026-09-04 · <a href="#changelog">changelog</a>
+    Latest change: 2026-09-14 · <a href="#changelog">changelog</a>
   </p>
 
   <div class="panel">
@@ -388,20 +388,27 @@ lighthouse beacon_node \
   <div class="panel">
     <table>
       <tr>
-        <td>Pending<br><span style="font-weight:400">next re-genesis</span></td>
-        <td class="desc"><strong>Upgrade to the current specs</strong>, prepared on the branch
-          and awaiting the relaunch. Pins move to EIP-8141 <code>b75cbe6115</code>, EIP-8250
-          <code>f3079a09e8</code>, EIP-8272 <code>824cbc0b0e</code>, EIP-8369
-          <code>51dc7b939a</code> (merged upstream). For anyone building frame transactions: the
-          first use of a keyed nonce costs 97,920 of <em>state</em> gas from the approving frame
-          (195,840 for two fresh keys) instead of 20,000 execution gas, and the prefix's state
-          budgets may not exceed 500,000; recent roots leave the envelope for a canonical VERIFY
-          frame to <code>0x…8272</code> carrying 72-byte tuples, so the envelope has 8 fields,
+        <td>2026-09-14<br><span style="font-weight:400">21:47 UTC</span></td>
+        <td class="desc"><strong>Fresh genesis on the current specs</strong>, the chain running
+          now. Pins: EIP-8141 <code>b75cbe6115</code>, EIP-8250 <code>f3079a09e8</code>,
+          EIP-8272 <code>824cbc0b0e</code>, EIP-7805 <code>9a345f96c2</code>, EIP-8369
+          <code>51dc7b939a</code> (merged upstream). For anyone building frame transactions:
+          the first use of a keyed nonce costs 97,920 of <em>state</em> gas from the approving
+          frame (195,840 for two fresh keys) instead of 20,000 execution gas, and the prefix's
+          state budgets may not exceed 500,000. Recent roots have left the envelope for a
+          canonical VERIFY frame to <code>0x…8272</code> carrying 72-byte
+          <code>(source_id, slot, root)</code> tuples, so the envelope now has 8 fields,
           <code>TXPARAM 0x11</code> and <code>RECENTROOTREFLOAD</code> are gone, and the
-          predeploy runs a 345-byte two-operation runtime. Every type <code>0x06</code>
-          transaction signed for the current chain will be invalid on the new one; the two
-          EIP-8141 divergences fixed on the branch ship with it. EIP-8312 is removed from the
-          build. Date and resync instructions will be added here at the relaunch.</td>
+          predeploy runs a 345-byte two-operation runtime. That frame's gas counts toward the
+          validation budget, so a proof-carrying transaction needs 352,800 rather than 322,800.
+          A root published in slot <code>S</code> is referenceable from <code>S+1</code>, and
+          admission judges it against the head slot plus one. EIP-8312 is not in this build.
+          Every type <code>0x06</code> transaction signed for the previous chain is invalid
+          here, and so is every account balance: <strong>wipe your database and resync from the
+          new bundle</strong>, and request new funds from the faucet. The previous chain ended
+          at block 160,854. The two EIP-8141 divergences flagged on 2026-09-04
+          (<code>SIGPARAM(0x03)</code> answered for every scheme; the value cost charged on
+          frames that move nothing) are fixed in this build.</td>
       </tr>
       <tr>
         <td>2026-09-04</td>
@@ -411,8 +418,9 @@ lighthouse beacon_node \
           is published: rule set and pins, endpoints, what is being tested, how to join, and every
           known divergence between the running nodes and the pinned text. Two such divergences in
           EIP-8141 (<code>SIGPARAM(0x03)</code> answered for every signature scheme; the value
-          cost charged on frames that move nothing) are fixed on the branch and wait for the
-          next relaunch, because blocks already on this chain depend on the old behaviour.</td>
+          cost charged on frames that move nothing) were fixed on the branch and shipped with
+          the 2026-09-14 relaunch; they could not be applied in place, because blocks already
+          on that chain depended on the old behaviour.</td>
       </tr>
       <tr>
         <td>2026-09-03</td>
