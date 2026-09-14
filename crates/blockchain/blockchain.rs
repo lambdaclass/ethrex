@@ -2212,6 +2212,10 @@ impl Blockchain {
             )
             .map_err(|e| ChainError::WitnessGeneration(format!("witness record emission: {e}")))?;
 
+        let codes_jumpdests = codes
+            .iter()
+            .map(|c| ethrex_common::types::Code::compute_jumpdests(c).to_vec())
+            .collect();
         Ok((
             ExecutionWitness {
                 codes,
@@ -2219,6 +2223,7 @@ impl Blockchain {
                 first_block_number: first_block_header.number,
                 chain_config: self.storage.get_chain_config(),
                 state_nodes,
+                codes_jumpdests,
             },
             block_access_lists,
         ))
@@ -2415,12 +2420,17 @@ impl Blockchain {
             )
             .map_err(|e| ChainError::WitnessGeneration(format!("witness record emission: {e}")))?;
 
+        let codes_jumpdests = codes
+            .iter()
+            .map(|c| ethrex_common::types::Code::compute_jumpdests(c).to_vec())
+            .collect();
         Ok(ExecutionWitness {
             codes,
             block_headers_bytes,
             first_block_number: parent_header.number,
             chain_config: self.storage.get_chain_config(),
             state_nodes,
+            codes_jumpdests,
         })
     }
 

@@ -81,6 +81,16 @@ pub struct ExecutionWitness {
     /// storage trie. The guest rebuilds the tries straight from the stream.
     #[rkyv(with = crate::rkyv_utils::VecVecWrapper)]
     pub state_nodes: Vec<Vec<u8>>,
+    /// JUMPDEST bitmap for each entry of `codes` (parallel array, same order):
+    /// one bit per bytecode byte, set when that offset holds a `JUMPDEST` that
+    /// is not part of a `PUSH` immediate (exactly `Code::jumpdests`). Carrying
+    /// it in the witness lets the guest build each `Code` with
+    /// `Code::from_parts_unchecked` instead of re-scanning the whole bytecode
+    /// corpus in-circuit. Trust model: like the shipped node hashes, a forged
+    /// bitmap makes execution diverge (a JUMP wrongly succeeds or fails), so
+    /// the final state root / receipts anchors reject the block.
+    #[rkyv(with = crate::rkyv_utils::VecVecWrapper)]
+    pub codes_jumpdests: Vec<Vec<u8>>,
 }
 
 /// RPC-friendly representation of an execution witness.
@@ -218,12 +228,18 @@ impl RpcExecutionWitness {
         let initial_state_root = find_parent_state_root(decoded_headers, first_block_number)?;
         let nodes = node_map_from_rlp(self.state.iter());
         let state_nodes = witness_records_from_node_map(&nodes, initial_state_root, crypto)?;
+        let codes_jumpdests = self
+            .codes
+            .iter()
+            .map(|b| Code::compute_jumpdests(b).to_vec())
+            .collect();
         Ok(ExecutionWitness {
             codes: self.codes.into_iter().map(|b| b.to_vec()).collect(),
             chain_config,
             first_block_number,
             block_headers_bytes: self.headers.into_iter().map(|b| b.to_vec()).collect(),
             state_nodes,
+            codes_jumpdests,
         })
     }
 }
@@ -337,13 +353,19 @@ impl ExecutionWitness {
         let initial_state_root = find_parent_state_root(&headers, first_block_number)?;
         let nodes = node_map_from_rlp(input.witness.state_as_vecs().iter());
         let state_nodes = witness_records_from_node_map(&nodes, initial_state_root, crypto)?;
+        let codes = input.witness.codes_as_vecs();
+        let codes_jumpdests = codes
+            .iter()
+            .map(|c| Code::compute_jumpdests(c).to_vec())
+            .collect();
 
         Ok(Self {
-            codes: input.witness.codes_as_vecs(),
+            codes,
             block_headers_bytes,
             first_block_number,
             chain_config: amsterdam_chain_config(input.chain_id),
             state_nodes,
+            codes_jumpdests,
         })
     }
 }
@@ -509,13 +531,25 @@ impl GuestProgramState {
         let (state_trie, storage_tries) =
             build_tries_from_records(&value.state_nodes, parent_header.state_root)?;
 
-        // hash codes
-        // TODO: codes here probably needs to be Vec<Code>, rather than recomputing here. This requires rkyv implementation.
+        // hash codes — the witness carries each code's JUMPDEST bitmap, so
+        // building `Code` needs no in-circuit scan of the bytecode corpus.
+        if value.codes.len() != value.codes_jumpdests.len() {
+            return Err(GuestProgramStateError::Custom(format!(
+                "witness carries {} codes but {} jumpdest bitmaps",
+                value.codes.len(),
+                value.codes_jumpdests.len()
+            )));
+        }
         let codes_hashed = value
             .codes
             .into_iter()
-            .map(|code| {
-                let code = Code::from_bytecode(code.into(), crypto);
+            .zip(value.codes_jumpdests)
+            .map(|(code, jumpdests)| {
+                let code = Code::from_parts_unchecked(
+                    H256(crypto.keccak256(&code)),
+                    &code,
+                    std::sync::Arc::from(jumpdests.as_slice()),
+                );
                 (code.hash, code)
             })
             .collect();

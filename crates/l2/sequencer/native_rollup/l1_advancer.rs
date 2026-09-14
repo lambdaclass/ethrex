@@ -614,6 +614,7 @@ mod tests {
                 ..Default::default()
             },
             state_nodes: vec![],
+            codes_jumpdests: vec![],
         };
 
         // Block → SSZ (no BAL for pre-Amsterdam test block)
@@ -795,6 +796,7 @@ mod tests {
                 ..Default::default()
             },
             state_nodes: vec![],
+            codes_jumpdests: vec![],
         };
 
         // Block → SSZ with the real BAL passed through.
