@@ -1024,12 +1024,11 @@ impl Blockchain {
         // and the thread spawned to warm them concurrently costs more than the
         // cold reads it saves. Warming is best-effort and populates caches only,
         // so skipping it cannot change the block's result.
+        #[cfg(feature = "rayon")]
         let block_has_transactions = !block.body.transactions.is_empty();
 
         let (execution_result, merkleization_result, warmer_duration) = std::thread::scope(
-            // `s` carries the warmer and trie-prefetch threads, which are rayon-only;
-            // without that feature nothing is spawned into the scope.
-            |#[allow(unused_variables)] s| -> Result<_, ChainError> {
+            |s| -> Result<_, ChainError> {
                 #[cfg(feature = "rayon")]
                 let vm_type = vm.vm_type;
                 let cancelled_ref = &cancelled;
@@ -1292,56 +1291,31 @@ impl Blockchain {
                 // borrows both closures hold stay valid.
                 // `catch_unwind` on each keeps the previous semantics, where a panic
                 // in either was reported as an error instead of unwinding.
-                let (execution_result, merkleization_result) = if block_has_transactions {
-                    let (merkle_tx, merkle_rx) = std::sync::mpsc::sync_channel::<MerkleResult>(1);
-                    let mut execution_slot = None;
-                    self.pipeline_pool().in_place_scope(|ps| {
-                        ps.spawn(move |_| {
-                            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
-                                merkle_closure,
-                            ))
-                            .unwrap_or_else(|_| {
-                                Err(StoreError::Custom("merkleization panicked".to_string()))
-                            });
-                            let _ = merkle_tx.send(result);
-                        });
-                        execution_slot = Some(
-                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(
-                                execution_closure,
-                            ))
-                            .unwrap_or_else(|_| {
-                                Err(ChainError::Custom("execution panicked".to_string()))
-                            }),
-                        );
+                let (merkle_tx, merkle_rx) = std::sync::mpsc::sync_channel::<MerkleResult>(1);
+                let mut execution_slot = None;
+                self.pipeline_pool().in_place_scope(|ps| {
+                    ps.spawn(move |_| {
+                        let result =
+                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(merkle_closure))
+                                .unwrap_or_else(|_| {
+                                    Err(StoreError::Custom("merkleization panicked".to_string()))
+                                });
+                        let _ = merkle_tx.send(result);
                     });
-                    let merkleization_result = merkle_rx.recv().unwrap_or_else(|_| {
-                        Err(StoreError::Custom(
-                            "merkleizer finished without sending a result".to_string(),
-                        ))
-                    });
-                    (
-                        execution_slot.expect("execution runs inside the pipeline scope"),
-                        merkleization_result,
-                    )
-                } else {
-                    // A block with no transactions streams no per-tx updates, so the
-                    // merkleizer would spend the whole of execution parked on an empty
-                    // channel and do all of its work afterwards anyway. Running both here,
-                    // in order, gives up no overlap and avoids handing the task to a pool
-                    // worker that has to be woken first. The streaming channel is unbounded,
-                    // so execution still completes without waiting for a reader.
-                    let execution_result =
+                    execution_slot = Some(
                         std::panic::catch_unwind(std::panic::AssertUnwindSafe(execution_closure))
                             .unwrap_or_else(|_| {
                                 Err(ChainError::Custom("execution panicked".to_string()))
-                            });
-                    let merkleization_result =
-                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(merkle_closure))
-                            .unwrap_or_else(|_| {
-                                Err(StoreError::Custom("merkleization panicked".to_string()))
-                            });
-                    (execution_result, merkleization_result)
-                };
+                            }),
+                    );
+                });
+                let execution_result =
+                    execution_slot.expect("execution runs inside the pipeline scope");
+                let merkleization_result = merkle_rx.recv().unwrap_or_else(|_| {
+                    Err(StoreError::Custom(
+                        "merkleizer finished without sending a result".to_string(),
+                    ))
+                });
                 #[cfg(feature = "rayon")]
                 let warmer_duration = warm_handle
                     .map(|handle| {
