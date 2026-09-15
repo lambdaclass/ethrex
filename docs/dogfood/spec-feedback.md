@@ -115,6 +115,11 @@ builder's second pass over skipped inclusion-list entries, and three test files 
 and fill units, replay rules, real blocks for cases 1, 2, 3, 7 both ways, 21, pre-fork and the
 builder retry). 1,317 tests pass in `ethrex-test`, 39 of them new.
 
+Isolation record: the implementer reported no contact with the excluded documents or
+history during the implementation. After all four commits had landed and its report was
+delivered, a tooling notification showed it part of this file (the base-stripping section);
+it reported the exposure and did not act on it. The implementation predates it.
+
 ### The implementation as a joiner (2026-09-15)
 
 The leg 1 node (`dogfood-focil` at `f919aa57b`, release build) was run against the live
