@@ -318,9 +318,9 @@ pub fn encode_subtree_records(root: &Node, root_hash: &H256, records: &mut Vec<V
 /// [`encode_subtree_records`]), starting at `*pos` and advancing it past every
 /// record consumed. Returns the root reference — with its hash slot pre-seeded
 /// from the shipped hashes — and the shipped root hash. When `collect_leaves`
-/// is set, every leaf's full path and value is also pushed to `leaves` (used
-/// to discover accounts and their storage roots while building the state
-/// trie).
+/// is set, every leaf's full path (**packed** bytes, like `Nibbles::to_bytes`)
+/// and value is also pushed to `leaves` (used to discover accounts and their
+/// storage roots while building the state trie).
 ///
 /// Every `NodeRef` produced is seeded with the node's shipped hash, so a
 /// `Trie` built from the result needs no upfront `hash_no_commit`. The parent
@@ -328,13 +328,17 @@ pub fn encode_subtree_records(root: &Node, root_hash: &H256, records: &mut Vec<V
 /// shipped hash, so the stream's structure is self-consistent; the caller is
 /// expected to anchor the returned root hash (e.g. against the parent header's
 /// state root). See [`decode_witness_node`] for the trust model.
+///
+/// The walk tracks the current path in a single nibble stack (push before
+/// recursing, pop/truncate after) instead of cloning a fresh `Nibbles` per
+/// child — ~19k path allocations per witness become zero.
 pub fn decode_subtree_records(
     records: &[Vec<u8>],
     pos: &mut usize,
-    path: &Nibbles,
-    mut leaves: Option<&mut Vec<(Nibbles, ValueRLP)>>,
+    mut leaves: Option<&mut Vec<(Vec<u8>, ValueRLP)>>,
 ) -> Result<(NodeRef, H256), WitnessNodeError> {
     use alloc::sync::Arc;
+    use alloc::vec::Vec;
 
     use crate::node::OnceLock;
 
@@ -358,11 +362,22 @@ pub fn decode_subtree_records(
         ))
     }
 
+    /// Same packing as `Nibbles::to_bytes`: two nibbles per output byte.
+    fn pack_nibbles(nibbles: &[u8]) -> Vec<u8> {
+        nibbles
+            .chunks(2)
+            .map(|chunk| match chunk.len() {
+                1 => chunk[0] << 4,
+                _ => chunk[0] << 4 | chunk[1],
+            })
+            .collect()
+    }
+
     fn build(
         records: &[Vec<u8>],
         pos: &mut usize,
-        path: &Nibbles,
-        leaves: &mut Option<&mut Vec<(Nibbles, ValueRLP)>>,
+        path: &mut Vec<u8>,
+        leaves: &mut Option<&mut Vec<(Vec<u8>, ValueRLP)>>,
         expected_hash: Option<&H256>,
     ) -> Result<(NodeRef, H256), WitnessNodeError> {
         let record = records.get(*pos).ok_or(WitnessNodeError::Truncated)?;
@@ -383,8 +398,19 @@ pub fn decode_subtree_records(
                     return Err(WitnessNodeError::TrailingBytes);
                 }
                 if let Some(leaves) = leaves {
-                    let full_path = path.concat(&partial);
-                    leaves.push((full_path, value.clone()));
+                    let mut full_path = Vec::with_capacity(path.len() + partial.as_ref().len());
+                    full_path.extend_from_slice(path);
+                    // Mirror `Nibbles::to_bytes`: the compact-decoded leaf
+                    // partial carries the trailing leaf flag (16), which is
+                    // not part of the path.
+                    let partial_nibbles = partial.as_ref();
+                    let partial_nibbles = if partial.is_leaf() {
+                        &partial_nibbles[..partial_nibbles.len() - 1]
+                    } else {
+                        partial_nibbles
+                    };
+                    full_path.extend_from_slice(partial_nibbles);
+                    leaves.push((pack_nibbles(&full_path), value.clone()));
                 }
                 Ok((
                     seeded(
@@ -396,8 +422,10 @@ pub fn decode_subtree_records(
             }
             TAG_EXTENSION => {
                 let (prefix, rest) = take_nibbles(payload)?;
-                let (child, rest) =
-                    take_ref_or_subtree(records, pos, &path.concat(&prefix), leaves, rest)?;
+                let path_len = path.len();
+                path.extend_from_slice(prefix.as_ref());
+                let (child, rest) = take_ref_or_subtree(records, pos, path, leaves, rest)?;
+                path.truncate(path_len);
                 if !rest.is_empty() {
                     return Err(WitnessNodeError::TrailingBytes);
                 }
@@ -413,8 +441,10 @@ pub fn decode_subtree_records(
                 let mut rest = payload;
                 let mut choices = BranchNode::EMPTY_CHOICES;
                 for (i, choice) in choices.iter_mut().enumerate() {
-                    let (child, r) =
-                        take_ref_or_subtree(records, pos, &path.append_new(i as u8), leaves, rest)?;
+                    path.push(i as u8);
+                    let result = take_ref_or_subtree(records, pos, path, leaves, rest);
+                    path.pop();
+                    let (child, r) = result?;
                     *choice = child;
                     rest = r;
                 }
@@ -437,8 +467,8 @@ pub fn decode_subtree_records(
     fn take_ref_or_subtree<'a>(
         records: &[Vec<u8>],
         pos: &mut usize,
-        child_path: &Nibbles,
-        leaves: &mut Option<&mut Vec<(Nibbles, ValueRLP)>>,
+        path: &mut Vec<u8>,
+        leaves: &mut Option<&mut Vec<(Vec<u8>, ValueRLP)>>,
         bytes: &'a [u8],
     ) -> Result<(NodeRef, &'a [u8]), WitnessNodeError> {
         let (&kind, rest) = bytes.split_first().ok_or(WitnessNodeError::Truncated)?;
@@ -448,14 +478,15 @@ pub fn decode_subtree_records(
                     return Err(WitnessNodeError::Truncated);
                 }
                 let child_hash = H256::from_slice(&rest[..32]);
-                let (child, _) = build(records, pos, child_path, leaves, Some(&child_hash))?;
+                let (child, _) = build(records, pos, path, leaves, Some(&child_hash))?;
                 Ok((child, &rest[32..]))
             }
             _ => take_ref(bytes),
         }
     }
 
-    build(records, pos, path, &mut leaves, None)
+    let mut path = Vec::new();
+    build(records, pos, &mut path, &mut leaves, None)
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -590,8 +621,7 @@ mod tests {
         let mut pos = 0;
         let mut leaves = Vec::new();
         let (root_ref, root_hash) =
-            decode_subtree_records(&records, &mut pos, &Nibbles::default(), Some(&mut leaves))
-                .unwrap();
+            decode_subtree_records(&records, &mut pos, Some(&mut leaves)).unwrap();
         assert_eq!(pos, records.len());
         assert_eq!(root_hash, branch_hash);
         assert_eq!(leaves.len(), 1);
@@ -612,5 +642,31 @@ mod tests {
         assert!(
             matches!(&decoded_branch.choices[7], NodeRef::Hash(NodeHash::Hashed(h)) if *h == hash_b)
         );
+    }
+    #[test]
+    fn leaf_paths_are_correctly_packed() {
+        use alloc::sync::Arc;
+
+        // leaf with partial path nibbles [0x0a, 0x0b] under branch choice 0x0f;
+        // decoded-compact leaf partials carry the trailing leaf flag (16),
+        // which the collected path must trim (like `Nibbles::to_bytes`).
+        let leaf = Node::Leaf(LeafNode::new(
+            Nibbles::from_raw(&[0xab], true),
+            vec![0x11; 40],
+        ));
+        let mut choices = BranchNode::EMPTY_CHOICES;
+        choices[0x0f] = NodeRef::Node(Arc::new(leaf), Default::default());
+        let branch = Node::Branch(Box::new(BranchNode::new(choices)));
+        let branch_hash = hash_of(&branch);
+
+        let mut records = Vec::new();
+        encode_subtree_records(&branch, &branch_hash, &mut records);
+
+        let mut pos = 0;
+        let mut leaves = Vec::new();
+        let (_root, _hash) = decode_subtree_records(&records, &mut pos, Some(&mut leaves)).unwrap();
+        assert_eq!(leaves.len(), 1);
+        // full path [0x0f, 0x0a, 0x0b] packs to [0xfa, 0xb0]
+        assert_eq!(leaves[0].0, vec![0xf0u8 | 0x0a, 0xb0u8]);
     }
 }

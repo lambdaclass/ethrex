@@ -389,8 +389,7 @@ fn build_tries_from_records(
     }
     let mut leaves = Vec::new();
     let (state_root_ref, root_hash) =
-        decode_subtree_records(records, &mut pos, &Nibbles::default(), Some(&mut leaves))
-            .map_err(TrieError::from)?;
+        decode_subtree_records(records, &mut pos, Some(&mut leaves)).map_err(TrieError::from)?;
     if root_hash != initial_state_root {
         return Err(GuestProgramStateError::Custom(format!(
             "witness state trie root {root_hash} does not match the parent header's state root {initial_state_root}"
@@ -403,8 +402,7 @@ fn build_tries_from_records(
     // Accounts can share an identical storage trie, so one root can key
     // several addresses; the host ships each distinct root's subtree once.
     let mut storage_by_root: FxHashMap<H256, Vec<H256>> = FxHashMap::default();
-    for (path, value) in &leaves {
-        let path_bytes = path.to_bytes();
+    for (path_bytes, value) in &leaves {
         if path_bytes.len() != 32 {
             continue;
         }
@@ -414,15 +412,14 @@ fn build_tries_from_records(
             storage_by_root
                 .entry(account_state.storage_root)
                 .or_default()
-                .push(H256::from_slice(&path_bytes));
+                .push(H256::from_slice(path_bytes));
         }
     }
 
     let mut storage_tries = BTreeMap::new();
     while pos < records.len() {
         let (storage_ref, storage_root) =
-            decode_subtree_records(records, &mut pos, &Nibbles::default(), None)
-                .map_err(TrieError::from)?;
+            decode_subtree_records(records, &mut pos, None).map_err(TrieError::from)?;
         if let Some(hashed_addresses) = storage_by_root.get(&storage_root) {
             for hashed_address in hashed_addresses {
                 storage_tries.insert(
