@@ -9,6 +9,8 @@ use std::{
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::error::MempoolError;
+use crate::matcha::{MatchaCharge, MatchaConfig, WidthError, WidthLedger};
+use ethrex_common::types::BlockNumber;
 use ethrex_common::{
     Address, H160, H256, U256,
     types::{
@@ -385,6 +387,20 @@ struct MempoolInner {
     /// removal path can decrement the other maps and the post-block revalidation
     /// can bound its affected set. Populated on insert; removed on removal.
     frame_tx_paymaster: FxHashMap<H256, FramePaymasterReservation>,
+
+    /// MATCHA per-sender width, and the load its optional linear fee reads.
+    ///
+    /// Consulted only for *additional* frame transactions: the one EIP-8141 already
+    /// allows a sender spends nothing. Lives here rather than beside the pool because
+    /// every mutation has to be atomic with the admission decision that caused it.
+    width: WidthLedger,
+    /// The MATCHA charge each pending additional frame tx paid, by hash.
+    ///
+    /// Kept because the charge is needed twice more after admission: to release the
+    /// transaction's contribution to `load` when it leaves, and to spend again before
+    /// each revalidation. A transaction absent from this map is a baseline transaction
+    /// and was free. Populated on insert; removed on removal.
+    frame_tx_charge: FxHashMap<H256, u64>,
 }
 
 impl MempoolInner {
@@ -407,6 +423,14 @@ impl MempoolInner {
         let Some(tx) = self.transaction_pool.remove(hash) else {
             return Ok(());
         };
+        // MATCHA: a departing transaction stops contributing to `load`, so the linear fee
+        // floor falls back for whoever comes next. Its spent width is deliberately NOT
+        // returned: the client already did the admission work, and refunding on removal
+        // would let one sender cycle transactions through the pool for free. This is the
+        // single removal path, so it is the only place `load` falls.
+        if let Some(charge) = self.frame_tx_charge.remove(hash) {
+            self.width.release_load(charge);
+        }
         // Covers EIP-4844 and blob-carrying EIP-8141 frame transactions alike:
         // `blob_tx_count` is the size of the bundle pool, so a leaked bundle
         // would inflate blob-pool occupancy forever and, being unreachable from
@@ -938,6 +962,72 @@ impl MempoolInner {
         Ok(predecessor)
     }
 
+    /// How many frame transactions this sender already has pending, ignoring one hash.
+    ///
+    /// MATCHA calls a transaction *additional* when the sender already holds the one
+    /// baseline transaction EIP-8141 allows. `excluding` is the incumbent a replacement
+    /// is about to displace: a replacement of the baseline is still the baseline and must
+    /// stay free, or a sender could be charged for raising its own fee.
+    fn sender_pending_frame_count(&self, sender: Address, excluding: Option<H256>) -> usize {
+        let keyed = self
+            .pending_keyed_by_sender
+            .get(&sender)
+            .map(|pending| {
+                pending
+                    .keys()
+                    .filter(|hash| Some(**hash) != excluding)
+                    .count()
+            })
+            .unwrap_or(0);
+        let linear = self
+            .pending_frame_tx_by_sender
+            .get(&sender)
+            .filter(|(hash, _)| Some(*hash) != excluding)
+            .map_or(0, |_| 1);
+        keyed + linear
+    }
+
+    /// Charge MATCHA width when this frame transaction is an additional one.
+    ///
+    /// Returns the charge actually spent, or `None` for a baseline transaction, which
+    /// pays nothing. Must run under the write lock: the count it reads and the width it
+    /// spends have to be atomic with the insert, or two concurrent additional
+    /// transactions from one sender could both pass against the same balance.
+    fn charge_width(
+        &mut self,
+        sender: Address,
+        incoming_hash: H256,
+        replacing: Option<H256>,
+        charge: Option<MatchaCharge>,
+    ) -> Result<Option<u64>, MempoolError> {
+        if !self.width.config().enabled {
+            return Ok(None);
+        }
+        let Some(charge) = charge else {
+            return Ok(None);
+        };
+        // A re-announce of a transaction already pending shares its record and spends
+        // nothing: the client did the admission work once.
+        if self.transaction_pool.contains_key(&incoming_hash) {
+            return Ok(None);
+        }
+        let excluding = replacing.or(Some(incoming_hash));
+        if self.sender_pending_frame_count(sender, excluding) == 0 {
+            return Ok(None);
+        }
+        self.width
+            .spend(sender, charge.charge, charge.effective_priority_fee)
+            .map_err(|err| match err {
+                WidthError::Insufficient { have, need } => {
+                    MempoolError::FrameTxWidthExhausted { have, need }
+                }
+                WidthError::BelowFloor { offered, floor } => {
+                    MempoolError::FrameTxBelowWidthFeeFloor { offered, floor }
+                }
+            })?;
+        Ok(Some(charge.charge))
+    }
+
     fn check_keyed_frame_pending(
         &self,
         sender: Address,
@@ -1133,6 +1223,43 @@ impl Mempool {
     ///
     /// The transaction's hash is queued for P2P broadcast.
     #[allow(clippy::too_many_arguments)]
+    /// The MATCHA policy this pool is running, for pricing a charge before the lock.
+    pub fn matcha_config(&self) -> Result<MatchaConfig, MempoolError> {
+        Ok(*self.read()?.width.config())
+    }
+
+    /// Whether the MATCHA mechanism is switched on for this pool.
+    pub fn matcha_enabled(&self) -> Result<bool, MempoolError> {
+        Ok(self.read()?.width.config().enabled)
+    }
+
+    /// The highest finalized block already credited, if any.
+    pub fn last_credited_block(&self) -> Result<Option<BlockNumber>, MempoolError> {
+        Ok(self.read()?.width.last_credited())
+    }
+
+    /// Earned width for one sender, for diagnostics and tests.
+    pub fn width_of(&self, sender: Address) -> Result<u64, MempoolError> {
+        Ok(self.read()?.width.width_of(sender))
+    }
+
+    /// Credit one newly finalized block's per-sender frame-transaction gas.
+    ///
+    /// Returns false when the block was already credited. The caller supplies the gas
+    /// each sender's own frame transactions used, which is the only thing that mints
+    /// width: a sender cannot earn from someone else's blockspace.
+    pub fn credit_finalized_block(
+        &self,
+        number: BlockNumber,
+        gas_by_sender: &FxHashMap<Address, u64>,
+    ) -> Result<bool, MempoolError> {
+        Ok(self
+            .write()?
+            .width
+            .credit_finalized_block(number, gas_by_sender))
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn add_transaction(
         &self,
         hash: H256,
@@ -1141,6 +1268,7 @@ impl Mempool {
         frame_reservation: Option<FramePaymasterReservation>,
         sender_admission: Option<SenderAdmission>,
         keyed_concurrency: KeyedConcurrency,
+        matcha_charge: Option<MatchaCharge>,
     ) -> Result<(), MempoolError> {
         self.add_transaction_inner(
             hash,
@@ -1149,6 +1277,7 @@ impl Mempool {
             frame_reservation,
             sender_admission,
             keyed_concurrency,
+            matcha_charge,
             true,
         )
     }
@@ -1169,6 +1298,7 @@ impl Mempool {
         frame_reservation: Option<FramePaymasterReservation>,
         sender_admission: Option<SenderAdmission>,
         keyed_concurrency: KeyedConcurrency,
+        matcha_charge: Option<MatchaCharge>,
     ) -> Result<(), MempoolError> {
         self.add_transaction_inner(
             hash,
@@ -1177,6 +1307,7 @@ impl Mempool {
             frame_reservation,
             sender_admission,
             keyed_concurrency,
+            matcha_charge,
             false,
         )
     }
@@ -1190,6 +1321,7 @@ impl Mempool {
         frame_reservation: Option<FramePaymasterReservation>,
         sender_admission: Option<SenderAdmission>,
         keyed_concurrency: KeyedConcurrency,
+        matcha_charge: Option<MatchaCharge>,
         broadcast: bool,
     ) -> Result<(), MempoolError> {
         let mut inner = self.write()?;
@@ -1239,6 +1371,10 @@ impl Mempool {
             _ => None,
         };
 
+        // MATCHA charge actually spent by this insert; `None` for a baseline frame
+        // transaction and for every non-frame type.
+        let mut spent_charge: Option<u64> = None;
+
         // One-pending-frame-tx-per-sender gate (EIP-8141 §Mempool, review fix 1.6).
         // Must run under the write lock so the check and insert are atomic.
         if is_frame {
@@ -1255,6 +1391,13 @@ impl Mempool {
                 hash,
                 keyed_concurrency,
             )?;
+
+            // MATCHA: an additional frame transaction spends width before anything is
+            // inserted, so a refusal leaves no trace. Runs after the structural gates
+            // because width pays for admission work the client has decided it is willing
+            // to do, not for work it would refuse outright. Replacing the baseline is
+            // still the baseline and spends nothing.
+            spent_charge = inner.charge_width(sender, hash, existing_frame_hash, matcha_charge)?;
 
             // Re-validate the fee bump against the CURRENT predecessor. The price
             // check in `find_tx_to_replace` ran unlocked, so a concurrent
@@ -1394,6 +1537,12 @@ impl Mempool {
             inner.txs_by_sender_nonce.insert((sender, tx_nonce), hash);
         }
         inner.transaction_pool.insert(hash, transaction);
+        // MATCHA: remember what this transaction paid. Needed twice more: to release its
+        // contribution to `load` when it leaves, and to spend again before each
+        // revalidation. Absent means baseline, which paid nothing.
+        if let Some(charge) = spent_charge {
+            inner.frame_tx_charge.insert(hash, charge);
+        }
         // Private txs are held for local block building only: they never enter
         // the broadcast pool, so no P2P path can pick them up.
         if broadcast {
@@ -2661,6 +2810,7 @@ mod tests {
                     None,
                     None,
                     KeyedConcurrency::Denied,
+                    None,
                 )
                 .expect("Failed to add transaction");
         }
@@ -2697,8 +2847,16 @@ mod tests {
         let tx = build_tx(nonce);
         let mtx = MempoolTransaction::new(tx, sender);
         let hash = mtx.hash(&NativeCrypto);
-        pool.add_transaction(hash, sender, mtx, None, None, KeyedConcurrency::Denied)
-            .unwrap();
+        pool.add_transaction(
+            hash,
+            sender,
+            mtx,
+            None,
+            None,
+            KeyedConcurrency::Denied,
+            None,
+        )
+        .unwrap();
         hash
     }
 
@@ -2808,6 +2966,7 @@ mod tests {
                 balance_check: None,
             }),
             KeyedConcurrency::Denied,
+            None,
         )
     }
 
@@ -2884,8 +3043,16 @@ mod tests {
     fn add_tx_cost(pool: &Mempool, sender: Address, nonce: u64, cost: u64) -> H256 {
         let mtx = MempoolTransaction::new(build_tx_cost(nonce, cost), sender);
         let hash = mtx.hash(&NativeCrypto);
-        pool.add_transaction(hash, sender, mtx, None, None, KeyedConcurrency::Denied)
-            .unwrap();
+        pool.add_transaction(
+            hash,
+            sender,
+            mtx,
+            None,
+            None,
+            KeyedConcurrency::Denied,
+            None,
+        )
+        .unwrap();
         hash
     }
 
@@ -2916,6 +3083,7 @@ mod tests {
                 }),
             }),
             KeyedConcurrency::Denied,
+            None,
         )
     }
 
@@ -2943,6 +3111,7 @@ mod tests {
                 balance_check: None,
             }),
             KeyedConcurrency::Denied,
+            None,
         )
     }
 

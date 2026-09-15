@@ -597,6 +597,7 @@ fn test_filter_mempool_transactions() {
             None,
             None,
             KeyedConcurrency::Denied,
+            None,
         )
         .unwrap();
     mempool
@@ -607,6 +608,7 @@ fn test_filter_mempool_transactions() {
             None,
             None,
             KeyedConcurrency::Denied,
+            None,
         )
         .unwrap();
     let txs = mempool.filter_transactions_with_filter_fn(&filter).unwrap();
@@ -827,6 +829,7 @@ fn frame_tx_reservation_maps_clear_after_add_and_remove() {
             Some(reservation),
             None,
             KeyedConcurrency::Denied,
+            None,
         )
         .expect("add frame tx with reservation");
 
@@ -956,6 +959,7 @@ fn canonical_paymaster_is_exempt_from_the_noncanonical_pending_cap() {
                 Some(reservation_for(CANONICAL_PAYMASTER_RUNTIME)),
                 None,
                 KeyedConcurrency::Denied,
+                None,
             )
             .expect("a canonical paymaster is not capped by the non-canonical pending limit");
     }
@@ -989,6 +993,7 @@ fn canonical_paymaster_is_exempt_from_the_noncanonical_pending_cap() {
             }),
             None,
             KeyedConcurrency::Denied,
+            None,
         )
     };
     submit(Address::from_low_u64_be(0xCA11_0003), 0)
@@ -1651,6 +1656,7 @@ fn blobs_bundle_insert_and_remove() {
                 None,
                 None,
                 KeyedConcurrency::Denied,
+                None,
             )
             .expect("Failed to add blob transaction");
     }
@@ -2017,6 +2023,7 @@ fn blob_txs_are_not_evicted_by_regular_tx_flood() {
                 None,
                 None,
                 KeyedConcurrency::Denied,
+                None,
             )
             .expect("Failed to add blob transaction");
         blob_hashes.push(blob_hash);
@@ -2044,6 +2051,7 @@ fn blob_txs_are_not_evicted_by_regular_tx_flood() {
                 None,
                 None,
                 KeyedConcurrency::Denied,
+                None,
             )
             .expect("Failed to add regular transaction");
     }
@@ -2096,6 +2104,7 @@ fn add_blob_tx(mempool: &Mempool, nonce: u64, blob_fee: u64) -> H256 {
             None,
             None,
             KeyedConcurrency::Denied,
+            None,
         )
         .expect("Failed to add blob transaction");
     hash
@@ -2126,6 +2135,7 @@ fn add_blob_tx_with_sender(mempool: &Mempool, sender: Address, nonce: u64) -> H2
             None,
             None,
             KeyedConcurrency::Denied,
+            None,
         )
         .expect("Failed to add blob transaction");
     hash
@@ -2154,6 +2164,7 @@ fn blob_txs_lists_only_blob_txs_with_sender_and_nonce() {
             None,
             None,
             KeyedConcurrency::Denied,
+            None,
         )
         .unwrap();
 
@@ -2418,6 +2429,7 @@ async fn mempool_rejects_underfunded_paymaster() {
             }),
             None,
             KeyedConcurrency::Denied,
+            None,
         )
         .expect("phantom reservation must be directly inserted");
 
@@ -2508,6 +2520,7 @@ async fn mempool_enforces_noncanonical_paymaster_limit() {
             }),
             None,
             KeyedConcurrency::Denied,
+            None,
         )
         .expect("phantom frame tx must be directly inserted to fill paymaster slot");
 
@@ -2538,6 +2551,7 @@ async fn mempool_enforces_noncanonical_paymaster_limit() {
         }),
         None,
         KeyedConcurrency::Denied,
+        None,
     );
     assert!(
         matches!(result, Err(MempoolError::FrameTxNonCanonicalPaymasterLimit)),
@@ -2606,6 +2620,7 @@ fn self_pay_frame_tx_exempt_from_noncanonical_paymaster_limit() {
             Some(reservation()),
             None,
             KeyedConcurrency::Allowed,
+            None,
         )
         .expect("first self-paying keyed frame tx must be admitted");
 
@@ -2618,6 +2633,7 @@ fn self_pay_frame_tx_exempt_from_noncanonical_paymaster_limit() {
             Some(reservation()),
             None,
             KeyedConcurrency::Allowed,
+            None,
         )
         .expect(
             "second disjoint-keyed self-paying frame tx must also be admitted \
@@ -2683,6 +2699,7 @@ async fn mempool_rejects_second_frame_tx_same_sender_new_nonce() {
             None,
             None,
             KeyedConcurrency::Denied,
+            None,
         )
         .expect("direct insert of nonce=1 frame tx must succeed");
 
@@ -2773,6 +2790,7 @@ async fn mempool_frame_tx_replaces_same_nonce_non_frame_tx() {
             None,
             None,
             KeyedConcurrency::Denied,
+            None,
         )
         .expect("direct insert of non-frame tx must succeed");
 
@@ -2938,6 +2956,7 @@ async fn mempool_fee_bump_rejected_leaves_original_intact() {
             }),
             None,
             KeyedConcurrency::Denied,
+            None,
         )
         .expect("phantom reservation must be directly inserted");
 
@@ -3728,6 +3747,7 @@ fn fill_mempool(mempool: &Mempool, count: usize) {
                 None,
                 None,
                 KeyedConcurrency::Denied,
+                None,
             )
             .expect("Failed to add transaction");
     }
@@ -3859,6 +3879,7 @@ async fn replacement_at_existing_nonce_bypasses_gap_admission() {
             None,
             None,
             KeyedConcurrency::Denied,
+            None,
         )
         .expect("Failed to seed the pool with a tx at nonce 5");
 
@@ -3954,6 +3975,7 @@ fn add_frame_with(
         None,
         None,
         keyed_concurrency,
+        None,
     )
 }
 
@@ -4213,6 +4235,7 @@ fn keyed_reannounce_does_not_leak_reservation() {
             reservation(),
             None,
             KeyedConcurrency::Allowed,
+            None,
         )
     };
     add_once().unwrap();
@@ -4296,6 +4319,7 @@ mod p2p_serve_tests {
                 None,
                 None,
                 KeyedConcurrency::Denied,
+                None,
             )
             .expect("failed to add frame tx to mempool");
 
@@ -4334,6 +4358,7 @@ mod cumulative_balance_tests {
                 None,
                 None,
                 KeyedConcurrency::Denied,
+                None,
             )
             .expect("add_transaction");
         hash
@@ -4481,6 +4506,7 @@ fn self_pay_removal_does_not_release_a_noncanonical_paymaster_slot() {
             Some(reservation(false)),
             None,
             KeyedConcurrency::Denied,
+            None,
         )
         .expect("sponsored frame tx must be admitted");
     assert_eq!(
@@ -4498,6 +4524,7 @@ fn self_pay_removal_does_not_release_a_noncanonical_paymaster_slot() {
             Some(reservation(true)),
             None,
             KeyedConcurrency::Denied,
+            None,
         )
         .expect("self-paying frame tx must be admitted (exempt from the limit)");
     mempool
@@ -4609,6 +4636,7 @@ fn insert_frame_tx(mempool: &Mempool, sender: Address, tx: Transaction) -> H256 
             None,
             None,
             KeyedConcurrency::Denied,
+            None,
         )
         .expect("direct frame tx insert");
     hash
@@ -4926,12 +4954,114 @@ async fn setup_hegota_store_with_sender_code(name: &str, code: Bytes) -> Store {
     store
 }
 
+/// A sender with no finalized history gets exactly the one transaction EIP-8141 allows,
+/// however independent its prefix is. This is the bootstrapping cost MATCHA imposes by
+/// design: width is earned, never granted, so a freshly deployed shared sender has none.
+#[tokio::test]
+async fn an_additional_keyed_tx_is_refused_when_the_sender_has_no_width() {
+    let store = setup_hegota_store_funded().await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    let first = keyed_frame_tx(vec![U256::one()], 0, 1_000_000_000);
+    blockchain
+        .add_transaction_to_pool(first)
+        .await
+        .expect("the baseline transaction spends no width and must be admitted");
+
+    let second = keyed_frame_tx(vec![U256::from(2u64)], 0, 1_000_000_000);
+    let result = blockchain.add_transaction_to_pool(second).await;
+    assert!(
+        matches!(
+            result,
+            Err(MempoolError::FrameTxWidthExhausted { have: 0, .. })
+        ),
+        "a second transaction from a sender with no earned width must be refused; got {result:?}"
+    );
+}
+
+/// Width buys a bounded number of additional transactions, not an unbounded one. Credited
+/// with just enough for one, the sender gets one and is then refused, which is the
+/// property that makes this a capacity rather than a flag.
+#[tokio::test]
+async fn earned_width_admits_a_bounded_number_of_additional_txs() {
+    let store = setup_hegota_store_funded().await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    let baseline = keyed_frame_tx(vec![U256::one()], 0, 1_000_000_000);
+    blockchain
+        .add_transaction_to_pool(baseline)
+        .await
+        .expect("baseline admitted");
+
+    // Enough for exactly one additional transaction: admit one at a generous credit,
+    // read what it cost, then re-run with precisely that much.
+    let sender = Address::from_low_u64_be(FRAME_TX_SELF_SENDER);
+    let mut generous = rustc_hash::FxHashMap::default();
+    generous.insert(sender, 10_000_000u64);
+    blockchain
+        .mempool
+        .credit_finalized_block(1, &generous)
+        .expect("credit");
+    let before = blockchain.mempool.width_of(sender).expect("width");
+
+    let second = keyed_frame_tx(vec![U256::from(2u64)], 0, 1_000_000_000);
+    blockchain
+        .add_transaction_to_pool(second)
+        .await
+        .expect("the first additional transaction is covered by the credit");
+    let after = blockchain.mempool.width_of(sender).expect("width");
+    let charge = before - after;
+    assert!(charge > 0, "an additional transaction must spend width");
+
+    // Spend the remainder down so less than one charge is left, then confirm refusal.
+    let remaining = blockchain.mempool.width_of(sender).expect("width");
+    let mut key = 3u64;
+    let mut admitted_more = 0;
+    while blockchain.mempool.width_of(sender).expect("width") >= charge {
+        let tx = keyed_frame_tx(vec![U256::from(key)], 0, 1_000_000_000);
+        if blockchain.add_transaction_to_pool(tx).await.is_err() {
+            break;
+        }
+        admitted_more += 1;
+        key += 1;
+        if admitted_more > 200 {
+            panic!("width should have run out long before 200 additional transactions");
+        }
+    }
+    let tx = keyed_frame_tx(vec![U256::from(key + 1)], 0, 1_000_000_000);
+    let result = blockchain.add_transaction_to_pool(tx).await;
+    assert!(
+        matches!(result, Err(MempoolError::FrameTxWidthExhausted { .. })),
+        "once width is below one charge the next additional transaction is refused; \
+         started from {remaining} at {charge} per transaction, got {result:?}"
+    );
+}
+
+/// Give the shared sender MATCHA width so its *additional* transactions can be admitted.
+///
+/// Width is earned from finalized frame-transaction gas, so a sender with no history is
+/// held to the one baseline transaction EIP-8141 allows. These tests exercise the
+/// EIP-8250 concurrency rule, not bootstrapping, so they start the sender where a
+/// deployed application would be once its first transactions had finalized.
+fn grant_keyed_sender_width(blockchain: &Blockchain) {
+    let mut gas = rustc_hash::FxHashMap::default();
+    gas.insert(
+        Address::from_low_u64_be(FRAME_TX_SELF_SENDER),
+        10_000_000u64,
+    );
+    blockchain
+        .mempool
+        .credit_finalized_block(1, &gas)
+        .expect("crediting finalized width must succeed");
+}
+
 #[tokio::test]
 async fn admission_grants_keyed_concurrency_to_an_independent_prefix() {
     // The sender is a contract whose prefix only calls APPROVE: no deploy frame,
     // no sender storage read, no TXPARAM(0x0D). Disjoint keyed txs may coexist.
     let store = setup_hegota_store_funded().await;
     let blockchain = Blockchain::default_with_store(store);
+    grant_keyed_sender_width(&blockchain);
 
     let first = keyed_frame_tx(vec![U256::one()], 0, 1_000_000_000);
     blockchain
@@ -5065,6 +5195,7 @@ async fn a_pending_frame_tx_survives_an_unrelated_block() {
 async fn both_concurrent_keyed_txs_are_actually_in_the_pool() {
     let store = setup_hegota_store_funded().await;
     let blockchain = Blockchain::default_with_store(store);
+    grant_keyed_sender_width(&blockchain);
 
     let first = keyed_frame_tx(vec![U256::one()], 0, 1_000_000_000);
     let first_hash = blockchain
@@ -5186,6 +5317,7 @@ fn add_transaction_no_broadcast_keeps_tx_out_of_broadcast_pool() {
             None,
             None,
             KeyedConcurrency::Denied,
+            None,
         )
         .expect("public tx should land in broadcast pool");
     mempool
@@ -5196,6 +5328,7 @@ fn add_transaction_no_broadcast_keeps_tx_out_of_broadcast_pool() {
             None,
             None,
             KeyedConcurrency::Denied,
+            None,
         )
         .expect("private tx should land in mempool but not broadcast pool");
 
@@ -5260,6 +5393,7 @@ fn add_transaction_no_broadcast_marks_tx_as_private_for_p2p_filters() {
             None,
             None,
             KeyedConcurrency::Denied,
+            None,
         )
         .unwrap();
     mempool
@@ -5270,6 +5404,7 @@ fn add_transaction_no_broadcast_marks_tx_as_private_for_p2p_filters() {
             None,
             None,
             KeyedConcurrency::Denied,
+            None,
         )
         .unwrap();
 

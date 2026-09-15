@@ -78,6 +78,21 @@ async fn setup_store(store_name: &str) -> (Store, u64) {
     (store, chain_id)
 }
 
+/// Give the shared sender MATCHA width so its *additional* transactions can be admitted.
+///
+/// Width is earned from finalized frame-transaction gas, so a sender with no history gets
+/// only the one baseline transaction EIP-8141 allows. These tests are about the EIP-8250
+/// concurrency rule rather than about bootstrapping, so they start the sender where a
+/// deployed application would be after its first transactions finalized.
+fn grant_width(blockchain: &Blockchain, sender: Address, amount: u64) {
+    let mut gas = rustc_hash::FxHashMap::default();
+    gas.insert(sender, amount);
+    blockchain
+        .mempool
+        .credit_finalized_block(1, &gas)
+        .expect("crediting finalized width must succeed");
+}
+
 /// One keyed transaction: a self-verifying frame that approves, then a SENDER frame
 /// funding a fresh address. The recipient differs per key so neither transaction's
 /// account-creation charge depends on the other having run.
@@ -125,6 +140,8 @@ async fn two_keyed_transactions_from_one_contract_sender_build_into_one_block() 
         },
     );
     let genesis_header = store.get_block_header(0).unwrap().unwrap();
+
+    grant_width(&blockchain, FRAME_SENDER, 10_000_000);
 
     for index in 0..2 {
         blockchain
@@ -256,6 +273,8 @@ async fn a_deployed_contract_sender_is_not_resolved_as_codeless() {
         runtime.to_vec(),
         "the deployment must have installed the runtime at {contract:#x}"
     );
+
+    grant_width(&blockchain, contract, 10_000_000);
 
     for index in 0..2 {
         let mut tx = keyed_tx(chain_id, index);

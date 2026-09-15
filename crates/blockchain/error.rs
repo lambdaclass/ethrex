@@ -202,6 +202,16 @@ pub enum MempoolError {
     FrameTxRecentRootNotCommitted,
     #[error("EIP-8272 RECENT_ROOT_ADDRESS does not hold RECENT_ROOT_CODE at head state")]
     FrameTxRecentRootCodeMismatch,
+    #[error(
+        "sender has {have} MATCHA width, needs {need} for an additional frame transaction; \
+         width is earned from the gas its transactions used in finalized blocks"
+    )]
+    FrameTxWidthExhausted { have: u64, need: u64 },
+    #[error(
+        "effective priority fee {offered} is below the MATCHA load floor {floor} for an \
+         additional frame transaction"
+    )]
+    FrameTxBelowWidthFeeFloor { offered: u64, floor: u64 },
     #[error("Mempool {occupancy_pct}% full; rejecting gapped-nonce tx (nonce gap = {nonce_gap})")]
     GapAdmissionDeniedUnderPressure { occupancy_pct: u8, nonce_gap: u64 },
     #[error("L2-only transaction type is not valid on an L1 node")]

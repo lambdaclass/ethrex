@@ -71,7 +71,15 @@ fn add_mempool_tx(bc: &Blockchain, nonce: u64, data_len: usize) -> H256 {
     let mtx = MempoolTransaction::new(tx, sender);
     let hash = mtx.hash(&NativeCrypto);
     bc.mempool
-        .add_transaction(hash, sender, mtx, None, None, KeyedConcurrency::Denied)
+        .add_transaction(
+            hash,
+            sender,
+            mtx,
+            None,
+            None,
+            KeyedConcurrency::Denied,
+            None,
+        )
         .expect("add to mempool");
     hash
 }

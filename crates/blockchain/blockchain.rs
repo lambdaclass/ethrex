@@ -48,6 +48,7 @@ pub mod focil_profile2;
 pub mod fork_choice;
 pub mod inclusion_list_builder;
 pub mod inclusion_list_validator;
+pub mod matcha;
 pub mod mempool;
 pub mod payload;
 pub mod prewarm;
@@ -104,6 +105,7 @@ use ethrex_vm::backends::levm::LEVM;
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::system_contracts::RECENT_ROOT_RUNTIME_BYTECODE;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError, VmDatabase};
+use matcha::MatchaCharge;
 use mempool::{
     BalanceCheck, FRAME_CANONICAL_PAYMASTER_CODE_HASH, FramePaymasterReservation, KeyedConcurrency,
     Mempool, SenderAdmission, is_canonical_paymaster, keyed_concurrency_verdict,
@@ -3246,7 +3248,7 @@ impl Blockchain {
         // per-sender gate inputs, re-checked atomically inside `add_transaction`,
         // which also removes any same-nonce tx being replaced under the same lock
         // (#6938) — so no separate pre-removal here.
-        let (frame_reservation, sender_admission, keyed_concurrency) =
+        let (frame_reservation, sender_admission, keyed_concurrency, matcha_charge) =
             self.validate_transaction(&transaction, sender).await?;
 
         // Add blobs bundle before the transaction so that when add_transaction
@@ -3265,6 +3267,7 @@ impl Blockchain {
                 frame_reservation,
                 sender_admission,
                 keyed_concurrency,
+                matcha_charge,
             )
         } else {
             self.mempool.add_transaction_no_broadcast(
@@ -3274,6 +3277,7 @@ impl Blockchain {
                 frame_reservation,
                 sender_admission,
                 keyed_concurrency,
+                matcha_charge,
             )
         };
         if let Err(e) = inserted {
@@ -3348,7 +3352,7 @@ impl Blockchain {
         // removal, and the insert are one atomic scope (#6938). For a frame tx
         // the removal happens only after the locked paymaster re-check, so a
         // rejected fee-bump leaves the original pending tx intact.
-        let (frame_reservation, sender_admission, keyed_concurrency) =
+        let (frame_reservation, sender_admission, keyed_concurrency, matcha_charge) =
             self.validate_transaction(&transaction, sender).await?;
 
         // Add transaction to storage
@@ -3361,6 +3365,7 @@ impl Blockchain {
                 frame_reservation,
                 sender_admission,
                 keyed_concurrency,
+                matcha_charge,
             )?;
         } else {
             self.mempool.add_transaction_no_broadcast(
@@ -3370,10 +3375,75 @@ impl Blockchain {
                 frame_reservation,
                 sender_admission,
                 keyed_concurrency,
+                matcha_charge,
             )?;
         }
 
         Ok(hash)
+    }
+
+    /// Credit MATCHA width from every block finalized since the last credit.
+    ///
+    /// Width is minted only from finalized gas, never from the head. A head-based credit
+    /// would let a sender earn from a block that is later reorged out, and then spend
+    /// that width on admission work the chain never paid for.
+    ///
+    /// Each sender is credited the gas its own frame transactions used. Other
+    /// transaction types mint nothing: they do not consume the per-sender capacity this
+    /// mechanism rations, so letting them earn it would hand width to senders that never
+    /// needed any.
+    ///
+    /// Blocks are credited in order and once each. A finalized number at or below the
+    /// high-water mark is a no-op, which makes a repeated forkchoice notification
+    /// harmless.
+    pub async fn credit_finalized_width(
+        &self,
+        finalized_number: BlockNumber,
+    ) -> Result<(), StoreError> {
+        if !self.mempool.matcha_enabled().unwrap_or(false) {
+            return Ok(());
+        }
+        // Bound the catch-up so a node that has been offline does not walk the chain.
+        // Skipping blocks only ever withholds width, which is the safe direction.
+        const MAX_CATCHUP_BLOCKS: u64 = 64;
+        let start = self
+            .mempool
+            .last_credited_block()
+            .unwrap_or(None)
+            .map(|last| last.saturating_add(1))
+            .unwrap_or(finalized_number)
+            .max(finalized_number.saturating_sub(MAX_CATCHUP_BLOCKS));
+
+        for number in start..=finalized_number {
+            let Some(body) = self.storage.get_block_body(number).await? else {
+                continue;
+            };
+            let Some(hash) = self.storage.get_canonical_block_hash(number).await? else {
+                continue;
+            };
+            let receipts = self.storage.get_receipts_for_block(&hash).await?;
+            let mut gas_by_sender: FxHashMap<Address, u64> = FxHashMap::default();
+            let mut previous_cumulative = 0u64;
+            for (index, tx) in body.transactions.iter().enumerate() {
+                let cumulative = receipts
+                    .get(index)
+                    .map(|r| r.cumulative_gas_used)
+                    .unwrap_or(previous_cumulative);
+                let used = cumulative.saturating_sub(previous_cumulative);
+                previous_cumulative = cumulative;
+                if let Transaction::FrameTransaction(frame_tx) = tx {
+                    *gas_by_sender.entry(frame_tx.sender).or_insert(0) += used;
+                }
+            }
+            if !gas_by_sender.is_empty() {
+                let _ = self.mempool.credit_finalized_block(number, &gas_by_sender);
+            } else {
+                // Still advance the high-water mark, or a run of frame-free blocks
+                // would be re-walked on every notification.
+                let _ = self.mempool.credit_finalized_block(number, &gas_by_sender);
+            }
+        }
+        Ok(())
     }
 
     /// Remove a transaction from the mempool
@@ -3794,6 +3864,7 @@ impl Blockchain {
             Option<FramePaymasterReservation>,
             Option<SenderAdmission>,
             KeyedConcurrency,
+            Option<MatchaCharge>,
         ),
         MempoolError,
     > {
@@ -3809,7 +3880,7 @@ impl Blockchain {
         }
 
         if matches!(tx, &Transaction::PrivilegedL2Transaction(_)) {
-            return Ok((None, None, KeyedConcurrency::Denied));
+            return Ok((None, None, KeyedConcurrency::Denied, None));
         }
 
         // Frame transactions: skip balance/EOA checks (payer unknown until execution)
@@ -3872,6 +3943,9 @@ impl Blockchain {
         // has shown the prefix to be independent of the sender's mutable state.
         let mut keyed_concurrency = KeyedConcurrency::Denied;
 
+        // MATCHA charge for a frame transaction; `None` for every other type, which
+        // has no width accounting.
+        let mut matcha_charge: Option<MatchaCharge> = None;
         if let Transaction::FrameTransaction(frame_tx) = tx {
             // EIP-8141 static constraints at admission (mirrors the VM check)
             // so malformed frame txs never occupy pool slots.
@@ -3922,6 +3996,38 @@ impl Blockchain {
             // number of storage reads behind static validation and signature
             // authentication. Prospective: `current_slot` is the head's slot plus one.
             self.check_recent_root_frame(frame_tx, &header, header_no)?;
+
+            // MATCHA: what this transaction would cost the client to admit, priced from
+            // the same prefix gas the MAX_VERIFY_GAS budget above was measured against
+            // so the two can never disagree about which frames are validation work.
+            // Only spent if the sender turns out to already have a pending frame
+            // transaction, which is decided under the mempool lock.
+            let prefix_execution_gas: u64 = prefix
+                .frame_indices
+                .iter()
+                .chain(prefix.recent_root_index.iter())
+                .map(|&i| frame_tx.frames[i].gas_limit)
+                .fold(0u64, |acc, g| acc.saturating_add(g));
+            let ledger_config = self.mempool.matcha_config()?;
+            matcha_charge = Some(MatchaCharge {
+                charge: crate::matcha::charge_for(
+                    &ledger_config,
+                    crate::matcha::admission_gas(frame_tx, prefix_execution_gas),
+                ),
+                // The fee the sender actually pays above the base fee at this head,
+                // which is what the optional linear floor is judged against. Capped
+                // the way a block would cap it, so a huge `max_fee` does not read as
+                // a huge priority fee.
+                effective_priority_fee: {
+                    let base_fee = U256::from(header.base_fee_per_gas.unwrap_or_default());
+                    let headroom = frame_tx.max_fee_per_gas.saturating_sub(base_fee);
+                    frame_tx
+                        .max_priority_fee_per_gas
+                        .min(headroom)
+                        .try_into()
+                        .unwrap_or(u64::MAX)
+                },
+            });
         }
 
         // Wire size cap for non-blob txs: peer-policy default, not consensus.
@@ -4396,7 +4502,12 @@ impl Blockchain {
             })
         };
 
-        Ok((frame_reservation, sender_admission, keyed_concurrency))
+        Ok((
+            frame_reservation,
+            sender_admission,
+            keyed_concurrency,
+            matcha_charge,
+        ))
     }
 
     /// Marks the node's chain as up to date with the current chain
