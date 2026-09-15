@@ -281,6 +281,44 @@ enough; Lighthouse also needs `--ignore-ws-check`. The "Starting a node" section
 written while the chain was younger than that and should say so. Found on 2026-09-15 at
 slot about 11,700 with `ethpandaops/lighthouse:focil` (v8.1.3).
 
-## Cross-implementation agreement
+## Cross-implementation agreement (2026-09-15)
 
-(recorded once both nodes follow the chain)
+Both implementations ran side by side against the live chain from one laptop, each as an
+ethrex release build on the host with `ethpandaops/lighthouse:focil` in docker, leg 2 given
+leg 1's enode as an extra bootnode. Leg 1 (`dogfood-focil` at `f919aa57b`) synced 12,010
+blocks; leg 2 (`dogfood-frames` at `9c1f8c43d`) synced 12,392. Both follow the head with
+three beacon peers; leg 2 reports four execution peers to leg 1's three, and ethrex exposes
+no peer list, so the loopback peering is inferred from that count, not shown.
+
+Per-block `inclusionListSatisfied` records, taken from each node's beacon client and from
+the network's first beacon node over the same six-minute window once both were at the head:
+
+| Pair | Blocks in both | Disagreements |
+| --- | ---: | ---: |
+| leg 1 vs production | 60 | 0 |
+| leg 2 vs production | 60 | 0 |
+| leg 1 vs leg 2 | 60 | 0 |
+
+Every record on all three sides is `satisfied: true`; neither node logged an undecided
+verdict or a warning. The live chain has never produced an unsatisfied block, so this
+agreement is one-sided: it shows that two independent readings of the text accept
+everything the network accepts, and not that they reject the same things. The rejecting
+direction rests on the two test suites, which between them cover every row of the Test
+Cases table that a chain can produce, in both directions for rows 1, 2, 3, 7, 9 and 21.
+
+One divergence is visible from the code rather than the chain. Leg 1 predates the EIP-161
+rule the first revision added for an account that exists in the committed post-state only
+because a withdrawal in `B` created it; leg 2 implements it and reads such an account as
+nonexistent at `S_end`. A listed transaction whose validation observes that account's
+existence, through EIP-8037's account-creation charge in `APPROVE`, would be judged
+differently by the two nodes. It is the one place the two legs are known to disagree, it is
+a consequence of the spec having changed between them, and the running chain's builder never
+produces the block that would expose it.
+
+What the exercise settled about the text: the first revision removed the large gaps (the
+flat Engine API list, the reconstruction of `S_end`, the unstated replay order, the missing
+chain id); the second round found only local ones, all answerable in a sentence, and the
+implementer working from the revised text listed most of the document as implemented
+verbatim. What it did not settle: the Test Cases are still descriptions and not vectors, so
+two implementers agreeing on 60 live blocks and on their own scenarios is not the same as
+agreeing on a shared vector suite. That is the next thing the spec needs.
