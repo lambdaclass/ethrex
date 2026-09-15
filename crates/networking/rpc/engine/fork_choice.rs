@@ -1169,7 +1169,7 @@ mod tests {
         });
 
         // Three params with a null custody bitmap: the shape Lighthouse sends.
-        let (_, attrs) = super::parse_v5(&Some(vec![
+        let (_, attrs, _) = super::parse_v5(&Some(vec![
             state.clone(),
             serde_json::Value::Null,
             serde_json::Value::Null,
@@ -1181,7 +1181,7 @@ mod tests {
         // for a client that does advertise one. Accepted and ignored: ethrex
         // has no custody-dependent behaviour, and rejecting the value would
         // halt the chain under a client that sends it.
-        let (_, attrs) = super::parse_v5(&Some(vec![
+        let (_, attrs, _) = super::parse_v5(&Some(vec![
             state.clone(),
             serde_json::Value::Null,
             json!(format!("0x{}", "ff".repeat(16))),
