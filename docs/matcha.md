@@ -140,7 +140,11 @@ author. In summary:
   transaction sums both gas dimensions. Width is earned from what was paid for.
 - Width is required for additional transactions regardless of whether the prefix is
   structurally independent, following the post's reply that the balance-drain vector
-  applies independently of mass invalidation.
+  applies independently of mass invalidation. The structural EIP-8250 eligibility test is
+  retained as well: a structurally dependent sender is still held to one pending
+  transaction however much width it holds. That is the conservative of the two readings
+  the post admits; the other, width as the whole mechanism with no structural cap, is
+  what the post argues for, and which is intended is an open question put to its author.
 
 ## Bootstrapping
 
