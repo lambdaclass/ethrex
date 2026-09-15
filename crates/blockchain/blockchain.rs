@@ -1103,89 +1103,89 @@ impl Blockchain {
                         (Some(tx), Some(rx))
                     };
 
-                let execution_handle = std::thread::Builder::new()
-                    .name("block_executor_execution".to_string())
-                    .spawn_scoped(s, move || -> Result<_, ChainError> {
-                        // Cheap Arc pointer bump: `execute_block_pipeline` takes
-                        // ownership, but the header-commitment check below still needs
-                        // the input BAL on the parallel path (produced_bal == None).
-                        let header_bal = bal.clone();
-                        let result = vm.execute_block_pipeline(
-                            block,
-                            tx,
-                            queue_length_ref,
-                            bal,
-                            bal_parallel_exec_enabled,
-                        );
-                        cancelled_ref.store(true, Ordering::Relaxed);
-                        let (execution_result, produced_bal) = result?;
+                // Execution runs on this thread rather than a spawned one: the
+                // calling thread would otherwise only wait for it, and creating an
+                // OS thread per block is not free. On a chain of near-empty blocks
+                // the merkleizer's measured start delay (thread creation plus
+                // scheduling) was ~29% of the whole block, and part of that was
+                // this spawn happening first. Defined here, run below, after the
+                // merkleizer is already on its way.
+                let execution_closure = move || -> Result<_, ChainError> {
+                    // Cheap Arc pointer bump: `execute_block_pipeline` takes
+                    // ownership, but the header-commitment check below still needs
+                    // the input BAL on the parallel path (produced_bal == None).
+                    let header_bal = bal.clone();
+                    let result = vm.execute_block_pipeline(
+                        block,
+                        tx,
+                        queue_length_ref,
+                        bal,
+                        bal_parallel_exec_enabled,
+                    );
+                    cancelled_ref.store(true, Ordering::Relaxed);
+                    let (execution_result, produced_bal) = result?;
 
-                        // Validate execution went alright
-                        if let Err(e) =
-                            validate_gas_used(execution_result.block_gas_used, &block.header)
-                        {
-                            ethrex_vm::log_gas_used_mismatch(
-                                &execution_result.tx_gas_breakdowns,
-                                block.header.number,
-                                execution_result.block_gas_used,
-                                block.header.gas_used,
-                            );
-                            return Err(e.into());
-                        }
-                        validate_receipts_root_and_logs_bloom(
-                            &block.header,
-                            &execution_result.receipts,
-                            &NativeCrypto,
-                        )?;
-                        validate_requests_hash(
+                    // Validate execution went alright
+                    if let Err(e) =
+                        validate_gas_used(execution_result.block_gas_used, &block.header)
+                    {
+                        ethrex_vm::log_gas_used_mismatch(
+                            &execution_result.tx_gas_breakdowns,
+                            block.header.number,
+                            execution_result.block_gas_used,
+                            block.header.gas_used,
+                        );
+                        return Err(e.into());
+                    }
+                    validate_receipts_root_and_logs_bloom(
+                        &block.header,
+                        &execution_result.receipts,
+                        &NativeCrypto,
+                    )?;
+                    validate_requests_hash(
+                        &block.header,
+                        &chain_config,
+                        &execution_result.requests,
+                    )?;
+                    // EIP-7928 block_access_list_hash commitment check.
+                    //
+                    // Sequential Amsterdam path: rebuilds a BAL and returns
+                    // Some(produced_bal), so the full hash+index+size check runs here.
+                    //
+                    // Parallel Amsterdam path: uses the header BAL directly to drive
+                    // execution and returns produced_bal = None. The header BAL's
+                    // index/size are already validated inside execute_block_pipeline,
+                    // and content-equivalence (unread_storage_reads /
+                    // unaccessed_pure_accounts) plus the state_root comparison prove the
+                    // header BAL is the canonical one. The one thing those checks do NOT
+                    // bind is the header commitment itself, so we must compare
+                    // keccak(rlp(header_bal)) against header.block_access_list_hash here;
+                    // otherwise a block with a content-valid BAL but a forged commitment
+                    // is accepted on this path while every spec-conformant client (and
+                    // our own sequential/batch paths) rejects it. This is a pure hash
+                    // compare on a BAL already in memory; the parallel exec optimization
+                    // (no BAL rebuild) is preserved.
+                    //
+                    // Pre-Amsterdam blocks never record a BAL, so both arms are skipped.
+                    if let Some(bal) = &produced_bal {
+                        validate_block_access_list_hash(
                             &block.header,
                             &chain_config,
-                            &execution_result.requests,
+                            bal,
+                            block.body.transactions.len(),
+                            &NativeCrypto,
                         )?;
-                        // EIP-7928 block_access_list_hash commitment check.
-                        //
-                        // Sequential Amsterdam path: rebuilds a BAL and returns
-                        // Some(produced_bal), so the full hash+index+size check runs here.
-                        //
-                        // Parallel Amsterdam path: uses the header BAL directly to drive
-                        // execution and returns produced_bal = None. The header BAL's
-                        // index/size are already validated inside execute_block_pipeline,
-                        // and content-equivalence (unread_storage_reads /
-                        // unaccessed_pure_accounts) plus the state_root comparison prove the
-                        // header BAL is the canonical one. The one thing those checks do NOT
-                        // bind is the header commitment itself, so we must compare
-                        // keccak(rlp(header_bal)) against header.block_access_list_hash here;
-                        // otherwise a block with a content-valid BAL but a forged commitment
-                        // is accepted on this path while every spec-conformant client (and
-                        // our own sequential/batch paths) rejects it. This is a pure hash
-                        // compare on a BAL already in memory; the parallel exec optimization
-                        // (no BAL rebuild) is preserved.
-                        //
-                        // Pre-Amsterdam blocks never record a BAL, so both arms are skipped.
-                        if let Some(bal) = &produced_bal {
-                            validate_block_access_list_hash(
-                                &block.header,
-                                &chain_config,
-                                bal,
-                                block.body.transactions.len(),
-                                &NativeCrypto,
-                            )?;
-                        } else if let Some(header_bal) = header_bal.as_deref()
-                            && chain_config.is_amsterdam_activated(block.header.timestamp)
-                            && !header_bal.matches_commitment(
-                                block.header.block_access_list_hash,
-                                &NativeCrypto,
-                            )
-                        {
-                            return Err(InvalidBlockError::BlockAccessListHashMismatch.into());
-                        }
+                    } else if let Some(header_bal) = header_bal.as_deref()
+                        && chain_config.is_amsterdam_activated(block.header.timestamp)
+                        && !header_bal
+                            .matches_commitment(block.header.block_access_list_hash, &NativeCrypto)
+                    {
+                        return Err(InvalidBlockError::BlockAccessListHashMismatch.into());
+                    }
 
-                        let exec_end_instant = Instant::now();
-                        Ok((execution_result, produced_bal, exec_end_instant))
-                    })
-                    .map_err(|e| {
-                        ChainError::Custom(format!("Failed to spawn execution thread: {e}"))
-                    })?;
+                    let exec_end_instant = Instant::now();
+                    Ok((execution_result, produced_bal, exec_end_instant))
+                };
                 let parent_header_ref = &parent_header; // Avoid moving to thread
                 // Merkleizer returns (list, streaming witness or None on BAL path, merkle_start, merkle_end).
                 type MerkleResult = Result<
@@ -1250,9 +1250,14 @@ impl Blockchain {
                     .map_err(|e| {
                         ChainError::Custom(format!("Failed to spawn merkleizer thread: {e}"))
                     })?;
-                let execution_result = execution_handle.join().unwrap_or_else(|_| {
-                    Err(ChainError::Custom("execution thread panicked".to_string()))
-                });
+                // The merkleizer is already running on its own thread; execute here.
+                // `catch_unwind` keeps the previous semantics, where a panic in
+                // execution surfaced as an error rather than unwinding the scope.
+                let execution_result =
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(execution_closure))
+                        .unwrap_or_else(|_| {
+                            Err(ChainError::Custom("execution panicked".to_string()))
+                        });
                 let merkleization_result = merkleize_handle.join().unwrap_or_else(|_| {
                     Err(StoreError::Custom(
                         "merkleization thread panicked".to_string(),
