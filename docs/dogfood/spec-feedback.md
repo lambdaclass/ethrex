@@ -33,21 +33,191 @@ Sizing, from merge dry runs:
 | delta `frames-devnet-0` to `hegota-testnet` | 62 files in `crates/`, +7,806 / -1,221 |
 | delta `focil-devnet-0` to `hegota-testnet` | 90 files in `crates/`, +14,188 / -2,158 |
 
-## Leg 1: FOCIL base
+## Leg 1: FOCIL base (`dogfood-focil`)
 
 ### Prerequisite merge
 
-(inventory and resolutions recorded below as they are made)
+The branch `dogfood-focil` starts at `focil-devnet-0`, reverts its head commit to restore
+the frames it had deleted, then merges `hegota-testnet`. Reverting first is what turns 49
+conflicts into 20: without it every frames file `hegota-testnet` touched is a delete-versus-
+modify conflict. Twenty conflicts remained, six in code. Each resolution follows one rule:
+keep this branch's FOCIL layer, which is newer (aligned to tests-focil-devnet@v0.2.0 and the
+glamsterdam-devnet-8 fixes), take the frame EIPs and fixture pins from `hegota-testnet`, and
+union anything that is a list. These resolutions are recorded for review; none was
+discussed before being made.
+
+| File | Resolution | Why |
+| --- | --- | --- |
+| `crates/blockchain/inclusion_list_builder.rs` | ours | `get_code` provider method; the other side's `classify_code` belongs to the Profile 2 layer being rebuilt |
+| `crates/blockchain/inclusion_list_validator.rs` | ours | `TrackedSender` and the EELS-mirroring includability gates; the other side's `IlSenderState`, `SenderCode` and `check_with_profile_2` are the layer being rebuilt |
+| `crates/networking/rpc/engine/fork_choice.rs` | ours | `parse_v5` keeps V4's `custodyColumns` third parameter, per the Engine API |
+| `crates/networking/rpc/engine/inclusion_list.rs` | ours | `parentHash` is parsed and used, not ignored |
+| `crates/networking/rpc/eth/logs.rs` | theirs | `blockHash` filter support; additive, not FOCIL |
+| `crates/vm/backends/levm/tracing.rs` | theirs | `#[expect]` over `#[allow]`; lint hygiene only |
+| `cmd/ethrex/l2/initializers.rs` | theirs | the mempool config fields the frame mempool needs |
+| `test/tests/blockchain/{inclusion_list_builder,inclusion_list_validator,focil}_tests.rs` | ours / ours / union | follow the code choices above; the frames imports in `focil_tests.rs` are kept for the Profile 2 tests that will be rewritten |
+| `test/tests/rpc/{fork_choice,inclusion_list_engine}_tests.rs` | ours | custody and `parentHash` tests match the code above; the other side had moved the same custody tests to the end of the file |
+| `test/tests/{common,rpc,storage}/mod.rs` | union | module lists |
+| `Makefile` | theirs | the ethereum-package revision whose genesis generator deploys the EIP-8282 predeploys the chain needs |
+| `tooling/ef_tests/.fixtures_url_amsterdam`, hive `amsterdam.yaml` | theirs | v8.1.4 is newer than v8.1.2; the two pins must move together |
+| `tooling/ef_tests/engine/Makefile` | mixed | frames overlay from theirs, FOCIL overlay ours (v0.2.0), clean target unioned |
+| `tooling/ef_tests/engine/src/fixture.rs` | merged | fork arm accepts "Bogota", "Hegota" and "Heze" |
+
+What the merge could not express: `hegota-testnet`'s Profile 2 layer arrived through clean
+auto-merges in files that did not conflict (`blockchain.rs`, `focil_eligibility.rs`,
+`focil_profile2.rs`, the observer). It is removed in the next commit, so the base carries the
+four prerequisite EIPs and nothing this spec specifies.
+
+### Stripping the existing Profile 2 layer
+
+Removed from the merged tree, so the base carries prerequisites only:
+
+- `crates/blockchain/focil_eligibility.rs` and `focil_profile2.rs`, with their tests
+- the `IlStateProvider::classify_code` method, `SenderCode`, `IlSenderState`,
+  `check_with_profile_2`, `Profile2Eligibility` and `IlCheckReport`: the inclusion-list
+  builder and validator are this branch's own versions, which use `get_code` and
+  `TrackedSender`
+- the observer's `FocilVopsSurface`, `CodeBodyBudget`, `Profile2Replay`, the two
+  violations they raise, the surface branches in the `SLOAD` and `SSTORE` hooks, and the
+  per-frame code charge
+- the `profile_2` parameter threaded through `run_frame_validation_prefix`,
+  `simulate_frame_validation_prefix` and the backend wrappers, and the `code_budget`
+  field on `FrameValidationOutcome`
+- the operations documents that describe the implementation
+  (`hegota-testnet-{divergences,spec,verification,upgrading}.md`, `hegota-upgrade-merge.md`)
+
+Kept, because the spec's prerequisites need them: the EIP-8141 mempool prefix simulation
+and its validation observer, the canonical paymaster exemption, the EIP-8272 verifier-frame
+permissions and `check_recent_root_frame`, EIP-8250 keyed nonces, and `inclusionListSatisfied`
+on `engine_newPayloadV6` and `engine_forkchoiceUpdatedV5`.
+
+Two adaptations the merge needed that are not about the spec: the inclusion-list builder's
+fee arithmetic assumed `u64` fees and the frames line widened them to `U256`; and this
+branch's `eth_getRawTransactionByBlock*` used an RLP helper the frames line no longer
+implements on `Transaction`, replaced by `encode_canonical_to_vec`. Both are the kind of
+seam a FOCIL client meets when it first takes in frame transactions, and neither is
+mentioned by any of the EIPs, which is fair: they are implementation history, not protocol.
+
+A frame transaction in an inclusion list is, on this base, simply not a Profile 1
+transaction. Whether its omission is excused or judged is exactly what the spec has to make
+the implementer add.
+
+### Implementation
+
+Written by an agent that read only `docs/eip-focil-frametx.md` and the pinned prerequisite
+texts, with the base code but no access to `hegota-testnet`, its history or its documents.
+Four commits on `dogfood-focil`, `d1d6e6c88` to `1ad028402`: the replay policy on the VM
+(`Profile2Surface`, per-list `CodeBudget`, code charged at frame entry and at `CALL` and
+`EXTCODE` targets), `focil_profile2.rs` (candidacy, `verify_budget_cost`, the two-stage fill,
+the two-state check with `S_end` read through the committed root minus withdrawal credits),
+one shared entry point for both profiles used by block import and the engine RPC, the
+builder's second pass over skipped inclusion-list entries, and three test files (candidacy
+and fill units, replay rules, real blocks for cases 1, 2, 3, 7 both ways, 21, pre-fork and the
+builder retry). 1,317 tests pass in `ethrex-test`, 39 of them new.
 
 ### Spec feedback
 
-(entries added as implementation proceeds)
+The implementer's log is `leg1-spec-feedback.md` in this directory, 21 entries, verbatim.
+The revision of the spec that accompanies this file applies them as follows.
 
-## Leg 2: frames base
+| Entry | Finding | Applied |
+| ---: | --- | --- |
+| 1 | The Engine API delivers one flat `inclusionListTransactions` array; "per inclusion list" budgets are not computable | Terminology now defines the inclusion list as that array; the fill, the code budget and the Rationale's bound (`2**20` per payload, not `2**24`) follow; case 19 rewritten; griefing note extended |
+| 2 | `FORK_TIMESTAMP` is `TBD` | Defaults to EIP-8272's activation unless the chain schedules its own |
+| 3 | `S_end` is not a state the client holds after import | Reading through the committed root MUST discount withdrawal credits; an account left empty by the discount is nonexistent per EIP-161 |
+| 4 | Pre-execution operations are observable at the activation block | Claim restricted to blocks after activation; the activation-block case stated |
+| 5 | No chain id condition for Profile 2 | Folded into candidacy condition 1 |
+| 6 | The fill's sum cannot MUST-agree with a mempool reading EIP-8141 rule 6 literally | Downgraded to SHOULD, with the reason; rule 6 SHOULD be clarified |
+| 7 | "Unpriceable" undefined | `prefix_and_verifier_frame_cost` defined in the pseudocode |
+| 8 | Conditions 5, 7 and the target half of 3 are implied by 1 | Said so, and why they are kept |
+| 9 | `S_end`-first skip changes the shared code budget | Order made normative: first occurrence order, `S_end` then `S_start`, eligible replay ends the check |
+| 10 | `gas_fits` is one-dimensional under EIP-8037 | Stated as deliberate, with the direction it errs in |
+| 11 | "does not proceed" | Ineligible, no further charge, MAY abort |
+| 12 | Pre-frame check order | Not consensus; SHOULD, with the reason |
+| 13 | Case 9 names `DELEGATECALL` for a read it cannot perform | Storage owner rule added to the surface; case 9 rewritten |
+| 14 | Where undecided verdicts are recorded | Local record; nothing reaches the Engine API |
+| 15 | "MUST evaluate both states within the call that executes `B`" | Compute from `B`'s own states in whichever call imports it; `ACCEPTED` judged when executed |
+| 16 | Identity by bytes, implemented by digest | MAY key by the keccak-256 digest |
+| 17 | Front placement alone does not meet the builder MUST | Two-pass construction RECOMMENDED, with the failing case |
+| 18 | Test cases are descriptions, not vectors | Said so; vectors still to be published |
+| 19 | `AA_VOPS_SLOT_COUNT` as chain configuration | No change; it worked |
+| 20 | What the text got right | No change |
+| 21 | Unnecessary text | No change; the `payer` sentence stays because it defines the surface, not a check |
+
+Not applied, for the record: the implementation reads `S_end` through a discounted view of
+the committed root and judges recent roots at the block's own slot, which is what the
+running chain does; the spec did not have to change to describe it.
+
+## Leg 2: frames base (`dogfood-frames`)
+
+### Prerequisite base
+
+`frames-devnet-0` is an ancestor of `hegota-testnet`, so the branch starts at
+`hegota-testnet` (06d98078b) and needs no merge: the FOCIL prerequisites (EIP-7805 engine
+surface, inclusion-list builder and Profile 1 validator, EIP-8250 keyed nonces, EIP-8272
+recent roots) are already in the tree. The only work is removing the Profile 2 layer.
+
+### Stripping the existing Profile 2 layer
+
+Removed, so the base carries prerequisites only (commit `e7fcab06e`):
+
+- `crates/blockchain/focil_profile2.rs` and `test/tests/blockchain/focil_profile2_tests.rs`
+- from `focil_eligibility.rs`: `VopsProfile`, `classify`, `is_profile_2_candidate`,
+  `profile_2_payer`, `evaluation_index`, `FillOutcome`, `fill_il_budget`, the VERIFY budget
+  constants and cost functions. Kept: `SenderCode`, `classify_sender_code`, `fee_valid`,
+  which the Profile 1 validator uses for the EIP-3607 sender gate and the fee gate.
+- from `inclusion_list_validator.rs`: `Profile2Eligibility`, `IlProfile2Evaluator`,
+  `IlCheckReport`, `check_with_profile_2`. `check` is now the whole Profile 1 pass and
+  short-circuits on the first appendable omission. A transaction outside the four Profile 1
+  types (legacy, EIP-2930, EIP-1559, EIP-7702) is excused, which covers blob carriers and
+  frame transactions.
+- from the engine handler and `add_block_pipeline_with_il`: the evaluator construction and
+  the two `focil::profile2` log loops; both call `check` directly.
+- the observer's `FocilVopsSurface`, `CodeBodyBudget`, `Profile2Replay`, the two violations
+  they raise, the surface branches in the `SLOAD` and `SSTORE` hooks and the per-frame code
+  charge; the `profile_2` parameter and `code_budget` field on the VM and backend wrappers
+- the judgment-slot test in `focil_tests.rs` (`check_recent_root_frame_at_root` judged at
+  the block's own slot); the method itself stays, as the EIP-8272 seam admission uses
+- the two pointers into the removed code in `docs/eip-8272.md`, and the five operations
+  documents that describe the implementation
+
+Kept and not neutral: `docs/hegota-testnet.md`, `docs/hegota-testnet-joining.md` and
+`docs/hegota-testnet-prs.md` describe the chain's rule set, including the EIP-8369
+parameters (`AA_VOPS_SLOT_COUNT = 4`, the budgets, the two-endpoint index rule). They are
+the joiner's operations manual and stay, but the implementing agent is told not to read them.
+
+Pre-existing on `hegota-testnet`, not touched: an unused `FrameTransaction` import in
+`crates/networking/rpc/types/receipt.rs` tests, two unused helpers in
+`test/tests/levm/eip8141_tests.rs`, and a `redundant_clone` clippy error in
+`crates/common/types/transaction.rs` tests. CI's `lint-l1` lints only libs and bins, which
+is why they survive there.
+
+### The base as a joiner (2026-09-15)
+
+Before any Profile 2 work, the stripped base was run against the live chain from a laptop:
+ethrex release build on the host, `ethpandaops/lighthouse:focil` in docker, genesis sync. It
+synced 11,246 blocks in about six minutes, crossed the Hegotá boundary and imported every
+frame-transaction block, and followed the head with three peers on each layer. Over the
+first 92 blocks both nodes saw live, the beacon node's per-block `Record payload inclusion
+list satisfaction` lines agree with the network's first beacon node, all `satisfied: true`.
+The live chain has recorded no `satisfied: false` block in its first 11,655 records, so
+agreement on the live chain alone cannot distinguish an implementation that judges frame
+omissions from one that excuses them; that distinction has to come from the tests, or from
+a deliberately omitting builder.
 
 ### Spec feedback
 
-(entries added as implementation proceeds)
+(entries added as the leg 2 implementation proceeds, against the revised text)
+
+## Operator documentation, not spec (`docs/hegota-testnet-joining.md`)
+
+Once the chain is older than the weak-subjectivity period (256 epochs, 8,192 slots, about
+13.6 hours at 6 seconds per slot), the documented genesis sync fails at startup:
+`Failed to build beacon chain: The current head state is outside the weak subjectivity
+period`, and the beacon node exits. `--allow-insecure-genesis-sync` alone is no longer
+enough; Lighthouse also needs `--ignore-ws-check`. The "Starting a node" section was
+written while the chain was younger than that and should say so. Found on 2026-09-15 at
+slot about 11,700 with `ethpandaops/lighthouse:focil` (v8.1.3).
 
 ## Cross-implementation agreement
 

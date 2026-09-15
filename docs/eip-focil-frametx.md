@@ -7,7 +7,7 @@ status: Draft
 type: Standards Track
 category: Core
 created: 2026-08-07
-requires: 1559, 2718, 2930, 3607, 4844, 7702, 7805, 7843, 8141, 8250, 8272
+requires: 161, 1559, 2718, 2930, 3607, 4844, 7702, 7805, 7843, 8037, 8141, 8250, 8272
 ---
 
 ## Abstract
@@ -32,7 +32,7 @@ A frame transaction does not have a nonce and a balance in that sense. Its sende
 
 Where EIP-8369 says a Profile 2 omission is judged at an index the builder claims, this EIP judges it at the two fixed endpoints of the payload instead. That is stronger, because the builder can no longer pick the point at which the transaction looks invalid. It is cheaper, because both states already exist in the evaluator's memory. And it needs no new field anywhere, because there is nothing to claim. The [Rationale](#rationale) gives the argument in full.
 
-Everything in this document has been implemented and run on a public test network. Where the text names a constant, a rule, or an ordering, it is the one that is running, and the [Test Cases](#test-cases) are the ones the implementation is checked against.
+Everything in this document has been implemented and run on a public test network. Where the text names a constant, a rule, or an ordering, it is the one that is running, and the [Test Cases](#test-cases) are the ones the implementation is checked against. A second implementation was then written from this text alone, by an implementer with no access to the first, and the places where the text failed it are folded into this revision.
 
 ## Specification
 
@@ -54,9 +54,9 @@ This EIP is a delta against two documents. Readers implementing one of them need
 
 ### Terminology
 
-A **listed transaction** appears in an inclusion list from a non-equivocating committee member. An **occurrence** is one appearance of a listed transaction in one inclusion list; the same transaction in several lists has several occurrences.
+For the execution layer, **the inclusion list** of `B` is the `inclusionListTransactions` array delivered with `B` through the Engine API, in the order delivered. The consensus layer aggregates the committee members' lists into that array; how it aggregates and deduplicates them is defined by [EIP-7805](./eip-7805.md) and its consensus specifications, not here, and the execution layer never learns which committee member listed what or where one member's list ends. A **listed transaction** is a transaction that appears in that array. An **occurrence** is one element of the array; a transaction the array names more than once has several occurrences. Every rule below that says "per inclusion list" or "in list order" is defined over that array.
 
-Transaction identity, for presence in `B`, for deduplication across lists, and for budget fill, is the exact [EIP-2718](./eip-2718.md) envelope bytes. A byte-distinct variant does not satisfy the listing.
+Transaction identity, for presence in `B`, for deduplication, and for the budget fill, is the exact [EIP-2718](./eip-2718.md) envelope bytes; a client MAY key by their keccak-256 digest, which is the transaction hash. A byte-distinct variant does not satisfy the listing.
 
 A frame transaction's frames fall into three groups. Its **validation prefix** is the frames EIP-8141 defines as such: the optional deploy frame and the `VERIFY` frames that establish `sender` approval and `payer`. Its **protocol verifier frames** are the optional expiry verifier frame of EIP-8141 and the optional recent-root verifier frame of EIP-8272; both precede the prefix, both are executed, and neither is part of the prefix for shape matching. Every remaining frame is a **body frame**.
 
@@ -64,7 +64,7 @@ A frame transaction's frames fall into three groups. Its **validation prefix** i
 
 | Name | Value |
 | --- | ---: |
-| `FORK_TIMESTAMP` | `TBD` |
+| `FORK_TIMESTAMP` | the activation timestamp of [EIP-8272](./eip-8272.md), unless the chain schedules its own |
 | `AA_VOPS_SLOT_COUNT` | `4` |
 | `MAX_VERIFY_GAS_PER_IL` | `2**20` |
 | `MAX_VERIFY_GAS_PER_TX` | `MAX_VERIFY_GAS_PER_IL` |
@@ -72,6 +72,8 @@ A frame transaction's frames fall into three groups. Its **validation prefix** i
 | `MAX_VALIDATION_CODE_BYTES` | `MAX_VALIDATION_CODE_BODIES * MAX_CODE_SIZE` |
 
 `MAX_CODE_SIZE` is defined by the active fork. `IL_COMMITTEE_SIZE` and `MAX_BYTES_PER_INCLUSION_LIST` are defined by [EIP-7805](./eip-7805.md) and are not used by any rule here.
+
+`FORK_TIMESTAMP` is not left open. A chain that activates the four prerequisite EIPs together, as the test network does, activates this EIP at that same timestamp; a chain that wants a later activation MUST schedule it explicitly. An unset consensus constant is an invitation to diverge.
 
 These are consensus constants. They MUST NOT be read from node-local configuration. In particular a client that also implements EIP-8141's public mempool cap `MAX_VERIFY_GAS` MUST NOT use that value, or any operator-tunable override of it, on this path; the two budgets answer different questions and are permitted to differ.
 
@@ -92,6 +94,8 @@ For legacy and [EIP-2930](./eip-2930.md) transactions, `gas_price` stands in for
 
 `gas_fits` is not part of eligibility at a state and MUST be evaluated once, at the end of the payload, for both profiles.
 
+`gas_fits` is deliberately one-dimensional. `B.gas_used` is one number, while [EIP-8037](./eip-8037.md), which EIP-8141 requires, admits a frame transaction when its execution reservation and its state reservation each fit their own dimension. Judging the sum against the one remaining budget excuses more omissions than the per-dimension rule would, never fewer, which is the direction every ambiguity in this document resolves toward.
+
 ### Evaluation states
 
 ```text
@@ -99,7 +103,9 @@ S_start = the state B executes from
 S_end   = the state after B's last transaction, before B's end-of-block system operations
 ```
 
-`S_end` is the state [EIP-7805](./eip-7805.md) already specifies. `S_start` is `P`'s post-state. `B`'s pre-execution system operations write only the storage of system contracts, which lies outside the [validation surface](#validation-surface), so a Profile 2 replay cannot observe whether they have been applied; an evaluator MAY apply them or MAY read `P`'s post-state directly, and MUST reach the same verdict either way.
+`S_end` is the state [EIP-7805](./eip-7805.md) already specifies. It is not a state a client holds once `B` is imported: the committed post-state root lies after `B`'s withdrawals, which credit arbitrary accounts. An evaluator that reads `S_end` through the committed post-state MUST discount the block's withdrawal credits from each recipient's balance. Withdrawals credit balance and nothing else, so the discounted view is exact, with one consequence: an account whose discounted balance is zero, whose nonce is zero and whose code is empty was created by the credit, is empty under [EIP-161](./eip-161.md), and MUST be treated as nonexistent, as EIP-161 already requires of an empty account.
+
+`S_start` is `P`'s post-state. From the block after activation onward, `B`'s pre-execution system operations write only the storage of system contracts, which lies outside the [validation surface](#validation-surface), so a Profile 2 replay cannot observe whether they have been applied; an evaluator MAY apply them or MAY read `P`'s post-state directly, and MUST reach the same verdict either way. At the activation block of [EIP-8272](./eip-8272.md) those operations also install `RECENT_ROOT_CODE`, so at that block's `S_start` eligibility condition 3 fails for every transaction leading with a recent-root verifier frame; no root can be committed before activation, so the verdict is the one `S_end` reaches.
 
 Both states are evaluated under `B`'s block context: `B.base_fee_per_gas`, `B.timestamp`, `B.gas_limit`, `B`'s chain id, and `B`'s [EIP-7843](./eip-7843.md) `slotNumber` as `current_slot`. Each endpoint asks whether the transaction could have been included in this block, so the state differs between them and nothing else does.
 
@@ -122,7 +128,7 @@ Profile 1 candidates are judged at `S_end` only, exactly as EIP-7805 specifies, 
 
 Candidacy is decided from the transaction bytes alone, with no state access. A listed transaction is a Profile 2 candidate if all of the following are true:
 
-1. it is a statically valid [EIP-8141](./eip-8141.md) frame transaction;
+1. it is a statically valid [EIP-8141](./eip-8141.md) frame transaction whose `chain_id` matches the chain;
 2. `blob_versioned_hashes` is empty;
 3. disregarding protocol verifier frames for shape matching, the modes, flags, and targets of its validation prefix match one of `self_verify`, `deploy | self_verify`, `only_verify | pay`, or `deploy | only_verify | pay`;
 4. its protocol verifier frames, if present, are in the positions EIP-8141 and EIP-8272 require: an expiry verifier frame first, a recent-root verifier frame immediately after it or first in its absence, and at most one of each;
@@ -132,13 +138,22 @@ Candidacy is decided from the transaction bytes alone, with no state access. A l
 8. `verify_budget_cost(tx) <= MAX_VERIFY_GAS_PER_TX`.
 
 ```python
-def verify_budget_cost(tx):
-    return (signature_verification_cost(tx)
-            + sum(f.limits.execution for f in validation_prefix(tx))
+def prefix_and_verifier_frame_cost(tx):
+    # Decoding and shape only. None when the transaction is not statically
+    # valid or its validation prefix matches none of the four admitted shapes:
+    # such an occurrence is unpriceable and the budget fill ignores it.
+    if not statically_valid(tx) or shape_of(validation_prefix(tx)) is None:
+        return None
+    return (sum(f.limits.execution for f in validation_prefix(tx))
             + sum(f.limits.execution for f in protocol_verifier_frames(tx)))
+
+def verify_budget_cost(tx):
+    return signature_verification_cost(tx) + prefix_and_verifier_frame_cost(tx)
 ```
 
-`signature_verification_cost` is the intrinsic cost EIP-8141 assigns to validating `tx.signatures`. Protocol verifier frames are disregarded only by condition 3. Their declared gas counts, because replay executes them; a client that builds a prefix-frame list with those frames filtered out for shape matching MUST add their gas back before pricing. This is the same sum EIP-8141 rule 6 and EIP-8272 require for public mempool admission, and the two MUST agree, or a transaction the mempool admitted at one price is charged another by the fill.
+`signature_verification_cost` is the intrinsic cost EIP-8141 assigns to validating `tx.signatures`. Protocol verifier frames are disregarded only by condition 3. Their declared gas counts, because replay executes them; a client that builds a prefix-frame list with those frames filtered out for shape matching MUST add their gas back before pricing. This is the sum [EIP-8272](./eip-8272.md) requires for public mempool admission. EIP-8141 rule 6 sums "across the validation prefix" and does not name the expiry verifier frame, so a mempool reading it literally charges less than this fill for a transaction carrying one. The fill's sum is fixed here and is consensus; the mempool's is local policy this EIP has no authority over. It SHOULD be brought to agree, so that a transaction admitted at one price is not charged another by the fill, and EIP-8141 rule 6 SHOULD be clarified to name the expiry frame.
+
+Condition 5, condition 7, and the target half of condition 3 for the `self_verify` and `only_verify` frames are already implied by condition 1: EIP-8141's static constraints reject `ATOMIC_BATCH_FLAG` on any frame followed by another, reject undefined modes, and require `APPROVE_EXECUTION` frames to target the sender. They are stated so that a later relaxation of those constraints cannot widen Profile 2 by default, not because an implementation needs a code path for them; an implementer will find that none of the three is reachable past condition 1.
 
 Condition 7 admits the modes EIP-8141 defines and no others. A future EIP that adds a frame mode settling after the validation prefix, whose failure could invalidate a transaction that replayed cleanly, is outside condition 7 until an extension to this EIP admits it explicitly. Profile 2 replay never observes such a frame, so admitting one by default would make an unenforceable omission look enforceable.
 
@@ -153,7 +168,7 @@ A Profile 2 candidate is eligible at a state `S` if all of the following are tru
 5. the protocol verifier frames and the validation prefix execute to completion against `S` under [Replay semantics](#replay-semantics), stay within the [validation surface](#validation-surface) and the [code bound](#code-bound), and set `payer` through `APPROVE_PAYMENT` (`0x1`) or `APPROVE_EXECUTION_AND_PAYMENT` (`0x3`);
 6. a deploy frame, if present, is the first frame after the protocol verifier frames, installs code or an [EIP-7702](./eip-7702.md) delegation indicator at `sender`, and touches only storage inside the surface.
 
-Conditions 2, 3, and 4 are decided before any frame executes and are conditions of eligibility, not outcomes of replay. They are cheap, they need no EVM, and evaluating them first bounds the work a malformed transaction can cause. Replaying the validation prefix without applying them first reports invalid transactions as includable, because the prefix code has no reason to re-check what the protocol checks.
+Conditions 2, 3, and 4 are decided before any frame executes and are conditions of eligibility, not outcomes of replay. They are cheap, they need no EVM, and evaluating them first bounds the work a malformed transaction can cause. Their order among themselves is not consensus: an evaluator SHOULD check them before constructing an EVM, in whatever order its existing admission path uses, because the verdict does not depend on that order and only the work does. Replaying the validation prefix without applying them first reports invalid transactions as includable, because the prefix code has no reason to re-check what the protocol checks.
 
 `payer` is `sender` for the `self_verify` shapes and the `pay` frame's EIP-8141 `resolved_target` otherwise; a null `pay` target resolves to `sender`. `payer` MUST be resolved from the prefix shape before the first frame executes, so the surface is known before any read is judged against it.
 
@@ -169,7 +184,7 @@ Replay may read the following state and no other:
 * the [EIP-8272](./eip-8272.md) recent-root entries named by the tuples in the recent-root verifier frame, readable only while that frame executes `RECENT_ROOT_CODE` at the top level, as EIP-8272 already permits for public mempool admission;
 * code and `codeHash` of every account reached during validation, including [EIP-7702](./eip-7702.md) delegation target code.
 
-Any other read makes the transaction ineligible rather than expensive. This covers `keccak256`-derived locations, which is what mappings, proxy slots, and namespaced layouts use. The restriction applies transitively through `CALL`, `DELEGATECALL`, and any other reachable frame, and it applies inside the `pay` frame whether or not the payer is the canonical paymaster: EIP-8141's canonical paymaster exemption is a public mempool rule about trusted shared state, and it does not widen this surface. A canonical paymaster whose `pay` frame reads its own reservation storage is therefore outside Profile 2, exactly as EIP-8369 states.
+Any other read makes the transaction ineligible rather than expensive. This covers `keccak256`-derived locations, which is what mappings, proxy slots, and namespaced layouts use. The owner of a storage read is the account whose storage the executing context reads, not the account whose code runs: a library reached by `DELEGATECALL` reads its caller's storage, which is inside the surface when the caller is `sender` or `payer`, while a contract reached by `CALL`, `STATICCALL`, or `CALLCODE` that reads its own storage reads a third account's, which is outside it. The restriction applies transitively through `CALL`, `DELEGATECALL`, and any other reachable frame, and it applies inside the `pay` frame whether or not the payer is the canonical paymaster: EIP-8141's canonical paymaster exemption is a public mempool rule about trusted shared state, and it does not widen this surface. A canonical paymaster whose `pay` frame reads its own reservation storage is therefore outside Profile 2, exactly as EIP-8369 states.
 
 Writes are restricted to what EIP-8141, EIP-8250, and EIP-8272 permit for the validation prefix, and MUST additionally stay inside the surface.
 
@@ -179,7 +194,9 @@ Replay MUST count each distinct `codeHash` once and sum each distinct code body'
 
 A transaction whose replay would load more than `MAX_VALIDATION_CODE_BODIES` distinct code bodies, or more than `MAX_VALIDATION_CODE_BYTES` in total, is ineligible.
 
-One budget of `MAX_VALIDATION_CODE_BODIES` bodies and `MAX_VALIDATION_CODE_BYTES` bytes is maintained per inclusion list, shared across every replay of that list's occurrences and across both evaluation states. A distinct `codeHash` is charged once, on first load by any replay of that list, and is free to every later replay of the same list. A replay that would exceed the budget does not proceed and its transaction is ineligible for that list. Charges survive the verdict: a replay that loaded bodies and then failed still made every attester read them.
+One budget of `MAX_VALIDATION_CODE_BODIES` bodies and `MAX_VALIDATION_CODE_BYTES` bytes is maintained per inclusion list, shared across every replay of that list's occurrences and across both evaluation states. A distinct `codeHash` is charged once, on first load by any replay of that list, and is free to every later replay of the same list. A replay whose next load would exceed the budget makes its transaction ineligible for that list; no further code is charged for that replay, and an evaluator MAY abort it, since nothing it does afterwards can change the verdict. Charges survive the verdict: a replay that loaded bodies and then failed still made every attester read them.
+
+Because the budget is shared, the verdict for one transaction depends on which replays ran before it. The [Omission check](#omission-check) therefore fixes the order in which replays run.
 
 ### Replay semantics
 
@@ -196,7 +213,7 @@ The only state shared across replays is the per-inclusion-list budgets.
 
 ### Budget fill
 
-Occurrences are admitted per inclusion list, in list order, before deduplication across lists. The evaluator computes this from the inclusion list alone, so every evaluator admits the same set. The debit is in two stages so that a structurally valid transaction with a bad signature pays for the signature check it caused and nothing more.
+Occurrences are admitted over the inclusion list as delivered, in list order, before any deduplication, so every occurrence is metered even when the same transaction appears more than once. The evaluator computes this from the inclusion list alone, so every evaluator admits the same set. The debit is in two stages so that a structurally valid transaction with a bad signature pays for the signature check it caused and nothing more.
 
 ```python
 def admitted(il):
@@ -234,15 +251,15 @@ def omission_unjustified(T, B):
     if is_profile_1_candidate(T):
         return eligible_profile_1(T, S_end)
     if is_profile_2_candidate(T) and any_occurrence_admitted(T):
-        return eligible_profile_2(T, S_start) or eligible_profile_2(T, S_end)
+        return eligible_profile_2(T, S_end) or eligible_profile_2(T, S_start)
     return False
 ```
 
 If any listed transaction's omission is unjustified, `B` does not satisfy its inclusion lists and attesters MUST NOT vote for it.
 
-An evaluator MAY evaluate `S_end` first and skip `S_start` when the transaction is eligible there, since the result is the same.
+Absent listed transactions are judged in the order of their first occurrence in the inclusion list, once each. For each, the evaluator replays at `S_end` first and then, only if the transaction is not eligible at `S_end`, at `S_start`; the `or` in `omission_unjustified` short-circuits in that order. An eligible replay ends the check for `B`. This order is normative, not an optimisation: the code budget is shared across the list's replays, so a different order, or a replay run when this order skips it, charges a different set of bodies and can change a later verdict, or the same transaction's own verdict at the other state. An evaluator that has found `B` unsatisfied MAY continue replaying to record further omissions; nothing it finds afterwards changes the verdict.
 
-A verdict that cannot be computed is not a verdict. If an evaluator cannot decide eligibility at a state, because the state cannot be opened, a code body matching a `codeHash` is missing, or replay fails for a reason internal to the evaluator, it MUST NOT treat that as ineligibility, and it MUST NOT report the payload unsatisfied on that account alone. It SHOULD record which transactions it could not decide, so that the failure is visible rather than silently excused. An omission is unjustified only when a computed replay found the transaction eligible.
+A verdict that cannot be computed is not a verdict. If an evaluator cannot decide eligibility at a state, because the state cannot be opened, a code body matching a `codeHash` is missing, or replay fails for a reason internal to the evaluator, it MUST NOT treat that as ineligibility, and it MUST NOT report the payload unsatisfied on that account alone. It SHOULD record which transactions it could not decide, so that the failure is visible rather than silently excused; the record is local, a log entry or a metric, since the Engine API carries no field for it and the consensus layer is not meant to see it. An omission is unjustified only when a computed replay found the transaction eligible.
 
 ### Transactions outside enforcement
 
@@ -262,7 +279,7 @@ For public mempool admission clients apply EIP-8141's storage rule, which admits
 
 Includers SHOULD simulate a candidate's validation prefix before listing it. This is local policy and does not affect enforceability.
 
-Builders MUST include every listed transaction whose omission would be unjustified. Builders commit no evaluation index. A builder placing all listed transactions at the front of its payload satisfies the rule for every transaction eligible at `S_start`; this is RECOMMENDED but not required, and EIP-7805's anywhere-in-block property is unchanged.
+Builders MUST include every listed transaction whose omission would be unjustified. Builders commit no evaluation index. A builder that places every listed transaction it can at the front of its payload, and retries the ones it had to skip after the rest of the payload, satisfies the rule for every transaction eligible at either endpoint the builder itself produces. A single pass at the front does not: a listed transaction whose predecessor the builder appends later in the same payload is ineligible at the front and eligible at the end, and its omission is unjustified. The two-pass construction is RECOMMENDED but not required, and EIP-7805's anywhere-in-block property is unchanged.
 
 ### Engine API
 
@@ -270,7 +287,7 @@ No Engine API method, parameter, structure, or version is added. Inclusion lists
 
 Satisfaction is a field, not a status. [EIP-7805](./eip-7805.md) describes an `INCLUSION_LIST_UNSATISFIED` status; the Engine API defines none. `PayloadStatusV2` extends `PayloadStatusV1` with `inclusionListSatisfied`, a `BOOLEAN|null` that is set when the payload is `VALID` and `null` otherwise. An unsatisfied payload is therefore `VALID` with the field `false`, and the consensus layer withholds its vote on the field. Where EIP-7805's summary and the Engine API disagree, the Engine API governs.
 
-Both `engine_newPayloadV6` and `engine_forkchoiceUpdatedV5` report the field, the latter for the payload named by `forkchoiceState.headBlockHash`, from the inclusion list the execution client retained when that payload was `ACCEPTED`. Retention lets the consensus layer re-read a verdict, not request a different one: the retained list is the same list, and this specification fixes the states it is judged at. Execution clients MUST evaluate both states within the call that executes `B`, and MUST report the same verdict from every later call about the same payload.
+Both `engine_newPayloadV6` and `engine_forkchoiceUpdatedV5` report the field, the latter for the payload named by `forkchoiceState.headBlockHash`, from the inclusion list the execution client retained when that payload was `ACCEPTED`. Retention lets the consensus layer re-read a verdict, not request a different one: the retained list is the same list, and this specification fixes the states it is judged at. Execution clients MUST compute the verdict from `B`'s own states, in whichever call imports `B`, and MUST report the same verdict from every later call about the same payload. A payload returned `ACCEPTED` is judged in the call that executes it.
 
 ### Activation
 
@@ -291,7 +308,7 @@ The Profile 2 replay is the same simulation EIP-8141 requires for public mempool
 * The gas sum. Shape matching filters the protocol verifier frames out of the prefix; the budget sums them back in. An implementation that prices the filtered list undercounts by the expiry frame and the recent-root frame, and disagrees with its own mempool.
 * `current_slot`. The mempool judges a recent root against the head slot plus one, the earliest block that could carry the transaction; Profile 2 judges it at `B`'s own `slotNumber`, because the question is whether the root held in this block.
 
-The pre-frame checks (keyed nonces, recent-root tuples, signatures) run before the EVM is constructed, in that order, so that a transaction failing any of them costs no replay. Payer resolution follows, so the surface is fixed before the first opcode. Each evaluation state opens its own EVM over a state root, with `B`'s header as context and `B`'s fork rules.
+The pre-frame checks (keyed nonces, recent-root tuples, signatures) run before the EVM is constructed, so that a transaction failing any of them costs no replay; their order among themselves changes the work, not the verdict. Payer resolution follows, so the surface is fixed before the first opcode. Each evaluation state opens its own EVM over a state root, with `B`'s header as context and `B`'s fork rules.
 
 ### Interaction with EIP-7732
 
@@ -321,7 +338,7 @@ The reference model reconstructs state at an arbitrary index by applying [EIP-79
 
 ### A constant budget
 
-`MAX_VERIFY_GAS_PER_IL = 2**20` is the value EIP-8369 proposed and the value the implementation runs. Across EIP-7805's sixteen committee members it bounds the metered Profile 2 replay at `2**24` gas per slot, roughly a quarter of a 60,000,000 gas block, and it does not move when the gas limit does.
+`MAX_VERIFY_GAS_PER_IL = 2**20` is the value EIP-8369 proposed and the value the implementation runs. The budget is defined over the inclusion list as the execution layer receives it, one array per payload, so it bounds the metered Profile 2 replay at `2**20` gas per slot however many committee members contributed to that array, roughly one sixtieth of a 60,000,000 gas block, and it does not move when the gas limit does. An earlier draft defined the budget per committee member's list and bounded the replay at `2**24`; the Engine API delivers no list boundaries, so that rule was not computable by the execution layer.
 
 A budget derived from the parent's gas limit was considered and set aside. It keeps the committee's share of the block constant as the limit grows, which is attractive, and an earlier draft of this document specified it. But it makes the admitted set depend on a header field, so a client that derives from the wrong block, or from a limit that changed between the list's construction and the payload, admits a different set from one that does not; it changes the budget's meaning with every limit vote; and no measurement yet says whether the attestation deadline scales with the gas limit at all. A constant is the value every evaluator can compute from nothing. Moving to a derivation is a one-line change for a later revision once the full pipeline has been benchmarked.
 
@@ -385,7 +402,7 @@ Each case names a listed transaction absent from `B`. `E` means the omission is 
 | 6 | signature in `tx.signatures` does not verify, structurally valid otherwise | `J`; only the signature half of the budget is debited |
 | 7 | prefix reads storage slot `AA_VOPS_SLOT_COUNT` of `sender` | `J` |
 | 8 | prefix reads a `keccak256`-derived slot of `payer` | `J` |
-| 9 | prefix reads third-account storage reached by `DELEGATECALL` | `J` |
+| 9 | prefix reads a third account's storage through a call into that account; a `DELEGATECALL`ed library reading its caller's slots below `AA_VOPS_SLOT_COUNT` stays inside the surface | `J` |
 | 10 | canonical paymaster `pay` frame reads its reservation storage | `J` |
 | 11 | frame with a mode EIP-8141 does not define | `J` |
 | 12 | non-empty `blob_versioned_hashes`, eligible otherwise | `J` |
@@ -395,7 +412,7 @@ Each case names a listed transaction absent from `B`. `E` means the omission is 
 | 16 | `verify_budget_cost` exceeds `MAX_VERIFY_GAS_PER_TX` only once the recent-root verifier frame's gas is counted | `J` |
 | 17 | second occurrence in a list whose first consumed all of `MAX_VERIFY_GAS_PER_IL` | `J` for the second |
 | 18 | two occurrences at half the list budget each, the first with a bad signature | `E` for the second; the first debits only its signature half |
-| 19 | listed by two committee members, admitted in one list only | `E` |
+| 19 | two occurrences of one transaction in the delivered list, the first admitted, the second not fitting the remaining budget | `E`; one verdict per transaction, every occurrence metered |
 | 20 | a byte-distinct variant is present in `B` | `E` |
 | 21 | `total_gas_limit` exceeds `B.gas_limit - B.gas_used` but not `B.gas_limit`, eligible at both states | `J` |
 | 22 | replay loads a 17th distinct code body | `J` |
@@ -408,13 +425,15 @@ Each case names a listed transaction absent from `B`. `E` means the omission is 
 
 Cases 2 and 3 distinguish this EIP from an end-of-payload rule; case 2 also distinguishes it from a builder-claimed index, which excuses that omission. Case 21 pins the boundary: state validity is judged at two points, block space at one. Cases 15 and 16 pin the budget sum against the shape-matched prefix. Cases 27 and 28 pin that an undecidable state is neither evidence for nor against.
 
+These rows are scenario descriptions, not vectors. The transaction encodings, state seeds and expected budget balances that would make "checked against" mean the same thing on every client are still to be published; until they are, two implementers can build different scenarios from one row, as the first independent implementation did for case 9 before its wording was corrected.
+
 ## Security Considerations
 
 Two endpoints are not a proof. A builder controlling the payload can construct one where a listed transaction fails at both, with an unmet dependency at `S_start` and a drained payer at `S_end`. Only the union over every index is a proof, and it is unaffordable. This EIP claims a better point on the cost and guarantee curve than an end-of-payload rule or a builder-chosen index, not censorship resistance in the strong sense.
 
 A transaction whose payer is shared with other sponsored transactions holds no reservation on that payer's balance. It is protected whenever it is solvent at `S_start`, which the end-of-payload rule does not give it, but a payload draining the payer before `B`'s first transaction defeats both.
 
-Budget fill is griefable. A transaction may consume a list's gas budget while valid and then be invalidated by a cheaper conflicting transaction included earlier in `B`, denying the rest of that list. Includer simulation does not prevent it, since the conflicting transaction need not exist when the list is built. The per-list code budget has the same property. Both are accepted in exchange for a fill every evaluator computes identically from the list alone; a stateful fill would have to be recomputed per state and would reintroduce the ordering problem this EIP removes.
+Budget fill is griefable. A transaction may consume a list's gas budget while valid and then be invalidated by a cheaper conflicting transaction included earlier in `B`, denying the rest of that list. Includer simulation does not prevent it, since the conflicting transaction need not exist when the list is built. The per-list code budget has the same property. Both are accepted in exchange for a fill every evaluator computes identically from the list alone; a stateful fill would have to be recomputed per state and would reintroduce the ordering problem this EIP removes. Because the execution layer sees one list per payload, one committee member's occurrences can consume the budget every other member's transactions needed, and the consensus layer's aggregation order decides which are denied.
 
 Total attester work exceeds the metered budget. Transaction decoding, signature verification of rejected candidates, the pre-frame keyed nonce and recent-root checks, and code loading sit outside `MAX_VERIFY_GAS_PER_IL`; the code bound covers the largest of those. The full path including both replays must be benchmarked against the attestation deadline before activation, since the constants fix the budget's size, not its wall-clock cost.
 
