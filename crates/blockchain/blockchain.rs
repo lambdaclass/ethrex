@@ -1028,7 +1028,9 @@ impl Blockchain {
         let block_has_transactions = !block.body.transactions.is_empty();
 
         let (execution_result, merkleization_result, warmer_duration) = std::thread::scope(
-            |s| -> Result<_, ChainError> {
+            // `s` carries the warmer and trie-prefetch threads, which are rayon-only;
+            // without that feature nothing is spawned into the scope.
+            |#[allow(unused_variables)] s| -> Result<_, ChainError> {
                 #[cfg(feature = "rayon")]
                 let vm_type = vm.vm_type;
                 let cancelled_ref = &cancelled;
