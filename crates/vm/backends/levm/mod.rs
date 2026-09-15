@@ -1,7 +1,10 @@
 pub mod db;
 mod tracing;
 
-use super::{BlockExecutionResult, FrameValidationOutcome, TxGasBreakdown, compute_burned_fees};
+use super::{
+    BlockExecutionResult, FrameValidationOutcome, Profile2Replay, TxGasBreakdown,
+    compute_burned_fees,
+};
 use crate::system_contracts::{
     AMSTERDAM_REQUEST_PREDEPLOYS, BEACON_ROOTS_ADDRESS, BUILDER_DEPOSIT_CONTRACT_ADDRESS,
     BUILDER_EXIT_CONTRACT_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
@@ -60,7 +63,9 @@ use ethrex_levm::memory::Memory;
 use ethrex_levm::timings::{OPCODE_TIMINGS, PRECOMPILES_TIMINGS};
 use ethrex_levm::tracing::LevmCallTracer;
 use ethrex_levm::utils::get_base_fee_per_blob_gas;
-use ethrex_levm::validation_observer::FrameSimViolation;
+use ethrex_levm::validation_observer::{
+    CodeBudget, FrameSimViolation, Profile2Surface, ValidationObserver,
+};
 use ethrex_levm::vm::VMType;
 use ethrex_levm::{
     Environment,
@@ -3327,6 +3332,158 @@ impl LEVM {
             passed: true,
             ..observed
         })
+    }
+
+    /// FOCIL Profile 2 omission replay (FOCIL frame-transaction EIP, "Profile 2
+    /// eligibility" and "Replay semantics"): the EIP-8141 validation-prefix
+    /// simulation run for a different question, with exactly the differences
+    /// that EIP names. The storage rule is the Profile 2 validation surface
+    /// (slots `0..slot_count` of `sender` and `payer`, nothing exempted) in place
+    /// of the mempool's sender-only rule; the per-list `code_budget` bounds the
+    /// code bodies loaded; the canonical paymaster exemption is not granted; and
+    /// there is no operator-tunable gas budget, because the declared frame limits
+    /// already bound the work and candidacy priced them against the consensus
+    /// constant. Everything else, the banned opcodes, the deploy-frame write
+    /// rules, the protocol verifier frame permissions and `APPROVE` semantics, is
+    /// the shared code path.
+    ///
+    /// `block_header` is the judged block `B`: its base fee, timestamp, gas
+    /// limit, chain id and EIP-7843 slot are the replay context at either
+    /// evaluation state, and its fork rules apply. The state itself is whatever
+    /// `db` reads from, which the caller opens at `S_start` or `S_end`. Every
+    /// state change stays in `db`'s cache and is discarded with it, so the caller
+    /// hands over a fresh database per replay.
+    ///
+    /// The pre-frame keyed-nonce, fee and signature checks run in the shared
+    /// preamble before the EVM is constructed; the recent-root tuple check and
+    /// payer resolution are the caller's, since both need only the transaction
+    /// and a state read. `code_budget` comes back charged whatever the verdict.
+    #[allow(clippy::too_many_arguments)]
+    pub fn replay_profile2_validation_prefix(
+        tx: &Transaction,
+        block_header: &BlockHeader,
+        db: &mut GeneralizedDatabase,
+        vm_type: VMType,
+        crypto: &dyn Crypto,
+        prefix: &ethrex_common::types::ValidationPrefix,
+        payer: Address,
+        slot_count: u64,
+        code_budget: &mut CodeBudget,
+    ) -> Result<Profile2Replay, EvmError> {
+        let frame_tx = match tx {
+            Transaction::FrameTransaction(ft) => ft,
+            _ => {
+                return Err(EvmError::Custom(
+                    "replay_profile2_validation_prefix requires a frame transaction".to_string(),
+                ));
+            }
+        };
+        let sender = frame_tx.sender;
+
+        // EIP-8272 grants the recent-root verifier frame its two permissions only
+        // while the predeploy runs RECENT_ROOT_CODE. The caller has already judged
+        // the code and the tuples (eligibility condition 3), so a mismatch here only
+        // leaves the frame permissionless and it fails as an ordinary frame would.
+        let recent_root_frame = prefix.recent_root_index.filter(|_| {
+            db.get_account(RECENT_ROOT_ADDRESS.address)
+                .map(|account| {
+                    account.info.code_hash
+                        == ethrex_common::utils::keccak(RECENT_ROOT_RUNTIME_BYTECODE)
+                })
+                .unwrap_or(false)
+        });
+
+        // A state that cannot be opened is not evidence about the transaction.
+        let env = match Self::setup_env(tx, sender, block_header, db, vm_type) {
+            Ok(env) => env,
+            Err(err) => return Ok(Profile2Replay::Undecided(err.to_string())),
+        };
+        let mut vm = match VM::new(
+            env,
+            db,
+            tx,
+            LevmCallTracer::disabled(),
+            vm_type,
+            crypto,
+            None,
+        ) {
+            Ok(vm) => vm,
+            Err(err) => return Ok(Profile2Replay::Undecided(EvmError::from(err).to_string())),
+        };
+
+        let mut observer = ValidationObserver::new(
+            sender,
+            prefix.deploy_index,
+            ethrex_common::types::frame_tx_expiry_verifier(),
+        );
+        observer.recent_root_verifier_frame = recent_root_frame;
+        observer.recent_root_address = ethrex_common::types::frame_tx_recent_root();
+        observer.profile2 = Some(Profile2Surface {
+            payer,
+            slot_count: U256::from(slot_count),
+        });
+        // The budget is moved into the observer for the replay and handed back
+        // below on every path: charges survive the verdict.
+        observer.code_budget = Some(std::mem::replace(code_budget, CodeBudget::new(0, 0)));
+
+        let sim = vm.run_frame_validation_prefix_with_observer(&prefix.frame_indices, observer);
+        if let Some(charged) = vm.validation_observer.code_budget.take() {
+            *code_budget = charged;
+        }
+
+        let sim = match sim {
+            Ok(sim) => sim,
+            // The preamble refused the transaction: a computed verdict about the
+            // transaction (fee, keyed nonce, signature or static form), not a
+            // failure of the evaluator.
+            Err(VMError::TxValidation(err)) => {
+                return Ok(Profile2Replay::Ineligible(err.to_string()));
+            }
+            Err(err) => return Ok(Profile2Replay::Undecided(EvmError::from(err).to_string())),
+        };
+
+        if let Some(violation) = &vm.validation_observer.violation {
+            return Ok(Profile2Replay::Ineligible(format!("{violation:?}")));
+        }
+        if sim.any_revert {
+            return Ok(Profile2Replay::Ineligible(
+                "validation prefix frame reverted".to_string(),
+            ));
+        }
+        match sim.payer_address {
+            None => {
+                return Ok(Profile2Replay::Ineligible(
+                    "validation prefix did not set payer".to_string(),
+                ));
+            }
+            // APPROVE only succeeds in the frame's resolved target, so the payer
+            // it set is the one candidacy resolved from the prefix shape. Anything
+            // else is a shape the surface was not computed for.
+            Some(set) if set != payer => {
+                return Ok(Profile2Replay::Ineligible(format!(
+                    "payer {set:#x} set by APPROVE differs from the resolved payer {payer:#x}"
+                )));
+            }
+            Some(_) => {}
+        }
+        // Eligibility condition 6: a deploy frame must leave code or a delegation
+        // indicator at `sender`.
+        if prefix.deploy_index.is_some() {
+            let code = match vm.db.get_account_code(sender) {
+                Ok(code) => code,
+                Err(err) => {
+                    return Ok(Profile2Replay::Undecided(VMError::from(err).to_string()));
+                }
+            };
+            if code.is_empty() {
+                return Ok(Profile2Replay::Ineligible(format!(
+                    "{:?}",
+                    FrameSimViolation::DeployInstalledNoCode
+                )));
+            }
+        }
+
+        Ok(Profile2Replay::Eligible)
     }
 
     /// TXPARAM 0x06 max cost for a frame transaction: `max_gas * max_fee_per_gas +

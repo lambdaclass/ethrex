@@ -316,6 +316,32 @@ impl Evm {
         )
     }
 
+    /// FOCIL Profile 2 omission replay of a frame transaction's validation
+    /// prefix at the state this `Evm` reads from, under the block context of
+    /// `header` (the judged block). Wraps
+    /// [`LEVM::replay_profile2_validation_prefix`]; see it for the policy.
+    pub fn replay_profile2_validation_prefix(
+        &mut self,
+        tx: &Transaction,
+        header: &BlockHeader,
+        prefix: &ethrex_common::types::ValidationPrefix,
+        payer: Address,
+        slot_count: u64,
+        code_budget: &mut ethrex_levm::validation_observer::CodeBudget,
+    ) -> Result<Profile2Replay, EvmError> {
+        LEVM::replay_profile2_validation_prefix(
+            tx,
+            header,
+            &mut self.db,
+            self.vm_type,
+            self.crypto.as_ref(),
+            prefix,
+            payer,
+            slot_count,
+            code_budget,
+        )
+    }
+
     pub fn create_access_list(
         &mut self,
         tx: &GenericTransaction,
@@ -379,6 +405,28 @@ pub fn compute_burned_fees(
     base_fee_per_gas
         .saturating_mul(gas_spent)
         .saturating_add(blob_base_fee.saturating_mul(blob_gas_used))
+}
+
+/// The verdict of one FOCIL Profile 2 replay of a frame transaction's
+/// validation prefix at one evaluation state
+/// ([`Evm::replay_profile2_validation_prefix`]). Unlike the mempool's
+/// [`FrameValidationOutcome`] this is a consensus-relevant value: an `Eligible`
+/// verdict at either state makes the transaction's omission unjustified.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Profile2Replay {
+    /// The protocol verifier frames and the validation prefix executed to
+    /// completion against the state, stayed inside the validation surface and
+    /// the code bound, and set `payer`.
+    Eligible,
+    /// The transaction could not have been included at this state: a
+    /// pre-frame check (fee, keyed nonce, signature, static form) refused it,
+    /// a prefix frame reverted, a read left the surface, or the code budget
+    /// was exceeded. Carries the reason for tracing.
+    Ineligible(String),
+    /// A verdict that cannot be computed is not a verdict: the state could not
+    /// be read, a code body was missing, or the evaluator failed internally.
+    /// Neither evidence for nor against eligibility.
+    Undecided(String),
 }
 
 /// Outcome of an EIP-8141 mempool validation-prefix simulation

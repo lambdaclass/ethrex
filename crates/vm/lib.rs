@@ -10,7 +10,8 @@ pub mod backends;
 /// payload builder can enforce it with identical semantics to the validator.
 pub use backends::levm::check_2d_gas_allowance;
 pub use backends::{
-    BlockExecutionResult, Evm, TxGasBreakdown, TxStatus, compute_burned_fees, log_gas_used_mismatch,
+    BlockExecutionResult, Evm, Profile2Replay, TxGasBreakdown, TxStatus, compute_burned_fees,
+    log_gas_used_mismatch,
 };
 pub use db::{DynVmDatabase, VmDatabase};
 pub use errors::EvmError;
@@ -23,6 +24,9 @@ pub use ethrex_levm::utils::intrinsic_gas_dimensions;
 /// EIP-7623/7976/7981 floor gas for a transaction. Re-exported so the mempool
 /// can match the VM's `validate_min_gas_limit` check at admission time.
 pub use ethrex_levm::utils::intrinsic_gas_floor;
+/// FOCIL Profile 2 per-inclusion-list code budget, carried across the omission
+/// replays of one list by the blockchain crate.
+pub use ethrex_levm::validation_observer::CodeBudget;
 pub use ethrex_levm::vm::validate_frame_signatures;
 pub use execution_result::ExecutionResult;
 pub use witness_db::GuestProgramStateWrapper;
