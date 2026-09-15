@@ -1707,6 +1707,7 @@ mod tests {
             first_block_number: 1,
             chain_config: ChainConfig::default(),
             state_nodes: vec![],
+            codes_jumpdests: vec![],
         };
 
         let encoded = encode_witness_for_engine_rpc(witness).unwrap();
