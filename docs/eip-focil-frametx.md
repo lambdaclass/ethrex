@@ -7,7 +7,7 @@ status: Draft
 type: Standards Track
 category: Core
 created: 2026-08-07
-requires: 161, 1559, 2718, 2930, 3607, 4844, 7702, 7805, 7843, 8037, 8141, 8250, 8272
+requires: 161, 1559, 2718, 2930, 3607, 4844, 7702, 7805, 7843, 7954, 8037, 8141, 8250, 8272
 ---
 
 ## Abstract
@@ -90,7 +90,7 @@ def gas_fits(tx, B):
     return tx.total_gas_limit <= B.gas_limit - B.gas_used
 ```
 
-For legacy and [EIP-2930](./eip-2930.md) transactions, `gas_price` stands in for both fee fields. For a frame transaction, `total_gas_limit` is EIP-8141's `max_gas`, the intrinsic cost plus the sum of every frame's `limits.execution` and `limits.state`.
+For legacy and [EIP-2930](./eip-2930.md) transactions, `gas_price` stands in for both fee fields. For a frame transaction, `total_gas_limit` is EIP-8141's `max_gas`: the larger of the transaction's standard gas limit (its intrinsic cost plus the sum of every frame's `limits.execution` and `limits.state`) and its calldata floor gas plus the sum of every frame's `limits.state`. For a transaction whose floor is not binding, that is the standard gas limit; a floor-bound transaction reserves more, and it is the reservation that has to fit.
 
 `gas_fits` is not part of eligibility at a state and MUST be evaluated once, at the end of the payload, for both profiles.
 
