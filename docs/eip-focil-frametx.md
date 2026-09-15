@@ -32,7 +32,7 @@ A frame transaction does not have a nonce and a balance in that sense. Its sende
 
 Where EIP-8369 says a Profile 2 omission is judged at an index the builder claims, this EIP judges it at the two fixed endpoints of the payload instead. That is stronger, because the builder can no longer pick the point at which the transaction looks invalid. It is cheaper, because both states already exist in the evaluator's memory. And it needs no new field anywhere, because there is nothing to claim. The [Rationale](#rationale) gives the argument in full.
 
-Everything in this document has been implemented and run on a public test network. Where the text names a constant, a rule, or an ordering, it is the one that is running, and the [Test Cases](#test-cases) are the ones the implementation is checked against. A second implementation was then written from this text alone, by an implementer with no access to the first, and the places where the text failed it are folded into this revision.
+Everything in this document has been implemented and run on a public test network. Where the text names a constant, a rule, or an ordering, it is the one that is running, and the [Test Cases](#test-cases) are the ones the implementation is checked against.
 
 ## Specification
 
@@ -301,7 +301,7 @@ If `timestamp >= FORK_TIMESTAMP`, clients MUST apply the omission check defined 
 
 ### Implementation notes
 
-These are not additional rules. They record how the one implementation that exists arrived at verdicts every evaluator must reproduce, and where a natural implementation goes wrong.
+These are not additional rules. They record how the existing implementations arrived at verdicts every evaluator must reproduce, and where a natural implementation goes wrong.
 
 The Profile 2 replay is the same simulation EIP-8141 requires for public mempool admission, run with two things attached: the [validation surface](#validation-surface), which replaces the mempool's `sender`-only storage rule for the duration of the replay, and the per-list [code budget](#code-bound), which the mempool does not have. Everything else, the banned opcodes, the deploy-frame write rules, the protocol verifier frame permissions, and `APPROVE` semantics, is shared. The two uses MUST differ in exactly these places:
 
@@ -429,7 +429,7 @@ Cases 2 and 3 distinguish this EIP from an end-of-payload rule; case 2 also dist
 
 Rows 27 and 28 need a state that cannot be opened, which no block on a healthy chain produces; they are checked by driving the omission check with an evaluator that reports the failure, not by building a block. Row 23 is a statement about the code budget (one shared verifier is one body however many transactions load it) and is checked there.
 
-These rows are scenario descriptions, not vectors. The transaction encodings, state seeds and expected budget balances that would make "checked against" mean the same thing on every client are still to be published; until they are, two implementers can build different scenarios from one row, as the first independent implementation did for case 9 before its wording was corrected.
+These rows are scenario descriptions, not vectors. The transaction encodings, state seeds and expected budget balances that would make "checked against" mean the same thing on every client are still to be published; until they are, two implementers can build different scenarios from one row.
 
 ## Security Considerations
 
