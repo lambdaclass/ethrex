@@ -16,9 +16,7 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use ethrex_blockchain::inclusion_list_builder::InclusionListBuilder;
-use ethrex_blockchain::inclusion_list_validator::{
-    InclusionListSatisfactionValidator, StoreIlStateProvider,
-};
+use ethrex_blockchain::inclusion_list_validator::StoreIlStateProvider;
 use ethrex_common::H256;
 use ethrex_common::types::{MAX_BYTES_PER_INCLUSION_LIST, Transaction};
 use ethrex_crypto::NativeCrypto;
@@ -76,14 +74,15 @@ impl RetainedInclusionLists {
 /// clones a transaction list out or moves one in, so it never spans an `await`.
 pub type RetainedInclusionListsHandle = Arc<Mutex<RetainedInclusionLists>>;
 
-/// Runs the EIP-7805 (FOCIL) satisfaction algorithm for `block_hash` against
+/// Runs the inclusion-list satisfaction check for `block_hash` against
 /// `inclusion_list`, reporting whether the block satisfies it.
 ///
-/// An empty inclusion list is trivially satisfied. The algorithm is a pure
-/// state-comparison pass: the validator is seeded from the parent's pre-state,
-/// refreshed from the block's post-state (with same-block withdrawal credits
-/// discounted, since the check point precedes withdrawal processing), and
-/// consulted once — no transaction is re-executed.
+/// An empty inclusion list is trivially satisfied. The verdict itself is
+/// `Blockchain::inclusion_list_satisfaction`: the EIP-7805 nonce-and-balance
+/// check for ordinary transactions and the FOCIL frame-transaction extension
+/// for EIP-8141 frame transactions, over the imported block's committed states.
+/// Because both are fixed by the block, `engine_newPayloadV6` and a later
+/// `engine_forkchoiceUpdatedV5` naming the same payload report the same field.
 pub async fn block_satisfies_inclusion_list(
     context: &RpcApiContext,
     block_hash: H256,
@@ -98,28 +97,6 @@ pub async fn block_satisfies_inclusion_list(
         .get_block_header_by_hash(block_hash)
         .map_err(|e| RpcErr::Internal(e.to_string()))?
         .ok_or_else(|| RpcErr::Internal("block missing for IL satisfaction check".to_string()))?;
-    let parent_header = context
-        .storage
-        .get_block_header_by_hash(header.parent_hash)
-        .map_err(|e| RpcErr::Internal(e.to_string()))?
-        .ok_or_else(|| RpcErr::Internal("parent missing for IL satisfaction check".to_string()))?;
-
-    let pre_state = StoreIlStateProvider {
-        store: &context.storage,
-        state_root: parent_header.state_root,
-    };
-    let post_state = StoreIlStateProvider {
-        store: &context.storage,
-        state_root: header.state_root,
-    };
-    let crypto = NativeCrypto;
-    let mut validator =
-        InclusionListSatisfactionValidator::new(inclusion_list, &pre_state, &crypto)
-            .map_err(|e| RpcErr::Internal(format!("IL validator init failed: {e}")))?;
-    validator
-        .refresh_all_from(&post_state, &crypto)
-        .map_err(|e| RpcErr::Internal(format!("IL validator refresh failed: {e}")))?;
-
     let body = context
         .storage
         .get_block_body_by_hash(block_hash)
@@ -128,28 +105,22 @@ pub async fn block_satisfies_inclusion_list(
         .ok_or_else(|| {
             RpcErr::Internal("block body missing for IL satisfaction check".to_string())
         })?;
-    // The satisfaction check evaluates senders at the post-transactions,
-    // PRE-withdrawals point (EELS `apply_body` order), so the withdrawals'
-    // credits must be discounted from the post-state balances.
-    validator.discount_withdrawals(body.withdrawals.as_deref().unwrap_or_default());
     let block_tx_hashes: HashSet<H256> = body
         .transactions
         .iter()
-        .map(|tx| tx.hash(&crypto))
+        .map(|tx| tx.hash(&NativeCrypto))
         .collect();
-    let gas_left = header.gas_limit.saturating_sub(header.gas_used);
-    let chain_config = context.storage.get_chain_config();
 
-    Ok(validator
-        .check(
-            inclusion_list,
-            &block_tx_hashes,
-            gas_left,
+    let satisfaction = context
+        .blockchain
+        .inclusion_list_satisfaction(
             &header,
-            &chain_config,
-            &crypto,
+            &block_tx_hashes,
+            body.withdrawals.as_deref().unwrap_or_default(),
+            inclusion_list,
         )
-        .is_ok())
+        .map_err(|e| RpcErr::Internal(format!("IL satisfaction check failed: {e}")))?;
+    Ok(satisfaction.is_satisfied())
 }
 
 #[derive(Debug)]

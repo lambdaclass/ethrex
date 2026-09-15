@@ -636,7 +636,33 @@ impl Blockchain {
                 if !inclusion_list.is_empty() {
                     self.apply_inclusion_list_transactions(&mut context, inclusion_list)?;
                 }
-                self.fill_transactions(&mut context)?
+                self.fill_transactions(&mut context)?;
+                // FOCIL frame-transaction EIP, "Includers and builders": a builder
+                // MUST include every listed transaction whose omission would be
+                // unjustified, and omission is judged at both endpoints of the
+                // payload. Front placement covers what is eligible at `S_start`; a
+                // listed transaction the first pass skipped may have become
+                // eligible by the end (a queued nonce whose predecessor the mempool
+                // supplied, a payer funded by a later transaction), so the skipped
+                // entries are retried once, at the end of the payload, where the
+                // omission check judges `S_end`.
+                if !inclusion_list.is_empty() {
+                    let included: std::collections::HashSet<H256> = context
+                        .payload
+                        .body
+                        .transactions
+                        .iter()
+                        .map(|tx| tx.hash(&NativeCrypto))
+                        .collect();
+                    let skipped: Vec<Transaction> = inclusion_list
+                        .iter()
+                        .filter(|tx| !included.contains(&tx.hash(&NativeCrypto)))
+                        .cloned()
+                        .collect();
+                    if !skipped.is_empty() {
+                        self.apply_inclusion_list_transactions(&mut context, &skipped)?;
+                    }
+                }
             }
             Some(transactions) => self.fill_explicit_transactions(&mut context, transactions)?,
         }

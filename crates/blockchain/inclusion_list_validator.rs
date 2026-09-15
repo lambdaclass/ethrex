@@ -156,6 +156,27 @@ impl std::fmt::Display for IlUnsatisfied {
 
 impl std::error::Error for IlUnsatisfied {}
 
+/// The whole inclusion-list verdict for one block: the Profile 1 check of this
+/// module and the Profile 2 check of [`crate::focil_profile2`] combined, as
+/// computed by `Blockchain::inclusion_list_satisfaction` and reported through
+/// `PayloadStatusV2.inclusionListSatisfied`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct IlSatisfaction {
+    /// The first listed transaction whose omission is unjustified, if any. The
+    /// block satisfies its inclusion lists exactly when this is `None`.
+    pub unjustified_omission: Option<H256>,
+    /// Profile 2 transactions whose eligibility could not be decided at a state
+    /// and were excused on that account, with the reason. A verdict that cannot
+    /// be computed is not a verdict; these are recorded, not counted.
+    pub undecided: Vec<(H256, String)>,
+}
+
+impl IlSatisfaction {
+    pub fn is_satisfied(&self) -> bool {
+        self.unjustified_omission.is_none()
+    }
+}
+
 impl InclusionListSatisfactionValidator {
     /// Build the per-sender tracker from the unique senders in `il`. A read
     /// of `Ok(None)` is treated as an empty account (nonce 0, balance 0) per
