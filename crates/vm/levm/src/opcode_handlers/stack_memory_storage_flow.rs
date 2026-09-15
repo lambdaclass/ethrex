@@ -340,6 +340,12 @@ impl OpcodeHandler for OpSStoreHandler {
 
         if needs_state_gas {
             vm.increase_state_gas(vm.state_gas_storage_set)?;
+            // EIP-8141: record which frame paid, so a later frame clearing this
+            // slot refills the payer rather than itself.
+            if let Some(ctx) = vm.frame_tx_context.as_mut() {
+                let owner = ctx.current_frame_index;
+                ctx.outstanding_charge_owners.insert((to, key), owner);
+            }
         }
         // EIP-8037 (Amsterdam+) 0→N→0: the slot was created in this tx (original == 0),
         // dirtied to N (current_value != 0), and now being reset to 0 (value == original == 0).
@@ -403,7 +409,17 @@ impl OpcodeHandler for OpSStoreHandler {
 
         // EIP-8037: credit the state gas refund via clamp-and-spill (after regular gas processing).
         if is_zero_to_n_to_zero_amsterdam {
-            vm.credit_state_gas_refund(vm.state_gas_storage_set)?;
+            // Inside a frame transaction the refill belongs to whichever frame paid
+            // the creation charge, which may be an earlier one whose receipt is
+            // already recorded (EIP-8141 `gas_used.state`).
+            let owner = vm
+                .frame_tx_context
+                .as_mut()
+                .and_then(|ctx| ctx.outstanding_charge_owners.remove(&(to, key)));
+            match owner {
+                Some(owner) => vm.credit_frame_state_gas_refill(owner, vm.state_gas_storage_set)?,
+                None => vm.credit_state_gas_refund(vm.state_gas_storage_set)?,
+            }
         }
 
         if value != current_value {

@@ -158,8 +158,18 @@ pub enum TxValidationError {
         "Transaction gas limit exceeds maximum. Transaction hash: {tx_hash}, transaction gas limit: {tx_gas_limit}"
     )]
     TxMaxGasLimitExceeded { tx_hash: H256, tx_gas_limit: u64 },
-    #[error("Invalid frame transaction: VERIFY frame did not call APPROVE or payer not approved")]
-    InvalidFrameTransaction,
+    /// EIP-8141: the transaction is not includable. Several distinct rules produce this
+    /// verdict, and a node operator reading a log cannot act on "invalid" alone, so the
+    /// reason travels with the error. The payload is chosen from a fixed set of literals
+    /// at the raise site, never user data, so it is safe to log and to return over RPC.
+    #[error("Invalid frame transaction: {0}")]
+    InvalidFrameTransaction(String),
+    /// EIP-8141 static validity: well-formed RLP that breaks a static constraint. The
+    /// rule that failed is carried through for the same reason as above.
+    #[error("Invalid frame transaction format: {0}")]
+    InvalidFrameTransactionFormat(String),
+    #[error("Invalid frame transaction: signature validation failed")]
+    InvalidFrameSignature,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
@@ -253,6 +263,12 @@ pub enum TxResult {
     Revert(VMError),
 }
 
+/// One frame's outcome: `(status, gas_used.execution, gas_used.state, logs)`.
+///
+/// EIP-8141 gives a frame receipt two gas dimensions, so the execution and
+/// state figures travel together from the frame loop to the receipt.
+pub type FrameResult = (u8, u64, u64, Vec<Log>);
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExecutionReport {
     pub result: TxResult,
@@ -275,8 +291,8 @@ pub struct ExecutionReport {
     pub payer_address: Option<Address>,
     /// For frame transactions: per-frame results (status, gas_used, logs).
     /// `status` is a `FRAME_RECEIPT_STATUS_*` code (0 = failure, 1 = success,
-    /// 3 = skipped due to failed atomic batch, per EIP-8141 receipt encoding).
-    pub frame_results: Option<Vec<(u8, u64, Vec<Log>)>>,
+    /// 2 = skipped due to failed atomic batch, per EIP-8141 receipt encoding).
+    pub frame_results: Option<Vec<FrameResult>>,
 }
 
 impl ExecutionReport {

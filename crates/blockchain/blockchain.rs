@@ -55,11 +55,7 @@ pub mod stateless;
 pub mod tracing;
 pub mod vm;
 
-use ::tracing::{error, info, instrument, warn};
-// Every `debug!` call site lives in the rayon warmer path, so the import is
-// unused in any configuration that compiles that path out.
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
-use ::tracing::debug;
+use ::tracing::{debug, error, info, instrument, warn};
 use constants::{AMSTERDAM_MAX_INITCODE_SIZE, MAX_INITCODE_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
@@ -68,8 +64,6 @@ use ethrex_common::constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH, MIN_BASE_FEE_
 use crossbeam::channel::{self as cb, TryRecvError, select};
 // Re-export stateless validation functions for backwards compatibility
 #[cfg(feature = "c-kzg")]
-use ethrex_common::types::EIP4844Transaction;
-#[cfg(feature = "c-kzg")]
 use ethrex_common::types::MAX_BLOB_TX_SIZE;
 use ethrex_common::types::MAX_TX_SIZE;
 use ethrex_common::types::block_access_list::BlockAccessList;
@@ -77,7 +71,8 @@ use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{
     AccountInfo, AccountState, AccountUpdate, BalSynthesisItem, Block, BlockHash, BlockHeader,
-    BlockNumber, Code, Transaction, WrappedEIP4844Transaction, synthesize_bal_updates,
+    BlockNumber, Code, FRAME_TX_MAX_VERIFY_GAS, FrameTransaction, Transaction,
+    WrappedEIP4844Transaction, WrappedFrameTransaction, synthesize_bal_updates,
     validate_block_body,
 };
 use ethrex_common::types::{EIP7702_DELEGATED_CODE_LEN, is_eip7702_delegation};
@@ -106,10 +101,11 @@ use ethrex_vm::backends::CachingDatabase;
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_vm::backends::levm::LEVM;
 use ethrex_vm::backends::levm::db::DatabaseLogger;
+use ethrex_vm::system_contracts::RECENT_ROOT_RUNTIME_BYTECODE;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError, VmDatabase};
 use mempool::{
-    BalanceCheck, FRAME_CANONICAL_PAYMASTER_CODE_HASH, FramePaymasterReservation, Mempool,
-    SenderAdmission, is_canonical_paymaster,
+    BalanceCheck, FRAME_CANONICAL_PAYMASTER_CODE_HASH, FramePaymasterReservation, KeyedConcurrency,
+    Mempool, SenderAdmission, is_canonical_paymaster, keyed_concurrency_verdict,
 };
 use payload::PayloadOrTask;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -305,6 +301,10 @@ impl Drop for ReorgGuard<'_> {
     }
 }
 
+/// Default min-tip floor (wei). Matches geth's mempool `PriceLimit = 1 wei`.
+/// Effectively just rejects zero-tip transactions at admission.
+pub const DEFAULT_MIN_TIP_WEI: u64 = 1;
+
 /// Configuration options for the blockchain.
 #[derive(Debug, Clone)]
 pub struct BlockchainOptions {
@@ -319,10 +319,32 @@ pub struct BlockchainOptions {
     pub max_blobs_per_block: Option<u32>,
     /// If true, computes execution witnesses upon receiving newPayload messages and stores them in local storage
     pub precompute_witnesses: bool,
+    /// If true, transactions submitted via this node's RPC (e.g.
+    /// `eth_sendRawTransaction`) are kept private: they enter the mempool and
+    /// can be included in blocks built locally, but are not propagated to
+    /// peers via `Transactions` / `NewPooledTransactionHashes`. Equivalent to
+    /// reth's `--txpool.no-local-transactions-propagation`.
+    /// P2P-received transactions are unaffected.
+    pub private_mempool: bool,
     /// If true (default), per-block execution caches precompile results between the
     /// warmer thread and the executor. Set to false (via `--no-precompile-cache`) to
     /// disable the cache for benchmarking purposes.
     pub precompile_cache_enabled: bool,
+    /// Minimum priority-fee *cap* (in wei) required for a transaction to be
+    /// admitted into the mempool. Compared against the raw tip cap
+    /// (`max_priority_fee_per_gas` for typed txs, `gas_price` for legacy), NOT
+    /// the base-fee-dependent effective tip — matching geth's `PriceLimit`
+    /// check on `tx.GasTipCap()`. Set to 0 to disable the floor.
+    pub min_tip_wei: u64,
+    /// Minimum fee-field bump (in percent) required to replace a non-blob
+    /// transaction at the same `(sender, nonce)`. Matches the 10%
+    /// default of every peer EL client.
+    pub price_bump_percent: u64,
+    /// Minimum fee-field bump (in percent) required to replace an EIP-4844
+    /// blob transaction at the same `(sender, nonce)`. Matches the 100%
+    /// default of every peer EL client. Blob replacements are deliberately
+    /// expensive because blob sidecars are large to re-propagate.
+    pub blob_price_bump_percent: u64,
     /// Maximum number of *queued* (future/nonce-gapped) transactions a single
     /// sender may hold in the mempool. Executable (contiguous-nonce) txs are NOT
     /// capped — mirroring geth's `AccountQueue` (a hard cap on the future/queued
@@ -363,13 +385,10 @@ pub struct BlockchainOptions {
     /// transactions with a nonce gap relative to the sender's on-chain nonce
     /// are rejected. Setting to 100 disables the check.
     pub gap_admit_occupancy_threshold: u8,
-    /// If true, transactions submitted via this node's RPC (e.g.
-    /// `eth_sendRawTransaction`) are kept private: they enter the mempool and
-    /// can be included in blocks built locally, but are not propagated to
-    /// peers via `Transactions` / `NewPooledTransactionHashes`. Equivalent to
-    /// reth's `--txpool.no-local-transactions-propagation`.
-    /// P2P-received transactions are unaffected.
-    pub private_mempool: bool,
+    /// EIP-8141 §Mempool `MAX_VERIFY_GAS`: the maximum gas this node expends
+    /// validating signatures and simulating a frame transaction's validation
+    /// prefix. Mempool policy (SHOULD), not consensus, so it is operator-tunable.
+    pub max_verify_gas: u64,
 }
 
 impl Default for BlockchainOptions {
@@ -380,7 +399,11 @@ impl Default for BlockchainOptions {
             r#type: BlockchainType::default(),
             max_blobs_per_block: None,
             precompute_witnesses: false,
+            private_mempool: false,
             precompile_cache_enabled: true,
+            min_tip_wei: DEFAULT_MIN_TIP_WEI,
+            price_bump_percent: DEFAULT_PRICE_BUMP_PERCENT,
+            blob_price_bump_percent: DEFAULT_BLOB_PRICE_BUMP_PERCENT,
             max_queued_txs_per_account: DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT,
             bal_parallel_exec_enabled: true,
             bal_prefetch_enabled: true,
@@ -389,15 +412,28 @@ impl Default for BlockchainOptions {
             blob_eager_provider: false,
             max_reorg_depth: None,
             gap_admit_occupancy_threshold: DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD,
-            private_mempool: false,
+            max_verify_gas: DEFAULT_MAX_VERIFY_GAS,
         }
     }
 }
+
+/// Default 10% bump required for non-blob RBF replacements (matches geth
+/// `PriceBump`, reth `default_price_bump`, nethermind `PriceBump`,
+/// erigon `PriceBump`, besu `DEFAULT_PRICE_BUMP`).
+pub const DEFAULT_PRICE_BUMP_PERCENT: u64 = 10;
+/// Default 100% bump required for blob RBF replacements (matches geth
+/// `blobpool.PriceBump`, reth `replace_blob_tx_price_bump`, nethermind
+/// blob comparison, erigon `BlobPriceBump`, besu `DEFAULT_BLOB_PRICE_BUMP`).
+pub const DEFAULT_BLOB_PRICE_BUMP_PERCENT: u64 = 100;
 
 /// Default per-account *queued* (future-nonce) tx cap. Matches geth's
 /// `AccountQueue` default (64) — a hard cap on the future/queued subpool only;
 /// executable txs are uncapped.
 pub const DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT: usize = 64;
+
+/// Default frame-transaction verify-gas budget: the EIP-8141 §Mempool
+/// `MAX_VERIFY_GAS` value.
+pub const DEFAULT_MAX_VERIFY_GAS: u64 = FRAME_TX_MAX_VERIFY_GAS;
 
 #[derive(Debug, Clone)]
 pub struct BatchBlockProcessingFailure {
@@ -534,14 +570,26 @@ impl Blockchain {
         }
     }
 
+    /// Test-permissive `Blockchain` constructor. Mirrors `BlockchainOptions::default`
+    /// but disables admission-policy gates (e.g. the min-tip floor) so that
+    /// unrelated tests don't need to set every mempool option explicitly.
+    ///
+    /// **Do not use in production.** Despite the name, this is not a "sensible
+    /// default" constructor: it deliberately weakens mempool admission. Node
+    /// startup builds its `BlockchainOptions` from the CLI instead (see
+    /// `cmd/ethrex/initializers.rs`). Every current caller is a test harness.
     pub fn default_with_store(store: Store) -> Self {
+        let options = BlockchainOptions {
+            min_tip_wei: 0,
+            ..BlockchainOptions::default()
+        };
         Self {
             storage: store,
             mempool: Mempool::new(MAX_MEMPOOL_SIZE_DEFAULT),
             is_synced: AtomicBool::new(false),
             reorg_in_progress: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
-            options: BlockchainOptions::default(),
+            options,
             merkle_pool: Self::build_merkle_pool(),
             prewarmed: PrewarmedCache::default(),
         }
@@ -3101,9 +3149,12 @@ impl Blockchain {
     /// For the local-RPC path that honors `private_mempool`, use
     /// [`Self::add_local_blob_transaction_to_pool`].
     #[cfg(feature = "c-kzg")]
+    /// Admit a blob-carrying transaction together with its sidecar. Takes any
+    /// `Transaction` that declares blobs, since EIP-4844 and EIP-8141 frame
+    /// transactions both do.
     pub async fn add_blob_transaction_to_pool(
         &self,
-        transaction: EIP4844Transaction,
+        transaction: Transaction,
         blobs_bundle: BlobsBundle,
     ) -> Result<H256, MempoolError> {
         self.add_blob_transaction_to_pool_inner(transaction, blobs_bundle, true)
@@ -3118,7 +3169,7 @@ impl Blockchain {
     #[cfg(feature = "c-kzg")]
     pub async fn add_local_blob_transaction_to_pool(
         &self,
-        transaction: EIP4844Transaction,
+        transaction: Transaction,
         blobs_bundle: BlobsBundle,
     ) -> Result<H256, MempoolError> {
         let broadcast = !self.options.private_mempool;
@@ -3129,15 +3180,17 @@ impl Blockchain {
     #[cfg(feature = "c-kzg")]
     async fn add_blob_transaction_to_pool_inner(
         &self,
-        transaction: EIP4844Transaction,
+        transaction: Transaction,
         blobs_bundle: BlobsBundle,
         broadcast: bool,
     ) -> Result<H256, MempoolError> {
         let fork = self.current_fork().await?;
 
-        let transaction = Transaction::EIP4844Transaction(transaction);
         let hash = transaction.hash(&NativeCrypto);
         if self.mempool.contains_tx(hash)? {
+            if !broadcast {
+                warn!(%hash, "tx already public; --mempool.private cannot retroactively un-broadcast");
+            }
             return Ok(hash);
         }
 
@@ -3156,14 +3209,17 @@ impl Blockchain {
         }
 
         // Validate blobs bundle after checking if it's already added.
-        if let Transaction::EIP4844Transaction(transaction) = &transaction {
-            // eth/72 elided bundles carry commitments + cell proofs but no blobs;
-            // full KZG verification is deferred until cells are fetched via GetCells.
-            if blobs_bundle.blobs.is_empty() && !blobs_bundle.commitments.is_empty() {
-                blobs_bundle.validate_elided(transaction, fork)?;
-            } else {
-                blobs_bundle.validate(transaction, fork)?;
+        // eth/72 elided bundles carry commitments and cell proofs but no blobs, and
+        // full KZG verification is deferred until the cells arrive via GetCells. Only
+        // the 4844 envelope can be elided -- `validate_elided` is typed to it -- so any
+        // other blob-carrying transaction takes the full check against its hashes.
+        let bundle_is_elided =
+            blobs_bundle.blobs.is_empty() && !blobs_bundle.commitments.is_empty();
+        match (&transaction, bundle_is_elided) {
+            (Transaction::EIP4844Transaction(blob_tx), true) => {
+                blobs_bundle.validate_elided(blob_tx, fork)?
             }
+            _ => blobs_bundle.validate(transaction.blob_versioned_hashes_ref(), fork)?,
         }
 
         let sender = transaction.sender(&NativeCrypto)?;
@@ -3172,7 +3228,7 @@ impl Blockchain {
         // per-sender gate inputs, re-checked atomically inside `add_transaction`,
         // which also removes any same-nonce tx being replaced under the same lock
         // (#6938) — so no separate pre-removal here.
-        let (frame_reservation, sender_admission) =
+        let (frame_reservation, sender_admission, keyed_concurrency) =
             self.validate_transaction(&transaction, sender).await?;
 
         // Add blobs bundle before the transaction so that when add_transaction
@@ -3183,13 +3239,14 @@ impl Blockchain {
         // original error (a failing insert means the write lock is poisoned or
         // eviction failed, in which case the cleanup can't do better anyway).
         let mempool_tx = MempoolTransaction::new(transaction, sender);
-        let insert = if broadcast {
+        let inserted = if broadcast {
             self.mempool.add_transaction(
                 hash,
                 sender,
                 mempool_tx,
                 frame_reservation,
                 sender_admission,
+                keyed_concurrency,
             )
         } else {
             self.mempool.add_transaction_no_broadcast(
@@ -3198,9 +3255,10 @@ impl Blockchain {
                 mempool_tx,
                 frame_reservation,
                 sender_admission,
+                keyed_concurrency,
             )
         };
-        if let Err(e) = insert {
+        if let Err(e) = inserted {
             let _ = self.mempool.remove_blobs_bundle(&hash);
             return Err(e);
         }
@@ -3238,8 +3296,11 @@ impl Blockchain {
         transaction: Transaction,
         broadcast: bool,
     ) -> Result<H256, MempoolError> {
-        // Blob transactions should be submitted via add_blob_transaction along with the corresponding blobs bundle
-        if matches!(transaction, Transaction::EIP4844Transaction(_)) {
+        // Blob-carrying transactions must be submitted via
+        // `add_blob_transaction_to_pool` with their sidecar, or the pool would hold
+        // a transaction it cannot serve over p2p or build a block from. This covers
+        // EIP-4844 and blob-carrying EIP-8141 frame transactions alike.
+        if transaction.is_blob_carrying() {
             return Err(MempoolError::BlobTxNoBlobsBundle);
         }
         // Wire size cap: run before sender recovery so oversized txs don't
@@ -3256,6 +3317,9 @@ impl Blockchain {
         }
         let hash = transaction.hash(&NativeCrypto);
         if self.mempool.contains_tx(hash)? {
+            if !broadcast {
+                warn!(%hash, "tx already public; --mempool.private cannot retroactively un-broadcast");
+            }
             return Ok(hash);
         }
         let sender = transaction.sender(&NativeCrypto)?;
@@ -3266,7 +3330,7 @@ impl Blockchain {
         // removal, and the insert are one atomic scope (#6938). For a frame tx
         // the removal happens only after the locked paymaster re-check, so a
         // rejected fee-bump leaves the original pending tx intact.
-        let (frame_reservation, sender_admission) =
+        let (frame_reservation, sender_admission, keyed_concurrency) =
             self.validate_transaction(&transaction, sender).await?;
 
         // Add transaction to storage
@@ -3278,6 +3342,7 @@ impl Blockchain {
                 mempool_tx,
                 frame_reservation,
                 sender_admission,
+                keyed_concurrency,
             )?;
         } else {
             self.mempool.add_transaction_no_broadcast(
@@ -3286,6 +3351,7 @@ impl Blockchain {
                 mempool_tx,
                 frame_reservation,
                 sender_admission,
+                keyed_concurrency,
             )?;
         }
 
@@ -3330,6 +3396,136 @@ impl Blockchain {
             };
             if tx_nonce < state_nonce {
                 self.mempool.remove_transaction(&hash)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// EIP-8272 §Current slot: the header the public mempool simulates a pending
+    /// transaction against. The earliest block that can include it is the one after
+    /// `head`, so `SLOTNUM` during simulation must read `head.slotNumber + 1` while the
+    /// state stays the head's. Left as is when there is no sound slot to bump (no CL
+    /// slot and the EIP-7843 derivation knob inactive), which is also when the
+    /// recent-root policy is skipped.
+    pub fn prospective_header(&self, head: &BlockHeader) -> BlockHeader {
+        let config = self.storage.get_chain_config();
+        if head.slot_number.is_none() && !config.is_derived_slot_activated(head.timestamp) {
+            return head.clone();
+        }
+        let head_slot = config.effective_slot_number(head.slot_number, head.timestamp);
+        BlockHeader {
+            slot_number: Some(head_slot.saturating_add(1)),
+            ..head.clone()
+        }
+    }
+
+    /// EIP-8272 §Public mempool handling (local peer policy — it may over-reject
+    /// but must never under-reject): whether the recent-root verifier frame
+    /// `frame_tx` may lead with would pass in the earliest block that could include
+    /// it, with `header` as the current head. `current_slot` is therefore
+    /// `head.slot_number + 1`: a tuple that is "too new" or expired against that
+    /// slot can never make the transaction valid right now. This prospective "next
+    /// block" question is what admission and revalidation ask; it is one slot too
+    /// high for judging the frame from inside the block at `header`'s own slot,
+    /// which is what `check_recent_root_frame_at_root` is for.
+    ///
+    /// Checked natively rather than by running the frame: the simulation does run
+    /// `RECENT_ROOT_CODE`, but its verdict comes wrapped as "prefix frame reverted",
+    /// while this pass names the tuple and the reason, and it is what the post-block
+    /// revalidation re-runs as the transaction's recent-root dependency check. The
+    /// head slot is the CL-supplied header slot when present, else the
+    /// timestamp-derived slot once the EIP-7843 `derived_slot_time` knob is active,
+    /// matching what block execution derives (`ChainConfig::effective_slot_number`).
+    /// With no sound slot to compare against the policy is skipped (guard, don't
+    /// reject); block execution remains the authoritative check.
+    pub fn check_recent_root_frame(
+        &self,
+        frame_tx: &FrameTransaction,
+        header: &BlockHeader,
+        header_number: BlockNumber,
+    ) -> Result<(), MempoolError> {
+        let config = self.storage.get_chain_config();
+        if frame_tx.recent_root_verifier_index().is_none()
+            || (header.slot_number.is_none() && !config.is_derived_slot_activated(header.timestamp))
+        {
+            return Ok(());
+        }
+        let head_slot = config.effective_slot_number(header.slot_number, header.timestamp);
+        let current_slot = head_slot.saturating_add(1);
+        // Mirrors `Store::get_storage_at(header_number, ...)`: resolve the
+        // canonical block at `header_number` and read its state. Every existing
+        // caller passes `header_number == header.number` for a header it already
+        // holds, so the lookup always finds `header` itself; `header.state_root`
+        // is only a fallback for the unreachable case where it doesn't.
+        let state_root = self
+            .storage
+            .get_block_header(header_number)?
+            .map(|resolved| resolved.state_root)
+            .unwrap_or(header.state_root);
+        self.check_recent_root_frame_at_root(frame_tx, current_slot, state_root)
+    }
+
+    /// EIP-8272 §Public mempool handling: the recent-root rules
+    /// `check_recent_root_frame` applies, taking `current_slot` and `state_root`
+    /// explicitly instead of deriving them from a canonical header. Reading through
+    /// `Store::get_storage_at_root` (rather than `get_storage_at`, which resolves by
+    /// block *number* and so always lands on the canonical block at that height)
+    /// makes this safe for judging a block that is not yet canonical: pass that
+    /// block's own post-execution state root, not its number.
+    ///
+    /// A transaction without a leading recent-root verifier frame passes trivially.
+    /// Otherwise the predeploy must hold `RECENT_ROOT_CODE` at `state_root`, and
+    /// every tuple the frame carries must satisfy the contract's three conditions:
+    ///   1. `slot < current_slot` (a root is only referenceable from the slot
+    ///      after it was written),
+    ///   2. `current_slot - slot <= FRAME_TX_RECENT_ROOT_USABLE_WINDOW` (older
+    ///      entries may be overwritten by ring-buffer aliasing),
+    ///   3. the entry hash is committed under the tuple's storage key.
+    pub fn check_recent_root_frame_at_root(
+        &self,
+        frame_tx: &FrameTransaction,
+        current_slot: u64,
+        state_root: H256,
+    ) -> Result<(), MempoolError> {
+        let tuples = frame_tx.recent_root_tuples();
+        if tuples.is_empty() {
+            return Ok(());
+        }
+        let recent_root_address = ethrex_common::types::frame_tx_recent_root();
+        let code_hash = self
+            .storage
+            .get_account_state_by_root(state_root, recent_root_address)?
+            .map(|state| state.code_hash)
+            .unwrap_or(*EMPTY_KECCAK_HASH);
+        if code_hash != ethrex_common::utils::keccak(RECENT_ROOT_RUNTIME_BYTECODE) {
+            return Err(MempoolError::FrameTxRecentRootCodeMismatch);
+        }
+        for reference in &tuples {
+            if reference.slot >= current_slot {
+                return Err(MempoolError::FrameTxRecentRootTooNew {
+                    reference_slot: reference.slot,
+                    current_slot,
+                });
+            }
+            // `reference.slot < current_slot` holds here, so the subtraction
+            // cannot underflow.
+            if current_slot - reference.slot
+                > ethrex_common::types::FRAME_TX_RECENT_ROOT_USABLE_WINDOW
+            {
+                return Err(MempoolError::FrameTxRecentRootExpired {
+                    reference_slot: reference.slot,
+                    current_slot,
+                });
+            }
+            // The committed entry hash must match what the tuple declares. An
+            // empty or aliased slot reads as 0 and correctly fails the match.
+            let stored = self
+                .storage
+                .get_storage_at_root(state_root, recent_root_address, reference.storage_key())?
+                .unwrap_or_default();
+            let expected = U256::from_big_endian(reference.entry_hash().as_bytes());
+            if stored != expected {
+                return Err(MempoolError::FrameTxRecentRootNotCommitted);
             }
         }
         Ok(())
@@ -3413,6 +3609,21 @@ impl Blockchain {
                 continue;
             }
 
+            // EIP-8272 §Public mempool handling: a slot advance can age a tuple of
+            // the recent-root verifier frame out of the usable window, or a reorg
+            // can leave it uncommitted at the new head. Re-run the admission
+            // conditions and evict what they now reject. A storage-read failure is
+            // transient, so it keeps the tx (never under-reject on a read error
+            // alone).
+            match self.check_recent_root_frame(frame_tx, &block.header, block.header.number) {
+                Ok(()) => {}
+                Err(MempoolError::StoreError(_)) => continue,
+                Err(_) => {
+                    self.mempool.remove_transaction(&hash)?;
+                    continue;
+                }
+            }
+
             // Re-derive the prefix and re-simulate against the new head state.
             let prefix = match frame_tx.validation_prefix() {
                 Ok(prefix) => prefix,
@@ -3431,7 +3642,13 @@ impl Blockchain {
             };
             let evict = match self.new_evm(vm_db.clone()) {
                 Ok(mut vm) => {
-                    match vm.simulate_frame_validation_prefix(&tx, &block.header, &prefix, None) {
+                    match vm.simulate_frame_validation_prefix(
+                        &tx,
+                        &self.prospective_header(&block.header),
+                        &prefix,
+                        Some(FRAME_CANONICAL_PAYMASTER_CODE_HASH),
+                        self.options.max_verify_gas,
+                    ) {
                         // Simulation passed for this tx in isolation. The
                         // per-tx validation prefix only catches a single-tx
                         // drain (its own APPROVE underflows). N txs sharing one
@@ -3444,8 +3661,7 @@ impl Blockchain {
                         // Because evicting a tx decrements
                         // `reserved_pending_cost` (single removal path), the
                         // pass converges to `reserved <= balance` per paymaster
-                        // and never under-evicts. (All paymasters are
-                        // non-canonical today (OQ1); the per-paymaster pending
+                        // and never under-evicts. (The per-paymaster pending
                         // COUNT limit cannot be exceeded by a block, so only
                         // the balance/reserved aggregate needs re-checking.)
                         Ok(outcome) if outcome.passed => {
@@ -3468,17 +3684,44 @@ impl Blockchain {
                             // newcomer passed its own locked availability check).
                             balance < self.mempool.reserved_pending_cost(paymaster)?
                         }
-                        // Simulation passed flag is false: evict.
+                        // Simulation passed flag is false: the prefix was replayed
+                        // against the new head and rejected it. That is a verdict, so
+                        // evict.
                         Ok(_) => true,
-                        // A simulation error means the prefix can no longer be
-                        // validated against the new state: evict (conservative).
-                        Err(_) => true,
+                        // A simulation ERROR is not a verdict. It says the prefix could
+                        // not be replayed — a state read that failed, a head whose state
+                        // is not yet readable — not that the transaction became invalid.
+                        // Evicting on it silently destroys transactions the node already
+                        // told the sender it had accepted, and it does so intermittently,
+                        // because whether the read fails is a matter of timing. Keep the
+                        // transaction, exactly as the three transient-failure branches
+                        // above do (`StoreError`, absent `vm_db`, failed balance read).
+                        // A genuinely invalid transaction is caught by the `passed` flag
+                        // here, by the next block's pass, or at block building.
+                        Err(error) => {
+                            debug!(
+                                %hash, %error,
+                                "frame tx prefix could not be re-simulated after a block;                                  keeping it pending rather than evicting on a non-verdict"
+                            );
+                            false
+                        }
                     }
                 }
-                Err(_) => true,
+                // Same reasoning: failing to build an EVM says nothing about the
+                // transaction.
+                Err(error) => {
+                    debug!(
+                        %hash, %error,
+                        "could not build an EVM to re-simulate a pending frame tx; keeping it"
+                    );
+                    false
+                }
             };
 
             if evict {
+                // Evictions were silent, which is how an intermittent drop went unnoticed
+                // until a devnet run happened to look for the transaction afterwards.
+                debug!(%hash, "evicting pending frame tx: it no longer validates at the new head");
                 self.mempool.remove_transaction(&hash)?;
             }
         }
@@ -3528,7 +3771,14 @@ impl Blockchain {
         &self,
         tx: &Transaction,
         sender: Address,
-    ) -> Result<(Option<FramePaymasterReservation>, Option<SenderAdmission>), MempoolError> {
+    ) -> Result<
+        (
+            Option<FramePaymasterReservation>,
+            Option<SenderAdmission>,
+            KeyedConcurrency,
+        ),
+        MempoolError,
+    > {
         let nonce = tx.nonce();
 
         // On an L1 node, reject L2-only transaction types (FeeToken 0x7d,
@@ -3541,11 +3791,16 @@ impl Blockchain {
         }
 
         if matches!(tx, &Transaction::PrivilegedL2Transaction(_)) {
-            return Ok((None, None));
+            return Ok((None, None, KeyedConcurrency::Denied));
         }
 
         // Frame transactions: skip balance/EOA checks (payer unknown until execution)
         let is_frame_tx = matches!(tx, Transaction::FrameTransaction(_));
+        // EIP-8250: a non-zero-keyed frame tx carries per-key nonces in the
+        // NONCE_MANAGER domain, so the sender's linear account nonce is the
+        // wrong yardstick — the validation-prefix simulation checks each key's
+        // nonce. Skip the linear-nonce guards below for these.
+        let is_keyed_frame_tx = matches!(tx, Transaction::FrameTransaction(ft) if ft.is_keyed());
 
         let header_no = self.storage.get_latest_block_number().await?;
         let header = self
@@ -3554,12 +3809,30 @@ impl Blockchain {
             .ok_or(MempoolError::NoBlockHeaderError)?;
         let config = self.storage.get_chain_config();
 
+        // Every fork gate below must resolve the fork exactly like execution does,
+        // i.e. through the fork ordinal. A per-field activation check
+        // (`is_amsterdam_activated`) is not equivalent: on a chain that schedules a
+        // fork after Amsterdam without setting an explicit `amsterdamTime`, the
+        // ordinal is already `>= Fork::Amsterdam` while the field is unset, so a
+        // field-based gate diverges from execution in whichever direction the gate
+        // points, over-rejecting transactions execution accepts or admitting ones it
+        // rejects.
+        let fork = config.fork(header.timestamp);
+
         // EIP-8141 fork gating: reject frame transactions before Hegota activates.
         // Prevents FrameTransaction (type 0x06) from entering the mempool or being
         // forwarded over P2P on chains where EIP-8141 has not yet activated.
-        if is_frame_tx && !config.is_hegota_activated(header.timestamp) {
+        if is_frame_tx && fork < Fork::Hegota {
             return Err(MempoolError::FrameTxPreFork);
         }
+
+        // EIP-8250: non-zero-keyed frame transactions are admitted. Their nonces
+        // live in the NONCE_MANAGER key domain, so they are tracked per
+        // `(sender, keyset)` in the mempool (disjoint key sets are independent)
+        // and their per-key nonce validity is checked by the validation-prefix
+        // simulation, not the linear account nonce. Static validation still
+        // enforces the key-set shape (key 0 only as the sole key; non-zero keys
+        // strictly increasing, 1..=16).
 
         // EIP-8141 expiry: drop frame txs whose expiry
         // verifier deadline is already behind the current head timestamp.
@@ -3577,6 +3850,9 @@ impl Blockchain {
         // frame txs after simulation + availability pass; `None` for every other
         // tx type and threaded to the locked insert in `add_transaction`.
         let mut frame_reservation: Option<FramePaymasterReservation> = None;
+        // EIP-8250 keyed-concurrency verdict; set once the prefix simulation below
+        // has shown the prefix to be independent of the sender's mutable state.
+        let mut keyed_concurrency = KeyedConcurrency::Denied;
 
         if let Transaction::FrameTransaction(frame_tx) = tx {
             // EIP-8141 static constraints at admission (mirrors the VM check)
@@ -3584,18 +3860,6 @@ impl Blockchain {
             frame_tx
                 .validate_static_constraints()
                 .map_err(MempoolError::InvalidFrameTransaction)?;
-
-            // Interim policy: no sidecar transport exists for frame-tx blobs
-            // yet, so a blob-carrying frame tx could never be included with data
-            // availability. Reject at admission (local policy). Block IMPORT does
-            // account for frame blobs (verify_blob_gas_usage counts them), but the
-            // BUILD path does not yet add them to header.blob_gas_used — so this
-            // admission gate is also what keeps the builder from ever producing
-            // such a block. If this gate is lifted, the builder must route frame
-            // blobs through blob accounting first (see payload.rs apply_transaction).
-            if !frame_tx.blob_versioned_hashes.is_empty() {
-                return Err(MempoolError::FrameTxBlobsUnsupported);
-            }
 
             // Frame `data` size is bounded by the wire-size cap below
             // (MAX_TX_SIZE over encode_canonical_len), which covers the
@@ -3608,9 +3872,7 @@ impl Blockchain {
             // crypto work done by validate_frame_signatures below. (The full
             // validation-prefix simulation runs below over a throwaway head-state
             // VM and is the authoritative gas-budget check.)
-            if frame_tx.signature_verification_cost()
-                > ethrex_common::types::FRAME_TX_MAX_VERIFY_GAS
-            {
+            if frame_tx.signature_verification_cost() > self.options.max_verify_gas {
                 return Err(MempoolError::FrameTxVerifyGasExceeded);
             }
 
@@ -3622,7 +3884,7 @@ impl Blockchain {
                 &frame_tx.signatures,
                 sig_hash,
                 frame_tx.sender,
-                config.fork(header.timestamp),
+                fork,
                 &NativeCrypto,
             ) {
                 return Err(MempoolError::InvalidFrameSignature);
@@ -3634,8 +3896,14 @@ impl Blockchain {
             // sig-cost pre-filter above; both are kept for defence-in-depth.
             let prefix = frame_tx.validation_prefix().map_err(MempoolError::from)?;
             frame_tx
-                .validate_prefix_structure(&prefix)
+                .validate_prefix_structure(&prefix, self.options.max_verify_gas)
                 .map_err(MempoolError::from)?;
+
+            // EIP-8272 §Public mempool handling: the recent-root verifier frame's
+            // tuples are judged against head state before any EVM work, a bounded
+            // number of storage reads behind static validation and signature
+            // authentication. Prospective: `current_slot` is the head's slot plus one.
+            self.check_recent_root_frame(frame_tx, &header, header_no)?;
         }
 
         // Wire size cap for non-blob txs: peer-policy default, not consensus.
@@ -3643,8 +3911,10 @@ impl Blockchain {
         // nethermind `MaxTxSize`. Blob txs are bounded by their own
         // wire-wrapper cap (`MAX_BLOB_TX_SIZE`) in `add_blob_transaction_to_pool`,
         // which sums the core tx and the sidecar to match geth/nethermind/erigon
-        // scope.
-        if !matches!(tx, Transaction::EIP4844Transaction(_)) {
+        // scope. That covers blob-carrying EIP-8141 frame transactions too, which
+        // would otherwise clear the 1 MiB wrapper cap and then be rejected by the
+        // 128 KiB cap meant for blobless transactions.
+        if !tx.is_blob_carrying() {
             let encoded_len = tx.encode_canonical_len();
             if encoded_len > MAX_TX_SIZE {
                 return Err(MempoolError::TxSizeExceeded {
@@ -3656,20 +3926,26 @@ impl Blockchain {
 
         // Check init code size
         // [EIP-7954] - Amsterdam increases the limit
-        let max_initcode_size = if config.is_amsterdam_activated(header.timestamp) {
+        // Gate on the fork ORDINAL to match execution (levm `validate_init_code_size`
+        // uses `fork >= Fork::Amsterdam`): on a chain running a post-Amsterdam fork
+        // without an explicit `amsterdamTime`, a field-based check would apply the
+        // smaller legacy cap and over-reject initcode sizes execution accepts.
+        let max_initcode_size = if config.fork(header.timestamp) >= Fork::Amsterdam {
             AMSTERDAM_MAX_INITCODE_SIZE
         } else {
             MAX_INITCODE_SIZE
         };
-        if config.is_shanghai_activated(header.timestamp)
+        if fork >= Fork::Shanghai
             && tx.is_contract_creation()
             && tx.data().len() > max_initcode_size as usize
         {
             return Err(MempoolError::TxMaxInitCodeSizeError);
         }
 
-        if config.is_osaka_activated(header.timestamp)
-            && !config.is_amsterdam_activated(header.timestamp)
+        // EIP-7825's flat per-tx gas cap applies from Osaka until Amsterdam, which
+        // supersedes it with the EIP-8037 gas model. Mirrors levm's `default_hook`.
+        if fork >= Fork::Osaka
+            && fork < Fork::Amsterdam
             && tx.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP
         {
             // https://eips.ethereum.org/EIPS/eip-7825
@@ -3685,8 +3961,30 @@ impl Blockchain {
         }
 
         // Check priority fee is less or equal than gas fee gap
-        if tx.max_priority_fee().unwrap_or(0) > tx.max_fee_per_gas().unwrap_or(0) {
+        if tx.max_priority_fee().unwrap_or_default() > tx.max_fee_per_gas().unwrap_or_default() {
             return Err(MempoolError::TxTipAboveFeeCapError);
+        }
+
+        // Admission-time minimum tip floor. Compares the raw tip cap
+        // (`max_priority_fee_per_gas` for typed txs, `gas_price` for legacy)
+        // against `min_tip_wei`, matching geth's `PriceLimit` check on
+        // `tx.GasTipCap()` and reth's check on `max_priority_fee_per_gas`.
+        // Using the raw tip cap keeps the admission decision independent of
+        // the current base fee, so a tx that paid the floor at admission
+        // doesn't get reclassified as under-floor when base fee oscillates.
+        // A floor of 0 disables the check.
+        if self.options.min_tip_wei > 0 {
+            // Saturate to u64::MAX on overflow: a U256 tip cap above u64::MAX
+            // wei is astronomically larger than any sane floor, so clamping
+            // (and therefore admitting) is the correct direction here. Do not
+            // reuse this pattern where truncation would flip a comparison.
+            let tip_cap = u64::try_from(tx.gas_tip_cap()).unwrap_or(u64::MAX);
+            if tip_cap < self.options.min_tip_wei {
+                return Err(MempoolError::TipBelowMinimum {
+                    actual: tip_cap,
+                    limit: self.options.min_tip_wei,
+                });
+            }
         }
 
         // EIP-7702 type-4 structural validation, mirroring LEVM's
@@ -3695,7 +3993,7 @@ impl Blockchain {
         // at admission so invalid type-4 txs never enter the pool.
         if let Transaction::EIP7702Transaction(eip7702) = tx {
             // Type-4 txs only exist from Prague onward.
-            if !config.is_prague_activated(header.timestamp) {
+            if fork < Fork::Prague {
                 return Err(MempoolError::Eip7702TxPreFork);
             }
             // An empty authorization_list makes the tx invalid.
@@ -3734,7 +4032,10 @@ impl Blockchain {
         let sender_account_nonce = maybe_sender_acc_info.as_ref().map(|info| info.nonce);
 
         let sender_balance = if let Some(sender_acc_info) = maybe_sender_acc_info {
-            if nonce < sender_acc_info.nonce || nonce == u64::MAX {
+            // A keyed frame tx carries `nonce_seq` in the NONCE_MANAGER domain, so
+            // it is unrelated to the sender's account nonce and cannot be compared
+            // against it (EIP-8250 §Stateful validity checks it per key instead).
+            if !is_keyed_frame_tx && (nonce < sender_acc_info.nonce || nonce == u64::MAX) {
                 return Err(MempoolError::NonceTooLow);
             }
 
@@ -3799,8 +4100,9 @@ impl Blockchain {
             // nonce sanity guard as the existing-account path instead of skipping
             // nonce validation entirely. `nonce < 0` is impossible for a u64, so
             // only the u64::MAX sentinel is rejectable here; a fresh sender's
-            // nonce-0 tx still passes.
-            if nonce == u64::MAX {
+            // nonce-0 tx still passes. A non-zero-keyed frame tx is exempt: its
+            // nonce_seq is a NONCE_MANAGER key value, validated by the prefix sim.
+            if !is_keyed_frame_tx && nonce == u64::MAX {
                 return Err(MempoolError::NonceTooLow);
             }
             // Frame txs skip the cumulative balance check below, so this
@@ -3814,7 +4116,13 @@ impl Blockchain {
 
         // Check the nonce of pendings TXs in the mempool from the same sender
         // If it exists check if the new tx has higher fees
-        let tx_to_replace_hash = self.mempool.find_tx_to_replace(sender, nonce, tx)?;
+        let tx_to_replace_hash = self.mempool.find_tx_to_replace(
+            sender,
+            nonce,
+            tx,
+            self.options.price_bump_percent,
+            self.options.blob_price_bump_percent,
+        )?;
 
         // Cumulative balance check across this sender's pending transactions.
         // Without this, a sender at the per-sender slot cap can have only one
@@ -3866,8 +4174,15 @@ impl Blockchain {
         // error message — taking the read lock twice (a separate check plus a
         // re-read for the message) would allow TOCTOU drift where the reported
         // occupancy differs from the value the gate fired on.
+        // A keyed frame tx (EIP-8250) is exempt: its `nonce_seq` lives in the
+        // NONCE_MANAGER domain, so differing from the sender's account nonce is
+        // the normal case and says nothing about contiguity.
         let threshold = self.options.gap_admit_occupancy_threshold;
-        if tx_to_replace_hash.is_none() && nonce != sender_acc_nonce && threshold < 100 {
+        if !is_keyed_frame_tx
+            && tx_to_replace_hash.is_none()
+            && nonce != sender_acc_nonce
+            && threshold < 100
+        {
             let occupancy_pct = self.mempool.occupancy_pct()?;
             if occupancy_pct >= threshold {
                 let nonce_gap = nonce.saturating_sub(sender_acc_nonce);
@@ -3900,10 +4215,14 @@ impl Blockchain {
             let mut vm = self
                 .new_evm(vm_db)
                 .map_err(|err| MempoolError::FrameTxValidationFailed(err.to_string()))?;
-            // OQ1: no canonical paymaster bytecode is resolvable, so no canonical
-            // code hash is passed (the canonical-pay-frame exemption never fires).
             let outcome = vm
-                .simulate_frame_validation_prefix(tx, &header, &prefix, None)
+                .simulate_frame_validation_prefix(
+                    tx,
+                    &self.prospective_header(&header),
+                    &prefix,
+                    Some(FRAME_CANONICAL_PAYMASTER_CODE_HASH),
+                    self.options.max_verify_gas,
+                )
                 .map_err(|err| MempoolError::FrameTxValidationFailed(err.to_string()))?;
             if !outcome.passed {
                 return Err(MempoolError::FrameTxValidationFailed(
@@ -3913,30 +4232,62 @@ impl Blockchain {
                 ));
             }
 
+            // EIP-8250 keyed-concurrency eligibility. Several keyed transactions
+            // from one sender may only be pending together when this transaction's
+            // validation prefix cannot be invalidated by the sender's other
+            // transactions, which needs all four to hold:
+            //   1. the sender runs real contract code, not an EIP-7702 delegation
+            //      (an EOA's default-code prefix authenticates with the sender's
+            //      own nonce, and a delegation can be retargeted at any time),
+            //   2. no deploy frame, which would install that code mid-flight,
+            //   3. the prefix read no sender storage, so no sibling transaction's
+            //      SSTORE can invalidate it,
+            //   4. the prefix did not read TXPARAM(0x0D), the legacy account nonce
+            //      that a key-0 transaction bumps on inclusion.
+            // Anything else stays under EIP-8141's one-pending-per-sender rule.
+            if is_keyed_frame_tx {
+                let sender_code = self
+                    .storage
+                    .get_code_by_account_address(header_no, sender)
+                    .await?
+                    .map(|code| code.code_bytes())
+                    .unwrap_or_default();
+                let sender_runs_contract_code =
+                    !sender_code.is_empty() && !is_eip7702_delegation(&sender_code);
+                keyed_concurrency = keyed_concurrency_verdict(
+                    sender_runs_contract_code,
+                    prefix.deploy_index.is_some(),
+                    !outcome.touched_sender_slots.is_empty(),
+                    outcome.read_legacy_nonce,
+                );
+            }
+
             // Paymaster availability accounting (EIP-8141). The simulation
             // identified the payer (paymaster) and whether its code matched the
-            // canonical paymaster hash (always false today, OQ1). Reserve the
-            // tx's max cost against the paymaster's head balance, summed with all
-            // other pending reservations for that paymaster so concurrently
-            // pending sponsored txs cannot collectively overdraw it.
-            let max_cost = outcome.max_cost;
+            // canonical paymaster hash. Reserve the tx's max cost against the
+            // paymaster's head balance, summed with all other pending
+            // reservations for that paymaster so concurrently pending sponsored
+            // txs cannot collectively overdraw it.
+            // The RESERVATION ceiling, not the consensus max cost: for a blob-carrying
+            // transaction the two differ, and reserving the smaller one would let a
+            // paymaster be overdrawn by a block whose blob base fee rose after admission.
+            let max_cost = outcome.reservation_ceiling;
             if let Some((paymaster, code_is_canonical)) = outcome.accessed_paymaster {
-                // OQ1: re-derive the canonical flag from the paymaster's head
-                // code so the (currently always-false) determination lives in
-                // one place. The storage read is skipped entirely until the
-                // canonical bytecode hash is pinned upstream (the sentinel),
-                // since `is_canonical_paymaster` can only return false until then.
-                let is_canonical = if FRAME_CANONICAL_PAYMASTER_CODE_HASH == H256::zero() {
-                    code_is_canonical
-                } else {
-                    let paymaster_code = self
-                        .storage
-                        .get_code_by_account_address(header_no, paymaster)
-                        .await?
-                        .map(|code| code.code_bytes())
-                        .unwrap_or_default();
-                    code_is_canonical || is_canonical_paymaster(&paymaster_code)
-                };
+                // Re-derive the canonical flag from the paymaster's head code, so
+                // a target that acquired canonical code after the simulation
+                // observed it is still recognized.
+                let paymaster_code = self
+                    .storage
+                    .get_code_by_account_address(header_no, paymaster)
+                    .await?
+                    .map(|code| code.code_bytes())
+                    .unwrap_or_default();
+                let is_canonical = code_is_canonical || is_canonical_paymaster(&paymaster_code);
+
+                // Self-pay (payer == sender): exempt from the non-canonical COUNT
+                // limit (see FramePaymasterReservation::is_self_pay). The balance
+                // reservation below still applies so the sender can't overdraw.
+                let is_self_pay = paymaster == sender;
 
                 let paymaster_balance = self
                     .storage
@@ -3978,8 +4329,9 @@ impl Blockchain {
                         if available < max_cost {
                             return Err(MempoolError::FrameTxPaymasterUnderfunded);
                         }
-                        if self.mempool.noncanonical_paymaster_pending(paymaster)?
-                            >= ethrex_common::types::FRAME_TX_MAX_PENDING_NONCANONICAL_PAYMASTER
+                        if !is_self_pay
+                            && self.mempool.noncanonical_paymaster_pending(paymaster)?
+                                >= ethrex_common::types::FRAME_TX_MAX_PENDING_NONCANONICAL_PAYMASTER
                         {
                             return Err(MempoolError::FrameTxNonCanonicalPaymasterLimit);
                         }
@@ -3995,6 +4347,7 @@ impl Blockchain {
                     reserved_cost: max_cost,
                     is_canonical,
                     paymaster_balance,
+                    is_self_pay,
                 });
             }
         }
@@ -4005,18 +4358,27 @@ impl Blockchain {
         // above are an unlocked pre-filter (issue #6938). `None` when the sender
         // has no account (only frame txs reach here in that case, and they are
         // not per-sender rate-limited on nonce/balance).
-        let sender_admission = sender_account_nonce.map(|account_nonce| SenderAdmission {
-            account_nonce,
-            queued_max: self.options.max_queued_txs_per_account,
-            gap_threshold: self.options.gap_admit_occupancy_threshold,
-            // Frame txs are not balance-gated (payer unknown until execution).
-            balance_check: (!is_frame_tx).then_some(BalanceCheck {
-                tx_cost,
-                sender_balance,
-            }),
-        });
+        // EIP-8250: a keyed frame tx carries `nonce_seq` in the NONCE_MANAGER
+        // domain, which is not comparable to the sender's account nonce. Every
+        // gate in `SenderAdmission` is keyed on the linear nonce domain (the
+        // balance gate is already skipped for frame txs), so none of them
+        // applies and the guard is omitted entirely.
+        let sender_admission = if is_keyed_frame_tx {
+            None
+        } else {
+            sender_account_nonce.map(|account_nonce| SenderAdmission {
+                account_nonce,
+                queued_max: self.options.max_queued_txs_per_account,
+                gap_threshold: self.options.gap_admit_occupancy_threshold,
+                // Frame txs are not balance-gated (payer unknown until execution).
+                balance_check: (!is_frame_tx).then_some(BalanceCheck {
+                    tx_cost,
+                    sender_balance,
+                }),
+            })
+        };
 
-        Ok((frame_reservation, sender_admission))
+        Ok((frame_reservation, sender_admission, keyed_concurrency))
     }
 
     /// Marks the node's chain as up to date with the current chain
@@ -4039,6 +4401,15 @@ impl Blockchain {
     }
 
     pub fn get_p2p_transaction_by_hash(&self, hash: &H256) -> Result<P2PTransaction, StoreError> {
+        // --mempool.private: never serve private txs over P2P, even if a peer
+        // somehow learned the hash. The spec for `GetPooledTransactions`
+        // explicitly allows skipping unavailable transactions, so we mirror
+        // the "not found" path the caller already handles.
+        if self.mempool.is_private(*hash)? {
+            return Err(StoreError::Custom(format!(
+                "Hash {hash} is private and must not propagate",
+            )));
+        }
         let Some(tx) = self.mempool.get_transaction_by_hash(*hash)? else {
             return Err(StoreError::Custom(format!(
                 "Hash {hash} not found in the mempool",
@@ -4071,9 +4442,24 @@ impl Blockchain {
                 ));
             }
             Transaction::FeeTokenTransaction(itx) => P2PTransaction::FeeTokenTransaction(itx),
-            // Frame transactions (EIP-8141) have no blobs bundle, so no bundle
-            // lookup is needed; they are served on request like other typed txs.
-            Transaction::FrameTransaction(itx) => P2PTransaction::FrameTransaction(itx),
+            // A frame transaction (EIP-8141) carrying blobs is served wrapped with
+            // its sidecar, exactly like an EIP-4844 transaction; one without blobs
+            // is served as the plain payload.
+            Transaction::FrameTransaction(itx) if itx.blob_versioned_hashes.is_empty() => {
+                P2PTransaction::FrameTransaction(itx)
+            }
+            Transaction::FrameTransaction(itx) => {
+                let Some(bundle) = self.mempool.get_blobs_bundle(*hash)? else {
+                    return Err(StoreError::Custom(format!(
+                        "Blob-carrying frame transaction present without its bundle: hash {hash}",
+                    )));
+                };
+                P2PTransaction::FrameTransactionWithBlobs(WrappedFrameTransaction {
+                    tx: itx,
+                    wrapper_version: (bundle.version != 0).then_some(bundle.version),
+                    blobs_bundle: bundle,
+                })
+            }
         };
 
         Ok(result)

@@ -6,13 +6,14 @@ use crate::system_contracts::{
     AMSTERDAM_REQUEST_PREDEPLOYS, BEACON_ROOTS_ADDRESS, BUILDER_DEPOSIT_CONTRACT_ADDRESS,
     BUILDER_EXIT_CONTRACT_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
     EXPIRY_VERIFIER_PREDEPLOY, EXPIRY_VERIFIER_RUNTIME_BYTECODE, HISTORY_STORAGE_ADDRESS,
-    PRAGUE_SYSTEM_CONTRACTS, SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
+    NONCE_MANAGER_PREDEPLOY, NONCE_MANAGER_RUNTIME_BYTECODE, PRAGUE_SYSTEM_CONTRACTS,
+    RECENT_ROOT_ADDRESS, RECENT_ROOT_RUNTIME_BYTECODE, SYSTEM_ADDRESS,
+    WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
 use crate::{EvmError, ExecutionResult};
 use bytes::Bytes;
 use ethrex_common::H256;
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
-use ethrex_common::constants::EMPTY_KECCAK_HASH;
+use ethrex_common::constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH};
 use ethrex_common::types::Code;
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_common::types::TxType;
@@ -31,7 +32,7 @@ use ethrex_common::{
     Address, U256,
     types::{
         AccessList, AccountUpdate, Block, BlockHeader, EIP1559Transaction, Fork, FrameReceipt,
-        GWEI_TO_WEI, GenericTransaction, INITIAL_BASE_FEE, Log, Receipt, Transaction, TxKind,
+        GWEI_TO_WEI, GenericTransaction, INITIAL_BASE_FEE, Receipt, Transaction, TxKind,
         Withdrawal, requests::Requests,
     },
 };
@@ -115,14 +116,15 @@ pub struct LEVM;
 /// execution report's `frame_results`. Returns `None` when the report carries
 /// no frame results.
 fn frame_receipts_from(
-    frame_results: Option<Vec<(u8, u64, Vec<Log>)>>,
+    frame_results: Option<Vec<ethrex_levm::errors::FrameResult>>,
 ) -> Option<Vec<FrameReceipt>> {
     frame_results.map(|results| {
         results
             .into_iter()
-            .map(|(status, gas_used, logs)| FrameReceipt {
+            .map(|(status, gas_used, state_gas_used, logs)| FrameReceipt {
                 status,
                 gas_used,
+                state_gas_used,
                 logs,
             })
             .collect()
@@ -168,7 +170,24 @@ pub fn check_2d_gas_allowance(
     block_gas_used_state: u64,
     block_gas_limit: u64,
 ) -> Result<(), EvmError> {
-    let tx_gas = tx.gas_limit();
+    // A frame transaction declares its two budgets separately, so each dimension
+    // reserves only what can be spent in it: the execution side mirrors the EIP-7825
+    // cap (`intrinsic + Σ limits.execution`, or the calldata floor, whichever binds),
+    // and the state side is the frames' total state budget. Reserving the combined
+    // figure in both dimensions would double-count every frame transaction.
+    let (regular_gas, state_gas) = match tx {
+        Transaction::FrameTransaction(frame_tx) => (
+            frame_tx
+                .mandatory_gas()
+                .saturating_add(frame_tx.data_cost())
+                .saturating_add(frame_tx.total_frame_execution_gas())
+                .max(frame_tx.calldata_floor_total()),
+            frame_tx
+                .total_frame_gas()
+                .saturating_sub(frame_tx.total_frame_execution_gas()),
+        ),
+        _ => (tx.gas_limit(), tx.gas_limit()),
+    };
     let regular_available = block_gas_limit.saturating_sub(block_gas_used_regular);
     let state_available = block_gas_limit.saturating_sub(block_gas_used_state);
 
@@ -176,7 +195,7 @@ pub fn check_2d_gas_allowance(
     // TX_MAX_GAS_LIMIT. The spec uses the full tx gas with no intrinsic
     // subtraction; intrinsic underfunding is rejected separately in transaction
     // validation, not by this inclusion check.
-    let regular_contrib = tx_gas.min(TX_MAX_GAS_LIMIT_AMSTERDAM);
+    let regular_contrib = regular_gas.min(TX_MAX_GAS_LIMIT_AMSTERDAM);
     if regular_contrib > regular_available {
         return Err(EvmError::Transaction(format!(
             "Gas allowance exceeded: regular dim worst-case {regular_contrib} > \
@@ -186,7 +205,7 @@ pub fn check_2d_gas_allowance(
     }
 
     // State dim: worst-case state contribution = full tx.gas.
-    let state_contrib = tx_gas;
+    let state_contrib = state_gas;
     if state_contrib > state_available {
         return Err(EvmError::Transaction(format!(
             "Gas allowance exceeded: state dim worst-case {state_contrib} > \
@@ -332,7 +351,9 @@ impl LEVM {
                 &report,
             ));
 
-            // EIP-7778: gas_spent (POST-REFUND) for receipt cumulative_gas_used
+            // EIP-7778: gas_spent (POST-REFUND) for receipt cumulative_gas_used.
+            // Frame and ordinary transactions report the same shape: the payer
+            // total across both gas dimensions.
             cumulative_gas_used += report.gas_spent;
 
             // EIP-8037 (Amsterdam+): block_gas_used = max(sum_regular, sum_state)
@@ -589,6 +610,7 @@ impl LEVM {
             if let Some(withdrawals) = &block.body.withdrawals {
                 Self::process_withdrawals(db, withdrawals)?;
             }
+
             // State transitions for merkleizer come from bal_to_account_updates,
             // not from db — no need to call send_state_transitions_tx here.
 
@@ -775,7 +797,9 @@ impl LEVM {
                 tx_since_last_flush += 1;
             }
 
-            // EIP-7778: gas_spent (POST-REFUND) for receipt cumulative_gas_used
+            // EIP-7778: gas_spent (POST-REFUND) for receipt cumulative_gas_used.
+            // Frame and ordinary transactions report the same shape: the payer
+            // total across both gas dimensions.
             cumulative_gas_used += report.gas_spent;
 
             // EIP-8037 (Amsterdam+): block_gas_used = max(sum_regular, sum_state)
@@ -873,6 +897,7 @@ impl LEVM {
         if let Some(withdrawals) = &block.body.withdrawals {
             Self::process_withdrawals(db, withdrawals)?;
         }
+
         LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
 
         // Extract BAL if recording was enabled
@@ -2977,10 +3002,11 @@ impl LEVM {
             coinbase: block_header.coinbase,
             timestamp: block_header.timestamp,
             prev_randao: Some(block_header.prev_randao),
-            slot_number: block_header
-                .slot_number
-                .map(U256::from)
-                .unwrap_or(U256::zero()),
+            // Effective EIP-7843 slot, precomputed once per block on `EVMConfig`
+            // (CL-supplied header slot, else timestamp-derived when the
+            // `derived_slot_time` knob is active, else 0). See
+            // `ChainConfig::effective_slot_number`.
+            slot_number: config.slot_number,
             chain_id: chain_id.into(),
             base_fee_per_gas: block_header.base_fee_per_gas.unwrap_or_default().into(),
             base_blob_fee_per_gas,
@@ -2988,8 +3014,8 @@ impl LEVM {
             block_excess_blob_gas,
             block_blob_gas_used: block_header.blob_gas_used,
             tx_blob_hashes: tx.blob_versioned_hashes(),
-            tx_max_priority_fee_per_gas: tx.max_priority_fee().map(U256::from),
-            tx_max_fee_per_gas: tx.max_fee_per_gas().map(U256::from),
+            tx_max_priority_fee_per_gas: tx.max_priority_fee(),
+            tx_max_fee_per_gas: tx.max_fee_per_gas(),
             tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas(),
             tx_nonce: tx.nonce(),
             block_gas_limit: block_header.gas_limit,
@@ -3097,7 +3123,7 @@ impl LEVM {
         crypto: &dyn Crypto,
         stateless_validator: Option<&dyn StatelessValidator>,
     ) -> Result<ExecutionResult, EvmError> {
-        let mut env = env_from_generic(tx, block_header, db, vm_type)?;
+        let mut env = env_from_generic(tx, block_header, db)?;
 
         // Let the call run with a `gas` above the block's limit, but leave
         // `block_gas_limit` at the block's real value: the GASLIMIT opcode reads it, so
@@ -3123,11 +3149,19 @@ impl LEVM {
     ///   - each verify/pay frame that must APPROVE did (the prefix established a
     ///     payer);
     ///   - the deploy frame (if any) left non-empty code at the sender;
-    ///   - total simulated prefix gas <= MAX_VERIFY_GAS;
+    ///   - total simulated prefix gas <= `max_verify_gas`;
     ///   - no validation-trace rule was violated.
     ///
-    /// `canonical_paymaster_code_hash` is the pinned canonical paymaster code
-    /// hash, when known (always `None` today, OQ1).
+    /// `canonical_paymaster_code_hash` is the pinned canonical paymaster runtime
+    /// code hash. A `pay` frame whose resolved target's code hash matches is
+    /// exempt from the generic validation-trace rules, per EIP-8141: the
+    /// canonical implementation is standardized to be safe for public mempool
+    /// use, so it is admitted by the code-hash match plus a successful
+    /// `APPROVE(APPROVE_PAYMENT)` and the paymaster accounting rules.
+    ///
+    /// `max_verify_gas` is the node's `MAX_VERIFY_GAS` budget; the EIP-8141 spec
+    /// value is `FRAME_TX_MAX_VERIFY_GAS`, but it is mempool policy and therefore
+    /// operator-tunable.
     #[allow(clippy::too_many_arguments)]
     pub fn simulate_frame_validation_prefix(
         tx: &Transaction,
@@ -3136,10 +3170,9 @@ impl LEVM {
         vm_type: VMType,
         crypto: &dyn Crypto,
         prefix: &ethrex_common::types::ValidationPrefix,
-        _canonical_paymaster_code_hash: Option<H256>,
+        canonical_paymaster_code_hash: Option<H256>,
+        max_verify_gas: u64,
     ) -> Result<FrameValidationOutcome, EvmError> {
-        use ethrex_common::types::FRAME_TX_MAX_VERIFY_GAS;
-
         let frame_tx = match tx {
             Transaction::FrameTransaction(ft) => ft,
             _ => {
@@ -3150,7 +3183,38 @@ impl LEVM {
         };
         let sender = frame_tx.sender;
 
+        // Resolve the canonical pay-frame exemption before the VM borrows `db`.
+        // A null `pay` target resolves to `sender`, per EIP-8141.
+        let canonical_pay_frame = match (canonical_paymaster_code_hash, prefix.pay_index) {
+            (Some(canonical), Some(pay_index)) => {
+                let target = frame_tx
+                    .frames
+                    .get(pay_index)
+                    .and_then(|frame| frame.target)
+                    .unwrap_or(sender);
+                let matches = db
+                    .get_account(target)
+                    .map(|account| account.info.code_hash == canonical)
+                    .unwrap_or(false);
+                matches.then_some(pay_index)
+            }
+            _ => None,
+        };
+
+        // EIP-8272: the recent-root verifier frame gets its two permissions only
+        // while the predeploy runs RECENT_ROOT_CODE; admission rejects a mismatch
+        // outright, and the observer simply grants nothing here when it differs.
+        let recent_root_frame = prefix.recent_root_index.filter(|_| {
+            db.get_account(RECENT_ROOT_ADDRESS.address)
+                .map(|account| {
+                    account.info.code_hash
+                        == ethrex_common::utils::keccak(RECENT_ROOT_RUNTIME_BYTECODE)
+                })
+                .unwrap_or(false)
+        });
+
         let env = Self::setup_env(tx, sender, block_header, db, vm_type)?;
+        let blob_base_fee = env.base_blob_fee_per_gas;
         let mut vm = VM::new(
             env,
             db,
@@ -3161,121 +3225,143 @@ impl LEVM {
             None,
         )?;
 
-        // OQ1: no canonical paymaster is resolvable, so the canonical pay-frame
-        // exemption never fires (always `None`).
-        let canonical_pay_frame: Option<usize> = None;
-
         let sim = match vm.run_frame_validation_prefix(
             &prefix.frame_indices,
             prefix.deploy_index,
             canonical_pay_frame,
+            recent_root_frame,
         ) {
             Ok(sim) => sim,
             Err(err) => {
                 // A preamble / VM error means the prefix cannot be validated;
                 // treat it as a (conservative) rejection rather than failing the
-                // whole admission pipeline.
+                // whole admission pipeline. The budget comes back untouched: the
+                // prefix never ran, so it loaded nothing.
                 return Ok(FrameValidationOutcome {
                     passed: false,
                     violation: Some(EvmError::from(err).to_string()),
-                    max_cost: Self::frame_tx_max_cost(frame_tx),
+                    max_cost: Self::frame_tx_max_cost(frame_tx, blob_base_fee),
+                    reservation_ceiling: Self::frame_tx_reservation_ceiling(frame_tx),
                     accessed_paymaster: None,
                     touched_sender_slots: Vec::new(),
+                    read_legacy_nonce: false,
                 });
             }
         };
 
-        let max_cost = Self::frame_tx_max_cost(frame_tx);
+        let reservation_ceiling = Self::frame_tx_reservation_ceiling(frame_tx);
         let touched_sender_slots = vm.validation_observer.touched_sender_slots.clone();
+        let read_legacy_nonce = vm.validation_observer.read_legacy_nonce;
         // The payer established by the prefix is the paymaster (OQ2: the
         // APPROVE-payment address is treated uniformly as "paymaster", including
-        // the self-funded sender). Its canonical flag is always false (OQ1: no
-        // canonical paymaster bytecode is resolvable), which is also why
-        // `_canonical_paymaster_code_hash` is unused. The observer carries no
-        // distinct paymaster, so derive it from the established payer.
-        let accessed_paymaster = sim.payer_address.map(|payer| (payer, false));
+        // the self-funded sender). The observer carries no distinct paymaster, so
+        // derive it from the established payer, and its canonical flag from that
+        // account's runtime code hash.
+        let accessed_paymaster = sim.payer_address.map(|payer| {
+            let is_canonical = canonical_paymaster_code_hash.is_some_and(|canonical| {
+                vm.db
+                    .get_account(payer)
+                    .map(|account| account.info.code_hash == canonical)
+                    .unwrap_or(false)
+            });
+            (payer, is_canonical)
+        });
+
+        // Every outcome below reports the same observations and differs only in
+        // whether it passed and why not. The budget is the state the observer
+        // reached, which the caller carries to the next replay of the same
+        // inclusion list.
+        let max_cost = Self::frame_tx_max_cost(frame_tx, blob_base_fee);
+        let observed = FrameValidationOutcome {
+            passed: false,
+            violation: None,
+            max_cost,
+            reservation_ceiling,
+            accessed_paymaster,
+            touched_sender_slots,
+            read_legacy_nonce,
+        };
+        let rejected = |reason: String| FrameValidationOutcome {
+            violation: Some(reason),
+            ..observed.clone()
+        };
 
         // Assertion: a recorded trace violation fails validation.
         if let Some(violation) = &vm.validation_observer.violation {
-            return Ok(FrameValidationOutcome {
-                passed: false,
-                violation: Some(format!("{violation:?}")),
-                max_cost,
-                accessed_paymaster,
-                touched_sender_slots,
-            });
+            return Ok(rejected(format!("{violation:?}")));
         }
 
         // Assertion: no prefix frame reverted.
         if sim.any_revert {
-            return Ok(FrameValidationOutcome {
-                passed: false,
-                violation: Some("validation prefix frame reverted".to_string()),
-                max_cost,
-                accessed_paymaster,
-                touched_sender_slots,
-            });
+            return Ok(rejected("validation prefix frame reverted".to_string()));
         }
 
         // Assertion: the prefix established a payer (verify/pay frames must
         // APPROVE-payment; otherwise the transaction has no payer).
         if sim.payer_address.is_none() {
-            return Ok(FrameValidationOutcome {
-                passed: false,
-                violation: Some("validation prefix did not establish a payer".to_string()),
-                max_cost,
-                accessed_paymaster,
-                touched_sender_slots,
-            });
+            return Ok(rejected(
+                "validation prefix did not establish a payer".to_string(),
+            ));
         }
 
         // Assertion: a deploy frame must leave non-empty code at the sender.
         if prefix.deploy_index.is_some() {
             let code = vm.db.get_account_code(sender).map_err(VMError::from)?;
             if code.is_empty() {
-                return Ok(FrameValidationOutcome {
-                    passed: false,
-                    violation: Some(format!("{:?}", FrameSimViolation::DeployInstalledNoCode)),
-                    max_cost,
-                    accessed_paymaster,
-                    touched_sender_slots,
-                });
+                return Ok(rejected(format!(
+                    "{:?}",
+                    FrameSimViolation::DeployInstalledNoCode
+                )));
             }
         }
 
         // Assertion: total simulated prefix gas within the verify-gas budget.
-        if sim.total_gas_used > FRAME_TX_MAX_VERIFY_GAS {
-            return Ok(FrameValidationOutcome {
-                passed: false,
-                violation: Some(format!(
-                    "validation prefix gas {} exceeds MAX_VERIFY_GAS {}",
-                    sim.total_gas_used, FRAME_TX_MAX_VERIFY_GAS
-                )),
-                max_cost,
-                accessed_paymaster,
-                touched_sender_slots,
-            });
+        if sim.total_gas_used > max_verify_gas {
+            return Ok(rejected(format!(
+                "validation prefix gas {} exceeds MAX_VERIFY_GAS {}",
+                sim.total_gas_used, max_verify_gas
+            )));
         }
 
         Ok(FrameValidationOutcome {
             passed: true,
-            violation: None,
-            max_cost,
-            accessed_paymaster,
-            touched_sender_slots,
+            ..observed
         })
     }
 
-    /// TXPARAM 0x06 max cost for a frame transaction:
-    /// `max_fee_per_gas * total_gas_limit + len(blob_hashes) * 131072 * max_fee_per_blob_gas`
-    /// (mirrors `load_tx_param` 0x06 in `opcode_handlers/frame_tx.rs`), saturating.
-    fn frame_tx_max_cost(frame_tx: &ethrex_common::types::FrameTransaction) -> U256 {
-        // Intentionally saturating (not checked): the TXPARAM 0x06 consensus handler
-        // uses checked_mul/checked_add and halts on overflow (frame_tx.rs:499-509). Here
-        // we compute a reservation ceiling for the mempool, so saturating to U256::MAX
-        // on overflow is conservative — it just makes the reservation larger, not smaller.
-        let gas_cost = U256::from(frame_tx.max_fee_per_gas)
-            .saturating_mul(U256::from(frame_tx.total_gas_limit()));
+    /// TXPARAM 0x06 max cost for a frame transaction: `max_gas * max_fee_per_gas +
+    /// len(blob_hashes) * GAS_PER_BLOB * blob_base_fee`. Saturating on purpose: this
+    /// is a reservation ceiling, so overflowing to `U256::MAX` is conservative, where
+    /// the consensus TXPARAM handler uses checked math and halts instead.
+    fn frame_tx_max_cost(
+        frame_tx: &ethrex_common::types::FrameTransaction,
+        blob_base_fee: U256,
+    ) -> U256 {
+        frame_tx.max_cost(blob_base_fee)
+    }
+
+    /// Mempool reservation ceiling for a frame transaction:
+    /// `max_gas * max_fee_per_gas + len(blob_hashes) * 131072 * max_fee_per_blob_gas`,
+    /// saturating.
+    ///
+    /// The consensus `max_cost` that APPROVE collects prices blobs at the
+    /// including block's `blob_base_fee` (EIP-8141 §Gas Accounting, TXPARAM 0x06;
+    /// `load_tx_param` 0x06 in `opcode_handlers/frame_tx.rs`). That rate is not
+    /// known at admission — the simulation runs against the current head, while
+    /// execution charges the base fee of whichever later block includes the
+    /// transaction — and the blob base fee moves per block, so pricing the
+    /// reservation at the head's rate could reserve less than the eventual charge.
+    /// `max_fee_per_blob_gas >= blob_base_fee` is an inclusion condition
+    /// (EIP-8141 §Blob handling), so the declared max rate bounds every block that
+    /// can include the transaction and keeps this a true ceiling.
+    ///
+    /// Intentionally saturating (not checked): the TXPARAM 0x06 consensus handler
+    /// uses checked_mul/checked_add and halts on overflow. Saturating to
+    /// `U256::MAX` here only makes the reservation larger, never smaller.
+    fn frame_tx_reservation_ceiling(frame_tx: &ethrex_common::types::FrameTransaction) -> U256 {
+        let gas_cost = frame_tx
+            .max_fee_per_gas
+            .saturating_mul(U256::from(frame_tx.max_gas()));
         let blob_cost = U256::from(frame_tx.blob_versioned_hashes.len())
             .saturating_mul(U256::from(131072u64))
             .saturating_mul(frame_tx.max_fee_per_blob_gas);
@@ -3379,13 +3465,20 @@ impl LEVM {
     /// activation, clients must install..."). Idempotent: writes only when
     /// the existing code differs, so exactly one account update is produced
     /// (at the first Hegota block) and none afterwards.
+    ///
+    /// Only the code is installed. The account's nonce and balance are left
+    /// exactly as they were, so a previously nonexistent account keeps nonce
+    /// zero and any balance it held before the fork survives. That is what the
+    /// EIP specifies ("install the following ... runtime code") and what the
+    /// execution specs do; it differs from the genesis predeploys
+    /// (4788/2935/7002/7251), whose nonce 1 comes from the deployment
+    /// transaction that created them, not from a client-side install. Setting
+    /// nonce 1 here produced a different state root at the fork block from
+    /// every client that follows the spec.
     pub fn install_expiry_verifier_code(
         db: &mut GeneralizedDatabase,
         crypto: &dyn Crypto,
     ) -> Result<(), EvmError> {
-        // Predeploy convention (matches the genesis predeploys 4788/2935/7002/7251).
-        const PREDEPLOY_NONCE: u64 = 1;
-
         let current = db.get_account_code(EXPIRY_VERIFIER_PREDEPLOY.address)?;
         if current.code() == EXPIRY_VERIFIER_RUNTIME_BYTECODE.as_slice() {
             return Ok(());
@@ -3395,18 +3488,114 @@ impl LEVM {
             crypto,
         );
         let code_hash = code.hash;
-        // Record BAL code/nonce changes if recording is active, so a BAL
-        // reconstructor reproduces the same post-state (it takes nonce from
-        // prestate otherwise).
+        // Record the BAL code change if recording is active, so a BAL
+        // reconstructor reproduces the same post-state. There is no nonce change
+        // to record: the nonce is untouched, and the reconstructor carries the
+        // pre-state nonce forward for an account whose only change is its code.
         if let Some(recorder) = db.bal_recorder_mut() {
             recorder.record_code_change(EXPIRY_VERIFIER_PREDEPLOY.address, code.code_bytes());
-            recorder.record_nonce_change(EXPIRY_VERIFIER_PREDEPLOY.address, PREDEPLOY_NONCE);
         }
         let acc = db
             .get_account_mut(EXPIRY_VERIFIER_PREDEPLOY.address)
             .map_err(EvmError::from)?;
         acc.info.code_hash = code_hash;
-        acc.info.nonce = PREDEPLOY_NONCE;
+        db.codes.entry(code_hash).or_insert(code);
+        Ok(())
+    }
+
+    /// Install the EIP-8250 NONCE_MANAGER predeploy at Hegota activation.
+    /// Idempotent: writes only when the existing code differs, so exactly one
+    /// account update is produced (at the first Hegota block) and none after.
+    pub fn install_nonce_manager_code(
+        db: &mut GeneralizedDatabase,
+        crypto: &dyn Crypto,
+    ) -> Result<(), EvmError> {
+        // Predeploy convention (matches the genesis predeploys 4788/2935/7002/7251).
+        const PREDEPLOY_NONCE: u64 = 1;
+
+        let current = db.get_account_code(NONCE_MANAGER_PREDEPLOY.address)?;
+        if current.code() == NONCE_MANAGER_RUNTIME_BYTECODE.as_slice() {
+            return Ok(());
+        }
+        // EIP-8250 activation (spec's 3-case rule). Case 1 (account absent): create
+        // with nonce 1. Case 2 (exists with empty code + empty storage): set the code,
+        // nonce = max(existing_nonce, 1), preserve balance, leave storage empty. Case 3
+        // (pre-existing code/storage) is undefined by the spec — the address is chosen
+        // so it cannot occur — so it is not special-cased; the idempotent guard above
+        // already returns early when our code is already installed. Balance is preserved
+        // because only code_hash and nonce are written; storage is never added here.
+        let existing_nonce = db
+            .get_account(NONCE_MANAGER_PREDEPLOY.address)
+            .map_err(EvmError::from)?
+            .info
+            .nonce;
+        let new_nonce = existing_nonce.max(PREDEPLOY_NONCE);
+        let code = Code::from_bytecode(Bytes::from_static(&NONCE_MANAGER_RUNTIME_BYTECODE), crypto);
+        let code_hash = code.hash;
+        if let Some(recorder) = db.bal_recorder_mut() {
+            recorder.record_code_change(NONCE_MANAGER_PREDEPLOY.address, code.code_bytes());
+            recorder.record_nonce_change(NONCE_MANAGER_PREDEPLOY.address, new_nonce);
+        }
+        let acc = db
+            .get_account_mut(NONCE_MANAGER_PREDEPLOY.address)
+            .map_err(EvmError::from)?;
+        acc.info.code_hash = code_hash;
+        acc.info.nonce = new_nonce;
+        db.codes.entry(code_hash).or_insert(code);
+        Ok(())
+    }
+
+    /// Install the EIP-8272 RECENT_ROOT_ADDRESS predeploy at Hegota activation.
+    /// Idempotent: writes only when the existing code differs, so exactly one
+    /// account update is produced (at the first Hegota block) and none after.
+    pub fn install_recent_root_code(
+        db: &mut GeneralizedDatabase,
+        crypto: &dyn Crypto,
+    ) -> Result<(), EvmError> {
+        // Predeploy convention (matches the genesis predeploys 4788/2935/7002/7251).
+        const PREDEPLOY_NONCE: u64 = 1;
+
+        let current = db.get_account_code(RECENT_ROOT_ADDRESS.address)?;
+        if current.code() == RECENT_ROOT_RUNTIME_BYTECODE.as_slice() {
+            return Ok(());
+        }
+        // EIP-8272 Activation: the address must have empty code and empty storage
+        // in the parent state, and the payload is invalid when it does not. Read
+        // through `store` rather than the account cache, because the storage root
+        // is the only witness that the account holds no slots. Anything reaching
+        // here is either absent (create) or an account whose code is not the
+        // predeploy's, so this is the activation block for the predeploy.
+        let parent_state = db
+            .store
+            .get_account_state(RECENT_ROOT_ADDRESS.address)
+            .map_err(EvmError::from)?;
+        if parent_state.code_hash != *EMPTY_KECCAK_HASH
+            || parent_state.storage_root != *EMPTY_TRIE_HASH
+        {
+            return Err(EvmError::Custom(format!(
+                "EIP-8272: RECENT_ROOT_ADDRESS {:#x} has non-empty code or storage in the parent state",
+                RECENT_ROOT_ADDRESS.address
+            )));
+        }
+        // Balance is preserved because only code_hash and nonce are written: an EOA
+        // may have sent value here before the fork.
+        let existing_nonce = db
+            .get_account(RECENT_ROOT_ADDRESS.address)
+            .map_err(EvmError::from)?
+            .info
+            .nonce;
+        let new_nonce = existing_nonce.max(PREDEPLOY_NONCE);
+        let code = Code::from_bytecode(Bytes::from_static(&RECENT_ROOT_RUNTIME_BYTECODE), crypto);
+        let code_hash = code.hash;
+        if let Some(recorder) = db.bal_recorder_mut() {
+            recorder.record_code_change(RECENT_ROOT_ADDRESS.address, code.code_bytes());
+            recorder.record_nonce_change(RECENT_ROOT_ADDRESS.address, new_nonce);
+        }
+        let acc = db
+            .get_account_mut(RECENT_ROOT_ADDRESS.address)
+            .map_err(EvmError::from)?;
+        acc.info.code_hash = code_hash;
+        acc.info.nonce = new_nonce;
         db.codes.entry(code_hash).or_insert(code);
         Ok(())
     }
@@ -3542,7 +3731,7 @@ impl LEVM {
         vm_type: VMType,
         crypto: &dyn Crypto,
     ) -> Result<(ExecutionResult, AccessList), VMError> {
-        let mut env = env_from_generic(&tx, header, db, vm_type)?;
+        let mut env = env_from_generic(&tx, header, db)?;
 
         adjust_disabled_base_fee(&mut env);
 
@@ -3587,6 +3776,10 @@ impl LEVM {
         // hooked in apply_system_calls for the payload-build path.
         if fork >= Fork::Hegota {
             Self::install_expiry_verifier_code(db, crypto)?;
+            // EIP-8250: the keyed-nonce manager predeploy.
+            Self::install_nonce_manager_code(db, crypto)?;
+            // EIP-8272: the recent-root predeploy.
+            Self::install_recent_root_code(db, crypto)?;
         }
 
         if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
@@ -3798,13 +3991,13 @@ pub fn calculate_gas_price_for_tx(
         fee_per_gas += operator_fee_config.operator_fee_per_gas;
     }
 
-    if fee_per_gas > max_fee_per_gas {
+    if U256::from(fee_per_gas) > max_fee_per_gas {
         return Err(VMError::TxValidation(
             TxValidationError::InsufficientMaxFeePerGas,
         ));
     }
 
-    Ok(min(max_priority_fee + fee_per_gas, max_fee_per_gas).into())
+    Ok(min(max_priority_fee + fee_per_gas, max_fee_per_gas))
 }
 
 /// When basefee tracking is disabled  (ie. env.disable_base_fee = true; env.disable_block_gas_limit = true;)
@@ -3841,7 +4034,6 @@ fn env_from_generic(
     tx: &GenericTransaction,
     header: &BlockHeader,
     db: &GeneralizedDatabase,
-    vm_type: VMType,
 ) -> Result<Environment, VMError> {
     let chain_config = db.store.get_chain_config()?;
     let gas_price =
@@ -3849,24 +4041,16 @@ fn env_from_generic(
     let block_excess_blob_gas = header.excess_blob_gas;
     let config = EVMConfig::new_from_chain_config(&chain_config, header);
 
-    // slot_number: default a missing value to zero exactly like
-    // `setup_env_with_config` (the block-execution env builder) does, rather
-    // than erroring on Amsterdam+. A canonical Amsterdam header always carries
-    // a slot — `validate_prague_header_fields` rejects one that doesn't, the
-    // genesis builder fills in Some(0), and engine_newPayloadV5 requires the
-    // field — so this branch is not reachable on a well-formed chain. It is
-    // defense in depth, and it belongs on the execution side (where a missing
-    // slot would be a consensus fault) rather than in simulation, whose job is
-    // to predict what execution does: a header the executor would happily run
-    // with SLOTNUM reading 0 must not make eth_call fail. That divergence is
-    // reachable if a devnet's fork timestamps are moved so that Amsterdam
-    // retroactively covers already-stored pre-Amsterdam headers.
-    // For L2 chains, slot_number is always 0.
-    let slot_number = if let VMType::L2(_) = vm_type {
-        U256::zero()
-    } else {
-        header.slot_number.map(U256::from).unwrap_or(U256::zero())
-    };
+    // The effective EIP-7843 slot, taken from the same block-invariant value the
+    // block-execution env builder uses (`EVMConfig::new_from_chain_config` ->
+    // `ChainConfig::effective_slot_number`): the CL-supplied header slot when
+    // present, else the timestamp-derived slot once the `derived_slot_time` knob
+    // is active, else 0. Simulation must predict what execution does, so
+    // eth_call / eth_estimateGas / eth_createAccessList read the slot exactly as
+    // a mined block would — and a missing slot yields 0 rather than an error,
+    // since a header the executor would happily run with SLOTNUM reading 0 must
+    // not make eth_call fail.
+    let slot_number = config.slot_number;
 
     Ok(Environment {
         origin: tx.from.0.into(),
@@ -4127,6 +4311,80 @@ mod bal_tests {
         ) -> Result<ethrex_common::types::CodeMetadata, DatabaseError> {
             Ok(ethrex_common::types::CodeMetadata { length: 0 })
         }
+    }
+
+    /// EIP-8141 installs the expiry verifier's *runtime code* at activation and
+    /// nothing else: an account that did not exist keeps nonce zero. The genesis
+    /// predeploys carry nonce 1 because a deployment transaction created them;
+    /// this one is written by the client, and the spec says code only. Getting
+    /// this wrong changes the fork block's state root against every other client.
+    #[test]
+    fn expiry_verifier_install_leaves_a_fresh_account_at_nonce_zero() {
+        let store = MockStore::new();
+        let mut db = GeneralizedDatabase::new(Arc::new(store));
+
+        LEVM::install_expiry_verifier_code(&mut db, &ethrex_crypto::NativeCrypto).unwrap();
+
+        let acc = db.get_account(EXPIRY_VERIFIER_PREDEPLOY.address).unwrap();
+        assert_eq!(acc.info.nonce, 0, "install must not touch the nonce");
+        assert_eq!(acc.info.balance, U256::zero());
+        assert_eq!(
+            db.get_account_code(EXPIRY_VERIFIER_PREDEPLOY.address)
+                .unwrap()
+                .code(),
+            EXPIRY_VERIFIER_RUNTIME_BYTECODE.as_slice()
+        );
+    }
+
+    /// An account that already existed at the address keeps its nonce and
+    /// balance: the install replaces code and nothing more.
+    #[test]
+    fn expiry_verifier_install_preserves_existing_nonce_and_balance() {
+        let store = MockStore::new().with_account(
+            EXPIRY_VERIFIER_PREDEPLOY.address,
+            AccountState {
+                nonce: 7,
+                balance: U256::from(5_000u64),
+                code_hash: *EMPTY_KECCAK_HASH,
+                storage_root: H256::zero(),
+            },
+        );
+        let mut db = GeneralizedDatabase::new(Arc::new(store));
+
+        LEVM::install_expiry_verifier_code(&mut db, &ethrex_crypto::NativeCrypto).unwrap();
+
+        let acc = db.get_account(EXPIRY_VERIFIER_PREDEPLOY.address).unwrap();
+        assert_eq!(acc.info.nonce, 7);
+        assert_eq!(acc.info.balance, U256::from(5_000u64));
+        assert_eq!(
+            db.get_account_code(EXPIRY_VERIFIER_PREDEPLOY.address)
+                .unwrap()
+                .code(),
+            EXPIRY_VERIFIER_RUNTIME_BYTECODE.as_slice()
+        );
+    }
+
+    /// Idempotent: a second call finds the code already in place and changes
+    /// nothing, so exactly one account update is ever produced for the install.
+    #[test]
+    fn expiry_verifier_install_is_idempotent() {
+        let store = MockStore::new();
+        let mut db = GeneralizedDatabase::new(Arc::new(store));
+
+        LEVM::install_expiry_verifier_code(&mut db, &ethrex_crypto::NativeCrypto).unwrap();
+        let first = db
+            .get_account(EXPIRY_VERIFIER_PREDEPLOY.address)
+            .unwrap()
+            .clone();
+        LEVM::install_expiry_verifier_code(&mut db, &ethrex_crypto::NativeCrypto).unwrap();
+        let second = db
+            .get_account(EXPIRY_VERIFIER_PREDEPLOY.address)
+            .unwrap()
+            .clone();
+
+        assert_eq!(first.info.nonce, second.info.nonce);
+        assert_eq!(first.info.code_hash, second.info.code_hash);
+        assert_eq!(second.info.nonce, 0);
     }
 
     #[test]

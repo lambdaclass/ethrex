@@ -1,0 +1,12 @@
+services:
+  faucet:
+    image: chainflag/eth-faucet:latest
+    ports:
+      - "8080:8080"
+    environment:
+      WEB3_PROVIDER: "http://host.docker.internal:${RPC_PORT}"
+      PRIVATE_KEY: "${FAUCET_PRIVATE_KEY}"
+      FAUCET_AMOUNT: "1"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped

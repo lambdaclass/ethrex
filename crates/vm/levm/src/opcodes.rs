@@ -179,6 +179,7 @@ pub enum Opcode {
     FRAMEDATACOPY = 0xB2,
     FRAMEPARAM = 0xB3,
     SIGPARAM = 0xB4,
+    SIGDATACOPY = 0xB5,
     // EIP-8024
     DUPN = 0xE6,
     SWAPN = 0xE7,
@@ -195,6 +196,16 @@ pub enum Opcode {
     INVALID = 0xFE,
     SELFDESTRUCT = 0xFF,
 }
+
+// The frame-opcode bytes have now collided twice across this EIP set, so pin them:
+// after already having moved off 0xB4, and nothing in the set may share a byte. A future
+// relocation is then a compile error instead of two clients disagreeing about an opcode.
+// A discriminant read is the only way to assert an opcode's byte at compile time; the
+// crate's blanket ban on silent `as` exists for value conversions, as in `From<u8>` below.
+#[expect(clippy::as_conversions)]
+const _: () = assert!(Opcode::SIGDATACOPY as u8 == 0xB5);
+#[expect(clippy::as_conversions)]
+const _: () = assert!(Opcode::SIGPARAM as u8 != Opcode::SIGDATACOPY as u8);
 
 impl From<u8> for Opcode {
     #[expect(clippy::as_conversions)]
@@ -340,6 +351,7 @@ impl From<u8> for Opcode {
             table[0xB2] = Opcode::FRAMEDATACOPY;
             table[0xB3] = Opcode::FRAMEPARAM;
             table[0xB4] = Opcode::SIGPARAM;
+            table[0xB5] = Opcode::SIGDATACOPY;
             table[0x51] = Opcode::MLOAD;
             table[0x52] = Opcode::MSTORE;
             table[0x53] = Opcode::MSTORE8;
@@ -664,6 +676,7 @@ impl<'a> VM<'a> {
         opcode_table[Opcode::FRAMEDATACOPY as usize] = OpCodeFn::new::<OpFrameDataCopyHandler>();
         opcode_table[Opcode::FRAMEPARAM as usize] = OpCodeFn::new::<OpFrameParamHandler>();
         opcode_table[Opcode::SIGPARAM as usize] = OpCodeFn::new::<OpSigParamHandler>();
+        opcode_table[Opcode::SIGDATACOPY as usize] = OpCodeFn::new::<OpSigDataCopyHandler>();
 
         opcode_table
     }
@@ -673,28 +686,84 @@ impl<'a> VM<'a> {
 mod tests {
     use super::*;
 
+    /// Compare handler identity by fn-pointer address without an `as` cast
+    /// (the workspace denies `clippy::as_conversions`).
+    fn same_handler(a: OpCodeFn, b: OpCodeFn) -> bool {
+        std::ptr::fn_addr_eq(a.0, b.0)
+    }
+
+    /// The frame-transaction opcode surface, as installed at Hegotá.
+    const FRAME_OPCODES: [(usize, &str); 7] = [
+        (0xAA, "APPROVE"),
+        (0xB0, "TXPARAM"),
+        (0xB1, "FRAMEDATALOAD"),
+        (0xB2, "FRAMEDATACOPY"),
+        (0xB3, "FRAMEPARAM"),
+        (0xB4, "SIGPARAM"),
+        (0xB5, "SIGDATACOPY"),
+    ];
+
+    /// Bytes adjacent to the frame surface that no EIP in the Hegotá set
+    /// assigns. Leaving them unpinned is how an opcode outside the set would
+    /// reach a chain unnoticed.
+    const UNASSIGNED: [usize; 3] = [0xB7, 0xB8, 0xB9];
+
     #[test]
     #[allow(
         clippy::indexing_slicing,
         reason = "fixed 256-entry table indexed by u8"
     )]
     fn frame_opcodes_not_installed_before_hegota() {
-        fn same_handler(a: OpCodeFn, b: OpCodeFn) -> bool {
-            // Compare handler identity by fn-pointer address without an `as`
-            // cast (the workspace denies clippy::as_conversions).
-            std::ptr::fn_addr_eq(a.0, b.0)
-        }
         // 0xEF is never assigned in any table -> it holds the invalid handler.
         for fork in [Fork::Osaka, Fork::Amsterdam] {
             let table = VM::build_opcode_table(fork);
-            for byte in [0xAAusize, 0xB0, 0xB1, 0xB2, 0xB3, 0xB4] {
+            for (byte, name) in FRAME_OPCODES
+                .into_iter()
+                .chain(UNASSIGNED.into_iter().map(|byte| (byte, "unassigned")))
+            {
                 assert!(
                     same_handler(table[byte], table[0xEF]),
-                    "frame opcode {byte:#x} must be invalid at {fork:?}"
+                    "{name} ({byte:#x}) must be invalid at {fork:?}"
                 );
             }
         }
+    }
+
+    /// Hegotá installs exactly the frame-transaction surface and nothing else.
+    ///
+    /// Diffing the whole table against Amsterdam's is what makes this an *exact*
+    /// set: asserting each expected byte is present would pass just as happily
+    /// with an eighth opcode registered by accident, and an opcode a second
+    /// client does not have is a chain split on the first block that runs it.
+    #[test]
+    #[allow(
+        clippy::indexing_slicing,
+        reason = "fixed 256-entry table indexed by u8"
+    )]
+    fn hegota_installs_exactly_the_frame_opcode_surface() {
+        let amsterdam = VM::build_opcode_table(Fork::Amsterdam);
         let hegota = VM::build_opcode_table(Fork::Hegota);
-        assert!(!same_handler(hegota[0xAA], hegota[0xEF]));
+
+        let changed: Vec<usize> = (0..256)
+            .filter(|&byte| !same_handler(amsterdam[byte], hegota[byte]))
+            .collect();
+        let expected: Vec<usize> = FRAME_OPCODES.iter().map(|(byte, _)| *byte).collect();
+        assert_eq!(
+            changed, expected,
+            "Hegotá must change exactly the frame-transaction opcodes"
+        );
+
+        for (byte, name) in FRAME_OPCODES {
+            assert!(
+                !same_handler(hegota[byte], hegota[0xEF]),
+                "{name} ({byte:#x}) must be installed at Hegotá"
+            );
+        }
+        for byte in UNASSIGNED {
+            assert!(
+                same_handler(hegota[byte], hegota[0xEF]),
+                "unassigned opcode {byte:#x} must stay invalid at Hegotá"
+            );
+        }
     }
 }

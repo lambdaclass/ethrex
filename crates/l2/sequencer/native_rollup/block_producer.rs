@@ -408,7 +408,7 @@ impl NativeBlockProducer {
                 .map(|tx| tx.tx.hash(&ethrex_crypto::NativeCrypto))
                 .unwrap_or_default();
             self.blockchain.remove_transaction_from_pool(&blob_hash)?;
-            blob_txs.pop();
+            blob_txs.pop()?;
         }
 
         loop {
@@ -440,7 +440,7 @@ impl NativeBlockProducer {
                     "NativeBlockProducer: skipping tx {}, not enough gas",
                     head_tx.tx.hash(&ethrex_crypto::NativeCrypto)
                 );
-                txs.pop();
+                txs.pop()?;
                 continue;
             }
 
@@ -458,7 +458,7 @@ impl NativeBlockProducer {
                     "NativeBlockProducer: ignoring replay-protected tx: {}",
                     tx_hash
                 );
-                txs.pop();
+                txs.pop()?;
                 self.blockchain.remove_transaction_from_pool(&tx_hash)?;
                 continue;
             }
@@ -487,7 +487,7 @@ impl NativeBlockProducer {
                         )));
                     }
                     debug!("NativeBlockProducer: failed to execute tx {}: {e}", tx_hash);
-                    txs.pop();
+                    txs.pop()?;
                     self.blockchain.remove_transaction_from_pool(&tx_hash)?;
                 }
             }

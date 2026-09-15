@@ -5,6 +5,7 @@ use ethrex_blockchain::inclusion_list_builder::{
     AccountStateView, DEFAULT_PER_SENDER_CAP, IlPolicy, IlStateProvider, IlStateProviderError,
     InclusionListBuilder, MAX_BYTES_PER_INCLUSION_LIST,
 };
+use ethrex_blockchain::mempool::KeyedConcurrency;
 use ethrex_blockchain::mempool::Mempool;
 use ethrex_common::types::{
     EIP1559Transaction, EIP4844Transaction, LegacyTransaction, MempoolTransaction,
@@ -118,7 +119,7 @@ fn insert_tx(mempool: &Mempool, sender: Address, tx: Transaction) -> H256 {
     let mtx = MempoolTransaction::new(tx, sender);
     let hash = mtx.transaction().hash(&NativeCrypto);
     mempool
-        .add_transaction(hash, sender, mtx, None, None)
+        .add_transaction(hash, sender, mtx, None, None, KeyedConcurrency::Denied)
         .expect("add_transaction");
     hash
 }

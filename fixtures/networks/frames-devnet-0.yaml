@@ -1,0 +1,63 @@
+# frames-devnet-0: EIP-8141 frame transactions on top of the glamsterdam-devnet-8
+# stack. This is `glamsterdam-devnet-8.yaml` with Hegotá scheduled and the
+# participant list narrowed to ethrex, which is the only client on this branch
+# that implements EIP-8141; add the other ELs back as their frame-transaction
+# support lands.
+participants:
+  - el_type: ethrex
+    el_image: ethrex:local
+    cl_type: grandine
+    cl_image: ethpandaops/grandine:glamsterdam-devnet-8-minimal
+    validator_count: 32
+    supernode: true
+  - el_type: ethrex
+    el_image: ethrex:local
+    cl_type: grandine
+    cl_image: ethpandaops/grandine:glamsterdam-devnet-8-minimal
+    validator_count: 32
+  - el_type: ethrex
+    el_image: ethrex:local
+    cl_type: grandine
+    cl_image: ethpandaops/grandine:glamsterdam-devnet-8-minimal
+    validator_count: 32
+
+global_log_level: debug
+network_params:
+  preset: minimal
+  # EIP-8282 builder deposit/exit predeploys. Amsterdam invalidates every block
+  # from activation on if either predeploy has no code, the same rule EIP-7002
+  # and EIP-7251 apply, so the generator has to deploy them.
+  deploy_eip8282_contracts: true
+  # Amsterdam (gloas) at epoch 1, ahead of Hegotá. Hegotá is defined on top of
+  # Amsterdam, so `amsterdamTime` has to be set: levm resolves Amsterdam from the
+  # fork ordinal while the header schema, the BAL and the Engine API key on the
+  # timestamp field. Scheduling it after genesis keeps the beacon genesis state
+  # Fulu; a Gloas genesis state is rejected by Lighthouse ("Built-in genesis
+  # state SSZ bytes are invalid: OffsetsAreDecreasing(0)").
+  gloas_fork_epoch: 1
+  # Hegotá (heze) at epoch 2 enables the EIP-8141 frame-tx opcodes (APPROVE
+  # 0xAA, TXPARAM 0xB0, FRAMEDATALOAD 0xB1, FRAMEDATACOPY 0xB2, FRAMEPARAM 0xB3,
+  # SIGPARAM 0xB4) and the EXPIRY_VERIFIER predeploy at 0x…8141. They are gated
+  # on Hegotá, not Osaka or Amsterdam. The genesis generator emits
+  # `bogotaTime`/`hezeTime` into the EL genesis JSON, which ethrex parses into
+  # `ChainConfig.hegota_time` via its serde aliases; without this every frame
+  # transaction is rejected with `FrameTxPreFork`.
+  heze_fork_epoch: 2
+  gas_limit: 600000000
+  genesis_gaslimit: 600000000
+  withdrawal_type: "0x02"
+
+additional_services:
+  - dora
+  - spamoor
+
+port_publisher:
+  el:
+    enabled: true
+    public_port_start: 32000
+  cl:
+    enabled: true
+    public_port_start: 33000
+  additional_services:
+    enabled: true
+    public_port_start: 34000

@@ -75,7 +75,7 @@ pub const BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE: u64 = 5007716; // Defined in [EI
 pub const MAX_BLOB_COUNT: u32 = 6;
 pub const MAX_BLOB_COUNT_ELECTRA: u32 = 9;
 // Max blob count per tx (introduced by Osaka fork)
-pub const MAX_BLOB_COUNT_TX: usize = 6;
+pub use ethrex_common::types::MAX_BLOBS_PER_TX as MAX_BLOB_COUNT_TX;
 
 pub const VALID_BLOB_PREFIXES: [u8; 1] = [VERSIONED_HASH_VERSION_KZG];
 

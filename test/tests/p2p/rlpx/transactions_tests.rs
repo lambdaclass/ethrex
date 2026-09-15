@@ -1,5 +1,6 @@
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
+use ethrex_blockchain::mempool::KeyedConcurrency;
 use ethrex_common::{
     Address, H256,
     types::{EIP1559Transaction, MempoolTransaction, P2PTransaction, Transaction},
@@ -70,7 +71,7 @@ fn add_mempool_tx(bc: &Blockchain, nonce: u64, data_len: usize) -> H256 {
     let mtx = MempoolTransaction::new(tx, sender);
     let hash = mtx.hash(&NativeCrypto);
     bc.mempool
-        .add_transaction(hash, sender, mtx, None, None)
+        .add_transaction(hash, sender, mtx, None, None, KeyedConcurrency::Denied)
         .expect("add to mempool");
     hash
 }

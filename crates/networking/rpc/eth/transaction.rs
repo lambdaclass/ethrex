@@ -15,7 +15,6 @@ use ethrex_common::{
     types::{AccessListEntry, BlockHash, BlockHeader, BlockNumber, GenericTransaction, TxKind},
 };
 
-use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::Store;
 
 use ethrex_vm::{ExecutionResult, backends::levm::get_max_allowed_gas_limit};
@@ -428,7 +427,7 @@ impl RpcHandler for GetRawTransactionByBlockAndIndex {
         let Some(tx) = block_body.transactions.get(self.transaction_index) else {
             return Ok(Value::Null);
         };
-        serde_json::to_value(format!("0x{}", &hex::encode(tx.encode_to_vec())))
+        serde_json::to_value(format!("0x{}", &hex::encode(tx.encode_canonical_to_vec())))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -470,7 +469,15 @@ impl RpcHandler for GetRawTransaction {
             Some(tx) => tx,
             _ => return Ok(Value::Null),
         };
-        serde_json::to_value(format!("0x{}", &hex::encode(tx.encode_to_vec())))
+        // Canonical encoding, not the network one: `debug_getRawTransaction` returns the
+        // bytes as they appear in the block, so `0x06f84f…` for a typed transaction rather
+        // than an RLP string wrapping them. `encode_to_vec` produces the network form,
+        // whose length prefix makes the result unusable where the raw bytes are expected —
+        // `eth_sendRawTransaction`, and an engine payload's `transactions` list, both
+        // reject it with an RLP `UnexpectedString`.
+        let mut canonical = Vec::new();
+        tx.encode_canonical(&mut canonical);
+        serde_json::to_value(format!("0x{}", &hex::encode(canonical)))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -695,19 +702,27 @@ impl RpcHandler for SendRawTransactionRequest {
         // BlockchainOptions::private_mempool flag controls whether the tx is
         // propagated to peers. P2P-received txs continue to use the
         // non-local methods elsewhere.
-        let hash = if let SendRawTransactionRequest::EIP4844(wrapped_blob_tx) = self {
-            context
-                .blockchain
-                .add_local_blob_transaction_to_pool(
-                    wrapped_blob_tx.tx.clone(),
-                    wrapped_blob_tx.blobs_bundle.clone(),
-                )
-                .await
-        } else {
-            context
-                .blockchain
-                .add_local_transaction_to_pool(self.to_transaction())
-                .await
+        //
+        // Blob-carrying transactions take the blob admission path so their sidecar
+        // is stored with them: EIP-4844 and EIP-8141 frame transactions alike.
+        let blobs_bundle = match self {
+            SendRawTransactionRequest::EIP4844(wrapped) => Some(&wrapped.blobs_bundle),
+            SendRawTransactionRequest::FrameWithBlobs(wrapped) => Some(&wrapped.blobs_bundle),
+            _ => None,
+        };
+        let hash = match blobs_bundle {
+            Some(blobs_bundle) => {
+                context
+                    .blockchain
+                    .add_local_blob_transaction_to_pool(self.to_transaction(), blobs_bundle.clone())
+                    .await
+            }
+            None => {
+                context
+                    .blockchain
+                    .add_local_transaction_to_pool(self.to_transaction())
+                    .await
+            }
         }?;
         serde_json::to_value(format!("{hash:#x}"))
             .map_err(|error| RpcErr::Internal(error.to_string()))

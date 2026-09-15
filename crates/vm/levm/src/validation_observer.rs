@@ -23,12 +23,12 @@
 //! ## Canonical-pay-frame exemption
 //! ERC-7562 exempts the canonical paymaster's pay frame from the storage/call
 //! access restrictions (a canonical paymaster is trusted to touch shared
-//! reservation state). ethrex cannot resolve the canonical paymaster bytecode
-//! (OQ1: not pinned in the draft EIP or any reference implementation), so
+//! reservation state).
 //! [`canonical_paymaster_pay_frame`](ValidationObserver::canonical_paymaster_pay_frame)
-//! is always `None` here and the exemption never fires. The field and the
-//! `current_frame_index == canonical_paymaster_pay_frame` skip are wired up so
-//! the exemption flips on for free once the canonical code hash is pinned.
+//! carries that frame's index when the pay frame's resolved target has the
+//! canonical runtime code hash, and the
+//! `current_frame_index == canonical_paymaster_pay_frame` skip applies the
+//! exemption to it.
 
 use ethrex_common::{Address, H256};
 
@@ -89,17 +89,30 @@ pub struct ValidationObserver {
     /// correctly banning it in any callee of an expiry frame that routes execution
     /// elsewhere (an under-reject the per-top-frame boolean could not prevent).
     pub expiry_verifier: Address,
-    /// Index of the canonical paymaster's pay frame, if any. Always `None`
-    /// (OQ1, see module docs); the access-restriction skip is wired for the
-    /// future canonical-paymaster case.
+    /// Index of the canonical paymaster's pay frame, if any: set when the pay
+    /// frame's resolved target carries the canonical runtime code hash, which is
+    /// what admits the access-restriction skip (see module docs).
     pub canonical_paymaster_pay_frame: Option<usize>,
+    /// Index of the EIP-8272 recent-root verifier frame, if the transaction leads
+    /// with one and the code at `RECENT_ROOT_ADDRESS` is `RECENT_ROOT_CODE` (the
+    /// harness checks the code before setting this). While that frame runs
+    /// `RECENT_ROOT_CODE` at the top level, `SLOTNUM` and `SLOAD`s of the
+    /// predeploy's own storage are permitted; nothing else changes, and no nested
+    /// call inherits either permission.
+    pub recent_root_verifier_frame: Option<usize>,
+    /// Address of the RECENT_ROOT_ADDRESS predeploy (0x…8272).
+    pub recent_root_address: Address,
     /// The opcode byte executed on the previous dispatch-loop iteration. Used to
     /// enforce the `GAS` sequential rule (`GAS` is allowed only immediately
     /// before a `*CALL`). Reset each iteration.
     pub last_opcode: u8,
     /// Sender storage slots touched (read or written) during the prefix. Recorded
-    /// for the admission-time revalidation affected-set (Phase 3).
+    /// for the admission-time revalidation affected-set.
     pub touched_sender_slots: Vec<H256>,
+    /// Whether the prefix read `TXPARAM(0x12)`, the sender's legacy account nonce
+    /// (EIP-8250 §Mempool). Such a prefix depends on the legacy nonce even when
+    /// the transaction's own nonce lives in a keyed domain.
+    pub read_legacy_nonce: bool,
     /// First violation observed, if any.
     pub violation: Option<FrameSimViolation>,
 }
@@ -116,8 +129,11 @@ impl ValidationObserver {
             current_frame_mode: 0,
             expiry_verifier: Address::zero(),
             canonical_paymaster_pay_frame: None,
+            recent_root_verifier_frame: None,
+            recent_root_address: Address::zero(),
             last_opcode: 0,
             touched_sender_slots: Vec::new(),
+            read_legacy_nonce: false,
             violation: None,
         }
     }
@@ -138,10 +154,22 @@ impl ValidationObserver {
             current_frame_mode: 0,
             expiry_verifier,
             canonical_paymaster_pay_frame: None,
+            recent_root_verifier_frame: None,
+            recent_root_address: Address::zero(),
             last_opcode: 0,
             touched_sender_slots: Vec::new(),
+            read_legacy_nonce: false,
             violation: None,
         }
+    }
+
+    /// Whether the recent-root verifier frame is the one executing, at the top
+    /// level: the executing contract must be the predeploy itself, so a callee of
+    /// the frame (impossible for `RECENT_ROOT_CODE`, but the rule is stated for the
+    /// frame, not for the code) inherits nothing.
+    pub fn in_recent_root_frame(&self, code_address: Address) -> bool {
+        self.recent_root_verifier_frame == Some(self.current_frame_index)
+            && code_address == self.recent_root_address
     }
 
     /// Records the first violation observed; later violations are ignored (the

@@ -401,7 +401,10 @@ impl PooledTransactions72 {
                 // Blobs are elided in eth/72; store commitments+proofs.
                 // Full KZG validation deferred until blobs are fetched via GetCells.
                 if let Err(e) = blockchain
-                    .add_blob_transaction_to_pool(itx.tx, itx.blobs_bundle)
+                    .add_blob_transaction_to_pool(
+                        Transaction::EIP4844Transaction(itx.tx),
+                        itx.blobs_bundle,
+                    )
                     .await
                 {
                     if matches!(e, MempoolError::BlobsBundleError(_)) {

@@ -21,6 +21,19 @@ use crate::{
     rkyv_utils,
 };
 
+/// Default for [`ChainConfig::aa_vops_slot_count`], at the top of EIP-8369's
+/// candidate range.
+///
+/// The top of the range is the worst case for attester replay, so a run that
+/// fits the attestation deadline at 4 also fits at 2 and 3; and it is a superset,
+/// so no transaction eligible at a lower value becomes unreachable. Choosing low
+/// makes wallets ineligible, which presents as fewer enforcement obligations and
+/// so reads as success. The range covers the realistic validation surface: one
+/// slot for an address owner, two for a P256 public key, a third for a threshold
+/// or module word, the fourth as headroom. Keyed nonces and recent roots live in
+/// protocol state and cost no slots.
+pub const DEFAULT_AA_VOPS_SLOT_COUNT: u64 = 4;
+
 #[allow(unused)]
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
@@ -283,6 +296,71 @@ pub struct ChainConfig {
     pub hegota_time: Option<u64>,
     pub lstar_time: Option<u64>,
 
+    /// EIP-7843 beacon-slot derivation knob (ethrex devnet, new-fork decoupling).
+    /// When set and `block.timestamp >= derived_slot_time`, and the CL did not
+    /// supply a slot in the payload attributes (engine V3), the EL derives the
+    /// beacon slot from the block timestamp: `(timestamp - genesis_timestamp) /
+    /// seconds_per_slot`. This makes EIP-8272 recent-root references functional
+    /// on a CL that does not forward the EIP-7843 slot (e.g. Lighthouse over
+    /// `forkchoiceUpdatedV3`). Gated on a FUTURE timestamp so already-produced
+    /// blocks keep `slot_number = 0` and re-execute identically (the write/ref
+    /// state is slot-keyed). `None` on chains without this knob → behaviour is
+    /// unchanged (CL-supplied slot, else 0). Requires `genesis_timestamp` +
+    /// `seconds_per_slot` to be set; otherwise the derivation is skipped.
+    ///
+    /// The Hegotá testnet leaves this UNSET. Its CL is FOCIL-capable Lighthouse
+    /// over engine V4, which forwards the slot, and a derived slot that
+    /// disagreed with a CL-aware client's would key every recent-root entry
+    /// differently — a chain split with no state-root mismatch upstream of it.
+    #[serde(default)]
+    pub derived_slot_time: Option<u64>,
+    /// Genesis block timestamp, used only by the `derived_slot_time` derivation.
+    #[serde(default)]
+    pub genesis_timestamp: Option<u64>,
+    /// Beacon seconds-per-slot, used only by the `derived_slot_time` derivation.
+    #[serde(default)]
+    pub seconds_per_slot: Option<u64>,
+
+    /// Resolved-payer TXPARAM knob (ethrex devnet extension, new-fork
+    /// decoupling). When set and `block.timestamp >= payer_txparam_time`, the
+    /// EIP-8141 frame-tx opcode `TXPARAM(0x12)` resolves to the transaction's
+    /// resolved payer — the account a payment-scoped APPROVE charged — zero-
+    /// padded like `TXPARAM(0x02)` sender; before the payer is resolved it reads
+    /// the zero address. Before the knob (and on chains without it) the index
+    /// keeps its historical exceptional-halt (`InvalidOpcode`), so already-
+    /// produced blocks re-execute identically. Gated on a FUTURE timestamp for a
+    /// state-preserving rollout. `None` = unchanged behaviour.
+    ///
+    /// The Hegotá testnet leaves this UNSET: `TXPARAM(0x12)` is an ethrex
+    /// extension with no EIP behind it, so a second client would halt where
+    /// ethrex returns a payer.
+    #[serde(default)]
+    pub payer_txparam_time: Option<u64>,
+
+    /// EIP-8369 `AA_VOPS_SLOT_COUNT`: how many leading storage slots of `sender`
+    /// and `payer` sit inside the FOCIL Profile 2 validation surface. A read
+    /// outside the surface makes a transaction ineligible for inclusion-list
+    /// enforcement rather than merely expensive.
+    ///
+    /// EIP-8369 leaves the value unset with a candidate range of 2 to 4 "pending
+    /// benchmarks", and states that no implementation can classify Profile 2 for
+    /// enforcement until the enforcing Standards Track EIP selects one. It is a
+    /// chain-config parameter rather than a constant so a devnet can sweep the
+    /// range and produce that benchmark, and so adopting the settled value is a
+    /// genesis change rather than a code change.
+    ///
+    /// `None` selects [`DEFAULT_AA_VOPS_SLOT_COUNT`].
+    ///
+    /// The Hegotá testnet leaves this UNSET and therefore runs at the default 4,
+    /// the top of the candidate range and the worst case for replay: a benchmark
+    /// that fits the attestation deadline at 4 fits at 2 and 3, and no
+    /// transaction eligible at a lower value becomes unreachable. Unlike the
+    /// other three fields, absence here is not inertness — the surface is live
+    /// at its default — so a joining client MUST NOT infer a different value
+    /// from the missing field.
+    #[serde(default)]
+    pub aa_vops_slot_count: Option<u64>,
+
     /// Amount of total difficulty reached by the network that triggers the consensus upgrade.
     #[serde(default, with = "crate::serde_utils::u128::hex_str_opt")]
     pub terminal_total_difficulty: Option<u128>,
@@ -385,8 +463,99 @@ impl ChainConfig {
         self.hegota_time.is_some_and(|time| time <= block_timestamp)
     }
 
+    /// Whether the EIP-7843 beacon-slot derivation knob is active at
+    /// `block_timestamp` (see [`ChainConfig::derived_slot_time`]).
+    pub fn is_derived_slot_activated(&self, block_timestamp: u64) -> bool {
+        self.derived_slot_time
+            .is_some_and(|time| time <= block_timestamp)
+    }
+
+    /// Whether the resolved-payer TXPARAM knob is active at `block_timestamp`
+    /// (see [`ChainConfig::payer_txparam_time`]).
+    pub fn is_payer_txparam_activated(&self, block_timestamp: u64) -> bool {
+        self.payer_txparam_time
+            .is_some_and(|time| time <= block_timestamp)
+    }
+
+    /// EIP-8369 `AA_VOPS_SLOT_COUNT`, falling back to
+    /// [`DEFAULT_AA_VOPS_SLOT_COUNT`] when the chain does not pin one.
+    ///
+    /// Every Profile 2 storage bound MUST resolve through this accessor rather
+    /// than reading the field, so a chain that omits it and one that sets it to
+    /// the default classify identically.
+    pub fn aa_vops_slot_count(&self) -> u64 {
+        self.aa_vops_slot_count
+            .unwrap_or(DEFAULT_AA_VOPS_SLOT_COUNT)
+    }
+
+    /// The effective EIP-7843 beacon slot for a block, used by EIP-8272
+    /// recent-root writes/references and the SLOTNUM opcode.
+    ///
+    /// - If the CL supplied a slot (`header_slot = Some`, engine V4 path), use it
+    ///   verbatim — the CL is authoritative.
+    /// - Otherwise, once `derived_slot_time` is active and both
+    ///   `genesis_timestamp` and a non-zero `seconds_per_slot` are configured,
+    ///   derive it from the block timestamp:
+    ///   `(block_timestamp - genesis_timestamp) / seconds_per_slot`. In PoS every
+    ///   block's timestamp is `genesis + slot*seconds_per_slot`, so this is exact
+    ///   for the block's own slot (missed slots do not perturb it).
+    /// - Otherwise 0 (pre-knob and no-knob chains — unchanged behaviour).
+    ///
+    /// Deterministic across all ELs (no proposer-settable input), so it needs no
+    /// header field and produces identical state on re-execution.
+    pub fn effective_slot_number(&self, header_slot: Option<u64>, block_timestamp: u64) -> u64 {
+        if let Some(slot) = header_slot {
+            return slot;
+        }
+        if self.is_derived_slot_activated(block_timestamp)
+            && let (Some(genesis_ts), Some(seconds_per_slot)) =
+                (self.genesis_timestamp, self.seconds_per_slot)
+            && seconds_per_slot > 0
+            && block_timestamp >= genesis_ts
+        {
+            return (block_timestamp - genesis_ts) / seconds_per_slot;
+        }
+        0
+    }
+
     pub fn is_lstar_activated(&self, block_timestamp: u64) -> bool {
         self.lstar_time.is_some_and(|time| time <= block_timestamp)
+    }
+
+    /// Reject a fork schedule whose later forks are scheduled without their
+    /// prerequisites.
+    ///
+    /// [`ChainConfig::get_fork`] is a first-match cascade, so `hegotaTime` alone
+    /// resolves to [`Fork::Hegota`] even with `amsterdamTime` absent — and then
+    /// the two gating styles in this codebase disagree: `fork >= Fork::Amsterdam`
+    /// is true while `is_amsterdam_activated` is false. Every Amsterdam-gated
+    /// rule (EIP-7928 block access lists, EIP-8037 two-dimensional gas, EIP-7778
+    /// accounting) silently switches off under a fork that is specified on top
+    /// of them.
+    ///
+    /// EIP-8081 (*Hardfork Meta - Hegotá*) `requires` EIP-7773 (*Hardfork Meta -
+    /// Glamsterdam*), so this is the spec's own dependency rather than a local
+    /// convention. A chain that violates it could never produce a block another
+    /// client would accept, so failing at load beats degrading at runtime.
+    pub fn validate_fork_schedule(&self) -> Result<(), String> {
+        if let Some(hegota) = self.hegota_time {
+            match self.amsterdam_time {
+                None => {
+                    return Err(
+                        "hegotaTime is set but amsterdamTime is not; EIP-8081 requires EIP-7773"
+                            .to_string(),
+                    );
+                }
+                Some(amsterdam) if amsterdam > hegota => {
+                    return Err(format!(
+                        "amsterdamTime ({amsterdam}) is after hegotaTime ({hegota}); \
+                         Hegotá cannot activate before Amsterdam"
+                    ));
+                }
+                Some(_) => {}
+            }
+        }
+        Ok(())
     }
 
     pub fn is_amsterdam_activated(&self, block_timestamp: u64) -> bool {
@@ -443,11 +612,10 @@ impl ChainConfig {
         self.eip155_block.is_some_and(|num| num <= block_number)
     }
 
-    pub fn display_config(&self) -> String {
-        let network = NETWORK_NAMES.get(&self.chain_id).unwrap_or(&"unknown");
-        let mut output = format!("Chain ID: {} ({})\n\n", self.chain_id, network);
-
-        let post_merge_forks = [
+    /// The post-merge forks in activation order, paired with their configured
+    /// activation timestamps.
+    fn post_merge_schedule(&self) -> [(&'static str, Option<u64>); 7] {
+        [
             ("Shanghai", self.shanghai_time),
             ("Cancun", self.cancun_time),
             ("Prague", self.prague_time),
@@ -455,7 +623,38 @@ impl ChainConfig {
             ("Osaka", self.osaka_time),
             ("Amsterdam", self.amsterdam_time),
             ("Hegota", self.hegota_time),
-        ];
+        ]
+    }
+
+    /// Post-merge forks left unscheduled while a later fork is scheduled, in
+    /// activation order.
+    ///
+    /// Such a schedule is not a configuration a live network can have, and it
+    /// resolves inconsistently: fork *rules* come from the fork ordinal (see
+    /// [`ChainConfig::get_fork`]), so scheduling a fork silently activates the
+    /// rules of every fork below it, while each check keyed on a specific fork's
+    /// own timestamp field stays inactive. A chain that sets `hegotaTime` without
+    /// `amsterdamTime` therefore runs Amsterdam's EVM rules under a pre-Amsterdam
+    /// header schema.
+    ///
+    /// Verkle is excluded: it is a placeholder no schedule sets.
+    pub fn unscheduled_predecessor_forks(&self) -> Vec<&'static str> {
+        let schedule = self.post_merge_schedule();
+        let Some(last_scheduled) = schedule.iter().rposition(|(_, time)| time.is_some()) else {
+            return Vec::new();
+        };
+        schedule[..last_scheduled]
+            .iter()
+            .filter(|(name, time)| time.is_none() && *name != "Verkle")
+            .map(|(name, _)| *name)
+            .collect()
+    }
+
+    pub fn display_config(&self) -> String {
+        let network = NETWORK_NAMES.get(&self.chain_id).unwrap_or(&"unknown");
+        let mut output = format!("Chain ID: {} ({})\n\n", self.chain_id, network);
+
+        let post_merge_forks = self.post_merge_schedule();
 
         let active_forks: Vec<_> = post_merge_forks
             .iter()
@@ -468,6 +667,21 @@ impl ChainConfig {
             output.push_str(&active_forks.join("\n"));
         } else {
             output.push_str("Network is at Paris\n\n");
+        }
+
+        let unscheduled = self.unscheduled_predecessor_forks();
+        if !unscheduled.is_empty() {
+            output.push_str(&format!(
+                "\n\nWARNING: {} scheduled after an unscheduled fork ({}). Fork rules \
+                 resolve from the fork ordinal, so those rules are active while every \
+                 check keyed on their own activation timestamp is not.",
+                post_merge_forks
+                    .iter()
+                    .rev()
+                    .find_map(|(name, time)| time.map(|_| *name))
+                    .unwrap_or("A fork"),
+                unscheduled.join(", "),
+            ));
         }
 
         output
@@ -534,8 +748,28 @@ impl ChainConfig {
             Some(self.blob_schedule.bpo2)
         } else if self.is_bpo1_activated(block_timestamp) {
             Some(self.blob_schedule.bpo1)
+        } else if self.is_lstar_activated(block_timestamp)
+            || self.is_hegota_activated(block_timestamp)
+            || self.is_amsterdam_activated(block_timestamp)
+        {
+            // A genesis that jumps straight to Amsterdam or later without scheduling
+            // any BPO fork — the native-rollup L2 genesis does exactly this — still
+            // runs the post-BPO2 blob parameters, since Amsterdam is defined on top of
+            // them; falling through to the Osaka entry would under-report the limit.
+            // Below the whole BPO chain, so a network that does schedule its BPOs keeps
+            // inheriting the highest one it activated.
+            Some(self.blob_schedule.bpo2)
         } else if self.is_osaka_activated(block_timestamp) {
             Some(self.blob_schedule.osaka)
+        } else if self.is_amsterdam_activated(block_timestamp)
+            || self.is_lstar_activated(block_timestamp)
+        {
+            // An Amsterdam-era genesis that schedules no BPO or Osaka fork and pins no
+            // amsterdam entry still runs Amsterdam-era blob params, which are BPO2's.
+            // Ordered after the BPO and Osaka arms on purpose: where a BPO *is*
+            // scheduled and activated its entry wins, so an unscheduled BPO2 never
+            // displaces a lower entry that is actually in force.
+            Some(self.blob_schedule.bpo2)
         } else if self.is_prague_activated(block_timestamp) {
             Some(self.blob_schedule.prague)
         } else if self.is_cancun_activated(block_timestamp) {
@@ -1274,6 +1508,61 @@ mod tests {
     }
 
     #[test]
+    fn hegota_without_amsterdam_is_rejected() {
+        // The shape that motivates the check: `get_fork` already answers
+        // `Hegota`, so `fork >= Fork::Amsterdam` holds while
+        // `is_amsterdam_activated` does not, and every Amsterdam-gated rule
+        // silently switches off under a fork specified on top of them.
+        let config = ChainConfig {
+            hegota_time: Some(0),
+            amsterdam_time: None,
+            ..Default::default()
+        };
+        assert_eq!(config.get_fork(0), Fork::Hegota);
+        assert!(!config.is_amsterdam_activated(0));
+        let err = config
+            .validate_fork_schedule()
+            .expect_err("hegotaTime without amsterdamTime must be rejected");
+        assert!(err.contains("amsterdamTime"), "got: {err}");
+    }
+
+    #[test]
+    fn amsterdam_after_hegota_is_rejected() {
+        let config = ChainConfig {
+            hegota_time: Some(100),
+            amsterdam_time: Some(200),
+            ..Default::default()
+        };
+        assert!(config.validate_fork_schedule().is_err());
+    }
+
+    #[test]
+    fn a_complete_schedule_validates() {
+        // Same activation timestamp is legal: a devnet may start at Hegotá.
+        let together = ChainConfig {
+            hegota_time: Some(0),
+            amsterdam_time: Some(0),
+            ..Default::default()
+        };
+        assert!(together.validate_fork_schedule().is_ok());
+
+        let staged = ChainConfig {
+            hegota_time: Some(200),
+            amsterdam_time: Some(100),
+            ..Default::default()
+        };
+        assert!(staged.validate_fork_schedule().is_ok());
+
+        // A chain that never schedules Hegotá is unconstrained.
+        let no_hegota = ChainConfig {
+            hegota_time: None,
+            amsterdam_time: None,
+            ..Default::default()
+        };
+        assert!(no_hegota.validate_fork_schedule().is_ok());
+    }
+
+    #[test]
     fn lstar_fork_ordering_and_activation() {
         // LStar is the highest fork and strictly greater than Amsterdam.
         assert!(Fork::LStar > Fork::Amsterdam);
@@ -1468,6 +1757,80 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(config.next_fork(0), None);
+    }
+
+    // EIP-7843 beacon-slot derivation knob.
+
+    /// Genesis 1000, 6s slots, knob active from ts 1000.
+    fn slot_config() -> ChainConfig {
+        ChainConfig {
+            derived_slot_time: Some(1000),
+            genesis_timestamp: Some(1000),
+            seconds_per_slot: Some(6),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn effective_slot_prefers_cl_supplied_slot() {
+        // When the CL supplies a slot (engine V4), it wins verbatim regardless of
+        // the knob / timestamp derivation.
+        let config = slot_config();
+        assert_eq!(config.effective_slot_number(Some(42), 1_000_000), 42);
+        // Even with no knob configured.
+        assert_eq!(
+            ChainConfig::default().effective_slot_number(Some(7), 999),
+            7
+        );
+    }
+
+    #[test]
+    fn effective_slot_derives_from_timestamp_when_knob_active() {
+        let config = slot_config();
+        // ts == genesis -> slot 0; each +6s -> +1 slot; exact division.
+        assert_eq!(config.effective_slot_number(None, 1000), 0);
+        assert_eq!(config.effective_slot_number(None, 1006), 1);
+        assert_eq!(config.effective_slot_number(None, 1060), 10);
+        // Non-slot-aligned timestamp truncates toward the slot it falls in.
+        assert_eq!(config.effective_slot_number(None, 1065), 10);
+    }
+
+    #[test]
+    fn effective_slot_is_zero_before_knob_activation() {
+        // Knob activates at 2000 but genesis/seconds are set; a pre-activation
+        // block still derives 0 (history preserved).
+        let config = ChainConfig {
+            derived_slot_time: Some(2000),
+            genesis_timestamp: Some(1000),
+            seconds_per_slot: Some(6),
+            ..Default::default()
+        };
+        assert_eq!(config.effective_slot_number(None, 1994), 0);
+        // At/after activation it derives.
+        assert_eq!(config.effective_slot_number(None, 2002), (2002 - 1000) / 6);
+    }
+
+    #[test]
+    fn effective_slot_is_zero_without_knob_or_params() {
+        // No knob at all -> unchanged behaviour (0 when the CL gives nothing).
+        assert_eq!(
+            ChainConfig::default().effective_slot_number(None, 1_000_000),
+            0
+        );
+        // Knob active but genesis/seconds missing -> derivation skipped, 0.
+        let partial = ChainConfig {
+            derived_slot_time: Some(0),
+            ..Default::default()
+        };
+        assert_eq!(partial.effective_slot_number(None, 1_000_000), 0);
+        // seconds_per_slot == 0 -> derivation skipped (no divide-by-zero), 0.
+        let zero_sps = ChainConfig {
+            derived_slot_time: Some(0),
+            genesis_timestamp: Some(0),
+            seconds_per_slot: Some(0),
+            ..Default::default()
+        };
+        assert_eq!(zero_sps.effective_slot_number(None, 1_000_000), 0);
     }
 
     #[test]

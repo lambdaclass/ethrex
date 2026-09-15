@@ -3,8 +3,8 @@ use ethrex_common::{
     Address, H256, serde_utils,
     types::{
         BlockHash, BlockNumber, EIP1559Transaction, EIP2930Transaction, EIP7702Transaction,
-        EnvelopeTxType, FeeTokenTransaction, FrameTransaction, LegacyTransaction,
-        PrivilegedL2Transaction, Transaction, WrappedEIP4844Transaction,
+        EnvelopeTxType, FeeTokenTransaction, FramePayload, FrameTransaction, LegacyTransaction,
+        PrivilegedL2Transaction, Transaction, WrappedEIP4844Transaction, WrappedFrameTransaction,
     },
 };
 use ethrex_crypto::NativeCrypto;
@@ -64,6 +64,9 @@ pub enum SendRawTransactionRequest {
     PrivilegedL2(PrivilegedL2Transaction),
     FeeToken(FeeTokenTransaction),
     Frame(FrameTransaction),
+    /// An EIP-8141 frame transaction carrying blobs, submitted in the EIP-7594
+    /// wrapped form so its sidecar arrives with it.
+    FrameWithBlobs(WrappedFrameTransaction),
 }
 
 impl SendRawTransactionRequest {
@@ -79,6 +82,9 @@ impl SendRawTransactionRequest {
             }
             SendRawTransactionRequest::FeeToken(t) => Transaction::FeeTokenTransaction(t.clone()),
             SendRawTransactionRequest::Frame(t) => Transaction::FrameTransaction(t.clone()),
+            SendRawTransactionRequest::FrameWithBlobs(t) => {
+                Transaction::FrameTransaction(t.tx.clone())
+            }
         }
     }
 
@@ -104,8 +110,15 @@ impl SendRawTransactionRequest {
                     EnvelopeTxType::EIP7702 => {
                         EIP7702Transaction::decode(tx_bytes).map(SendRawTransactionRequest::EIP7702)
                     }
+                    // EIP-8141 §Networking: a blob-carrying frame transaction is
+                    // submitted in the EIP-7594 wrapped form, a blobless one plain.
                     EnvelopeTxType::Frame => {
-                        FrameTransaction::decode(tx_bytes).map(SendRawTransactionRequest::Frame)
+                        FramePayload::decode(tx_bytes).map(|payload| match payload {
+                            FramePayload::Plain(tx) => SendRawTransactionRequest::Frame(tx),
+                            FramePayload::WithBlobs(wrapped) => {
+                                SendRawTransactionRequest::FrameWithBlobs(wrapped)
+                            }
+                        })
                     }
                     EnvelopeTxType::FeeToken => FeeTokenTransaction::decode(tx_bytes)
                         .map(SendRawTransactionRequest::FeeToken),

@@ -1,0 +1,747 @@
+//! EIP-8250: keyed-nonce consumption and its interaction with atomic batches.
+//!
+//! A payment-scoped APPROVE commits five coupled effects (nonce consumption,
+//! payer recording, the balance debit, first-use gas, approval flags). They
+//! must all take effect together or not at all. Inside an atomic batch a
+//! sibling frame's failure rolls the whole batch's state back, which would
+//! unwind the balance debit while the transaction stayed authorized — minting
+//! the difference at the end-of-tx refund. ethrex forbids payment approval
+//! inside a batch (the mempool already bans the batch flag in the validation
+//! prefix; this covers the consensus path a crafted block could otherwise
+//! reach). The legitimate case — payment granted in a non-batch frame, a
+//! *later* atomic batch reverting — keeps the consumption because an
+//! independent frame's committed state is absorbed into the tx-level backup
+//! and is not in the batch's revert scope.
+
+use bytes::Bytes;
+use ethrex_blockchain::vm::StoreVmDatabase;
+use ethrex_common::types::{
+    Account, BlockHeader, Code, Fork, Frame, FrameMode, FrameTransaction, Transaction,
+    frame_tx_nonce_manager,
+};
+use ethrex_common::{Address, H256, U256, constants::EMPTY_TRIE_HASH};
+use ethrex_crypto::NativeCrypto;
+use ethrex_levm::db::gen_db::GeneralizedDatabase;
+use ethrex_levm::environment::{EVMConfig, Environment};
+use ethrex_levm::errors::{ExecutionReport, VMError};
+use ethrex_levm::tracing::LevmCallTracer;
+use ethrex_levm::vm::{VM, VMType};
+use ethrex_storage::Store;
+use ethrex_vm::DynVmDatabase;
+use rustc_hash::FxHashMap;
+use std::sync::Arc;
+
+const HARNESS_CHAIN_ID: u64 = 1;
+const HARNESS_BASE_FEE: u64 = 1;
+const FUNDED_SENDER: Address = Address::repeat_byte(0xAA);
+fn sender_balance() -> U256 {
+    U256::from(10u64).pow(U256::from(18u64))
+}
+
+/// APPROVE(scope=3): sender + payment approval; frame target must be the sender.
+const APPROVE_BOTH_CODE: &[u8] = &[0x60, 0x03, 0x60, 0x00, 0x60, 0x00, 0xAA];
+/// SSTORE 1@0; REVERT — a state-writing frame that always reverts.
+const SSTORE_THEN_REVERT_CODE: &[u8] =
+    &[0x60, 0x01, 0x60, 0x00, 0x55, 0x60, 0x00, 0x60, 0x00, 0xFD];
+/// SSTORE 1@0; STOP.
+const SSTORE_THEN_STOP_CODE: &[u8] = &[0x60, 0x01, 0x60, 0x00, 0x55, 0x00];
+/// EIP-8037 STATE_BYTES_PER_NEW_ACCOUNT * CPSB: the state gas a value-bearing frame
+/// pays to bring a fresh account into existence.
+const NEW_ACCOUNT_STATE_GAS: u64 = 120 * 1530;
+/// EIP-8250 `KEYED_NONCE_FIRST_USE_STATE_GAS` = EIP-8037 STATE_BYTES_PER_STORAGE_SET * CPSB:
+/// the state gas a payment approval pays for each keyed-nonce slot it creates.
+const KEYED_NONCE_FIRST_USE_STATE_GAS: u64 = 64 * 1530;
+/// NONCE_MANAGER predeploy runtime code: PUSH1 0; PUSH1 0; REVERT.
+const NONCE_MANAGER_STUB_CODE: &[u8] = &[0x60, 0x00, 0x60, 0x00, 0xFD];
+
+type SeededAccount = (Address, U256, u64, Bytes);
+
+fn seeded_db(accounts: &[SeededAccount]) -> GeneralizedDatabase {
+    let in_memory_db = Store::new("", ethrex_storage::EngineType::InMemory).unwrap();
+    let header = BlockHeader {
+        state_root: *EMPTY_TRIE_HASH,
+        ..Default::default()
+    };
+    let store: DynVmDatabase = Box::new(StoreVmDatabase::new(in_memory_db, header).unwrap());
+
+    let mut cache: FxHashMap<Address, Account> = FxHashMap::default();
+    for (address, balance, nonce, code) in accounts {
+        cache.insert(
+            *address,
+            Account::new(
+                *balance,
+                Code::from_bytecode(code.clone(), &NativeCrypto),
+                *nonce,
+                FxHashMap::default(),
+            ),
+        );
+    }
+    GeneralizedDatabase::new_with_account_state(Arc::new(store), cache)
+}
+
+fn frame_tx_env(tx: &FrameTransaction) -> Environment {
+    Environment {
+        origin: tx.sender,
+        gas_limit: tx.max_gas(),
+        block_gas_limit: (i64::MAX - 1) as u64,
+        config: EVMConfig::new(Fork::Hegota, EVMConfig::canonical_values(Fork::Hegota)),
+        chain_id: U256::from(HARNESS_CHAIN_ID),
+        base_fee_per_gas: U256::from(HARNESS_BASE_FEE),
+        gas_price: U256::from(tx.max_fee_per_gas),
+        tx_nonce: tx.nonce_seq,
+        ..Default::default()
+    }
+}
+
+fn frame_tx_with_keys(frames: Vec<Frame>, nonce_keys: Vec<U256>) -> FrameTransaction {
+    FrameTransaction {
+        chain_id: HARNESS_CHAIN_ID,
+        nonce_keys,
+        nonce_seq: 0,
+        sender: FUNDED_SENDER,
+        frames,
+        signatures: Vec::new(),
+        max_priority_fee_per_gas: U256::from(1),
+        max_fee_per_gas: U256::from(HARNESS_BASE_FEE + 1_000),
+        max_fee_per_blob_gas: U256::zero(),
+        blob_versioned_hashes: Vec::new(),
+        inner_hash: Default::default(),
+        cached_canonical: Default::default(),
+    }
+}
+
+fn frame(mode: FrameMode, flags: u8, target: Address, gas_limit: u64, data: &[u8]) -> Frame {
+    Frame {
+        mode: u8::from(mode),
+        flags,
+        target: Some(target),
+        gas_limit,
+        state_gas_limit: 0,
+        value: U256::zero(),
+        data: Bytes::from(data.to_vec()),
+    }
+}
+
+fn run_frame_tx(
+    accounts: &[SeededAccount],
+    tx: FrameTransaction,
+) -> (Result<ExecutionReport, VMError>, GeneralizedDatabase) {
+    let mut db = seeded_db(accounts);
+    let env = frame_tx_env(&tx);
+    let transaction = Transaction::FrameTransaction(tx);
+    let result = {
+        let mut vm = VM::new(
+            env,
+            &mut db,
+            &transaction,
+            LevmCallTracer::disabled(),
+            VMType::L1,
+            &NativeCrypto,
+            None,
+        )
+        .expect("VM::new should succeed for a frame tx");
+        vm.execute()
+    };
+    (result, db)
+}
+
+fn nonce_of(db: &GeneralizedDatabase, addr: Address) -> u64 {
+    db.current_accounts_state
+        .get(&addr)
+        .map(|account| account.info.nonce)
+        .unwrap_or_default()
+}
+
+fn storage_slot(db: &GeneralizedDatabase, addr: Address, key: H256) -> U256 {
+    db.current_accounts_state
+        .get(&addr)
+        .and_then(|account| account.storage.get(&key).copied())
+        .unwrap_or_default()
+}
+
+/// NONCE_MANAGER slot for `(sender, key)`: keccak256(pad32(sender) || be32(key)).
+fn keyed_slot(sender: Address, key: U256) -> H256 {
+    let mut preimage = [0u8; 64];
+    preimage[12..32].copy_from_slice(sender.as_bytes());
+    preimage[32..64].copy_from_slice(&key.to_big_endian());
+    H256(ethrex_crypto::keccak::keccak_hash(preimage))
+}
+
+fn nonce_manager_account() -> SeededAccount {
+    (
+        frame_tx_nonce_manager(),
+        U256::zero(),
+        1,
+        Bytes::from(NONCE_MANAGER_STUB_CODE.to_vec()),
+    )
+}
+
+// ==================== payment APPROVE inside a batch is rejected ====================
+
+#[test]
+fn payment_approve_inside_atomic_batch_is_rejected() {
+    // frame[0] VERIFY with scope=3 AND the atomic-batch flag (0x07), so the
+    // payment APPROVE commits inside the batch; frame[1] is the terminator.
+    // A crafted block could reach this at consensus (the mempool bans it via
+    // the prefix rules). The payment APPROVE must revert, leaving `payer`
+    // unset, so the whole tx is invalid — the balance debit can never be
+    // stranded outside a surviving authorization.
+    let reverter = Address::from_low_u64_be(0x82_50_11);
+    let accounts = [
+        (
+            FUNDED_SENDER,
+            sender_balance(),
+            0,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        ),
+        (
+            reverter,
+            U256::zero(),
+            0,
+            Bytes::from(SSTORE_THEN_STOP_CODE.to_vec()),
+        ),
+    ];
+    let tx = frame_tx_with_keys(
+        vec![
+            frame(FrameMode::Verify, 0x07, FUNDED_SENDER, 100_000, &[]),
+            frame(FrameMode::Sender, 0x00, reverter, 100_000, &[]),
+        ],
+        vec![U256::zero()],
+    );
+    let (result, db) = run_frame_tx(&accounts, tx);
+    assert!(
+        result.is_err(),
+        "payment approval inside an atomic batch must invalidate the tx; got {result:?}"
+    );
+    assert_eq!(
+        nonce_of(&db, FUNDED_SENDER),
+        0,
+        "an invalidated tx must consume no nonce",
+    );
+}
+
+// ==================== consumption survives a LATER batch revert ====================
+
+#[test]
+fn key0_consumption_survives_a_later_batch_revert() {
+    // Legit shape: frame[0] VERIFY(scope=3, NO batch flag) grants payment and
+    // consumes the key-0 nonce; frames[1..] are a SENDER atomic batch that
+    // reverts. The payment frame is not in the batch, so its consumption is
+    // outside the batch's revert scope and survives.
+    let reverter = Address::from_low_u64_be(0x82_50_21);
+    let accounts = [
+        (
+            FUNDED_SENDER,
+            sender_balance(),
+            0,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        ),
+        (
+            reverter,
+            U256::zero(),
+            0,
+            Bytes::from(SSTORE_THEN_REVERT_CODE.to_vec()),
+        ),
+    ];
+    let tx = frame_tx_with_keys(
+        vec![
+            Frame {
+                state_gas_limit: KEYED_NONCE_FIRST_USE_STATE_GAS,
+                ..frame(FrameMode::Verify, 0x03, FUNDED_SENDER, 100_000, &[])
+            },
+            frame(FrameMode::Sender, 0x04, reverter, 100_000, &[]),
+            frame(FrameMode::Sender, 0x00, reverter, 100_000, &[]),
+        ],
+        vec![U256::zero()],
+    );
+    let (result, db) = run_frame_tx(&accounts, tx);
+    let report = result.expect("payment is granted outside the batch, so the tx is valid");
+    assert_eq!(report.payer_address, Some(FUNDED_SENDER));
+    assert_eq!(
+        nonce_of(&db, FUNDED_SENDER),
+        1,
+        "key-0 consumption from the non-batch payment frame survives the later batch revert",
+    );
+    assert!(
+        storage_slot(&db, reverter, H256::zero()).is_zero(),
+        "the reverted in-batch SSTORE must not survive",
+    );
+}
+
+#[test]
+fn keyed_nonce_consumption_survives_a_later_batch_revert() {
+    // Same as above but with a non-zero nonce key, so consumption lands in
+    // NONCE_MANAGER storage rather than the account nonce.
+    let reverter = Address::from_low_u64_be(0x82_50_31);
+    let accounts = [
+        (
+            FUNDED_SENDER,
+            sender_balance(),
+            0,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        ),
+        (
+            reverter,
+            U256::zero(),
+            0,
+            Bytes::from(SSTORE_THEN_REVERT_CODE.to_vec()),
+        ),
+        nonce_manager_account(),
+    ];
+    let tx = frame_tx_with_keys(
+        vec![
+            Frame {
+                state_gas_limit: KEYED_NONCE_FIRST_USE_STATE_GAS,
+                ..frame(FrameMode::Verify, 0x03, FUNDED_SENDER, 100_000, &[])
+            },
+            frame(FrameMode::Sender, 0x04, reverter, 100_000, &[]),
+            frame(FrameMode::Sender, 0x00, reverter, 100_000, &[]),
+        ],
+        vec![U256::one()],
+    );
+    let (result, db) = run_frame_tx(&accounts, tx);
+    let report = result.expect("payment granted outside the batch keeps the tx valid");
+    assert_eq!(report.payer_address, Some(FUNDED_SENDER));
+    assert_eq!(
+        storage_slot(
+            &db,
+            frame_tx_nonce_manager(),
+            keyed_slot(FUNDED_SENDER, U256::one())
+        ),
+        U256::one(),
+        "keyed-nonce consumption survives the later batch revert",
+    );
+    assert_eq!(
+        nonce_of(&db, FUNDED_SENDER),
+        0,
+        "a non-zero key must not touch the sender's linear account nonce",
+    );
+}
+
+// ==================== Keyed nonces are protocol bookkeeping ====================
+//
+// EIP-8250: "Keyed-nonce reads and writes performed by stateful validity and
+// `consume_nonce_set` are protocol bookkeeping: they do NOT add `NONCE_MANAGER`
+// or its slots to EIP-2929 `accessed_addresses` or `accessed_storage_keys`, are
+// NOT charged under EIP-2200 `SSTORE` pricing, and do NOT warm the address or
+// slot for later user-level access."
+
+/// A probe account whose code does `PUSH20 addr; BALANCE; POP; STOP`.
+const PROBE: Address = Address::repeat_byte(0xB2);
+/// Never touched by the protocol: the cold control.
+const COLD_CONTROL: Address = Address::repeat_byte(0xC2);
+
+fn balance_probe_code(addr: Address) -> Bytes {
+    let mut code = vec![0x73];
+    code.extend_from_slice(addr.as_bytes());
+    code.extend_from_slice(&[0x31, 0x50, 0x00]);
+    Bytes::from(code)
+}
+
+/// Run a frame tx that consumes `nonce_keys` and then probes `probed`'s
+/// warm/cold status from a DEFAULT frame, returning the execution report. The
+/// VERIFY frame carries the state budget for two fresh keys, which is what the
+/// probes below consume at most.
+fn keyed_nonce_probe(probed: Address, nonce_keys: Vec<U256>) -> ExecutionReport {
+    let tx = frame_tx_with_keys(
+        vec![
+            Frame {
+                state_gas_limit: 2 * KEYED_NONCE_FIRST_USE_STATE_GAS,
+                ..frame(FrameMode::Verify, 0x03, FUNDED_SENDER, 100_000, &[])
+            },
+            frame(FrameMode::Default, 0, PROBE, 100_000, &[]),
+        ],
+        nonce_keys,
+    );
+    let (result, _db) = run_frame_tx(
+        &[
+            (
+                FUNDED_SENDER,
+                sender_balance(),
+                0,
+                Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+            ),
+            (PROBE, U256::zero(), 0, balance_probe_code(probed)),
+            (COLD_CONTROL, U256::from(1u64), 0, Bytes::new()),
+            (
+                ethrex_common::types::frame_tx_nonce_manager(),
+                U256::zero(),
+                1,
+                Bytes::from(NONCE_MANAGER_STUB_CODE.to_vec()),
+            ),
+        ],
+        tx,
+    );
+    result.expect("the keyed-nonce probe tx must execute")
+}
+
+#[test]
+fn consuming_a_keyed_nonce_does_not_warm_the_nonce_manager() {
+    let nonce_manager = ethrex_common::types::frame_tx_nonce_manager();
+    let keys = vec![U256::one()];
+
+    let manager_gas = keyed_nonce_probe(nonce_manager, keys.clone()).gas_used;
+    let control_gas = keyed_nonce_probe(COLD_CONTROL, keys).gas_used;
+
+    assert_eq!(
+        manager_gas, control_gas,
+        "consuming a keyed nonce must not warm NONCE_MANAGER for later \
+         user-level access: probing it cost {manager_gas} against {control_gas} \
+         for a never-touched account"
+    );
+}
+
+#[test]
+fn a_keyed_nonce_first_use_is_priced_as_state_gas() {
+    // EIP-8250 §Nonce consumption: the only keyed-nonce charge is one storage set of
+    // state gas per newly-occupied key, drawn from the approving frame's
+    // `limits.state`. It is not execution gas, not an EIP-2200 SSTORE charge, and
+    // not a cold-slot access on top.
+    let legacy_only = keyed_nonce_probe(COLD_CONTROL, vec![U256::zero()]);
+    let one_key = keyed_nonce_probe(COLD_CONTROL, vec![U256::one()]);
+    let two_keys = keyed_nonce_probe(COLD_CONTROL, vec![U256::one(), U256::from(2u64)]);
+
+    // The state dimension: exactly one first-use charge per fresh key, and none
+    // for key 0, which is the account nonce and occupies no NONCE_MANAGER slot.
+    assert_eq!(
+        one_key.state_gas_used - legacy_only.state_gas_used,
+        KEYED_NONCE_FIRST_USE_STATE_GAS,
+        "one fresh key must cost exactly one KEYED_NONCE_FIRST_USE_STATE_GAS of state gas"
+    );
+    assert_eq!(
+        two_keys.state_gas_used - one_key.state_gas_used,
+        KEYED_NONCE_FIRST_USE_STATE_GAS,
+        "a second fresh key must cost exactly one more KEYED_NONCE_FIRST_USE_STATE_GAS"
+    );
+
+    // The execution dimension: an extra key only lengthens the signed envelope, so
+    // the delta is a few gas of ordinary transaction data cost. A cold slot access
+    // or an EIP-2200 charge would add thousands, so bounding the excess below
+    // `ENVELOPE_SLACK` is what makes this an assertion about pricing.
+    const ENVELOPE_SLACK: u64 = 100;
+    let execution = |report: &ExecutionReport| report.gas_used - report.state_gas_used;
+    let keyed_delta = execution(&one_key) - execution(&legacy_only);
+    assert!(
+        keyed_delta < ENVELOPE_SLACK,
+        "consuming a fresh keyed nonce must cost no execution gas beyond envelope data, \
+         but cost {keyed_delta} more"
+    );
+    let second_key_delta = execution(&two_keys) - execution(&one_key);
+    assert!(
+        second_key_delta < ENVELOPE_SLACK,
+        "a second fresh key must cost no execution gas beyond envelope data, but cost \
+         {second_key_delta} more -- a storage charge is layered on top"
+    );
+}
+
+// ==================== Contract sender on a keyed nonce ====================
+
+/// The exact shape the devnet probe submits: a contract sender whose runtime is
+/// nothing but `APPROVE(3)`, a VERIFY frame on itself, and a SENDER frame paying a
+/// fresh address — all on a keyed nonce rather than the legacy one.
+///
+/// This is the transaction that `eth_sendRawTransaction` admits and the builder then
+/// evicts, so it is worth pinning as a unit: the two paths must agree, and the tighter
+/// budgets are the probe's, not round numbers. The VERIFY frame declares exactly the
+/// state budget EIP-8250 charges for creating the key's NONCE_MANAGER slot.
+#[test]
+fn a_contract_sender_can_approve_on_a_first_use_keyed_nonce() {
+    let contract = Address::repeat_byte(0xC5);
+    let recipient = Address::from_low_u64_be(0xF00D);
+    let mut tx = frame_tx_with_keys(
+        vec![
+            Frame {
+                mode: u8::from(FrameMode::Verify),
+                flags: 0x03,
+                target: Some(contract),
+                gas_limit: 80_000,
+                state_gas_limit: KEYED_NONCE_FIRST_USE_STATE_GAS,
+                value: U256::zero(),
+                data: Bytes::new(),
+            },
+            Frame {
+                mode: u8::from(FrameMode::Sender),
+                flags: 0,
+                target: Some(recipient),
+                gas_limit: 30_000,
+                state_gas_limit: NEW_ACCOUNT_STATE_GAS,
+                value: U256::from(100u64),
+                data: Bytes::new(),
+            },
+        ],
+        vec![U256::from(0x9999_0000u64)],
+    );
+    tx.sender = contract;
+
+    let accounts = [(
+        contract,
+        U256::from(10u64).pow(U256::from(18u64)), // 1 ETH, as the probe funds it
+        0,
+        Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+    )];
+    let (result, db) = run_frame_tx(&accounts, tx);
+    let report = result.expect(
+        "a contract sender approving on a first-use keyed nonce must be a VALID tx: \
+         this is the transaction the devnet admits and then drops",
+    );
+    let frame_results = report.frame_results.expect("frame results present");
+    assert_eq!(
+        frame_results[1].0,
+        ethrex_common::types::FRAME_RECEIPT_STATUS_SUCCESS,
+        "the SENDER frame must deliver its value; got {frame_results:?}"
+    );
+    assert_eq!(
+        db.current_accounts_state
+            .get(&recipient)
+            .map(|a| a.info.balance)
+            .unwrap_or_default(),
+        U256::from(100u64),
+        "the recipient must actually be funded"
+    );
+}
+
+/// EIP-8250's headline feature, executed the way a block executes it: two frame
+/// transactions from one contract sender on disjoint keys, run in sequence against a
+/// single database so the second sees everything the first committed.
+///
+/// This is the case the devnet verification calls "both mine", and the one that
+/// intermittently loses both transactions to the builder with `VERIFY frame reverted`.
+/// A single transaction of this shape passes
+/// (`a_contract_sender_can_approve_on_a_first_use_keyed_nonce`), so if the pair fails
+/// here the cause is something the first transaction leaves behind for the second.
+#[test]
+fn two_keyed_transactions_from_one_contract_sender_both_execute() {
+    let contract = Address::repeat_byte(0xC5);
+    let mut db = seeded_db(&[(
+        contract,
+        U256::from(10u64).pow(U256::from(18u64)),
+        0,
+        Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+    )]);
+
+    for index in 0u64..2 {
+        let recipient = Address::from_low_u64_be(0xBEEF_0000 + index);
+        let mut tx = frame_tx_with_keys(
+            vec![
+                Frame {
+                    mode: u8::from(FrameMode::Verify),
+                    flags: 0x03,
+                    target: Some(contract),
+                    gas_limit: 80_000,
+                    state_gas_limit: KEYED_NONCE_FIRST_USE_STATE_GAS,
+                    value: U256::zero(),
+                    data: Bytes::new(),
+                },
+                Frame {
+                    mode: u8::from(FrameMode::Sender),
+                    flags: 0,
+                    target: Some(recipient),
+                    gas_limit: 30_000,
+                    state_gas_limit: NEW_ACCOUNT_STATE_GAS,
+                    value: U256::from(100u64),
+                    data: Bytes::new(),
+                },
+            ],
+            vec![U256::from(0x8250_0000u64 + index)],
+        );
+        tx.sender = contract;
+
+        let env = frame_tx_env(&tx);
+        let transaction = Transaction::FrameTransaction(tx);
+        let result = {
+            let mut vm = VM::new(
+                env,
+                &mut db,
+                &transaction,
+                LevmCallTracer::disabled(),
+                VMType::L1,
+                &NativeCrypto,
+                None,
+            )
+            .expect("VM::new should succeed for a frame tx");
+            vm.execute()
+        };
+        let report = result.unwrap_or_else(|e| {
+            panic!("transaction {index} on key {index} must be valid, got {e:?}")
+        });
+        let frames = report.frame_results.expect("frame results present");
+        assert_eq!(
+            frames[1].0,
+            ethrex_common::types::FRAME_RECEIPT_STATUS_SUCCESS,
+            "transaction {index}'s SENDER frame must deliver its value; got {frames:?}"
+        );
+        assert_eq!(
+            db.current_accounts_state
+                .get(&recipient)
+                .map(|a| a.info.balance)
+                .unwrap_or_default(),
+            U256::from(100u64),
+            "transaction {index}'s recipient must be funded"
+        );
+    }
+}
+
+/// The same transaction with a VERIFY frame that declares no state budget: the
+/// first-use charge cannot be covered, the frame halts with no approval effect,
+/// and a halted VERIFY frame invalidates the transaction.
+#[test]
+fn a_first_use_keyed_nonce_halts_the_frame_without_its_state_budget() {
+    let contract = Address::repeat_byte(0xC5);
+    let mut tx = frame_tx_with_keys(
+        vec![
+            Frame {
+                mode: u8::from(FrameMode::Verify),
+                flags: 0x03,
+                target: Some(contract),
+                gas_limit: 80_000,
+                state_gas_limit: 0,
+                value: U256::zero(),
+                data: Bytes::new(),
+            },
+            Frame {
+                mode: u8::from(FrameMode::Sender),
+                flags: 0,
+                target: Some(Address::from_low_u64_be(0xF00D)),
+                gas_limit: 30_000,
+                state_gas_limit: NEW_ACCOUNT_STATE_GAS,
+                value: U256::from(100u64),
+                data: Bytes::new(),
+            },
+        ],
+        vec![U256::from(0x9999_0000u64)],
+    );
+    tx.sender = contract;
+
+    let accounts = [(
+        contract,
+        U256::from(10u64).pow(U256::from(18u64)),
+        0,
+        Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+    )];
+    let (result, db) = run_frame_tx(&accounts, tx);
+    let err = result.expect_err(
+        "a VERIFY frame that cannot pay the keyed-nonce first-use state gas must halt \
+         and invalidate the transaction",
+    );
+    assert!(
+        format!("{err:?}").contains("VERIFY"),
+        "the rejection must name the reverted VERIFY frame, got {err:?}"
+    );
+    // No approval effect applied: the key's slot was never written.
+    let slot = keyed_slot(contract, U256::from(0x9999_0000u64));
+    assert!(
+        storage_slot(&db, ethrex_common::types::frame_tx_nonce_manager(), slot).is_zero(),
+        "a halted approval must leave the keyed-nonce slot unwritten"
+    );
+}
+
+// ==================== Key 0 from a sender that does not exist ====================
+
+/// EIP-8250 §Nonce consumption, step 1, on the legacy key: when `tx.sender` does not
+/// exist under EIP-8037's existence rule, the approving frame pays account creation
+/// state gas immediately before the nonce increment creates the account. The sender
+/// here is a never-seen EOA with no balance, so a paymaster's `APPROVE(APPROVE_PAYMENT)`
+/// is what consumes the nonce, and it is that frame's `limits.state` that pays.
+mod key_zero_from_a_fresh_sender {
+    use super::*;
+    use ethrex_common::types::{FRAME_SIG_SCHEME_SECP256K1, FrameSignature};
+    use k256::ecdsa::SigningKey;
+
+    /// APPROVE(scope=1): payment approval from a paymaster's own code.
+    const APPROVE_PAYMENT_CODE: &[u8] = &[0x60, 0x01, 0x60, 0x00, 0x60, 0x00, 0xAA];
+    const PAYMASTER: Address = Address::repeat_byte(0xFA);
+
+    fn key_and_address(seed: u8) -> (SigningKey, Address) {
+        let signing_key = SigningKey::from_bytes(&[seed; 32].into()).unwrap();
+        let uncompressed = signing_key.verifying_key().to_encoded_point(false);
+        let pub_hash = ethrex_crypto::keccak::keccak_hash(&uncompressed.as_bytes()[1..]);
+        (signing_key, Address::from_slice(&pub_hash[12..]))
+    }
+
+    fn sign(key: &SigningKey, sig_hash: H256, signer: Address) -> FrameSignature {
+        let (raw_sig, recovery_id) = key.sign_prehash_recoverable(sig_hash.as_bytes()).unwrap();
+        let mut bytes = vec![0u8; 65];
+        bytes[0] = recovery_id.to_byte();
+        bytes[1..].copy_from_slice(&raw_sig.to_bytes());
+        FrameSignature {
+            scheme: FRAME_SIG_SCHEME_SECP256K1,
+            signer: Some(signer),
+            msg: Bytes::new(),
+            signature: Bytes::from(bytes),
+        }
+    }
+
+    /// A signed `[VERIFY(exec) on the sender's default code, VERIFY(pay) on the
+    /// paymaster]` transaction from a sender that exists nowhere, with `pay_state`
+    /// as the paymaster frame's state budget.
+    fn sponsored_tx_from_nowhere(pay_state: u64) -> (FrameTransaction, Address) {
+        let (key, sender) = key_and_address(0x5A);
+        let mut tx = frame_tx_with_keys(
+            vec![
+                frame(FrameMode::Verify, 0x02, sender, 100_000, &[]),
+                Frame {
+                    state_gas_limit: pay_state,
+                    ..frame(FrameMode::Verify, 0x01, PAYMASTER, 100_000, &[])
+                },
+            ],
+            vec![U256::zero()],
+        );
+        tx.sender = sender;
+        tx.signatures = vec![FrameSignature {
+            scheme: FRAME_SIG_SCHEME_SECP256K1,
+            signer: Some(sender),
+            msg: Bytes::new(),
+            signature: Bytes::from(vec![0u8; 65]),
+        }];
+        let sig_hash = tx.compute_sig_hash();
+        tx.signatures[0] = sign(&key, sig_hash, sender);
+        tx.inner_hash = Default::default();
+        tx.cached_canonical = Default::default();
+        (tx, sender)
+    }
+
+    fn paymaster() -> SeededAccount {
+        (
+            PAYMASTER,
+            U256::from(10u64).pow(U256::from(18u64)),
+            0,
+            Bytes::from(APPROVE_PAYMENT_CODE.to_vec()),
+        )
+    }
+
+    #[test]
+    fn the_approving_frame_pays_account_creation() {
+        let (tx, sender) = sponsored_tx_from_nowhere(NEW_ACCOUNT_STATE_GAS);
+        let (result, db) = run_frame_tx(&[paymaster()], tx);
+        let report = result.expect("a sponsored transaction from a fresh sender must be valid");
+        let frames = report.frame_results.expect("frame results present");
+        assert_eq!(
+            frames[1].2, NEW_ACCOUNT_STATE_GAS,
+            "the paymaster frame must be attributed the sender's account creation, got {frames:?}"
+        );
+        assert_eq!(
+            frames[0].2, 0,
+            "the sender's own VERIFY frame creates nothing"
+        );
+        assert_eq!(
+            nonce_of(&db, sender),
+            1,
+            "the increment created the account at nonce 1"
+        );
+    }
+
+    #[test]
+    fn without_the_state_budget_the_approval_halts() {
+        let (tx, sender) = sponsored_tx_from_nowhere(NEW_ACCOUNT_STATE_GAS - 1);
+        let (result, db) = run_frame_tx(&[paymaster()], tx);
+        result.expect_err(
+            "a paymaster frame one gas short of the account creation charge must halt and \
+             invalidate the transaction",
+        );
+        assert_eq!(
+            nonce_of(&db, sender),
+            0,
+            "no approval effect may survive the halt"
+        );
+    }
+}

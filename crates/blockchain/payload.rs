@@ -826,6 +826,28 @@ impl Blockchain {
                 continue;
             }
 
+            // EIP-8141 fork and expiry gates, mirroring `fill_transactions`.
+            // Both are defence in depth rather than the thing that makes these
+            // transactions unincludable: a pre-fork frame transaction halts with
+            // `FrameTxPreFork` and an expired one reverts in its expiry-verifier
+            // frame, and the `apply_transaction` arm below already skips a
+            // failed entry and restores the BAL checkpoint. What the gates buy
+            // is deciding it from the envelope and the payload timestamp alone,
+            // so a list cannot spend an execution attempt and a checkpoint
+            // round-trip per entry on transactions that cannot be included.
+            if tx.tx_type() == TxType::Frame
+                && !chain_config.is_hegota_activated(context.payload.header.timestamp)
+            {
+                continue;
+            }
+            if let Transaction::FrameTransaction(frame_tx) = tx
+                && frame_tx
+                    .expiry_deadline()
+                    .is_some_and(|deadline| deadline < context.payload.header.timestamp)
+            {
+                continue;
+            }
+
             // BAL index + per-tx checkpoint, then record touched addresses.
             #[allow(clippy::cast_possible_truncation)]
             let tx_index = (context.payload.body.transactions.len() + 1) as u32;
@@ -927,7 +949,7 @@ impl Blockchain {
                     head_tx.tx.hash(&NativeCrypto)
                 );
                 // We don't have enough gas left for the transaction, so we skip all txs from this account
-                txs.pop();
+                txs.pop()?;
                 continue;
             }
 
@@ -953,7 +975,7 @@ impl Blockchain {
                 // Ignore replay protected tx & all txs from the sender
                 // Pull transaction from the mempool
                 debug!("Ignoring replay-protected transaction: {}", tx_hash);
-                txs.pop();
+                txs.pop()?;
                 self.remove_transaction_from_pool(&tx_hash)?;
                 continue;
             }
@@ -965,7 +987,7 @@ impl Blockchain {
                 && !chain_config.is_hegota_activated(context.payload.header.timestamp)
             {
                 debug!("Skipping frame transaction before Hegota fork: {}", tx_hash);
-                txs.pop();
+                txs.pop()?;
                 self.remove_transaction_from_pool(&tx_hash)?;
                 continue;
             }
@@ -979,7 +1001,7 @@ impl Blockchain {
                     .is_some_and(|deadline| deadline < context.payload.header.timestamp)
             {
                 debug!("Skipping expired frame transaction: {}", tx_hash);
-                txs.pop();
+                txs.pop()?;
                 self.remove_transaction_from_pool(&tx_hash)?;
                 continue;
             }
@@ -989,10 +1011,21 @@ impl Blockchain {
             match self.apply_tx_to_payload(head_tx, context) {
                 Ok(()) => txs.shift()?,
                 Err(e) => {
-                    // Frame-tx failures are deterministic (signatures bind the
-                    // whole tx) EXCEPT nonce mismatches, which are transient
-                    // queue-ordering artifacts — keep those pooled for a later
-                    // block, mirroring how regular txs are treated.
+                    // A frame tx's CONTENTS are fixed by its signature; its
+                    // INCLUSION is not. It can be turned away by things that have
+                    // nothing to do with its bytes — a nonce mismatch from queue
+                    // ordering, an EIP-8272 reference the next slot makes
+                    // referenceable, or simply a block with no room left in one
+                    // of EIP-8037's two gas
+                    // dimensions. None of those recur once the cause moves on, so
+                    // the transaction stays pooled, mirroring how regular txs are
+                    // treated.
+                    //
+                    // Conflating the two cost real transactions: a frame tx that
+                    // declared `limits.state` and met a block whose state
+                    // dimension was full was deleted from the pool rather than
+                    // retried, which is why two concurrent keyed transactions
+                    // would arrive and one would vanish.
                     //
                     // Regular txs are likewise kept pooled on failure, since the
                     // usual cause is a transient queue-ordering/nonce/balance
@@ -1004,19 +1037,34 @@ impl Blockchain {
                     // build and starve that sender's other txs indefinitely.
                     // Evict those too.
                     let evict = if is_frame {
-                        !is_nonce_mismatch(&e)
+                        is_frame_tx_intrinsically_invalid(&e)
                     } else {
                         is_deterministic_invalid(&e)
                     };
                     if evict {
-                        // Neutral wording on purpose: the two branches evict for
-                        // different reasons (a frame tx for any non-nonce-mismatch
-                        // failure, a regular tx only for a deterministic one), so
-                        // naming either reason here would mislabel the other.
-                        debug!("Evicting transaction {tx_hash} from the pool: {e}");
+                        if is_frame {
+                            // A frame tx is admitted on its VALIDATION PREFIX alone
+                            // (EIP-8141 §Mempool) — that is what bounds the work the
+                            // pool does per transaction — so a later frame can make it
+                            // invalid without anything having gone wrong. What is not
+                            // routine is that the node accepted the transaction, told
+                            // the sender its hash, and is now discarding it: from the
+                            // outside that is indistinguishable from a silent drop, and
+                            // it was in fact hiding two eviction bugs this file now
+                            // guards against. Log it at default verbosity so the reason
+                            // is visible without a debug build.
+                            warn!(
+                                "Frame transaction {tx_hash} was admitted on its \
+                                 validation prefix but is invalid as a whole; evicting \
+                                 it from the pool: {e}"
+                            );
+                        } else {
+                            // A deterministically-invalid regular tx is routine.
+                            debug!("Evicting transaction {tx_hash} from the pool: {e}");
+                        }
                         self.remove_transaction_from_pool(&tx_hash)?;
                     }
-                    txs.pop()
+                    txs.pop()?
                 }
             }
         }
@@ -1157,9 +1205,14 @@ impl Blockchain {
         head: &HeadTransaction,
         context: &mut PayloadBuildContext,
     ) -> Result<Receipt, ChainError> {
-        match **head {
-            Transaction::EIP4844Transaction(_) => self.apply_blob_transaction(head, context),
-            _ => apply_plain_transaction(head, context),
+        // A frame transaction (EIP-8141) carrying blobs needs the same blob-gas
+        // accounting and sidecar handling as an EIP-4844 one; the blob path reads
+        // only the hash, the versioned hashes and the bundle, so it is already
+        // type-agnostic.
+        if (**head).is_blob_carrying() {
+            self.apply_blob_transaction(head, context)
+        } else {
+            apply_plain_transaction(head, context)
         }
     }
 
@@ -1202,7 +1255,7 @@ impl Blockchain {
                 };
                 (blobs_bundle.blobs.len(), Some(blobs_bundle))
             }
-            None if context.explicit_build => ((**head).blob_versioned_hashes().len(), None),
+            None if context.explicit_build => ((**head).blob_versioned_hashes_ref().len(), None),
             None => {
                 // No blob tx should enter the mempool without its blobs bundle so this is an internal error
                 return Err(StoreError::Custom(format!(
@@ -1354,16 +1407,42 @@ impl Blockchain {
 
 /// Returns true if `e` represents a transaction nonce mismatch.
 ///
-/// The VM surfaces this as `TxValidationError::NonceMismatch` which gets
-/// stringified through `EvmError::Transaction(String)` →
-/// `ChainError::InvalidBlock(InvalidBlockError::InvalidTransaction(String))`.
-/// There is no typed variant to match at the `ChainError` level, so we detect
-/// it by the stable Display substring. Used to keep gapped-nonce frame txs
-/// pooled instead of evicting them: a nonce gap is transient because the
-/// `TransactionQueue` feeds the lowest pooled nonce without comparing to the
-/// account nonce, so the tx becomes valid once earlier nonces are included.
-fn is_nonce_mismatch(e: &ChainError) -> bool {
-    e.to_string().contains("Nonce mismatch")
+/// Whether a frame transaction is invalid because of what it *is*, rather than because of
+/// the state it met.
+///
+/// This is deliberately a very short list, and the reason is the failure that produced it.
+/// A frame transaction's execution reads the chain: its frames resolve targets, read code,
+/// check balances and storage. The builder does not execute against the chain head — it
+/// executes against the parent of the payload it is building, and it keeps rebuilding that
+/// payload as new transactions arrive. So a transaction can enter the pool after the
+/// payload's parent was fixed and then be executed against a state older than the one it
+/// was admitted against.
+///
+/// That is exactly how this was found: a contract sender was deployed, its transactions
+/// were admitted, and the builder ran them against a parent from before the deployment.
+/// The frame resolved its target to an account with no code, took the default-code path
+/// instead of calling the contract, failed, and the transaction was deleted from the pool
+/// as invalid — while being perfectly valid against the chain head, and against every
+/// later block. The user saw `eth_sendRawTransaction` return a hash for a transaction that
+/// then vanished, roughly one run in three.
+///
+/// The previous rule enumerated the transient failures and evicted everything else, which
+/// meant every new state-dependent failure mode was silently a transaction-losing bug
+/// until someone thought to add it to the list. Three were found that way and added one at
+/// a time. Enumerating the *intrinsic* failures instead is the safe direction to be
+/// incomplete in: the cost of wrongly keeping a transaction is that it occupies a pool slot
+/// until it expires, and the cost of wrongly evicting one is losing a transaction the node
+/// already told the sender it had accepted.
+fn is_frame_tx_intrinsically_invalid(e: &ChainError) -> bool {
+    let message = e.to_string();
+    // Structural: the frame list itself is malformed (frame count, reserved modes, batch
+    // flags). No state can make it well-formed.
+    message.contains("Invalid frame transaction format:")
+        // The signature list does not authenticate the sender. Fixed by the bytes.
+        || message.contains("Invalid frame transaction: signature validation failed")
+        // Submitted against a chain where EIP-8141 is not active. A frame transaction is
+        // not includable before the fork and the pool should not hold it.
+        || message.contains("not supported before the Hegota fork")
 }
 
 /// Whether a tx failed with an error that recurs at the same nonce for as long as
@@ -1557,7 +1636,7 @@ impl From<HeadTransaction> for Transaction {
 
 impl TransactionQueue {
     /// Creates a new TransactionQueue from a set of transactions grouped by sender and sorted by nonce
-    fn new(
+    pub fn new(
         mut txs: FxHashMap<Address, Vec<MempoolTransaction>>,
         base_fee: Option<u64>,
     ) -> Result<Self, ChainError> {
@@ -1602,12 +1681,25 @@ impl TransactionQueue {
         self.heads.first().cloned()
     }
 
-    /// Removes current head transaction and all transactions from the given sender
-    pub fn pop(&mut self) {
-        if !self.is_empty() {
-            let sender = self.heads.remove(0).tx.sender();
-            self.txs.remove(&sender);
+    /// Removes the current head transaction, and with it every remaining
+    /// transaction from that sender that depended on it.
+    ///
+    /// A sender's queue is ordered by nonce, so dropping one transaction
+    /// normally invalidates all the later ones. That reasoning holds only in the
+    /// linear account-nonce domain. An [EIP-8250] keyed frame transaction owns
+    /// its own `(sender, nonce_key)` sequence and the mempool admits at most one
+    /// pending transaction per key set, so it has no dependents and only the
+    /// head is dropped.
+    pub fn pop(&mut self) -> Result<(), ChainError> {
+        let Some(head) = self.heads.first() else {
+            return Ok(());
+        };
+        if !head_has_dependents(head.tx.transaction()) {
+            return self.shift();
         }
+        let sender = self.heads.remove(0).tx.sender();
+        self.txs.remove(&sender);
+        Ok(())
     }
 
     /// Remove the top transaction
@@ -1637,6 +1729,16 @@ impl TransactionQueue {
         }
         Ok(())
     }
+}
+
+/// Whether the rest of `sender`'s queue is ordered behind `tx` and becomes
+/// unusable if `tx` is dropped.
+///
+/// True for the linear account-nonce domain, where a queue is a nonce chain.
+/// False for [EIP-8250] keyed frame transactions, whose `nonce_seq` counts
+/// within a `(sender, nonce_key)` sequence of its own.
+fn head_has_dependents(tx: &Transaction) -> bool {
+    !matches!(tx, Transaction::FrameTransaction(frame_tx) if frame_tx.is_keyed())
 }
 
 // Orders transactions by highest tip, if tip is equal, orders by lowest timestamp
@@ -1826,32 +1928,65 @@ mod tests {
     }
 
     #[test]
-    fn nonce_mismatch_detected_from_chain_error() {
-        // Build the ChainError through the REAL production conversion path so a
-        // change to the TxValidationError/VMError Display strings breaks this
-        // test instead of silently breaking `is_nonce_mismatch` (which keys off
-        // the "Nonce mismatch" substring). Path:
-        // TxValidationError::NonceMismatch -> VMError -> EvmError::Transaction
+    fn frame_tx_intrinsic_invalidity_detected_from_chain_error() {
+        // Pin the substrings through the REAL production conversion path, so a reworded
+        // levm error breaks this test rather than silently changing which transactions the
+        // builder throws away. Path: TxValidationError -> VMError -> EvmError::Transaction
         // (via From, which stringifies) -> ChainError::InvalidBlock.
         use ethrex_levm::errors::{TxValidationError, VMError};
-        let nonce_err: ChainError =
+        let intrinsic: ChainError = EvmError::from(VMError::TxValidation(
+            TxValidationError::InvalidFrameTransactionFormat("Frame 0: reserved mode".to_string()),
+        ))
+        .into();
+        assert!(
+            is_frame_tx_intrinsically_invalid(&intrinsic),
+            "a malformed frame list is intrinsic and must be evicted; got: {intrinsic}"
+        );
+
+        let bad_signature: ChainError = EvmError::from(VMError::TxValidation(
+            TxValidationError::InvalidFrameSignature,
+        ))
+        .into();
+        assert!(
+            is_frame_tx_intrinsically_invalid(&bad_signature),
+            "a signature that does not authenticate the sender is fixed by the bytes; got: \
+             {bad_signature}"
+        );
+
+        let pre_fork: ChainError =
+            EvmError::from(VMError::TxValidation(TxValidationError::FrameTxPreFork)).into();
+        assert!(
+            is_frame_tx_intrinsically_invalid(&pre_fork),
+            "a pre-fork frame transaction is intrinsic; got: {pre_fork}"
+        );
+
+        // The one that cost a devnet its transactions: a frame that failed because of the
+        // state it met must NOT be treated as intrinsic. The builder can be on a parent
+        // older than the transaction, and the same bytes are valid one block later.
+        let state_dependent: ChainError = EvmError::from(VMError::TxValidation(
+            TxValidationError::InvalidFrameTransaction(
+                "VERIFY frame 0 (target 0xabc, 0 bytes of code) failed: the default code \
+                 for this frame mode failed"
+                    .to_string(),
+            ),
+        ))
+        .into();
+        assert!(
+            !is_frame_tx_intrinsically_invalid(&state_dependent),
+            "a frame that failed against this parent's state must stay pooled; got: \
+             {state_dependent}"
+        );
+
+        // So must an ordinary nonce mismatch, which is transient by queue ordering.
+        let nonce: ChainError =
             EvmError::from(VMError::TxValidation(TxValidationError::NonceMismatch {
                 expected: 5,
                 actual: 7,
             }))
             .into();
         assert!(
-            is_nonce_mismatch(&nonce_err),
-            "is_nonce_mismatch must match the real NonceMismatch Display; got: {nonce_err}"
-        );
-        // A different validation error must NOT match, also via the real path.
-        let other: ChainError = EvmError::from(VMError::TxValidation(
-            TxValidationError::InsufficientAccountFunds,
-        ))
-        .into();
-        assert!(
-            !is_nonce_mismatch(&other),
-            "is_nonce_mismatch must not match unrelated errors; got: {other}"
+            !is_frame_tx_intrinsically_invalid(&nonce),
+            "a nonce mismatch is transient; got: {nonce}"
         );
     }
 

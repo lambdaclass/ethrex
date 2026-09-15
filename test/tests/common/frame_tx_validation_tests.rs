@@ -7,11 +7,13 @@
 
 use bytes::Bytes;
 use ethrex_common::constants::GAS_PER_BLOB;
+use ethrex_common::types::MAX_BLOBS_PER_TX;
 use ethrex_common::types::{
     APPROVE_EXECUTION, APPROVE_EXECUTION_AND_PAYMENT, APPROVE_PAYMENT, Block, BlockBody,
     BlockHeader, ChainConfig, EIP4844Transaction, FRAME_SIG_SCHEME_ARBITRARY,
-    FRAME_SIG_SCHEME_SECP256K1, FRAME_TX_MAX_VERIFY_GAS, Frame, FrameMode, FrameSignature,
-    FrameTransaction, FrameValidationError, PrefixShape, Transaction, frame_tx_expiry_verifier,
+    FRAME_SIG_SCHEME_SECP256K1, FRAME_TX_MAX_VERIFY_GAS, FRAME_TX_MAX_VERIFY_STATE_GAS, Frame,
+    FrameMode, FrameSignature, FrameTransaction, FrameValidationError, PrefixShape, Transaction,
+    frame_tx_expiry_verifier,
 };
 
 /// EIP-4844 `VERSIONED_HASH_VERSION_KZG`. The constant itself lives in a private
@@ -37,19 +39,21 @@ fn cancun_config() -> ChainConfig {
 fn frame_tx_with_blobs(n_blobs: usize) -> FrameTransaction {
     FrameTransaction {
         chain_id: 0,
-        nonce: 0,
+        nonce_keys: vec![U256::zero()],
+        nonce_seq: 0,
         sender: Default::default(),
         frames: vec![Frame {
             mode: FrameMode::Default as u8,
             flags: 0x00,
             target: None,
             gas_limit: 0,
+            state_gas_limit: 100_000,
             value: Default::default(),
             data: Bytes::new(),
         }],
         signatures: vec![],
-        max_priority_fee_per_gas: 0,
-        max_fee_per_gas: 0,
+        max_priority_fee_per_gas: U256::from(0u64),
+        max_fee_per_gas: U256::from(0u64),
         max_fee_per_blob_gas: Default::default(),
         blob_versioned_hashes: (0..n_blobs).map(|_| H256::zero()).collect(),
         ..Default::default()
@@ -127,6 +131,7 @@ fn expiry_verifier_frame() -> Frame {
         flags: 0x00,
         target: Some(frame_tx_expiry_verifier()),
         gas_limit: 1_000,
+        state_gas_limit: 100_000,
         value: U256::zero(),
         data: Bytes::from(vec![0u8; 8]),
     }
@@ -138,6 +143,7 @@ fn self_verify_frame() -> Frame {
         flags: APPROVE_EXECUTION_AND_PAYMENT,
         target: Some(sender_addr()),
         gas_limit: 10_000,
+        state_gas_limit: 100_000,
         value: U256::zero(),
         data: Bytes::new(),
     }
@@ -149,6 +155,7 @@ fn only_verify_frame() -> Frame {
         flags: APPROVE_EXECUTION,
         target: Some(sender_addr()),
         gas_limit: 10_000,
+        state_gas_limit: 100_000,
         value: U256::zero(),
         data: Bytes::new(),
     }
@@ -160,6 +167,7 @@ fn pay_frame() -> Frame {
         flags: APPROVE_PAYMENT,
         target: Some(sender_addr()),
         gas_limit: 10_000,
+        state_gas_limit: 100_000,
         value: U256::zero(),
         data: Bytes::new(),
     }
@@ -171,6 +179,7 @@ fn deploy_frame() -> Frame {
         flags: 0x00,
         target: None,
         gas_limit: 50_000,
+        state_gas_limit: 100_000,
         value: U256::zero(),
         data: Bytes::from_static(b"deploy_bytecode"),
     }
@@ -181,9 +190,10 @@ fn base_frame_tx_with_frames(frames: Vec<Frame>) -> FrameTransaction {
         sender: sender_addr(),
         frames,
         chain_id: 1,
-        nonce: 42,
-        max_priority_fee_per_gas: 1_000_000_000,
-        max_fee_per_gas: 30_000_000_000,
+        nonce_keys: vec![U256::zero()],
+        nonce_seq: 42,
+        max_priority_fee_per_gas: U256::from(1_000_000_000u64),
+        max_fee_per_gas: U256::from(30_000_000_000u64),
         ..Default::default()
     }
 }
@@ -198,7 +208,7 @@ fn prefix_shape_self_verify() {
     assert_eq!(prefix.frame_indices, vec![0]);
     assert_eq!(prefix.deploy_index, None);
     assert_eq!(prefix.pay_index, Some(0));
-    tx.validate_prefix_structure(&prefix)
+    tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
         .expect("SelfVerify structure should be valid");
 }
 
@@ -212,7 +222,7 @@ fn prefix_shape_deploy_self_verify() {
     assert_eq!(prefix.frame_indices, vec![0, 1]);
     assert_eq!(prefix.deploy_index, Some(0));
     assert_eq!(prefix.pay_index, Some(1));
-    tx.validate_prefix_structure(&prefix)
+    tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
         .expect("DeploySelfVerify structure should be valid");
 }
 
@@ -226,7 +236,7 @@ fn prefix_shape_only_verify_pay() {
     assert_eq!(prefix.frame_indices, vec![0, 1]);
     assert_eq!(prefix.deploy_index, None);
     assert_eq!(prefix.pay_index, Some(1));
-    tx.validate_prefix_structure(&prefix)
+    tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
         .expect("OnlyVerifyPay structure should be valid");
 }
 
@@ -240,7 +250,7 @@ fn prefix_shape_deploy_only_verify_pay() {
     assert_eq!(prefix.frame_indices, vec![0, 1, 2]);
     assert_eq!(prefix.deploy_index, Some(0));
     assert_eq!(prefix.pay_index, Some(2));
-    tx.validate_prefix_structure(&prefix)
+    tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
         .expect("DeployOnlyVerifyPay structure should be valid");
 }
 
@@ -255,13 +265,14 @@ fn prefix_shape_self_verify_with_interleaved_expiry_verifier() {
     assert_eq!(prefix.shape, PrefixShape::SelfVerify);
     // frame_indices omits the expiry-verifier (index 0); self_verify is at index 1.
     assert_eq!(prefix.frame_indices, vec![1]);
-    tx.validate_prefix_structure(&prefix)
+    tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
         .expect("SelfVerify with expiry-verifier should be structurally valid");
 }
 
 #[test]
 fn prefix_shape_deploy_self_verify_with_expiry_verifier_between() {
-    // Expiry verifier between deploy and self-verify should be transparent.
+    // An expiry verifier between deploy and self-verify is transparent to shape
+    // matching, but the frame itself is misplaced: it may only be the first frame.
     let tx = base_frame_tx_with_frames(vec![
         deploy_frame(),
         expiry_verifier_frame(),
@@ -274,8 +285,11 @@ fn prefix_shape_deploy_self_verify_with_expiry_verifier_between() {
     assert_eq!(prefix.frame_indices, vec![0, 2]);
     assert_eq!(prefix.deploy_index, Some(0));
     assert_eq!(prefix.pay_index, Some(2));
-    tx.validate_prefix_structure(&prefix)
-        .expect("DeploySelfVerify with expiry-verifier should be structurally valid");
+    assert_eq!(
+        tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
+            .unwrap_err(),
+        FrameValidationError::ExpiryFrameNotFirst { frame_index: 1 }
+    );
 }
 
 #[test]
@@ -295,7 +309,7 @@ fn prefix_shape_deploy_self_verify_with_leading_expiry_verifier() {
     assert_eq!(prefix.frame_indices, vec![1, 2]);
     assert_eq!(prefix.deploy_index, Some(1));
     assert_eq!(prefix.pay_index, Some(2));
-    tx.validate_prefix_structure(&prefix)
+    tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
         .expect("DeploySelfVerify with raw-index-1 deploy should be structurally valid");
 }
 
@@ -309,6 +323,7 @@ fn prefix_rejection_unrecognized_shape() {
         flags: 0x00,
         target: None,
         gas_limit: 10_000,
+        state_gas_limit: 100_000,
         value: U256::zero(),
         data: Bytes::new(),
     }]);
@@ -330,6 +345,7 @@ fn prefix_rejection_deploy_not_first() {
             flags: APPROVE_EXECUTION_AND_PAYMENT,
             target: Some(sender_addr()),
             gas_limit: 5_000,
+            state_gas_limit: 100_000,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -341,7 +357,7 @@ fn prefix_rejection_deploy_not_first() {
         .expect("SelfVerify recognized (deploy after prefix is ignored)");
     assert_eq!(prefix.shape, PrefixShape::SelfVerify);
     // Structure validation passes too (the deploy frame is not in the prefix).
-    tx.validate_prefix_structure(&prefix)
+    tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
         .expect("SelfVerify with trailing deploy is structurally valid");
 }
 
@@ -373,7 +389,8 @@ fn prefix_rejection_target_not_sender() {
     let tx = base_frame_tx_with_frames(vec![frame]);
     let prefix = tx.validation_prefix().expect("shape recognized");
     assert_eq!(
-        tx.validate_prefix_structure(&prefix).unwrap_err(),
+        tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
+            .unwrap_err(),
         FrameValidationError::VerifyTargetNotSender { frame_index: 0 }
     );
 }
@@ -389,7 +406,7 @@ fn prefix_rejection_wrong_scope_self_verify() {
     // matches OnlyVerifyPay shape (pos 0 = VERIFY(exec), pos 1 = VERIFY(pay)).
     let prefix = tx.validation_prefix().expect("OnlyVerifyPay recognized");
     assert_eq!(prefix.shape, PrefixShape::OnlyVerifyPay);
-    tx.validate_prefix_structure(&prefix)
+    tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
         .expect("OnlyVerifyPay structure is valid");
     // Now single VERIFY with wrong scope for SelfVerify: only one VERIFY with
     // APPROVE_EXECUTION means no SelfVerify shape.
@@ -398,6 +415,7 @@ fn prefix_rejection_wrong_scope_self_verify() {
         flags: APPROVE_EXECUTION,
         target: Some(sender_addr()),
         gas_limit: 10_000,
+        state_gas_limit: 100_000,
         value: U256::zero(),
         data: Bytes::new(),
     }]);
@@ -418,9 +436,13 @@ fn prefix_rejection_wrong_scope_only_verify_pay() {
     let tx = base_frame_tx_with_frames(vec![verify, pay_frame()]);
     let prefix = tx.validation_prefix().expect("SelfVerify recognized");
     assert_eq!(prefix.shape, PrefixShape::SelfVerify);
-    // The structure is valid for SelfVerify (only the first frame is in the prefix).
-    tx.validate_prefix_structure(&prefix)
-        .expect("SelfVerify structure valid");
+    // The prefix covers only the first frame, which leaves the `pay` frame as a
+    // VERIFY frame after the prefix — banned by structural rule 8.
+    assert_eq!(
+        tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
+            .unwrap_err(),
+        FrameValidationError::VerifyFrameAfterPrefix { frame_index: 1 }
+    );
 }
 
 #[test]
@@ -433,7 +455,8 @@ fn prefix_rejection_atomic_batch_in_prefix() {
     let prefix = tx.validation_prefix().expect("SelfVerify recognized");
     assert_eq!(prefix.shape, PrefixShape::SelfVerify);
     assert_eq!(
-        tx.validate_prefix_structure(&prefix).unwrap_err(),
+        tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
+            .unwrap_err(),
         FrameValidationError::AtomicBatchInPrefix { frame_index: 0 }
     );
 }
@@ -455,9 +478,36 @@ fn prefix_rejection_gas_budget_exceeded() {
     let prefix = tx.validation_prefix().expect("SelfVerify recognized");
     // 100_000 + 2_800 > 100_000 → budget exceeded.
     assert!(matches!(
-        tx.validate_prefix_structure(&prefix).unwrap_err(),
+        tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
+            .unwrap_err(),
         FrameValidationError::VerifyGasBudgetExceeded { .. }
     ));
+}
+
+#[test]
+fn prefix_rejection_state_budget_exceeded() {
+    // EIP-8141 rule 6, state half: the prefix frames' `limits.state` may sum to
+    // MAX_VERIFY_STATE_GAS and no more. One gas over, on the only prefix frame.
+    let mut frame = self_verify_frame();
+    frame.state_gas_limit = FRAME_TX_MAX_VERIFY_STATE_GAS + 1;
+    let tx = base_frame_tx_with_frames(vec![frame]);
+    let prefix = tx.validation_prefix().expect("SelfVerify recognized");
+    assert_eq!(
+        tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
+            .unwrap_err(),
+        FrameValidationError::VerifyStateBudgetExceeded {
+            actual: FRAME_TX_MAX_VERIFY_STATE_GAS + 1,
+            limit: FRAME_TX_MAX_VERIFY_STATE_GAS,
+        }
+    );
+
+    // Exactly the cap passes.
+    let mut frame = self_verify_frame();
+    frame.state_gas_limit = FRAME_TX_MAX_VERIFY_STATE_GAS;
+    let tx = base_frame_tx_with_frames(vec![frame]);
+    let prefix = tx.validation_prefix().expect("SelfVerify recognized");
+    tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
+        .expect("a prefix at exactly MAX_VERIFY_STATE_GAS is structurally valid");
 }
 
 // ---------------------------------------------------------------------------
@@ -469,7 +519,8 @@ fn prefix_rejection_gas_budget_exceeded() {
 fn make_test_frame_tx() -> FrameTransaction {
     FrameTransaction {
         chain_id: 1,
-        nonce: 42,
+        nonce_keys: vec![U256::zero()],
+        nonce_seq: 42,
         sender: Address::from_low_u64_be(0xABCD),
         frames: vec![
             Frame {
@@ -477,6 +528,7 @@ fn make_test_frame_tx() -> FrameTransaction {
                 flags: 0x03, // APPROVE_EXECUTION_AND_PAYMENT
                 target: Some(Address::from_low_u64_be(0xABCD)),
                 gas_limit: 100_000,
+                state_gas_limit: 100_000,
                 value: U256::zero(),
                 data: Bytes::from_static(b"verify_data"),
             },
@@ -485,6 +537,7 @@ fn make_test_frame_tx() -> FrameTransaction {
                 flags: 0x00,
                 target: Some(Address::from_low_u64_be(0x1234)),
                 gas_limit: 200_000,
+                state_gas_limit: 100_000,
                 value: U256::zero(),
                 data: Bytes::from_static(b"call_data"),
             },
@@ -495,8 +548,8 @@ fn make_test_frame_tx() -> FrameTransaction {
             msg: Bytes::new(),
             signature: Bytes::from(vec![0u8; 65]),
         }],
-        max_priority_fee_per_gas: 1_000_000_000,
-        max_fee_per_gas: 30_000_000_000,
+        max_priority_fee_per_gas: U256::from(1_000_000_000u64),
+        max_fee_per_gas: U256::from(30_000_000_000u64),
         max_fee_per_blob_gas: U256::zero(),
         blob_versioned_hashes: vec![],
         ..Default::default()
@@ -512,6 +565,7 @@ fn atomic_batch_flag_on_verify_frame_is_invalid() {
             flags: 0x04 | 0x03, // atomic batch + scope bits
             target: None,
             gas_limit: 21_000,
+            state_gas_limit: 100_000,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -520,6 +574,7 @@ fn atomic_batch_flag_on_verify_frame_is_invalid() {
             flags: 0x00,
             target: Some(Address::from_low_u64_be(0xCAFE)),
             gas_limit: 21_000,
+            state_gas_limit: 100_000,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -542,6 +597,7 @@ fn atomic_batch_followed_by_verify_frame_is_invalid() {
             flags: 0x04, // atomic batch
             target: Some(Address::from_low_u64_be(0xB0B)),
             gas_limit: 21_000,
+            state_gas_limit: 100_000,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -550,6 +606,7 @@ fn atomic_batch_followed_by_verify_frame_is_invalid() {
             flags: 0x03,
             target: None,
             gas_limit: 21_000,
+            state_gas_limit: 100_000,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -604,10 +661,36 @@ fn static_validation_rejects_blob_fee_without_blobs() {
     );
 }
 
+/// The EIP-7594 per-transaction blob limit applies to frame transactions
+/// unchanged (EIP-8141 §Blob-carrying frame transactions). It must bind here
+/// rather than only on the sidecar: block execution has no sidecar to check, so
+/// a static-constraint miss would make ethrex accept a block that a conformant
+/// client rejects.
 #[test]
-fn data_cost_covers_only_frame_and_signature_data() {
-    // 4 gas per zero byte, 16 per non-zero, over frame.data and each
-    // signature's signer/msg/signature — no RLP framing, no scalar fields.
+fn static_validation_rejects_more_blobs_than_the_per_transaction_limit() {
+    let mut tx = make_test_frame_tx();
+    tx.max_fee_per_blob_gas = U256::from(1u64);
+    let mut hash = [0x11u8; 32];
+    hash[0] = VERSIONED_HASH_VERSION_KZG;
+    tx.blob_versioned_hashes = vec![H256(hash); MAX_BLOBS_PER_TX];
+    assert!(
+        tx.validate_static_constraints().is_ok(),
+        "{MAX_BLOBS_PER_TX} blobs are within the per-transaction limit"
+    );
+
+    tx.blob_versioned_hashes.push(H256(hash));
+    assert!(
+        tx.validate_static_constraints()
+            .unwrap_err()
+            .contains(&format!("Blob count must not exceed {MAX_BLOBS_PER_TX}")),
+    );
+}
+
+#[test]
+fn data_cost_covers_frame_signature_and_nonce_data() {
+    // 4 gas per zero byte, 16 per non-zero, over frame.data, each signature's
+    // signer/msg/signature, and EIP-8250's rlp(nonce_keys) || rlp(nonce_seq) —
+    // no other RLP framing, no other scalar fields.
     let mut tx = make_test_frame_tx();
     tx.frames[0].data = Bytes::from(vec![0u8; 3]); // 3 zero bytes -> 12
     tx.frames[1].data = Bytes::from(vec![0xAAu8; 2]); // 2 non-zero -> 32
@@ -617,28 +700,120 @@ fn data_cost_covers_only_frame_and_signature_data() {
         msg: Bytes::new(),
         signature: Bytes::from(vec![0xAAu8, 0x00]), // 16 + 4
     }];
-    assert_eq!(tx.data_cost(), 12 + 32 + 16 + 4);
-    // Floor tokens are unweighted: 7 bytes * 4 tokens * 16 gas = 448.
-    assert_eq!(tx.calldata_tokens(), 7 * 4);
-    assert_eq!(tx.calldata_floor_gas(), 7 * 64);
+    // nonce_keys == [0] and nonce_seq == 42 encode as c1 80 2a: 3 non-zero -> 48.
+    assert_eq!(tx.nonce_calldata(), vec![0xc1, 0x80, 0x2a]);
+    assert_eq!(tx.data_cost(), 12 + 32 + 16 + 4 + 48);
+    // Floor tokens are unweighted: (7 data + 3 nonce) bytes * 4 tokens * 16 gas.
+    assert_eq!(tx.calldata_tokens(), 10 * 4);
+    assert_eq!(tx.calldata_floor_gas(), 10 * 64);
 }
 
 #[test]
-fn static_validation_requires_the_calldata_floor_to_be_reserved() {
+fn max_gas_takes_the_calldata_floor_when_it_exceeds_the_standard_limit() {
+    // EIP-8141 `max_gas = max(standard_gas_limit, calldata_floor_gas)`. A
+    // transaction whose data floor exceeds what it declared for execution
+    // reserves the floor; it is valid, not rejected.
     let mut tx = make_test_frame_tx();
-    // 64 bytes of frame data need 4096 gas of floor, which frames carrying
-    // 100 gas each cannot reserve.
     tx.signatures.clear();
     tx.frames[0].data = Bytes::from(vec![0xAAu8; 64]);
     tx.frames[1].data = Bytes::new();
     tx.frames[0].gas_limit = 100;
     tx.frames[1].gas_limit = 100;
-    assert!(
-        tx.validate_static_constraints()
-            .unwrap_err()
-            .contains("does not reserve the calldata floor of 4096"),
-    );
-    // Enough frame gas to cover the floor makes it valid again.
-    tx.frames[1].gas_limit = 4096;
+    // `standard_gas_limit` spans both dimensions, so the state budgets have to be
+    // small too for the data floor to be the binding quantity.
+    tx.frames[0].state_gas_limit = 0;
+    tx.frames[1].state_gas_limit = 0;
+    assert!(tx.calldata_floor_total() > tx.standard_gas_limit());
+    assert_eq!(tx.max_gas(), tx.calldata_floor_total());
     assert!(tx.validate_static_constraints().is_ok());
+
+    // With enough frame gas to outweigh the floor, `max_gas` is the standard limit.
+    tx.frames[1].gas_limit = 100_000;
+    assert!(tx.standard_gas_limit() > tx.calldata_floor_total());
+    assert_eq!(tx.max_gas(), tx.standard_gas_limit());
+    assert!(tx.validate_static_constraints().is_ok());
+}
+
+// ---------------------------------------------------------------------------
+// EIP-8141 §Structural Rules rule 8 and §Expiry Verifier Frame placement
+// ---------------------------------------------------------------------------
+
+/// A `user_op` frame: SENDER mode, no approval scope. Legal after the prefix.
+fn user_op_frame() -> Frame {
+    Frame {
+        mode: FrameMode::Sender as u8,
+        flags: 0x00,
+        target: Some(Address::from_low_u64_be(0x1234)),
+        gas_limit: 10_000,
+        state_gas_limit: 100_000,
+        value: U256::zero(),
+        data: Bytes::new(),
+    }
+}
+
+#[test]
+fn prefix_rejection_verify_frame_after_prefix() {
+    // A `pay` frame trailing a complete `self_verify` prefix is a VERIFY frame
+    // outside the prefix: its revert would invalidate the whole transaction
+    // against state the prefix simulation never inspected.
+    let tx = base_frame_tx_with_frames(vec![self_verify_frame(), pay_frame()]);
+    let prefix = tx.validation_prefix().expect("SelfVerify recognized");
+    assert_eq!(prefix.shape, PrefixShape::SelfVerify);
+    assert_eq!(
+        tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
+            .unwrap_err(),
+        FrameValidationError::VerifyFrameAfterPrefix { frame_index: 1 }
+    );
+}
+
+#[test]
+fn prefix_accepts_non_verify_frames_after_prefix() {
+    // Rule 8 bans only VERIFY frames after the prefix; `user_op` (SENDER) and
+    // `post_op` (DEFAULT) frames may follow in any number.
+    let post_op = Frame {
+        mode: FrameMode::Default as u8,
+        flags: 0x00,
+        target: Some(Address::from_low_u64_be(0x5678)),
+        gas_limit: 10_000,
+        state_gas_limit: 100_000,
+        value: U256::zero(),
+        data: Bytes::new(),
+    };
+    let tx = base_frame_tx_with_frames(vec![
+        self_verify_frame(),
+        user_op_frame(),
+        post_op,
+        user_op_frame(),
+    ]);
+    let prefix = tx.validation_prefix().expect("SelfVerify recognized");
+    tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
+        .expect("non-VERIFY frames after the prefix are allowed");
+}
+
+#[test]
+fn prefix_rejection_expiry_frame_not_first() {
+    // An expiry verifier frame may appear only as the first frame of the list.
+    let tx = base_frame_tx_with_frames(vec![
+        self_verify_frame(),
+        expiry_verifier_frame(),
+        user_op_frame(),
+    ]);
+    let prefix = tx.validation_prefix().expect("SelfVerify recognized");
+    assert_eq!(
+        tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
+            .unwrap_err(),
+        FrameValidationError::ExpiryFrameNotFirst { frame_index: 1 }
+    );
+}
+
+#[test]
+fn prefix_accepts_expiry_frame_as_first_frame() {
+    let tx = base_frame_tx_with_frames(vec![
+        expiry_verifier_frame(),
+        self_verify_frame(),
+        user_op_frame(),
+    ]);
+    let prefix = tx.validation_prefix().expect("SelfVerify recognized");
+    tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
+        .expect("a leading expiry verifier frame is valid");
 }

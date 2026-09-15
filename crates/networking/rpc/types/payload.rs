@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::error::RLPDecodeError;
 use serde::{Deserialize, Serialize};
 
@@ -61,10 +62,14 @@ pub struct ExecutionPayload {
     // ExecutionPayloadV4 fields. Optional since we support previous versions.
     #[serde(
         skip_serializing_if = "Option::is_none",
-        with = "serde_utils::block_access_list::rlp_str_opt",
+        with = "serde_utils::block_access_list::raw_opt",
         default
     )]
-    pub block_access_list: Option<BlockAccessList>,
+    /// EIP-7928 blockAccessList, kept as the raw bytes received on the wire.
+    /// The header's BAL hash commits to exactly these bytes, and an undecodable
+    /// value must fail payload *validation* (newPayload status INVALID), not
+    /// params parsing, so the typed decode happens in the engine handler.
+    pub block_access_list: Option<Bytes>,
     // burned_fees (EIP-8079, LStar+): total base + blob fees burned in the block.
     // Part of the header hash at LStar, so it must survive the getPayload →
     // newPayload round-trip or a producer's own LStar block fails its block-hash
@@ -171,6 +176,11 @@ impl ExecutionPayload {
     }
 
     pub fn from_block(block: Block, block_access_list: Option<BlockAccessList>) -> Self {
+        let block_access_list = block_access_list.map(|bal| {
+            let mut buf = Vec::new();
+            bal.encode(&mut buf);
+            Bytes::from(buf)
+        });
         Self {
             parent_hash: block.header.parent_hash,
             fee_recipient: block.header.coinbase,

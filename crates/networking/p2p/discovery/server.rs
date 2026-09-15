@@ -586,7 +586,7 @@ mod tests {
     use ethrex_storage::EngineType;
     use secp256k1::SecretKey;
     use std::{
-        net::Ipv4Addr,
+        net::{IpAddr, Ipv4Addr},
         sync::{Arc, RwLock},
     };
     use tokio::net::UdpSocket;

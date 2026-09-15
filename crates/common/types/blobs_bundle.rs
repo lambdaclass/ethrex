@@ -146,10 +146,10 @@ impl BlobsBundle {
     #[cfg(feature = "c-kzg")]
     pub fn validate(
         &self,
-        tx: &super::EIP4844Transaction,
+        blob_versioned_hashes: &[H256],
         fork: super::Fork,
     ) -> Result<(), BlobsBundleError> {
-        self.validate_cheap(tx, fork)?;
+        self.validate_cheap(blob_versioned_hashes, fork)?;
         self.verify_kzg_proofs()
     }
 
@@ -181,9 +181,12 @@ impl BlobsBundle {
     /// (after dedup check), avoiding redundant proof verification for the same
     /// blob tx received from multiple peers.
     #[cfg(feature = "c-kzg")]
+    /// Structural validation of the sidecar against the transaction's declared
+    /// versioned hashes. Takes the hashes rather than a transaction, since both
+    /// EIP-4844 and EIP-8141 frame transactions carry blobs.
     pub fn validate_cheap(
         &self,
-        tx: &super::EIP4844Transaction,
+        blob_versioned_hashes: &[H256],
         fork: super::Fork,
     ) -> Result<(), BlobsBundleError> {
         use super::CELLS_PER_EXT_BLOB;
@@ -195,9 +198,9 @@ impl BlobsBundle {
             return Err(BlobsBundleError::MaxBlobsExceeded);
         }
 
-        // EIP-7594: a single transaction may carry at most MAX_BLOB_COUNT (6) blobs,
+        // EIP-7594: a single transaction may carry at most MAX_BLOBS_PER_TX blobs,
         // independent of the higher per-block limit.
-        if fork >= Fork::Osaka && blob_count > MAX_BLOB_COUNT {
+        if fork >= Fork::Osaka && blob_count > super::MAX_BLOBS_PER_TX {
             return Err(BlobsBundleError::MaxBlobsExceeded);
         }
 
@@ -227,12 +230,12 @@ impl BlobsBundle {
         if blob_count != self.commitments.len()
             || (self.version == 0 && blob_count != self.proofs.len())
             || (self.version != 0 && blob_count * CELLS_PER_EXT_BLOB != self.proofs.len())
-            || blob_count != tx.blob_versioned_hashes.len()
+            || blob_count != blob_versioned_hashes.len()
         {
             return Err(BlobsBundleError::BlobsBundleWrongLen);
         };
 
-        self.validate_blob_commitment_hashes(&tx.blob_versioned_hashes)?;
+        self.validate_blob_commitment_hashes(blob_versioned_hashes)?;
 
         Ok(())
     }
@@ -427,7 +430,7 @@ mod tests {
         };
 
         assert!(matches!(
-            blobs_bundle.validate(&tx, crate::types::Fork::Prague),
+            blobs_bundle.validate(&tx.blob_versioned_hashes, crate::types::Fork::Prague),
             Ok(())
         ));
     }
@@ -463,7 +466,7 @@ mod tests {
         };
 
         assert!(matches!(
-            blobs_bundle.validate(&tx, crate::types::Fork::Osaka),
+            blobs_bundle.validate(&tx.blob_versioned_hashes, crate::types::Fork::Osaka),
             Ok(())
         ));
     }
@@ -502,7 +505,7 @@ mod tests {
         };
 
         assert!(matches!(
-            blobs_bundle.validate(&tx, crate::types::Fork::Prague),
+            blobs_bundle.validate(&tx.blob_versioned_hashes, crate::types::Fork::Prague),
             Ok(())
         ));
     }
@@ -538,7 +541,7 @@ mod tests {
         };
 
         assert!(!matches!(
-            blobs_bundle.validate(&tx, crate::types::Fork::Osaka),
+            blobs_bundle.validate(&tx.blob_versioned_hashes, crate::types::Fork::Osaka),
             Ok(())
         ));
     }
@@ -590,7 +593,7 @@ mod tests {
         };
 
         assert!(matches!(
-            blobs_bundle.validate(&tx, crate::types::Fork::Prague),
+            blobs_bundle.validate(&tx.blob_versioned_hashes, crate::types::Fork::Prague),
             Err(crate::types::BlobsBundleError::BlobToCommitmentAndProofError)
         ));
     }
@@ -642,7 +645,7 @@ mod tests {
         };
 
         assert!(matches!(
-            blobs_bundle.validate(&tx, crate::types::Fork::Prague),
+            blobs_bundle.validate(&tx.blob_versioned_hashes, crate::types::Fork::Prague),
             Err(crate::types::BlobsBundleError::BlobVersionedHashesError)
         ));
     }
@@ -675,7 +678,7 @@ mod tests {
         };
 
         assert!(matches!(
-            blobs_bundle.validate(&tx, crate::types::Fork::Prague),
+            blobs_bundle.validate(&tx.blob_versioned_hashes, crate::types::Fork::Prague),
             Err(crate::types::BlobsBundleError::MaxBlobsExceeded)
         ));
     }
@@ -713,7 +716,7 @@ mod tests {
         };
 
         assert!(matches!(
-            blobs_bundle.validate(&tx, crate::types::Fork::Amsterdam),
+            blobs_bundle.validate(&tx.blob_versioned_hashes, crate::types::Fork::Amsterdam),
             Err(crate::types::BlobsBundleError::InvalidBlobVersionForFork)
         ));
     }

@@ -312,6 +312,7 @@ mod tests {
             FrameReceipt {
                 status: ethrex_common::types::FRAME_RECEIPT_STATUS_SUCCESS,
                 gas_used: 21_000,
+                state_gas_used: 0,
                 logs: vec![Log {
                     address: Address::from_low_u64_be(0xAA),
                     topics: vec![H256::from_low_u64_be(1)],
@@ -321,6 +322,7 @@ mod tests {
             FrameReceipt {
                 status: ethrex_common::types::FRAME_RECEIPT_STATUS_SKIPPED,
                 gas_used: 0,
+                state_gas_used: 0,
                 logs: vec![],
             },
         ];

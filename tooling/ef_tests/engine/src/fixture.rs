@@ -297,11 +297,12 @@ fn single_fork(s: &str) -> anyhow::Result<ethrex_common::types::Fork> {
         "BPO4" => Fork::BPO4,
         "BPO5" => Fork::BPO5,
         "Amsterdam" => Fork::Amsterdam,
-        // EIP-7805 (FOCIL) ships as the "Bogota" fork in execution-apis /
-        // execution-specs (every tests-focil-devnet@v0.2.0 fixture fills on
-        // it); ethrex names it "Hegota" internally (genesis already aliases
-        // bogotaTime → hegota_time).
-        "Bogota" | "Hegota" => Fork::Hegota,
+        // The fork carries three names. EEST fixtures label it "Bogota" (EIP-7805
+        // and EIP-8141 both fill on it), the consensus layer calls the same boundary
+        // "Heze", and ethrex's own enum says Hegota; genesis already aliases
+        // bogotaTime to hegota_time. Without every arm a fixture fails at parse time
+        // with "Unknown network", which reads as the whole suite being broken.
+        "Bogota" | "Hegota" | "Heze" => Fork::Hegota,
         other => anyhow::bail!("Unknown network: {other}"),
     };
     Ok(f)

@@ -830,7 +830,11 @@ pub async fn init_l1(
             r#type: BlockchainType::L1,
             max_blobs_per_block: opts.max_blobs_per_block,
             precompute_witnesses: opts.precompute_witnesses,
+            private_mempool: opts.mempool_private,
             precompile_cache_enabled: !opts.no_precompile_cache,
+            min_tip_wei: opts.mempool_min_tip,
+            price_bump_percent: opts.mempool_price_bump,
+            blob_price_bump_percent: opts.mempool_blob_price_bump,
             max_queued_txs_per_account: opts.mempool_max_queued_txs_per_account,
             bal_parallel_exec_enabled: !opts.no_bal_parallel_exec,
             bal_prefetch_enabled: !opts.no_bal_prefetch,
@@ -839,7 +843,7 @@ pub async fn init_l1(
             blob_eager_provider: opts.blob_eager_provider,
             max_reorg_depth: opts.max_reorg_depth,
             gap_admit_occupancy_threshold: opts.mempool_gap_admit_occupancy_threshold,
-            private_mempool: opts.mempool_private,
+            max_verify_gas: opts.mempool_max_verify_gas,
         },
     );
 

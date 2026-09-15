@@ -104,7 +104,7 @@ use tokio::sync::{
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 use tower_http::cors::CorsLayer;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 use tracing_subscriber::{EnvFilter, Registry, reload};
 
 #[cfg(all(feature = "jemalloc_profiling", target_os = "linux"))]
@@ -1360,6 +1360,7 @@ pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Resu
         RpcNamespace::Net => map_net_requests(req, context).await,
         RpcNamespace::Mempool => map_mempool_requests(req, context),
         RpcNamespace::Testing => map_testing_requests(req, context).await,
+        RpcNamespace::Ethrex => map_ethrex_requests(req, context).await,
         // Engine is served on the authenticated port only. The CLI parser
         // already rejects `--http.api engine`, but `allowed_namespaces` can
         // also be built programmatically (e.g. in tests or future call sites),
@@ -1496,6 +1497,24 @@ pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Res
         "debug_traceBlockByHash" => TraceBlockByHashRequest::call(req, context).await,
         "debug_traceCall" => TraceCallRequest::call(req, context).await,
         unknown_debug_method => Err(RpcErr::MethodNotFound(unknown_debug_method.to_owned())),
+    }
+}
+
+/// Routes `ethrex_*` namespace requests to their handlers.
+///
+/// These are ethrex-specific extensions outside the standardized `eth_`/`debug_`
+/// namespaces (kept separate so operators can expose them publicly without
+/// enabling all of `debug_`):
+/// - Frame transactions (EIP-8141): `ethrex_simulateFrameTransaction`
+pub async fn map_ethrex_requests(
+    req: &RpcRequest,
+    context: RpcApiContext,
+) -> Result<Value, RpcErr> {
+    match req.method.as_str() {
+        "ethrex_simulateFrameTransaction" => {
+            crate::ethrex::SimulateFrameTransactionRequest::call(req, context).await
+        }
+        unknown_ethrex_method => Err(RpcErr::MethodNotFound(unknown_ethrex_method.to_owned())),
     }
 }
 
@@ -1879,6 +1898,11 @@ mod tests {
                             "bpo5Time": null,
                             "amsterdamTime": null,
                             "hegotaTime": null,
+                            "derivedSlotTime": null,
+                            "payerTxparamTime": null,
+                            "aaVopsSlotCount": null,
+                            "genesisTimestamp": null,
+                            "secondsPerSlot": null,
                             "lstarTime": null,
                             "terminalTotalDifficulty": "0x0",
                             "terminalTotalDifficultyPassed": true,

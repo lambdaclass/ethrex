@@ -16,6 +16,7 @@ use bytes::Bytes;
 use ethrex_blockchain::{
     Blockchain,
     constants::GAS_LIMIT_BOUND_DIVISOR,
+    mempool::KeyedConcurrency,
     payload::{BuildPayloadArgs, calc_gas_limit, create_payload},
 };
 use ethrex_common::{
@@ -188,7 +189,14 @@ async fn builder_caps_elided_blob_bundles_to_fork_max() {
 
         blockchain
             .mempool
-            .add_transaction(tx_hash, sender, mempool_tx, None, None)
+            .add_transaction(
+                tx_hash,
+                sender,
+                mempool_tx,
+                None,
+                None,
+                KeyedConcurrency::Denied,
+            )
             .expect("add_transaction");
 
         // Elided bundle: blobs empty, real commitment + cell proofs.

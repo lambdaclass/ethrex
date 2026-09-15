@@ -1,0 +1,553 @@
+<!-- Faucet landing page. Self-contained: no external fonts, scripts or images,
+     so it works behind a strict CSP and on an air-gapped devnet.
+     Placeholders substituted at render time:
+     {{CHAIN_ID}} {{AMOUNT}} {{RPC}} {{EXPLORER}} {{ARTIFACTS}} {{BOOTNODES}} -->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Hegotá privacy testnet faucet</title>
+<style>
+  :root {
+    --bg: #fbfbfd; --panel: #fff; --fg: #1a1a1f; --muted: #61616b;
+    --line: #e4e4ea; --accent: #4f46e5; --accent-soft: #eef0fe;
+    --ok: #0f7b4f; --err: #b42318; --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0e0e12; --panel: #16161c; --fg: #ececf1; --muted: #9a9aa6;
+      --line: #26262f; --accent: #8b85f8; --accent-soft: #1d1b33;
+      --ok: #46d39a; --err: #ff8a7a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 2.5rem 1.25rem 4rem; background: var(--bg); color: var(--fg);
+    font: 15px/1.6 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  }
+  main { max-width: 46rem; margin: 0 auto; }
+  h1 { font-size: 1.7rem; margin: 0 0 .35rem; letter-spacing: -.02em; }
+  h2 { font-size: 1rem; margin: 2.25rem 0 .75rem; letter-spacing: .04em;
+       text-transform: uppercase; color: var(--muted); }
+  .lede { color: var(--muted); margin: 0 0 1.75rem; }
+  a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 1.25rem; }
+  .row { display: flex; gap: .6rem; flex-wrap: wrap; }
+  input {
+    flex: 1 1 22rem; min-width: 0; padding: .7rem .8rem; font: 14px var(--mono);
+    color: var(--fg); background: var(--bg);
+    border: 1px solid var(--line); border-radius: 8px;
+  }
+  input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  button {
+    padding: .7rem 1.3rem; font: 600 14px system-ui; cursor: pointer;
+    color: #fff; background: var(--accent); border: 0; border-radius: 8px;
+  }
+  button:disabled { opacity: .55; cursor: default; }
+  #out { margin: .9rem 0 0; font: 13px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+  #out.ok { color: var(--ok); } #out.err { color: var(--err); }
+  table { width: 100%; border-collapse: collapse; }
+  td { padding: .55rem .5rem; border-top: 1px solid var(--line); vertical-align: top; }
+  tr:first-child td { border-top: 0; }
+  td:first-child { white-space: nowrap; font-weight: 600; }
+  td.desc { color: var(--muted); font-weight: 400; }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: .45rem 1rem; margin: 0; }
+  dt { color: var(--muted); }
+  dd { margin: 0; font-family: var(--mono); font-size: 13px; overflow-wrap: anywhere; }
+  .note { margin-top: 1.5rem; padding: .9rem 1rem; border-radius: 10px;
+          background: var(--accent-soft); color: var(--fg); font-size: 14px; }
+  code { font: 13px var(--mono); background: var(--accent-soft); padding: .1rem .3rem; border-radius: 4px; }
+  pre { margin: 0 0 1rem; overflow-x: auto; font: 12px/1.5 var(--mono);
+        background: var(--accent-soft); padding: .8rem; border-radius: 8px; }
+  .err + .err { margin-top: 1.1rem; padding-top: 1.1rem; border-top: 1px solid var(--line); }
+  .err-msg { margin: 0 0 .35rem; font-weight: 600; }
+  .err-msg code { background: none; padding: 0; overflow-wrap: anywhere; }
+  .err-fix { margin: 0; color: var(--muted); font-size: 14px; }
+  .peers-lede { margin: 0 0 .9rem; color: var(--muted); font-size: 14px; }
+  .peerset + .peerset { margin-top: 1rem; }
+  .peerset-title { font-size: .8rem; margin: 0 0 .4rem; text-transform: uppercase;
+                   letter-spacing: .04em; color: var(--muted); }
+  .peerset-title .flag { font: 12px var(--mono); text-transform: none; letter-spacing: 0; }
+  .records { margin: 0; padding-left: 1.1rem; }
+  .records li { font: 12px/1.7 var(--mono); overflow-wrap: anywhere; }
+  .copy-host { position: relative; }
+  .copy-host pre { padding-right: 4.2rem; }
+  .copy-btn {
+    padding: .2rem .5rem; font: 600 11px system-ui; cursor: pointer;
+    color: var(--muted); background: var(--panel);
+    border: 1px solid var(--line); border-radius: 6px;
+  }
+  .copy-host > .copy-btn { position: absolute; top: .5rem; right: .5rem; }
+  .copy-btn:hover { color: var(--fg); }
+  .copy-btn.done { color: var(--ok); border-color: var(--ok); }
+  .copy-inline { margin-left: .5rem; vertical-align: 1px; }
+  dd { display: flex; gap: .25rem; align-items: baseline; flex-wrap: wrap; }
+  .records li::marker { color: var(--muted); }
+  footer { margin-top: 2.5rem; color: var(--muted); font-size: 13px; }
+</style>
+
+<main>
+  <h1>Hegotá privacy testnet faucet</h1>
+  <p class="lede">
+    A public test network running <strong>EIP-8141 frame transactions</strong> together with
+    <strong>EIP-8250</strong> keyed nonces, <strong>EIP-8272</strong> recent roots and
+    <strong>EIP-7805</strong> inclusion lists, on
+    <a href="https://github.com/lambdaclass/ethrex">ethrex</a>. Test ETH has no value.
+  </p>
+  <p style="margin:-1.1rem 0 1.75rem;font-size:14px;color:var(--muted)">
+    Latest change: 2026-09-14 · <a href="#changelog">changelog</a>
+  </p>
+
+  <div class="panel">
+    <div class="row">
+      <input id="addr" placeholder="0x… your address" spellcheck="false"
+             autocomplete="off" aria-label="Ethereum address">
+      <button id="go">Request {{AMOUNT}} ETH</button>
+    </div>
+    <p id="out" aria-live="polite"></p>
+  </div>
+
+  <h2>What this chain enables</h2>
+  <div class="panel">
+    <table>
+      <tr>
+        <td><a href="https://eips.ethereum.org/EIPS/eip-8141">EIP-8141</a><br>
+          <a href="https://github.com/ethereum/EIPs/blob/b75cbe6115/EIPS/eip-8141.md" style="font-weight:400"><code>b75cbe6115</code></a></td>
+        <td class="desc">Frame transactions: a new type <code>0x06</code> whose payload is a list of
+          <em>frames</em>, each executed with its own target, mode and two gas budgets, with payment
+          authorised by an <code>APPROVE</code> in a validation prefix. Authentication becomes a
+          program: a passkey, a multisig or a zero-knowledge proof can authorise a transaction, and
+          the account that pays need not be the one that acts.</td>
+      </tr>
+      <tr>
+        <td><a href="https://eips.ethereum.org/EIPS/eip-8250">EIP-8250</a><br>
+          <a href="https://github.com/ethereum/EIPs/blob/f3079a09e8/EIPS/eip-8250.md" style="font-weight:400"><code>f3079a09e8</code></a></td>
+        <td class="desc">Keyed nonces: up to 16 independent nonce keys per sender instead of one
+          linear counter, tracked in a <code>NONCE_MANAGER</code> predeploy. A contract sender can
+          have several transactions pending on different keys and none waits behind another.</td>
+      </tr>
+      <tr>
+        <td><a href="https://eips.ethereum.org/EIPS/eip-8272">EIP-8272</a><br>
+          <a href="https://github.com/ethereum/EIPs/blob/824cbc0b0e/EIPS/eip-8272.md" style="font-weight:400"><code>824cbc0b0e</code></a></td>
+        <td class="desc">Recent roots: verified <code>(source, slot, root)</code> tuples carried
+          in a canonical VERIFY frame that leads the transaction and is checked by a
+          <code>RECENT_ROOT</code> predeploy before application code runs; the prefix reads them
+          back with <code>FRAMEDATALOAD</code>. A proof can be anchored to a root minutes old
+          without the prefix touching storage.</td>
+      </tr>
+      <tr>
+        <td><a href="https://eips.ethereum.org/EIPS/eip-7805">EIP-7805</a><br>
+          <a href="https://github.com/ethereum/EIPs/blob/9a345f96c2/EIPS/eip-7805.md" style="font-weight:400"><code>9a345f96c2</code></a></td>
+        <td class="desc">Fork-choice enforced inclusion lists, with
+          <a href="https://eips.ethereum.org/EIPS/eip-8369">EIP-8369</a>'s validation-only profiles
+          (at <a href="https://github.com/ethereum/EIPs/blob/51dc7b939a/EIPS/eip-8369.md"><code>51dc7b939a</code></a>, merged upstream)
+          deciding which frame transactions are eligible: attesters replay only the validation
+          prefix, under a fixed budget, so a builder cannot leave an eligible transaction out.</td>
+      </tr>
+    </table>
+    <p style="margin:1rem 0 0;font-size:14px;color:var(--muted)">
+      Together they are what a shielded pool needs from the base layer: a proof authorising a
+      spend, the pool paying for it, concurrent spends, a fresh root to prove against, and an
+      inclusion guarantee. Everything else is Glamsterdam. Each EIP is explained at length, with
+      how they lean on each other, in <a href="/eips">the EIP guide</a>.
+    </p>
+    <p style="margin:.6rem 0 0;font-size:14px;color:var(--muted)">
+      The hash under each number is the <code>ethereum/EIPs</code> commit this chain implements.
+      These drafts move often and the chain does not follow them live: what runs here is the
+      text at those commits (<code>git show &lt;commit&gt;:EIPS/eip-&lt;n&gt;.md</code>), and a
+      spec change only reaches the chain through a relaunch. The
+      <a href="https://github.com/lambdaclass/ethrex/blob/hegota-testnet/docs/hegota-testnet-spec.md">network spec</a>
+      records the pins, the fork schedule and what is being tested.
+    </p>
+  </div>
+
+  <h2>Connect</h2>
+  <div class="panel">
+    <dl>
+      <dt>Chain ID</dt><dd>{{CHAIN_ID}}</dd>
+      {{RPC}}
+      {{EXPLORER}}
+      {{ARTIFACTS}}
+    </dl>
+  </div>
+
+  <h2>Sending transactions here</h2>
+  <div class="panel">
+    <p style="margin:0 0 .8rem">
+      <strong>Ordinary transactions work normally.</strong> The ETH above is plain ETH: point any
+      wallet or library at the RPC endpoint with the chain ID above and send transfers, deploy
+      contracts, call them.
+    </p>
+    <p style="margin:0">
+      <strong>Frame transactions are a different matter.</strong> EIP-8141 is a draft, so no wallet
+      and no released version of the common libraries can encode or sign one; a wallet asked to
+      send one simply has no representation for it. Submitting one means building the envelope
+      yourself and handing the signed bytes to <code>eth_sendRawTransaction</code>. The ethrex
+      repository carries reference submitters that do exactly that, and the node offers
+      <code>ethrex_simulateFrameTransaction</code> to dry-run the bytes before you send them.
+    </p>
+  </div>
+
+  <h2>Send one</h2>
+  <div class="panel">
+    <p style="margin:0 0 .8rem">
+      Take the submitters from the <strong><code>hegota-testnet</code></strong> branch:
+    </p>
+<pre>git clone --branch hegota-testnet --depth 1 https://github.com/lambdaclass/ethrex
+cd ethrex/scripts/hegota-testnet &amp;&amp; pip install eth-keys eth-hash[pycryptodome]</pre>
+    <p style="margin:0 0 .8rem;font-size:14px">
+      Only this branch speaks the wire format this chain runs: nested fees, a per-frame
+      <code>[execution, state]</code> pair, keyed nonces, recent roots in a verifier frame. Released
+      libraries, and <code>rex</code> for now, encode an older envelope and are rejected on
+      decode (see the first error below).
+    </p>
+<pre># Self-verified transfer: a VERIFY frame approving execution and payment,
+# then a SENDER frame that moves the value. Prints the sig hash, the tx hash,
+# and the mined receipt with its per-frame receipts.
+python3 frametx_submit.py https://rpc1.privacy.ethrex.xyz &lt;YOUR_PRIVATE_KEY_HEX&gt; 0xRecipientAddress 1000000000
+
+# A sponsored transfer, where a second account pays:
+python3 frametx_sponsor_submit.py https://rpc1.privacy.ethrex.xyz &lt;SENDER_KEY&gt; &lt;PAYER_KEY&gt; 0xRecipientAddress 1000000000
+
+# Dry-run any raw 0x06 payload against the node before submitting it:
+curl -s https://rpc1.privacy.ethrex.xyz -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"ethrex_simulateFrameTransaction","params":["0x06…"]}'
+
+# Decode a mined one, frame by frame:
+curl -s https://rpc1.privacy.ethrex.xyz -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"eth_getTransactionReceipt","params":["&lt;TX_HASH&gt;"]}'</pre>
+    <p style="margin:0;font-size:14px">
+      The receipt carries <code>frameReceipts</code>, one per frame, each with its own
+      <code>status</code>, <code>gasUsed</code> and <code>stateGasUsed</code>. The explorer renders
+      the same breakdown. <code>frametx.py</code> next to the submitters is the encoder itself;
+      build any frame shape from it.
+    </p>
+  </div>
+
+  <h2>Common errors</h2>
+  <div class="panel">
+    <div class="err">
+      <p class="err-msg"><code>Error decoding field 'frames' … Error decoding field 'limits' of type (u64, u64):
+        MalformedData</code></p>
+      <p class="err-fix">The encoder predates two-dimensional gas and is sending a frame's gas as one
+        scalar. This chain accepts only the <code>[execution, state]</code> pair. The sibling
+        <code>Error decoding field 'fees'</code> means the fees are flat where this chain expects
+        one nested <code>[max_priority_fee, max_fee, max_fee_per_blob_gas]</code> list; a released
+        <code>rex</code> produces exactly that.</p>
+    </div>
+    <div class="err">
+      <p class="err-msg">A frame reverts having used exactly its <code>execution</code> budget,
+        with <code>stateGasUsed: 0x0</code></p>
+      <p class="err-fix">Missing state budget, not execution. Raising the frame's
+        <code>limits.execution</code> will not help; raise its <code>limits.state</code>. A
+        transfer to an address that does not exist yet needs 183,600 of it, the account-creation
+        charge.</p>
+    </div>
+    <div class="err">
+      <p class="err-msg"><code>Invalid frame transaction signature</code></p>
+      <p class="err-fix">The layout is <code>v ‖ r ‖ s</code> with <code>v</code> a bare recovery
+        id, <code>0</code> or <code>1</code> — not the <code>27</code>/<code>28</code> form
+        <code>ecrecover</code> takes. <code>r</code> and <code>s</code> must also be canonical
+        and low-s.</p>
+    </div>
+    <div class="err">
+      <p class="err-msg"><code>Frame transaction prefix gas budget (frames + sig cost) exceeds
+        MAX_VERIFY_GAS</code></p>
+      <p class="err-fix">The validation prefix is bounded, at 500,000 here. Move work out of the
+        prefix, or lower the prefix frames' <code>limits.execution</code>. The
+        signature-verification variant means the signatures alone already exceed it — use
+        fewer.</p>
+    </div>
+  </div>
+
+  <h2>Building one</h2>
+  <div class="panel">
+        <p style="margin:0 0 .8rem">The envelope is a type byte followed by an 8-field RLP list:</p>
+<pre>0x06 || rlp([chain_id, nonce_keys, nonce_seq, sender, frames, signatures, fees, blob_hashes])
+nonce_keys = [0]                                  # the legacy account nonce; or 1..16 strictly increasing keys (EIP-8250)
+frame      = [mode, flags, target, [execution, state], value, data]
+fees       = [max_priority_fee, max_fee, max_fee_per_blob_gas]
+signature  = [scheme, signer, msg, signature]     # scheme 1 = secp256k1
+sig_hash   = keccak256(0x06 || rlp(envelope))     # empty-msg signature bytes elided
+# recent roots (EIP-8272): a leading VERIFY frame to 0x…8272, flags 0, state 0,
+#   data = (source_id ‖ uint64_be(slot) ‖ root) × 1..16</pre>
+    <table>
+      <tr><td>mode 0</td><td class="desc"><code>DEFAULT</code>, called by the entry point.</td></tr>
+      <tr><td>mode 1</td><td class="desc"><code>VERIFY</code>, static; where authorisation happens.
+        A frame targeting <code>tx.sender</code> with <code>flags = 0x03</code> runs the default
+        code path, checks the outer signature and executes <code>APPROVE</code> for both execution
+        and payment. Without an <code>APPROVE</code> the transaction has no payer and is
+        invalid.</td></tr>
+      <tr><td>mode 2</td><td class="desc"><code>SENDER</code>, executes with <code>tx.sender</code>
+        as the caller.</td></tr>
+    </table>
+    <p style="margin:1rem 0 0;font-size:14px">
+      The smallest useful transaction is therefore two frames: a <code>VERIFY</code> frame
+      targeting the sender with <code>flags = 0x03</code>, then a <code>SENDER</code> frame
+      carrying the actual call. <code>flags</code> bits 0 and 1 are the <code>APPROVE</code>
+      scope; bit 2 marks an atomic batch, which must be terminated by a following non-batch frame.
+    </p>
+    <p style="margin:1rem 0 0;font-size:14px">
+      A frame's two budgets are independent: <code>execution</code> pays for running code,
+      <code>state</code> pays for state growth. Execution gas cannot cover state growth, so a
+      frame that writes new state with <code>state: 0</code> halts on that write and burns its
+      whole execution budget — which looks exactly like an execution limit set too low. Check
+      <code>stateGasUsed</code> on the receipt: if it is <code>0x0</code>, the missing budget is
+      the state one. Unused state gas is refunded.
+    </p>
+    <div class="note">
+      <strong>The signature is not in EVM form.</strong> Each entry is 65 bytes of
+      <code>v ‖ r ‖ s</code> where <code>v</code> is the bare recovery id, <code>0</code> or
+      <code>1</code>, not <code>27</code>/<code>28</code>. Anything above 1 is rejected, and it is
+      the single most common reason a hand-built frame transaction is refused.
+    </div>
+  </div>
+
+  <h2>Run a node</h2>
+  <div class="panel">
+    <p style="margin:0 0 1rem;font-size:14px;color:var(--muted)">
+      Read the <a href="#changelog">changelog</a> before syncing: a relaunch means a fresh
+      genesis, and a database from the previous chain has to be wiped.
+    </p>
+    {{BOOTNODES}}
+    <div class="note">
+      <strong>The consensus client must be FOCIL-aware.</strong> From Hegotá on, ethrex serves only
+      <code>engine_newPayloadV6</code> and <code>engine_forkchoiceUpdatedV5</code>, the pair that
+      carries <code>inclusionListTransactions</code>, and rejects the older V5/V4 pair. A client that
+      speaks only those halts at the fork boundary with no inert state in between.
+      <code>ethpandaops/lighthouse:focil</code> works; a stock release generally does not. Confirm
+      the capability through <code>engine_exchangeCapabilities</code> before the boundary, not after.
+    </div>
+<pre># Execution layer, from the bundle's genesis.json and bootnodes.txt
+ethrex --network genesis.json \
+       --bootnodes "$(paste -sd, bootnodes.txt)" \
+       --nat.extip &lt;your public IP&gt; \
+       --syncmode full
+
+# Consensus layer, against the execution client's engine port
+lighthouse beacon_node \
+  --testnet-dir=. \
+  --execution-endpoint=http://127.0.0.1:8551 \
+  --jwt-secrets=&lt;path to the jwtsecret your EL generated&gt; \
+  --boot-nodes="$(paste -sd, bootnodes-cl.txt)"</pre>
+    <p style="margin:0;font-size:14px">
+      <code>--nat.extip</code> is what the node advertises in discovery and in its ENR;
+      <code>--p2p.addr</code> is only the bind address and is not a substitute. To confirm you are
+      following the chain, compare a block <em>hash</em> against <code>rpc1</code> at the same
+      height, not just the height.
+    </p>
+  </div>
+
+  <h2>Become a validator</h2>
+  <div class="panel">
+    <p style="margin:0 0 .8rem">
+      <strong>Validator entry is permissioned; everything else on this chain is not.</strong>
+      <strong>Contact us</strong> with the address you will deposit <em>from</em> — not the
+      withdrawal address, not the validator pubkey. We mint a deposit token to that address; ask
+      for the 32&nbsp;ETH stake at the same time, since it is beyond the faucet's drip. Without the
+      token the deposit reverts with <code>Not enough tokens</code>; with it, the deposit burns the
+      token and works.
+    </p>
+    <p style="margin:0 0 .35rem"><strong>1. Choose execution-layer withdrawal credentials.</strong>
+      <code>0x01</code>, <code>0x02</code> and <code>0x03</code> are allowed with a token; BLS
+      <code>0x00</code> deposits are blocked outright. Top-ups to an existing validator
+      (<code>0xffff</code>) need no token.</p>
+    <p style="margin:0 0 .35rem"><strong>2. Generate deposit data</strong> against this chain's
+      genesis fork version, <code>0x10000038</code>. Signed against anything else, the execution
+      transaction succeeds and the consensus layer rejects the deposit. With
+      <a href="https://github.com/wealdtech/ethdo">ethdo</a>:</p>
+<pre>ethdo validator depositdata \
+  --validatoraccount=&lt;wallet&gt;/&lt;account&gt; \
+  --withdrawaladdress=&lt;your 0x01 address&gt; \
+  --depositvalue="32 Ether" \
+  --forkversion=0x10000038 \
+  --raw</pre>
+    <p style="margin:0 0 .35rem"><strong>3. Deposit 32 ETH</strong> from the granted address, with
+      the calldata <code>--raw</code> printed. Let the tool estimate gas:</p>
+<pre>cast send --rpc-url https://rpc1.privacy.ethrex.xyz \
+  --private-key &lt;DEPOSITOR_KEY&gt; --value 32ether \
+  0x00000000219ab540356cBB839Cbe05303d7705Fa &lt;CALLDATA&gt;</pre>
+    <p style="margin:0 0 .8rem;font-size:14px">
+      A successful deposit consumes exactly one token and emits the standard
+      <code>DepositEvent</code>. Activation follows the protocol's queue, roughly an hour; watch the
+      pubkey from your own beacon node or in
+      <a href="https://dora.privacy.ethrex.xyz">the explorer</a>, and run a validator client
+      against your own node from "Run a node" before it activates, or it starts accruing
+      missed-attestation penalties from its first active epoch.
+    </p>
+    <div class="note">
+      <strong>Exiting.</strong> Send 56 bytes — the 48-byte pubkey then an 8-byte amount,
+      <code>0</code> for a full exit — to the EIP-7002 predeploy
+      <code>0x00000961Ef480Eb55e80D19ad83579A64c007002</code> from your <code>0x01</code>
+      withdrawal address, with the current fee as value. Exits are only honoured
+      <strong>256&nbsp;epochs after activation</strong>; before that the transaction succeeds and
+      the consensus layer silently ignores it, so only the validator's own
+      <code>exit_epoch</code> is evidence the exit took.
+    </div>
+  </div>
+
+  <h2 id="changelog">Changelog</h2>
+  <div class="panel">
+    <table>
+      <tr>
+        <td>2026-09-14<br><span style="font-weight:400">21:47 UTC</span></td>
+        <td class="desc"><strong>Fresh genesis on the current specs</strong>, the chain running
+          now. Pins: EIP-8141 <code>b75cbe6115</code>, EIP-8250 <code>f3079a09e8</code>,
+          EIP-8272 <code>824cbc0b0e</code>, EIP-7805 <code>9a345f96c2</code>, EIP-8369
+          <code>51dc7b939a</code> (merged upstream). For anyone building frame transactions:
+          the first use of a keyed nonce costs 97,920 of <em>state</em> gas from the approving
+          frame (195,840 for two fresh keys) instead of 20,000 execution gas, and the prefix's
+          state budgets may not exceed 500,000. Recent roots have left the envelope for a
+          canonical VERIFY frame to <code>0x…8272</code> carrying 72-byte
+          <code>(source_id, slot, root)</code> tuples, so the envelope now has 8 fields,
+          <code>TXPARAM 0x11</code> and <code>RECENTROOTREFLOAD</code> are gone, and the
+          predeploy runs a 345-byte two-operation runtime. That frame's gas counts toward the
+          validation budget, so a proof-carrying transaction needs 352,800 rather than 322,800.
+          A root published in slot <code>S</code> is referenceable from <code>S+1</code>, and
+          admission judges it against the head slot plus one. EIP-8312 is not in this build.
+          Every type <code>0x06</code> transaction signed for the previous chain is invalid
+          here, and so is every account balance: <strong>wipe your database and resync from the
+          new bundle</strong>, and request new funds from the faucet. The previous chain ended
+          at block 160,854. The two EIP-8141 divergences flagged on 2026-09-04
+          (<code>SIGPARAM(0x03)</code> answered for every scheme; the value cost charged on
+          frames that move nothing) are fixed in this build.</td>
+      </tr>
+      <tr>
+        <td>2026-09-04</td>
+        <td class="desc">The pages now show the <code>ethereum/EIPs</code> commit each EIP is
+          implemented at, and the
+          <a href="https://github.com/lambdaclass/ethrex/blob/hegota-testnet/docs/hegota-testnet-spec.md">network spec</a>
+          is published: rule set and pins, endpoints, what is being tested, how to join, and every
+          known divergence between the running nodes and the pinned text. Two such divergences in
+          EIP-8141 (<code>SIGPARAM(0x03)</code> answered for every signature scheme; the value
+          cost charged on frames that move nothing) were fixed on the branch and shipped with
+          the 2026-09-14 relaunch; they could not be applied in place, because blocks already
+          on that chain depended on the old behaviour.</td>
+      </tr>
+      <tr>
+        <td>2026-09-03</td>
+        <td class="desc">All three beacon nodes now custody every PeerDAS column, so a
+          consensus client with default custody can range-sync; before this a joiner could
+          stall waiting for columns no peer served. A read-only beacon API is published at
+          <code>checkpoint-sync.privacy.ethrex.xyz</code>; the FOCIL Lighthouse build cannot
+          checkpoint-sync from it yet on a Gloas chain, so sync from genesis (minutes). The
+          bootnode bundle was re-published with the changed beacon records: refetch
+          <code>bootnodes-cl.txt</code>.</td>
+      </tr>
+      <tr>
+        <td>2026-09-03<br><span style="font-weight:400">17:18 UTC</span></td>
+        <td class="desc"><strong>Fresh genesis on the updated specs</strong>, the chain running
+          now. Pins: EIP-8141 <code>7d1c8bfb94</code>, EIP-8250 <code>e5cf246ff1</code>,
+          EIP-8272 <code>0231fb05f5</code>, EIP-7805 <code>9a345f96c2</code>, EIP-8369
+          <code>33724bd7da</code>. For anyone building frame transactions: the envelope has
+          9 fields with the fees nested in one list, each frame declares
+          <code>limits = [execution, state]</code>, the intrinsic cost is 12,000 plus 6,000 per
+          frame that moves value, <code>SIGDATACOPY</code> is its own opcode at
+          <code>0xB5</code>, EIP-8250's ids moved to <code>TXPARAM 0x0D</code>–<code>0x10</code>,
+          and EIP-8272's count sits at <code>TXPARAM 0x11</code> with
+          <code>RECENTROOTREFLOAD</code> at <code>0xB6</code>. Every type <code>0x06</code>
+          transaction signed for the previous chain is invalid here. The previous chain ended at
+          block 313,106: wipe your database and resync from the new bundle. An earlier relaunch
+          the same day was withdrawn after 1,691 blocks; nothing from it carries over. Spec diffs:
+          <a href="https://gist.github.com/ilitteri/808996324a6409db38f45ed639e82a19">8141</a>,
+          <a href="https://gist.github.com/ilitteri/9f2a53396d92538ef6b6bee380078fbc">8250</a>,
+          <a href="https://gist.github.com/ilitteri/7fe0324152d5ae8ca9d888358796337f">8272</a>.</td>
+      </tr>
+      <tr>
+        <td>2026-08-11</td>
+        <td class="desc"><strong>Network launched</strong> as chain <code>8141</code>: EIP-8141,
+          EIP-8250, EIP-8272 and EIP-7805 with EIP-8369, activating together at one fork on top
+          of Glamsterdam, at the four core EIPs' <code>4093c21847</code> revision and EIP-8369's
+          <code>6f818e27dd</code>. Validator entry permissioned through a gated deposit
+          contract; syncing, peering and transacting open to anyone. Faucet, explorer and public
+          RPC online.</td>
+      </tr>
+    </table>
+    <p style="margin:1rem 0 0;font-size:14px;color:var(--muted)">
+      Newest first. Every relaunch, and every change a node operator or transaction builder has
+      to act on, gets an entry here with the date it took effect. The exact rule set and pins
+      are in the network spec.
+    </p>
+  </div>
+
+  <footer>Test ETH has no value. The chain may be reset without notice.</footer>
+</main>
+
+<script>
+  const out = document.getElementById('out');
+  const btn = document.getElementById('go');
+  const addr = document.getElementById('addr');
+
+  async function claim() {
+    const value = addr.value.trim();
+    out.className = ''; out.textContent = 'Requesting…'; btn.disabled = true;
+    try {
+      const res = await fetch('/api/claim', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ address: value }),
+      });
+      const body = await res.json().catch(() => ({ msg: 'unreadable response' }));
+      out.className = res.ok ? 'ok' : 'err';
+      out.textContent = body.txhash ? `${body.msg}\n${body.txhash}` : body.msg;
+    } catch (err) {
+      out.className = 'err';
+      out.textContent = `request failed: ${err}`;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  btn.addEventListener('click', claim);
+  addr.addEventListener('keydown', (e) => { if (e.key === 'Enter') claim(); });
+
+  // Copy affordances. navigator.clipboard needs a secure context, which this page
+  // has over HTTPS but not when reached by IP over plain HTTP, so fall back to a
+  // detached textarea rather than failing silently on the deployment's own address.
+  async function copyText(text) {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch (err) { /* fall through */ }
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.cssText = 'position:fixed;top:-9999px;opacity:0';
+    document.body.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (err) { ok = false; }
+    document.body.removeChild(ta);
+    return ok;
+  }
+
+  function makeCopyButton(getText, extraClass) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'copy-btn' + (extraClass ? ' ' + extraClass : '');
+    b.textContent = 'Copy';
+    b.addEventListener('click', async () => {
+      const ok = await copyText(getText());
+      b.textContent = ok ? 'Copied' : 'Press ⌘C';
+      b.classList.toggle('done', ok);
+      setTimeout(() => { b.textContent = 'Copy'; b.classList.remove('done'); }, 1600);
+    });
+    return b;
+  }
+
+  // Command blocks: the multi-line ones are the whole reason this exists.
+  document.querySelectorAll('pre').forEach((pre) => {
+    const host = document.createElement('div');
+    host.className = 'copy-host';
+    pre.parentNode.insertBefore(host, pre);
+    host.appendChild(pre);
+    host.appendChild(makeCopyButton(() => pre.textContent.trimEnd()));
+  });
+
+  // Single long values: endpoints and enodes, where selecting by hand is fiddly.
+  document.querySelectorAll('dd, .records li').forEach((el) => {
+    const text = el.textContent.trim();
+    if (!text) return;
+    el.appendChild(makeCopyButton(() => text, 'copy-inline'));
+  });
+</script>

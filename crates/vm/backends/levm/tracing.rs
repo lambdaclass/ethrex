@@ -101,7 +101,7 @@ impl LEVM {
         vm_type: VMType,
         crypto: &dyn Crypto,
     ) -> Result<PrestateResult, EvmError> {
-        let (env, converted) = prepare_call_env(tx, block_header, db, vm_type)?;
+        let (env, converted) = prepare_call_env(tx, block_header, db)?;
         Self::run_prestate_trace(
             db,
             env,
@@ -189,7 +189,7 @@ impl LEVM {
         vm_type: VMType,
         crypto: &dyn Crypto,
     ) -> Result<OpcodeTraceResult, EvmError> {
-        let (env, converted) = prepare_call_env(tx, block_header, db, vm_type)?;
+        let (env, converted) = prepare_call_env(tx, block_header, db)?;
         Self::run_opcode_trace(db, env, &converted, cfg, vm_type, crypto)
     }
 
@@ -220,7 +220,7 @@ impl LEVM {
     /// Run transaction with callTracer activated. `log_index_base` is the number of logs
     /// emitted by preceding txs in the block, so `withLog` logs get geth's block-absolute
     /// `index` (pass 0 when there is no preceding context or logs aren't collected).
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub fn trace_tx_calls(
         db: &mut GeneralizedDatabase,
         block_header: &BlockHeader,
@@ -266,7 +266,7 @@ impl LEVM {
         vm_type: VMType,
         crypto: &dyn Crypto,
     ) -> Result<CallTrace, EvmError> {
-        let (env, converted) = prepare_call_env(tx, block_header, db, vm_type)?;
+        let (env, converted) = prepare_call_env(tx, block_header, db)?;
         Self::run_call_trace(
             db,
             env,
@@ -469,9 +469,8 @@ fn prepare_call_env(
     tx: &GenericTransaction,
     block_header: &BlockHeader,
     db: &GeneralizedDatabase,
-    vm_type: VMType,
 ) -> Result<(Environment, Transaction), EvmError> {
-    let mut env = env_from_generic(tx, block_header, db, vm_type)?;
+    let mut env = env_from_generic(tx, block_header, db)?;
     // Skip the allowance check without touching `block_gas_limit`; see
     // `simulate_tx_from_generic`. A trace must report the same GASLIMIT the traced block
     // executed with.

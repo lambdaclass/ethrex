@@ -55,7 +55,7 @@ use ethrex_blockchain::{
 use ethrex_common::H256;
 #[cfg(feature = "l2")]
 use ethrex_common::types::Transaction;
-use ethrex_common::types::{MempoolTransaction, P2PTransaction, Receipt};
+use ethrex_common::types::{P2PTransaction, Receipt};
 use ethrex_crypto::NativeCrypto;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{Store, error::StoreError};
@@ -1065,14 +1065,9 @@ async fn send_all_pooled_tx_hashes(
     state: &mut Established,
     connection: &mut PeerConnection,
 ) -> Result<(), PeerConnectionError> {
-    let txs: Vec<MempoolTransaction> = state
-        .blockchain
-        .mempool
-        .get_all_txs_by_sender()?
-        .into_values()
-        .flatten()
-        .filter(|tx| !tx.is_privileged())
-        .collect();
+    // --mempool.private: locally-submitted private txs MUST NOT be
+    // disclosed via the new-peer pooled-hashes dump.
+    let txs = state.blockchain.mempool.get_txs_for_new_peer_dump()?;
     if !txs.is_empty() {
         state
             .tx_broadcaster
@@ -1899,7 +1894,9 @@ async fn handle_incoming_message(
                                     {
                                         target |= 1u128 << extra_col;
                                     }
-                                    let fetch_mask = target & u128::MAX; // peer is full provider
+                                    // A full provider holds every column, so the
+                                    // whole target is fetchable from it.
+                                    let fetch_mask = target;
                                     if fetch_mask != 0 {
                                         state.pending_cell_requests.push((vec![hash], fetch_mask));
                                     }
@@ -1972,11 +1969,19 @@ async fn handle_incoming_message(
             }
             // If we receive a blob transaction without blobs or with blobs that don't match the versioned hashes we must disconnect from the peer
             for tx in &msg.pooled_transactions {
-                if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx
-                    && (itx.blobs_bundle.is_empty()
-                        || itx
-                            .blobs_bundle
-                            .validate_blob_commitment_hashes(&itx.tx.blob_versioned_hashes)
+                let sidecar = match tx {
+                    P2PTransaction::EIP4844TransactionWithBlobs(itx) => {
+                        Some((&itx.blobs_bundle, &itx.tx.blob_versioned_hashes))
+                    }
+                    P2PTransaction::FrameTransactionWithBlobs(itx) => {
+                        Some((&itx.blobs_bundle, &itx.tx.blob_versioned_hashes))
+                    }
+                    _ => None,
+                };
+                if let Some((bundle, versioned_hashes)) = sidecar
+                    && (bundle.is_empty()
+                        || bundle
+                            .validate_blob_commitment_hashes(versioned_hashes)
                             .is_err())
                 {
                     debug!(

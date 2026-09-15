@@ -695,6 +695,49 @@ pub mod block_access_list {
     use ethrex_rlp::decode::RLPDecode;
     use ethrex_rlp::encode::RLPEncode;
 
+    /// The `blockAccessList` engine-API field as raw bytes, exactly as received.
+    ///
+    /// The typed decode deliberately does NOT happen here: a syntactically valid
+    /// DATA field whose bytes fail RLP decoding is not a malformed request, it is
+    /// an invalid payload, and the engine API answers those with a `newPayload`
+    /// status of INVALID rather than a JSON-RPC error. Decoding in serde would
+    /// poison the whole params parse and surface as error -32602. The raw bytes
+    /// are also what the header's BAL hash commits to, so canonicalizing through
+    /// a decode/encode round-trip here would hide a non-canonical encoding from
+    /// the block-hash check.
+    pub mod raw_opt {
+        use super::*;
+
+        pub fn deserialize<'de, D>(d: D) -> Result<Option<::bytes::Bytes>, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let value = Option::<String>::deserialize(d)?;
+            let Some(value) = value else { return Ok(None) };
+            // EIP-7928 blockAccessList is a DATA field (`^0x[0-9a-f]*$`): the `0x`
+            // prefix is mandatory. Require it rather than silently trimming, so an
+            // unprefixed (schema-invalid) value is rejected as strict clients do.
+            let hex_body = value
+                .strip_prefix("0x")
+                .ok_or_else(|| D::Error::custom("blockAccessList must be 0x-prefixed"))?;
+            let bytes = hex::decode(hex_body).map_err(|e| D::Error::custom(e.to_string()))?;
+            Ok(Some(::bytes::Bytes::from(bytes)))
+        }
+
+        pub fn serialize<S>(
+            value: &Option<::bytes::Bytes>,
+            serializer: S,
+        ) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            match value {
+                Some(b) => serializer.serialize_str(&format!("0x{}", hex::encode(b))),
+                None => serializer.serialize_none(),
+            }
+        }
+    }
+
     pub mod rlp_str {
 
         use crate::types::block_access_list::BlockAccessList;

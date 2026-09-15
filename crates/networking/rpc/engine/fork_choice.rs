@@ -1154,6 +1154,57 @@ mod tests {
         );
     }
 
+    /// `engine_forkchoiceUpdatedV5` carries a third parameter, `custodyColumns`,
+    /// which Lighthouse sends as `null` because it advertises no custody bitmap.
+    /// Rejecting the arity leaves the consensus client unable to start a payload
+    /// build, which halts the chain at the fork boundary.
+    #[test]
+    fn parse_v5_accepts_the_custody_columns_parameter() {
+        use serde_json::json;
+
+        let state = json!({
+            "headBlockHash": format!("0x{:064x}", 1),
+            "safeBlockHash": format!("0x{:064x}", 1),
+            "finalizedBlockHash": format!("0x{:064x}", 1),
+        });
+
+        // Three params with a null custody bitmap: the shape Lighthouse sends.
+        let (_, attrs) = super::parse_v5(&Some(vec![
+            state.clone(),
+            serde_json::Value::Null,
+            serde_json::Value::Null,
+        ]))
+        .expect("V5 must accept the specified three-parameter form");
+        assert!(attrs.is_none());
+
+        // A real 16-byte custody bitarray, the shape the engine API specifies
+        // for a client that does advertise one. Accepted and ignored: ethrex
+        // has no custody-dependent behaviour, and rejecting the value would
+        // halt the chain under a client that sends it.
+        let (_, attrs) = super::parse_v5(&Some(vec![
+            state.clone(),
+            serde_json::Value::Null,
+            json!(format!("0x{}", "ff".repeat(16))),
+        ]))
+        .expect("V5 must accept a populated custody bitarray");
+        assert!(attrs.is_none());
+
+        // The one- and two-parameter forms stay accepted.
+        super::parse_v5(&Some(vec![state.clone()])).expect("one param");
+        super::parse_v5(&Some(vec![state.clone(), serde_json::Value::Null])).expect("two params");
+
+        // A fourth parameter is not defined by any revision.
+        assert!(
+            super::parse_v5(&Some(vec![
+                state,
+                serde_json::Value::Null,
+                serde_json::Value::Null,
+                serde_json::Value::Null,
+            ]))
+            .is_err()
+        );
+    }
+
     #[test]
     fn validate_v5_accepts_hegota_timestamp_with_empty_il() {
         use super::validate_attributes_v5;

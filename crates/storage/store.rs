@@ -17,7 +17,7 @@ use crate::{
     block_data_buffer::BlockDataBuffer,
     error::StoreError,
     journal::{FlatDiff, JournalEntry},
-    layering::{Overlay, TrieLayerCache, TrieWrapper},
+    layering::{Overlay, OverlayCf, TrieLayerCache, TrieWrapper},
     rlp::{BlockBodyRLP, BlockHeaderRLP, BlockRLP},
     trie::{BackendTrieDB, BackendTrieDBLocked, classify_trie_key},
     utils::{ChainDataIndex, SnapStateIndex},
@@ -2846,6 +2846,15 @@ impl Store {
     ) -> Result<(), StoreError> {
         debug!("Storing initial state from genesis");
 
+        // A fork scheduled without its prerequisite resolves to that fork's
+        // ordinal while the prerequisite's own timestamp gates stay closed, so
+        // the chain runs a combination no other client can agree on. Fail here
+        // rather than at the first block that depends on the difference.
+        genesis
+            .config
+            .validate_fork_schedule()
+            .map_err(StoreError::Custom)?;
+
         // Obtain genesis block
         let genesis_block = genesis.get_block();
         let genesis_block_number = genesis_block.header.number;
@@ -4396,11 +4405,33 @@ impl Store {
         .expect("block_data_buffer lock poisoned");
     }
 
+    /// Insert a block and its receipts into the in-memory buffer without writing
+    /// to disk. For testing only — gates production code off.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn buffer_block_with_receipts_for_test(&self, block: &Block, receipts: Vec<Receipt>) {
+        mutate_block_buffer(&self.block_data_buffer, |b| {
+            b.insert(block.clone(), receipts.clone(), vec![])
+        })
+        .expect("block_data_buffer lock poisoned");
+    }
+
     /// Synchronously flush the block data buffer to disk.
     /// For testing only — gates production code off.
     #[cfg(any(test, feature = "testing"))]
     pub fn flush_block_data_for_test(&self) -> Result<(), StoreError> {
         flush_block_data(self.backend.as_ref(), &self.block_data_buffer)
+    }
+
+    /// Read a receipt by block hash, bypassing the canonical-hash lookup that
+    /// [`Store::get_receipt`] performs. For testing only — lets a test assert
+    /// what a flush wrote without staging a canonical chain.
+    #[cfg(any(test, feature = "testing"))]
+    pub async fn get_receipt_by_hash_for_test(
+        &self,
+        block_hash: BlockHash,
+        index: Index,
+    ) -> Result<Option<Receipt>, StoreError> {
+        self.get_receipt_by_block_hash(block_hash, index).await
     }
 
     /// Read a raw trie node straight from the on-disk account/storage trie-node
@@ -4567,9 +4598,15 @@ struct BlockPersist {
     wait_for_flush: bool,
     /// Number of the block whose layer this update represents (the last block in
     /// the batch, matching `child_state_root`). Threaded into the trie layer so
-    /// the committed-layer identity is available for the journal write path;
-    /// harmless for batch updates, since journal writes are skipped when
-    /// `wait_for_flush` (batch mode) is set.
+    /// the committed-layer identity is available for the journal write path.
+    ///
+    /// On a multi-block batch this names only the LAST block, which is NOT a usable
+    /// journal identity for the batch's layer. `wait_for_flush` does not make that
+    /// safe: it decides when THIS message acks, whereas the layer it creates is
+    /// journaled or not by whichever LATER commit sweeps it — `TrieLayerCache::commit`
+    /// takes the target layer and every ancestor, so a per-block commit can reach a
+    /// batch layer. Any journal entry must therefore be gated on the committed
+    /// layer covering exactly one block, not on this message's ack mode.
     block_number: BlockNumber,
     /// Hash of the block whose layer this update represents (see `block_number`).
     block_hash: H256,
@@ -4650,10 +4687,14 @@ fn flush_block_data(
         let hash = b.header.hash();
         write_block_data(tx.as_mut(), b.number, hash, &b.header, &b.body)?;
         for (index, receipt) in b.receipts.iter().enumerate() {
+            // `RECEIPTS_V2` holds the internal storage codec, which for frame
+            // receipts carries `succeeded` and the aggregated logs that the
+            // consensus layout omits. Identical to `encode_to_vec` for non-frame
+            // receipts.
             tx.put(
                 RECEIPTS_V2,
                 &receipt_key(&hash, index as u64),
-                &receipt.encode_to_vec(),
+                &receipt.encode_storage(),
             )?;
         }
         max_number = max_number.max(b.number);
@@ -5002,6 +5043,15 @@ fn commit_to_disk(
             &[]
         };
 
+        // Pre-images for the reconciliation layer must be taken at the pivot, not at the
+        // old chain's edge `D`. `T`'s journal entry has to reverse disk back to the pivot
+        // state, but this batch is built while disk still holds `D`, so `read_view` yields
+        // `D`'s values for every key the old chain rewrote in `[T, D]`. The overlay *is*
+        // the pivot-vs-`D` difference, so it wins over `read_view` for any key it carries.
+        // `None` in the overlay means "absent at the pivot", which is exactly the journal's
+        // "delete on rollback" entry.
+        let pivot_overlay = overlay_for_reconciliation.as_ref();
+
         for (key, value) in layer.nodes.iter().chain(extra.iter()) {
             let (is_leaf, is_account) = classify_trie_key(key.len());
 
@@ -5024,17 +5074,23 @@ fn commit_to_disk(
                 &STORAGE_TRIE_NODES
             };
 
-            // Pre-image: the intra-batch overlay wins over disk so multi-layer commits
-            // record each block's true pre-state. Skipped for batch (full-sync) commits.
+            // Pre-image: the intra-batch overlay wins over the pivot overlay, which wins
+            // over disk, so multi-layer commits record each block's true pre-state and the
+            // reconciliation layer records the pivot's. Skipped for batch (full-sync) commits.
             let prev_value = if !is_batch {
                 match overlay.get(key) {
                     Some(v) => Some(v.clone()),
-                    None => match read_view.get(table, key) {
-                        Ok(v) => Some(v),
-                        Err(e) => {
-                            result = Err(e);
-                            break 'layers;
-                        }
+                    None => match pivot_overlay
+                        .and_then(|ov| ov.lookup(OverlayCf::classify_by_key_length(key.len()), key))
+                    {
+                        Some(v) => Some(v),
+                        None => match read_view.get(table, key) {
+                            Ok(v) => Some(v),
+                            Err(e) => {
+                                result = Err(e);
+                                break 'layers;
+                            }
+                        },
                     },
                 }
             } else {

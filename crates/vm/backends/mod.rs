@@ -161,7 +161,10 @@ impl Evm {
             self.stateless_validator.as_deref(),
         )?;
 
-        // Track cumulative post-refund gas for receipt
+        // Track cumulative post-refund gas for receipt. `gas_spent` is the payer
+        // total across both gas dimensions for every transaction kind -- the frame
+        // path reports the same shape as the ordinary one -- so no per-kind
+        // adjustment happens here.
         *cumulative_gas_spent += execution_report.gas_spent;
 
         let mut receipt = Receipt::new(
@@ -177,13 +180,14 @@ impl Evm {
             receipt.frame_receipts = execution_report.frame_results.take().map(|results| {
                 results
                     .into_iter()
-                    .map(
-                        |(status, gas_used, logs)| ethrex_common::types::FrameReceipt {
+                    .map(|(status, gas_used, state_gas_used, logs)| {
+                        ethrex_common::types::FrameReceipt {
                             status,
                             gas_used,
+                            state_gas_used,
                             logs,
-                        },
-                    )
+                        }
+                    })
                     .collect()
             });
         }
@@ -206,6 +210,10 @@ impl Evm {
         // payload-build path; the block-import path is hooked in prepare_block.
         if fork >= Fork::Hegota && matches!(self.vm_type, VMType::L1) {
             LEVM::install_expiry_verifier_code(&mut self.db, self.crypto.as_ref())?;
+            // EIP-8250: the keyed-nonce manager predeploy.
+            LEVM::install_nonce_manager_code(&mut self.db, self.crypto.as_ref())?;
+            // EIP-8272: the recent-root predeploy.
+            LEVM::install_recent_root_code(&mut self.db, self.crypto.as_ref())?;
         }
 
         if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
@@ -294,6 +302,7 @@ impl Evm {
         header: &BlockHeader,
         prefix: &ethrex_common::types::ValidationPrefix,
         canonical_paymaster_code_hash: Option<ethrex_common::H256>,
+        max_verify_gas: u64,
     ) -> Result<FrameValidationOutcome, EvmError> {
         LEVM::simulate_frame_validation_prefix(
             tx,
@@ -303,6 +312,7 @@ impl Evm {
             self.crypto.as_ref(),
             prefix,
             canonical_paymaster_code_hash,
+            max_verify_gas,
         )
     }
 
@@ -385,13 +395,22 @@ pub struct FrameValidationOutcome {
     /// The transaction's max cost (TXPARAM 0x06): the largest amount the payer
     /// may be charged. Used by the paymaster reservation accounting (Phase 3).
     pub max_cost: ethrex_common::U256,
+    /// The ceiling the mempool reserves against the paymaster's balance. Equals
+    /// `max_cost` except in the blob term: this prices blobs at the transaction's
+    /// declared `max_fee_per_blob_gas` rather than at the head's `blob_base_fee`, so
+    /// it stays a ceiling for every block that can include the transaction. See
+    /// `LEVM::frame_tx_reservation_ceiling`.
+    pub reservation_ceiling: ethrex_common::U256,
     /// The paymaster accessed by the prefix and whether its code matched the
     /// canonical paymaster hash. `None` when no distinct paymaster was
     /// identified (e.g. self-funded self_verify).
     pub accessed_paymaster: Option<(Address, bool)>,
     /// Sender storage slots touched during the prefix, recorded for the
-    /// admission-time revalidation affected-set (Phase 3).
+    /// admission-time revalidation affected-set.
     pub touched_sender_slots: Vec<ethrex_common::H256>,
+    /// Whether the prefix read `TXPARAM(0x12)`, the sender's legacy account nonce
+    /// (EIP-8250 §Mempool).
+    pub read_legacy_nonce: bool,
 }
 
 #[derive(Clone, Debug)]

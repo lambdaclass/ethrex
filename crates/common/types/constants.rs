@@ -12,10 +12,9 @@ pub const VERSIONED_HASH_VERSION_KZG: u8 = 0x01; // Defined in [EIP-4844](https:
 /// Minimum tip, obtained from geth's default miner config (https://github.com/ethereum/go-ethereum/blob/f750117ad19d623622cc4a46ea361a716ba7407e/miner/miner.go#L56)
 ///
 /// Scope: this constant is consumed only by the RPC gas-price estimators
-/// (`eth_gasPrice`, `eth_maxPriorityFeePerGas`). It is NOT a mempool
-/// admission gate — zero-tip transactions are currently admitted.
-///
-/// TODO: This should be configurable along with the tip filter on https://github.com/lambdaclass/ethrex/issues/680
+/// (`eth_gasPrice`, `eth_maxPriorityFeePerGas`). The mempool admission
+/// floor is a separate, lower default (see
+/// `ethrex_blockchain::DEFAULT_MIN_TIP_WEI`).
 pub const MIN_GAS_TIP: u64 = 1000000;
 
 // Blob size related
@@ -46,3 +45,9 @@ pub const MAX_TX_SIZE: usize = 131_072;
 /// excluding the blob sidecar. Sidecar size is bounded separately by the
 /// per-blob byte count and the fork's max blob count.
 pub const MAX_BLOB_TX_SIZE: usize = 1_048_576;
+
+/// Maximum number of blobs a single transaction may carry, independent of the
+/// higher per-block limit. Defined in
+/// [EIP-7594](https://eips.ethereum.org/EIPS/eip-7594) and applied unchanged to
+/// EIP-8141 frame transactions.
+pub const MAX_BLOBS_PER_TX: usize = 6;

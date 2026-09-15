@@ -12,6 +12,10 @@
 
 ## Perf
 
+### 2026-09-07
+
+- EIP-8037 (execution-specs#3478, consensus-breaking): when a successful child frame merges, the state-gas reservoir now repays the spill still outstanding in the merged frame back into `gas_remaining`, debiting the reservoir by the same amount. A cross-frame refund can credit the reservoir while the `gas_remaining` that funded the charge stays reduced; the merge is the first point where the claim and the credit share a frame. Billing-neutral by construction — the user total (`gas_limit - gas_remaining - reservoir`) and the EIP-7778 dimensions are unchanged — but it changes how much execution gas a parent frame has after a child returns, so it is consensus-visible. Frame transactions carry no reservoir and are unaffected. Fixtures move to `tests-frames-devnet@v0.3.0` and `tests-glamsterdam-devnet@v8.1.4` [#7254](https://github.com/lambdaclass/ethrex/pull/7254)
+
 ### 2026-08-03
 
 - Size the default RocksDB shared block cache from the memory the process may actually use — 40% of the smaller of physical memory and the cgroup limit, clamped to 512 MiB..=12 GiB — instead of a flat 12 GiB. The flat default was 71% of a 16 GiB host, leaving no headroom for trie layers, execution and the mempool; `--rocksdb.block-cache-size` still overrides it

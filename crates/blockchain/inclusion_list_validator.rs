@@ -460,7 +460,7 @@ impl InclusionListSatisfactionValidator {
             let max_price = match tx_il.tx_type() {
                 TxType::Legacy | TxType::EIP2930 | TxType::Privileged => tx_il.gas_price(),
                 _ => match tx_il.max_fee_per_gas() {
-                    Some(fee) => U256::from(fee),
+                    Some(fee) => fee,
                     None => continue,
                 },
             };

@@ -487,13 +487,16 @@ fn make_frame_tx(sender: Address, nonce: u64, frame_gas_limit: u64) -> Transacti
     };
     Transaction::FrameTransaction(FrameTransaction {
         chain_id: 1,
-        nonce,
+        // The frames line keys nonces (EIP-8250); key 0 is the account nonce.
+        nonce_keys: vec![U256::zero()],
+        nonce_seq: nonce,
         sender,
         frames: vec![Frame {
             mode: FrameMode::Sender as u8,
             flags: 0x00,
             target: Some(Address::repeat_byte(0xaa)),
             gas_limit: frame_gas_limit,
+            state_gas_limit: 0,
             value: U256::zero(),
             data: Default::default(),
         }],
@@ -503,8 +506,8 @@ fn make_frame_tx(sender: Address, nonce: u64, frame_gas_limit: u64) -> Transacti
             msg: Default::default(),
             signature: Default::default(),
         }],
-        max_priority_fee_per_gas: 1,
-        max_fee_per_gas: 1,
+        max_priority_fee_per_gas: U256::from(1),
+        max_fee_per_gas: U256::from(1),
         max_fee_per_blob_gas: U256::zero(),
         blob_versioned_hashes: vec![],
         ..Default::default()
