@@ -281,6 +281,15 @@ pub struct Blockchain {
     /// merkleizes seed a shared one via [`Self::for_test_harness_with_pool`].
     /// Use [`Self::merkle_pool`] to read it.
     merkle_pool: OnceLock<Arc<rayon::ThreadPool>>,
+    /// Persistent pool that runs the per-block merkleizer.
+    ///
+    /// Two threads, and only one is busy at a time: the point is not parallelism
+    /// but avoiding an OS thread creation per block. Measured on a chain of
+    /// near-empty blocks, the merkleizer's start delay (from the start of the
+    /// exec/merkle phase to its first instruction) was 0.31 ms of a 1.2 ms block
+    /// when it was spawned fresh each time. Separate from the merkleization pool
+    /// because the merkleizer itself opens a scope on that one.
+    pipeline_pool: OnceLock<Arc<rayon::ThreadPool>>,
     /// Cache handoff slot from the mempool prewarmer to
     /// `execute_block_pipeline`; see `PrewarmedCache` and `crate::prewarm`.
     prewarmed: PrewarmedCache,
@@ -569,6 +578,22 @@ impl Blockchain {
         self.merkle_pool.get_or_init(Self::build_merkle_pool)
     }
 
+    /// Build the pool that runs the per-block merkleizer.
+    fn build_pipeline_pool() -> Arc<rayon::ThreadPool> {
+        Arc::new(
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(2)
+                .thread_name(|i| format!("block-pipeline-{i}"))
+                .build()
+                .expect("Failed to create block pipeline thread pool"),
+        )
+    }
+
+    /// This `Blockchain`'s block-pipeline pool, building it on first use.
+    fn pipeline_pool(&self) -> &rayon::ThreadPool {
+        self.pipeline_pool.get_or_init(Self::build_pipeline_pool)
+    }
+
     /// Builds the merkleization pool now, unless it is already seeded.
     ///
     /// Node startup calls this so a pool that cannot be created fails the process at
@@ -602,6 +627,7 @@ impl Blockchain {
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: blockchain_opts,
             merkle_pool: OnceLock::new(),
+            pipeline_pool: OnceLock::new(),
             prewarmed: PrewarmedCache::default(),
         }
     }
@@ -630,6 +656,7 @@ impl Blockchain {
                 ..Default::default()
             },
             merkle_pool: OnceLock::new(),
+            pipeline_pool: OnceLock::new(),
             prewarmed: PrewarmedCache::default(),
         }
     }
@@ -680,6 +707,7 @@ impl Blockchain {
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options,
             merkle_pool: OnceLock::new(),
+            pipeline_pool: OnceLock::new(),
             prewarmed: PrewarmedCache::default(),
         }
     }
@@ -1210,70 +1238,84 @@ impl Blockchain {
                     ),
                     StoreError,
                 >;
-                let merkleize_handle = std::thread::Builder::new()
-                    .name("block_executor_merkleizer".to_string())
-                    .spawn_scoped(s, move || -> MerkleResult {
-                        let merkle_start_instant = Instant::now();
-                        // Merkleizer behavior MUST match the channel-creation decision above:
-                        // a channel is created (and execution streams per-tx updates into it via
-                        // `send_state_transitions_tx`) in every case except `bal=Some &&
-                        // parallel_exec`. So the optimistic synthesized-updates path is valid ONLY
-                        // when no channel exists (`rx_for_merkle` is None); whenever a channel was
-                        // created we must consume it. Taking the optimistic path while a channel is
-                        // live drops `rx` mid-execution and races execution's later sends (the
-                        // post-requests send especially), surfacing as "sending on a closed channel".
-                        let (account_updates_list, streaming_witness) = match rx_for_merkle {
-                            None => {
-                                let prepared = optimistic_updates.expect(
+                let merkle_closure = move || -> MerkleResult {
+                    let merkle_start_instant = Instant::now();
+                    // Merkleizer behavior MUST match the channel-creation decision above:
+                    // a channel is created (and execution streams per-tx updates into it via
+                    // `send_state_transitions_tx`) in every case except `bal=Some &&
+                    // parallel_exec`. So the optimistic synthesized-updates path is valid ONLY
+                    // when no channel exists (`rx_for_merkle` is None); whenever a channel was
+                    // created we must consume it. Taking the optimistic path while a channel is
+                    // live drops `rx` mid-execution and races execution's later sends (the
+                    // post-requests send especially), surfacing as "sending on a closed channel".
+                    let (account_updates_list, streaming_witness) = match rx_for_merkle {
+                        None => {
+                            let prepared = optimistic_updates.expect(
                                     "optimistic updates are present when the streaming channel is absent",
                                 );
-                                let list = self.handle_merkleization_bal_from_updates(
-                                    prepared,
-                                    parent_header_ref,
-                                )?;
-                                // The merkleizer builds the trie from the BAL-synthesized
-                                // updates and ignores the streaming channel. But sequential
-                                // execution (`!bal_parallel_exec_enabled`) still streams per-tx
-                                // updates over `rx_for_merkle`; if we drop the receiver before
-                                // the executor's last send, that send fails with "sending on a
-                                // closed channel", racing the real validation error. Drain the
-                                // channel (the updates are redundant here — the BAL path is
-                                // authoritative) so the executor always completes cleanly.
-                                if let Some(rx) = rx_for_merkle {
-                                    for _ in rx {}
-                                }
-                                (list, None)
-                            }
-                            Some(rx) => self.handle_merkleization(
-                                rx,
+                            let list = self.handle_merkleization_bal_from_updates(
+                                prepared,
                                 parent_header_ref,
-                                queue_length_ref,
-                                max_queue_length_ref,
-                                collect_witness,
-                            )?,
-                        };
-                        let merkle_end_instant = Instant::now();
-                        Ok((
-                            account_updates_list,
-                            streaming_witness,
-                            merkle_start_instant,
-                            merkle_end_instant,
-                        ))
-                    })
-                    .map_err(|e| {
-                        ChainError::Custom(format!("Failed to spawn merkleizer thread: {e}"))
-                    })?;
-                // The merkleizer is already running on its own thread; execute here.
-                // `catch_unwind` keeps the previous semantics, where a panic in
-                // execution surfaced as an error rather than unwinding the scope.
+                            )?;
+                            // The merkleizer builds the trie from the BAL-synthesized
+                            // updates and ignores the streaming channel. But sequential
+                            // execution (`!bal_parallel_exec_enabled`) still streams per-tx
+                            // updates over `rx_for_merkle`; if we drop the receiver before
+                            // the executor's last send, that send fails with "sending on a
+                            // closed channel", racing the real validation error. Drain the
+                            // channel (the updates are redundant here — the BAL path is
+                            // authoritative) so the executor always completes cleanly.
+                            if let Some(rx) = rx_for_merkle {
+                                for _ in rx {}
+                            }
+                            (list, None)
+                        }
+                        Some(rx) => self.handle_merkleization(
+                            rx,
+                            parent_header_ref,
+                            queue_length_ref,
+                            max_queue_length_ref,
+                            collect_witness,
+                        )?,
+                    };
+                    let merkle_end_instant = Instant::now();
+                    Ok((
+                        account_updates_list,
+                        streaming_witness,
+                        merkle_start_instant,
+                        merkle_end_instant,
+                    ))
+                };
+                // The merkleizer runs on the persistent pipeline pool and execution
+                // runs here, on the calling thread. Neither creates an OS thread per
+                // block. `in_place_scope` runs this body on the calling thread and
+                // does not return until the spawned merkleizer has finished, so the
+                // borrows both closures hold stay valid.
+                // `catch_unwind` on each keeps the previous semantics, where a panic
+                // in either was reported as an error instead of unwinding.
+                let (merkle_tx, merkle_rx) = std::sync::mpsc::sync_channel::<MerkleResult>(1);
+                let mut execution_slot = None;
+                self.pipeline_pool().in_place_scope(|ps| {
+                    ps.spawn(move |_| {
+                        let result =
+                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(merkle_closure))
+                                .unwrap_or_else(|_| {
+                                    Err(StoreError::Custom("merkleization panicked".to_string()))
+                                });
+                        let _ = merkle_tx.send(result);
+                    });
+                    execution_slot = Some(
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(execution_closure))
+                            .unwrap_or_else(|_| {
+                                Err(ChainError::Custom("execution panicked".to_string()))
+                            }),
+                    );
+                });
                 let execution_result =
-                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(execution_closure))
-                        .unwrap_or_else(|_| {
-                            Err(ChainError::Custom("execution panicked".to_string()))
-                        });
-                let merkleization_result = merkleize_handle.join().unwrap_or_else(|_| {
+                    execution_slot.expect("execution runs inside the pipeline scope");
+                let merkleization_result = merkle_rx.recv().unwrap_or_else(|_| {
                     Err(StoreError::Custom(
-                        "merkleization thread panicked".to_string(),
+                        "merkleizer finished without sending a result".to_string(),
                     ))
                 });
                 #[cfg(feature = "rayon")]
