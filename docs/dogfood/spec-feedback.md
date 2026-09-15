@@ -222,9 +222,54 @@ agreement on the live chain alone cannot distinguish an implementation that judg
 omissions from one that excuses them; that distinction has to come from the tests, or from
 a deliberately omitting builder.
 
+### Implementation
+
+Written by a second agent under the same isolation, from the revised text (the one that
+applies leg 1's findings), on the stripped `hegota-testnet` base. Four commits on
+`dogfood-frames`, `31db0ff1a` to `9c1f8c43d`: the validation surface and per-list code
+budget on the LEVM observer (`Profile2Surface`, `CodeBudget`, code charged at frame dispatch,
+`CALL`-family and `EXTCODE*` targets and their delegates), `inclusion_list_profile2.rs`
+(candidacy, pricing, the fill, `EvaluationState`, a `Profile2Replayer` trait,
+`check_frame_omissions`, `WithdrawalDiscountedDb` with the EIP-161 empty-account rule),
+`Blockchain::inclusion_list_satisfaction` shared by import and the engine RPC, the retained
+list now carrying its verdict, the builder's second pass, and two test files: 28 unit tests
+and 19 block-level scenarios covering rows 1, 2, 3, 4, 5, 6, 7, 8, 9 (both readings), 20,
+21, 22, 24, 26, the withdrawal discount and the builder retry. Five excused-direction tests
+were mutation-checked. 1,312 tests pass in `ethrex-test`, 47 of them new.
+
+Isolation record: no excluded document was opened. The base itself leaked two hints the
+implementer reported: `ChainConfig::aa_vops_slot_count` already existed with a doc comment
+naming Profile 2, and two comments in the LEVM backend mentioned a budget carried between
+replays of a list. Neither showed a rule or a code path.
+
 ### Spec feedback
 
-(entries added as the leg 2 implementation proceeds, against the revised text)
+The implementer's log is `leg2-spec-feedback.md` in this directory, 16 entries plus a list
+of what implemented verbatim. Against the revised text the gaps are smaller and more local
+than leg 1's, and none contradicts the base. Applied as follows.
+
+| Entry | Finding | Applied |
+| ---: | --- | --- |
+| 1 | `protocol_verifier_frames(tx)` used, never defined; a misplaced verifier-shaped frame's status for pricing unclear | Terminology defines the frames by position; anywhere else is a body frame for every rule, pricing included |
+| 2 | Keyed-nonce surface bullet: protocol read or `SLOAD` permission? | Protocol read for condition 2; not an `SLOAD` permission; nonce-manager storage is a third account |
+| 3 | Which opcodes load a code body | Load points named: frame dispatch, `CALL` family, `EXTCODESIZE/COPY/HASH`; a delegation indicator is a body of its own |
+| 4 | Whether the load that trips the bound is charged | It is not |
+| 5 | Charges made by a replay that ends undecided | Stay charged; a replay failing before its first frame charges nothing |
+| 6 | Replay `S_start` after an undecided `S_end`? | "not found eligible at `S_end`, whether ineligible or undecided" |
+| 7 | Order stated over all transactions, only matters among Profile 2 | Order normative among Profile 2 candidates; Profile 1 MAY be judged first and stop the check |
+| 8 | Recomputing the verdict is not idempotent under pruning | SHOULD retain the verdict with the list, with the pruning case as the reason |
+| 9 | `FORK_TIMESTAMP` default clear; "schedule explicitly" implies a config surface | No change; the sentence is a requirement on chains, not clients |
+| 10 | Activation-block paragraph names only `RECENT_ROOT_CODE` | Generalised to every predeploy the replay executes or reads, with the outcome for each |
+| 11 | `MAX_VALIDATION_CODE_BYTES` depends on the fork | The number under EIP-7954 added to the table |
+| 12 | The base mempool undercounts the expiry frame, as predicted | No change; the SHOULD already says so |
+| 13 | Conditions 5 and 3's target half unreachable, as stated | No change |
+| 14 | "Statically valid" against a client with stricter local static checks | EIP-8141's constraints and only those; stricter local checks MUST NOT apply |
+| 15 | `payer` resolved from the shape versus the account `APPROVE` binds | Sentence added: necessarily the same account, a pre-computation not a second check |
+| 16 | Rows 27, 28 and 23 cannot be chain scenarios | Said so under Test Cases |
+
+Where the two logs meet: leg 2's entries 6 and 7 are the direct consequences of the
+replay-order rule leg 1's entry 9 asked for, so the revision created two small questions
+while answering one large one. Leg 2 confirms leg 1's entries 8, 12 and 13 independently.
 
 ## Operator documentation, not spec (`docs/hegota-testnet-joining.md`)
 
