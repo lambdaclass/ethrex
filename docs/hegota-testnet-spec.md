@@ -1,5 +1,13 @@
 # hegota-testnet spec
 
+> **Superseded in part (2026-09-15).** The FOCIL Profile 2 layer this document describes
+> (`focil_eligibility.rs`, `check_with_profile_2`, `BlockchainProfile2Evaluator`, the
+> observer's `FocilVopsSurface`) was replaced by an implementation written from
+> `docs/eip-focil-frametx.md` alone, in `crates/blockchain/focil_profile2.rs` and the LEVM
+> validation observer, together with the newer EIP-7805 layer from `focil-devnet-0`.
+> Statements here about those names describe the previous code; the specification and
+> `docs/dogfood/spec-feedback.md` are current. Everything else in this document still applies.
+
 :::info
 :mega: **Live since 2026-09-14 21:47:31 UTC.** Chain ID `8141`, genesis hash
 `0x2036e3fe3eaaa15382a9befde816137b6b2cda1e3df8ca0c92e89bc17a3fca5a`. This is the fourth genesis

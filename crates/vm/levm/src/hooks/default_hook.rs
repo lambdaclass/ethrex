@@ -66,7 +66,8 @@ impl Hook for DefaultHook {
             validate_min_gas_limit(vm, &intrinsic)?;
             // EIP-7825 (Osaka to pre-Amsterdam): reject tx if gas_limit > POST_OSAKA_GAS_LIMIT_CAP.
             // Amsterdam removes this restriction (EIP-8037 reservoir model).
-            if vm.env.config.fork >= Fork::Osaka
+            if !vm.env.disable_gas_allowance_check
+                && vm.env.config.fork >= Fork::Osaka
                 && vm.env.config.fork < Fork::Amsterdam
                 && vm.tx.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP
             {

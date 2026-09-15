@@ -2666,9 +2666,7 @@ mod validation_observer_tests {
     use ethrex_levm::environment::{EVMConfig, Environment};
     use ethrex_levm::errors::DatabaseError;
     use ethrex_levm::tracing::LevmCallTracer;
-    use ethrex_levm::validation_observer::{
-        CodeBodyBudget, FocilVopsSurface, FrameSimViolation, Profile2Replay,
-    };
+    use ethrex_levm::validation_observer::FrameSimViolation;
     use ethrex_levm::vm::{PrefixSimResult, VM, VMType};
     use rustc_hash::FxHashMap;
     use std::sync::Arc;
@@ -2838,7 +2836,6 @@ mod validation_observer_tests {
         sender: Address,
         frame_indices: &[usize],
         deploy_index: Option<usize>,
-        focil_surface: Option<FocilVopsSurface>,
     ) -> (PrefixSimResult, Option<FrameSimViolation>) {
         let env = hegota_env(sender);
         let mut vm = VM::new(
@@ -2851,12 +2848,8 @@ mod validation_observer_tests {
             None,
         )
         .unwrap();
-        let profile_2 = focil_surface.map(|surface| Profile2Replay {
-            surface,
-            code_budget: CodeBodyBudget::unbounded(),
-        });
         let result = vm
-            .run_frame_validation_prefix(frame_indices, deploy_index, None, None, profile_2)
+            .run_frame_validation_prefix(frame_indices, deploy_index, None, None)
             .unwrap();
         (result, vm.validation_observer.violation.clone())
     }
@@ -2916,7 +2909,7 @@ mod validation_observer_tests {
             ),
         ]);
         // The prefix is frame 1 alone; frame 0 runs ahead of it either way.
-        let (result, violation) = run(&tx, &mut db, sender, &[1], None, None);
+        let (result, violation) = run(&tx, &mut db, sender, &[1], None);
         assert!(
             violation.is_none(),
             "reading a completed frame breaks no rule"
@@ -2941,7 +2934,7 @@ mod validation_observer_tests {
             vec![verify_frame_obs(sender, 50_000, 0x03, Bytes::new())],
         );
         let mut db = build_db(vec![(sender, account_with_code(0, approve_code(0x03)))]);
-        let (result, violation) = run(&tx, &mut db, sender, &[0], None, None);
+        let (result, violation) = run(&tx, &mut db, sender, &[0], None);
         assert!(violation.is_none(), "self_verify must not violate any rule");
         assert!(!result.any_revert, "self_verify frame must not revert");
         assert_eq!(
@@ -2961,7 +2954,7 @@ mod validation_observer_tests {
             vec![verify_frame_obs(sender, 50_000, 0x03, Bytes::new())],
         );
         let mut db = build_db(vec![(sender, account_with_code(0, code))]);
-        let (_result, violation) = run(&tx, &mut db, sender, &[0], None, None);
+        let (_result, violation) = run(&tx, &mut db, sender, &[0], None);
         assert_eq!(
             violation,
             Some(FrameSimViolation::BannedOpcode(0x42)),
@@ -2997,7 +2990,7 @@ mod validation_observer_tests {
         )
         .unwrap();
         let _ = vm
-            .run_frame_validation_prefix(&[0], None, None, None, None)
+            .run_frame_validation_prefix(&[0], None, None, None)
             .unwrap();
         assert!(
             vm.validation_observer.violation.is_none(),
@@ -3020,7 +3013,7 @@ mod validation_observer_tests {
             vec![verify_frame_obs(sender, 50_000, 0x03, Bytes::new())],
         );
         let mut db = build_db(vec![(sender, account_with_code(0, code))]);
-        let (_result, violation) = run(&tx, &mut db, sender, &[0], None, None);
+        let (_result, violation) = run(&tx, &mut db, sender, &[0], None);
         assert_eq!(
             violation,
             Some(FrameSimViolation::BannedOpcode(0x4B)),
@@ -3056,7 +3049,7 @@ mod validation_observer_tests {
                 vec![verify_frame_obs(sender, 50_000, 0x03, Bytes::new())],
             );
             let mut db = build_db(vec![(sender, account_with_code(0, code))]);
-            let (_result, violation) = run(&tx, &mut db, sender, &[0], None, None);
+            let (_result, violation) = run(&tx, &mut db, sender, &[0], None);
             assert!(
                 !matches!(violation, Some(FrameSimViolation::BannedOpcode(op)) if op == opcode),
                 "{name} ({opcode:#04x}) must not be reported as a banned opcode"
@@ -3073,7 +3066,7 @@ mod validation_observer_tests {
             vec![default_frame_obs(sender, 100_000, Bytes::new())],
         );
         let mut db = build_db(vec![(sender, account_with_code(0, code))]);
-        let (_result, violation) = run(&tx, &mut db, sender, &[0], None, None);
+        let (_result, violation) = run(&tx, &mut db, sender, &[0], None);
         assert_eq!(
             violation,
             Some(FrameSimViolation::StateWriteOutsideDeploy),
@@ -3097,7 +3090,7 @@ mod validation_observer_tests {
             (sender, account_with_code(0, Bytes::new())),
             (other, account_with_code(0, code)),
         ]);
-        let (_result, violation) = run(&tx, &mut db, sender, &[0], None, None);
+        let (_result, violation) = run(&tx, &mut db, sender, &[0], None);
         assert_eq!(
             violation,
             Some(FrameSimViolation::StorageReadNonSender),
@@ -3125,7 +3118,7 @@ mod validation_observer_tests {
             vec![verify_frame_obs(sender, 200_000, 0x03, Bytes::new())],
         );
         let mut db = build_db(vec![(sender, account_with_code(0, code))]);
-        let (_result, violation) = run(&tx, &mut db, sender, &[0], None, None);
+        let (_result, violation) = run(&tx, &mut db, sender, &[0], None);
         assert_eq!(
             violation,
             Some(FrameSimViolation::CallToNonexistentOrDelegated(ghost)),
@@ -3142,7 +3135,7 @@ mod validation_observer_tests {
             vec![verify_frame_obs(sender, 50_000, 0x03, Bytes::new())],
         );
         let mut db = build_db(vec![(sender, account_with_code(0, code))]);
-        let (result, violation) = run(&tx, &mut db, sender, &[0], None, None);
+        let (result, violation) = run(&tx, &mut db, sender, &[0], None);
         assert!(
             violation.is_none(),
             "a revert is a frame outcome, not a trace violation"
@@ -3166,7 +3159,7 @@ mod validation_observer_tests {
             vec![verify_frame_obs(sender, 50_000, 0x03, Bytes::new())],
         );
         let mut db = build_db(vec![(sender, account_with_code(0, code))]);
-        let (result, violation) = run(&tx, &mut db, sender, &[0], None, None);
+        let (result, violation) = run(&tx, &mut db, sender, &[0], None);
         assert!(violation.is_none(), "a no-op VERIFY frame violates no rule");
         assert!(!result.any_revert, "an empty VERIFY frame succeeds");
         assert!(
@@ -3197,7 +3190,7 @@ mod validation_observer_tests {
         )
         .unwrap();
         let result = vm
-            .run_frame_validation_prefix(&[0], Some(0), None, None, None)
+            .run_frame_validation_prefix(&[0], Some(0), None, None)
             .unwrap();
         assert!(
             vm.validation_observer.violation.is_none(),
@@ -3478,7 +3471,6 @@ mod frame_validation_prefix_tests {
             &prefix,
             None,
             FRAME_TX_MAX_VERIFY_GAS,
-            None,
         )
         .expect("simulation runs");
         assert!(
@@ -3517,7 +3509,6 @@ mod frame_validation_prefix_tests {
             &prefix,
             None,
             FRAME_TX_MAX_VERIFY_GAS,
-            None,
         )
         .expect("simulation runs");
         assert!(
@@ -3571,7 +3562,6 @@ mod frame_validation_prefix_tests {
             &prefix,
             None,
             FRAME_TX_MAX_VERIFY_GAS,
-            None,
         )
         .expect("simulation runs");
         assert!(
@@ -3630,7 +3620,6 @@ mod frame_validation_prefix_tests {
             &prefix,
             None,
             FRAME_TX_MAX_VERIFY_GAS,
-            None,
         )
         .expect("simulation runs");
         assert!(

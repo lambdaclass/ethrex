@@ -1,5 +1,13 @@
 # Hegotá testnet — genesis requirements and verification
 
+> **Superseded in part (2026-09-15).** The FOCIL Profile 2 layer this document describes
+> (`focil_eligibility.rs`, `check_with_profile_2`, `BlockchainProfile2Evaluator`, the
+> observer's `FocilVopsSurface`) was replaced by an implementation written from
+> `docs/eip-focil-frametx.md` alone, in `crates/blockchain/focil_profile2.rs` and the LEVM
+> validation observer, together with the newer EIP-7805 layer from `focil-devnet-0`.
+> Statements here about those names describe the previous code; the specification and
+> `docs/dogfood/spec-feedback.md` are current. Everything else in this document still applies.
+
 What a genesis for this testnet must contain, and how to prove a deployment works.
 Every item in the first two sections is load-bearing: omitting any of them produces a
 chain that either never starts or stops producing blocks at a fork boundary.

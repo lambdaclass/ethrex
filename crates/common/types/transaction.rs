@@ -2665,8 +2665,22 @@ impl FrameTransaction {
     /// Validate static constraints per EIP-8141 spec.
     /// Returns an error string if the transaction is invalid.
     pub fn validate_static_constraints(&self) -> Result<(), String> {
-        // tx.sender != zero address
-        if self.sender == Address::zero() {
+        self.validate_static_constraints_impl(true)
+    }
+
+    /// EIP-8141's static constraints and only those. [`Self::validate_static_constraints`]
+    /// adds two bounds of this client's own on top of them, the non-zero sender and the
+    /// `2**63-1` gas caps, both documented as divergences in `docs/eip-8141.md`. A
+    /// consensus rule defined over "statically valid" transactions, such as FOCIL
+    /// Profile 2 candidacy, has to use this variant: a local check applied there would
+    /// widen the set of omissions this client excuses relative to every other client.
+    pub fn validate_eip8141_static_constraints(&self) -> Result<(), String> {
+        self.validate_static_constraints_impl(false)
+    }
+
+    fn validate_static_constraints_impl(&self, local_bounds: bool) -> Result<(), String> {
+        // tx.sender != zero address. A local bound: EIP-8141 does not forbid it.
+        if local_bounds && self.sender == Address::zero() {
             return Err("tx.sender must not be zero address".to_string());
         }
         // EIP-8250 keyed nonces: 1..=16 strictly-increasing keys; nonce_seq < 2**64-1.
@@ -2816,13 +2830,13 @@ impl FrameTransaction {
             // in docs/eip-8141.md. It is effectively unreachable: any gas_limit
             // >= 2**63 dwarfs every real block gas limit and is rejected by the
             // gas-limit-vs-block-limit check regardless.
-            if frame.gas_limit > i64::MAX as u64 {
+            if local_bounds && frame.gas_limit > i64::MAX as u64 {
                 return Err(format!(
                     "Frame {i}: gas_limit {} exceeds 2**63-1",
                     frame.gas_limit
                 ));
             }
-            if frame.state_gas_limit > i64::MAX as u64 {
+            if local_bounds && frame.state_gas_limit > i64::MAX as u64 {
                 return Err(format!(
                     "Frame {i}: state_gas_limit {} exceeds 2**63-1",
                     frame.state_gas_limit
@@ -2837,7 +2851,7 @@ impl FrameTransaction {
                 .checked_add(frame.gas_limit as u128)
                 .and_then(|t| t.checked_add(frame.state_gas_limit as u128))
                 .ok_or_else(|| format!("Frame {i}: cumulative frame gas overflow"))?;
-            if total_frame_gas > i64::MAX as u128 {
+            if local_bounds && total_frame_gas > i64::MAX as u128 {
                 return Err(format!(
                     "Frame {i}: cumulative frame gas {total_frame_gas} exceeds 2**63-1"
                 ));

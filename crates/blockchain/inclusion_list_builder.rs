@@ -19,19 +19,16 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ethrex_common::{
-    Address, H256, U256,
-    constants::EMPTY_KECCAK_HASH,
+    Address, Bytes, U256,
     types::{MempoolTransaction, Transaction},
 };
 use rustc_hash::FxHashMap;
 
-use crate::focil_eligibility::SenderCode;
 use crate::mempool::Mempool;
 
-/// Hard byte cap on the total RLP-encoded size of the returned inclusion list.
-/// Re-exported so builder callers do not depend on a second definition drifting
-/// from the one the decoder enforces.
-pub use ethrex_common::types::MAX_BYTES_PER_INCLUSION_LIST;
+/// Hard byte cap on the total RLP-encoded size of the returned inclusion list,
+/// matching `MAX_BYTES_PER_INCLUSION_LIST` in the execution-apis spec.
+pub const MAX_BYTES_PER_INCLUSION_LIST: usize = 8192;
 
 /// Default per-sender cap for the IL builder. Matches the `--il-per-sender-cap`
 /// CLI default.
@@ -39,26 +36,11 @@ pub const DEFAULT_PER_SENDER_CAP: usize = 2;
 
 /// Account snapshot used to validate IL candidates against parent-state.
 /// `None` from [`IlStateProvider::get_account`] means the account is empty
-/// (`nonce = 0`, `balance = 0`, empty code).
-#[derive(Clone, Copy, Debug)]
+/// (`nonce = 0`, `balance = 0`).
+#[derive(Clone, Copy, Debug, Default)]
 pub struct AccountStateView {
     pub nonce: u64,
     pub balance: U256,
-    pub code_hash: H256,
-}
-
-impl Default for AccountStateView {
-    /// An absent account: nonce 0, balance 0, and — load-bearing — the
-    /// *empty-code* hash, not `H256::zero()`. A derived `Default` would
-    /// yield `H256::zero()`, which is not `EMPTY_KECCAK_HASH`, so every
-    /// absent account would misclassify as code-bearing.
-    fn default() -> Self {
-        Self {
-            nonce: 0,
-            balance: U256::zero(),
-            code_hash: *EMPTY_KECCAK_HASH,
-        }
-    }
 }
 
 /// Synchronous, account-only state read used by the IL builder against a
@@ -71,14 +53,13 @@ pub trait IlStateProvider {
         address: Address,
     ) -> Result<Option<AccountStateView>, IlStateProviderError>;
 
-    /// Classify the code at `code_hash` per EIP-3607/EIP-7702. Callers MUST
-    /// short-circuit `code_hash == EMPTY_KECCAK_HASH` to `SenderCode::Eoa`
-    /// themselves before calling this; an implementation may assume
-    /// `code_hash` is always non-empty here. Implementations may consult a
-    /// code-length index rather than loading the code body, since only a
-    /// body of exactly `EIP7702_DELEGATED_CODE_LEN` bytes can be a
-    /// delegation indicator.
-    fn classify_code(&self, code_hash: H256) -> Result<SenderCode, IlStateProviderError>;
+    /// The account's contract code; `None` when the account has none. Consumed
+    /// by the satisfaction validator's sender-is-EOA gate (EELS
+    /// `check_transaction` raises `InvalidSenderError` for a sender whose code
+    /// is set and is not a valid EIP-7702 delegation, per EIP-3607). The
+    /// builder itself never calls this: mempool admission already rejects
+    /// contract senders.
+    fn get_code(&self, address: Address) -> Result<Option<Bytes>, IlStateProviderError>;
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -115,23 +96,6 @@ impl Default for InclusionListBuilder {
             max_bytes: MAX_BYTES_PER_INCLUSION_LIST,
         }
     }
-}
-
-/// Whether a candidate's nonce lives in the sender's linear account-nonce
-/// domain. False only for [EIP-8250] keyed frame transactions, whose `nonce_seq`
-/// is one sequence per `(sender, nonce_key)` in the NONCE_MANAGER predeploy.
-fn is_linear_nonce_domain(tx: &Transaction) -> bool {
-    !matches!(tx, Transaction::FrameTransaction(frame_tx) if frame_tx.is_keyed())
-}
-
-/// Shape exclusions that apply to every candidate regardless of nonce domain:
-/// blob carriers (an [EIP-7805] spec rule) and L2 privileged transactions
-/// (FOCIL is L1-only).
-fn is_il_eligible_shape(tx: &Transaction) -> bool {
-    !matches!(
-        tx,
-        Transaction::EIP4844Transaction(_) | Transaction::PrivilegedL2Transaction(_)
-    )
 }
 
 impl InclusionListBuilder {
@@ -193,14 +157,6 @@ impl InclusionListBuilder {
     /// Returns the surviving candidates as a flat list of
     /// `(MempoolTransaction, Transaction)` pairs (the mempool wrapper is
     /// retained for `time()` access during scoring).
-    ///
-    /// Candidates are split by nonce domain first. Only the linear domain —
-    /// non-frame transactions and key-0 frame transactions, whose `nonce_seq`
-    /// *is* the account's linear nonce — is walked against the sender's account
-    /// nonce. [EIP-8250] keyed frame transactions carry `nonce_seq` in the
-    /// NONCE_MANAGER domain, one sequence per `(sender, nonce_key)`, so the
-    /// account nonce is the wrong yardstick and a linear walk drops them all.
-    /// This mirrors the mempool's `is_keyed_frame_tx` handling.
     fn filter_and_cap(
         &self,
         txs_by_sender: FxHashMap<Address, Vec<MempoolTransaction>>,
@@ -208,7 +164,7 @@ impl InclusionListBuilder {
     ) -> Vec<MempoolTransaction> {
         let mut survivors: Vec<MempoolTransaction> = Vec::new();
 
-        for (sender, sender_txs) in txs_by_sender {
+        for (sender, mut sender_txs) in txs_by_sender {
             // Look up the sender's account once per sender. A read failure
             // is treated as "skip this sender" — being conservative, since
             // we can't validate them.
@@ -218,13 +174,9 @@ impl InclusionListBuilder {
                 Err(_) => continue,
             };
 
-            let (mut linear, non_linear): (Vec<_>, Vec<_>) = sender_txs
-                .into_iter()
-                .partition(|mtx| is_linear_nonce_domain(mtx.transaction()));
-
             // Sort by ascending nonce. The mempool `Ord` ranks by tip, not
             // nonce, so do not rely on it for the per-sender cap.
-            linear.sort_by_key(|mtx| mtx.nonce());
+            sender_txs.sort_by_key(|mtx| mtx.nonce());
 
             // Track the expected next nonce as we walk; if there's a gap we
             // stop accepting from this sender (the gapped tx can't be
@@ -233,14 +185,19 @@ impl InclusionListBuilder {
             let mut running_balance = acct.balance;
             let mut taken: usize = 0;
 
-            for mtx in linear {
+            for mtx in sender_txs {
                 if taken >= self.per_sender_cap {
                     break;
                 }
 
                 let tx: &Transaction = mtx.transaction();
 
-                if !is_il_eligible_shape(tx) {
+                // Blob exclusion (spec rule, non-negotiable).
+                if matches!(tx, Transaction::EIP4844Transaction(_)) {
+                    continue;
+                }
+                // L2 privileged exclusion (FOCIL is L1-only).
+                if matches!(tx, Transaction::PrivilegedL2Transaction(_)) {
                     continue;
                 }
 
@@ -253,34 +210,17 @@ impl InclusionListBuilder {
                     }
                     break; // gap: stop walking this sender
                 }
-
-                // Frame transactions are not balance-gated: the payer is a
-                // paymaster resolved during the validation prefix, so the
-                // sender's balance says nothing about affordability.
-                if !matches!(tx, Transaction::FrameTransaction(_)) {
-                    let cost = match tx.cost_without_base_fee() {
-                        Some(c) => c,
-                        None => continue, // malformed fee data — skip
-                    };
-                    if cost > running_balance {
-                        break; // sender can't afford this tx, can't afford follow-ups either
-                    }
-                    running_balance = running_balance.saturating_sub(cost);
+                let cost = match tx.cost_without_base_fee() {
+                    Some(c) => c,
+                    None => continue, // malformed fee data — skip
+                };
+                if cost > running_balance {
+                    break; // sender can't afford this tx, can't afford follow-ups either
                 }
 
                 // Account moves forward as if this tx were included next.
                 expected_nonce = expected_nonce.saturating_add(1);
-                taken = taken.saturating_add(1);
-                survivors.push(mtx);
-            }
-
-            for mtx in non_linear {
-                if taken >= self.per_sender_cap {
-                    break;
-                }
-                if !is_il_eligible_shape(mtx.transaction()) {
-                    continue;
-                }
+                running_balance = running_balance.saturating_sub(cost);
                 taken = taken.saturating_add(1);
                 survivors.push(mtx);
             }
@@ -311,16 +251,9 @@ fn order_by_production_score(candidates: Vec<MempoolTransaction>) -> Vec<Transac
             // Cast through `u128 -> f64`. ~2^53 micros ≈ 285 years; safe.
             #[allow(clippy::cast_precision_loss)]
             let age_seconds = (age_micros as f64) / 1_000_000.0;
-            // The tip only feeds a logarithmic score, so clamping it to u64 loses nothing
-            // that could change the ordering in practice.
-            let tip = mtx
-                .transaction()
-                .max_priority_fee()
-                .unwrap_or_default()
-                .min(ethrex_common::U256::from(u64::MAX))
-                .low_u64();
+            let tip = mtx.transaction().max_priority_fee().unwrap_or_default();
             #[allow(clippy::cast_precision_loss)]
-            let tip_term = (tip as f64 + 1.0).ln();
+            let tip_term = (tip.min(U256::from(u128::MAX)).low_u128() as f64 + 1.0).ln();
             let score = age_seconds * (1.0 + tip_term);
             (score, mtx.transaction().clone())
         })

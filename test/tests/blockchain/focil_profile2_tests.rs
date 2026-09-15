@@ -1,974 +1,541 @@
-//! `InclusionListSatisfactionValidator::check_with_profile_2`: EIP-8369
-//! Profile 2 (FOCIL AA-VOPS) omissions. Only `Eligible` makes a list
-//! unsatisfied; `Ineligible` and `Undecided` leave the payload verdict alone.
+//! FOCIL Profile 2, the stateless half: the consensus constants, candidacy
+//! (decided from the transaction bytes alone), `verify_budget_cost`, and the
+//! per-list two-stage budget fill. Nothing here opens state or runs the EVM.
 //!
-//! Two layers:
-//! - Unit-level (`FakeEvaluator`): pins the wiring contract — which fill
-//!   outcomes reach the evaluator, and which of the three verdicts lands in
-//!   which report bucket — without any EVM or `Store`.
-//! - End-to-end (real `Store`/`Blockchain`): drives
-//!   [`BlockchainProfile2Evaluator`] against real block state to prove the
-//!   three verdicts are actually reachable through validation-prefix replay,
-//!   and that only `Eligible` moves the payload verdict.
-//!
-//! The end-to-end layer also pins the pre-execution gates that
-//! `run_frame_validation_prefix` runs ahead of the replay — the EIP-8250 keyed
-//! nonce and the EIP-8141 outer signatures — because a transaction that was
-//! never includable must be excused, not reported unjustified.
-
-use std::cell::RefCell;
-use std::collections::HashSet;
+//! Case numbers refer to the Test Cases table of `docs/eip-focil-frametx.md`.
 
 use bytes::Bytes;
-use ethrex_blockchain::Blockchain;
-use ethrex_blockchain::error::ChainError;
-use ethrex_blockchain::focil_eligibility::MAX_VERIFY_GAS_PER_TX;
-use ethrex_blockchain::focil_profile2::BlockchainProfile2Evaluator;
-use ethrex_blockchain::inclusion_list_builder::{
-    AccountStateView, IlStateProvider, IlStateProviderError,
+use ethrex_blockchain::focil_profile2::{
+    MAX_VALIDATION_CODE_BODIES, MAX_VERIFY_GAS_PER_IL, MAX_VERIFY_GAS_PER_TX, NotProfile2Candidate,
+    budget_fill, discount_withdrawal_credit, max_validation_code_bytes,
+    prefix_and_verifier_frame_cost, profile2_candidate, verify_budget_cost,
 };
-use ethrex_blockchain::inclusion_list_validator::{
-    IlProfile2Evaluator, IlUnsatisfied, InclusionListSatisfactionValidator, Profile2Eligibility,
-    StoreIlStateProvider,
+use ethrex_common::constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH};
+use ethrex_common::types::{
+    AccountState, ChainConfig, EIP1559Transaction, FRAME_SIG_SCHEME_SECP256K1,
+    FRAME_TX_RECENT_ROOT_TUPLE_BYTES, Fork, Frame, FrameMode, FrameSignature, FrameTransaction,
+    Transaction, TxKind, frame_tx_expiry_verifier, frame_tx_recent_root,
 };
-use ethrex_common::validation::BlockValidationContext;
-use ethrex_common::{
-    Address, H256, U256,
-    types::{
-        APPROVE_EXECUTION_AND_PAYMENT, BlockHeader, ChainConfig, Frame, FrameMode,
-        FrameTransaction, Genesis, GenesisAccount, Transaction,
-    },
-};
+use ethrex_common::{Address, H256, U256};
 use ethrex_crypto::NativeCrypto;
-use ethrex_storage::{EngineType, Store};
-use rustc_hash::FxHashMap;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Unit-level: `check_with_profile_2` wiring, against a `FakeEvaluator`.
-// ─────────────────────────────────────────────────────────────────────────────
+const SENDER: Address = Address::repeat_byte(0x5E);
+const PAYMASTER: Address = Address::repeat_byte(0xFA);
+/// EIP-8141 prices one SECP256K1 signature at this.
+const SECP256K1_SIGNATURE_GAS: u64 = 2800;
 
-/// An `IlStateProvider` that treats every address as an empty account. The
-/// Profile 2 path never consults the per-sender tracker, so this is enough to
-/// satisfy `InclusionListSatisfactionValidator::new`'s state-read contract.
-struct EmptyState;
-
-impl IlStateProvider for EmptyState {
-    fn get_account(
-        &self,
-        _address: Address,
-    ) -> Result<Option<AccountStateView>, IlStateProviderError> {
-        Ok(None)
-    }
-
-    fn classify_code(
-        &self,
-        _code_hash: H256,
-    ) -> Result<ethrex_blockchain::focil_eligibility::SenderCode, IlStateProviderError> {
-        Ok(ethrex_blockchain::focil_eligibility::SenderCode::Eoa)
-    }
-}
-
-/// A fixed verdict per sender address, plus a call log. Panics if `evaluate`
-/// is called for a sender with no registered verdict — used to prove a
-/// non-`Admitted` fill outcome never reaches the evaluator at all.
-#[derive(Default)]
-struct FakeEvaluator {
-    verdict: FxHashMap<Address, Profile2Eligibility>,
-    calls: RefCell<Vec<Address>>,
-}
-
-impl FakeEvaluator {
-    fn with(verdict: FxHashMap<Address, Profile2Eligibility>) -> Self {
-        Self {
-            verdict,
-            calls: RefCell::new(Vec::new()),
-        }
-    }
-}
-
-impl IlProfile2Evaluator for FakeEvaluator {
-    fn evaluate(&self, tx: &FrameTransaction) -> Profile2Eligibility {
-        self.calls.borrow_mut().push(tx.sender);
-        self.verdict.get(&tx.sender).cloned().unwrap_or_else(|| {
-            panic!(
-                "evaluate() must not be called for sender {:#x} — its fill outcome was not Admitted",
-                tx.sender
-            )
-        })
-    }
-}
-
-fn header() -> BlockHeader {
-    BlockHeader::default()
-}
-
-fn config() -> ChainConfig {
-    ChainConfig::default()
-}
-
-fn verify_frame(target: Option<Address>, scope: u8, gas_limit: u64) -> Frame {
+fn frame(mode: FrameMode, flags: u8, target: Option<Address>, gas_limit: u64) -> Frame {
     Frame {
-        mode: FrameMode::Verify as u8,
-        flags: scope,
+        mode: mode as u8,
+        flags,
         target,
         gas_limit,
         state_gas_limit: 0,
         value: U256::zero(),
-        data: Default::default(),
+        data: Bytes::new(),
     }
 }
 
-/// A statically-valid `self_verify` frame transaction (the simplest Profile 2
-/// candidate shape) for `sender`.
-fn self_verify_tx(sender: Address, gas_limit: u64) -> FrameTransaction {
+fn self_verify(gas_limit: u64) -> Frame {
+    frame(FrameMode::Verify, 0x03, Some(SENDER), gas_limit)
+}
+
+fn only_verify(gas_limit: u64) -> Frame {
+    frame(FrameMode::Verify, 0x02, Some(SENDER), gas_limit)
+}
+
+fn pay(target: Option<Address>, gas_limit: u64) -> Frame {
+    frame(FrameMode::Verify, 0x01, target, gas_limit)
+}
+
+fn deploy(gas_limit: u64) -> Frame {
+    frame(
+        FrameMode::Default,
+        0x00,
+        Some(Address::repeat_byte(0xDE)),
+        gas_limit,
+    )
+}
+
+fn body(gas_limit: u64) -> Frame {
+    frame(
+        FrameMode::Sender,
+        0x00,
+        Some(Address::repeat_byte(0xB0)),
+        gas_limit,
+    )
+}
+
+fn expiry_frame(gas_limit: u64) -> Frame {
+    Frame {
+        data: Bytes::from(vec![0xFF; 8]),
+        ..frame(
+            FrameMode::Verify,
+            0x00,
+            Some(frame_tx_expiry_verifier()),
+            gas_limit,
+        )
+    }
+}
+
+fn recent_root_frame(gas_limit: u64) -> Frame {
+    Frame {
+        data: Bytes::from(vec![0x11; FRAME_TX_RECENT_ROOT_TUPLE_BYTES]),
+        ..frame(
+            FrameMode::Verify,
+            0x00,
+            Some(frame_tx_recent_root()),
+            gas_limit,
+        )
+    }
+}
+
+fn frame_tx(frames: Vec<Frame>) -> FrameTransaction {
     FrameTransaction {
         chain_id: 1,
         nonce_keys: vec![U256::zero()],
         nonce_seq: 0,
-        sender,
-        frames: vec![verify_frame(
-            Some(sender),
-            APPROVE_EXECUTION_AND_PAYMENT,
-            gas_limit,
-        )],
-        // Empty, not a placeholder signature: EIP-8141 signature validation
-        // passes vacuously on an empty list, and a garbage-but-present entry
-        // would fail `validate_frame_signatures` and abort the prefix replay
-        // before it ever reaches the VERIFY frame.
-        signatures: vec![],
-        // Comfortably above the execution-api fixture genesis's 1 gwei
-        // `baseFeePerGas`, so `fee_valid` holds in both the unit-level tests
-        // (default header, base fee 0) and the end-to-end tests (a real
-        // chain's base fee).
-        max_priority_fee_per_gas: U256::from(1),
-        max_fee_per_gas: U256::from(10_000_000_000u64),
-        max_fee_per_blob_gas: U256::zero(),
-        blob_versioned_hashes: vec![],
+        sender: SENDER,
+        frames,
+        signatures: Vec::new(),
+        max_priority_fee_per_gas: U256::zero(),
+        max_fee_per_gas: U256::from(1u64),
         ..Default::default()
     }
 }
 
-fn frame_tx_transaction(tx: FrameTransaction) -> Transaction {
+/// A structurally valid SECP256K1 signature entry that does not verify.
+fn bad_signature() -> FrameSignature {
+    FrameSignature {
+        scheme: FRAME_SIG_SCHEME_SECP256K1,
+        signer: Some(SENDER),
+        msg: Bytes::new(),
+        signature: Bytes::from(vec![0u8; 65]),
+    }
+}
+
+fn listed(tx: FrameTransaction) -> Transaction {
     Transaction::FrameTransaction(tx)
 }
 
-/// An `Eligible` omission lands in `profile_2_unjustified`; `unsatisfied`
-/// stays `None` regardless.
-#[test]
-fn eligible_profile2_omission_lands_in_unjustified_bucket() {
-    let crypto = NativeCrypto;
-    let sender = Address::repeat_byte(0x11);
-    let tx = self_verify_tx(sender, 50_000);
-    let il = vec![frame_tx_transaction(tx)];
-
-    let state = EmptyState;
-    let validator =
-        InclusionListSatisfactionValidator::new(&il, &state, &crypto).expect("construct");
-
-    let mut verdicts = FxHashMap::default();
-    verdicts.insert(sender, Profile2Eligibility::Eligible);
-    let evaluator = FakeEvaluator::with(verdicts);
-
-    let block_txs: HashSet<H256> = HashSet::new();
-    let report = validator.check_with_profile_2(
-        &il,
-        &block_txs,
-        30_000_000,
-        &header(),
-        &config(),
-        &crypto,
-        Some(&evaluator),
-    );
-
-    assert_eq!(
-        report.unsatisfied,
-        Some(IlUnsatisfied {
-            tx_hash: il[0].hash(&crypto)
-        }),
-        "an eligible Profile 2 omission is unjustified, so the list is unsatisfied"
-    );
-    assert_eq!(report.profile_2_unjustified, vec![il[0].hash(&crypto)]);
-    assert!(report.profile_2_undecided.is_empty());
-    assert_eq!(evaluator.calls.borrow().as_slice(), &[sender]);
-}
-
-/// `Ineligible` and `Undecided` omissions never populate `profile_2_unjustified`
-/// (only `Eligible` does); `Undecided` populates `profile_2_undecided`,
-/// `Ineligible` populates neither. `unsatisfied` stays `None` throughout: a
-/// frame transaction is never Profile 1.
-#[test]
-fn ineligible_and_undecided_omissions_are_excluded_from_unjustified() {
-    let crypto = NativeCrypto;
-    let ineligible_sender = Address::repeat_byte(0x22);
-    let undecided_sender = Address::repeat_byte(0x33);
-
-    let ineligible_tx = self_verify_tx(ineligible_sender, 50_000);
-    let undecided_tx = self_verify_tx(undecided_sender, 60_000);
-    let il = vec![
-        frame_tx_transaction(ineligible_tx),
-        frame_tx_transaction(undecided_tx),
-    ];
-
-    let state = EmptyState;
-    let validator =
-        InclusionListSatisfactionValidator::new(&il, &state, &crypto).expect("construct");
-
-    let mut verdicts = FxHashMap::default();
-    verdicts.insert(
-        ineligible_sender,
-        Profile2Eligibility::Ineligible("over budget".to_string()),
-    );
-    verdicts.insert(
-        undecided_sender,
-        Profile2Eligibility::Undecided("replay could not decide".to_string()),
-    );
-    let evaluator = FakeEvaluator::with(verdicts);
-
-    let block_txs: HashSet<H256> = HashSet::new();
-    let report = validator.check_with_profile_2(
-        &il,
-        &block_txs,
-        30_000_000,
-        &header(),
-        &config(),
-        &crypto,
-        Some(&evaluator),
-    );
-
-    assert!(report.unsatisfied.is_none());
-    assert!(
-        report.profile_2_unjustified.is_empty(),
-        "neither Ineligible nor Undecided may land in profile_2_unjustified"
-    );
-    assert_eq!(report.profile_2_undecided, vec![il[1].hash(&crypto)]);
-    // Both were evaluated (both were Admitted candidates).
-    let mut calls = evaluator.calls.borrow().clone();
-    calls.sort();
-    let mut expected = vec![ineligible_sender, undecided_sender];
-    expected.sort();
-    assert_eq!(calls, expected);
-}
-
-/// A frame tx whose `fill_il_budget` outcome is `Ignored` (over the
-/// per-transaction VERIFY budget cap) or `ChargedNotAdmitted` (priceable but
-/// structurally invalid) is never handed to the evaluator at all. The
-/// `FakeEvaluator` has no verdict registered for either sender, so a stray
-/// `evaluate()` call panics the test.
-#[test]
-fn ignored_and_charged_not_admitted_never_reach_the_evaluator() {
-    let crypto = NativeCrypto;
-    let ignored_sender = Address::repeat_byte(0x44);
-    let charged_not_admitted_sender = Address::repeat_byte(0x55);
-
-    // Over MAX_VERIFY_GAS_PER_TX: priced, then rejected by the per-tx cap →
-    // `FillOutcome::Ignored`.
-    let ignored_tx = self_verify_tx(ignored_sender, MAX_VERIFY_GAS_PER_TX + 1);
-
-    // Priceable (a valid prefix shape) but statically invalid (empty
-    // `nonce_keys`, which EIP-8250 forbids) →
-    // `FillOutcome::ChargedNotAdmitted`.
-    let mut charged_not_admitted_tx = self_verify_tx(charged_not_admitted_sender, 50_000);
-    charged_not_admitted_tx.nonce_keys = vec![];
-
-    let il = vec![
-        frame_tx_transaction(ignored_tx),
-        frame_tx_transaction(charged_not_admitted_tx),
-    ];
-
-    let state = EmptyState;
-    let validator =
-        InclusionListSatisfactionValidator::new(&il, &state, &crypto).expect("construct");
-
-    // No verdicts registered — any `evaluate()` call panics.
-    let evaluator = FakeEvaluator::with(FxHashMap::default());
-
-    let block_txs: HashSet<H256> = HashSet::new();
-    let report = validator.check_with_profile_2(
-        &il,
-        &block_txs,
-        30_000_000,
-        &header(),
-        &config(),
-        &crypto,
-        Some(&evaluator),
-    );
-
-    assert!(report.unsatisfied.is_none());
-    assert!(report.profile_2_unjustified.is_empty());
-    assert!(report.profile_2_undecided.is_empty());
-    assert!(
-        evaluator.calls.borrow().is_empty(),
-        "neither Ignored nor ChargedNotAdmitted may reach the evaluator"
-    );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// End-to-end: `BlockchainProfile2Evaluator` against a real `Store`/`Blockchain`.
-// ─────────────────────────────────────────────────────────────────────────────
-
-const AA_VOPS_SLOT_COUNT: u64 = 4;
-
-/// APPROVE(scope) then STOP: `PUSH1 scope; PUSH1 0; PUSH1 0; APPROVE; STOP`.
-/// A `self_verify` VERIFY frame targeting an address running this code
-/// establishes that address as payer without touching any storage.
-fn approve_code(scope: u8) -> Bytes {
-    Bytes::from(vec![0x60, scope, 0x60, 0x00, 0x60, 0x00, 0xAA, 0x00])
-}
-
-/// `SLOAD` of `slot` (discarded), then the same APPROVE sequence. Used to put
-/// a storage read at or above `AA_VOPS_SLOT_COUNT` inside the validation
-/// prefix, which the Profile 2 surface must reject.
-fn oob_sload_then_approve_code(slot: u8, scope: u8) -> Bytes {
-    let mut code = vec![0x60, slot, 0x54, 0x50]; // PUSH1 slot; SLOAD; POP
-    code.extend_from_slice(&[0x60, scope, 0x60, 0x00, 0x60, 0x00, 0xAA, 0x00]);
-    Bytes::from(code)
-}
-
-/// A store with Hegotá active from genesis and one contract account per
-/// `(address, code)` pair, funded with enough state to be a plausible chain.
-///
-/// Starts from the execution-api fixture genesis (rather than
-/// `Genesis::default()`) so the EIP-1559 base-fee fields are the ones real
-/// blocks already build against; only Hegotá activation and the extra
-/// contract accounts are added.
-async fn setup_profile2_store(accounts: &[(Address, Bytes)]) -> (Store, Blockchain, BlockHeader) {
-    setup_profile2_store_at_nonce(accounts, 0, "focil-profile2-store.db").await
-}
-
-/// As [`setup_profile2_store`], with the seeded accounts at `nonce`. Nonce key
-/// `0` is the account's linear nonce, so this is what a keyed-nonce sequence
-/// looks like before and after a predecessor consumes it.
-async fn setup_profile2_store_at_nonce(
-    accounts: &[(Address, Bytes)],
-    nonce: u64,
-    db_name: &str,
-) -> (Store, Blockchain, BlockHeader) {
-    setup_profile2_store_funded(
-        accounts,
-        nonce,
-        U256::from(10u64).pow(U256::from(18u64)),
-        db_name,
-    )
-    .await
-}
-
-/// As [`setup_profile2_store_at_nonce`], with the seeded accounts holding
-/// `balance`. `self_verify_tx` self-pays, so this is the payer's balance as far
-/// as eligibility replay is concerned.
-async fn setup_profile2_store_funded(
-    accounts: &[(Address, Bytes)],
-    nonce: u64,
-    balance: U256,
-    db_name: &str,
-) -> (Store, Blockchain, BlockHeader) {
-    let file = std::fs::File::open(
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("fixtures/genesis/execution-api.json"),
-    )
-    .expect("open execution-api genesis fixture");
-    let mut genesis: Genesis =
-        serde_json::from_reader(std::io::BufReader::new(file)).expect("parse genesis fixture");
-    genesis.config.hegota_time = Some(0);
-    genesis.config.amsterdam_time = Some(0);
-    for (address, code) in accounts {
-        genesis.alloc.insert(
-            *address,
-            GenesisAccount {
-                code: code.clone(),
-                storage: Default::default(),
-                // `self_verify_tx`'s APPROVE_EXECUTION_AND_PAYMENT self-pays:
-                // it debits `max_fee_per_gas * total_gas_limit` from this same
-                // account inside the VERIFY frame, which reverts on an
-                // underfunded sender before any surface check runs.
-                balance,
-                nonce,
-            },
-        );
-    }
-    let mut store = Store::new(db_name, EngineType::InMemory).expect("in-memory store");
-    store
-        .add_initial_state(genesis)
-        .await
-        .expect("add genesis state");
-    let blockchain = Blockchain::default_with_store(store.clone());
-    let genesis_header = store.get_block_header(0).unwrap().unwrap();
-    (store, blockchain, genesis_header)
-}
-
-/// Import one empty block on top of `parent` via the IL-aware pipeline, with
-/// `il` listed but never included (an "external proposer omitted it"
-/// scenario). Returns the imported (NOT canonical) block's header.
-///
-/// Asserts the payload verdict (`add_block_pipeline_with_il`'s `Result`) is
-/// Returns the imported header alongside the pipeline's verdict, so a caller can
-/// assert what Profile 2 enforcement did to it end to end.
-async fn import_block_omitting_il(
-    store: &Store,
-    blockchain: &Blockchain,
-    parent: &BlockHeader,
-    il: Vec<Transaction>,
-) -> (BlockHeader, Result<(), ChainError>) {
-    use ethrex_blockchain::payload::{BuildPayloadArgs, create_payload};
-    use ethrex_common::types::{DEFAULT_BUILDER_GAS_CEIL, ELASTICITY_MULTIPLIER};
-
-    let args = BuildPayloadArgs {
-        parent: parent.hash(),
-        timestamp: parent.timestamp + 12,
-        fee_recipient: ethrex_common::H160::zero(),
-        random: H256::zero(),
-        withdrawals: Some(Vec::new()),
-        beacon_root: Some(H256::zero()),
-        slot_number: Some(1),
-        version: 5,
-        elasticity_multiplier: ELASTICITY_MULTIPLIER,
-        gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
-        inclusion_list_transactions: None,
-    };
-    let block = create_payload(&args, store, Bytes::new()).unwrap();
-    let block = blockchain.build_payload(block).unwrap().payload;
-    assert!(
-        block.body.transactions.is_empty(),
-        "the IL tx must be omitted, not included"
-    );
-    let header = block.header.clone();
-
-    let context = BlockValidationContext::with_inclusion_list(il);
-    let verdict = blockchain.add_block_pipeline_with_il(block, None, &context);
-
-    (header, verdict)
-}
-
-/// A `self_verify` frame tx listed and omitted from a block whose post-state
-/// leaves it valid: `evaluate()` reports `Eligible`, and the payload verdict
-/// (block import) is unaffected.
-#[tokio::test]
-async fn self_verify_frame_tx_that_would_pass_replay_is_eligible() {
-    let sender = Address::from_low_u64_be(0xE11);
-    let (store, blockchain, genesis) =
-        setup_profile2_store(&[(sender, approve_code(APPROVE_EXECUTION_AND_PAYMENT))]).await;
-
-    let tx = self_verify_tx(sender, 50_000);
-    let il = vec![frame_tx_transaction(tx.clone())];
-
-    let (header, verdict) =
-        import_block_omitting_il(&store, &blockchain, &genesis, il.clone()).await;
-
-    let gas_left = header.gas_limit.saturating_sub(header.gas_used);
-    let pre_state = StoreIlStateProvider {
-        store: &store,
-        state_root: genesis.state_root,
-    };
-    let post_state = StoreIlStateProvider {
-        store: &store,
-        state_root: header.state_root,
-    };
-    let crypto = NativeCrypto;
-    let mut validator =
-        InclusionListSatisfactionValidator::new(&il, &pre_state, &crypto).expect("construct");
-    validator
-        .refresh_all_from(&post_state, &crypto)
-        .expect("refresh");
-
-    let evaluator =
-        BlockchainProfile2Evaluator::new(&blockchain, &header, header.state_root, gas_left);
-    let report = validator.check_with_profile_2(
-        &il,
-        &HashSet::new(),
-        gas_left,
-        &header,
-        &store.get_chain_config(),
-        &crypto,
-        Some(&evaluator),
-    );
-
-    assert_eq!(
-        report.unsatisfied,
-        Some(IlUnsatisfied {
-            tx_hash: il[0].hash(&crypto)
-        })
-    );
-    assert_eq!(report.profile_2_unjustified, vec![il[0].hash(&crypto)]);
-    assert!(report.profile_2_undecided.is_empty());
-
-    // End to end: the pipeline reaches the same verdict, so a builder that drops
-    // an includable listed frame transaction has its block reported unsatisfied.
-    match verdict {
-        Err(ChainError::IlUnsatisfied { tx_hash }) => {
-            assert_eq!(tx_hash, il[0].hash(&crypto))
-        }
-        other => panic!("expected IlUnsatisfied from the pipeline, got {other:?}"),
-    }
-}
-
-/// The same shape, but the sender's code reads storage slot
-/// `AA_VOPS_SLOT_COUNT` (the first slot outside the Profile 2 surface):
-/// `evaluate()` reports `Ineligible` with a `StorageOutsideVopsSurface`
-/// violation, and the payload verdict is unaffected.
-#[tokio::test]
-async fn self_verify_frame_tx_reading_outside_the_surface_is_ineligible() {
-    let sender = Address::from_low_u64_be(0xE22);
-    let (store, blockchain, genesis) = setup_profile2_store(&[(
-        sender,
-        oob_sload_then_approve_code(AA_VOPS_SLOT_COUNT as u8, APPROVE_EXECUTION_AND_PAYMENT),
-    )])
-    .await;
-
-    let tx = self_verify_tx(sender, 50_000);
-    let il = vec![frame_tx_transaction(tx.clone())];
-
-    let (header, verdict) =
-        import_block_omitting_il(&store, &blockchain, &genesis, il.clone()).await;
-
-    let gas_left = header.gas_limit.saturating_sub(header.gas_used);
-    let pre_state = StoreIlStateProvider {
-        store: &store,
-        state_root: genesis.state_root,
-    };
-    let post_state = StoreIlStateProvider {
-        store: &store,
-        state_root: header.state_root,
-    };
-    let crypto = NativeCrypto;
-    let mut validator =
-        InclusionListSatisfactionValidator::new(&il, &pre_state, &crypto).expect("construct");
-    validator
-        .refresh_all_from(&post_state, &crypto)
-        .expect("refresh");
-
-    let evaluator =
-        BlockchainProfile2Evaluator::new(&blockchain, &header, header.state_root, gas_left);
-    let report = validator.check_with_profile_2(
-        &il,
-        &HashSet::new(),
-        gas_left,
-        &header,
-        &store.get_chain_config(),
-        &crypto,
-        Some(&evaluator),
-    );
-
-    assert!(
-        report.unsatisfied.is_none(),
-        "payload verdict must be unchanged"
-    );
-    assert!(
-        report.profile_2_unjustified.is_empty(),
-        "an out-of-surface read must not be reported unjustified"
-    );
-    assert!(report.profile_2_undecided.is_empty());
-
-    // Confirm the specific violation directly through the evaluator too.
-    match evaluator.evaluate(&tx) {
-        Profile2Eligibility::Ineligible(violation) => {
-            assert!(
-                violation.contains("StorageOutsideVopsSurface"),
-                "expected a StorageOutsideVopsSurface violation, got: {violation}"
-            );
-        }
-        other => panic!("expected Ineligible, got {other:?}"),
-    }
-
-    verdict.expect("an out-of-surface read must not fail the block");
-}
-
-/// Eligibility is not constant across a payload, which is what makes a
-/// builder-chosen evaluation index a censorship vector rather than a detail.
-///
-/// The same queued frame transaction (`nonce_seq == 1`, so it sits behind one
-/// predecessor) is judged against the two states a payload's endpoints resolve
-/// to. Before the predecessor consumes the sequence it is `Ineligible`; after,
-/// it is `Eligible`.
-///
-/// EIP-8369 judges an omission at an index the builder claims, falling back to
-/// end-of-payload. End-of-payload is one of the claimable indices, so the set of
-/// omissions a free claim excuses strictly contains the set end-of-payload
-/// excuses. This transaction is in the difference: enforced under the fallback,
-/// excused by a builder that claims the earlier index. EIP-8369's
-/// `a600eba447` puts exactly this shape outside the position-stable class.
-#[tokio::test]
-async fn queued_frame_tx_eligibility_flips_across_the_payload() {
-    let sender = Address::from_low_u64_be(0xE66);
-    let code = approve_code(APPROVE_EXECUTION_AND_PAYMENT);
-
-    // Nonce key 0 is the sender's linear nonce. `nonce_seq == 1` needs a
-    // predecessor to have consumed sequence 0 first.
-    let mut tx = self_verify_tx(sender, 50_000);
-    tx.nonce_seq = 1;
-
-    // Start of payload: the predecessor has not run.
-    let (_s0, chain_before, header_before) =
-        setup_profile2_store_at_nonce(&[(sender, code.clone())], 0, "focil-queued-before.db").await;
-    let gas_left = header_before.gas_limit;
-    let before = BlockchainProfile2Evaluator::new(
-        &chain_before,
-        &header_before,
-        header_before.state_root,
-        gas_left,
-    )
-    .evaluate(&tx);
-
-    // End of payload: the predecessor has consumed sequence 0.
-    let (_s1, chain_after, header_after) =
-        setup_profile2_store_at_nonce(&[(sender, code)], 1, "focil-queued-after.db").await;
-    let after = BlockchainProfile2Evaluator::new(
-        &chain_after,
-        &header_after,
-        header_after.state_root,
-        gas_left,
-    )
-    .evaluate(&tx);
-
-    match (&before, &after) {
-        (Profile2Eligibility::Ineligible(violation), Profile2Eligibility::Eligible) => {
-            // The flip must be the keyed nonce reading 0 where the transaction
-            // wants 1, and nothing incidental, otherwise this passes for the
-            // wrong reason.
-            assert!(
-                violation.contains("Nonce mismatch: expected 0, got 1"),
-                "expected the early verdict to fail on the keyed nonce, got: {violation}"
-            );
-        }
-        _ => panic!(
-            "expected the verdict to flip Ineligible -> Eligible across the payload, \
-             got before={before:?} after={after:?}"
-        ),
-    }
-}
-
-/// A transaction can be eligible at both ends of a payload and ineligible in
-/// between, which is the shape a builder-claimed evaluation index excuses and
-/// no endpoint rule does.
-///
-/// The payer's balance is not monotonic across a payload: a sponsored
-/// transaction draws it down, a top-up restores it. The same listed frame
-/// transaction is therefore eligible at the start, ineligible after the draw,
-/// and eligible again at the end.
-///
-/// This shape matters because it survives the objection that kills the queued
-/// case. An includer builds its list against the head, which is the
-/// start-of-payload state, and here the transaction is eligible there, so an
-/// honest includer does list it. Under EIP-7805's end-of-payload rule the
-/// omission is enforced, because the transaction is eligible at the end. Under
-/// a builder-claimed index the builder names the middle and is excused, at the
-/// cost of two transactions it was free to order as it liked.
-#[tokio::test]
-async fn frame_tx_eligible_at_both_endpoints_can_be_ineligible_between_them() {
-    let sender = Address::from_low_u64_be(0xE77);
-    let code = approve_code(APPROVE_EXECUTION_AND_PAYMENT);
-    let tx = self_verify_tx(sender, 50_000);
-
-    // `self_verify_tx` self-pays `max_fee_per_gas * total_gas_limit`, so this is
-    // comfortably above the cost, and the drawn-down figure below it.
-    let funded = U256::from(10u64).pow(U256::from(18u64));
-    let drawn_down = U256::from(1_000u64);
-
-    async fn verdict_at(
-        sender: Address,
-        code: Bytes,
-        tx: &FrameTransaction,
-        balance: U256,
-        db: &str,
-    ) -> Profile2Eligibility {
-        let (_store, chain, header) =
-            setup_profile2_store_funded(&[(sender, code)], 0, balance, db).await;
-        let gas_left = header.gas_limit;
-        BlockchainProfile2Evaluator::new(&chain, &header, header.state_root, gas_left).evaluate(tx)
-    }
-
-    let start = verdict_at(sender, code.clone(), &tx, funded, "focil-sandwich-start.db").await;
-    let middle = verdict_at(
-        sender,
-        code.clone(),
-        &tx,
-        drawn_down,
-        "focil-sandwich-middle.db",
-    )
-    .await;
-    let end = verdict_at(sender, code, &tx, funded, "focil-sandwich-end.db").await;
-
-    assert!(
-        matches!(start, Profile2Eligibility::Eligible),
-        "must be eligible at the start, or an honest includer would never list it: {start:?}"
-    );
-    assert!(
-        matches!(end, Profile2Eligibility::Eligible),
-        "must be eligible at the end, or the end-of-payload rule would excuse the omission by \
-         itself and the claimed index would not be what did it: {end:?}"
-    );
-    match &middle {
-        Profile2Eligibility::Ineligible(_) => {}
-        other => panic!("expected the drawn-down payer to be ineligible, got {other:?}"),
-    }
-}
-
-/// EIP-8250: a listed frame tx whose `nonce_seq` does not match the current
-/// sequence for a selected key could never have been included, so its omission
-/// is justified. The keyed-nonce gate runs inside `run_frame_validation_prefix`,
-/// ahead of the prefix replay, and a stale sequence must surface as `Ineligible`
-/// rather than `Eligible` — the latter would withhold an attestation from an
-/// honest block.
-#[tokio::test]
-async fn frame_tx_with_a_stale_keyed_nonce_is_ineligible() {
-    let sender = Address::from_low_u64_be(0xE44);
-    let (store, blockchain, genesis) =
-        setup_profile2_store(&[(sender, approve_code(APPROVE_EXECUTION_AND_PAYMENT))]).await;
-
-    let mut tx = self_verify_tx(sender, 50_000);
-    // Key 0 is the sender's linear account nonce, which genesis sets to 0.
-    tx.nonce_seq = 7;
-    let il = vec![frame_tx_transaction(tx.clone())];
-
-    let (header, verdict) =
-        import_block_omitting_il(&store, &blockchain, &genesis, il.clone()).await;
-
-    let gas_left = header.gas_limit.saturating_sub(header.gas_used);
-    let evaluator =
-        BlockchainProfile2Evaluator::new(&blockchain, &header, header.state_root, gas_left);
-    match evaluator.evaluate(&tx) {
-        Profile2Eligibility::Ineligible(violation) => {
-            assert!(
-                violation.contains("Nonce") || violation.contains("nonce"),
-                "expected a nonce-mismatch violation, got: {violation}"
-            );
-        }
-        other => panic!("expected Ineligible, got {other:?}"),
-    }
-
-    verdict.expect("a stale keyed nonce must not fail the block");
-}
-
-/// EIP-8141: a listed frame tx carrying a signature that does not verify could
-/// never have been included. `validate_frame_signatures` runs inside
-/// `run_frame_validation_prefix`, so a bad signature must surface as
-/// `Ineligible`.
-///
-/// An empty signature list passes vacuously and is legitimate: a smart-account
-/// sender is authenticated by its own VERIFY frame calling `APPROVE`, not by an
-/// outer signature. This pins the case where a signature IS present and does
-/// not verify.
-#[tokio::test]
-async fn frame_tx_with_an_unverifiable_signature_is_ineligible() {
-    use ethrex_common::types::{FRAME_SIG_SCHEME_SECP256K1, FrameSignature};
-
-    let sender = Address::from_low_u64_be(0xE55);
-    let (store, blockchain, genesis) =
-        setup_profile2_store(&[(sender, approve_code(APPROVE_EXECUTION_AND_PAYMENT))]).await;
-
-    let mut tx = self_verify_tx(sender, 50_000);
-    // Well-formed length and a bare recovery id, so the entry is rejected for
-    // failing to recover `sender` rather than for being malformed.
-    let mut signature = vec![0x01u8; 65];
-    signature[0] = 0;
-    tx.signatures = vec![FrameSignature {
-        scheme: FRAME_SIG_SCHEME_SECP256K1,
-        msg: Default::default(),
-        signature: signature.into(),
+fn amsterdam_config() -> ChainConfig {
+    ChainConfig {
+        amsterdam_time: Some(0),
+        hegota_time: Some(0),
         ..Default::default()
-    }];
-    let il = vec![frame_tx_transaction(tx.clone())];
-
-    let (header, verdict) =
-        import_block_omitting_il(&store, &blockchain, &genesis, il.clone()).await;
-
-    let gas_left = header.gas_limit.saturating_sub(header.gas_used);
-    let evaluator =
-        BlockchainProfile2Evaluator::new(&blockchain, &header, header.state_root, gas_left);
-    match evaluator.evaluate(&tx) {
-        Profile2Eligibility::Ineligible(_) => {}
-        other => panic!("expected Ineligible, got {other:?}"),
     }
-
-    verdict.expect("an unverifiable signature must not fail the block");
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Per-inclusion-list code-body budget.
-// ─────────────────────────────────────────────────────────────────────────────
-//
-// EVM gas does not bound how much code a Profile 2 replay makes an attester
-// read: at a few thousand gas per cold account, one candidate's VERIFY budget
-// admits hundreds of cold accesses, each able to pull a maximum-size body. The
-// budget is per inclusion **list** rather than per transaction, because the
-// motivating shape is many transactions validating against one shared verifier
-// contract whose bytes an attester loads once.
-
-/// `EXTCODESIZE` each of `targets` (result discarded), then APPROVE both
-/// scopes. Each cold `EXTCODESIZE` charges the target's code body against the
-/// list's allowance.
-fn extcodesize_then_approve_code(targets: &[Address], scope: u8) -> Bytes {
-    let mut code = Vec::new();
-    for target in targets {
-        code.push(0x73); // PUSH20
-        code.extend_from_slice(target.as_bytes());
-        code.push(0x3B); // EXTCODESIZE
-        code.push(0x50); // POP
-    }
-    code.extend_from_slice(&[0x60, scope, 0x60, 0x00, 0x60, 0x00, 0xAA, 0x00]);
-    Bytes::from(code)
+/// The constants table, pinned. Consensus values, never node configuration.
+#[test]
+fn constants_match_the_spec_table() {
+    assert_eq!(MAX_VERIFY_GAS_PER_IL, 1 << 20);
+    assert_eq!(MAX_VERIFY_GAS_PER_TX, MAX_VERIFY_GAS_PER_IL);
+    assert_eq!(MAX_VALIDATION_CODE_BODIES, 16);
+    // MAX_VALIDATION_CODE_BYTES = MAX_VALIDATION_CODE_BODIES * MAX_CODE_SIZE, with
+    // the code size of the active fork.
+    assert_eq!(
+        max_validation_code_bytes(&amsterdam_config(), 0),
+        16 * 0x10000
+    );
+    assert_eq!(
+        max_validation_code_bytes(&ChainConfig::default(), 0),
+        16 * 0x6000
+    );
 }
 
-/// `count` filler contracts, each with a distinct one-off body so each has its
-/// own code hash. Identical bodies would share a hash and be charged once,
-/// which is the opposite of what these tests need.
-fn filler_contracts(count: u8) -> Vec<(Address, Bytes)> {
-    (0..count)
-        .map(|i| {
-            (
-                Address::from_low_u64_be(0xF000 + u64::from(i)),
-                Bytes::from(vec![0x60, i, 0x00]),
-            )
+#[test]
+fn self_verify_is_a_candidate_paying_for_itself() {
+    let candidate = profile2_candidate(&frame_tx(vec![self_verify(50_000), body(10_000)]))
+        .expect("self_verify is a candidate");
+    assert_eq!(candidate.payer, SENDER);
+    assert_eq!(candidate.verify_budget_cost, 50_000);
+    assert_eq!(candidate.prefix.frame_indices, vec![0]);
+}
+
+#[test]
+fn pay_frame_target_is_the_payer_and_a_null_target_is_the_sender() {
+    let sponsored = profile2_candidate(&frame_tx(vec![
+        only_verify(40_000),
+        pay(Some(PAYMASTER), 30_000),
+    ]))
+    .expect("only_verify | pay is a candidate");
+    assert_eq!(sponsored.payer, PAYMASTER);
+    assert_eq!(sponsored.verify_budget_cost, 70_000);
+
+    let self_paid = profile2_candidate(&frame_tx(vec![only_verify(40_000), pay(None, 30_000)]))
+        .expect("a null pay target is admitted");
+    assert_eq!(self_paid.payer, SENDER);
+}
+
+/// Cases 15 and 16: the protocol verifier frames are disregarded by shape
+/// matching but their declared gas counts, because replay executes them. A
+/// transaction that fits the cap without them and not with them is not a
+/// candidate.
+#[test]
+fn verify_budget_cost_counts_the_expiry_and_recent_root_frames() {
+    let with_expiry = frame_tx(vec![expiry_frame(20_000), self_verify(30_000)]);
+    assert_eq!(prefix_and_verifier_frame_cost(&with_expiry), Some(50_000));
+    assert_eq!(verify_budget_cost(&with_expiry), Some(50_000));
+
+    let with_both = frame_tx(vec![
+        expiry_frame(20_000),
+        recent_root_frame(25_000),
+        self_verify(30_000),
+    ]);
+    assert_eq!(verify_budget_cost(&with_both), Some(75_000));
+
+    let just_fits = frame_tx(vec![self_verify(MAX_VERIFY_GAS_PER_TX)]);
+    assert!(profile2_candidate(&just_fits).is_ok());
+
+    // Case 15: over the cap only once the expiry frame's gas is counted.
+    let over_with_expiry = frame_tx(vec![
+        expiry_frame(20_000),
+        self_verify(MAX_VERIFY_GAS_PER_TX - 10_000),
+    ]);
+    assert_eq!(
+        profile2_candidate(&over_with_expiry),
+        Err(NotProfile2Candidate::BudgetCostExceeded {
+            cost: MAX_VERIFY_GAS_PER_TX + 10_000,
+            limit: MAX_VERIFY_GAS_PER_TX,
         })
-        .collect()
-}
-
-/// A candidate reading `n` filler bodies on top of its own.
-fn reader_tx(sender: Address) -> FrameTransaction {
-    self_verify_tx(sender, 400_000)
-}
-
-#[tokio::test]
-async fn a_prefix_over_the_code_body_bound_is_ineligible() {
-    // MAX_VALIDATION_CODE_BODIES is 16 and the prefix's own code counts, so 16
-    // fillers put the candidate one body over.
-    let sender = Address::from_low_u64_be(0xC0DE);
-    let fillers = filler_contracts(16);
-    let targets: Vec<Address> = fillers.iter().map(|(a, _)| *a).collect();
-
-    let mut accounts = vec![(
-        sender,
-        extcodesize_then_approve_code(&targets, APPROVE_EXECUTION_AND_PAYMENT),
-    )];
-    accounts.extend(fillers);
-
-    let (_store, chain, header) = setup_profile2_store_funded(
-        &accounts,
-        0,
-        U256::from(10u64).pow(U256::from(18u64)),
-        "focil-code-budget-over.db",
-    )
-    .await;
-    let evaluator =
-        BlockchainProfile2Evaluator::new(&chain, &header, header.state_root, header.gas_limit);
-
-    // Both endpoints replay and both run out, so the verdict is the union's
-    // combined message rather than the bare violation.
-    match evaluator.evaluate(&reader_tx(sender)) {
-        Profile2Eligibility::Ineligible(why) => {
-            assert!(
-                why.contains("ValidationCodeBudgetExceeded"),
-                "expected the budget violation, got {why}"
-            );
-        }
-        other => panic!("expected the budget to reject the replay, got {other:?}"),
-    }
-}
-
-#[tokio::test]
-async fn a_prefix_within_the_code_body_bound_is_eligible() {
-    // The negative control for the test above: 15 fillers plus the prefix's own
-    // code is exactly MAX_VALIDATION_CODE_BODIES, so nothing is rejected and the
-    // bound above is a bound rather than a blanket refusal.
-    let sender = Address::from_low_u64_be(0xC0DF);
-    let fillers = filler_contracts(15);
-    let targets: Vec<Address> = fillers.iter().map(|(a, _)| *a).collect();
-
-    let mut accounts = vec![(
-        sender,
-        extcodesize_then_approve_code(&targets, APPROVE_EXECUTION_AND_PAYMENT),
-    )];
-    accounts.extend(fillers);
-
-    let (_store, chain, header) = setup_profile2_store_funded(
-        &accounts,
-        0,
-        U256::from(10u64).pow(U256::from(18u64)),
-        "focil-code-budget-under.db",
-    )
-    .await;
-    let evaluator =
-        BlockchainProfile2Evaluator::new(&chain, &header, header.state_root, header.gas_limit);
-
-    assert_eq!(
-        evaluator.evaluate(&reader_tx(sender)),
-        Profile2Eligibility::Eligible
     );
-}
-
-#[tokio::test]
-async fn the_code_budget_is_shared_across_the_list() {
-    // One evaluator judges one inclusion list. The first candidate fills the
-    // allowance to the brim; the second asks for one body more and is refused,
-    // even though it would pass on its own. Without a shared ledger a list could
-    // multiply an attester's read work by its own length.
-    let first = Address::from_low_u64_be(0xA001);
-    let second = Address::from_low_u64_be(0xA002);
-    let fillers = filler_contracts(14);
-    let targets: Vec<Address> = fillers.iter().map(|(a, _)| *a).collect();
-
-    // first: own code + 14 fillers = 15 bodies. second: own code + the same 14
-    // = one body more, the 16th, which fits. A third distinct body would not.
-    let mut accounts = vec![
-        (
-            first,
-            extcodesize_then_approve_code(&targets, APPROVE_EXECUTION_AND_PAYMENT),
-        ),
-        (
-            second,
-            extcodesize_then_approve_code(&targets, APPROVE_EXECUTION_AND_PAYMENT),
-        ),
-    ];
-    accounts.extend(fillers.clone());
-    // A 17th body only the third candidate reads.
-    let extra = Address::from_low_u64_be(0xBEEF);
-    accounts.push((extra, Bytes::from(vec![0x60, 0xEE, 0x00])));
-    let third = Address::from_low_u64_be(0xA003);
-    let mut third_targets = targets.clone();
-    third_targets.push(extra);
-    accounts.push((
-        third,
-        extcodesize_then_approve_code(&third_targets, APPROVE_EXECUTION_AND_PAYMENT),
+    // Case 16: the same, for the recent-root verifier frame.
+    let over_with_recent_root = frame_tx(vec![
+        recent_root_frame(20_000),
+        self_verify(MAX_VERIFY_GAS_PER_TX - 10_000),
+    ]);
+    assert!(matches!(
+        profile2_candidate(&over_with_recent_root),
+        Err(NotProfile2Candidate::BudgetCostExceeded { .. })
     ));
+}
 
-    let (_store, chain, header) = setup_profile2_store_funded(
-        &accounts,
-        0,
-        U256::from(10u64).pow(U256::from(18u64)),
-        "focil-code-budget-shared.db",
-    )
-    .await;
-    let evaluator =
-        BlockchainProfile2Evaluator::new(&chain, &header, header.state_root, header.gas_limit);
+/// The signature cost is intrinsic and part of the budget.
+#[test]
+fn verify_budget_cost_includes_the_signature_verification_cost() {
+    let mut tx = frame_tx(vec![self_verify(30_000)]);
+    tx.signatures = vec![bad_signature()];
+    assert_eq!(
+        verify_budget_cost(&tx),
+        Some(30_000 + SECP256K1_SIGNATURE_GAS)
+    );
+}
 
-    // 15 bodies charged.
+/// Case 12: a frame transaction carrying blobs is outside enforcement.
+#[test]
+fn blob_carrying_frame_tx_is_not_a_candidate() {
+    let mut tx = frame_tx(vec![self_verify(30_000)]);
+    tx.blob_versioned_hashes = vec![ethrex_common::H256::from([0x01; 32])];
+    tx.max_fee_per_blob_gas = U256::from(1u64);
     assert_eq!(
-        evaluator.evaluate(&reader_tx(first)),
-        Profile2Eligibility::Eligible,
-        "the first candidate must fit"
+        profile2_candidate(&tx),
+        Err(NotProfile2Candidate::CarriesBlobs)
     );
-    // Its own code is the 16th; the 14 fillers are already charged and free.
-    assert_eq!(
-        evaluator.evaluate(&reader_tx(second)),
-        Profile2Eligibility::Eligible,
-        "a candidate reusing charged bodies must still fit"
-    );
-    // Own code (17th) is one too many.
-    match evaluator.evaluate(&reader_tx(third)) {
-        Profile2Eligibility::Ineligible(why) => {
-            assert!(
-                why.contains("ValidationCodeBudgetExceeded"),
-                "expected the budget violation, got {why}"
-            );
-        }
-        other => panic!("expected the list's allowance to be spent, got {other:?}"),
-    }
+}
 
-    // The same candidate against a fresh list passes, so the refusal above is
-    // the shared ledger and not something about the transaction itself.
-    let fresh =
-        BlockchainProfile2Evaluator::new(&chain, &header, header.state_root, header.gas_limit);
+/// Case 13: `ATOMIC_BATCH_FLAG` on a validation prefix frame. EIP-8141's static
+/// constraints already forbid the flag on a VERIFY frame and on any frame
+/// followed by one, so every prefix shape trips condition 1 before condition 5.
+#[test]
+fn atomic_batch_flag_on_a_prefix_frame_is_not_a_candidate() {
+    let mut batched_deploy = deploy(20_000);
+    batched_deploy.flags = 0x04;
+    let tx = frame_tx(vec![batched_deploy, self_verify(30_000)]);
+    assert!(matches!(
+        profile2_candidate(&tx),
+        Err(NotProfile2Candidate::StaticallyInvalid(_))
+    ));
+}
+
+/// Case 14: a VERIFY-mode body frame. Replay never observes it, and its
+/// failure would invalidate a transaction that replayed cleanly.
+#[test]
+fn verify_mode_body_frame_is_not_a_candidate() {
+    let tx = frame_tx(vec![
+        self_verify(30_000),
+        body(10_000),
+        frame(
+            FrameMode::Verify,
+            0x00,
+            Some(Address::repeat_byte(0xB1)),
+            5_000,
+        ),
+    ]);
     assert_eq!(
-        fresh.evaluate(&reader_tx(third)),
-        Profile2Eligibility::Eligible
+        profile2_candidate(&tx),
+        Err(NotProfile2Candidate::VerifyBodyFrame { frame_index: 2 })
     );
+}
+
+/// Case 11: a frame mode EIP-8141 does not define. Static validity (condition
+/// 1) rejects it before condition 7 is reached.
+#[test]
+fn undefined_frame_mode_is_not_a_candidate() {
+    let mut reserved = body(10_000);
+    reserved.mode = 3;
+    let tx = frame_tx(vec![self_verify(30_000), reserved]);
+    assert!(matches!(
+        profile2_candidate(&tx),
+        Err(NotProfile2Candidate::StaticallyInvalid(_))
+    ));
+}
+
+/// Case 25: a recent-root verifier frame present but not in the leading
+/// position, and an expiry verifier frame not first.
+#[test]
+fn misplaced_protocol_verifier_frames_are_not_candidates() {
+    let trailing_recent_root = frame_tx(vec![self_verify(30_000), recent_root_frame(20_000)]);
+    assert_eq!(
+        profile2_candidate(&trailing_recent_root),
+        Err(NotProfile2Candidate::ProtocolVerifierMisplaced { frame_index: 1 })
+    );
+    let trailing_expiry = frame_tx(vec![self_verify(30_000), expiry_frame(20_000)]);
+    assert_eq!(
+        profile2_candidate(&trailing_expiry),
+        Err(NotProfile2Candidate::ProtocolVerifierMisplaced { frame_index: 1 })
+    );
+    // Reversed protocol verifiers: the recent-root frame must follow the expiry
+    // frame, not precede it.
+    let reversed = frame_tx(vec![
+        recent_root_frame(20_000),
+        expiry_frame(20_000),
+        self_verify(30_000),
+    ]);
+    assert_eq!(
+        profile2_candidate(&reversed),
+        Err(NotProfile2Candidate::ProtocolVerifierMisplaced { frame_index: 1 })
+    );
+    // In position, both are admitted and the prefix is shape-matched around them.
+    let in_position = frame_tx(vec![
+        expiry_frame(20_000),
+        recent_root_frame(20_000),
+        self_verify(30_000),
+    ]);
+    let candidate = profile2_candidate(&in_position).expect("in position");
+    assert_eq!(candidate.prefix.frame_indices, vec![2]);
+    assert_eq!(candidate.prefix.recent_root_index, Some(1));
+}
+
+/// Protocol verifier frames are defined by position. An expiry-shaped frame
+/// after the prefix is a body frame for every rule: candidacy condition 4
+/// rejects the transaction, and the fill prices the occurrence without it.
+#[test]
+fn a_verifier_shaped_frame_out_of_position_is_a_body_frame_for_pricing() {
+    let in_position = frame_tx(vec![expiry_frame(20_000), self_verify(30_000)]);
+    assert_eq!(prefix_and_verifier_frame_cost(&in_position), Some(50_000));
+
+    let trailing = frame_tx(vec![self_verify(30_000), expiry_frame(20_000)]);
+    assert_eq!(
+        prefix_and_verifier_frame_cost(&trailing),
+        Some(30_000),
+        "a trailing expiry-shaped frame is a body frame and is not priced"
+    );
+    assert!(matches!(
+        profile2_candidate(&trailing),
+        Err(NotProfile2Candidate::ProtocolVerifierMisplaced { frame_index: 1 })
+    ));
+}
+
+/// "Statically valid" in candidacy condition 1 means EIP-8141's constraints
+/// only. This client also refuses a zero sender at admission and in block
+/// execution; that local bound must not excuse the omission of a transaction
+/// every other client would enforce.
+#[test]
+fn a_zero_sender_passes_candidacy_though_the_local_static_check_refuses_it() {
+    let mut tx = frame_tx(vec![frame(
+        FrameMode::Verify,
+        0x03,
+        Some(Address::zero()),
+        30_000,
+    )]);
+    tx.sender = Address::zero();
+    assert!(
+        tx.validate_static_constraints().is_err(),
+        "the local static check keeps refusing a zero sender"
+    );
+    assert!(tx.validate_eip8141_static_constraints().is_ok());
+    let candidate = profile2_candidate(&tx).expect("a candidate by EIP-8141's constraints");
+    assert_eq!(candidate.payer, Address::zero());
+    assert_eq!(prefix_and_verifier_frame_cost(&tx), Some(30_000));
+}
+
+/// `S_end` read through the committed post-state: a withdrawal credit is
+/// subtracted from its recipient, and an account left with nothing was created
+/// by the credit, is empty under EIP-161, and reads as nonexistent.
+#[test]
+fn discounting_a_withdrawal_credit_applies_the_eip_161_rule() {
+    let credit = U256::from(1_000_000_000u64);
+    let state = |nonce: u64, balance: U256, code_hash: H256| AccountState {
+        nonce,
+        balance,
+        storage_root: *EMPTY_TRIE_HASH,
+        code_hash,
+    };
+
+    // Existed only because of the credit: nonexistent at `S_end`.
+    assert_eq!(
+        discount_withdrawal_credit(state(0, credit, *EMPTY_KECCAK_HASH), credit),
+        None
+    );
+    // Funded before the block: the credit comes off, the account stays.
+    let funded = discount_withdrawal_credit(state(0, credit * 3, *EMPTY_KECCAK_HASH), credit)
+        .expect("a funded account exists at S_end");
+    assert_eq!(funded.balance, credit * 2);
+    // A nonce or code proves prior existence even at zero balance.
+    assert!(discount_withdrawal_credit(state(1, credit, *EMPTY_KECCAK_HASH), credit).is_some());
+    assert!(
+        discount_withdrawal_credit(state(0, credit, H256::repeat_byte(0xC0)), credit).is_some()
+    );
+}
+
+/// A prefix that is not one of the four shapes is unpriceable and not a
+/// candidate: here a lone SENDER frame, and a `pay` frame with no preceding
+/// `only_verify`.
+#[test]
+fn unrecognised_shapes_are_not_candidates_and_have_no_price() {
+    let lone_sender = frame_tx(vec![body(10_000)]);
+    assert_eq!(prefix_and_verifier_frame_cost(&lone_sender), None);
+    assert_eq!(
+        profile2_candidate(&lone_sender),
+        Err(NotProfile2Candidate::UnrecognisedShape)
+    );
+    let pay_only = frame_tx(vec![pay(Some(PAYMASTER), 10_000)]);
+    assert_eq!(
+        profile2_candidate(&pay_only),
+        Err(NotProfile2Candidate::UnrecognisedShape)
+    );
+}
+
+/// A `self_verify` frame naming another account is statically invalid under
+/// EIP-8141 (`APPROVE_EXECUTION` requires the sender as target), so the shape's
+/// target condition is met by condition 1 before it is checked.
+#[test]
+fn verify_frame_targeting_another_account_is_not_a_candidate() {
+    let tx = frame_tx(vec![frame(
+        FrameMode::Verify,
+        0x03,
+        Some(Address::repeat_byte(0x99)),
+        30_000,
+    )]);
+    assert!(matches!(
+        profile2_candidate(&tx),
+        Err(NotProfile2Candidate::StaticallyInvalid(_))
+    ));
+}
+
+/// Case 17: the second occurrence in a list whose first consumed all of
+/// `MAX_VERIFY_GAS_PER_IL` is not admitted.
+#[test]
+fn budget_fill_admits_nothing_once_the_list_budget_is_spent() {
+    let first = listed(frame_tx(vec![self_verify(MAX_VERIFY_GAS_PER_IL)]));
+    let mut second_inner = frame_tx(vec![self_verify(MAX_VERIFY_GAS_PER_IL)]);
+    second_inner.nonce_seq = 1;
+    let second = listed(second_inner);
+    let fill = budget_fill(
+        &[first.clone(), second.clone()],
+        Fork::Hegota,
+        &NativeCrypto,
+    );
+    assert!(fill.admitted.contains(&first.hash(&NativeCrypto)));
+    assert!(!fill.admitted.contains(&second.hash(&NativeCrypto)));
+    assert_eq!(fill.remaining_gas, 0);
+}
+
+/// Case 6: a structurally valid transaction whose signature does not verify is
+/// not admitted, and only the signature half of its cost is debited.
+#[test]
+fn budget_fill_debits_only_the_signature_half_for_a_bad_signature() {
+    let mut inner = frame_tx(vec![self_verify(100_000)]);
+    inner.signatures = vec![bad_signature()];
+    let tx = listed(inner);
+    let fill = budget_fill(std::slice::from_ref(&tx), Fork::Hegota, &NativeCrypto);
+    assert!(fill.admitted.is_empty());
+    assert_eq!(
+        fill.remaining_gas,
+        MAX_VERIFY_GAS_PER_IL - SECP256K1_SIGNATURE_GAS
+    );
+}
+
+/// Case 18: two occurrences at half the list budget each, the first with a bad
+/// signature. The first debits only its signature half, so the second still
+/// fits and is admitted.
+#[test]
+fn budget_fill_two_stage_debit_leaves_room_for_the_second_occurrence() {
+    let half = MAX_VERIFY_GAS_PER_IL / 2;
+    let mut first_inner = frame_tx(vec![self_verify(half - SECP256K1_SIGNATURE_GAS)]);
+    first_inner.signatures = vec![bad_signature()];
+    let first = listed(first_inner);
+    let mut second_inner = frame_tx(vec![self_verify(half)]);
+    second_inner.nonce_seq = 1;
+    let second = listed(second_inner);
+    let fill = budget_fill(
+        &[first.clone(), second.clone()],
+        Fork::Hegota,
+        &NativeCrypto,
+    );
+    assert!(!fill.admitted.contains(&first.hash(&NativeCrypto)));
+    assert!(fill.admitted.contains(&second.hash(&NativeCrypto)));
+    assert_eq!(
+        fill.remaining_gas,
+        MAX_VERIFY_GAS_PER_IL - SECP256K1_SIGNATURE_GAS - half
+    );
+}
+
+/// Unpriceable and unmetered occurrences leave the budget untouched; a priced
+/// occurrence that fails candidacy after the debit keeps the debit.
+#[test]
+fn budget_fill_debits_exactly_what_the_spec_meters() {
+    // Not a frame transaction: not metered.
+    let profile1 = Transaction::EIP1559Transaction(EIP1559Transaction {
+        chain_id: 1,
+        gas_limit: 21_000,
+        to: TxKind::Call(Address::repeat_byte(0xAA)),
+        ..Default::default()
+    });
+    // Blobs: not metered.
+    let mut blob_inner = frame_tx(vec![self_verify(30_000)]);
+    blob_inner.blob_versioned_hashes = vec![ethrex_common::H256::from([0x01; 32])];
+    blob_inner.max_fee_per_blob_gas = U256::from(1u64);
+    // No recognised shape: unpriceable, no debit.
+    let shapeless = listed(frame_tx(vec![body(10_000)]));
+    // Priced, signature-less, but a VERIFY body frame: charged, not admitted.
+    let verify_body = listed(frame_tx(vec![
+        self_verify(40_000),
+        frame(
+            FrameMode::Verify,
+            0x00,
+            Some(Address::repeat_byte(0xB1)),
+            5_000,
+        ),
+    ]));
+    // Does not fit the per-transaction cap: ignored, no debit.
+    let too_expensive = listed(frame_tx(vec![self_verify(MAX_VERIFY_GAS_PER_TX + 1)]));
+
+    let fill = budget_fill(
+        &[
+            profile1,
+            listed(blob_inner),
+            shapeless,
+            verify_body,
+            too_expensive,
+        ],
+        Fork::Hegota,
+        &NativeCrypto,
+    );
+    assert!(fill.admitted.is_empty());
+    assert_eq!(fill.remaining_gas, MAX_VERIFY_GAS_PER_IL - 40_000);
+}
+
+/// Duplicate occurrences are metered per occurrence, in list order.
+#[test]
+fn budget_fill_meters_every_occurrence_of_the_same_transaction() {
+    let tx = listed(frame_tx(vec![self_verify(300_000)]));
+    let fill = budget_fill(
+        &[tx.clone(), tx.clone(), tx.clone()],
+        Fork::Hegota,
+        &NativeCrypto,
+    );
+    assert!(fill.admitted.contains(&tx.hash(&NativeCrypto)));
+    assert_eq!(fill.remaining_gas, MAX_VERIFY_GAS_PER_IL - 900_000);
 }

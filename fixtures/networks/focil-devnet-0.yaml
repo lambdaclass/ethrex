@@ -1,0 +1,44 @@
+# focil-devnet-0 — the official devnet config.
+#
+# Mirrors https://notes.ethereum.org/@ethpandaops/focil-devnet-0 verbatim, which
+# is the configuration devnet-0 launches with on 2026-08-31. ethrex is the EL in
+# ethpandaops' own example, so this file should track that note rather than
+# diverge from it; verified end-to-end on ethrex-office-4 (Heze active, lodestar
+# publishing inclusion lists every slot, finalising, zero EL errors).
+#
+# Scope is EIP-7805 on the Heze fork. EIP-8141 frame transactions are a separate
+# devnet track (frames-devnet-0), so they are deliberately absent here.
+#
+# Notes on the values, since earlier local configs on this branch differed:
+#   * `preset: minimal` — an epoch is 8 slots, so heze lands ~48s in rather than
+#     ~13min. Earlier configs here used the mainnet preset, where activating
+#     gloas at genesis produces a genesis whose state disagrees with the genesis
+#     block and no consensus client starts. Under the minimal preset
+#     `gloas_fork_epoch: 0` is fine, so keep the official values.
+#   * No genesis-generator pin. The package default is the right one to follow;
+#     pinning is what broke lodestar's focil-devnet-0 image locally.
+#
+# Run with:
+#   KURTOSIS_CONFIG_FILE=./fixtures/networks/focil-devnet-0.yaml make localnet
+#
+# `spamoor` is in the upstream note's additional_services but is omitted here: it
+# panics with `unknown flag: --startup-defaults` against the pinned
+# ethereum-package revision. Add it back once that is resolved upstream.
+
+participants_matrix:
+  el:
+    - el_type: ethrex
+      el_image: ethpandaops/ethrex:focil-devnet-0
+  cl:
+    - cl_type: lodestar
+      cl_image: ethpandaops/lodestar:focil-devnet-0
+
+network_params:
+  preset: minimal
+  gloas_fork_epoch: 0
+  heze_fork_epoch: 1
+
+additional_services:
+  - dora
+
+global_log_level: debug

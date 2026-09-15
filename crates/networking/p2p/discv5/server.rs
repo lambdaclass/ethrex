@@ -4,6 +4,7 @@ use crate::{
     discv5::messages::Packet,
     types::{Node, NodeRecord},
 };
+use bytes::Bytes;
 use ethrex_common::H256;
 use lru::LruCache;
 use rand::RngCore;
@@ -22,6 +23,10 @@ const MESSAGE_CACHE_TIMEOUT: Duration = Duration::from_secs(2);
 /// Max age of a `session_ips` entry before it is evicted. Bounds the map: it is inserted
 /// per discv5 handshake and (absent this) was never removed for nodes we don't keep as peers.
 const SESSION_TTL: Duration = Duration::from_secs(3600);
+/// How long an outstanding FINDNODE stays eligible to be answered. Generous
+/// enough for a multi-packet NODES response over a slow link, short enough that
+/// a request id cannot be replayed against us much later.
+const PENDING_FINDNODE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Source IP a discv5 session was established from, paired with when it was recorded so stale
 /// entries can be evicted (see `SESSION_TTL`).
@@ -52,6 +57,15 @@ pub struct Discv5State {
     pub session_ips: FxHashMap<H256, SessionSource>,
     /// Currently active iterative lookups.
     pub active_lookups: Vec<IterativeLookup>,
+    /// FINDNODE requests we sent and have not yet timed out, keyed by
+    /// (peer node id, request id). A NODES response is only accepted if it
+    /// matches one of these: without the check, any peer with a session can
+    /// push arbitrary ENRs into the peer table by sending an unsolicited
+    /// NODES, and we then serve them back from our own FINDNODE responses.
+    /// Entries are not removed on first use, because a single response may be
+    /// split across up to `total` packets sharing one request id; they expire
+    /// via `PENDING_FINDNODE_TIMEOUT` instead.
+    pub pending_findnodes: FxHashMap<(H256, Bytes), Instant>,
 }
 
 impl Default for Discv5State {
@@ -60,6 +74,7 @@ impl Default for Discv5State {
             counter: 0,
             pending_by_nonce: Default::default(),
             pending_challenges: Default::default(),
+            pending_findnodes: Default::default(),
             whoareyou_rate_limit: LruCache::new(
                 NonZero::new(MAX_WHOAREYOU_RATE_LIMIT_ENTRIES)
                     .expect("MAX_WHOAREYOU_RATE_LIMIT_ENTRIES must be non-zero"),
@@ -96,6 +111,9 @@ impl Discv5State {
                 now.duration_since(*timestamp) < MESSAGE_CACHE_TIMEOUT
             });
         let removed_messages = before_messages - self.pending_by_nonce.len();
+
+        self.pending_findnodes
+            .retain(|_key, timestamp| now.duration_since(*timestamp) < PENDING_FINDNODE_TIMEOUT);
 
         let before_challenges = self.pending_challenges.len();
         self.pending_challenges

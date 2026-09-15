@@ -47,6 +47,11 @@ pub struct GetRawReceipts {
     pub block: BlockIdentifier,
 }
 
+/// `eth_getUncleCountByBlockHash` / `eth_getUncleCountByBlockNumber`.
+pub struct GetUncleCountRequest {
+    pub block: BlockIdentifierOrHash,
+}
+
 pub struct BlockNumberRequest;
 pub struct GetBlobBaseFee;
 
@@ -100,19 +105,15 @@ impl RpcHandler for GetBlockByHashRequest {
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let storage = &context.storage;
         debug!("Requested block with hash: {:#x}", self.block);
-        let block_number = match storage.get_block_number(self.block).await? {
-            Some(number) => number,
-            _ => return Ok(Value::Null),
+        // Read by the hash itself, never hash -> number -> canonical block: for a
+        // non-canonical hash that resolution answers with the canonical sibling at
+        // the same height — a different block than the caller asked for. Prysm's
+        // ePBS envelope reconstruction fetches fork blocks by hash and rejects the
+        // response when its hash does not echo the request.
+        let Some(block) = storage.get_block_by_hash(self.block).await? else {
+            return Ok(Value::Null);
         };
-        let header = storage.get_block_header(block_number)?;
-        let body = storage.get_block_body(block_number).await?;
-        let (header, body) = match (header, body) {
-            (Some(header), Some(body)) => (header, body),
-            // Block not found
-            _ => return Ok(Value::Null),
-        };
-        let hash = header.hash();
-        let block = RpcBlock::build(header, body, hash, self.hydrated)?;
+        let block = RpcBlock::build(block.header, block.body, self.block, self.hydrated)?;
         serde_json::to_value(&block).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -146,6 +147,40 @@ impl RpcHandler for GetBlockTransactionCountRequest {
         let transaction_count = block_body.transactions.len();
 
         serde_json::to_value(format!("{transaction_count:#x}"))
+            .map_err(|error| RpcErr::Internal(error.to_string()))
+    }
+}
+
+impl RpcHandler for GetUncleCountRequest {
+    fn parse(params: &Option<Vec<Value>>) -> Result<GetUncleCountRequest, RpcErr> {
+        let params = params
+            .as_ref()
+            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+        if params.len() != 1 {
+            return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
+        };
+        Ok(GetUncleCountRequest {
+            block: BlockIdentifierOrHash::parse(params[0].clone(), 0)?,
+        })
+    }
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        debug!("Requested uncle count for block: {}", self.block);
+        // Post-merge every canonical block has an empty ommers list, so this is
+        // always `0x0` in practice. It is still derived from the stored body
+        // rather than hardcoded, so pre-merge history read from a synced archive
+        // answers truthfully. An unknown block yields `null`, matching the
+        // transaction-count getters and the other clients.
+        let block_number = match self.block.resolve_block_number(&context.storage).await? {
+            Some(block_number) => block_number,
+            _ => return Ok(Value::Null),
+        };
+        let block_body = match context.storage.get_block_body(block_number).await? {
+            Some(block_body) => block_body,
+            _ => return Ok(Value::Null),
+        };
+        let uncle_count = block_body.ommers.len();
+
+        serde_json::to_value(format!("{uncle_count:#x}"))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }

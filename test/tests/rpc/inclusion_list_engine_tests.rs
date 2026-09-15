@@ -42,32 +42,43 @@ fn payload_status_omits_inclusion_list_satisfied_when_unreported() {
     assert!(json.get("inclusionListSatisfied").is_none());
 }
 
-// `engine_getInclusionListV1` is specified with `params: []`: the list is built
-// from the node's own view of the mempool against its canonical head.
+// `engine_getInclusionListV1` takes no parameters: the list is built from the
+// node's own view of the mempool against its canonical head.
 
 #[test]
 fn get_inclusion_list_accepts_empty_params() {
-    assert!(GetInclusionListV1Request::parse(&Some(vec![])).is_ok());
-    assert!(GetInclusionListV1Request::parse(&None).is_ok());
-}
-
-/// A lone parameter is tolerated and ignored. Every consensus client that
-/// implements FOCIL today sends a `parentHash` here, having been written against
-/// the pre-spec design; the engine-api FOCIL methods only landed 2026-08-03.
-/// Rejecting it deadlocks the chain at the fork boundary, since the client cannot
-/// build an inclusion list and stops driving the execution layer.
-///
-/// Ignoring it is sound rather than merely permissive: the list is built against
-/// this node's canonical head, which is the block that hash identifies.
-#[test]
-fn get_inclusion_list_tolerates_a_stale_clients_parent_hash() {
-    let one_param =
-        GetInclusionListV1Request::parse(&Some(vec![json!(format!("0x{:064x}", 0x42u64))]));
-    assert!(one_param.is_ok());
+    // The merged execution-apis spec gives the method no parameters.
+    assert_eq!(
+        GetInclusionListV1Request::parse(&Some(vec![]))
+            .unwrap()
+            .parent_hash,
+        None
+    );
+    assert_eq!(
+        GetInclusionListV1Request::parse(&None).unwrap().parent_hash,
+        None
+    );
 }
 
 #[test]
-fn get_inclusion_list_rejects_more_than_one_param() {
+fn get_inclusion_list_accepts_a_parent_hash() {
+    // Consensus clients built against the earlier revision of
+    // execution-apis#609 still pass the parent hash — teku does. Rejecting it
+    // takes FOCIL out of service for that validator, so it is accepted and used
+    // as the parent the list is built against.
+    let hash = format!("0x{:064x}", 0x42u64);
+    let parsed = GetInclusionListV1Request::parse(&Some(vec![json!(hash)])).unwrap();
+    assert_eq!(parsed.parent_hash, Some(H256::from_low_u64_be(0x42)));
+}
+
+#[test]
+fn get_inclusion_list_rejects_malformed_or_extra_params() {
+    let not_a_hash = GetInclusionListV1Request::parse(&Some(vec![json!("0xnothex")]));
+    assert!(matches!(not_a_hash, Err(RpcErr::WrongParam(_))));
+
+    let wrong_length = GetInclusionListV1Request::parse(&Some(vec![json!("0xdeadbeef")]));
+    assert!(matches!(wrong_length, Err(RpcErr::WrongParam(_))));
+
     let two_params = GetInclusionListV1Request::parse(&Some(vec![json!("0x00"), json!("0x01")]));
     assert!(matches!(two_params, Err(RpcErr::BadParams(_))));
 }

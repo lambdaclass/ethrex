@@ -3071,9 +3071,39 @@ impl<'a> VM<'a> {
         deploy_index: Option<usize>,
         canonical_paymaster_pay_frame: Option<usize>,
         recent_root_verifier_frame: Option<usize>,
-        profile_2: Option<crate::validation_observer::Profile2Replay>,
     ) -> Result<PrefixSimResult, VMError> {
-        use crate::validation_observer::ValidationObserver;
+        let sender = match &self.tx {
+            Transaction::FrameTransaction(ft) => ft.sender,
+            _ => {
+                return Err(VMError::Internal(InternalError::Custom(
+                    "run_frame_validation_prefix called on non-frame tx".to_string(),
+                )));
+            }
+        };
+        let expiry_verifier = ethrex_common::types::frame_tx_expiry_verifier();
+        let mut observer = ValidationObserver::new(sender, deploy_index, expiry_verifier);
+        observer.canonical_paymaster_pay_frame = canonical_paymaster_pay_frame;
+        observer.recent_root_verifier_frame = recent_root_verifier_frame;
+        observer.recent_root_address = ethrex_common::types::frame_tx_recent_root();
+        self.run_frame_validation_prefix_with_observer(frame_indices, observer)
+    }
+
+    /// The frame-tx preamble and prefix simulation behind
+    /// [`VM::run_frame_validation_prefix`], under a caller-built `observer`.
+    ///
+    /// Shared by mempool admission and by the FOCIL Profile 2 omission replay,
+    /// which attach different policies to the observer (the sender-only storage
+    /// rule with the canonical pay-frame exemption, or the Profile 2 surface with
+    /// the per-list code budget). The observer is installed before the preamble
+    /// runs so that whatever it carries, the code budget in particular, is
+    /// recoverable from `self.validation_observer` on every exit path: the
+    /// preamble executes no EVM code, so no hook fires early.
+    pub fn run_frame_validation_prefix_with_observer(
+        &mut self,
+        frame_indices: &[usize],
+        observer: ValidationObserver,
+    ) -> Result<PrefixSimResult, VMError> {
+        self.validation_observer = observer;
 
         if self.env.config.fork < Fork::Hegota {
             return Err(VMError::TxValidation(
@@ -3092,7 +3122,16 @@ impl<'a> VM<'a> {
 
         let sender = frame_tx.sender;
 
-        if let Err(e) = frame_tx.validate_static_constraints() {
+        // Mempool admission applies this client's full static check. A FOCIL
+        // Profile 2 replay judges a consensus question and applies EIP-8141's
+        // constraints only, so that a local bound cannot excuse an omission other
+        // clients enforce.
+        let statically_valid = if self.validation_observer.profile2.is_some() {
+            frame_tx.validate_eip8141_static_constraints()
+        } else {
+            frame_tx.validate_static_constraints()
+        };
+        if let Err(e) = statically_valid {
             return Err(VMError::TxValidation(
                 crate::errors::TxValidationError::InvalidFrameTransactionFormat(e),
             ));
@@ -3155,17 +3194,6 @@ impl<'a> VM<'a> {
                 crate::errors::TxValidationError::InvalidFrameSignature,
             ));
         }
-
-        let expiry_verifier = ethrex_common::types::frame_tx_expiry_verifier();
-        let mut observer = ValidationObserver::new(sender, deploy_index, expiry_verifier);
-        observer.canonical_paymaster_pay_frame = canonical_paymaster_pay_frame;
-        observer.recent_root_verifier_frame = recent_root_verifier_frame;
-        observer.recent_root_address = ethrex_common::types::frame_tx_recent_root();
-        if let Some(profile_2) = profile_2 {
-            observer.focil_surface = Some(profile_2.surface);
-            observer.code_budget = Some(profile_2.code_budget);
-        }
-        self.validation_observer = observer;
 
         self.simulate_validation_prefix(frame_indices)
     }
@@ -3271,11 +3299,12 @@ impl<'a> VM<'a> {
                     self.env.config.fork,
                 )?;
 
-            // The frame's own code counts against the list's allowance too: a
-            // prefix that never calls out still makes every attester read the
-            // body it runs. Charged by resolved code address, so an EIP-7702
-            // delegation is charged as the delegate's body.
-            self.validation_charge_code(code_address)?;
+            // FOCIL Profile 2 code bound: resolving the frame's target is the first
+            // code reached during validation, the delegate's body included when the
+            // target carries an EIP-7702 indicator. A no-op without a code budget.
+            if self.validation_observer.active {
+                self.validation_charge_code(target)?;
+            }
 
             self.substate.push_backup();
 
@@ -3792,13 +3821,12 @@ impl<'a> VM<'a> {
     /// admission-time revalidation affected-set.
     pub fn validation_check_sload(&mut self, address: Address, slot: H256) {
         use crate::validation_observer::FrameSimViolation;
-        if self.validation_observer.in_canonical_pay_frame() {
-            return;
-        }
         // EIP-8272 §Public mempool handling, permission 2: the recent-root verifier
         // frame may read the predeploy's own storage. The tuples it names are the
         // transaction's recent-root dependencies, tracked by the mempool from the
-        // frame's data rather than from these reads.
+        // frame's data rather than from these reads. The FOCIL Profile 2 surface
+        // grants the same reads, only while that frame runs the canonical code at
+        // the top level, so this exemption precedes the surface check for both.
         if address == self.validation_observer.recent_root_address
             && self
                 .validation_observer
@@ -3806,16 +3834,21 @@ impl<'a> VM<'a> {
         {
             return;
         }
-        if let Some(surface) = self.validation_observer.focil_surface {
-            // EIP-8369 Profile 2 replaces the mempool rule wholesale: `payer` is
-            // readable too, but only within the first `slot_count` slots.
-            if self.validation_observer.within_vops_surface(address, slot) {
+        // FOCIL Profile 2: the validation surface replaces the sender-only rule
+        // and exempts nothing, so it is consulted before the canonical pay-frame
+        // skip below; a check that returned early for that frame would apply the
+        // mempool rule to a Profile 2 replay.
+        if let Some(in_surface) = self.validation_observer.slot_in_surface(address, slot) {
+            if !in_surface {
+                self.validation_observer.record_violation(
+                    FrameSimViolation::StorageReadOutsideSurface { address, slot },
+                );
+            } else if address == self.validation_observer.sender {
                 self.validation_observer.touched_sender_slots.push(slot);
-            } else {
-                let _ = surface;
-                self.validation_observer
-                    .record_violation(FrameSimViolation::StorageOutsideVopsSurface);
             }
+            return;
+        }
+        if self.validation_observer.in_canonical_pay_frame() {
             return;
         }
         if address == self.validation_observer.sender {
@@ -3832,21 +3865,26 @@ impl<'a> VM<'a> {
     /// owner (`address`, the executing frame's `to`) is the transaction sender.
     pub fn validation_check_sstore(&mut self, address: Address, slot: H256) {
         use crate::validation_observer::FrameSimViolation;
-        if self.validation_observer.in_canonical_pay_frame() {
+        // FOCIL Profile 2: the deploy frame keeps its EIP-8141 allowance (writes
+        // to the sender's own storage) and must additionally stay inside the
+        // surface. Judged before the canonical pay-frame skip for the same reason
+        // as in `validation_check_sload`.
+        if let Some(in_surface) = self.validation_observer.slot_in_surface(address, slot) {
+            if !(self.validation_observer.in_deploy_frame()
+                && address == self.validation_observer.sender)
+            {
+                self.validation_observer
+                    .record_violation(FrameSimViolation::StateWriteOutsideDeploy);
+            } else if !in_surface {
+                self.validation_observer.record_violation(
+                    FrameSimViolation::StorageWriteOutsideSurface { address, slot },
+                );
+            } else {
+                self.validation_observer.touched_sender_slots.push(slot);
+            }
             return;
         }
-        if self.validation_observer.focil_surface.is_some() {
-            // A write still has to be inside the deploy frame, and additionally
-            // inside the Profile 2 surface: EIP-8369 admits a deploy frame only
-            // if "all storage it touches stays within the Profile 2 surface".
-            if self.validation_observer.in_deploy_frame()
-                && self.validation_observer.within_vops_surface(address, slot)
-            {
-                self.validation_observer.touched_sender_slots.push(slot);
-            } else {
-                self.validation_observer
-                    .record_violation(FrameSimViolation::StorageOutsideVopsSurface);
-            }
+        if self.validation_observer.in_canonical_pay_frame() {
             return;
         }
         if self.validation_observer.in_deploy_frame() && address == self.validation_observer.sender
@@ -3888,6 +3926,10 @@ impl<'a> VM<'a> {
         is_delegation_7702: bool,
     ) -> Result<(), VMError> {
         use crate::validation_observer::FrameSimViolation;
+        // FOCIL Profile 2 code bound: the callee's body, and its delegate's, is
+        // code reached during validation whatever the rules below make of the
+        // call. Charged first so the canonical pay-frame skip cannot bypass it.
+        self.validation_charge_code(target)?;
         if self.validation_observer.in_canonical_pay_frame() {
             return Ok(());
         }
@@ -3912,22 +3954,6 @@ impl<'a> VM<'a> {
                 .record_violation(FrameSimViolation::CallToNonexistentOrDelegated(target));
             return Ok(());
         }
-        self.validation_charge_code(target)
-    }
-
-    /// Charge `target`'s code body against the inclusion list's
-    /// [`CodeBodyBudget`](crate::validation_observer::CodeBodyBudget).
-    ///
-    /// A no-op unless a budget is configured, which happens only for EIP-8369
-    /// Profile 2 replays. Reads the length through the code metadata rather than
-    /// the body, so the budget is decided before the bytes are materialized.
-    fn validation_charge_code(&mut self, target: Address) -> Result<(), VMError> {
-        if self.validation_observer.code_budget.is_none() {
-            return Ok(());
-        }
-        let code_hash = self.db.get_account(target)?.info.code_hash;
-        let len = self.db.get_code_metadata(code_hash)?.length;
-        self.validation_observer.charge_code_body(code_hash, len);
         Ok(())
     }
 
@@ -3938,6 +3964,10 @@ impl<'a> VM<'a> {
     /// EXTCODE gas already performed has happened; resolving here only follows a
     /// delegation indicator to read its flag, mirroring the CALL-family path.
     pub fn validation_check_extcode_target(&mut self, target: Address) -> Result<(), VMError> {
+        // FOCIL Profile 2 code bound: `EXTCODE*` reads the target's code (and
+        // `codeHash`), so the body counts even for the sender and inside the
+        // canonical pay frame, both of which the trace rules below exempt.
+        self.validation_charge_code(target)?;
         if self.validation_observer.in_canonical_pay_frame()
             || target == self.validation_observer.sender
         {
@@ -3951,6 +3981,50 @@ impl<'a> VM<'a> {
                 self.env.config.fork,
             )?;
         self.validation_check_call_target(target, is_delegation_7702)
+    }
+
+    /// FOCIL Profile 2 code bound: charge the code body at `address`, and the
+    /// body its EIP-7702 delegation indicator names when it carries one, against
+    /// the per-list budget. Each distinct `codeHash` is charged once per list;
+    /// an account with empty code is not a body and costs nothing. A no-op when
+    /// no budget is attached, which is every use outside the omission replay.
+    ///
+    /// Reads go through the VM's own cache, so an account whose code the frame
+    /// or opcode already resolved costs no second store read here.
+    pub fn validation_charge_code(&mut self, address: Address) -> Result<(), VMError> {
+        use crate::utils::{code_has_delegation, get_authorized_address_from_code};
+        use ethrex_common::constants::EMPTY_KECCAK_HASH;
+
+        if self.validation_observer.code_budget.is_none() {
+            return Ok(());
+        }
+        let code_hash = self.db.get_account(address)?.info.code_hash;
+        if code_hash == *EMPTY_KECCAK_HASH {
+            return Ok(());
+        }
+        let (len, delegate) = {
+            let code = self.db.get_code(code_hash)?;
+            let delegate = if code_has_delegation(code.code())? {
+                Some(get_authorized_address_from_code(code.code())?)
+            } else {
+                None
+            };
+            (u64::try_from(code.len()).unwrap_or(u64::MAX), delegate)
+        };
+        self.validation_observer.charge_code(code_hash, len);
+
+        // The delegate is resolved one level deep, as EIP-7702 dispatch does; its
+        // own indicator, if any, is never followed and so never loaded.
+        if let Some(delegate) = delegate {
+            let delegate_hash = self.db.get_account(delegate)?.info.code_hash;
+            if delegate_hash != *EMPTY_KECCAK_HASH {
+                let delegate_len =
+                    u64::try_from(self.db.get_code(delegate_hash)?.len()).unwrap_or(u64::MAX);
+                self.validation_observer
+                    .charge_code(delegate_hash, delegate_len);
+            }
+        }
+        Ok(())
     }
 
     /// Struct-log pre-step capture, split out of the interpreter loop and kept

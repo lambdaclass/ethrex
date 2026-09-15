@@ -1,3 +1,4 @@
+mod bal_auth_oog_recipient_tests;
 mod bal_content_validation_tests;
 mod bal_hash_parallel_skip;
 mod bal_validate_tx_execution_tests;
@@ -10,13 +11,12 @@ mod eip8037_block_gate_tests;
 mod eip8070_kzg_tests;
 mod eip8250_concurrency_tests;
 mod explicit_blob_tx_tests;
-mod focil_eligibility_tests;
+mod focil_profile2_block_tests;
 mod focil_profile2_tests;
 mod focil_tests;
 #[cfg(feature = "c-kzg")]
 mod frame_blob_tx_tests;
 mod inclusion_list_builder_tests;
-mod inclusion_list_store_provider_tests;
 mod inclusion_list_validator_tests;
 mod l1_tx_type_tests;
 mod logs_bloom_tests;

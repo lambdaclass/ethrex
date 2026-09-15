@@ -303,7 +303,6 @@ impl Evm {
         prefix: &ethrex_common::types::ValidationPrefix,
         canonical_paymaster_code_hash: Option<ethrex_common::H256>,
         max_verify_gas: u64,
-        profile_2: Option<ethrex_levm::validation_observer::Profile2Replay>,
     ) -> Result<FrameValidationOutcome, EvmError> {
         LEVM::simulate_frame_validation_prefix(
             tx,
@@ -314,7 +313,32 @@ impl Evm {
             prefix,
             canonical_paymaster_code_hash,
             max_verify_gas,
-            profile_2,
+        )
+    }
+
+    /// FOCIL Profile 2 omission replay of a frame transaction's validation
+    /// prefix at the state this `Evm` reads from, under the block context of
+    /// `header` (the judged block). Wraps
+    /// [`LEVM::replay_profile2_validation_prefix`]; see it for the policy.
+    pub fn replay_profile2_validation_prefix(
+        &mut self,
+        tx: &Transaction,
+        header: &BlockHeader,
+        prefix: &ethrex_common::types::ValidationPrefix,
+        payer: Address,
+        slot_count: u64,
+        code_budget: &mut ethrex_levm::validation_observer::CodeBudget,
+    ) -> Result<Profile2Replay, EvmError> {
+        LEVM::replay_profile2_validation_prefix(
+            tx,
+            header,
+            &mut self.db,
+            self.vm_type,
+            self.crypto.as_ref(),
+            prefix,
+            payer,
+            slot_count,
+            code_budget,
         )
     }
 
@@ -383,6 +407,28 @@ pub fn compute_burned_fees(
         .saturating_add(blob_base_fee.saturating_mul(blob_gas_used))
 }
 
+/// The verdict of one FOCIL Profile 2 replay of a frame transaction's
+/// validation prefix at one evaluation state
+/// ([`Evm::replay_profile2_validation_prefix`]). Unlike the mempool's
+/// [`FrameValidationOutcome`] this is a consensus-relevant value: an `Eligible`
+/// verdict at either state makes the transaction's omission unjustified.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Profile2Replay {
+    /// The protocol verifier frames and the validation prefix executed to
+    /// completion against the state, stayed inside the validation surface and
+    /// the code bound, and set `payer`.
+    Eligible,
+    /// The transaction could not have been included at this state: a
+    /// pre-frame check (fee, keyed nonce, signature, static form) refused it,
+    /// a prefix frame reverted, a read left the surface, or the code budget
+    /// was exceeded. Carries the reason for tracing.
+    Ineligible(String),
+    /// A verdict that cannot be computed is not a verdict: the state could not
+    /// be read, a code body was missing, or the evaluator failed internally.
+    /// Neither evidence for nor against eligibility.
+    Undecided(String),
+}
+
 /// Outcome of an EIP-8141 mempool validation-prefix simulation
 /// ([`Evm::simulate_frame_validation_prefix`]). A local peer policy result, not
 /// a consensus value.
@@ -413,10 +459,6 @@ pub struct FrameValidationOutcome {
     /// Whether the prefix read `TXPARAM(0x12)`, the sender's legacy account nonce
     /// (EIP-8250 §Mempool).
     pub read_legacy_nonce: bool,
-    /// EIP-8369 Profile 2: the per-inclusion-list code-body allowance as this
-    /// replay left it, for the caller to carry to the next replay of the same
-    /// list. `None` for ordinary mempool simulation, which configures no budget.
-    pub code_budget: Option<ethrex_levm::validation_observer::CodeBodyBudget>,
 }
 
 #[derive(Clone, Debug)]

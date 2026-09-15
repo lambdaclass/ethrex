@@ -44,7 +44,6 @@
 
 pub mod constants;
 pub mod error;
-pub mod focil_eligibility;
 pub mod focil_profile2;
 pub mod fork_choice;
 pub mod inclusion_list_builder;
@@ -2524,19 +2523,13 @@ impl Blockchain {
     /// EIP-7805 (FOCIL) variant of [`add_block_pipeline`]. Runs the standard
     /// import pipeline and, if the chain has activated Hegotá and the
     /// caller-provided context carries a non-empty inclusion list, runs the
-    /// satisfaction algorithm against the post-execution state.
+    /// satisfaction algorithm ([`Self::inclusion_list_satisfaction`]) against
+    /// the imported block's states.
     ///
     /// Returns `Err(ChainError::IlUnsatisfied { tx_hash })` if the block
     /// imports successfully but fails the IL satisfaction check. The V6
     /// `engine_newPayloadV6` handler maps this to
     /// `PayloadStatus::inclusion_list_unsatisfied()`.
-    ///
-    /// Per Decision 4 in `design.md`, the satisfaction algorithm is a pure
-    /// state-comparison pass — no EVM re-execution. The validator is
-    /// initialized from post-state directly (one read per IL sender) rather
-    /// than incrementally tracked during execution; this keeps the hot path
-    /// untouched while preserving spec correctness (a missing IL tx is
-    /// classified by post-state regardless of how it was reached).
     pub fn add_block_pipeline_with_il(
         &self,
         block: Block,
@@ -2545,112 +2538,111 @@ impl Blockchain {
     ) -> Result<(), ChainError> {
         use std::collections::HashSet;
 
-        let block_timestamp = block.header.timestamp;
-        let chain_config = self.storage.get_chain_config();
-        let parent_hash = block.header.parent_hash;
-        // Snapshot what we need for the satisfaction check BEFORE the inner
-        // pipeline consumes `block`. (`block` is moved into
-        // `add_block_pipeline_inner`.)
-        let pre_state_root = self
-            .storage
-            .get_block_header_by_hash(parent_hash)?
-            .map(|h| h.state_root);
+        // Snapshot what the satisfaction check needs BEFORE the inner pipeline
+        // consumes `block`. (`block` is moved into `add_block_pipeline_inner`.)
         let block_tx_hashes: HashSet<H256> = block
             .body
             .transactions
             .iter()
             .map(|tx| tx.hash(&NativeCrypto))
             .collect();
-        let post_state_root = block.header.state_root;
-        let gas_left = block.header.gas_limit.saturating_sub(block.header.gas_used);
-        // Snapshot the header for the satisfaction check (intrinsic-gas fork +
-        // base fee) before `block` is moved into the inner pipeline.
         let header = block.header.clone();
+        let withdrawals = block.body.withdrawals.clone().unwrap_or_default();
 
         let (_, _, result) = self.add_block_pipeline_inner(block, bal, false, None)?;
         result?;
 
-        // Only run the satisfaction check on the V6 path: Hegotá-active
-        // chain AND a non-empty IL was carried in the context.
-        if !chain_config.is_hegota_activated(block_timestamp) {
-            return Ok(());
-        }
         let Some(il) = context.inclusion_list.as_ref() else {
             return Ok(());
         };
-        if il.is_empty() {
-            return Ok(());
+        let satisfaction =
+            self.inclusion_list_satisfaction(&header, &block_tx_hashes, &withdrawals, il)?;
+        match satisfaction.unjustified_omission {
+            None => Ok(()),
+            Some(tx_hash) => Err(ChainError::IlUnsatisfied { tx_hash }),
         }
-        let Some(pre_state_root) = pre_state_root else {
-            // Unreachable — the inner pipeline would have failed if the
-            // parent header wasn't found.
-            return Ok(());
-        };
+    }
 
+    /// Whether the imported block `header` satisfies the inclusion list `il`:
+    /// the EIP-7805 omission check for ordinary transactions (Profile 1, a pure
+    /// state comparison in [`inclusion_list_validator`]) and, on a Hegotá-active
+    /// chain, the FOCIL frame-transaction extension for EIP-8141 frame
+    /// transactions (Profile 2, a bounded replay in [`focil_profile2`]).
+    ///
+    /// Shared by the import pipeline and by the engine API, so that
+    /// `engine_newPayloadV6` and `engine_forkchoiceUpdatedV5` report the same
+    /// verdict for the same payload: both states are fixed by the block, the
+    /// budget fill is computed from the list alone, and nothing here depends on
+    /// when the question is asked.
+    ///
+    /// The block must already be imported: `S_start` is read from the parent's
+    /// committed state root and `S_end` from the block's own, with the block's
+    /// withdrawal credits discounted, since the check point precedes them.
+    pub fn inclusion_list_satisfaction(
+        &self,
+        header: &BlockHeader,
+        block_tx_hashes: &HashSet<H256>,
+        withdrawals: &[ethrex_common::types::Withdrawal],
+        il: &[Transaction],
+    ) -> Result<inclusion_list_validator::IlSatisfaction, ChainError> {
+        let chain_config = self.storage.get_chain_config();
+        // Before the fork, EIP-7805 is not in force here, and every frame
+        // transaction omission is justified.
+        if il.is_empty() || !chain_config.is_hegota_activated(header.timestamp) {
+            return Ok(inclusion_list_validator::IlSatisfaction::default());
+        }
+        let parent_header = self
+            .storage
+            .get_block_header_by_hash(header.parent_hash)?
+            .ok_or(ChainError::ParentNotFound)?;
+        let crypto = NativeCrypto;
+        let gas_left = header.gas_limit.saturating_sub(header.gas_used);
+
+        // Profile 1: the EIP-7805 check, verbatim, at the end of the payload.
         let pre_state = inclusion_list_validator::StoreIlStateProvider {
             store: &self.storage,
-            state_root: pre_state_root,
+            state_root: parent_header.state_root,
         };
         let post_state = inclusion_list_validator::StoreIlStateProvider {
             store: &self.storage,
-            state_root: post_state_root,
+            state_root: header.state_root,
         };
-        let crypto = NativeCrypto;
-
         let mut validator = inclusion_list_validator::InclusionListSatisfactionValidator::new(
             il, &pre_state, &crypto,
         )
         .map_err(|e| ChainError::Custom(format!("IL validator init failed: {e}")))?;
-
-        // Initialize tracker from POST-state: equivalent to "observe every
-        // executed tx" since the post-state already reflects all updates.
-        // O(|IL senders|) reads, not O(block_size).
+        // Initialize the tracker from the post-state: equivalent to observing
+        // every executed transaction, at O(|IL senders|) reads.
         validator
             .refresh_all_from(&post_state, &crypto)
             .map_err(|e| ChainError::Custom(format!("IL validator refresh failed: {e}")))?;
-
-        let profile_2 = focil_profile2::BlockchainProfile2Evaluator::new(
-            self,
-            &header,
-            pre_state_root,
-            gas_left,
-        );
-        let report = validator.check_with_profile_2(
+        validator.discount_withdrawals(withdrawals);
+        if let Err(unsatisfied) = validator.check(
             il,
-            &block_tx_hashes,
+            block_tx_hashes,
             gas_left,
-            &header,
+            header,
             &chain_config,
             &crypto,
-            Some(&profile_2),
-        );
-
-        // Log every Profile 2 outcome, including the ones that reached no
-        // verdict, so an operator can see what the replay decided rather than
-        // inferring it from the single `unsatisfied` value.
-        for tx_hash in &report.profile_2_unjustified {
-            info!(
-                target: "focil::profile2",
-                %tx_hash,
-                block_hash = %header.hash(),
-                "profile_2_unjustified: omitted frame tx would have passed EIP-8369 Profile 2 eligibility replay"
-            );
-        }
-        for tx_hash in &report.profile_2_undecided {
-            info!(
-                target: "focil::profile2",
-                %tx_hash,
-                block_hash = %header.hash(),
-                "profile_2_undecided: omitted frame tx's EIP-8369 Profile 2 eligibility could not be decided"
-            );
+        ) {
+            return Ok(inclusion_list_validator::IlSatisfaction {
+                unjustified_omission: Some(unsatisfied.tx_hash),
+                undecided: Vec::new(),
+            });
         }
 
-        match report.unsatisfied {
-            None => Ok(()),
-            Some(unsat) => Err(ChainError::IlUnsatisfied {
-                tx_hash: unsat.tx_hash,
-            }),
-        }
+        // Profile 2: frame transactions, replayed at both endpoints of the payload.
+        let judged = focil_profile2::JudgedBlock {
+            header,
+            parent_header: &parent_header,
+            withdrawals,
+            block_tx_hashes,
+        };
+        let profile2 = self.check_profile2_omissions(il, &judged, &chain_config, &crypto);
+        Ok(inclusion_list_validator::IlSatisfaction {
+            unjustified_omission: profile2.unjustified,
+            undecided: profile2.undecided,
+        })
     }
 
     /// Runs the full block pipeline (execute + merkleize + store).
@@ -3674,7 +3666,6 @@ impl Blockchain {
                         &prefix,
                         Some(FRAME_CANONICAL_PAYMASTER_CODE_HASH),
                         self.options.max_verify_gas,
-                        None,
                     ) {
                         // Simulation passed for this tx in isolation. The
                         // per-tx validation prefix only catches a single-tx
@@ -4249,7 +4240,6 @@ impl Blockchain {
                     &prefix,
                     Some(FRAME_CANONICAL_PAYMASTER_CODE_HASH),
                     self.options.max_verify_gas,
-                    None,
                 )
                 .map_err(|err| MempoolError::FrameTxValidationFailed(err.to_string()))?;
             if !outcome.passed {

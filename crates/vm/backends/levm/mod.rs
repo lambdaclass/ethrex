@@ -1,7 +1,10 @@
 pub mod db;
 mod tracing;
 
-use super::{BlockExecutionResult, FrameValidationOutcome, TxGasBreakdown, compute_burned_fees};
+use super::{
+    BlockExecutionResult, FrameValidationOutcome, Profile2Replay, TxGasBreakdown,
+    compute_burned_fees,
+};
 use crate::system_contracts::{
     AMSTERDAM_REQUEST_PREDEPLOYS, BEACON_ROOTS_ADDRESS, BUILDER_DEPOSIT_CONTRACT_ADDRESS,
     BUILDER_EXIT_CONTRACT_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
@@ -60,7 +63,9 @@ use ethrex_levm::memory::Memory;
 use ethrex_levm::timings::{OPCODE_TIMINGS, PRECOMPILES_TIMINGS};
 use ethrex_levm::tracing::LevmCallTracer;
 use ethrex_levm::utils::get_base_fee_per_blob_gas;
-use ethrex_levm::validation_observer::FrameSimViolation;
+use ethrex_levm::validation_observer::{
+    CodeBudget, FrameSimViolation, Profile2Surface, ValidationObserver,
+};
 use ethrex_levm::vm::VMType;
 use ethrex_levm::{
     Environment,
@@ -3172,7 +3177,6 @@ impl LEVM {
         prefix: &ethrex_common::types::ValidationPrefix,
         canonical_paymaster_code_hash: Option<H256>,
         max_verify_gas: u64,
-        profile_2: Option<ethrex_levm::validation_observer::Profile2Replay>,
     ) -> Result<FrameValidationOutcome, EvmError> {
         let frame_tx = match tx {
             Transaction::FrameTransaction(ft) => ft,
@@ -3231,7 +3235,6 @@ impl LEVM {
             prefix.deploy_index,
             canonical_pay_frame,
             recent_root_frame,
-            profile_2.clone(),
         ) {
             Ok(sim) => sim,
             Err(err) => {
@@ -3247,7 +3250,6 @@ impl LEVM {
                     accessed_paymaster: None,
                     touched_sender_slots: Vec::new(),
                     read_legacy_nonce: false,
-                    code_budget: profile_2.map(|p| p.code_budget),
                 });
             }
         };
@@ -3283,7 +3285,6 @@ impl LEVM {
             accessed_paymaster,
             touched_sender_slots,
             read_legacy_nonce,
-            code_budget: vm.validation_observer.code_budget.clone(),
         };
         let rejected = |reason: String| FrameValidationOutcome {
             violation: Some(reason),
@@ -3331,6 +3332,162 @@ impl LEVM {
             passed: true,
             ..observed
         })
+    }
+
+    /// FOCIL Profile 2 omission replay (FOCIL frame-transaction EIP, "Profile 2
+    /// eligibility" and "Replay semantics"): the EIP-8141 validation-prefix
+    /// simulation run for a different question, with exactly the differences
+    /// that EIP names. The storage rule is the Profile 2 validation surface
+    /// (slots `0..slot_count` of `sender` and `payer`, nothing exempted) in place
+    /// of the mempool's sender-only rule; the per-list `code_budget` bounds the
+    /// code bodies loaded; the canonical paymaster exemption is not granted; and
+    /// there is no operator-tunable gas budget, because the declared frame limits
+    /// already bound the work and candidacy priced them against the consensus
+    /// constant. Everything else, the banned opcodes, the deploy-frame write
+    /// rules, the protocol verifier frame permissions and `APPROVE` semantics, is
+    /// the shared code path.
+    ///
+    /// `block_header` is the judged block `B`: its base fee, timestamp, gas
+    /// limit, chain id and EIP-7843 slot are the replay context at either
+    /// evaluation state, and its fork rules apply. The state itself is whatever
+    /// `db` reads from, which the caller opens at `S_start` or `S_end`. Every
+    /// state change stays in `db`'s cache and is discarded with it, so the caller
+    /// hands over a fresh database per replay.
+    ///
+    /// The pre-frame keyed-nonce, fee and signature checks run in the shared
+    /// preamble before the EVM is constructed; the recent-root tuple check and
+    /// payer resolution are the caller's, since both need only the transaction
+    /// and a state read. `code_budget` comes back charged whatever the verdict.
+    #[allow(clippy::too_many_arguments)]
+    pub fn replay_profile2_validation_prefix(
+        tx: &Transaction,
+        block_header: &BlockHeader,
+        db: &mut GeneralizedDatabase,
+        vm_type: VMType,
+        crypto: &dyn Crypto,
+        prefix: &ethrex_common::types::ValidationPrefix,
+        payer: Address,
+        slot_count: u64,
+        code_budget: &mut CodeBudget,
+    ) -> Result<Profile2Replay, EvmError> {
+        let frame_tx = match tx {
+            Transaction::FrameTransaction(ft) => ft,
+            _ => {
+                return Err(EvmError::Custom(
+                    "replay_profile2_validation_prefix requires a frame transaction".to_string(),
+                ));
+            }
+        };
+        let sender = frame_tx.sender;
+
+        // EIP-8272 grants the recent-root verifier frame its two permissions only
+        // while the predeploy runs RECENT_ROOT_CODE. The caller has already judged
+        // the code and the tuples (eligibility condition 3), so a mismatch here only
+        // leaves the frame permissionless and it fails as an ordinary frame would.
+        let recent_root_frame = prefix.recent_root_index.filter(|_| {
+            db.get_account(RECENT_ROOT_ADDRESS.address)
+                .map(|account| {
+                    account.info.code_hash
+                        == ethrex_common::utils::keccak(RECENT_ROOT_RUNTIME_BYTECODE)
+                })
+                .unwrap_or(false)
+        });
+
+        // A state that cannot be opened is not evidence about the transaction.
+        let env = match Self::setup_env(tx, sender, block_header, db, vm_type) {
+            Ok(env) => env,
+            Err(err) => return Ok(Profile2Replay::Undecided(err.to_string())),
+        };
+        let mut vm = match VM::new(
+            env,
+            db,
+            tx,
+            LevmCallTracer::disabled(),
+            vm_type,
+            crypto,
+            None,
+        ) {
+            Ok(vm) => vm,
+            Err(err) => return Ok(Profile2Replay::Undecided(EvmError::from(err).to_string())),
+        };
+
+        let mut observer = ValidationObserver::new(
+            sender,
+            prefix.deploy_index,
+            ethrex_common::types::frame_tx_expiry_verifier(),
+        );
+        observer.recent_root_verifier_frame = recent_root_frame;
+        observer.recent_root_address = ethrex_common::types::frame_tx_recent_root();
+        observer.profile2 = Some(Profile2Surface {
+            payer,
+            slot_count: U256::from(slot_count),
+        });
+        // The budget is moved into the observer for the replay and handed back
+        // below on every path: charges survive the verdict. A refused charge
+        // stops further charging for the replay that overran, not for the list,
+        // so the flag is cleared for each replay while the charges are kept.
+        let mut budget = std::mem::replace(code_budget, CodeBudget::new(0, 0));
+        budget.exceeded = false;
+        observer.code_budget = Some(budget);
+
+        let sim = vm.run_frame_validation_prefix_with_observer(&prefix.frame_indices, observer);
+        if let Some(charged) = vm.validation_observer.code_budget.take() {
+            *code_budget = charged;
+        }
+
+        let sim = match sim {
+            Ok(sim) => sim,
+            // The preamble refused the transaction: a computed verdict about the
+            // transaction (fee, keyed nonce, signature or static form), not a
+            // failure of the evaluator.
+            Err(VMError::TxValidation(err)) => {
+                return Ok(Profile2Replay::Ineligible(err.to_string()));
+            }
+            Err(err) => return Ok(Profile2Replay::Undecided(EvmError::from(err).to_string())),
+        };
+
+        if let Some(violation) = &vm.validation_observer.violation {
+            return Ok(Profile2Replay::Ineligible(format!("{violation:?}")));
+        }
+        if sim.any_revert {
+            return Ok(Profile2Replay::Ineligible(
+                "validation prefix frame reverted".to_string(),
+            ));
+        }
+        match sim.payer_address {
+            None => {
+                return Ok(Profile2Replay::Ineligible(
+                    "validation prefix did not set payer".to_string(),
+                ));
+            }
+            // APPROVE only succeeds in the frame's resolved target, so the payer
+            // it set is the one candidacy resolved from the prefix shape. Anything
+            // else is a shape the surface was not computed for.
+            Some(set) if set != payer => {
+                return Ok(Profile2Replay::Ineligible(format!(
+                    "payer {set:#x} set by APPROVE differs from the resolved payer {payer:#x}"
+                )));
+            }
+            Some(_) => {}
+        }
+        // Eligibility condition 6: a deploy frame must leave code or a delegation
+        // indicator at `sender`.
+        if prefix.deploy_index.is_some() {
+            let code = match vm.db.get_account_code(sender) {
+                Ok(code) => code,
+                Err(err) => {
+                    return Ok(Profile2Replay::Undecided(VMError::from(err).to_string()));
+                }
+            };
+            if code.is_empty() {
+                return Ok(Profile2Replay::Ineligible(format!(
+                    "{:?}",
+                    FrameSimViolation::DeployInstalledNoCode
+                )));
+            }
+        }
+
+        Ok(Profile2Replay::Eligible)
     }
 
     /// TXPARAM 0x06 max cost for a frame transaction: `max_gas * max_fee_per_gas +
@@ -4100,7 +4257,26 @@ fn env_from_generic(
 ///
 /// Split out from `vm_from_generic` so the caller owns the resulting `Transaction` for at least
 /// the VM's lifetime — `VM` now borrows its tx (`&'a Transaction`) instead of cloning it.
+///
+/// The envelope fields are carried over even though execution reads almost none of them,
+/// because the L2 prices its L1 data fee from `Transaction::length()` — the RLP-encoded byte
+/// count — and reserves that as gas before execution. Leaving them at their defaults made a
+/// simulated transaction encode up to ~104 bytes shorter than the signed one it stands for
+/// (a zero `U256` is one RLP byte, a real signature component is 33), so `eth_estimateGas`
+/// under-reserved the L1 fee and the transaction it was estimating ran out of gas. The
+/// signature is stamped at full width for the same reason, and deliberately at the maximum:
+/// a real component can be shorter after leading-zero trimming, and over-reserving the L1
+/// fee is safe where under-reserving is not.
 fn generic_tx_to_transaction(tx: &GenericTransaction) -> Result<Transaction, VMError> {
+    // Not read during execution — the sender comes from `env.origin` — so this only has to
+    // encode to the same width as a real signature.
+    let (signature_r, signature_s) = (U256::MAX, U256::MAX);
+    let nonce = tx.nonce.unwrap_or_default();
+    let gas_limit = tx.gas.unwrap_or_default();
+    let max_fee_per_gas = tx.max_fee_per_gas.unwrap_or_default();
+    let max_priority_fee_per_gas = tx.max_priority_fee_per_gas.unwrap_or_default();
+    let chain_id = tx.chain_id.unwrap_or_default();
+
     Ok(match &tx.authorization_list {
         Some(authorization_list) => Transaction::EIP7702Transaction(EIP7702Transaction {
             to: match tx.to {
@@ -4120,6 +4296,13 @@ fn generic_tx_to_transaction(tx: &GenericTransaction) -> Result<Transaction, VME
                 .iter()
                 .map(|auth| Into::<AuthorizationTuple>::into(auth.clone()))
                 .collect(),
+            nonce,
+            gas_limit,
+            max_fee_per_gas,
+            max_priority_fee_per_gas,
+            chain_id,
+            signature_r,
+            signature_s,
             ..Default::default()
         }),
         None => Transaction::EIP1559Transaction(EIP1559Transaction {
@@ -4131,6 +4314,13 @@ fn generic_tx_to_transaction(tx: &GenericTransaction) -> Result<Transaction, VME
                 .iter()
                 .map(|list| (list.address, list.storage_keys.clone()))
                 .collect(),
+            nonce,
+            gas_limit,
+            max_fee_per_gas,
+            max_priority_fee_per_gas,
+            chain_id,
+            signature_r,
+            signature_s,
             ..Default::default()
         }),
     })
@@ -5206,5 +5396,76 @@ mod burned_fees_tests {
             result_d.burned_fees, None,
             "pre-LStar: burned_fees must be None"
         );
+    }
+}
+
+#[cfg(test)]
+mod simulated_tx_encoding_tests {
+    //! The L2 prices its L1 data fee from `Transaction::length()` and reserves that
+    //! as gas before execution, so a simulated transaction must never encode shorter
+    //! than the signed one it stands for — otherwise `eth_estimateGas` reserves less
+    //! L1 fee gas than the transaction it is estimating will need, and that
+    //! transaction runs out of gas at exactly the estimate.
+    //!
+    //! This was reached through the L2 fee-token integration test, which submits the
+    //! estimate verbatim. It only surfaced once the estimate became exact; the search's
+    //! former 1.5% tolerance had been absorbing the shortfall.
+    use super::*;
+    use ethrex_common::types::GenericTransaction;
+    use ethrex_rlp::encode::RLPEncode;
+
+    /// The transaction the SDK signs and sends after estimating, with signature
+    /// components at the width secp256k1 actually produces.
+    fn signed_equivalent(gas_limit: u64, data: Bytes) -> Transaction {
+        Transaction::EIP1559Transaction(EIP1559Transaction {
+            chain_id: 9_999,
+            nonce: 42,
+            max_priority_fee_per_gas: 1_000_000_000,
+            max_fee_per_gas: 2_000_000_000,
+            gas_limit,
+            to: TxKind::Create,
+            value: U256::from(1u64),
+            data,
+            access_list: vec![],
+            signature_y_parity: true,
+            signature_r: U256::MAX,
+            signature_s: U256::MAX,
+            ..Default::default()
+        })
+    }
+
+    fn generic(gas_limit: u64, data: Bytes) -> GenericTransaction {
+        GenericTransaction {
+            to: TxKind::Create,
+            value: U256::from(1u64),
+            input: data,
+            nonce: Some(42),
+            gas: Some(gas_limit),
+            max_fee_per_gas: Some(2_000_000_000),
+            max_priority_fee_per_gas: Some(1_000_000_000),
+            chain_id: Some(9_999),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn simulated_tx_never_encodes_shorter_than_the_signed_one() {
+        for (gas_limit, data) in [
+            (21_000u64, Bytes::new()),
+            (150_000, Bytes::from_static(&[0x60, 0x00, 0x60, 0x00])),
+            (5_000_000, Bytes::from(vec![0xab; 4_096])),
+        ] {
+            let simulated = generic_tx_to_transaction(&generic(gas_limit, data.clone()))
+                .expect("conversion should succeed");
+            let signed = signed_equivalent(gas_limit, data.clone());
+            assert!(
+                simulated.length() >= signed.length(),
+                "simulated tx encodes {} bytes, signed one {} — the L2 would under-reserve \
+                 the L1 fee by the difference (gas_limit {gas_limit}, {} data bytes)",
+                simulated.length(),
+                signed.length(),
+                data.len(),
+            );
+        }
     }
 }

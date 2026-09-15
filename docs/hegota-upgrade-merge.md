@@ -1,5 +1,13 @@
 # Hegotá upgrade — merging `frames-devnet-0` into the testnet branch
 
+> **Superseded in part (2026-09-15).** The FOCIL Profile 2 layer this document describes
+> (`focil_eligibility.rs`, `check_with_profile_2`, `BlockchainProfile2Evaluator`, the
+> observer's `FocilVopsSurface`) was replaced by an implementation written from
+> `docs/eip-focil-frametx.md` alone, in `crates/blockchain/focil_profile2.rs` and the LEVM
+> validation observer, together with the newer EIP-7805 layer from `focil-devnet-0`.
+> Statements here about those names describe the previous code; the specification and
+> `docs/dogfood/spec-feedback.md` are current. Everything else in this document still applies.
+
 Working notes for the merge of `origin/frames-devnet-0` (`d587cf9ff`, EIP-8141 at
 `b75cbe6115`, `tests-frames-devnet@v0.3.0`) into `hegota-testnet` (`c575e4481`), done on the
 branch `hegota-upgrade`. The two lines had implemented the same EIP-8141 revision

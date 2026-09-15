@@ -10,27 +10,25 @@
 //! validator. Helpers are imported from `batch_tests` where possible to keep
 //! parity with existing patterns.
 
-use std::{collections::BTreeMap, fs::File, io::BufReader, path::PathBuf};
+use std::{fs::File, io::BufReader, path::PathBuf};
 
 use bytes::Bytes;
 use ethrex_blockchain::{
     Blockchain,
-    error::{ChainError, MempoolError},
+    error::ChainError,
     payload::{BuildPayloadArgs, create_payload},
 };
 use ethrex_common::{
     Address, H160, H256, U256,
     types::{
         Block, BlockHeader, DEFAULT_BUILDER_GAS_CEIL, EIP1559Transaction, EIP4844Transaction,
-        ELASTICITY_MULTIPLIER, Frame, FrameMode, FrameTransaction, Genesis, GenesisAccount,
-        RecentRootReference, Transaction, TxKind, frame_tx_expiry_verifier, frame_tx_recent_root,
+        ELASTICITY_MULTIPLIER, GenesisAccount, Transaction, TxKind, VERSIONED_HASH_VERSION_KZG,
     },
     validation::BlockValidationContext,
 };
 use ethrex_crypto::NativeCrypto;
 use ethrex_l2_rpc::signer::{LocalSigner, Signable, Signer};
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::system_contracts::RECENT_ROOT_RUNTIME_BYTECODE;
 use secp256k1::SecretKey;
 
 const TEST_PRIVATE_KEY: &str = "850643a0224065ecce3882673c21f56bcf6eef86274cc21cadff15930b59fc8c";
@@ -127,7 +125,7 @@ async fn build_block_with_il(
         random: H256::zero(),
         withdrawals: Some(Vec::new()),
         beacon_root: Some(H256::zero()),
-        slot_number: Some(1),
+        slot_number: None,
         version: 5,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
@@ -151,7 +149,7 @@ async fn build_block_ignoring_il(
         random: H256::zero(),
         withdrawals: Some(Vec::new()),
         beacon_root: Some(H256::zero()),
-        slot_number: Some(1),
+        slot_number: None,
         version: 5,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
@@ -175,7 +173,6 @@ async fn locally_built_block_with_il_satisfies_on_import() {
     let mut config = store.get_chain_config();
     // Activate Hegotá at genesis so the satisfaction check engages.
     config.hegota_time = Some(0);
-    config.amsterdam_time = Some(0);
     store.set_chain_config(&config).await.unwrap();
 
     let blockchain = Blockchain::default_with_store(store.clone());
@@ -224,7 +221,6 @@ async fn externally_built_block_omitting_il_tx_fails_on_import() {
     let (mut store, chain_id) = setup_store(&[s1, s2]).await;
     let mut config = store.get_chain_config();
     config.hegota_time = Some(0);
-    config.amsterdam_time = Some(0);
     store.set_chain_config(&config).await.unwrap();
 
     let blockchain = Blockchain::default_with_store(store.clone());
@@ -274,7 +270,6 @@ async fn il_first_ordering_with_mempool_competition() {
     let (mut store, chain_id) = setup_store(&[s1, s2]).await;
     let mut config = store.get_chain_config();
     config.hegota_time = Some(0);
-    config.amsterdam_time = Some(0);
     store.set_chain_config(&config).await.unwrap();
 
     let blockchain = Blockchain::default_with_store(store.clone());
@@ -321,8 +316,10 @@ async fn il_first_ordering_with_mempool_competition() {
 // pending IL tx (un)appendable; here we drive the same satisfaction outcomes
 // directly through the validator's per-tx appendability checks. An omitted IL
 // tx makes the block INVALID only if it is still validly appendable; otherwise
-// the block is valid. Mirrors `test_block_status_depends_on_pending_inclusion_list`
-// and `test_block_with_pending_blob_il_tx_is_valid`.
+// the block is valid. Mirrors `test_pending_il_appendability_by_nonce`,
+// `test_pending_il_appendability_by_affordability` and
+// `test_block_with_pending_blob_il_tx_is_valid` (the names the release's test
+// restructuring left them under).
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Hegotá-active chain with `senders` funded; returns store, blockchain,
@@ -331,7 +328,6 @@ async fn hegota_chain(senders: &[Address]) -> (Store, Blockchain, BlockHeader, u
     let (mut store, chain_id) = setup_store(senders).await;
     let mut config = store.get_chain_config();
     config.hegota_time = Some(0);
-    config.amsterdam_time = Some(0);
     store.set_chain_config(&config).await.unwrap();
     let blockchain = Blockchain::default_with_store(store.clone());
     let genesis = store.get_block_header(0).unwrap().unwrap();
@@ -402,19 +398,27 @@ async fn omitted_il_tx_unaffordable_is_valid() {
         .expect("omitted IL tx whose sender cannot afford it must be satisfied");
 }
 
-/// EELS `test_block_with_pending_blob_il_tx_is_valid`: blob (EIP-4844) txs are
-/// excluded from the EL IL-satisfaction pass, so omitting one keeps the block
-/// valid even though the sender is funded and the tx is otherwise appendable.
+/// EELS `test_block_with_pending_blob_il_tx_is_valid`: a blob (EIP-4844) tx is
+/// evaluated like any other type. Omitting an appendable one leaves the block
+/// UNSATISFIED — the blanket blob exclusion was a spec bug, removed in
+/// tests-focil-devnet@v0.2.0 ("Type-3 transactions were considered
+/// not-includable by default"), and upstream flipped this scenario's
+/// `expected_inclusion_list_satisfied` to `false` in the same release.
 #[tokio::test]
-async fn omitted_blob_il_tx_is_valid() {
+async fn omitted_blob_il_tx_is_unsatisfied() {
     let sk1 = key(TEST_PRIVATE_KEY);
     let s1 = sender_from_key(&sk1);
     let signer1: Signer = LocalSigner::new(sk1).into();
 
     let (store, blockchain, genesis, chain_id) = hegota_chain(&[s1]).await;
 
-    // A signed blob tx from a funded sender at the correct nonce: without the
-    // blob-skip it would be appendable → unsatisfied. The skip keeps it valid.
+    // A signed blob tx from a funded sender at the correct nonce, and fully
+    // includable: the versioned hash is KZG-versioned, the blob fee covers the
+    // block's blob gas price, and one blob fits the block's blob budget. So the
+    // only thing that could excuse it is a blob-type exclusion, and there is
+    // none any more.
+    let mut blob_hash = [0u8; 32];
+    blob_hash[0] = VERSIONED_HASH_VERSION_KZG;
     let mut blob_tx = Transaction::EIP4844Transaction(EIP4844Transaction {
         chain_id,
         nonce: 0,
@@ -425,17 +429,24 @@ async fn omitted_blob_il_tx_is_valid() {
         value: U256::zero(),
         data: Bytes::new(),
         max_fee_per_blob_gas: U256::from(1u64),
-        blob_versioned_hashes: vec![H256::zero()],
+        blob_versioned_hashes: vec![H256::from(blob_hash)],
         ..Default::default()
     });
     blob_tx.sign_inplace(&signer1).await.unwrap();
-    let il = vec![blob_tx];
+    let il = vec![blob_tx.clone()];
 
     let block = build_block_ignoring_il(&store, &blockchain, &genesis).await;
     let context = BlockValidationContext::with_inclusion_list(il);
-    blockchain
+    let err = blockchain
         .add_block_pipeline_with_il(block, None, &context)
-        .expect("omitted blob IL tx must be satisfied (excluded from EL IL check)");
+        .expect_err("appendable blob IL tx must count against the block");
+
+    match err {
+        ChainError::IlUnsatisfied { tx_hash } => {
+            assert_eq!(tx_hash, blob_tx.hash(&NativeCrypto));
+        }
+        other => panic!("expected ChainError::IlUnsatisfied, got {other:?}"),
+    }
 }
 
 /// EELS `unsatisfied_with_mixed_valid_and_invalid_pending_il_txs`: an IL with
@@ -468,188 +479,4 @@ async fn mixed_valid_and_invalid_omitted_il_is_unsatisfied() {
         }
         other => panic!("expected ChainError::IlUnsatisfied, got {other:?}"),
     }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// EIP-8272 recent-root judgment: `check_recent_root_frame_at_root` takes
-// `current_slot` as an explicit parameter, which is what makes it usable to
-// judge a verifier frame's tuple *inside* the block whose slot it names — a
-// question distinct from admission's "would this be valid in the next block".
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// A reference to slot `S`, committed in the RECENT_ROOT_ADDRESS predeploy at
-/// genesis, must be rejected when judged with `current_slot == S` (in-block
-/// judgment: a transaction executing inside the block at slot `S` sees the
-/// VM's own `env.slot_number == S`, and a root only becomes referenceable the
-/// slot after it was written) and accepted with `current_slot == S + 1`
-/// (admission's prospective question: would this be valid in the block that
-/// follows a head at slot `S`). Pre-fix, the admission-side check always
-/// derived `current_slot = header.slot_number + 1` regardless of which
-/// question was being asked, which would have wrongly admitted the in-block
-/// case too.
-#[tokio::test]
-async fn recent_root_reference_off_by_one_between_judgment_and_admission() {
-    const REFERENCE_SLOT: u64 = 10_000;
-
-    let reference = RecentRootReference {
-        source_id: H256::from_low_u64_be(0x1234),
-        slot: REFERENCE_SLOT,
-        root: H256::from_low_u64_be(0x5678),
-    };
-
-    let mut predeploy_storage = BTreeMap::new();
-    predeploy_storage.insert(
-        U256::from_big_endian(reference.storage_key().as_bytes()),
-        U256::from_big_endian(reference.entry_hash().as_bytes()),
-    );
-
-    let genesis = Genesis {
-        alloc: [(
-            frame_tx_recent_root(),
-            GenesisAccount {
-                // RECENT_ROOT_CODE, as the check requires, over storage seeded
-                // with this tuple's committed entry.
-                code: Bytes::from_static(&RECENT_ROOT_RUNTIME_BYTECODE),
-                storage: predeploy_storage,
-                balance: U256::zero(),
-                nonce: 1,
-            },
-        )]
-        .into_iter()
-        .collect(),
-        ..Default::default()
-    };
-    let mut store = Store::new("focil-recent-root-slot-test", EngineType::InMemory)
-        .expect("Failed to build DB for testing");
-    store
-        .add_initial_state(genesis)
-        .await
-        .expect("Failed to add genesis state");
-
-    let blockchain = Blockchain::default_with_store(store.clone());
-    let state_root = store.get_block_header(0).unwrap().unwrap().state_root;
-
-    let mut data = Vec::with_capacity(72);
-    data.extend_from_slice(reference.source_id.as_bytes());
-    data.extend_from_slice(&reference.slot.to_be_bytes());
-    data.extend_from_slice(reference.root.as_bytes());
-    let frame_tx = FrameTransaction {
-        frames: vec![Frame {
-            mode: FrameMode::Verify as u8,
-            flags: 0,
-            target: Some(frame_tx_recent_root()),
-            gas_limit: 60_000,
-            state_gas_limit: 0,
-            value: U256::zero(),
-            data: Bytes::from(data),
-        }],
-        ..Default::default()
-    };
-
-    // Judged inside the block at slot S itself (current_slot == S): the
-    // reference names the very slot it is being evaluated in, which can never
-    // be referenceable yet.
-    let judged_in_own_slot =
-        blockchain.check_recent_root_frame_at_root(&frame_tx, REFERENCE_SLOT, state_root);
-    assert!(
-        matches!(
-            judged_in_own_slot,
-            Err(MempoolError::FrameTxRecentRootTooNew { .. })
-        ),
-        "reference to slot S must be rejected when judged with current_slot == S; got {judged_in_own_slot:?}"
-    );
-
-    // Admitted against a head at slot S (current_slot == S + 1): the earliest
-    // slot the transaction could land in. The entry is in-window and
-    // committed, so admission accepts it.
-    let admitted_against_next_slot =
-        blockchain.check_recent_root_frame_at_root(&frame_tx, REFERENCE_SLOT + 1, state_root);
-    assert!(
-        admitted_against_next_slot.is_ok(),
-        "reference to slot S must be accepted when current_slot == S + 1; got {admitted_against_next_slot:?}"
-    );
-}
-
-/// The EIP-8141 expiry-verifier frame: a VERIFY frame targeting `0x…8141`
-/// whose data is the deadline as eight big-endian bytes.
-fn expiry_frame(deadline: u64) -> Frame {
-    Frame {
-        mode: FrameMode::Verify as u8,
-        flags: 0x00,
-        target: Some(frame_tx_expiry_verifier()),
-        gas_limit: 30_000,
-        state_gas_limit: 0,
-        value: U256::zero(),
-        data: Bytes::copy_from_slice(&deadline.to_be_bytes()),
-    }
-}
-
-/// An inclusion list is assembled against the parent and applied to a block
-/// that may sit on the far side of a fork boundary, so it can carry a frame
-/// transaction into a payload whose timestamp is still pre-Hegotá. It must not
-/// land there.
-///
-/// This pins the invariant, not the mechanism: two layers enforce it — the
-/// envelope-level gate in `apply_inclusion_list_transactions` and, under it,
-/// the `FrameTxPreFork` halt that makes the entry fail and be skipped. The test
-/// passes with either one alone, which is the point: whichever layer a future
-/// change removes, the other must still hold the line.
-#[tokio::test]
-async fn pre_hegota_payload_drops_a_listed_frame_transaction() {
-    let sk1 = key(TEST_PRIVATE_KEY);
-    let s1 = sender_from_key(&sk1);
-
-    // A chain WITHOUT `hegota_time`: `setup_store` alone, not `hegota_chain`.
-    let (store, _chain_id) = setup_store(&[s1]).await;
-    assert!(
-        store.get_chain_config().hegota_time.is_none(),
-        "this test needs a chain where Hegotá has not activated"
-    );
-    let blockchain = Blockchain::default_with_store(store.clone());
-    let genesis = store.get_block_header(0).unwrap().unwrap();
-
-    let il = vec![Transaction::FrameTransaction(FrameTransaction {
-        sender: s1,
-        ..Default::default()
-    })];
-
-    let block = build_block_with_il(&store, &blockchain, &genesis, &il).await;
-    assert!(
-        block.body.transactions.is_empty(),
-        "a frame transaction must not enter a pre-Hegotá payload through an inclusion list"
-    );
-}
-
-/// The same invariant for expiry: a frame transaction whose EIP-8141 deadline is
-/// behind the payload's timestamp is invalid in this block whoever listed it, so
-/// it must not be applied. Enforced at both layers as above — the envelope gate,
-/// and the expiry-verifier frame reverting during execution.
-#[tokio::test]
-async fn expired_listed_frame_transaction_is_dropped() {
-    let sk1 = key(TEST_PRIVATE_KEY);
-    let s1 = sender_from_key(&sk1);
-
-    let (store, _blockchain, genesis, _chain_id) = hegota_chain(&[s1]).await;
-    let blockchain = Blockchain::default_with_store(store.clone());
-
-    // `build_block_with_il` builds at `parent.timestamp + 12`, so a deadline at
-    // the parent's timestamp is already behind the block being built.
-    let deadline = genesis.timestamp;
-    let mut frame_tx = FrameTransaction {
-        sender: s1,
-        ..Default::default()
-    };
-    frame_tx.frames = vec![expiry_frame(deadline)];
-    assert_eq!(
-        frame_tx.expiry_deadline(),
-        Some(deadline),
-        "the fixture must actually carry an expiry deadline"
-    );
-
-    let il = vec![Transaction::FrameTransaction(frame_tx)];
-    let block = build_block_with_il(&store, &blockchain, &genesis, &il).await;
-    assert!(
-        block.body.transactions.is_empty(),
-        "an expired frame transaction must not be applied from an inclusion list"
-    );
 }

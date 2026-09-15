@@ -719,10 +719,11 @@ impl ChainConfig {
 
     pub fn get_fork_blob_schedule(&self, block_timestamp: u64) -> Option<ForkBlobSchedule> {
         // EIP-7892: from Prague onward the blob schedule only changes at BPO forks.
-        // Named forks (Osaka, Amsterdam, Hegotá) carry no blob params of their own and
-        // inherit the highest activated BPO entry, so resolution falls through the BPO
+        // Named forks (Osaka, Amsterdam, Hegotá, LStar) carry no blob params of their own
+        // and inherit the highest activated BPO entry, so resolution falls through the BPO
         // chain. A genesis that pins an entry for the named fork anyway takes precedence.
-        if (self.is_hegota_activated(block_timestamp)
+        if (self.is_lstar_activated(block_timestamp)
+            || self.is_hegota_activated(block_timestamp)
             || self.is_amsterdam_activated(block_timestamp))
             && let Some(schedule) = self.blob_schedule.amsterdam
         {

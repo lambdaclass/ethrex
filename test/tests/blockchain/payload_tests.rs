@@ -224,7 +224,6 @@ async fn builder_caps_elided_blob_bundles_to_fork_max() {
     }
 
     let args = BuildPayloadArgs {
-        inclusion_list_transactions: None,
         parent: genesis_header.hash(),
         timestamp: genesis_header.timestamp + 12,
         fee_recipient: Address::zero(),
@@ -235,6 +234,7 @@ async fn builder_caps_elided_blob_bundles_to_fork_max() {
         version: 3,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+        inclusion_list_transactions: None,
     };
     let payload_block = create_payload(&args, &store, Bytes::new()).expect("create_payload");
     let result = blockchain

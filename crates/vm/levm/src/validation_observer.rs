@@ -29,8 +29,21 @@
 //! canonical runtime code hash, and the
 //! `current_frame_index == canonical_paymaster_pay_frame` skip applies the
 //! exemption to it.
+//!
+//! ## FOCIL Profile 2 replay
+//! The same observer serves the inclusion-list omission check for frame
+//! transactions (the FOCIL frame-transaction EIP, "Profile 2 eligibility"). That
+//! replay asks a different question from mempool admission and differs from it
+//! in exactly the places the EIP names: the storage rule is the
+//! [`Profile2Surface`] (slots `0..AA_VOPS_SLOT_COUNT` of `sender` and `payer`,
+//! nothing exempted) instead of EIP-8141's sender-only rule, and a per-list
+//! [`CodeBudget`] bounds the code bodies a replay may load. Both attach through
+//! [`ValidationObserver::profile2`] and [`ValidationObserver::code_budget`];
+//! the canonical pay-frame exemption is never set alongside them, and the
+//! surface check runs before it so it could not widen the surface if it were.
 
-use ethrex_common::{Address, H256};
+use ethrex_common::{Address, H256, U256};
+use rustc_hash::FxHashSet;
 
 /// A validation-trace rule violation detected during prefix simulation.
 ///
@@ -56,107 +69,86 @@ pub enum FrameSimViolation {
     /// A deploy frame finished without leaving non-empty code installed at the
     /// sender's address.
     DeployInstalledNoCode,
-    /// EIP-8369 Profile 2 only: storage was accessed outside the FOCIL AA-VOPS
-    /// surface, i.e. an account other than `sender`/`payer`, or a slot at or
-    /// above `AA_VOPS_SLOT_COUNT`. Such a read makes the transaction ineligible
-    /// for inclusion-list enforcement rather than merely expensive.
-    StorageOutsideVopsSurface,
-    /// EIP-8369 Profile 2 only: the replay tried to load a code body the
-    /// inclusion list's [`CodeBodyBudget`] no longer covers, in bodies or in
-    /// bytes. Ends the replay rather than letting one list dictate how much
-    /// code every attester must read.
-    ValidationCodeBudgetExceeded,
+    /// Profile 2 replay: an `SLOAD` read storage outside the validation surface,
+    /// an account other than `sender` or `payer`, or a slot at or above
+    /// `AA_VOPS_SLOT_COUNT`; carries the storage owner and the slot.
+    StorageReadOutsideSurface { address: Address, slot: H256 },
+    /// Profile 2 replay: the deploy frame wrote a `sender` slot at or above
+    /// `AA_VOPS_SLOT_COUNT`. Writes are restricted to what the deploy frame may
+    /// touch and must additionally stay inside the surface.
+    StorageWriteOutsideSurface { address: Address, slot: H256 },
+    /// Profile 2 replay: loading one more code body would exceed the per-list
+    /// code budget (`MAX_VALIDATION_CODE_BODIES` bodies or
+    /// `MAX_VALIDATION_CODE_BYTES` bytes). The replay does not proceed.
+    CodeBudgetExceeded,
 }
 
-/// What one inclusion list's Profile 2 replays may still load, in distinct code
-/// bodies and in bytes.
+/// The FOCIL Profile 2 validation surface: storage reads are confined to slots
+/// `0..slot_count` of `sender` and `payer`. Attached to the observer it replaces
+/// EIP-8141's sender-only mempool storage rule for the duration of a replay.
+/// `payer` is resolved from the prefix shape before the first frame executes,
+/// so the surface is known before any read is judged against it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Profile2Surface {
+    pub payer: Address,
+    /// `AA_VOPS_SLOT_COUNT`, the number of leading slots inside the surface.
+    pub slot_count: U256,
+}
+
+/// Per-inclusion-list code budget (FOCIL frame-transaction EIP, "Code bound").
 ///
-/// The budget is per inclusion **list**, not per transaction: the motivating
-/// shape is many transactions validating against one shared verifier contract,
-/// whose bytes an attester loads once. `charged` is therefore carried across
-/// every candidate in the list and across both evaluation states, and a body
-/// already on it costs nothing to load again.
-///
-/// EVM gas does not bound this on its own. At a few thousand gas per cold
-/// account, one candidate's VERIFY budget admits hundreds of cold accesses,
-/// each able to pull a maximum-size code body.
-///
-/// Deliberately not `Default`: a zero allowance rejects every replay, so the
-/// bound is always chosen explicitly.
+/// Every distinct `codeHash` loaded by any replay of the list is charged once,
+/// one body and its byte length, and is free to every later replay of the same
+/// list, at either evaluation state. An account with empty code is not a body.
+/// Charges survive the verdict: a replay that loaded bodies and then failed
+/// still made every attester read them, so the caller carries the budget from
+/// one replay to the next unchanged by the outcome.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CodeBodyBudget {
-    /// Code hashes already charged, by this replay or by an earlier one for the
-    /// same inclusion list.
-    pub charged: Vec<H256>,
-    /// Distinct bodies still chargeable.
-    pub bodies_remaining: u32,
-    /// Total code bytes still chargeable.
-    pub bytes_remaining: u64,
+pub struct CodeBudget {
+    pub max_bodies: u64,
+    pub max_bytes: u64,
+    pub bodies_loaded: u64,
+    pub bytes_loaded: u64,
+    /// The code hashes already paid for by this list.
+    pub loaded: FxHashSet<H256>,
+    /// Set once a charge was refused. No further charges are taken, so the
+    /// replay that overran the budget does not keep loading bodies.
+    pub exceeded: bool,
 }
 
-impl CodeBodyBudget {
-    pub fn new(bodies: u32, bytes: u64) -> Self {
+impl CodeBudget {
+    pub fn new(max_bodies: u64, max_bytes: u64) -> Self {
         Self {
-            charged: Vec::new(),
-            bodies_remaining: bodies,
-            bytes_remaining: bytes,
+            max_bodies,
+            max_bytes,
+            bodies_loaded: 0,
+            bytes_loaded: 0,
+            loaded: FxHashSet::default(),
+            exceeded: false,
         }
     }
 
-    /// An allowance nothing can exhaust, for callers that want the Profile 2
-    /// storage surface without the code bound (tests, and any future caller
-    /// that bounds its own work another way).
-    pub fn unbounded() -> Self {
-        Self::new(u32::MAX, u64::MAX)
-    }
-
-    /// Charge one code body. Returns `false` when it does not fit, which is
-    /// what ends the replay.
-    ///
-    /// Empty code is free: an account with no code is not a body to load, and
-    /// charging it would let the number of *accounts* a prefix touches consume
-    /// a budget meant for bytes.
-    fn charge(&mut self, code_hash: H256, len: u64) -> bool {
-        if len == 0 || self.charged.contains(&code_hash) {
-            return true;
-        }
-        if self.bodies_remaining == 0 || self.bytes_remaining < len {
+    /// Charges a non-empty code body of `len` bytes under `code_hash`, unless
+    /// this list already paid for it. Returns `false`, and marks the budget
+    /// exceeded, when the charge does not fit.
+    pub fn charge(&mut self, code_hash: H256, len: u64) -> bool {
+        if self.exceeded {
             return false;
         }
-        self.bodies_remaining = self.bodies_remaining.saturating_sub(1);
-        self.bytes_remaining = self.bytes_remaining.saturating_sub(len);
-        self.charged.push(code_hash);
+        if self.loaded.contains(&code_hash) {
+            return true;
+        }
+        let bodies = self.bodies_loaded.saturating_add(1);
+        let bytes = self.bytes_loaded.saturating_add(len);
+        if bodies > self.max_bodies || bytes > self.max_bytes {
+            self.exceeded = true;
+            return false;
+        }
+        self.loaded.insert(code_hash);
+        self.bodies_loaded = bodies;
+        self.bytes_loaded = bytes;
         true
     }
-}
-
-/// EIP-8369 Profile 2 (FOCIL AA-VOPS) storage surface.
-///
-/// Present only when replaying a validation prefix to decide inclusion-list
-/// eligibility. It both widens and narrows EIP-8141's mempool rule: reads of
-/// `payer` are permitted where the mempool allows only `sender`, but every
-/// access must fall in the first `slot_count` slots, so "a mapping value at a
-/// `keccak256`-derived slot is outside Profile 2".
-#[derive(Debug, Clone, Copy)]
-pub struct FocilVopsSurface {
-    /// Resolved statically from the prefix: `sender` for the `self_verify`
-    /// shapes, the pay frame's resolved target otherwise.
-    pub payer: Address,
-    /// `AA_VOPS_SLOT_COUNT` for the chain being judged.
-    pub slot_count: u64,
-}
-
-/// Everything an EIP-8369 Profile 2 replay adds to ordinary prefix simulation.
-///
-/// The surface and the budget always travel together: a replay judging
-/// inclusion-list eligibility has both, and ordinary mempool simulation has
-/// neither. Passing them as one value is what keeps that invariant visible.
-#[derive(Debug, Clone)]
-pub struct Profile2Replay {
-    /// The AA-VOPS storage surface reads must stay inside.
-    pub surface: FocilVopsSurface,
-    /// The inclusion list's remaining code-body allowance.
-    pub code_budget: CodeBodyBudget,
 }
 
 /// EIP-8141 validation-trace observer. Inert (`active == false`) in every VM
@@ -214,15 +206,14 @@ pub struct ValidationObserver {
     /// (EIP-8250 §Mempool). Such a prefix depends on the legacy nonce even when
     /// the transaction's own nonce lives in a keyed domain.
     pub read_legacy_nonce: bool,
+    /// FOCIL Profile 2 validation surface. `Some` only during an inclusion-list
+    /// omission replay, where it replaces the sender-only storage rule.
+    pub profile2: Option<Profile2Surface>,
+    /// FOCIL Profile 2 per-list code budget. `Some` only during an omission
+    /// replay; the harness moves it in before the replay and back out after.
+    pub code_budget: Option<CodeBudget>,
     /// First violation observed, if any.
     pub violation: Option<FrameSimViolation>,
-    /// EIP-8369 Profile 2 storage surface. `None` during ordinary mempool
-    /// simulation, where EIP-8141's sender-only rule applies instead.
-    pub focil_surface: Option<FocilVopsSurface>,
-    /// EIP-8369 Profile 2 per-inclusion-list code-body allowance. `None` during
-    /// ordinary mempool simulation, which is a local policy and bounds its own
-    /// work by the operator's `MAX_VERIFY_GAS` instead.
-    pub code_budget: Option<CodeBodyBudget>,
 }
 
 impl ValidationObserver {
@@ -242,9 +233,9 @@ impl ValidationObserver {
             last_opcode: 0,
             touched_sender_slots: Vec::new(),
             read_legacy_nonce: false,
-            violation: None,
-            focil_surface: None,
+            profile2: None,
             code_budget: None,
+            violation: None,
         }
     }
 
@@ -269,9 +260,30 @@ impl ValidationObserver {
             last_opcode: 0,
             touched_sender_slots: Vec::new(),
             read_legacy_nonce: false,
-            violation: None,
-            focil_surface: None,
+            profile2: None,
             code_budget: None,
+            violation: None,
+        }
+    }
+
+    /// Profile 2 only: whether `slot` of `address` lies inside the validation
+    /// surface, that is, the owner is `sender` or `payer` and the slot is below
+    /// `AA_VOPS_SLOT_COUNT`. `None` when no surface is attached, in which case
+    /// the mempool's sender-only rule applies instead.
+    pub fn slot_in_surface(&self, address: Address, slot: H256) -> Option<bool> {
+        let surface = self.profile2?;
+        let owner_in_surface = address == self.sender || address == surface.payer;
+        Some(owner_in_surface && U256::from_big_endian(slot.as_bytes()) < surface.slot_count)
+    }
+
+    /// Profile 2 only: charges one code body against the per-list budget and
+    /// records [`FrameSimViolation::CodeBudgetExceeded`] when it does not fit.
+    /// No-op without a budget, so the mempool path pays nothing here.
+    pub fn charge_code(&mut self, code_hash: H256, len: u64) {
+        if let Some(budget) = self.code_budget.as_mut()
+            && !budget.charge(code_hash, len)
+        {
+            self.record_violation(FrameSimViolation::CodeBudgetExceeded);
         }
     }
 
@@ -282,38 +294,6 @@ impl ValidationObserver {
     pub fn in_recent_root_frame(&self, code_address: Address) -> bool {
         self.recent_root_verifier_frame == Some(self.current_frame_index)
             && code_address == self.recent_root_address
-    }
-
-    /// Whether `(address, slot)` lies inside the EIP-8369 Profile 2 surface:
-    /// `sender` or `payer`, and a slot index below `AA_VOPS_SLOT_COUNT`.
-    ///
-    /// Returns `false` when no surface is configured, so a caller that reaches
-    /// this without Profile 2 in play rejects rather than silently permitting.
-    /// The numeric slot bound is what puts `keccak256`-derived mapping slots
-    /// outside the profile.
-    pub fn within_vops_surface(&self, address: Address, slot: H256) -> bool {
-        let Some(surface) = self.focil_surface else {
-            return false;
-        };
-        if address != self.sender && address != surface.payer {
-            return false;
-        }
-        ethrex_common::U256::from_big_endian(slot.as_bytes())
-            < ethrex_common::U256::from(surface.slot_count)
-    }
-
-    /// Charge one code body against the inclusion list's allowance, recording
-    /// [`FrameSimViolation::ValidationCodeBudgetExceeded`] when it does not fit.
-    ///
-    /// A no-op when no budget is configured, so ordinary mempool simulation is
-    /// unaffected.
-    pub fn charge_code_body(&mut self, code_hash: H256, len: u64) {
-        let Some(budget) = self.code_budget.as_mut() else {
-            return;
-        };
-        if !budget.charge(code_hash, len) {
-            self.record_violation(FrameSimViolation::ValidationCodeBudgetExceeded);
-        }
     }
 
     /// Records the first violation observed; later violations are ignored (the

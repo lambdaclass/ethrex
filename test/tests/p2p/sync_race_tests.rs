@@ -59,7 +59,6 @@ fn build_child_block(
     timestamp: u64,
 ) -> Block {
     let args = BuildPayloadArgs {
-        inclusion_list_transactions: None,
         parent: parent.hash(),
         timestamp,
         fee_recipient: H160::random(),
@@ -70,6 +69,7 @@ fn build_child_block(
         version: 3,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+        inclusion_list_transactions: None,
     };
     let payload = create_payload(&args, store, Bytes::new()).unwrap();
     blockchain.build_payload(payload).unwrap().payload

@@ -598,7 +598,10 @@ fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<U256, crate::errors::V
         default_hook::validate_min_gas_limit(vm, &intrinsic)?;
         // EIP-7825 (Prague to pre-Amsterdam): reject tx if gas_limit > TX_MAX_GAS_LIMIT_AMSTERDAM.
         // Amsterdam removes this restriction (EIP-8037 reservoir model).
-        if vm.env.config.fork < Fork::Amsterdam && vm.tx.gas_limit() > TX_MAX_GAS_LIMIT_AMSTERDAM {
+        if !vm.env.disable_gas_allowance_check
+            && vm.env.config.fork < Fork::Amsterdam
+            && vm.tx.gas_limit() > TX_MAX_GAS_LIMIT_AMSTERDAM
+        {
             return Err(VMError::TxValidation(
                 TxValidationError::TxMaxGasLimitExceeded {
                     tx_hash: vm.tx.hash(vm.crypto),
@@ -606,7 +609,8 @@ fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<U256, crate::errors::V
                 },
             ));
         }
-        if vm.env.config.fork >= Fork::Osaka
+        if !vm.env.disable_gas_allowance_check
+            && vm.env.config.fork >= Fork::Osaka
             && vm.env.config.fork < Fork::Amsterdam
             && vm.tx.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP
         {

@@ -505,6 +505,8 @@ pub async fn init_native_rollup_l2(
         bal_parallel_exec_enabled: true,
         bal_prefetch_enabled: true,
         bal_parallel_trie_enabled: true,
+        blob_sampling_enabled: opts.node_opts.blob_sampling || opts.node_opts.blob_eager_provider,
+        blob_eager_provider: opts.node_opts.blob_eager_provider,
         max_reorg_depth: opts.node_opts.max_reorg_depth,
         gap_admit_occupancy_threshold: opts.node_opts.mempool_gap_admit_occupancy_threshold,
         private_mempool: opts.node_opts.mempool_private,

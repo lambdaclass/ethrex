@@ -281,6 +281,48 @@ enough; Lighthouse also needs `--ignore-ws-check`. The "Starting a node" section
 written while the chain was younger than that and should say so. Found on 2026-09-15 at
 slot about 11,700 with `ethpandaops/lighthouse:focil` (v8.1.3).
 
+## Port onto `hegota-testnet` (2026-09-15)
+
+Leg 1 was brought up to the current spec revision first (`03376812e`): the EIP-161 rule for
+withdrawal-created accounts at `S_end`, positional pricing of protocol verifier frames,
+EIP-8141-only static constraints for candidacy and the replay preamble, a per-replay
+"exceeded" flag on the shared code budget (leg 1 had let one overrun refuse every later
+charge in the list), and the verdict retained with the inclusion list. Four tests pin these.
+
+`dogfood-focil` was then merged into `hegota-testnet` at `f13bd2fb0`. The merge base is
+`06d98078b`, the commit the live chain runs; the branch had merged it in whole. Four
+conflicts, resolved as follows and not discussed beforehand:
+
+| Path | Resolution | Why |
+| --- | --- | --- |
+| `crates/blockchain/focil_eligibility.rs` | deleted (leg 1) | the old layer's module; the recent-root budget fix it had received (`10abe4cc0`) is already part of the new layer's pricing |
+| `test/tests/blockchain/focil_eligibility_tests.rs` | deleted (leg 1) | its tests |
+| `crates/blockchain/inclusion_list_validator.rs` | leg 1 | the `focil-devnet-0` Profile 1 validator, which reads `S_end` before withdrawals as EIP-7805 requires; the live one read the committed root |
+| `docs/eip-focil-frametx.md` | `hegota-testnet` | the current revision, including the `max_gas` and `requires` fixes; leg 1 carried the revision it was updated to |
+
+Everything else merged cleanly, which means the whole `focil-devnet-0` FOCIL layer (builder,
+validator, engine handlers, fixture pins at `tests-focil-devnet@v0.2.0`) replaced the older
+snapshot the live chain carried, alongside the new Profile 2 layer. The six documents that
+describe the replaced layer (`hegota-testnet.md`, the four `hegota-testnet-*` operations
+documents and `hegota-upgrade-merge.md`) were restored where leg 1's strip had deleted them
+and given a banner saying which of their statements are about the previous code.
+
+The merged tree: `cargo check` on all targets clean apart from three pre-existing warnings,
+`fmt` clean, `clippy` on libraries and binaries with warnings denied clean, and the tests of
+`ethrex-blockchain`, `ethrex-rpc`, `ethrex-levm`, `ethrex-vm` and `ethrex-test` all passing
+(1,528 tests). Relative to the audit of `41d048135`, this closes the paymaster exemption, the
+chain id, the withdrawal discount, the stricter statics, the recomputed verdict, the missing
+dedup and the single-pass builder, and separately the Profile 1 withdrawal reading. Still
+open by choice: the mempool prices a prefix without the expiry frame (the spec's SHOULD, a
+local policy); `inclusionListSatisfied` is omitted rather than `null` when a payload is not
+`VALID`, because the same Rust type serializes older payload statuses.
+
+The merged tree's release build was run as a joiner against the live chain: genesis sync of
+13,738 blocks in about seven minutes, following the head with three peers on each layer, no
+warning and no undecided verdict logged. Over the first 60 live blocks it and the network's
+first beacon node both saw, every satisfaction record agrees, all `satisfied: true`; the
+same one-sided caveat as before applies, since the live chain has no unsatisfied block.
+
 ## Cross-implementation agreement (2026-09-15)
 
 Both implementations ran side by side against the live chain from one laptop, each as an

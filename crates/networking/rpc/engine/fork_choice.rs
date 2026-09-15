@@ -3,7 +3,7 @@ use ethrex_blockchain::{
     fork_choice::apply_fork_choice_with_deep_reorg,
     payload::{BuildPayloadArgs, create_payload},
 };
-use ethrex_common::types::{BlockHeader, ELASTICITY_MULTIPLIER, Transaction};
+use ethrex_common::types::{BlockHeader, ELASTICITY_MULTIPLIER};
 use ethrex_p2p::sync::SyncMode;
 use serde_json::Value;
 use tracing::{debug, info, warn};
@@ -282,15 +282,26 @@ impl RpcHandler for ForkChoiceUpdatedV4 {
 pub struct ForkChoiceUpdatedV5 {
     pub fork_choice_state: ForkChoiceState,
     pub payload_attributes: Option<PayloadAttributesV5>,
+    /// Optional custody column bitmask from the 3rd Engine API parameter,
+    /// carried over from V4 (execution-apis bogota.md,
+    /// `engine_forkchoiceUpdatedV5` params). `None` means the param was absent
+    /// or null; `Some(mask)` triggers a custody column update in the mempool.
+    pub custody_columns: Option<u128>,
 }
 
 impl From<ForkChoiceUpdatedV5> for RpcRequest {
     fn from(val: ForkChoiceUpdatedV5) -> Self {
+        let custody_hex = val
+            .custody_columns
+            .map(|m| format!("0x{}", hex::encode(m.to_le_bytes())))
+            .map(Value::String)
+            .unwrap_or(Value::Null);
         RpcRequest {
             method: "engine_forkchoiceUpdatedV5".to_string(),
             params: Some(vec![
                 serde_json::json!(val.fork_choice_state),
                 serde_json::json!(val.payload_attributes),
+                custody_hex,
             ]),
             ..Default::default()
         }
@@ -299,14 +310,18 @@ impl From<ForkChoiceUpdatedV5> for RpcRequest {
 
 impl RpcHandler for ForkChoiceUpdatedV5 {
     fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
-        let (fork_choice_state, payload_attributes) = parse_v5(params)?;
+        let (fork_choice_state, payload_attributes, custody_columns) = parse_v5(params)?;
         Ok(ForkChoiceUpdatedV5 {
             fork_choice_state,
             payload_attributes,
+            custody_columns,
         })
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        // As in V4, the custody set update runs independently of the fork choice
+        // update, so it is applied before any early return from the forkchoice flow.
+        apply_custody_update(&context, self.custody_columns);
         let (head_block_opt, mut response) =
             handle_forkchoice(&self.fork_choice_state, context.clone(), 5).await?;
 
@@ -318,16 +333,37 @@ impl RpcHandler for ForkChoiceUpdatedV5 {
         if response.payload_status.status == PayloadValidationStatus::Valid {
             let head_hash = self.fork_choice_state.head_block_hash;
             let retained = match context.retained_inclusion_lists.lock() {
-                Ok(lists) => lists.get(&head_hash).map(<[Transaction]>::to_vec),
+                Ok(lists) => lists.get(&head_hash).cloned(),
                 Err(e) => {
                     return Err(RpcErr::Internal(format!(
                         "retained inclusion list lock poisoned: {e}"
                     )));
                 }
             };
-            if let Some(inclusion_list) = retained {
-                let satisfied =
-                    block_satisfies_inclusion_list(&context, head_hash, &inclusion_list).await?;
+            if let Some(retained) = retained {
+                // The verdict recorded when the payload was judged is reported
+                // as is. A payload that was `ACCEPTED` at `engine_newPayloadV6`
+                // has none yet; it is judged now, once, and the result kept.
+                let satisfied = match retained.satisfied {
+                    Some(satisfied) => satisfied,
+                    None => {
+                        let satisfied = block_satisfies_inclusion_list(
+                            &context,
+                            head_hash,
+                            &retained.transactions,
+                        )
+                        .await?;
+                        match context.retained_inclusion_lists.lock() {
+                            Ok(mut lists) => lists.record_verdict(&head_hash, satisfied),
+                            Err(e) => {
+                                return Err(RpcErr::Internal(format!(
+                                    "retained inclusion list lock poisoned: {e}"
+                                )));
+                            }
+                        }
+                        satisfied
+                    }
+                };
                 response.payload_status.inclusion_list_satisfied = Some(satisfied);
             }
         }
@@ -554,9 +590,21 @@ async fn handle_forkchoice(
                     syncer.sync_to_head(fork_choice_state.head_block_hash);
                     ForkChoiceResponse::from(PayloadStatus::syncing())
                 }
-                InvalidForkChoice::Disconnected(_, _) | InvalidForkChoice::ElementNotFound(_) => {
+                InvalidForkChoice::Disconnected(_, _) => {
                     warn!("Invalid fork choice state. Reason: {:?}", forkchoice_error);
                     return Err(RpcErr::InvalidForkChoiceState(forkchoice_error.to_string()));
+                }
+                InvalidForkChoice::ElementNotFound(_) => {
+                    // A safe/finalized block we simply do not have yet is missing data, not an
+                    // inconsistent forkchoice: -38002 is for elements we DO hold but that are
+                    // ordered wrongly (`Unordered`) or sit on a disjoint branch (`Disconnected`).
+                    // Reporting the hard error here wedges a node that has fallen behind, because
+                    // unlike `Syncing`/`StateNotReachable` this arm never starts a sync: the very
+                    // blocks we are missing are never fetched, so every later FCU fails
+                    // identically and the node stays stuck for as long as the CL keeps asking.
+                    warn!("Fork choice element not found, syncing. Reason: {forkchoice_error:?}");
+                    syncer.sync_to_head(fork_choice_state.head_block_hash);
+                    ForkChoiceResponse::from(PayloadStatus::syncing())
                 }
                 InvalidForkChoice::TooDeepReorg { .. } => {
                     warn!("Rejecting fork choice update. Reason: {forkchoice_error}");
@@ -826,39 +874,41 @@ async fn build_payload_v4(
     Ok(payload_id)
 }
 
-fn parse_v5(
+pub(crate) fn parse_v5(
     params: &Option<Vec<Value>>,
-) -> Result<(ForkChoiceState, Option<PayloadAttributesV5>), RpcErr> {
+) -> Result<(ForkChoiceState, Option<PayloadAttributesV5>, Option<u128>), RpcErr> {
     let params = params
         .as_ref()
         .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
 
-    // The third parameter is `custodyColumns: DATA|null`, a 16-byte bitarray of
-    // the consensus client's PeerDAS custody set (engine-api, Bogota). It is
-    // accepted and ignored: ethrex advertises no custody-dependent behaviour, and
-    // a client is free to send null, which is what Lighthouse does.
-    //
-    // One and two parameters stay accepted so a caller predating the third is not
-    // rejected.
-    if params.is_empty() || params.len() > 3 {
-        return Err(RpcErr::BadParams("Expected 1, 2 or 3 params".to_owned()));
+    if params.len() > 3 || params.is_empty() {
+        return Err(RpcErr::BadParams("Expected 1, 2, or 3 params".to_owned()));
     }
 
     let forkchoice_state: ForkChoiceState = serde_json::from_value(params[0].clone())?;
-    let mut payload_attributes: Option<PayloadAttributesV5> = None;
-    if params.len() >= 2 {
-        // execution-apis#796: V5 attributes are validated strictly, mirroring
-        // parse_v4. A present but malformed object (e.g. missing the required
-        // targetGasLimit) is rejected rather than silently ignored; an
-        // absent/null object yields no attributes.
-        payload_attributes = serde_json::from_value::<Option<PayloadAttributesV5>>(
-            params[1].clone(),
-        )
-        .map_err(|error| {
-            RpcErr::InvalidPayloadAttributes(format!("invalid V5 payload attributes: {error}"))
-        })?;
-    }
-    Ok((forkchoice_state, payload_attributes))
+
+    // execution-apis#796: V5 attributes are validated strictly, mirroring
+    // parse_v4. A present but malformed object (e.g. missing the required
+    // targetGasLimit) is rejected rather than silently ignored; an
+    // absent/null object yields no attributes.
+    let payload_attributes = if params.len() >= 2 {
+        serde_json::from_value::<Option<PayloadAttributesV5>>(params[1].clone()).map_err(
+            |error| {
+                RpcErr::InvalidPayloadAttributes(format!("invalid V5 payload attributes: {error}"))
+            },
+        )?
+    } else {
+        None
+    };
+
+    // V5 keeps V4's `custodyColumns` third parameter (execution-apis bogota.md).
+    let custody_columns = if params.len() == 3 {
+        parse_custody_columns(&params[2])?
+    } else {
+        None
+    };
+
+    Ok((forkchoice_state, payload_attributes, custody_columns))
 }
 
 fn validate_attributes_v5(
@@ -1140,7 +1190,7 @@ mod tests {
         });
 
         // Three params with a null custody bitmap: the shape Lighthouse sends.
-        let (_, attrs) = super::parse_v5(&Some(vec![
+        let (_, attrs, _) = super::parse_v5(&Some(vec![
             state.clone(),
             serde_json::Value::Null,
             serde_json::Value::Null,
@@ -1152,7 +1202,7 @@ mod tests {
         // for a client that does advertise one. Accepted and ignored: ethrex
         // has no custody-dependent behaviour, and rejecting the value would
         // halt the chain under a client that sends it.
-        let (_, attrs) = super::parse_v5(&Some(vec![
+        let (_, attrs, _) = super::parse_v5(&Some(vec![
             state.clone(),
             serde_json::Value::Null,
             json!(format!("0x{}", "ff".repeat(16))),

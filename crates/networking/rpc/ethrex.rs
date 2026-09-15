@@ -329,7 +329,6 @@ impl SimulateFrameTransactionRequest {
             prefix,
             Some(FRAME_CANONICAL_PAYMASTER_CODE_HASH),
             context.blockchain.options.max_verify_gas,
-            None,
         )
         .map_err(RpcErr::from)
     }
