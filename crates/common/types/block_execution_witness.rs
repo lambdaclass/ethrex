@@ -55,6 +55,15 @@ pub struct GuestProgramState {
     /// verified.
     /// Verification is done by hashing the trie and comparing the root hash with the account's storage root.
     pub verified_storage_roots: BTreeMap<H256, bool>,
+    /// Flat read path for accounts: hashed address -> RLP `AccountState`,
+    /// built from the same anchored witness records as `state_trie` (and kept
+    /// in sync with it by `apply_account_updates`). Reads hit this map instead
+    /// of walking the trie per level. Absence is meaningful: the witness
+    /// proves the account does not exist.
+    pub accounts_flat: FxHashMap<H256, Vec<u8>>,
+    /// Flat read path for storage slots: (hashed address, hashed slot key) ->
+    /// RLP value, same construction discipline as [`Self::accounts_flat`].
+    pub storage_flat: FxHashMap<(H256, H256), Vec<u8>>,
 }
 
 /// Witness data produced by the client and consumed by the guest program
@@ -371,21 +380,36 @@ impl ExecutionWitness {
 }
 
 /// Build the state trie and per-account storage tries straight from the DFS
-/// record stream (guest side). No node map and no embedding pass: each record
-/// links to its children by stream position, and every rebuilt node is
-/// hash-seeded, so the returned tries need no upfront `hash_no_commit`. The
-/// state root is anchored to `initial_state_root` (the parent header's state
-/// root); storage subtries are bound to their accounts by matching each
-/// subtree's shipped root hash against the accounts found in the state leaves
-/// (several accounts can share one storage trie, so one subtree can bind to
-/// more than one hashed address).
+/// record stream (guest side), plus the flat read maps derived from the same
+/// anchored leaves. No node map and no embedding pass: each record links to
+/// its children by stream position, and every rebuilt node is hash-seeded, so
+/// the returned tries need no upfront `hash_no_commit`. The state root is
+/// anchored to `initial_state_root` (the parent header's state root); storage
+/// subtries are bound to their accounts by matching each subtree's shipped
+/// root hash against the accounts found in the state leaves (several accounts
+/// can share one storage trie, so one subtree can bind to more than one
+/// hashed address).
+#[allow(clippy::type_complexity)]
 fn build_tries_from_records(
     records: &[Vec<u8>],
     initial_state_root: H256,
-) -> Result<(Trie, BTreeMap<H256, Trie>), GuestProgramStateError> {
+) -> Result<
+    (
+        Trie,
+        BTreeMap<H256, Trie>,
+        FxHashMap<H256, Vec<u8>>,
+        FxHashMap<(H256, H256), Vec<u8>>,
+    ),
+    GuestProgramStateError,
+> {
     let mut pos = 0;
     if initial_state_root == EMPTY_TRIE_HASH {
-        return Ok((Trie::new_temp(), BTreeMap::new()));
+        return Ok((
+            Trie::new_temp(),
+            BTreeMap::new(),
+            FxHashMap::default(),
+            FxHashMap::default(),
+        ));
     }
     let mut leaves = Vec::new();
     let (state_root_ref, root_hash) =
@@ -397,31 +421,47 @@ fn build_tries_from_records(
     }
     let state_trie = Trie::new_temp_with_root(state_root_ref);
 
-    // Map each account's storage root to its hashed addresses (from the state
-    // leaves just built) so storage subtries can be bound to their accounts.
-    // Accounts can share an identical storage trie, so one root can key
-    // several addresses; the host ships each distinct root's subtree once.
+    // Feed the flat account map from the state leaves just built, and map each
+    // account's storage root to its hashed addresses so storage subtries can
+    // be bound to their accounts. Accounts can share an identical storage
+    // trie, so one root can key several addresses; the host ships each
+    // distinct root's subtree once.
+    let mut accounts_flat: FxHashMap<H256, Vec<u8>> = FxHashMap::default();
     let mut storage_by_root: FxHashMap<H256, Vec<H256>> = FxHashMap::default();
     for (path_bytes, value) in &leaves {
         if path_bytes.len() != 32 {
             continue;
         }
+        let hashed_address = H256::from_slice(path_bytes);
+        accounts_flat.insert(hashed_address, value.clone());
         if let Ok(account_state) = AccountState::decode(value)
             && account_state.storage_root != EMPTY_TRIE_HASH
         {
             storage_by_root
                 .entry(account_state.storage_root)
                 .or_default()
-                .push(H256::from_slice(path_bytes));
+                .push(hashed_address);
         }
     }
 
     let mut storage_tries = BTreeMap::new();
+    let mut storage_flat: FxHashMap<(H256, H256), Vec<u8>> = FxHashMap::default();
     while pos < records.len() {
+        let mut storage_leaves = Vec::new();
         let (storage_ref, storage_root) =
-            decode_subtree_records(records, &mut pos, None).map_err(TrieError::from)?;
+            decode_subtree_records(records, &mut pos, Some(&mut storage_leaves))
+                .map_err(TrieError::from)?;
         if let Some(hashed_addresses) = storage_by_root.get(&storage_root) {
             for hashed_address in hashed_addresses {
+                for (path_bytes, value) in &storage_leaves {
+                    if path_bytes.len() != 32 {
+                        continue;
+                    }
+                    storage_flat.insert(
+                        (*hashed_address, H256::from_slice(path_bytes)),
+                        value.clone(),
+                    );
+                }
                 storage_tries.insert(
                     *hashed_address,
                     Trie::new_temp_with_root(storage_ref.clone()),
@@ -431,7 +471,7 @@ fn build_tries_from_records(
         // Subtries bound to no account are unused witness data; the spec
         // tolerates them, so they are skipped rather than rejected.
     }
-    Ok((state_trie, storage_tries))
+    Ok((state_trie, storage_tries, accounts_flat, storage_flat))
 }
 
 /// RLP-decode the raw header byte slices into a `Vec<BlockHeader>`.
@@ -525,7 +565,7 @@ impl GuestProgramState {
         // position and every rebuilt node is hash-seeded, so no upfront
         // `hash_no_commit` is needed either. The stream's root is anchored to
         // the parent header's state root inside.
-        let (state_trie, storage_tries) =
+        let (state_trie, storage_tries, accounts_flat, storage_flat) =
             build_tries_from_records(&value.state_nodes, parent_header.state_root)?;
 
         // hash codes — the witness carries each code's JUMPDEST bitmap, so
@@ -561,6 +601,8 @@ impl GuestProgramState {
             chain_config: value.chain_config,
             account_hashes_by_address: BTreeMap::new(),
             verified_storage_roots: BTreeMap::new(),
+            accounts_flat,
+            storage_flat,
         })
     }
 }
@@ -583,6 +625,7 @@ impl GuestProgramState {
             if update.removed {
                 // Remove account from trie
                 self.state_trie.remove(hashed_address.as_bytes())?;
+                self.accounts_flat.remove(&hashed_address);
             } else {
                 // Add or update AccountState in the trie
                 // Fetch current state or create a new state to be inserted
@@ -592,6 +635,9 @@ impl GuestProgramState {
                 };
                 if update.removed_storage {
                     account_state.storage_root = EMPTY_TRIE_HASH;
+                    // Drop the account's flat storage entries too.
+                    self.storage_flat
+                        .retain(|(addr, _), _| *addr != hashed_address);
                 }
                 if let Some(info) = &update.info {
                     account_state.nonce = info.nonce;
@@ -617,21 +663,26 @@ impl GuestProgramState {
                         .partition(|(_k, v)| v.is_zero());
 
                     for (hashed_key, storage_value) in inserts {
-                        storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
+                        let encoded = storage_value.encode_to_vec();
+                        storage_trie.insert(hashed_key.clone(), encoded.clone())?;
+                        self.storage_flat
+                            .insert((hashed_address, H256::from_slice(&hashed_key)), encoded);
                     }
 
                     for (hashed_key, _) in deletes {
                         storage_trie.remove(&hashed_key)?;
+                        self.storage_flat
+                            .remove(&(hashed_address, H256::from_slice(&hashed_key)));
                     }
 
                     let storage_root = storage_trie.hash_no_commit(crypto);
                     account_state.storage_root = storage_root;
                 }
 
-                self.state_trie.insert(
-                    hashed_address.as_bytes().to_vec(),
-                    account_state.encode_to_vec(),
-                )?;
+                let encoded_state = account_state.encode_to_vec();
+                self.state_trie
+                    .insert(hashed_address.as_bytes().to_vec(), encoded_state.clone())?;
+                self.accounts_flat.insert(hashed_address, encoded_state);
             }
         }
         Ok(())
@@ -706,18 +757,29 @@ impl GuestProgramState {
             .entry(address)
             .or_insert_with(|| hash_address(&address, crypto));
 
-        let encoded_state = match self.state_trie.get(hashed_address.as_bytes()) {
-            // The witness proves the account is absent.
-            Ok(None) => return Ok(None),
-            Ok(Some(encoded_state)) => encoded_state,
-            // A missing trie node means the witness lacks the proof needed to
-            // resolve this account. Surface it as an error rather than silently
-            // treating the account as absent, otherwise a read of an unmodified
-            // account (e.g. a failed CALL's target) would pass replay against an
-            // incomplete witness (EIP-8025 `witness_validation_state` tests).
-            Err(e) => return Err(GuestProgramStateError::Database(e.to_string())),
+        let encoded_state = match self.accounts_flat.get(&hashed_address) {
+            Some(encoded_state) => encoded_state,
+            None => {
+                // Distinguish proven-absent from not-covered-by-the-witness:
+                // the trie knows — a read of an account the witness does not
+                // cover must error rather than silently pass as empty
+                // (EIP-8025 `witness_validation_state` tests). The fallback
+                // only runs for accounts missing from the map.
+                match self.state_trie.get(hashed_address.as_bytes()) {
+                    Ok(None) => return Ok(None),
+                    Ok(Some(encoded_state)) => {
+                        let state = AccountState::decode(&encoded_state).map_err(|_| {
+                            GuestProgramStateError::Database(
+                                "Failed to get decode account from trie".to_string(),
+                            )
+                        })?;
+                        return Ok(Some(state));
+                    }
+                    Err(e) => return Err(GuestProgramStateError::Database(e.to_string())),
+                }
+            }
         };
-        let state = AccountState::decode(&encoded_state).map_err(|_| {
+        let state = AccountState::decode(encoded_state).map_err(|_| {
             GuestProgramStateError::Database("Failed to get decode account from trie".to_string())
         })?;
 
@@ -749,20 +811,43 @@ impl GuestProgramState {
         crypto: &dyn Crypto,
     ) -> Result<Option<U256>, GuestProgramStateError> {
         let hashed_key = hash_key(&key, crypto);
-        let Some(storage_trie) = self.get_valid_storage_trie(address, crypto)? else {
+        let hashed_address = *self
+            .account_hashes_by_address
+            .entry(address)
+            .or_insert_with(|| hash_address(&address, crypto));
+        // Verification first (marks the account's storage as verified, ending
+        // the borrow), then the flat read.
+        if self.get_valid_storage_trie(address, crypto)?.is_none() {
             return Ok(None);
-        };
-        if let Some(encoded_key) = storage_trie
-            .get(&hashed_key)
-            .map_err(|e| GuestProgramStateError::Database(e.to_string()))?
+        }
+        if let Some(encoded_key) = self
+            .storage_flat
+            .get(&(hashed_address, H256::from_slice(&hashed_key)))
         {
-            U256::decode(&encoded_key)
+            return U256::decode(encoded_key)
                 .map_err(|_| {
                     GuestProgramStateError::Database("failed to read storage from trie".to_string())
                 })
-                .map(Some)
-        } else {
-            Ok(None)
+                .map(Some);
+        }
+        // On a miss, fall back to the trie (already verified, so this is the
+        // cheap path) to distinguish proven-absent from
+        // not-covered-by-the-witness, same as `get_account_state`.
+        let Some(storage_trie) = self.get_valid_storage_trie(address, crypto)? else {
+            return Err(GuestProgramStateError::Unreachable(
+                "storage trie verified but missing".to_string(),
+            ));
+        };
+        match storage_trie
+            .get(&hashed_key)
+            .map_err(|e| GuestProgramStateError::Database(e.to_string()))?
+        {
+            Some(encoded_key) => U256::decode(&encoded_key)
+                .map_err(|_| {
+                    GuestProgramStateError::Database("failed to read storage from trie".to_string())
+                })
+                .map(Some),
+            None => Ok(None),
         }
     }
 
