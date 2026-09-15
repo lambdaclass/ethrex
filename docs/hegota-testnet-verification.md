@@ -274,6 +274,31 @@ the pinned 30,000 at all. The pool never sends more than one tuple, and its disp
 pins the frame's data length to 72 bytes, so the shape it actually uses is the first
 row. Anyone budgeting a multi-tuple frame needs a fresh measurement with distinct roots.
 
+### The shielded pool on the live chain (2026-09-15)
+
+The relaunch's own gate is the conformance script, which covers the node. It does not
+cover the application the chain exists for, so the pool's lifecycle was run against
+`rpc1.privacy.ethrex.xyz` after the relaunch rather than only against a devnet.
+
+Deploy, shield (block 8,150), publish root, transfer (8,155), publish root, withdraw
+(8,160), claim. The recipient was credited exactly. The pool is at
+`0x8fdab78244c5fa43809d064fc93e6c0e5041971d`. Per-frame gas matched the devnet figures to
+the gas, which is what makes the two runs comparable rather than merely both green:
+5,579 for the recent-root verifier, 254,685 for the proof frame, 796,585 and 25,495 for
+the two settlements.
+
+Two things this run established that a devnet cannot. The public RPC exposes
+`ethrex_simulateFrameTransaction` and EIP-7843 `slotNumber`, so a wallet can build and
+dry-run a frame transaction without an internal endpoint. And the deployment path works
+over HTTPS against a remote node, which is how an external user would meet this chain.
+
+A caution for whoever runs this next. The pool source that works here is the
+canonical-frame revision. The upstream repository's `main` does not carry it: the pull
+request adding it merged into a branch that had already been squash-merged, so its
+commits never reached `main`, which still encodes recent roots as an envelope field this
+chain cannot decode. Check the source has `recent_root_window_error` in
+`devnet/pool_frametx.py` before deploying from it.
+
 ### Re-validation after the pool review (2026-09-14)
 
 The shielded pool's review round found a one-slot disagreement between the wallet's copy
