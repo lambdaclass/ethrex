@@ -115,6 +115,18 @@ builder's second pass over skipped inclusion-list entries, and three test files 
 and fill units, replay rules, real blocks for cases 1, 2, 3, 7 both ways, 21, pre-fork and the
 builder retry). 1,317 tests pass in `ethrex-test`, 39 of them new.
 
+### The implementation as a joiner (2026-09-15)
+
+The leg 1 node (`dogfood-focil` at `f919aa57b`, release build) was run against the live
+chain alongside the leg 2 base node, peered with it over loopback and with the network's
+three bootnodes: genesis sync with `--ignore-ws-check`, 12,010 blocks, following the head
+with four execution peers and three beacon peers. Over the first 95 blocks it and the
+network's first beacon node both saw live, every per-block satisfaction record agrees, all
+`satisfied: true`; the node logged no undecided Profile 2 verdict and no warning. Same
+caveat as for the base: the live chain carries no unsatisfied block, so this shows the
+implementation does not reject what the network accepts, not that it rejects what it
+should. That half is the block-level tests (cases 1, 2, 3, 7, 21 and the builder retry).
+
 ### Spec feedback
 
 The implementer's log is `leg1-spec-feedback.md` in this directory, 21 entries, verbatim.
