@@ -7,14 +7,15 @@
 //!   transactions without blobs. Keeps EIP-7805's end-of-payload omission check
 //!   and consumes no VERIFY budget.
 //! - **Profile 2**, FOCIL AA-VOPS: EIP-8141 frame transactions whose validation
-//!   stays inside a fixed state surface, judged at a builder-claimed index.
+//!   stays inside a fixed state surface, judged at the two endpoints of the
+//!   payload (see `focil_profile2`).
 //!
 //! A transaction in neither profile may still be listed and included, but its
 //! omission is excused.
 //!
 //! Everything here is static: it reads the transaction and the block header, and
-//! never touches state or the EVM. Stateful eligibility is decided later, during
-//! replay at the evaluation index, because it depends on that index.
+//! never touches state or the EVM. Stateful eligibility is decided later, by
+//! replaying the validation prefix at each evaluation state.
 //!
 //! ## Eligibility is not mempool admission
 //!
@@ -121,8 +122,8 @@ pub fn classify_sender_code(code: &[u8]) -> SenderCode {
 pub enum VopsProfile {
     /// Base VOPS. Omission is judged by EIP-7805's end-of-payload rule.
     One,
-    /// FOCIL AA-VOPS. Omission is judged at a builder-claimed index, and only
-    /// after the transaction also passes stateful eligibility there.
+    /// FOCIL AA-VOPS. Omission is judged at the payload's two endpoints, and
+    /// only after the transaction also passes stateful eligibility at one.
     TwoCandidate,
     /// Outside FOCIL enforcement; omission is always excused.
     Ineligible,
@@ -160,9 +161,16 @@ pub fn fee_valid(tx: &Transaction, base_fee_per_gas: u64) -> bool {
 /// means the occurrence is ignored and consumes nothing.
 ///
 /// An expiry verifier frame "is ignored only when matching the four allowed
-/// prefix shapes; its gas limit still counts". `ValidationPrefix::frame_indices`
-/// deliberately excludes expiry frames, so summing it alone would undercount;
-/// they are added back here.
+/// prefix shapes; its gas limit still counts". EIP-8272 says the same of the
+/// recent-root verifier frame: "Clients MUST count the recent root verifier
+/// frame's `limits.execution` toward EIP-8141's `MAX_VERIFY_GAS` limit".
+/// `ValidationPrefix::frame_indices` deliberately excludes both, so summing it
+/// alone would undercount; they are added back here, exactly as the mempool's
+/// own budget check adds them.
+///
+/// The two sums must agree or a transaction can be admitted by the mempool with
+/// a budget the inclusion-list fill then prices lower, and every attester's
+/// replay runs frames the fill never charged for.
 pub fn verify_budget_cost(tx: &FrameTransaction) -> Option<u64> {
     Some(verify_budget_prefix_cost(tx)?.saturating_add(verify_budget_signature_cost(tx)))
 }
@@ -187,7 +195,19 @@ pub fn verify_budget_prefix_cost(tx: &FrameTransaction) -> Option<u64> {
         .map(|f| f.gas_limit)
         .fold(0u64, |acc, g| acc.saturating_add(g));
 
-    Some(prefix_gas.saturating_add(expiry_gas))
+    // The positional verifier frame the prefix recognised, not any frame that
+    // merely has the shape: an out-of-position one fails structural validation
+    // and is never a candidate.
+    let recent_root_gas = prefix
+        .recent_root_index
+        .and_then(|i| tx.frames.get(i))
+        .map_or(0, |f| f.gas_limit);
+
+    Some(
+        prefix_gas
+            .saturating_add(expiry_gas)
+            .saturating_add(recent_root_gas),
+    )
 }
 
 /// The signature half of the VERIFY budget, debited before any protocol
@@ -278,37 +298,6 @@ pub fn profile_2_payer(tx: &FrameTransaction) -> Option<Address> {
                 .unwrap_or(tx.sender),
         ),
         None => Some(tx.sender),
-    }
-}
-
-/// The evaluation index to judge an omitted Profile 2 candidate at, when the
-/// builder supplies no usable claim.
-///
-/// EIP-8369 lets a builder commit an index in `[0, len(block.transactions)]`, and
-/// pins the fallback: "A missing, malformed, or out-of-range index defaults to
-/// `len(block.transactions)`, the end of the payload." That default is not a
-/// stub. For a position-stable transaction, one whose validation dependencies
-/// are constant within the payload or change monotonically, invalidity at any
-/// index persists to the end, so judging at the end is equivalent to EIP-7805's
-/// existing rule.
-///
-/// No claimed index can reach the execution layer yet: EIP-7805 defines no
-/// beacon-block field and the Engine API has no parameter, and the EIP-8369
-/// extension that would define the encoding does not exist. Until it does, every
-/// omission is judged here.
-pub fn default_evaluation_index(block_tx_count: usize) -> usize {
-    block_tx_count
-}
-
-/// Clamp a builder-claimed index to the range EIP-8369 allows, falling back to
-/// [`default_evaluation_index`] when it is out of range.
-///
-/// Kept separate from the default so that wiring a claim in later is a change at
-/// the call site rather than a change to the rule.
-pub fn evaluation_index(claimed: Option<usize>, block_tx_count: usize) -> usize {
-    match claimed {
-        Some(idx) if idx <= block_tx_count => idx,
-        _ => default_evaluation_index(block_tx_count),
     }
 }
 

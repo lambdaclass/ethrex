@@ -6,13 +6,12 @@ use k256::ecdsa::SigningKey;
 
 use ethrex_blockchain::focil_eligibility::{
     FillOutcome, MAX_VERIFY_GAS_PER_IL, MAX_VERIFY_GAS_PER_TX, SenderCode, VopsProfile, classify,
-    classify_sender_code, default_evaluation_index, evaluation_index, fee_valid, fill_il_budget,
-    profile_2_payer, verify_budget_cost,
+    classify_sender_code, fee_valid, fill_il_budget, profile_2_payer, verify_budget_cost,
 };
 use ethrex_common::types::{
     APPROVE_EXECUTION, APPROVE_EXECUTION_AND_PAYMENT, APPROVE_PAYMENT, EIP1559Transaction,
     FRAME_SIG_SCHEME_SECP256K1, Frame, FrameMode, FrameSignature, FrameTransaction,
-    LegacyTransaction, Transaction, TxKind, frame_tx_expiry_verifier,
+    LegacyTransaction, Transaction, TxKind, frame_tx_expiry_verifier, frame_tx_recent_root,
 };
 use ethrex_common::{Address, U256};
 
@@ -226,6 +225,38 @@ fn an_expiry_verifier_frames_gas_counts_toward_the_budget() {
 
 /// The budget is signature-verification gas plus prefix frame gas, so adding a
 /// signature raises the cost. SECP256K1 is 2800 gas per EIP-8141.
+#[test]
+fn a_recent_root_verifier_frames_gas_counts_toward_the_budget() {
+    // EIP-8272: the canonical verifier frame leads the transaction, is skipped
+    // for shape matching, and its `limits.execution` still counts toward the
+    // verify budget. Pricing the shape-matched prefix alone undercounts by
+    // exactly this frame, and the mempool's own MAX_VERIFY_GAS sum includes it,
+    // so the two budgets would disagree about the same transaction.
+    let without = self_verify_tx(50_000);
+    let base = verify_budget_cost(&without).expect("priceable");
+
+    let mut with_recent_root = without;
+    with_recent_root.frames.insert(
+        0,
+        Frame {
+            mode: FrameMode::Verify as u8,
+            flags: 0,
+            target: Some(frame_tx_recent_root()),
+            gas_limit: 9_000,
+            state_gas_limit: 0,
+            value: U256::zero(),
+            data: vec![0u8; 72].into(),
+        },
+    );
+
+    let with = verify_budget_cost(&with_recent_root).expect("priceable");
+    assert_eq!(
+        with,
+        base + 9_000,
+        "recent-root verifier gas must be added to the prefix sum"
+    );
+}
+
 #[test]
 fn signature_verification_gas_is_part_of_the_budget() {
     let one_sig = self_verify_tx(50_000);
@@ -454,18 +485,6 @@ fn the_surface_predicate_fails_closed_when_unconfigured() {
 
 /// EIP-8369 pins the fallback: "A missing, malformed, or out-of-range index
 /// defaults to `len(block.transactions)`, the end of the payload."
-#[test]
-fn the_evaluation_index_falls_back_to_end_of_payload() {
-    assert_eq!(default_evaluation_index(7), 7);
-    // No claim, and an out-of-range claim, both fall back.
-    assert_eq!(evaluation_index(None, 7), 7);
-    assert_eq!(evaluation_index(Some(8), 7), 7);
-    // In-range claims are honoured, including index 0 (before the first tx) and
-    // exactly len(block.transactions).
-    assert_eq!(evaluation_index(Some(0), 7), 0);
-    assert_eq!(evaluation_index(Some(3), 7), 3);
-    assert_eq!(evaluation_index(Some(7), 7), 7);
-}
 
 /// EIP-8369 Profile 1 sender validity: "EOAs with empty code and EOAs with a
 /// valid EIP-7702 delegation indicator can originate transactions; accounts

@@ -63,9 +63,9 @@ use crate::mempool::transaction_intrinsic_gas;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Profile2Eligibility {
     /// The transaction would have passed EIP-8369 Profile 2 stateful
-    /// eligibility replay (recent-root references, payer resolution, and the
-    /// AA-VOPS validation-prefix replay) at the evaluation index: its
-    /// omission is the kind EIP-8369 makes enforceable.
+    /// eligibility replay (the recent-root verifier frame's tuples, payer
+    /// resolution, and the AA-VOPS validation-prefix replay) at one of the two
+    /// evaluation states: its omission is the kind EIP-8369 makes enforceable.
     Eligible,
     /// A Profile 2 eligibility condition failed (budget, recent-root
     /// reference, payer resolution, or a validation-trace violation such as
