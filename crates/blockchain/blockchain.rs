@@ -2204,12 +2204,13 @@ impl Blockchain {
                 )
             })
             .collect();
-        let state_nodes = ethrex_common::types::block_execution_witness::witness_records_from_node_map(
-            &nodes,
-            initial_state_root,
-            &NativeCrypto,
-        )
-        .map_err(|e| ChainError::WitnessGeneration(format!("witness record emission: {e}")))?;
+        let state_nodes =
+            ethrex_common::types::block_execution_witness::witness_records_from_node_map(
+                &nodes,
+                initial_state_root,
+                &NativeCrypto,
+            )
+            .map_err(|e| ChainError::WitnessGeneration(format!("witness record emission: {e}")))?;
 
         Ok((
             ExecutionWitness {
@@ -2406,12 +2407,13 @@ impl Blockchain {
                 )
             })
             .collect();
-        let state_nodes = ethrex_common::types::block_execution_witness::witness_records_from_node_map(
-            &nodes,
-            initial_state_root,
-            &NativeCrypto,
-        )
-        .map_err(|e| ChainError::WitnessGeneration(format!("witness record emission: {e}")))?;
+        let state_nodes =
+            ethrex_common::types::block_execution_witness::witness_records_from_node_map(
+                &nodes,
+                initial_state_root,
+                &NativeCrypto,
+            )
+            .map_err(|e| ChainError::WitnessGeneration(format!("witness record emission: {e}")))?;
 
         Ok(ExecutionWitness {
             codes,

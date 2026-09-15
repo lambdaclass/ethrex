@@ -13,7 +13,9 @@ use ethrex_crypto::Crypto;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_rlp::structs::{Decoder, Encoder};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_trie::witness_codec::{decode_subtree_records, decode_witness_node, encode_subtree_records};
+use ethrex_trie::witness_codec::{
+    decode_subtree_records, decode_witness_node, encode_subtree_records,
+};
 use ethrex_trie::{EMPTY_TRIE_HASH, FxHashMap, Nibbles, Node, NodeRef, Trie, TrieError};
 use serde::{Deserialize, Serialize};
 
@@ -257,10 +259,17 @@ pub fn witness_records_from_node_map(
     };
     if let Some(root) = &state_root {
         encode_subtree_records(root, &initial_state_root, &mut records);
+        // Distinct storage roots only: accounts can share an identical storage
+        // trie, and the guest binds each shipped subtree to every account whose
+        // storage root matches it.
+        let mut emitted_roots = BTreeSet::new();
         for (_hashed_address, storage_root_hash) in
             collect_accounts_from_embedded_trie(root, nodes, crypto)
         {
-            if storage_root_hash == EMPTY_TRIE_HASH || !nodes.contains_key(&storage_root_hash) {
+            if storage_root_hash == EMPTY_TRIE_HASH
+                || !nodes.contains_key(&storage_root_hash)
+                || !emitted_roots.insert(storage_root_hash)
+            {
                 continue;
             }
             let node = Trie::get_embedded_root_committed(nodes, storage_root_hash, crypto)?;
@@ -345,7 +354,9 @@ impl ExecutionWitness {
 /// hash-seeded, so the returned tries need no upfront `hash_no_commit`. The
 /// state root is anchored to `initial_state_root` (the parent header's state
 /// root); storage subtries are bound to their accounts by matching each
-/// subtree's shipped root hash against the accounts found in the state leaves.
+/// subtree's shipped root hash against the accounts found in the state leaves
+/// (several accounts can share one storage trie, so one subtree can bind to
+/// more than one hashed address).
 fn build_tries_from_records(
     records: &[Vec<u8>],
     initial_state_root: H256,
@@ -355,13 +366,9 @@ fn build_tries_from_records(
         return Ok((Trie::new_temp(), BTreeMap::new()));
     }
     let mut leaves = Vec::new();
-    let (state_root_ref, root_hash) = decode_subtree_records(
-        records,
-        &mut pos,
-        &Nibbles::default(),
-        Some(&mut leaves),
-    )
-    .map_err(TrieError::from)?;
+    let (state_root_ref, root_hash) =
+        decode_subtree_records(records, &mut pos, &Nibbles::default(), Some(&mut leaves))
+            .map_err(TrieError::from)?;
     if root_hash != initial_state_root {
         return Err(GuestProgramStateError::Custom(format!(
             "witness state trie root {root_hash} does not match the parent header's state root {initial_state_root}"
@@ -369,9 +376,11 @@ fn build_tries_from_records(
     }
     let state_trie = Trie::new_temp_with_root(state_root_ref);
 
-    // Map each account's storage root to its hashed address (from the state
-    // leaves just built) so storage subtries can be bound to their account.
-    let mut storage_by_root: FxHashMap<H256, H256> = FxHashMap::default();
+    // Map each account's storage root to its hashed addresses (from the state
+    // leaves just built) so storage subtries can be bound to their accounts.
+    // Accounts can share an identical storage trie, so one root can key
+    // several addresses; the host ships each distinct root's subtree once.
+    let mut storage_by_root: FxHashMap<H256, Vec<H256>> = FxHashMap::default();
     for (path, value) in &leaves {
         let path_bytes = path.to_bytes();
         if path_bytes.len() != 32 {
@@ -380,7 +389,10 @@ fn build_tries_from_records(
         if let Ok(account_state) = AccountState::decode(value)
             && account_state.storage_root != EMPTY_TRIE_HASH
         {
-            storage_by_root.insert(account_state.storage_root, H256::from_slice(&path_bytes));
+            storage_by_root
+                .entry(account_state.storage_root)
+                .or_default()
+                .push(H256::from_slice(&path_bytes));
         }
     }
 
@@ -389,8 +401,13 @@ fn build_tries_from_records(
         let (storage_ref, storage_root) =
             decode_subtree_records(records, &mut pos, &Nibbles::default(), None)
                 .map_err(TrieError::from)?;
-        if let Some(hashed_address) = storage_by_root.get(&storage_root) {
-            storage_tries.insert(*hashed_address, Trie::new_temp_with_root(storage_ref));
+        if let Some(hashed_addresses) = storage_by_root.get(&storage_root) {
+            for hashed_address in hashed_addresses {
+                storage_tries.insert(
+                    *hashed_address,
+                    Trie::new_temp_with_root(storage_ref.clone()),
+                );
+            }
         }
         // Subtries bound to no account are unused witness data; the spec
         // tolerates them, so they are skipped rather than rejected.
@@ -813,9 +830,15 @@ impl GuestProgramState {
             let storage_trie = match self.storage_tries.get(&hashed_address) {
                 None if storage_root == EMPTY_TRIE_HASH => return Ok(None),
                 Some(trie) if trie.hash_no_commit(crypto) == storage_root => trie,
-                _ => {
+                None => {
                     return Err(GuestProgramStateError::Custom(format!(
-                        "invalid storage trie for account {address}"
+                        "missing storage trie for account {address} (hashed {hashed_address:?}, root {storage_root:?})"
+                    )));
+                }
+                Some(trie) => {
+                    return Err(GuestProgramStateError::Custom(format!(
+                        "storage trie hash mismatch for account {address}: got {:?}, want {storage_root:?}",
+                        trie.hash_no_commit(crypto)
                     )));
                 }
             };

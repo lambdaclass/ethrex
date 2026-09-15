@@ -20,15 +20,16 @@
 //! need to keccak the preimage to key or seed the node. See
 //! [`decode_witness_node`] for the trust implications of the shipped hash.
 
+use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 use ethereum_types::H256;
 use ethrex_crypto::NativeCrypto;
 
+use crate::ValueRLP;
 use crate::nibbles::Nibbles;
 use crate::node::{BranchNode, ExtensionNode, LeafNode, Node, NodeRef};
 use crate::node_hash::NodeHash;
-use crate::ValueRLP;
 
 const VERSION: u8 = 1;
 const TAG_LEAF: u8 = 0;
@@ -93,7 +94,7 @@ fn push_bytes(bytes: &[u8], out: &mut Vec<u8>) {
 
 fn push_ref(child: &NodeRef, out: &mut Vec<u8>) {
     let hash = match child {
-        NodeRef::Hash(hash) => Some(hash.clone()),
+        NodeRef::Hash(hash) => Some(*hash),
         NodeRef::Node(_, _) if child.is_valid() => Some(child.compute_hash(&NativeCrypto)),
         _ => None,
     };
@@ -155,7 +156,10 @@ pub fn decode_witness_node(bytes: &[u8]) -> Result<(H256, Node), WitnessNodeErro
                 rest = r;
             }
             let (value, rest) = take_bytes(rest)?;
-            (Node::Branch(Box::new(BranchNode::new_with_value(choices, value))), rest)
+            (
+                Node::Branch(Box::new(BranchNode::new_with_value(choices, value))),
+                rest,
+            )
         }
         _ => return Err(WitnessNodeError::BadTag(tag)),
     };
@@ -347,7 +351,11 @@ pub fn decode_subtree_records(
         if bytes.len() < HEADER_LEN || bytes[0] != VERSION {
             return Err(WitnessNodeError::BadHeader);
         }
-        Ok((H256::from_slice(&bytes[2..34]), bytes[1], &bytes[HEADER_LEN..]))
+        Ok((
+            H256::from_slice(&bytes[2..34]),
+            bytes[1],
+            &bytes[HEADER_LEN..],
+        ))
     }
 
     fn build(
@@ -365,7 +373,8 @@ pub fn decode_subtree_records(
         {
             return Err(WitnessNodeError::HashMismatch);
         }
-        let seeded = |node: Node, hash: NodeHash| NodeRef::Node(Arc::new(node), OnceLock::from(hash));
+        let seeded =
+            |node: Node, hash: NodeHash| NodeRef::Node(Arc::new(node), OnceLock::from(hash));
         match tag {
             TAG_LEAF => {
                 let (partial, rest) = take_nibbles(payload)?;
@@ -378,19 +387,17 @@ pub fn decode_subtree_records(
                     leaves.push((full_path, value.clone()));
                 }
                 Ok((
-                    seeded(Node::Leaf(LeafNode::new(partial, value)), NodeHash::Hashed(hash)),
+                    seeded(
+                        Node::Leaf(LeafNode::new(partial, value)),
+                        NodeHash::Hashed(hash),
+                    ),
                     hash,
                 ))
             }
             TAG_EXTENSION => {
                 let (prefix, rest) = take_nibbles(payload)?;
-                let (child, rest) = take_ref_or_subtree(
-                    records,
-                    pos,
-                    &path.concat(&prefix),
-                    leaves,
-                    rest,
-                )?;
+                let (child, rest) =
+                    take_ref_or_subtree(records, pos, &path.concat(&prefix), leaves, rest)?;
                 if !rest.is_empty() {
                     return Err(WitnessNodeError::TrailingBytes);
                 }
@@ -406,13 +413,8 @@ pub fn decode_subtree_records(
                 let mut rest = payload;
                 let mut choices = BranchNode::EMPTY_CHOICES;
                 for (i, choice) in choices.iter_mut().enumerate() {
-                    let (child, r) = take_ref_or_subtree(
-                        records,
-                        pos,
-                        &path.append_new(i as u8),
-                        leaves,
-                        rest,
-                    )?;
+                    let (child, r) =
+                        take_ref_or_subtree(records, pos, &path.append_new(i as u8), leaves, rest)?;
                     *choice = child;
                     rest = r;
                 }
@@ -446,13 +448,7 @@ pub fn decode_subtree_records(
                     return Err(WitnessNodeError::Truncated);
                 }
                 let child_hash = H256::from_slice(&rest[..32]);
-                let (child, _) = build(
-                    records,
-                    pos,
-                    child_path,
-                    leaves,
-                    Some(&child_hash),
-                )?;
+                let (child, _) = build(records, pos, child_path, leaves, Some(&child_hash))?;
                 Ok((child, &rest[32..]))
             }
             _ => take_ref(bytes),
@@ -480,19 +476,19 @@ impl core::fmt::Display for WitnessNodeError {
             Self::BadRefKind(kind) => write!(f, "bad witness child ref kind {kind}"),
             Self::Truncated => write!(f, "truncated witness node record"),
             Self::TrailingBytes => write!(f, "trailing bytes in witness node record"),
-            Self::HashMismatch => write!(f, "child record hash does not match the parent's reference"),
+            Self::HashMismatch => {
+                write!(f, "child record hash does not match the parent's reference")
+            }
         }
     }
 }
 
-#[cfg(feature = "std")]
-impl std::error::Error for WitnessNodeError {}
+impl core::error::Error for WitnessNodeError {}
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use alloc::boxed::Box;
-    use ethrex_crypto::Crypto;
 
     fn hash_of(node: &Node) -> H256 {
         NodeRef::from(node.clone())
@@ -544,10 +540,7 @@ mod tests {
 
     #[test]
     fn rejects_truncation_and_garbage() {
-        assert_eq!(
-            decode_witness_node(&[]),
-            Err(WitnessNodeError::BadHeader)
-        );
+        assert_eq!(decode_witness_node(&[]), Err(WitnessNodeError::BadHeader));
         let mut truncated = vec![VERSION, TAG_LEAF];
         truncated.extend_from_slice(&[0xaa; 32]);
         assert!(matches!(
@@ -565,7 +558,6 @@ mod tests {
     #[test]
     fn subtree_stream_roundtrip_with_seeds() {
         use alloc::sync::Arc;
-        use ethrex_crypto::Crypto;
 
         let leaf = |nibble: u8, value: u8| {
             Node::Leaf(LeafNode::new(
@@ -610,10 +602,7 @@ mod tests {
         let NodeRef::Node(root_node, root_seed) = root_ref else {
             panic!("expected embedded root");
         };
-        assert_eq!(
-            root_seed.into_inner(),
-            Some(NodeHash::Hashed(branch_hash))
-        );
+        assert_eq!(root_seed.into_inner(), Some(NodeHash::Hashed(branch_hash)));
         let Node::Branch(decoded_branch) = root_node.as_ref() else {
             panic!("expected branch");
         };
