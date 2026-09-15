@@ -398,6 +398,55 @@ fn code_budget_charges_each_distinct_body_once_per_list() {
     );
 }
 
+/// A refused charge stops the replay that overran from loading more, and only
+/// that replay: the next replay of the same list starts with the flag cleared
+/// and every earlier charge kept, so a transaction whose bodies the list has
+/// already paid for is still eligible after another transaction overran.
+#[test]
+fn an_overrun_stops_charging_for_that_replay_only() {
+    let sender_a = addr(0x5E20);
+    let sender_b = addr(0x5E21);
+    let sender_c = addr(0x5E22);
+    let helper = addr(0x4E20);
+    let stop = Bytes::from(vec![0x00]);
+    let mut budget = CodeBudget::new(2, 16 * 0x10000);
+
+    // Two bodies, the sender's and the helper's: the budget is now full.
+    let mut db = db_with(vec![
+        (
+            sender_a,
+            account(0, call_then_approve_code(0xFA, helper, 0x03)),
+        ),
+        (helper, account(0, stop.clone())),
+    ]);
+    assert_eq!(
+        replay(&self_verify_tx(sender_a), &mut db, sender_a, &mut budget),
+        Profile2Replay::Eligible
+    );
+    assert_eq!(budget.bodies_loaded, 2);
+
+    // A third distinct body does not fit: this replay overran.
+    let mut db = db_with(vec![(sender_b, account(0, approve_code(0x03)))]);
+    let verdict = replay(&self_verify_tx(sender_b), &mut db, sender_b, &mut budget);
+    assert_ineligible_because(&verdict, "CodeBudgetExceeded");
+    assert_eq!(budget.bodies_loaded, 2, "the refused load is not charged");
+
+    // The same two bodies again, under another sender: already paid for by this
+    // list, so nothing is charged and the overrun before does not carry over.
+    let mut db = db_with(vec![
+        (
+            sender_c,
+            account(0, call_then_approve_code(0xFA, helper, 0x03)),
+        ),
+        (helper, account(0, stop)),
+    ]);
+    assert_eq!(
+        replay(&self_verify_tx(sender_c), &mut db, sender_c, &mut budget),
+        Profile2Replay::Eligible
+    );
+    assert_eq!(budget.bodies_loaded, 2);
+}
+
 /// The byte bound is separate from the body bound: a single body larger than
 /// what remains of `MAX_VALIDATION_CODE_BYTES` is refused at frame entry.
 #[test]

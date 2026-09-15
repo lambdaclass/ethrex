@@ -3122,7 +3122,16 @@ impl<'a> VM<'a> {
 
         let sender = frame_tx.sender;
 
-        if let Err(e) = frame_tx.validate_static_constraints() {
+        // Mempool admission applies this client's full static check. A FOCIL
+        // Profile 2 replay judges a consensus question and applies EIP-8141's
+        // constraints only, so that a local bound cannot excuse an omission other
+        // clients enforce.
+        let statically_valid = if self.validation_observer.profile2.is_some() {
+            frame_tx.validate_eip8141_static_constraints()
+        } else {
+            frame_tx.validate_static_constraints()
+        };
+        if let Err(e) = statically_valid {
             return Err(VMError::TxValidation(
                 crate::errors::TxValidationError::InvalidFrameTransactionFormat(e),
             ));

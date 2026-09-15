@@ -49,14 +49,43 @@ const MAX_RETAINED_INCLUSION_LISTS: usize = 64;
 /// leaves `inclusionListSatisfied` unreported.
 #[derive(Debug, Default)]
 pub struct RetainedInclusionLists {
-    by_block: HashMap<H256, Vec<Transaction>>,
+    by_block: HashMap<H256, RetainedInclusionList>,
     order: VecDeque<H256>,
 }
 
+/// One retained list and, once the payload has been imported and judged, its
+/// verdict. The verdict is kept rather than recomputed on later calls:
+/// recomputation reads both of the block's states, and a state pruned between
+/// two calls would turn a decided replay into an excused one, so the two calls
+/// would disagree about the same payload.
+#[derive(Debug, Clone)]
+pub struct RetainedInclusionList {
+    pub transactions: Vec<Transaction>,
+    pub satisfied: Option<bool>,
+}
+
 impl RetainedInclusionLists {
+    /// Retains `transactions` for `block_hash`. A list already retained for the
+    /// block keeps its verdict when the transactions are the same, and loses it
+    /// when they differ, since the verdict was about the earlier list.
     pub fn insert(&mut self, block_hash: H256, transactions: Vec<Transaction>) {
-        if self.by_block.insert(block_hash, transactions).is_none() {
-            self.order.push_back(block_hash);
+        match self.by_block.get_mut(&block_hash) {
+            Some(existing) => {
+                if existing.transactions != transactions {
+                    existing.transactions = transactions;
+                    existing.satisfied = None;
+                }
+            }
+            None => {
+                self.by_block.insert(
+                    block_hash,
+                    RetainedInclusionList {
+                        transactions,
+                        satisfied: None,
+                    },
+                );
+                self.order.push_back(block_hash);
+            }
         }
         while self.order.len() > MAX_RETAINED_INCLUSION_LISTS {
             if let Some(evicted) = self.order.pop_front() {
@@ -65,8 +94,15 @@ impl RetainedInclusionLists {
         }
     }
 
-    pub fn get(&self, block_hash: &H256) -> Option<&[Transaction]> {
-        self.by_block.get(block_hash).map(Vec::as_slice)
+    pub fn get(&self, block_hash: &H256) -> Option<&RetainedInclusionList> {
+        self.by_block.get(block_hash)
+    }
+
+    /// Records the verdict computed for `block_hash`, if its list is retained.
+    pub fn record_verdict(&mut self, block_hash: &H256, satisfied: bool) {
+        if let Some(retained) = self.by_block.get_mut(block_hash) {
+            retained.satisfied = Some(satisfied);
+        }
     }
 }
 

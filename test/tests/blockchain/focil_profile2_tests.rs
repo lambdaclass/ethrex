@@ -7,15 +7,16 @@
 use bytes::Bytes;
 use ethrex_blockchain::focil_profile2::{
     MAX_VALIDATION_CODE_BODIES, MAX_VERIFY_GAS_PER_IL, MAX_VERIFY_GAS_PER_TX, NotProfile2Candidate,
-    budget_fill, max_validation_code_bytes, prefix_and_verifier_frame_cost, profile2_candidate,
-    verify_budget_cost,
+    budget_fill, discount_withdrawal_credit, max_validation_code_bytes,
+    prefix_and_verifier_frame_cost, profile2_candidate, verify_budget_cost,
 };
+use ethrex_common::constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH};
 use ethrex_common::types::{
-    ChainConfig, EIP1559Transaction, FRAME_SIG_SCHEME_SECP256K1, FRAME_TX_RECENT_ROOT_TUPLE_BYTES,
-    Fork, Frame, FrameMode, FrameSignature, FrameTransaction, Transaction, TxKind,
-    frame_tx_expiry_verifier, frame_tx_recent_root,
+    AccountState, ChainConfig, EIP1559Transaction, FRAME_SIG_SCHEME_SECP256K1,
+    FRAME_TX_RECENT_ROOT_TUPLE_BYTES, Fork, Frame, FrameMode, FrameSignature, FrameTransaction,
+    Transaction, TxKind, frame_tx_expiry_verifier, frame_tx_recent_root,
 };
-use ethrex_common::{Address, U256};
+use ethrex_common::{Address, H256, U256};
 use ethrex_crypto::NativeCrypto;
 
 const SENDER: Address = Address::repeat_byte(0x5E);
@@ -314,6 +315,78 @@ fn misplaced_protocol_verifier_frames_are_not_candidates() {
     let candidate = profile2_candidate(&in_position).expect("in position");
     assert_eq!(candidate.prefix.frame_indices, vec![2]);
     assert_eq!(candidate.prefix.recent_root_index, Some(1));
+}
+
+/// Protocol verifier frames are defined by position. An expiry-shaped frame
+/// after the prefix is a body frame for every rule: candidacy condition 4
+/// rejects the transaction, and the fill prices the occurrence without it.
+#[test]
+fn a_verifier_shaped_frame_out_of_position_is_a_body_frame_for_pricing() {
+    let in_position = frame_tx(vec![expiry_frame(20_000), self_verify(30_000)]);
+    assert_eq!(prefix_and_verifier_frame_cost(&in_position), Some(50_000));
+
+    let trailing = frame_tx(vec![self_verify(30_000), expiry_frame(20_000)]);
+    assert_eq!(
+        prefix_and_verifier_frame_cost(&trailing),
+        Some(30_000),
+        "a trailing expiry-shaped frame is a body frame and is not priced"
+    );
+    assert!(matches!(
+        profile2_candidate(&trailing),
+        Err(NotProfile2Candidate::ProtocolVerifierMisplaced { frame_index: 1 })
+    ));
+}
+
+/// "Statically valid" in candidacy condition 1 means EIP-8141's constraints
+/// only. This client also refuses a zero sender at admission and in block
+/// execution; that local bound must not excuse the omission of a transaction
+/// every other client would enforce.
+#[test]
+fn a_zero_sender_passes_candidacy_though_the_local_static_check_refuses_it() {
+    let mut tx = frame_tx(vec![frame(
+        FrameMode::Verify,
+        0x03,
+        Some(Address::zero()),
+        30_000,
+    )]);
+    tx.sender = Address::zero();
+    assert!(
+        tx.validate_static_constraints().is_err(),
+        "the local static check keeps refusing a zero sender"
+    );
+    assert!(tx.validate_eip8141_static_constraints().is_ok());
+    let candidate = profile2_candidate(&tx).expect("a candidate by EIP-8141's constraints");
+    assert_eq!(candidate.payer, Address::zero());
+    assert_eq!(prefix_and_verifier_frame_cost(&tx), Some(30_000));
+}
+
+/// `S_end` read through the committed post-state: a withdrawal credit is
+/// subtracted from its recipient, and an account left with nothing was created
+/// by the credit, is empty under EIP-161, and reads as nonexistent.
+#[test]
+fn discounting_a_withdrawal_credit_applies_the_eip_161_rule() {
+    let credit = U256::from(1_000_000_000u64);
+    let state = |nonce: u64, balance: U256, code_hash: H256| AccountState {
+        nonce,
+        balance,
+        storage_root: *EMPTY_TRIE_HASH,
+        code_hash,
+    };
+
+    // Existed only because of the credit: nonexistent at `S_end`.
+    assert_eq!(
+        discount_withdrawal_credit(state(0, credit, *EMPTY_KECCAK_HASH), credit),
+        None
+    );
+    // Funded before the block: the credit comes off, the account stays.
+    let funded = discount_withdrawal_credit(state(0, credit * 3, *EMPTY_KECCAK_HASH), credit)
+        .expect("a funded account exists at S_end");
+    assert_eq!(funded.balance, credit * 2);
+    // A nonce or code proves prior existence even at zero balance.
+    assert!(discount_withdrawal_credit(state(1, credit, *EMPTY_KECCAK_HASH), credit).is_some());
+    assert!(
+        discount_withdrawal_credit(state(0, credit, H256::repeat_byte(0xC0)), credit).is_some()
+    );
 }
 
 /// A prefix that is not one of the four shapes is unpriceable and not a

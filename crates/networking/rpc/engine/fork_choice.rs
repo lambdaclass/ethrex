@@ -3,7 +3,7 @@ use ethrex_blockchain::{
     fork_choice::apply_fork_choice_with_deep_reorg,
     payload::{BuildPayloadArgs, create_payload},
 };
-use ethrex_common::types::{BlockHeader, ELASTICITY_MULTIPLIER, Transaction};
+use ethrex_common::types::{BlockHeader, ELASTICITY_MULTIPLIER};
 use ethrex_p2p::sync::SyncMode;
 use serde_json::Value;
 use tracing::{debug, info, warn};
@@ -333,16 +333,37 @@ impl RpcHandler for ForkChoiceUpdatedV5 {
         if response.payload_status.status == PayloadValidationStatus::Valid {
             let head_hash = self.fork_choice_state.head_block_hash;
             let retained = match context.retained_inclusion_lists.lock() {
-                Ok(lists) => lists.get(&head_hash).map(<[Transaction]>::to_vec),
+                Ok(lists) => lists.get(&head_hash).cloned(),
                 Err(e) => {
                     return Err(RpcErr::Internal(format!(
                         "retained inclusion list lock poisoned: {e}"
                     )));
                 }
             };
-            if let Some(inclusion_list) = retained {
-                let satisfied =
-                    block_satisfies_inclusion_list(&context, head_hash, &inclusion_list).await?;
+            if let Some(retained) = retained {
+                // The verdict recorded when the payload was judged is reported
+                // as is. A payload that was `ACCEPTED` at `engine_newPayloadV6`
+                // has none yet; it is judged now, once, and the result kept.
+                let satisfied = match retained.satisfied {
+                    Some(satisfied) => satisfied,
+                    None => {
+                        let satisfied = block_satisfies_inclusion_list(
+                            &context,
+                            head_hash,
+                            &retained.transactions,
+                        )
+                        .await?;
+                        match context.retained_inclusion_lists.lock() {
+                            Ok(mut lists) => lists.record_verdict(&head_hash, satisfied),
+                            Err(e) => {
+                                return Err(RpcErr::Internal(format!(
+                                    "retained inclusion list lock poisoned: {e}"
+                                )));
+                            }
+                        }
+                        satisfied
+                    }
+                };
                 response.payload_status.inclusion_list_satisfied = Some(satisfied);
             }
         }

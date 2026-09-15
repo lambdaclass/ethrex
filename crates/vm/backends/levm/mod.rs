@@ -3423,8 +3423,12 @@ impl LEVM {
             slot_count: U256::from(slot_count),
         });
         // The budget is moved into the observer for the replay and handed back
-        // below on every path: charges survive the verdict.
-        observer.code_budget = Some(std::mem::replace(code_budget, CodeBudget::new(0, 0)));
+        // below on every path: charges survive the verdict. A refused charge
+        // stops further charging for the replay that overran, not for the list,
+        // so the flag is cleared for each replay while the charges are kept.
+        let mut budget = std::mem::replace(code_budget, CodeBudget::new(0, 0));
+        budget.exceeded = false;
+        observer.code_budget = Some(budget);
 
         let sim = vm.run_frame_validation_prefix_with_observer(&prefix.frame_indices, observer);
         if let Some(charged) = vm.validation_observer.code_budget.take() {

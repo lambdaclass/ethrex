@@ -658,6 +658,17 @@ impl RpcHandler for NewPayloadV6Request {
 
         let satisfied =
             block_satisfies_inclusion_list(&context, block_hash_for_il, &decoded_il).await?;
+        // Keep the verdict with the list, so a later `engine_forkchoiceUpdatedV5`
+        // naming this payload reports the same field without reading the block's
+        // states again.
+        match context.retained_inclusion_lists.lock() {
+            Ok(mut retained) => retained.record_verdict(&block_hash_for_il, satisfied),
+            Err(e) => {
+                return Err(RpcErr::Internal(format!(
+                    "retained inclusion list lock poisoned: {e}"
+                )));
+            }
+        }
         serde_json::to_value(payload_status.with_inclusion_list_satisfied(satisfied))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }

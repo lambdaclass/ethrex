@@ -40,6 +40,7 @@ use std::sync::Arc;
 
 use ethrex_common::{
     Address, H256, U256,
+    constants::EMPTY_KECCAK_HASH,
     types::{
         AccountState, BlockHeader, ChainConfig, Code, CodeMetadata, Fork, FrameMode,
         FrameTransaction, GWEI_TO_WEI, PrefixShape, Transaction, ValidationPrefix, Withdrawal,
@@ -127,8 +128,15 @@ pub enum NotProfile2Candidate {
 /// replay executes them, so their declared gas is added back here. An
 /// implementation that prices the filtered list undercounts by the expiry
 /// frame and the recent-root frame.
+///
+/// Protocol verifier frames are defined by position: the expiry verifier frame
+/// when it is the first frame, the recent-root verifier frame when it leads or
+/// follows that one. A frame with either shape anywhere else is a body frame
+/// for every rule, this one included, so it is not priced; candidacy
+/// condition 4 rejects the transaction, which the fill then charges but does
+/// not admit.
 pub fn prefix_and_verifier_frame_cost(tx: &FrameTransaction) -> Option<u64> {
-    if tx.validate_static_constraints().is_err() {
+    if tx.validate_eip8141_static_constraints().is_err() {
         return None;
     }
     let prefix = tx.validation_prefix().ok()?;
@@ -137,7 +145,8 @@ pub fn prefix_and_verifier_frame_cost(tx: &FrameTransaction) -> Option<u64> {
         cost = cost.saturating_add(tx.frames.get(index)?.gas_limit);
     }
     for (index, frame) in tx.frames.iter().enumerate() {
-        if frame.is_expiry_verifier() || Some(index) == prefix.recent_root_index {
+        let leading_expiry = index == 0 && frame.is_expiry_verifier();
+        if leading_expiry || Some(index) == prefix.recent_root_index {
             cost = cost.saturating_add(frame.gas_limit);
         }
     }
@@ -158,8 +167,12 @@ pub fn verify_budget_cost(tx: &FrameTransaction) -> Option<u64> {
 pub fn profile2_candidate(
     tx: &FrameTransaction,
 ) -> Result<Profile2Candidate, NotProfile2Candidate> {
-    // 1. A statically valid EIP-8141 frame transaction.
-    tx.validate_static_constraints()
+    // 1. A statically valid EIP-8141 frame transaction, by EIP-8141's constraints
+    //    and only those: this client's own static bounds (the non-zero sender and
+    //    the 2**63-1 gas caps) belong to admission and block validity, and
+    //    applying them here would excuse omissions every other client enforces.
+    //    The chain id half of the condition is judged in the omission check.
+    tx.validate_eip8141_static_constraints()
         .map_err(NotProfile2Candidate::StaticallyInvalid)?;
     // 2. No blobs: blob gas has its own budget and no omission check over it.
     if !tx.blob_versioned_hashes.is_empty() {
@@ -371,13 +384,28 @@ impl PreWithdrawalsDb {
     }
 }
 
+/// The `S_end` view of one account the block's withdrawals credited. The
+/// credit is subtracted, and an account the subtraction leaves with no
+/// balance, no nonce and no code existed only because of the credit: it is
+/// empty under EIP-161 and reads as nonexistent, which is what a replay at
+/// `S_end` has to see, since EIP-8037's account-creation charge in `APPROVE`
+/// observes existence.
+pub fn discount_withdrawal_credit(state: AccountState, credit: U256) -> Option<AccountState> {
+    let balance = state.balance.saturating_sub(credit);
+    if balance.is_zero() && state.nonce == 0 && state.code_hash == *EMPTY_KECCAK_HASH {
+        return None;
+    }
+    Some(AccountState { balance, ..state })
+}
+
 impl VmDatabase for PreWithdrawalsDb {
     fn get_account_state(&self, address: Address) -> Result<Option<AccountState>, EvmError> {
-        let mut state = self.inner.get_account_state(address)?;
-        if let (Some(state), Some(credit)) = (state.as_mut(), self.credits.get(&address)) {
-            state.balance = state.balance.saturating_sub(*credit);
-        }
-        Ok(state)
+        let state = self.inner.get_account_state(address)?;
+        Ok(match (state, self.credits.get(&address)) {
+            (Some(state), Some(credit)) => discount_withdrawal_credit(state, *credit),
+            (state, None) => state,
+            (None, Some(_)) => None,
+        })
     }
 
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError> {
