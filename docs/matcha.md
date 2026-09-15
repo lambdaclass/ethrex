@@ -45,8 +45,8 @@ charge = ceil(safety_factor * admission_gas)
 `admission_gas` is the intrinsic and per-frame cost, the signature verification cost, the
 transaction's data cost, the validation prefix's declared `limits.execution` including the
 EIP-8272 recent-root verifier frame, and one cold storage read per EIP-8250 nonce key. It
-excludes application execution after the payer is established, and excludes the state
-dimension entirely, because neither is work the client does at admission.
+excludes application execution after the payer is established, the state dimension, and
+the value-transfer cost, because none of those is work the client does at admission.
 
 The prefix figure is the same sum `MAX_VERIFY_GAS` is measured against, passed in rather
 than recomputed, so the charge and the budget cannot drift about which frames count as
@@ -67,6 +67,12 @@ eviction bookkeeping, none of which appears in a gas figure.
 | Replacing an additional transaction | another charge |
 | Revalidating after a new head | its stored charge, before the work |
 | Removal, inclusion, eviction, expiry | nothing returned |
+| Past the maximum pending lifetime | dropped; re-admission spends again |
+
+Revalidation is charged only when a rerun actually happens. If the new head's state cannot
+be opened the prefix is not re-simulated, so there is no work and nothing is spent. The
+charge is taken after the cheap drops (expiry, recent-root window, structure) and before
+any EVM is built, which is what "before the work begins" means in practice.
 
 ## Where it lives
 
@@ -78,7 +84,11 @@ both pass against the same balance.
 The charge is computed before the lock, where the validation prefix has just been
 validated, and carried into the locked section as a `MatchaCharge`. The decision about
 whether a transaction is *additional* is made under the lock, because it depends on what
-else the sender has pending at that instant.
+else the sender has pending at that instant, and the spend is the last check before any
+insertion or removal, so a transaction the lock rejects for any other reason has spent
+nothing. The effective priority fee the optional floor is judged against is computed
+against the *next* block's base fee, since that is the block the transaction is admitted
+for.
 
 Credit comes from finality, never from the head: `Blockchain::credit_finalized_width`
 walks newly finalized blocks and credits each sender the gas its own frame transactions
@@ -87,12 +97,30 @@ and spend the width on work the chain never paid for.
 
 ## Local policy
 
-`MatchaConfig` carries the cap, the safety factor, the optional linear-fee `base_price`
-and an on/off switch. The post is explicit that these are local policy rather than
-consensus, and nothing here is observable to other nodes.
+`MatchaConfig` is local policy, not consensus, and nothing in it is observable to other
+nodes. Every field has a CLI flag under `--mempool.matcha-*`, plus `--mempool.no-matcha`
+to switch the mechanism off and fall back to the structural EIP-8250 rule alone.
 
-The linear fee is off by default. The post presents it as optional deterrence, and whether
-FOCIL alone makes it unnecessary is an open question the post itself raises.
+| Field | Default | Flag |
+| --- | --- | --- |
+| `width_cap` | 30,000,000 gas | `--mempool.matcha-width-cap` |
+| `safety_factor` | 3/2 | fixed |
+| `base_price` (linear fee) | 0, off | `--mempool.matcha-base-price` |
+| `min_validity_slots` | 0, off | `--mempool.matcha-min-validity-slots` |
+| `max_pending_lifetime` | 3 hours | `--mempool.matcha-max-lifetime-secs` |
+
+The two optional deterrence policies the proposal describes are both implemented and both
+off by default, since it leaves open whether FOCIL alone makes them unnecessary. The
+linear fee raises the priority-fee floor for additional transactions by `base_price` per
+pending charge of the same size. The minimum validity period refuses an additional
+transaction whose EIP-8141 expiry deadline or any EIP-8272 recent root would stop being
+valid within `min_validity_slots` of the next block, so a transaction cannot be admitted
+only to expire before it can be built.
+
+The maximum pending lifetime is on by default and applies to every pending frame
+transaction, baseline included, because the proposal says "every pending transaction".
+A removed transaction is unaffected on chain and may be resubmitted; if it is additional
+that costs another charge.
 
 ## Divergences and judgement calls
 
@@ -106,6 +134,10 @@ author. In summary:
   charges are equal.
 - "Newly finalized" needs a rule when a node has been offline. Catch-up is bounded to the
   last 64 finalized blocks; withholding width is always the safe direction.
+- "Credited once" is keyed on block number with a high-water mark, not on block hash, so
+  two blocks at one height after a reorg cannot both mint width.
+- Finalized gas is the transaction's `cumulative_gas_used` delta, which for a frame
+  transaction sums both gas dimensions. Width is earned from what was paid for.
 - Width is required for additional transactions regardless of whether the prefix is
   structurally independent, following the post's reply that the balance-drain vector
   applies independently of mass invalidation.

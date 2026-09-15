@@ -342,6 +342,7 @@ mod tests {
                 None,
                 None,
                 KeyedConcurrency::Denied,
+                None,
             )
             .unwrap();
     }

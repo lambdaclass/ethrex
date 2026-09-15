@@ -249,6 +249,19 @@ pub struct FramePaymasterReservation {
 /// revalidation pass.
 pub type PendingFrameTx = (H256, Address, Address);
 
+/// Outcome of charging a pending frame tx's stored MATCHA charge for a revalidation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RevalidationCharge {
+    /// Baseline transaction, or the mechanism is off: nothing to pay.
+    NotAdditional,
+    Paid,
+    /// The sender cannot pay for the rerun; the transaction should be dropped.
+    Exhausted {
+        have: u64,
+        need: u64,
+    },
+}
+
 /// Precomputed inputs for the per-sender admission gates, re-checked atomically
 /// inside [`Mempool::add_transaction`] under the insertion write lock so the
 /// checks and the insert share one lock scope. `Blockchain::validate_transaction`
@@ -388,19 +401,14 @@ struct MempoolInner {
     /// can bound its affected set. Populated on insert; removed on removal.
     frame_tx_paymaster: FxHashMap<H256, FramePaymasterReservation>,
 
-    /// MATCHA per-sender width, and the load its optional linear fee reads.
-    ///
-    /// Consulted only for *additional* frame transactions: the one EIP-8141 already
-    /// allows a sender spends nothing. Lives here rather than beside the pool because
-    /// every mutation has to be atomic with the admission decision that caused it.
+    /// MATCHA width per sender. Lives under this lock because every spend must be
+    /// atomic with the admission decision that caused it.
     width: WidthLedger,
-    /// The MATCHA charge each pending additional frame tx paid, by hash.
-    ///
-    /// Kept because the charge is needed twice more after admission: to release the
-    /// transaction's contribution to `load` when it leaves, and to spend again before
-    /// each revalidation. A transaction absent from this map is a baseline transaction
-    /// and was free. Populated on insert; removed on removal.
+    /// The charge each pending *additional* frame tx paid. Needed again to release its
+    /// `load` on removal and to charge each revalidation. Absent means baseline.
     frame_tx_charge: FxHashMap<H256, u64>,
+    /// When each pending frame tx was admitted, for the maximum-lifetime sweep.
+    frame_tx_admitted_at: FxHashMap<H256, Instant>,
 }
 
 impl MempoolInner {
@@ -423,14 +431,12 @@ impl MempoolInner {
         let Some(tx) = self.transaction_pool.remove(hash) else {
             return Ok(());
         };
-        // MATCHA: a departing transaction stops contributing to `load`, so the linear fee
-        // floor falls back for whoever comes next. Its spent width is deliberately NOT
-        // returned: the client already did the admission work, and refunding on removal
-        // would let one sender cycle transactions through the pool for free. This is the
-        // single removal path, so it is the only place `load` falls.
+        // Load falls; spent width does not. Refunding on removal would let a sender cycle
+        // transactions through the pool at no cost.
         if let Some(charge) = self.frame_tx_charge.remove(hash) {
             self.width.release_load(charge);
         }
+        self.frame_tx_admitted_at.remove(hash);
         // Covers EIP-4844 and blob-carrying EIP-8141 frame transactions alike:
         // `blob_tx_count` is the size of the bundle pool, so a leaked bundle
         // would inflate blob-pool occupancy forever and, being unreachable from
@@ -962,12 +968,8 @@ impl MempoolInner {
         Ok(predecessor)
     }
 
-    /// How many frame transactions this sender already has pending, ignoring one hash.
-    ///
-    /// MATCHA calls a transaction *additional* when the sender already holds the one
-    /// baseline transaction EIP-8141 allows. `excluding` is the incumbent a replacement
-    /// is about to displace: a replacement of the baseline is still the baseline and must
-    /// stay free, or a sender could be charged for raising its own fee.
+    /// Pending frame transactions for `sender`, ignoring the one a replacement displaces:
+    /// replacing the baseline is still the baseline and must stay free.
     fn sender_pending_frame_count(&self, sender: Address, excluding: Option<H256>) -> usize {
         let keyed = self
             .pending_keyed_by_sender
@@ -987,12 +989,11 @@ impl MempoolInner {
         keyed + linear
     }
 
-    /// Charge MATCHA width when this frame transaction is an additional one.
+    /// Spend width for an additional frame transaction; `None` when it is the baseline.
     ///
-    /// Returns the charge actually spent, or `None` for a baseline transaction, which
-    /// pays nothing. Must run under the write lock: the count it reads and the width it
-    /// spends have to be atomic with the insert, or two concurrent additional
-    /// transactions from one sender could both pass against the same balance.
+    /// Runs under the write lock so the pending count and the spend are atomic with the
+    /// insert, and after every other admission check so a rejected transaction never
+    /// spends anything.
     fn charge_width(
         &mut self,
         sender: Address,
@@ -1006,14 +1007,17 @@ impl MempoolInner {
         let Some(charge) = charge else {
             return Ok(None);
         };
-        // A re-announce of a transaction already pending shares its record and spends
-        // nothing: the client did the admission work once.
         if self.transaction_pool.contains_key(&incoming_hash) {
             return Ok(None);
         }
         let excluding = replacing.or(Some(incoming_hash));
         if self.sender_pending_frame_count(sender, excluding) == 0 {
             return Ok(None);
+        }
+        if !charge.meets_validity_floor {
+            return Err(MempoolError::FrameTxValidityTooShort {
+                min_slots: self.width.config().min_validity_slots,
+            });
         }
         self.width
             .spend(sender, charge.charge, charge.effective_priority_fee)
@@ -1223,31 +1227,64 @@ impl Mempool {
     ///
     /// The transaction's hash is queued for P2P broadcast.
     #[allow(clippy::too_many_arguments)]
-    /// The MATCHA policy this pool is running, for pricing a charge before the lock.
     pub fn matcha_config(&self) -> Result<MatchaConfig, MempoolError> {
         Ok(*self.read()?.width.config())
     }
 
-    /// Whether the MATCHA mechanism is switched on for this pool.
+    pub fn set_matcha_config(&self, config: MatchaConfig) -> Result<(), MempoolError> {
+        self.write()?.width.set_config(config);
+        Ok(())
+    }
+
+    /// Spend a pending frame tx's stored charge before its prefix is re-simulated.
+    pub fn charge_revalidation(&self, hash: H256) -> Result<RevalidationCharge, StoreError> {
+        let mut inner = self.write()?;
+        if !inner.width.config().enabled {
+            return Ok(RevalidationCharge::NotAdditional);
+        }
+        let Some(charge) = inner.frame_tx_charge.get(&hash).copied() else {
+            return Ok(RevalidationCharge::NotAdditional);
+        };
+        let Some(sender) = inner.transaction_pool.get(&hash).map(|tx| tx.sender()) else {
+            return Ok(RevalidationCharge::NotAdditional);
+        };
+        Ok(match inner.width.spend_for_revalidation(sender, charge) {
+            Ok(()) => RevalidationCharge::Paid,
+            Err(WidthError::Insufficient { have, need }) => {
+                RevalidationCharge::Exhausted { have, need }
+            }
+            Err(WidthError::BelowFloor { .. }) => RevalidationCharge::Paid,
+        })
+    }
+
+    /// Frame txs pending longer than the configured maximum lifetime, as of `now`.
+    pub fn frame_txs_past_lifetime(&self, now: Instant) -> Result<Vec<H256>, StoreError> {
+        let inner = self.read()?;
+        let lifetime = inner.width.config().max_pending_lifetime;
+        if lifetime.is_zero() {
+            return Ok(Vec::new());
+        }
+        Ok(inner
+            .frame_tx_admitted_at
+            .iter()
+            .filter(|(_, admitted)| now.saturating_duration_since(**admitted) >= lifetime)
+            .map(|(hash, _)| *hash)
+            .collect())
+    }
+
     pub fn matcha_enabled(&self) -> Result<bool, MempoolError> {
         Ok(self.read()?.width.config().enabled)
     }
 
-    /// The highest finalized block already credited, if any.
     pub fn last_credited_block(&self) -> Result<Option<BlockNumber>, MempoolError> {
         Ok(self.read()?.width.last_credited())
     }
 
-    /// Earned width for one sender, for diagnostics and tests.
     pub fn width_of(&self, sender: Address) -> Result<u64, MempoolError> {
         Ok(self.read()?.width.width_of(sender))
     }
 
-    /// Credit one newly finalized block's per-sender frame-transaction gas.
-    ///
-    /// Returns false when the block was already credited. The caller supplies the gas
-    /// each sender's own frame transactions used, which is the only thing that mints
-    /// width: a sender cannot earn from someone else's blockspace.
+    /// Credit one finalized block's per-sender frame-tx gas; false if already credited.
     pub fn credit_finalized_block(
         &self,
         number: BlockNumber,
@@ -1371,8 +1408,6 @@ impl Mempool {
             _ => None,
         };
 
-        // MATCHA charge actually spent by this insert; `None` for a baseline frame
-        // transaction and for every non-frame type.
         let mut spent_charge: Option<u64> = None;
 
         // One-pending-frame-tx-per-sender gate (EIP-8141 §Mempool, review fix 1.6).
@@ -1391,13 +1426,6 @@ impl Mempool {
                 hash,
                 keyed_concurrency,
             )?;
-
-            // MATCHA: an additional frame transaction spends width before anything is
-            // inserted, so a refusal leaves no trace. Runs after the structural gates
-            // because width pays for admission work the client has decided it is willing
-            // to do, not for work it would refuse outright. Replacing the baseline is
-            // still the baseline and spends nothing.
-            spent_charge = inner.charge_width(sender, hash, existing_frame_hash, matcha_charge)?;
 
             // Re-validate the fee bump against the CURRENT predecessor. The price
             // check in `find_tx_to_replace` ran unlocked, so a concurrent
@@ -1486,6 +1514,8 @@ impl Mempool {
             // paymaster reservation net-zero, exactly as the linear slot removal
             // does; keying off `existing_frame_hash` here would skip the removal
             // and double-count the reservation.
+            spent_charge = inner.charge_width(sender, hash, existing_frame_hash, matcha_charge)?;
+
             match &keyed_keys {
                 Some(keys) => {
                     if let Some(old_hash) = inner.keyed_frame_key_holder(sender, keys) {
@@ -1537,9 +1567,9 @@ impl Mempool {
             inner.txs_by_sender_nonce.insert((sender, tx_nonce), hash);
         }
         inner.transaction_pool.insert(hash, transaction);
-        // MATCHA: remember what this transaction paid. Needed twice more: to release its
-        // contribution to `load` when it leaves, and to spend again before each
-        // revalidation. Absent means baseline, which paid nothing.
+        if is_frame {
+            inner.frame_tx_admitted_at.insert(hash, Instant::now());
+        }
         if let Some(charge) = spent_charge {
             inner.frame_tx_charge.insert(hash, charge);
         }

@@ -78,7 +78,10 @@ use ethrex_common::types::{
     validate_block_body,
 };
 use ethrex_common::types::{EIP7702_DELEGATED_CODE_LEN, is_eip7702_delegation};
-use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
+use ethrex_common::types::{
+    ELASTICITY_MULTIPLIER, FRAME_TX_RECENT_ROOT_USABLE_WINDOW, P2PTransaction,
+    calculate_base_fee_per_gas,
+};
 use ethrex_common::types::{Fork, MempoolTransaction};
 use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H256, U256};
@@ -105,7 +108,7 @@ use ethrex_vm::backends::levm::LEVM;
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::system_contracts::RECENT_ROOT_RUNTIME_BYTECODE;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError, VmDatabase};
-use matcha::MatchaCharge;
+use matcha::{MatchaCharge, MatchaConfig};
 use mempool::{
     BalanceCheck, FRAME_CANONICAL_PAYMASTER_CODE_HASH, FramePaymasterReservation, KeyedConcurrency,
     Mempool, SenderAdmission, is_canonical_paymaster, keyed_concurrency_verdict,
@@ -392,6 +395,8 @@ pub struct BlockchainOptions {
     /// validating signatures and simulating a frame transaction's validation
     /// prefix. Mempool policy (SHOULD), not consensus, so it is operator-tunable.
     pub max_verify_gas: u64,
+    /// MATCHA local policy for additional frame transactions from one sender.
+    pub matcha: MatchaConfig,
 }
 
 impl Default for BlockchainOptions {
@@ -416,6 +421,7 @@ impl Default for BlockchainOptions {
             max_reorg_depth: None,
             gap_admit_occupancy_threshold: DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD,
             max_verify_gas: DEFAULT_MAX_VERIFY_GAS,
+            matcha: MatchaConfig::default(),
         }
     }
 }
@@ -539,6 +545,9 @@ impl Blockchain {
         } else {
             Mempool::new(blockchain_opts.max_mempool_size)
         };
+        mempool
+            .set_matcha_config(blockchain_opts.matcha)
+            .expect("a freshly built mempool lock cannot be poisoned");
         Self {
             storage: store,
             mempool,
@@ -3384,41 +3393,29 @@ impl Blockchain {
 
     /// Credit MATCHA width from every block finalized since the last credit.
     ///
-    /// Width is minted only from finalized gas, never from the head. A head-based credit
-    /// would let a sender earn from a block that is later reorged out, and then spend
-    /// that width on admission work the chain never paid for.
-    ///
-    /// Each sender is credited the gas its own frame transactions used. Other
-    /// transaction types mint nothing: they do not consume the per-sender capacity this
-    /// mechanism rations, so letting them earn it would hand width to senders that never
-    /// needed any.
-    ///
-    /// Blocks are credited in order and once each. A finalized number at or below the
-    /// high-water mark is a no-op, which makes a repeated forkchoice notification
-    /// harmless.
+    /// Width is minted from finalized gas only. A head-based credit would let a sender
+    /// earn from a block later reorged out and spend it on work the chain never paid for.
+    /// Catch-up after downtime is bounded; skipping blocks only withholds width, which is
+    /// the safe direction.
     pub async fn credit_finalized_width(
         &self,
         finalized_number: BlockNumber,
-    ) -> Result<(), StoreError> {
-        if !self.mempool.matcha_enabled().unwrap_or(false) {
+    ) -> Result<(), MempoolError> {
+        const MAX_CATCHUP_BLOCKS: u64 = 64;
+        if !self.mempool.matcha_enabled()? {
             return Ok(());
         }
-        // Bound the catch-up so a node that has been offline does not walk the chain.
-        // Skipping blocks only ever withholds width, which is the safe direction.
-        const MAX_CATCHUP_BLOCKS: u64 = 64;
         let start = self
             .mempool
-            .last_credited_block()
-            .unwrap_or(None)
-            .map(|last| last.saturating_add(1))
-            .unwrap_or(finalized_number)
+            .last_credited_block()?
+            .map_or(finalized_number, |last| last.saturating_add(1))
             .max(finalized_number.saturating_sub(MAX_CATCHUP_BLOCKS));
 
         for number in start..=finalized_number {
-            let Some(body) = self.storage.get_block_body(number).await? else {
-                continue;
-            };
-            let Some(hash) = self.storage.get_canonical_block_hash(number).await? else {
+            let (Some(body), Some(hash)) = (
+                self.storage.get_block_body(number).await?,
+                self.storage.get_canonical_block_hash(number).await?,
+            ) else {
                 continue;
             };
             let receipts = self.storage.get_receipts_for_block(&hash).await?;
@@ -3427,23 +3424,52 @@ impl Blockchain {
             for (index, tx) in body.transactions.iter().enumerate() {
                 let cumulative = receipts
                     .get(index)
-                    .map(|r| r.cumulative_gas_used)
-                    .unwrap_or(previous_cumulative);
+                    .map_or(previous_cumulative, |r| r.cumulative_gas_used);
                 let used = cumulative.saturating_sub(previous_cumulative);
                 previous_cumulative = cumulative;
                 if let Transaction::FrameTransaction(frame_tx) = tx {
                     *gas_by_sender.entry(frame_tx.sender).or_insert(0) += used;
                 }
             }
-            if !gas_by_sender.is_empty() {
-                let _ = self.mempool.credit_finalized_block(number, &gas_by_sender);
-            } else {
-                // Still advance the high-water mark, or a run of frame-free blocks
-                // would be re-walked on every notification.
-                let _ = self.mempool.credit_finalized_block(number, &gas_by_sender);
-            }
+            // Credited even when empty, so the high-water mark advances past frame-free
+            // blocks instead of re-walking them on every notification.
+            self.mempool
+                .credit_finalized_block(number, &gas_by_sender)?;
         }
         Ok(())
+    }
+
+    /// Whether every validity horizon of `frame_tx` outlasts the configured minimum: its
+    /// EIP-8141 expiry deadline, and every EIP-8272 recent root's usable window.
+    fn meets_validity_floor(
+        &self,
+        frame_tx: &FrameTransaction,
+        head: &BlockHeader,
+        policy: &MatchaConfig,
+    ) -> bool {
+        if policy.min_validity_slots == 0 {
+            return true;
+        }
+        let config = self.storage.get_chain_config();
+        if let (Some(deadline), Some(seconds_per_slot)) =
+            (frame_tx.expiry_deadline(), config.seconds_per_slot)
+        {
+            let horizon = head
+                .timestamp
+                .saturating_add(policy.min_validity_slots.saturating_mul(seconds_per_slot));
+            if deadline < horizon {
+                return false;
+            }
+        }
+        let Some(current_slot) = self.prospective_header(head).slot_number else {
+            return true;
+        };
+        frame_tx.recent_root_tuples().iter().all(|tuple| {
+            tuple
+                .slot
+                .saturating_add(FRAME_TX_RECENT_ROOT_USABLE_WINDOW)
+                >= current_slot.saturating_add(policy.min_validity_slots)
+        })
     }
 
     /// Remove a transaction from the mempool
@@ -3679,6 +3705,11 @@ impl Blockchain {
             }
         };
 
+        for hash in self.mempool.frame_txs_past_lifetime(Instant::now())? {
+            debug!(%hash, "evicting frame tx past its maximum pending lifetime");
+            self.mempool.remove_transaction(&hash)?;
+        }
+
         for (hash, _sender, paymaster) in pending {
             let Some(mempool_tx) = self.mempool.get_mempool_transaction_by_hash(hash)? else {
                 continue;
@@ -3728,6 +3759,16 @@ impl Blockchain {
             let Some(vm_db) = &vm_db else {
                 continue;
             };
+
+            // The rerun below is the work MATCHA prices, so it is paid for here, after
+            // the cheap drops and before any EVM is built.
+            if let mempool::RevalidationCharge::Exhausted { have, need } =
+                self.mempool.charge_revalidation(hash)?
+            {
+                debug!(%hash, have, need, "evicting frame tx: sender cannot pay to revalidate it");
+                self.mempool.remove_transaction(&hash)?;
+                continue;
+            }
             let evict = match self.new_evm(vm_db.clone()) {
                 Ok(mut vm) => {
                     match vm.simulate_frame_validation_prefix(
@@ -3943,8 +3984,6 @@ impl Blockchain {
         // has shown the prefix to be independent of the sender's mutable state.
         let mut keyed_concurrency = KeyedConcurrency::Denied;
 
-        // MATCHA charge for a frame transaction; `None` for every other type, which
-        // has no width accounting.
         let mut matcha_charge: Option<MatchaCharge> = None;
         if let Transaction::FrameTransaction(frame_tx) = tx {
             // EIP-8141 static constraints at admission (mirrors the VM check)
@@ -3997,36 +4036,41 @@ impl Blockchain {
             // authentication. Prospective: `current_slot` is the head's slot plus one.
             self.check_recent_root_frame(frame_tx, &header, header_no)?;
 
-            // MATCHA: what this transaction would cost the client to admit, priced from
-            // the same prefix gas the MAX_VERIFY_GAS budget above was measured against
-            // so the two can never disagree about which frames are validation work.
-            // Only spent if the sender turns out to already have a pending frame
-            // transaction, which is decided under the mempool lock.
+            // Priced from the same prefix sum MAX_VERIFY_GAS was just measured against,
+            // so the charge and the budget agree about which frames are validation work.
             let prefix_execution_gas: u64 = prefix
                 .frame_indices
                 .iter()
                 .chain(prefix.recent_root_index.iter())
                 .map(|&i| frame_tx.frames[i].gas_limit)
                 .fold(0u64, |acc, g| acc.saturating_add(g));
-            let ledger_config = self.mempool.matcha_config()?;
+            let policy = self.mempool.matcha_config()?;
+            let next_base_fee = header
+                .base_fee_per_gas
+                .and_then(|base| {
+                    calculate_base_fee_per_gas(
+                        header.gas_limit,
+                        header.gas_limit,
+                        header.gas_used,
+                        base,
+                        ELASTICITY_MULTIPLIER,
+                    )
+                })
+                .unwrap_or_default();
+            let headroom = frame_tx
+                .max_fee_per_gas
+                .saturating_sub(U256::from(next_base_fee));
             matcha_charge = Some(MatchaCharge {
-                charge: crate::matcha::charge_for(
-                    &ledger_config,
-                    crate::matcha::admission_gas(frame_tx, prefix_execution_gas),
+                charge: matcha::charge_for(
+                    &policy,
+                    matcha::admission_gas(frame_tx, prefix_execution_gas),
                 ),
-                // The fee the sender actually pays above the base fee at this head,
-                // which is what the optional linear floor is judged against. Capped
-                // the way a block would cap it, so a huge `max_fee` does not read as
-                // a huge priority fee.
-                effective_priority_fee: {
-                    let base_fee = U256::from(header.base_fee_per_gas.unwrap_or_default());
-                    let headroom = frame_tx.max_fee_per_gas.saturating_sub(base_fee);
-                    frame_tx
-                        .max_priority_fee_per_gas
-                        .min(headroom)
-                        .try_into()
-                        .unwrap_or(u64::MAX)
-                },
+                effective_priority_fee: frame_tx
+                    .max_priority_fee_per_gas
+                    .min(headroom)
+                    .try_into()
+                    .unwrap_or(u64::MAX),
+                meets_validity_floor: self.meets_validity_floor(frame_tx, &header, &policy),
             });
         }
 

@@ -14,6 +14,7 @@ use ethrex_blockchain::{
     DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD, DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT,
     DEFAULT_MAX_VERIFY_GAS, DEFAULT_MIN_TIP_WEI, DEFAULT_PRICE_BUMP_PERCENT, L2Config,
     error::{ChainError, InvalidBlockError},
+    matcha::{DEFAULT_MAX_PENDING_LIFETIME, DEFAULT_WIDTH_CAP},
 };
 use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis, validate_block_body};
 use ethrex_p2p::{
@@ -291,6 +292,49 @@ pub struct Options {
         env = "ETHREX_MEMPOOL_MAX_VERIFY_GAS"
     )]
     pub mempool_max_verify_gas: u64,
+    #[arg(
+        help = "Disable MATCHA: one sender may then hold only the single pending frame transaction EIP-8141 allows, whatever its history.",
+        long = "mempool.no-matcha",
+        help_heading = "Node options",
+        env = "ETHREX_MEMPOOL_NO_MATCHA"
+    )]
+    pub mempool_no_matcha: bool,
+    #[arg(
+        help = "MATCHA: maximum width a sender may accumulate from finalized frame-transaction gas.",
+        long = "mempool.matcha-width-cap",
+        default_value_t = DEFAULT_WIDTH_CAP,
+        value_name = "GAS",
+        help_heading = "Node options",
+        env = "ETHREX_MEMPOOL_MATCHA_WIDTH_CAP"
+    )]
+    pub mempool_matcha_width_cap: u64,
+    #[arg(
+        help = "MATCHA optional linear fee: base priority-fee floor in wei for an additional frame transaction; 0 disables the policy.",
+        long = "mempool.matcha-base-price",
+        default_value_t = 0,
+        value_name = "WEI",
+        help_heading = "Node options",
+        env = "ETHREX_MEMPOOL_MATCHA_BASE_PRICE"
+    )]
+    pub mempool_matcha_base_price: u64,
+    #[arg(
+        help = "MATCHA optional minimum validity: an additional frame transaction's expiry and recent roots must stay valid this many slots past the next block; 0 disables the policy.",
+        long = "mempool.matcha-min-validity-slots",
+        default_value_t = 0,
+        value_name = "SLOTS",
+        help_heading = "Node options",
+        env = "ETHREX_MEMPOOL_MATCHA_MIN_VALIDITY_SLOTS"
+    )]
+    pub mempool_matcha_min_validity_slots: u64,
+    #[arg(
+        help = "MATCHA: maximum seconds a frame transaction may stay pending before it is dropped and must be re-admitted; 0 disables the sweep.",
+        long = "mempool.matcha-max-lifetime-secs",
+        default_value_t = DEFAULT_MAX_PENDING_LIFETIME.as_secs(),
+        value_name = "SECONDS",
+        help_heading = "Node options",
+        env = "ETHREX_MEMPOOL_MATCHA_MAX_LIFETIME_SECS"
+    )]
+    pub mempool_matcha_max_lifetime_secs: u64,
     #[arg(
         long = "http.addr",
         default_value = "127.0.0.1",
@@ -633,6 +677,11 @@ impl Default for Options {
             mempool_gap_admit_occupancy_threshold: DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD,
             mempool_max_queued_txs_per_account: DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT,
             mempool_max_verify_gas: DEFAULT_MAX_VERIFY_GAS,
+            mempool_no_matcha: false,
+            mempool_matcha_width_cap: DEFAULT_WIDTH_CAP,
+            mempool_matcha_base_price: 0,
+            mempool_matcha_min_validity_slots: 0,
+            mempool_matcha_max_lifetime_secs: DEFAULT_MAX_PENDING_LIFETIME.as_secs(),
             tx_broadcasting_time_interval: Default::default(),
             target_peers: Default::default(),
             lookup_interval: Default::default(),

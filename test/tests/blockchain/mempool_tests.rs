@@ -9,6 +9,7 @@ use ethrex_blockchain::constants::{
     TX_DATA_NON_ZERO_GAS_EIP2028, TX_DATA_ZERO_GAS_COST, TX_GAS_COST, TX_INIT_CODE_WORD_GAS_COST,
 };
 use ethrex_blockchain::error::MempoolError;
+use ethrex_blockchain::matcha::{MatchaCharge, MatchaConfig};
 use ethrex_blockchain::mempool::{
     FRAME_CANONICAL_PAYMASTER_CODE_HASH, FramePaymasterReservation, KeyedConcurrency, Mempool,
     is_canonical_paymaster, keyed_concurrency_verdict, transaction_intrinsic_gas,
@@ -19,6 +20,7 @@ use ethrex_blockchain::{
 use ethrex_crypto::NativeCrypto;
 use hex_literal::hex;
 use rustc_hash::FxHashMap;
+use std::time::Duration;
 
 use ethrex_common::types::{
     APPROVE_EXECUTION_AND_PAYMENT, AuthorizationTuple, BYTES_PER_BLOB, BlobsBundle, Block,
@@ -4954,9 +4956,7 @@ async fn setup_hegota_store_with_sender_code(name: &str, code: Bytes) -> Store {
     store
 }
 
-/// A sender with no finalized history gets exactly the one transaction EIP-8141 allows,
-/// however independent its prefix is. This is the bootstrapping cost MATCHA imposes by
-/// design: width is earned, never granted, so a freshly deployed shared sender has none.
+/// Width is earned, so a sender with no finalized history is held to the EIP-8141 baseline.
 #[tokio::test]
 async fn an_additional_keyed_tx_is_refused_when_the_sender_has_no_width() {
     let store = setup_hegota_store_funded().await;
@@ -4979,9 +4979,6 @@ async fn an_additional_keyed_tx_is_refused_when_the_sender_has_no_width() {
     );
 }
 
-/// Width buys a bounded number of additional transactions, not an unbounded one. Credited
-/// with just enough for one, the sender gets one and is then refused, which is the
-/// property that makes this a capacity rather than a flag.
 #[tokio::test]
 async fn earned_width_admits_a_bounded_number_of_additional_txs() {
     let store = setup_hegota_store_funded().await;
@@ -4993,8 +4990,6 @@ async fn earned_width_admits_a_bounded_number_of_additional_txs() {
         .await
         .expect("baseline admitted");
 
-    // Enough for exactly one additional transaction: admit one at a generous credit,
-    // read what it cost, then re-run with precisely that much.
     let sender = Address::from_low_u64_be(FRAME_TX_SELF_SENDER);
     let mut generous = rustc_hash::FxHashMap::default();
     generous.insert(sender, 10_000_000u64);
@@ -5013,7 +5008,6 @@ async fn earned_width_admits_a_bounded_number_of_additional_txs() {
     let charge = before - after;
     assert!(charge > 0, "an additional transaction must spend width");
 
-    // Spend the remainder down so less than one charge is left, then confirm refusal.
     let remaining = blockchain.mempool.width_of(sender).expect("width");
     let mut key = 3u64;
     let mut admitted_more = 0;
@@ -5037,12 +5031,8 @@ async fn earned_width_admits_a_bounded_number_of_additional_txs() {
     );
 }
 
-/// Give the shared sender MATCHA width so its *additional* transactions can be admitted.
-///
-/// Width is earned from finalized frame-transaction gas, so a sender with no history is
-/// held to the one baseline transaction EIP-8141 allows. These tests exercise the
-/// EIP-8250 concurrency rule, not bootstrapping, so they start the sender where a
-/// deployed application would be once its first transactions had finalized.
+/// Credit the shared sender enough MATCHA width for the concurrency tests, which are about
+/// the EIP-8250 rule rather than about bootstrapping.
 fn grant_keyed_sender_width(blockchain: &Blockchain) {
     let mut gas = rustc_hash::FxHashMap::default();
     gas.insert(
@@ -5053,6 +5043,315 @@ fn grant_keyed_sender_width(blockchain: &Blockchain) {
         .mempool
         .credit_finalized_block(1, &gas)
         .expect("crediting finalized width must succeed");
+}
+
+/// The funded fixture plus a slot duration and the canonical expiry verifier, so the
+/// MATCHA minimum-validity policy has both of its inputs.
+async fn setup_hegota_store_funded_with_slots() -> Store {
+    let genesis = Genesis {
+        config: ChainConfig {
+            chain_id: 0,
+            shanghai_time: Some(0),
+            amsterdam_time: Some(0),
+            hegota_time: Some(0),
+            seconds_per_slot: Some(12),
+            ..Default::default()
+        },
+        gas_limit: 100_000_000,
+        alloc: [
+            (
+                Address::from_low_u64_be(FRAME_TX_SELF_SENDER),
+                GenesisAccount {
+                    code: approve_code(APPROVE_EXECUTION_AND_PAYMENT),
+                    storage: BTreeMap::new(),
+                    balance: U256::from(10u64).pow(U256::from(18u64)),
+                    nonce: 0,
+                },
+            ),
+            (
+                frame_tx_expiry_verifier(),
+                GenesisAccount {
+                    code: Bytes::from_static(&[
+                        0x60, 0x08, 0x36, 0x14, 0x60, 0x0a, 0x57, 0x5f, 0x5f, 0xfd, 0x5b, 0x5f,
+                        0x35, 0x60, 0xc0, 0x1c, 0x42, 0x11, 0x60, 0x16, 0x57, 0x00, 0x5b, 0x5f,
+                        0x5f, 0xfd,
+                    ]),
+                    storage: BTreeMap::new(),
+                    balance: U256::zero(),
+                    nonce: 0,
+                },
+            ),
+        ]
+        .into_iter()
+        .collect(),
+        ..Default::default()
+    };
+    let mut store =
+        Store::new("hegota-funded-slots-test", EngineType::InMemory).expect("Storage setup");
+    store
+        .add_initial_state(genesis)
+        .await
+        .expect("add genesis state");
+    store
+}
+
+fn blockchain_with_matcha(store: Store, matcha: MatchaConfig) -> Blockchain {
+    Blockchain::new(
+        store,
+        BlockchainOptions {
+            matcha,
+            ..BlockchainOptions::default()
+        },
+    )
+}
+
+/// `keyed_frame_tx` with an EIP-8141 expiry frame in front, bounding its validity.
+fn keyed_frame_tx_expiring_at(key: u64, deadline: u64) -> Transaction {
+    let Transaction::FrameTransaction(mut ftx) =
+        keyed_frame_tx(vec![U256::from(key)], 0, 1_000_000_000)
+    else {
+        unreachable!("keyed_frame_tx builds a frame transaction");
+    };
+    ftx.frames.insert(
+        0,
+        Frame {
+            mode: FrameMode::Verify as u8,
+            flags: 0,
+            target: Some(frame_tx_expiry_verifier()),
+            gas_limit: 10_000,
+            state_gas_limit: 0,
+            value: U256::zero(),
+            data: Bytes::copy_from_slice(&deadline.to_be_bytes()),
+        },
+    );
+    Transaction::FrameTransaction(ftx)
+}
+
+fn next_empty_block() -> Block {
+    Block::new(
+        BlockHeader {
+            number: 1,
+            timestamp: 1_001,
+            gas_limit: 100_000_000,
+            parent_hash: H256::zero(),
+            ..Default::default()
+        },
+        BlockBody::empty(),
+    )
+}
+
+/// Width is spent only once every other locked admission check has passed, so a
+/// rejected transaction costs its sender nothing.
+#[tokio::test]
+async fn width_is_not_spent_when_a_later_locked_check_rejects() {
+    let mempool = Mempool::new(64);
+    let sender = frame_self_sender();
+    let baseline = keyed_frame_tx(vec![U256::one()], 0, 1_000_000_000);
+    mempool
+        .add_transaction(
+            baseline.hash(&NativeCrypto),
+            sender,
+            MempoolTransaction::new(baseline, sender),
+            None,
+            None,
+            KeyedConcurrency::Allowed,
+            None,
+        )
+        .expect("baseline admitted");
+    let mut gas = FxHashMap::default();
+    gas.insert(sender, 1_000_000u64);
+    mempool.credit_finalized_block(1, &gas).expect("credit");
+
+    let additional = keyed_frame_tx(vec![U256::from(2u64)], 0, 1_000_000_000);
+    let charge = Some(MatchaCharge {
+        charge: 1_000,
+        effective_priority_fee: 0,
+        meets_validity_floor: true,
+    });
+    let paymaster = Address::from_low_u64_be(0x9A11);
+    let reservation = |paymaster_balance: u64| FramePaymasterReservation {
+        paymaster,
+        reserved_cost: U256::from(10u64),
+        is_canonical: false,
+        is_self_pay: false,
+        paymaster_balance: U256::from(paymaster_balance),
+    };
+
+    let rejected = mempool.add_transaction(
+        additional.hash(&NativeCrypto),
+        sender,
+        MempoolTransaction::new(additional.clone(), sender),
+        Some(reservation(1)),
+        None,
+        KeyedConcurrency::Allowed,
+        charge,
+    );
+    assert!(
+        matches!(rejected, Err(MempoolError::FrameTxPaymasterUnderfunded)),
+        "the underfunded paymaster must reject under the lock; got {rejected:?}"
+    );
+    assert_eq!(
+        mempool.width_of(sender).expect("width"),
+        1_000_000,
+        "a transaction the lock rejected must not have spent width"
+    );
+
+    mempool
+        .add_transaction(
+            additional.hash(&NativeCrypto),
+            sender,
+            MempoolTransaction::new(additional, sender),
+            Some(reservation(1_000)),
+            None,
+            KeyedConcurrency::Allowed,
+            charge,
+        )
+        .expect("the same transaction with a solvent paymaster is admitted");
+    assert_eq!(mempool.width_of(sender).expect("width"), 999_000);
+}
+
+/// Revalidation spends the stored charge before re-simulating, so a sender that has run
+/// out of width has its additional transactions dropped rather than revalidated for free.
+#[tokio::test]
+async fn revalidation_charges_stored_width_and_evicts_when_exhausted() {
+    let store = setup_hegota_store_funded().await;
+    let blockchain = Blockchain::default_with_store(store.clone());
+    let sender = Address::from_low_u64_be(FRAME_TX_SELF_SENDER);
+
+    let baseline = keyed_frame_tx(vec![U256::one()], 0, 1_000_000_000);
+    let baseline_hash = blockchain
+        .add_transaction_to_pool(baseline)
+        .await
+        .expect("baseline admitted");
+
+    grant_keyed_sender_width(&blockchain);
+    let before = blockchain.mempool.width_of(sender).expect("width");
+    let first = keyed_frame_tx(vec![U256::from(2u64)], 0, 1_000_000_000);
+    let mut additional = vec![
+        blockchain
+            .add_transaction_to_pool(first)
+            .await
+            .expect("first additional admitted"),
+    ];
+    let charge = before - blockchain.mempool.width_of(sender).expect("width");
+
+    let mut key = 3u64;
+    while blockchain.mempool.width_of(sender).expect("width") >= charge {
+        let tx = keyed_frame_tx(vec![U256::from(key)], 0, 1_000_000_000);
+        match blockchain.add_transaction_to_pool(tx).await {
+            Ok(hash) => additional.push(hash),
+            Err(_) => break,
+        }
+        key += 1;
+        assert!(key < 300, "width should run out long before this");
+    }
+    assert!(
+        blockchain.mempool.width_of(sender).expect("width") < charge,
+        "precondition: less than one charge of width remains"
+    );
+
+    // The rerun only happens against a head whose state can be opened, and the charge
+    // pays for the rerun, so revalidate against a real block rather than a synthetic one.
+    let genesis = store
+        .get_block_header(0)
+        .expect("store")
+        .expect("genesis header");
+    blockchain
+        .revalidate_frame_txs_after_block(&Block::new(genesis, BlockBody::empty()))
+        .expect("revalidation must not error");
+
+    assert!(
+        blockchain.mempool.contains_tx(baseline_hash).expect("pool"),
+        "the baseline pays nothing to revalidate and must survive"
+    );
+    for hash in additional {
+        assert!(
+            !blockchain.mempool.contains_tx(hash).expect("pool"),
+            "an additional tx whose sender cannot pay for the rerun must be evicted: {hash:#x}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_frame_tx_past_its_maximum_lifetime_is_evicted() {
+    let store = setup_hegota_store_funded().await;
+    let blockchain = blockchain_with_matcha(
+        store,
+        MatchaConfig {
+            max_pending_lifetime: Duration::from_millis(1),
+            ..MatchaConfig::default()
+        },
+    );
+    let hash = blockchain
+        .add_transaction_to_pool(keyed_frame_tx(vec![U256::one()], 0, 1_000_000_000))
+        .await
+        .expect("admitted");
+    std::thread::sleep(Duration::from_millis(20));
+    blockchain
+        .revalidate_frame_txs_after_block(&next_empty_block())
+        .expect("revalidation must not error");
+    assert!(
+        !blockchain.mempool.contains_tx(hash).expect("pool"),
+        "a frame tx older than the maximum lifetime must be dropped"
+    );
+}
+
+/// With a minimum validity period configured, an additional transaction whose expiry
+/// falls inside the horizon is refused, and one that outlasts it is admitted.
+#[tokio::test]
+async fn the_validity_floor_refuses_an_additional_tx_that_expires_too_soon() {
+    let store = setup_hegota_store_funded_with_slots().await;
+    let blockchain = blockchain_with_matcha(
+        store,
+        MatchaConfig {
+            min_validity_slots: 10,
+            ..MatchaConfig::default()
+        },
+    );
+    grant_keyed_sender_width(&blockchain);
+    blockchain
+        .add_transaction_to_pool(keyed_frame_tx(vec![U256::one()], 0, 1_000_000_000))
+        .await
+        .expect("baseline admitted");
+
+    // Head timestamp is 0 and a slot is 12 s, so the horizon is 120 s.
+    let too_soon = blockchain
+        .add_transaction_to_pool(keyed_frame_tx_expiring_at(2, 12 * 5))
+        .await;
+    assert!(
+        matches!(
+            too_soon,
+            Err(MempoolError::FrameTxValidityTooShort { min_slots: 10 })
+        ),
+        "an expiry five slots out must be refused under a ten-slot floor; got {too_soon:?}"
+    );
+    blockchain
+        .add_transaction_to_pool(keyed_frame_tx_expiring_at(3, 12 * 20))
+        .await
+        .expect("an expiry twenty slots out clears a ten-slot floor");
+}
+
+/// With MATCHA off the pool falls back to the structural EIP-8250 rule alone.
+#[tokio::test]
+async fn with_matcha_disabled_an_independent_sender_needs_no_width() {
+    let store = setup_hegota_store_funded().await;
+    let blockchain = blockchain_with_matcha(
+        store,
+        MatchaConfig {
+            enabled: false,
+            ..MatchaConfig::default()
+        },
+    );
+    let first = blockchain
+        .add_transaction_to_pool(keyed_frame_tx(vec![U256::one()], 0, 1_000_000_000))
+        .await
+        .expect("first admitted");
+    let second = blockchain
+        .add_transaction_to_pool(keyed_frame_tx(vec![U256::from(2u64)], 0, 1_000_000_000))
+        .await
+        .expect("second admitted without any earned width");
+    assert!(blockchain.mempool.contains_tx(first).expect("pool"));
+    assert!(blockchain.mempool.contains_tx(second).expect("pool"));
 }
 
 #[tokio::test]
