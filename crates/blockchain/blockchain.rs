@@ -993,6 +993,14 @@ impl Blockchain {
         #[cfg(feature = "rayon")]
         let bal_warmer = bal.clone();
 
+        // A block with no transactions has nothing worth warming: execution only
+        // touches the handful of entries the system calls and withdrawals reach,
+        // and the thread spawned to warm them concurrently costs more than the
+        // cold reads it saves. Warming is best-effort and populates caches only,
+        // so skipping it cannot change the block's result.
+        #[cfg(feature = "rayon")]
+        let block_has_transactions = !block.body.transactions.is_empty();
+
         let (execution_result, merkleization_result, warmer_duration) = std::thread::scope(
             |s| -> Result<_, ChainError> {
                 #[cfg(feature = "rayon")]
@@ -1001,7 +1009,7 @@ impl Blockchain {
                 #[cfg(feature = "rayon")]
                 let bal_prefetch_enabled = self.options.bal_prefetch_enabled;
                 #[cfg(feature = "rayon")]
-                let warm_handle = (!collect_witness)
+                let warm_handle = (!collect_witness && block_has_transactions)
                     .then(|| {
                         std::thread::Builder::new()
                             .name("block_executor_warmer".to_string())
