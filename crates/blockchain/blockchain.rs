@@ -283,7 +283,7 @@ pub struct Blockchain {
     merkle_pool: OnceLock<Arc<rayon::ThreadPool>>,
     /// Persistent pool that runs the per-block merkleizer.
     ///
-    /// Two threads, and only one is busy at a time: the point is not parallelism
+    /// Four threads, and one block uses one of them: the point is not parallelism
     /// but avoiding an OS thread creation per block. Measured on a chain of
     /// near-empty blocks, the merkleizer's start delay (from the start of the
     /// exec/merkle phase to its first instruction) was 0.31 ms of a 1.2 ms block
@@ -582,7 +582,10 @@ impl Blockchain {
     fn build_pipeline_pool() -> Arc<rayon::ThreadPool> {
         Arc::new(
             rayon::ThreadPoolBuilder::new()
-                .num_threads(2)
+                // One task per block in flight; the spare threads only matter when
+                // block processing overlaps (a payload arriving while the syncer
+                // runs), where a saturated pool would serialise them.
+                .num_threads(4)
                 .thread_name(|i| format!("block-pipeline-{i}"))
                 .build()
                 .expect("Failed to create block pipeline thread pool"),
