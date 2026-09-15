@@ -50,9 +50,9 @@ fn migration_for_version(version: u64) -> MigrationFn {
 /// list of `u32` offsets. Both forms are readable, so a v3 database needs no rewriting
 /// and this migration only moves the version marker.
 ///
-/// The bump exists for the other direction: a v3 binary cannot decode a bitmap, and
-/// `run_pending_migrations` warns that the database is ahead of the binary instead of
-/// letting it fail on the first code read.
+/// The bump exists for the other direction: a v3 binary cannot decode a bitmap, so the
+/// store refuses to open a v4 database (`IncompatibleDBVersion`) instead of letting it
+/// fail on the first code read.
 fn migrate_3_to_4(_backend: &dyn StorageBackend) -> Result<(), StoreError> {
     Ok(())
 }
@@ -74,20 +74,22 @@ fn entries_per_second(count: u64, elapsed: Duration) -> f64 {
 ///
 /// Returns `Ok(())` if `current_version == STORE_SCHEMA_VERSION` (no-op).
 /// If `current_version > STORE_SCHEMA_VERSION` (older binary against a newer
-/// database), it warns and returns `Ok(())` without migrating.
+/// database), it returns `IncompatibleDBVersion` without touching the database:
+/// there is no downgrade path, and continuing would fail on the first read of a
+/// format this binary cannot decode.
 pub fn run_pending_migrations(
     backend: &dyn StorageBackend,
     db_path: &Path,
     current_version: u64,
 ) -> Result<(), StoreError> {
     if current_version > STORE_SCHEMA_VERSION {
-        tracing::warn!(
-            "Database schema is at v{current_version}, ahead of this binary's v{STORE_SCHEMA_VERSION}; \
-             running an older binary against a newer database is unsupported. Upgrade the binary"
-        );
+        return Err(StoreError::IncompatibleDBVersion {
+            found: current_version,
+            expected: STORE_SCHEMA_VERSION,
+        });
     }
 
-    let pending = STORE_SCHEMA_VERSION.saturating_sub(current_version);
+    let pending = STORE_SCHEMA_VERSION - current_version;
     if pending == 0 {
         return Ok(());
     }
@@ -361,6 +363,34 @@ mod tests {
 
         let result = run_pending_migrations(&backend, temp_dir.path(), STORE_SCHEMA_VERSION);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn run_pending_migrations_rejects_a_database_ahead_of_the_binary() {
+        // A database stamped by a newer ethrex must be refused, not "migrated"
+        // downwards or silently opened: this binary cannot decode formats
+        // introduced after its schema version.
+        let backend = crate::backend::in_memory::InMemoryBackend::open().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let newer = STORE_SCHEMA_VERSION + 1;
+        write_metadata_version(temp_dir.path(), newer).unwrap();
+
+        let result = run_pending_migrations(&backend, temp_dir.path(), newer);
+
+        assert!(
+            matches!(
+                result,
+                Err(StoreError::IncompatibleDBVersion { found, expected })
+                    if found == newer && expected == STORE_SCHEMA_VERSION
+            ),
+            "expected IncompatibleDBVersion, got {result:?}"
+        );
+        // The marker is left as the newer binary wrote it, so that binary can
+        // still open the database.
+        let contents =
+            std::fs::read_to_string(temp_dir.path().join(STORE_METADATA_FILENAME)).unwrap();
+        let metadata: StoreMetadata = serde_json::from_str(&contents).unwrap();
+        assert_eq!(metadata.schema_version, newer);
     }
 
     #[test]

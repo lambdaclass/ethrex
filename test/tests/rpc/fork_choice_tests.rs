@@ -12,7 +12,6 @@ use ethrex_common::{
 };
 use ethrex_rpc::engine::fork_choice::{ForkChoiceUpdatedV3, ForkChoiceUpdatedV4};
 use ethrex_rpc::engine::payload::GetPayloadV5Request;
-use ethrex_rpc::rpc::RpcApiContext;
 use ethrex_rpc::rpc::RpcHandler;
 use ethrex_rpc::test_utils::default_context_with_storage;
 use ethrex_rpc::types::fork_choice::PayloadAttributesV4;
@@ -23,6 +22,8 @@ use ethrex_storage::{EngineType, Store};
 fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
 }
+
+use ethrex_rpc::test_utils::TestContext;
 
 async fn test_store() -> Store {
     let file = File::open(workspace_root().join("fixtures/genesis/execution-api.json"))
@@ -56,7 +57,7 @@ async fn new_block(store: &Store, parent: &BlockHeader) -> Block {
     blockchain.build_payload(block).unwrap().payload
 }
 
-async fn context_with_built_payload_at(timestamp: u64, payload_id: u64) -> RpcApiContext {
+async fn context_with_built_payload_at(timestamp: u64, payload_id: u64) -> TestContext {
     let mut storage = test_store().await;
     let mut chain_config = storage.get_chain_config();
     chain_config.osaka_time = Some(0);
@@ -93,7 +94,7 @@ async fn get_payload_v5_accepts_osaka_payload_before_amsterdam() {
     let context = context_with_built_payload_at(9, payload_id).await;
 
     let response = GetPayloadV5Request { payload_id }
-        .handle(context)
+        .handle(context.clone())
         .await
         .unwrap();
     let response: ExecutionPayloadResponse = serde_json::from_value(response).unwrap();
@@ -107,7 +108,7 @@ async fn get_payload_v5_rejects_amsterdam_payload() {
     let context = context_with_built_payload_at(10, payload_id).await;
 
     let err = GetPayloadV5Request { payload_id }
-        .handle(context)
+        .handle(context.clone())
         .await
         .unwrap_err();
 
@@ -168,7 +169,7 @@ async fn test_fcu_v3_finalized_ancestor_returns_valid_with_null_payload_id() {
     let request: RpcRequest = serde_json::from_str(&body).expect("valid FCU request");
 
     let context = default_context_with_storage(store).await;
-    let response = ForkChoiceUpdatedV3::call(&request, context)
+    let response = ForkChoiceUpdatedV3::call(&request, context.clone())
         .await
         .expect("FCU V3 call should succeed");
 
@@ -292,7 +293,7 @@ async fn fcu_v4_accepts_target_gas_limit_present() {
     let request = fcu_v4_request(genesis.hash(), genesis.timestamp + 12, Some("0x2faf080"));
 
     let context = default_context_with_storage(store).await;
-    let response = ForkChoiceUpdatedV4::call(&request, context)
+    let response = ForkChoiceUpdatedV4::call(&request, context.clone())
         .await
         .expect("FCU V4 call should succeed");
 
@@ -312,7 +313,7 @@ async fn fcu_v4_rejects_target_gas_limit_absent() {
     let request = fcu_v4_request(genesis.hash(), genesis.timestamp + 12, None);
 
     let context = default_context_with_storage(store).await;
-    let err = ForkChoiceUpdatedV4::call(&request, context)
+    let err = ForkChoiceUpdatedV4::call(&request, context.clone())
         .await
         .expect_err("FCU V4 must reject attributes without targetGasLimit");
 
@@ -331,7 +332,7 @@ async fn fcu_v4_rejects_pre_amsterdam_timestamp() {
     let request = fcu_v4_request(genesis.hash(), genesis.timestamp + 12, Some("0x2faf080"));
 
     let context = default_context_with_storage(store).await;
-    let err = ForkChoiceUpdatedV4::call(&request, context)
+    let err = ForkChoiceUpdatedV4::call(&request, context.clone())
         .await
         .expect_err("FCU V4 must reject pre-Amsterdam attributes");
 
@@ -384,7 +385,7 @@ async fn forkchoice_updated_v3_rejects_amsterdam_payload_attributes() {
     let request: RpcRequest = serde_json::from_str(&body).expect("valid FCU request");
     let context = default_context_with_storage(store).await;
 
-    let err = ForkChoiceUpdatedV3::call(&request, context)
+    let err = ForkChoiceUpdatedV3::call(&request, context.clone())
         .await
         .unwrap_err();
 
@@ -466,7 +467,7 @@ fn parse_custody_columns_wrong_length() {
     assert_eq!(RpcErrorMetadata::from(err).code, -32602);
 }
 
-async fn fresh_context() -> RpcApiContext {
+async fn fresh_context() -> TestContext {
     let storage = Store::new("test", EngineType::InMemory).expect("store");
     default_context_with_storage(storage).await
 }

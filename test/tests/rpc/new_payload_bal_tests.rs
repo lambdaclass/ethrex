@@ -4,15 +4,15 @@ use ethrex_common::{
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::{
-    engine::payload::NewPayloadV5Request,
-    rpc::{RpcApiContext, RpcHandler},
-    test_utils::default_context_with_storage,
-    utils::RpcErrorMetadata,
+    engine::payload::NewPayloadV5Request, rpc::RpcHandler,
+    test_utils::default_context_with_storage, utils::RpcErrorMetadata,
 };
 use ethrex_storage::{EngineType, Store};
 use serde_json::{Value, json};
 
-async fn fresh_context() -> RpcApiContext {
+use ethrex_rpc::test_utils::TestContext;
+
+async fn fresh_context() -> TestContext {
     let store = Store::new("test", EngineType::InMemory).expect("store");
     default_context_with_storage(store).await
 }
@@ -60,7 +60,7 @@ async fn undecodable_bal_returns_invalid_status_not_an_error() {
 
     let ctx = fresh_context().await;
     let response = request
-        .handle(ctx)
+        .handle(ctx.clone())
         .await
         .expect("must be a result, not an error");
     assert_eq!(response["status"], "INVALID");
@@ -99,7 +99,10 @@ async fn missing_bal_still_returns_invalid_params() {
     assert!(!request.undecodable_bal);
 
     let ctx = fresh_context().await;
-    let err = request.handle(ctx).await.expect_err("must be an error");
+    let err = request
+        .handle(ctx.clone())
+        .await
+        .expect_err("must be an error");
     let metadata = RpcErrorMetadata::from(err);
     assert_eq!(metadata.code, -32602);
 }

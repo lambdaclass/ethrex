@@ -464,7 +464,7 @@ pub(crate) fn parse_indices_bitarray(value: &Value) -> Result<u128, RpcErr> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::default_context_with_storage;
+    use crate::test_utils::{TestContext, default_context_with_storage};
     use ethrex_common::{
         Address, H256,
         types::{
@@ -538,7 +538,7 @@ mod tests {
         }
     }
 
-    async fn context_with_chain_config(osaka_active: bool) -> RpcApiContext {
+    async fn context_with_chain_config(osaka_active: bool) -> TestContext {
         let mut storage =
             Store::new("test-blobs", EngineType::InMemory).expect("Failed to create test store");
         storage
@@ -562,7 +562,7 @@ mod tests {
             blob_versioned_hashes: vec![hashes[0], H256::from_low_u64_be(999)],
         };
 
-        let result = request.handle(context).await.unwrap();
+        let result = request.handle(context.clone()).await.unwrap();
         assert_eq!(result, serde_json::Value::Null);
     }
 
@@ -580,7 +580,7 @@ mod tests {
             blob_versioned_hashes: hashes.clone(),
         };
 
-        let result = request.handle(context).await.unwrap();
+        let result = request.handle(context.clone()).await.unwrap();
         let expected = serde_json::to_value(vec![
             Some(blob_and_proof(&bundle, 0)),
             Some(blob_and_proof(&bundle, 1)),
@@ -603,7 +603,7 @@ mod tests {
             blob_versioned_hashes: vec![hashes[0], H256::from_low_u64_be(999)],
         };
 
-        let result = request.handle(context).await.unwrap();
+        let result = request.handle(context.clone()).await.unwrap();
         let expected = serde_json::to_value(vec![Some(blob_and_proof(&bundle, 0)), None]).unwrap();
         assert_eq!(result, expected);
     }
@@ -622,7 +622,7 @@ mod tests {
             blob_versioned_hashes: hashes,
         };
 
-        let result = request.handle(context).await.unwrap();
+        let result = request.handle(context.clone()).await.unwrap();
         let expected = serde_json::to_value(vec![Some(BlobAndProofV1 {
             blob: bundle.blobs[0],
             proof: bundle.proofs[0],
@@ -648,7 +648,7 @@ mod tests {
             blob_versioned_hashes: hashes,
         };
 
-        let result = request.handle(context).await.unwrap();
+        let result = request.handle(context.clone()).await.unwrap();
         let expected = serde_json::to_value(vec![None::<BlobAndProofV1>]).unwrap();
         assert_eq!(result, expected);
     }
@@ -660,7 +660,7 @@ mod tests {
             blob_versioned_hashes: vec![H256::from_low_u64_be(1)],
         };
 
-        let err = request.handle(context).await.unwrap_err();
+        let err = request.handle(context.clone()).await.unwrap_err();
         assert!(matches!(err, RpcErr::UnsupportedFork(_)));
     }
 
@@ -674,7 +674,7 @@ mod tests {
             blob_versioned_hashes: vec![H256::from_low_u64_be(1), H256::from_low_u64_be(2)],
         };
 
-        let result = request.handle(context).await.unwrap();
+        let result = request.handle(context.clone()).await.unwrap();
         let expected = serde_json::to_value(vec![None::<BlobAndProofV2>, None]).unwrap();
         assert_eq!(result, expected);
     }
@@ -686,7 +686,7 @@ mod tests {
             blob_versioned_hashes: vec![H256::zero(); GET_BLOBS_V1_REQUEST_MAX_SIZE + 1],
         };
 
-        let err = request.handle(context).await.unwrap_err();
+        let err = request.handle(context.clone()).await.unwrap_err();
         assert!(matches!(err, RpcErr::TooLargeRequest));
     }
 
@@ -697,7 +697,7 @@ mod tests {
         let request = BlobsV3Request {
             blob_versioned_hashes: vec![H256::zero(); GET_BLOBS_V1_REQUEST_MAX_SIZE],
         };
-        let result = request.handle(context).await;
+        let result = request.handle(context.clone()).await;
         assert!(!matches!(result, Err(RpcErr::TooLargeRequest)));
     }
 
@@ -707,7 +707,7 @@ mod tests {
         let request = BlobsV1Request {
             blob_versioned_hashes: vec![H256::zero(); GET_BLOBS_V1_REQUEST_MAX_SIZE],
         };
-        let result = request.handle(context).await;
+        let result = request.handle(context.clone()).await;
         assert!(!matches!(result, Err(RpcErr::TooLargeRequest)));
     }
 
