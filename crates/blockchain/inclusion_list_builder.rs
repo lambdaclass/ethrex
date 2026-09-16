@@ -27,7 +27,8 @@ use rustc_hash::FxHashMap;
 use crate::mempool::Mempool;
 
 /// Hard byte cap on the total RLP-encoded size of the returned inclusion list,
-/// matching `MAX_BYTES_PER_INCLUSION_LIST` in the execution-apis spec.
+/// matching `MAX_TRANSACTIONS_BYTES_PER_INCLUSION_LIST` in the execution-apis spec
+/// (renamed from `MAX_BYTES_PER_INCLUSION_LIST` there on 2026-08-28; same value).
 pub const MAX_BYTES_PER_INCLUSION_LIST: usize = 8192;
 
 /// Default per-sender cap for the IL builder. Matches the `--il-per-sender-cap`

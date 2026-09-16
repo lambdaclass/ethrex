@@ -364,3 +364,63 @@ merge dropped the four tests along with the code. The split, the balance exempti
 tests are restored in `e1ac1c4cc`; the validator side had kept judging listed frame
 transactions by the Profile 2 replay throughout, so the two agree again. The second gate
 run, recorded above, is from the image with that fix.
+
+### Post-merge audit of the FOCIL and frames layers (2026-09-16)
+
+Prompted by the inclusion-list regression above: if one wholesale conflict resolution in
+the dogfood merge (`aa0951576`) could drop a fix and its tests without anything turning
+red, the same merge could have dropped others. This audit accounts for every such change
+mechanically rather than by reading the merge message.
+
+**Method.** A three-way comparison of the merge against both parents (`89faa8cdd`, the
+dogfood side, and `06d98078b`, the Hegotá side, from their base `06d57f833`). For every
+commit that exists on only one side, every line it added that was still present in that
+side's tip at merge time was looked up in the merge result; a line missing from the
+result is a change the merge discarded. The list was then classified by hand.
+
+**Result.** Everything the merge discarded falls into four groups:
+
+| Group | What | Verdict |
+| --- | --- | --- |
+| The Profile 2 layer of the Hegotá side (`focil_eligibility`, the first `focil_profile2`, the VOPS surface and code budget in the observer, `check_with_profile_2`, their tests) | Removed on purpose so the dogfood layer could be written from the spec text alone | Re-implemented. The current `focil_profile2.rs` carries the same rules: `MAX_VERIFY_GAS_PER_IL = 2**20`, sixteen code bodies per list, `S_start`/`S_end` with withdrawal credits discounted, recent roots checked at the block's slot against each state's root, keyed nonces and the resolved payer in the replay, the EIP-3607/7702 sender gate in the validator |
+| Engine-API shapes (`ed025e982`) | Tolerating a `parentHash` on `engine_getInclusionListV1`, three params on `engine_forkchoiceUpdatedV5` | Superseded by stricter versions on the dogfood side: the parent hash is parsed and honoured (falling back to the head if unknown), the custody bitmap is parsed and ignored; both have tests |
+| The dogfood side's older frames stack (`89faa8cdd`) | The frame-transaction code as it stood before Hegotá's upgrade 2 | Correctly discarded in favour of Hegotá's newer version everywhere it differed |
+| The inclusion-list builder's nonce-domain split (`58d9831e3`) | Keyed frame transactions walked against the account nonce; frame transactions balance-gated | The one real loss. Restored in `e1ac1c4cc` with its four tests, see the record above |
+
+Nothing else was lost: every other discarded line is a call-site shape (a removed
+`profile_2` argument), a test file replaced by the dogfood side's equivalent, or a fixture
+pin the two sides had moved in lock-step (`tests-glamsterdam-devnet@v8.1.4` in both the
+hive config and the fixture URL).
+
+**Specs.** No commit has landed on `EIPS/eip-8141.md`, `eip-8250.md`, `eip-8272.md`,
+`eip-7805.md` or `eip-8369.md` since the pins in the record above; the latest revision of
+each is the pinned one. `tests-focil-devnet@v0.2.0` is still the newest FOCIL fixture
+release. execution-apis has moved twice on the FOCIL engine methods since the spec
+landed: a constant rename (`MAX_TRANSACTIONS_BYTES_PER_INCLUSION_LIST`, doc comment
+updated here) and #878, which restates `engine_getInclusionListV1`'s response rules as
+non-empty transactions, no blob transactions and the byte cap; the builder satisfies all
+three.
+
+**MATCHA.** Every hook is called on the merged tree: the finality credit from the
+forkchoice handler, the revalidation charge after the cheap drops in
+`revalidate_frame_txs_after_block`, the spend as the last locked admission check, the
+lifetime sweep, and the configuration from the CLI flags. The builder's restored
+keyed-frame handling is what lets a MATCHA-admitted second key reach an inclusion list.
+
+**Suites on the merged tip.** Blockchain fixtures 14,906 (LEVM) and 3,138
+(stateless); engine fixtures with the FOCIL overlay 14,155 files, 102,138 fixtures passing
+and 130 held as upstream-broken; integration 1,332; blockchain unit 50.
+
+The engine run found the one thing this audit changes besides a doc comment. Three
+`for_bogota` fixtures from `tests-focil-devnet@v0.2.0`
+(`test_bal_invalid_engine_payload_encoding`) send an `engine_newPayloadV6` whose
+`blockAccessList` is present but not a valid RLP list and expect JSON-RPC error `-32602`.
+The engine API says the payload is `INVALID` and reserves `-32602` for a missing field
+(execution-apis `amsterdam.md`, `engine_newPayloadV5` rule 3, inherited by V6); the test's
+docstring on execution-specs main now says the same, and the Amsterdam copy of the test in
+`tests-glamsterdam-devnet@v8.1.4` expects `INVALID` and passes. ethrex has returned
+`INVALID` since `f584e7976`. The dogfood side of the merge still returned `-32602`, which
+is why its fixture pin and this behaviour had never met before the merge. The three
+variants are now held in `upstream_broken_fixtures.txt` as a third documented class, with
+the harness accepting exactly their signature so a corrected fixture release flags them as
+stale.
