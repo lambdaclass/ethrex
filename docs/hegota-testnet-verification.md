@@ -334,3 +334,33 @@ halted at admission while executing correctly in a block. Every shielded-pool sp
 refused until it was fixed. It also found two pool-side defects, fixed in the pool's own
 pull request.
 
+
+### MATCHA on the rebased branch (2026-09-15)
+
+The `matcha` branch adds per-sender mempool capacity earned from finalized frame-transaction
+gas (design in `docs/matcha.md`). It was rebased onto the FOCIL dogfood merge and gated on a
+fresh three-node devnet at the same pins as the records above, image built from the branch,
+Hegotá at epoch 2.
+
+| What | Result |
+| --- | --- |
+| `scripts/hegota-testnet/verify_devnet.py` with `HEGOTA_VERIFY_MATCHA_EARN=1` | 46 of 46 checks, 0 failures |
+| MATCHA bootstrapping | a fresh contract sender's second keyed transaction refused at admission with `sender has 0 MATCHA width, needs 142725 for an additional frame transaction`; its baseline admitted and mined free |
+| MATCHA finality credit | the baseline mined free in block 71 and three earning baselines mined in blocks 72 to 74; the `finalized` tag passed the last of them at block 95; immediately afterwards two fresh keys were admitted at once and both mined in block 162 |
+| Minimal shielded pool, full lifecycle | deploy, shield, publish root, transfer, publish root, withdraw, claim, all mined with status `0x1`, recipient credited the exact expected amount; per-frame gas unchanged (recent-root verifier 5,579; proof VERIFY 254,685 transfer and 254,712 withdraw; settlement 796,585 transfer and 25,495 withdraw) |
+| Rust suites | integration 1,332 and blockchain unit 50 passing after the rebase; clippy on the changed crates and fmt clean |
+
+The rebase's first gate run passed every MATCHA check and the pool lifecycle but failed one
+FOCIL check the pre-rebase image had passed: `engine_getInclusionListV1` returned an empty
+list while a keyed frame transaction from the contract sender was pending. The cause was on
+the base branch, not in MATCHA. The dogfood merge (`aa0951576`) took the dogfood branch's
+inclusion-list builder wholesale to shed the Profile 2 wiring and with it lost the August
+fix that split candidates by nonce domain: a keyed frame transaction's `nonce_seq` counts
+within its own `(sender, nonce_key)` sequence, so walking it against the sender's account
+nonce reads it as stale, and a paymaster-funded frame transaction from a sender holding
+nothing reads as unaffordable. Every contract sender's frame transaction had been left out
+of locally built inclusion lists since the merge, with no test turning red because the
+merge dropped the four tests along with the code. The split, the balance exemption and the
+tests are restored in `e1ac1c4cc`; the validator side had kept judging listed frame
+transactions by the Profile 2 replay throughout, so the two agree again. The second gate
+run, recorded above, is from the image with that fix.
