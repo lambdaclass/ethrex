@@ -379,6 +379,23 @@ run, recorded above, is from the image with that fix.
 | Pool wallet scheduling on the ledger, earned | ledger `width=3,124,012` after finality; both spends quoted admissible and mined together in block 199; ledger after `1,977,348`, two charges for the additional one (admission plus one revalidation) |
 | Rust suites | integration 1,338, blockchain unit 50, rpc unit 127; clippy clean on the two crates except a pre-existing unused test import in `crates/networking/rpc/types/receipt.rs` |
 
+### MATCHA on the payer (2026-09-16)
+
+The payer-ledger commit keys the width ledger on the paymaster as well as the sender (design in
+`docs/matcha.md`, "Paymasters"). The conformance script gained a section that deploys the
+pinned canonical paymaster runtime with an owner in slot 0, funds it, and sponsors fresh
+senders through it. Gated on a fresh three-node devnet built from that commit:
+
+| What | Result |
+| --- | --- |
+| `scripts/hegota-testnet/verify_devnet.py` with `HEGOTA_VERIFY_MATCHA_EARN=1` | 66 of 66 (the paymaster section is fourteen of them) |
+| Canonical paymaster deploys and is recognised | 355 bytes of the pinned runtime, owner read back from slot 0; a sponsored `only_verify, pay` transaction simulates valid with the paymaster as payer, charge 200,822, admissible as the paymaster's baseline |
+| First sponsored transaction | admitted and mined; the receipt names the paymaster as payer, which is the field the finality credit reads |
+| Second sponsored transaction while the first is pending | refused by the simulation (`matchaAdmissible: false`) and at send, both with `canonical paymaster 0x... has 0 MATCHA width, needs 200,768 for an additional sponsored frame transaction` |
+| After the first finalized | after three finalized sponsored transfers the paymaster read 475,491 width; two sponsored transactions from two fresh senders were admitted at once and mined together in block 450; the paymaster paid 475,491 to 73,811 (the second one's admission charge plus one revalidation while it waited through a head) and the sender's own width stayed at zero. A first run with width for exactly one charge lost the second of the pair to that revalidation charge, which is the per-head charge of register row 8 measured on the payer |
+| Minimal shielded pool lifecycle (self-paying, unaffected by design) | green, shield 75 onward, claim credited exactly |
+| Rust suites | integration 1,340, blockchain unit 50, rpc unit 127; clippy clean on the two crates except the pre-existing unused test import in `crates/networking/rpc/types/receipt.rs` |
+
 ### Post-merge audit of the FOCIL and frames layers (2026-09-16)
 
 Prompted by the inclusion-list regression above: if one wholesale conflict resolution in

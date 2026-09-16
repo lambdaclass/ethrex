@@ -208,6 +208,16 @@ pub enum MempoolError {
     )]
     FrameTxWidthExhausted { have: u64, need: u64 },
     #[error(
+        "canonical paymaster {paymaster:#x} has {have} MATCHA width, needs {need} for an additional \
+         sponsored frame transaction; width is earned from the gas of the transactions it paid \
+         for in finalized blocks"
+    )]
+    FrameTxPayerWidthExhausted {
+        paymaster: ethrex_common::Address,
+        have: u64,
+        need: u64,
+    },
+    #[error(
         "effective priority fee {offered} is below the MATCHA load floor {floor} for an \
          additional frame transaction"
     )]

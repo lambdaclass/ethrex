@@ -135,10 +135,26 @@ fn matcha_fields(
         .blockchain
         .matcha_charge_for(frame_tx, prefix, header)
         .map_err(|error| RpcErr::Internal(error.to_string()))?;
+    // The payer is the pay frame's target, known from the prefix shape before any EVM
+    // pass; only a canonical instance reaches the ledger, a non-canonical one is held to
+    // its one-pending rule and a self-payer is charged as a sender.
+    let canonical_payer = prefix
+        .pay_index
+        .and_then(|index| frame_tx.frames.get(index))
+        .and_then(|frame| frame.target)
+        .filter(|payer| *payer != frame_tx.sender)
+        .filter(|payer| {
+            context
+                .storage
+                .get_account_state_by_root(header.state_root, *payer)
+                .ok()
+                .flatten()
+                .is_some_and(|state| state.code_hash == FRAME_CANONICAL_PAYMASTER_CODE_HASH)
+        });
     let (admissible, refusal) = match context
         .blockchain
         .mempool
-        .matcha_admission(frame_tx.sender, &charge)
+        .matcha_admission(frame_tx.sender, canonical_payer, &charge)
         .map_err(|error| RpcErr::Internal(error.to_string()))?
     {
         MatchaAdmission::Baseline | MatchaAdmission::Admissible => (true, None),
@@ -485,6 +501,8 @@ struct MatchaWidthResult {
     last_credited_block: Option<String>,
     pending_frame_txs: usize,
     pending_charges: String,
+    pending_sponsored: usize,
+    pending_sponsored_charges: String,
     load: String,
     safety_factor_num: u64,
     safety_factor_den: u64,
@@ -521,6 +539,8 @@ impl RpcHandler for MatchaWidthRequest {
             last_credited_block: view.last_credited.map(|block| format!("0x{block:x}")),
             pending_frame_txs: view.pending_frame_txs,
             pending_charges: format!("0x{:x}", view.pending_charges),
+            pending_sponsored: view.pending_sponsored,
+            pending_sponsored_charges: format!("0x{:x}", view.pending_sponsored_charges),
             load: format!("0x{:x}", view.load),
             safety_factor_num: view.config.safety_factor_num,
             safety_factor_den: view.config.safety_factor_den,

@@ -232,6 +232,15 @@ impl WidthLedger {
         Ok(())
     }
 
+    /// Spend `charge` from the payer of an additional sponsored transaction. The fee floor
+    /// is a property of the transaction and was judged once already, so this only debits
+    /// and records the load.
+    pub fn spend_as_payer(&mut self, payer: Address, charge: u64) -> Result<(), WidthError> {
+        self.debit(payer, charge)?;
+        self.load = self.load.saturating_add(charge);
+        Ok(())
+    }
+
     /// Spend a pending transaction's stored charge again before revalidating it. A sender
     /// that cannot pay has the transaction dropped instead of revalidated for free.
     pub fn spend_for_revalidation(

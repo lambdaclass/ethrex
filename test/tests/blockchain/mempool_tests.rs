@@ -12,8 +12,8 @@ use ethrex_blockchain::error::MempoolError;
 use ethrex_blockchain::matcha::{MatchaCharge, MatchaConfig};
 use ethrex_blockchain::mempool::{
     FRAME_CANONICAL_PAYMASTER_CODE_HASH, FramePaymasterReservation, KeyedConcurrency,
-    MatchaAdmission, Mempool, is_canonical_paymaster, keyed_concurrency_verdict,
-    transaction_intrinsic_gas,
+    MatchaAdmission, Mempool, RevalidationCharge, is_canonical_paymaster,
+    keyed_concurrency_verdict, transaction_intrinsic_gas,
 };
 use ethrex_blockchain::{
     Blockchain, BlockchainOptions, DEFAULT_BLOB_PRICE_BUMP_PERCENT, DEFAULT_PRICE_BUMP_PERCENT,
@@ -5142,6 +5142,217 @@ fn next_empty_block() -> Block {
 }
 
 /// Width is spent only once every other locked admission check has passed, so a
+/// A canonical paymaster is exempt from the non-canonical pending cap, and before MATCHA
+/// its balance was the only bound on how many fresh senders it could sponsor at once. Now
+/// its second pending sponsored transaction spends width the paymaster earned by paying
+/// for finalized ones; the senders, each on its own free baseline, are not charged.
+#[tokio::test]
+async fn a_canonical_paymasters_second_sponsored_tx_needs_payer_width() {
+    let mempool = Mempool::new(64);
+    let paymaster = Address::from_low_u64_be(0x9A11_D001);
+    let sponsored = |sender: Address| FramePaymasterReservation {
+        paymaster,
+        reserved_cost: U256::from(1u64),
+        is_canonical: true,
+        is_self_pay: false,
+        paymaster_balance: U256::from(10u64).pow(U256::from(18u64)),
+    };
+    let charge = Some(MatchaCharge {
+        charge: 1_000,
+        effective_priority_fee: 0,
+        meets_validity_floor: true,
+    });
+    let sender_a = Address::from_low_u64_be(0xA1);
+    let sender_b = Address::from_low_u64_be(0xB1);
+    let tx_a = keyed_frame_tx(vec![U256::one()], 0, 1_000_000_000);
+    let tx_b = keyed_frame_tx(vec![U256::from(2u64)], 0, 1_000_000_000);
+
+    // The paymaster's first sponsored transaction is its baseline in that role.
+    mempool
+        .add_transaction(
+            tx_a.hash(&NativeCrypto),
+            sender_a,
+            MempoolTransaction::new(tx_a, sender_a),
+            Some(sponsored(sender_a)),
+            None,
+            KeyedConcurrency::Allowed,
+            charge,
+        )
+        .expect("first sponsored tx is the paymaster's baseline");
+
+    // A second sender, itself on a free baseline, is refused for the paymaster's width.
+    let refused = mempool.add_transaction(
+        tx_b.hash(&NativeCrypto),
+        sender_b,
+        MempoolTransaction::new(tx_b.clone(), sender_b),
+        Some(sponsored(sender_b)),
+        None,
+        KeyedConcurrency::Allowed,
+        charge,
+    );
+    assert!(
+        matches!(
+            refused,
+            Err(MempoolError::FrameTxPayerWidthExhausted { paymaster: p, have: 0, need: 1_000 }) if p == paymaster
+        ),
+        "the paymaster has earned nothing; got {refused:?}"
+    );
+    assert_eq!(
+        mempool
+            .matcha_sender_view(paymaster)
+            .expect("view")
+            .pending_sponsored,
+        1
+    );
+
+    // Width the paymaster earned by paying for finalized transactions admits it, and the
+    // charge lands on the paymaster, not on the sender.
+    let mut gas = FxHashMap::default();
+    gas.insert(paymaster, 1_500u64);
+    mempool.credit_finalized_block(1, &gas).expect("credit");
+    assert!(matches!(
+        mempool
+            .matcha_admission(sender_b, Some(paymaster), charge.as_ref().unwrap())
+            .expect("view"),
+        MatchaAdmission::Admissible
+    ));
+    let hash_b = tx_b.hash(&NativeCrypto);
+    mempool
+        .add_transaction(
+            hash_b,
+            sender_b,
+            MempoolTransaction::new(tx_b, sender_b),
+            Some(sponsored(sender_b)),
+            None,
+            KeyedConcurrency::Allowed,
+            charge,
+        )
+        .expect("earned payer width admits the second sponsored tx");
+    assert_eq!(mempool.width_of(paymaster).expect("width"), 500);
+    assert_eq!(mempool.width_of(sender_b).expect("width"), 0);
+    let view = mempool.matcha_sender_view(paymaster).expect("view");
+    assert_eq!(
+        (view.pending_sponsored, view.pending_sponsored_charges),
+        (2, 1_000)
+    );
+
+    // Revalidation debits the paymaster again, and evicts when it cannot pay.
+    assert!(matches!(
+        mempool.charge_revalidation(hash_b).expect("charge"),
+        RevalidationCharge::Exhausted { account, have: 500, need: 1_000 } if account == paymaster
+    ));
+
+    // Removal releases the load; the spent width stays spent.
+    mempool.remove_transaction(&hash_b).expect("remove");
+    let view = mempool.matcha_sender_view(paymaster).expect("view");
+    assert_eq!(
+        (
+            view.pending_sponsored,
+            view.pending_sponsored_charges,
+            view.load
+        ),
+        (1, 0, 0)
+    );
+    assert_eq!(mempool.width_of(paymaster).expect("width"), 500);
+}
+
+/// A self-payer is the sender and is charged as one; a non-canonical paymaster never
+/// reaches the ledger because its one-pending rule refuses the second transaction first.
+#[tokio::test]
+async fn self_pay_and_non_canonical_paymasters_never_spend_payer_width() {
+    let mempool = Mempool::new(64);
+    let charge = Some(MatchaCharge {
+        charge: 1_000,
+        effective_priority_fee: 0,
+        meets_validity_floor: true,
+    });
+
+    // Self-pay: the pool's shape. Two keyed spends, the second charged to the sender only.
+    let pool = frame_self_sender();
+    let self_pay = FramePaymasterReservation {
+        paymaster: pool,
+        reserved_cost: U256::from(1u64),
+        is_canonical: false,
+        is_self_pay: true,
+        paymaster_balance: U256::from(10u64).pow(U256::from(18u64)),
+    };
+    let mut gas = FxHashMap::default();
+    gas.insert(pool, 1_000u64);
+    mempool.credit_finalized_block(1, &gas).expect("credit");
+    for (key, expect) in [(1u64, "baseline"), (2, "charged to the sender")] {
+        let tx = keyed_frame_tx(vec![U256::from(key)], 0, 1_000_000_000);
+        mempool
+            .add_transaction(
+                tx.hash(&NativeCrypto),
+                pool,
+                MempoolTransaction::new(tx, pool),
+                Some(self_pay.clone()),
+                None,
+                KeyedConcurrency::Allowed,
+                charge,
+            )
+            .unwrap_or_else(|err| panic!("self-paid spend {key} ({expect}) refused: {err}"));
+    }
+    let view = mempool.matcha_sender_view(pool).expect("view");
+    assert_eq!(
+        (
+            view.width,
+            view.pending_charges,
+            view.pending_sponsored,
+            view.pending_sponsored_charges
+        ),
+        (0, 1_000, 0, 0)
+    );
+
+    // Non-canonical: the count rule, not the ledger, refuses the second sponsored one.
+    let sponsor = Address::from_low_u64_be(0x5C);
+    let non_canonical = |sender: Address| FramePaymasterReservation {
+        paymaster: sponsor,
+        reserved_cost: U256::from(1u64),
+        is_canonical: false,
+        is_self_pay: false,
+        paymaster_balance: U256::from(10u64).pow(U256::from(18u64)),
+    };
+    let sender_a = Address::from_low_u64_be(0xA2);
+    let sender_b = Address::from_low_u64_be(0xB2);
+    let tx_a = keyed_frame_tx(vec![U256::one()], 0, 1_000_000_000);
+    let tx_b = keyed_frame_tx(vec![U256::from(2u64)], 0, 1_000_000_000);
+    mempool
+        .add_transaction(
+            tx_a.hash(&NativeCrypto),
+            sender_a,
+            MempoolTransaction::new(tx_a, sender_a),
+            Some(non_canonical(sender_a)),
+            None,
+            KeyedConcurrency::Allowed,
+            charge,
+        )
+        .expect("first sponsored tx");
+    let refused = mempool.add_transaction(
+        tx_b.hash(&NativeCrypto),
+        sender_b,
+        MempoolTransaction::new(tx_b, sender_b),
+        Some(non_canonical(sender_b)),
+        None,
+        KeyedConcurrency::Allowed,
+        charge,
+    );
+    assert!(
+        matches!(
+            refused,
+            Err(MempoolError::FrameTxNonCanonicalPaymasterLimit)
+        ),
+        "the structural rule holds before width is consulted; got {refused:?}"
+    );
+    assert_eq!(
+        mempool
+            .matcha_sender_view(sponsor)
+            .expect("view")
+            .pending_sponsored,
+        1
+    );
+}
+
 /// `matcha_admission` answers what `charge_width` would decide, in its order, and spends
 /// nothing while doing so.
 #[tokio::test]
@@ -5154,7 +5365,9 @@ async fn matcha_admission_mirrors_the_locked_decision_without_spending() {
         meets_validity_floor: true,
     };
     assert!(matches!(
-        mempool.matcha_admission(sender, &charge).expect("view"),
+        mempool
+            .matcha_admission(sender, None, &charge)
+            .expect("view"),
         MatchaAdmission::Baseline
     ));
 
@@ -5171,7 +5384,9 @@ async fn matcha_admission_mirrors_the_locked_decision_without_spending() {
         )
         .expect("baseline admitted");
     assert!(matches!(
-        mempool.matcha_admission(sender, &charge).expect("view"),
+        mempool
+            .matcha_admission(sender, None, &charge)
+            .expect("view"),
         MatchaAdmission::Refused(MempoolError::FrameTxWidthExhausted {
             have: 0,
             need: 1_000
@@ -5182,7 +5397,9 @@ async fn matcha_admission_mirrors_the_locked_decision_without_spending() {
     gas.insert(sender, 1_000u64);
     mempool.credit_finalized_block(1, &gas).expect("credit");
     assert!(matches!(
-        mempool.matcha_admission(sender, &charge).expect("view"),
+        mempool
+            .matcha_admission(sender, None, &charge)
+            .expect("view"),
         MatchaAdmission::Admissible
     ));
     assert_eq!(

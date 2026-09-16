@@ -95,14 +95,44 @@ walks newly finalized blocks and credits each sender the gas its own frame trans
 used. A head-based credit would let a sender earn from a block that is later reorged out
 and spend the width on work the chain never paid for.
 
+## Paymasters
+
+EIP-8141 exempts a canonical paymaster (the pinned runtime, one instance per sponsor) from
+the one-pending rule that binds non-canonical ones, and bounds it by balance alone:
+`available = balance - reserved_cost`. Composed with the free sender baseline, that
+exemption was the one place the mechanism did not reach. Every fresh sender gets a free
+pending transaction, a canonical paymaster can fund an unbounded number of fresh senders,
+and the capital behind them is only reserved, never spent: `balance / max_cost` pending
+transactions per node, re-simulated on every head, all invalidated by one ordinary
+transaction that moves the paymaster's balance, and the same balance funds the next batch.
+Sender width never sees it, because none of those transactions is additional for its
+sender.
+
+So the ledger is keyed on the payer too. A canonical paymaster earns width from the gas
+of the transactions it paid for in finalized blocks (`credit_finalized_width` credits the
+receipt's payer alongside the sender when they differ). Its first pending sponsored
+transaction is its free baseline in that role; every further one spends the same charge
+from the paymaster's width, and every revalidation debits it again. A transaction that is
+additional for both its sender and its paymaster pays both, and both ledgers are checked
+before either is debited, so a refusal for one never costs the other. The refusal is its
+own error, naming the paymaster and its figures.
+
+What that buys: parking six thousand sponsored transactions would need about 3.4 billion
+width, which the cap makes impossible, so a paymaster holds about fifty per node at the
+default charge, and each drain-and-refill cycle debits all of them. Idle capital stops
+counting; gas actually paid for in finalized blocks is what buys sponsoring capacity.
+Self-payers are charged as senders only, and non-canonical paymasters keep their
+one-pending rule, the structural gate width stacks behind.
+
 ## Reading the ledger
 
 A wallet that relays for many senders wants to schedule rather than probe, so the two
 figures admission judges are readable before a broadcast.
 
-`ethrex_matchaWidth(address)` returns this node's ledger for one sender: `width` (earned
+`ethrex_matchaWidth(address)` returns this node's ledger for one account: `width` (earned
 and not spent), `widthCap`, `lastCreditedBlock`, `pendingFrameTxs` (the first of which is
 the free baseline), `pendingCharges` (what those pending additional transactions paid),
+`pendingSponsored` and `pendingSponsoredCharges` (the same two in the paymaster role),
 `load` (the pool-wide term the linear fee reads), and the policy knobs. The answer is
 node-local by construction: width is credited from finalized blocks, which every node
 sees alike, and spent by what this node admitted, so it is exact for this node's
@@ -111,8 +141,8 @@ admission and only approximate for another's.
 `ethrex_simulateFrameTransaction` gained three fields, priced from the prefix it already
 validates: `matchaCharge`, the width admitting the transaction as an additional pending
 one would spend, computed by the same function admission uses; `matchaAdmissible`, whether
-admission would take it right now, as the sender's baseline or against its width and the
-fee floor; and `matchaRefusal`, the error admission would return when it would not. Like
+admission would take it right now, as a baseline or against the sender's width, the
+canonical paymaster's width when one pays, and the fee floor; and `matchaRefusal`, the error admission would return when it would not. Like
 `valid`, admissible is necessary rather than sufficient, and it can go stale the moment it
 is answered, so the refusal on `eth_sendRawTransaction` remains the authority.
 

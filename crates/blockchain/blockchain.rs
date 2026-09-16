@@ -3419,22 +3419,28 @@ impl Blockchain {
                 continue;
             };
             let receipts = self.storage.get_receipts_for_block(&hash).await?;
-            let mut gas_by_sender: FxHashMap<Address, u64> = FxHashMap::default();
+            let mut gas_by_account: FxHashMap<Address, u64> = FxHashMap::default();
             let mut previous_cumulative = 0u64;
             for (index, tx) in body.transactions.iter().enumerate() {
-                let cumulative = receipts
-                    .get(index)
-                    .map_or(previous_cumulative, |r| r.cumulative_gas_used);
+                let receipt = receipts.get(index);
+                let cumulative = receipt.map_or(previous_cumulative, |r| r.cumulative_gas_used);
                 let used = cumulative.saturating_sub(previous_cumulative);
                 previous_cumulative = cumulative;
                 if let Transaction::FrameTransaction(frame_tx) = tx {
-                    *gas_by_sender.entry(frame_tx.sender).or_insert(0) += used;
+                    *gas_by_account.entry(frame_tx.sender).or_insert(0) += used;
+                    // A third-party paymaster earns width in its own role from the gas it
+                    // paid for; a self-payer is the sender and was credited above.
+                    if let Some(payer) = receipt.and_then(|r| r.payer)
+                        && payer != frame_tx.sender
+                    {
+                        *gas_by_account.entry(payer).or_insert(0) += used;
+                    }
                 }
             }
             // Credited even when empty, so the high-water mark advances past frame-free
             // blocks instead of re-walking them on every notification.
             self.mempool
-                .credit_finalized_block(number, &gas_by_sender)?;
+                .credit_finalized_block(number, &gas_by_account)?;
         }
         Ok(())
     }
@@ -3810,10 +3816,13 @@ impl Blockchain {
 
             // The rerun below is the work MATCHA prices, so it is paid for here, after
             // the cheap drops and before any EVM is built.
-            if let mempool::RevalidationCharge::Exhausted { have, need } =
-                self.mempool.charge_revalidation(hash)?
+            if let mempool::RevalidationCharge::Exhausted {
+                account,
+                have,
+                need,
+            } = self.mempool.charge_revalidation(hash)?
             {
-                debug!(%hash, have, need, "evicting frame tx: sender cannot pay to revalidate it");
+                debug!(%hash, %account, have, need, "evicting frame tx: its sender or paymaster cannot pay to revalidate it");
                 self.mempool.remove_transaction(&hash)?;
                 continue;
             }

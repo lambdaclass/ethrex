@@ -233,25 +233,38 @@ def recent_root_frame(*tuples: bytes) -> bytes:
     return frame(1, 0x00, RECENT_ROOT_ADDRESS, 80_000, 0, 0, b"".join(tuples))
 
 
-def build_frame_tx(chain_id, sender, key, seq, frames, priority, max_fee, sender_key, sign=True):
+def build_frame_tx(chain_id, sender, key, seq, frames, priority, max_fee, sender_key, sign=True,
+                   cosigners=()):
     """The envelope; fees are one nested list and the signature covers the whole thing.
 
     `sign=False` builds a zero-signature envelope, which is what a contract sender uses:
     its own code decides whether to `APPROVE`, so the transaction carries no signature for
     the protocol to validate. `sender_key` is then unused.
+
+    `cosigners` are further secp256k1 private keys whose signatures follow the sender's in
+    the signature list, each over the same signature hash with an empty `msg`. The
+    canonical paymaster reads its owner's approval from entry 1 that way (`SIGPARAM`), which
+    is what lets the owner sign a hash that does not contain its own signature.
     """
-    def envelope(signature) -> bytes:
-        entries = [] if signature is None else [rl([ri(1), rb(addr(sender)), rb(b""), rb(signature)])]
+    def sign_hash(private_key: str, sig_hash: str) -> bytes:
+        raw = bytes.fromhex(cast_cmd("wallet", "sign", "--private-key", private_key, "--no-hash", sig_hash)[2:])
+        v = raw[64] - 27 if raw[64] >= 27 else raw[64]
+        return bytes([v]) + raw[:64]
+
+    signers = ([(sender, sender_key)] if sign else []) + [
+        (cast_cmd("wallet", "address", "--private-key", k), k) for k in cosigners]
+
+    def envelope(signatures) -> bytes:
+        entries = [rl([ri(1), rb(addr(signer)), rb(b""), rb(signature)])
+                   for (signer, _), signature in zip(signers, signatures)]
         fees = rl([ri(priority), ri(max_fee), ri(0)])
         return rl([ri(chain_id), rl([ri(key)]), ri(seq), rb(addr(sender)), rl(frames),
                    rl(entries), fees, rl([])])
 
-    if not sign:
-        return "0x06" + envelope(None).hex()
-    sig_hash = cast_cmd("keccak", "0x06" + envelope(b"").hex())
-    raw = bytes.fromhex(cast_cmd("wallet", "sign", "--private-key", sender_key, "--no-hash", sig_hash)[2:])
-    v = raw[64] - 27 if raw[64] >= 27 else raw[64]
-    return "0x06" + envelope(bytes([v]) + raw[:64]).hex()
+    if not signers:
+        return "0x06" + envelope([]).hex()
+    sig_hash = cast_cmd("keccak", "0x06" + envelope([b""] * len(signers)).hex())
+    return "0x06" + envelope([sign_hash(k, sig_hash) for _, k in signers]).hex()
 
 
 # A sender contract that unconditionally approves execution and payment for itself:
@@ -285,6 +298,45 @@ def deploy(runtime: bytes, endowment: int = 0) -> str:
                               "--value", str(endowment), "--json",
                               "--create", "0x" + init.hex()))
     return out["contractAddress"]
+
+
+# The canonical paymaster runtime EIP-8141 pins (EIPs#12041), 355 bytes, keccak
+# da42f0d1...d45c: the mempool recognises an instance by this hash alone. Its pay frame
+# takes no calldata and no value; it approves payment when signature entry 1 is a
+# secp256k1 signature by the owner held in storage slot 0, with an empty `msg`.
+CANONICAL_PAYMASTER_RUNTIME = bytes.fromhex("3461002e57366100355760016001b41561005a575f6001b45f54141561005a5760026001b461005a5760015f5faa5b3661005a57005b5f3560f81c8060011461005e57806002146100a557806003146100ec57600414610123575b5f5ffd5b50335f54146100875760016001b41561005a575f6001b45f54141561005a5760026001b461005a575b60025461005a57600135801561005a57600155426201518001600255005b50335f54146100ce5760016001b41561005a575f6001b45f54141561005a5760026001b461005a575b60025461005a57600135801561005a57600355426201518001600255005b50335f54146101155760016001b41561005a575f6001b45f54141561005a5760026001b461005a575b5f6001555f6002555f600355005b600254801561005a57421061005a576001548015610153575f6001555f6002555f5f5f5f845f545af11561005a57005b506003545f555f6003555f60025500")
+
+
+def deploy_with_owner(runtime: bytes, owner: str, endowment: int) -> str:
+    """Deploy `runtime` with `owner` written to storage slot 0 and `endowment` wei.
+
+    The init code is `PUSH20 owner; PUSH1 0; SSTORE` followed by the same copy-and-return
+    tail as `deploy`, with two-byte pushes because the canonical paymaster is longer than
+    255 bytes. `offset` is the init code's own length, asserted below.
+    """
+    prologue = bytes([0x73]) + addr(owner) + bytes([0x60, 0x00, 0x55])
+    length = len(runtime).to_bytes(2, "big")
+    tail_len = 3 + 3 + 2 + 1 + 3 + 2 + 1
+    offset = (len(prologue) + tail_len).to_bytes(2, "big")
+    tail = (bytes([0x61]) + length + bytes([0x61]) + offset + bytes([0x60, 0x00, 0x39])
+            + bytes([0x61]) + length + bytes([0x60, 0x00, 0xF3]))
+    init = prologue + tail + runtime
+    assert len(tail) == tail_len and len(prologue) + len(tail) == int.from_bytes(offset, "big")
+    out = json.loads(cast_cmd("send", "--rpc-url", RPC, "--private-key", KEY,
+                              "--value", str(endowment), "--json",
+                              "--create", "0x" + init.hex()))
+    return out["contractAddress"]
+
+
+def fresh_key() -> tuple[str, str]:
+    """A brand-new secp256k1 key as `(address, private_key)`; nothing on chain knows it."""
+    wallet = json.loads(cast_cmd("wallet", "new", "--json"))[0]
+    return wallet["address"], wallet["private_key"]
+
+
+def fund(address: str, wei: int) -> None:
+    """Send `wei` from the script's key and wait for it to mine."""
+    cast_cmd("send", address, "--value", str(wei), "--rpc-url", RPC, "--private-key", KEY, "--json")
 
 
 # The TXPARAM index map this chain must answer to, as settled upstream on 2026-08-31 after
@@ -351,6 +403,36 @@ def txparam_id_check(chain_id, sender_contract) -> None:
               f"read {hex(got)}, expected {hex(expected[idx])}")
 
 
+def wait_mined(hashes: list, what: str) -> set:
+    # Wait on the POOL, not just a poll count. A transaction with no receipt means one of
+    # two very different things, still queued or dropped, and only the pool can tell them
+    # apart. Reporting them as one failure is how a busy devnet looks like a broken feature.
+    mined = {}
+    for _ in range(120):
+        mined = {h: rpc(RPC, "eth_getTransactionReceipt", [h]) for h in hashes}
+        if all(mined.values()):
+            break
+        status = rpc(RPC, "txpool_status", [])
+        if int(status["pending"], 16) + int(status["queued"], 16) == 0:
+            break
+        time.sleep(2)
+    blocks = {int(r["blockNumber"], 16) for r in mined.values() if r}
+    missing = [h for h in hashes if not mined.get(h)]
+    if missing:
+        still_pooled = [h for h in missing if rpc(RPC, "eth_getTransactionByHash", [h])]
+        check(f"{what} mine{'s' if len(hashes) == 1 else ''}", False,
+              f"{len(missing)} of {len(hashes)} not included; "
+              + ("still pooled — the builder had not got to them yet"
+                 if still_pooled else "GONE FROM THE POOL — dropped, not delayed"))
+    else:
+        check(f"{what} mine{'s' if len(hashes) == 1 else ''}", True,
+              ",".join(mined[h]["status"] for h in hashes) + f" in block(s) {sorted(blocks)}")
+        check(f"{what} succeed{'s' if len(hashes) == 1 else ''}",
+              all(mined[h]["status"] == "0x1" for h in hashes),
+              ",".join(mined[h]["status"] for h in hashes))
+    return blocks
+
+
 def concurrency_check(chain_id) -> None:
     """EIP-8250 concurrency under MATCHA. Only a contract sender qualifies structurally, and
     even it starts with no width: a second key is refused until the sender's own finalized
@@ -399,34 +481,6 @@ def concurrency_check(chain_id) -> None:
                   outcome == "refused" and "MATCHA width" in detail, detail)
         return hashes
 
-    def wait_mined(hashes: list, what: str) -> set:
-        # Wait on the POOL, not just a poll count. A transaction with no receipt means one of
-        # two very different things, still queued or dropped, and only the pool can tell them
-        # apart. Reporting them as one failure is how a busy devnet looks like a broken feature.
-        mined = {}
-        for _ in range(120):
-            mined = {h: rpc(RPC, "eth_getTransactionReceipt", [h]) for h in hashes}
-            if all(mined.values()):
-                break
-            status = rpc(RPC, "txpool_status", [])
-            if int(status["pending"], 16) + int(status["queued"], 16) == 0:
-                break
-            time.sleep(2)
-        blocks = {int(r["blockNumber"], 16) for r in mined.values() if r}
-        missing = [h for h in hashes if not mined.get(h)]
-        if missing:
-            still_pooled = [h for h in missing if rpc(RPC, "eth_getTransactionByHash", [h])]
-            check(f"{what} mine{'s' if len(hashes) == 1 else ''}", False,
-                  f"{len(missing)} of {len(hashes)} not included; "
-                  + ("still pooled — the builder had not got to them yet"
-                     if still_pooled else "GONE FROM THE POOL — dropped, not delayed"))
-        else:
-            check(f"{what} mine{'s' if len(hashes) == 1 else ''}", True,
-                  ",".join(mined[h]["status"] for h in hashes) + f" in block(s) {sorted(blocks)}")
-            check(f"{what} succeed{'s' if len(hashes) == 1 else ''}",
-                  all(mined[h]["status"] == "0x1" for h in hashes),
-                  ",".join(mined[h]["status"] for h in hashes))
-        return blocks
 
     # A fresh sender has earned nothing, so it is held to the one baseline EIP-8141 allows.
     blocks = wait_mined(send_pair(0x8250_0000, "beef", expect_second_admitted=False), "the baseline")
@@ -473,6 +527,124 @@ def concurrency_check(chain_id) -> None:
     wait_mined(send_pair(0x8250_0200, "d00d", expect_second_admitted=True), "both")
     return contract
 
+def paymaster_check(chain_id) -> None:
+    """MATCHA on the payer. EIP-8141 exempts a canonical paymaster from the pending cap that
+    binds non-canonical ones and bounds it by balance alone, so before the payer ledger its
+    capital was the only limit on how many fresh senders it could sponsor at once, and every
+    one of them sat on a free sender baseline. Now the paymaster's second pending sponsored
+    transaction needs width it earned by paying for finalized ones.
+
+    The earning half waits for finality and runs only when HEGOTA_VERIFY_MATCHA_EARN=1."""
+    owner, owner_key = fresh_key()
+    paymaster = deploy_with_owner(CANONICAL_PAYMASTER_RUNTIME, owner, 10**18)
+    code = rpc(RPC, "eth_getCode", [paymaster, "latest"])
+    slot0 = rpc(RPC, "eth_getStorageAt", [paymaster, "0x0", "latest"])
+    check("the canonical paymaster runtime deploys with its owner in slot 0",
+          bytes.fromhex(code[2:]) == CANONICAL_PAYMASTER_RUNTIME
+          and slot0[-40:].lower() == owner[2:].lower(),
+          f"{len(code[2:]) // 2} bytes at {paymaster[:10]}..., owner {owner[:10]}...")
+
+    def sponsored(sender: str, sender_key: str, salt: str, seq: int = 0) -> str:
+        # only_verify: the sender's default code checks entry 0 and approves execution.
+        # pay: the canonical paymaster checks entry 1 against its owner and approves payment.
+        # Then a small transfer to a fresh recipient, so the paymaster actually pays for gas.
+        return build_frame_tx(
+            chain_id, sender, 0, seq,
+            [frame(1, 0x02, sender, 80_000, 0, 0, b""),
+             frame(1, 0x01, paymaster, 30_000, 0, 0, b""),
+             frame(2, 0x00, derived_address(salt, 0), 30_000, NEW_ACCOUNT_STATE_GAS, 100, b"")],
+            *fees(), sender_key, cosigners=(owner_key,))
+
+    def funded_senders(count: int) -> list:
+        senders = [fresh_key() for _ in range(count)]
+        for address, _ in senders:
+            fund(address, 10**15)
+        return senders
+
+    (sender_a, key_a), (sender_b, key_b) = funded_senders(2)
+    raw_a = sponsored(sender_a, key_a, "9a01")
+    raw_b = sponsored(sender_b, key_b, "9a02")
+    sim = rpc(RPC, "ethrex_simulateFrameTransaction", [raw_a])
+    check("a sponsored transaction simulates valid with the paymaster as payer",
+          sim.get("valid") is True and (sim.get("payer") or "").lower() == paymaster.lower(),
+          f"valid={sim.get('valid')} payer={sim.get('payer')} shape={sim.get('prefixShape')}")
+    check("its charge is quoted and, as the paymaster's first, admissible",
+          sim.get("matchaAdmissible") is True and bool(sim.get("matchaCharge")),
+          f"charge={int(sim['matchaCharge'], 16) if sim.get('matchaCharge') else None}")
+
+    hash_a = rpc(RPC, "eth_sendRawTransaction", [raw_a])
+    sim_b = rpc(RPC, "ethrex_simulateFrameTransaction", [raw_b])
+    if rpc(RPC, "eth_getTransactionReceipt", [hash_a]):
+        check("the simulation refuses a second sponsored transaction for the paymaster's width", True,
+              "not observable: the first mined before the second was simulated")
+    else:
+        check("the simulation refuses a second sponsored transaction for the paymaster's width",
+              sim_b.get("matchaAdmissible") is False
+              and "canonical paymaster" in (sim_b.get("matchaRefusal") or ""),
+              (sim_b.get("matchaRefusal") or f"admissible={sim_b.get('matchaAdmissible')}")[:110])
+    try:
+        rpc(RPC, "eth_sendRawTransaction", [raw_b])
+        if rpc(RPC, "eth_getTransactionReceipt", [hash_a]):
+            check("a second sponsored transaction is refused while the first is pending", True,
+                  "not observable: the first mined before the second send")
+        else:
+            check("a second sponsored transaction is refused while the first is pending", False,
+                  "admitted alongside a pending sponsored transaction with no payer width")
+    except RuntimeError as exc:
+        check("a second sponsored transaction is refused while the first is pending",
+              "canonical paymaster" in str(exc) and "MATCHA width" in str(exc), str(exc)[:110])
+    blocks = wait_mined([hash_a], "the sponsored baseline")
+    receipt = rpc(RPC, "eth_getTransactionReceipt", [hash_a]) or {}
+    check("the receipt names the paymaster as payer",
+          (receipt.get("payer") or "").lower() == paymaster.lower(), f"payer={receipt.get('payer')}")
+
+    if os.environ.get("HEGOTA_VERIFY_MATCHA_EARN") != "1":
+        check("a paymaster earns width from the gas it paid for", True,
+              "skipped; HEGOTA_VERIFY_MATCHA_EARN=1 runs it and waits about two epochs")
+        return
+
+    # Earn: two more sponsored baselines from the same sender, each mined before the next so
+    # each is free for the paymaster. One finalized sponsored transfer earns about one
+    # charge, and an additional transaction is charged again on every head it waits
+    # through, so a paymaster with exactly one charge of width loses the second of a pair
+    # to the first revalidation. Three finalized ones give it room for the pair below.
+    last_block = max(blocks) if blocks else 0
+    for seq in (1, 2):
+        raw = sponsored(sender_a, key_a, f"9a1{seq}", seq)
+        blocks = wait_mined([rpc(RPC, "eth_sendRawTransaction", [raw])], f"sponsored earning round {seq}")
+        last_block = max(last_block, *blocks) if blocks else last_block
+
+    finalized = -1
+    for _ in range(90):
+        block = rpc(RPC, "eth_getBlockByNumber", ["finalized", False])
+        finalized = int(block["number"], 16) if block else -1
+        if finalized >= last_block:
+            break
+        time.sleep(10)
+    check("the sponsored transactions finalized", finalized >= last_block,
+          f"finalized block {finalized}, needed >= {last_block}")
+    time.sleep(3)
+    view = rpc(RPC, "ethrex_matchaWidth", [paymaster])
+    before = int(view["width"], 16)
+    check("ethrex_matchaWidth shows the paymaster credited for the gas it paid",
+          before > 0, f"width={before} pendingSponsored={view.get('pendingSponsored')}")
+
+    (sender_c, key_c), (sender_d, key_d) = funded_senders(2)
+    hashes = [rpc(RPC, "eth_sendRawTransaction", [sponsored(sender_c, key_c, "9a03")])]
+    try:
+        hashes.append(rpc(RPC, "eth_sendRawTransaction", [sponsored(sender_d, key_d, "9a04")]))
+        check("two sponsored transactions pend at once on earned payer width", True, "2 of 2 admitted")
+    except RuntimeError as exc:
+        check("two sponsored transactions pend at once on earned payer width", False, str(exc)[:110])
+    wait_mined(hashes, "both sponsored")
+    # Their own gas is not finalized yet, so the only movement is the second one's charge
+    # (and a revalidation charge per head it waited through), all on the paymaster.
+    after = int(rpc(RPC, "ethrex_matchaWidth", [paymaster])["width"], 16)
+    check("the second one was charged to the paymaster, not to its sender",
+          after < before and int(rpc(RPC, "ethrex_matchaWidth", [sender_d])["width"], 16) == 0,
+          f"paymaster width {before} -> {after}")
+
+
 def main() -> int:
     sender = cast_cmd("wallet", "address", "--private-key", KEY)
     chain_id = int(rpc(RPC, "eth_chainId", []), 16)
@@ -499,7 +671,9 @@ def main() -> int:
           f"shape={sim.get('prefixShape')} violation={sim.get('violation')}")
     tx_hash = rpc(RPC, "eth_sendRawTransaction", [raw])
     receipt = None
-    for _ in range(30):
+    # Two minutes: the first block after activation can be slow to come, and this is the
+    # first transaction the script sends.
+    for _ in range(60):
         receipt = rpc(RPC, "eth_getTransactionReceipt", [tx_hash])
         if receipt:
             break
@@ -658,6 +832,10 @@ def main() -> int:
     print("\nEIP-8250 — concurrency, which needs a contract sender")
     drain_pool("the contract-sender deploy")
     sender_contract = concurrency_check(chain_id)
+
+    print("\nMATCHA on the payer: a canonical paymaster sponsoring fresh senders")
+    drain_pool("the paymaster deploy")
+    paymaster_check(chain_id)
 
     print("\nEIP-8141/8250/8272 — the TXPARAM index map, read on chain")
     drain_pool("the TXPARAM probe")

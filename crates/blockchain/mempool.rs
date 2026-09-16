@@ -255,8 +255,10 @@ pub enum RevalidationCharge {
     /// Baseline transaction, or the mechanism is off: nothing to pay.
     NotAdditional,
     Paid,
-    /// The sender cannot pay for the rerun; the transaction should be dropped.
+    /// `account` (the sender, or the canonical paymaster) cannot pay for the rerun; the
+    /// transaction should be dropped.
     Exhausted {
+        account: Address,
         have: u64,
         need: u64,
     },
@@ -407,6 +409,9 @@ struct MempoolInner {
     /// The charge each pending *additional* frame tx paid. Needed again to release its
     /// `load` on removal and to charge each revalidation. Absent means baseline.
     frame_tx_charge: FxHashMap<H256, u64>,
+    /// The charge a canonical paymaster paid for each pending sponsored frame tx beyond its
+    /// first, keyed like `frame_tx_charge` and released and re-charged the same way.
+    frame_tx_payer_charge: FxHashMap<H256, u64>,
     /// When each pending frame tx was admitted, for the maximum-lifetime sweep.
     frame_tx_admitted_at: FxHashMap<H256, Instant>,
 }
@@ -434,6 +439,9 @@ impl MempoolInner {
         // Load falls; spent width does not. Refunding on removal would let a sender cycle
         // transactions through the pool at no cost.
         if let Some(charge) = self.frame_tx_charge.remove(hash) {
+            self.width.release_load(charge);
+        }
+        if let Some(charge) = self.frame_tx_payer_charge.remove(hash) {
             self.width.release_load(charge);
         }
         self.frame_tx_admitted_at.remove(hash);
@@ -989,47 +997,113 @@ impl MempoolInner {
         keyed + linear
     }
 
-    /// Spend width for an additional frame transaction; `None` when it is the baseline.
+    /// Pending frame transactions a third-party paymaster sponsors, ignoring the one a
+    /// replacement displaces. Self-paid transactions are the sender's affair, not the
+    /// paymaster's.
+    fn sponsored_pending_count(&self, paymaster: Address, excluding: Option<H256>) -> usize {
+        self.frame_tx_paymaster
+            .iter()
+            .filter(|(hash, reservation)| {
+                Some(**hash) != excluding
+                    && reservation.paymaster == paymaster
+                    && !reservation.is_self_pay
+            })
+            .count()
+    }
+
+    /// The canonical paymaster whose width an additional sponsored transaction spends, if
+    /// the reservation names one. A non-canonical paymaster is held to its one-pending
+    /// rule and never reaches the ledger; a self-payer is charged as a sender.
+    fn matcha_payer(reservation: Option<&FramePaymasterReservation>) -> Option<Address> {
+        reservation
+            .filter(|reservation| reservation.is_canonical && !reservation.is_self_pay)
+            .map(|reservation| reservation.paymaster)
+    }
+
+    /// Spend width for an additional frame transaction, from the sender when it already
+    /// has one pending and from the canonical paymaster when it already sponsors one;
+    /// `(None, None)` when it is a baseline in both roles.
     ///
-    /// Runs under the write lock so the pending count and the spend are atomic with the
+    /// Runs under the write lock so the pending counts and the spends are atomic with the
     /// insert, and after every other admission check so a rejected transaction never
-    /// spends anything.
+    /// spends anything. Both ledgers are checked before either is debited, for the same
+    /// reason: a refusal for the payer must not have cost the sender.
     fn charge_width(
         &mut self,
         sender: Address,
         incoming_hash: H256,
         replacing: Option<H256>,
         charge: Option<MatchaCharge>,
-    ) -> Result<Option<u64>, MempoolError> {
+        reservation: Option<&FramePaymasterReservation>,
+    ) -> Result<(Option<u64>, Option<u64>), MempoolError> {
         if !self.width.config().enabled {
-            return Ok(None);
+            return Ok((None, None));
         }
         let Some(charge) = charge else {
-            return Ok(None);
+            return Ok((None, None));
         };
         if self.transaction_pool.contains_key(&incoming_hash) {
-            return Ok(None);
+            return Ok((None, None));
         }
         let excluding = replacing.or(Some(incoming_hash));
-        if self.sender_pending_frame_count(sender, excluding) == 0 {
-            return Ok(None);
+        let sender_due = self.sender_pending_frame_count(sender, excluding) > 0;
+        let payer_due = Self::matcha_payer(reservation)
+            .filter(|payer| self.sponsored_pending_count(*payer, excluding) > 0);
+        if !sender_due && payer_due.is_none() {
+            return Ok((None, None));
         }
         if !charge.meets_validity_floor {
             return Err(MempoolError::FrameTxValidityTooShort {
                 min_slots: self.width.config().min_validity_slots,
             });
         }
-        self.width
-            .spend(sender, charge.charge, charge.effective_priority_fee)
-            .map_err(|err| match err {
-                WidthError::Insufficient { have, need } => {
-                    MempoolError::FrameTxWidthExhausted { have, need }
-                }
-                WidthError::BelowFloor { offered, floor } => {
-                    MempoolError::FrameTxBelowWidthFeeFloor { offered, floor }
-                }
-            })?;
-        Ok(Some(charge.charge))
+        let floor = self.width.fee_floor(charge.charge);
+        if charge.effective_priority_fee < floor {
+            return Err(MempoolError::FrameTxBelowWidthFeeFloor {
+                offered: charge.effective_priority_fee,
+                floor,
+            });
+        }
+        if let Some(payer) = payer_due {
+            let have = self.width.width_of(payer);
+            if have < charge.charge {
+                return Err(MempoolError::FrameTxPayerWidthExhausted {
+                    paymaster: payer,
+                    have,
+                    need: charge.charge,
+                });
+            }
+        }
+        let sender_charge = if sender_due {
+            self.width
+                .spend(sender, charge.charge, charge.effective_priority_fee)
+                .map_err(|err| match err {
+                    WidthError::Insufficient { have, need } => {
+                        MempoolError::FrameTxWidthExhausted { have, need }
+                    }
+                    WidthError::BelowFloor { offered, floor } => {
+                        MempoolError::FrameTxBelowWidthFeeFloor { offered, floor }
+                    }
+                })?;
+            Some(charge.charge)
+        } else {
+            None
+        };
+        let payer_charge = match payer_due {
+            Some(payer) => {
+                // Checked above; the sender's debit cannot have touched the payer's balance.
+                self.width
+                    .spend_as_payer(payer, charge.charge)
+                    .map_err(|_| MempoolError::FrameTxPayerWidthExhausted {
+                        paymaster: payer,
+                        have: self.width.width_of(payer),
+                        need: charge.charge,
+                    })?;
+                Some(charge.charge)
+            }
+            None => None,
+        };
+        Ok((sender_charge, payer_charge))
     }
 
     fn check_keyed_frame_pending(
@@ -1101,6 +1175,11 @@ pub struct MatchaSenderView {
     pub pending_frame_txs: usize,
     /// Sum of the charges the sender's pending additional transactions paid.
     pub pending_charges: u64,
+    /// Pending frame transactions this address pays for as a third-party paymaster; the
+    /// first one is its free baseline in that role.
+    pub pending_sponsored: usize,
+    /// Sum of the charges this address paid as paymaster for its pending sponsored ones.
+    pub pending_sponsored_charges: u64,
     /// Sum of every pending additional transaction's charge, the linear fee's load term.
     pub load: u64,
 }
@@ -1265,25 +1344,45 @@ impl Mempool {
         Ok(())
     }
 
-    /// Spend a pending frame tx's stored charge before its prefix is re-simulated.
+    /// Spend a pending frame tx's stored charges before its prefix is re-simulated: the
+    /// sender's if it was additional for the sender, the canonical paymaster's if it was
+    /// additional for the paymaster. Whoever cannot pay has the transaction dropped.
     pub fn charge_revalidation(&self, hash: H256) -> Result<RevalidationCharge, StoreError> {
         let mut inner = self.write()?;
         if !inner.width.config().enabled {
             return Ok(RevalidationCharge::NotAdditional);
         }
-        let Some(charge) = inner.frame_tx_charge.get(&hash).copied() else {
+        let sender_charge = inner.frame_tx_charge.get(&hash).copied();
+        let payer_charge = inner.frame_tx_payer_charge.get(&hash).copied();
+        if sender_charge.is_none() && payer_charge.is_none() {
             return Ok(RevalidationCharge::NotAdditional);
-        };
+        }
         let Some(sender) = inner.transaction_pool.get(&hash).map(|tx| tx.sender()) else {
             return Ok(RevalidationCharge::NotAdditional);
         };
-        Ok(match inner.width.spend_for_revalidation(sender, charge) {
-            Ok(()) => RevalidationCharge::Paid,
-            Err(WidthError::Insufficient { have, need }) => {
-                RevalidationCharge::Exhausted { have, need }
+        let payer = inner
+            .frame_tx_paymaster
+            .get(&hash)
+            .map(|reservation| reservation.paymaster);
+        let mut debits = Vec::with_capacity(2);
+        if let Some(charge) = sender_charge {
+            debits.push((sender, charge));
+        }
+        if let (Some(charge), Some(payer)) = (payer_charge, payer) {
+            debits.push((payer, charge));
+        }
+        for (account, charge) in debits {
+            if let Err(WidthError::Insufficient { have, need }) =
+                inner.width.spend_for_revalidation(account, charge)
+            {
+                return Ok(RevalidationCharge::Exhausted {
+                    account,
+                    have,
+                    need,
+                });
             }
-            Err(WidthError::BelowFloor { .. }) => RevalidationCharge::Paid,
-        })
+        }
+        Ok(RevalidationCharge::Paid)
     }
 
     /// Frame txs pending longer than the configured maximum lifetime, as of `now`.
@@ -1326,29 +1425,47 @@ impl Mempool {
                     .is_some_and(|tx| tx.sender() == sender)
             })
             .fold(0u64, |acc, (_, charge)| acc.saturating_add(*charge));
+        let pending_sponsored_charges = inner
+            .frame_tx_payer_charge
+            .iter()
+            .filter(|(hash, _)| {
+                inner
+                    .frame_tx_paymaster
+                    .get(*hash)
+                    .is_some_and(|reservation| reservation.paymaster == sender)
+            })
+            .fold(0u64, |acc, (_, charge)| acc.saturating_add(*charge));
         Ok(MatchaSenderView {
             config: *inner.width.config(),
             width: inner.width.width_of(sender),
             last_credited: inner.width.last_credited(),
             pending_frame_txs: inner.sender_pending_frame_count(sender, None),
             pending_charges,
+            pending_sponsored: inner.sponsored_pending_count(sender, None),
+            pending_sponsored_charges,
             load: inner.width.load(),
         })
     }
 
-    /// What `charge_width` would decide for a transaction carrying `charge` from `sender`
+    /// What `charge_width` would decide for a transaction carrying `charge` from `sender`,
+    /// paid by `canonical_payer` when a canonical paymaster other than the sender pays,
     /// right now, in the same order, without spending. The answer can go stale the moment
     /// the lock is released, which is why admission never relies on it.
     pub fn matcha_admission(
         &self,
         sender: Address,
+        canonical_payer: Option<Address>,
         charge: &MatchaCharge,
     ) -> Result<MatchaAdmission, MempoolError> {
         let inner = self.read()?;
         if !inner.width.config().enabled {
             return Ok(MatchaAdmission::Admissible);
         }
-        if inner.sender_pending_frame_count(sender, None) == 0 {
+        let sender_due = inner.sender_pending_frame_count(sender, None) > 0;
+        let payer_due = canonical_payer
+            .filter(|payer| *payer != sender)
+            .filter(|payer| inner.sponsored_pending_count(*payer, None) > 0);
+        if !sender_due && payer_due.is_none() {
             return Ok(MatchaAdmission::Baseline);
         }
         if !charge.meets_validity_floor {
@@ -1367,14 +1484,28 @@ impl Mempool {
                 },
             ));
         }
-        let have = inner.width.width_of(sender);
-        if have < charge.charge {
-            return Ok(MatchaAdmission::Refused(
-                MempoolError::FrameTxWidthExhausted {
-                    have,
-                    need: charge.charge,
-                },
-            ));
+        if let Some(payer) = payer_due {
+            let have = inner.width.width_of(payer);
+            if have < charge.charge {
+                return Ok(MatchaAdmission::Refused(
+                    MempoolError::FrameTxPayerWidthExhausted {
+                        paymaster: payer,
+                        have,
+                        need: charge.charge,
+                    },
+                ));
+            }
+        }
+        if sender_due {
+            let have = inner.width.width_of(sender);
+            if have < charge.charge {
+                return Ok(MatchaAdmission::Refused(
+                    MempoolError::FrameTxWidthExhausted {
+                        have,
+                        need: charge.charge,
+                    },
+                ));
+            }
         }
         Ok(MatchaAdmission::Admissible)
     }
@@ -1504,6 +1635,7 @@ impl Mempool {
         };
 
         let mut spent_charge: Option<u64> = None;
+        let mut spent_payer_charge: Option<u64> = None;
 
         // One-pending-frame-tx-per-sender gate (EIP-8141 §Mempool, review fix 1.6).
         // Must run under the write lock so the check and insert are atomic.
@@ -1609,7 +1741,13 @@ impl Mempool {
             // paymaster reservation net-zero, exactly as the linear slot removal
             // does; keying off `existing_frame_hash` here would skip the removal
             // and double-count the reservation.
-            spent_charge = inner.charge_width(sender, hash, existing_frame_hash, matcha_charge)?;
+            (spent_charge, spent_payer_charge) = inner.charge_width(
+                sender,
+                hash,
+                existing_frame_hash,
+                matcha_charge,
+                frame_reservation.as_ref(),
+            )?;
 
             match &keyed_keys {
                 Some(keys) => {
@@ -1667,6 +1805,9 @@ impl Mempool {
         }
         if let Some(charge) = spent_charge {
             inner.frame_tx_charge.insert(hash, charge);
+        }
+        if let Some(charge) = spent_payer_charge {
+            inner.frame_tx_payer_charge.insert(hash, charge);
         }
         // Private txs are held for local block building only: they never enter
         // the broadcast pool, so no P2P path can pick them up.

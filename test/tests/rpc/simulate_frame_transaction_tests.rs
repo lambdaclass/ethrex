@@ -298,6 +298,8 @@ async fn matcha_width_reports_the_ledger_and_the_policy() {
     assert_eq!(fresh["widthCap"], json!("0x1c9c380"));
     assert_eq!(fresh["lastCreditedBlock"], json!(null));
     assert_eq!(fresh["pendingFrameTxs"], json!(0));
+    assert_eq!(fresh["pendingSponsored"], json!(0));
+    assert_eq!(fresh["pendingSponsoredCharges"], json!("0x0"));
     assert_eq!(fresh["safetyFactorNum"], json!(3));
     assert_eq!(fresh["safetyFactorDen"], json!(2));
 
