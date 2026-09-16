@@ -98,7 +98,9 @@ fn upstream_broken() -> &'static HashSet<&'static str> {
 /// The only failure shapes `upstream_broken_fixtures.txt` documents: an
 /// expected-`VALID` payload that ethrex rejects for the header inconsistency
 /// the broken fill baked in (stale `blobGasUsed`, or a block access list over
-/// the EIP-7928 `gas_limit / 2000` item cap).
+/// the EIP-7928 `gas_limit / 2000` item cap), and an undecodable
+/// `blockAccessList` the fill expects to be refused as a malformed request
+/// (-32602) where the engine API, and ethrex, make the payload `INVALID`.
 fn is_documented_upstream_breakage(e: &FixtureFailure) -> bool {
     match e {
         FixtureFailure::WrongStatus {
@@ -112,6 +114,7 @@ fn is_documented_upstream_breakage(e: &FixtureFailure) -> bool {
                 && (ve.contains("Blob gas used doesn't match value in header")
                     || ve.contains("Block access list exceeds gas limit"))
         }
+        FixtureFailure::MissingErrorCode { want: -32602, .. } => true,
         _ => false,
     }
 }

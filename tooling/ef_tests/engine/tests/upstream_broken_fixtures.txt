@@ -37,6 +37,20 @@
 # (blockchain_tests_engine and _x; the plain blockchain_tests tree has none),
 # which EELS never executes. Bundle provenance: fixtures/.meta/fixtures.ini ->
 # built from tag commit 23b0358c.
+#
+# 3 x test_bal_invalid_engine_payload_encoding -- stale error-code expectation.
+#   The three variants send an `engine_newPayloadV6` whose `blockAccessList`
+#   is present but not a valid RLP list (`0x`, `0x80`, `0xc1`) and, at tag
+#   commit 23b0358c, expect JSON-RPC error -32602. The engine API says
+#   otherwise: execution-apis src/engine/amsterdam.md, engine_newPayloadV5
+#   rule 3, "Client software MUST return {status: INVALID, ...} if the
+#   blockAccessList field is not a valid RLP encoding", with -32602 reserved
+#   for a MISSING field (rule 2), and V6 inherits V5's payload rules. Upstream
+#   agreed since: the test's docstring on execution-specs main reads "the
+#   payload is invalid rather than the request being malformed", and the same
+#   test in tests-glamsterdam-devnet@v8.1.4 (the for_amsterdam copy in this
+#   suite) expects INVALID and passes. ethrex returns INVALID.
+#   Signature: missing_error_code[0] expected_code=-32602.
 tests/cancun/eip4844_blobs/test_blob_txs.py::test_insufficient_balance_blob_tx_combinations[fork_Bogota-blobs_per_tx_(1,)-blockchain_test_engine_inclusion_list--exact_balance_minus_1]
 tests/cancun/eip4844_blobs/test_blob_txs.py::test_insufficient_balance_blob_tx_combinations[fork_Bogota-blobs_per_tx_(1,1)-blockchain_test_engine_inclusion_list--exact_balance_minus_1]
 tests/cancun/eip4844_blobs/test_blob_txs.py::test_insufficient_balance_blob_tx_combinations[fork_Bogota-blobs_per_tx_(1,1,1)-blockchain_test_engine_inclusion_list--exact_balance_minus_1]
@@ -164,3 +178,6 @@ tests/cancun/eip4844_blobs/test_blob_txs.py::test_invalid_tx_blob_count[fork_Bog
 tests/cancun/eip4844_blobs/test_blob_txs.py::test_invalid_tx_max_fee_per_blob_gas[fork_Bogota-insufficient_max_fee_per_blob_gas-blockchain_test_engine_inclusion_list-account_balance_modifier_1000000000]
 tests/cancun/eip4844_blobs/test_blob_txs.py::test_invalid_tx_max_fee_per_blob_gas[fork_Bogota-invalid_max_fee_per_blob_gas-blockchain_test_engine_inclusion_list-account_balance_modifier_1000000000]
 tests/frontier/validation/test_transaction.py::test_tx_gas_limit[fork_Bogota-blockchain_test_engine_inclusion_list]
+tests/amsterdam/eip7928_block_level_access_lists/test_block_access_lists_invalid.py::test_bal_invalid_engine_payload_encoding[fork_Bogota-blockchain_test_engine-empty_byte_string]
+tests/amsterdam/eip7928_block_level_access_lists/test_block_access_lists_invalid.py::test_bal_invalid_engine_payload_encoding[fork_Bogota-blockchain_test_engine-rlp_non_list]
+tests/amsterdam/eip7928_block_level_access_lists/test_block_access_lists_invalid.py::test_bal_invalid_engine_payload_encoding[fork_Bogota-blockchain_test_engine-rlp_truncated_list]
