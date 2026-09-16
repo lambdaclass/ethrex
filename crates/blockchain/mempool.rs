@@ -9,6 +9,8 @@ use std::{
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::error::MempoolError;
+use crate::matcha::{MatchaCharge, MatchaConfig, WidthError, WidthLedger};
+use ethrex_common::types::BlockNumber;
 use ethrex_common::{
     Address, H160, H256, U256,
     types::{
@@ -247,6 +249,19 @@ pub struct FramePaymasterReservation {
 /// revalidation pass.
 pub type PendingFrameTx = (H256, Address, Address);
 
+/// Outcome of charging a pending frame tx's stored MATCHA charge for a revalidation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RevalidationCharge {
+    /// Baseline transaction, or the mechanism is off: nothing to pay.
+    NotAdditional,
+    Paid,
+    /// The sender cannot pay for the rerun; the transaction should be dropped.
+    Exhausted {
+        have: u64,
+        need: u64,
+    },
+}
+
 /// Precomputed inputs for the per-sender admission gates, re-checked atomically
 /// inside [`Mempool::add_transaction`] under the insertion write lock so the
 /// checks and the insert share one lock scope. `Blockchain::validate_transaction`
@@ -385,6 +400,15 @@ struct MempoolInner {
     /// removal path can decrement the other maps and the post-block revalidation
     /// can bound its affected set. Populated on insert; removed on removal.
     frame_tx_paymaster: FxHashMap<H256, FramePaymasterReservation>,
+
+    /// MATCHA width per sender. Lives under this lock because every spend must be
+    /// atomic with the admission decision that caused it.
+    width: WidthLedger,
+    /// The charge each pending *additional* frame tx paid. Needed again to release its
+    /// `load` on removal and to charge each revalidation. Absent means baseline.
+    frame_tx_charge: FxHashMap<H256, u64>,
+    /// When each pending frame tx was admitted, for the maximum-lifetime sweep.
+    frame_tx_admitted_at: FxHashMap<H256, Instant>,
 }
 
 impl MempoolInner {
@@ -407,6 +431,12 @@ impl MempoolInner {
         let Some(tx) = self.transaction_pool.remove(hash) else {
             return Ok(());
         };
+        // Load falls; spent width does not. Refunding on removal would let a sender cycle
+        // transactions through the pool at no cost.
+        if let Some(charge) = self.frame_tx_charge.remove(hash) {
+            self.width.release_load(charge);
+        }
+        self.frame_tx_admitted_at.remove(hash);
         // Covers EIP-4844 and blob-carrying EIP-8141 frame transactions alike:
         // `blob_tx_count` is the size of the bundle pool, so a leaked bundle
         // would inflate blob-pool occupancy forever and, being unreachable from
@@ -938,6 +968,70 @@ impl MempoolInner {
         Ok(predecessor)
     }
 
+    /// Pending frame transactions for `sender`, ignoring the one a replacement displaces:
+    /// replacing the baseline is still the baseline and must stay free.
+    fn sender_pending_frame_count(&self, sender: Address, excluding: Option<H256>) -> usize {
+        let keyed = self
+            .pending_keyed_by_sender
+            .get(&sender)
+            .map(|pending| {
+                pending
+                    .keys()
+                    .filter(|hash| Some(**hash) != excluding)
+                    .count()
+            })
+            .unwrap_or(0);
+        let linear = self
+            .pending_frame_tx_by_sender
+            .get(&sender)
+            .filter(|(hash, _)| Some(*hash) != excluding)
+            .map_or(0, |_| 1);
+        keyed + linear
+    }
+
+    /// Spend width for an additional frame transaction; `None` when it is the baseline.
+    ///
+    /// Runs under the write lock so the pending count and the spend are atomic with the
+    /// insert, and after every other admission check so a rejected transaction never
+    /// spends anything.
+    fn charge_width(
+        &mut self,
+        sender: Address,
+        incoming_hash: H256,
+        replacing: Option<H256>,
+        charge: Option<MatchaCharge>,
+    ) -> Result<Option<u64>, MempoolError> {
+        if !self.width.config().enabled {
+            return Ok(None);
+        }
+        let Some(charge) = charge else {
+            return Ok(None);
+        };
+        if self.transaction_pool.contains_key(&incoming_hash) {
+            return Ok(None);
+        }
+        let excluding = replacing.or(Some(incoming_hash));
+        if self.sender_pending_frame_count(sender, excluding) == 0 {
+            return Ok(None);
+        }
+        if !charge.meets_validity_floor {
+            return Err(MempoolError::FrameTxValidityTooShort {
+                min_slots: self.width.config().min_validity_slots,
+            });
+        }
+        self.width
+            .spend(sender, charge.charge, charge.effective_priority_fee)
+            .map_err(|err| match err {
+                WidthError::Insufficient { have, need } => {
+                    MempoolError::FrameTxWidthExhausted { have, need }
+                }
+                WidthError::BelowFloor { offered, floor } => {
+                    MempoolError::FrameTxBelowWidthFeeFloor { offered, floor }
+                }
+            })?;
+        Ok(Some(charge.charge))
+    }
+
     fn check_keyed_frame_pending(
         &self,
         sender: Address,
@@ -1133,6 +1227,76 @@ impl Mempool {
     ///
     /// The transaction's hash is queued for P2P broadcast.
     #[allow(clippy::too_many_arguments)]
+    pub fn matcha_config(&self) -> Result<MatchaConfig, MempoolError> {
+        Ok(*self.read()?.width.config())
+    }
+
+    pub fn set_matcha_config(&self, config: MatchaConfig) -> Result<(), MempoolError> {
+        self.write()?.width.set_config(config);
+        Ok(())
+    }
+
+    /// Spend a pending frame tx's stored charge before its prefix is re-simulated.
+    pub fn charge_revalidation(&self, hash: H256) -> Result<RevalidationCharge, StoreError> {
+        let mut inner = self.write()?;
+        if !inner.width.config().enabled {
+            return Ok(RevalidationCharge::NotAdditional);
+        }
+        let Some(charge) = inner.frame_tx_charge.get(&hash).copied() else {
+            return Ok(RevalidationCharge::NotAdditional);
+        };
+        let Some(sender) = inner.transaction_pool.get(&hash).map(|tx| tx.sender()) else {
+            return Ok(RevalidationCharge::NotAdditional);
+        };
+        Ok(match inner.width.spend_for_revalidation(sender, charge) {
+            Ok(()) => RevalidationCharge::Paid,
+            Err(WidthError::Insufficient { have, need }) => {
+                RevalidationCharge::Exhausted { have, need }
+            }
+            Err(WidthError::BelowFloor { .. }) => RevalidationCharge::Paid,
+        })
+    }
+
+    /// Frame txs pending longer than the configured maximum lifetime, as of `now`.
+    pub fn frame_txs_past_lifetime(&self, now: Instant) -> Result<Vec<H256>, StoreError> {
+        let inner = self.read()?;
+        let lifetime = inner.width.config().max_pending_lifetime;
+        if lifetime.is_zero() {
+            return Ok(Vec::new());
+        }
+        Ok(inner
+            .frame_tx_admitted_at
+            .iter()
+            .filter(|(_, admitted)| now.saturating_duration_since(**admitted) >= lifetime)
+            .map(|(hash, _)| *hash)
+            .collect())
+    }
+
+    pub fn matcha_enabled(&self) -> Result<bool, MempoolError> {
+        Ok(self.read()?.width.config().enabled)
+    }
+
+    pub fn last_credited_block(&self) -> Result<Option<BlockNumber>, MempoolError> {
+        Ok(self.read()?.width.last_credited())
+    }
+
+    pub fn width_of(&self, sender: Address) -> Result<u64, MempoolError> {
+        Ok(self.read()?.width.width_of(sender))
+    }
+
+    /// Credit one finalized block's per-sender frame-tx gas; false if already credited.
+    pub fn credit_finalized_block(
+        &self,
+        number: BlockNumber,
+        gas_by_sender: &FxHashMap<Address, u64>,
+    ) -> Result<bool, MempoolError> {
+        Ok(self
+            .write()?
+            .width
+            .credit_finalized_block(number, gas_by_sender))
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn add_transaction(
         &self,
         hash: H256,
@@ -1141,6 +1305,7 @@ impl Mempool {
         frame_reservation: Option<FramePaymasterReservation>,
         sender_admission: Option<SenderAdmission>,
         keyed_concurrency: KeyedConcurrency,
+        matcha_charge: Option<MatchaCharge>,
     ) -> Result<(), MempoolError> {
         self.add_transaction_inner(
             hash,
@@ -1149,6 +1314,7 @@ impl Mempool {
             frame_reservation,
             sender_admission,
             keyed_concurrency,
+            matcha_charge,
             true,
         )
     }
@@ -1169,6 +1335,7 @@ impl Mempool {
         frame_reservation: Option<FramePaymasterReservation>,
         sender_admission: Option<SenderAdmission>,
         keyed_concurrency: KeyedConcurrency,
+        matcha_charge: Option<MatchaCharge>,
     ) -> Result<(), MempoolError> {
         self.add_transaction_inner(
             hash,
@@ -1177,6 +1344,7 @@ impl Mempool {
             frame_reservation,
             sender_admission,
             keyed_concurrency,
+            matcha_charge,
             false,
         )
     }
@@ -1190,6 +1358,7 @@ impl Mempool {
         frame_reservation: Option<FramePaymasterReservation>,
         sender_admission: Option<SenderAdmission>,
         keyed_concurrency: KeyedConcurrency,
+        matcha_charge: Option<MatchaCharge>,
         broadcast: bool,
     ) -> Result<(), MempoolError> {
         let mut inner = self.write()?;
@@ -1238,6 +1407,8 @@ impl Mempool {
             }
             _ => None,
         };
+
+        let mut spent_charge: Option<u64> = None;
 
         // One-pending-frame-tx-per-sender gate (EIP-8141 §Mempool, review fix 1.6).
         // Must run under the write lock so the check and insert are atomic.
@@ -1343,6 +1514,8 @@ impl Mempool {
             // paymaster reservation net-zero, exactly as the linear slot removal
             // does; keying off `existing_frame_hash` here would skip the removal
             // and double-count the reservation.
+            spent_charge = inner.charge_width(sender, hash, existing_frame_hash, matcha_charge)?;
+
             match &keyed_keys {
                 Some(keys) => {
                     if let Some(old_hash) = inner.keyed_frame_key_holder(sender, keys) {
@@ -1394,6 +1567,12 @@ impl Mempool {
             inner.txs_by_sender_nonce.insert((sender, tx_nonce), hash);
         }
         inner.transaction_pool.insert(hash, transaction);
+        if is_frame {
+            inner.frame_tx_admitted_at.insert(hash, Instant::now());
+        }
+        if let Some(charge) = spent_charge {
+            inner.frame_tx_charge.insert(hash, charge);
+        }
         // Private txs are held for local block building only: they never enter
         // the broadcast pool, so no P2P path can pick them up.
         if broadcast {
@@ -2661,6 +2840,7 @@ mod tests {
                     None,
                     None,
                     KeyedConcurrency::Denied,
+                    None,
                 )
                 .expect("Failed to add transaction");
         }
@@ -2697,8 +2877,16 @@ mod tests {
         let tx = build_tx(nonce);
         let mtx = MempoolTransaction::new(tx, sender);
         let hash = mtx.hash(&NativeCrypto);
-        pool.add_transaction(hash, sender, mtx, None, None, KeyedConcurrency::Denied)
-            .unwrap();
+        pool.add_transaction(
+            hash,
+            sender,
+            mtx,
+            None,
+            None,
+            KeyedConcurrency::Denied,
+            None,
+        )
+        .unwrap();
         hash
     }
 
@@ -2808,6 +2996,7 @@ mod tests {
                 balance_check: None,
             }),
             KeyedConcurrency::Denied,
+            None,
         )
     }
 
@@ -2884,8 +3073,16 @@ mod tests {
     fn add_tx_cost(pool: &Mempool, sender: Address, nonce: u64, cost: u64) -> H256 {
         let mtx = MempoolTransaction::new(build_tx_cost(nonce, cost), sender);
         let hash = mtx.hash(&NativeCrypto);
-        pool.add_transaction(hash, sender, mtx, None, None, KeyedConcurrency::Denied)
-            .unwrap();
+        pool.add_transaction(
+            hash,
+            sender,
+            mtx,
+            None,
+            None,
+            KeyedConcurrency::Denied,
+            None,
+        )
+        .unwrap();
         hash
     }
 
@@ -2916,6 +3113,7 @@ mod tests {
                 }),
             }),
             KeyedConcurrency::Denied,
+            None,
         )
     }
 
@@ -2943,6 +3141,7 @@ mod tests {
                 balance_check: None,
             }),
             KeyedConcurrency::Denied,
+            None,
         )
     }
 

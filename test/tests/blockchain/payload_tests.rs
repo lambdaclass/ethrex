@@ -196,6 +196,7 @@ async fn builder_caps_elided_blob_bundles_to_fork_max() {
                 None,
                 None,
                 KeyedConcurrency::Denied,
+                None,
             )
             .expect("add_transaction");
 

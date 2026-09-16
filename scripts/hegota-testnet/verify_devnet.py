@@ -352,8 +352,12 @@ def txparam_id_check(chain_id, sender_contract) -> None:
 
 
 def concurrency_check(chain_id) -> None:
-    """EIP-8250's headline feature: two frame transactions from one sender, different keys,
-    both pending at once and both mined. Only a contract sender qualifies."""
+    """EIP-8250 concurrency under MATCHA. Only a contract sender qualifies structurally, and
+    even it starts with no width: a second key is refused until the sender's own finalized
+    gas has earned some. Once it has, two keys pend at once and both mine.
+
+    The earning half waits for finality, about two epochs, and runs only when
+    HEGOTA_VERIFY_MATCHA_EARN=1. The refusal half always runs."""
     contract = deploy(SENDER_CONTRACT_RUNTIME, 10**18)
     code = rpc(RPC, "eth_getCode", [contract, "latest"])
     check("the sender contract deploys with its approve-both runtime",
@@ -361,62 +365,98 @@ def concurrency_check(chain_id) -> None:
     funded = int(rpc(RPC, "eth_getBalance", [contract, "latest"]), 16)
     check("it is funded to pay for its own transactions", funded > 0, f"{funded / 1e18:.3f} ETH")
 
-    # Two keys, each at sequence 0 because neither has ever been used, and no signature:
-    # the contract's code is the authorization. A recipient per key, so neither frame's
-    # account-creation charge depends on the other having run.
-    raws = []
-    base = int(rpc(RPC, "eth_getTransactionCount", [contract, "latest"]), 16)
-    for index in (0, 1):
-        key = 0x8250_0000 + index
-        recipient = derived_address("beef", base * 2 + index)
-        raws.append(build_frame_tx(
+    def keyed_tx(key: int, salt: str, index: int) -> str:
+        # Sequence 0 because the key has never been used, and no signature: the contract's
+        # code is the authorization. A fresh recipient per transaction so no frame's
+        # account-creation charge depends on another having run.
+        recipient = derived_address(salt, index)
+        return build_frame_tx(
             chain_id, contract, key, 0,
             [frame(1, 0x03, contract, 80_000, SSTORE_SET_STATE_GAS, 0, b""),
              frame(2, 0x00, recipient, 30_000, NEW_ACCOUNT_STATE_GAS, 100, b"")],
             *fees(), None,
-            sign=False))
+            sign=False)
 
-    hashes = []
-    for index, raw in enumerate(raws):
+    def send_pair(first_key: int, salt: str, expect_second_admitted: bool) -> list:
+        """Two keys back to back. The first is the sender's baseline and is always admitted;
+        whether the second is admitted is what MATCHA decides."""
+        first = rpc(RPC, "eth_sendRawTransaction", [keyed_tx(first_key, salt, 0)])
+        hashes = [first]
         try:
-            hashes.append(rpc(RPC, "eth_sendRawTransaction", [raw]))
+            hashes.append(rpc(RPC, "eth_sendRawTransaction", [keyed_tx(first_key + 1, salt, 1)]))
+            outcome, detail = "admitted", "2 of 2 admitted"
         except RuntimeError as exc:
-            check(f"keyed transaction {index} from a contract sender is admitted", False,
-                  str(exc)[:110])
-    check("both keys are admitted at once — concurrency the linear nonce forbids",
-          len(hashes) == 2, f"{len(hashes)} of 2 admitted")
+            outcome, detail = "refused", str(exc)[:110]
+        if expect_second_admitted:
+            check("both keys are admitted at once — concurrency the linear nonce forbids",
+                  outcome == "admitted", detail)
+        elif outcome == "admitted" and rpc(RPC, "eth_getTransactionReceipt", [first]):
+            # The baseline mined between the two sends, so the second was itself a baseline.
+            check("a second key from a sender with no earned width is refused", True,
+                  "not observable: the baseline mined before the second send")
+        else:
+            check("a second key from a sender with no earned width is refused",
+                  outcome == "refused" and "MATCHA width" in detail, detail)
+        return hashes
 
-    # Wait on the POOL, not just a poll count. A transaction with no receipt means one of two
-    # very different things — still queued, or dropped — and only the pool can tell them
-    # apart. Reporting them as one failure is how a busy devnet looks like a broken feature.
-    mined = {}
-    for _ in range(120):
-        mined = {h: rpc(RPC, "eth_getTransactionReceipt", [h]) for h in hashes}
-        if all(mined.values()):
-            break
-        status = rpc(RPC, "txpool_status", [])
-        if int(status["pending"], 16) + int(status["queued"], 16) == 0:
-            # The pool is empty and something is still missing: it was dropped, not delayed.
-            break
-        time.sleep(2)
+    def wait_mined(hashes: list, what: str) -> set:
+        # Wait on the POOL, not just a poll count. A transaction with no receipt means one of
+        # two very different things, still queued or dropped, and only the pool can tell them
+        # apart. Reporting them as one failure is how a busy devnet looks like a broken feature.
+        mined = {}
+        for _ in range(120):
+            mined = {h: rpc(RPC, "eth_getTransactionReceipt", [h]) for h in hashes}
+            if all(mined.values()):
+                break
+            status = rpc(RPC, "txpool_status", [])
+            if int(status["pending"], 16) + int(status["queued"], 16) == 0:
+                break
+            time.sleep(2)
+        blocks = {int(r["blockNumber"], 16) for r in mined.values() if r}
+        missing = [h for h in hashes if not mined.get(h)]
+        if missing:
+            still_pooled = [h for h in missing if rpc(RPC, "eth_getTransactionByHash", [h])]
+            check(f"{what} mine{'s' if len(hashes) == 1 else ''}", False,
+                  f"{len(missing)} of {len(hashes)} not included; "
+                  + ("still pooled — the builder had not got to them yet"
+                     if still_pooled else "GONE FROM THE POOL — dropped, not delayed"))
+        else:
+            check(f"{what} mine{'s' if len(hashes) == 1 else ''}", True,
+                  ",".join(mined[h]["status"] for h in hashes) + f" in block(s) {sorted(blocks)}")
+            check(f"{what} succeed{'s' if len(hashes) == 1 else ''}",
+                  all(mined[h]["status"] == "0x1" for h in hashes),
+                  ",".join(mined[h]["status"] for h in hashes))
+        return blocks
 
-    blocks = {int(r["blockNumber"], 16) for r in mined.values() if r}
-    missing = [h for h in hashes if not mined.get(h)]
-    if missing:
-        still_pooled = [h for h in missing if rpc(RPC, "eth_getTransactionByHash", [h])]
-        check("both mine", False,
-              f"{len(missing)} of {len(hashes)} not included; "
-              + ("still pooled — the builder had not got to them yet"
-                 if still_pooled else "GONE FROM THE POOL — dropped, not delayed"))
-    else:
-        check("both mine", True,
-              ",".join(mined[h]["status"] for h in hashes) + f" in block(s) {sorted(blocks)}")
-    if hashes and all(mined.get(h) for h in hashes):
-        check("both succeed",
-              all(mined[h]["status"] == "0x1" for h in hashes),
-              ",".join(mined[h]["status"] for h in hashes))
+    # A fresh sender has earned nothing, so it is held to the one baseline EIP-8141 allows.
+    blocks = wait_mined(send_pair(0x8250_0000, "beef", expect_second_admitted=False), "the baseline")
+
+    if os.environ.get("HEGOTA_VERIFY_MATCHA_EARN") != "1":
+        check("width is earned from finalized gas", True,
+              "skipped; HEGOTA_VERIFY_MATCHA_EARN=1 runs it and waits about two epochs")
+        return contract
+
+    # Earn: three more baselines, each mined before the next so each is free, then wait for
+    # them to finalize, which is the only moment the client credits their gas as width.
+    last_block = max(blocks) if blocks else 0
+    for round_index in range(3):
+        raw = keyed_tx(0x8250_0100 + round_index, f"ea{round_index:02d}", 0)
+        blocks = wait_mined([rpc(RPC, "eth_sendRawTransaction", [raw])], f"earning round {round_index}")
+        last_block = max(last_block, *blocks) if blocks else last_block
+
+    finalized = -1
+    for _ in range(90):
+        block = rpc(RPC, "eth_getBlockByNumber", ["finalized", False])
+        finalized = int(block["number"], 16) if block else -1
+        if finalized >= last_block:
+            break
+        time.sleep(10)
+    check("the earning transactions finalized", finalized >= last_block,
+          f"finalized block {finalized}, needed >= {last_block}")
+    time.sleep(3)  # the credit runs in the same forkchoice update that advanced finality
+
+    wait_mined(send_pair(0x8250_0200, "d00d", expect_second_admitted=True), "both")
     return contract
-
 
 def main() -> int:
     sender = cast_cmd("wallet", "address", "--private-key", KEY)

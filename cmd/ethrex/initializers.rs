@@ -6,11 +6,13 @@ use crate::{
         read_node_config_file,
     },
 };
+use ethrex_blockchain::matcha::MatchaConfig;
 use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
 use ethrex_common::fd_limit::raise_fd_limit;
 use ethrex_common::types::Genesis;
 use ethrex_config::networks::Network;
 use ethrex_rpc::WebSocketConfig;
+use std::time::Duration;
 
 use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_processing_profile};
 use ethrex_metrics::rpc::initialize_rpc_metrics;
@@ -844,6 +846,14 @@ pub async fn init_l1(
             max_reorg_depth: opts.max_reorg_depth,
             gap_admit_occupancy_threshold: opts.mempool_gap_admit_occupancy_threshold,
             max_verify_gas: opts.mempool_max_verify_gas,
+            matcha: MatchaConfig {
+                enabled: !opts.mempool_no_matcha,
+                width_cap: opts.mempool_matcha_width_cap,
+                base_price: opts.mempool_matcha_base_price,
+                min_validity_slots: opts.mempool_matcha_min_validity_slots,
+                max_pending_lifetime: Duration::from_secs(opts.mempool_matcha_max_lifetime_secs),
+                ..MatchaConfig::default()
+            },
         },
     );
 

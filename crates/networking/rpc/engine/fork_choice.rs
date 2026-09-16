@@ -490,6 +490,21 @@ async fn handle_forkchoice(
         Ok(head) => {
             // Fork Choice was succesful, the node is up to date with the current chain
             context.blockchain.set_synced();
+
+            // The only place MATCHA width is minted. Best-effort: a failure here must not
+            // fail an otherwise successful FCU, and the next one resumes from the same
+            // high-water mark.
+            if !fork_choice_state.finalized_block_hash.is_zero()
+                && let Ok(Some(finalized)) = context
+                    .storage
+                    .get_block_header_by_hash(fork_choice_state.finalized_block_hash)
+                && let Err(err) = context
+                    .blockchain
+                    .credit_finalized_width(finalized.number)
+                    .await
+            {
+                warn!(%err, "could not credit MATCHA width at finality; senders stop earning until it succeeds");
+            }
             // Remove included transactions from the mempool after we accept the fork choice
             // TODO(#797): The remove of transactions from the mempool could be incomplete (i.e. REORGS)
             match context.storage.get_block_by_hash(head.hash()).await {
