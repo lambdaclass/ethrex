@@ -153,3 +153,9 @@ one pending transaction until its first transaction finalizes. This is the desig
 as intended, and it is sharp enough to surprise: it applies exactly when an application is
 trying to attract its first users. Tests that exercise concurrency credit the sender
 first, which is what a real deployment reaches by running.
+
+The devnet conformance script, `scripts/hegota-testnet/verify_devnet.py`, asserts this
+against a live node: a fresh contract sender's second key is refused with the width error.
+With `HEGOTA_VERIFY_MATCHA_EARN=1` it goes on to mine three more baseline transactions,
+wait for the finalized tag to pass them, and then admit and mine two keys at once, which
+is the only check that proves the credit actually fires at finality.
