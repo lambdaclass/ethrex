@@ -1092,7 +1092,7 @@ the frame-tx gates the mempool applies produces blocks its own peers reject.
       that carry them. The mechanical half of the justification — that the per-sender
       linear-nonce walk is the wrong domain for a keyed, payer-funded transaction — is
       real and already handled: `is_linear_nonce_domain`
-      (`crates/blockchain/inclusion_list_builder.rs:123`) routes keyed frame
+      (`crates/blockchain/inclusion_list_builder.rs:104`) routes keyed frame
       transactions to a `non_linear` bucket that never enters the walk, and frame
       transactions are exempt from balance gating because the payer is a paymaster
       resolved during the validation prefix.
