@@ -95,6 +95,27 @@ walks newly finalized blocks and credits each sender the gas its own frame trans
 used. A head-based credit would let a sender earn from a block that is later reorged out
 and spend the width on work the chain never paid for.
 
+## Reading the ledger
+
+A wallet that relays for many senders wants to schedule rather than probe, so the two
+figures admission judges are readable before a broadcast.
+
+`ethrex_matchaWidth(address)` returns this node's ledger for one sender: `width` (earned
+and not spent), `widthCap`, `lastCreditedBlock`, `pendingFrameTxs` (the first of which is
+the free baseline), `pendingCharges` (what those pending additional transactions paid),
+`load` (the pool-wide term the linear fee reads), and the policy knobs. The answer is
+node-local by construction: width is credited from finalized blocks, which every node
+sees alike, and spent by what this node admitted, so it is exact for this node's
+admission and only approximate for another's.
+
+`ethrex_simulateFrameTransaction` gained three fields, priced from the prefix it already
+validates: `matchaCharge`, the width admitting the transaction as an additional pending
+one would spend, computed by the same function admission uses; `matchaAdmissible`, whether
+admission would take it right now, as the sender's baseline or against its width and the
+fee floor; and `matchaRefusal`, the error admission would return when it would not. Like
+`valid`, admissible is necessary rather than sufficient, and it can go stale the moment it
+is answered, so the refusal on `eth_sendRawTransaction` remains the authority.
+
 ## Local policy
 
 `MatchaConfig` is local policy, not consensus, and nothing in it is observable to other

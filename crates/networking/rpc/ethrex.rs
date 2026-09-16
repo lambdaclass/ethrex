@@ -5,13 +5,13 @@
 //! so operators can enable them on a public endpoint (`--http.api ethrex`)
 //! without also exposing the whole `debug_` surface.
 
-use ethrex_blockchain::mempool::FRAME_CANONICAL_PAYMASTER_CODE_HASH;
+use ethrex_blockchain::mempool::{FRAME_CANONICAL_PAYMASTER_CODE_HASH, MatchaAdmission};
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::{
     Address, U256,
     types::{
-        BlockHeader, FRAME_RECEIPT_STATUS_SUCCESS, PrefixShape, Transaction, ValidationPrefix,
-        calculate_base_fee_per_blob_gas,
+        BlockHeader, FRAME_RECEIPT_STATUS_SUCCESS, FrameTransaction, PrefixShape, Transaction,
+        ValidationPrefix, calculate_base_fee_per_blob_gas,
     },
 };
 use ethrex_crypto::NativeCrypto;
@@ -81,6 +81,9 @@ struct SimulateFrameTransactionResult {
     /// the frame-tx exclusion model, or the payer was underfunded). `null`
     /// otherwise.
     execution_error: Option<String>,
+    /// MATCHA: what this transaction would spend and whether admission would take it now.
+    #[serde(flatten)]
+    matcha: MatchaFields,
 }
 
 /// Per-frame execution outcome for the full-execution step.
@@ -102,6 +105,50 @@ fn prefix_shape_name(shape: &PrefixShape) -> &'static str {
         PrefixShape::OnlyVerifyPay => "OnlyVerifyPay",
         PrefixShape::DeployOnlyVerifyPay => "DeployOnlyVerifyPay",
     }
+}
+
+/// The MATCHA facts a wallet needs before broadcasting. All `null` when the prefix is
+/// structurally invalid, since the charge is priced from the prefix.
+#[derive(Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MatchaFields {
+    /// What admitting this transaction as an additional pending transaction from its
+    /// sender would spend of the sender's width: `ceil(3/2 * admission_gas)` by default,
+    /// the figure admission itself uses.
+    matcha_charge: Option<String>,
+    /// Whether admission would take the transaction right now on this node: as the
+    /// sender's free baseline when nothing of theirs is pending, or as an additional
+    /// transaction its width and the fee floor allow. Node-local: another node's ledger
+    /// differs by what it admitted. Necessary, not sufficient, like `valid`.
+    matcha_admissible: Option<bool>,
+    /// The refusal admission would return when `matchaAdmissible` is false.
+    matcha_refusal: Option<String>,
+}
+
+fn matcha_fields(
+    context: &RpcApiContext,
+    frame_tx: &FrameTransaction,
+    prefix: &ValidationPrefix,
+    header: &BlockHeader,
+) -> Result<MatchaFields, RpcErr> {
+    let charge = context
+        .blockchain
+        .matcha_charge_for(frame_tx, prefix, header)
+        .map_err(|error| RpcErr::Internal(error.to_string()))?;
+    let (admissible, refusal) = match context
+        .blockchain
+        .mempool
+        .matcha_admission(frame_tx.sender, &charge)
+        .map_err(|error| RpcErr::Internal(error.to_string()))?
+    {
+        MatchaAdmission::Baseline | MatchaAdmission::Admissible => (true, None),
+        MatchaAdmission::Refused(error) => (false, Some(error.to_string())),
+    };
+    Ok(MatchaFields {
+        matcha_charge: Some(format!("0x{:x}", charge.charge)),
+        matcha_admissible: Some(admissible),
+        matcha_refusal: refusal,
+    })
 }
 
 impl RpcHandler for SimulateFrameTransactionRequest {
@@ -224,6 +271,7 @@ impl RpcHandler for SimulateFrameTransactionRequest {
             return structurally_invalid(error.to_string(), max_cost);
         }
         let prefix_shape = Some(prefix_shape_name(&prefix.shape).to_owned());
+        let matcha = matcha_fields(&context, frame_tx, &prefix, &header)?;
 
         // EIP-8272: the recent-root verifier frame's tuples are read from head state
         // natively rather than through the EVM, behind static validation and
@@ -261,6 +309,7 @@ impl RpcHandler for SimulateFrameTransactionRequest {
                 frames: None,
                 execution_status: None,
                 execution_error: None,
+                matcha,
             });
         }
 
@@ -285,6 +334,7 @@ impl RpcHandler for SimulateFrameTransactionRequest {
                 frames: None,
                 execution_status: None,
                 execution_error: None,
+                matcha,
             });
         }
 
@@ -304,6 +354,7 @@ impl RpcHandler for SimulateFrameTransactionRequest {
             frames,
             execution_status,
             execution_error,
+            matcha,
         })
     }
 }
@@ -403,6 +454,7 @@ fn structurally_invalid(violation: String, max_cost: String) -> Result<Value, Rp
         frames: None,
         execution_status: None,
         execution_error: None,
+        matcha: MatchaFields::default(),
     })
 }
 
@@ -410,6 +462,70 @@ fn to_hex_u256(value: U256) -> String {
     format!("0x{value:x}")
 }
 
-fn to_value(result: SimulateFrameTransactionResult) -> Result<Value, RpcErr> {
+fn to_value<T: Serialize>(result: T) -> Result<Value, RpcErr> {
     serde_json::to_value(result).map_err(|error| RpcErr::Internal(error.to_string()))
+}
+
+/// `ethrex_matchaWidth` — this node's MATCHA ledger for one sender: the width it has
+/// earned and not spent, what it has pending, and the policy those figures are judged
+/// against. Node-local by construction: width is credited from finalized blocks, which
+/// every node sees alike, and spent by what this node admitted, so the answer is exact
+/// for this node's admission and only approximate for another's.
+#[derive(Debug)]
+pub struct MatchaWidthRequest {
+    pub sender: Address,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MatchaWidthResult {
+    enabled: bool,
+    width: String,
+    width_cap: String,
+    last_credited_block: Option<String>,
+    pending_frame_txs: usize,
+    pending_charges: String,
+    load: String,
+    safety_factor_num: u64,
+    safety_factor_den: u64,
+    base_price: String,
+    min_validity_slots: u64,
+}
+
+impl RpcHandler for MatchaWidthRequest {
+    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let params = params
+            .as_ref()
+            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+        let [sender] = params.as_slice() else {
+            return Err(RpcErr::BadParams(format!(
+                "Expected one param (the sender address) and {} were provided",
+                params.len()
+            )));
+        };
+        let sender: Address = serde_json::from_value(sender.clone())
+            .map_err(|_| RpcErr::WrongParam("sender: expected a 20-byte address".to_owned()))?;
+        Ok(MatchaWidthRequest { sender })
+    }
+
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        let view = context
+            .blockchain
+            .mempool
+            .matcha_sender_view(self.sender)
+            .map_err(|error| RpcErr::Internal(error.to_string()))?;
+        to_value(MatchaWidthResult {
+            enabled: view.config.enabled,
+            width: format!("0x{:x}", view.width),
+            width_cap: format!("0x{:x}", view.config.width_cap),
+            last_credited_block: view.last_credited.map(|block| format!("0x{block:x}")),
+            pending_frame_txs: view.pending_frame_txs,
+            pending_charges: format!("0x{:x}", view.pending_charges),
+            load: format!("0x{:x}", view.load),
+            safety_factor_num: view.config.safety_factor_num,
+            safety_factor_den: view.config.safety_factor_den,
+            base_price: format!("0x{:x}", view.config.base_price),
+            min_validity_slots: view.config.min_validity_slots,
+        })
+    }
 }

@@ -431,6 +431,15 @@ def concurrency_check(chain_id) -> None:
     # A fresh sender has earned nothing, so it is held to the one baseline EIP-8141 allows.
     blocks = wait_mined(send_pair(0x8250_0000, "beef", expect_second_admitted=False), "the baseline")
 
+    # The ledger is readable, so a relayer can schedule instead of probing: a fresh sender
+    # shows no width and, once its baseline mined, nothing pending.
+    view = rpc(RPC, "ethrex_matchaWidth", [contract])
+    check("ethrex_matchaWidth reports the fresh sender's ledger",
+          view.get("enabled") is True and int(view["width"], 16) == 0
+          and view.get("pendingFrameTxs") == 0,
+          f"width={int(view['width'], 16)} pending={view.get('pendingFrameTxs')} "
+          f"cap={int(view['widthCap'], 16)}")
+
     if os.environ.get("HEGOTA_VERIFY_MATCHA_EARN") != "1":
         check("width is earned from finalized gas", True,
               "skipped; HEGOTA_VERIFY_MATCHA_EARN=1 runs it and waits about two epochs")
@@ -454,6 +463,12 @@ def concurrency_check(chain_id) -> None:
     check("the earning transactions finalized", finalized >= last_block,
           f"finalized block {finalized}, needed >= {last_block}")
     time.sleep(3)  # the credit runs in the same forkchoice update that advanced finality
+
+    view = rpc(RPC, "ethrex_matchaWidth", [contract])
+    credited = view.get("lastCreditedBlock")
+    check("ethrex_matchaWidth shows the width finality credited", int(view["width"], 16) > 0,
+          f"width={int(view['width'], 16)} lastCreditedBlock="
+          f"{int(credited, 16) if credited else None}")
 
     wait_mined(send_pair(0x8250_0200, "d00d", expect_second_admitted=True), "both")
     return contract

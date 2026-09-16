@@ -73,7 +73,7 @@ use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{
     AccountInfo, AccountState, AccountUpdate, BalSynthesisItem, Block, BlockHash, BlockHeader,
-    BlockNumber, Code, FRAME_TX_MAX_VERIFY_GAS, FrameTransaction, Transaction,
+    BlockNumber, Code, FRAME_TX_MAX_VERIFY_GAS, FrameTransaction, Transaction, ValidationPrefix,
     WrappedEIP4844Transaction, WrappedFrameTransaction, synthesize_bal_updates,
     validate_block_body,
 };
@@ -3439,6 +3439,54 @@ impl Blockchain {
         Ok(())
     }
 
+    /// What admitting `frame_tx` as an additional pending transaction would charge, with the
+    /// fee and validity facts the charge is judged against. Priced from the same prefix sum
+    /// `MAX_VERIFY_GAS` is measured against, so the charge and the budget agree about which
+    /// frames are validation work; the effective priority fee is judged against the next
+    /// block's base fee, the block the transaction is admitted for. Shared by admission and
+    /// `ethrex_simulateFrameTransaction`, so a wallet is quoted the figure admission uses.
+    pub fn matcha_charge_for(
+        &self,
+        frame_tx: &FrameTransaction,
+        prefix: &ValidationPrefix,
+        head: &BlockHeader,
+    ) -> Result<MatchaCharge, MempoolError> {
+        let prefix_execution_gas: u64 = prefix
+            .frame_indices
+            .iter()
+            .chain(prefix.recent_root_index.iter())
+            .map(|&i| frame_tx.frames[i].gas_limit)
+            .fold(0u64, |acc, g| acc.saturating_add(g));
+        let policy = self.mempool.matcha_config()?;
+        let next_base_fee = head
+            .base_fee_per_gas
+            .and_then(|base| {
+                calculate_base_fee_per_gas(
+                    head.gas_limit,
+                    head.gas_limit,
+                    head.gas_used,
+                    base,
+                    ELASTICITY_MULTIPLIER,
+                )
+            })
+            .unwrap_or_default();
+        let headroom = frame_tx
+            .max_fee_per_gas
+            .saturating_sub(U256::from(next_base_fee));
+        Ok(MatchaCharge {
+            charge: matcha::charge_for(
+                &policy,
+                matcha::admission_gas(frame_tx, prefix_execution_gas),
+            ),
+            effective_priority_fee: frame_tx
+                .max_priority_fee_per_gas
+                .min(headroom)
+                .try_into()
+                .unwrap_or(u64::MAX),
+            meets_validity_floor: self.meets_validity_floor(frame_tx, head, &policy),
+        })
+    }
+
     /// Whether every validity horizon of `frame_tx` outlasts the configured minimum: its
     /// EIP-8141 expiry deadline, and every EIP-8272 recent root's usable window.
     fn meets_validity_floor(
@@ -4036,42 +4084,7 @@ impl Blockchain {
             // authentication. Prospective: `current_slot` is the head's slot plus one.
             self.check_recent_root_frame(frame_tx, &header, header_no)?;
 
-            // Priced from the same prefix sum MAX_VERIFY_GAS was just measured against,
-            // so the charge and the budget agree about which frames are validation work.
-            let prefix_execution_gas: u64 = prefix
-                .frame_indices
-                .iter()
-                .chain(prefix.recent_root_index.iter())
-                .map(|&i| frame_tx.frames[i].gas_limit)
-                .fold(0u64, |acc, g| acc.saturating_add(g));
-            let policy = self.mempool.matcha_config()?;
-            let next_base_fee = header
-                .base_fee_per_gas
-                .and_then(|base| {
-                    calculate_base_fee_per_gas(
-                        header.gas_limit,
-                        header.gas_limit,
-                        header.gas_used,
-                        base,
-                        ELASTICITY_MULTIPLIER,
-                    )
-                })
-                .unwrap_or_default();
-            let headroom = frame_tx
-                .max_fee_per_gas
-                .saturating_sub(U256::from(next_base_fee));
-            matcha_charge = Some(MatchaCharge {
-                charge: matcha::charge_for(
-                    &policy,
-                    matcha::admission_gas(frame_tx, prefix_execution_gas),
-                ),
-                effective_priority_fee: frame_tx
-                    .max_priority_fee_per_gas
-                    .min(headroom)
-                    .try_into()
-                    .unwrap_or(u64::MAX),
-                meets_validity_floor: self.meets_validity_floor(frame_tx, &header, &policy),
-            });
+            matcha_charge = Some(self.matcha_charge_for(frame_tx, &prefix, &header)?);
         }
 
         // Wire size cap for non-blob txs: peer-policy default, not consensus.

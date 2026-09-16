@@ -11,8 +11,9 @@ use ethrex_blockchain::constants::{
 use ethrex_blockchain::error::MempoolError;
 use ethrex_blockchain::matcha::{MatchaCharge, MatchaConfig};
 use ethrex_blockchain::mempool::{
-    FRAME_CANONICAL_PAYMASTER_CODE_HASH, FramePaymasterReservation, KeyedConcurrency, Mempool,
-    is_canonical_paymaster, keyed_concurrency_verdict, transaction_intrinsic_gas,
+    FRAME_CANONICAL_PAYMASTER_CODE_HASH, FramePaymasterReservation, KeyedConcurrency,
+    MatchaAdmission, Mempool, is_canonical_paymaster, keyed_concurrency_verdict,
+    transaction_intrinsic_gas,
 };
 use ethrex_blockchain::{
     Blockchain, BlockchainOptions, DEFAULT_BLOB_PRICE_BUMP_PERCENT, DEFAULT_PRICE_BUMP_PERCENT,
@@ -5141,6 +5142,61 @@ fn next_empty_block() -> Block {
 }
 
 /// Width is spent only once every other locked admission check has passed, so a
+/// `matcha_admission` answers what `charge_width` would decide, in its order, and spends
+/// nothing while doing so.
+#[tokio::test]
+async fn matcha_admission_mirrors_the_locked_decision_without_spending() {
+    let mempool = Mempool::new(64);
+    let sender = frame_self_sender();
+    let charge = MatchaCharge {
+        charge: 1_000,
+        effective_priority_fee: 0,
+        meets_validity_floor: true,
+    };
+    assert!(matches!(
+        mempool.matcha_admission(sender, &charge).expect("view"),
+        MatchaAdmission::Baseline
+    ));
+
+    let baseline = keyed_frame_tx(vec![U256::one()], 0, 1_000_000_000);
+    mempool
+        .add_transaction(
+            baseline.hash(&NativeCrypto),
+            sender,
+            MempoolTransaction::new(baseline, sender),
+            None,
+            None,
+            KeyedConcurrency::Allowed,
+            None,
+        )
+        .expect("baseline admitted");
+    assert!(matches!(
+        mempool.matcha_admission(sender, &charge).expect("view"),
+        MatchaAdmission::Refused(MempoolError::FrameTxWidthExhausted {
+            have: 0,
+            need: 1_000
+        })
+    ));
+
+    let mut gas = FxHashMap::default();
+    gas.insert(sender, 1_000u64);
+    mempool.credit_finalized_block(1, &gas).expect("credit");
+    assert!(matches!(
+        mempool.matcha_admission(sender, &charge).expect("view"),
+        MatchaAdmission::Admissible
+    ));
+    assert_eq!(
+        mempool.width_of(sender).expect("width"),
+        1_000,
+        "a look does not spend"
+    );
+    let view = mempool.matcha_sender_view(sender).expect("view");
+    assert_eq!(
+        (view.width, view.pending_frame_txs, view.pending_charges),
+        (1_000, 1, 0)
+    );
+}
+
 /// rejected transaction costs its sender nothing.
 #[tokio::test]
 async fn width_is_not_spent_when_a_later_locked_check_rejects() {

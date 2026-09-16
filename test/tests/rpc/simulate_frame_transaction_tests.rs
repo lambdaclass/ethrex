@@ -1,11 +1,15 @@
 use std::{fs::File, io::BufReader, path::PathBuf};
 
+use ethrex_blockchain::matcha::{MatchaConfig, admission_gas, charge_for};
+use ethrex_blockchain::mempool::KeyedConcurrency;
+use ethrex_common::types::MempoolTransaction;
 use ethrex_common::types::{
     APPROVE_EXECUTION_AND_PAYMENT, EIP1559Transaction, FRAME_SIG_SCHEME_SECP256K1, Frame,
     FrameMode, FrameSignature, FrameTransaction, Transaction,
 };
 use ethrex_common::{Address, U256};
-use ethrex_rpc::ethrex::SimulateFrameTransactionRequest;
+use ethrex_crypto::NativeCrypto;
+use ethrex_rpc::ethrex::{MatchaWidthRequest, SimulateFrameTransactionRequest};
 use ethrex_rpc::rpc::{RpcApiContext, RpcHandler};
 use ethrex_rpc::test_utils::default_context_with_storage;
 use ethrex_rpc::utils::RpcErr;
@@ -182,4 +186,130 @@ async fn simulate_reports_max_cost_even_when_a_gate_rejects() {
             .is_some_and(|c| c.starts_with("0x")),
         "maxCost must be reported on every path"
     );
+}
+
+/// The fixture with no signature at all: EIP-8141 lets a contract sender's code be the
+/// authorization, so an empty list authenticates and the prefix gates run.
+fn unsigned_self_verify_tx(key: u64) -> FrameTransaction {
+    let mut tx = self_verify_tx();
+    tx.nonce_keys = vec![U256::from(key)];
+    tx.signatures = vec![];
+    // Above the genesis base fee (1 gwei), so the simulation reaches the prefix instead
+    // of stopping at the fee check.
+    tx.max_fee_per_gas = U256::from(2_000_000_000u64);
+    tx
+}
+
+async fn simulate_in(context: RpcApiContext, tx: FrameTransaction) -> serde_json::Value {
+    let params = Some(vec![json!(raw_hex(&Transaction::FrameTransaction(tx)))]);
+    SimulateFrameTransactionRequest::parse(&params)
+        .expect("parse")
+        .handle(context)
+        .await
+        .expect("handle")
+}
+
+#[tokio::test]
+async fn simulate_quotes_the_matcha_charge_admission_would_take() {
+    // A fresh sender has nothing pending, so the transaction would be its free baseline,
+    // and the quoted charge is the figure admission itself computes from the prefix.
+    let tx = unsigned_self_verify_tx(1);
+    let expected = charge_for(&MatchaConfig::default(), admission_gas(&tx, 21_000));
+
+    let result = simulate(tx).await;
+
+    assert_eq!(result["matchaCharge"], json!(format!("0x{expected:x}")));
+    assert_eq!(result["matchaAdmissible"], json!(true));
+    assert_eq!(result["matchaRefusal"], json!(null));
+}
+
+#[tokio::test]
+async fn simulate_reports_the_refusal_a_pending_sender_with_no_width_would_get() {
+    let context = context().await;
+    let pending = unsigned_self_verify_tx(1);
+    let pending_hash = Transaction::FrameTransaction(pending.clone()).hash(&NativeCrypto);
+    context
+        .blockchain
+        .mempool
+        .add_transaction(
+            pending_hash,
+            sender(),
+            MempoolTransaction::new(Transaction::FrameTransaction(pending), sender()),
+            None,
+            None,
+            KeyedConcurrency::Allowed,
+            None,
+        )
+        .expect("baseline admitted");
+
+    let result = simulate_in(context, unsigned_self_verify_tx(2)).await;
+
+    assert_eq!(result["matchaAdmissible"], json!(false));
+    let refusal = result["matchaRefusal"].as_str().expect("refusal");
+    assert!(
+        refusal.contains("has 0 MATCHA width"),
+        "expected the width refusal admission returns, got: {refusal}"
+    );
+    assert!(
+        result["matchaCharge"]
+            .as_str()
+            .is_some_and(|c| c.starts_with("0x"))
+    );
+}
+
+#[tokio::test]
+async fn simulate_leaves_the_matcha_fields_null_when_the_prefix_is_structurally_invalid() {
+    let mut tx = self_verify_tx();
+    tx.nonce_keys = vec![];
+
+    let result = simulate(tx).await;
+
+    assert_eq!(result["matchaCharge"], json!(null));
+    assert_eq!(result["matchaAdmissible"], json!(null));
+}
+
+#[test]
+fn matcha_width_parse_takes_exactly_one_address() {
+    let ok = MatchaWidthRequest::parse(&Some(vec![json!(format!("{:#x}", sender()))]))
+        .expect("address accepted");
+    assert_eq!(ok.sender, sender());
+    assert!(matches!(
+        MatchaWidthRequest::parse(&Some(vec![])),
+        Err(RpcErr::BadParams(_))
+    ));
+    assert!(matches!(
+        MatchaWidthRequest::parse(&Some(vec![json!("0x12")])),
+        Err(RpcErr::WrongParam(_))
+    ));
+    assert!(matches!(
+        MatchaWidthRequest::parse(&Some(vec![json!(format!("{:#x}", sender())), json!(1)])),
+        Err(RpcErr::BadParams(_))
+    ));
+}
+
+#[tokio::test]
+async fn matcha_width_reports_the_ledger_and_the_policy() {
+    let context = context().await;
+    let request = MatchaWidthRequest { sender: sender() };
+
+    let fresh = request.handle(context.clone()).await.expect("handle");
+    assert_eq!(fresh["enabled"], json!(true));
+    assert_eq!(fresh["width"], json!("0x0"));
+    assert_eq!(fresh["widthCap"], json!("0x1c9c380"));
+    assert_eq!(fresh["lastCreditedBlock"], json!(null));
+    assert_eq!(fresh["pendingFrameTxs"], json!(0));
+    assert_eq!(fresh["safetyFactorNum"], json!(3));
+    assert_eq!(fresh["safetyFactorDen"], json!(2));
+
+    let mut gas = rustc_hash::FxHashMap::default();
+    gas.insert(sender(), 1_000_000u64);
+    context
+        .blockchain
+        .mempool
+        .credit_finalized_block(7, &gas)
+        .expect("credit");
+
+    let credited = request.handle(context).await.expect("handle");
+    assert_eq!(credited["width"], json!("0xf4240"));
+    assert_eq!(credited["lastCreditedBlock"], json!("0x7"));
 }

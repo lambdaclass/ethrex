@@ -1087,6 +1087,35 @@ fn keyed_key_sets_match(existing: &Transaction, keys: &[U256]) -> bool {
     }
 }
 
+/// One sender's MATCHA ledger on this node. Width is credited from finalized blocks, which
+/// every node sees alike, and spent by what this node admitted, so the view is exact for
+/// this node's admission and only approximate for another's.
+#[derive(Clone, Copy, Debug)]
+pub struct MatchaSenderView {
+    pub config: MatchaConfig,
+    /// Earned and not yet spent.
+    pub width: u64,
+    /// The finalized block the ledger last credited.
+    pub last_credited: Option<BlockNumber>,
+    /// The sender's pending frame transactions here; the first one is the free baseline.
+    pub pending_frame_txs: usize,
+    /// Sum of the charges the sender's pending additional transactions paid.
+    pub pending_charges: u64,
+    /// Sum of every pending additional transaction's charge, the linear fee's load term.
+    pub load: u64,
+}
+
+/// What admission would decide for a transaction, judged without spending.
+#[derive(Debug)]
+pub enum MatchaAdmission {
+    /// The sender has nothing pending, so this would be its free baseline.
+    Baseline,
+    /// An additional transaction the sender can pay for right now.
+    Admissible,
+    /// An additional transaction admission would refuse, with the error it would return.
+    Refused(MempoolError),
+}
+
 #[derive(Debug)]
 pub struct Mempool {
     inner: RwLock<MempoolInner>,
@@ -1282,6 +1311,72 @@ impl Mempool {
 
     pub fn width_of(&self, sender: Address) -> Result<u64, MempoolError> {
         Ok(self.read()?.width.width_of(sender))
+    }
+
+    /// One sender's view of the ledger, read under one lock so the figures agree.
+    pub fn matcha_sender_view(&self, sender: Address) -> Result<MatchaSenderView, MempoolError> {
+        let inner = self.read()?;
+        let pending_charges = inner
+            .frame_tx_charge
+            .iter()
+            .filter(|(hash, _)| {
+                inner
+                    .transaction_pool
+                    .get(*hash)
+                    .is_some_and(|tx| tx.sender() == sender)
+            })
+            .fold(0u64, |acc, (_, charge)| acc.saturating_add(*charge));
+        Ok(MatchaSenderView {
+            config: *inner.width.config(),
+            width: inner.width.width_of(sender),
+            last_credited: inner.width.last_credited(),
+            pending_frame_txs: inner.sender_pending_frame_count(sender, None),
+            pending_charges,
+            load: inner.width.load(),
+        })
+    }
+
+    /// What `charge_width` would decide for a transaction carrying `charge` from `sender`
+    /// right now, in the same order, without spending. The answer can go stale the moment
+    /// the lock is released, which is why admission never relies on it.
+    pub fn matcha_admission(
+        &self,
+        sender: Address,
+        charge: &MatchaCharge,
+    ) -> Result<MatchaAdmission, MempoolError> {
+        let inner = self.read()?;
+        if !inner.width.config().enabled {
+            return Ok(MatchaAdmission::Admissible);
+        }
+        if inner.sender_pending_frame_count(sender, None) == 0 {
+            return Ok(MatchaAdmission::Baseline);
+        }
+        if !charge.meets_validity_floor {
+            return Ok(MatchaAdmission::Refused(
+                MempoolError::FrameTxValidityTooShort {
+                    min_slots: inner.width.config().min_validity_slots,
+                },
+            ));
+        }
+        let floor = inner.width.fee_floor(charge.charge);
+        if charge.effective_priority_fee < floor {
+            return Ok(MatchaAdmission::Refused(
+                MempoolError::FrameTxBelowWidthFeeFloor {
+                    offered: charge.effective_priority_fee,
+                    floor,
+                },
+            ));
+        }
+        let have = inner.width.width_of(sender);
+        if have < charge.charge {
+            return Ok(MatchaAdmission::Refused(
+                MempoolError::FrameTxWidthExhausted {
+                    have,
+                    need: charge.charge,
+                },
+            ));
+        }
+        Ok(MatchaAdmission::Admissible)
     }
 
     /// Credit one finalized block's per-sender frame-tx gas; false if already credited.
