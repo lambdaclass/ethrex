@@ -212,11 +212,13 @@ fn sanitize_blocks(
 
 /// Build a simulated block header from its (possibly simulated) parent.
 ///
-/// Defaults mirror geth's `makeHeaders`/`processBlock`: coinbase, gas limit
-/// and difficulty are inherited from the parent (difficulty is zero post-merge
-/// anyway), prevRandao defaults to zero, the base fee is computed per EIP-1559
-/// only with `validation: true` (zero otherwise, so zero-priced calls run like
-/// `eth_call`), and the blob fee market rolls forward in both modes.
+/// Defaults mirror geth's `makeHeaders`/`processBlock`: coinbase and gas limit are
+/// inherited from the parent, prevRandao defaults to zero, the base fee is computed
+/// per EIP-1559 only with `validation: true` (zero otherwise, so zero-priced calls
+/// run like `eth_call`), and the blob fee market rolls forward in both modes.
+/// Difficulty defaults to zero rather than to the parent's: geth inherits it and then
+/// zeroes it for a post-merge block, so that post-merge forks are recognized as
+/// active, and every chain this engine can simulate is post-merge.
 fn make_sim_header(
     parent: &BlockHeader,
     sanitized: &SanitizedBlock,
@@ -446,6 +448,11 @@ fn build_sim_transaction(
         }
     };
 
+    // No EIP-2930 branch: geth reaches `ToTransaction` with a type-2 default, whose
+    // `AccessListTxType` arm is therefore unreachable, and then downgrades to legacy
+    // whenever `gasPrice` is set. So a call carrying both `gasPrice` and `accessList`
+    // is a legacy transaction with the list dropped in geth too, and simulating it as
+    // type 1 instead would disagree on intrinsic gas, warm slots and the tx root.
     let access_list = call
         .access_list
         .iter()
@@ -541,7 +548,10 @@ impl Blockchain {
         let blocks = sanitize_blocks(&base, request.blocks)?;
         let store_db =
             StoreVmDatabase::new(self.storage.clone(), base.clone()).map_err(internal)?;
-        let mut overlay = SimulationOverlay::new(base.number);
+        // Shared with each block's `SimulationVmDatabase` instead of deep-copied into it:
+        // `Arc::make_mut` then pays for at most one copy per block, and only while a
+        // database built from the previous contents is still alive.
+        let mut overlay = Arc::new(SimulationOverlay::new(base.number));
         let mut budget_remaining = SIMULATION_GAS_CAP;
         let mut parent = base;
         let mut results = Vec::with_capacity(blocks.len());
@@ -554,16 +564,17 @@ impl Blockchain {
             // State overrides are applied prior to execution of the block and
             // become part of the overlay (and thus the state root).
             if !sanitized.spec.state_overrides.is_empty() {
-                let pre_db = SimulationVmDatabase::new(store_db.clone(), Arc::new(overlay.clone()));
+                let pre_db = SimulationVmDatabase::new(store_db.clone(), overlay.clone());
                 for (address, override_) in sanitized.spec.state_overrides.clone() {
                     if override_.is_noop() {
                         continue;
                     }
-                    overlay.merge_update(state_override_to_update(address, override_, &pre_db)?);
+                    let update = state_override_to_update(address, override_, &pre_db)?;
+                    Arc::make_mut(&mut overlay).merge_update(update);
                 }
             }
 
-            let sim_db = SimulationVmDatabase::new(store_db.clone(), Arc::new(overlay.clone()));
+            let sim_db = SimulationVmDatabase::new(store_db.clone(), overlay.clone());
             let mut evm = self.new_evm(sim_db).map_err(internal)?;
             // The other half of a State Override Set: the account overlay above feeds
             // reads, while `movePrecompileToAddress` changes precompile *dispatch*, which
@@ -616,7 +627,7 @@ impl Blockchain {
                     budget_remaining,
                     &mut evm,
                 )?;
-                let (_, report) = match evm.execute_tx_simulate(
+                let report = match evm.execute_tx_simulate(
                     &tx,
                     &header,
                     &mut cumulative_gas_spent,
@@ -731,8 +742,13 @@ impl Blockchain {
             header.block_access_list_hash =
                 evm.take_bal().map(|bal| bal.compute_hash(&NativeCrypto));
 
-            for update in evm.get_state_transitions().map_err(internal)? {
-                overlay.merge_update(update);
+            // Dropping the EVM releases its handle on the overlay, so the writes below
+            // land in place rather than on a copy.
+            let updates = evm.get_state_transitions().map_err(internal)?;
+            drop(evm);
+            let overlay_mut = Arc::make_mut(&mut overlay);
+            for update in updates {
+                overlay_mut.merge_update(update);
             }
 
             // The state root derives from the *cumulative* updates applied to
@@ -761,7 +777,7 @@ impl Blockchain {
             };
             let block = Block::new(header, body);
             let block_hash = block.header.hash();
-            overlay.insert_block_hash(block.header.number, block_hash);
+            Arc::make_mut(&mut overlay).insert_block_hash(block.header.number, block_hash);
             parent = block.header.clone();
             results.push(SimulatedBlock {
                 block,

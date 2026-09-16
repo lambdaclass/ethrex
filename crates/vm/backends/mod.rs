@@ -214,6 +214,10 @@ impl Evm {
     /// Like [`Evm::execute_tx`] but for `eth_simulateV1`: validation failures
     /// are returned structured (see [`SimulationTxError`]) and the simulation
     /// relaxations from `config` are applied.
+    ///
+    /// No receipt is built here, unlike [`Evm::execute_tx`]: the simulation engine
+    /// keeps trace-transfer logs out of receipts, so it builds its own from the
+    /// filtered logs.
     pub fn execute_tx_simulate(
         &mut self,
         tx: &Transaction,
@@ -221,7 +225,7 @@ impl Evm {
         cumulative_gas_spent: &mut u64,
         sender: Address,
         config: &SimTxConfig,
-    ) -> Result<(Receipt, ExecutionReport), SimulationTxError> {
+    ) -> Result<ExecutionReport, SimulationTxError> {
         let execution_report = LEVM::execute_tx_for_simulation(
             tx,
             sender,
@@ -235,14 +239,7 @@ impl Evm {
 
         *cumulative_gas_spent += execution_report.gas_spent;
 
-        let receipt = Receipt::new(
-            tx.tx_type(),
-            execution_report.is_success(),
-            *cumulative_gas_spent,
-            execution_report.logs.clone(),
-        );
-
-        Ok((receipt, execution_report))
+        Ok(execution_report)
     }
 
     /// Current nonce for `address`, read through the live EVM cache so writes
