@@ -31,7 +31,8 @@ use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
 use crate::snap::{
     async_fs,
     constants::{
-        BYTECODE_CHUNK_SIZE, MAX_HEADER_FETCH_ATTEMPTS, MIN_FULL_BLOCKS, MISSING_SLOTS_PERCENTAGE,
+        BYTECODE_CHUNK_SIZE, MAX_HEADER_FETCH_ATTEMPTS, MAX_PENDING_ACCOUNTS_FOR_HEALING_FALLBACK,
+        MAX_STORAGE_RANGE_REQUEST_ATTEMPTS, MIN_FULL_BLOCKS, MISSING_SLOTS_PERCENTAGE,
         SECONDS_PER_BLOCK, SNAP_LIMIT,
     },
     request_account_range, request_bytecodes, request_storage_ranges,
@@ -409,7 +410,7 @@ pub async fn snap_sync(
         // is correct. To do so, we always heal the state trie before requesting storage rates
         let mut chunk_index = 0_u64;
         let mut state_leafs_healed = 0_u64;
-        let mut storage_range_request_attempts = 0;
+        let mut storage_range_request_attempts = 0_u64;
         loop {
             while block_is_stale(&pivot_header) {
                 pivot_header = update_pivot(
@@ -437,12 +438,26 @@ pub async fn snap_sync(
                 continue;
             };
 
+            let pending_accounts = storage_accounts.accounts_with_storage_root.len();
             debug!(
-                "Started request_storage_ranges with {} accounts with storage root unchanged",
-                storage_accounts.accounts_with_storage_root.len()
+                "Started request_storage_ranges with {pending_accounts} accounts with storage root unchanged"
             );
             storage_range_request_attempts += 1;
-            if storage_range_request_attempts < 5 {
+            // The attempt limit exists for accounts whose storage root reverted to a
+            // value we already downloaded: no peer can serve those ranges, so only
+            // healing gets them done. Healing is much slower per account than a range
+            // download, so the limit is ignored while the pending set is large: sending
+            // that many accounts to healing costs more sync time than another round does.
+            if storage_range_request_attempts < MAX_STORAGE_RANGE_REQUEST_ATTEMPTS
+                || pending_accounts > MAX_PENDING_ACCOUNTS_FOR_HEALING_FALLBACK
+            {
+                if storage_range_request_attempts >= MAX_STORAGE_RANGE_REQUEST_ATTEMPTS {
+                    warn!(
+                        pending_accounts,
+                        attempts = storage_range_request_attempts,
+                        "Storage ranges are past the attempt limit, but too many accounts are still pending to fall back to healing. Downloading again."
+                    );
+                }
                 chunk_index = request_storage_ranges(
                     peers,
                     &mut storage_accounts,
@@ -471,6 +486,7 @@ pub async fn snap_sync(
                 }
 
                 warn!(
+                    pending_accounts,
                     "Storage could not be downloaded after multiple attempts. Marking for healing. This could impact snap sync time (healing may take a while)."
                 );
 
@@ -1072,68 +1088,6 @@ async fn insert_accounts(
     Ok((computed_state_root, BTreeSet::new()))
 }
 
-#[cfg(not(feature = "rocksdb"))]
-async fn insert_storages(
-    store: Store,
-    _: BTreeSet<H256>,
-    account_storages_snapshots_dir: &Path,
-    _: &Path,
-) -> Result<(), SyncError> {
-    use crate::utils::AccountsWithStorage;
-    use rayon::iter::IntoParallelIterator;
-
-    let snapshot_files = async_fs::read_dir_paths(account_storages_snapshots_dir).await?;
-    for snapshot_path in snapshot_files {
-        info!("Reading account storage file from {snapshot_path:?}");
-
-        let snapshot_contents = async_fs::read_file(&snapshot_path).await?;
-
-        #[expect(clippy::type_complexity)]
-        let account_storages_snapshot: Vec<AccountsWithStorage> =
-            RLPDecode::decode(&snapshot_contents)
-                .map(|all_accounts: Vec<(Vec<H256>, Vec<(H256, U256)>)>| {
-                    all_accounts
-                        .into_iter()
-                        .map(|(accounts, storages)| AccountsWithStorage { accounts, storages })
-                        .collect()
-                })
-                .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
-
-        let store_clone = store.clone();
-        info!("Starting compute of account_storages_snapshot");
-        let storage_trie_node_changes = tokio::task::spawn_blocking(move || {
-            let store: Store = store_clone;
-
-            account_storages_snapshot
-                .into_par_iter()
-                .flat_map(|account_storages| {
-                    let storages: Arc<[_]> = account_storages.storages.into();
-                    account_storages
-                        .accounts
-                        .into_par_iter()
-                        // FIXME: we probably want to make storages an Arc
-                        .map(move |account| (account, storages.clone()))
-                })
-                .map(|(account, storages)| compute_storage_roots(store.clone(), account, &storages))
-                .collect::<Result<Vec<_>, SyncError>>()
-        })
-        .await??;
-        info!("Writing to db");
-
-        store
-            .write_storage_trie_nodes_batch(storage_trie_node_changes)
-            .await?;
-    }
-
-    async_fs::remove_dir_all(account_storages_snapshots_dir).await?;
-
-    Ok(())
-}
-
-// ============================================================================
-// Account and Storage Insertion (rocksdb)
-// ============================================================================
-
 #[cfg(feature = "rocksdb")]
 async fn insert_accounts(
     store: Store,
@@ -1197,6 +1151,64 @@ async fn insert_accounts(
     let accounts_with_storage =
         BTreeSet::from_iter(storage_accounts.accounts_with_storage_root.keys().copied());
     Ok((compute_state_root, accounts_with_storage))
+}
+
+#[cfg(not(feature = "rocksdb"))]
+async fn insert_storages(
+    store: Store,
+    _: BTreeSet<H256>,
+    account_storages_snapshots_dir: &Path,
+    _: &Path,
+) -> Result<(), SyncError> {
+    use crate::utils::AccountsWithStorage;
+    use rayon::iter::IntoParallelIterator;
+
+    let snapshot_files = async_fs::read_dir_paths(account_storages_snapshots_dir).await?;
+    for snapshot_path in snapshot_files {
+        info!("Reading account storage file from {snapshot_path:?}");
+
+        let snapshot_contents = async_fs::read_file(&snapshot_path).await?;
+
+        #[expect(clippy::type_complexity)]
+        let account_storages_snapshot: Vec<AccountsWithStorage> =
+            RLPDecode::decode(&snapshot_contents)
+                .map(|all_accounts: Vec<(Vec<H256>, Vec<(H256, U256)>)>| {
+                    all_accounts
+                        .into_iter()
+                        .map(|(accounts, storages)| AccountsWithStorage { accounts, storages })
+                        .collect()
+                })
+                .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
+
+        let store_clone = store.clone();
+        info!("Starting compute of account_storages_snapshot");
+        let storage_trie_node_changes = tokio::task::spawn_blocking(move || {
+            let store: Store = store_clone;
+
+            account_storages_snapshot
+                .into_par_iter()
+                .flat_map(|account_storages| {
+                    let storages: Arc<[_]> = account_storages.storages.into();
+                    account_storages
+                        .accounts
+                        .into_par_iter()
+                        // FIXME: we probably want to make storages an Arc
+                        .map(move |account| (account, storages.clone()))
+                })
+                .map(|(account, storages)| compute_storage_roots(store.clone(), account, &storages))
+                .collect::<Result<Vec<_>, SyncError>>()
+        })
+        .await??;
+        info!("Writing to db");
+
+        store
+            .write_storage_trie_nodes_batch(storage_trie_node_changes)
+            .await?;
+    }
+
+    async_fs::remove_dir_all(account_storages_snapshots_dir).await?;
+
+    Ok(())
 }
 
 #[cfg(feature = "rocksdb")]
@@ -1335,6 +1347,10 @@ async fn insert_storages(
 
     Ok(())
 }
+
+// ============================================================================
+// Account and Storage Insertion (rocksdb)
+// ============================================================================
 
 #[cfg(test)]
 mod block_sync_state_tests {
