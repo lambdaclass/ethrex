@@ -365,6 +365,20 @@ tests are restored in `e1ac1c4cc`; the validator side had kept judging listed fr
 transactions by the Profile 2 replay throughout, so the two agree again. The second gate
 run, recorded above, is from the image with that fix.
 
+### The MATCHA ledger over RPC (2026-09-16)
+
+`ab9d05228` adds `ethrex_matchaWidth(address)` and the `matchaCharge`, `matchaAdmissible` and
+`matchaRefusal` fields on `ethrex_simulateFrameTransaction` (design in `docs/matcha.md`,
+"Reading the ledger"). Gated on a fresh three-node devnet built from that commit:
+
+| What | Result |
+| --- | --- |
+| `scripts/hegota-testnet/verify_devnet.py` with `HEGOTA_VERIFY_MATCHA_EARN=1` | 48 of 48; the two new checks read the fresh contract sender's ledger as `width=0 pending=0` and, after finality, `width=1,214,728 lastCreditedBlock=95`, after which two keys were admitted at once and mined in block 161 |
+| Minimal shielded pool lifecycle | green; every spend quoted by the simulation before sending (573,350 and 573,530 width) |
+| Pool wallet scheduling on the ledger, fresh pool | transfer A quoted admissible as the baseline; transfer C's simulation not admissible with the refusal admission would return; the wallet held it, saw the pending count drop when A mined, and sent; A block 110, C block 111, nothing refused at broadcast |
+| Pool wallet scheduling on the ledger, earned | ledger `width=3,124,012` after finality; both spends quoted admissible and mined together in block 199; ledger after `1,977,348`, two charges for the additional one (admission plus one revalidation) |
+| Rust suites | integration 1,338, blockchain unit 50, rpc unit 127; clippy clean on the two crates except a pre-existing unused test import in `crates/networking/rpc/types/receipt.rs` |
+
 ### Post-merge audit of the FOCIL and frames layers (2026-09-16)
 
 Prompted by the inclusion-list regression above: if one wholesale conflict resolution in
