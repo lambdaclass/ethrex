@@ -56,7 +56,8 @@ pub struct Environment {
     pub disable_nonce_check: bool,
     /// When true, emit informational ETH-transfer logs from the
     /// `TRACE_TRANSFER_ADDRESS` sentinel (`eth_simulateV1` traceTransfers).
-    /// On Amsterdam+ forks the consensus EIP-7708 logs take precedence.
+    /// Independent of the fork: an Amsterdam+ block carries these alongside its
+    /// consensus EIP-7708 logs rather than in place of them.
     pub trace_eth_transfers: bool,
     /// When true, skip the gas limits that gate a transaction's *admission* rather than
     /// its execution: the block-level gas allowance and the EIP-7825 per-transaction cap.

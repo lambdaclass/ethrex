@@ -1077,8 +1077,8 @@ pub fn size_offset_to_usize(size: U256, offset: U256) -> Result<(usize, usize), 
 
 /// Creates a Transfer log (LOG3) for an ETH transfer, emitted from
 /// `log_address`: SYSTEM_ADDRESS for consensus EIP-7708 logs (Amsterdam+) or
-/// TRACE_TRANSFER_ADDRESS for `eth_simulateV1` traceTransfers. Callers decide
-/// via `VM::eth_transfer_log_address`.
+/// TRACE_TRANSFER_ADDRESS for `eth_simulateV1` traceTransfers. Which of the two
+/// apply is decided in `VM::push_eth_transfer_logs`.
 #[inline]
 pub fn create_eth_transfer_log(
     log_address: Address,

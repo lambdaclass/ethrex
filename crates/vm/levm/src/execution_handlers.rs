@@ -2,7 +2,6 @@ use crate::{
     constants::*,
     errors::{ContextResult, ExceptionalHalt, InternalError, TxResult, VMError},
     gas_cost::{CODE_DEPOSIT_COST, CODE_DEPOSIT_REGULAR_COST_PER_WORD},
-    utils::create_eth_transfer_log,
     vm::VM,
 };
 
@@ -195,13 +194,7 @@ impl<'a> VM<'a> {
 
         // EIP-7708 / traceTransfers: emit transfer log for nonzero-value contract
         // creation transactions. Origin is sender, new_contract_address is the recipient.
-        if let Some(log_address) =
-            self.eth_transfer_log_address(self.env.origin, new_contract_address, value)
-        {
-            let log =
-                create_eth_transfer_log(log_address, self.env.origin, new_contract_address, value);
-            self.substate.add_log(log);
-        }
+        self.add_eth_transfer_logs(self.env.origin, new_contract_address, value);
 
         self.increment_account_nonce(new_contract_address)?;
 

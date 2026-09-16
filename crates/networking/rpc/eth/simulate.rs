@@ -183,8 +183,10 @@ impl RpcHandler for EthSimulateRequest {
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(serde_json::to_value(blocks)?)
         };
-        // Up to 256 blocks of EVM execution: run off the async runtime, with
-        // a wall-clock cap.
+        // Up to 256 blocks of EVM execution, so run it off the async runtime. The
+        // timeout bounds the response, not the work: a `spawn_blocking` task has no
+        // cancellation point, so an expired request leaves the simulation running until
+        // it exhausts SIMULATION_GAS_CAP, which is what actually bounds the CPU.
         tokio::time::timeout(SIMULATE_TIMEOUT, tokio::task::spawn_blocking(operation))
             .await
             .map_err(|_| RpcErr::Internal("eth_simulateV1 timeout".to_string()))?
@@ -418,6 +420,9 @@ fn validation_error_code(error: &TxValidationError) -> i32 {
         | TxValidationError::Type4TxPreFork
         | TxValidationError::Type4TxAuthorizationListIsEmpty
         | TxValidationError::Type4TxContractCreation => -32602,
+        // The spec's table has no code for the rest (an explicit gas above the EIP-7825
+        // cap, say), and geth answers them from `txValidationError`'s default, which is
+        // also an internal error.
         _ => -32603,
     }
 }
@@ -1101,6 +1106,104 @@ mod integration_tests {
             result[0]["logsBloom"],
             json!(format!("0x{}", "0".repeat(512)))
         );
+    }
+
+    #[tokio::test]
+    async fn trace_transfers_still_emits_the_sentinel_log_on_amsterdam() {
+        // EIP-7708 adds a consensus transfer log from SYSTEM_ADDRESS, but it does not
+        // stand in for the traceTransfers sentinel: geth's tracer is fork-independent,
+        // and a client filtering on 0xeee...eeee must not see the flag empty out the
+        // moment Amsterdam activates.
+        let result = simulate_amsterdam(json!([{
+            "traceTransfers": true,
+            "blockStateCalls": [{
+                "calls": [{"from": RICH, "to": FRESH_B, "value": "0x7b"}],
+            }],
+        }, "latest"]))
+        .await
+        .unwrap();
+        let call = &result[0]["calls"][0];
+        assert_eq!(call["status"], json!("0x1"));
+        let addresses: Vec<&str> = call["logs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|log| log["address"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            addresses,
+            vec![
+                "0xfffffffffffffffffffffffffffffffffffffffe",
+                "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            ]
+        );
+        // Only the consensus log is a real one, so only it reaches the block's bloom.
+        assert_ne!(
+            result[0]["logsBloom"],
+            json!(format!("0x{}", "0".repeat(512)))
+        );
+    }
+
+    /// Bytecode performing `CALLCODE(gas: 10000, target, value: 1)` with empty calldata
+    /// and no return buffer. The opcode pops `gas, address, value, argsOffset, argsLen,
+    /// retOffset, retLen`, so the pushes run in the reverse of that order.
+    fn callcode_to(target: &str) -> String {
+        format!("0x6000600060006000600173{}612710f200", &target[2..])
+    }
+
+    /// A traceTransfers request calling FRESH_A, which `overrides` sets up to CALLCODE
+    /// another account with value.
+    fn callcode_request(overrides: Value) -> Value {
+        json!([{
+            "traceTransfers": true,
+            "blockStateCalls": [{
+                "stateOverrides": overrides,
+                "calls": [{"from": RICH, "to": FRESH_A, "gas": "0x100000"}],
+            }],
+        }, "latest"])
+    }
+
+    fn padded(address: &str) -> Value {
+        json!(format!("0x000000000000000000000000{}", &address[2..]))
+    }
+
+    #[tokio::test]
+    async fn callcode_trace_log_names_the_callee() {
+        let result = simulate(callcode_request(json!({
+            FRESH_A: {"code": callcode_to(FRESH_B), "balance": "0xde0b6b3a7640000"},
+        })))
+        .await
+        .unwrap();
+        let call = &result[0]["calls"][0];
+        assert_eq!(call["status"], json!("0x1"));
+        let log = &call["logs"][0];
+        assert_eq!(
+            log["address"],
+            json!("0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")
+        );
+        // geth's OnEnter hook excludes DELEGATECALL and nothing else, and names the
+        // callee it entered rather than the caller the value stays with.
+        assert_eq!(log["topics"][1], padded(FRESH_A));
+        assert_eq!(log["topics"][2], padded(FRESH_B));
+    }
+
+    #[tokio::test]
+    async fn callcode_trace_log_names_the_callee_when_the_callee_delegates() {
+        // The call kind used to be inferred from `to == msg_sender && code_address != to`,
+        // a condition an EIP-7702 delegation on the target falsifies. Resolving the
+        // delegation must not change which address the log names.
+        const DELEGATE: &str = "0xc200000000000000000000000000000000000000";
+        let result = simulate(callcode_request(json!({
+            FRESH_A: {"code": callcode_to(FRESH_B), "balance": "0xde0b6b3a7640000"},
+            FRESH_B: {"code": format!("0xef0100{}", &DELEGATE[2..])},
+        })))
+        .await
+        .unwrap();
+        let call = &result[0]["calls"][0];
+        assert_eq!(call["status"], json!("0x1"));
+        let log = &call["logs"][0];
+        assert_eq!(log["topics"][1], padded(FRESH_A));
+        assert_eq!(log["topics"][2], padded(FRESH_B));
     }
 
     #[tokio::test]

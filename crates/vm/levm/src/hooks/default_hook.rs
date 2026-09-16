@@ -915,12 +915,8 @@ pub fn transfer_value(vm: &mut VM<'_>) -> Result<(), VMError> {
 
         // EIP-7708 / traceTransfers: emit transfer log for nonzero-value transactions.
         // Self-transfers (origin == to) do NOT emit consensus logs per the EIP spec;
-        // trace mode includes them (see `eth_transfer_log_address`).
-        let from = vm.env.origin;
-        if let Some(log_address) = vm.eth_transfer_log_address(from, to, value) {
-            let log = create_eth_transfer_log(log_address, from, to, value);
-            vm.substate.add_log(log);
-        }
+        // trace mode includes them (see `VM::push_eth_transfer_logs`).
+        vm.add_eth_transfer_logs(vm.env.origin, to, value);
     }
     Ok(())
 }

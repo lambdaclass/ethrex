@@ -18,7 +18,7 @@ use crate::{
     gas_cost,
     memory::{self, calculate_memory_size},
     opcode_handlers::OpcodeHandler,
-    utils::{address_to_word, create_eth_transfer_log, word_to_address, *},
+    utils::{address_to_word, word_to_address, *},
     vm::VM,
 };
 use bytes::Bytes;
@@ -215,6 +215,7 @@ impl OpcodeHandler for OpCallHandler {
             bytecode,
             is_delegation_7702,
             needs_state_gas,
+            None,
         )
     }
 }
@@ -351,6 +352,7 @@ impl OpcodeHandler for OpCallCodeHandler {
             bytecode,
             is_delegation_7702,
             false,
+            Some(address),
         )
     }
 }
@@ -475,6 +477,7 @@ impl OpcodeHandler for OpDelegateCallHandler {
             bytecode,
             is_delegation_7702,
             false,
+            None,
         )
     }
 }
@@ -597,6 +600,7 @@ impl OpcodeHandler for OpStaticCallHandler {
             bytecode,
             is_delegation_7702,
             false,
+            None,
         )
     }
 }
@@ -808,13 +812,10 @@ impl OpcodeHandler for OpSelfDestructHandler {
             }
 
             // EIP-7708 / traceTransfers: emit appropriate log for ETH movement.
-            // EIP-8246 (Amsterdam+): no burn log for same-tx selfdestruct-to-self; no ETH
-            // burned, and no consensus log for to == beneficiary (trace mode includes it).
-            if let Some(log_address) = vm.eth_transfer_log_address(to, beneficiary, balance) {
-                let log = create_eth_transfer_log(log_address, to, beneficiary, balance);
-                vm.substate.add_log(log);
-                // No burn log under EIP-8246: selfdestruct-to-self preserves balance.
-            }
+            // EIP-8246 (Amsterdam+): no burn log for same-tx selfdestruct-to-self, since
+            // the balance is preserved rather than burned, and no consensus log for
+            // to == beneficiary (trace mode includes it).
+            vm.add_eth_transfer_logs(to, beneficiary, balance);
         } else {
             vm.increase_account_balance(beneficiary, balance)?;
             vm.get_account_mut(to)?.info.balance = U256::zero();
@@ -827,10 +828,7 @@ impl OpcodeHandler for OpSelfDestructHandler {
             vm.substate.add_selfdestruct(to);
 
             // traceTransfers: pre-Cancun selfdestructs move the balance too.
-            if let Some(log_address) = vm.eth_transfer_log_address(to, beneficiary, balance) {
-                let log = create_eth_transfer_log(log_address, to, beneficiary, balance);
-                vm.substate.add_log(log);
-            }
+            vm.add_eth_transfer_logs(to, beneficiary, balance);
         }
 
         vm.tracer.enter(
@@ -1058,10 +1056,7 @@ impl<'a> VM<'a> {
 
         // EIP-7708 / traceTransfers: emit transfer log for nonzero-value CREATE/CREATE2
         // Must be after push_backup() so the log reverts if the child context reverts
-        if let Some(log_address) = self.eth_transfer_log_address(deployer, new_address, value) {
-            let log = create_eth_transfer_log(log_address, deployer, new_address, value);
-            self.substate.add_log(log);
-        }
+        self.add_eth_transfer_logs(deployer, new_address, value);
 
         Ok(OpcodeResult::Continue)
     }
@@ -1153,6 +1148,12 @@ impl<'a> VM<'a> {
     /// U256. This is because we have to use the values that are
     /// pushed to the stack.
     ///
+    /// `callcode_target` is `Some` only when the caller is [`OpCallCodeHandler`], and
+    /// carries the raw address CALLCODE was given. The call kind cannot be inferred from
+    /// the other arguments: `to == msg_sender && code_address != to` also holds for a CALL
+    /// to a 7702-delegated self, and fails to hold for a CALLCODE whose target delegates.
+    /// Only the traceTransfers log reads it; see [`VM::add_call_eth_transfer_logs`].
+    ///
     // Force inline, due to lot of arguments, inlining must be forced, and it is actually beneficial
     // because passing so much data is costly. Verified with samply.
     #[expect(
@@ -1175,6 +1176,7 @@ impl<'a> VM<'a> {
         bytecode: Code,
         is_delegation_7702: bool,
         new_account_charged: bool,
+        callcode_target: Option<Address>,
     ) -> Result<OpcodeResult, VMError> {
         // Clear callframe subreturn data
         self.current_call_frame.sub_return_data.clear();
@@ -1265,17 +1267,8 @@ impl<'a> VM<'a> {
             if should_transfer_value && ctx_result.is_success() {
                 self.transfer(msg_sender, to, value)?;
 
-                // EIP-7708 / traceTransfers: emit transfer log for nonzero-value CALL.
-                // Consensus logs exclude all self-transfers (which covers CALLCODE, where
-                // to == msg_sender); trace mode includes CALL-to-self but still excludes
-                // CALLCODE since its value never leaves the caller's account.
-                let is_callcode = to == msg_sender && code_address != to && !is_delegation_7702;
-                if !is_callcode
-                    && let Some(log_address) = self.eth_transfer_log_address(msg_sender, to, value)
-                {
-                    let log = create_eth_transfer_log(log_address, msg_sender, to, value);
-                    self.substate.add_log(log);
-                }
+                // EIP-7708 / traceTransfers: emit transfer logs for a nonzero-value call.
+                self.add_call_eth_transfer_logs(msg_sender, to, callcode_target, value);
             }
 
             self.tracer.exit_context(&ctx_result, false)?;
@@ -1319,18 +1312,10 @@ impl<'a> VM<'a> {
 
             self.substate.push_backup();
 
-            // EIP-7708 / traceTransfers: emit transfer log for nonzero-value CALL.
-            // Must be after push_backup() so the log reverts if the child context reverts.
-            // Consensus logs exclude all self-transfers (which covers CALLCODE, where
-            // to == msg_sender); trace mode includes CALL-to-self but still excludes
-            // CALLCODE since its value never leaves the caller's account.
-            let is_callcode = to == msg_sender && code_address != to && !is_delegation_7702;
-            if should_transfer_value
-                && !is_callcode
-                && let Some(log_address) = self.eth_transfer_log_address(msg_sender, to, value)
-            {
-                let log = create_eth_transfer_log(log_address, msg_sender, to, value);
-                self.substate.add_log(log);
+            // EIP-7708 / traceTransfers: emit transfer logs for a nonzero-value call.
+            // Must be after push_backup() so they revert if the child context reverts.
+            if should_transfer_value {
+                self.add_call_eth_transfer_logs(msg_sender, to, callcode_target, value);
             }
         }
 
