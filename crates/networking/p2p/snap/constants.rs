@@ -88,10 +88,17 @@ pub const MAX_STORAGE_RANGE_REQUEST_ATTEMPTS: u64 = 5;
 ///
 /// Healing a storage trie is far more expensive than downloading its range:
 /// healing walks the trie node by node against the current pivot, while a range
-/// download fetches leaves in bulk. Handing a set this large to healing costs
-/// more sync time than running further download rounds, so past this threshold
-/// the attempt limit does not apply.
-pub const MAX_PENDING_ACCOUNTS_FOR_HEALING_FALLBACK: usize = 300_000;
+/// download fetches leaves in bulk. Handing a large set to healing costs more
+/// sync time than running further download rounds, so past this threshold the
+/// attempt limit does not apply.
+///
+/// The value is small because the pending set collapses fast. Across sepolia
+/// snap syncs the rounds go ~16M -> ~3M -> a few hundred, and on the two runs
+/// that reached the attempt limit only 600 and 300 accounts were left: those are
+/// the accounts whose storage root reverted, which no peer can serve. Anything
+/// above that handful means the set is still converging and another download
+/// round is cheaper than healing it.
+pub const MAX_PENDING_ACCOUNTS_FOR_HEALING_FALLBACK: usize = 1_000;
 
 /// Soft limit on the number of entries in a healing pending-parents queue.
 ///
