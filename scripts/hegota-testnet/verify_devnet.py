@@ -40,6 +40,7 @@ import hashlib
 import hmac
 import json
 import os
+import secrets
 import subprocess
 import sys
 import time
@@ -403,6 +404,28 @@ def txparam_id_check(chain_id, sender_contract) -> None:
               f"read {hex(got)}, expected {hex(expected[idx])}")
 
 
+def wait_finalized_past(block_number: int) -> int:
+    """Wait until the `finalized` tag is at or past `block_number`; return where it got to.
+
+    Finality trails the head by two epochs, so the budget is derived from the chain's own
+    slot time (two consecutive block timestamps) rather than fixed: three epochs and a
+    margin, which is about 20 minutes at 12-second slots and 10 at 6-second ones. The
+    earlier fixed 15-minute budget fit a 6-second devnet and timed out on a 12-second one
+    while the chain was finalizing normally."""
+    head = rpc(RPC, "eth_getBlockByNumber", ["latest", False])
+    parent = rpc(RPC, "eth_getBlockByNumber", [hex(int(head["number"], 16) - 1), False])
+    slot_seconds = max(1, int(head["timestamp"], 16) - int(parent["timestamp"], 16))
+    deadline = time.time() + 3 * 32 * slot_seconds + 60
+    finalized = -1
+    while time.time() < deadline:
+        block = rpc(RPC, "eth_getBlockByNumber", ["finalized", False])
+        finalized = int(block["number"], 16) if block else -1
+        if finalized >= block_number:
+            break
+        time.sleep(10)
+    return finalized
+
+
 def wait_mined(hashes: list, what: str) -> set:
     # Wait on the POOL, not just a poll count. A transaction with no receipt means one of
     # two very different things, still queued or dropped, and only the pool can tell them
@@ -507,13 +530,7 @@ def concurrency_check(chain_id) -> None:
         blocks = wait_mined([rpc(RPC, "eth_sendRawTransaction", [raw])], f"earning round {round_index}")
         last_block = max(last_block, *blocks) if blocks else last_block
 
-    finalized = -1
-    for _ in range(90):
-        block = rpc(RPC, "eth_getBlockByNumber", ["finalized", False])
-        finalized = int(block["number"], 16) if block else -1
-        if finalized >= last_block:
-            break
-        time.sleep(10)
+    finalized = wait_finalized_past(last_block)
     check("the earning transactions finalized", finalized >= last_block,
           f"finalized block {finalized}, needed >= {last_block}")
     time.sleep(3)  # the credit runs in the same forkchoice update that advanced finality
@@ -544,6 +561,12 @@ def paymaster_check(chain_id) -> None:
           and slot0[-40:].lower() == owner[2:].lower(),
           f"{len(code[2:]) // 2} bytes at {paymaster[:10]}..., owner {owner[:10]}...")
 
+    # Recipients are salted per run: a recipient that already exists costs the transfer no
+    # new-account state gas (36k instead of about 220k), and the paymaster's credit is exactly
+    # the gas of the transfers it paid for, so a re-run on a chain that has seen this section
+    # before would earn less than one charge and fail the pair for the wrong reason.
+    run_salt = secrets.token_hex(2)
+
     def sponsored(sender: str, sender_key: str, salt: str, seq: int = 0) -> str:
         # only_verify: the sender's default code checks entry 0 and approves execution.
         # pay: the canonical paymaster checks entry 1 against its owner and approves payment.
@@ -552,7 +575,7 @@ def paymaster_check(chain_id) -> None:
             chain_id, sender, 0, seq,
             [frame(1, 0x02, sender, 80_000, 0, 0, b""),
              frame(1, 0x01, paymaster, 30_000, 0, 0, b""),
-             frame(2, 0x00, derived_address(salt, 0), 30_000, NEW_ACCOUNT_STATE_GAS, 100, b"")],
+             frame(2, 0x00, derived_address(run_salt, int(salt, 16)), 30_000, NEW_ACCOUNT_STATE_GAS, 100, b"")],
             *fees(), sender_key, cosigners=(owner_key,))
 
     def funded_senders(count: int) -> list:
@@ -614,13 +637,7 @@ def paymaster_check(chain_id) -> None:
         blocks = wait_mined([rpc(RPC, "eth_sendRawTransaction", [raw])], f"sponsored earning round {seq}")
         last_block = max(last_block, *blocks) if blocks else last_block
 
-    finalized = -1
-    for _ in range(90):
-        block = rpc(RPC, "eth_getBlockByNumber", ["finalized", False])
-        finalized = int(block["number"], 16) if block else -1
-        if finalized >= last_block:
-            break
-        time.sleep(10)
+    finalized = wait_finalized_past(last_block)
     check("the sponsored transactions finalized", finalized >= last_block,
           f"finalized block {finalized}, needed >= {last_block}")
     time.sleep(3)
@@ -902,4 +919,5 @@ def main() -> int:
     return 0
 
 
-sys.exit(main())
+if __name__ == "__main__":
+    sys.exit(main())
