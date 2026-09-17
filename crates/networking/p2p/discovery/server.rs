@@ -42,10 +42,17 @@ use super::{
     contact_table::DiscoveryProtocol, contact_table::PeerEvent, lookup_interval_function,
 };
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Minimum packet size for a valid discv4 packet.
 /// hash (32) + signature (65) + type (1) = 98 bytes
 const DISCV4_MIN_PACKET_SIZE: usize = 98;
+
+/// Reschedules between two "Discovery lookup interval" lines. Three timers
+/// (discv4, discv5, ENR) reschedule off `get_lookup_interval`, each as often as
+/// twice a second at the floor of the curve, so an unsampled line would be ~6/s.
+const LOOKUP_INTERVAL_LOG_EVERY: u64 = 64;
+static LOOKUP_INTERVAL_LOG_TICK: AtomicU64 = AtomicU64::new(0);
 
 // Shared constants
 const REVALIDATION_CHECK_INTERVAL: Duration = Duration::from_secs(1);
@@ -132,8 +139,25 @@ impl DiscoveryHandle {
     /// events, not a state machine, and `Rejected` is only ever reported for an
     /// attempt that never became a connection.
     pub fn record_peer_event(&self, node_id: H256, event: PeerEvent) {
-        if let Some(server) = self.server() {
-            let _ = server.record_peer_event(node_id, event);
+        // Both arms below used to discard their failure. The cast is how the
+        // connected mirror is kept in step with the peer table, so a dropped
+        // one desynchronises `peer_completion` (which paces the iterative
+        // lookups) with nothing left behind to say it happened.
+        let Some(server) = self.server() else {
+            warn!(
+                ?node_id,
+                ?event,
+                "Discovery peer event dropped: no discovery server handle"
+            );
+            return;
+        };
+        if let Err(err) = server.record_peer_event(node_id, event) {
+            warn!(
+                ?node_id,
+                ?event,
+                ?err,
+                "Discovery peer event dropped: cast failed"
+            );
         }
     }
 
@@ -569,11 +593,34 @@ impl DiscoveryServer {
 
     pub(crate) fn get_lookup_interval(&self) -> Duration {
         let peer_completion = self.contacts.peer_completion();
-        lookup_interval_function(
+        let interval = lookup_interval_function(
             peer_completion,
             ITERATIVE_LOOKUP_INITIAL_MS,
             ITERATIVE_LOOKUP_INTERVAL_MS,
-        )
+        );
+        // This runs up to twice a second at the floor of the easing curve, so
+        // it reports on a tick rather than on every reschedule. `connected` is
+        // a mirror of the peer table fed by casts that queue behind this
+        // actor's UDP drain: if it reads low, the curve is paced off a peer
+        // count the node has already exceeded, and lookups run faster than
+        // intended. Compare `connected` here against the `Peers:` line the
+        // sync progress logger prints from the peer table itself.
+        if LOOKUP_INTERVAL_LOG_TICK
+            .fetch_add(1, Ordering::Relaxed)
+            .is_multiple_of(LOOKUP_INTERVAL_LOG_EVERY)
+        {
+            let (connected, connected_events, disconnected_events) =
+                self.contacts.connected_debug();
+            info!(
+                connected,
+                connected_events,
+                disconnected_events,
+                peer_completion,
+                interval_ms = interval.as_millis(),
+                "Discovery lookup interval"
+            );
+        }
+        interval
     }
     /// Republish the ENR when the network layer reports a new fork id.
     ///

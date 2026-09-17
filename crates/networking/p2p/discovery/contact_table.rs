@@ -369,6 +369,9 @@ pub struct ContactTable {
     /// back from the consumer, so that discovery never has to call into it:
     /// every message across that boundary travels inward.
     connected: FxHashSet<H256>,
+    /// Diagnostic counters for [`Self::connected_debug`].
+    connected_events_applied: u64,
+    disconnected_events_applied: u64,
     /// Nodes already offered to the dialer this cycle, cleared once the pool is
     /// exhausted so failed dials get another turn.
     already_tried_peers: FxHashSet<H256>,
@@ -400,6 +403,8 @@ impl ContactTable {
             sessions: Default::default(),
             filter,
             connected: Default::default(),
+            connected_events_applied: 0,
+            disconnected_events_applied: 0,
             already_tried_peers: Default::default(),
             target_peers,
         }
@@ -435,6 +440,7 @@ impl ContactTable {
     /// Record that the consumer is now connected to `node_id`, so it stops
     /// being offered as a dial candidate and counts towards lookup pacing.
     pub(crate) fn mark_connected(&mut self, node_id: H256) {
+        self.connected_events_applied += 1;
         self.connected.insert(node_id);
     }
 
@@ -447,6 +453,7 @@ impl ContactTable {
     /// WHOAREYOU round trip to talk to a node we are still perfectly able to
     /// reach. Sessions go when the contact does, in [`Self::prune`].
     pub(crate) fn mark_disconnected(&mut self, node_id: &H256) {
+        self.disconnected_events_applied += 1;
         self.connected.remove(node_id);
     }
 
@@ -458,6 +465,18 @@ impl ContactTable {
             return 1.0;
         }
         self.connected.len() as f64 / self.target_peers as f64
+    }
+
+    /// Size of the connected mirror, and the number of peer events that built
+    /// it. Diagnostic only: the mirror is fed by casts that share a mailbox
+    /// with the UDP drain, so it can lag the peer table it mirrors. Comparing
+    /// these against the peer table's own count says whether it is lagging.
+    pub fn connected_debug(&self) -> (usize, u64, u64) {
+        (
+            self.connected.len(),
+            self.connected_events_applied,
+            self.disconnected_events_applied,
+        )
     }
 
     /// Backdates the last use of every stored session by `by`, so a test can drive the
