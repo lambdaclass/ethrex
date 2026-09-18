@@ -8,7 +8,6 @@ mod apply;
 pub use apply::apply_bal;
 pub(crate) use apply::store_code_sync;
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use ethrex_common::{
@@ -24,7 +23,7 @@ use crate::{
     peer_handler::PeerHandler,
     peer_table::PeerTableServerProtocol as _,
     snap::constants::{BAL_MAX_RETRIES_PER_BLOCK, BAL_REQUEST_BATCH_SIZE},
-    sync::{SyncDiagnostics, SyncError},
+    sync::{SyncDiagnostics, SyncError, snap2::gap_headers},
 };
 
 /// Reason a single-block BAL apply could not produce a valid post-state.
@@ -105,13 +104,18 @@ pub fn try_apply_bal_block(
 /// `target_block_hash` by fetching and replaying BALs block-by-block.
 ///
 /// Algorithm (EIP-8189 §"Synchronization Algorithm"):
-/// 1. Load all block headers from `start_block.number+1` to `target_block_hash`.
-/// 2. Batch their hashes (`BAL_REQUEST_BATCH_SIZE = 64`) and request BALs via snap/2.
-/// 3. For each BAL:
-///    a. Verify hash against `header.block_access_list_hash` (§68).
-///    b. Apply via `apply_bal` and verify per-block state root.
-///    c. Persist the BAL into the store.
+/// 1. Resolve the headers in `(start_block, target]` by walking parent hashes
+///    back from the target, which also detects a reorg past `start_block`.
+/// 2. Batch their hashes (`BAL_REQUEST_BATCH_SIZE`) and request BALs via snap/2.
+/// 3. Apply each returned BAL in order with [`try_apply_bal_block`], which
+///    verifies the hash against the header and the resulting state root, and
+///    persists the BAL.
 /// 4. Return the final state root when all blocks have been replayed.
+///
+/// Responses are consumed strictly in order. A peer may truncate from the tail
+/// or mark an entry unavailable; either way the run stops there and the rest is
+/// re-requested, possibly from another peer. Re-fetching a few entries a
+/// previous response already carried is cheaper than keeping them aside.
 ///
 /// Returns the post-replay state root. On degraded paths (no snap/2 peer, peer
 /// request error, exhausted per-block retries) returns the partial root reached
@@ -125,199 +129,140 @@ pub async fn advance_state_via_bals(
     target_block_hash: H256,
     diagnostics: &Arc<tokio::sync::RwLock<SyncDiagnostics>>,
 ) -> Result<H256, SyncError> {
-    // Step 1: load headers from start+1 to target.
-    let headers = load_headers_range(store, start_block.number + 1, target_block_hash).await?;
-    if headers.is_empty() {
+    let target = store
+        .get_block_header_by_hash(target_block_hash)?
+        .ok_or(SyncError::MissingHeaderForBal(target_block_hash))?;
+    if target.number <= start_block.number {
         info!("advance_state_via_bals: no headers to replay, returning start root");
         return Ok(start_block.state_root);
     }
+    let headers = gap_headers(store, &start_block, &target)?;
 
     let mut current_root = start_block.state_root;
     let mut parent_hash = start_block.hash();
 
-    // Step 2: process in batches.
-    let mut i = 0;
-    while i < headers.len() {
-        let batch_end = (i + BAL_REQUEST_BATCH_SIZE).min(headers.len());
-        let batch_headers = &headers[i..batch_end];
-        let batch_hashes: Vec<H256> = batch_headers.iter().map(|h| h.hash()).collect();
+    for batch in headers.chunks(BAL_REQUEST_BATCH_SIZE) {
+        let mut applied = 0usize;
+        // Failures since the last block that applied. Every failure concerns the
+        // first pending block — the run stops at the first bad or missing entry —
+        // so this is that block's retry count.
+        let mut attempts = 0u32;
 
-        let mut batch_filled = vec![false; batch_headers.len()];
-        let mut retry_counts: Vec<u32> = vec![0; batch_headers.len()];
-        // Holding buffer for BALs received out of order: a usable BAL whose
-        // prior slots aren't applied yet is kept here (keyed by batch index,
-        // with the peer that served it) instead of being discarded and
-        // re-fetched. Drained in strict ascending order once the gap closes.
-        let mut deferred: HashMap<usize, (BlockAccessList, H256)> = HashMap::new();
-
-        while batch_filled.iter().any(|f| !f) {
-            // Request only slots we have neither applied nor already buffered.
-            let pending_indices: Vec<usize> = (0..batch_hashes.len())
-                .filter(|idx| !batch_filled[*idx] && !deferred.contains_key(idx))
-                .collect();
-            let pending_hashes: Vec<H256> = pending_indices
+        while applied < batch.len() {
+            let pending: Vec<H256> = batch[applied..]
                 .iter()
-                .map(|&idx| batch_hashes[idx])
+                .map(|header| header.hash())
                 .collect();
+            diagnostics.write().await.snap2_bal_requests_sent += 1;
 
-            {
-                let mut diag = diagnostics.write().await;
-                diag.snap2_bal_requests_sent += 1;
-            }
-
-            match peers.request_snap2_bals(&pending_hashes).await {
-                Err(e) => {
-                    warn!("advance_state_via_bals: failed to get snap/2 peer: {e}");
-                    {
-                        let mut diag = diagnostics.write().await;
-                        diag.snap2_peer_failures += 1;
-                    }
-                    // Return partial progress; caller falls back to snap/1 healing.
-                    return Ok(current_root);
-                }
+            let (response, peer_id) = match peers.request_snap2_bals(&pending).await {
+                Ok(Some(served)) => served,
                 Ok(None) => {
                     warn!(
                         "advance_state_via_bals: no snap/2 peer available; returning partial root for snap/1 fallback"
                     );
-                    {
-                        let mut diag = diagnostics.write().await;
-                        diag.snap2_peer_failures += 1;
-                    }
+                    diagnostics.write().await.snap2_peer_failures += 1;
                     return Ok(current_root);
                 }
-                Ok(Some((response_bals, peer_id))) => {
-                    // EIP-8189 permits truncating a response from the tail, but a
-                    // response covering no slot at all makes no progress. Charge it to
-                    // the first pending slot so the retry budget stays finite and the
-                    // loop cannot spin forever against an unhelpful peer.
-                    if response_bals.is_empty() {
-                        warn!(
-                            "advance_state_via_bals: peer {peer_id} returned no entries for {} pending slots",
-                            pending_indices.len()
+                Err(e) => {
+                    warn!("advance_state_via_bals: failed to get snap/2 peer: {e}");
+                    diagnostics.write().await.snap2_peer_failures += 1;
+                    return Ok(current_root);
+                }
+            };
+
+            // EIP-8189 permits truncating a response from the tail, but one
+            // covering no entry at all makes no progress. Charge it to the first
+            // pending block so the retry budget stays finite.
+            if response.is_empty() {
+                warn!(
+                    "advance_state_via_bals: peer {peer_id} returned no entries for {} pending blocks",
+                    pending.len()
+                );
+                diagnostics.write().await.snap2_peer_failures += 1;
+                attempts += 1;
+                if attempts >= BAL_MAX_RETRIES_PER_BLOCK {
+                    let _ = peers.peer_table.record_critical_failure(peer_id);
+                    return exhausted(batch[applied].number, current_root);
+                }
+                let _ = peers.peer_table.record_failure(peer_id);
+                continue;
+            }
+
+            for bal in response {
+                let header = &batch[applied];
+                let block_hash = header.hash();
+
+                let Some(bal) = bal else {
+                    // The peer does not hold this one. Stop the run here and
+                    // re-request the rest; another peer may have it.
+                    diagnostics.write().await.snap2_bals_unavailable += 1;
+                    attempts += 1;
+                    if attempts >= BAL_MAX_RETRIES_PER_BLOCK {
+                        let _ = peers.peer_table.record_critical_failure(peer_id);
+                        return exhausted(header.number, current_root);
+                    }
+                    let _ = peers.peer_table.record_failure(peer_id);
+                    break;
+                };
+
+                match try_apply_bal_block(store, header, &bal, current_root, parent_hash) {
+                    Ok(new_root) => {
+                        current_root = new_root;
+                        parent_hash = block_hash;
+                        applied += 1;
+                        attempts = 0;
+                        diagnostics.write().await.snap2_blocks_replayed += 1;
+                        debug!(
+                            "advance_state_via_bals: applied BAL for block {} ({block_hash:?}), new root: {new_root:?}",
+                            header.number
                         );
-                        if let Some(&first) = pending_indices.first() {
-                            retry_counts[first] += 1;
-                            let _ = if retry_counts[first] >= BAL_MAX_RETRIES_PER_BLOCK {
-                                peers.peer_table.record_critical_failure(peer_id)
-                            } else {
-                                peers.peer_table.record_failure(peer_id)
-                            };
-                        }
+                        let _ = peers.peer_table.record_success(peer_id);
+                    }
+                    Err(ApplyBalError::BadParent {
+                        expected_parent,
+                        actual_parent,
+                    }) => {
+                        // `gap_headers` already verified every link, so this cannot
+                        // fire for a header it returned; the mapping is kept so a
+                        // future caller with unchecked headers still gets the
+                        // recoverable error.
+                        warn!(
+                            "advance_state_via_bals: reorg detected at block {}: parent {actual_parent:?} != expected {expected_parent:?}",
+                            header.number
+                        );
+                        return Err(SyncError::ChainReorgDetected {
+                            expected_parent,
+                            actual_parent,
+                        });
+                    }
+                    Err(ApplyBalError::Internal(e)) => return Err(*e),
+                    Err(err) => {
+                        // BadOrdering | BadHash | BadStateRoot — peer-attributable,
+                        // retry from a different peer. Stop the run; the rest is
+                        // re-requested.
+                        warn!(
+                            "advance_state_via_bals: validation failed for block {} ({block_hash:?}): {err}",
+                            header.number
+                        );
                         {
                             let mut diag = diagnostics.write().await;
-                            diag.snap2_peer_failures += 1;
-                        }
-                    }
-
-                    // Buffer every returned BAL by batch index; a missing slot
-                    // bumps its retry count and penalizes the serving peer.
-                    for (bal_opt, &batch_idx) in
-                        response_bals.into_iter().zip(pending_indices.iter())
-                    {
-                        match bal_opt {
-                            Some(bal) => {
-                                deferred.insert(batch_idx, (bal, peer_id));
-                            }
-                            None => {
-                                retry_counts[batch_idx] += 1;
-                                {
-                                    let mut diag = diagnostics.write().await;
-                                    diag.snap2_bals_unavailable += 1;
-                                }
-                                if retry_counts[batch_idx] >= BAL_MAX_RETRIES_PER_BLOCK {
-                                    let _ = peers.peer_table.record_critical_failure(peer_id);
-                                } else {
-                                    let _ = peers.peer_table.record_failure(peer_id);
-                                }
+                            diag.snap2_validation_failures += 1;
+                            if matches!(err, ApplyBalError::BadStateRoot { .. }) {
+                                diag.snap2_peer_failures += 1;
                             }
                         }
-                    }
-
-                    // Drain buffered BALs in strict ascending order as far as the
-                    // contiguous prefix allows. Applying strictly in order means the
-                    // last applied block's hash (`parent_hash`) is always the correct
-                    // expected parent, and each BAL is validated against the state its
-                    // predecessor produced — never against a gap.
-                    while let Some(next) = batch_filled.iter().position(|filled| !filled) {
-                        let Some((bal, src_peer)) = deferred.remove(&next) else {
-                            break; // next in-order slot not received yet
-                        };
-                        let header = &batch_headers[next];
-                        let block_hash = batch_hashes[next];
-
-                        match try_apply_bal_block(store, header, &bal, current_root, parent_hash) {
-                            Ok(new_root) => {
-                                current_root = new_root;
-                                parent_hash = block_hash;
-                                batch_filled[next] = true;
-                                {
-                                    let mut diag = diagnostics.write().await;
-                                    diag.snap2_blocks_replayed += 1;
-                                }
-                                debug!(
-                                    "advance_state_via_bals: applied BAL for block {} ({block_hash:?}), new root: {new_root:?}",
-                                    header.number
-                                );
-                                let _ = peers.peer_table.record_success(src_peer);
-                            }
-                            Err(ApplyBalError::BadParent {
-                                expected_parent,
-                                actual_parent,
-                            }) => {
-                                warn!(
-                                    "advance_state_via_bals: reorg detected at block {}: parent {actual_parent:?} != expected {expected_parent:?}",
-                                    header.number
-                                );
-                                return Err(SyncError::ChainReorgDetected {
-                                    expected_parent,
-                                    actual_parent,
-                                });
-                            }
-                            Err(ApplyBalError::Internal(e)) => return Err(*e),
-                            Err(err) => {
-                                // BadOrdering | BadHash | BadStateRoot — peer-attributable,
-                                // retry from a different peer. Stop draining: later slots
-                                // stay buffered and apply once this one is re-fetched.
-                                warn!(
-                                    "advance_state_via_bals: validation failed for block {} ({block_hash:?}): {err}",
-                                    header.number
-                                );
-                                {
-                                    let mut diag = diagnostics.write().await;
-                                    diag.snap2_validation_failures += 1;
-                                    if matches!(err, ApplyBalError::BadStateRoot { .. }) {
-                                        diag.snap2_peer_failures += 1;
-                                    }
-                                }
-                                retry_counts[next] += 1;
-                                if retry_counts[next] >= BAL_MAX_RETRIES_PER_BLOCK {
-                                    let _ = peers.peer_table.record_critical_failure(src_peer);
-                                } else {
-                                    let _ = peers.peer_table.record_failure(src_peer);
-                                }
-                                break;
-                            }
+                        attempts += 1;
+                        if attempts >= BAL_MAX_RETRIES_PER_BLOCK {
+                            let _ = peers.peer_table.record_critical_failure(peer_id);
+                            return exhausted(header.number, current_root);
                         }
+                        let _ = peers.peer_table.record_failure(peer_id);
+                        break;
                     }
                 }
             }
-
-            // If any slot has exhausted retries, return partial progress and let
-            // the caller fall back to snap/1 healing for the remainder.
-            let any_exhausted = retry_counts
-                .iter()
-                .enumerate()
-                .any(|(idx, &count)| !batch_filled[idx] && count >= BAL_MAX_RETRIES_PER_BLOCK);
-            if any_exhausted {
-                warn!(
-                    "advance_state_via_bals: exhausted retries for batch at block index {}; returning partial root for snap/1 fallback",
-                    i
-                );
-                return Ok(current_root);
-            }
         }
-
-        i += BAL_REQUEST_BATCH_SIZE;
     }
 
     info!(
@@ -328,108 +273,11 @@ pub async fn advance_state_via_bals(
     Ok(current_root)
 }
 
-/// Load headers from `start_number` up to (and including) the block with hash `target_hash`.
-pub(super) async fn load_headers_range(
-    store: &Store,
-    start_number: u64,
-    target_hash: H256,
-) -> Result<Vec<BlockHeader>, SyncError> {
-    let target_header = store
-        .get_block_header_by_hash(target_hash)?
-        .ok_or(SyncError::MissingHeaderForBal(target_hash))?;
-
-    let end_number = target_header.number;
-    if start_number > end_number {
-        return Ok(vec![]);
-    }
-
-    let mut headers = Vec::with_capacity((end_number - start_number + 1) as usize);
-    for number in start_number..=end_number {
-        let hash = store
-            .get_canonical_block_hash(number)
-            .await?
-            .ok_or(SyncError::MissingCanonicalBlock(number))?;
-        let header = store
-            .get_block_header_by_hash(hash)?
-            .ok_or(SyncError::MissingHeaderForBal(hash))?;
-        headers.push(header);
-    }
-    Ok(headers)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use ethrex_common::H256;
-    use ethrex_common::types::BlockHeader;
-    use ethrex_storage::{EngineType, Store};
-
-    // `PeerHandler` requires an `RLPxInitiator` actor to construct, which makes it
-    // impractical to directly unit-test `advance_state_via_bals` here. What we test
-    // instead are the deterministic inputs to that orchestration: `load_headers_range`,
-    // which feeds every downstream apply / validate step, and the `MissingHeaderForBal`
-    // short-circuit it produces before any peer interaction.
-
-    async fn store_canonical_header(store: &Store, header: BlockHeader) -> H256 {
-        let number = header.number;
-        let hash = header.hash();
-        store
-            .add_block_header(hash, header)
-            .await
-            .expect("add_block_header");
-        // Set the canonical hash at this number so `get_canonical_block_hash`
-        // resolves during `load_headers_range`. `forkchoice_update` takes the
-        // list of (number, hash) pairs that should become canonical.
-        store
-            .forkchoice_update(vec![(number, hash)], number, hash, None, None)
-            .await
-            .expect("forkchoice_update");
-        hash
-    }
-
-    fn header_with(number: u64, parent_hash: H256) -> BlockHeader {
-        BlockHeader {
-            number,
-            parent_hash,
-            ..Default::default()
-        }
-    }
-
-    #[tokio::test]
-    async fn load_headers_range_empty_when_start_after_target() {
-        let store = Store::new("memory", EngineType::InMemory).expect("in-memory store");
-        let target_hash = store_canonical_header(&store, header_with(5, H256::zero())).await;
-        // start_number > target.number ⇒ empty.
-        let headers = load_headers_range(&store, 10, target_hash)
-            .await
-            .expect("load_headers_range");
-        assert!(headers.is_empty());
-    }
-
-    #[tokio::test]
-    async fn load_headers_range_missing_target_returns_error() {
-        let store = Store::new("memory", EngineType::InMemory).expect("in-memory store");
-        let unknown = H256::from([0xCCu8; 32]);
-        let err = load_headers_range(&store, 0, unknown)
-            .await
-            .expect_err("must error on missing target header");
-        assert!(matches!(err, SyncError::MissingHeaderForBal(h) if h == unknown));
-    }
-
-    #[tokio::test]
-    async fn load_headers_range_returns_canonical_chain_in_order() {
-        let store = Store::new("memory", EngineType::InMemory).expect("in-memory store");
-        // Build a 4-block canonical chain anchored at zero.
-        let mut last_hash = H256::zero();
-        for n in 1u64..=4 {
-            last_hash = store_canonical_header(&store, header_with(n, last_hash)).await;
-        }
-        let headers = load_headers_range(&store, 2, last_hash)
-            .await
-            .expect("load_headers_range");
-        assert_eq!(headers.len(), 3);
-        assert_eq!(headers[0].number, 2);
-        assert_eq!(headers[1].number, 3);
-        assert_eq!(headers[2].number, 4);
-    }
+/// The retry budget for one block ran out: report it and hand the partial root
+/// back so the caller can heal the remainder with snap/1.
+fn exhausted(block_number: u64, current_root: H256) -> Result<H256, SyncError> {
+    warn!(
+        "advance_state_via_bals: exhausted retries at block {block_number}; returning partial root for snap/1 fallback"
+    );
+    Ok(current_root)
 }
