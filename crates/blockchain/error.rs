@@ -138,6 +138,10 @@ pub enum MempoolError {
     #[error("Attempted to replace a pooled transaction with an underpriced transaction")]
     UnderpricedReplacement,
     #[error(
+        "EIP-4844 replacement carries fewer blobs ({new_count}) than the in-pool tx ({old_count})"
+    )]
+    ReplacementShrinksBlobs { old_count: usize, new_count: usize },
+    #[error(
         "Attempted to replace a pooled transaction with one of a different category (blob vs. non-blob)"
     )]
     ReplacementTypeMismatch,
