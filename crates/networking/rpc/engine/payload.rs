@@ -200,6 +200,20 @@ impl RpcHandler for NewPayloadV4Request {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        self.handle_with_witness(context, false).await
+    }
+}
+
+impl NewPayloadV4Request {
+    /// Shared body of `engine_newPayloadV4` and `engine_newPayloadWithWitnessV4`.
+    /// The two differ only in whether the execution collects a witness, so every
+    /// structural and fork check lives here once; `make_witness` is the only
+    /// thing the witness variant changes, exactly as `NewPayloadV5Request` does.
+    async fn handle_with_witness(
+        &self,
+        context: RpcApiContext,
+        make_witness: bool,
+    ) -> Result<Value, RpcErr> {
         // EIP-7928 / Amsterdam: V4 payloads MUST NOT include the BAL field — that
         // field belongs to V5. Per engine-API spec, structurally-invalid payloads
         // return JSON-RPC -32602 (Invalid params), not PayloadStatus.INVALID.
@@ -263,10 +277,42 @@ impl RpcHandler for NewPayloadV4Request {
             block,
             self.expected_blob_versioned_hashes.clone(),
             None,
-            false,
+            make_witness,
         )
         .await?;
         serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
+    }
+}
+
+/// `engine_newPayloadWithWitnessV4`: `engine_newPayloadV4` plus a `witness`
+/// field in the response. Same four params, same status semantics, same
+/// Prague-through-BPO2 fork window; only `make_witness` differs. Mirrors geth's
+/// `NewPayloadWithWitnessV4`, which forwards to its `newPayload` with
+/// `witness = true` after the identical V4 checks.
+pub struct NewPayloadWithWitnessV4Request(pub NewPayloadV4Request);
+
+impl From<NewPayloadWithWitnessV4Request> for RpcRequest {
+    fn from(val: NewPayloadWithWitnessV4Request) -> Self {
+        RpcRequest {
+            method: "engine_newPayloadWithWitnessV4".to_string(),
+            params: Some(vec![
+                serde_json::json!(val.0.payload),
+                serde_json::json!(val.0.expected_blob_versioned_hashes),
+                serde_json::json!(val.0.parent_beacon_block_root),
+                serde_json::json!(val.0.execution_requests),
+            ]),
+            ..Default::default()
+        }
+    }
+}
+
+impl RpcHandler for NewPayloadWithWitnessV4Request {
+    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        NewPayloadV4Request::parse(params).map(Self)
+    }
+
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        self.0.handle_with_witness(context, true).await
     }
 }
 
@@ -1623,6 +1669,158 @@ mod tests {
             block_access_list: Some(BlockAccessList::default()),
             burned_fees: None,
         }
+    }
+
+    /// The V4 shape: V5 minus the two Amsterdam-only fields.
+    fn v4_payload() -> ExecutionPayload {
+        ExecutionPayload {
+            slot_number: None,
+            block_access_list: None,
+            ..v5_payload()
+        }
+    }
+
+    #[test]
+    fn new_payload_with_witness_v4_parses_like_v4() {
+        let params = Some(vec![
+            serde_json::json!(v4_payload()),
+            serde_json::json!(Vec::<H256>::new()),
+            serde_json::json!(H256::zero()),
+            serde_json::json!(Vec::<EncodedRequests>::new()),
+        ]);
+
+        let request = NewPayloadWithWitnessV4Request::parse(&params).unwrap();
+
+        assert_eq!(request.0.payload.block_access_list, None);
+        assert_eq!(request.0.execution_requests.len(), 0);
+    }
+
+    /// A Prague-era block built on the `execution-api.json` genesis (Prague at
+    /// t=0, no Amsterdam), returned together with the store it was built on.
+    /// The block is built but not stored, so a newPayload call executes it.
+    async fn prague_block_and_store() -> (Block, Store) {
+        use ethrex_blockchain::Blockchain;
+        use ethrex_blockchain::payload::{BuildPayloadArgs, create_payload};
+        use ethrex_common::types::{DEFAULT_BUILDER_GAS_CEIL, ELASTICITY_MULTIPLIER, Genesis};
+
+        let genesis_path = std::path::Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../fixtures/genesis/execution-api.json"
+        ));
+        let genesis = Genesis::try_from(genesis_path).expect("load genesis");
+        let mut store = Store::new("v4-witness", EngineType::InMemory).expect("store");
+        store.add_initial_state(genesis).await.expect("genesis");
+        let blockchain = Blockchain::for_test_harness(store.clone());
+        let genesis_header = store.get_block_header(0).unwrap().unwrap();
+        let args = BuildPayloadArgs {
+            parent: genesis_header.hash(),
+            timestamp: genesis_header.timestamp + 12,
+            fee_recipient: Default::default(),
+            random: H256::zero(),
+            withdrawals: Some(Vec::new()),
+            beacon_root: Some(H256::zero()),
+            slot_number: None,
+            version: 1,
+            elasticity_multiplier: ELASTICITY_MULTIPLIER,
+            gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+        };
+        let template = create_payload(&args, &store, Bytes::new()).expect("template");
+        let built = blockchain.build_payload(template).expect("build payload");
+        (built.payload, store)
+    }
+
+    fn v4_params_for(block: &Block) -> Option<Vec<Value>> {
+        Some(vec![
+            serde_json::json!(ExecutionPayload::from_block(block.clone(), None)),
+            serde_json::json!(Vec::<H256>::new()),
+            serde_json::json!(H256::zero()),
+            serde_json::json!(Vec::<EncodedRequests>::new()),
+        ])
+    }
+
+    /// Upstream ships no V4 payload with an `executionWitness` (the pre-fork
+    /// blocks in the zkevm fixtures carry none), so the fixture runner cannot
+    /// grade this endpoint. The oracle is the witness ethrex itself derives for
+    /// the same block through `generate_witness_for_blocks`, which is what
+    /// `debug_executionWitness` serves: the engine variant must return exactly
+    /// those bytes, and the plain V4 call must return the same status without
+    /// a `witness` field.
+    #[tokio::test]
+    async fn new_payload_with_witness_v4_returns_the_witness_debug_rpc_would() {
+        use ethrex_common::types::block_execution_witness::ExtWitness;
+        use ethrex_rlp::decode::RLPDecode;
+
+        let (block, store) = prague_block_and_store().await;
+        let params = v4_params_for(&block);
+        let ctx = default_context_with_storage(store).await;
+
+        let response = NewPayloadWithWitnessV4Request::parse(&params)
+            .expect("parse")
+            .handle(ctx.clone())
+            .await
+            .expect("handle");
+        assert_eq!(response["status"], "VALID", "{response:?}");
+        assert_eq!(
+            response["latestValidHash"],
+            serde_json::json!(block.hash()),
+            "{response:?}"
+        );
+
+        let witness_hex = response["witness"]
+            .as_str()
+            .expect("with-witness response carries a witness");
+        let witness_bytes = hex::decode(witness_hex.strip_prefix("0x").unwrap()).unwrap();
+        ExtWitness::decode(&witness_bytes).expect("witness is geth's ExtWitness RLP");
+
+        let oracle = ctx
+            .blockchain
+            .generate_witness_for_blocks(std::slice::from_ref(&block))
+            .await
+            .expect("debug witness for the same block");
+        let oracle_bytes = encode_witness_for_engine_rpc(oracle).expect("encode oracle");
+        assert_eq!(witness_bytes, oracle_bytes.as_ref());
+
+        // Same block through plain V4: identical status, and no witness field at
+        // all rather than an empty one (the field is skipped when absent).
+        let plain = NewPayloadV4Request::parse(&params)
+            .expect("parse")
+            .handle(ctx.clone())
+            .await
+            .expect("handle");
+        assert_eq!(plain["status"], "VALID", "{plain:?}");
+        assert!(plain.get("witness").is_none(), "{plain:?}");
+    }
+
+    /// The witness variant shares V4's fork window. An Amsterdam-active
+    /// timestamp must be refused with -38005 before anything is executed,
+    /// exactly as `engine_newPayloadV4` does, so asking for a witness cannot
+    /// be used to slip a V5-era payload through the V4 entry point.
+    #[tokio::test]
+    async fn new_payload_with_witness_v4_rejects_amsterdam_timestamps() {
+        use ethrex_common::types::Genesis;
+
+        let (block, _) = prague_block_and_store().await;
+        let params = v4_params_for(&block);
+
+        let genesis_path = std::path::Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../fixtures/genesis/execution-api.json"
+        ));
+        let mut genesis = Genesis::try_from(genesis_path).expect("load genesis");
+        genesis.config.osaka_time = Some(0);
+        genesis.config.bpo1_time = Some(0);
+        genesis.config.bpo2_time = Some(0);
+        genesis.config.amsterdam_time = Some(0);
+        let mut store = Store::new("v4-witness-amsterdam", EngineType::InMemory).expect("store");
+        store.add_initial_state(genesis).await.expect("genesis");
+        let ctx = default_context_with_storage(store).await;
+
+        let err = NewPayloadWithWitnessV4Request::parse(&params)
+            .expect("parse")
+            .handle(ctx.clone())
+            .await
+            .expect_err("Amsterdam timestamps are not a V4 concern");
+        assert!(matches!(err, RpcErr::UnsupportedFork(_)), "{err:?}");
     }
 
     #[test]
