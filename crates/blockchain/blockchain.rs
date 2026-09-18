@@ -2494,7 +2494,7 @@ impl Blockchain {
         Ok(ExecutionWitness {
             codes,
             block_headers_bytes,
-            first_block_number: parent_header.number,
+            first_block_number: block.header.number,
             chain_config: self.storage.get_chain_config(),
             state_trie_root,
             storage_trie_roots,
@@ -5170,6 +5170,21 @@ mod tests {
         let block_template = create_payload(&args, &store, Bytes::new()).unwrap();
         let result = blockchain.build_payload(block_template).unwrap();
         (blockchain, vec![result.payload])
+    }
+
+    #[tokio::test]
+    async fn imported_block_witness_supports_stateless_validation() {
+        let (blockchain, blocks) = build_test_blockchain_with_one_block().await;
+        let witness = blockchain
+            .add_block_pipeline_with_witness(blocks[0].clone(), None)
+            .expect("import block with witness");
+
+        ethrex_guest_program::l1::validate_blocks_statelessly(
+            &blocks,
+            witness,
+            Arc::new(NativeCrypto),
+        )
+        .expect("imported block witness must support stateless validation");
     }
 
     #[tokio::test]
