@@ -1915,13 +1915,10 @@ impl<'a> VM<'a> {
                 () => {
                     if !frame.value.is_zero() && !value_transfer_reverted {
                         self.transfer(sender, target, frame.value)?;
-                        // EIP-7708 log parity with default_hook::transfer_value:
-                        // only Amsterdam+ and only when sender != target.
-                        if self.env.config.fork >= Fork::Amsterdam && sender != target {
-                            let log =
-                                crate::utils::create_eth_transfer_log(sender, target, frame.value);
-                            self.substate.add_log(log);
-                        }
+                        // EIP-7708 / traceTransfers log parity with
+                        // default_hook::transfer_value: which logs apply is decided in
+                        // `push_eth_transfer_logs`.
+                        self.add_eth_transfer_logs(sender, target, frame.value);
                     }
                 };
             }
@@ -3252,6 +3249,72 @@ impl<'a> VM<'a> {
     /// True if external transaction is a contract creation
     pub fn is_create(&self) -> Result<bool, InternalError> {
         Ok(self.current_call_frame.is_create)
+    }
+
+    /// Emit every ETH-transfer log that applies to `value` moving `from` → `to`.
+    ///
+    /// Two independent logs exist and both are emitted when both apply:
+    /// * the consensus EIP-7708 log from SYSTEM_ADDRESS, Amsterdam+ only. The EIP
+    ///   excludes self-transfers, since no balance changes.
+    /// * the informational `eth_simulateV1` traceTransfers log from the
+    ///   TRACE_TRANSFER_ADDRESS sentinel. It is fork-independent and includes
+    ///   self-transfers, so what a client sees for the flag keeps its shape across
+    ///   Amsterdam activation rather than silently emptying out; geth's tracer is
+    ///   fork-independent for the same reason.
+    ///
+    /// `trace_to` is the recipient the trace log names. It differs from `to` only for
+    /// CALLCODE, where the value stays with the caller: see
+    /// [`VM::add_call_eth_transfer_logs`].
+    fn push_eth_transfer_logs(
+        &mut self,
+        from: Address,
+        to: Address,
+        trace_to: Address,
+        value: U256,
+    ) {
+        if value.is_zero() {
+            return;
+        }
+        if self.env.config.fork >= Fork::Amsterdam && from != to {
+            let log = crate::utils::create_eth_transfer_log(
+                ethrex_common::constants::SYSTEM_ADDRESS,
+                from,
+                to,
+                value,
+            );
+            self.substate.add_log(log);
+        }
+        if self.env.trace_eth_transfers {
+            let log = crate::utils::create_eth_transfer_log(
+                crate::constants::TRACE_TRANSFER_ADDRESS,
+                from,
+                trace_to,
+                value,
+            );
+            self.substate.add_log(log);
+        }
+    }
+
+    /// Emit the ETH-transfer logs for `value` moving `from` → `to`.
+    #[inline]
+    pub fn add_eth_transfer_logs(&mut self, from: Address, to: Address, value: U256) {
+        self.push_eth_transfer_logs(from, to, to, value);
+    }
+
+    /// Message-call variant of [`VM::add_eth_transfer_logs`]. `callcode_target` is
+    /// `Some` only for CALLCODE, whose value never leaves the caller: `to` is the
+    /// caller itself, which suppresses the consensus log as a self-transfer, while the
+    /// trace log still names the callee, as geth's tracer does (its `OnEnter` hook
+    /// excludes DELEGATECALL and nothing else).
+    #[inline]
+    pub fn add_call_eth_transfer_logs(
+        &mut self,
+        from: Address,
+        to: Address,
+        callcode_target: Option<Address>,
+        value: U256,
+    ) {
+        self.push_eth_transfer_logs(from, to, callcode_target.unwrap_or(to), value);
     }
 
     /// Executes without making changes to the cache.

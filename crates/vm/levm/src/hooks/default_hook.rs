@@ -913,13 +913,10 @@ pub fn transfer_value(vm: &mut VM<'_>) -> Result<(), VMError> {
 
         vm.increase_account_balance(to, value)?;
 
-        // EIP-7708: Emit transfer log for nonzero-value transactions to DIFFERENT accounts
-        // Self-transfers (origin == to) should NOT emit a log per the EIP spec
-        let from = vm.env.origin;
-        if vm.env.config.fork >= Fork::Amsterdam && !value.is_zero() && from != to {
-            let log = create_eth_transfer_log(from, to, value);
-            vm.substate.add_log(log);
-        }
+        // EIP-7708 / traceTransfers: emit transfer log for nonzero-value transactions.
+        // Self-transfers (origin == to) do NOT emit consensus logs per the EIP spec;
+        // trace mode includes them (see `VM::push_eth_transfer_logs`).
+        vm.add_eth_transfer_logs(vm.env.origin, to, value);
     }
     Ok(())
 }
