@@ -71,6 +71,7 @@ fn make_block(transactions: Vec<Transaction>, blob_gas_used: u64) -> Block {
             transactions,
             ommers: vec![],
             withdrawals: Some(vec![]),
+            ..Default::default()
         },
     }
 }
