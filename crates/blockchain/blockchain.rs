@@ -3395,21 +3395,28 @@ impl Blockchain {
     ///
     /// Width is minted from finalized gas only. A head-based credit would let a sender
     /// earn from a block later reorged out and spend it on work the chain never paid for.
-    /// Catch-up after downtime is bounded; skipping blocks only withholds width, which is
-    /// the safe direction.
+    /// Catch-up is bounded to `MAX_CATCHUP_BLOCKS`, after downtime and on the first credit
+    /// after a start alike: the ledger lives in memory, so a restarted node has nothing,
+    /// and crediting the recent window back gives its senders most of what they had
+    /// earned rather than one pending transaction each until their next spend finalizes.
+    /// Spends made before the restart are forgotten, which over-credits by at most what
+    /// was pending and stays under the cap. Skipping older blocks only withholds width,
+    /// which is the safe direction. The window is 1,024 blocks, 3.4 hours at 12-second
+    /// slots, and costs that many body and receipt reads once.
     pub async fn credit_finalized_width(
         &self,
         finalized_number: BlockNumber,
     ) -> Result<(), MempoolError> {
-        const MAX_CATCHUP_BLOCKS: u64 = 64;
+        const MAX_CATCHUP_BLOCKS: u64 = 1_024;
         if !self.mempool.matcha_enabled()? {
             return Ok(());
         }
+        let window_start = finalized_number.saturating_sub(MAX_CATCHUP_BLOCKS);
         let start = self
             .mempool
             .last_credited_block()?
-            .map_or(finalized_number, |last| last.saturating_add(1))
-            .max(finalized_number.saturating_sub(MAX_CATCHUP_BLOCKS));
+            .map_or(window_start, |last| last.saturating_add(1))
+            .max(window_start);
 
         for number in start..=finalized_number {
             let (Some(body), Some(hash)) = (

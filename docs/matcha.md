@@ -184,7 +184,11 @@ author. In summary:
   `base_price * (1 + load / charge)`, which reproduces the stated behaviour exactly when
   charges are equal.
 - "Newly finalized" needs a rule when a node has been offline. Catch-up is bounded to the
-  last 64 finalized blocks; withholding width is always the safe direction.
+  last 1,024 finalized blocks, on the first credit after a start as well as after downtime,
+  since the ledger lives in memory and a restart would otherwise leave every sender at one
+  pending transaction until its next spend finalizes; withholding older width is always the
+  safe direction. (First measured with a 64-block window on 2026-09-17: a restarted node read
+  zero for a pool its peers read at 4.9M.)
 - "Credited once" is keyed on block number with a high-water mark, not on block hash, so
   two blocks at one height after a reorg cannot both mint width.
 - Finalized gas is the transaction's `cumulative_gas_used` delta, which for a frame
