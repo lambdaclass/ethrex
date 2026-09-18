@@ -40,8 +40,8 @@ pub fn u256_to_offset(value: U256) -> Option<usize> {
 
 /// Compute the transaction's MAXIMUM cost (EIP-8141 §Gas Accounting: APPROVE must
 /// "collect the transaction's maximum cost from payer"):
-/// `max_cost = max_fee_per_gas * total_gas_limit
-///           + len(blob_hashes) * 131072 * max_fee_per_blob_gas`.
+/// `max_cost = max_fee_per_gas * max_gas
+///           + len(blob_hashes) * 131072 * blob_base_fee`.
 /// This is the single definition of "maximum cost": APPROVE (scopes 0x1/0x3)
 /// debits it from the payer, TXPARAM(0x06) reports it, and the
 /// mempool paymaster reservation reserves it. The end-of-tx refund returns
@@ -51,12 +51,12 @@ pub fn u256_to_offset(value: U256) -> Option<usize> {
 /// non-refundable).
 pub(crate) fn compute_tx_max_cost(ctx: &crate::vm::FrameTxContext) -> Result<U256, VMError> {
     let gas_cost = U256::from(ctx.tx.max_fee_per_gas)
-        .checked_mul(U256::from(ctx.total_gas_limit))
+        .checked_mul(U256::from(ctx.max_gas))
         .ok_or(ExceptionalHalt::InvalidOpcode)?;
     let blob_cost = U256::from(ctx.tx.blob_versioned_hashes.len())
         .checked_mul(U256::from(131072u64))
         .ok_or(ExceptionalHalt::InvalidOpcode)?
-        .checked_mul(ctx.tx.max_fee_per_blob_gas)
+        .checked_mul(ctx.blob_base_fee)
         .ok_or(ExceptionalHalt::InvalidOpcode)?;
     gas_cost
         .checked_add(blob_cost)
@@ -457,10 +457,11 @@ impl OpcodeHandler for OpFrameParamHandler {
 /// SIGPARAM (0xB4) -- signature-scoped metadata and data copy (EIP-8141).
 /// Metadata (params 0x00-0x03): stack `[param, signatureIndex]` with
 /// `signatureIndex` on top; gas 2; returns one word (0x00 effective signer,
-/// 0x01 scheme, 0x02 msg, 0x03 len(signature)). Copy (param 0x04): stack
-/// `[memOffset, dataOffset, length, param, signatureIndex]` with `signatureIndex`
-/// on top; CALLDATACOPY gas; copies an ARBITRARY signature's raw bytes into
-/// memory (zero-filled past the end) and pushes nothing — any other scheme halts.
+/// 0x01 scheme, 0x02 msg, 0x03 len(signature)). Copy (param 0x04): takes
+/// `[signatureIndex, param, memOffset, dataOffset, length]` with `signatureIndex`
+/// on top (popped first), matching `CALLDATACOPY`'s operand order; CALLDATACOPY
+/// gas; copies an ARBITRARY signature's raw bytes into memory (zero-filled past
+/// the end) and pushes nothing — any other scheme halts.
 pub struct OpSigParamHandler;
 impl OpcodeHandler for OpSigParamHandler {
     #[inline(always)]
@@ -474,7 +475,7 @@ impl OpcodeHandler for OpSigParamHandler {
         // 0x04: copy the referenced ARBITRARY signature's raw bytes into memory,
         // CALLDATACOPY-style (see FRAMEDATACOPY). Pops three more operands.
         if param == 0x04 {
-            let [length, data_offset, mem_offset] = *vm.current_call_frame.stack.pop()?;
+            let [mem_offset, data_offset, length] = *vm.current_call_frame.stack.pop()?;
             let (length, mem_offset) = size_offset_to_usize(length, mem_offset)?;
             let data_offset_opt = u256_to_offset(data_offset);
 
@@ -671,10 +672,12 @@ mod max_cost_tests {
     use crate::vm::FrameTxContext;
     use ethrex_common::{H256, U256, types::FrameTransaction};
 
-    fn ctx(max_fee: u64, blobs: usize, max_blob_fee: u64, total_gas_limit: u64) -> FrameTxContext {
+    fn ctx(max_fee: u64, blobs: usize, blob_base_fee: u64, max_gas: u64) -> FrameTxContext {
         let tx = FrameTransaction {
             max_fee_per_gas: max_fee,
-            max_fee_per_blob_gas: U256::from(max_blob_fee),
+            // Deliberately far above the base fee: `max_fee_per_blob_gas` bounds
+            // inclusion only and must not reach `max_cost`.
+            max_fee_per_blob_gas: U256::from(blob_base_fee).saturating_mul(U256::from(1_000u64)),
             blob_versioned_hashes: vec![H256::zero(); blobs],
             ..Default::default()
         };
@@ -686,16 +689,17 @@ mod max_cost_tests {
             sig_hash: H256::zero(),
             tx,
             approve_called_in_current_frame: false,
-            total_gas_limit,
+            max_gas,
+            blob_base_fee: U256::from(blob_base_fee),
         }
     }
 
     #[test]
-    fn max_cost_is_max_fee_times_limit_plus_max_blob_cost() {
+    fn max_cost_is_max_fee_times_limit_plus_base_rate_blob_cost() {
         // 10 * 100_000 + 2 * 131072 * 5 = 1_000_000 + 1_310_720
         let c = ctx(10, 2, 5, 100_000);
         assert_eq!(compute_tx_max_cost(&c).unwrap(), U256::from(2_310_720u64));
-        // No blobs: just max_fee * total_gas_limit.
+        // No blobs: just max_fee * max_gas.
         let c = ctx(7, 0, 999, 21_000);
         assert_eq!(compute_tx_max_cost(&c).unwrap(), U256::from(147_000u64));
     }

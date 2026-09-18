@@ -83,6 +83,8 @@ pub enum MempoolError {
     TxMaxInitCodeSizeError,
     #[error("Transaction encoded size ({actual} bytes) exceeds the {limit}-byte limit")]
     TxSizeExceeded { actual: usize, limit: usize },
+    #[error("Tip cap {actual} wei below the configured minimum of {limit} wei")]
+    TipBelowMinimum { actual: u64, limit: u64 },
     #[error(
         "Sender {sender:#x} has {count} queued (future-nonce) transactions (per-account cap {limit}); rejecting new future transaction"
     )]
@@ -135,6 +137,10 @@ pub enum MempoolError {
     InvalidTxSender(#[from] ethrex_crypto::CryptoError),
     #[error("Attempted to replace a pooled transaction with an underpriced transaction")]
     UnderpricedReplacement,
+    #[error(
+        "Attempted to replace a pooled transaction with one of a different category (blob vs. non-blob)"
+    )]
+    ReplacementTypeMismatch,
     #[error("Frame transactions (EIP-8141) are not supported before the Hegota fork")]
     FrameTxPreFork,
     #[error("Frame transaction expiry deadline has passed")]

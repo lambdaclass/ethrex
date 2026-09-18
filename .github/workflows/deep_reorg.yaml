@@ -25,6 +25,8 @@ jobs:
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+        with:
+          cache-pool: l1
 
       - name: Build ethrex (release, rocksdb + metrics)
         run: |

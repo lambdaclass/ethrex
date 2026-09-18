@@ -18,7 +18,6 @@ use crate::{
     gas_cost,
     memory::{self, calculate_memory_size},
     opcode_handlers::OpcodeHandler,
-    precompiles,
     utils::{address_to_word, create_eth_transfer_log, word_to_address, *},
     vm::VM,
 };
@@ -1197,9 +1196,7 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue);
         }
 
-        if precompiles::is_precompile(&code_address, self.env.config.fork, self.vm_type)
-            && !is_delegation_7702
-        {
+        if self.address_is_precompile(&code_address) && !is_delegation_7702 {
             // Record precompile address touch for BAL per EIP-7928
             if let Some(recorder) = self.db.bal_recorder.as_mut() {
                 recorder.record_touched_address(code_address);
@@ -1207,13 +1204,15 @@ impl<'a> VM<'a> {
 
             let mut gas_remaining = gas_limit;
             let ctx_result = Self::execute_precompile(
-                code_address,
+                // Resolve a relocation destination back to the precompile it hosts.
+                self.effective_precompile_address(code_address),
                 &calldata,
                 gas_limit,
                 &mut gas_remaining,
                 self.env.config.fork,
                 self.db.store.precompile_cache(),
                 self.crypto,
+                self.stateless_validator,
             )?;
 
             let call_frame = &mut self.current_call_frame;
@@ -1435,6 +1434,12 @@ impl<'a> VM<'a> {
                     .frame_state_gas_spilled
                     .checked_add(child_frame_state_gas_spilled)
                     .ok_or(InternalError::Overflow)?;
+                // EIP-8037 (execution-specs#3478): with the child's gas merged in, the
+                // reservoir repays whatever spill is still outstanding in this frame —
+                // EELS calls `repay_state_gas_spill` here, on the success arm only.
+                if self.env.config.fork >= Fork::Amsterdam {
+                    self.repay_state_gas_spill()?;
+                }
             }
             TxResult::Revert(_) => {
                 // EIP-8037: the child already self-refilled its execution state gas via
@@ -1504,6 +1509,12 @@ impl<'a> VM<'a> {
                     .frame_state_gas_spilled
                     .checked_add(child_frame_state_gas_spilled)
                     .ok_or(InternalError::Overflow)?;
+                // EIP-8037 (execution-specs#3478): with the child's gas merged in, the
+                // reservoir repays whatever spill is still outstanding in this frame —
+                // EELS calls `repay_state_gas_spill` here, on the success arm only.
+                if self.env.config.fork >= Fork::Amsterdam {
+                    self.repay_state_gas_spill()?;
+                }
                 // EIP-8037 (#3002): the parent charged the NEW_ACCOUNT state gas only
                 // when the target was NOT alive (`new_account_charged = !target_alive`),
                 // exactly as EELS `generic_create`. On child success EELS does not

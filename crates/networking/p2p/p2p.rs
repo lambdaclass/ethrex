@@ -68,6 +68,7 @@ pub mod discv4;
 pub mod discv5;
 pub(crate) mod metrics;
 pub mod network;
+pub mod peer_filter;
 pub mod peer_handler;
 pub mod peer_table;
 pub mod rlpx;
@@ -77,6 +78,9 @@ pub mod sync_manager;
 pub mod tx_broadcaster;
 pub mod types;
 pub mod utils;
+
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils;
 
 pub use discovery::DiscoveryConfig;
 pub use network::periodically_show_peer_stats;

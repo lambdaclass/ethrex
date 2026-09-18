@@ -1,11 +1,12 @@
 use bytes::Bytes;
 use ethereum_types::{Address, H256};
 use ethrex_rpc::clients::{EngineClient, EngineClientError};
-use ethrex_rpc::types::fork_choice::{ForkChoiceState, PayloadAttributesV3};
+use ethrex_rpc::types::fork_choice::{ForkChoiceState, PayloadAttributesV3, PayloadAttributesV4};
 use sha2::{Digest, Sha256};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::sleep;
 
+#[allow(clippy::too_many_arguments)]
 pub async fn start_block_producer(
     execution_client_auth_url: String,
     jwt_secret: Bytes,
@@ -13,6 +14,12 @@ pub async fn start_block_producer(
     max_tries: u32,
     block_production_interval_ms: u64,
     coinbase_address: Address,
+    // Amsterdam activation timestamp (from the chain config). `Some(t)` with
+    // `t <= block_timestamp` means the payload must be built with the V4 engine
+    // methods (V3 forkchoice is rejected at Amsterdam+). `None` → pre-Amsterdam.
+    amsterdam_time: Option<u64>,
+    // CL-supplied target gas limit for V4 payload building (execution-apis#796).
+    target_gas_limit: u64,
 ) -> Result<(), EngineClientError> {
     let engine_client = EngineClient::new(&execution_client_auth_url, jwt_secret);
 
@@ -21,6 +28,7 @@ pub async fn start_block_producer(
 
     let mut head_block_hash: H256 = head_block_hash;
     let parent_beacon_block_root = H256::zero();
+    let mut slot_number: u64 = 0;
     let mut tries = 0;
     while tries < max_tries {
         tracing::info!("Producing block");
@@ -31,24 +39,52 @@ pub async fn start_block_producer(
             finalized_block_hash: head_block_hash,
         };
 
-        let payload_attributes = PayloadAttributesV3 {
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
-            prev_randao: H256::zero(),
-            suggested_fee_recipient: coinbase_address,
-            parent_beacon_block_root: Some(parent_beacon_block_root),
-            withdrawals: Some(Vec::new()),
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        let is_amsterdam = amsterdam_time.is_some_and(|t| t <= timestamp);
+
+        // Amsterdam+ payloads MUST be built via forkchoiceUpdatedV4 (V3 is
+        // rejected at Amsterdam+, e.g. for a native-rollup L1 at LStar); earlier
+        // forks use V3, which rejects the V4-only slot_number/target_gas_limit.
+        let (fork_choice_result, fcu_version) = if is_amsterdam {
+            slot_number += 1;
+            let payload_attributes = PayloadAttributesV4 {
+                timestamp,
+                prev_randao: H256::zero(),
+                suggested_fee_recipient: coinbase_address,
+                parent_beacon_block_root: Some(parent_beacon_block_root),
+                withdrawals: Some(Vec::new()),
+                slot_number,
+                target_gas_limit,
+            };
+            (
+                engine_client
+                    .engine_forkchoice_updated_v4(fork_choice_state, Some(payload_attributes))
+                    .await,
+                "engine_forkchoiceUpdatedV4",
+            )
+        } else {
+            let payload_attributes = PayloadAttributesV3 {
+                timestamp,
+                prev_randao: H256::zero(),
+                suggested_fee_recipient: coinbase_address,
+                parent_beacon_block_root: Some(parent_beacon_block_root),
+                withdrawals: Some(Vec::new()),
+            };
+            (
+                engine_client
+                    .engine_forkchoice_updated_v3(fork_choice_state, Some(payload_attributes))
+                    .await,
+                "engine_forkchoiceUpdatedV3",
+            )
         };
-        let fork_choice_response = match engine_client
-            .engine_forkchoice_updated_v3(fork_choice_state, Some(payload_attributes))
-            .await
-        {
+        let fork_choice_response = match fork_choice_result {
             Ok(response) => {
-                tracing::debug!("engine_forkchoiceUpdatedV3 response: {response:?}");
+                tracing::debug!("{fcu_version} response: {response:?}");
                 response
             }
             Err(error) => {
                 tracing::error!(
-                    "Failed to produce block: error sending engine_forkchoiceUpdatedV3 with PayloadAttributes: {error}"
+                    "Failed to produce block: error sending {fcu_version} with PayloadAttributes: {error}"
                 );
                 sleep(Duration::from_millis(300)).await;
                 tries += 1;
@@ -66,15 +102,27 @@ pub async fn start_block_producer(
         // Note that this makes getPayload failures result in skipped blocks.
         sleep(Duration::from_millis(block_production_interval_ms)).await;
 
-        let execution_payload_response = match engine_client.engine_get_payload_v5(payload_id).await
-        {
+        // Amsterdam+ payloads are retrieved with getPayloadV6 (V5 is Osaka-only,
+        // capped below Amsterdam); earlier forks use V5.
+        let (get_payload_result, get_payload_version) = if is_amsterdam {
+            (
+                engine_client.engine_get_payload_v6(payload_id).await,
+                "engine_getPayloadV6",
+            )
+        } else {
+            (
+                engine_client.engine_get_payload_v5(payload_id).await,
+                "engine_getPayloadV5",
+            )
+        };
+        let execution_payload_response = match get_payload_result {
             Ok(response) => {
-                tracing::debug!("engine_getPayloadV5 response: {response:?}");
+                tracing::debug!("{get_payload_version} response: {response:?}");
                 response
             }
             Err(error) => {
                 tracing::error!(
-                    "Failed to produce block: error sending engine_getPayloadV5: {error}"
+                    "Failed to produce block: error sending {get_payload_version}: {error}"
                 );
                 sleep(Duration::from_millis(300)).await;
                 tries += 1;

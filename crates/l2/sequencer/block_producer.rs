@@ -133,7 +133,7 @@ impl BlockProducer {
     pub async fn produce_block(&mut self) -> Result<(), BlockProducerError> {
         let version = 3;
         let head_header = {
-            let current_block_number = self.store.get_latest_block_number().await?;
+            let current_block_number = self.store.get_latest_block_number()?;
             self.store
                 .get_block_header(current_block_number)?
                 .ok_or(BlockProducerError::StorageDataIsNone)?
@@ -196,6 +196,7 @@ impl BlockProducer {
             requests: Vec::new(),
             // Use the block header's gas_used which was set during payload building
             block_gas_used: block.header.gas_used,
+            burned_fees: None,
             tx_gas_breakdowns: Vec::new(),
         };
 

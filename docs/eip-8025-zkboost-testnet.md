@@ -43,9 +43,9 @@ cd lighthouse && git checkout feat/eip8025
 ### Build
 
 ```bash
-# ethrex
+# ethrex (stateless validation is unconditional; there is no feature flag)
 cd ethrex
-cargo build --release --features eip-8025 --bin ethrex
+cargo build --release --bin ethrex
 
 # zkboost
 cd zkboost

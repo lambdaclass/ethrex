@@ -329,7 +329,7 @@ impl<'a> VM<'a> {
     /// atomic prepare region (so an OOG rolls the whole region back and burns all gas
     /// rather than rejecting the tx). Per valid authorization, in EELS order:
     /// - `NEW_ACCOUNT` (state) when the authority's account leaf does not yet exist;
-    /// - `ACCOUNT_WRITE` (regular, 8000) when this is the transaction's first write to
+    /// - `ACCOUNT_WRITE` (regular) when this is the transaction's first write to
     ///   the authority's leaf (the sender's leaf was written at inclusion, and the
     ///   recipient's when `value > 0`, so those pay nothing here — a self-sponsored
     ///   authority and repeated authorizations on one authority pay `ACCOUNT_WRITE` at
@@ -1054,7 +1054,10 @@ pub fn account_to_levm_account(account: Account) -> (LevmAccount, Code) {
 /// This is generally used for memory offsets and sizes, 32 bits is more than enough for this purpose.
 #[expect(clippy::as_conversions)]
 pub fn u256_to_usize(val: U256) -> Result<usize, VMError> {
-    if val.0[0] > u32::MAX as u64 || val.0[1] != 0 || val.0[2] != 0 || val.0[3] != 0 {
+    // OR the three high limbs into one branch instead of a 4-way `||` chain,
+    // then a single magnitude check — fewer branches on this hot conversion
+    // (MLOAD/MSTORE/MCOPY/CALLDATACOPY/RETURN/... offsets all pass through here).
+    if (val.0[1] | val.0[2] | val.0[3]) != 0 || val.0[0] > u32::MAX as u64 {
         return Err(VMError::ExceptionalHalt(ExceptionalHalt::VeryLargeNumber));
     }
     Ok(val.0[0] as usize)

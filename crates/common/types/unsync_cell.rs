@@ -1,4 +1,4 @@
-/// `OnceCell` replacement for zkVM guest gated on `eip-8025` feature.
+/// `OnceCell` replacement for the ZisK zkVM guest (riscv64).
 ///
 /// `once_cell::sync::OnceCell` atomics are pure overhead in zkVM guest.
 /// This struct copies the methods from `once_cell::unsync::OnceCell` and uses unsafe
@@ -42,6 +42,17 @@ impl<T> OnceCell<T> {
             Ok(_) => Ok(()),
             Err((_, value)) => Err(value),
         }
+    }
+
+    /// Takes the value out, leaving the cell uninitialized.
+    ///
+    /// Mirrors `once_cell::sync::OnceCell::take`, which `BlockHeader::hash` is
+    /// cleared through in `into_with_burned_fees`. This cell and that one are
+    /// selected by a `cfg` no host build resolves to this side, so a method
+    /// missing here surfaces only in a ZisK guest build.
+    #[inline]
+    pub fn take(&mut self) -> Option<T> {
+        self.0.get_mut().take()
     }
 
     #[inline]

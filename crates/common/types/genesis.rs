@@ -281,6 +281,7 @@ pub struct ChainConfig {
         alias = "bogota_time"
     )]
     pub hegota_time: Option<u64>,
+    pub lstar_time: Option<u64>,
 
     /// Amount of total difficulty reached by the network that triggers the consensus upgrade.
     #[serde(default, with = "crate::serde_utils::u128::hex_str_opt")]
@@ -304,6 +305,7 @@ lazy_static::lazy_static! {
             (1, "mainnet"),
             (11155111, "sepolia"),
             (560048, "hoodi"),
+            (7091047534, "plataberget"),
             (9, "L1 local devnet"),
             (65536999, "L2 local devnet"),
         ])
@@ -341,6 +343,7 @@ pub enum Fork {
     BPO5 = 24,
     Amsterdam = 25,
     Hegota = 26,
+    LStar = 27,
 }
 
 impl From<Fork> for &str {
@@ -373,6 +376,7 @@ impl From<Fork> for &str {
             Fork::BPO5 => "BPO5",
             Fork::Amsterdam => "Amsterdam",
             Fork::Hegota => "Hegota",
+            Fork::LStar => "LStar",
         }
     }
 }
@@ -380,6 +384,10 @@ impl From<Fork> for &str {
 impl ChainConfig {
     pub fn is_hegota_activated(&self, block_timestamp: u64) -> bool {
         self.hegota_time.is_some_and(|time| time <= block_timestamp)
+    }
+
+    pub fn is_lstar_activated(&self, block_timestamp: u64) -> bool {
+        self.lstar_time.is_some_and(|time| time <= block_timestamp)
     }
 
     pub fn is_amsterdam_activated(&self, block_timestamp: u64) -> bool {
@@ -467,7 +475,9 @@ impl ChainConfig {
     }
 
     pub fn get_fork(&self, block_timestamp: u64) -> Fork {
-        if self.is_hegota_activated(block_timestamp) {
+        if self.is_lstar_activated(block_timestamp) {
+            Fork::LStar
+        } else if self.is_hegota_activated(block_timestamp) {
             Fork::Hegota
         } else if self.is_amsterdam_activated(block_timestamp) {
             Fork::Amsterdam
@@ -495,22 +505,17 @@ impl ChainConfig {
     }
 
     pub fn get_fork_blob_schedule(&self, block_timestamp: u64) -> Option<ForkBlobSchedule> {
-        // Hegotá inherits Amsterdam's blob schedule unless an explicit Hegotá
-        // entry is added to BlobSchedule in a future change.
-        if self.is_hegota_activated(block_timestamp)
+        // EIP-7892: from Prague onward the blob schedule only changes at BPO forks.
+        // Named forks (Osaka, Amsterdam, Hegotá, LStar) carry no blob params of their own
+        // and inherit the highest activated BPO entry, so resolution falls through the BPO
+        // chain. A genesis that pins an entry for the named fork anyway takes precedence.
+        if (self.is_lstar_activated(block_timestamp)
+            || self.is_hegota_activated(block_timestamp)
+            || self.is_amsterdam_activated(block_timestamp))
             && let Some(schedule) = self.blob_schedule.amsterdam
         {
             return Some(schedule);
         }
-        // Amsterdam (and BPO3-5) don't independently define blob params in Hive;
-        // they inherit from the highest activated BPO fork. If the fork-specific
-        // entry is None, fall through to find the right BPO schedule.
-        if self.is_amsterdam_activated(block_timestamp)
-            && let Some(schedule) = self.blob_schedule.amsterdam
-        {
-            return Some(schedule);
-        }
-        // Fall through to BPO chain
         if self.is_bpo5_activated(block_timestamp)
             && let Some(schedule) = self.blob_schedule.bpo5
         {
@@ -526,8 +531,7 @@ impl ChainConfig {
         {
             return Some(schedule);
         }
-        // Amsterdam implies BPO2 blob params when no explicit schedule is set.
-        if self.is_bpo2_activated(block_timestamp) || self.is_amsterdam_activated(block_timestamp) {
+        if self.is_bpo2_activated(block_timestamp) {
             Some(self.blob_schedule.bpo2)
         } else if self.is_bpo1_activated(block_timestamp) {
             Some(self.blob_schedule.bpo1)
@@ -567,6 +571,7 @@ impl ChainConfig {
             Fork::BPO5,
             Fork::Amsterdam,
             Fork::Hegota,
+            Fork::LStar,
         ]
         .into_iter()
         .enumerate()
@@ -580,7 +585,9 @@ impl ChainConfig {
     }
 
     pub fn get_last_scheduled_fork(&self) -> Fork {
-        if self.hegota_time.is_some() {
+        if self.lstar_time.is_some() {
+            Fork::LStar
+        } else if self.hegota_time.is_some() {
             Fork::Hegota
         } else if self.amsterdam_time.is_some() {
             Fork::Amsterdam
@@ -617,6 +624,7 @@ impl ChainConfig {
             Fork::BPO5 => self.bpo5_time,
             Fork::Amsterdam => self.amsterdam_time,
             Fork::Hegota => self.hegota_time,
+            Fork::LStar => self.lstar_time,
             Fork::Homestead => self.homestead_block,
             Fork::DaoFork => self.dao_fork_block,
             Fork::Byzantium => self.byzantium_block,
@@ -635,21 +643,16 @@ impl ChainConfig {
     }
 
     pub fn get_blob_schedule_for_fork(&self, fork: Fork) -> Option<ForkBlobSchedule> {
-        match fork {
-            Fork::Cancun => Some(self.blob_schedule.cancun),
-            Fork::Prague => Some(self.blob_schedule.prague),
-            Fork::Osaka => Some(self.blob_schedule.osaka),
-            Fork::BPO1 => Some(self.blob_schedule.bpo1),
-            Fork::BPO2 => Some(self.blob_schedule.bpo2),
-            Fork::BPO3 => self.blob_schedule.bpo3,
-            Fork::BPO4 => self.blob_schedule.bpo4,
-            Fork::BPO5 => self.blob_schedule.bpo5,
-            Fork::Amsterdam => self.blob_schedule.amsterdam,
-            // Hegotá inherits Amsterdam's blob schedule unless an explicit
-            // Hegotá entry is added to BlobSchedule in a future change.
-            Fork::Hegota => self.blob_schedule.amsterdam,
-            _ => None,
+        // Blob params are timestamp-scheduled from Cancun onward; earlier forks are
+        // activated by block number and have no blob schedule. Resolving through the
+        // fork's activation timestamp keeps this in step with the inheritance rules in
+        // `get_fork_blob_schedule`, so a named fork that declares no entry of its own
+        // reports the entry actually in force at its activation.
+        if fork < Fork::Cancun {
+            return None;
         }
+        self.get_activation_timestamp_for_fork(fork)
+            .and_then(|timestamp| self.get_fork_blob_schedule(timestamp))
     }
 
     pub fn gather_forks(&self, genesis_header: BlockHeader) -> (Vec<u64>, Vec<u64>) {
@@ -1272,6 +1275,83 @@ mod tests {
     }
 
     #[test]
+    fn lstar_fork_ordering_and_activation() {
+        // LStar is the highest fork and strictly greater than Amsterdam.
+        assert!(Fork::LStar > Fork::Amsterdam);
+        assert_eq!(<&str>::from(Fork::LStar), "LStar");
+
+        let mut cfg = ChainConfig {
+            lstar_time: Some(100),
+            ..Default::default()
+        };
+        assert!(!cfg.is_lstar_activated(99));
+        assert!(cfg.is_lstar_activated(100));
+        assert!(cfg.is_lstar_activated(101));
+
+        cfg.lstar_time = None;
+        assert!(!cfg.is_lstar_activated(u64::MAX));
+    }
+
+    #[test]
+    fn native_l2_genesis_activates_amsterdam() {
+        let file = File::open("../../fixtures/genesis/native_l2.json")
+            .expect("Failed to open native_l2.json");
+        let reader = BufReader::new(file);
+        let genesis: Genesis =
+            serde_json::from_reader(reader).expect("Failed to deserialize native_l2.json");
+        assert_eq!(
+            genesis.config.get_fork(0),
+            Fork::Amsterdam,
+            "native_l2.json genesis should activate Amsterdam at timestamp 0"
+        );
+        // Confirm blobSchedule falls back to bpo2 (no explicit amsterdam entry).
+        let bs = genesis
+            .config
+            .get_fork_blob_schedule(0)
+            .expect("Amsterdam implies bpo2 blob schedule");
+        assert_eq!(bs.max, 21, "Amsterdam should inherit bpo2 max=21");
+    }
+
+    #[test]
+    fn lstar_fork_resolution() {
+        // Genesis-activated Amsterdam + LStar (LStar at a later time).
+        let cfg = ChainConfig {
+            cancun_time: Some(0),
+            prague_time: Some(0),
+            amsterdam_time: Some(0),
+            lstar_time: Some(1000),
+            ..Default::default()
+        };
+
+        // Before LStar: highest active fork is Amsterdam.
+        assert_eq!(cfg.get_fork(999), Fork::Amsterdam);
+        // At/after LStar: highest active fork is LStar.
+        assert_eq!(cfg.get_fork(1000), Fork::LStar);
+
+        // next_fork: at Amsterdam (pre-LStar) the next scheduled fork is LStar; at LStar there is none.
+        assert_eq!(cfg.next_fork(999), Some(Fork::LStar));
+        assert_eq!(cfg.next_fork(1000), None);
+
+        // get_last_scheduled_fork reflects LStar once scheduled.
+        assert_eq!(cfg.get_last_scheduled_fork(), Fork::LStar);
+
+        // Activation timestamp round-trips.
+        assert_eq!(
+            cfg.get_activation_timestamp_for_fork(Fork::LStar),
+            Some(1000)
+        );
+
+        // Blob schedule at LStar inherits Amsterdam's (which inherits bpo2, max=9 default).
+        let sched_lstar = cfg
+            .get_fork_blob_schedule(1000)
+            .expect("lstar blob schedule");
+        let sched_amsterdam = cfg
+            .get_fork_blob_schedule(999)
+            .expect("amsterdam blob schedule");
+        assert_eq!(sched_lstar.max, sched_amsterdam.max);
+    }
+
+    #[test]
     fn test_hegota_after_amsterdam() {
         // Discriminant ordering: Hegota strictly follows Amsterdam.
         assert!(Fork::Hegota > Fork::Amsterdam);
@@ -1389,5 +1469,80 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(config.next_fork(0), None);
+    }
+
+    #[test]
+    fn amsterdam_inherits_highest_activated_bpo_schedule() {
+        // EIP-7892: Amsterdam declares no blob params of its own, so a genesis that
+        // schedules BPO1 and then Amsterdam keeps BPO1's target and max across the
+        // Amsterdam boundary. An unscheduled BPO2 must never contribute its schedule.
+        let config: ChainConfig = serde_json::from_str(
+            r#"{
+                "chainId": 1,
+                "depositContractAddress": "0x00000000219ab540356cbb839cbe05303d7705fa",
+                "osakaTime": 0,
+                "bpo1Time": 0,
+                "amsterdamTime": 100,
+                "blobSchedule": {
+                    "cancun": {"target": 3, "max": 6, "baseFeeUpdateFraction": 3338477},
+                    "prague": {"target": 6, "max": 9, "baseFeeUpdateFraction": 5007716},
+                    "bpo1": {"target": 10, "max": 15, "baseFeeUpdateFraction": 8346193}
+                }
+            }"#,
+        )
+        .expect("genesis should parse");
+
+        let bpo1 = ForkBlobSchedule {
+            target: 10,
+            max: 15,
+            base_fee_update_fraction: 8346193,
+        };
+        assert_eq!(config.get_fork_blob_schedule(99), Some(bpo1));
+        assert_eq!(config.get_fork_blob_schedule(100), Some(bpo1));
+    }
+
+    #[test]
+    fn blob_schedule_for_fork_reports_the_inherited_entry() {
+        // `eth_config` (EIP-7910) must report the blob params actually in force at a
+        // fork's activation, which for Amsterdam is the highest activated BPO entry.
+        let config = ChainConfig {
+            osaka_time: Some(0),
+            bpo1_time: Some(0),
+            amsterdam_time: Some(100),
+            ..Default::default()
+        };
+
+        let schedule = config
+            .get_blob_schedule_for_fork(Fork::Amsterdam)
+            .expect("Amsterdam must report a blob schedule");
+        assert_eq!((schedule.target, schedule.max), (10, 15));
+
+        // Forks that were never scheduled have nothing to report, and pre-Cancun forks
+        // are activated by block number rather than timestamp.
+        assert_eq!(config.get_blob_schedule_for_fork(Fork::BPO2), None);
+        assert_eq!(config.get_blob_schedule_for_fork(Fork::London), None);
+    }
+
+    #[test]
+    fn amsterdam_prefers_explicitly_pinned_schedule() {
+        let mut config = ChainConfig {
+            osaka_time: Some(0),
+            bpo1_time: Some(0),
+            bpo2_time: Some(50),
+            amsterdam_time: Some(100),
+            ..Default::default()
+        };
+        assert_eq!(
+            config.get_fork_blob_schedule(100),
+            Some(default_bpo2_schedule())
+        );
+
+        let pinned = ForkBlobSchedule {
+            target: 16,
+            max: 24,
+            base_fee_update_fraction: 13353910,
+        };
+        config.blob_schedule.amsterdam = Some(pinned);
+        assert_eq!(config.get_fork_blob_schedule(100), Some(pinned));
     }
 }
